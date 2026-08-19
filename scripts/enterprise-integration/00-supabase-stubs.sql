@@ -16,13 +16,53 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'service_role') then
     create role service_role nologin noinherit bypassrls;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'supabase_admin') then
+    create role supabase_admin login noinherit superuser createdb createrole
+      replication bypassrls;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticator') then
+    create role authenticator login noinherit nobypassrls;
+  end if;
+  if not exists (
+    select 1 from pg_roles where rolname = 'supabase_storage_admin'
+  ) then
+    create role supabase_storage_admin nologin noinherit nobypassrls;
+  end if;
+  if not exists (
+    select 1 from pg_roles where rolname = 'cli_login_postgres'
+  ) then
+    create role cli_login_postgres login noinherit nobypassrls;
+  end if;
 end
 $$;
 
-alter role anon nologin noinherit nobypassrls;
-alter role authenticated nologin noinherit nobypassrls;
-alter role service_role nologin noinherit bypassrls;
+alter role anon nologin inherit nobypassrls;
+alter role authenticated nologin inherit nobypassrls;
+alter role service_role nologin inherit bypassrls;
+alter role supabase_admin login noinherit superuser createdb createrole
+  replication bypassrls;
+alter role authenticator login noinherit nosuperuser nocreatedb nocreaterole
+  noreplication nobypassrls;
+alter role supabase_storage_admin nologin noinherit nosuperuser nocreatedb
+  nocreaterole noreplication nobypassrls;
+alter role cli_login_postgres login noinherit nosuperuser nocreatedb
+  nocreaterole noreplication nobypassrls;
+grant anon, authenticated, service_role to authenticator;
+grant anon, authenticated, service_role to postgres;
+grant authenticator to supabase_storage_admin;
+set role supabase_admin;
+grant postgres to cli_login_postgres;
+reset role;
 grant usage on schema public to anon, authenticated, service_role;
+
+-- Mirror the hosted Supabase function defaults that exposed historical RPCs
+-- to API roles even when their migrations only revoked PUBLIC. The 039
+-- acceptance must prove it removes these direct legacy grants and also
+-- normalizes the creators' global (all-schema) future defaults.
+alter default privileges for role postgres
+  grant execute on functions to public, anon, authenticated, service_role;
+alter default privileges for role supabase_admin
+  grant execute on functions to public, anon, authenticated, service_role;
 
 create schema if not exists auth;
 create schema if not exists storage;

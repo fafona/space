@@ -11,7 +11,7 @@ if [[ "${ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE}" != 1 ]]; then
   exit 1
 fi
 
-export PGOPTIONS="-c statement_timeout=60000 -c lock_timeout=15000 ${PGOPTIONS:-}"
+export PGOPTIONS="-c lc_messages=C -c statement_timeout=60000 -c lock_timeout=15000 ${PGOPTIONS:-}"
 PSQL_BASE=(psql -X --set ON_ERROR_STOP=1 --no-psqlrc)
 
 run_psql() {
@@ -49,6 +49,101 @@ expect_sql_file_error() {
   fi
 }
 
+run_sql_file_as_role() {
+  local file="$1"
+  local role="$2"
+  echo "[enterprise-integration] applying ${file#"${REPOSITORY_ROOT}/"} as ${role}"
+  run_psql --command "set role \"${role}\"" --file "${file}"
+}
+
+expect_sql_file_error_as_role() {
+  local file="$1"
+  local role="$2"
+  local expected_message="$3"
+  local output
+  echo "[enterprise-integration] expecting ${expected_message} from ${file#"${REPOSITORY_ROOT}/"} as ${role}"
+  if output="$(run_psql --command "set role \"${role}\"" --file "${file}" 2>&1)"; then
+    echo "Expected migration failure containing ${expected_message}" >&2
+    exit 1
+  fi
+  if [[ "${output}" != *"${expected_message}"* ]]; then
+    echo "Expected migration failure containing ${expected_message}, got:" >&2
+    echo "${output}" >&2
+    exit 1
+  fi
+}
+
+wait_for_sql_true() {
+  local label="$1"
+  local query="$2"
+  local attempt result
+  for ((attempt = 1; attempt <= 200; attempt += 1)); do
+    result="$(run_psql --tuples-only --no-align --command "${query}")"
+    if [[ "${result}" == 't' ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "Timed out waiting for ${label}" >&2
+  return 1
+}
+
+assert_rpc_acl_catalog_writer_waits() {
+  local application_name="$1"
+  local catalog_name="$2"
+  local statement="$3"
+  local writer_log writer_pid
+  writer_log="$(mktemp)"
+  rpc_acl_temp_logs+=("${writer_log}")
+  (
+    run_psql --command \
+      "set application_name = '${application_name}'; ${statement}"
+  ) >"${writer_log}" 2>&1 &
+  writer_pid=$!
+  rpc_acl_background_pids+=("${writer_pid}")
+  wait_for_sql_true "${catalog_name} RowExclusive wait barrier" \
+    "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = '${application_name}' and lock_state.relation = ('pg_catalog.${catalog_name}'::regclass) and lock_state.mode = 'RowExclusiveLock' and not lock_state.granted);"
+  run_psql --command \
+    "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where application_name = '${application_name}';" \
+    >/dev/null
+  if wait "${writer_pid}"; then
+    echo "${catalog_name} writer unexpectedly completed through the catalog gate" >&2
+    exit 1
+  fi
+  rm -f -- "${writer_log}"
+}
+
+rpc_acl_background_pids=()
+rpc_acl_temp_logs=()
+cleanup_rpc_acl_early_processes() {
+  run_psql --command \
+    "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where (application_name in ('enterprise_rpc_acl_gate_039', 'enterprise_rpc_acl_ddl_first_039', 'enterprise_rpc_acl_database_owner_039', 'enterprise_rpc_acl_cross_database_039', 'enterprise_rpc_acl_controlled_writer_039', 'enterprise_rpc_acl_registry_blocker_039', 'enterprise_rpc_acl_migration_barrier_039', 'enterprise_rpc_acl_second_migration_039', 'enterprise_rpc_acl_postlock_ddl_039') or application_name like 'enterprise_rpc_acl_catalog_%_039') and pid <> pg_backend_pid();" \
+    >/dev/null 2>&1 || true
+  if [[ "$(run_psql --tuples-only --no-align --command \
+    "select exists (select 1 from pg_catalog.pg_prepared_xacts where gid = 'enterprise_rpc_acl_prepared_039');" \
+    2>/dev/null || true)" == 't' ]]; then
+    run_psql --command "rollback prepared 'enterprise_rpc_acl_prepared_039';" \
+      >/dev/null 2>&1 || true
+  fi
+  run_psql --command \
+    "drop database if exists enterprise_rpc_acl_shared_039 with (force);" \
+    >/dev/null 2>&1 || true
+  run_psql --command \
+    "drop function if exists public.redteam_rpc_acl_proc_probe_039(); drop function if exists public.faolla_rpc_acl_postlock_canary_039(); drop type if exists public.redteam_rpc_acl_type_probe_039;" \
+    >/dev/null 2>&1 || true
+  run_psql --command \
+    "drop role if exists redteam_rpc_acl_database_owner_039;" \
+    >/dev/null 2>&1 || true
+  local background_pid temporary_log
+  for background_pid in "${rpc_acl_background_pids[@]}"; do
+    kill "${background_pid}" >/dev/null 2>&1 || true
+  done
+  for temporary_log in "${rpc_acl_temp_logs[@]}"; do
+    rm -f -- "${temporary_log}" || true
+  done
+}
+trap cleanup_rpc_acl_early_processes EXIT
+
 run_pre_cutover_acceptance() {
   run_sql_file "${SCRIPT_DIR}/40-workflow-acceptance.sql"
   run_sql_file "${SCRIPT_DIR}/43-workflow-archive-pagination.sql"
@@ -67,29 +162,34 @@ run_sql_file "${SCRIPT_DIR}/00-supabase-stubs.sql"
 run_psql --command \
   "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text null, raw_app_meta_data jsonb not null default '{}'::jsonb, raw_user_meta_data jsonb not null default '{}'::jsonb, created_at timestamptz not null default now());"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-init.sql"
-run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250001_core_transaction_foundation.sql"
-run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250004_booking_shadow_write_rpc.sql"
-run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250005_coupon_shadow_write_rpc.sql"
-run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250007_reliable_outbox_runtime.sql"
-run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped_outbox_claim.sql"
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250001_core_transaction_foundation.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250002_order_shadow_write_rpc.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250003_membership_ledger_shadow_write_rpc.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250004_booking_shadow_write_rpc.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250005_coupon_shadow_write_rpc.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250006_conversation_shadow_write_rpc.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250007_reliable_outbox_runtime.sql" supabase_admin
+run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped_outbox_claim.sql" supabase_admin
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' \) \
     -print | sort
 )
 
 isolation_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_system_site_principal_isolation.sql"
 recovery_observer_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190038_ordinary_account_recovery_observer.sql"
+rpc_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190039_runtime_rpc_execute_acl_hardening.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
-expected_registry_count=36
+expected_registry_count=39
 isolation_present=0
 recovery_observer_present=0
+rpc_acl_hardening_present=0
 cutover_present=0
 if [[ -f "${isolation_migration_path}" ]]; then
   expected_enterprise_migration_count=32
-  expected_registry_count=37
+  expected_registry_count=40
   isolation_present=1
 fi
 if [[ -f "${recovery_observer_migration_path}" ]]; then
@@ -98,8 +198,17 @@ if [[ -f "${recovery_observer_migration_path}" ]]; then
     exit 1
   fi
   expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
-  expected_registry_count=38
+  expected_registry_count=41
   recovery_observer_present=1
+fi
+if [[ -f "${rpc_acl_hardening_migration_path}" ]]; then
+  if [[ "${recovery_observer_present}" -ne 1 ]]; then
+    echo 'Runtime RPC ACL hardening 039 requires the exact 038 recovery observer migration' >&2
+    exit 1
+  fi
+  expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
+  expected_registry_count=42
+  rpc_acl_hardening_present=1
 fi
 if [[ -f "${cutover_migration_path}" ]]; then
   if [[ "${isolation_present}" -eq 1 ]]; then
@@ -107,12 +216,12 @@ if [[ -f "${cutover_migration_path}" ]]; then
     exit 1
   fi
   expected_enterprise_migration_count=32
-  expected_registry_count=37
+  expected_registry_count=40
   cutover_present=1
 fi
 
 if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
-  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-038), found ${#enterprise_migrations[@]}" >&2
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-039), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -433,6 +542,540 @@ for migration in "${enterprise_migrations[@]}"; do
       exit 1
     fi
   elif [[ "$(basename -- "${migration}")" == \
+    "202608190039_runtime_rpc_execute_acl_hardening.sql" ]]; then
+    echo '[enterprise-integration] verifying the production supabase_admin creator and historical default exposure'
+    rpc_acl_precondition_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select (select relowner = to_regrole('supabase_admin') from pg_catalog.pg_class where oid = 'public.faolla_schema_migrations'::regclass) and (select count(*) = 16 and bool_and(function_metadata.proowner = to_regrole('supabase_admin')) from pg_catalog.pg_proc as function_metadata where function_metadata.pronamespace = 'public'::regnamespace and function_metadata.proname in ('faolla_is_merchant_owner','faolla_upsert_merchant_order_v1','faolla_upsert_merchant_orders_v1','faolla_upsert_merchant_membership_ledger_v1','faolla_upsert_merchant_bookings_v1','faolla_resolve_merchant_customer_v1','faolla_upsert_merchant_coupons_v1','faolla_upsert_merchant_conversations_v1','faolla_enqueue_merchant_outbox_v1','faolla_claim_merchant_outbox_v1','faolla_renew_merchant_outbox_lease_v1','faolla_complete_merchant_outbox_v1','faolla_fail_merchant_outbox_v1','faolla_replay_merchant_outbox_v1','faolla_claim_merchant_outbox_scoped_v1','faolla_get_merchant_outbox_health_v1')) and (select count(*) = 15 from (values ('public.faolla_is_merchant_owner(text)'), ('public.faolla_upsert_merchant_order_v1(jsonb,jsonb,jsonb)'), ('public.faolla_upsert_merchant_orders_v1(jsonb)'), ('public.faolla_upsert_merchant_membership_ledger_v1(jsonb)'), ('public.faolla_upsert_merchant_bookings_v1(jsonb)'), ('public.faolla_resolve_merchant_customer_v1(text,jsonb,text)'), ('public.faolla_upsert_merchant_coupons_v1(jsonb)'), ('public.faolla_upsert_merchant_conversations_v1(jsonb)'), ('public.faolla_enqueue_merchant_outbox_v1(jsonb)'), ('public.faolla_claim_merchant_outbox_v1(text,integer,integer,text[])'), ('public.faolla_renew_merchant_outbox_lease_v1(uuid,text,integer)'), ('public.faolla_complete_merchant_outbox_v1(uuid,text,jsonb)'), ('public.faolla_fail_merchant_outbox_v1(uuid,text,text,text,boolean,integer)'), ('public.faolla_replay_merchant_outbox_v1(uuid,text,text)'), ('public.faolla_claim_merchant_outbox_scoped_v1(text,text[],text[],integer,integer)')) as exposed(signature) where pg_catalog.has_function_privilege('anon', exposed.signature, 'EXECUTE')) and not pg_catalog.has_function_privilege('anon', 'public.faolla_get_merchant_outbox_health_v1(text,integer)', 'EXECUTE') and pg_catalog.has_function_privilege('service_role', 'public.faolla_get_merchant_outbox_health_v1(text,integer)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_precondition_state}" != 't' ]]; then
+      echo '039 fixture did not reproduce the exact hosted owner/default ACL state' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] seeding custom, delegated, global, and schema function ACL drift'
+    run_psql --command \
+      "do \$\$ begin if to_regrole('\"redteam rpc acl 039\"') is null then create role \"redteam rpc acl 039\" nologin noinherit; end if; if to_regrole('redteam_rpc_acl_child_039') is null then create role redteam_rpc_acl_child_039 nologin noinherit; end if; if to_regrole('redteam_rpc_acl_transitive_039') is null then create role redteam_rpc_acl_transitive_039 nologin inherit; end if; if to_regrole('redteam_rpc_acl_untrusted_039') is null then create role redteam_rpc_acl_untrusted_039 nologin noinherit; end if; if to_regrole('redteam_rpc_acl_database_owner_039') is null then create role redteam_rpc_acl_database_owner_039 nologin noinherit createdb; else alter role redteam_rpc_acl_database_owner_039 nologin noinherit createdb; end if; end \$\$; grant usage, create on schema public to \"redteam rpc acl 039\"; grant execute on function public.faolla_is_merchant_owner(text), public.faolla_upsert_merchant_order_v1(jsonb,jsonb,jsonb), public.faolla_enqueue_merchant_outbox_v1(jsonb), public.faolla_get_merchant_outbox_health_v1(text,integer) to \"redteam rpc acl 039\" with grant option; set role supabase_admin; grant execute on function public.faolla_upsert_merchant_order_v1(jsonb,jsonb,jsonb) to supabase_admin with grant option; reset role; set role \"redteam rpc acl 039\"; grant execute on function public.faolla_is_merchant_owner(text), public.faolla_enqueue_merchant_outbox_v1(jsonb) to redteam_rpc_acl_child_039; reset role; alter default privileges for role postgres grant execute on functions to public; alter default privileges for role postgres in schema public grant execute on functions to \"redteam rpc acl 039\" with grant option; alter default privileges for role supabase_admin grant execute on functions to public, anon, authenticated, service_role; alter default privileges for role supabase_admin grant execute on functions to supabase_admin with grant option; alter default privileges for role supabase_admin in schema public grant execute on functions to supabase_admin with grant option; alter default privileges for role supabase_admin in schema public grant execute on functions to \"redteam rpc acl 039\" with grant option; alter default privileges for role \"redteam rpc acl 039\" grant execute on functions to public, anon; alter default privileges for role \"redteam rpc acl 039\" in schema public grant execute on functions to authenticated, service_role;"
+    run_psql --command \
+      "grant select on table public.faolla_schema_migrations to public; grant select on table public.faolla_schema_migrations to \"redteam rpc acl 039\" with grant option; grant update(applied_at) on table public.faolla_schema_migrations to \"redteam rpc acl 039\" with grant option; grant select(version) on table public.faolla_schema_migrations to authenticated; grant update, delete, truncate on table public.faolla_schema_migrations to service_role with grant option; set role supabase_admin; grant select on table public.faolla_schema_migrations to supabase_admin with grant option; reset role; set role \"redteam rpc acl 039\"; grant select on table public.faolla_schema_migrations to redteam_rpc_acl_child_039, service_role; grant update(applied_at) on table public.faolla_schema_migrations to redteam_rpc_acl_child_039; reset role;"
+    run_psql --command \
+      "do \$\$ begin if exists (select 1 from pg_catalog.pg_auth_members where roleid = to_regrole('supabase_admin') and member = to_regrole('authenticator')) then revoke supabase_admin from authenticator; end if; end \$\$; alter default privileges for role pg_monitor revoke execute on functions from anon;"
+
+    echo '[enterprise-integration] rejecting a conflicting 039 registry row before ACL mutation'
+    run_psql --command \
+      "insert into public.faolla_schema_migrations(version, name) values (202608190039, 'redteam_wrong_039');"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_registry_conflict'
+    rpc_acl_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and has_function_privilege('redteam_rpc_acl_child_039', 'public.faolla_enqueue_merchant_outbox_v1(jsonb)', 'EXECUTE') and has_table_privilege('redteam_rpc_acl_child_039', 'public.faolla_schema_migrations', 'SELECT') and has_column_privilege('redteam_rpc_acl_child_039', 'public.faolla_schema_migrations', 'applied_at', 'UPDATE') and has_table_privilege('service_role', 'public.faolla_schema_migrations', 'TRUNCATE') and has_column_privilege('authenticated', 'public.faolla_schema_migrations', 'version', 'SELECT') and exists (select 1 from pg_catalog.pg_class as registry_metadata cross join lateral pg_catalog.aclexplode(registry_metadata.relacl) as acl where registry_metadata.oid = 'public.faolla_schema_migrations'::regclass and acl.grantee = 0 and acl.privilege_type = 'SELECT') and exists (select 1 from pg_catalog.pg_class as registry_metadata cross join lateral pg_catalog.aclexplode(registry_metadata.relacl) as acl where registry_metadata.oid = 'public.faolla_schema_migrations'::regclass and acl.grantee = registry_metadata.relowner and acl.privilege_type = 'SELECT' and acl.is_grantable) from public.faolla_schema_migrations where version = 202608190039 and name = 'redteam_wrong_039';"
+    )"
+    if [[ "${rpc_acl_conflict_state}" != 't' ]]; then
+      echo '039 registry conflict changed ACL or registry state' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190039;"
+
+    echo '[enterprise-integration] rejecting an untrusted migration actor atomically'
+    expect_sql_file_error_as_role "${migration}" redteam_rpc_acl_untrusted_039 \
+      'runtime_rpc_execute_acl_hardening_untrusted_migrator'
+    rpc_acl_untrusted_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_untrusted_state}" != 't' ]]; then
+      echo 'Untrusted 039 attempt changed registry or ACL state' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting a demoted supabase_admin before mutation'
+    run_psql --command "alter role supabase_admin nosuperuser;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_untrusted_migrator'
+    rpc_acl_demoted_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    run_psql --command "alter role supabase_admin superuser;"
+    if [[ "${rpc_acl_demoted_state}" != 't' ]]; then
+      echo 'Demoted supabase_admin attempt changed registry or ACL state' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting partial and custom role graphs'
+    run_psql --command "revoke anon from postgres;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command "grant anon to postgres; grant service_role to redteam_rpc_acl_transitive_039;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command "revoke service_role from redteam_rpc_acl_transitive_039;"
+    run_psql --command "revoke postgres from cli_login_postgres;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "set role supabase_admin; grant postgres to cli_login_postgres; reset role;"
+    run_psql --command \
+      "revoke postgres from cli_login_postgres; grant postgres to cli_login_postgres;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "revoke postgres from cli_login_postgres; set role supabase_admin; grant postgres to cli_login_postgres with admin option; reset role;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "revoke postgres from cli_login_postgres; set role supabase_admin; grant postgres to cli_login_postgres; reset role; grant service_role to cli_login_postgres;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "revoke service_role from cli_login_postgres; grant cli_login_postgres to redteam_rpc_acl_transitive_039;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "revoke cli_login_postgres from redteam_rpc_acl_transitive_039; grant postgres to redteam_rpc_acl_transitive_039;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "revoke postgres from redteam_rpc_acl_transitive_039;"
+    run_psql --command "alter role cli_login_postgres bypassrls;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command "alter role cli_login_postgres nobypassrls;"
+
+    echo '[enterprise-integration] rejecting an unexpected custom CREATEROLE actor'
+    run_psql --command \
+      "do \$\$ begin if to_regrole('redteam_rpc_acl_privileged_039') is null then create role redteam_rpc_acl_privileged_039 nologin noinherit createrole; else alter role redteam_rpc_acl_privileged_039 nologin noinherit createrole; end if; end \$\$;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_role_attribute_mismatch'
+    run_psql --command \
+      "alter role redteam_rpc_acl_privileged_039 nocreaterole;"
+
+    echo '[enterprise-integration] rejecting an idle-in-transaction function DDL by its cluster XID'
+    rpc_acl_gate_log="$(mktemp)"
+    rpc_acl_race_log="$(mktemp)"
+    rpc_acl_temp_logs+=("${rpc_acl_gate_log}" "${rpc_acl_race_log}")
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_gate_039'; select pg_catalog.pg_advisory_lock(20260819, 3901); select pg_sleep(30);"
+    ) >"${rpc_acl_gate_log}" 2>&1 &
+    rpc_acl_gate_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_gate_pid}")
+    wait_for_sql_true 'DDL commit-gate advisory barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = 'enterprise_rpc_acl_gate_039' and lock_state.locktype = 'advisory' and lock_state.granted);"
+    (
+      run_psql \
+        --command "set application_name = 'enterprise_rpc_acl_ddl_first_039'; set track_activities = off;" \
+        --command "begin; create function public.faolla_is_merchant_owner(jsonb) returns boolean language sql stable as \$\$ select false \$\$; select pg_catalog.pg_advisory_xact_lock(20260819, 3901); commit;"
+    ) >"${rpc_acl_race_log}" 2>&1 &
+    rpc_acl_race_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_race_pid}")
+    wait_for_sql_true 'DDL-first assigned-XID and commit-gate wait barrier' \
+      "select exists (select 1 from pg_catalog.pg_stat_activity as activity where activity.application_name = 'enterprise_rpc_acl_ddl_first_039' and activity.backend_xid is not null and activity.state = 'disabled' and activity.xact_start is null and exists (select 1 from pg_catalog.pg_locks as lock_state where lock_state.pid = activity.pid and lock_state.locktype = 'advisory' and not lock_state.granted) and not exists (select 1 from pg_catalog.pg_locks as proc_lock where proc_lock.pid = activity.pid and proc_lock.relation = 'pg_catalog.pg_proc'::regclass and proc_lock.mode = 'RowExclusiveLock' and proc_lock.granted));"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_concurrent_transaction'
+    rpc_acl_xid_failure_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and has_function_privilege('redteam_rpc_acl_child_039', 'public.faolla_enqueue_merchant_outbox_v1(jsonb)', 'EXECUTE') and exists (select 1 from pg_catalog.pg_default_acl as defaults cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as acl where defaults.defaclrole = to_regrole('supabase_admin') and defaults.defaclnamespace = 0 and defaults.defaclobjtype = 'f' and acl.grantee = 0 and acl.privilege_type = 'EXECUTE') and pg_catalog.pg_has_role('authenticator', 'anon', 'MEMBER') and pg_catalog.pg_has_role('cli_login_postgres', 'postgres', 'MEMBER');"
+    )"
+    if [[ "${rpc_acl_xid_failure_state}" != 't' ]]; then
+      echo 'Concurrent-XID rejection changed registry, ACL, default, or role state' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where application_name = 'enterprise_rpc_acl_gate_039';"
+    if wait "${rpc_acl_gate_pid}"; then
+      echo 'DDL commit-gate blocker unexpectedly completed' >&2
+      exit 1
+    fi
+    if ! wait "${rpc_acl_race_pid}"; then
+      echo 'Concurrent function-DDL writer failed' >&2
+      cat "${rpc_acl_race_log}" >&2
+      rm -f -- "${rpc_acl_gate_log}" "${rpc_acl_race_log}"
+      exit 1
+    fi
+    rm -f -- "${rpc_acl_gate_log}" "${rpc_acl_race_log}"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_definition_mismatch'
+    rpc_acl_race_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select to_regprocedure('public.faolla_is_merchant_owner(jsonb)') is not null and not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_race_state}" != 't' ]]; then
+      echo '039 retry did not observe the committed concurrent overload atomically' >&2
+      exit 1
+    fi
+    run_psql --command "drop function public.faolla_is_merchant_owner(jsonb);"
+
+    echo '[enterprise-integration] rejecting an idle database-owner writer at the catalog lock gate'
+    rpc_acl_database_identifier="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.format('%I', pg_catalog.current_database());"
+    )"
+    rpc_acl_gate_log="$(mktemp)"
+    rpc_acl_database_owner_log="$(mktemp)"
+    rpc_acl_temp_logs+=("${rpc_acl_gate_log}" "${rpc_acl_database_owner_log}")
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_gate_039'; select pg_catalog.pg_advisory_lock(20260819, 3904); select pg_sleep(30);"
+    ) >"${rpc_acl_gate_log}" 2>&1 &
+    rpc_acl_gate_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_gate_pid}")
+    wait_for_sql_true 'database-owner commit-gate advisory barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = 'enterprise_rpc_acl_gate_039' and lock_state.locktype = 'advisory' and lock_state.granted);"
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_database_owner_039'; set lock_timeout = 0; begin; alter database ${rpc_acl_database_identifier} owner to redteam_rpc_acl_database_owner_039; select pg_catalog.pg_advisory_xact_lock(20260819, 3904); commit;"
+    ) >"${rpc_acl_database_owner_log}" 2>&1 &
+    rpc_acl_database_owner_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_database_owner_pid}")
+    wait_for_sql_true 'database-owner catalog-lock barrier' \
+      "select exists (select 1 from pg_catalog.pg_stat_activity as activity where activity.application_name = 'enterprise_rpc_acl_database_owner_039' and activity.backend_xid is not null and exists (select 1 from pg_catalog.pg_locks as lock_state where lock_state.pid = activity.pid and lock_state.locktype = 'advisory' and not lock_state.granted) and exists (select 1 from pg_catalog.pg_locks as database_lock where database_lock.pid = activity.pid and database_lock.relation = 'pg_catalog.pg_database'::regclass and database_lock.mode = 'RowExclusiveLock' and database_lock.granted));"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'canceling statement due to lock timeout'
+    run_psql --command \
+      "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where application_name in ('enterprise_rpc_acl_database_owner_039', 'enterprise_rpc_acl_gate_039');"
+    if wait "${rpc_acl_database_owner_pid}"; then
+      echo 'Database-owner writer unexpectedly committed' >&2
+      exit 1
+    fi
+    if wait "${rpc_acl_gate_pid}"; then
+      echo 'Database-owner commit-gate blocker unexpectedly completed' >&2
+      exit 1
+    fi
+    rpc_acl_database_owner_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and (select datdba = to_regrole('postgres') from pg_catalog.pg_database where datname = pg_catalog.current_database()) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_database_owner_state}" != 't' ]]; then
+      echo 'Database-owner catalog-lock rejection changed database owner, registry, or ACL state' >&2
+      exit 1
+    fi
+    rm -f -- "${rpc_acl_gate_log}" "${rpc_acl_database_owner_log}"
+
+    echo '[enterprise-integration] rejecting an ordinary uncommitted write from a second database'
+    run_psql --command "create database enterprise_rpc_acl_shared_039;"
+    run_psql \
+      --command "\\connect enterprise_rpc_acl_shared_039" \
+      --command "create table public.enterprise_rpc_acl_cross_database_probe_039(id integer primary key);"
+    rpc_acl_gate_log="$(mktemp)"
+    rpc_acl_cross_database_log="$(mktemp)"
+    rpc_acl_temp_logs+=("${rpc_acl_gate_log}" "${rpc_acl_cross_database_log}")
+    (
+      run_psql \
+        --command "\\connect enterprise_rpc_acl_shared_039" \
+        --command "set application_name = 'enterprise_rpc_acl_gate_039'; select pg_catalog.pg_advisory_lock(20260819, 3902); select pg_sleep(30);"
+    ) >"${rpc_acl_gate_log}" 2>&1 &
+    rpc_acl_gate_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_gate_pid}")
+    wait_for_sql_true 'cross-database rollback-gate advisory barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = 'enterprise_rpc_acl_gate_039' and lock_state.locktype = 'advisory' and lock_state.granted);"
+    (
+      run_psql \
+        --command "\\connect enterprise_rpc_acl_shared_039" \
+        --command "set application_name = 'enterprise_rpc_acl_cross_database_039'; begin; insert into public.enterprise_rpc_acl_cross_database_probe_039(id) values (1); select pg_catalog.pg_advisory_xact_lock(20260819, 3902); commit;"
+    ) >"${rpc_acl_cross_database_log}" 2>&1 &
+    rpc_acl_cross_database_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_cross_database_pid}")
+    wait_for_sql_true 'cross-database assigned-XID barrier' \
+      "select exists (select 1 from pg_catalog.pg_stat_activity as activity where activity.datname = 'enterprise_rpc_acl_shared_039' and activity.application_name = 'enterprise_rpc_acl_cross_database_039' and activity.backend_xid is not null and exists (select 1 from pg_catalog.pg_locks as lock_state where lock_state.pid = activity.pid and lock_state.locktype = 'advisory' and not lock_state.granted));"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_concurrent_transaction'
+    run_psql --command \
+      "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where application_name = 'enterprise_rpc_acl_gate_039';"
+    if wait "${rpc_acl_gate_pid}"; then
+      echo 'Cross-database rollback-gate blocker unexpectedly completed' >&2
+      exit 1
+    fi
+    if ! wait "${rpc_acl_cross_database_pid}"; then
+      echo 'Cross-database ordinary writer failed to commit after the XID rejection' >&2
+      cat "${rpc_acl_cross_database_log}" >&2
+      exit 1
+    fi
+    run_psql \
+      --command "\\connect enterprise_rpc_acl_shared_039" \
+      --command "do \$\$ begin if (select count(*) from public.enterprise_rpc_acl_cross_database_probe_039) <> 1 then raise exception 'enterprise_rpc_acl_cross_database_write_missing'; end if; end \$\$;"
+    rpc_acl_cross_database_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_cross_database_state}" != 't' ]]; then
+      echo 'Cross-database XID rejection changed registry or ACL state, or lost the queued write' >&2
+      exit 1
+    fi
+    run_psql --command "drop database enterprise_rpc_acl_shared_039;"
+    rm -f -- "${rpc_acl_gate_log}" "${rpc_acl_cross_database_log}"
+
+    rpc_acl_prepared_limit="$(
+      run_psql --tuples-only --no-align --command \
+        "select current_setting('max_prepared_transactions')::integer;"
+    )"
+    if [[ "${rpc_acl_prepared_limit}" -gt 0 ]]; then
+      echo '[enterprise-integration] rejecting an unrelated prepared transaction cluster-wide'
+      run_psql \
+        --command "create table public.redteam_rpc_acl_prepared_probe_039(id integer primary key);" \
+        --command "begin; insert into public.redteam_rpc_acl_prepared_probe_039(id) values (1); prepare transaction 'enterprise_rpc_acl_prepared_039';"
+      wait_for_sql_true 'prepared-transaction catalog barrier' \
+        "select exists (select 1 from pg_catalog.pg_prepared_xacts where gid = 'enterprise_rpc_acl_prepared_039');"
+      expect_sql_file_error_as_role "${migration}" supabase_admin \
+        'runtime_rpc_execute_acl_hardening_concurrent_transaction'
+      rpc_acl_prepared_state="$(
+        run_psql --tuples-only --no-align --command \
+          "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and not exists (select 1 from public.redteam_rpc_acl_prepared_probe_039) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+      )"
+      if [[ "${rpc_acl_prepared_state}" != 't' ]]; then
+        echo 'Prepared-XID rejection changed registry, ACL, or visible probe state' >&2
+        exit 1
+      fi
+      run_psql \
+        --command "rollback prepared 'enterprise_rpc_acl_prepared_039';" \
+        --command "drop table public.redteam_rpc_acl_prepared_probe_039;"
+    else
+      echo '[enterprise-integration] max_prepared_transactions=0; static contract covers the prepared-transaction gate'
+    fi
+
+    echo '[enterprise-integration] rejecting a registry-owning XID before waiting on the registry lock'
+    rpc_acl_gate_log="$(mktemp)"
+    rpc_acl_registry_writer_log="$(mktemp)"
+    rpc_acl_temp_logs+=("${rpc_acl_gate_log}" "${rpc_acl_registry_writer_log}")
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_gate_039'; select pg_catalog.pg_advisory_lock(20260819, 3903); select pg_sleep(30);"
+    ) >"${rpc_acl_gate_log}" 2>&1 &
+    rpc_acl_gate_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_gate_pid}")
+    wait_for_sql_true 'registry-writer rollback-gate advisory barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = 'enterprise_rpc_acl_gate_039' and lock_state.locktype = 'advisory' and lock_state.granted);"
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_controlled_writer_039'; begin; insert into public.faolla_schema_migrations(version, name) values (209608190039, 'redteam_registry_writer_039'); select pg_catalog.pg_advisory_xact_lock(20260819, 3903); commit;"
+    ) >"${rpc_acl_registry_writer_log}" 2>&1 &
+    rpc_acl_registry_writer_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_registry_writer_pid}")
+    wait_for_sql_true 'registry-owning assigned-XID barrier' \
+      "select exists (select 1 from pg_catalog.pg_stat_activity as activity where activity.application_name = 'enterprise_rpc_acl_controlled_writer_039' and activity.backend_xid is not null and exists (select 1 from pg_catalog.pg_locks as lock_state where lock_state.pid = activity.pid and lock_state.relation = 'public.faolla_schema_migrations'::regclass and lock_state.mode = 'RowExclusiveLock' and lock_state.granted));"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_concurrent_transaction'
+    run_psql --command \
+      "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where application_name in ('enterprise_rpc_acl_controlled_writer_039', 'enterprise_rpc_acl_gate_039');"
+    if wait "${rpc_acl_registry_writer_pid}"; then
+      echo 'Registry-owning writer unexpectedly committed' >&2
+      exit 1
+    fi
+    if wait "${rpc_acl_gate_pid}"; then
+      echo 'Registry-writer rollback-gate blocker unexpectedly completed' >&2
+      exit 1
+    fi
+    rpc_acl_registry_writer_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version in (202608190039, 209608190039)) and has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_registry_writer_state}" != 't' ]]; then
+      echo 'Registry-owning XID rejection changed registry or ACL state' >&2
+      exit 1
+    fi
+    rm -f -- "${rpc_acl_gate_log}" "${rpc_acl_registry_writer_log}"
+
+    echo '[enterprise-integration] rejecting same-OID definition drift'
+    run_psql --command \
+      "create table public.redteam_rpc_definition_backup_039(source text not null); insert into public.redteam_rpc_definition_backup_039(source) select prosrc from pg_catalog.pg_proc where oid = 'public.faolla_is_merchant_owner(text)'::regprocedure; create or replace function public.faolla_is_merchant_owner(target_merchant_id text) returns boolean language sql stable security definer set search_path = public as \$\$ select true \$\$;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_definition_mismatch'
+    run_psql --command \
+      "do \$\$ declare v_source text; begin select source into strict v_source from public.redteam_rpc_definition_backup_039; execute format('create or replace function public.faolla_is_merchant_owner(target_merchant_id text) returns boolean language sql stable security definer set search_path = public as %L', v_source); end \$\$; drop table public.redteam_rpc_definition_backup_039;"
+
+    echo '[enterprise-integration] proving postcondition failure rolls back all ACL and role mutations'
+    run_psql --command \
+      "alter default privileges for role pg_monitor grant execute on functions to anon; grant supabase_admin to authenticator;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'runtime_rpc_execute_acl_hardening_default_acl_invariant_failed'
+    rpc_acl_atomic_rollback_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190039) and pg_catalog.pg_has_role('authenticator', 'supabase_admin', 'MEMBER') and pg_catalog.has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and exists (select 1 from pg_catalog.pg_default_acl as defaults cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as acl where defaults.defaclrole = to_regrole('pg_monitor') and defaults.defaclnamespace = 0 and defaults.defaclobjtype = 'f' and acl.grantee = to_regrole('anon') and acl.privilege_type = 'EXECUTE') and has_table_privilege('redteam_rpc_acl_child_039', 'public.faolla_schema_migrations', 'SELECT') and has_column_privilege('redteam_rpc_acl_child_039', 'public.faolla_schema_migrations', 'applied_at', 'UPDATE') and has_table_privilege('service_role', 'public.faolla_schema_migrations', 'TRUNCATE') and exists (select 1 from pg_catalog.pg_class as registry_metadata cross join lateral pg_catalog.aclexplode(registry_metadata.relacl) as acl where registry_metadata.oid = 'public.faolla_schema_migrations'::regclass and acl.grantee = to_regrole('service_role') and acl.grantor = to_regrole('\"redteam rpc acl 039\"') and acl.privilege_type = 'SELECT');"
+    )"
+    if [[ "${rpc_acl_atomic_rollback_state}" != 't' ]]; then
+      echo '039 postcondition failure did not atomically restore pre-migration state' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "alter default privileges for role pg_monitor revoke execute on functions from anon; revoke supabase_admin from authenticator;"
+
+    echo '[enterprise-integration] applying 039 under the current official role topology'
+    rpc_acl_database_identifier="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.format('%I', pg_catalog.current_database());"
+    )"
+    run_psql --command \
+      "create type public.redteam_rpc_acl_type_probe_039 as enum ('a');"
+    rpc_acl_registry_blocker_log="$(mktemp)"
+    rpc_acl_migration_log="$(mktemp)"
+    rpc_acl_second_migration_log="$(mktemp)"
+    rpc_acl_postlock_ddl_log="$(mktemp)"
+    rpc_acl_temp_logs+=("${rpc_acl_registry_blocker_log}"
+      "${rpc_acl_migration_log}" "${rpc_acl_second_migration_log}"
+      "${rpc_acl_postlock_ddl_log}")
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_registry_blocker_039'; begin; lock table public.faolla_schema_migrations in row exclusive mode; select pg_sleep(30); commit;"
+    ) >"${rpc_acl_registry_blocker_log}" 2>&1 &
+    rpc_acl_registry_blocker_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_registry_blocker_pid}")
+    wait_for_sql_true 'registry RowExclusiveLock barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.datname = current_database() and activity.application_name = 'enterprise_rpc_acl_registry_blocker_039' and activity.xact_start is not null and lock_state.relation = 'public.faolla_schema_migrations'::regclass and lock_state.mode = 'RowExclusiveLock' and lock_state.granted);"
+    (
+      PGAPPNAME=enterprise_rpc_acl_migration_barrier_039 \
+        PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" \
+        run_psql \
+          --command "select pg_catalog.pg_advisory_lock(20260731, 1);" \
+          --command "set role supabase_admin" \
+          --file "${migration}" \
+          --command "reset role" \
+          --command "do \$\$ begin if not pg_catalog.pg_advisory_unlock(20260731, 1) then raise exception 'runtime_rpc_execute_acl_wrapper_unlock_failed'; end if; if exists (select 1 from pg_catalog.pg_locks where pid = pg_catalog.pg_backend_pid() and locktype = 'advisory') then raise exception 'runtime_rpc_execute_acl_wrapper_lock_leaked'; end if; end \$\$;"
+    ) >"${rpc_acl_migration_log}" 2>&1 &
+    rpc_acl_migration_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_migration_pid}")
+    wait_for_sql_true 'migration ten-catalog gate and registry wait barrier' \
+      "select exists (select 1 from pg_catalog.pg_stat_activity as activity where activity.datname = current_database() and activity.application_name = 'enterprise_rpc_acl_migration_barrier_039' and activity.backend_xid is null and 10 = (select count(*) from pg_catalog.pg_locks as catalog_lock where catalog_lock.pid = activity.pid and catalog_lock.relation in ('pg_catalog.pg_database'::regclass, 'pg_catalog.pg_authid'::regclass, 'pg_catalog.pg_auth_members'::regclass, 'pg_catalog.pg_namespace'::regclass, 'pg_catalog.pg_language'::regclass, 'pg_catalog.pg_type'::regclass, 'pg_catalog.pg_proc'::regclass, 'pg_catalog.pg_default_acl'::regclass, 'pg_catalog.pg_class'::regclass, 'pg_catalog.pg_attribute'::regclass) and catalog_lock.mode = 'ShareRowExclusiveLock' and catalog_lock.granted) and exists (select 1 from pg_catalog.pg_locks as registry_lock where registry_lock.pid = activity.pid and registry_lock.relation = 'public.faolla_schema_migrations'::regclass and registry_lock.mode = 'ShareRowExclusiveLock' and not registry_lock.granted));"
+    rpc_acl_catalog_read_state="$(
+      run_psql --quiet --tuples-only --no-align --command \
+        "set statement_timeout = '2s'; select (select count(*) from pg_catalog.pg_database) > 0 and (select count(*) from pg_catalog.pg_authid) > 0 and (select count(*) from pg_catalog.pg_auth_members) >= 0 and (select count(*) from pg_catalog.pg_namespace) > 0 and (select count(*) from pg_catalog.pg_language) > 0 and (select count(*) from pg_catalog.pg_type) > 0 and (select count(*) from pg_catalog.pg_proc) > 0 and (select count(*) from pg_catalog.pg_default_acl) >= 0 and (select count(*) from pg_catalog.pg_class) > 0 and (select count(*) from pg_catalog.pg_attribute) > 0;"
+    )"
+    if [[ "${rpc_acl_catalog_read_state}" != 't' ]]; then
+      echo 'Catalog SHARE ROW EXCLUSIVE gates blocked an ordinary catalog read' >&2
+      exit 1
+    fi
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_database_039' 'pg_database' \
+      "alter database ${rpc_acl_database_identifier} owner to redteam_rpc_acl_database_owner_039;"
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_authid_039' 'pg_authid' \
+      'alter role redteam_rpc_acl_untrusted_039 login;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_auth_members_039' 'pg_auth_members' \
+      'grant service_role to redteam_rpc_acl_untrusted_039;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_namespace_039' 'pg_namespace' \
+      'grant create on schema public to redteam_rpc_acl_untrusted_039;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_language_039' 'pg_language' \
+      'alter language plpgsql owner to supabase_admin;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_type_039' 'pg_type' \
+      'alter type public.redteam_rpc_acl_type_probe_039 owner to supabase_admin;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_proc_039' 'pg_proc' \
+      "create function public.redteam_rpc_acl_proc_probe_039() returns integer language sql as 'select 1';"
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_default_acl_039' 'pg_default_acl' \
+      'alter default privileges for role redteam_rpc_acl_untrusted_039 grant execute on functions to authenticated;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_class_table_grant_039' 'pg_class' \
+      'grant update on table public.faolla_schema_migrations to redteam_rpc_acl_untrusted_039;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_class_column_grant_039' 'pg_class' \
+      'grant update(applied_at) on table public.faolla_schema_migrations to redteam_rpc_acl_untrusted_039;'
+    assert_rpc_acl_catalog_writer_waits \
+      'enterprise_rpc_acl_catalog_attribute_lock_039' 'pg_attribute' \
+      'lock table pg_catalog.pg_attribute in row exclusive mode;'
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_postlock_ddl_039'; create function public.faolla_rpc_acl_postlock_canary_039() returns integer language sql as \$\$ select 1 \$\$;"
+    ) >"${rpc_acl_postlock_ddl_log}" 2>&1 &
+    rpc_acl_postlock_ddl_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_postlock_ddl_pid}")
+    wait_for_sql_true 'post-lock function DDL wait barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.datname = current_database() and activity.application_name = 'enterprise_rpc_acl_postlock_ddl_039' and activity.backend_xid is null and lock_state.relation = 'pg_catalog.pg_proc'::regclass and lock_state.mode = 'RowExclusiveLock' and not lock_state.granted);"
+    run_psql --command \
+      "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where datname = current_database() and application_name = 'enterprise_rpc_acl_registry_blocker_039';"
+    if wait "${rpc_acl_registry_blocker_pid}"; then
+      echo 'Registry blocker unexpectedly committed instead of being released' >&2
+      exit 1
+    fi
+    if ! wait "${rpc_acl_migration_pid}"; then
+      echo '039 migration failed after the reverse DDL barrier' >&2
+      cat "${rpc_acl_migration_log}" >&2
+      exit 1
+    fi
+    if ! wait "${rpc_acl_postlock_ddl_pid}"; then
+      echo 'Post-lock function DDL failed after 039 committed' >&2
+      cat "${rpc_acl_postlock_ddl_log}" >&2
+      exit 1
+    fi
+    rpc_acl_gate_log="$(mktemp)"
+    rpc_acl_temp_logs+=("${rpc_acl_gate_log}")
+    (
+      run_psql --command \
+        "set application_name = 'enterprise_rpc_acl_gate_039'; select pg_catalog.pg_advisory_lock(20260731, 1); select pg_sleep(30);"
+    ) >"${rpc_acl_gate_log}" 2>&1 &
+    rpc_acl_gate_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_gate_pid}")
+    wait_for_sql_true 'deployment-mutex session blocker barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = 'enterprise_rpc_acl_gate_039' and lock_state.locktype = 'advisory' and lock_state.granted);"
+    (
+      PGAPPNAME=enterprise_rpc_acl_second_migration_039 \
+        run_sql_file_as_role "${migration}" supabase_admin
+    ) >"${rpc_acl_second_migration_log}" 2>&1 &
+    rpc_acl_second_migration_pid=$!
+    rpc_acl_background_pids+=("${rpc_acl_second_migration_pid}")
+    wait_for_sql_true 'second migration deployment-mutex wait barrier' \
+      "select exists (select 1 from pg_catalog.pg_locks as lock_state join pg_catalog.pg_stat_activity as activity using (pid) where activity.application_name = 'enterprise_rpc_acl_second_migration_039' and activity.backend_xid is null and lock_state.locktype = 'advisory' and not lock_state.granted);"
+    run_psql --command \
+      "select pg_catalog.pg_terminate_backend(pid) from pg_catalog.pg_stat_activity where application_name = 'enterprise_rpc_acl_gate_039';"
+    if wait "${rpc_acl_gate_pid}"; then
+      echo 'Deployment-mutex session blocker unexpectedly completed' >&2
+      exit 1
+    fi
+    if ! wait "${rpc_acl_second_migration_pid}"; then
+      echo 'Second serialized 039 retry failed' >&2
+      cat "${rpc_acl_second_migration_log}" >&2
+      exit 1
+    fi
+    rm -f -- "${rpc_acl_registry_blocker_log}" \
+      "${rpc_acl_migration_log}" "${rpc_acl_second_migration_log}" \
+      "${rpc_acl_postlock_ddl_log}" "${rpc_acl_gate_log}"
+    rpc_acl_postlock_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select exists (select 1 from public.faolla_schema_migrations where version = 202608190039 and name = 'runtime_rpc_execute_acl_hardening') and to_regprocedure('public.faolla_rpc_acl_postlock_canary_039()') is not null and not has_function_privilege('anon', 'public.faolla_rpc_acl_postlock_canary_039()', 'EXECUTE') and not has_function_privilege('authenticated', 'public.faolla_rpc_acl_postlock_canary_039()', 'EXECUTE') and not has_function_privilege('service_role', 'public.faolla_rpc_acl_postlock_canary_039()', 'EXECUTE') and 1 = (select count(*) from pg_catalog.pg_proc as metadata cross join lateral pg_catalog.aclexplode(coalesce(metadata.proacl, pg_catalog.acldefault('f', metadata.proowner))) as acl where metadata.oid = 'public.faolla_rpc_acl_postlock_canary_039()'::regprocedure) and 1 = (select count(*) from pg_catalog.pg_proc as metadata cross join lateral pg_catalog.aclexplode(coalesce(metadata.proacl, pg_catalog.acldefault('f', metadata.proowner))) as acl where metadata.oid = 'public.faolla_rpc_acl_postlock_canary_039()'::regprocedure and acl.grantee = metadata.proowner and acl.grantor = metadata.proowner and acl.privilege_type = 'EXECUTE' and not acl.is_grantable);"
+    )"
+    if [[ "${rpc_acl_postlock_state}" != 't' ]]; then
+      echo 'Post-lock function DDL inherited a non-owner runtime ACL' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "drop function public.faolla_rpc_acl_postlock_canary_039(); drop type public.redteam_rpc_acl_type_probe_039;"
+
+    rpc_acl_normalized_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not has_function_privilege('redteam rpc acl 039', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and not has_function_privilege('redteam_rpc_acl_child_039', 'public.faolla_enqueue_merchant_outbox_v1(jsonb)', 'EXECUTE') and has_function_privilege('authenticated', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and not has_function_privilege('service_role', 'public.faolla_upsert_merchant_order_v1(jsonb,jsonb,jsonb)', 'EXECUTE') and has_function_privilege('service_role', 'public.faolla_enqueue_merchant_outbox_v1(jsonb)', 'EXECUTE');"
+    )"
+    if [[ "${rpc_acl_normalized_state}" != 't' ]]; then
+      echo '039 did not normalize exact runtime RPC ACLs' >&2
+      exit 1
+    fi
+    rpc_acl_registry_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "with registry as (select relowner, relacl from pg_catalog.pg_class where oid = 'public.faolla_schema_migrations'::regclass), actual as (select acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable from registry cross join lateral pg_catalog.aclexplode(coalesce(registry.relacl, pg_catalog.acldefault('r', registry.relowner))) as acl), expected as (select owner_acl.grantee, owner_acl.grantor, owner_acl.privilege_type, owner_acl.is_grantable from registry cross join lateral pg_catalog.aclexplode(pg_catalog.acldefault('r', registry.relowner)) as owner_acl union all select to_regrole('service_role'), registry.relowner, 'SELECT'::text, false from registry), delta as ((select * from actual except select * from expected) union all (select * from expected except select * from actual)) select not exists (select 1 from delta) and not exists (select 1 from pg_catalog.pg_attribute where attrelid = 'public.faolla_schema_migrations'::regclass and attnum > 0 and not attisdropped and attacl is not null);"
+    )"
+    if [[ "${rpc_acl_registry_acl_state}" != 't' ]]; then
+      echo '039 did not normalize the exact registry table and column ACLs' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] retrying unregistered 039 under the removable legacy role topology'
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190039; revoke anon, authenticated, service_role from postgres; revoke authenticator from supabase_storage_admin; revoke postgres from cli_login_postgres; drop role cli_login_postgres; grant supabase_admin to authenticator; alter role anon noinherit; alter role authenticated noinherit; alter role service_role noinherit;"
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" \
+      run_sql_file_as_role "${migration}" supabase_admin
+    legacy_edge_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not pg_catalog.pg_has_role('authenticator', 'supabase_admin', 'MEMBER') and exists (select 1 from public.faolla_schema_migrations where version = 202608190039 and name = 'runtime_rpc_execute_acl_hardening');"
+    )"
+    if [[ "${legacy_edge_state}" != 't' ]]; then
+      echo '039 did not remove the legacy authenticator-to-superuser edge' >&2
+      exit 1
+    fi
+    run_psql --command "drop role redteam_rpc_acl_database_owner_039;"
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -578,7 +1221,7 @@ fi
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250005, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039) or version between 202607310001 and 202608040026;"
 )"
 if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
   echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2
@@ -601,6 +1244,9 @@ if [[ "${isolation_present}" -eq 1 ]]; then
     run_sql_file "${SCRIPT_DIR}/59-ordinary-account-system-site-principal-isolation.sql"
   if [[ "${recovery_observer_present}" -eq 1 ]]; then
     run_sql_file "${SCRIPT_DIR}/60-ordinary-account-recovery-observer.sql"
+  fi
+  if [[ "${rpc_acl_hardening_present}" -eq 1 ]]; then
+    run_sql_file "${SCRIPT_DIR}/61-runtime-rpc-execute-acl-hardening.sql"
   fi
   echo '[enterprise-integration] restoring serial and system-site race fixtures after isolation acceptance'
   run_psql --command \

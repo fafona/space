@@ -561,8 +561,8 @@ test("runner and real PostgreSQL acceptance cover independently staged migration
   assert.match(runner, /ordinary_account_authorization_\*\.sql/i);
   assert.match(runner, /expected_enterprise_migration_count=31/i);
   assert.match(runner, /expected_enterprise_migration_count=32/i);
-  assert.match(runner, /expected_registry_count=36/i);
-  assert.match(runner, /expected_registry_count=37/i);
+  assert.match(runner, /expected_registry_count=39/i);
+  assert.match(runner, /expected_registry_count=40/i);
   assert.match(runner, /cutover_present=0/i);
   assert.match(runner, /202608190036/i);
   assert.match(runner, /202608190037/i);

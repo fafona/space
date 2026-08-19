@@ -8,7 +8,8 @@ Coverage includes:
 
 - `supabase-init.sql`, the shared order/booking/coupon and reliable-outbox
   prerequisites, and enterprise migrations 001-026 plus audit-security and
-  staged ordinary-account migrations 032-038 in filename order; the runner
+  staged ordinary-account/runtime-hardening migrations 032-039 in filename
+  order; the runner
   completes all Stage-2A acceptance fixtures before applying and testing the
   independently deployable 037 system-site isolation migration;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
@@ -69,6 +70,18 @@ Coverage includes:
   personal-ID claims, merchant/staff/employee/system-site conflicts, source-
   table 42501 preservation, malformed input denial, custom-role ACL cleanup,
   and unregistered retry under quoted identifiers without any identity write;
+- exact 16-function runtime RPC catalog and raw EXECUTE ACL normalization,
+  hosted current/legacy role-topology gates, removal of the legacy
+  authenticator-to-superuser edge, owner/custom/delegated grant cleanup,
+  owner-only all-schema future function defaults and canaries, exact registry
+  owner-plus-service-read table ACLs with no column grants, registry and
+  postcondition rollback, quoted-identifier retry, and multi-session probes for
+  the fixed ten-catalog `SHARE ROW EXCLUSIVE` order, cluster-wide active and
+  prepared-XID quiescence, controlled deployment-lock re-entry, safe retry,
+  ordinary catalog-read availability, and post-gate owner-only DDL defaults.
+  The catalog-writer timeout probe runs with `lc_messages=C` so its standard
+  PostgreSQL `lock_timeout` text is deterministic; released-lock active or
+  prepared XIDs are checked separately by the stable migration error;
 - authoritative-readiness-gated removal of email-based owner authorization,
   mutable metadata/email DoS resistance, conflicting-registry and extra-policy
   rollback, exact pre/post protected-table ACLs (including custom delegated and

@@ -218,7 +218,7 @@ test("disposable PostgreSQL acceptance covers retries, GUC stability and authori
   );
   assert.match(
     runner,
-    /expected_registry_count=36[\s\S]+expected_registry_count=37/i,
+    /expected_registry_count=39[\s\S]+expected_registry_count=40/i,
   );
   assert.match(runner, /run_sql_file "\$\{SCRIPT_DIR\}\/53-current-operations\.sql"/i);
 
