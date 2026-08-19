@@ -11,7 +11,7 @@ const migrationPath = path.join(
 );
 
 function readMigration() {
-  return fs.readFileSync(migrationPath, "utf8");
+  return fs.readFileSync(migrationPath, "utf8").replace(/\r\n?/g, "\n");
 }
 
 function readFunction(source, name) {

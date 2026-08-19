@@ -8,7 +8,7 @@ Coverage includes:
 
 - `supabase-init.sql`, the shared order/booking and reliable-outbox
   prerequisites, and enterprise migrations 001-026 plus audit-security
-  migration 032 in filename order;
+  migrations 032-034 in filename order;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
   task update, checklist, comments, notifications, and audit listing;
 - forged-owner, cross-merchant, low-privilege ACL, and role-escalation denial;
@@ -35,6 +35,9 @@ Coverage includes:
   permissions, including historical rows after a role change;
 - exact audit actor filters, strict UTC half-open time ranges, stable keyset
   pagination, and database-level task-event update/delete/truncate rejection;
+- bounded current-state enterprise and employee operations summaries, unique
+  multi-assignee task cardinality, exact due windows, restricted-board scope,
+  cross-tenant and employee-enumeration denial, and service-only RPC grants;
 - two independent `psql` sessions racing the same task, invitation, and
   workflow versions, with exactly one commit and one
   `enterprise_version_conflict` for each race;

@@ -53,10 +53,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
-
       - name: Run enterprise database acceptance
-        run: bash scripts/enterprise-integration/run.sh
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          node --test scripts/enterprise-integration-workflow-contract.test.mjs
+          docker cp "${GITHUB_WORKSPACE}/." "${POSTGRES_CONTAINER_ID}:/workspace"
+          docker exec \
+            --workdir /workspace \
+            --env DATABASE_URL="${DATABASE_URL}" \
+            --env ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE="${ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE}" \
+            "${POSTGRES_CONTAINER_ID}" \
+            bash scripts/enterprise-integration/run.sh

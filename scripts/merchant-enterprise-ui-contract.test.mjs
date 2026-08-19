@@ -151,29 +151,52 @@ test("a successful mutation returns its payload even when the overview refresh f
   );
 });
 
-test("enterprise overview aggregates every active board while task filtering stays board-scoped", () => {
-  const overviewSummarySource = sliceBetween(
-    /const\s+overviewTaskSummary\s*=/,
-    /const\s+filteredTasks\s*=/,
-    "enterprise overview summary",
+test("enterprise overview uses the server-authoritative current-operations response while task filtering stays board-scoped", () => {
+  const currentOperationsSource = sliceBetween(
+    /const\s+fetchCurrentOperations\s*=\s*useCallback/,
+    /const\s+loadTaskEvents\s*=\s*useCallback/,
+    "current operations requests",
   );
   assert.match(
-    overviewSummarySource,
-    /useMemo\([\s\S]*buildMerchantEnterpriseTaskOverview\(\s*\{[\s\S]*boards:\s*snapshot\.boards,[\s\S]*tasks:\s*snapshot\.tasks/,
+    currentOperationsSource,
+    /\/api\/merchant-enterprise\/current-operations\?\$\{params\.toString\(\)\}/,
+  );
+  assert.match(
+    currentOperationsSource,
+    /normalizeMerchantEnterpriseCurrentOperations\(rawPayload\)/,
+    "the client must validate the response before rendering it",
+  );
+  assert.match(
+    currentOperationsSource,
+    /generation\s*!==\s*overviewCurrentOperationsGenerationRef\.current[\s\S]{0,180}currentOperationsSiteRef\.current\s*!==\s*requestSiteId/,
+    "overview requests must be latest-wins and site guarded",
+  );
+  assert.match(
+    currentOperationsSource,
+    /requestActor\.type\s*===\s*["']employee["']\s*\?\s*requestActor\.id\s*:\s*null/,
+    "employee overview queries must request self while owners retain enterprise scope",
+  );
+  assert.doesNotMatch(source, /buildMerchantEnterpriseOperationsOverview/);
+  assert.doesNotMatch(source, /buildMerchantEnterpriseTaskOverview/);
+  assert.match(
+    source,
+    /visibleOverviewCurrentOperations\.errorCode\s*!==\s*["']enterprise_schema_unavailable["'][\s\S]{0,220}visibleOverviewCurrentOperations\.authorizationFingerprint\s*!==\s*actorAuthorizationFingerprint[\s\S]{0,180}return\s+null[\s\S]{0,220}buildMerchantEnterpriseCurrentOperationsFallback/,
+    "the rollout fallback must be limited to the known app-before-migration schema gap",
   );
   assert.match(
     source,
-    /window\.setInterval\(\s*\(\)\s*=>\s*setOverviewNowMs\(Date\.now\(\)\),\s*resolvedCollaborationRefreshIntervalMs,?\s*\)/,
-    "overdue totals must refresh while the workspace stays open",
+    /buildMerchantEnterpriseCurrentOperationsFallback\(\s*\{[\s\S]{0,260}actor[\s\S]{0,260}boards:\s*snapshot\.boards[\s\S]{0,180}columns:\s*snapshot\.columns[\s\S]{0,180}tasks:\s*snapshot\.tasks/,
+    "the schema-gap fallback may only consume the already-authorized workspace snapshot",
   );
   assert.match(
-    overviewSummarySource,
-    /\},\s*overviewNowMs,\s*\)[\s\S]*\[actor,\s*overviewNowMs,\s*snapshot\.boards,\s*snapshot\.tasks\]/,
+    source,
+    /const\s+overviewOperationsData\s*=\s*visibleOverviewCurrentOperations\.data\s*\?\?\s*overviewOperationsFallback/,
+    "a valid server response must always take precedence over the temporary fallback",
   );
   assert.match(
-    overviewSummarySource,
-    /assigneeId:\s*actor\?\.type\s*===\s*["']employee["'][\s\S]{0,160}getMerchantEnterpriseDefaultTaskAssigneeFilter\(actor\)[\s\S]{0,80}:\s*undefined/,
-    "employee overview totals must be scoped to the signed-in employee while owners retain the enterprise view",
+    source,
+    /buildMerchantEnterpriseCurrentOperationsFallback\([\s\S]{0,500}lastSyncedAtMs\s*,/,
+    "the fallback as-of time must remain frozen at the last successful authorized snapshot",
   );
   assert.match(
     source,
@@ -187,12 +210,12 @@ test("enterprise overview aggregates every active board while task filtering sta
     "enterprise overview",
   );
   for (const field of [
-    "overviewOperationsSummary.openTaskCount",
-    "overviewOperationsSummary.overdueTaskCount",
-    "overviewOperationsSummary.dueSoonTaskCount",
-    "overviewOperationsSummary.unassignedTaskCount",
-    "overviewOperationsSummary.boardSummaries",
-    "overviewPriorityTasks",
+    "overviewOperationsData.summary.openTaskCount",
+    "overviewOperationsData.summary.overdueTaskCount",
+    "overviewOperationsData.summary.dueSoonTaskCount",
+    "overviewOperationsData.summary.unassignedTaskCount",
+    "overviewOperationsData.boards",
+    "overviewOperationsData.priorityTasks",
   ]) {
     assert.ok(overviewSource.includes(field), `overview must use ${field}`);
   }
@@ -201,8 +224,14 @@ test("enterprise overview aggregates every active board while task filtering sta
     /\bvisibleTasks\b/,
     "overview totals must not depend on the currently selected board",
   );
-  assert.match(overviewSource, /汇总全部启用看板中的当前未完成工作/);
-  assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
+  assert.match(overviewSource, /服务端在查询时点看到的当前任务库存/);
+  assert.match(overviewSource, /统计时点：\{formatDateTime\(overviewOperationsData\.asOf\)\}/);
+  assert.match(overviewSource, /overviewOperationsData\.boardsTruncated/);
+  assert.match(
+    overviewSource,
+    /visibleOverviewCurrentOperations\.status\s*===\s*["']error["'][\s\S]{0,500}overviewUsingRolloutFallback/,
+    "the UI must disclose the migration-window fallback instead of presenting it as authoritative data",
+  );
 });
 
 test("employees default to their own tasks and can explicitly switch to the team view", () => {
@@ -268,18 +297,17 @@ test("employee overview is a current operations snapshot and opens a task on its
       `current operations overview must not expose the misleading label ${misleadingLabel}`,
     );
   }
-  assert.match(overviewSource, /overviewPriorityTasks\.slice\(0,\s*6\)\.map\(\(task\)\s*=>/);
+  assert.match(overviewSource, /overviewOperationsData\.priorityTasks\.map\(\(task\)\s*=>/);
   assert.match(
     overviewSource,
-    /overviewOperationsSummary\.boardSummaries\.slice\(0,\s*12\)\.map\(\(board\)\s*=>/,
+    /overviewOperationsData\.boards\.map\(\(board\)\s*=>/,
   );
-  assert.match(overviewSource, /const\s+boardName\s*=\s*snapshot\.boards\.find/);
   const recentTaskButton = overviewSource.match(
-    /<button\s+key=\{task\.id\}[\s\S]{0,900}?onClick=\{\(\)\s*=>\s*openTaskFromOverview\(task\)\}[\s\S]{0,120}?>/,
+    /<button\s+key=\{task\.id\}[\s\S]{0,900}?onClick=\{\(\)\s*=>\s*openTaskById\(task\.id\)\}[\s\S]{0,120}?>/,
   )?.[0];
   assert.ok(recentTaskButton, "each recent cross-board task must be directly actionable");
   const recentTaskAriaLabel = recentTaskButton.match(/aria-label=\{`[\s\S]*?`\}/)?.[0] ?? "";
-  for (const context of ["task.title", "boardName", "columnName"]) {
+  for (const context of ["task.title", "task.boardName", "task.columnName"]) {
     assert.ok(
       recentTaskAriaLabel.includes(`\${${context}`),
       `recent-task accessible names must include ${context} so duplicate titles remain distinguishable`,
@@ -323,6 +351,136 @@ test("employee overview is a current operations snapshot and opens a task on its
         openTaskSource,
       ),
     "overview navigation must restore the actor's default task scope",
+  );
+});
+
+test("employee rows open a guarded current-work drawer with non-performance semantics", () => {
+  const drawerSource = sliceBetween(
+    /function\s+EmployeeCurrentWorkDrawer\s*\(/,
+    /function\s+EmployeeOffboardingDialog\s*\(/,
+    "employee current-work drawer",
+  );
+  for (const label of [
+    "员工当前工作",
+    "不是绩效考核",
+    "不同员工之间、员工与企业之间的数字都不可相加",
+    "当前未完成",
+    "当前逾期",
+    "未来 7 天内到期",
+    "当前涉及看板",
+    "统计时点",
+  ]) {
+    assert.ok(drawerSource.includes(label), `current-work drawer must expose ${label}`);
+  }
+  assert.match(drawerSource, /role=["']dialog["'][\s\S]{0,100}aria-modal=["']true["']/);
+  assert.match(drawerSource, /event\.key\s*!==\s*["']Tab["']/);
+  assert.match(drawerSource, /drawer\.querySelectorAll<HTMLElement>/);
+  assert.match(
+    drawerSource,
+    /event\.shiftKey[\s\S]{0,240}last\.focus\(\)[\s\S]{0,180}first\.focus\(\)/,
+    "the modal drawer must cycle Tab and Shift+Tab inside itself",
+  );
+  assert.match(drawerSource, /closeButtonRef\.current\?\.focus\(\)/);
+  assert.match(drawerSource, /data\?\.summary\.sharedAssignmentTaskCount/);
+  assert.match(drawerSource, /data\.boardsTruncated/);
+  assert.match(drawerSource, /data\.priorityTasks\.map\(\(task\)\s*=>/);
+  assert.match(drawerSource, /onOpenTask\(task\)/);
+
+  const employeeViewSource = sliceBetween(
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']employees["']/,
+    /!needsBootstrap\s*&&\s*tab\s*===\s*["']roles["']/,
+    "employee account rows",
+  );
+  assert.match(
+    employeeViewSource,
+    /查看当前工作[\s\S]{0,200}|onClick=\{\(\)\s*=>\s*openEmployeeCurrentWork\(employee\)\}[\s\S]{0,300}查看当前工作/,
+  );
+
+  const requestSource = sliceBetween(
+    /const\s+loadEmployeeCurrentWork\s*=\s*useCallback/,
+    /const\s+loadTaskEvents\s*=\s*useCallback/,
+    "employee current-work request",
+  );
+  assert.match(requestSource, /employeeCurrentWorkAbortRef\.current\?\.abort\(\)/);
+  assert.match(
+    requestSource,
+    /generation\s*!==\s*employeeCurrentWorkGenerationRef\.current[\s\S]{0,180}currentOperationsSiteRef\.current\s*!==\s*requestSiteId[\s\S]{0,220}currentOperationsActorAuthorizationFingerprintRef\.current\s*!==[\s\S]{0,100}requestActorAuthorizationFingerprint[\s\S]{0,180}currentWorkEmployeeIdRef\.current\s*!==\s*employeeId/,
+    "drawer responses must match the latest generation, site, authorization, and employee",
+  );
+  assert.match(
+    requestSource,
+    /actorAuthorizationFingerprint:\s*requestActorAuthorizationFingerprint/,
+    "drawer request keys must include the actor's current authorization fingerprint",
+  );
+  assert.match(
+    requestSource,
+    /\{\s*employeeId,\s*expectedScope:\s*["']employee["']\s*\}/,
+  );
+  assert.match(source, /cache:\s*["']no-store["']/);
+  assert.match(
+    source,
+    /function\s+openEmployeeCurrentWork[\s\S]{0,300}setCurrentWorkEmployeeId\(employee\.id\)[\s\S]{0,160}setEmployeeCurrentWork\(EMPTY_CURRENT_OPERATIONS_STATE\)/,
+    "switching employees must clear the previous employee before the authorization-aware effect loads",
+  );
+
+  const authorizationEffectSource = sliceBetween(
+    /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!currentWorkEmployeeId\)\s*return;/,
+    /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*!actor\s*\|\|\s*needsBootstrap/,
+    "employee current-work authorization effect",
+  );
+  assert.match(
+    authorizationEffectSource,
+    /employeeCurrentWorkGenerationRef\.current\s*\+=\s*1[\s\S]{0,120}employeeCurrentWorkAbortRef\.current\?\.abort\(\)[\s\S]{0,180}setEmployeeCurrentWork\(EMPTY_CURRENT_OPERATIONS_STATE\)/,
+    "authorization changes must abort and clear any employee result before reloading",
+  );
+  assert.match(
+    authorizationEffectSource,
+    /!actor\s*\|\|\s*!actorCanViewTasks\s*\|\|\s*!actorCanViewEmployees[\s\S]{0,220}setCurrentWorkEmployeeId\(["']["']\)/,
+    "revoking tasks.view or employees.view must close the employee drawer",
+  );
+  assert.match(
+    authorizationEffectSource,
+    /loadEmployeeCurrentWork\(currentWorkEmployeeId\)[\s\S]{0,280}actorAuthorizationFingerprint/,
+    "all-to-restricted and allowed-board changes must reload the open drawer",
+  );
+  assert.match(
+    employeeViewSource,
+    /can\(actor,\s*["']tasks\.view["']\)[\s\S]{0,900}openEmployeeCurrentWork\(employee\)/,
+    "the current-work action must only be exposed inside the employees.view-gated list when tasks.view is granted",
+  );
+});
+
+test("current-operation rendering is keyed to the actor's exact authorization", () => {
+  const fingerprintDeclaration = source.indexOf(
+    "const actorAuthorizationFingerprint = actor",
+  );
+  const fingerprintRef = source.indexOf(
+    "const currentOperationsActorAuthorizationFingerprintRef = useRef",
+  );
+  assert.ok(fingerprintDeclaration >= 0 && fingerprintDeclaration < fingerprintRef);
+  assert.match(
+    source,
+    /overviewCurrentOperations\.requestKey\s*===\s*overviewExpectedRequestKey\s*\?\s*overviewCurrentOperations/,
+    "an overview response from an older authorization must never render",
+  );
+  assert.match(
+    source,
+    /employeeCurrentWork\.requestKey\s*===\s*employeeCurrentWorkExpectedRequestKey\s*\?\s*employeeCurrentWork/,
+    "an employee response from an older authorization must never render",
+  );
+  const overviewRequestSource = sliceBetween(
+    /const\s+loadOverviewCurrentOperations\s*=\s*useCallback/,
+    /const\s+loadEmployeeCurrentWork\s*=\s*useCallback/,
+    "overview current-operations request",
+  );
+  assert.match(
+    overviewRequestSource,
+    /actorAuthorizationFingerprint:\s*requestActorAuthorizationFingerprint/,
+  );
+  assert.match(
+    overviewRequestSource,
+    /currentOperationsActorAuthorizationFingerprintRef\.current\s*!==[\s\S]{0,100}requestActorAuthorizationFingerprint/,
+    "an in-flight enterprise response must be discarded when actor scope changes",
   );
 });
 
@@ -901,7 +1059,7 @@ test("task cards and editor expose a safe completion shortcut", () => {
 
   const taskEditorSource = sliceBetween(
     /function\s+TaskEditor\b/,
-    /function\s+RoleBoardAccessEditor\b/,
+    /function\s+EmployeeCurrentWorkDrawer\b/,
     "TaskEditor",
   );
   assert.match(
@@ -932,7 +1090,7 @@ test("task cards and editor expose a safe completion shortcut", () => {
     taskCardSource,
     /taskArchiveView\s*===\s*["']active["'][\s\S]{0,150}!task\.archivedAt[\s\S]{0,150}can\(actor,\s*["']tasks\.update["']\)[\s\S]{0,150}Boolean\(completionTransition\)/,
   );
-  assert.match(taskCardSource, /min-h-11[\s\S]{0,500}aria-label=\{`\$\{/);
+  assert.match(taskCardSource, /min-h-11[\s\S]{0,800}aria-label=\{`\$\{/);
   assert.match(
     taskCardSource,
     /moveTask\(task,\s*completionTransition\.targetColumnId\)/,
@@ -1241,7 +1399,7 @@ test("linked tasks keep their source order visible and immutable while only owne
 
   const taskEditorSource = sliceBetween(
     /function\s+TaskEditor\b/,
-    /function\s+EmployeeOffboardingDialog\b/,
+    /function\s+EmployeeCurrentWorkDrawer\b/,
     "source-aware task editor",
   );
   assert.match(taskEditorSource, /const\s+orderSource\s*=\s*getMerchantOrderTaskSource\(task\)/);
@@ -1306,7 +1464,7 @@ test("linked tasks keep their source order visible and immutable while only owne
 test("assigned employees can lazily load only the linked-order redacted summary", () => {
   const taskEditorSource = sliceBetween(
     /function\s+TaskEditor\b/,
-    /function\s+EmployeeOffboardingDialog\b/,
+    /function\s+EmployeeCurrentWorkDrawer\b/,
     "linked-order summary task editor",
   );
   assert.match(
@@ -2071,7 +2229,7 @@ test("mobile enterprise contains navigation, board scrolling and compact task wo
 
   const taskEditor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+RoleBoardAccessEditor\(/,
+    /function\s+EmployeeCurrentWorkDrawer\(/,
     "mobile task editor",
   );
   const dialog = taskEditor.match(
@@ -2139,7 +2297,7 @@ test("mobile enterprise contains navigation, board scrolling and compact task wo
 test("task details expose a permission-aware activity timeline and idempotent comments", () => {
   const editor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+RoleBoardAccessEditor\(/,
+    /function\s+EmployeeCurrentWorkDrawer\(/,
     "task editor",
   );
   assert.match(editor, /任务动态/);
@@ -2168,7 +2326,7 @@ test("task details expose a permission-aware activity timeline and idempotent co
 test("task details expose a permission-aware checklist with progress and local reloads", () => {
   const editor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+RoleBoardAccessEditor\(/,
+    /function\s+EmployeeCurrentWorkDrawer\(/,
     "task editor checklist",
   );
   const checklist = sliceSourceBetween(
@@ -2391,7 +2549,7 @@ test("restricted role managers cannot escalate scopes or create unscoped boards"
 test("enterprise drafts are guarded across task closing, submenu changes and workspace exits", () => {
   const taskEditor = sliceBetween(
     /function\s+TaskEditor\(/,
-    /function\s+EmployeeOffboardingDialog\(/,
+    /function\s+EmployeeCurrentWorkDrawer\(/,
     "task editor draft guard",
   );
   assert.match(taskEditor, /function\s+requestClose\(\)/);

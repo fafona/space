@@ -4,7 +4,9 @@ import path from "node:path";
 import test from "node:test";
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(process.cwd(), ...relativePath.split("/")), "utf8");
+  return fs
+    .readFileSync(path.join(process.cwd(), ...relativePath.split("/")), "utf8")
+    .replace(/\r\n?/g, "\n");
 }
 
 const portalPath =

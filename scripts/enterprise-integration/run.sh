@@ -48,8 +48,8 @@ mapfile -t enterprise_migrations < <(
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 28 ]]; then
-  echo "Expected 28 enterprise migrations (001-026 plus 032-033), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 29 ]]; then
+  echo "Expected 29 enterprise migrations (001-026 plus 032-034), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -67,15 +67,24 @@ for migration in "${enterprise_migrations[@]}"; do
     run_psql --command \
       "create index merchant_enterprise_employees_invitation_exchange_idx on public.merchant_enterprise_employees(merchant_id); create index merchant_outbox_enterprise_invitation_due_idx on public.merchant_outbox_events(merchant_id); create index merchant_outbox_enterprise_invitation_lease_idx on public.merchant_outbox_events(merchant_id);"
   fi
-  run_sql_file "${migration}"
+  if [[ "$(basename -- "${migration}")" == \
+    "202608190034_merchant_enterprise_current_operations.sql" ]]; then
+    echo '[enterprise-integration] seeding conflicting current-operations indexes for retry coverage'
+    run_psql --command \
+      "create index merchant_tasks_current_operations_idx on public.merchant_tasks(merchant_id); create index merchant_task_assignees_employee_task_idx on public.merchant_task_assignees(merchant_id);"
+    echo '[enterprise-integration] applying 034 with quote_all_identifiers=on'
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+  else
+    run_sql_file "${migration}"
+  fi
 done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032, 202608190033) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034) or version between 202607310001 and 202608040026;"
 )"
-if [[ "${registry_count}" -ne 32 ]]; then
-  echo "Expected 32 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 33 ]]; then
+  echo "Expected 33 applied prerequisite/enterprise versions, found ${registry_count}" >&2
   exit 1
 fi
 
@@ -89,6 +98,7 @@ run_sql_file "${SCRIPT_DIR}/49-enterprise-todos.sql"
 run_sql_file "${SCRIPT_DIR}/50-workflow-automations.sql"
 run_sql_file "${SCRIPT_DIR}/51-audit-query-security.sql"
 run_sql_file "${SCRIPT_DIR}/52-invitation-delivery-outbox.sql"
+run_sql_file "${SCRIPT_DIR}/53-current-operations.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {
