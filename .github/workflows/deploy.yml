@@ -127,6 +127,28 @@ jobs:
           ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64="$(printf '%s' "${ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON:-}" | base64 -w0)"
           ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64="$(printf '%s' "${ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET:-}" | base64 -w0)"
           RESEND_API_KEY_B64="$(printf '%s' "${RESEND_API_KEY:-}" | base64 -w0)"
+          for derived_secret in \
+            "$SUPABASE_INTERNAL_URL_B64" \
+            "$NEXT_PUBLIC_SUPABASE_URL_B64" \
+            "$NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" \
+            "$SUPABASE_SERVICE_ROLE_KEY_B64" \
+            "$GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64" \
+            "$GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64" \
+            "$GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64" \
+            "$GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64" \
+            "$MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64" \
+            "$MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64" \
+            "$MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64" \
+            "$MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64" \
+            "$MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64" \
+            "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64" \
+            "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64" \
+            "$RESEND_API_KEY_B64"; do
+            if [ -n "$derived_secret" ]; then
+              printf '::add-mask::%s\n' "$derived_secret"
+            fi
+          done
+          unset derived_secret
           if [ "${MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:-false}" != "true" ]; then
             MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED=false
           fi

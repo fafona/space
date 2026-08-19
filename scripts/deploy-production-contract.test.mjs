@@ -58,6 +58,28 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
     deployWorkflow,
     /ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET:\s*\$\{\{ secrets\.ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET \}\}/,
   );
+  const derivedSecretMaskIndex = deployWorkflow.indexOf(
+    "for derived_secret in",
+  );
+  const deploySshIndex = deployWorkflow.indexOf(
+    "ssh -o ConnectTimeout=20",
+  );
+  assert.ok(derivedSecretMaskIndex >= 0);
+  assert.ok(derivedSecretMaskIndex < deploySshIndex);
+  const derivedSecretMaskBlock = deployWorkflow.slice(
+    derivedSecretMaskIndex,
+    deployWorkflow.indexOf("unset derived_secret", derivedSecretMaskIndex) +
+      "unset derived_secret".length,
+  );
+  assert.match(
+    derivedSecretMaskBlock,
+    /\$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64/,
+  );
+  assert.match(
+    derivedSecretMaskBlock,
+    /\$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64/,
+  );
+  assert.match(derivedSecretMaskBlock, /::add-mask::%s\\n/);
   assert.doesNotMatch(
     deployWorkflow,
     /NEXT_PUBLIC_ORDINARY_LEGACY_PERSONAL_RECOVERY/,
