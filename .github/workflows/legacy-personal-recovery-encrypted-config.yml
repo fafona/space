@@ -1,0 +1,99 @@
+name: Legacy Personal Recovery Encrypted Config
+
+run-name: Legacy personal recovery encrypted config at ${{ inputs.expected_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact current main commit SHA to inspect in production
+        required: true
+        type: string
+      confirmation:
+        description: Type GENERATE_LEGACY_PERSONAL_RECOVERY_ENCRYPTED_CONFIG
+        required: true
+        type: string
+      operator_public_key_pem:
+        description: Ephemeral RSA public key PEM; keep the private key local
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  generate-encrypted-config:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Checkout Exact Main Commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Configure Pinned SSH Trust
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          if ! [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] \
+            || [ "${SSH_PORT:-22}" -lt 1 ] \
+            || [ "${SSH_PORT:-22}" -gt 65535 ]; then
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/legacy-personal-recovery-ssh"
+          chmod 700 "$RUNNER_TEMP/legacy-personal-recovery-ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" \
+            > "$RUNNER_TEMP/legacy-personal-recovery-ssh/id_ed25519"
+          chmod 600 "$RUNNER_TEMP/legacy-personal-recovery-ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" \
+            > "$RUNNER_TEMP/legacy-personal-recovery-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/legacy-personal-recovery-ssh/known_hosts"
+          ssh-keygen -y \
+            -f "$RUNNER_TEMP/legacy-personal-recovery-ssh/id_ed25519" \
+            >/dev/null 2>&1
+          known_hosts_lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != "22" ]; then
+            known_hosts_lookup="[$SSH_HOST]:${SSH_PORT}"
+          fi
+          ssh-keygen -F "$known_hosts_lookup" \
+            -f "$RUNNER_TEMP/legacy-personal-recovery-ssh/known_hosts" \
+            >/dev/null 2>&1
+
+      - name: Generate Ciphertext Only
+        env:
+          RECOVERY_OPS_EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RECOVERY_OPS_CONFIRMATION: ${{ inputs.confirmation }}
+          RECOVERY_OPS_OPERATOR_PUBLIC_KEY_PEM: ${{ inputs.operator_public_key_pem }}
+          RECOVERY_OPS_CANDIDATE_EMAIL_SHA256: ${{ secrets.ORDINARY_LEGACY_PERSONAL_RECOVERY_CANDIDATE_EMAIL_SHA256 }}
+          RECOVERY_OPS_CANDIDATE_PERSONAL_ACCOUNT_ID: ${{ secrets.ORDINARY_LEGACY_PERSONAL_RECOVERY_CANDIDATE_PERSONAL_ACCOUNT_ID }}
+          RECOVERY_OPS_SSH_HOST: ${{ secrets.SSH_HOST }}
+          RECOVERY_OPS_SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+          RECOVERY_OPS_SSH_USER: ${{ secrets.SSH_USER }}
+          RECOVERY_OPS_APP_DIR: ${{ secrets.APP_DIR }}
+          RECOVERY_OPS_KNOWN_HOSTS_FILE: ${{ runner.temp }}/legacy-personal-recovery-ssh/known_hosts
+          RECOVERY_OPS_SSH_PRIVATE_KEY_FILE: ${{ runner.temp }}/legacy-personal-recovery-ssh/id_ed25519
+        run: bash scripts/run-legacy-personal-recovery-config-transport.sh
+
+      - name: Upload One-Day Encrypted Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-personal-recovery-encrypted-config-${{ github.run_id }}
+          path: ${{ runner.temp }}/legacy-personal-recovery-config.enc.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
