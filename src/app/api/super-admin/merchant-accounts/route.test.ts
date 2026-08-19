@@ -106,13 +106,15 @@ test("super-admin deletion cannot orphan a canonical personal or one-auth-many m
 });
 
 test("super-admin creation uses only create-only authority before display updates", () => {
-  const source = fs.readFileSync(
-    path.join(
-      process.cwd(),
-      "src/app/api/super-admin/merchant-accounts/route.ts",
-    ),
-    "utf8",
-  );
+  const source = fs
+    .readFileSync(
+      path.join(
+        process.cwd(),
+        "src/app/api/super-admin/merchant-accounts/route.ts",
+      ),
+      "utf8",
+    )
+    .replace(/\r\n?/g, "\n");
   const createIndex = source.indexOf(
     "await createActiveOrdinaryAccountAuthorization(",
   );
