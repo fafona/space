@@ -204,7 +204,10 @@ test("migration is additive, prerequisite-gated and service-role only", () => {
 test("disposable PostgreSQL acceptance covers retries, GUC stability and authorization", () => {
   const runner = fs.readFileSync(integrationRunnerPath, "utf8");
   const acceptance = fs.readFileSync(integrationAcceptancePath, "utf8");
-  assert.match(runner, /Expected 29 enterprise migrations \(001-026 plus 032-034\)/i);
+  assert.match(
+    runner,
+    /Expected 30 enterprise\/identity migrations \(001-026 plus 032-035\)/i,
+  );
   assert.match(
     runner,
     /create index merchant_tasks_current_operations_idx[\s\S]+create index merchant_task_assignees_employee_task_idx/i,
@@ -213,7 +216,10 @@ test("disposable PostgreSQL acceptance covers retries, GUC stability and authori
     runner,
     /PGOPTIONS="\$\{PGOPTIONS\} -c quote_all_identifiers=on" run_sql_file "\$\{migration\}"/i,
   );
-  assert.match(runner, /202608190034[\s\S]+Expected 33 applied prerequisite\/enterprise versions/i);
+  assert.match(
+    runner,
+    /202608190034[\s\S]+Expected 34 applied prerequisite\/enterprise\/identity versions/i,
+  );
   assert.match(runner, /run_sql_file "\$\{SCRIPT_DIR\}\/53-current-operations\.sql"/i);
 
   assert.match(acceptance, /begin;[\s\S]+rollback;\s*$/i);
