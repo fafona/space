@@ -36,6 +36,16 @@ RPC: every claim and expired-lease recovery must match explicit exact merchant
 IDs and registered event types. Applying the migration does not start a worker,
 enable enqueue, or change the current Google review response path.
 
+Migration `202608190035` adds the shadow-only positive authorization
+foundation for ordinary Faolla accounts. It reuses consistent merchant UUID
+aliases, creates an empty versioned canonical personal binding table with
+active/disabled lifecycle state, and exposes only service-role
+resolver/readiness RPCs. Readiness compares legacy metadata/email merchant
+access with positive UUID ownership and gates personal metadata, global account
+identifier, staff-registry, and cross-type conflicts without returning identity
+values. It does not backfill production rows, change login or RLS behavior, or
+make any route consume the new projection.
+
 After applying a migration, verify it with:
 
 ```sql

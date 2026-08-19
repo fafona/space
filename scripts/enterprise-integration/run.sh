@@ -35,7 +35,7 @@ run_sql_file() {
 
 run_sql_file "${SCRIPT_DIR}/00-supabase-stubs.sql"
 run_psql --command \
-  "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text null, raw_app_meta_data jsonb not null default '{}'::jsonb, created_at timestamptz not null default now());"
+  "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text null, raw_app_meta_data jsonb not null default '{}'::jsonb, raw_user_meta_data jsonb not null default '{}'::jsonb, created_at timestamptz not null default now());"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-init.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250001_core_transaction_foundation.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250004_booking_shadow_write_rpc.sql"
@@ -44,12 +44,12 @@ run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_foundation.sql' \) \
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 29 ]]; then
-  echo "Expected 29 enterprise migrations (001-026 plus 032-034), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 30 ]]; then
+  echo "Expected 30 enterprise/identity migrations (001-026 plus 032-035), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -74,6 +74,14 @@ for migration in "${enterprise_migrations[@]}"; do
       "create index merchant_tasks_current_operations_idx on public.merchant_tasks(merchant_id); create index merchant_task_assignees_employee_task_idx on public.merchant_task_assignees(merchant_id);"
     echo '[enterprise-integration] applying 034 with quote_all_identifiers=on'
     PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+  elif [[ "$(basename -- "${migration}")" == \
+    "202608190035_ordinary_account_authorization_foundation.sql" ]]; then
+    run_sql_file "${migration}"
+    echo '[enterprise-integration] seeding conflicting identity indexes for unregistered retry coverage'
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190035; drop index public.faolla_personal_accounts_auth_user_id_uidx; drop index public.faolla_personal_accounts_personal_account_id_uidx; create unique index faolla_personal_accounts_auth_user_id_uidx on public.faolla_personal_accounts(created_at); create unique index faolla_personal_accounts_personal_account_id_uidx on public.faolla_personal_accounts(personal_account_id, created_at);"
+    echo '[enterprise-integration] retrying 035 with quote_all_identifiers=on'
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
   else
     run_sql_file "${migration}"
   fi
@@ -81,10 +89,10 @@ done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035) or version between 202607310001 and 202608040026;"
 )"
-if [[ "${registry_count}" -ne 33 ]]; then
-  echo "Expected 33 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 34 ]]; then
+  echo "Expected 34 applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2
   exit 1
 fi
 
@@ -99,6 +107,7 @@ run_sql_file "${SCRIPT_DIR}/50-workflow-automations.sql"
 run_sql_file "${SCRIPT_DIR}/51-audit-query-security.sql"
 run_sql_file "${SCRIPT_DIR}/52-invitation-delivery-outbox.sql"
 run_sql_file "${SCRIPT_DIR}/53-current-operations.sql"
+run_sql_file "${SCRIPT_DIR}/54-ordinary-account-authorization.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {
