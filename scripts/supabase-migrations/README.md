@@ -109,9 +109,9 @@ It also installs exact restrictive authenticated INSERT and UPDATE policies
 for `site-main`. They close both the missing-sentinel recreation window and the
 legacy-RLS reattachment window while retaining ordinary merchant writes and
 privileged `service_role` BYPASSRLS operations. Email fallback reads remain
-until the later behavior cutover. Migration 039 must include both isolation
-policies in its exact preflight allowlist and explicitly remove or preserve
-them in its post-cutover policy catalog.
+until the later behavior cutover. The later renumbered behavior-cutover
+migration must include both isolation policies in its exact preflight allowlist
+and explicitly remove or preserve them in its post-cutover policy catalog.
 
 Migration `202608190038` adds one read-only recovery observer,
 `faolla_observe_ordinary_account_recovery_v1(uuid,text)`. It is a
@@ -127,8 +127,42 @@ prerequisites fail closed. This observer exists only to pre-prove the fixed
 recovery target before the existing 036 create-only RPC performs its atomic
 collision checks; it is not a generic bind or repair operation.
 
-The separately published migration `202608190039` is the irreversible behavior
-cutover stage. Apply it only after 036 and 037 are deployed, production
+Migration `202608190039_runtime_rpc_execute_acl_hardening.sql` is the urgent
+runtime RPC ACL hotfix. It freezes the full catalog contract of 16 existing
+RPCs, then rebuilds their raw ACLs to one authenticated-only owner check, one
+owner-only single-order writer, and fourteen service-only runtime functions.
+It removes custom and delegated grants, reconstructs owner tuples without
+grant options, and makes audited creators' global function defaults
+owner-only. Global defaults apply to future functions in every schema; callers
+must receive EXECUTE explicitly. The migration runs only as the exact
+SUPERUSER `supabase_admin`. It takes the production deployment advisory lock,
+then locks ten shared catalogs in a fixed order with reader-compatible
+`SHARE ROW EXCLUSIVE` locks and requires cluster-wide active and prepared XID
+quiescence before it locks the registry or reads the complete preflight. This
+serializes cooperating DDL while leaving ordinary catalog reads available;
+apply it only through the controlled migration job during a short maintenance
+window. A catalog writer that still holds `RowExclusiveLock` makes the entry
+lock hit its ordinary `lock_timeout`; a writer whose catalog statement released
+that lock but still owns an XID, or any prepared transaction, produces the
+stable `runtime_rpc_execute_acl_hardening_concurrent_transaction` error. Both
+paths occur before mutation and are safe to retry after quiescence. The migration
+rebuilds the migration registry to the exact raw ACL of owner privileges plus
+non-grantable `service_role` `SELECT`, and removes every live-column ACL so
+runtime readiness remains readable without exposing registry writes. It
+accepts the safe hosted role snapshots (including optional CLI and storage
+edges), removes the legacy authenticator-to-superuser edge, and repeats the
+complete definition, ACL, default, role-graph, and registry invariants before
+registration. `cli_login_postgres`, when present, must be directly
+unprivileged and is treated as a trusted CLI login whose only membership is
+`postgres`, granted by `supabase_admin`; production
+must compare this fail-closed catalog preflight with its read-only role snapshot
+before apply. It changes no function body or business result.
+
+The separately staged irreversible behavior cutover formerly used version
+`202608190039`. It must be renumbered after this hotfix before publication and
+must never coexist with the hotfix at the same registry version. Apply that
+later cutover only after exact migrations 035/036/037/038/039 and the PR12
+positive-resolver application are deployed, production
 canonical bindings are backfilled, the
 application has stopped every metadata/email authorization and allocator path,
 and `faolla_get_ordinary_account_authoritative_cutover_readiness_v1()` reports
@@ -156,17 +190,22 @@ RLS.
 Production publication is deliberately split because the production migrator
 applies through the newest migration in the deployed revision:
 
-1. PR-A contains migration 036 and its bootstrap acceptance/contract. Deploy,
-   back up, and apply 036.
-2. PR-B adds migration 037 and its isolation acceptance/contract. Deploy, back
-   up, apply 037, and require the system-site overlap count to be zero.
-3. PR-C adds the service-only recovery observer 038. Deploy, back up, apply
-   038, and complete the one supervised legacy personal recovery without any
-   direct read grant on the protected identity tables.
-4. Perform the remaining controlled canonical backfill, then deploy the application
-   positive-resolver cutover. Require authoritative readiness to be true.
-5. PR-D adds migration 039 and its cutover acceptance/contract. Deploy, back
-   up, and apply 039 manually. Never publish the behavior cutover before the
+1. Deploy, back up, and apply migration 036 with its bootstrap acceptance.
+2. Deploy, back up, and apply migration 037; require the system-site overlap
+   count to be zero.
+3. Deploy, back up, and apply the service-only recovery observer 038. Its
+   presence does not imply that the supervised recovery has occurred.
+4. Take a fresh backup, deploy urgent runtime ACL hotfix 039, apply it as the
+   verified `supabase_admin`, and re-probe all 16 RPCs (including all 15
+   historically over-granted functions and the already narrow health RPC).
+5. Perform the separately supervised legacy personal recovery through the
+   observer/create-only path without any direct protected-table read grant.
+6. Perform the remaining controlled canonical backfill, then deploy the
+   application positive-resolver cutover. Require authoritative readiness to
+   be true.
+7. A later PR adds the renumbered behavior-cutover migration and its
+   acceptance/contract. Deploy, back up, and apply it manually. Never publish
+   the behavior cutover before the
    intervening isolation, backfill, and application gates pass.
 
 After applying a migration, verify it with:

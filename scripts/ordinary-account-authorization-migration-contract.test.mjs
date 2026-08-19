@@ -329,7 +329,7 @@ test("disposable PostgreSQL acceptance and package suites register stage one", (
   assert.match(runner, /202608190035[\s\S]+quote_all_identifiers=on/i);
   assert.match(
     runner,
-    /expected_registry_count=36[\s\S]+expected_registry_count=37/i,
+    /expected_registry_count=39[\s\S]+expected_registry_count=40/i,
   );
   assert.match(
     runner,
