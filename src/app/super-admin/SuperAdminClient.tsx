@@ -7491,6 +7491,13 @@ export default function SuperAdminClient() {
                 <div className="text-xs text-slate-500">{menu.hint}</div>
               </button>
             ))}
+            <Link
+              href="/super-admin/personal-recovery"
+              className="block w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-sm text-amber-900 hover:bg-amber-100"
+            >
+              <div className="font-medium">一次性账号恢复</div>
+              <div className="text-xs text-amber-700">固定 case 的独立审批页</div>
+            </Link>
           </nav>
         </aside>
         ) : null}
