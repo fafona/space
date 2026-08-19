@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const deployScript = await readFile(
@@ -19,6 +21,138 @@ const automationWorker = await readFile(
   "utf8",
 );
 const envExample = await readFile(new URL("../.env.example", import.meta.url), "utf8");
+const envCheckUrl = new URL("./check-env.mjs", import.meta.url);
+const envCheckScript = await readFile(envCheckUrl, "utf8");
+
+function runRecoveryEnvCheck(caseJson, hmacSecret) {
+  return spawnSync(process.execPath, [fileURLToPath(envCheckUrl), "--strict"], {
+    cwd: fileURLToPath(new URL("../", import.meta.url)),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_SUPABASE_URL: "https://contract-test.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "contract-test-anon-key",
+      SUPER_ADMIN_VERIFICATION_SECRET:
+        "super-admin-contract-secret-that-is-not-the-recovery-key",
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "true",
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON: caseJson,
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET: hmacSecret,
+    },
+  });
+}
+
+test("one-time personal recovery deploy config is secret-only, fail-closed, and erased when disabled", () => {
+  assert.match(
+    envExample,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED=false/,
+  );
+  assert.match(
+    deployWorkflow,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED:\s*\$\{\{ vars\.ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED \}\}/,
+  );
+  assert.match(
+    deployWorkflow,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON:\s*\$\{\{ secrets\.ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON \}\}/,
+  );
+  assert.match(
+    deployWorkflow,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET:\s*\$\{\{ secrets\.ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET \}\}/,
+  );
+  assert.doesNotMatch(
+    deployWorkflow,
+    /NEXT_PUBLIC_ORDINARY_LEGACY_PERSONAL_RECOVERY/,
+  );
+  assert.match(
+    deployScript,
+    /enabled ordinary legacy personal recovery requires fresh case and HMAC secrets/,
+  );
+  assert.match(
+    deployScript,
+    /\[\[ "\$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_VALUE" =~ \[\[:space:\]#\] \]\]/,
+  );
+  assert.match(
+    deployScript,
+    /\^\[0-9a-f\]\{64\}\$/,
+  );
+  const recoveryBlock = deployScript.slice(
+    deployScript.indexOf(
+      'write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" "false"',
+    ),
+    deployScript.indexOf('write_env_value "RESEND_API_KEY"'),
+  );
+  const enableBranchIndex = recoveryBlock.indexOf(
+    'if [ "$ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" = "true" ]',
+  );
+  const caseRemovalIndex = recoveryBlock.indexOf(
+    'remove_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON"',
+  );
+  const hmacRemovalIndex = recoveryBlock.indexOf(
+    'remove_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET"',
+  );
+  const caseWriteIndex = recoveryBlock.indexOf(
+    'write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON" "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_VALUE"',
+  );
+  const hmacWriteIndex = recoveryBlock.indexOf(
+    'write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET" "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_VALUE"',
+  );
+  const gateEnableIndex = recoveryBlock.indexOf(
+    'write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" "true"',
+  );
+  assert.ok(caseRemovalIndex >= 0 && caseRemovalIndex < enableBranchIndex);
+  assert.ok(hmacRemovalIndex >= 0 && hmacRemovalIndex < enableBranchIndex);
+  assert.ok(caseWriteIndex > enableBranchIndex);
+  assert.ok(hmacWriteIndex > caseWriteIndex);
+  assert.ok(gateEnableIndex > hmacWriteIndex);
+  assert.match(envCheckScript, /JSON\.stringify\(recoveryCase\) !== rawCase/);
+  assert.match(envCheckScript, /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(hmacSecret\)/);
+});
+
+test("strict env gate accepts only compact case JSON and a safe lowercase 64-hex HMAC", () => {
+  const recoveryCase = {
+    caseId: "contract_case_20260819",
+    authUserId: "11111111-1111-4111-8111-111111111111",
+    personalAccountId: "50010105",
+    emailSha256: "a".repeat(64),
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  };
+  const compact = JSON.stringify(recoveryCase);
+  const secret = "0123456789abcdef".repeat(4);
+  const valid = runRecoveryEnvCheck(compact, secret);
+  assert.equal(valid.status, 0, `${valid.stdout}\n${valid.stderr}`);
+
+  for (const [name, caseJson, hmac] of [
+    ["nonhex HMAC", compact, "z".repeat(64)],
+    ["short HMAC", compact, "a".repeat(63)],
+    ["pretty JSON", JSON.stringify(recoveryCase, null, 2), secret],
+    ["leading whitespace", ` ${compact}`, secret],
+    [
+      "hash character",
+      compact.replace("contract_case_20260819", "contract#case_20260819"),
+      secret,
+    ],
+    [
+      "numeric personal ID",
+      JSON.stringify({ ...recoveryCase, personalAccountId: 50010105 }),
+      secret,
+    ],
+    [
+      "numeric case ID",
+      JSON.stringify({ ...recoveryCase, caseId: 12345678 }),
+      secret,
+    ],
+    [
+      "numeric email hash",
+      JSON.stringify({ ...recoveryCase, emailSha256: Number("1".repeat(64)) }),
+      secret,
+    ],
+  ]) {
+    const result = runRecoveryEnvCheck(caseJson, hmac);
+    assert.equal(result.status, 1, `${name}: ${result.stdout}\n${result.stderr}`);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(output.includes("50010105"), false);
+    assert.equal(output.includes(secret), false);
+  }
+});
 
 test("production deployment is serialized before mutable work", () => {
   assert.match(deployScript, /command -v flock/);

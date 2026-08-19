@@ -12,6 +12,7 @@ MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE="${MERCHANT_ENTERPRISE_INVITATION_D
 MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="${MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:-false}"
 MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS="${MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS:-3600}"
 MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS="${MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS:-3900}"
+ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED="${ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED:-false}"
 SUPABASE_INTERNAL_URL="${SUPABASE_INTERNAL_URL:-http://127.0.0.1:8000}"
 RELEASES_DIR="${RELEASES_DIR:-${APP_DIR}.releases}"
 CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}.current}"
@@ -184,6 +185,13 @@ validate_disk_thresholds() {
       exit 1
       ;;
   esac
+  case "$ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" in
+    true|false) ;;
+    *)
+      echo "[deploy] ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED must be true or false"
+      exit 1
+      ;;
+  esac
   if [ "$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" = "outbox" ] \
     && [ "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" != "true" ]; then
     echo "[deploy] outbox invitation delivery requires the invitation worker"
@@ -299,6 +307,18 @@ write_env_value() {
   mv "$temp_file" "$file"
 }
 
+remove_env_value() {
+  local key="$1"
+  local file="${2:-.env.local}"
+  if [ -z "$key" ] || [ ! -f "$file" ]; then
+    return 0
+  fi
+  local temp_file
+  temp_file="$(mktemp)"
+  grep -v "^${key}=" "$file" > "$temp_file" || true
+  mv "$temp_file" "$file"
+}
+
 decode_base64_value() {
   local value="$1"
   if [ -z "$value" ]; then
@@ -349,6 +369,30 @@ write_env_value "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM" "$(decode_base64_val
 write_env_value "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO" "$(decode_base64_value "${MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64:-}")"
 write_env_value "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS" "$MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS"
 write_env_value "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" "$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS"
+# Reset the persisted one-time gate and erase any prior case before validating
+# a newly requested enablement. A failed deploy therefore stays closed, and
+# the gate is written true only after both fresh secrets are safely persisted.
+write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" "false"
+remove_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON"
+remove_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET"
+if [ "$ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" = "true" ]; then
+  if [ -z "${ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64:-}" ] \
+    || [ -z "${ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64:-}" ]; then
+    echo "[deploy] enabled ordinary legacy personal recovery requires fresh case and HMAC secrets"
+    exit 1
+  fi
+  ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_VALUE="$(decode_base64_value "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64")"
+  ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_VALUE="$(decode_base64_value "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64")"
+  if [ -z "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_VALUE" ] \
+    || [[ "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_VALUE" =~ [[:space:]#] ]] \
+    || ! [[ "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_VALUE" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[deploy] ordinary legacy personal recovery requires compact case JSON and a lowercase 64-hex HMAC secret"
+    exit 1
+  fi
+  write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON" "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_VALUE"
+  write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET" "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_VALUE"
+  write_env_value "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED" "true"
+fi
 write_env_value "RESEND_API_KEY" "$(decode_base64_value "${RESEND_API_KEY_B64:-}")"
 write_env_value "SUPER_ADMIN_ACCOUNT" "${SUPER_ADMIN_ACCOUNT:-}"
 write_env_value "SUPER_ADMIN_PASSWORD" "${SUPER_ADMIN_PASSWORD:-}"

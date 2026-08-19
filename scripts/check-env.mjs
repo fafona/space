@@ -72,9 +72,78 @@ function validateSupabaseUrl(rawValue) {
   return null;
 }
 
+function validateLegacyPersonalRecovery(env, now = Date.now()) {
+  const enabled = (env.ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED || "false").toString().trim();
+  if (enabled !== "true" && enabled !== "false") {
+    return ["ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED must be true or false."];
+  }
+  if (enabled !== "true") return [];
+
+  const rawCase = (env.ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON || "").toString();
+  const hmacSecret = (env.ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET || "").toString();
+  const superAdminSecret = (env.SUPER_ADMIN_VERIFICATION_SECRET || "").toString().trim();
+  if (
+    !rawCase ||
+    rawCase !== rawCase.trim() ||
+    /[\r\n#]/.test(rawCase) ||
+    !/^[0-9a-f]{64}$/.test(hmacSecret) ||
+    hmacSecret === rawCase ||
+    (superAdminSecret && hmacSecret === superAdminSecret)
+  ) {
+    return ["Enabled ordinary legacy personal recovery requires an independent case and HMAC secret."];
+  }
+
+  let recoveryCase;
+  try {
+    recoveryCase = JSON.parse(rawCase);
+  } catch {
+    return ["ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON is invalid."];
+  }
+  if (JSON.stringify(recoveryCase) !== rawCase) {
+    return ["ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON must be compact single-line JSON."];
+  }
+  const expectedKeys = ["authUserId", "caseId", "emailSha256", "expiresAt", "personalAccountId"];
+  const actualKeys =
+    recoveryCase && typeof recoveryCase === "object" && !Array.isArray(recoveryCase)
+      ? Object.keys(recoveryCase).sort()
+      : [];
+  const exactKeys =
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index]);
+  const stringFields =
+    exactKeys &&
+    expectedKeys.every((key) => typeof recoveryCase[key] === "string");
+  const caseId = stringFields ? recoveryCase.caseId : "";
+  const authUserId = stringFields ? recoveryCase.authUserId : "";
+  const personalId = stringFields ? recoveryCase.personalAccountId : "";
+  const emailSha256 = stringFields ? recoveryCase.emailSha256 : "";
+  const expiresAt = stringFields ? recoveryCase.expiresAt : "";
+  const expiresAtMs = Date.parse(expiresAt);
+  const personalIdNumber = Number(personalId);
+  if (
+    !stringFields ||
+    !/^[A-Za-z0-9_-]{8,64}$/.test(caseId) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      authUserId,
+    ) ||
+    !/^\d{8}$/.test(personalId) ||
+    personalIdNumber < 50_010_105 ||
+    personalIdNumber > 59_999_999 ||
+    !/^[0-9a-f]{64}$/.test(emailSha256) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(expiresAt) ||
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= now ||
+    expiresAtMs - now > 31 * 24 * 60 * 60 * 1000
+  ) {
+    return ["Enabled ordinary legacy personal recovery configuration is invalid or expired."];
+  }
+  return [];
+}
+
 const invalidMessages = [];
 const supabaseUrlIssue = validateSupabaseUrl(mergedEnv.NEXT_PUBLIC_SUPABASE_URL);
 if (supabaseUrlIssue) invalidMessages.push(supabaseUrlIssue);
+invalidMessages.push(...validateLegacyPersonalRecovery(mergedEnv));
 
 if (missingKeys.length === 0 && invalidMessages.length === 0) {
   console.log("[env-check] OK");
