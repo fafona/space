@@ -227,7 +227,7 @@ test("disposable PostgreSQL acceptance covers retries, GUC stability and authori
   );
   assert.match(
     acceptance,
-    /Visible exactly at as-of[\s\S]+Visible exactly at 168 hours[\s\S]+\[asOf, asOf \+ 168h\)/i,
+    /Visible exactly at as-of[\s\S]+excluded the inclusive asOf boundary[\s\S]+Visible exactly at 168 hours[\s\S]+included the exclusive asOf \+ 168h boundary/i,
   );
   assert.match(
     acceptance,

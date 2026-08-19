@@ -343,39 +343,71 @@ $test$;
 do $test$
 declare
   v_as_of timestamptz := statement_timestamp();
+  v_before jsonb;
+  v_after_lower_bound jsonb;
   v_payload jsonb;
 begin
+  v_before := public.faolla_get_merchant_enterprise_current_operations_v1(
+    '{
+      "merchant_id":"10000001",
+      "actor_type":"owner",
+      "actor_id":"10000000-0000-4000-8000-000000000001"
+    }'::jsonb
+  );
+
   insert into public.merchant_tasks (
     id, merchant_id, board_id, column_id, title, priority, due_at,
     completed_at, archived_at, position, updated_at
   )
-  values
-    (
-      '95000000-0000-4000-8000-000000000013'::uuid,
-      '10000001',
-      '93000000-0000-4000-8000-000000000001'::uuid,
-      '94000000-0000-4000-8000-000000000001'::uuid,
-      'Visible exactly at as-of',
-      'normal',
-      v_as_of,
-      null,
-      null,
-      11,
-      v_as_of
-    ),
-    (
-      '95000000-0000-4000-8000-000000000014'::uuid,
-      '10000001',
-      '93000000-0000-4000-8000-000000000001'::uuid,
-      '94000000-0000-4000-8000-000000000001'::uuid,
-      'Visible exactly at 168 hours',
-      'normal',
-      v_as_of + interval '168 hours',
-      null,
-      null,
-      12,
-      v_as_of
-    );
+  values (
+    '95000000-0000-4000-8000-000000000013'::uuid,
+    '10000001',
+    '93000000-0000-4000-8000-000000000001'::uuid,
+    '94000000-0000-4000-8000-000000000001'::uuid,
+    'Visible exactly at as-of',
+    'normal',
+    v_as_of,
+    null,
+    null,
+    11,
+    v_as_of
+  );
+
+  v_after_lower_bound := public.faolla_get_merchant_enterprise_current_operations_v1(
+    '{
+      "merchant_id":"10000001",
+      "actor_type":"owner",
+      "actor_id":"10000000-0000-4000-8000-000000000001"
+    }'::jsonb
+  );
+
+  perform enterprise_integration.assert_true(
+    (v_after_lower_bound #>> '{summary,openTaskCount}')::integer
+        = (v_before #>> '{summary,openTaskCount}')::integer + 1
+      and (v_after_lower_bound #>> '{summary,overdueTaskCount}')::integer
+        = (v_before #>> '{summary,overdueTaskCount}')::integer
+      and (v_after_lower_bound #>> '{summary,dueSoonTaskCount}')::integer
+        = (v_before #>> '{summary,dueSoonTaskCount}')::integer + 1,
+    'current operations excluded the inclusive asOf boundary'
+  );
+
+  insert into public.merchant_tasks (
+    id, merchant_id, board_id, column_id, title, priority, due_at,
+    completed_at, archived_at, position, updated_at
+  )
+  values (
+    '95000000-0000-4000-8000-000000000014'::uuid,
+    '10000001',
+    '93000000-0000-4000-8000-000000000001'::uuid,
+    '94000000-0000-4000-8000-000000000001'::uuid,
+    'Visible exactly at 168 hours',
+    'normal',
+    v_as_of + interval '168 hours',
+    null,
+    null,
+    12,
+    v_as_of
+  );
 
   v_payload := public.faolla_get_merchant_enterprise_current_operations_v1(
     '{
@@ -386,10 +418,13 @@ begin
   );
 
   perform enterprise_integration.assert_true(
-    (v_payload #>> '{summary,openTaskCount}')::integer = 11
-      and (v_payload #>> '{summary,overdueTaskCount}')::integer = 3
-      and (v_payload #>> '{summary,dueSoonTaskCount}')::integer = 5,
-    'current operations did not preserve the [asOf, asOf + 168h) boundary'
+    (v_payload #>> '{summary,openTaskCount}')::integer
+        = (v_after_lower_bound #>> '{summary,openTaskCount}')::integer + 1
+      and (v_payload #>> '{summary,overdueTaskCount}')::integer
+        = (v_after_lower_bound #>> '{summary,overdueTaskCount}')::integer
+      and (v_payload #>> '{summary,dueSoonTaskCount}')::integer
+        = (v_after_lower_bound #>> '{summary,dueSoonTaskCount}')::integer,
+    'current operations included the exclusive asOf + 168h boundary'
   );
 end;
 $test$;
