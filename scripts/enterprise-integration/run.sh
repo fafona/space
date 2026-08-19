@@ -75,15 +75,26 @@ run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' \) \
     -print | sort
 )
 
+isolation_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_system_site_principal_isolation.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
 expected_registry_count=36
+isolation_present=0
 cutover_present=0
+if [[ -f "${isolation_migration_path}" ]]; then
+  expected_enterprise_migration_count=32
+  expected_registry_count=37
+  isolation_present=1
+fi
 if [[ -f "${cutover_migration_path}" ]]; then
+  if [[ "${isolation_present}" -eq 1 ]]; then
+    echo 'Refusing colliding 202608190037 isolation and cutover migrations' >&2
+    exit 1
+  fi
   expected_enterprise_migration_count=32
   expected_registry_count=37
   cutover_present=1
@@ -96,6 +107,8 @@ if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}
 fi
 
 pre_cutover_acceptance_ran=0
+isolation_retry_updated_at_unchanged=0
+isolation_absent_site_retry_verified=0
 
 for migration in "${enterprise_migrations[@]}"; do
   if [[ "$(basename -- "${migration}")" == \
@@ -269,6 +282,114 @@ for migration in "${enterprise_migrations[@]}"; do
     run_psql --command \
       "delete from public.merchants where id = 'site-illegal'; delete from auth.users where id = 'd3500000-0000-4000-8000-000000000002'::uuid;"
   elif [[ "$(basename -- "${migration}")" == \
+    "202608190037_ordinary_account_system_site_principal_isolation.sql" ]]; then
+    echo '[enterprise-integration] running all additive acceptance before 037 exists in the registry'
+    run_pre_cutover_acceptance
+    pre_cutover_acceptance_ran=1
+
+    echo '[enterprise-integration] seeding a selective system-site overlap fixture'
+    run_psql --command \
+      "grant select, insert, update on table public.merchants to service_role; insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data) values ('d3500000-0000-4000-8000-000000000003'::uuid, 'independent-system@example.test', '{}'::jsonb, '{}'::jsonb); update public.merchants set user_id = 'd3500000-0000-4000-8000-000000000001'::uuid, auth_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid, owner_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid, owner_id = 'd3500000-0000-4000-8000-000000000001'::uuid, auth_id = 'd3500000-0000-4000-8000-000000000001'::uuid, created_by = 'd3500000-0000-4000-8000-000000000001'::uuid, created_by_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid where id = '10000001'; update public.merchants set email = 'owner-a@example.test', user_id = 'd3500000-0000-4000-8000-000000000001'::uuid, auth_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid, owner_user_id = 'd3500000-0000-4000-8000-000000000003'::uuid, owner_id = null, auth_id = null, created_by = null, created_by_user_id = null where id = 'site-main';"
+    isolation_fixture_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select readiness #>> '{security,systemSitePrincipalOverlapCount}' = '1' and readiness #>> '{security,crossAccountTypeOverlapCount}' = '0' and readiness #>> '{security,accountIdentifierCollisionCount}' = '0' and readiness #>> '{security,staffRegistryOverlapCount}' = '0' and readiness #>> '{merchant,recordCount}' = '2' and readiness #>> '{merchant,authoritativeBindingCount}' = '1' and readiness #>> '{merchant,invalidBindingCount}' = '1' and readiness #>> '{personal,canonicalBindingCount}' = '0' and (select count(distinct site_alias.auth_user_id) = 2 from public.merchants as site cross join lateral unnest(array[site.user_id, site.auth_user_id, site.owner_user_id, site.owner_id, site.auth_id, site.created_by, site.created_by_user_id]::uuid[]) as site_alias(auth_user_id) where site.id = 'site-main' and site_alias.auth_user_id is not null) from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${isolation_fixture_state}" != 't' ]]; then
+      echo 'Selective system-site fixture did not isolate one overlap from one independent principal' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting a conflicting 037 isolation registry name'
+    run_psql --command \
+      "insert into public.faolla_schema_migrations(version, name) values (202608190037, 'redteam_wrong_037');"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_system_site_isolation_registry_conflict'
+    isolation_registry_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and not exists (select 1 from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_system_site_principal_isolation', 'merchants_system_site_principal_insert_isolation')) and (select user_id = 'd3500000-0000-4000-8000-000000000001'::uuid and auth_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid and owner_user_id = 'd3500000-0000-4000-8000-000000000003'::uuid from public.merchants where id = 'site-main') from public.faolla_schema_migrations where version = 202608190037 and name = 'redteam_wrong_037';"
+    )"
+    if [[ "${isolation_registry_conflict_state}" != 't' ]]; then
+      echo '037 isolation registry conflict changed aliases, policy, or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190037 and name = 'redteam_wrong_037';"
+
+    echo '[enterprise-integration] rejecting a same-named permissive policy'
+    run_psql --command \
+      "create policy merchants_system_site_principal_isolation on public.merchants as permissive for update to authenticated using (id <> 'site-main') with check (id <> 'site-main');"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_system_site_isolation_policy_conflict'
+    isolation_policy_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190037) and policy.permissive = 'PERMISSIVE' and (select user_id = 'd3500000-0000-4000-8000-000000000001'::uuid and auth_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid and owner_user_id = 'd3500000-0000-4000-8000-000000000003'::uuid from public.merchants where id = 'site-main') from pg_catalog.pg_policies as policy where policy.schemaname = 'public' and policy.tablename = 'merchants' and policy.policyname = 'merchants_system_site_principal_isolation';"
+    )"
+    if [[ "${isolation_policy_conflict_state}" != 't' ]]; then
+      echo '037 isolation policy conflict changed aliases, policy, or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "drop policy merchants_system_site_principal_isolation on public.merchants;"
+
+    echo '[enterprise-integration] rejecting a same-named permissive INSERT isolation policy'
+    run_psql --command \
+      "create policy merchants_system_site_principal_isolation on public.merchants as restrictive for update to authenticated using (id <> 'site-main') with check (id <> 'site-main'); create policy merchants_system_site_principal_insert_isolation on public.merchants as permissive for insert to authenticated with check (id <> 'site-main');"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_system_site_isolation_policy_conflict'
+    isolation_insert_policy_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190037) and (select count(*) = 2 from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_system_site_principal_isolation', 'merchants_system_site_principal_insert_isolation')) and (select permissive = 'PERMISSIVE' and cmd = 'INSERT' from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname = 'merchants_system_site_principal_insert_isolation') and (select user_id = 'd3500000-0000-4000-8000-000000000001'::uuid and auth_user_id = 'd3500000-0000-4000-8000-000000000001'::uuid and owner_user_id = 'd3500000-0000-4000-8000-000000000003'::uuid from public.merchants where id = 'site-main');"
+    )"
+    if [[ "${isolation_insert_policy_conflict_state}" != 't' ]]; then
+      echo '037 INSERT isolation policy conflict changed aliases, policies, or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "drop policy merchants_system_site_principal_isolation on public.merchants; drop policy merchants_system_site_principal_insert_isolation on public.merchants;"
+
+    run_sql_file "${migration}"
+    isolation_updated_at_before_retry="$(
+      run_psql --tuples-only --no-align --command \
+        "select updated_at::text from public.merchants where id = 'site-main';"
+    )"
+    echo '[enterprise-integration] retrying unregistered 037 isolation with quote_all_identifiers=on'
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190037 and name = 'ordinary_account_system_site_principal_isolation';"
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+    isolation_updated_at_after_retry="$(
+      run_psql --tuples-only --no-align --command \
+        "select updated_at::text from public.merchants where id = 'site-main';"
+    )"
+    if [[ "${isolation_updated_at_before_retry}" != "${isolation_updated_at_after_retry}" ]]; then
+      echo '037 isolation no-op retry changed site-main updated_at' >&2
+      exit 1
+    fi
+    isolation_post_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select readiness #>> '{security,systemSitePrincipalOverlapCount}' = '0' and readiness #>> '{security,crossAccountTypeOverlapCount}' = '0' and readiness #>> '{security,accountIdentifierCollisionCount}' = '0' and readiness #>> '{security,staffRegistryOverlapCount}' = '0' and readiness #>> '{merchant,recordCount}' = '2' and readiness #>> '{merchant,authoritativeBindingCount}' = '1' and readiness #>> '{merchant,invalidBindingCount}' = '1' and readiness #>> '{personal,canonicalBindingCount}' = '0' and (select user_id is null and auth_user_id is null and owner_user_id = 'd3500000-0000-4000-8000-000000000003'::uuid and owner_id is null and auth_id is null and created_by is null and created_by_user_id is null from public.merchants where id = 'site-main') and exists (select 1 from public.faolla_schema_migrations where version = 202608190037 and name = 'ordinary_account_system_site_principal_isolation') and (select count(*) = 2 from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_system_site_principal_isolation', 'merchants_system_site_principal_insert_isolation') and permissive = 'RESTRICTIVE' and roles = array['authenticated']::name[] and ((policyname = 'merchants_system_site_principal_isolation' and cmd = 'UPDATE') or (policyname = 'merchants_system_site_principal_insert_isolation' and cmd = 'INSERT'))) from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${isolation_post_state}" != 't' ]]; then
+      echo '037 isolation did not preserve the independent alias or readiness invariants' >&2
+      exit 1
+    fi
+    isolation_retry_updated_at_unchanged=1
+
+    echo '[enterprise-integration] retrying unregistered 037 with site-main absent'
+    run_psql --command \
+      "delete from public.merchants where id = 'site-main'; delete from public.faolla_schema_migrations where version = 202608190037 and name = 'ordinary_account_system_site_principal_isolation';"
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+    isolation_absent_site_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.merchants where id = 'site-main') and readiness #>> '{security,systemSitePrincipalOverlapCount}' = '0' and exists (select 1 from public.faolla_schema_migrations where version = 202608190037 and name = 'ordinary_account_system_site_principal_isolation') and (select count(*) = 2 from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_system_site_principal_isolation', 'merchants_system_site_principal_insert_isolation') and permissive = 'RESTRICTIVE' and roles = array['authenticated']::name[] and ((policyname = 'merchants_system_site_principal_isolation' and cmd = 'UPDATE') or (policyname = 'merchants_system_site_principal_insert_isolation' and cmd = 'INSERT'))) from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${isolation_absent_site_state}" != 't' ]]; then
+      echo '037 isolation did not safely retry with site-main absent' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "insert into public.merchants(id, name, email, owner_user_id) values ('site-main', 'Platform system site', 'owner-a@example.test', 'd3500000-0000-4000-8000-000000000003'::uuid);"
+    isolation_absent_site_retry_verified=1
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -423,6 +544,21 @@ fi
 
 if [[ "${cutover_present}" -eq 1 ]]; then
   run_sql_file "${SCRIPT_DIR}/55-ordinary-account-authorization-cutover.sql"
+fi
+if [[ "${isolation_present}" -eq 1 ]]; then
+  if [[ "${isolation_retry_updated_at_unchanged}" -ne 1 ]]; then
+    echo '037 isolation retry verification did not run' >&2
+    exit 1
+  fi
+  if [[ "${isolation_absent_site_retry_verified}" -ne 1 ]]; then
+    echo '037 absent-site retry verification did not run' >&2
+    exit 1
+  fi
+  PGOPTIONS="${PGOPTIONS} -c enterprise_integration.system_site_retry_updated_at_unchanged=true -c enterprise_integration.system_site_absent_retry_verified=true" \
+    run_sql_file "${SCRIPT_DIR}/59-ordinary-account-system-site-principal-isolation.sql"
+  echo '[enterprise-integration] restoring serial and system-site race fixtures after isolation acceptance'
+  run_psql --command \
+    "update public.merchants set user_id = '10000000-0000-4000-8000-000000000001'::uuid, auth_user_id = '10000000-0000-4000-8000-000000000001'::uuid, owner_user_id = '10000000-0000-4000-8000-000000000001'::uuid, owner_id = '10000000-0000-4000-8000-000000000001'::uuid, auth_id = '10000000-0000-4000-8000-000000000001'::uuid, created_by = '10000000-0000-4000-8000-000000000001'::uuid, created_by_user_id = '10000000-0000-4000-8000-000000000001'::uuid where id = '10000001'; update public.merchants set user_id = 'd3500000-0000-4000-8000-000000000001'::uuid where id = 'site-main';"
 fi
 run_sql_file "${SCRIPT_DIR}/56-ordinary-account-lock-race-setup.sql"
 

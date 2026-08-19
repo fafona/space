@@ -8,9 +8,9 @@ Coverage includes:
 
 - `supabase-init.sql`, the shared order/booking/coupon and reliable-outbox
   prerequisites, and enterprise migrations 001-026 plus audit-security and
-  staged ordinary-account migrations 032-036 in filename order; when the
-  separately published 037 file is present, the runner first completes all
-  Stage-2A acceptance/backfill fixtures and only then applies/tests 037;
+  staged ordinary-account migrations 032-037 in filename order; the runner
+  completes all Stage-2A acceptance fixtures before applying and testing the
+  independently deployable 037 system-site isolation migration;
 - owner bootstrap, roles, employee invitation acceptance, task assignment,
   task update, checklist, comments, notifications, and audit listing;
 - forged-owner, cross-merchant, low-privilege ACL, and role-escalation denial;
@@ -56,6 +56,14 @@ Coverage includes:
   canonical search-path / custom-role function ACL normalization, exact
   owner-only canonical-table and column ACLs, and catalog-structural readiness
   checks for unique indexes, constraints, and `ENABLE ALWAYS` triggers;
+- relationally derived, selective removal of only those `site-main` UUID
+  aliases shared with a non-system merchant, canonical personal account, or
+  staff identity; preservation of an independent system principal and all
+  contact/content fields; exact readiness-delta checks; unregistered no-op
+  retry; and exact restrictive authenticated INSERT/UPDATE policies that
+  prevent legacy email/UUID RLS from recreating or reattaching the sentinel
+  while leaving ordinary merchants writable and `service_role` BYPASSRLS
+  operations available;
 - authoritative-readiness-gated removal of email-based owner authorization,
   mutable metadata/email DoS resistance, conflicting-registry and extra-policy
   rollback, exact pre/post protected-table ACLs (including custom delegated and
