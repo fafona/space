@@ -224,6 +224,107 @@ function jsonClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function buildCurrentOperationsResponse(snapshot, actor, requestedEmployeeId = "") {
+  const asOf = timestamp();
+  const nowMs = Date.parse(asOf);
+  const dueSoonBoundaryMs = nowMs + 7 * 24 * 60 * 60 * 1000;
+  const employeeId = requestedEmployeeId || (actor.type === "employee" ? actor.id : null);
+  const boards = snapshot.boards
+    .filter((board) => board.status === "active")
+    .filter(
+      (board) =>
+        actor.type === "owner" ||
+        actor.accessScope === "all" ||
+        actor.allowedBoardIds.includes(board.id),
+    );
+  const activeBoardIds = new Set(boards.map((board) => board.id));
+  const tasks = snapshot.tasks.filter(
+    (task) =>
+      !task.archivedAt &&
+      !task.completedAt &&
+      activeBoardIds.has(task.boardId) &&
+      (!employeeId || task.assigneeIds.includes(employeeId)),
+  );
+  const urgencyCounts = (items) => {
+    let overdueTaskCount = 0;
+    let dueSoonTaskCount = 0;
+    for (const task of items) {
+      const dueAtMs = task.dueAt ? Date.parse(task.dueAt) : Number.NaN;
+      if (!Number.isFinite(dueAtMs)) continue;
+      if (dueAtMs < nowMs) overdueTaskCount += 1;
+      else if (dueAtMs < dueSoonBoundaryMs) dueSoonTaskCount += 1;
+    }
+    return { overdueTaskCount, dueSoonTaskCount };
+  };
+  const boardSummaries = boards
+    .map((board) => {
+      const boardTasks = tasks.filter((task) => task.boardId === board.id);
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        openTaskCount: boardTasks.length,
+        ...urgencyCounts(boardTasks),
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.overdueTaskCount - left.overdueTaskCount ||
+        right.openTaskCount - left.openTaskCount ||
+        left.boardName.localeCompare(right.boardName) ||
+        left.boardId.localeCompare(right.boardId),
+    );
+  const totalUrgency = urgencyCounts(tasks);
+  const priorityTasks = [...tasks]
+    .sort((left, right) => {
+      const dueSort = (task) => {
+        const dueAtMs = task.dueAt ? Date.parse(task.dueAt) : Number.NaN;
+        if (!Number.isFinite(dueAtMs)) return 2;
+        return dueAtMs < nowMs ? 0 : dueAtMs < dueSoonBoundaryMs ? 1 : 2;
+      };
+      return (
+        dueSort(left) - dueSort(right) ||
+        String(right.updatedAt).localeCompare(String(left.updatedAt)) ||
+        left.id.localeCompare(right.id)
+      );
+    })
+    .slice(0, 6)
+    .map((task) => ({
+      id: task.id,
+      boardId: task.boardId,
+      boardName: boards.find((board) => board.id === task.boardId)?.name || "未知看板",
+      columnId: task.columnId,
+      columnName:
+        snapshot.columns.find((column) => column.id === task.columnId)?.name || "未分类",
+      title: task.title,
+      priority: task.priority,
+      dueAt: task.dueAt,
+      updatedAt: task.updatedAt,
+      assigneeCount: task.assigneeIds.length,
+    }));
+  return {
+    ok: true,
+    asOf,
+    scope: employeeId ? "employee" : "enterprise",
+    employeeId,
+    scopeRestricted: actor.type === "employee" && actor.accessScope !== "all",
+    boardSummaryTotalCount: boardSummaries.length,
+    boardsTruncated: false,
+    summary: {
+      openTaskCount: tasks.length,
+      ...totalUrgency,
+      unassignedTaskCount: employeeId
+        ? null
+        : tasks.filter((task) => task.assigneeIds.length === 0).length,
+      involvedBoardCount: boardSummaries.filter((board) => board.openTaskCount > 0).length,
+      sharedAssignmentTaskCount: employeeId
+        ? tasks.filter((task) => task.assigneeIds.length > 1).length
+        : null,
+    },
+    boards: boardSummaries,
+    priorityTasks,
+  };
+}
+
 function nextWorkflowId(state) {
   const suffix = String(state.workflowSequence++).padStart(12, "0");
   return `10000000-0000-4000-8000-${suffix}`;
@@ -451,6 +552,24 @@ async function installEnterpriseApiMock(
         snapshot: jsonClone(overviewSnapshot),
         needsBootstrap: false,
       });
+    }
+    if (
+      url.pathname === "/api/merchant-enterprise/current-operations" &&
+      request.method() === "GET"
+    ) {
+      stats.currentOperationsGets = (stats.currentOperationsGets || 0) + 1;
+      const requestedEmployeeId = url.searchParams.get("employeeId") || "";
+      stats.currentOperationsRequests = [
+        ...(stats.currentOperationsRequests || []),
+        { siteId: url.searchParams.get("siteId") || "", employeeId: requestedEmployeeId },
+      ];
+      if (url.searchParams.get("siteId") !== siteId) {
+        return respond(400, { ok: false, error: "invalid_site_id" });
+      }
+      return respond(
+        200,
+        buildCurrentOperationsResponse(overviewSnapshot, actor, requestedEmployeeId),
+      );
     }
     if (url.pathname === "/api/merchant-enterprise/todos" && request.method() === "GET") {
       stats.todoGets = (stats.todoGets || 0) + 1;
@@ -1057,12 +1176,27 @@ async function waitForServer(baseUrl, timeoutMs = 60_000) {
 async function startServer() {
   const configuredBaseUrl = String(process.env.FAOLLA_ENTERPRISE_E2E_BASE_URL || "").trim();
   if (configuredBaseUrl) {
-    return { baseUrl: configuredBaseUrl.replace(/\/+$/, ""), child: null };
+    return {
+      baseUrl: configuredBaseUrl.replace(/\/+$/, ""),
+      child: null,
+      readServerOutput: () => "",
+    };
   }
   const port = Number(process.env.FAOLLA_ENTERPRISE_E2E_PORT || 3117);
   const baseUrl = `http://127.0.0.1:${port}`;
   const nextBin = path.join(root, "node_modules", "next", "dist", "bin", "next");
-  const child = spawn(process.execPath, [nextBin, "start", "-H", "127.0.0.1", "-p", String(port)], {
+  const serverMode = process.env.FAOLLA_ENTERPRISE_E2E_SERVER_MODE === "dev"
+    ? "dev"
+    : "start";
+  const child = spawn(process.execPath, [
+    nextBin,
+    serverMode,
+    ...(serverMode === "dev" ? ["--webpack"] : []),
+    "-H",
+    "127.0.0.1",
+    "-p",
+    String(port),
+  ], {
     cwd: root,
     env: {
       ...process.env,
@@ -1071,15 +1205,20 @@ async function startServer() {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let serverError = "";
+  let serverOutput = "";
+  child.stdout.on("data", (chunk) => {
+    serverOutput = `${serverOutput}${String(chunk)}`.slice(-8000);
+  });
   child.stderr.on("data", (chunk) => {
     serverError = `${serverError}${String(chunk)}`.slice(-4000);
+    serverOutput = `${serverOutput}${String(chunk)}`.slice(-8000);
   });
   child.on("exit", (code) => {
     if (code && !serverError) serverError = `next_start_exit_${code}`;
   });
   try {
     await waitForServer(baseUrl);
-    return { baseUrl, child };
+    return { baseUrl, child, readServerOutput: () => serverOutput };
   } catch (error) {
     child.kill();
     throw new Error(
@@ -1136,7 +1275,7 @@ async function run() {
       },
     ],
   ];
-  const { baseUrl, child } = await startServer();
+  const { baseUrl, child, readServerOutput } = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
     const ownerContextA = await browser.newContext({
@@ -1268,6 +1407,25 @@ async function run() {
     await pageA.locator(`#employee-profile-editor-${secondEmployeeId}`).waitFor();
     await firstProfileEditor.waitFor({ state: "hidden" });
     await secondEmployeeRow.getByRole("button", { name: "收起资料", exact: true }).click();
+
+    state.snapshot.tasks[0].assigneeIds = [employeeId, secondEmployeeId];
+    await firstEmployeeRow
+      .getByRole("button", { name: "查看当前工作", exact: true })
+      .click();
+    const currentWorkDrawer = pageA.getByRole("dialog", {
+      name: "浏览器测试员工",
+    });
+    await currentWorkDrawer.getByText("不是绩效考核", { exact: false }).waitFor();
+    await currentWorkDrawer.getByText("1 项由多人共同负责", { exact: false }).waitFor();
+    assert(
+      (statsA.currentOperationsRequests || []).some(
+        (request) => request.siteId === siteId && request.employeeId === employeeId,
+      ),
+      "employee current-work drawer did not issue a site- and employee-scoped request",
+    );
+    await currentWorkDrawer.getByRole("button", { name: "关闭", exact: true }).click();
+    await currentWorkDrawer.waitFor({ state: "hidden" });
+    state.snapshot.tasks[0].assigneeIds = [];
 
     const publishedWorkflowTitle = "客户到店接待流程";
     const publishedStepTitle = "确认预约信息";
@@ -2702,6 +2860,10 @@ async function run() {
         ],
       }) + "\n",
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const serverOutput = readServerOutput().trim();
+    throw new Error(serverOutput ? `${message}\n${serverOutput}` : message);
   } finally {
     await browser.close().catch(() => undefined);
     child?.kill();

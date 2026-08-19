@@ -4,26 +4,31 @@ import path from "node:path";
 import test from "node:test";
 
 const root = process.cwd();
-const executionSource = readFileSync(
+
+function normalizeSource(source) {
+  return source.replace(/\r\n?/g, "\n");
+}
+
+const executionSource = normalizeSource(readFileSync(
   path.join(root, "src", "app", "enterprise", "[siteId]", "EnterpriseWorkflowExecutionPanel.tsx"),
   "utf8",
-);
-const governanceSource = readFileSync(
+));
+const governanceSource = normalizeSource(readFileSync(
   path.join(root, "src", "app", "enterprise", "[siteId]", "EnterpriseWorkflowGovernance.tsx"),
   "utf8",
-);
-const workflowSource = readFileSync(
+));
+const workflowSource = normalizeSource(readFileSync(
   path.join(root, "src", "app", "enterprise", "[siteId]", "EnterpriseWorkflowsPanel.tsx"),
   "utf8",
-);
-const managerSource = readFileSync(
+));
+const managerSource = normalizeSource(readFileSync(
   path.join(root, "src", "components", "admin", "MerchantEnterpriseManager.tsx"),
   "utf8",
-);
-const taskBindingSource = readFileSync(
+));
+const taskBindingSource = normalizeSource(readFileSync(
   path.join(root, "src", "components", "admin", "MerchantTaskWorkflowBindingCard.tsx"),
   "utf8",
-);
+));
 
 test("published workflow details expose employee execution and manager statistics", () => {
   assert.match(workflowSource, /<EnterpriseWorkflowExecutionPanel[\s\S]{0,400}workflow=\{selectedWorkflow\}/);

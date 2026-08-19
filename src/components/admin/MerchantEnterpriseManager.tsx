@@ -31,7 +31,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  buildMerchantEnterpriseTaskOverview,
   buildMerchantTaskEditChanges,
   canMerchantEnterpriseEmployeeCoverBoards,
   canCreateMerchantEnterpriseBoards,
@@ -77,7 +76,13 @@ import {
   planMerchantTaskReorder,
   sortMerchantTaskOrderItems,
 } from "@/lib/merchantTaskOrdering";
-import { buildMerchantEnterpriseOperationsOverview } from "@/lib/merchantEnterpriseOperationsOverview";
+import {
+  buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint,
+  buildMerchantEnterpriseCurrentOperationsRequestKey,
+  normalizeMerchantEnterpriseCurrentOperations,
+  type MerchantEnterpriseCurrentOperations,
+  type MerchantEnterpriseCurrentOperationsPriorityTask,
+} from "@/lib/merchantEnterpriseCurrentOperations";
 import MerchantEnterpriseNotificationCenter from "@/components/admin/MerchantEnterpriseNotificationCenter";
 import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAuditLog";
 import MerchantEnterpriseTodoCenter from "@/components/admin/MerchantEnterpriseTodoCenter";
@@ -169,6 +174,20 @@ type LinkedOrderSummaryPayload = {
   ok?: boolean;
   error?: string;
   summary?: MerchantLinkedOrderSummary;
+};
+
+type CurrentOperationsViewState = {
+  requestKey: string;
+  status: "idle" | "loading" | "ready" | "error";
+  data: MerchantEnterpriseCurrentOperations | null;
+  error: string;
+};
+
+const EMPTY_CURRENT_OPERATIONS_STATE: CurrentOperationsViewState = {
+  requestKey: "",
+  status: "idle",
+  data: null,
+  error: "",
 };
 
 type TaskChecklistItemChange =
@@ -2011,6 +2030,254 @@ function TaskEditor({
   );
 }
 
+function EmployeeCurrentWorkDrawer({
+  employee,
+  roleName,
+  state,
+  onRetry,
+  onOpenTask,
+  onClose,
+}: {
+  employee: MerchantEnterpriseEmployee;
+  roleName: string;
+  state: CurrentOperationsViewState;
+  onRetry: () => void;
+  onOpenTask: (task: MerchantEnterpriseCurrentOperationsPriorityTask) => void;
+  onClose: () => void;
+}) {
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const previousOverflow = document.body.style.overflow;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const drawer = drawerRef.current;
+      if (!drawer) return;
+      const focusable = Array.from(
+        drawer.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        return;
+      }
+      const activeElement = document.activeElement;
+      if (!drawer.contains(activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
+
+  const data = state.data;
+  const sharedAssignmentTaskCount = data?.summary.sharedAssignmentTaskCount ?? null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[150] flex justify-end bg-slate-950/55 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside
+        ref={drawerRef}
+        id="enterprise-employee-current-work-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="enterprise-employee-current-work-title"
+        aria-describedby="enterprise-employee-current-work-boundary"
+        className="flex h-[100dvh] w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl"
+      >
+        <header className="shrink-0 border-b border-slate-200 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sm:px-6 sm:pt-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-600">
+                员工当前工作
+              </div>
+              <h2
+                id="enterprise-employee-current-work-title"
+                className="mt-1 !text-xl !font-bold !text-slate-950"
+              >
+                {employee.displayName}
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {roleName || "未分配角色"} · {employee.status === "active" ? "在职" : employee.status === "disabled" ? "已停用" : "待接受邀请"}
+              </p>
+            </div>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="min-h-11 shrink-0 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          </div>
+          <p
+            id="enterprise-employee-current-work-boundary"
+            className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900"
+          >
+            这是截至当前查询时点的任务库存，用于工作协调，不是绩效考核。多人负责的同一任务会出现在每位相关员工的视图中，因此不同员工之间、员工与企业之间的数字都不可相加。
+          </p>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          {state.status === "loading" ? (
+            <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600" role="status">
+              {data ? "正在更新当前工作…" : "正在读取当前工作…"}
+            </div>
+          ) : null}
+          {state.status === "error" ? (
+            <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3" role="alert">
+              <p className="text-sm leading-6 text-rose-700">{state.error}</p>
+              <button
+                type="button"
+                className="mt-3 min-h-11 rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white"
+                onClick={onRetry}
+              >
+                重新读取
+              </button>
+            </div>
+          ) : null}
+
+          {!data && state.status === "loading" ? (
+            <div className="animate-pulse space-y-4" aria-hidden="true">
+              <div className="grid grid-cols-2 gap-3">
+                {Array.from({ length: 4 }, (_, index) => (
+                  <div key={index} className="h-24 rounded-2xl bg-slate-100" />
+                ))}
+              </div>
+              <div className="h-44 rounded-2xl bg-slate-100" />
+            </div>
+          ) : null}
+
+          {data ? (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                <span>统计时点：{formatDateTime(data.asOf)}</span>
+                {data.scopeRestricted ? (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
+                    仅含当前账号有权查看的看板
+                  </span>
+                ) : null}
+              </div>
+
+              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: "当前未完成", value: data.summary.openTaskCount, tone: "text-blue-700" },
+                  { label: "当前逾期", value: data.summary.overdueTaskCount, tone: "text-rose-700" },
+                  { label: "未来 7 天内到期", value: data.summary.dueSoonTaskCount, tone: "text-amber-700" },
+                  { label: "当前涉及看板", value: data.summary.involvedBoardCount, tone: "text-violet-700" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <dt className="text-xs leading-5 text-slate-500">{item.label}</dt>
+                    <dd className={`mt-2 text-2xl font-bold ${item.tone}`}>{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
+
+              {sharedAssignmentTaskCount !== null ? (
+                <p className="rounded-2xl bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-800">
+                  当前未完成任务中有 {sharedAssignmentTaskCount} 项由多人共同负责；该数字已包含在“当前未完成”中，不能再次相加。
+                </p>
+              ) : null}
+
+              <section className="rounded-2xl border border-slate-200 p-4">
+                <h3 className="font-semibold text-slate-950">当前优先任务</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  最多显示 6 项，优先展示逾期、即将到期和最近更新的任务。
+                </p>
+                <div className="mt-3 divide-y divide-slate-100">
+                  {data.priorityTasks.map((task) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                      aria-label={`打开任务：${task.title}，看板：${task.boardName}，工作列：${task.columnName}`}
+                      onClick={() => onOpenTask(task)}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-slate-900">{task.title}</span>
+                        <span className="mt-1 block text-xs text-slate-500">
+                          {task.boardName} · {task.columnName}
+                          {task.dueAt ? ` · 截止 ${formatDate(task.dueAt)}` : ""}
+                          {task.assigneeCount > 1 ? ` · ${task.assigneeCount} 人协作` : ""}
+                        </span>
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_META[task.priority].className}`}>
+                        {PRIORITY_META[task.priority].label}
+                      </span>
+                    </button>
+                  ))}
+                  {data.priorityTasks.length === 0 ? (
+                    <p className="py-7 text-center text-sm text-slate-500">当前没有未完成任务。</p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 p-4">
+                <h3 className="font-semibold text-slate-950">按看板查看当前任务</h3>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {data.boards.map((board) => (
+                    <div key={board.boardId} className="rounded-2xl bg-slate-50 px-4 py-3">
+                      <div className="truncate text-sm font-semibold text-slate-900">{board.boardName}</div>
+                      <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div><dt className="text-[11px] text-slate-500">未完成</dt><dd className="mt-1 font-bold text-blue-700">{board.openTaskCount}</dd></div>
+                        <div><dt className="text-[11px] text-slate-500">逾期</dt><dd className="mt-1 font-bold text-rose-700">{board.overdueTaskCount}</dd></div>
+                        <div><dt className="text-[11px] text-slate-500">7 日内</dt><dd className="mt-1 font-bold text-amber-700">{board.dueSoonTaskCount}</dd></div>
+                      </dl>
+                    </div>
+                  ))}
+                </div>
+                {data.boards.length === 0 ? (
+                  <p className="mt-3 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">当前没有涉及的启用看板。</p>
+                ) : null}
+                {data.boardsTruncated ? (
+                  <p className="mt-3 text-xs leading-5 text-amber-700" role="status">
+                    共有 {data.boardSummaryTotalCount} 个看板，本抽屉仅显示当前风险和未完成任务较多的前 {data.boards.length} 个；顶部统计仍为完整授权范围。
+                  </p>
+                ) : null}
+              </section>
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function EmployeeOffboardingDialog({
   employee,
   openTaskCount,
@@ -3419,12 +3686,19 @@ function MerchantEnterpriseManagerContent({
     resolvedCollaborationRefreshIntervalMs * MERCHANT_ENTERPRISE_STALE_INTERVAL_MULTIPLIER;
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
+  const actorAuthorizationFingerprint = actor
+    ? buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(actor)
+    : "";
+  const actorCanViewTasks = can(actor, "tasks.view");
+  const actorCanViewEmployees = can(actor, "employees.view");
   const [snapshot, setSnapshot] = useState<MerchantEnterpriseSnapshot>(EMPTY_SNAPSHOT);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
   const [loading, setLoading] = useState(true);
   const [overviewRefreshing, setOverviewRefreshing] = useState(false);
+  const [overviewCurrentOperations, setOverviewCurrentOperations] =
+    useState<CurrentOperationsViewState>(EMPTY_CURRENT_OPERATIONS_STATE);
   const [lastSyncedAtMs, setLastSyncedAtMs] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
@@ -3433,6 +3707,17 @@ function MerchantEnterpriseManagerContent({
   const overviewRequestSequenceRef = useRef(0);
   const overviewAbortControllerRef = useRef<AbortController | null>(null);
   const silentOverviewRequestRef = useRef<AbortController | null>(null);
+  const currentOperationsSiteRef = useRef(siteId);
+  currentOperationsSiteRef.current = siteId;
+  const currentOperationsActorAuthorizationFingerprintRef = useRef(
+    actorAuthorizationFingerprint,
+  );
+  currentOperationsActorAuthorizationFingerprintRef.current =
+    actorAuthorizationFingerprint;
+  const overviewCurrentOperationsGenerationRef = useRef(0);
+  const overviewCurrentOperationsAbortRef = useRef<AbortController | null>(null);
+  const employeeCurrentWorkGenerationRef = useRef(0);
+  const employeeCurrentWorkAbortRef = useRef<AbortController | null>(null);
   const canAutoRefreshOnFocusRef = useRef(false);
   const lastSyncedAtRef = useRef(0);
   const defaultTaskAssigneeScopeRef = useRef("");
@@ -3491,6 +3776,11 @@ function MerchantEnterpriseManagerContent({
   const [employeeName, setEmployeeName] = useState("");
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeeRoleId, setEmployeeRoleId] = useState("");
+  const [currentWorkEmployeeId, setCurrentWorkEmployeeId] = useState("");
+  const [employeeCurrentWork, setEmployeeCurrentWork] =
+    useState<CurrentOperationsViewState>(EMPTY_CURRENT_OPERATIONS_STATE);
+  const currentWorkEmployeeIdRef = useRef(currentWorkEmployeeId);
+  currentWorkEmployeeIdRef.current = currentWorkEmployeeId;
   const [managedEmployeeProfileId, setManagedEmployeeProfileId] = useState("");
   const [managedEmployeeProfileName, setManagedEmployeeProfileName] = useState("");
   const [managedEmployeeProfileVersion, setManagedEmployeeProfileVersion] = useState(0);
@@ -3582,6 +3872,185 @@ function MerchantEnterpriseManagerContent({
       }
     },
     [accessToken],
+  );
+
+  const fetchCurrentOperations = useCallback(
+    async (
+      input: {
+        employeeId: string | null;
+        expectedScope: "enterprise" | "employee";
+      },
+      signal: AbortSignal,
+    ) => {
+      const params = new URLSearchParams({ siteId });
+      if (input.employeeId) params.set("employeeId", input.employeeId);
+      const response = await apiFetch(
+        `/api/merchant-enterprise/current-operations?${params.toString()}`,
+        { signal },
+      );
+      const rawPayload = await response.json().catch(() => null);
+      const payload = normalizeMerchantEnterpriseCurrentOperations(rawPayload);
+      if (!response.ok || !payload) {
+        throw new Error(
+          readApiError(rawPayload, "当前运营数据读取失败，请稍后重试。"),
+        );
+      }
+      if (
+        payload.scope !== input.expectedScope ||
+        payload.employeeId !== input.employeeId
+      ) {
+        throw new Error("当前运营数据范围不一致，请重新读取。");
+      }
+      return payload;
+    },
+    [apiFetch, siteId],
+  );
+
+  const loadOverviewCurrentOperations = useCallback(
+    async (requestActor: MerchantEnterpriseActor) => {
+      const requestSiteId = siteId;
+      const requestActorAuthorizationFingerprint =
+        buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(requestActor);
+      const employeeId = requestActor.type === "employee" ? requestActor.id : null;
+      const expectedScope = employeeId ? "employee" as const : "enterprise" as const;
+      const requestKey = buildMerchantEnterpriseCurrentOperationsRequestKey({
+        siteId: requestSiteId,
+        actorAuthorizationFingerprint: requestActorAuthorizationFingerprint,
+        scope: expectedScope,
+        employeeId,
+      });
+      const generation = overviewCurrentOperationsGenerationRef.current + 1;
+      overviewCurrentOperationsGenerationRef.current = generation;
+      overviewCurrentOperationsAbortRef.current?.abort();
+      const controller = new AbortController();
+      overviewCurrentOperationsAbortRef.current = controller;
+      setOverviewCurrentOperations((current) => ({
+        requestKey,
+        status: "loading",
+        data: current.requestKey === requestKey ? current.data : null,
+        error: "",
+      }));
+      try {
+        const payload = await fetchCurrentOperations(
+          { employeeId, expectedScope },
+          controller.signal,
+        );
+        if (
+          controller.signal.aborted ||
+          generation !== overviewCurrentOperationsGenerationRef.current ||
+          currentOperationsSiteRef.current !== requestSiteId ||
+          currentOperationsActorAuthorizationFingerprintRef.current !==
+            requestActorAuthorizationFingerprint
+        ) {
+          return false;
+        }
+        setOverviewCurrentOperations({
+          requestKey,
+          status: "ready",
+          data: payload,
+          error: "",
+        });
+        return true;
+      } catch (error) {
+        if (
+          controller.signal.aborted ||
+          generation !== overviewCurrentOperationsGenerationRef.current ||
+          currentOperationsSiteRef.current !== requestSiteId ||
+          currentOperationsActorAuthorizationFingerprintRef.current !==
+            requestActorAuthorizationFingerprint
+        ) {
+          return false;
+        }
+        setOverviewCurrentOperations((current) => ({
+          requestKey,
+          status: "error",
+          data: current.requestKey === requestKey ? current.data : null,
+          error:
+            error instanceof Error
+              ? error.message
+              : "当前运营数据读取失败，请稍后重试。",
+        }));
+        return false;
+      } finally {
+        if (overviewCurrentOperationsAbortRef.current === controller) {
+          overviewCurrentOperationsAbortRef.current = null;
+        }
+      }
+    },
+    [fetchCurrentOperations, siteId],
+  );
+
+  const loadEmployeeCurrentWork = useCallback(
+    async (employeeId: string) => {
+      const requestSiteId = siteId;
+      const requestActorAuthorizationFingerprint = actorAuthorizationFingerprint;
+      const requestKey = buildMerchantEnterpriseCurrentOperationsRequestKey({
+        siteId: requestSiteId,
+        actorAuthorizationFingerprint: requestActorAuthorizationFingerprint,
+        scope: "employee",
+        employeeId,
+      });
+      const generation = employeeCurrentWorkGenerationRef.current + 1;
+      employeeCurrentWorkGenerationRef.current = generation;
+      employeeCurrentWorkAbortRef.current?.abort();
+      const controller = new AbortController();
+      employeeCurrentWorkAbortRef.current = controller;
+      setEmployeeCurrentWork((current) => ({
+        requestKey,
+        status: "loading",
+        data: current.requestKey === requestKey ? current.data : null,
+        error: "",
+      }));
+      try {
+        const payload = await fetchCurrentOperations(
+          { employeeId, expectedScope: "employee" },
+          controller.signal,
+        );
+        if (
+          controller.signal.aborted ||
+          generation !== employeeCurrentWorkGenerationRef.current ||
+          currentOperationsSiteRef.current !== requestSiteId ||
+          currentOperationsActorAuthorizationFingerprintRef.current !==
+            requestActorAuthorizationFingerprint ||
+          currentWorkEmployeeIdRef.current !== employeeId
+        ) {
+          return false;
+        }
+        setEmployeeCurrentWork({
+          requestKey,
+          status: "ready",
+          data: payload,
+          error: "",
+        });
+        return true;
+      } catch (error) {
+        if (
+          controller.signal.aborted ||
+          generation !== employeeCurrentWorkGenerationRef.current ||
+          currentOperationsSiteRef.current !== requestSiteId ||
+          currentOperationsActorAuthorizationFingerprintRef.current !==
+            requestActorAuthorizationFingerprint ||
+          currentWorkEmployeeIdRef.current !== employeeId
+        ) {
+          return false;
+        }
+        setEmployeeCurrentWork((current) => ({
+          requestKey,
+          status: "error",
+          data: current.requestKey === requestKey ? current.data : null,
+          error:
+            error instanceof Error
+              ? error.message
+              : "员工当前工作读取失败，请稍后重试。",
+        }));
+        return false;
+      } finally {
+        if (employeeCurrentWorkAbortRef.current === controller) {
+          employeeCurrentWorkAbortRef.current = null;
+        }
+      }
+    },
+    [actorAuthorizationFingerprint, fetchCurrentOperations, siteId],
   );
 
   const loadTaskEvents = useCallback(
@@ -3817,8 +4286,59 @@ function MerchantEnterpriseManagerContent({
       overviewAbortControllerRef.current?.abort();
       overviewAbortControllerRef.current = null;
       silentOverviewRequestRef.current = null;
+      overviewCurrentOperationsGenerationRef.current += 1;
+      overviewCurrentOperationsAbortRef.current?.abort();
+      overviewCurrentOperationsAbortRef.current = null;
+      employeeCurrentWorkGenerationRef.current += 1;
+      employeeCurrentWorkAbortRef.current?.abort();
+      employeeCurrentWorkAbortRef.current = null;
     };
   }, [loadOverview]);
+
+  useEffect(() => {
+    if (
+      !actor ||
+      needsBootstrap ||
+      lastSyncedAtMs <= 0 ||
+      !actorCanViewTasks
+    ) {
+      overviewCurrentOperationsGenerationRef.current += 1;
+      overviewCurrentOperationsAbortRef.current?.abort();
+      overviewCurrentOperationsAbortRef.current = null;
+      setOverviewCurrentOperations(EMPTY_CURRENT_OPERATIONS_STATE);
+      return;
+    }
+    void loadOverviewCurrentOperations(actor);
+  }, [
+    actor,
+    actorAuthorizationFingerprint,
+    actorCanViewTasks,
+    lastSyncedAtMs,
+    loadOverviewCurrentOperations,
+    needsBootstrap,
+  ]);
+
+  useEffect(() => {
+    if (!currentWorkEmployeeId) return;
+    employeeCurrentWorkGenerationRef.current += 1;
+    employeeCurrentWorkAbortRef.current?.abort();
+    employeeCurrentWorkAbortRef.current = null;
+    setEmployeeCurrentWork(EMPTY_CURRENT_OPERATIONS_STATE);
+    if (!actor || !actorCanViewTasks || !actorCanViewEmployees) {
+      currentWorkEmployeeIdRef.current = "";
+      setCurrentWorkEmployeeId("");
+      return;
+    }
+    currentWorkEmployeeIdRef.current = currentWorkEmployeeId;
+    void loadEmployeeCurrentWork(currentWorkEmployeeId);
+  }, [
+    actor,
+    actorAuthorizationFingerprint,
+    actorCanViewEmployees,
+    actorCanViewTasks,
+    currentWorkEmployeeId,
+    loadEmployeeCurrentWork,
+  ]);
 
   useEffect(() => {
     if (
@@ -3919,6 +4439,7 @@ function MerchantEnterpriseManagerContent({
           !taskComposerHasDraft) ||
         (tab === "employees" &&
           !employeeInviteHasDraft &&
+          !currentWorkEmployeeId &&
           !managedEmployeeProfileId &&
           !managedInvitationEmployeeId) ||
         (tab === "roles" && !roleComposerHasDraft && dirtyRoleIds.size === 0)),
@@ -3985,6 +4506,14 @@ function MerchantEnterpriseManagerContent({
         setDraggingTaskId("");
         setShowBoardSettings(false);
         setMobileTaskComposerOpen(false);
+      }
+      if (view !== "employees") {
+        currentWorkEmployeeIdRef.current = "";
+        employeeCurrentWorkGenerationRef.current += 1;
+        employeeCurrentWorkAbortRef.current?.abort();
+        employeeCurrentWorkAbortRef.current = null;
+        setCurrentWorkEmployeeId("");
+        setEmployeeCurrentWork(EMPTY_CURRENT_OPERATIONS_STATE);
       }
       return true;
     },
@@ -4327,40 +4856,26 @@ function MerchantEnterpriseManagerContent({
   ]);
   const boardTasks = snapshot.tasks.filter((task) => task.boardId === activeBoard?.id);
   const visibleTasks = filterMerchantTasks(boardTasks, { archive: "active" });
-  const overviewTaskSummary = useMemo(
-    () =>
-      buildMerchantEnterpriseTaskOverview(
-        {
-          boards: snapshot.boards,
-          tasks: snapshot.tasks,
-          assigneeId:
-            actor?.type === "employee"
-              ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor)
-              : undefined,
-        },
-        overviewNowMs,
-      ),
-    [actor, overviewNowMs, snapshot.boards, snapshot.tasks],
-  );
-  const overviewOperationsSummary = useMemo(
-    () =>
-      buildMerchantEnterpriseOperationsOverview(
-        {
-          boards: snapshot.boards,
-          tasks: snapshot.tasks,
-          assigneeId:
-            actor?.type === "employee"
-              ? getMerchantEnterpriseDefaultTaskAssigneeFilter(actor)
-              : undefined,
-        },
-        overviewNowMs,
-      ),
-    [actor, overviewNowMs, snapshot.boards, snapshot.tasks],
-  );
-  const overviewPriorityTasks = useMemo(
-    () => overviewTaskSummary.recentTasks.filter((task) => !task.completedAt),
-    [overviewTaskSummary.recentTasks],
-  );
+  const overviewExpectedEmployeeId = actor?.type === "employee" ? actor.id : null;
+  const overviewExpectedScope = overviewExpectedEmployeeId ? "employee" as const : "enterprise" as const;
+  const overviewExpectedRequestKey = actor
+    ? buildMerchantEnterpriseCurrentOperationsRequestKey({
+        siteId,
+        actorAuthorizationFingerprint,
+        scope: overviewExpectedScope,
+        employeeId: overviewExpectedEmployeeId,
+      })
+    : "";
+  const visibleOverviewCurrentOperations =
+    overviewCurrentOperations.requestKey === overviewExpectedRequestKey
+      ? overviewCurrentOperations
+      : {
+          requestKey: overviewExpectedRequestKey,
+          status: "loading" as const,
+          data: null,
+          error: "",
+        };
+  const overviewOperationsData = visibleOverviewCurrentOperations.data;
   const filteredTasks = filterMerchantTasks(boardTasks, {
     archive: taskArchiveView,
     query: taskQuery,
@@ -4434,6 +4949,28 @@ function MerchantEnterpriseManagerContent({
       });
     });
   }
+
+  function openEmployeeCurrentWork(employee: MerchantEnterpriseEmployee) {
+    currentWorkEmployeeIdRef.current = employee.id;
+    setCurrentWorkEmployeeId(employee.id);
+    setEmployeeCurrentWork(EMPTY_CURRENT_OPERATIONS_STATE);
+  }
+
+  function closeEmployeeCurrentWork() {
+    currentWorkEmployeeIdRef.current = "";
+    employeeCurrentWorkGenerationRef.current += 1;
+    employeeCurrentWorkAbortRef.current?.abort();
+    employeeCurrentWorkAbortRef.current = null;
+    setCurrentWorkEmployeeId("");
+    setEmployeeCurrentWork(EMPTY_CURRENT_OPERATIONS_STATE);
+  }
+
+  function openTaskFromEmployeeCurrentWork(
+    task: MerchantEnterpriseCurrentOperationsPriorityTask,
+  ) {
+    closeEmployeeCurrentWork();
+    window.requestAnimationFrame(() => openTaskById(task.id));
+  }
   const taskDragEnabled =
     taskArchiveView === "active" &&
     can(actor, "tasks.update") &&
@@ -4462,6 +4999,26 @@ function MerchantEnterpriseManagerContent({
     () => new Map(snapshot.roles.map((role) => [role.id, role] as const)),
     [snapshot.roles],
   );
+  const currentWorkEmployee = currentWorkEmployeeId
+    ? snapshot.employees.find((employee) => employee.id === currentWorkEmployeeId) ?? null
+    : null;
+  const employeeCurrentWorkExpectedRequestKey = currentWorkEmployee
+    ? buildMerchantEnterpriseCurrentOperationsRequestKey({
+        siteId,
+        actorAuthorizationFingerprint,
+        scope: "employee",
+        employeeId: currentWorkEmployee.id,
+      })
+    : "";
+  const visibleEmployeeCurrentWork =
+    employeeCurrentWork.requestKey === employeeCurrentWorkExpectedRequestKey
+      ? employeeCurrentWork
+      : {
+          requestKey: employeeCurrentWorkExpectedRequestKey,
+          status: "loading" as const,
+          data: null,
+          error: "",
+        };
   const offboardingEmployee = offboardingEmployeeId
     ? snapshot.employees.find(
         (employee) => employee.id === offboardingEmployeeId && employee.status === "active",
@@ -5729,157 +6286,167 @@ function MerchantEnterpriseManagerContent({
             <section className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
               <strong>企业／看板当前运营概览（非绩效考核）</strong>
               <span className="ml-1">
-                这里只反映当前任务库存与截止风险，不用于评价员工产出。任务按唯一任务计数，多人负责不会让企业总数重复。
+                这里只反映服务端在查询时点看到的当前任务库存与截止风险，不用于评价员工产出。企业总数按唯一任务计数；员工视图中的多人协作任务不可跨员工相加。
               </span>
+              {overviewOperationsData ? (
+                <span className="ml-1 text-blue-700">
+                  统计时点：{formatDateTime(overviewOperationsData.asOf)}。
+                </span>
+              ) : null}
             </section>
-            <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                {
-                  label: actor.type === "employee" ? "当前分派给我的未完成" : "当前未完成",
-                  value: can(actor, "tasks.view")
-                    ? overviewOperationsSummary.openTaskCount
-                    : "—",
-                  tone: "text-blue-700",
-                },
-                {
-                  label: actor.type === "employee" ? "当前分派给我的逾期" : "当前逾期",
-                  value: can(actor, "tasks.view")
-                    ? overviewOperationsSummary.overdueTaskCount
-                    : "—",
-                  tone: "text-rose-700",
-                },
-                {
-                  label: "未来 7 天内到期",
-                  value: can(actor, "tasks.view")
-                    ? overviewOperationsSummary.dueSoonTaskCount
-                    : "—",
-                  tone: "text-amber-700",
-                },
-                {
-                  label: actor.type === "employee" ? "当前涉及看板" : "当前未分派",
-                  value: can(actor, "tasks.view")
-                    ? actor.type === "employee"
-                      ? overviewOperationsSummary.involvedBoardCount
-                      : overviewOperationsSummary.unassignedTaskCount
-                    : "—",
-                  tone: "text-violet-700",
-                },
-              ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="text-sm text-slate-500">{item.label}</div>
-                  <div className={`mt-3 text-3xl font-bold ${item.tone}`}>{item.value}</div>
-                </div>
-              ))}
-            </section>
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-950">
-                    {actor.type === "employee" ? "我的当前优先任务" : "当前优先任务"}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {actor.type === "employee"
-                      ? "汇总启用看板中当前分派给我的未完成工作，优先显示已逾期、即将到期和最近更新的任务。"
-                      : "汇总全部启用看板中的当前未完成工作，优先显示已逾期、即将到期和最近更新的任务。"}
+            {!can(actor, "tasks.view") ? (
+              <section className="rounded-3xl border border-slate-200 bg-white px-5 py-10 text-center text-sm text-slate-500 shadow-sm">
+                当前角色没有查看任务的权限，因此不读取当前运营数据。
+              </section>
+            ) : null}
+            {can(actor, "tasks.view") &&
+            visibleOverviewCurrentOperations.status === "loading" &&
+            !overviewOperationsData ? (
+              <section className="grid animate-pulse gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="正在读取当前运营数据">
+                {Array.from({ length: 4 }, (_, index) => (
+                  <div key={index} className="h-28 rounded-2xl bg-white shadow-sm" />
+                ))}
+              </section>
+            ) : null}
+            {can(actor, "tasks.view") &&
+            visibleOverviewCurrentOperations.status === "error" ? (
+              <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3" role={overviewOperationsData ? "status" : "alert"}>
+                <p className="text-sm leading-6 text-rose-700">{visibleOverviewCurrentOperations.error}</p>
+                <button
+                  type="button"
+                  className="mt-3 min-h-11 rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white"
+                  onClick={() => void loadOverviewCurrentOperations(actor)}
+                >
+                  重新读取运营数据
+                </button>
+              </section>
+            ) : null}
+            {overviewOperationsData ? (
+              <>
+                {visibleOverviewCurrentOperations.status === "loading" ? (
+                  <p className="rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-600" role="status">
+                    正在更新当前运营数据；下方暂时显示上一查询时点的结果。
                   </p>
-                </div>
-                {can(actor, "tasks.view") ? (
-                  <button type="button" className="text-sm font-semibold text-blue-700" onClick={openTaskBoardFromOverview}>
-                    {actor.type === "employee" ? "查看我的任务" : "查看看板"}
-                  </button>
                 ) : null}
-              </div>
-              <div className="mt-4 divide-y divide-slate-100">
-                {!can(actor, "tasks.view") ? (
-                  <div className="py-8 text-center text-sm text-slate-500">
-                    当前角色没有查看任务的权限。
-                  </div>
-                ) : null}
-                {can(actor, "tasks.view")
-                  ? overviewPriorityTasks.slice(0, 6).map((task) => {
-                      const boardName = snapshot.boards.find((board) => board.id === task.boardId)?.name;
-                      const columnName = snapshot.columns.find((column) => column.id === task.columnId)?.name;
-                      return (
-                        <button
-                          key={task.id}
-                          type="button"
-                          className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                          aria-label={`打开任务：${task.title}，看板：${boardName || "未知看板"}，工作列：${columnName || "未分类"}${
-                            task.dueAt ? `，截止：${formatDate(task.dueAt)}` : ""
-                          }`}
-                          onClick={() => openTaskFromOverview(task)}
-                        >
-                          <span className="min-w-0">
-                            <span className="block font-medium text-slate-900">{task.title}</span>
-                            <span className="mt-1 block text-xs text-slate-500">
-                              {boardName ? `${boardName} · ` : ""}
-                              {columnName || "未分类"}
-                              {task.dueAt ? ` · 截止 ${formatDate(task.dueAt)}` : ""}
-                            </span>
-                          </span>
-                          <span className={`rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_META[task.priority].className}`}>
-                            {PRIORITY_META[task.priority].label}
-                          </span>
-                        </button>
-                      );
-                    })
-                  : null}
-                {can(actor, "tasks.view") && overviewPriorityTasks.length === 0 ? (
-                  <div className="py-8 text-center text-sm text-slate-500">
-                    {actor.type === "employee"
-                      ? "目前没有分派给你的未完成任务。"
-                      : "还没有未完成任务，可以从任务看板创建第一项工作。"}
-                  </div>
-                ) : null}
-              </div>
-            </section>
-            {can(actor, "tasks.view") ? (
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-950">按看板查看当前任务</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
-                    {actor.type === "employee"
-                      ? "只统计当前分派给你的未完成任务；看板之间不做员工横向比较。"
-                      : "按启用看板汇总当前未完成、逾期及未来 7 天内到期任务。"}
+                {overviewOperationsData.scopeRestricted ? (
+                  <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                    当前结果仅包含此账号有权查看的看板，不代表企业全部任务。
                   </p>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {overviewOperationsSummary.boardSummaries.slice(0, 12).map((board) => (
-                    <div
-                      key={board.boardId}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
-                    >
-                      <div className="truncate text-sm font-semibold text-slate-900">
-                        {board.boardName}
-                      </div>
-                      <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
-                        <div>
-                          <dt className="text-[11px] text-slate-500">未完成</dt>
-                          <dd className="mt-1 text-lg font-bold text-blue-700">{board.openTaskCount}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-[11px] text-slate-500">逾期</dt>
-                          <dd className="mt-1 text-lg font-bold text-rose-700">{board.overdueTaskCount}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-[11px] text-slate-500">7 日内</dt>
-                          <dd className="mt-1 text-lg font-bold text-amber-700">{board.dueSoonTaskCount}</dd>
-                        </div>
-                      </dl>
+                ) : null}
+                <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {[
+                    {
+                      label: actor.type === "employee" ? "当前分派给我的未完成" : "当前未完成",
+                      value: overviewOperationsData.summary.openTaskCount,
+                      tone: "text-blue-700",
+                    },
+                    {
+                      label: actor.type === "employee" ? "当前分派给我的逾期" : "当前逾期",
+                      value: overviewOperationsData.summary.overdueTaskCount,
+                      tone: "text-rose-700",
+                    },
+                    {
+                      label: "未来 7 天内到期",
+                      value: overviewOperationsData.summary.dueSoonTaskCount,
+                      tone: "text-amber-700",
+                    },
+                    {
+                      label: actor.type === "employee" ? "当前涉及看板" : "当前未分派",
+                      value: actor.type === "employee"
+                        ? overviewOperationsData.summary.involvedBoardCount
+                        : overviewOperationsData.summary.unassignedTaskCount ?? 0,
+                      tone: "text-violet-700",
+                    },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="text-sm text-slate-500">{item.label}</div>
+                      <div className={`mt-3 text-3xl font-bold ${item.tone}`}>{item.value}</div>
                     </div>
                   ))}
-                </div>
-                {overviewOperationsSummary.boardSummaries.length === 0 ? (
-                  <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                    当前没有可查看的启用看板。
+                </section>
+                {overviewOperationsData.summary.sharedAssignmentTaskCount !== null ? (
+                  <p className="rounded-2xl bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-800">
+                    当前未完成任务中有 {overviewOperationsData.summary.sharedAssignmentTaskCount} 项由多人共同负责；该数字已包含在未完成任务中，也不能与其他员工的数字相加。
                   </p>
                 ) : null}
-                {overviewOperationsSummary.boardSummaries.length > 12 ? (
-                  <p className="mt-3 text-xs leading-5 text-slate-500">
-                    当前仅展示风险和未完成任务较多的前 12 个看板；请进入任务看板查看其余看板。
-                  </p>
-                ) : null}
-              </section>
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-950">
+                        {actor.type === "employee" ? "我的当前优先任务" : "当前优先任务"}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        服务端最多返回 6 项，优先显示已逾期、即将到期和最近更新的任务。
+                      </p>
+                    </div>
+                    <button type="button" className="text-sm font-semibold text-blue-700" onClick={openTaskBoardFromOverview}>
+                      {actor.type === "employee" ? "查看我的任务" : "查看看板"}
+                    </button>
+                  </div>
+                  <div className="mt-4 divide-y divide-slate-100">
+                    {overviewOperationsData.priorityTasks.map((task) => (
+                      <button
+                        key={task.id}
+                        type="button"
+                        className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                        aria-label={`打开任务：${task.title}，看板：${task.boardName}，工作列：${task.columnName}${task.dueAt ? `，截止：${formatDate(task.dueAt)}` : ""}`}
+                        onClick={() => openTaskById(task.id)}
+                      >
+                        <span className="min-w-0">
+                          <span className="block font-medium text-slate-900">{task.title}</span>
+                          <span className="mt-1 block text-xs text-slate-500">
+                            {task.boardName} · {task.columnName}
+                            {task.dueAt ? ` · 截止 ${formatDate(task.dueAt)}` : ""}
+                            {task.assigneeCount > 1 ? ` · ${task.assigneeCount} 人协作` : ""}
+                          </span>
+                        </span>
+                        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_META[task.priority].className}`}>
+                          {PRIORITY_META[task.priority].label}
+                        </span>
+                      </button>
+                    ))}
+                    {overviewOperationsData.priorityTasks.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-slate-500">
+                        {actor.type === "employee"
+                          ? "目前没有分派给你的未完成任务。"
+                          : "还没有未完成任务，可以从任务看板创建第一项工作。"}
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">按看板查看当前任务</h2>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      {actor.type === "employee"
+                        ? "只统计当前分派给你的未完成任务；看板之间不做员工横向比较。"
+                        : "按启用看板汇总当前未完成、逾期及未来 7 天内到期任务。"}
+                    </p>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {overviewOperationsData.boards.map((board) => (
+                      <div key={board.boardId} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="truncate text-sm font-semibold text-slate-900">{board.boardName}</div>
+                        <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                          <div><dt className="text-[11px] text-slate-500">未完成</dt><dd className="mt-1 text-lg font-bold text-blue-700">{board.openTaskCount}</dd></div>
+                          <div><dt className="text-[11px] text-slate-500">逾期</dt><dd className="mt-1 text-lg font-bold text-rose-700">{board.overdueTaskCount}</dd></div>
+                          <div><dt className="text-[11px] text-slate-500">7 日内</dt><dd className="mt-1 text-lg font-bold text-amber-700">{board.dueSoonTaskCount}</dd></div>
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                  {overviewOperationsData.boards.length === 0 ? (
+                    <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                      当前没有可查看的启用看板。
+                    </p>
+                  ) : null}
+                  {overviewOperationsData.boardsTruncated ? (
+                    <p className="mt-3 text-xs leading-5 text-amber-700" role="status">
+                      共有 {overviewOperationsData.boardSummaryTotalCount} 个看板，本页仅显示当前风险和未完成任务较多的前 {overviewOperationsData.boards.length} 个；顶部统计仍为完整授权范围。
+                    </p>
+                  ) : null}
+                </section>
+              </>
             ) : null}
           </div>
         ) : null}
@@ -6546,6 +7113,19 @@ function MerchantEnterpriseManagerContent({
                             {invitationPresentation.detail}
                           </span>
                         ) : null}
+                        {can(actor, "tasks.view") ? (
+                          <button
+                            type="button"
+                            className="min-h-11 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 disabled:opacity-45"
+                            disabled={busy}
+                            aria-haspopup="dialog"
+                            aria-expanded={currentWorkEmployeeId === employee.id}
+                            aria-controls="enterprise-employee-current-work-drawer"
+                            onClick={() => openEmployeeCurrentWork(employee)}
+                          >
+                            查看当前工作
+                          </button>
+                        ) : null}
                         {canManageInvitation ? (
                           <button
                             type="button"
@@ -6932,6 +7512,17 @@ function MerchantEnterpriseManagerContent({
                 }
               : {})}
             onClose={() => setEditingTaskId("")}
+          />
+        ) : null}
+        {currentWorkEmployee && actorCanViewTasks && actorCanViewEmployees ? (
+          <EmployeeCurrentWorkDrawer
+            key={`${currentWorkEmployee.id}:${currentWorkEmployee.version}`}
+            employee={currentWorkEmployee}
+            roleName={roleById.get(currentWorkEmployee.roleId)?.name || "未分配角色"}
+            state={visibleEmployeeCurrentWork}
+            onRetry={() => void loadEmployeeCurrentWork(currentWorkEmployee.id)}
+            onOpenTask={openTaskFromEmployeeCurrentWork}
+            onClose={closeEmployeeCurrentWork}
           />
         ) : null}
         {offboardingEmployee && actor ? (
