@@ -273,6 +273,11 @@ test("employee lifecycle RPC errors have stable API statuses", () => {
     "enterprise_version_conflict",
     "employee_board_access_in_use",
     "employee_email_in_use",
+    "employee_invitation_not_pending",
+    "employee_invitation_renew_required",
+    "employee_invitation_renew_not_required",
+    "enterprise_idempotency_conflict",
+    "invitation_delivery_cooldown",
   ]) {
     assert.deepEqual(
       getMerchantEnterpriseEmployeeMutationErrorResponse(new Error(code)),

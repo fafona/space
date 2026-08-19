@@ -469,8 +469,8 @@ function employeeInvitationPresentation(employee: MerchantEnterpriseEmployee, no
   if (value.invitationDeliveryStatus === "sending") {
     return {
       state: "sending" as const,
-      label: "正在发送",
-      detail: "如长时间未完成可重新发送",
+      label: "等待发送",
+      detail: "系统会自动发送，失败时自动重试",
       tone: "bg-blue-50 text-blue-700",
     };
   }
@@ -556,7 +556,9 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "employee_invitation_revoked") return "该邀请已经撤销，请刷新后重新生成邀请。";
   if (code === "employee_invitation_expired") return "该邀请已经过期，请重新生成邀请。";
   if (code === "employee_invitation_superseded") return "邀请已被更新，请刷新后再试。";
-  if (code === "employee_invitation_renew_required") return "该邀请已失效，请生成一封新邀请。";
+  if (code === "employee_invitation_renew_required") {
+    return "该邀请来自旧发送方式或已失效，请先撤销，再生成一封新邀请。";
+  }
   if (code === "employee_invitation_renew_not_required") return "当前邀请仍然有效，请使用重发邀请。";
   if (code === "employee_invitation_in_use") return "该待接受账号仍关联任务，请先移除相关任务负责人后再移除邀请。";
   if (code === "unauthorized") return "登录状态已失效，请重新登录。";
@@ -3437,6 +3439,14 @@ function MerchantEnterpriseManagerContent({
   const defaultRoleBoardAccessActorRef = useRef("");
   const handledTaskDraftIntentRef = useRef("");
   const taskCreateMutationRef = useRef<{ fingerprint: string; operationId: string } | null>(null);
+  const employeeInviteMutationRef = useRef<{
+    fingerprint: string;
+    operationId: string;
+  } | null>(null);
+  const employeeInvitationDeliveryMutationRef = useRef<{
+    fingerprint: string;
+    operationId: string;
+  } | null>(null);
   const taskSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
@@ -5034,24 +5044,43 @@ function MerchantEnterpriseManagerContent({
       employeeEmailInputRef.current?.focus();
       return;
     }
+    const inviteInput = {
+      displayName: employeeName,
+      email: normalizedEmail,
+      roleId: employeeRoleId,
+    };
+    const fingerprint = JSON.stringify(inviteInput);
+    if (employeeInviteMutationRef.current?.fingerprint !== fingerprint) {
+      employeeInviteMutationRef.current = {
+        fingerprint,
+        operationId: createClientMutationOperationId("enterprise-employee-invite"),
+      };
+    }
     const payload = await mutate(
       "/api/merchant-enterprise/employees",
       "POST",
       {
-        displayName: employeeName,
-        email: normalizedEmail,
-        roleId: employeeRoleId,
+        ...inviteInput,
+        operationId: employeeInviteMutationRef.current.operationId,
       },
-      "员工记录已创建。",
+      "员工邀请已提交。",
     );
     if (payload) {
+      employeeInviteMutationRef.current = null;
       const invitedEmployeeId =
         typeof payload.employee?.id === "string" ? payload.employee.id.trim() : "";
-      const invitationSent = payload.invitation?.status === "sent";
+      const invitationStatus =
+        typeof payload.invitation?.status === "string" ? payload.invitation.status : "";
+      const invitationSent = invitationStatus === "sent";
+      const invitationQueued =
+        invitationStatus === "queued" ||
+        invitationStatus === "already_queued" ||
+        invitationStatus === "sending" ||
+        payload.employee?.invitationDeliveryStatus === "sending";
       if (invitedEmployeeId) {
         setFailedInvitationEmployeeIds((current) => {
           const next = new Set(current);
-          if (invitationSent) next.delete(invitedEmployeeId);
+          if (invitationSent || invitationQueued) next.delete(invitedEmployeeId);
           else next.add(invitedEmployeeId);
           return next;
         });
@@ -5061,9 +5090,10 @@ function MerchantEnterpriseManagerContent({
       setEmployeeRoleId("");
       setMessage({
         kind: invitationSent ? "success" : "info",
-        text:
-          invitationSent
-            ? "邀请邮件已发送，员工接受后即可进入企业工作台。"
+        text: invitationSent
+          ? "邀请邮件已发送，员工接受后即可进入企业工作台。"
+          : invitationQueued
+            ? "邀请邮件已加入发送队列，系统会自动发送并在失败时重试。"
             : "员工记录已保存，但邀请邮件暂未发出，可稍后重试。",
       });
     }
@@ -5073,21 +5103,44 @@ function MerchantEnterpriseManagerContent({
     employee: MerchantEnterpriseEmployee,
     action: "resend_invite" | "renew_invite",
   ) {
+    const invitationInput = {
+      action,
+      employeeId: employee.id,
+      version: employee.version,
+    };
+    const fingerprint = JSON.stringify(invitationInput);
+    if (employeeInvitationDeliveryMutationRef.current?.fingerprint !== fingerprint) {
+      employeeInvitationDeliveryMutationRef.current = {
+        fingerprint,
+        operationId: createClientMutationOperationId(
+          action === "renew_invite"
+            ? "enterprise-employee-invitation-renew"
+            : "enterprise-employee-invitation-resend",
+        ),
+      };
+    }
     const payload = await mutate(
       "/api/merchant-enterprise/employees",
       "PATCH",
       {
-        action,
-        employeeId: employee.id,
-        version: employee.version,
+        ...invitationInput,
+        operationId: employeeInvitationDeliveryMutationRef.current.operationId,
       },
-      action === "renew_invite" ? "新邀请邮件已发送。" : "邀请邮件已重新发送。",
+      action === "renew_invite" ? "新邀请已提交。" : "重发邀请已提交。",
     );
     if (!payload) return;
-    const invitationSent = payload.invitation?.status === "sent";
+    employeeInvitationDeliveryMutationRef.current = null;
+    const invitationStatus =
+      typeof payload.invitation?.status === "string" ? payload.invitation.status : "";
+    const invitationSent = invitationStatus === "sent";
+    const invitationQueued =
+      invitationStatus === "queued" ||
+      invitationStatus === "already_queued" ||
+      invitationStatus === "sending" ||
+      payload.employee?.invitationDeliveryStatus === "sending";
     setFailedInvitationEmployeeIds((current) => {
       const next = new Set(current);
-      if (invitationSent) next.delete(employee.id);
+      if (invitationSent || invitationQueued) next.delete(employee.id);
       else next.add(employee.id);
       return next;
     });
@@ -5095,7 +5148,9 @@ function MerchantEnterpriseManagerContent({
       kind: invitationSent ? "success" : "info",
       text: invitationSent
         ? "邀请邮件已重新发送，员工接受后即可进入企业工作台。"
-        : "邀请邮件暂未发出，请稍后重试。",
+        : invitationQueued
+          ? "邀请邮件已加入发送队列，系统会自动发送并在失败时重试。"
+          : "邀请邮件暂未发出，请稍后重试。",
     });
   }
 

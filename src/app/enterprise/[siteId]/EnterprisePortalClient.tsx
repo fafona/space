@@ -5,10 +5,277 @@ import MerchantEnterpriseManager from "@/components/admin/MerchantEnterpriseMana
 import { MerchantEnterpriseAuthGeneration } from "@/lib/merchantEnterpriseAuthGeneration";
 import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
 
+type EnterpriseAuthSession = Awaited<
+  ReturnType<typeof supabase.auth.getSession>
+>["data"]["session"];
+
 type InvitationCredential = {
   invitationVersion: number;
   invitationToken: string;
 };
+
+type StoredInvitationCredential = InvitationCredential & {
+  attemptId: string;
+  authUserId: string | null;
+  createdAt: number;
+  stage: "exchange_pending" | "accept_pending";
+};
+
+const INVITATION_HANDOFF_TTL_MS = 2 * 60 * 60 * 1000;
+const INVITATION_STORAGE_PREFIX = "faolla:enterprise-invitation:v1";
+const INVITATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
+const INVITATION_ATTEMPT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AUTH_USER_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+class EnterpriseInvitationAcceptanceError extends Error {
+  readonly terminal: boolean;
+
+  constructor(message: string, terminal = false) {
+    super(message);
+    this.name = "EnterpriseInvitationAcceptanceError";
+    this.terminal = terminal;
+  }
+}
+
+function invitationStorageKey(siteId: string) {
+  return `${INVITATION_STORAGE_PREFIX}:${siteId}`;
+}
+
+function parseInvitationCredential(params: URLSearchParams):
+  | { status: "absent" }
+  | { status: "invalid" }
+  | { status: "valid"; credential: InvitationCredential } {
+  const hasVersion = params.has("iv");
+  const hasToken = params.has("it");
+  if (!hasVersion && !hasToken) return { status: "absent" };
+  if (params.getAll("iv").length !== 1 || params.getAll("it").length !== 1) {
+    return { status: "invalid" };
+  }
+  const invitationVersionText = params.get("iv")?.trim() ?? "";
+  const invitationToken = params.get("it")?.trim() ?? "";
+  if (
+    !hasVersion ||
+    !hasToken ||
+    !/^[1-9][0-9]{0,15}$/.test(invitationVersionText) ||
+    !INVITATION_TOKEN_PATTERN.test(invitationToken)
+  ) {
+    return { status: "invalid" };
+  }
+  const invitationVersion = Number(invitationVersionText);
+  if (!Number.isSafeInteger(invitationVersion) || invitationVersion <= 0) {
+    return { status: "invalid" };
+  }
+  return {
+    status: "valid",
+    credential: { invitationVersion, invitationToken },
+  };
+}
+
+function parseInvitationExchangeError(params: URLSearchParams): string {
+  if (!params.has("invitation_error") && !params.has("retry_after")) return "";
+  if (
+    params.getAll("invitation_error").length !== 1 ||
+    params.getAll("retry_after").length > 1
+  ) {
+    return "邀请处理结果无效，请重新打开最新邮件。";
+  }
+  const code = params.get("invitation_error")?.trim() ?? "";
+  const retryText = params.get("retry_after")?.trim() ?? "";
+  if (code === "invalid" && !retryText) {
+    return "邀请无效或已过期，请联系企业负责人重新发送。";
+  }
+  if (code === "unavailable" && !retryText) {
+    return "邀请服务暂时不可用，请稍后重新打开最新邀请邮件。";
+  }
+  if (code === "rate_limited" && /^[1-9][0-9]{0,4}$/.test(retryText)) {
+    const retryAfterSeconds = Number(retryText);
+    if (retryAfterSeconds <= 86_400) {
+      return `请求过于频繁，请在 ${retryAfterSeconds} 秒后重新打开最新邀请邮件。`;
+    }
+  }
+  return "邀请处理结果无效，请重新打开最新邮件。";
+}
+
+function sameInvitationCredential(
+  left: InvitationCredential,
+  right: InvitationCredential,
+) {
+  return (
+    left.invitationVersion === right.invitationVersion &&
+    left.invitationToken === right.invitationToken
+  );
+}
+
+function createInvitationAttemptId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  if (typeof globalThis.crypto?.getRandomValues !== "function") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "当前浏览器无法安全处理邀请，请升级浏览器后重新打开邮件。",
+      true,
+    );
+  }
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function clearStoredInvitationCredential(siteId: string) {
+  try {
+    window.sessionStorage.removeItem(invitationStorageKey(siteId));
+  } catch {
+    // The in-memory credential is cleared separately; storage may be disabled.
+  }
+}
+
+function storeInvitationCredential(
+  siteId: string,
+  credential: InvitationCredential,
+): StoredInvitationCredential {
+  const stored: StoredInvitationCredential = {
+    ...credential,
+    attemptId: createInvitationAttemptId(),
+    authUserId: null,
+    createdAt: Date.now(),
+    stage: "exchange_pending",
+  };
+  persistStoredInvitationCredential(siteId, stored);
+  return stored;
+}
+
+function persistStoredInvitationCredential(
+  siteId: string,
+  credential: StoredInvitationCredential,
+) {
+  try {
+    window.sessionStorage.setItem(
+      invitationStorageKey(siteId),
+      JSON.stringify(credential),
+    );
+  } catch {
+    throw new EnterpriseInvitationAcceptanceError(
+      "浏览器未能暂存邀请，请允许会话存储后重新打开邮件。",
+      true,
+    );
+  }
+}
+
+function markInvitationAcceptPending(
+  siteId: string,
+  credential: StoredInvitationCredential,
+  authUserId: string,
+) {
+  if (!AUTH_USER_ID_PATTERN.test(authUserId)) {
+    throw new EnterpriseInvitationAcceptanceError(
+      "员工登录身份无效，请重新打开最新邀请邮件。",
+      true,
+    );
+  }
+  const next: StoredInvitationCredential = {
+    ...credential,
+    authUserId,
+    stage: "accept_pending",
+  };
+  persistStoredInvitationCredential(siteId, next);
+  return next;
+}
+
+function readStoredInvitationCredential(siteId: string): {
+  credential: StoredInvitationCredential | null;
+  expired: boolean;
+} {
+  let raw = "";
+  try {
+    raw = window.sessionStorage.getItem(invitationStorageKey(siteId)) ?? "";
+  } catch {
+    return { credential: null, expired: false };
+  }
+  if (!raw) return { credential: null, expired: false };
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    const exactKeys = Object.keys(value).sort().join(",");
+    const invitationVersion = Number(value.invitationVersion);
+    const invitationToken =
+      typeof value.invitationToken === "string" ? value.invitationToken : "";
+    const attemptId = typeof value.attemptId === "string" ? value.attemptId : "";
+    const authUserId = typeof value.authUserId === "string" ? value.authUserId : null;
+    const createdAt = Number(value.createdAt);
+    const stage = value.stage;
+    const now = Date.now();
+    if (
+      exactKeys !==
+        "attemptId,authUserId,createdAt,invitationToken,invitationVersion,stage" ||
+      !Number.isSafeInteger(invitationVersion) ||
+      invitationVersion <= 0 ||
+      !INVITATION_TOKEN_PATTERN.test(invitationToken) ||
+      !INVITATION_ATTEMPT_ID_PATTERN.test(attemptId) ||
+      (stage !== "exchange_pending" && stage !== "accept_pending") ||
+      (stage === "exchange_pending" && authUserId !== null) ||
+      (stage === "accept_pending" &&
+        (authUserId === null || !AUTH_USER_ID_PATTERN.test(authUserId))) ||
+      !Number.isSafeInteger(createdAt) ||
+      createdAt <= 0 ||
+      createdAt > now + 60_000 ||
+      now - createdAt >= INVITATION_HANDOFF_TTL_MS
+    ) {
+      clearStoredInvitationCredential(siteId);
+      return { credential: null, expired: true };
+    }
+    return {
+      credential: {
+        invitationVersion,
+        invitationToken,
+        attemptId,
+        authUserId,
+        createdAt,
+        stage,
+      },
+      expired: false,
+    };
+  } catch {
+    clearStoredInvitationCredential(siteId);
+    return { credential: null, expired: true };
+  }
+}
+
+function submitInvitationExchange(siteId: string, credential: StoredInvitationCredential) {
+  const action = new URL(
+    "/api/merchant-enterprise/invitations/exchange",
+    window.location.origin,
+  );
+  if (action.origin !== window.location.origin) {
+    throw new EnterpriseInvitationAcceptanceError("邀请处理地址无效。", true);
+  }
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = action.toString();
+  form.target = "_top";
+  form.enctype = "application/x-www-form-urlencoded";
+  form.style.display = "none";
+  for (const [name, value] of [
+    ["siteId", siteId],
+    ["invitationVersion", String(credential.invitationVersion)],
+    ["invitationToken", credential.invitationToken],
+    ["attemptId", credential.attemptId],
+  ]) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.append(input);
+  }
+  document.body.append(form);
+  try {
+    form.submit();
+  } finally {
+    form.remove();
+  }
+}
 
 type PortalAuthContext = {
   siteId: string;
@@ -35,7 +302,7 @@ async function acceptEnterpriseMembership(
       "content-type": "application/json",
       "x-merchant-access-token": accessToken,
     },
-    credentials: "omit",
+    credentials: "same-origin",
     cache: "no-store",
     body: JSON.stringify({
       siteId,
@@ -53,30 +320,57 @@ async function acceptEnterpriseMembership(
   } | null;
   if (response.ok && payload?.ok) return;
   if (payload?.error === "enterprise_management_disabled") {
-    throw new Error("当前企业尚未开通企业管理。");
+    throw new EnterpriseInvitationAcceptanceError("当前企业尚未开通企业管理。");
   }
   if (payload?.error === "merchant_employee_not_invited") {
-    throw new Error("该账号没有收到此企业的员工邀请。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "该账号没有收到此企业的员工邀请。",
+      true,
+    );
   }
   if (payload?.error === "merchant_access_denied") {
-    throw new Error("邀请对应的角色已停用，请联系企业负责人。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "邀请对应的角色已停用，请联系企业负责人。",
+      true,
+    );
   }
   if (payload?.error === "employee_account_disabled") {
-    throw new Error("员工账号已停用，请联系企业负责人。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "员工账号已停用，请联系企业负责人。",
+      true,
+    );
   }
   if (payload?.error === "employee_invitation_expired") {
-    throw new Error("这封邀请已过期，请联系企业负责人重新发送。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "这封邀请已过期，请联系企业负责人重新发送。",
+      true,
+    );
   }
   if (payload?.error === "employee_invitation_revoked") {
-    throw new Error("这封邀请已被撤销，请联系企业负责人。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "这封邀请已被撤销，请联系企业负责人。",
+      true,
+    );
   }
   if (payload?.error === "employee_invitation_superseded") {
-    throw new Error("这不是最新的邀请邮件，请打开最近收到的那一封。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "这不是最新的邀请邮件，请打开最近收到的那一封。",
+      true,
+    );
   }
   if (payload?.error === "employee_invitation_credentials_required") {
-    throw new Error("请从最新的邀请邮件进入企业工作台。");
+    throw new EnterpriseInvitationAcceptanceError(
+      "请从最新的邀请邮件进入企业工作台。",
+      true,
+    );
   }
-  throw new Error("员工邀请确认失败，请稍后重试。");
+  if (payload?.error === "invalid_employee_invitation_credentials") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "邀请凭证无效，请重新打开最新邀请邮件。",
+      true,
+    );
+  }
+  throw new EnterpriseInvitationAcceptanceError("员工邀请确认失败，请稍后重试。");
 }
 
 export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
@@ -88,12 +382,27 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const invitationCredentialRef = useRef<InvitationCredential | null>(null);
+  const storedInvitationCredentialRef =
+    useRef<StoredInvitationCredential | null>(null);
   const invitationVersionRef = useRef(0);
   const acceptedAcceptanceKeysRef = useRef(new Set<string>());
   const acceptanceInFlightRef = useRef(new Map<string, Promise<void>>());
+  const invitationExchangeSubmittedRef = useRef(false);
+  const authCallbackInProgressRef = useRef(false);
   const authGenerationRef = useRef(new MerchantEnterpriseAuthGeneration());
   const accessToken = authContext?.siteId === siteId ? authContext.token : "";
   const portalContextMismatch = Boolean(authContext && authContext.siteId !== siteId);
+
+  const clearInvitationCredential = useCallback(
+    (expected?: InvitationCredential | null) => {
+      if (expected && invitationCredentialRef.current !== expected) return;
+      invitationCredentialRef.current = null;
+      storedInvitationCredentialRef.current = null;
+      invitationVersionRef.current = 0;
+      clearStoredInvitationCredential(siteId);
+    },
+    [siteId],
+  );
 
   const ensureMembershipAccepted = useCallback(
     async (token: string) => {
@@ -106,9 +415,19 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       const acceptance = acceptEnterpriseMembership(siteId, token, invitation)
         .then(() => {
           acceptedAcceptanceKeysRef.current.add(acceptanceKey);
-          if (invitationCredentialRef.current === invitation) {
-            invitationCredentialRef.current = null;
+          if (invitation) {
+            clearInvitationCredential(invitation);
           }
+        })
+        .catch((error) => {
+          if (
+            invitation &&
+            error instanceof EnterpriseInvitationAcceptanceError &&
+            error.terminal
+          ) {
+            clearInvitationCredential(invitation);
+          }
+          throw error;
         })
         .finally(() => {
           if (acceptanceInFlightRef.current.get(acceptanceKey) === acceptance) {
@@ -118,7 +437,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       acceptanceInFlightRef.current.set(acceptanceKey, acceptance);
       return acceptance;
     },
-    [siteId],
+    [clearInvitationCredential, siteId],
   );
 
   useEffect(() => {
@@ -129,75 +448,272 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
 
     async function resolveSession(generation: number) {
       let token = "";
+      let exchangeSubmitted = false;
+      let authCallbackInProgress = false;
+      let scrubResolvedCallbackUrl: (() => void) | null = null;
+      let callbackSession: EnterpriseAuthSession = null;
       try {
         if (typeof window !== "undefined") {
+          if (!/^\d{8}$/.test(siteId)) {
+            throw new EnterpriseInvitationAcceptanceError("企业入口无效。", true);
+          }
           const url = new URL(window.location.href);
           const code = url.searchParams.get("code")?.trim() ?? "";
-          const invitationVersionText = url.searchParams.get("iv")?.trim() ?? "";
-          const invitationToken = url.searchParams.get("it")?.trim() ?? "";
-          const invitationVersion = Number(invitationVersionText);
-          if (
-            Number.isSafeInteger(invitationVersion) &&
-            invitationVersion > 0 &&
-            /^[A-Za-z0-9_-]{32,256}$/.test(invitationToken)
-          ) {
-            invitationCredentialRef.current = {
-              invitationVersion,
-              invitationToken,
-            };
-            invitationVersionRef.current = invitationVersion;
+          const exchangeError = parseInvitationExchangeError(url.searchParams);
+          const queryInvitation = parseInvitationCredential(url.searchParams);
+          const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+          const fragmentInvitation = parseInvitationCredential(hash);
+          const hashAccessToken = hash.get("access_token")?.trim() ?? "";
+          const hashRefreshToken = hash.get("refresh_token")?.trim() ?? "";
+          authCallbackInProgress = Boolean(
+            code || hashAccessToken || hashRefreshToken,
+          );
+          if (authCallbackInProgress) {
+            authCallbackInProgressRef.current = true;
           }
-          if (code || invitationVersionText || invitationToken) {
+          const hasInvitationInQuery = queryInvitation.status !== "absent";
+          const hasInvitationInFragment = fragmentInvitation.status !== "absent";
+          const hasAuthHash = Boolean(hashAccessToken || hashRefreshToken);
+          const shouldScrubUrl = Boolean(
+            code ||
+              exchangeError ||
+              hasInvitationInQuery ||
+              hasInvitationInFragment ||
+              hasAuthHash,
+          );
+          let incomingCredential: InvitationCredential | null = null;
+          let invitationError = "";
+          if (exchangeError) {
+            invitationError = exchangeError;
+          } else if (
+            queryInvitation.status === "invalid" ||
+            fragmentInvitation.status === "invalid"
+          ) {
+            invitationError = "邀请凭证格式无效，请重新打开最新邮件。";
+          } else if (
+            queryInvitation.status === "valid" &&
+            fragmentInvitation.status === "valid" &&
+            !sameInvitationCredential(
+              queryInvitation.credential,
+              fragmentInvitation.credential,
+            )
+          ) {
+            invitationError = "页面包含两组不同的邀请凭证，请重新打开最新邮件。";
+          } else if (fragmentInvitation.status === "valid") {
+            incomingCredential = fragmentInvitation.credential;
+          } else if (queryInvitation.status === "valid") {
+            incomingCredential = queryInvitation.credential;
+          }
+
+          let storedInvitation: StoredInvitationCredential | null = null;
+          let storageError: unknown = null;
+          if (incomingCredential && !invitationError) {
+            try {
+              storedInvitation = storeInvitationCredential(siteId, incomingCredential);
+            } catch (error) {
+              storageError = error;
+            }
+          }
+
+          let callbackUrlScrubbed = false;
+          scrubResolvedCallbackUrl = () => {
+            if (!shouldScrubUrl || callbackUrlScrubbed) return;
+            callbackUrlScrubbed = true;
             url.searchParams.delete("code");
             url.searchParams.delete("iv");
             url.searchParams.delete("it");
+            url.searchParams.delete("invitation_error");
+            url.searchParams.delete("retry_after");
+            if (hasInvitationInFragment || hasAuthHash) url.hash = "";
             window.history.replaceState(
               window.history.state,
               "",
               `${url.pathname}${url.search}${url.hash}`,
             );
+          };
+          if (
+            shouldScrubUrl &&
+            (!authCallbackInProgress || invitationError || storageError)
+          ) {
+            scrubResolvedCallbackUrl();
+          }
+
+          if (invitationError) {
+            clearInvitationCredential();
+            throw new EnterpriseInvitationAcceptanceError(invitationError, true);
+          }
+          if (storageError) throw storageError;
+
+          if (!storedInvitation) {
+            const stored = readStoredInvitationCredential(siteId);
+            storedInvitation = stored.credential;
+            if (stored.expired) {
+              throw new EnterpriseInvitationAcceptanceError(
+                "邀请处理会话已过期，请重新打开最新邮件。",
+                true,
+              );
+            }
+          }
+          if (storedInvitation) {
+            storedInvitationCredentialRef.current = storedInvitation;
+            invitationCredentialRef.current = {
+              invitationVersion: storedInvitation.invitationVersion,
+              invitationToken: storedInvitation.invitationToken,
+            };
+            invitationVersionRef.current = storedInvitation.invitationVersion;
+          }
+
+          if (
+            storedInvitation &&
+            storedInvitation.stage === "exchange_pending" &&
+            !code &&
+            !hashAccessToken &&
+            !hashRefreshToken
+          ) {
+            if (!invitationExchangeSubmittedRef.current) {
+              invitationExchangeSubmittedRef.current = true;
+              try {
+                submitInvitationExchange(siteId, storedInvitation);
+                exchangeSubmitted = true;
+              } catch (error) {
+                invitationExchangeSubmittedRef.current = false;
+                throw error;
+              }
+            }
+            return;
           }
           if (code) {
             const exchanged = await supabase.auth.exchangeCodeForSession(code);
             if (exchanged.error) throw exchanged.error;
-          } else if (url.hash) {
-            const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
-            const hashAccessToken = hash.get("access_token")?.trim() ?? "";
-            const hashRefreshToken = hash.get("refresh_token")?.trim() ?? "";
-            if (hashAccessToken && hashRefreshToken) {
-              const established = await supabase.auth.setSession({
-                access_token: hashAccessToken,
-                refresh_token: hashRefreshToken,
-              });
-              if (established.error) throw established.error;
-              window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}`);
+            callbackSession = exchanged.data.session;
+          } else if (hashAccessToken && hashRefreshToken) {
+            const established = await supabase.auth.setSession({
+              access_token: hashAccessToken,
+              refresh_token: hashRefreshToken,
+            });
+            if (established.error) throw established.error;
+            callbackSession = established.data.session;
+          } else if (hashAccessToken || hashRefreshToken) {
+            throw new EnterpriseInvitationAcceptanceError(
+              "登录回跳凭证不完整，请重新打开邀请邮件。",
+              true,
+            );
+          }
+
+          if (authCallbackInProgress) {
+            if (!callbackSession) {
+              throw new EnterpriseInvitationAcceptanceError(
+                "登录回跳未能建立有效会话，请重试。",
+              );
             }
+            if (!authGeneration.isGenerationCurrent(generation, cancelled)) return;
+            let callbackInvitation = storedInvitationCredentialRef.current;
+            if (callbackInvitation?.stage === "exchange_pending") {
+              callbackInvitation = markInvitationAcceptPending(
+                siteId,
+                callbackInvitation,
+                callbackSession.user.id,
+              );
+              storedInvitationCredentialRef.current = callbackInvitation;
+            }
+            if (
+              callbackInvitation?.stage === "accept_pending" &&
+              callbackSession.user.id !== callbackInvitation.authUserId
+            ) {
+              throw new EnterpriseInvitationAcceptanceError(
+                "请使用该邀请已验证的员工账号登录后重试。",
+              );
+            }
+            scrubResolvedCallbackUrl?.();
           }
         }
-        const result = await supabase.auth.getSession();
-        if (result.error) throw result.error;
-        token = result.data.session?.access_token ?? "";
+        let session = callbackSession;
+        if (!session) {
+          const result = await supabase.auth.getSession();
+          if (result.error) throw result.error;
+          session = result.data.session;
+        }
+        token = session?.access_token ?? "";
+        let storedInvitation = storedInvitationCredentialRef.current;
+        if (
+          storedInvitation?.stage === "exchange_pending" &&
+          authCallbackInProgress
+        ) {
+          const authUserId = session?.user?.id ?? "";
+          storedInvitation = markInvitationAcceptPending(
+            siteId,
+            storedInvitation,
+            authUserId,
+          );
+          storedInvitationCredentialRef.current = storedInvitation;
+        }
+        if (
+          storedInvitation?.stage === "accept_pending" &&
+          session?.user?.id !== storedInvitation.authUserId
+        ) {
+          throw new EnterpriseInvitationAcceptanceError(
+            "请使用该邀请已验证的员工账号登录后重试。",
+          );
+        }
+        scrubResolvedCallbackUrl?.();
         if (cancelled || !authGeneration.bindSessionToken(generation, token)) return;
         if (token) await ensureMembershipAccepted(token);
         if (!authGeneration.isCurrent(generation, token, cancelled)) return;
         setAuthContext(token ? { siteId, token, generation } : null);
       } catch (error) {
+        if (
+          error instanceof EnterpriseInvitationAcceptanceError &&
+          error.terminal
+        ) {
+          clearInvitationCredential();
+        }
         if (authGeneration.isCurrent(generation, token, cancelled)) {
           setAuthContext(null);
           setMessage(error instanceof Error ? error.message : "邀请链接无效或已过期。");
         }
       } finally {
-        if (authGeneration.isGenerationCurrent(generation, cancelled)) setChecking(false);
+        if (authCallbackInProgress) {
+          authCallbackInProgressRef.current = false;
+        }
+        if (
+          !exchangeSubmitted &&
+          authGeneration.isGenerationCurrent(generation, cancelled)
+        ) {
+          setChecking(false);
+        }
       }
     }
     void resolveSession(initializationGeneration);
     const listener = supabase.auth.onAuthStateChange((_event, session) => {
+      // Supabase can emit INITIAL_SESSION for the previous account while a
+      // code/hash callback is still establishing the invited account. Let the
+      // callback resolver own that transition so stale credentials can never
+      // consume or clear the new invitation.
+      if (authCallbackInProgressRef.current) return;
       const generation = authGeneration.begin();
+      if (invitationExchangeSubmittedRef.current) {
+        authGeneration.bindSessionToken(generation, "");
+        return;
+      }
       const token = session?.access_token ?? "";
       if (!authGeneration.bindSessionToken(generation, token) || cancelled) return;
       setAuthContext(null);
       if (!token) {
         acceptedAcceptanceKeysRef.current.clear();
+        setChecking(false);
+        return;
+      }
+      const storedInvitation = storedInvitationCredentialRef.current;
+      if (
+        storedInvitation?.stage === "accept_pending" &&
+        session?.user?.id !== storedInvitation.authUserId
+      ) {
+        setMessage("请使用该邀请已验证的员工账号登录后重试。");
+        setChecking(false);
+        return;
+      }
+      if (storedInvitation?.stage === "exchange_pending") {
+        setMessage("请完成邀请邮件中的身份验证后再进入企业工作台。");
         setChecking(false);
         return;
       }
@@ -222,7 +738,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       authGeneration.bindSessionToken(invalidationGeneration, "");
       listener.data.subscription.unsubscribe();
     };
-  }, [ensureMembershipAccepted, siteId]);
+  }, [clearInvitationCredential, ensureMembershipAccepted, siteId]);
 
   async function signIn() {
     setBusy(true);

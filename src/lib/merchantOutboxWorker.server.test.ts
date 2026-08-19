@@ -18,6 +18,7 @@ function claimedRow(overrides: Record<string, unknown> = {}) {
     status: "processing",
     attempts: 1,
     total_attempts: 1,
+    replay_count: 0,
     max_attempts: 8,
     correlation_id: "request-1",
     lease_expires_at: "2026-07-25T10:01:00.000Z",
@@ -165,6 +166,100 @@ test("nonretryable task errors enter the dead letter state", async () => {
     },
   );
   assert.equal(summary.deadLettered, 1);
+});
+
+test("event-specific settlements can atomically complete and fail domain state", async () => {
+  const genericCalls: string[] = [];
+  const completionInputs: Record<string, unknown>[] = [];
+  const failureInputs: Record<string, unknown>[] = [];
+  let cycle = 0;
+  const client = {
+    rpc: async (name: string) => {
+      genericCalls.push(name);
+      if (name === "faolla_claim_merchant_outbox_scoped_v1") {
+        cycle += 1;
+        return {
+          data: [
+            claimedRow({
+              event_key: "enterprise.employee_invitation.deliver:abc",
+              event_type: "enterprise.employee_invitation.deliver",
+              aggregate_type: "enterprise_employee",
+              aggregate_id: "923e4567-e89b-42d3-a456-426614174000",
+              payload: {
+                schema_version: 1,
+                invitation_version: cycle,
+                hmac_key_id: "k1",
+              },
+            }),
+          ],
+          error: null,
+        };
+      }
+      return { data: true, error: null };
+    },
+  };
+  const settlement = {
+    complete: async (input: {
+      event: { id: string };
+      workerId: string;
+      result: Record<string, unknown>;
+    }) => {
+      completionInputs.push(input);
+      return true;
+    },
+    fail: async (input: {
+      event: { id: string };
+      workerId: string;
+      error: { code: string; retryable: boolean };
+    }) => {
+      failureInputs.push(input);
+      return "retry_scheduled" as const;
+    },
+  };
+  const completed = await processMerchantOutboxBatch(client, {
+    workerId: "invitation:test",
+    merchantIds: ["10000000"],
+    handlers: {
+      "enterprise.employee_invitation.deliver": async () => ({
+        provider: "resend",
+        provider_message_id: "message_1",
+      }),
+    },
+    settlements: {
+      "enterprise.employee_invitation.deliver": settlement as never,
+    },
+  });
+  assert.equal(completed.completed, 1);
+  assert.equal(completionInputs.length, 1);
+  assert.deepEqual(completionInputs[0]?.result, {
+    provider: "resend",
+    provider_message_id: "message_1",
+  });
+
+  const failed = await processMerchantOutboxBatch(client, {
+    workerId: "invitation:test",
+    merchantIds: ["10000000"],
+    handlers: {
+      "enterprise.employee_invitation.deliver": async () => {
+        throw new MerchantOutboxTaskError("provider_busy", {
+          retryable: true,
+          retryAfterSeconds: 45,
+        });
+      },
+    },
+    settlements: {
+      "enterprise.employee_invitation.deliver": settlement as never,
+    },
+  });
+  assert.equal(failed.retried, 1);
+  assert.equal(failureInputs.length, 1);
+  assert.deepEqual(failureInputs[0]?.error, {
+    code: "provider_busy",
+    retryable: true,
+    retryAfterSeconds: 45,
+  });
+  assert.equal(genericCalls.includes("faolla_complete_merchant_outbox_v1"), false);
+  assert.equal(genericCalls.includes("faolla_fail_merchant_outbox_v1"), false);
 });
 
 test("worker reports schema failures without exposing backend errors", async () => {

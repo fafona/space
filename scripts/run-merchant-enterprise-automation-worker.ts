@@ -10,9 +10,17 @@ import {
 import {
   MerchantOutboxTaskError,
   processMerchantOutboxBatch,
+  type MerchantOutboxEventSettlement,
   type MerchantOutboxTaskHandler,
 } from "../src/lib/merchantOutboxWorker.server";
 import { createMerchantEnterpriseAutomationOutboxHandler } from "../src/lib/merchantEnterpriseAutomationWorker.server";
+import { resolveMerchantEnterpriseInvitationEmailConfig } from "../src/lib/merchantEnterpriseInvitationEmail.server";
+import { resolveMerchantEnterpriseInvitationSecretKeyring } from "../src/lib/merchantEnterpriseInvitationSecret.server";
+import {
+  createMerchantEnterpriseInvitationOutboxHandler,
+  createMerchantEnterpriseInvitationOutboxRpcSettlement,
+  createMerchantEnterpriseInvitationRpcDependencies,
+} from "../src/lib/merchantEnterpriseInvitationWorker.server";
 import { createServerSupabaseServiceClient } from "../src/lib/superAdminServer";
 import {
   assertOutboxV1Ready,
@@ -30,6 +38,9 @@ const AUTOMATION_DISCOVERY_RPC =
   "/rest/v1/rpc/faolla_discover_merchant_enterprise_automation_merchants_v1";
 const AUTOMATION_CLAIM_RPC =
   "faolla_claim_merchant_enterprise_automation_outbox_v1";
+const INVITATION_MIGRATION_VERSION = 202608190033;
+const INVITATION_DISCOVERY_RPC =
+  "/rest/v1/rpc/faolla_discover_merchant_enterprise_invitation_merchants_v1";
 
 export type MerchantEnterpriseAutomationWorkerConfig = {
   enabled: boolean;
@@ -43,6 +54,9 @@ export type MerchantEnterpriseAutomationWorkerConfig = {
   taskTimeoutMs: number;
   requestTimeoutMs: number;
 };
+
+export type MerchantEnterpriseInvitationWorkerConfig =
+  MerchantEnterpriseAutomationWorkerConfig;
 
 type AutomationWorkerLogger = Pick<Console, "info" | "warn" | "error">;
 
@@ -71,6 +85,32 @@ type RunAutomationWorkerInput = {
   signal: AbortSignal;
   workerId?: string;
   dependencies?: AutomationWorkerDependencies;
+};
+
+type RunInvitationWorkerInput = {
+  client: MerchantOutboxRpcClient;
+  runtime: OutboxRestRuntime;
+  handler: MerchantOutboxTaskHandler;
+  settlement: MerchantOutboxEventSettlement;
+  config: MerchantEnterpriseInvitationWorkerConfig;
+  signal: AbortSignal;
+  workerId?: string;
+  dependencies?: InvitationWorkerDependencies;
+};
+
+type InvitationWorkerDependencies = {
+  discoverMerchantIds?: typeof discoverMerchantEnterpriseInvitationMerchantIds;
+  processBatch?: typeof processMerchantOutboxBatch;
+  sleep?: typeof sleepWithSignal;
+  random?: () => number;
+  logger?: AutomationWorkerLogger;
+  maxCycles?: number;
+};
+
+type InvitationPreReadyDependencies = {
+  resolveKeyring?: typeof resolveMerchantEnterpriseInvitationSecretKeyring;
+  resolveEmailConfig?: typeof resolveMerchantEnterpriseInvitationEmailConfig;
+  assertReady?: typeof assertMerchantEnterpriseInvitationWorkerReady;
 };
 
 function trimText(value: unknown) {
@@ -162,6 +202,90 @@ export function resolveMerchantEnterpriseAutomationWorkerConfig(
     requestTimeoutMs: readBoundedInteger(
       environment,
       "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_REQUEST_TIMEOUT_MS",
+      10_000,
+      1_000,
+      60_000,
+    ),
+  };
+}
+
+export function isMerchantEnterpriseInvitationWorkerEnabled(
+  environment: Record<string, string | undefined> = process.env,
+) {
+  return (
+    trimText(environment.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED).toLowerCase() ===
+    "true"
+  );
+}
+
+export function resolveMerchantEnterpriseInvitationWorkerConfig(
+  environment: Record<string, string | undefined> = process.env,
+): MerchantEnterpriseInvitationWorkerConfig {
+  const leaseSeconds = readBoundedInteger(
+    environment,
+    "MERCHANT_ENTERPRISE_INVITATION_WORKER_LEASE_SECONDS",
+    90,
+    15,
+    900,
+  );
+  const taskTimeoutMs = readBoundedInteger(
+    environment,
+    "MERCHANT_ENTERPRISE_INVITATION_WORKER_TASK_TIMEOUT_MS",
+    60_000,
+    1_000,
+    leaseSeconds * 900,
+  );
+  const failureBackoffInitialMs = readBoundedInteger(
+    environment,
+    "MERCHANT_ENTERPRISE_INVITATION_WORKER_FAILURE_BACKOFF_INITIAL_MS",
+    1_000,
+    100,
+    60_000,
+  );
+  const failureBackoffMaxMs = readBoundedInteger(
+    environment,
+    "MERCHANT_ENTERPRISE_INVITATION_WORKER_FAILURE_BACKOFF_MAX_MS",
+    30_000,
+    failureBackoffInitialMs,
+    300_000,
+  );
+  return {
+    enabled: isMerchantEnterpriseInvitationWorkerEnabled(environment),
+    pollIntervalMs: readBoundedInteger(
+      environment,
+      "MERCHANT_ENTERPRISE_INVITATION_WORKER_POLL_INTERVAL_MS",
+      1_000,
+      100,
+      60_000,
+    ),
+    failureBackoffInitialMs,
+    failureBackoffMaxMs,
+    discoveryLimit: readBoundedInteger(
+      environment,
+      "MERCHANT_ENTERPRISE_INVITATION_WORKER_DISCOVERY_LIMIT",
+      250,
+      1,
+      1_000,
+    ),
+    merchantScopeLimit: readBoundedInteger(
+      environment,
+      "MERCHANT_ENTERPRISE_INVITATION_WORKER_MERCHANT_SCOPE_LIMIT",
+      50,
+      1,
+      50,
+    ),
+    batchLimit: readBoundedInteger(
+      environment,
+      "MERCHANT_ENTERPRISE_INVITATION_WORKER_BATCH_LIMIT",
+      5,
+      1,
+      50,
+    ),
+    leaseSeconds,
+    taskTimeoutMs,
+    requestTimeoutMs: readBoundedInteger(
+      environment,
+      "MERCHANT_ENTERPRISE_INVITATION_WORKER_REQUEST_TIMEOUT_MS",
       10_000,
       1_000,
       60_000,
@@ -266,6 +390,46 @@ export async function discoverMerchantEnterpriseAutomationMerchantIds(
   return readMerchantIds(rows, limit);
 }
 
+export async function discoverMerchantEnterpriseInvitationMerchantIds(
+  runtime: OutboxRestRuntime,
+  config: Pick<
+    MerchantEnterpriseInvitationWorkerConfig,
+    "discoveryLimit" | "merchantScopeLimit" | "batchLimit" | "requestTimeoutMs"
+  >,
+  options: {
+    afterMerchantId?: string | null;
+    requestJson?: typeof requestOutboxJson;
+  } = {},
+) {
+  const afterMerchantId = options.afterMerchantId ?? null;
+  if (afterMerchantId !== null && !/^\d{8}$/.test(afterMerchantId)) {
+    throw new Error("invitation_outbox_discovery_invalid");
+  }
+  const requestJson = options.requestJson ?? requestOutboxJson;
+  const limit = Math.min(
+    config.discoveryLimit,
+    config.merchantScopeLimit,
+    config.batchLimit,
+  );
+  const rows = await requestJson(
+    runtime,
+    INVITATION_DISCOVERY_RPC,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        p_after_merchant_id: afterMerchantId,
+        p_limit: limit,
+      }),
+    },
+    config.requestTimeoutMs,
+  );
+  try {
+    return readMerchantIds(rows, limit);
+  } catch {
+    throw new Error("invitation_outbox_discovery_invalid");
+  }
+}
+
 export async function assertMerchantEnterpriseAutomationWorkerReady(
   runtime: OutboxRestRuntime,
 ) {
@@ -281,6 +445,43 @@ export async function assertMerchantEnterpriseAutomationWorkerReady(
   ) {
     throw new Error("automation_migration_not_ready");
   }
+}
+
+export async function assertMerchantEnterpriseInvitationWorkerReady(
+  runtime: OutboxRestRuntime,
+) {
+  await assertOutboxV1Ready(runtime);
+  const rows = await requestOutboxJson(
+    runtime,
+    `/rest/v1/faolla_schema_migrations?select=version&version=eq.${INVITATION_MIGRATION_VERSION}&limit=1`,
+  );
+  if (
+    !Array.isArray(rows) ||
+    Number((rows[0] as { version?: unknown } | undefined)?.version) !==
+      INVITATION_MIGRATION_VERSION
+  ) {
+    throw new Error("invitation_migration_not_ready");
+  }
+}
+
+export async function prepareMerchantEnterpriseInvitationWorkerBeforeReady(
+  runtime: OutboxRestRuntime,
+  enabled: boolean,
+  dependencies: InvitationPreReadyDependencies = {},
+) {
+  if (!enabled) return null;
+  const keyring = (
+    dependencies.resolveKeyring ??
+    resolveMerchantEnterpriseInvitationSecretKeyring
+  )();
+  const emailConfig = (
+    dependencies.resolveEmailConfig ??
+    resolveMerchantEnterpriseInvitationEmailConfig
+  )();
+  await (
+    dependencies.assertReady ?? assertMerchantEnterpriseInvitationWorkerReady
+  )(runtime);
+  return { keyring, emailConfig };
 }
 
 function safeErrorCode(error: unknown) {
@@ -395,6 +596,48 @@ export async function waitForMerchantEnterpriseAutomationWorkerReady(
   return false;
 }
 
+export async function waitForMerchantEnterpriseInvitationWorkerReady(
+  runtime: OutboxRestRuntime,
+  config: Pick<
+    MerchantEnterpriseInvitationWorkerConfig,
+    "failureBackoffInitialMs" | "failureBackoffMaxMs"
+  >,
+  signal: AbortSignal,
+  dependencies: AutomationWorkerReadinessDependencies = {},
+) {
+  const assertReady =
+    dependencies.assertReady ?? assertMerchantEnterpriseInvitationWorkerReady;
+  const sleep = dependencies.sleep ?? sleepWithSignal;
+  const random = dependencies.random ?? Math.random;
+  const logger = dependencies.logger ?? console;
+  let failures = 0;
+  let checks = 0;
+  while (!signal.aborted) {
+    if (dependencies.maxChecks !== undefined && checks >= dependencies.maxChecks) {
+      return false;
+    }
+    checks += 1;
+    try {
+      await assertReady(runtime);
+      logger.info("[enterprise-invitation-worker] schema-ready");
+      return true;
+    } catch (error) {
+      if (signal.aborted) break;
+      failures += 1;
+      const delay = resolveAutomationWorkerFailureBackoffMs(
+        failures,
+        config,
+        random,
+      );
+      logger.warn(
+        `[enterprise-invitation-worker] schema-wait code=${safeErrorCode(error)} retry-ms=${delay}`,
+      );
+      await sleep(delay, signal);
+    }
+  }
+  return false;
+}
+
 export async function runMerchantEnterpriseAutomationWorker(
   input: RunAutomationWorkerInput,
 ) {
@@ -464,10 +707,88 @@ export async function runMerchantEnterpriseAutomationWorker(
   }
 }
 
+export async function runMerchantEnterpriseInvitationWorker(
+  input: RunInvitationWorkerInput,
+) {
+  if (!input.config.enabled) throw new Error("invitation_worker_disabled");
+  const dependencies = input.dependencies ?? {};
+  const discoverMerchantIds =
+    dependencies.discoverMerchantIds ??
+    discoverMerchantEnterpriseInvitationMerchantIds;
+  const processBatch = dependencies.processBatch ?? processMerchantOutboxBatch;
+  const sleep = dependencies.sleep ?? sleepWithSignal;
+  const random = dependencies.random ?? Math.random;
+  const logger = dependencies.logger ?? console;
+  const workerId = input.workerId ?? buildWorkerId().replace(
+    /^enterprise-automation:/,
+    "enterprise-invitation:",
+  );
+  const handler = withShutdownSignal(input.handler, input.signal);
+  let consecutiveFailures = 0;
+  let cycles = 0;
+  let discoveryCursor: string | null = null;
+
+  while (!input.signal.aborted) {
+    if (dependencies.maxCycles !== undefined && cycles >= dependencies.maxCycles) {
+      break;
+    }
+    cycles += 1;
+    try {
+      const merchantIds = await discoverMerchantIds(input.runtime, input.config, {
+        afterMerchantId: discoveryCursor,
+      });
+      if (input.signal.aborted) break;
+      if (merchantIds.length === 0) {
+        discoveryCursor = null;
+        consecutiveFailures = 0;
+        await sleep(input.config.pollIntervalMs, input.signal);
+        continue;
+      }
+      discoveryCursor = merchantIds[merchantIds.length - 1] ?? discoveryCursor;
+      const summary = await processBatch(input.client, {
+        workerId,
+        merchantIds,
+        limit: input.config.batchLimit,
+        leaseSeconds: input.config.leaseSeconds,
+        taskTimeoutMs: input.config.taskTimeoutMs,
+        handlers: {
+          "enterprise.employee_invitation.deliver": handler,
+        },
+        settlements: {
+          "enterprise.employee_invitation.deliver": input.settlement,
+        },
+      });
+      if (summary.status === "failed") {
+        throw new Error(summary.errorCode || "outbox_batch_failed");
+      }
+      consecutiveFailures = 0;
+      logger.info(
+        `[enterprise-invitation-worker] status=${summary.status} scope=${merchantIds.length} claimed=${summary.claimed} completed=${summary.completed} retried=${summary.retried} dead-letter=${summary.deadLettered} lease-lost=${summary.leaseLost} malformed=${summary.malformed}`,
+      );
+      await sleep(input.config.pollIntervalMs, input.signal);
+    } catch (error) {
+      if (input.signal.aborted) break;
+      consecutiveFailures += 1;
+      const delay = resolveAutomationWorkerFailureBackoffMs(
+        consecutiveFailures,
+        input.config,
+        random,
+      );
+      logger.error(
+        `[enterprise-invitation-worker] cycle-failed code=${safeErrorCode(error)} retry-ms=${delay}`,
+      );
+      await sleep(delay, input.signal);
+    }
+  }
+}
+
 async function main() {
   loadEnvConfig(process.cwd());
-  const config = resolveMerchantEnterpriseAutomationWorkerConfig();
-  if (!config.enabled) throw new Error("automation_worker_disabled");
+  const automationConfig = resolveMerchantEnterpriseAutomationWorkerConfig();
+  const invitationConfig = resolveMerchantEnterpriseInvitationWorkerConfig();
+  if (!automationConfig.enabled && !invitationConfig.enabled) {
+    throw new Error("enterprise_workers_disabled");
+  }
   const runtime = createMerchantEnterpriseAutomationWorkerRestRuntime();
   const client = createServerSupabaseServiceClient();
   if (!client) throw new Error("supabase_service_env_missing");
@@ -480,25 +801,69 @@ async function main() {
   const onSigint = () => requestShutdown("SIGINT");
   process.once("SIGTERM", onSigterm);
   process.once("SIGINT", onSigint);
-  if (typeof process.send === "function") process.send("ready");
-  console.info("[enterprise-automation-worker] online");
   try {
-    const ready = await waitForMerchantEnterpriseAutomationWorkerReady(
-      runtime,
-      config,
-      controller.signal,
+    const rpcClient = client as unknown as MerchantOutboxRpcClient & {
+      auth: {
+        admin: Parameters<
+          typeof createMerchantEnterpriseInvitationRpcDependencies
+        >[0]["auth"]["admin"];
+      };
+    };
+    const invitationPreReady =
+      await prepareMerchantEnterpriseInvitationWorkerBeforeReady(
+        runtime,
+        invitationConfig.enabled,
+      );
+    if (typeof process.send === "function") process.send("ready");
+    console.info(
+      `[enterprise-worker-supervisor] online automation=${automationConfig.enabled} invitation=${invitationConfig.enabled}`,
     );
-    if (!ready) return;
-    await runMerchantEnterpriseAutomationWorker({
-      client: client as unknown as MerchantOutboxRpcClient,
-      runtime,
-      handler: createMerchantEnterpriseAutomationOutboxHandler(
-        client as unknown as MerchantOutboxRpcClient,
-      ),
-      config,
-      signal: controller.signal,
-    });
+    const workers: Promise<void>[] = [];
+    if (automationConfig.enabled) {
+      workers.push(
+        (async () => {
+          const ready = await waitForMerchantEnterpriseAutomationWorkerReady(
+            runtime,
+            automationConfig,
+            controller.signal,
+          );
+          if (!ready) return;
+          await runMerchantEnterpriseAutomationWorker({
+            client: rpcClient,
+            runtime,
+            handler: createMerchantEnterpriseAutomationOutboxHandler(rpcClient),
+            config: automationConfig,
+            signal: controller.signal,
+          });
+        })(),
+      );
+    }
+    if (invitationConfig.enabled) {
+      if (!invitationPreReady) throw new Error("invitation_worker_config_missing");
+      const invitationDependencies =
+        createMerchantEnterpriseInvitationRpcDependencies(rpcClient, {
+          keyring: invitationPreReady.keyring,
+          emailConfig: invitationPreReady.emailConfig,
+        });
+      workers.push(
+        (async () => {
+          await runMerchantEnterpriseInvitationWorker({
+            client: rpcClient,
+            runtime,
+            handler: createMerchantEnterpriseInvitationOutboxHandler(
+              invitationDependencies,
+            ),
+            settlement:
+              createMerchantEnterpriseInvitationOutboxRpcSettlement(rpcClient),
+            config: invitationConfig,
+            signal: controller.signal,
+          });
+        })(),
+      );
+    }
+    await Promise.all(workers);
   } finally {
+    controller.abort();
     process.removeListener("SIGTERM", onSigterm);
     process.removeListener("SIGINT", onSigint);
   }

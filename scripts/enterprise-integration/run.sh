@@ -34,6 +34,8 @@ run_sql_file() {
 }
 
 run_sql_file "${SCRIPT_DIR}/00-supabase-stubs.sql"
+run_psql --command \
+  "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text null, raw_app_meta_data jsonb not null default '{}'::jsonb, created_at timestamptz not null default now());"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-init.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250001_core_transaction_foundation.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250004_booking_shadow_write_rpc.sql"
@@ -46,8 +48,8 @@ mapfile -t enterprise_migrations < <(
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 27 ]]; then
-  echo "Expected 27 enterprise migrations (001-026 plus 032), found ${#enterprise_migrations[@]}" >&2
+if [[ "${#enterprise_migrations[@]}" -ne 28 ]]; then
+  echo "Expected 28 enterprise migrations (001-026 plus 032-033), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -59,15 +61,21 @@ for migration in "${enterprise_migrations[@]}"; do
     run_psql --command \
       "create index merchant_enterprise_audit_events_actor_created_idx on public.merchant_enterprise_audit_events(merchant_id);"
   fi
+  if [[ "$(basename -- "${migration}")" == \
+    "202608190033_merchant_enterprise_invitation_delivery_outbox.sql" ]]; then
+    echo '[enterprise-integration] seeding conflicting invitation indexes for retry coverage'
+    run_psql --command \
+      "create index merchant_enterprise_employees_invitation_exchange_idx on public.merchant_enterprise_employees(merchant_id); create index merchant_outbox_enterprise_invitation_due_idx on public.merchant_outbox_events(merchant_id); create index merchant_outbox_enterprise_invitation_lease_idx on public.merchant_outbox_events(merchant_id);"
+  fi
   run_sql_file "${migration}"
 done
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032, 202608190033) or version between 202607310001 and 202608040026;"
 )"
-if [[ "${registry_count}" -ne 31 ]]; then
-  echo "Expected 31 applied prerequisite/enterprise versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne 32 ]]; then
+  echo "Expected 32 applied prerequisite/enterprise versions, found ${registry_count}" >&2
   exit 1
 fi
 
@@ -80,6 +88,7 @@ run_sql_file "${SCRIPT_DIR}/48-task-workflow-binding.sql"
 run_sql_file "${SCRIPT_DIR}/49-enterprise-todos.sql"
 run_sql_file "${SCRIPT_DIR}/50-workflow-automations.sql"
 run_sql_file "${SCRIPT_DIR}/51-audit-query-security.sql"
+run_sql_file "${SCRIPT_DIR}/52-invitation-delivery-outbox.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {

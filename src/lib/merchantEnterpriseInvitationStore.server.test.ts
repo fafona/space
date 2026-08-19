@@ -9,11 +9,15 @@ import {
 import { normalizeMerchantEnterpriseEmployee } from "@/lib/merchantEnterprise";
 import {
   bindMerchantEnterpriseEmployeeInvitationAuthUser,
+  createMerchantEnterpriseEmployeeInvitationV2,
   createMerchantEnterpriseInvitationSecret,
   finalizeMerchantEnterpriseEmployeeInvitation,
   removeMerchantEnterpriseEmployeeInvitation,
   reserveMerchantEnterpriseEmployeeInvitation,
+  resolveMerchantEnterpriseInvitationActiveHmacKeyId,
+  resolveMerchantEnterpriseInvitationDeliveryMode,
   revokeMerchantEnterpriseEmployeeInvitation,
+  scheduleMerchantEnterpriseEmployeeInvitationDeliveryV2,
 } from "@/lib/merchantEnterpriseInvitationStore.server";
 import type { MerchantEnterpriseStoreClient } from "@/lib/merchantEnterpriseStore.server";
 
@@ -117,6 +121,130 @@ test("invitation secrets are high-entropy URL-safe values and only their SHA-256
   assert.doesNotMatch(JSON.stringify(captured?.args), new RegExp(secret.token));
   assert.equal(result.invitationVersion, 1);
   assert.equal(result.employee.id, employeeId);
+});
+
+test("reliable invitation delivery mode and active HMAC key fail closed", () => {
+  assert.equal(resolveMerchantEnterpriseInvitationDeliveryMode({}), "legacy");
+  assert.equal(
+    resolveMerchantEnterpriseInvitationDeliveryMode({
+      MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "outbox",
+    }),
+    "outbox",
+  );
+  assert.throws(
+    () =>
+      resolveMerchantEnterpriseInvitationDeliveryMode({
+        MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "enabled",
+      }),
+    /enterprise_invitation_delivery_mode_invalid/,
+  );
+  assert.equal(
+    resolveMerchantEnterpriseInvitationActiveHmacKeyId({
+      MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID: "v1",
+    }),
+    "v1",
+  );
+  assert.throws(
+    () => resolveMerchantEnterpriseInvitationActiveHmacKeyId({}),
+    /enterprise_invitation_hmac_active_key_invalid/,
+  );
+});
+
+test("reliable employee creation atomically requests a queued invitation without a token", async () => {
+  let captured:
+    | { functionName: string; args: Record<string, unknown> }
+    | undefined;
+  const eventId = "123e4567-e89b-42d3-a456-426614174000";
+  const client = rpcClient(async (functionName, args) => {
+    captured = { functionName, args };
+    return {
+      data: {
+        employee: employeeRow({ invitationVersion: 1, version: 2, authUserId: null }),
+        invitation_version: 1,
+        event_id: eventId,
+        delivery_status: "queued",
+        replayed: false,
+      },
+      error: null,
+    };
+  });
+  const result = await createMerchantEnterpriseEmployeeInvitationV2(client, {
+    siteId: "10000000",
+    email: "staff@example.com",
+    displayName: "Staff",
+    roleId,
+    operationId: "enterprise-employee-invite:one",
+    hmacKeyId: "v1",
+    ...ownerActor,
+  });
+
+  assert.equal(
+    captured?.functionName,
+    "faolla_create_merchant_enterprise_employee_invitation_v2",
+  );
+  assert.deepEqual(captured?.args, {
+    p_input: {
+      merchant_id: "10000000",
+      email: "staff@example.com",
+      display_name: "Staff",
+      role_id: roleId,
+      operation_id: "enterprise-employee-invite:one",
+      hmac_key_id: "v1",
+      actor_type: "owner",
+      actor_id: authUserId,
+    },
+  });
+  assert.equal(result.deliveryStatus, "queued");
+  assert.equal(result.eventId, eventId);
+  assert.doesNotMatch(JSON.stringify(captured?.args), /token/i);
+});
+
+test("reliable resend and renew schedule a generation using exact CAS and operation ids", async () => {
+  const calls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  const client = rpcClient(async (functionName, args) => {
+    calls.push({ functionName, args });
+    return {
+      data: {
+        employee: employeeRow({ invitationVersion: 4, version: 12 }),
+        invitation_version: 4,
+        event_id: "223e4567-e89b-42d3-a456-426614174000",
+        delivery_status: "already_queued",
+        replayed: false,
+        retry_after_seconds: 31,
+      },
+      error: null,
+    };
+  });
+  const result = await scheduleMerchantEnterpriseEmployeeInvitationDeliveryV2(
+    client,
+    {
+      siteId: "10000000",
+      employeeId,
+      version: 11,
+      action: "resend",
+      operationId: "enterprise-employee-resend:one",
+      hmacKeyId: "v1",
+      ...ownerActor,
+    },
+  );
+  assert.equal(
+    calls[0]?.functionName,
+    "faolla_schedule_merchant_employee_invitation_delivery_v2",
+  );
+  assert.deepEqual(calls[0]?.args, {
+    p_input: {
+      merchant_id: "10000000",
+      employee_id: employeeId,
+      expected_version: 11,
+      action: "resend",
+      operation_id: "enterprise-employee-resend:one",
+      hmac_key_id: "v1",
+      actor_type: "owner",
+      actor_id: authUserId,
+    },
+  });
+  assert.equal(result.deliveryStatus, "already_queued");
+  assert.equal(result.retryAfterSeconds, 31);
 });
 
 test("reserve rejects a raw invitation token before any database call", async () => {

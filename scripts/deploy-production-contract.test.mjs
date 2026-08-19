@@ -103,7 +103,96 @@ test("enterprise automation worker is fail-closed and receives the production ga
   );
   assert.match(
     deployScript,
-    /if \[ "\$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" \]; then[\s\S]+start_automation_worker_process "\$RELEASE_DIR"/,
+    /if \[ "\$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" \][\s\S]{0,120}\|\| \[ "\$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" = "true" \]; then[\s\S]+start_automation_worker_process "\$RELEASE_DIR"/,
+  );
+});
+
+test("durable invitation settings deploy fail-closed without erasing existing secrets", () => {
+  for (const entry of [
+    "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE=legacy",
+    "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED=false",
+    "MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON=",
+    "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID=",
+    "MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN=",
+    "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM=",
+    "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO=",
+    "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS=3600",
+    "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS=3900",
+    "RESEND_API_KEY=",
+  ]) {
+    assert.match(envExample, new RegExp(`^${entry}$`, "m"));
+  }
+  assert.match(
+    deployWorkflow,
+    /MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE:\s*\$\{\{ vars\.MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE \}\}/,
+  );
+  assert.match(
+    deployWorkflow,
+    /MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:\s*\$\{\{ vars\.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED \}\}/,
+  );
+  for (const secret of [
+    "MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON",
+    "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID",
+    "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM",
+    "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO",
+    "RESEND_API_KEY",
+  ]) {
+    assert.match(
+      deployWorkflow,
+      new RegExp(`${secret}:\\s*\\$\\{\\{ secrets\\.${secret} \\}\\}`),
+    );
+    assert.match(deployWorkflow, new RegExp(`${secret}_B64=`));
+    assert.match(deployWorkflow, new RegExp(`${secret}_B64='\\$${secret}_B64'`));
+    assert.match(
+      deployScript,
+      new RegExp(`write_env_value "${secret}" "\\$\\(decode_base64_value`),
+    );
+  }
+  assert.match(
+    deployWorkflow,
+    /MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN:\s*\$\{\{ vars\.MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN \}\}/,
+  );
+  for (const setting of [
+    "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS",
+    "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS",
+  ]) {
+    assert.match(
+      deployWorkflow,
+      new RegExp(`${setting}:\\s*\\$\\{\\{ vars\\.${setting} \\}\\}`),
+    );
+    assert.match(
+      deployScript,
+      new RegExp(`write_env_value "${setting}" "\\$${setting}"`),
+    );
+  }
+  assert.match(
+    deployScript,
+    /MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE="\$\{MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE:-legacy\}"/,
+  );
+  assert.match(
+    deployScript,
+    /MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="\$\{MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:-false\}"/,
+  );
+  assert.match(deployScript, /case "\$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" in\s*legacy\|outbox\)/);
+  assert.match(deployScript, /case "\$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" in\s*true\|false\)/);
+  assert.match(
+    deployScript,
+    /MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" = "outbox"[\s\S]+MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" != "true"[\s\S]+outbox invitation delivery requires the invitation worker/,
+    "outbox mode must never enqueue invitations without a live delivery worker",
+  );
+  assert.match(
+    deployScript,
+    /MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS" -lt \$\(\(MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS \+ 300\)\)/,
+  );
+  assert.match(
+    deployScript,
+    /if \[ -z "\$key" \] \|\| \[ -z "\$value" \]; then\s*return 0/,
+    "an omitted GitHub secret must preserve the value already stored on the server",
+  );
+  assert.match(
+    deployScript,
+    /read_runtime_invitation_worker_enabled[\s\S]+MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="\$invitation_worker_enabled"[\s\S]+pm2 start/,
+    "the shared supervisor must start when invitation delivery is explicitly enabled",
   );
 });
 

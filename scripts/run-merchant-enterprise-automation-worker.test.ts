@@ -6,11 +6,17 @@ import type { MerchantOutboxTaskHandler } from "../src/lib/merchantOutboxWorker.
 import type { OutboxRestRuntime } from "./outbox-v1-runtime";
 import {
   discoverMerchantEnterpriseAutomationMerchantIds,
+  discoverMerchantEnterpriseInvitationMerchantIds,
   isMerchantEnterpriseAutomationWorkerEnabled,
+  isMerchantEnterpriseInvitationWorkerEnabled,
+  prepareMerchantEnterpriseInvitationWorkerBeforeReady,
   resolveAutomationWorkerFailureBackoffMs,
   resolveMerchantEnterpriseAutomationWorkerConfig,
+  resolveMerchantEnterpriseInvitationWorkerConfig,
   runMerchantEnterpriseAutomationWorker,
+  runMerchantEnterpriseInvitationWorker,
   waitForMerchantEnterpriseAutomationWorkerReady,
+  waitForMerchantEnterpriseInvitationWorkerReady,
   type MerchantEnterpriseAutomationWorkerConfig,
 } from "./run-merchant-enterprise-automation-worker";
 
@@ -51,6 +57,74 @@ test("enterprise automation worker is disabled unless explicitly enabled", () =>
     }),
     true,
   );
+});
+
+test("invitation worker is independently gated and configured", () => {
+  assert.equal(isMerchantEnterpriseInvitationWorkerEnabled({}), false);
+  assert.equal(
+    isMerchantEnterpriseInvitationWorkerEnabled({
+      MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: " true ",
+    }),
+    true,
+  );
+  const resolved = resolveMerchantEnterpriseInvitationWorkerConfig({
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "true",
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_BATCH_LIMIT: "7",
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_LEASE_SECONDS: "120",
+  });
+  assert.equal(resolved.enabled, true);
+  assert.equal(resolved.batchLimit, 7);
+  assert.equal(resolved.leaseSeconds, 120);
+});
+
+test("enabled invitation worker validates secrets, email config, and schema before ready", async () => {
+  const order: string[] = [];
+  const prepared = await prepareMerchantEnterpriseInvitationWorkerBeforeReady(
+    runtime,
+    true,
+    {
+      resolveKeyring: () => {
+        order.push("keyring");
+        return { activeKeyId: "k1", keys: new Map([["k1", Buffer.alloc(32)]]) };
+      },
+      resolveEmailConfig: () => {
+        order.push("email");
+        return {
+          apiKey: "re_test",
+          from: "invite@faolla.example",
+          publicOrigin: "https://faolla.example",
+        };
+      },
+      assertReady: async () => {
+        order.push("schema");
+      },
+    },
+  );
+  assert.deepEqual(order, ["keyring", "email", "schema"]);
+  assert.equal(prepared?.keyring.activeKeyId, "k1");
+});
+
+test("disabled invitation worker preserves early-ready behavior without invitation checks", async () => {
+  let calls = 0;
+  const prepared = await prepareMerchantEnterpriseInvitationWorkerBeforeReady(
+    runtime,
+    false,
+    {
+      resolveKeyring: () => {
+        calls += 1;
+        throw new Error("must_not_run");
+      },
+      resolveEmailConfig: () => {
+        calls += 1;
+        throw new Error("must_not_run");
+      },
+      assertReady: async () => {
+        calls += 1;
+      },
+    },
+  );
+  assert.equal(prepared, null);
+  assert.equal(calls, 0);
 });
 
 test("enterprise automation worker configuration is bounded and rejects malformed overrides", () => {
@@ -136,6 +210,90 @@ test("scope discovery fails closed on malformed merchant rows", async () => {
       },
     ),
     /automation_outbox_discovery_invalid/,
+  );
+});
+
+test("invitation discovery uses its dedicated fair cursor RPC", async () => {
+  const requests: Array<{ path: string; init?: RequestInit }> = [];
+  const merchantIds = await discoverMerchantEnterpriseInvitationMerchantIds(
+    runtime,
+    {
+      discoveryLimit: 250,
+      merchantScopeLimit: 50,
+      batchLimit: 2,
+      requestTimeoutMs: 10_000,
+    },
+    {
+      afterMerchantId: "10000002",
+      requestJson: (async (
+        _runtime: OutboxRestRuntime,
+        path: string,
+        init?: RequestInit,
+      ) => {
+        requests.push({ path, init });
+        return [{ merchant_id: "10000003" }, { merchant_id: "10000004" }];
+      }) as never,
+    },
+  );
+  assert.deepEqual(merchantIds, ["10000003", "10000004"]);
+  assert.equal(
+    requests[0]?.path,
+    "/rest/v1/rpc/faolla_discover_merchant_enterprise_invitation_merchants_v1",
+  );
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    p_after_merchant_id: "10000002",
+    p_limit: 2,
+  });
+});
+
+test("invitation loop claims only invitation events and uses domain settlement", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const settlement = {
+    complete: async () => true,
+    fail: async () => "dead_lettered" as const,
+  };
+  await runMerchantEnterpriseInvitationWorker({
+    client: { rpc: async () => ({ data: null, error: null }) },
+    runtime,
+    handler: async () => undefined,
+    settlement,
+    config: {
+      ...config(),
+      enabled: true,
+    },
+    signal: new AbortController().signal,
+    workerId: "enterprise-invitation:test",
+    dependencies: {
+      maxCycles: 1,
+      discoverMerchantIds: async () => ["10000001"],
+      processBatch: (async (
+        _client: MerchantOutboxRpcClient,
+        options: Record<string, unknown>,
+      ) => {
+        calls.push(options);
+        return {
+          status: "idle",
+          claimed: 0,
+          completed: 0,
+          retried: 0,
+          deadLettered: 0,
+          leaseLost: 0,
+          malformed: 0,
+        };
+      }) as never,
+      sleep: async () => undefined,
+      logger: { info() {}, warn() {}, error() {} },
+    },
+  });
+  assert.equal(calls[0]?.claimFunctionName, undefined);
+  assert.deepEqual(Object.keys(calls[0]?.handlers as object), [
+    "enterprise.employee_invitation.deliver",
+  ]);
+  assert.equal(
+    (calls[0]?.settlements as Record<string, unknown>)[
+      "enterprise.employee_invitation.deliver"
+    ],
+    settlement,
   );
 });
 
@@ -262,6 +420,30 @@ test("worker stays online and backs off without claiming until migration readine
   assert.equal(checks, 3);
   assert.equal(claims, 1);
   assert.deepEqual(delays, [1_000, 2_000]);
+});
+
+test("invitation readiness uses its own migration gate and backoff", async () => {
+  const sleeps: number[] = [];
+  let checks = 0;
+  const ready = await waitForMerchantEnterpriseInvitationWorkerReady(
+    runtime,
+    config(),
+    new AbortController().signal,
+    {
+      maxChecks: 3,
+      assertReady: async () => {
+        checks += 1;
+        if (checks < 3) throw new Error("invitation_migration_not_ready");
+      },
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+      },
+      random: () => 0,
+      logger: { info() {}, warn() {}, error() {} },
+    },
+  );
+  assert.equal(ready, true);
+  assert.deepEqual(sleeps, [1_000, 2_000]);
 });
 
 test("disabled worker refuses to discover or claim", async () => {
