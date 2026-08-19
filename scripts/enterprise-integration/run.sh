@@ -33,26 +33,69 @@ run_sql_file() {
   run_psql --file "${file}"
 }
 
+expect_sql_file_error() {
+  local file="$1"
+  local expected_message="$2"
+  local output
+  echo "[enterprise-integration] expecting ${expected_message} from ${file#"${REPOSITORY_ROOT}/"}"
+  if output="$(run_psql --file "${file}" 2>&1)"; then
+    echo "Expected migration failure containing ${expected_message}" >&2
+    exit 1
+  fi
+  if [[ "${output}" != *"${expected_message}"* ]]; then
+    echo "Expected migration failure containing ${expected_message}, got:" >&2
+    echo "${output}" >&2
+    exit 1
+  fi
+}
+
+run_pre_cutover_acceptance() {
+  run_sql_file "${SCRIPT_DIR}/40-workflow-acceptance.sql"
+  run_sql_file "${SCRIPT_DIR}/43-workflow-archive-pagination.sql"
+  run_sql_file "${SCRIPT_DIR}/46-workflow-execution.sql"
+  run_sql_file "${SCRIPT_DIR}/47-workflow-revisions.sql"
+  run_sql_file "${SCRIPT_DIR}/48-task-workflow-binding.sql"
+  run_sql_file "${SCRIPT_DIR}/49-enterprise-todos.sql"
+  run_sql_file "${SCRIPT_DIR}/50-workflow-automations.sql"
+  run_sql_file "${SCRIPT_DIR}/51-audit-query-security.sql"
+  run_sql_file "${SCRIPT_DIR}/52-invitation-delivery-outbox.sql"
+  run_sql_file "${SCRIPT_DIR}/53-current-operations.sql"
+  run_sql_file "${SCRIPT_DIR}/55-ordinary-account-authorization-bootstrap.sql"
+}
+
 run_sql_file "${SCRIPT_DIR}/00-supabase-stubs.sql"
 run_psql --command \
   "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text null, raw_app_meta_data jsonb not null default '{}'::jsonb, raw_user_meta_data jsonb not null default '{}'::jsonb, created_at timestamptz not null default now());"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-init.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250001_core_transaction_foundation.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250004_booking_shadow_write_rpc.sql"
+run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250005_coupon_shadow_write_rpc.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250007_reliable_outbox_runtime.sql"
 run_sql_file "${REPOSITORY_ROOT}/scripts/supabase-migrations/202607250008_scoped_outbox_claim.sql"
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_foundation.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' \) \
     -print | sort
 )
 
-if [[ "${#enterprise_migrations[@]}" -ne 30 ]]; then
-  echo "Expected 30 enterprise/identity migrations (001-026 plus 032-035), found ${#enterprise_migrations[@]}" >&2
+cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
+expected_enterprise_migration_count=31
+expected_registry_count=36
+cutover_present=0
+if [[ -f "${cutover_migration_path}" ]]; then
+  expected_enterprise_migration_count=32
+  expected_registry_count=37
+  cutover_present=1
+fi
+
+if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-036/037), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
+
+pre_cutover_acceptance_ran=0
 
 for migration in "${enterprise_migrations[@]}"; do
   if [[ "$(basename -- "${migration}")" == \
@@ -82,32 +125,306 @@ for migration in "${enterprise_migrations[@]}"; do
       "delete from public.faolla_schema_migrations where version = 202608190035; drop index public.faolla_personal_accounts_auth_user_id_uidx; drop index public.faolla_personal_accounts_personal_account_id_uidx; create unique index faolla_personal_accounts_auth_user_id_uidx on public.faolla_personal_accounts(created_at); create unique index faolla_personal_accounts_personal_account_id_uidx on public.faolla_personal_accounts(personal_account_id, created_at);"
     echo '[enterprise-integration] retrying 035 with quote_all_identifiers=on'
     PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+    echo '[enterprise-integration] seeding the non-ordinary site-main platform sentinel'
+    run_psql --command \
+      "insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data) values ('d3500000-0000-4000-8000-000000000001'::uuid, 'system-site@example.test', '{}'::jsonb, '{}'::jsonb); insert into public.merchants(id, name, owner_user_id) values ('site-main', 'Platform system site', 'd3500000-0000-4000-8000-000000000001'::uuid);"
+    echo '[enterprise-integration] establishing the serial enterprise fixtures before the identity hardening stage'
+    run_sql_file "${SCRIPT_DIR}/10-serial-acceptance.sql"
+    echo '[enterprise-integration] validating the 035 shadow contract before 036 narrows positive authorization'
+    run_sql_file "${SCRIPT_DIR}/54-ordinary-account-authorization.sql"
+  elif [[ "$(basename -- "${migration}")" == \
+    "202608190036_ordinary_account_authorization_bootstrap.sql" ]]; then
+    run_psql --command \
+      "do \$\$ begin if not exists (select 1 from pg_catalog.pg_roles where rolname = 'redteam_custom_api') then create role redteam_custom_api nologin noinherit; end if; if not exists (select 1 from pg_catalog.pg_roles where rolname = 'redteam_custom_child') then create role redteam_custom_child nologin noinherit; end if; end \$\$; grant usage on schema public to redteam_custom_api, redteam_custom_child; grant execute on function public.faolla_resolve_ordinary_account_authorization_v1(uuid) to redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authorization_readiness_v1() to redteam_custom_api with grant option; grant execute on function public.faolla_guard_personal_account_binding_v1() to redteam_custom_api; grant select on table public.faolla_personal_accounts to redteam_custom_api with grant option; grant update(personal_account_id) on table public.faolla_personal_accounts to redteam_custom_api with grant option; set role redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authorization_readiness_v1() to redteam_custom_child; grant select on table public.faolla_personal_accounts to redteam_custom_child; grant update(personal_account_id) on table public.faolla_personal_accounts to redteam_custom_child; reset role;"
+    echo '[enterprise-integration] rejecting a conflicting 036 registry name before function DDL'
+    run_psql --command \
+      "insert into public.faolla_schema_migrations(version, name) values (202608190036, 'redteam_wrong_036');"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_bootstrap_registry_conflict'
+    bootstrap_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and to_regprocedure('public.faolla_create_ordinary_account_authorization_v1(uuid,text,text)') is null and to_regprocedure('public.faolla_bootstrap_ordinary_account_authorization_v1(uuid,text)') is null and not exists (select 1 from (values ('public.faolla_resolve_ordinary_account_authorization_v1(uuid)'), ('public.faolla_get_ordinary_account_authorization_readiness_v1()'), ('public.faolla_guard_personal_account_binding_v1()')) as protected_function(signature) where not has_function_privilege('redteam_custom_api', protected_function.signature, 'EXECUTE')) and has_function_privilege('redteam_custom_child', 'public.faolla_get_ordinary_account_authorization_readiness_v1()', 'EXECUTE') and has_table_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'SELECT') and has_table_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'SELECT') and has_column_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE') and has_column_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE') from public.faolla_schema_migrations where version = 202608190036 and name = 'redteam_wrong_036';"
+    )"
+    if [[ "${bootstrap_conflict_state}" != 't' ]]; then
+      echo '036 registry conflict changed functions or the registry row' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190036 and name = 'redteam_wrong_036';"
+    run_sql_file "${migration}"
+    bootstrap_custom_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from (values ('redteam_custom_api', 'public.faolla_resolve_ordinary_account_authorization_v1(uuid)'), ('redteam_custom_api', 'public.faolla_get_ordinary_account_authorization_readiness_v1()'), ('redteam_custom_api', 'public.faolla_guard_personal_account_binding_v1()'), ('redteam_custom_child', 'public.faolla_get_ordinary_account_authorization_readiness_v1()')) as protected_function(role_name, signature) where has_function_privilege(protected_function.role_name, protected_function.signature, 'EXECUTE')) and not has_table_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'SELECT') and not has_table_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'SELECT') and not has_column_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE') and not has_column_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE');"
+    )"
+    if [[ "${bootstrap_custom_acl_state}" != 't' ]]; then
+      echo '036 did not remove a pre-existing custom resolver grant' >&2
+      exit 1
+    fi
+    bootstrap_guard_search_path_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select function_metadata.proconfig is not distinct from array['search_path=pg_catalog, public']::text[] from pg_catalog.pg_proc as function_metadata where function_metadata.oid = 'public.faolla_guard_personal_account_binding_v1()'::regprocedure;"
+    )"
+    if [[ "${bootstrap_guard_search_path_state}" != 't' ]]; then
+      echo '036 did not normalize the quote_all_identifiers guard search_path' >&2
+      exit 1
+    fi
+    echo '[enterprise-integration] rejecting semantically different quoted search_path drift'
+    run_psql --command \
+      "alter function public.faolla_get_ordinary_account_authorization_readiness_v1() set search_path = \"PG_CATALOG\", public;"
+    bootstrap_search_path_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() #>> '{invariants,aclReady}')::boolean;"
+    )"
+    if [[ "${bootstrap_search_path_drift_state}" != 't' ]]; then
+      echo '036 readiness accepted a semantically different quoted search_path' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "alter function public.faolla_get_ordinary_account_authorization_readiness_v1() set search_path = pg_catalog, public;"
+    echo '[enterprise-integration] rejecting same-named fake identity schema objects'
+    run_psql --command \
+      "drop index public.faolla_personal_accounts_auth_user_id_uidx; create unique index faolla_personal_accounts_auth_user_id_uidx on public.faolla_personal_accounts(created_at); alter table public.faolla_personal_accounts drop constraint faolla_personal_accounts_status_valid; alter table public.faolla_personal_accounts add constraint faolla_personal_accounts_status_valid check (status is not null); drop trigger faolla_personal_accounts_binding_guard on public.faolla_personal_accounts; create trigger faolla_personal_accounts_binding_guard before insert on public.faolla_personal_accounts for each row execute function public.faolla_guard_personal_account_binding_v1(); alter table public.faolla_personal_accounts enable always trigger faolla_personal_accounts_binding_guard;"
+    fake_schema_ready="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() #>> '{invariants,schemaReady}')::boolean;"
+    )"
+    if [[ "${fake_schema_ready}" != 'f' ]]; then
+      echo 'Authoritative readiness accepted same-named fake schema objects' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "drop index public.faolla_personal_accounts_auth_user_id_uidx; create unique index faolla_personal_accounts_auth_user_id_uidx on public.faolla_personal_accounts(auth_user_id); alter table public.faolla_personal_accounts drop constraint faolla_personal_accounts_status_valid; alter table public.faolla_personal_accounts add constraint faolla_personal_accounts_status_valid check (status in ('active', 'disabled')); drop trigger faolla_personal_accounts_binding_guard on public.faolla_personal_accounts; create trigger faolla_personal_accounts_binding_guard before update or delete on public.faolla_personal_accounts for each row execute function public.faolla_guard_personal_account_binding_v1(); alter table public.faolla_personal_accounts enable always trigger faolla_personal_accounts_binding_guard;"
+    restored_schema_ready="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() #>> '{invariants,schemaReady}')::boolean;"
+    )"
+    if [[ "${restored_schema_ready}" != 't' ]]; then
+      echo 'Authoritative readiness did not accept restored exact schema objects' >&2
+      exit 1
+    fi
+    echo '[enterprise-integration] rejecting null-bearing personal rows and exact column-catalog drift'
+    personal_invalid_before="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() #>> '{personal,invalidCanonicalCount}')::integer;"
+    )"
+    run_psql --command \
+      "alter table public.faolla_personal_accounts alter column auth_user_id drop not null, alter column personal_account_id drop not null, alter column status drop not null, alter column status drop default, alter column version drop not null, alter column version drop default, alter column created_at drop not null, alter column created_at drop default, alter column updated_at drop not null, alter column updated_at drop default; insert into public.faolla_personal_accounts(auth_user_id, personal_account_id, status, version, created_at, updated_at) values (null, null, null, null, null, null);"
+    null_column_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not (readiness ->> 'readyForCutover')::boolean and not (readiness #>> '{invariants,schemaReady}')::boolean and (readiness #>> '{personal,invalidCanonicalCount}')::integer = ${personal_invalid_before} + 1 from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${null_column_drift_state}" != 't' ]]; then
+      echo 'Authoritative readiness accepted null data or personal-account column drift' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "alter table public.faolla_personal_accounts disable trigger faolla_personal_accounts_binding_guard; delete from public.faolla_personal_accounts where auth_user_id is null and personal_account_id is null and status is null and version is null and created_at is null and updated_at is null; alter table public.faolla_personal_accounts alter column auth_user_id set not null, alter column personal_account_id set not null, alter column status set not null, alter column status set default 'active', alter column version set not null, alter column version set default 1, alter column created_at set not null, alter column created_at set default now(), alter column updated_at set not null, alter column updated_at set default now(); alter table public.faolla_personal_accounts enable always trigger faolla_personal_accounts_binding_guard;"
+    restored_column_catalog_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select (readiness #>> '{invariants,schemaReady}')::boolean and (readiness #>> '{personal,invalidCanonicalCount}')::integer = ${personal_invalid_before} from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${restored_column_catalog_state}" != 't' ]]; then
+      echo 'Authoritative readiness did not accept the restored exact personal-account column catalog' >&2
+      exit 1
+    fi
+    echo '[enterprise-integration] retrying unregistered 036 with quote_all_identifiers=on'
+    run_psql --command \
+      "grant execute on function public.faolla_resolve_ordinary_account_authorization_v1(uuid) to redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authorization_readiness_v1() to redteam_custom_api with grant option; grant execute on function public.faolla_create_ordinary_account_authorization_v1(uuid,text,text) to redteam_custom_api; grant execute on function public.faolla_bootstrap_ordinary_account_authorization_v1(uuid,text) to redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() to redteam_custom_api; grant execute on function public.faolla_guard_personal_account_binding_v1() to redteam_custom_api; grant execute on function public.faolla_guard_staff_identity_ordinary_exclusion_v1() to redteam_custom_api; grant execute on function public.faolla_guard_auth_user_ordinary_account_delete_v1() to redteam_custom_api; grant select on table public.faolla_personal_accounts to redteam_custom_api with grant option; grant update(personal_account_id) on table public.faolla_personal_accounts to redteam_custom_api with grant option; set role redteam_custom_api; grant execute on function public.faolla_get_ordinary_account_authorization_readiness_v1() to redteam_custom_child; grant select on table public.faolla_personal_accounts to redteam_custom_child; grant update(personal_account_id) on table public.faolla_personal_accounts to redteam_custom_child; reset role; delete from public.faolla_schema_migrations where version = 202608190036;"
+    bootstrap_polluted_table_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() #>> '{invariants,aclReady}')::boolean and has_table_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'SELECT') and has_table_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'SELECT') and has_column_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE') and has_column_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE');"
+    )"
+    if [[ "${bootstrap_polluted_table_acl_state}" != 't' ]]; then
+      echo '036 readiness accepted a custom canonical-table grant chain' >&2
+      exit 1
+    fi
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+    bootstrap_retry_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from (values ('public.faolla_resolve_ordinary_account_authorization_v1(uuid)'), ('public.faolla_get_ordinary_account_authorization_readiness_v1()'), ('public.faolla_create_ordinary_account_authorization_v1(uuid,text,text)'), ('public.faolla_bootstrap_ordinary_account_authorization_v1(uuid,text)'), ('public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1()'), ('public.faolla_guard_personal_account_binding_v1()'), ('public.faolla_guard_staff_identity_ordinary_exclusion_v1()'), ('public.faolla_guard_auth_user_ordinary_account_delete_v1()')) as protected_function(signature) where has_function_privilege('redteam_custom_api', protected_function.signature, 'EXECUTE')) and not has_function_privilege('redteam_custom_child', 'public.faolla_get_ordinary_account_authorization_readiness_v1()', 'EXECUTE') and not has_table_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'SELECT') and not has_table_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'SELECT') and not has_column_privilege('redteam_custom_api', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE') and not has_column_privilege('redteam_custom_child', 'public.faolla_personal_accounts', 'personal_account_id', 'UPDATE');"
+    )"
+    if [[ "${bootstrap_retry_acl_state}" != 't' ]]; then
+      echo '036 retry retained a custom SECURITY DEFINER function grant' >&2
+      exit 1
+    fi
+    system_site_ready="$(
+      run_psql --tuples-only --no-align --command \
+        "select not (readiness ->> 'readyForCutover')::boolean and (readiness #>> '{merchant,recordCount}')::integer = 2 and (readiness #>> '{merchant,invalidBindingCount}')::integer = 2 from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${system_site_ready}" != 't' ]]; then
+      echo 'Authoritative readiness treated site-main as an ordinary merchant' >&2
+      exit 1
+    fi
+    echo '[enterprise-integration] proving only exact site-main is excluded from ordinary readiness'
+    run_psql --command \
+      "insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data) values ('d3500000-0000-4000-8000-000000000002'::uuid, 'illegal-site@example.test', '{}'::jsonb, '{}'::jsonb); insert into public.merchants(id, name, user_id, auth_user_id, owner_user_id, owner_id, auth_id, created_by, created_by_user_id) values ('site-illegal', 'Illegal ordinary site', 'd3500000-0000-4000-8000-000000000002'::uuid, 'd3500000-0000-4000-8000-000000000002'::uuid, 'd3500000-0000-4000-8000-000000000002'::uuid, 'd3500000-0000-4000-8000-000000000002'::uuid, 'd3500000-0000-4000-8000-000000000002'::uuid, 'd3500000-0000-4000-8000-000000000002'::uuid, 'd3500000-0000-4000-8000-000000000002'::uuid);"
+    illegal_site_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not (readiness ->> 'readyForCutover')::boolean and (readiness #>> '{merchant,recordCount}')::integer = 3 and (readiness #>> '{merchant,invalidBindingCount}')::integer = 3 from (select public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() as readiness) as result;"
+    )"
+    if [[ "${illegal_site_state}" != 't' ]]; then
+      echo 'Authoritative readiness hid a non-sentinel invalid merchant ID' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.merchants where id = 'site-illegal'; delete from auth.users where id = 'd3500000-0000-4000-8000-000000000002'::uuid;"
+  elif [[ "$(basename -- "${migration}")" == \
+    "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
+    echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
+    run_pre_cutover_acceptance
+    pre_cutover_acceptance_ran=1
+    echo '[enterprise-integration] applying the controlled authoritative fixture backfill'
+    run_psql --command \
+      "insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data) values ('10000000-0000-4000-8000-000000000001'::uuid, 'owner-a@example.test', '{}'::jsonb, '{}'::jsonb), ('20000000-0000-4000-8000-000000000002'::uuid, 'owner-b@example.test', '{}'::jsonb, '{}'::jsonb) on conflict (id) do nothing; update public.merchants set user_id = '10000000-0000-4000-8000-000000000001'::uuid, auth_user_id = '10000000-0000-4000-8000-000000000001'::uuid, owner_user_id = '10000000-0000-4000-8000-000000000001'::uuid, owner_id = '10000000-0000-4000-8000-000000000001'::uuid, auth_id = '10000000-0000-4000-8000-000000000001'::uuid, created_by = '10000000-0000-4000-8000-000000000001'::uuid, created_by_user_id = '10000000-0000-4000-8000-000000000001'::uuid where id = '10000001'; update public.merchants set user_id = '20000000-0000-4000-8000-000000000002'::uuid, auth_user_id = '20000000-0000-4000-8000-000000000002'::uuid, owner_user_id = '20000000-0000-4000-8000-000000000002'::uuid, owner_id = '20000000-0000-4000-8000-000000000002'::uuid, auth_id = '20000000-0000-4000-8000-000000000002'::uuid, created_by = '20000000-0000-4000-8000-000000000002'::uuid, created_by_user_id = '20000000-0000-4000-8000-000000000002'::uuid where id = '10000002';"
+    pre_cutover_ready="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() ->> 'readyForCutover')::boolean;"
+    )"
+    if [[ "${pre_cutover_ready}" != 't' ]]; then
+      echo 'Controlled fixture backfill did not satisfy authoritative cutover readiness' >&2
+      exit 1
+    fi
+    echo '[enterprise-integration] proving mutable metadata is observation-only for authoritative cutover readiness'
+    run_psql --command \
+      "insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data) values ('c7000000-0000-4000-8000-000000000001'::uuid, 'mutable-readiness-noise@example.test', '{}'::jsonb, '{\"account_type\":\"personal\",\"personal_id\":\"mutable-readiness-noise\"}'::jsonb);"
+    shadow_ready="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authorization_readiness_v1() ->> 'readyForCutover')::boolean;"
+    )"
+    authoritative_ready="$(
+      run_psql --tuples-only --no-align --command \
+        "select (public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() ->> 'readyForCutover')::boolean;"
+    )"
+    if [[ "${shadow_ready}" != 'f' || "${authoritative_ready}" != 't' ]]; then
+      echo 'Mutable metadata did not remain observation-only for authoritative readiness' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting a conflicting 037 registry name before behavior DDL'
+    run_psql --command \
+      "grant execute on function public.faolla_is_merchant_owner(text) to redteam_custom_api with grant option; grant select on table public.merchants to redteam_custom_api with grant option; grant update(name) on table public.merchants to redteam_custom_api with grant option; set role redteam_custom_api; grant execute on function public.faolla_is_merchant_owner(text) to redteam_custom_child; grant select on table public.merchants to redteam_custom_child; grant update(name) on table public.merchants to redteam_custom_child; reset role;"
+    run_psql --command \
+      "insert into public.faolla_schema_migrations(version, name) values (202608190037, 'redteam_wrong_037');"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_rls_cutover_registry_conflict'
+    cutover_registry_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and position('auth.jwt' in lower(pg_get_functiondef('public.faolla_is_merchant_owner(text)'::regprocedure))) > 0 and has_function_privilege('redteam_custom_api', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and has_function_privilege('redteam_custom_child', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and has_table_privilege('redteam_custom_api', 'public.merchants', 'SELECT') and has_table_privilege('redteam_custom_child', 'public.merchants', 'SELECT') and has_column_privilege('redteam_custom_api', 'public.merchants', 'name', 'UPDATE') and has_column_privilege('redteam_custom_child', 'public.merchants', 'name', 'UPDATE') from public.faolla_schema_migrations where version = 202608190037 and name = 'redteam_wrong_037';"
+    )"
+    if [[ "${cutover_registry_conflict_state}" != 't' ]]; then
+      echo '037 registry conflict changed owner behavior or the registry row' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190037 and name = 'redteam_wrong_037';"
+
+    echo '[enterprise-integration] rejecting a custom protected-table ACL before behavior DDL'
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_rls_cutover_table_acl_invalid'
+    cutover_table_acl_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190037) and position('auth.jwt' in lower(pg_get_functiondef('public.faolla_is_merchant_owner(text)'::regprocedure))) > 0 and has_table_privilege('redteam_custom_api', 'public.merchants', 'SELECT') and has_table_privilege('redteam_custom_child', 'public.merchants', 'SELECT') and has_column_privilege('redteam_custom_api', 'public.merchants', 'name', 'UPDATE') and has_column_privilege('redteam_custom_child', 'public.merchants', 'name', 'UPDATE') and (select count(*) from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_insert_self', 'merchants_update_own')) = 2;"
+    )"
+    if [[ "${cutover_table_acl_conflict_state}" != 't' ]]; then
+      echo 'Custom table-ACL rejection changed owner behavior, policies, grants, or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "revoke all privileges on table public.merchants from redteam_custom_api cascade; revoke all privileges on table public.merchants from redteam_custom_child cascade; revoke all privileges (name) on table public.merchants from redteam_custom_api cascade; revoke all privileges (name) on table public.merchants from redteam_custom_child cascade;"
+
+    echo '[enterprise-integration] rejecting an extra known-role table privilege before behavior DDL'
+    run_psql --command \
+      "grant truncate on table public.merchants to authenticated;"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_rls_cutover_table_acl_invalid'
+    cutover_known_role_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190037) and position('auth.jwt' in lower(pg_get_functiondef('public.faolla_is_merchant_owner(text)'::regprocedure))) > 0 and has_table_privilege('authenticated', 'public.merchants', 'TRUNCATE') and (select count(*) from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_insert_self', 'merchants_update_own')) = 2;"
+    )"
+    if [[ "${cutover_known_role_acl_state}" != 't' ]]; then
+      echo 'Known-role table-ACL rejection changed owner behavior, policies, grants, or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "revoke truncate on table public.merchants from authenticated;"
+
+    echo '[enterprise-integration] rejecting extra permissive policies before behavior DDL'
+    run_psql --command \
+      "create policy redteam_extra_merchants on public.merchants for select to authenticated using (true); create policy redteam_extra_pages on public.pages for select to authenticated using (true); create policy redteam_extra_orders on public.merchant_orders for select to authenticated using (true);"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_rls_cutover_policy_allowlist_invalid'
+    cutover_policy_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190037) and position('auth.jwt' in lower(pg_get_functiondef('public.faolla_is_merchant_owner(text)'::regprocedure))) > 0 and (select count(*) from pg_catalog.pg_policies where schemaname = 'public' and policyname in ('redteam_extra_merchants', 'redteam_extra_pages', 'redteam_extra_orders')) = 3 and (select count(*) from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'merchants' and policyname in ('merchants_insert_self', 'merchants_update_own')) = 2;"
+    )"
+    if [[ "${cutover_policy_conflict_state}" != 't' ]]; then
+      echo 'Extra-policy rejection changed owner behavior, legacy policies, or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "drop policy redteam_extra_merchants on public.merchants; drop policy redteam_extra_pages on public.pages; drop policy redteam_extra_orders on public.merchant_orders;"
+
+    echo '[enterprise-integration] rejecting a broadened anonymous page policy before behavior DDL'
+    run_psql --command \
+      "drop policy pages_public_home_read on public.pages; create policy pages_public_home_read on public.pages for select to anon using (true);"
+    expect_sql_file_error "${migration}" \
+      'ordinary_account_rls_cutover_public_page_policy_invalid'
+    cutover_page_policy_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190037) and position('auth.jwt' in lower(pg_get_functiondef('public.faolla_is_merchant_owner(text)'::regprocedure))) > 0 and regexp_replace(lower(coalesce(qual, '')), '[[:space:]()]', '', 'g') = 'true' from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'pages' and policyname = 'pages_public_home_read';"
+    )"
+    if [[ "${cutover_page_policy_state}" != 't' ]]; then
+      echo 'Anonymous-page-policy rejection changed owner behavior or registry' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "drop policy pages_public_home_read on public.pages; create policy pages_public_home_read on public.pages for select to anon using (merchant_id is null and slug = 'home');"
+
+    run_sql_file "${migration}"
+    cutover_custom_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not has_function_privilege('redteam_custom_api', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and not has_function_privilege('redteam_custom_child', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${cutover_custom_acl_state}" != 't' ]]; then
+      echo '037 did not remove a pre-existing custom owner-helper grant' >&2
+      exit 1
+    fi
+    echo '[enterprise-integration] retrying unregistered 037 with quote_all_identifiers=on'
+    run_psql --command \
+      "grant execute on function public.faolla_is_merchant_owner(text) to redteam_custom_api with grant option; set role redteam_custom_api; grant execute on function public.faolla_is_merchant_owner(text) to redteam_custom_child; reset role; delete from public.faolla_schema_migrations where version = 202608190037;"
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" run_sql_file "${migration}"
+    cutover_retry_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not has_function_privilege('redteam_custom_api', 'public.faolla_is_merchant_owner(text)', 'EXECUTE') and not has_function_privilege('redteam_custom_child', 'public.faolla_is_merchant_owner(text)', 'EXECUTE');"
+    )"
+    if [[ "${cutover_retry_acl_state}" != 't' ]]; then
+      echo '037 retry retained a custom owner-helper grant' >&2
+      exit 1
+    fi
   else
     run_sql_file "${migration}"
   fi
 done
 
+if [[ "${pre_cutover_acceptance_ran}" -ne 1 ]]; then
+  echo '[enterprise-integration] running additive 036 acceptance without a 037 cutover file'
+  run_pre_cutover_acceptance
+  pre_cutover_acceptance_ran=1
+fi
+
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250004, 202607250005, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037) or version between 202607310001 and 202608040026;"
 )"
-if [[ "${registry_count}" -ne 34 ]]; then
-  echo "Expected 34 applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2
+if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
+  echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2
   exit 1
 fi
 
-run_sql_file "${SCRIPT_DIR}/10-serial-acceptance.sql"
-run_sql_file "${SCRIPT_DIR}/40-workflow-acceptance.sql"
-run_sql_file "${SCRIPT_DIR}/43-workflow-archive-pagination.sql"
-run_sql_file "${SCRIPT_DIR}/46-workflow-execution.sql"
-run_sql_file "${SCRIPT_DIR}/47-workflow-revisions.sql"
-run_sql_file "${SCRIPT_DIR}/48-task-workflow-binding.sql"
-run_sql_file "${SCRIPT_DIR}/49-enterprise-todos.sql"
-run_sql_file "${SCRIPT_DIR}/50-workflow-automations.sql"
-run_sql_file "${SCRIPT_DIR}/51-audit-query-security.sql"
-run_sql_file "${SCRIPT_DIR}/52-invitation-delivery-outbox.sql"
-run_sql_file "${SCRIPT_DIR}/53-current-operations.sql"
-run_sql_file "${SCRIPT_DIR}/54-ordinary-account-authorization.sql"
+if [[ "${cutover_present}" -eq 1 ]]; then
+  run_sql_file "${SCRIPT_DIR}/55-ordinary-account-authorization-cutover.sql"
+fi
+run_sql_file "${SCRIPT_DIR}/56-ordinary-account-lock-race-setup.sql"
 
 work_dir="$(mktemp -d)"
 cleanup() {
@@ -149,6 +466,40 @@ run_pair() {
   if ! grep -q "${expected_error}" "${loser_log}"; then
     echo "${kind} losing session did not report ${expected_error}" >&2
     cat "${loser_log}" >&2
+    return 1
+  fi
+}
+
+run_both_fail() {
+  local kind="$1"
+  local expected_error="$2"
+  shift 2
+  local log_a="${work_dir}/${kind}-a.log"
+  local log_b="${work_dir}/${kind}-b.log"
+  local status_a status_b
+
+  set +e
+  "$@" A >"${log_a}" 2>&1 &
+  local pid_a=$!
+  "$@" B >"${log_b}" 2>&1 &
+  local pid_b=$!
+  wait "${pid_a}"
+  status_a=$?
+  wait "${pid_b}"
+  status_b=$?
+  set -e
+
+  if [[ "${status_a}" -eq 0 || "${status_b}" -eq 0 ]]; then
+    echo "${kind} expected two ${expected_error} failures; got A=${status_a}, B=${status_b}" >&2
+    cat "${log_a}" >&2
+    cat "${log_b}" >&2
+    return 1
+  fi
+  if ! grep -q "${expected_error}" "${log_a}" ||
+     ! grep -q "${expected_error}" "${log_b}"; then
+    echo "${kind} sessions did not both report ${expected_error}" >&2
+    cat "${log_a}" >&2
+    cat "${log_b}" >&2
     return 1
   fi
 }
@@ -198,12 +549,104 @@ restore_limit_worker() {
     --file "${SCRIPT_DIR}/44-workflow-restore-limit-worker.sql"
 }
 
+ordinary_staff_worker() {
+  local worker="$1"
+  local ordinary_staff_writer=false
+  local staff_ordinary_writer=false
+  if [[ "${worker}" == A ]]; then
+    ordinary_staff_writer=true
+  else
+    staff_ordinary_writer=true
+  fi
+  run_psql \
+    --set "ordinary_staff_writer=${ordinary_staff_writer}" \
+    --set "staff_ordinary_writer=${staff_ordinary_writer}" \
+    --set "ordinary_delete_writer=false" \
+    --set "delete_ordinary_writer=false" \
+    --set "bound_bootstrap_writer=false" \
+    --set "delete_bound_writer=false" \
+    --set "system_ordinary_writer=false" \
+    --set "system_staff_writer=false" \
+    --file "${SCRIPT_DIR}/57-ordinary-account-lock-race-worker.sql"
+}
+
+ordinary_auth_delete_worker() {
+  local worker="$1"
+  local ordinary_delete_writer=false
+  local delete_ordinary_writer=false
+  if [[ "${worker}" == A ]]; then
+    ordinary_delete_writer=true
+  else
+    delete_ordinary_writer=true
+  fi
+  run_psql \
+    --set "ordinary_staff_writer=false" \
+    --set "staff_ordinary_writer=false" \
+    --set "ordinary_delete_writer=${ordinary_delete_writer}" \
+    --set "delete_ordinary_writer=${delete_ordinary_writer}" \
+    --set "bound_bootstrap_writer=false" \
+    --set "delete_bound_writer=false" \
+    --set "system_ordinary_writer=false" \
+    --set "system_staff_writer=false" \
+    --file "${SCRIPT_DIR}/57-ordinary-account-lock-race-worker.sql"
+}
+
+bound_auth_delete_worker() {
+  local worker="$1"
+  local bound_bootstrap_writer=false
+  local delete_bound_writer=false
+  if [[ "${worker}" == A ]]; then
+    bound_bootstrap_writer=true
+  else
+    delete_bound_writer=true
+  fi
+  run_psql \
+    --set "ordinary_staff_writer=false" \
+    --set "staff_ordinary_writer=false" \
+    --set "ordinary_delete_writer=false" \
+    --set "delete_ordinary_writer=false" \
+    --set "bound_bootstrap_writer=${bound_bootstrap_writer}" \
+    --set "delete_bound_writer=${delete_bound_writer}" \
+    --set "system_ordinary_writer=false" \
+    --set "system_staff_writer=false" \
+    --file "${SCRIPT_DIR}/57-ordinary-account-lock-race-worker.sql"
+}
+
+system_site_exclusion_worker() {
+  local worker="$1"
+  local system_ordinary_writer=false
+  local system_staff_writer=false
+  if [[ "${worker}" == A ]]; then
+    system_ordinary_writer=true
+  else
+    system_staff_writer=true
+  fi
+  run_psql \
+    --set "ordinary_staff_writer=false" \
+    --set "staff_ordinary_writer=false" \
+    --set "ordinary_delete_writer=false" \
+    --set "delete_ordinary_writer=false" \
+    --set "bound_bootstrap_writer=false" \
+    --set "delete_bound_writer=false" \
+    --set "system_ordinary_writer=${system_ordinary_writer}" \
+    --set "system_staff_writer=${system_staff_writer}" \
+    --file "${SCRIPT_DIR}/57-ordinary-account-lock-race-worker.sql"
+}
+
 run_pair task enterprise_version_conflict task_worker
 run_pair invitation enterprise_version_conflict invitation_worker
 run_pair workflow enterprise_version_conflict workflow_worker
 run_pair workflow-restore-limit workflow_limit_reached restore_limit_worker
+run_pair ordinary-staff ordinary_staff_race_conflict ordinary_staff_worker
+run_pair ordinary-auth-delete \
+  ordinary_auth_delete_race_conflict ordinary_auth_delete_worker
+run_pair bound-auth-delete \
+  ordinary_bound_delete_race_conflict bound_auth_delete_worker
+run_both_fail system-site-exclusion \
+  ordinary_system_site_race_conflict system_site_exclusion_worker
 run_sql_file "${SCRIPT_DIR}/30-post-concurrency.sql"
 run_sql_file "${SCRIPT_DIR}/42-workflow-post-concurrency.sql"
 run_sql_file "${SCRIPT_DIR}/45-workflow-restore-limit-post.sql"
+run_sql_file "${SCRIPT_DIR}/58-ordinary-account-lock-race-post.sql"
 
 echo '[enterprise-integration] all PostgreSQL migration, security, transaction, and CAS checks passed'

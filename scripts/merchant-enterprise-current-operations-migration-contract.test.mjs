@@ -206,7 +206,7 @@ test("disposable PostgreSQL acceptance covers retries, GUC stability and authori
   const acceptance = fs.readFileSync(integrationAcceptancePath, "utf8");
   assert.match(
     runner,
-    /Expected 30 enterprise\/identity migrations \(001-026 plus 032-035\)/i,
+    /expected_enterprise_migration_count=31[\s\S]+expected_enterprise_migration_count=32/i,
   );
   assert.match(
     runner,
@@ -218,7 +218,7 @@ test("disposable PostgreSQL acceptance covers retries, GUC stability and authori
   );
   assert.match(
     runner,
-    /202608190034[\s\S]+Expected 34 applied prerequisite\/enterprise\/identity versions/i,
+    /expected_registry_count=36[\s\S]+expected_registry_count=37/i,
   );
   assert.match(runner, /run_sql_file "\$\{SCRIPT_DIR\}\/53-current-operations\.sql"/i);
 

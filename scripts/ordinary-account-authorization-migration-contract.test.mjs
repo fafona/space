@@ -40,12 +40,13 @@ function readSourceTree(directory) {
 }
 
 function readFunction(source, name) {
-  const marker = `create or replace function\n  public.${name}(`;
-  const start = source.toLowerCase().indexOf(marker);
-  assert.notEqual(start, -1, `missing function ${name}`);
-  const end = source.indexOf("\n$$;", start);
-  assert.notEqual(end, -1, `unterminated function ${name}`);
-  return source.slice(start, end + 4);
+  const expression = new RegExp(
+    `create or replace function\\s+public\\.${name}\\([\\s\\S]+?\\r?\\n\\$\\$;`,
+    "i",
+  );
+  const match = source.match(expression);
+  assert.ok(match, `missing function ${name}`);
+  return match[0];
 }
 
 test("personal bindings are canonical one-to-one safe text without an eight-digit restriction", () => {
@@ -321,9 +322,15 @@ test("disposable PostgreSQL acceptance and package suites register stage one", (
     fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
   );
 
-  assert.match(runner, /Expected 30 enterprise\/identity migrations/i);
+  assert.match(
+    runner,
+    /expected_enterprise_migration_count=31[\s\S]+expected_enterprise_migration_count=32/i,
+  );
   assert.match(runner, /202608190035[\s\S]+quote_all_identifiers=on/i);
-  assert.match(runner, /Expected 34 applied prerequisite\/enterprise\/identity versions/i);
+  assert.match(
+    runner,
+    /expected_registry_count=36[\s\S]+expected_registry_count=37/i,
+  );
   assert.match(
     runner,
     /run_sql_file "\$\{SCRIPT_DIR\}\/54-ordinary-account-authorization\.sql"/i,
