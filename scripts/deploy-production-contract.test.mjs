@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -23,6 +25,243 @@ const automationWorker = await readFile(
 const envExample = await readFile(new URL("../.env.example", import.meta.url), "utf8");
 const envCheckUrl = new URL("./check-env.mjs", import.meta.url);
 const envCheckScript = await readFile(envCheckUrl, "utf8");
+const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+const RECOVERY_DEPLOY_ENVELOPE_MAGIC =
+  "FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V1";
+
+function extractRecoveryDeployTransport() {
+  const startMarker =
+    "          unset ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON";
+  const endMarker = "\n          done\n\n      - name: Verify Public Release";
+  const start = deployWorkflow.indexOf(startMarker);
+  const end = deployWorkflow.indexOf(endMarker, start);
+  assert.ok(start >= 0, "recovery deploy transport start marker is missing");
+  assert.ok(end > start, "recovery deploy transport end marker is missing");
+  return deployWorkflow
+    .slice(start, end + "\n          done".length)
+    .split(/\r?\n/)
+    .map((line) => line.slice(10))
+    .join("\n");
+}
+
+function resolveBashExecutable() {
+  const candidates =
+    process.platform === "win32"
+      ? [
+          process.env.BASH,
+          "C:\\Program Files\\Git\\bin\\bash.exe",
+          "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+        ]
+      : [process.env.BASH, "bash"];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const probe = spawnSync(candidate, ["--version"], { stdio: "ignore" });
+    if (probe.status === 0) return candidate;
+  }
+  throw new Error("bash is required for the deploy transport contract");
+}
+
+function toBashPath(value) {
+  if (process.platform !== "win32") return value;
+  const normalized = value.replaceAll("\\", "/");
+  const match = /^([A-Za-z]):\/(.*)$/.exec(normalized);
+  return match ? `/${match[1].toLowerCase()}/${match[2]}` : normalized;
+}
+
+async function runRecoveryTransportScenario({ statuses, expectedStatus }) {
+  const captureDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-recovery-deploy-contract-"),
+  );
+  const caseJson = JSON.stringify({
+    caseId: "transport_case_20260819",
+    authUserId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    personalAccountId: "50010999",
+    emailSha256: "b".repeat(64),
+    expiresAt: "2026-08-20T12:00:00.000Z",
+  });
+  const hmacSecret = "fedcba9876543210".repeat(4);
+  const caseBase64 = Buffer.from(caseJson, "utf8").toString("base64");
+  const hmacBase64 = Buffer.from(hmacSecret, "utf8").toString("base64");
+  const transport = extractRecoveryDeployTransport();
+  const fakeSsh = String.raw`
+ssh() {
+  fake_index="$(wc -l < "$FAKE_SSH_CALLS")"
+  fake_index=$((fake_index + 1))
+  printf '%s\n' "$fake_index" >> "$FAKE_SSH_CALLS"
+  printf '%s\0' "$@" > "$FAKE_SSH_CAPTURE_DIR/argv-$fake_index"
+  env > "$FAKE_SSH_CAPTURE_DIR/env-$fake_index"
+  cat > "$FAKE_SSH_CAPTURE_DIR/stdin-$fake_index"
+  IFS=',' read -r -a fake_statuses <<< "$FAKE_SSH_STATUSES"
+  fake_status_index=$((fake_index - 1))
+  if [ "$fake_status_index" -ge "${"$"}{#fake_statuses[@]}" ]; then
+    fake_status_index=$((${"$"}{#fake_statuses[@]} - 1))
+  fi
+  return "${"$"}{fake_statuses[$fake_status_index]}"
+}
+sleep() { :; }
+`;
+  const callsPath = join(captureDirectory, "calls");
+  const script = `set -uo pipefail\n${fakeSsh}\n: > "$FAKE_SSH_CALLS"\nexport -n ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64\n${transport}\n`;
+  const emptyBase64 = Buffer.from("contract-safe", "utf8").toString("base64");
+  const result = spawnSync(resolveBashExecutable(), ["-c", script], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      FAKE_SSH_CALLS: toBashPath(callsPath),
+      FAKE_SSH_CAPTURE_DIR: toBashPath(captureDirectory),
+      FAKE_SSH_STATUSES: statuses.join(","),
+      SSH_USER: "deployer",
+      SSH_HOST: "production.invalid",
+      SSH_PORT: "22",
+      APP_DIR: "/srv/faolla",
+      APP_NAME: "merchant-space",
+      APP_PORT: "3000",
+      APP_BRANCH: "main",
+      SUPABASE_INTERNAL_URL_B64: emptyBase64,
+      NEXT_PUBLIC_SUPABASE_URL_B64: emptyBase64,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY_B64: emptyBase64,
+      SUPABASE_SERVICE_ROLE_KEY_B64: emptyBase64,
+      GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64: emptyBase64,
+      GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64: emptyBase64,
+      GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64: emptyBase64,
+      GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64: emptyBase64,
+      GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS: "",
+      MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
+      MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
+      MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
+      MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS: "3600",
+      MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS: "3900",
+      MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64: emptyBase64,
+      MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64: emptyBase64,
+      MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64: emptyBase64,
+      MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64: emptyBase64,
+      MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64: emptyBase64,
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "true",
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON: caseJson,
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET: hmacSecret,
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64: caseBase64,
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64: hmacBase64,
+      RESEND_API_KEY_B64: emptyBase64,
+      WEB_PUSH_PUBLIC_KEY: "",
+      WEB_PUSH_PRIVATE_KEY: "",
+      WEB_PUSH_SUBJECT: "",
+      SUPER_ADMIN_ACCOUNT: "",
+      SUPER_ADMIN_PASSWORD: "",
+      SUPER_ADMIN_VERIFICATION_EMAIL: "",
+      SUPER_ADMIN_VERIFICATION_SECRET: "",
+    },
+  });
+
+  try {
+    assert.equal(result.status, expectedStatus, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    const calls = (await readFile(callsPath, "utf8")).trim().split(/\r?\n/);
+    const expectedCalls = statuses.includes(0)
+      ? statuses.indexOf(0) + 1
+      : statuses[0] === 255
+        ? 5
+        : 1;
+    assert.equal(calls.length, expectedCalls);
+    for (let index = 1; index <= expectedCalls; index += 1) {
+      const argv = await readFile(
+        join(captureDirectory, `argv-${index}`),
+        "utf8",
+      );
+      const framedInput = await readFile(
+        join(captureDirectory, `stdin-${index}`),
+      );
+      const childEnvironment = await readFile(
+        join(captureDirectory, `env-${index}`),
+        "utf8",
+      );
+      const firstNewline = framedInput.indexOf(0x0a);
+      const secondNewline = framedInput.indexOf(0x0a, firstNewline + 1);
+      const thirdNewline = framedInput.indexOf(0x0a, secondNewline + 1);
+      assert.ok(firstNewline > 0 && secondNewline > firstNewline);
+      assert.ok(thirdNewline > secondNewline);
+      assert.equal(
+        framedInput.subarray(0, firstNewline).toString("utf8"),
+        RECOVERY_DEPLOY_ENVELOPE_MAGIC,
+      );
+      assert.equal(
+        framedInput.subarray(firstNewline + 1, secondNewline).toString("utf8"),
+        caseBase64,
+      );
+      assert.equal(
+        framedInput.subarray(secondNewline + 1, thirdNewline).toString("utf8"),
+        hmacBase64,
+      );
+      assert.deepEqual(
+        framedInput.subarray(thirdNewline + 1),
+        Buffer.from(deployScript, "utf8"),
+      );
+      for (const sensitive of [caseJson, hmacSecret, caseBase64, hmacBase64]) {
+        assert.equal(argv.includes(sensitive), false);
+        assert.equal(childEnvironment.includes(sensitive), false);
+        assert.equal(result.stdout.includes(sensitive), false);
+        assert.equal(result.stderr.includes(sensitive), false);
+      }
+      assert.equal(framedInput.includes(Buffer.from(caseJson, "utf8")), false);
+      assert.equal(framedInput.includes(Buffer.from(hmacSecret, "utf8")), false);
+      const argvEntries = argv.split("\0").filter(Boolean);
+      assert.ok(argvEntries.includes("-T"));
+      const remoteCommand = argvEntries.at(-1) ?? "";
+      assert.match(
+        remoteCommand,
+        /IFS= read -r recovery_deploy_envelope_magic/,
+      );
+      assert.match(
+        remoteCommand,
+        /export ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64/,
+      );
+      assert.match(remoteCommand, /exec env [\s\S]+ bash -s$/);
+      const remoteProbeScript = [
+        "set -eu",
+        'test -n "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64"',
+        'test -n "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64"',
+        "",
+      ].join("\n");
+      const remoteProbeInput = Buffer.from(
+        `${RECOVERY_DEPLOY_ENVELOPE_MAGIC}\n${caseBase64}\n${hmacBase64}\n${remoteProbeScript}`,
+        "utf8",
+      );
+      const remoteProbe = spawnSync(
+        resolveBashExecutable(),
+        ["-c", remoteCommand],
+        {
+          cwd: repositoryRoot,
+          input: remoteProbeInput,
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      assert.equal(remoteProbe.status, 0, remoteProbe.stderr);
+      assert.equal(remoteProbe.stdout, "");
+      assert.equal(remoteProbe.stderr, "");
+      const rejectedMagic = spawnSync(
+        resolveBashExecutable(),
+        ["-c", remoteCommand],
+        {
+          cwd: repositoryRoot,
+          input: Buffer.from(
+            `FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V0\n${caseBase64}\n${hmacBase64}\n${remoteProbeScript}`,
+            "utf8",
+          ),
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      assert.notEqual(rejectedMagic.status, 0);
+      assert.equal(rejectedMagic.stdout, "");
+      assert.equal(rejectedMagic.stderr, "");
+    }
+  } finally {
+    await rm(captureDirectory, { recursive: true, force: true });
+  }
+}
 
 function runRecoveryEnvCheck(caseJson, hmacSecret) {
   return spawnSync(process.execPath, [fileURLToPath(envCheckUrl), "--strict"], {
@@ -62,7 +301,7 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
     "for derived_secret in",
   );
   const deploySshIndex = deployWorkflow.indexOf(
-    "ssh -o ConnectTimeout=20",
+    "ssh -T -o ConnectTimeout=20",
   );
   assert.ok(derivedSecretMaskIndex >= 0);
   assert.ok(derivedSecretMaskIndex < deploySshIndex);
@@ -80,6 +319,38 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
     /\$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64/,
   );
   assert.match(derivedSecretMaskBlock, /::add-mask::%s\\n/);
+  for (const rawRecoverySecret of [
+    "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON",
+    "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET",
+  ]) {
+    const unsetIndex = deployWorkflow.indexOf(`unset ${rawRecoverySecret}`);
+    assert.ok(unsetIndex > derivedSecretMaskIndex);
+    assert.ok(unsetIndex < deploySshIndex);
+  }
+  const recoveryTransport = extractRecoveryDeployTransport();
+  assert.match(
+    recoveryTransport,
+    /RECOVERY_DEPLOY_ENVELOPE_MAGIC="FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V1"/,
+  );
+  assert.match(
+    recoveryTransport,
+    /IFS= read -r ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 && IFS= read -r ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64/,
+  );
+  assert.match(
+    recoveryTransport,
+    /export ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64 && exec env/,
+  );
+  assert.doesNotMatch(
+    recoveryTransport,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64='\$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64'/,
+  );
+  assert.doesNotMatch(
+    recoveryTransport,
+    /ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64='\$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64'/,
+  );
+  assert.match(recoveryTransport, /transport_status=\("\$\{PIPESTATUS\[@\]\}"\)/);
+  assert.match(recoveryTransport, /frame_status="\$\{transport_status\[0\]:-1\}"/);
+  assert.match(recoveryTransport, /ssh_status="\$\{transport_status\[1\]:-1\}"/);
   assert.doesNotMatch(
     deployWorkflow,
     /NEXT_PUBLIC_ORDINARY_LEGACY_PERSONAL_RECOVERY/,
@@ -127,6 +398,24 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
   assert.ok(gateEnableIndex > hmacWriteIndex);
   assert.match(envCheckScript, /JSON\.stringify\(recoveryCase\) !== rawCase/);
   assert.match(envCheckScript, /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(hmacSecret\)/);
+});
+
+test("recovery deploy keeps case and HMAC material in the versioned SSH stdin envelope", async (t) => {
+  await t.test("success sends one complete frame", async () => {
+    await runRecoveryTransportScenario({ statuses: [0], expectedStatus: 0 });
+  });
+  await t.test("SSH 255 retries with a fresh complete frame", async () => {
+    await runRecoveryTransportScenario({
+      statuses: [255, 255, 0],
+      expectedStatus: 0,
+    });
+  });
+  await t.test("persistent SSH 255 stops after the fifth frame", async () => {
+    await runRecoveryTransportScenario({ statuses: [255], expectedStatus: 255 });
+  });
+  await t.test("non-255 SSH failure is returned without retry", async () => {
+    await runRecoveryTransportScenario({ statuses: [37], expectedStatus: 37 });
+  });
 });
 
 test("strict env gate accepts only compact case JSON and a safe lowercase 64-hex HMAC", () => {
