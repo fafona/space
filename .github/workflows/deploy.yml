@@ -24,7 +24,7 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 120
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DEPLOY_BRANCH: main
@@ -344,7 +344,7 @@ jobs:
             --expected-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
             --expected-readiness-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
             --expected-readiness-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
-            --minimum-remaining-seconds 4500 \
+            --minimum-remaining-seconds 6000 \
             > "$summary_file"
           report_bytes="$(wc -c < "$report_file" | tr -d '[:space:]')"
           report_sha256="$(sha256sum "$report_file" | awk '{ print $1 }')"
@@ -534,7 +534,7 @@ jobs:
           );
           if (
             readinessValidUntil.value !== process.env.READINESS_VALID_UNTIL ||
-            readinessValidUntil.milliseconds - Date.now() < 4_500_000
+            readinessValidUntil.milliseconds - Date.now() < 6_000_000
           ) fail("backup_revalidation_readiness_ttl_insufficient");
           const run = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(readFileSync(process.argv[3], "utf8"));
@@ -842,9 +842,10 @@ jobs:
             RESEND_API_KEY_B64 WEB_PUSH_PUBLIC_KEY WEB_PUSH_PRIVATE_KEY \
             WEB_PUSH_SUBJECT SUPER_ADMIN_ACCOUNT SUPER_ADMIN_PASSWORD \
             SUPER_ADMIN_VERIFICATION_EMAIL SUPER_ADMIN_VERIFICATION_SECRET
-          DEPLOY_PAYLOAD_B64="$(node <<'NODE'
-          const { createHash } = require("node:crypto");
-          const { readFileSync } = require("node:fs");
+          DEPLOY_PAYLOAD_B64="$(node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          import { canonicalJsonBytes } from "./scripts/production-release-attestation.mjs";
 
           const keys = [
             "APP_DIR", "APP_NAME", "APP_PORT", "APP_BRANCH",
@@ -887,6 +888,7 @@ jobs:
           if (canonicalSha256 !== required("PRODUCTION_READINESS_ATTESTATION_SHA256", sha256)) process.exit(1);
           const releaseAttestation = {
             schemaVersion: 1,
+            repository: required("GITHUB_REPOSITORY", /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
             targetSha: values.EXPECTED_DEPLOY_SHA,
             readinessRunId: required("PRODUCTION_READINESS_RUN_ID", positiveDecimal),
             readinessRunAttempt: required("PRODUCTION_READINESS_RUN_ATTEMPT", positiveDecimal),
@@ -903,7 +905,7 @@ jobs:
             canonicalSha256,
             canonicalBytesBase64: canonicalBytes.toString("base64"),
           };
-          process.stdout.write(Buffer.from(JSON.stringify({ schemaVersion: 1, values, releaseAttestation })).toString("base64"));
+          process.stdout.write(canonicalJsonBytes({ schemaVersion: 1, values, releaseAttestation }).toString("base64"));
           NODE
           )"
           test -n "$DEPLOY_PAYLOAD_B64"

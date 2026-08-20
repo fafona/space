@@ -1951,6 +1951,7 @@ function normalizeCoreInput(input) {
       "expectedRunAttempt",
       "expectedArtifactId",
       "expectedArtifactDigest",
+      "expectedAttestationSha256",
       "expectedContainerId",
       "minimumRemainingTtlSeconds",
       "markerPath",
@@ -1976,6 +1977,12 @@ function normalizeCoreInput(input) {
       MINIMUM_ROLLBACK_MARGIN_SECONDS
   ) {
     fail("readiness_fence_ttl_below_hold");
+  }
+  if (
+    typeof source.expectedAttestationSha256 !== "string" ||
+    !SHA256_PATTERN.test(source.expectedAttestationSha256)
+  ) {
+    fail("readiness_fence_attestation_sha256_invalid");
   }
   if (
     typeof source.expectedContainerId !== "string" ||
@@ -2029,6 +2036,9 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
     },
   );
   const attestation = validation.attestation;
+  if (validation.sha256 !== normalized.expectedAttestationSha256) {
+    fail("readiness_fence_attestation_sha256_mismatch");
+  }
   if (attestation.database.containerId !== normalized.expectedContainerId) {
     fail("readiness_fence_container_id_mismatch");
   }
@@ -2320,6 +2330,7 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   const interrupt = () => stop("readiness_fence_interrupted");
   signalSource.on("SIGTERM", interrupt);
   signalSource.on("SIGINT", interrupt);
+  signalSource.on("SIGHUP", interrupt);
 
   try {
     const fullSql = buildOrdinaryAccountCutoverReadinessFenceSql(
@@ -2356,6 +2367,7 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
     if (childExitTimer !== null) cancelTimer(childExitTimer);
     signalSource.removeListener("SIGTERM", interrupt);
     signalSource.removeListener("SIGINT", interrupt);
+    signalSource.removeListener("SIGHUP", interrupt);
     let cleanupError = null;
     if (releaseRequestIdentity !== null) {
       try {
@@ -2390,6 +2402,7 @@ function parseCliArguments(argv) {
     "--expected-run-attempt",
     "--expected-artifact-id",
     "--expected-artifact-digest",
+    "--expected-attestation-sha256",
     "--expected-container-id",
     "--minimum-remaining-ttl-seconds",
     "--ready-marker",
@@ -2416,6 +2429,7 @@ function parseCliArguments(argv) {
     expectedRunAttempt: values.get("--expected-run-attempt"),
     expectedArtifactId: values.get("--expected-artifact-id"),
     expectedArtifactDigest: values.get("--expected-artifact-digest"),
+    expectedAttestationSha256: values.get("--expected-attestation-sha256"),
     expectedContainerId: values.get("--expected-container-id"),
     minimumRemainingTtlSeconds: values.get("--minimum-remaining-ttl-seconds"),
     markerPath: values.get("--ready-marker"),

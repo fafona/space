@@ -354,6 +354,7 @@ async function fixture(directory, attestation = readinessAttestation()) {
       expectedRunAttempt: "1",
       expectedArtifactId: "9003",
       expectedArtifactDigest: `sha256:${"f".repeat(64)}`,
+      expectedAttestationSha256: sha256Hex(canonicalJsonBytes(attestation)),
       expectedContainerId: CONTAINER_ID,
       minimumRemainingTtlSeconds: "570",
       markerPath,
@@ -1226,6 +1227,14 @@ test("attestation validation fails closed on wrong, expired, noncanonical, and c
       Date.parse("2026-08-20T15:00:00.000Z"),
     ],
     [
+      "attestation hash",
+      async (value) => {
+        value.input.expectedAttestationSha256 = "0".repeat(64);
+      },
+      "readiness_fence_attestation_sha256_mismatch",
+      NOW_MS,
+    ],
+    [
       "container",
       async (value) => {
         value.input.expectedContainerId = "c".repeat(64);
@@ -1589,6 +1598,44 @@ test("SIGTERM kills the psql child, waits termination, and removes the complete 
   });
 });
 
+test("SIGHUP from a disconnected deploy session fails closed and terminates the exact fence session", async () => {
+  await temporaryDirectory(async (directory) => {
+    const value = await fixture(directory);
+    const child = new FakeChild();
+    const signals = new EventEmitter();
+    let terminationInput = null;
+    const promise = holdOrdinaryAccountCutoverReadinessFence(
+      value.input,
+      coreDependencies(child, {
+        signalSource: signals,
+        spawnProcess: () => {
+          queueMicrotask(() => child.stdout.write(fenceLine()));
+          return child;
+        },
+        terminateSession: async (input) => {
+          terminationInput = input;
+          child.close(1);
+        },
+      }),
+    );
+    await waitForFile(value.markerPath);
+    signals.emit("SIGHUP");
+    await assertCode(promise, "readiness_fence_interrupted");
+    assert.deepEqual(terminationInput, {
+      containerId: CONTAINER_ID,
+      applicationName: terminationInput.applicationName,
+      backendPid: "4321",
+      requireExactOne: false,
+    });
+    assert.match(
+      terminationInput.applicationName,
+      /^faolla_readiness_fence_[1-9][0-9]*_[0-9a-f]{24}$/,
+    );
+    assert.deepEqual(child.signals, ["SIGTERM"]);
+    await assertMissing(value.markerPath);
+  });
+});
+
 test("a canonical private release request is the only successful path after a 240-second startup budget and preserves the full 900-second marker-ready hold", async () => {
   await temporaryDirectory(async (directory) => {
     const value = await fixture(directory);
@@ -1629,7 +1676,7 @@ test("a canonical private release request is the only successful path after a 24
       markerBytes.toString("utf8"),
       /127\.0\.0\.1|db\.example\.test|anon-key-do-not-log/,
     );
-    await writeFile(
+    await writeAtomicReadinessFenceMarker(
       value.releaseRequestPath,
       canonicalJsonBytes({
         schemaVersion: 1,
@@ -1637,7 +1684,6 @@ test("a canonical private release request is the only successful path after a 24
         markerSha256: sha256Hex(markerBytes),
         releaseToken: marker.releaseToken,
       }),
-      { flag: "wx", mode: 0o600 },
     );
     const result = await promise;
     assert.equal(result.markerSha256, sha256Hex(markerBytes));
@@ -1865,6 +1911,8 @@ function cliArguments(value) {
     "9003",
     "--expected-artifact-digest",
     `sha256:${"f".repeat(64)}`,
+    "--expected-attestation-sha256",
+    value.input.expectedAttestationSha256,
     "--expected-container-id",
     CONTAINER_ID,
     "--minimum-remaining-ttl-seconds",

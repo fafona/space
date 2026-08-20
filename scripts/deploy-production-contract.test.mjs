@@ -7,12 +7,21 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import {
+  canonicalJsonBytes,
+  parseProductionReleaseAttestation,
+  PRODUCTION_BACKUP_ATTESTATION_KIND,
+  PRODUCTION_READINESS_ATTESTATION_KIND,
+  sha256Hex,
+} from "./production-release-attestation.mjs";
 
 const deployScript = await readFile(
   new URL("./deploy.production.sh", import.meta.url),
@@ -72,9 +81,153 @@ const DEPLOY_PAYLOAD_KEYS = [
   "SUPER_ADMIN_VERIFICATION_EMAIL",
   "SUPER_ADMIN_VERIFICATION_SECRET",
 ];
-const READINESS_ATTESTATION_CANONICAL_BYTES = Buffer.from(
-  '{"kind":"faolla.production-readiness.v1","ready":true}\n',
-  "utf8",
+const FIXTURE_NOW_MS = Date.now();
+const FIXTURE_TARGET_SHA = "a".repeat(40);
+const FIXTURE_CONTAINER_ID = "b".repeat(64);
+const fixtureIso = (offsetMs) => new Date(FIXTURE_NOW_MS + offsetMs).toISOString();
+const fixtureBaseline = () => ({
+  merchantRecordCount: "10",
+  merchantAuthoritativeBindingCount: "10",
+  merchantInvalidBindingCount: "0",
+  personalCanonicalBindingCount: "5",
+  personalCanonicalOrphanCount: "0",
+  personalInvalidCanonicalCount: "0",
+  personalDuplicateAuthUserCount: "0",
+  personalDuplicateAccountIdCount: "0",
+  crossAccountTypeOverlapCount: "0",
+  accountIdentifierCollisionCount: "0",
+  staffRegistryOverlapCount: "0",
+  systemSitePrincipalOverlapCount: "0",
+  ordinaryIdentityContentSha256: "1".repeat(64),
+});
+const fixtureDatabase = () => ({
+  containerName: "supabase-db",
+  containerId: FIXTURE_CONTAINER_ID,
+  dbName: "postgres",
+  dbOid: "16384",
+  systemId: "7612345678901234567",
+  primary: true,
+});
+const fixtureArtifact = ({
+  id,
+  runId,
+  runAttempt,
+  name,
+  fileName,
+  digestCharacter,
+  fileHashCharacter,
+  createdAt,
+  artifactSize = "2048",
+  fileSize = "1024",
+}) => ({
+  id,
+  name,
+  digest: `sha256:${digestCharacter.repeat(64)}`,
+  sizeBytes: artifactSize,
+  createdAt,
+  expiresAt: fixtureIso(7 * 24 * 60 * 60 * 1000),
+  expired: false,
+  workflowRunId: runId,
+  workflowRunAttempt: runAttempt,
+  headSha: FIXTURE_TARGET_SHA,
+  file: {
+    name: fileName,
+    sizeBytes: fileSize,
+    sha256: fileHashCharacter.repeat(64),
+  },
+});
+const backupFixture = {
+  schemaVersion: 1,
+  kind: PRODUCTION_BACKUP_ATTESTATION_KIND,
+  repository: "fafona/space",
+  targetSha: FIXTURE_TARGET_SHA,
+  run: {
+    id: "8001",
+    attempt: "2",
+    workflowPath: ".github/workflows/database-backup.yml",
+    event: "workflow_dispatch",
+    headSha: FIXTURE_TARGET_SHA,
+    headBranch: "main",
+  },
+  remoteSource: {
+    headSha: FIXTURE_TARGET_SHA,
+    originMainSha: FIXTURE_TARGET_SHA,
+    detached: true,
+    cleanBefore: true,
+    cleanAfter: true,
+  },
+  database: fixtureDatabase(),
+  baseline: fixtureBaseline(),
+  backupArtifact: fixtureArtifact({
+    id: "9001",
+    runId: "8001",
+    runAttempt: "2",
+    name: "faolla-encrypted-disaster-recovery-8001-2",
+    fileName: "faolla-database-backup.tar.enc",
+    digestCharacter: "c",
+    fileHashCharacter: "7",
+    createdAt: fixtureIso(-6 * 60 * 1000),
+  }),
+  issuedAt: fixtureIso(-5 * 60 * 1000),
+  validUntil: fixtureIso(23 * 60 * 60 * 1000),
+};
+const parsedBackupFixture = parseProductionReleaseAttestation(backupFixture, {
+  nowMs: FIXTURE_NOW_MS,
+});
+const backupFixtureBytes = canonicalJsonBytes(parsedBackupFixture);
+const readinessFixture = {
+  schemaVersion: 1,
+  kind: PRODUCTION_READINESS_ATTESTATION_KIND,
+  repository: "fafona/space",
+  targetSha: FIXTURE_TARGET_SHA,
+  run: {
+    id: "8002",
+    attempt: "1",
+    workflowPath: ".github/workflows/ordinary-account-cutover-readiness.yml",
+    event: "workflow_dispatch",
+    headSha: FIXTURE_TARGET_SHA,
+    headBranch: "main",
+  },
+  remoteSource: {
+    headSha: FIXTURE_TARGET_SHA,
+    originMainSha: FIXTURE_TARGET_SHA,
+    detached: true,
+    cleanBefore: true,
+    cleanAfter: true,
+  },
+  database: fixtureDatabase(),
+  baseline: fixtureBaseline(),
+  readinessArtifact: fixtureArtifact({
+    id: "9003",
+    runId: "8002",
+    runAttempt: "1",
+    name: "faolla-production-readiness-report-8002-1",
+    fileName: "production-readiness-report.json",
+    digestCharacter: "e",
+    fileHashCharacter: "f",
+    createdAt: fixtureIso(-60 * 1000),
+  }),
+  backup: {
+    attestation: parsedBackupFixture,
+    attestationArtifact: fixtureArtifact({
+      id: "9002",
+      runId: "8001",
+      runAttempt: "2",
+      name: "faolla-production-backup-attestation-8001-2",
+      fileName: "production-backup-attestation.json",
+      digestCharacter: "d",
+      fileHashCharacter: "0",
+      artifactSize: "4096",
+      fileSize: String(backupFixtureBytes.length),
+      createdAt: fixtureIso(-4 * 60 * 1000),
+    }),
+  },
+  issuedAt: fixtureIso(0),
+  validUntil: fixtureIso(2 * 60 * 60 * 1000),
+};
+readinessFixture.backup.attestationArtifact.file.sha256 = sha256Hex(backupFixtureBytes);
+const READINESS_ATTESTATION_CANONICAL_BYTES = canonicalJsonBytes(
+  parseProductionReleaseAttestation(readinessFixture, { nowMs: FIXTURE_NOW_MS }),
 );
 const RELEASE_ATTESTATION_ENV_KEYS = [
   "PRODUCTION_READINESS_ATTESTATION_FILE",
@@ -94,6 +247,7 @@ const RELEASE_ATTESTATION_ENV_KEYS = [
 ];
 const EXPECTED_RELEASE_ATTESTATION = Object.freeze({
   schemaVersion: 1,
+  repository: "fafona/space",
   targetSha: "a".repeat(40),
   readinessRunId: "8002",
   readinessRunAttempt: "1",
@@ -217,6 +371,43 @@ async function pathExists(path) {
   }
 }
 
+function canonicalDeployPayloadBytes(values, releaseOverrides = {}) {
+  return canonicalJsonBytes({
+    schemaVersion: 1,
+    values,
+    releaseAttestation: {
+      ...EXPECTED_RELEASE_ATTESTATION,
+      targetSha: values.EXPECTED_DEPLOY_SHA,
+      ...releaseOverrides,
+    },
+  });
+}
+
+function earlyDeployValues(appDirectory, overrides = {}) {
+  return {
+    ...Object.fromEntries(DEPLOY_PAYLOAD_KEYS.map((key) => [key, ""])),
+    APP_DIR: toBashPath(appDirectory),
+    APP_NAME: "merchant-space",
+    APP_PORT: "3000",
+    APP_BRANCH: "main",
+    EXPECTED_DEPLOY_SHA: FIXTURE_TARGET_SHA,
+    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
+    MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
+    MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS: "3600",
+    MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS: "3900",
+    ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "false",
+    ...overrides,
+  };
+}
+
+function extractShellRegion(start, end) {
+  const startIndex = deployScript.indexOf(start);
+  const endIndex = deployScript.indexOf(end, startIndex);
+  assert.ok(startIndex >= 0 && endIndex > startIndex, `missing shell region ${start}`);
+  return deployScript.slice(startIndex, endIndex);
+}
+
 async function runDeployTransportScenario({
   statuses,
   expectedStatus,
@@ -332,6 +523,7 @@ sleep() { :; }
       SSH_USER: "deployer",
       SSH_HOST: "production.invalid",
       SSH_PORT: "22",
+      GITHUB_REPOSITORY: "fafona/space",
       APP_DIR: "contract-app-dir",
       APP_NAME: "merchant-space",
       APP_PORT: "3000",
@@ -508,6 +700,7 @@ sleep() { :; }
         );
       }
       assert.match(remoteCommand, /set -eu; umask 077;/);
+      assert.doesNotMatch(remoteCommand, /umask 022/);
       assert.match(remoteCommand, /IFS= read -r deploy_envelope_magic/);
       assert.match(remoteCommand, /IFS= read -r expected_deploy_bytes/);
       assert.match(remoteCommand, /actual_deploy_sha256/);
@@ -519,6 +712,7 @@ sleep() { :; }
       const payloadCopy = join(captureDirectory, `remote-payload-${index}.json`);
       const remoteProbeScript = [
         "set -eu",
+        '[ "$(umask)" = "0077" ]',
         'printf executed > "$FAKE_REMOTE_EXECUTION_MARKER"',
         'cp -- "$FAOLLA_DEPLOY_PAYLOAD_FILE" "$FAKE_REMOTE_PAYLOAD_COPY"',
         "",
@@ -688,7 +882,7 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
   );
   assert.match(
     recoveryTransport,
-    /DEPLOY_PAYLOAD_B64="\$\(node <<'NODE'/,
+    /DEPLOY_PAYLOAD_B64="\$\(node --input-type=module <<'NODE'/,
   );
   assert.match(
     recoveryTransport,
@@ -819,12 +1013,12 @@ test("remote deploy consumes one exact payload file and erases it before validat
   });
   await writeFile(
     payloadPath,
-    JSON.stringify({ schemaVersion: 1, values }),
-    "utf8",
+    canonicalDeployPayloadBytes(values),
+    { mode: 0o600 },
   );
   await writeFile(
     bashEnvironmentPath,
-    "pm2() { :; }\nflock() { :; }\n",
+    "pm2() { :; }\nflock() { :; }\nss() { :; }\nrunuser() { :; }\n",
     "utf8",
   );
   try {
@@ -849,6 +1043,102 @@ test("remote deploy consumes one exact payload file and erases it before validat
     assert.equal(await pathExists(payloadPath), false);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("outer payload and frozen sidecars fail before environment or cache mutation", async (t) => {
+  const cases = [
+    ["extra root key", (payload) => { payload.extra = true; }, "none", true],
+    ["missing release evidence", (payload) => { delete payload.releaseAttestation; }, "none", true],
+    ["wrong fixed repository", (payload) => { payload.releaseAttestation.repository = "attacker/fork"; }, "none", true],
+    ["target substitution", (payload) => { payload.releaseAttestation.targetSha = "c".repeat(40); }, "none", true],
+    ["noncanonical outer bytes", () => {}, "none", false],
+    ["attestation pathname replacement", () => {}, "attestation", true],
+    ["binding pathname replacement", () => {}, "binding", true],
+  ];
+  for (const [name, mutate, swapSidecar, canonical] of cases) {
+    await t.test(name, async () => {
+      const temporaryDirectory = await mkdtemp(
+        join(tmpdir(), "faolla-deploy-outer-payload-contract-"),
+      );
+      const appDirectory = join(temporaryDirectory, "app");
+      const homeDirectory = join(temporaryDirectory, "home");
+      const cacheDirectory = join(homeDirectory, ".cache", "ffmpeg-static-nodejs");
+      const payloadPath = join(temporaryDirectory, "payload.json");
+      const bashEnvironmentPath = join(temporaryDirectory, "bash-env");
+      const gitCallsPath = join(temporaryDirectory, "git-calls");
+      const envPath = join(appDirectory, ".env.local");
+      const cacheSentinelPath = join(cacheDirectory, "sentinel");
+      await mkdir(join(appDirectory, ".git"), { recursive: true });
+      await mkdir(cacheDirectory, { recursive: true });
+      await writeFile(envPath, "PRODUCTION_SENTINEL=unchanged\n", "utf8");
+      await writeFile(cacheSentinelPath, "unchanged\n", "utf8");
+      const values = earlyDeployValues(appDirectory);
+      const payload = JSON.parse(canonicalDeployPayloadBytes(values).toString("utf8"));
+      mutate(payload);
+      const payloadBytes = canonical
+        ? canonicalJsonBytes(payload)
+        : Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, "utf8");
+      await writeFile(payloadPath, payloadBytes, { mode: 0o600 });
+      await writeFile(
+        bashEnvironmentPath,
+        [
+          "git() {",
+          '  printf \'%s\\n\' "$*" >> "$FAKE_GIT_CALLS"',
+          '  if [ "$1" = "fetch" ] && [ "$FAKE_SWAP_SIDECAR" != "none" ]; then',
+          '    if [ "$FAKE_SWAP_SIDECAR" = "attestation" ]; then suffix=".readiness-attestation.json"; else suffix=".release-binding.json"; fi',
+          '    cp -p -- "$FAKE_PAYLOAD_PATH$suffix" "$FAKE_PAYLOAD_PATH$suffix.replacement"',
+          '    mv -f -- "$FAKE_PAYLOAD_PATH$suffix.replacement" "$FAKE_PAYLOAD_PATH$suffix"',
+          "  fi",
+          '  if [ "$1" = "rev-parse" ]; then',
+          `    printf '%s\\n' '${FIXTURE_TARGET_SHA}'`,
+          "  fi",
+          "  return 0",
+          "}",
+          "pm2() { :; }",
+          "flock() { :; }",
+          "ss() { :; }",
+          "runuser() { :; }",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      try {
+        const result = spawnSync(
+          resolveBashExecutable(),
+          [toBashPath(fileURLToPath(new URL("./deploy.production.sh", import.meta.url)))],
+          {
+            cwd: repositoryRoot,
+            encoding: "utf8",
+            timeout: 15_000,
+            env: {
+              ...process.env,
+              BASH_ENV: toBashPath(bashEnvironmentPath),
+              DEPLOY_LOCK_FILE: toBashPath(join(temporaryDirectory, "deploy.lock")),
+              FAKE_GIT_CALLS: toBashPath(gitCallsPath),
+              FAKE_PAYLOAD_PATH: toBashPath(payloadPath),
+              FAKE_SWAP_SIDECAR: swapSidecar,
+              FAOLLA_DEPLOY_PAYLOAD_FILE: toBashPath(payloadPath),
+              HOME: toBashPath(homeDirectory),
+            },
+          },
+        );
+        assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+        assert.equal(await readFile(envPath, "utf8"), "PRODUCTION_SENTINEL=unchanged\n");
+        assert.equal(await readFile(cacheSentinelPath, "utf8"), "unchanged\n");
+        assert.equal(await pathExists(payloadPath), false);
+        assert.equal(await pathExists(`${payloadPath}.readiness-attestation.json`), false);
+        assert.equal(await pathExists(`${payloadPath}.release-binding.json`), false);
+        if (swapSidecar === "none") {
+          assert.equal(await pathExists(gitCallsPath), false);
+        } else {
+          assert.match(await readFile(gitCallsPath, "utf8"), /fetch origin main --prune/);
+          assert.match(result.stdout, /canonical release evidence preflight failed/);
+        }
+      } finally {
+        await rm(temporaryDirectory, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -890,8 +1180,8 @@ test("a moving main ref fails before production config or caches are mutated", a
   });
   await writeFile(
     payloadPath,
-    JSON.stringify({ schemaVersion: 1, values }),
-    "utf8",
+    canonicalDeployPayloadBytes(values),
+    { mode: 0o600 },
   );
   await writeFile(
     bashEnvironmentPath,
@@ -906,6 +1196,8 @@ test("a moving main ref fails before production config or caches are mutated", a
       "npm() { :; }",
       "pm2() { :; }",
       "flock() { :; }",
+      "ss() { :; }",
+      "runuser() { :; }",
       "",
     ].join("\n"),
     "utf8",
@@ -1011,6 +1303,110 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex < cacheIndex);
   assert.ok(lockIndex < fetchIndex);
 });
+
+test("private deployment output exposes only immutable static assets to nginx", () => {
+  assert.match(deployScript, /^umask 077$/m);
+  assert.doesNotMatch(deployScript, /^umask 022$/m);
+  assert.doesNotMatch(deployWorkflow, /umask 022/);
+  assert.match(deployScript, /normalize_and_verify_release_permissions "\$RELEASE_BUILD_DIR"/);
+  assert.match(
+    deployScript,
+    /chmod 755 "\$RELEASES_DIR" "\$release_root" "\$release_root\/\.next" "\$static_root"/,
+  );
+  assert.match(deployScript, /find "\$static_root" -type d -exec chmod 755/);
+  assert.match(deployScript, /find "\$static_root" -type f -exec chmod 644/);
+  assert.match(deployScript, /find "\$server_root" -type d -exec chmod 700/);
+  assert.match(deployScript, /find "\$server_root" -type f -exec chmod 600/);
+  assert.match(deployScript, /chmod 600 "\$env_file"/);
+  assert.match(deployScript, /runuser -u "\$FAOLLA_NGINX_RUNTIME_USER" -- test -x/);
+  assert.match(
+    deployScript,
+    /runuser -u "\$FAOLLA_NGINX_RUNTIME_USER" --[\s\\]+test -r/,
+  );
+  assert.match(deployScript, /--resolve "www\.faolla\.com:443:127\.0\.0\.1"/);
+  assert.match(deployScript, /--noproxy "\*"/);
+  const permissionIndex = deployScript.indexOf(
+    'normalize_and_verify_release_permissions "$RELEASE_BUILD_DIR"',
+  );
+  const moveIndex = deployScript.indexOf('mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"');
+  const fenceIndex = deployScript.lastIndexOf("start_readiness_fence || exit 1");
+  const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1");
+  assert.ok(permissionIndex >= 0 && permissionIndex < moveIndex);
+  assert.ok(moveIndex < fenceIndex && fenceIndex < processMutationIndex);
+});
+
+test(
+  "Linux release modes remain private outside the exact static subtree",
+  { skip: process.platform === "win32" },
+  async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "faolla-release-permissions-contract-"),
+    );
+    const releaseDirectory = join(temporaryDirectory, ".release.building");
+    const permissionFunction = extractShellRegion(
+      "normalize_and_verify_release_permissions() {",
+      "\nprepare_shared_runtime() {",
+    );
+    const fixtureScript = [
+      "set -euo pipefail",
+      "umask 077",
+      'RELEASES_DIR="$1"',
+      'RELEASE_BUILD_DIR="$RELEASES_DIR/.release.building"',
+      'mkdir -p "$RELEASE_BUILD_DIR/.next/static/chunks" "$RELEASE_BUILD_DIR/.next/server/app" "$RELEASE_BUILD_DIR/node_modules/private"',
+      'printf secret > "$RELEASE_BUILD_DIR/.env.local"',
+      'printf public > "$RELEASE_BUILD_DIR/.next/static/chunks/app.js"',
+      'printf private > "$RELEASE_BUILD_DIR/.next/server/app/private.js"',
+      'printf source > "$RELEASE_BUILD_DIR/package.json"',
+      'printf module > "$RELEASE_BUILD_DIR/node_modules/private/index.js"',
+      permissionFunction,
+      'normalize_and_verify_release_permissions "$RELEASE_BUILD_DIR"',
+      "",
+    ].join("\n");
+    try {
+      const result = spawnSync(
+        resolveBashExecutable(),
+        ["-c", fixtureScript, "release-permission-fixture", temporaryDirectory],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const mode = async (path) => (await stat(path)).mode & 0o777;
+      assert.equal(await mode(temporaryDirectory), 0o755);
+      assert.equal(await mode(releaseDirectory), 0o755);
+      assert.equal(await mode(join(releaseDirectory, ".next")), 0o755);
+      assert.equal(await mode(join(releaseDirectory, ".next", "static", "chunks")), 0o755);
+      assert.equal(await mode(join(releaseDirectory, ".next", "static", "chunks", "app.js")), 0o644);
+      assert.equal(await mode(join(releaseDirectory, ".env.local")), 0o600);
+      assert.equal(await mode(join(releaseDirectory, ".next", "server", "app")), 0o700);
+      assert.equal(await mode(join(releaseDirectory, ".next", "server", "app", "private.js")), 0o600);
+      assert.equal(await mode(join(releaseDirectory, "package.json")), 0o600);
+      assert.equal(await mode(join(releaseDirectory, "node_modules", "private")), 0o700);
+      assert.equal(await mode(join(releaseDirectory, "node_modules", "private", "index.js")), 0o600);
+
+      await symlink(
+        "../../server/app/private.js",
+        join(releaseDirectory, ".next", "static", "private-link.js"),
+      );
+      const symlinkProbe = spawnSync(
+        resolveBashExecutable(),
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            'RELEASES_DIR="$1"',
+            permissionFunction,
+            'normalize_and_verify_release_permissions "$RELEASES_DIR/.release.building"',
+          ].join("\n"),
+          "release-permission-symlink-fixture",
+          temporaryDirectory,
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      assert.notEqual(symlinkProbe.status, 0);
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("deploy workflow bash and every embedded program have real syntax", () => {
   const bash = resolveBashExecutable();
@@ -1515,7 +1911,7 @@ test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bou
     deployWorkflow,
     /--expected-readiness-artifact-digest "\$READINESS_REPORT_ARTIFACT_DIGEST"/,
   );
-  assert.match(deployWorkflow, /--minimum-remaining-seconds 4500/);
+  assert.match(deployWorkflow, /--minimum-remaining-seconds 6000/);
   assert.match(deployWorkflow, /summary\.backupRunId/);
   assert.match(deployWorkflow, /summary\.backupRunAttempt/);
   assert.match(deployWorkflow, /summary\.backupArtifactId/);
@@ -1568,13 +1964,14 @@ test("nested backup evidence is re-fetched and exact-five validated immediately 
   assert.match(deployWorkflow, /primary\.digest !== process\.env\.BACKUP_PRIMARY_ARTIFACT_DIGEST/);
   assert.match(deployWorkflow, /attestation\.id !== expectedAttestationId/);
   assert.match(deployWorkflow, /attestation\.digest !== process\.env\.BACKUP_ATTESTATION_ARTIFACT_DIGEST/);
-  assert.match(deployWorkflow, /readinessValidUntil\.milliseconds - Date\.now\(\) < 4_500_000/);
+  assert.match(deployWorkflow, /readinessValidUntil\.milliseconds - Date\.now\(\) < 6_000_000/);
 });
 
 test("verified readiness bytes and artifact references ride inside the V2 payload without changing 35 deploy values", () => {
   assert.equal(DEPLOY_PAYLOAD_KEYS.length, 35);
   assert.match(deployWorkflow, /releaseAttestation = \{/);
   for (const field of [
+    "repository",
     "readinessRunId",
     "readinessRunAttempt",
     "readinessReportArtifactId",
@@ -1594,7 +1991,7 @@ test("verified readiness bytes and artifact references ride inside the V2 payloa
   }
   assert.match(
     deployWorkflow,
-    /JSON\.stringify\(\{ schemaVersion: 1, values, releaseAttestation \}\)/,
+    /canonicalJsonBytes\(\{ schemaVersion: 1, values, releaseAttestation \}\)\.toString\("base64"\)/,
   );
   assert.match(
     deployWorkflow,
@@ -1606,6 +2003,85 @@ test("verified readiness bytes and artifact references ride inside the V2 payloa
   );
   assert.doesNotMatch(deployWorkflow, /cat "\$PRODUCTION_READINESS_ATTESTATION_FILE"/);
   assert.match(deployWorkflow, /DEPLOY_ENVELOPE_MAGIC="FAOLLA_DEPLOY_ENVELOPE_V2"/);
+});
+
+test("remote preflight is rooted in the original payload bytes rather than replaceable sidecars", () => {
+  assert.match(deployScript, /release\.repository !== "fafona\/space"/);
+  assert.match(deployScript, /const trustedReleaseValues = \[/);
+  assert.match(deployScript, /\["RELEASE_READINESS_RUN_ATTEMPT", release\.readinessRunAttempt\]/);
+  assert.match(deployScript, /\["DEPLOY_ATTESTATION_DEVICE", String\(attestationFileIdentity\.dev\)\]/);
+  assert.match(deployScript, /\["DEPLOY_RELEASE_BINDING_SHA256", createHash\("sha256"\)/);
+  assert.doesNotMatch(deployScript, /printf -v "\$binding_key"/);
+  assert.match(deployScript, /constants\.O_RDONLY \| \(constants\.O_NOFOLLOW \?\? 0\)/);
+  assert.match(deployScript, /const readFrozenFile = \(path, identity, expectedSha256\) =>/);
+  assert.match(deployScript, /String\(before\.dev\) !== identity\.device/);
+  assert.match(deployScript, /digest\(bytes\) !== expectedSha256/);
+  assert.match(deployScript, /const expectedBinding = \{/);
+  assert.match(deployScript, /"\/proc\/self\/fd\/3"/);
+  assert.match(deployScript, /spawnSync\(process\.execPath/);
+  assert.match(deployScript, /finalIdentityMatches\(attestation, attestationPath\)/);
+  assert.match(deployScript, /EXPECTED_RELEASE_REPOSITORY="fafona\/space"/);
+  assert.match(deployScript, /--expected-repository", expectedRepository/);
+  assert.match(deployScript, /--expected-attestation-sha256 "\$RELEASE_CANONICAL_SHA256"/);
+  const checkoutIndex = deployScript.indexOf('git reset --hard "$EXPECTED_DEPLOY_SHA"');
+  const preflightIndex = deployScript.indexOf("validate_release_attestation_preflight\n", checkoutIndex);
+  const firstEnvironmentMutationIndex = deployScript.indexOf('write_env_value "WEB_PUSH_PUBLIC_KEY"');
+  assert.ok(checkoutIndex >= 0 && checkoutIndex < preflightIndex);
+  assert.ok(preflightIndex < firstEnvironmentMutationIndex);
+});
+
+test("readiness fence lifecycle holds every web checkpoint and releases before workers", () => {
+  const sequence = deployScript.slice(
+    deployScript.indexOf('if [ ! -f "$RELEASE_BUILD_DIR/.next/BUILD_ID"'),
+  );
+  const ordered = [
+    "start_readiness_fence || exit 1",
+    "PROCESSES_STOPPED=1",
+    'switch_current_release "$RELEASE_DIR" || exit 1',
+    'wait_for_release_health "$FAOLLA_WEB_BUILD_ID"',
+    "verify_booking_persistence || BOOKING_PERSISTENCE_STATUS=$?",
+    "run_local_release_smoke",
+    "install_runtime_compatibility_links || exit 1",
+    "verify_nginx_release_static_access || exit 1",
+    "release_readiness_fence || exit 1",
+    "WEB_COMMITTED=1",
+    'start_automation_worker_process "$RELEASE_DIR"',
+  ];
+  let previousIndex = -1;
+  for (const needle of ordered) {
+    const index = sequence.indexOf(needle);
+    assert.ok(index > previousIndex, `out-of-order lifecycle step: ${needle}`);
+    previousIndex = index;
+  }
+  assert.match(sequence, /BOOKING_PERSISTENCE_STATUS" -ne 0[\s\S]+exit 1/);
+  assert.match(sequence, /assert_readiness_fence_forward_checkpoint \|\| exit 1/g);
+  assert.match(deployScript, /blocked_cancelled[\s\S]+deployment will fail closed/);
+  assert.match(deployScript, /pg_catalog\.pg_cancel_backend\(blocked_waiters\.pid\)/);
+  assert.match(deployScript, /auth_share <> 1[\s\S]+auth_ax <> 0[\s\S]+pages_ax <> 0[\s\S]+registry_ax <> 1/);
+  assert.match(deployScript, /trap 'handle_deploy_signal 129' HUP/);
+  assert.match(deployScript, /trap 'handle_deploy_signal 143' TERM/);
+  assert.match(deployScript, /trap 'handle_deploy_signal 130' INT/);
+  assert.match(deployScript, /cleanup_failed_build\(\)[\s\S]+trap '' HUP TERM INT/);
+  assert.match(deployScript, /SELECT pg_catalog\.pg_stat_clear_snapshot\(\) AS cleared/);
+  assert.match(deployScript, /pg_catalog\.pg_terminate_backend\(blocked_waiters\.pid, 5000\)/);
+  assert.match(
+    deployScript,
+    /exited or changed identity before its ready marker[\s\S]{0,500}discard_failed_readiness_fence/,
+  );
+  assert.match(
+    deployScript,
+    /ensure_readiness_fence_for_rollback[\s\S]+rollback_release[\s\S]+release_readiness_fence[\s\S]+start_automation_worker_process "\$PREVIOUS_RUNTIME_DIR"/,
+  );
+  assert.match(
+    deployScript,
+    /rollback restored the previous web process, but fence release failed[\s\S]+discard_failed_readiness_fence/,
+  );
+  assert.match(deployScript, /readiness_fence_original_process_matches[\s\S]+kill -TERM/);
+  assert.match(deployScript, /terminate_readiness_fence_database_session \|\| cleanup_status=1/);
+  assert.match(deployScript, /remaining\.remainingCount !== "0"/);
+  assert.match(deployScript, /READINESS_FENCE_MINIMUM_TTL_SECONDS="\$\{[^}]+:-1440\}"/);
+  assert.match(deployScript, /RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS="\$\{[^}]+:-5700\}"/);
+  assert.match(deployScript, /an exact previous atomic release is required before environment mutation/);
 });
 
 test("deployment SSH trust is pinned and never learned from the live network", () => {
@@ -1627,7 +2103,7 @@ test("dependency installation and workflow runtime are bounded", () => {
     deployScript,
     /"\$\{BUILD_TIMEOUT_SECONDS\}s" \\\n  npm run build/,
   );
-  assert.match(deployWorkflow, /timeout-minutes:\s*70/);
+  assert.match(deployWorkflow, /timeout-minutes:\s*120/);
 });
 
 test("dependency installation retries transient registry failures with bounded cache-aware fetches", () => {
@@ -1645,6 +2121,127 @@ test("dependency installation retries transient registry failures with bounded c
     deployScript,
     /npm ci attempt \$\{npm_attempt\} failed with status \$\{npm_status\}; retrying/,
   );
+});
+
+test("fence startup remains fail-fast when invoked from cleanup set +e", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-fence-start-set-plus-e-contract-"),
+  );
+  const functions = extractShellRegion(
+    "cleanup_readiness_fence_files() {",
+    "\nrelease_readiness_fence() {",
+  );
+  const script = [
+    "set +e",
+    `SHARED_RUNTIME_DIR='${toBashPath(temporaryDirectory)}'`,
+    `RELEASE_DIR='${toBashPath(temporaryDirectory)}'`,
+    functions,
+    "mktemp() { return 73; }",
+    "if start_readiness_fence; then status=0; else status=$?; fi",
+    '[ "$status" -ne 0 ]',
+    '[ -z "${READINESS_FENCE_DIR:-}" ]',
+    '[ -z "${READINESS_FENCE_MARKER:-}" ]',
+    '[ ! -e /ready.json ]',
+    "",
+  ].join("\n");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-c", script], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("rollback link failure cannot start or certify the previous runtime under set +e", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-rollback-set-plus-e-contract-"),
+  );
+  const previousRuntime = join(temporaryDirectory, "previous");
+  const callsPath = join(temporaryDirectory, "calls");
+  await mkdir(join(previousRuntime, ".next"), { recursive: true });
+  const rollbackFunction = extractShellRegion(
+    "rollback_release() {",
+    "\ncleanup_failed_build() {",
+  );
+  const script = [
+    "set +e",
+    `PREVIOUS_RUNTIME_DIR='${toBashPath(previousRuntime)}'`,
+    `PREVIOUS_LINK_TARGET='${toBashPath(previousRuntime)}'`,
+    `CALLS='${toBashPath(callsPath)}'`,
+    `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
+    "SWITCH_COMPLETED=1",
+    "PROCESSES_STOPPED=1",
+    "WEB_COMMITTED=0",
+    "ROLLBACK_COMPLETED=0",
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=480",
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+    "AUTOMATION_WORKER_NAME=worker",
+    "AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS=205",
+    "APP_NAME=web",
+    "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+    "assert_readiness_fence_held() { return 0; }",
+    "stop_pm2_process_bounded() { return 0; }",
+    "wait_for_port_release() { return 0; }",
+    "restore_legacy_runtime_compatibility_paths() { return 0; }",
+    'switch_current_release() { printf "switch\\n" >> "$CALLS"; return 42; }',
+    'start_release() { printf "start\\n" >> "$CALLS"; return 0; }',
+    "wait_for_release_health() { return 0; }",
+    rollbackFunction,
+    "if rollback_release; then status=0; else status=$?; fi",
+    '[ "$status" -ne 0 ]',
+    '[ "$ROLLBACK_COMPLETED" = 0 ]',
+    'grep -Fxq switch "$CALLS"',
+    '! grep -Fxq start "$CALLS"',
+    "",
+  ].join("\n");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-c", script], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("PID reuse never signals an unrelated process while database cleanup still runs", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-fence-pid-reuse-contract-"),
+  );
+  const callsPath = join(temporaryDirectory, "calls");
+  const discardFunction = extractShellRegion(
+    "discard_failed_readiness_fence() {",
+    "\nensure_readiness_fence_for_rollback() {",
+  );
+  const script = [
+    "set +e",
+    `CALLS='${toBashPath(callsPath)}'`,
+    "READINESS_FENCE_PID=4242",
+    "READINESS_FENCE_ACTIVE=1",
+    "readiness_fence_original_process_matches() { return 1; }",
+    'terminate_readiness_fence_database_session() { printf "database-zero\\n" >> "$CALLS"; return 0; }',
+    "cleanup_readiness_fence_files() { return 0; }",
+    'kill() { printf "signal:%s\\n" "$*" >> "$CALLS"; return 0; }',
+    discardFunction,
+    "discard_failed_readiness_fence",
+    '[ "$READINESS_FENCE_ACTIVE" = 0 ]',
+    'grep -Fxq database-zero "$CALLS"',
+    '! grep -q "^signal:" "$CALLS"',
+    "",
+  ].join("\n");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-c", script], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test("stale incomplete releases are removed only when unused", () => {
@@ -1813,7 +2410,7 @@ test("enterprise automation worker deployment is graceful and rollback-safe", ()
   assert.match(deployScript, /wait_for_automation_worker_online/);
   assert.match(
     deployScript,
-    /rollback_release\(\)[\s\S]+pm2 delete "\$AUTOMATION_WORKER_NAME"[\s\S]+PREVIOUS_AUTOMATION_WORKER_RUNNING[\s\S]+start_automation_worker_process "\$PREVIOUS_RUNTIME_DIR"/,
+    /rollback_release\(\)[\s\S]+stop_pm2_process_bounded "\$AUTOMATION_WORKER_NAME"[\s\S]+ROLLBACK_COMPLETED=1[\s\S]+PREVIOUS_AUTOMATION_WORKER_RUNNING[\s\S]+start_automation_worker_process "\$PREVIOUS_RUNTIME_DIR"/,
   );
   const workerStartIndex = deployScript.indexOf(
     'start_automation_worker_process "$RELEASE_DIR"',
