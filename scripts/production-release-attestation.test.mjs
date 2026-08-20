@@ -38,6 +38,7 @@ function baseline(overrides = {}) {
     accountIdentifierCollisionCount: "0",
     staffRegistryOverlapCount: "0",
     systemSitePrincipalOverlapCount: "0",
+    ordinaryIdentityContentSha256: "1".repeat(64),
     ...overrides,
   };
 }
@@ -124,10 +125,9 @@ function backupAttestation(overrides = {}) {
 }
 
 function readinessAttestation(overrides = {}) {
-  const parsedBackup = parseProductionReleaseAttestation(
-    backupAttestation(),
-    { nowMs: NOW_MS },
-  );
+  const parsedBackup = parseProductionReleaseAttestation(backupAttestation(), {
+    nowMs: NOW_MS,
+  });
   const backupBytes = canonicalJsonBytes(parsedBackup);
   const value = {
     schemaVersion: 1,
@@ -137,8 +137,7 @@ function readinessAttestation(overrides = {}) {
     run: {
       id: "8002",
       attempt: "1",
-      workflowPath:
-        ".github/workflows/ordinary-account-cutover-readiness.yml",
+      workflowPath: ".github/workflows/ordinary-account-cutover-readiness.yml",
       event: "workflow_dispatch",
       headSha: TARGET_SHA,
       headBranch: "main",
@@ -233,7 +232,10 @@ test("backup attestation validates exact run, source, database, baseline, and ar
   });
 
   assert.equal(parsed.kind, PRODUCTION_BACKUP_ATTESTATION_KIND);
-  assert.equal(parsed.run.workflowPath, ".github/workflows/database-backup.yml");
+  assert.equal(
+    parsed.run.workflowPath,
+    ".github/workflows/database-backup.yml",
+  );
   assert.equal(parsed.database.primary, true);
   assert.equal(validation.valid, true);
   assert.equal(validation.sha256, sha256Hex(validation.canonicalBytes));
@@ -250,6 +252,7 @@ test("readiness attestation recursively binds the complete backup and exact base
   assert.equal(parsed.baseline.merchantRecordCount, "10");
   assert.equal(parsed.backup.attestation.baseline.merchantRecordCount, "10");
   assert.equal(summary.backupRunId, "8001");
+  assert.equal(summary.backupRunAttempt, "1");
   assert.equal(summary.readinessRunId, "8002");
   assert.equal(summary.backupArtifactId, "9001");
   assert.equal(summary.backupAttestationArtifactId, "9002");
@@ -301,15 +304,60 @@ test("canonical JSON rejects lossy numbers, unsupported values, and cycles", () 
 
 test("every attestation record rejects extra and missing keys", async (t) => {
   const cases = [
-    ["backup top level", backupAttestation(), (value) => value, "backup_attestation_keys_invalid"],
-    ["run", backupAttestation(), (value) => value.run, "attestation_run_invalid"],
-    ["remote source", backupAttestation(), (value) => value.remoteSource, "attestation_remote_source_invalid"],
-    ["database", backupAttestation(), (value) => value.database, "attestation_database_identity_invalid"],
-    ["baseline", backupAttestation(), (value) => value.baseline, "attestation_baseline_invalid"],
-    ["artifact", backupAttestation(), (value) => value.backupArtifact, "attestation_artifact_invalid"],
-    ["artifact file", backupAttestation(), (value) => value.backupArtifact.file, "attestation_artifact_file_invalid"],
-    ["readiness top level", readinessAttestation(), (value) => value, "readiness_attestation_keys_invalid"],
-    ["backup reference", readinessAttestation(), (value) => value.backup, "readiness_backup_reference_invalid"],
+    [
+      "backup top level",
+      backupAttestation(),
+      (value) => value,
+      "backup_attestation_keys_invalid",
+    ],
+    [
+      "run",
+      backupAttestation(),
+      (value) => value.run,
+      "attestation_run_invalid",
+    ],
+    [
+      "remote source",
+      backupAttestation(),
+      (value) => value.remoteSource,
+      "attestation_remote_source_invalid",
+    ],
+    [
+      "database",
+      backupAttestation(),
+      (value) => value.database,
+      "attestation_database_identity_invalid",
+    ],
+    [
+      "baseline",
+      backupAttestation(),
+      (value) => value.baseline,
+      "attestation_baseline_invalid",
+    ],
+    [
+      "artifact",
+      backupAttestation(),
+      (value) => value.backupArtifact,
+      "attestation_artifact_invalid",
+    ],
+    [
+      "artifact file",
+      backupAttestation(),
+      (value) => value.backupArtifact.file,
+      "attestation_artifact_file_invalid",
+    ],
+    [
+      "readiness top level",
+      readinessAttestation(),
+      (value) => value,
+      "readiness_attestation_keys_invalid",
+    ],
+    [
+      "backup reference",
+      readinessAttestation(),
+      (value) => value.backup,
+      "readiness_backup_reference_invalid",
+    ],
   ];
 
   for (const [name, source, select, code] of cases) {
@@ -328,22 +376,118 @@ test("every attestation record rejects extra and missing keys", async (t) => {
 
 test("IDs, attempts, OIDs, system identifiers, sizes, and counts are bounded canonical decimal strings", async (t) => {
   const cases = [
-    ["numeric run id", (value) => { value.run.id = 8001; }, "attestation_run_id_invalid"],
-    ["zero run id", (value) => { value.run.id = "0"; }, "attestation_run_id_invalid"],
-    ["leading-zero run id", (value) => { value.run.id = "08001"; }, "attestation_run_id_invalid"],
-    ["overflow run id", (value) => { value.run.id = "18446744073709551616"; }, "attestation_run_id_invalid"],
-    ["zero attempt", (value) => { value.run.attempt = "0"; }, "attestation_run_attempt_invalid"],
-    ["overflow attempt", (value) => { value.run.attempt = "4294967296"; }, "attestation_run_attempt_invalid"],
-    ["zero database OID", (value) => { value.database.dbOid = "0"; }, "attestation_database_oid_invalid"],
-    ["overflow database OID", (value) => { value.database.dbOid = "4294967296"; }, "attestation_database_oid_invalid"],
-    ["zero system identifier", (value) => { value.database.systemId = "0"; }, "attestation_database_system_identifier_invalid"],
-    ["overflow system identifier", (value) => { value.database.systemId = "18446744073709551616"; }, "attestation_database_system_identifier_invalid"],
-    ["zero artifact bytes", (value) => { value.backupArtifact.sizeBytes = "0"; }, "attestation_artifact_size_invalid"],
-    ["zero artifact file bytes", (value) => { value.backupArtifact.file.sizeBytes = "0"; }, "attestation_artifact_file_size_invalid"],
-    ["numeric count", (value) => { value.baseline.merchantRecordCount = 10; }, "attestation_baseline_merchantRecordCount_invalid"],
-    ["leading-zero count", (value) => { value.baseline.merchantRecordCount = "010"; }, "attestation_baseline_merchantRecordCount_invalid"],
-    ["negative count", (value) => { value.baseline.merchantRecordCount = "-1"; }, "attestation_baseline_merchantRecordCount_invalid"],
-    ["overflow count", (value) => { value.baseline.merchantRecordCount = "9223372036854775808"; }, "attestation_baseline_merchantRecordCount_invalid"],
+    [
+      "numeric run id",
+      (value) => {
+        value.run.id = 8001;
+      },
+      "attestation_run_id_invalid",
+    ],
+    [
+      "zero run id",
+      (value) => {
+        value.run.id = "0";
+      },
+      "attestation_run_id_invalid",
+    ],
+    [
+      "leading-zero run id",
+      (value) => {
+        value.run.id = "08001";
+      },
+      "attestation_run_id_invalid",
+    ],
+    [
+      "overflow run id",
+      (value) => {
+        value.run.id = "18446744073709551616";
+      },
+      "attestation_run_id_invalid",
+    ],
+    [
+      "zero attempt",
+      (value) => {
+        value.run.attempt = "0";
+      },
+      "attestation_run_attempt_invalid",
+    ],
+    [
+      "overflow attempt",
+      (value) => {
+        value.run.attempt = "4294967296";
+      },
+      "attestation_run_attempt_invalid",
+    ],
+    [
+      "zero database OID",
+      (value) => {
+        value.database.dbOid = "0";
+      },
+      "attestation_database_oid_invalid",
+    ],
+    [
+      "overflow database OID",
+      (value) => {
+        value.database.dbOid = "4294967296";
+      },
+      "attestation_database_oid_invalid",
+    ],
+    [
+      "zero system identifier",
+      (value) => {
+        value.database.systemId = "0";
+      },
+      "attestation_database_system_identifier_invalid",
+    ],
+    [
+      "overflow system identifier",
+      (value) => {
+        value.database.systemId = "18446744073709551616";
+      },
+      "attestation_database_system_identifier_invalid",
+    ],
+    [
+      "zero artifact bytes",
+      (value) => {
+        value.backupArtifact.sizeBytes = "0";
+      },
+      "attestation_artifact_size_invalid",
+    ],
+    [
+      "zero artifact file bytes",
+      (value) => {
+        value.backupArtifact.file.sizeBytes = "0";
+      },
+      "attestation_artifact_file_size_invalid",
+    ],
+    [
+      "numeric count",
+      (value) => {
+        value.baseline.merchantRecordCount = 10;
+      },
+      "attestation_baseline_merchantRecordCount_invalid",
+    ],
+    [
+      "leading-zero count",
+      (value) => {
+        value.baseline.merchantRecordCount = "010";
+      },
+      "attestation_baseline_merchantRecordCount_invalid",
+    ],
+    [
+      "negative count",
+      (value) => {
+        value.baseline.merchantRecordCount = "-1";
+      },
+      "attestation_baseline_merchantRecordCount_invalid",
+    ],
+    [
+      "overflow count",
+      (value) => {
+        value.baseline.merchantRecordCount = "9223372036854775808";
+      },
+      "attestation_baseline_merchantRecordCount_invalid",
+    ],
   ];
 
   for (const [name, mutate, code] of cases) {
@@ -357,15 +501,83 @@ test("IDs, attempts, OIDs, system identifiers, sizes, and counts are bounded can
 
 test("SHA fields and artifact digests are lowercase, exact-width, and cross-bound", async (t) => {
   const cases = [
-    ["uppercase target", (value) => { value.targetSha = TARGET_SHA.toUpperCase(); }, "attestation_target_sha_invalid"],
-    ["short target", (value) => { value.targetSha = "a".repeat(39); }, "attestation_target_sha_invalid"],
-    ["run head mismatch", (value) => { value.run.headSha = "1".repeat(40); }, "attestation_run_head_sha_mismatch"],
-    ["remote head mismatch", (value) => { value.remoteSource.headSha = "1".repeat(40); }, "attestation_remote_source_sha_mismatch"],
-    ["remote origin mismatch", (value) => { value.remoteSource.originMainSha = "1".repeat(40); }, "attestation_remote_source_sha_mismatch"],
-    ["artifact head mismatch", (value) => { value.backupArtifact.headSha = "1".repeat(40); }, "attestation_artifact_run_mismatch"],
-    ["bare artifact digest", (value) => { value.backupArtifact.digest = "c".repeat(64); }, "attestation_artifact_digest_invalid"],
-    ["uppercase artifact digest", (value) => { value.backupArtifact.digest = `sha256:${"C".repeat(64)}`; }, "attestation_artifact_digest_invalid"],
-    ["uppercase file SHA", (value) => { value.backupArtifact.file.sha256 = "D".repeat(64); }, "attestation_artifact_file_sha256_invalid"],
+    [
+      "uppercase target",
+      (value) => {
+        value.targetSha = TARGET_SHA.toUpperCase();
+      },
+      "attestation_target_sha_invalid",
+    ],
+    [
+      "short target",
+      (value) => {
+        value.targetSha = "a".repeat(39);
+      },
+      "attestation_target_sha_invalid",
+    ],
+    [
+      "run head mismatch",
+      (value) => {
+        value.run.headSha = "1".repeat(40);
+      },
+      "attestation_run_head_sha_mismatch",
+    ],
+    [
+      "remote head mismatch",
+      (value) => {
+        value.remoteSource.headSha = "1".repeat(40);
+      },
+      "attestation_remote_source_sha_mismatch",
+    ],
+    [
+      "remote origin mismatch",
+      (value) => {
+        value.remoteSource.originMainSha = "1".repeat(40);
+      },
+      "attestation_remote_source_sha_mismatch",
+    ],
+    [
+      "artifact head mismatch",
+      (value) => {
+        value.backupArtifact.headSha = "1".repeat(40);
+      },
+      "attestation_artifact_run_mismatch",
+    ],
+    [
+      "bare artifact digest",
+      (value) => {
+        value.backupArtifact.digest = "c".repeat(64);
+      },
+      "attestation_artifact_digest_invalid",
+    ],
+    [
+      "uppercase artifact digest",
+      (value) => {
+        value.backupArtifact.digest = `sha256:${"C".repeat(64)}`;
+      },
+      "attestation_artifact_digest_invalid",
+    ],
+    [
+      "uppercase file SHA",
+      (value) => {
+        value.backupArtifact.file.sha256 = "D".repeat(64);
+      },
+      "attestation_artifact_file_sha256_invalid",
+    ],
+    [
+      "uppercase identity content SHA",
+      (value) => {
+        value.baseline.ordinaryIdentityContentSha256 = "A".repeat(64);
+      },
+      "attestation_baseline_ordinaryIdentityContentSha256_invalid",
+    ],
+    [
+      "short identity content SHA",
+      (value) => {
+        value.baseline.ordinaryIdentityContentSha256 = "a".repeat(63);
+      },
+      "attestation_baseline_ordinaryIdentityContentSha256_invalid",
+    ],
   ];
 
   for (const [name, mutate, code] of cases) {
@@ -389,12 +601,48 @@ test("remote evidence must prove an exact clean detached checkout", async (t) =>
 
 test("workflow paths, events, branches, repositories, schemas, and kinds are frozen", async (t) => {
   const cases = [
-    ["workflow path", (value) => { value.run.workflowPath = ".github/workflows/other.yml"; }, "attestation_run_workflow_path_mismatch"],
-    ["event", (value) => { value.run.event = "push"; }, "attestation_run_event_invalid"],
-    ["branch", (value) => { value.run.headBranch = "release"; }, "attestation_run_head_branch_invalid"],
-    ["repository", (value) => { value.repository = "not a repository"; }, "attestation_repository_invalid"],
-    ["schema", (value) => { value.schemaVersion = 2; }, "attestation_schema_version_invalid"],
-    ["kind", (value) => { value.kind = "backup"; }, "attestation_kind_invalid"],
+    [
+      "workflow path",
+      (value) => {
+        value.run.workflowPath = ".github/workflows/other.yml";
+      },
+      "attestation_run_workflow_path_mismatch",
+    ],
+    [
+      "event",
+      (value) => {
+        value.run.event = "push";
+      },
+      "attestation_run_event_invalid",
+    ],
+    [
+      "branch",
+      (value) => {
+        value.run.headBranch = "release";
+      },
+      "attestation_run_head_branch_invalid",
+    ],
+    [
+      "repository",
+      (value) => {
+        value.repository = "not a repository";
+      },
+      "attestation_repository_invalid",
+    ],
+    [
+      "schema",
+      (value) => {
+        value.schemaVersion = 2;
+      },
+      "attestation_schema_version_invalid",
+    ],
+    [
+      "kind",
+      (value) => {
+        value.kind = "backup";
+      },
+      "attestation_kind_invalid",
+    ],
   ];
   for (const [name, mutate, code] of cases) {
     await t.test(name, () => {
@@ -421,10 +669,34 @@ test("workflow paths, events, branches, repositories, schemas, and kinds are fro
 
 test("database identity is exact, primary-only, and recursively stable", async (t) => {
   const cases = [
-    ["unsafe container name", (value) => { value.database.containerName = "/supabase-db"; }, "attestation_database_container_name_invalid"],
-    ["short container ID", (value) => { value.database.containerId = "b".repeat(63); }, "attestation_database_container_id_invalid"],
-    ["unsafe database name", (value) => { value.database.dbName = "production database"; }, "attestation_database_name_invalid"],
-    ["replica", (value) => { value.database.primary = false; }, "attestation_database_not_primary"],
+    [
+      "unsafe container name",
+      (value) => {
+        value.database.containerName = "/supabase-db";
+      },
+      "attestation_database_container_name_invalid",
+    ],
+    [
+      "short container ID",
+      (value) => {
+        value.database.containerId = "b".repeat(63);
+      },
+      "attestation_database_container_id_invalid",
+    ],
+    [
+      "unsafe database name",
+      (value) => {
+        value.database.dbName = "production database";
+      },
+      "attestation_database_name_invalid",
+    ],
+    [
+      "replica",
+      (value) => {
+        value.database.primary = false;
+      },
+      "attestation_database_not_primary",
+    ],
   ];
   for (const [name, mutate, code] of cases) {
     await t.test(name, () => {
@@ -434,11 +706,14 @@ test("database identity is exact, primary-only, and recursively stable", async (
     });
   }
 
-  await t.test("readiness rejects a different container-backed database", () => {
-    const value = readinessAttestation();
-    value.database.containerId = "9".repeat(64);
-    assertInvalid(value, "readiness_backup_database_mismatch");
-  });
+  await t.test(
+    "readiness rejects a different container-backed database",
+    () => {
+      const value = readinessAttestation();
+      value.database.containerId = "9".repeat(64);
+      assertInvalid(value, "readiness_backup_database_mismatch");
+    },
+  );
 });
 
 test("aggregate vectors reject semantic merchant binding overflow", () => {
@@ -449,16 +724,78 @@ test("aggregate vectors reject semantic merchant binding overflow", () => {
 
 test("attestation and artifact TTLs reject future, expired, undersized, and overlong evidence", async (t) => {
   const cases = [
-    ["noncanonical issued timestamp", (value) => { value.issuedAt = "2026-08-20T11:55:00Z"; }, "attestation_issued_at_invalid"],
-    ["issued in future", (value) => { value.issuedAt = "2026-08-20T12:00:00.001Z"; value.validUntil = "2026-08-20T13:00:00.001Z"; }, "attestation_issued_in_future"],
-    ["expired attestation", (value) => { value.validUntil = NOW_ISO; }, "attestation_expired"],
-    ["TTL below one minute", (value) => { value.issuedAt = "2026-08-20T11:59:30.001Z"; value.validUntil = "2026-08-20T12:00:30.000Z"; }, "attestation_ttl_invalid"],
-    ["backup TTL above 24 hours", (value) => { value.validUntil = "2026-08-21T11:55:00.001Z"; }, "attestation_ttl_invalid"],
-    ["artifact reports expired", (value) => { value.backupArtifact.expired = true; }, "attestation_artifact_expired"],
-    ["artifact expiry is in the past", (value) => { value.backupArtifact.expiresAt = "2026-08-20T11:59:59.999Z"; }, "attestation_artifact_expired"],
-    ["artifact expires before attestation", (value) => { value.backupArtifact.expiresAt = "2026-08-21T11:54:59.999Z"; }, "attestation_artifact_ttl_mismatch"],
-    ["artifact created in future", (value) => { value.backupArtifact.createdAt = "2026-08-20T12:00:00.001Z"; }, "attestation_artifact_created_in_future"],
-    ["artifact run mismatch", (value) => { value.backupArtifact.workflowRunId = "8002"; }, "attestation_artifact_run_mismatch"],
+    [
+      "noncanonical issued timestamp",
+      (value) => {
+        value.issuedAt = "2026-08-20T11:55:00Z";
+      },
+      "attestation_issued_at_invalid",
+    ],
+    [
+      "issued in future",
+      (value) => {
+        value.issuedAt = "2026-08-20T12:00:00.001Z";
+        value.validUntil = "2026-08-20T13:00:00.001Z";
+      },
+      "attestation_issued_in_future",
+    ],
+    [
+      "expired attestation",
+      (value) => {
+        value.validUntil = NOW_ISO;
+      },
+      "attestation_expired",
+    ],
+    [
+      "TTL below one minute",
+      (value) => {
+        value.issuedAt = "2026-08-20T11:59:30.001Z";
+        value.validUntil = "2026-08-20T12:00:30.000Z";
+      },
+      "attestation_ttl_invalid",
+    ],
+    [
+      "backup TTL above 24 hours",
+      (value) => {
+        value.validUntil = "2026-08-21T11:55:00.001Z";
+      },
+      "attestation_ttl_invalid",
+    ],
+    [
+      "artifact reports expired",
+      (value) => {
+        value.backupArtifact.expired = true;
+      },
+      "attestation_artifact_expired",
+    ],
+    [
+      "artifact expiry is in the past",
+      (value) => {
+        value.backupArtifact.expiresAt = "2026-08-20T11:59:59.999Z";
+      },
+      "attestation_artifact_expired",
+    ],
+    [
+      "artifact expires before attestation",
+      (value) => {
+        value.backupArtifact.expiresAt = "2026-08-21T11:54:59.999Z";
+      },
+      "attestation_artifact_ttl_mismatch",
+    ],
+    [
+      "artifact created in future",
+      (value) => {
+        value.backupArtifact.createdAt = "2026-08-20T12:00:00.001Z";
+      },
+      "attestation_artifact_created_in_future",
+    ],
+    [
+      "artifact run mismatch",
+      (value) => {
+        value.backupArtifact.workflowRunId = "8002";
+      },
+      "attestation_artifact_run_mismatch",
+    ],
   ];
   for (const [name, mutate, code] of cases) {
     await t.test(name, () => {
@@ -483,10 +820,13 @@ test("attestation and artifact TTLs reject future, expired, undersized, and over
   await t.test("readiness cannot outlive its backup", () => {
     const value = readinessAttestation();
     value.backup.attestation.validUntil = "2026-08-20T13:30:00.000Z";
-    value.backup.attestation.backupArtifact.expiresAt = "2026-08-27T12:00:00.000Z";
+    value.backup.attestation.backupArtifact.expiresAt =
+      "2026-08-27T12:00:00.000Z";
     const nestedBytes = canonicalJsonBytes(value.backup.attestation);
     value.backup.attestationArtifact.file.sha256 = sha256Hex(nestedBytes);
-    value.backup.attestationArtifact.file.sizeBytes = String(nestedBytes.length);
+    value.backup.attestationArtifact.file.sizeBytes = String(
+      nestedBytes.length,
+    );
     assertInvalid(value, "readiness_backup_lifetime_mismatch");
   });
 });
@@ -497,7 +837,9 @@ test("recursive backup scope, run IDs, artifact IDs, and canonical bytes cannot 
     value.backup.attestation.repository = "other/space";
     const nestedBytes = canonicalJsonBytes(value.backup.attestation);
     value.backup.attestationArtifact.file.sha256 = sha256Hex(nestedBytes);
-    value.backup.attestationArtifact.file.sizeBytes = String(nestedBytes.length);
+    value.backup.attestationArtifact.file.sizeBytes = String(
+      nestedBytes.length,
+    );
     assertInvalid(value, "readiness_backup_scope_mismatch");
   });
   await t.test("backup run ID cannot equal readiness run ID", () => {
@@ -507,7 +849,9 @@ test("recursive backup scope, run IDs, artifact IDs, and canonical bytes cannot 
     value.backup.attestationArtifact.workflowRunId = value.run.id;
     const nestedBytes = canonicalJsonBytes(value.backup.attestation);
     value.backup.attestationArtifact.file.sha256 = sha256Hex(nestedBytes);
-    value.backup.attestationArtifact.file.sizeBytes = String(nestedBytes.length);
+    value.backup.attestationArtifact.file.sizeBytes = String(
+      nestedBytes.length,
+    );
     assertInvalid(value, "readiness_backup_run_id_reused");
   });
   await t.test("attestation file SHA mismatch", () => {
@@ -525,33 +869,101 @@ test("recursive backup scope, run IDs, artifact IDs, and canonical bytes cannot 
     value.readinessArtifact.id = value.backup.attestationArtifact.id;
     assertInvalid(value, "readiness_artifact_id_reused");
   });
-  await t.test("backup attestation artifact must belong to the backup run", () => {
-    const value = readinessAttestation();
-    value.backup.attestationArtifact.workflowRunId = value.run.id;
-    assertInvalid(value, "attestation_artifact_run_mismatch");
-  });
+  await t.test(
+    "backup attestation artifact must belong to the backup run",
+    () => {
+      const value = readinessAttestation();
+      value.backup.attestationArtifact.workflowRunId = value.run.id;
+      assertInvalid(value, "attestation_artifact_run_mismatch");
+    },
+  );
 });
 
 test("explicit workflow expectations fail closed on every mismatch", async (t) => {
   const value = readinessAttestation();
   const cases = [
     ["kind", { expectedKind: "backup" }, "attestation_expected_kind_mismatch"],
-    ["repository", { expectedRepository: "other/space" }, "attestation_repository_mismatch"],
-    ["target", { expectedTargetSha: "1".repeat(40) }, "attestation_target_sha_mismatch"],
+    [
+      "repository",
+      { expectedRepository: "other/space" },
+      "attestation_repository_mismatch",
+    ],
+    [
+      "target",
+      { expectedTargetSha: "1".repeat(40) },
+      "attestation_target_sha_mismatch",
+    ],
     ["run", { expectedRunId: "1" }, "attestation_run_id_mismatch"],
-    ["attempt", { expectedRunAttempt: "2" }, "attestation_run_attempt_mismatch"],
-    ["backup run", { expectedBackupRunId: "1" }, "attestation_backup_run_id_mismatch"],
-    ["readiness run", { expectedReadinessRunId: "1" }, "attestation_readiness_run_id_mismatch"],
-    ["artifact ID", { expectedArtifactId: "1" }, "attestation_artifact_id_mismatch"],
-    ["artifact digest", { expectedArtifactDigest: `sha256:${"1".repeat(64)}` }, "attestation_artifact_digest_mismatch"],
-    ["backup artifact ID", { expectedBackupArtifactId: "1" }, "attestation_backup_artifact_id_mismatch"],
-    ["backup artifact digest", { expectedBackupArtifactDigest: `sha256:${"2".repeat(64)}` }, "attestation_backup_artifact_digest_mismatch"],
-    ["backup attestation artifact ID", { expectedBackupAttestationArtifactId: "1" }, "attestation_backup_attestation_artifact_id_mismatch"],
-    ["backup attestation artifact digest", { expectedBackupAttestationArtifactDigest: `sha256:${"2".repeat(64)}` }, "attestation_backup_attestation_artifact_digest_mismatch"],
-    ["readiness artifact ID", { expectedReadinessArtifactId: "1" }, "attestation_readiness_artifact_id_mismatch"],
-    ["readiness artifact digest", { expectedReadinessArtifactDigest: `sha256:${"2".repeat(64)}` }, "attestation_readiness_artifact_digest_mismatch"],
-    ["database", { expectedDatabase: database({ dbOid: "16385" }) }, "attestation_database_identity_mismatch"],
-    ["baseline", { expectedBaseline: baseline({ merchantRecordCount: "11", merchantAuthoritativeBindingCount: "11" }) }, "attestation_baseline_mismatch"],
+    [
+      "attempt",
+      { expectedRunAttempt: "2" },
+      "attestation_run_attempt_mismatch",
+    ],
+    [
+      "backup run",
+      { expectedBackupRunId: "1" },
+      "attestation_backup_run_id_mismatch",
+    ],
+    [
+      "readiness run",
+      { expectedReadinessRunId: "1" },
+      "attestation_readiness_run_id_mismatch",
+    ],
+    [
+      "artifact ID",
+      { expectedArtifactId: "1" },
+      "attestation_artifact_id_mismatch",
+    ],
+    [
+      "artifact digest",
+      { expectedArtifactDigest: `sha256:${"1".repeat(64)}` },
+      "attestation_artifact_digest_mismatch",
+    ],
+    [
+      "backup artifact ID",
+      { expectedBackupArtifactId: "1" },
+      "attestation_backup_artifact_id_mismatch",
+    ],
+    [
+      "backup artifact digest",
+      { expectedBackupArtifactDigest: `sha256:${"2".repeat(64)}` },
+      "attestation_backup_artifact_digest_mismatch",
+    ],
+    [
+      "backup attestation artifact ID",
+      { expectedBackupAttestationArtifactId: "1" },
+      "attestation_backup_attestation_artifact_id_mismatch",
+    ],
+    [
+      "backup attestation artifact digest",
+      { expectedBackupAttestationArtifactDigest: `sha256:${"2".repeat(64)}` },
+      "attestation_backup_attestation_artifact_digest_mismatch",
+    ],
+    [
+      "readiness artifact ID",
+      { expectedReadinessArtifactId: "1" },
+      "attestation_readiness_artifact_id_mismatch",
+    ],
+    [
+      "readiness artifact digest",
+      { expectedReadinessArtifactDigest: `sha256:${"2".repeat(64)}` },
+      "attestation_readiness_artifact_digest_mismatch",
+    ],
+    [
+      "database",
+      { expectedDatabase: database({ dbOid: "16385" }) },
+      "attestation_database_identity_mismatch",
+    ],
+    [
+      "baseline",
+      {
+        expectedBaseline: baseline({
+          merchantRecordCount: "11",
+          merchantAuthoritativeBindingCount: "11",
+        }),
+      },
+      "attestation_baseline_mismatch",
+    ],
   ];
 
   for (const [name, options, code] of cases) {
@@ -662,7 +1074,11 @@ test("CLI emits a minimal canonical summary and accepts all workflow binding inp
         "--minimum-remaining-seconds",
         "300",
       ],
-      { write: (valueToWrite) => { output += valueToWrite; } },
+      {
+        write: (valueToWrite) => {
+          output += valueToWrite;
+        },
+      },
     );
     const summary = JSON.parse(output);
 
@@ -670,6 +1086,7 @@ test("CLI emits a minimal canonical summary and accepts all workflow binding inp
     assert.equal(summary.valid, true);
     assert.equal(summary.kind, PRODUCTION_READINESS_ATTESTATION_KIND);
     assert.equal(summary.backupRunId, "8001");
+    assert.equal(summary.backupRunAttempt, "1");
     assert.equal(summary.readinessRunId, "8002");
     assert.deepEqual(Buffer.from(output), canonicalJsonBytes(summary));
   });

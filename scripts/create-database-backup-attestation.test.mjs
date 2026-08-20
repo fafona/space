@@ -54,6 +54,7 @@ const SOURCE = {
       accountIdentifierCollisionCount: "0",
       staffRegistryOverlapCount: "0",
       systemSitePrincipalOverlapCount: "0",
+      ordinaryIdentityContentSha256: "1".repeat(64),
     },
   },
 };
@@ -248,7 +249,7 @@ test("backup attestation rejects subject changes after upload", async () => {
   }
 });
 
-test("backup attestation rejects a restored baseline mismatch", async () => {
+test("backup attestation rejects a same-count restored identity mismatch", async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "faolla-backup-attestation-baseline-test-"),
   );
@@ -263,7 +264,7 @@ test("backup attestation rejects a restored baseline mismatch", async () => {
       source: SOURCE,
       restoredBaseline: {
         ...SOURCE.database.baseline,
-        merchantRecordCount: "11",
+        ordinaryIdentityContentSha256: "2".repeat(64),
       },
     });
     await assert.rejects(

@@ -3,9 +3,13 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  isOrdinaryAccountIdentityContentSha256,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
+} from "./ordinary-account-identity-content-contract.mjs";
+
 export const PRODUCTION_RELEASE_ATTESTATION_SCHEMA_VERSION = 1;
-export const PRODUCTION_BACKUP_ATTESTATION_KIND =
-  "faolla.production-backup.v1";
+export const PRODUCTION_BACKUP_ATTESTATION_KIND = "faolla.production-backup.v1";
 export const PRODUCTION_READINESS_ATTESTATION_KIND =
   "faolla.production-readiness.v1";
 export const PRODUCTION_BACKUP_WORKFLOW_PATH =
@@ -31,6 +35,10 @@ export const PRODUCTION_RELEASE_AGGREGATE_KEYS = Object.freeze([
   "accountIdentifierCollisionCount",
   "staffRegistryOverlapCount",
   "systemSitePrincipalOverlapCount",
+]);
+export const PRODUCTION_RELEASE_BASELINE_KEYS = Object.freeze([
+  ...PRODUCTION_RELEASE_AGGREGATE_KEYS,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
 ]);
 
 const BACKUP_KEYS = Object.freeze([
@@ -96,11 +104,7 @@ const ARTIFACT_KEYS = Object.freeze([
   "headSha",
   "file",
 ]);
-const ARTIFACT_FILE_KEYS = Object.freeze([
-  "name",
-  "sizeBytes",
-  "sha256",
-]);
+const ARTIFACT_FILE_KEYS = Object.freeze(["name", "sizeBytes", "sha256"]);
 const BACKUP_REFERENCE_KEYS = Object.freeze([
   "attestation",
   "attestationArtifact",
@@ -163,11 +167,7 @@ function validateExactString(value, pattern, code) {
 }
 
 function validateDecimalString(value, options) {
-  const {
-    code,
-    allowZero = false,
-    maximum = MAX_UINT64,
-  } = options;
+  const { code, allowZero = false, maximum = MAX_UINT64 } = options;
   const pattern = allowZero
     ? NON_NEGATIVE_DECIMAL_PATTERN
     : POSITIVE_DECIMAL_PATTERN;
@@ -183,14 +183,14 @@ function validateDecimalString(value, options) {
 }
 
 function validateCanonicalTimestamp(value, code) {
-  if (
-    typeof value !== "string" ||
-    !CANONICAL_TIMESTAMP_PATTERN.test(value)
-  ) {
+  if (typeof value !== "string" || !CANONICAL_TIMESTAMP_PATTERN.test(value)) {
     fail(code);
   }
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value) {
+  if (
+    !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString() !== value
+  ) {
     fail(code);
   }
   return { value, timestamp };
@@ -225,10 +225,7 @@ function validateLifetime(value, kind, timeContext) {
     kind === PRODUCTION_BACKUP_ATTESTATION_KIND
       ? PRODUCTION_BACKUP_MAXIMUM_TTL_MS
       : PRODUCTION_READINESS_MAXIMUM_TTL_MS;
-  if (
-    ttlMs < PRODUCTION_RELEASE_MINIMUM_TTL_MS ||
-    ttlMs > maximumTtlMs
-  ) {
+  if (ttlMs < PRODUCTION_RELEASE_MINIMUM_TTL_MS || ttlMs > maximumTtlMs) {
     fail("attestation_ttl_invalid");
   }
   if (
@@ -379,7 +376,7 @@ function validateDatabaseIdentity(value) {
 function validateAggregateBaseline(value) {
   const source = exactRecord(
     value,
-    PRODUCTION_RELEASE_AGGREGATE_KEYS,
+    PRODUCTION_RELEASE_BASELINE_KEYS,
     "attestation_baseline_invalid",
   );
   const baseline = Object.fromEntries(
@@ -398,7 +395,16 @@ function validateAggregateBaseline(value) {
   ) {
     fail("attestation_baseline_merchant_binding_count_invalid");
   }
-  return baseline;
+  const ordinaryIdentityContentSha256 =
+    source[ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY];
+  if (!isOrdinaryAccountIdentityContentSha256(ordinaryIdentityContentSha256)) {
+    fail("attestation_baseline_ordinaryIdentityContentSha256_invalid");
+  }
+  return {
+    ...baseline,
+    [ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY]:
+      ordinaryIdentityContentSha256,
+  };
 }
 
 function validateArtifactFile(value) {
@@ -479,13 +485,10 @@ function validateArtifact(value, context) {
     code: "attestation_artifact_workflow_run_id_invalid",
     maximum: MAX_UINT64,
   });
-  const workflowRunAttempt = validateDecimalString(
-    source.workflowRunAttempt,
-    {
-      code: "attestation_artifact_workflow_run_attempt_invalid",
-      maximum: MAX_UINT32,
-    },
-  );
+  const workflowRunAttempt = validateDecimalString(source.workflowRunAttempt, {
+    code: "attestation_artifact_workflow_run_attempt_invalid",
+    maximum: MAX_UINT32,
+  });
   const headSha = validateTargetSha(
     source.headSha,
     "attestation_artifact_head_sha_invalid",
@@ -513,9 +516,7 @@ function validateArtifact(value, context) {
 }
 
 function validateSchemaAndKind(value, kind) {
-  if (
-    value.schemaVersion !== PRODUCTION_RELEASE_ATTESTATION_SCHEMA_VERSION
-  ) {
+  if (value.schemaVersion !== PRODUCTION_RELEASE_ATTESTATION_SCHEMA_VERSION) {
     fail("attestation_schema_version_invalid");
   }
   if (value.kind !== kind) fail("attestation_kind_invalid");
@@ -651,8 +652,7 @@ function parseReadinessAttestation(value, timeContext) {
   );
   const backupCanonicalBytes = canonicalJsonBytes(backupAttestation);
   if (
-    backupAttestationArtifact.file.sha256 !==
-      sha256Hex(backupCanonicalBytes) ||
+    backupAttestationArtifact.file.sha256 !== sha256Hex(backupCanonicalBytes) ||
     backupAttestationArtifact.file.sizeBytes !==
       String(backupCanonicalBytes.length)
   ) {
@@ -694,10 +694,7 @@ function parseReadinessAttestation(value, timeContext) {
 }
 
 function normalizeKind(value) {
-  if (
-    value === "backup" ||
-    value === PRODUCTION_BACKUP_ATTESTATION_KIND
-  ) {
+  if (value === "backup" || value === PRODUCTION_BACKUP_ATTESTATION_KIND) {
     return PRODUCTION_BACKUP_ATTESTATION_KIND;
   }
   if (
@@ -719,6 +716,12 @@ function backupRunId(attestation) {
   return attestation.kind === PRODUCTION_BACKUP_ATTESTATION_KIND
     ? attestation.run.id
     : attestation.backup.attestation.run.id;
+}
+
+function backupRunAttempt(attestation) {
+  return attestation.kind === PRODUCTION_BACKUP_ATTESTATION_KIND
+    ? attestation.run.attempt
+    : attestation.backup.attestation.run.attempt;
 }
 
 function backupArtifact(attestation) {
@@ -747,8 +750,16 @@ function validateExpectedValues(attestation, options) {
     fail("attestation_expected_kind_mismatch");
   }
   const stringExpectations = [
-    ["expectedRepository", attestation.repository, "attestation_repository_mismatch"],
-    ["expectedTargetSha", attestation.targetSha, "attestation_target_sha_mismatch"],
+    [
+      "expectedRepository",
+      attestation.repository,
+      "attestation_repository_mismatch",
+    ],
+    [
+      "expectedTargetSha",
+      attestation.targetSha,
+      "attestation_target_sha_mismatch",
+    ],
     ["expectedRunId", attestation.run.id, "attestation_run_id_mismatch"],
     [
       "expectedRunAttempt",
@@ -921,6 +932,7 @@ export function productionReleaseAttestationSummary(attestation) {
     runId: attestation.run.id,
     runAttempt: attestation.run.attempt,
     backupRunId: backupRunId(attestation),
+    backupRunAttempt: backupRunAttempt(attestation),
     readinessRunId:
       attestation.kind === PRODUCTION_READINESS_ATTESTATION_KIND
         ? attestation.run.id
@@ -933,9 +945,7 @@ export function productionReleaseAttestationSummary(attestation) {
     backupAttestationArtifactDigest: backupJsonArtifact?.digest ?? null,
     readinessArtifactId: readinessEvidenceArtifact?.id ?? null,
     readinessArtifactDigest: readinessEvidenceArtifact?.digest ?? null,
-    databaseIdentitySha256: sha256Hex(
-      canonicalJsonBytes(attestation.database),
-    ),
+    databaseIdentitySha256: sha256Hex(canonicalJsonBytes(attestation.database)),
     baselineSha256: sha256Hex(canonicalJsonBytes(attestation.baseline)),
     canonicalSha256: sha256Hex(canonicalBytes),
     validUntil: attestation.validUntil,
@@ -1066,10 +1076,7 @@ function parseCliArguments(argv) {
   };
 }
 
-export async function runProductionReleaseAttestationCli(
-  argv,
-  io = {},
-) {
+export async function runProductionReleaseAttestationCli(argv, io = {}) {
   const write = io.write ?? ((value) => process.stdout.write(value));
   const { input, options } = parseCliArguments(argv);
   const { attestation } = await readProductionReleaseAttestationFile(

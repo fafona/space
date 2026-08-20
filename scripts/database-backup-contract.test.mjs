@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  buildDatabaseBackupAuthoritativeBaselineJsonSql,
   buildDatabaseBackupManifest,
   DATABASE_BACKUP_DATA_FILES,
   validateDatabaseBackupArchiveEntries,
@@ -12,6 +13,7 @@ import {
   validateDatabaseBackupNestedArchiveEntry,
   verifyDatabaseBackupManifestFiles,
 } from "./database-backup-contract.mjs";
+import { ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL } from "./ordinary-account-identity-content-contract.mjs";
 
 const STABLE_SOURCE = {
   sourceRepository: "fafona/space",
@@ -40,6 +42,7 @@ const STABLE_SOURCE = {
       accountIdentifierCollisionCount: "0",
       staffRegistryOverlapCount: "0",
       systemSitePrincipalOverlapCount: "0",
+      ordinaryIdentityContentSha256: "1".repeat(64),
     },
   },
 };
@@ -58,6 +61,12 @@ async function withBackupDirectory(callback) {
     await rm(directory, { recursive: true, force: true });
   }
 }
+
+test("backup baseline SQL reuses the canonical ordinary identity content SHA", () => {
+  const sql = buildDatabaseBackupAuthoritativeBaselineJsonSql();
+  assert.ok(sql.includes(ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL));
+  assert.match(sql, /'ordinaryIdentityContentSha256'/);
+});
 
 test("database backup manifest validates all expected dump files", async () => {
   await withBackupDirectory(async (directory) => {

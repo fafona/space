@@ -18,6 +18,11 @@ run_psql() {
   "${PSQL_BASE[@]}" "$@" "${DATABASE_URL}"
 }
 
+capture_ordinary_identity_content_sha256() {
+  node "${REPOSITORY_ROOT}/scripts/ordinary-account-identity-content-contract.mjs" \
+    --select-sql | run_psql --tuples-only --no-align --file -
+}
+
 existing_relations="$(
   run_psql --tuples-only --no-align --command \
     "select count(*) from pg_class as relation join pg_namespace as namespace on namespace.oid = relation.relnamespace where namespace.nspname not in ('pg_catalog', 'information_schema') and namespace.nspname !~ '^pg_toast' and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f');"
@@ -1493,6 +1498,9 @@ export FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$(
 export FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$(
   run_psql --tuples-only --no-align --command \
     "select count(*)::text from public.faolla_personal_accounts;"
+)"
+export FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$(
+  capture_ordinary_identity_content_sha256
 )"
 FAOLLA_EXPECTED_READINESS_STATUS=blocked \
   node "${SCRIPT_DIR}/check-ordinary-account-cutover-readiness.mjs"

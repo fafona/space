@@ -8,6 +8,11 @@ import {
   acquireProductionMigrationLock,
   runMigrationCommand,
 } from "./apply-production-database-migrations.mjs";
+import {
+  isOrdinaryAccountIdentityContentSha256,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL,
+} from "./ordinary-account-identity-content-contract.mjs";
 
 const CONTAINER_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,159}$/;
 const DATABASE_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,62}$/;
@@ -36,7 +41,9 @@ function extractDollarQuotedDoBlock(source, label) {
     end < 0 ||
     source.indexOf(opening, start + opening.length) >= 0
   ) {
-    throw new Error(`ordinary_account_readiness_runtime_block_invalid:${label}`);
+    throw new Error(
+      `ordinary_account_readiness_runtime_block_invalid:${label}`,
+    );
   }
   return source.slice(start, end + closing.length);
 }
@@ -71,6 +78,7 @@ const PSQL_CONTAINER_SCRIPT = [
   ': "${FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER:?FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER is required}"',
   ': "${FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT:?FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT is required}"',
   ': "${FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT:?FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT is required}"',
+  ': "${FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256:?FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256 is required}"',
   'export PGPASSWORD="$POSTGRES_PASSWORD"',
   "export PGOPTIONS='-c lock_timeout=15s -c statement_timeout=120s'",
   "exec psql --host=localhost --username=supabase_admin " +
@@ -80,6 +88,7 @@ const PSQL_CONTAINER_SCRIPT = [
     '--set=expected_database_system_identifier="$FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER" ' +
     '--set=expected_merchant_record_count="$FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT" ' +
     '--set=expected_personal_canonical_count="$FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT" ' +
+    '--set=expected_ordinary_identity_content_sha256="$FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256" ' +
     "--quiet --tuples-only --no-align",
 ].join("\n");
 
@@ -918,6 +927,8 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
     AND (SELECT ready FROM forbidden_binder_state)
     AND (SELECT ready FROM creator_default_acl_state)
     AS ready
+), ordinary_identity_content AS MATERIALIZED (
+  SELECT ${ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL} AS value
 ), readiness AS MATERIALIZED (
   SELECT public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1()
     AS value
@@ -934,6 +945,8 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
       :'expected_merchant_record_count'::numeric
       AND (readiness.value #>> '{personal,canonicalBindingCount}')::numeric =
         :'expected_personal_canonical_count'::numeric
+      AND (SELECT value FROM ordinary_identity_content) =
+        :'expected_ordinary_identity_content_sha256'::text
       AS baseline_ready
     FROM readiness
 )
@@ -990,6 +1003,8 @@ SELECT pg_catalog.jsonb_build_object(
       (SELECT value #> '{security,staffRegistryOverlapCount}' FROM readiness),
     'systemSitePrincipalOverlapCount',
       (SELECT value #> '{security,systemSitePrincipalOverlapCount}' FROM readiness),
+    '${ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY}',
+      (SELECT value FROM ordinary_identity_content),
     'schemaReady', (SELECT value #> '{invariants,schemaReady}' FROM readiness),
     'aclReady', (SELECT value #> '{invariants,aclReady}' FROM readiness)
   )
@@ -1133,11 +1148,22 @@ export function validateOrdinaryAccountCutoverExpectedEnvironment(
     );
   }
 
+  const ordinaryIdentityContentSha256 = trimText(
+    environment.FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256,
+  );
+  if (!isOrdinaryAccountIdentityContentSha256(ordinaryIdentityContentSha256)) {
+    throw readinessError(
+      "ordinary_account_readiness_expected_identity_content_sha256_invalid",
+    );
+  }
+
   return {
     FAOLLA_EXPECTED_DATABASE_NAME: databaseName,
     FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER: databaseSystemIdentifier,
     FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT: merchantRecordCount,
     FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT: personalCanonicalCount,
+    FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256:
+      ordinaryIdentityContentSha256,
   };
 }
 
@@ -1145,7 +1171,10 @@ function exactKeys(value, expectedKeys) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const actual = Object.keys(value).sort();
   const expected = [...expectedKeys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
 }
 
 export function parseOrdinaryAccountCutoverReadinessArguments(argv = []) {
@@ -1154,13 +1183,15 @@ export function parseOrdinaryAccountCutoverReadinessArguments(argv = []) {
   const seen = new Set();
   for (const entry of argv) {
     if (entry === "--json") {
-      if (seen.has("json")) throw readinessError("ordinary_account_readiness_json_duplicate");
+      if (seen.has("json"))
+        throw readinessError("ordinary_account_readiness_json_duplicate");
       seen.add("json");
       json = true;
       continue;
     }
     if (entry === "--fail-on-blocked") {
-      if (seen.has("fail")) throw readinessError("ordinary_account_readiness_fail_duplicate");
+      if (seen.has("fail"))
+        throw readinessError("ordinary_account_readiness_fail_duplicate");
       seen.add("fail");
       failOnBlocked = true;
       continue;
@@ -1220,7 +1251,8 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (lines.length !== 1) throw readinessError("ordinary_account_readiness_output_invalid");
+  if (lines.length !== 1)
+    throw readinessError("ordinary_account_readiness_output_invalid");
   let parsed;
   try {
     parsed = JSON.parse(lines[0]);
@@ -1259,6 +1291,7 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
     "readyForCutover",
     "schemaReady",
     "aclReady",
+    ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
     ...READINESS_COUNT_KEYS,
   ];
   if (!exactKeys(readiness, readinessKeys)) {
@@ -1272,6 +1305,9 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
     typeof readiness.readyForCutover !== "boolean" ||
     typeof readiness.schemaReady !== "boolean" ||
     typeof readiness.aclReady !== "boolean" ||
+    !isOrdinaryAccountIdentityContentSha256(
+      readiness[ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY],
+    ) ||
     READINESS_COUNT_KEYS.some(
       (key) => !Number.isSafeInteger(readiness[key]) || readiness[key] < 0,
     )
@@ -1279,12 +1315,17 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
   if (
-    readiness.merchantAuthoritativeBindingCount + readiness.merchantInvalidBindingCount !==
+    readiness.merchantAuthoritativeBindingCount +
+      readiness.merchantInvalidBindingCount !==
       readiness.merchantRecordCount ||
-    readiness.personalCanonicalOrphanCount > readiness.personalCanonicalBindingCount ||
-    readiness.personalInvalidCanonicalCount > readiness.personalCanonicalBindingCount ||
-    readiness.personalDuplicateAuthUserCount > readiness.personalCanonicalBindingCount ||
-    readiness.personalDuplicateAccountIdCount > readiness.personalCanonicalBindingCount
+    readiness.personalCanonicalOrphanCount >
+      readiness.personalCanonicalBindingCount ||
+    readiness.personalInvalidCanonicalCount >
+      readiness.personalCanonicalBindingCount ||
+    readiness.personalDuplicateAuthUserCount >
+      readiness.personalCanonicalBindingCount ||
+    readiness.personalDuplicateAccountIdCount >
+      readiness.personalCanonicalBindingCount
   ) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
@@ -1304,7 +1345,8 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
   const ready =
-    expectedReady && READINESS_BOOLEAN_KEYS.every((key) => parsed[key] === true);
+    expectedReady &&
+    READINESS_BOOLEAN_KEYS.every((key) => parsed[key] === true);
   return {
     ...parsed,
     status: ready ? "ready" : "blocked",
@@ -1377,13 +1419,18 @@ function printTextReport(report, write) {
 
 export async function runOrdinaryAccountCutoverReadinessCli(input = {}) {
   const argv = input.argv ?? process.argv.slice(2);
-  const writeStdout = input.writeStdout ?? ((value) => process.stdout.write(value));
-  const writeStderr = input.writeStderr ?? ((value) => process.stderr.write(value));
+  const writeStdout =
+    input.writeStdout ?? ((value) => process.stdout.write(value));
+  const writeStderr =
+    input.writeStderr ?? ((value) => process.stderr.write(value));
   const wantsJson = argv.includes("--json");
   try {
     const options = parseOrdinaryAccountCutoverReadinessArguments(argv);
-    const report = await (input.execute ?? checkOrdinaryAccountCutoverReadiness)();
-    if (options.json) writeStdout(`${JSON.stringify({ ok: true, ...report })}\n`);
+    const report = await (
+      input.execute ?? checkOrdinaryAccountCutoverReadiness
+    )();
+    if (options.json)
+      writeStdout(`${JSON.stringify({ ok: true, ...report })}\n`);
     else printTextReport(report, writeStdout);
     return options.failOnBlocked && report.status !== "ready" ? 2 : 0;
   } catch (error) {
@@ -1391,7 +1438,8 @@ export async function runOrdinaryAccountCutoverReadinessCli(input = {}) {
       error instanceof OrdinaryAccountCutoverReadinessError
         ? error.code
         : "ordinary_account_cutover_readiness_failed";
-    if (wantsJson) writeStderr(`${JSON.stringify({ ok: false, error: code })}\n`);
+    if (wantsJson)
+      writeStderr(`${JSON.stringify({ ok: false, error: code })}\n`);
     else writeStderr(`[ordinary-account-readiness] ERROR ${code}\n`);
     return 1;
   }

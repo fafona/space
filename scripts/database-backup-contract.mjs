@@ -3,7 +3,15 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { PRODUCTION_RELEASE_AGGREGATE_KEYS } from "./production-release-attestation.mjs";
+import {
+  PRODUCTION_RELEASE_AGGREGATE_KEYS,
+  PRODUCTION_RELEASE_BASELINE_KEYS,
+} from "./production-release-attestation.mjs";
+import {
+  isOrdinaryAccountIdentityContentSha256,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL,
+} from "./ordinary-account-identity-content-contract.mjs";
 
 export const DATABASE_BACKUP_DATA_FILES = [
   "database.sql.gz",
@@ -52,11 +60,11 @@ export function buildDatabaseBackupAuthoritativeBaselineJsonSql() {
   return [
     "pg_catalog.json_build_object(",
     ...AUTHORITATIVE_BASELINE_PATHS.map(
-      ([key, readinessPath], index) =>
-        `  '${key}', readiness.value #>> '${readinessPath}'${
-          index === AUTHORITATIVE_BASELINE_PATHS.length - 1 ? "" : ","
-        }`,
+      ([key, readinessPath]) =>
+        `  '${key}', readiness.value #>> '${readinessPath}',`,
     ),
+    `  '${ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY}',`,
+    ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL,
     ")",
   ].join("\n");
 }
@@ -127,12 +135,15 @@ export function validateDatabaseBackupSourceIdentity(value) {
     baseline && typeof baseline === "object" && !Array.isArray(baseline)
       ? Object.keys(baseline).sort()
       : [];
-  const expectedBaselineKeys = [...PRODUCTION_RELEASE_AGGREGATE_KEYS].sort();
+  const expectedBaselineKeys = [...PRODUCTION_RELEASE_BASELINE_KEYS].sort();
   const baselineValid =
     baselineKeys.length === expectedBaselineKeys.length &&
     baselineKeys.every((key, index) => key === expectedBaselineKeys[index]) &&
     PRODUCTION_RELEASE_AGGREGATE_KEYS.every((key) =>
       /^(?:0|[1-9][0-9]*)$/.test(baseline[key]),
+    ) &&
+    isOrdinaryAccountIdentityContentSha256(
+      baseline[ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY],
     );
 
   if (
@@ -182,7 +193,7 @@ export function validateDatabaseBackupSourceIdentity(value) {
         postmasterStartedAt,
         primary: true,
         baseline: Object.fromEntries(
-          PRODUCTION_RELEASE_AGGREGATE_KEYS.map((key) => [key, baseline[key]]),
+          PRODUCTION_RELEASE_BASELINE_KEYS.map((key) => [key, baseline[key]]),
         ),
       },
     },

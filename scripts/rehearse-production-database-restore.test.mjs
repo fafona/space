@@ -22,6 +22,7 @@ const RESTORED_BASELINE = {
   accountIdentifierCollisionCount: "0",
   staffRegistryOverlapCount: "0",
   systemSitePrincipalOverlapCount: "0",
+  ordinaryIdentityContentSha256: "1".repeat(64),
 };
 
 function restoreManifest(image = "supabase/postgres:15.8.1.085") {
@@ -262,7 +263,7 @@ test("database restore rehearsal uses an isolated container and validates key da
   }
 });
 
-test("database restore rehearsal rejects a restored authoritative baseline mismatch", async () => {
+test("database restore rehearsal rejects a same-count restored identity replacement", async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "faolla-restore-baseline-mismatch-test-"),
   );
@@ -299,7 +300,7 @@ test("database restore rehearsal rejects a restored authoritative baseline misma
               return {
                 stdout: `${JSON.stringify({
                   ...RESTORED_BASELINE,
-                  merchantRecordCount: "11",
+                  ordinaryIdentityContentSha256: "2".repeat(64),
                 })}\n`,
               };
             }

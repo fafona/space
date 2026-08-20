@@ -14,6 +14,7 @@ import {
   runOrdinaryAccountCutoverReadinessCli,
   validateOrdinaryAccountCutoverExpectedEnvironment,
 } from "./check-ordinary-account-cutover-readiness.mjs";
+import { ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL } from "./ordinary-account-identity-content-contract.mjs";
 
 function topology(name = "supabase-db") {
   return {
@@ -31,7 +32,11 @@ function topology(name = "supabase-db") {
 function lockProbe() {
   let released = false;
   return {
-    lock: { async release() { released = true; } },
+    lock: {
+      async release() {
+        released = true;
+      },
+    },
     wasReleased: () => released,
   };
 }
@@ -46,6 +51,7 @@ function expectedEnvironment(overrides = {}) {
     FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER: "7451234567890123456",
     FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT: "9",
     FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT: "4",
+    FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256: "1".repeat(64),
     ...overrides,
   };
 }
@@ -67,6 +73,7 @@ function readiness(overrides = {}) {
     accountIdentifierCollisionCount: 0,
     staffRegistryOverlapCount: 0,
     systemSitePrincipalOverlapCount: 0,
+    ordinaryIdentityContentSha256: "1".repeat(64),
     schemaReady: true,
     aclReady: true,
     ...overrides,
@@ -101,7 +108,10 @@ function databaseReport(overrides = {}) {
 }
 
 test("the production probe is one read-only transaction with the exact runtime hardening gate", () => {
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /BEGIN TRANSACTION READ ONLY;/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /BEGIN TRANSACTION READ ONLY;/,
+  );
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /SET LOCAL quote_all_identifiers = off;/,
@@ -146,7 +156,10 @@ test("the production probe is one read-only transaction with the exact runtime h
     "pg_inherits",
   ];
   for (const catalog of catalogs) {
-    assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, new RegExp(`pg_catalog\\.${catalog}`));
+    assert.match(
+      ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+      new RegExp(`pg_catalog\\.${catalog}`),
+    );
   }
   const catalogLockStart = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
     "pg_catalog.pg_database,",
@@ -162,35 +175,89 @@ test("the production probe is one read-only transaction with the exact runtime h
   let precedingCatalog = -1;
   for (const catalog of catalogs) {
     const position = catalogLockSql.indexOf(`pg_catalog.${catalog}`);
-    assert.ok(position > precedingCatalog, `${catalog} must keep the fixed catalog-lock order`);
+    assert.ok(
+      position > precedingCatalog,
+      `${catalog} must keep the fixed catalog-lock order`,
+    );
     precedingCatalog = position;
   }
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /pg_stat_clear_snapshot\(\)/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /activity\.backend_xid is not null/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /pg_catalog\.pg_prepared_xacts/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /\$role_graph_postcondition\$/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /\$definition_postcondition\$/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /\$registry_postcondition\$/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /pg_stat_clear_snapshot\(\)/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /activity\.backend_xid is not null/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /pg_catalog\.pg_prepared_xacts/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /\$role_graph_postcondition\$/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /\$definition_postcondition\$/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /\$registry_postcondition\$/,
+  );
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /ROLLBACK;/);
-  const executableSql = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL
-    .replace(/--[^\n]*/g, "")
-    .replace(/'(?:''|[^'])*'/gs, "''");
+  const executableSql = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.replace(
+    /--[^\n]*/g,
+    "",
+  ).replace(/'(?:''|[^'])*'/gs, "''");
   assert.doesNotMatch(
     executableSql,
     /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE)\b/i,
   );
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190035/);
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190039/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /current_user = 'supabase_admin'/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /pg_catalog\.current_database\(\) = :'expected_database_name'/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /pg_catalog\.pg_control_system\(\)/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /:'expected_database_system_identifier'::numeric/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /:'expected_merchant_record_count'::numeric/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /:'expected_personal_canonical_count'::numeric/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /registry\.relrowsecurity/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /attribute\.attacl IS NOT NULL/);
-  const dataLock = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf("auth.users,");
-  const catalogLock = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf("pg_catalog.pg_database,");
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /current_user = 'supabase_admin'/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /pg_catalog\.current_database\(\) = :'expected_database_name'/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /pg_catalog\.pg_control_system\(\)/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /:'expected_database_system_identifier'::numeric/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /:'expected_merchant_record_count'::numeric/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /:'expected_personal_canonical_count'::numeric/,
+  );
+  assert.ok(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.includes(
+      ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL,
+    ),
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /registry\.relrowsecurity/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /attribute\.attacl IS NOT NULL/,
+  );
+  const dataLock =
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf("auth.users,");
+  const catalogLock = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
+    "pg_catalog.pg_database,",
+  );
   const registryLock = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
     "LOCK TABLE public.faolla_schema_migrations IN SHARE ROW EXCLUSIVE MODE;",
   );
@@ -203,17 +270,47 @@ test("the production probe is one read-only transaction with the exact runtime h
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /auth\.users,[\s\S]*public\.merchant_enterprise_employees,[\s\S]*public\.merchant_enterprise_staff_identities,[\s\S]*public\.faolla_personal_accounts,[\s\S]*public\.merchants[\s\S]*IN SHARE MODE;/,
   );
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /expected_observer_relation/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /relation\.relkind <> 'r'/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /relation\.relpersistence <> 'p'/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /relation\.relispartition/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /expected_observer_column/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /14 = \(SELECT count\(\*\) FROM expected_observer_column\)/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /expected_observer_relation/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /relation\.relkind <> 'r'/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /relation\.relpersistence <> 'p'/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /relation\.relispartition/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /expected_observer_column/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /14 = \(SELECT count\(\*\) FROM expected_observer_column\)/,
+  );
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /attribute\.attnum > 0/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /attribute\.atttypmod = expected\.type_modifier/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /attribute\.attnotnull = expected\.not_null/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /expected_merchant_policy/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /merchants_system_site_principal_insert_isolation/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /attribute\.atttypmod = expected\.type_modifier/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /attribute\.attnotnull = expected\.not_null/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /expected_merchant_policy/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /merchants_system_site_principal_insert_isolation/,
+  );
   for (const hash of [
     "42205aae07118e35699a5507ffe3385a",
     "899af52ac5bbc8824aa635183199f48a",
@@ -221,7 +318,10 @@ test("the production probe is one read-only transaction with the exact runtime h
   ]) {
     assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, new RegExp(hash));
   }
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /personal_contract_state/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /personal_contract_state/,
+  );
   for (const hash of [
     "6c6a7472c2d303e319253578fc2a745a",
     "8b4bd9cb5a89caab86807b61eb21151c",
@@ -230,14 +330,35 @@ test("the production probe is one read-only transaction with the exact runtime h
   ]) {
     assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, new RegExp(hash));
   }
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /registry_structure_state/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /constraint_metadata\.condeferrable/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /constraint_metadata\.conname = 'faolla_schema_migrations_pkey'/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /index_relation\.relname = 'faolla_schema_migrations_pkey'/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /registry_structure_state/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /constraint_metadata\.condeferrable/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /constraint_metadata\.conname = 'faolla_schema_migrations_pkey'/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /index_relation\.relname = 'faolla_schema_migrations_pkey'/,
+  );
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /relreplident = 'd'/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /to_regcollation\('pg_catalog\.default'\)/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /function_metadata\.proname =[\s\S]*'faolla_bind_ordinary_account_authorization_v1'[\s\S]*function_metadata\.pronamespace = to_regnamespace\('public'\)/);
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /creator_default_acl_state/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /to_regcollation\('pg_catalog\.default'\)/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /function_metadata\.proname =[\s\S]*'faolla_bind_ordinary_account_authorization_v1'[\s\S]*function_metadata\.pronamespace = to_regnamespace\('public'\)/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /creator_default_acl_state/,
+  );
   const relevantCreatorSql = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.slice(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
       "relevant_creator AS MATERIALIZED",
@@ -259,7 +380,10 @@ test("the production probe is one read-only transaction with the exact runtime h
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /'runtimeRpcHardeningReady', \(SELECT ready FROM creator_default_acl_state\)/,
   );
-  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /'objectContractsReady'/);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /'objectContractsReady'/,
+  );
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /'pg_catalog\.trigger'::regtype, false/g,
@@ -268,15 +392,24 @@ test("the production probe is one read-only transaction with the exact runtime h
 
 test("the nine bridge and guard definition hashes are derived from the frozen migration sources", async () => {
   const migration035 = await readFile(
-    new URL("./supabase-migrations/202608190035_ordinary_account_authorization_foundation.sql", import.meta.url),
+    new URL(
+      "./supabase-migrations/202608190035_ordinary_account_authorization_foundation.sql",
+      import.meta.url,
+    ),
     "utf8",
   );
   const migration036 = await readFile(
-    new URL("./supabase-migrations/202608190036_ordinary_account_authorization_bootstrap.sql", import.meta.url),
+    new URL(
+      "./supabase-migrations/202608190036_ordinary_account_authorization_bootstrap.sql",
+      import.meta.url,
+    ),
     "utf8",
   );
   const migration038 = await readFile(
-    new URL("./supabase-migrations/202608190038_ordinary_account_recovery_observer.sql", import.meta.url),
+    new URL(
+      "./supabase-migrations/202608190038_ordinary_account_recovery_observer.sql",
+      import.meta.url,
+    ),
     "utf8",
   );
   const functions = [
@@ -284,7 +417,10 @@ test("the nine bridge and guard definition hashes are derived from the frozen mi
     ["faolla_get_ordinary_account_authorization_readiness_v1", migration035],
     ["faolla_create_ordinary_account_authorization_v1", migration036],
     ["faolla_bootstrap_ordinary_account_authorization_v1", migration036],
-    ["faolla_get_ordinary_account_authoritative_cutover_readiness_v1", migration036],
+    [
+      "faolla_get_ordinary_account_authoritative_cutover_readiness_v1",
+      migration036,
+    ],
     ["faolla_observe_ordinary_account_recovery_v1", migration038],
     ["faolla_guard_personal_account_binding_v1", migration035],
     ["faolla_guard_staff_identity_ordinary_exclusion_v1", migration036],
@@ -340,6 +476,7 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     "FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER",
     "FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT",
     "FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT",
+    "FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256",
   ]) {
     assert.match(runner, new RegExp(`export ${variable}=`));
   }
@@ -348,6 +485,7 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     "expected_database_system_identifier",
     "expected_merchant_record_count",
     "expected_personal_canonical_count",
+    "expected_ordinary_identity_content_sha256",
   ]) {
     assert.match(wrapper, new RegExp(`--set=${variable}=`));
   }
@@ -358,7 +496,8 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     'node "${SCRIPT_DIR}/check-ordinary-account-cutover-readiness.mjs"',
   );
   assert.ok(
-    merchantAclNormalization > 0 && merchantAclNormalization < readinessInvocation,
+    merchantAclNormalization > 0 &&
+      merchantAclNormalization < readinessInvocation,
   );
   assert.match(wrapper, /\["blocked", "error", "ready"\]/);
   assert.match(wrapper, /FAOLLA_EXPECTED_READINESS_STATUS/);
@@ -381,6 +520,7 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     "public forbidden-binder signature",
     "non-public unsafe function default ACL",
     "+1 merchant baseline drift",
+    "same-count ordinary identity content replacement",
     "quote_all_identifiers=on",
     "search_path=public,pg_catalog",
     "readiness-held locks block business DML",
@@ -392,20 +532,22 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     driftMatrix,
     /FAOLLA_EXPECTED_READINESS_STATUS=ready[\s\S]*pg_catalog\.pg_inherits[\s\S]*ShareRowExclusiveLock/,
   );
-  const guardDefinitions = [...driftMatrix.matchAll(
-    /create or replace function\s+public\.faolla_guard_personal_account_binding_v1\(\)[\s\S]*?as \$\$([\s\S]*?)\$\$;/gi,
-  )];
+  const guardDefinitions = [
+    ...driftMatrix.matchAll(
+      /create or replace function\s+public\.faolla_guard_personal_account_binding_v1\(\)[\s\S]*?as \$\$([\s\S]*?)\$\$;/gi,
+    ),
+  ];
   assert.equal(guardDefinitions.length, 2);
   assert.equal(
     createHash("md5")
-      .update(String(guardDefinitions.at(-1)[1]).replaceAll("\r\n", "\n"), "utf8")
+      .update(
+        String(guardDefinitions.at(-1)[1]).replaceAll("\r\n", "\n"),
+        "utf8",
+      )
       .digest("hex"),
     "9e5572f34a178da6551efda74751ba18",
   );
-  assert.match(
-    driftMatrix,
-    /U&'\\0009\\000A[\s\S]*\\3000\\FEFF'/,
-  );
+  assert.match(driftMatrix, /U&'\\0009\\000A[\s\S]*\\3000\\FEFF'/);
   assert.match(
     driftMatrix,
     /ordinary_readiness_personal_safe_restore_hash_invalid/,
@@ -415,7 +557,10 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
 
 test("argument parser exposes only JSON and fail-on-blocked controls", () => {
   assert.deepEqual(
-    parseOrdinaryAccountCutoverReadinessArguments(["--json", "--fail-on-blocked"]),
+    parseOrdinaryAccountCutoverReadinessArguments([
+      "--json",
+      "--fail-on-blocked",
+    ]),
     { json: true, failOnBlocked: true },
   );
   assert.throws(
@@ -462,6 +607,11 @@ test("expected production identity and baselines are strict canonical values", (
       "04",
       "ordinary_account_readiness_expected_personal_canonical_count_invalid",
     ],
+    [
+      "FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256",
+      "A".repeat(64),
+      "ordinary_account_readiness_expected_identity_content_sha256_invalid",
+    ],
   ]) {
     assert.throws(
       () =>
@@ -476,12 +626,13 @@ test("expected production identity and baselines are strict canonical values", (
   }
 });
 
-test("database report parser validates the exact aggregate shape", () => {
+test("database report parser validates the exact bounded baseline shape", () => {
   const parsed = parseOrdinaryAccountCutoverDatabaseReport(
     `${JSON.stringify(databaseReport())}\n`,
   );
   assert.equal(parsed.status, "ready");
   assert.equal(parsed.readiness.merchantRecordCount, 9);
+  assert.equal(parsed.readiness.ordinaryIdentityContentSha256, "1".repeat(64));
   assert.deepEqual(parsed.databaseIdentity, databaseIdentity());
 
   assert.equal(
@@ -510,7 +661,10 @@ test("database report parser validates the exact aggregate shape", () => {
     "blocked",
   );
   assert.throws(
-    () => parseOrdinaryAccountCutoverDatabaseReport(JSON.stringify({ ...databaseReport(), row: {} })),
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify({ ...databaseReport(), row: {} }),
+      ),
     /ordinary_account_readiness_output_invalid/,
   );
   for (const identity of [
@@ -527,6 +681,19 @@ test("database report parser validates the exact aggregate shape", () => {
       /ordinary_account_readiness_output_invalid/,
     );
   }
+  assert.throws(
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(
+          databaseReport({
+            readiness: readiness({
+              ordinaryIdentityContentSha256: "A".repeat(64),
+            }),
+          }),
+        ),
+      ),
+    /ordinary_account_readiness_output_invalid/,
+  );
   assert.throws(
     () => parseOrdinaryAccountCutoverDatabaseReport("not-json"),
     /ordinary_account_readiness_output_invalid/,
@@ -571,9 +738,15 @@ test("read-only inspection uses the selected database and always releases the mu
     "FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT=9",
     "--env",
     "FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT=4",
+    "--env",
+    `FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256=${"1".repeat(64)}`,
     "supabase-db",
   ]);
   assert.match(calls[0].args.at(-1), /--set=expected_database_name=/);
+  assert.match(
+    calls[0].args.at(-1),
+    /--set=expected_ordinary_identity_content_sha256=/,
+  );
   assert.equal(calls[0].options.input, ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL);
   assert.equal(lock.wasReleased(), true);
 });
@@ -645,14 +818,16 @@ test("query and topology failures are fail-closed without leaking command output
   );
 });
 
-test("CLI emits aggregate-only JSON and can fail a blocked release gate", async () => {
+test("CLI emits bounded baseline JSON and can fail a blocked release gate", async () => {
   const stdout = [];
   const stderr = [];
   const readyReport = {
     schemaVersion: 1,
     mode: "read_only",
     databaseContainer: "supabase-db",
-    ...parseOrdinaryAccountCutoverDatabaseReport(JSON.stringify(databaseReport())),
+    ...parseOrdinaryAccountCutoverDatabaseReport(
+      JSON.stringify(databaseReport()),
+    ),
   };
   const readyCode = await runOrdinaryAccountCutoverReadinessCli({
     argv: ["--json", "--fail-on-blocked"],

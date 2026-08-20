@@ -44,6 +44,7 @@ const SOURCE_IDENTITY = {
       accountIdentifierCollisionCount: "0",
       staffRegistryOverlapCount: "0",
       systemSitePrincipalOverlapCount: "0",
+      ordinaryIdentityContentSha256: "1".repeat(64),
     },
   },
 };

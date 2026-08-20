@@ -16,8 +16,9 @@ assert.ok(
   ["blocked", "error", "ready"].includes(expectedStatus),
   "FAOLLA_EXPECTED_READINESS_STATUS must be blocked, error, or ready",
 );
-const expectedEnvironment =
-  validateOrdinaryAccountCutoverExpectedEnvironment(process.env);
+const expectedEnvironment = validateOrdinaryAccountCutoverExpectedEnvironment(
+  process.env,
+);
 
 const result = spawnSync(
   "psql",
@@ -28,6 +29,7 @@ const result = spawnSync(
     `--set=expected_database_system_identifier=${expectedEnvironment.FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER}`,
     `--set=expected_merchant_record_count=${expectedEnvironment.FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT}`,
     `--set=expected_personal_canonical_count=${expectedEnvironment.FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT}`,
+    `--set=expected_ordinary_identity_content_sha256=${expectedEnvironment.FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256}`,
     "--no-psqlrc",
     "--quiet",
     "--tuples-only",
@@ -90,6 +92,4 @@ if (expectedStatus === "ready") {
   );
 }
 
-console.log(
-  `Ordinary-account readiness ${expectedStatus} expectation passed.`,
-);
+console.log(`Ordinary-account readiness ${expectedStatus} expectation passed.`);

@@ -1,11 +1,5 @@
 import { randomBytes } from "node:crypto";
-import {
-  open,
-  readFile,
-  rename,
-  stat,
-  unlink,
-} from "node:fs/promises";
+import { open, readFile, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -19,9 +13,8 @@ import {
   readProductionReleaseAttestationFile,
   sha256Hex,
 } from "./production-release-attestation.mjs";
-import {
-  parseOrdinaryAccountCutoverDatabaseReport,
-} from "./check-ordinary-account-cutover-readiness.mjs";
+import { parseOrdinaryAccountCutoverDatabaseReport } from "./check-ordinary-account-cutover-readiness.mjs";
+import { ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY } from "./ordinary-account-identity-content-contract.mjs";
 
 const CHECKER_TOP_LEVEL_KEYS = Object.freeze([
   "ok",
@@ -65,11 +58,7 @@ const ARTIFACT_KEYS = Object.freeze([
   "headSha",
   "file",
 ]);
-const ARTIFACT_FILE_KEYS = Object.freeze([
-  "name",
-  "sizeBytes",
-  "sha256",
-]);
+const ARTIFACT_FILE_KEYS = Object.freeze(["name", "sizeBytes", "sha256"]);
 const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
 const CANONICAL_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -112,7 +101,10 @@ function canonicalTimestampMs(value, code) {
     fail(code);
   }
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value) {
+  if (
+    !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString() !== value
+  ) {
     fail(code);
   }
   return timestamp;
@@ -269,6 +261,8 @@ function readinessBaseline(readiness) {
     systemSitePrincipalOverlapCount: String(
       readiness.systemSitePrincipalOverlapCount,
     ),
+    [ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY]:
+      readiness[ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY],
   };
 }
 
@@ -326,10 +320,7 @@ export async function createDatabaseReadinessAttestation(input, options = {}) {
     input.backupAttestationPath,
     backupRead.canonicalBytes,
   );
-  const checkerFile = computedFile(
-    input.checkerReportPath,
-    checkerRead.bytes,
-  );
+  const checkerFile = computedFile(input.checkerReportPath, checkerRead.bytes);
   const backupAttestationArtifact = validateArtifactFileBinding(
     backupArtifactRead.value,
     backupAttestationFile,
@@ -477,12 +468,14 @@ export async function runDatabaseReadinessAttestationCli(argv, io = {}) {
   const { input, nowMs } = parseCliArguments(argv);
   const result = await createDatabaseReadinessAttestation(input, { nowMs });
   await writeAtomic(input.outputPath, result.canonicalBytes);
-  write(canonicalJsonBytes({
-    ok: true,
-    outputFile: path.basename(input.outputPath),
-    sizeBytes: result.sizeBytes,
-    sha256: result.sha256,
-  }));
+  write(
+    canonicalJsonBytes({
+      ok: true,
+      outputFile: path.basename(input.outputPath),
+      sizeBytes: result.sizeBytes,
+      sha256: result.sha256,
+    }),
+  );
   return 0;
 }
 

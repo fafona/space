@@ -91,6 +91,9 @@ update public.merchants
        created_by_user_id = '20000000-0000-4000-8000-000000000002'::uuid
  where id = '10000002';
 SQL
+export FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$(
+  capture_ordinary_identity_content_sha256
+)"
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] blocking a guard body drift and restoring its exact definition'
@@ -295,6 +298,42 @@ SQL
 assert_ordinary_readiness_status blocked
 run_psql --command \
   "delete from public.merchants where id = '30000003'; delete from auth.users where id = '30000000-0000-4000-8000-000000000003'::uuid;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] blocking a same-count ordinary identity content replacement'
+run_psql <<'SQL'
+insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data)
+values ('40000000-0000-4000-8000-000000000004'::uuid,
+        'same-count-replacement@example.test', '{}'::jsonb, '{}'::jsonb);
+update public.merchants
+   set user_id = '40000000-0000-4000-8000-000000000004'::uuid,
+       auth_user_id = '40000000-0000-4000-8000-000000000004'::uuid,
+       owner_user_id = '40000000-0000-4000-8000-000000000004'::uuid,
+       owner_id = '40000000-0000-4000-8000-000000000004'::uuid,
+       auth_id = '40000000-0000-4000-8000-000000000004'::uuid,
+       created_by = '40000000-0000-4000-8000-000000000004'::uuid,
+       created_by_user_id = '40000000-0000-4000-8000-000000000004'::uuid
+ where id = '10000001';
+delete from auth.users
+ where id = '10000000-0000-4000-8000-000000000001'::uuid;
+SQL
+assert_ordinary_readiness_status blocked
+run_psql <<'SQL'
+insert into auth.users(id, email, raw_app_meta_data, raw_user_meta_data)
+values ('10000000-0000-4000-8000-000000000001'::uuid,
+        'owner-a@example.test', '{}'::jsonb, '{}'::jsonb);
+update public.merchants
+   set user_id = '10000000-0000-4000-8000-000000000001'::uuid,
+       auth_user_id = '10000000-0000-4000-8000-000000000001'::uuid,
+       owner_user_id = '10000000-0000-4000-8000-000000000001'::uuid,
+       owner_id = '10000000-0000-4000-8000-000000000001'::uuid,
+       auth_id = '10000000-0000-4000-8000-000000000001'::uuid,
+       created_by = '10000000-0000-4000-8000-000000000001'::uuid,
+       created_by_user_id = '10000000-0000-4000-8000-000000000001'::uuid
+ where id = '10000001';
+delete from auth.users
+ where id = '40000000-0000-4000-8000-000000000004'::uuid;
+SQL
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] staying ready with hostile client GUCs and a public shadow'

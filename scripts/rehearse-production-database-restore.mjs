@@ -14,7 +14,14 @@ import {
   DatabaseBackupVerificationError,
   withVerifiedProductionDatabaseBackup,
 } from "./verify-production-database-backup.mjs";
-import { PRODUCTION_RELEASE_AGGREGATE_KEYS } from "./production-release-attestation.mjs";
+import {
+  PRODUCTION_RELEASE_AGGREGATE_KEYS,
+  PRODUCTION_RELEASE_BASELINE_KEYS,
+} from "./production-release-attestation.mjs";
+import {
+  isOrdinaryAccountIdentityContentSha256,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
+} from "./ordinary-account-identity-content-contract.mjs";
 
 const RESTORE_DATABASE_IMAGE_PATTERN =
   /^supabase\/postgres:[a-z0-9][a-z0-9._-]{0,127}$/i;
@@ -428,12 +435,15 @@ async function queryAuthoritativeBaseline(
     parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? Object.keys(parsed).sort()
       : [];
-  const expectedKeys = [...PRODUCTION_RELEASE_AGGREGATE_KEYS].sort();
+  const expectedKeys = [...PRODUCTION_RELEASE_BASELINE_KEYS].sort();
   if (
     keys.length !== expectedKeys.length ||
     keys.some((key, index) => key !== expectedKeys[index]) ||
     PRODUCTION_RELEASE_AGGREGATE_KEYS.some(
       (key) => !/^(?:0|[1-9][0-9]*)$/.test(parsed[key]),
+    ) ||
+    !isOrdinaryAccountIdentityContentSha256(
+      parsed[ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY],
     )
   ) {
     throw new DatabaseRestoreRehearsalError(
@@ -441,7 +451,7 @@ async function queryAuthoritativeBaseline(
     );
   }
   return Object.fromEntries(
-    PRODUCTION_RELEASE_AGGREGATE_KEYS.map((key) => [key, parsed[key]]),
+    PRODUCTION_RELEASE_BASELINE_KEYS.map((key) => [key, parsed[key]]),
   );
 }
 
@@ -692,7 +702,7 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       restoreDatabaseName,
     );
     if (
-      PRODUCTION_RELEASE_AGGREGATE_KEYS.some(
+      PRODUCTION_RELEASE_BASELINE_KEYS.some(
         (key) => restoredBaseline[key] !== sourceDatabase.baseline[key],
       )
     ) {

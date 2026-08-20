@@ -88,17 +88,20 @@ Coverage includes:
   consistently ordered registry gate, frozen runtime-RPC postconditions,
   exact database-name and
   cluster system-identifier pinning, merchant/personal row-count baselines,
+  a canonical length-prefixed SHA-256 over every ordinary-identity row and UUID
+  alias (with duplicate multiplicity preserved),
   exact nine-function metadata/ACL modes, exact 037 merchant policy and ACL
   inventory, exact 038 five-relation/fourteen-column surface, exact personal and
   migration-registry structures, forbidden-binder absence, all-schema creator
-  function-default ACL closure, aggregate-only output parsing, fail-on-blocked
+  function-default ACL closure, bounded baseline output parsing, fail-on-blocked
   package execution, fixture-only merchant `service_role` ACL cleanup before
   the probe, and a read-only rollback boundary;
 - a production-normalized ready fixture followed by fail-closed drift and exact
   restoration probes for bridge/guard bodies and ACLs, merchant policy/table
   ACLs, the 038 relation-column surface, personal constraints/rules/inheritance,
   registry persistence/rules/primary key, forbidden binders, non-public schema
-  function defaults, and the pinned merchant baseline; positive hostile
+  function defaults, the pinned merchant baseline, and a same-count ordinary
+  identity replacement that only the content SHA can detect; positive hostile
   `quote_all_identifiers` and public-first shadow-search-path probes; and two-
   connection evidence that readiness-held relation locks make both merchant
   DML and `ALTER POLICY` wait before either can mutate production state;
@@ -137,9 +140,10 @@ The runner refuses to start unless the explicit disposable-database flag is
 `1` and the target contains no user relations.
 
 Immediately before the final readiness probe, the runner derives the expected
-database name, PostgreSQL system identifier, ordinary-merchant count, and
-canonical-personal count from the disposable fixture. The PostgreSQL wrapper
-passes those four canonical values as fixed `psql` variables so the same SQL
+database name, PostgreSQL system identifier, ordinary-merchant count,
+canonical-personal count, and canonical ordinary-identity content SHA-256 from
+the disposable fixture. The PostgreSQL wrapper passes those five canonical
+values as fixed `psql` variables so the same SQL
 identity and baseline gates exercised in production are covered here.
 
 The GitHub Actions workflow provisions its own PostgreSQL 15 service. Plain

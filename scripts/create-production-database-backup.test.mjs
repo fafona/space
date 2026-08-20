@@ -35,6 +35,7 @@ const DATABASE_IDENTITY = {
     accountIdentifierCollisionCount: "0",
     staffRegistryOverlapCount: "0",
     systemSitePrincipalOverlapCount: "0",
+    ordinaryIdentityContentSha256: "1".repeat(64),
   },
 };
 
@@ -164,6 +165,13 @@ function successfulCommandRunner(input = {}) {
           typeof entry === "string" && entry.includes("pg_control_system"),
       )
     ) {
+      const baseline =
+        identityProbeCount > 1 && input.changedIdentityContent
+          ? {
+              ...DATABASE_IDENTITY.baseline,
+              ordinaryIdentityContentSha256: "2".repeat(64),
+            }
+          : DATABASE_IDENTITY.baseline;
       return {
         stdout: `${JSON.stringify({
           databaseName: DATABASE_IDENTITY.databaseName,
@@ -172,7 +180,7 @@ function successfulCommandRunner(input = {}) {
           serverVersionNum: DATABASE_IDENTITY.serverVersionNum,
           postmasterStartedAt: DATABASE_IDENTITY.postmasterStartedAt,
           primary: DATABASE_IDENTITY.primary,
-          baseline: DATABASE_IDENTITY.baseline,
+          baseline,
         })}\n`,
         stderr: "",
       };
@@ -343,6 +351,40 @@ test("production database backup rejects a database identity change", async () =
         selfHostedTopology: selfHostedTopology(),
         runCommand: successfulCommandRunner({
           changedDatabaseIdentity: true,
+        }),
+        encryptArchive: async ({ outputPath: encryptedOutput }) => {
+          await writeFile(encryptedOutput, "encrypted archive");
+        },
+        appDirectory: directory,
+        sourceDirectory: directory,
+        sourceRepository: SOURCE_REPOSITORY,
+        sourceSha: SOURCE_SHA,
+      }),
+      /database_identity_changed_during_backup/,
+    );
+    assert.equal(await exists(outputPath), false);
+    assert.equal(await exists(lockPath), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("production database backup rejects a same-count identity content replacement", async () => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "faolla-db-content-identity-test-"),
+  );
+  const outputPath = path.join(directory, "backup.tar.enc");
+  const lockPath = path.join(directory, "backup.lock");
+  try {
+    await assert.rejects(
+      createProductionDatabaseBackup({
+        env: {},
+        outputPath,
+        lockPath,
+        passphrase: "long-enough-encryption-passphrase",
+        selfHostedTopology: selfHostedTopology(),
+        runCommand: successfulCommandRunner({
+          changedIdentityContent: true,
         }),
         encryptArchive: async ({ outputPath: encryptedOutput }) => {
           await writeFile(encryptedOutput, "encrypted archive");

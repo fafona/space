@@ -1,11 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  access,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -54,6 +48,7 @@ function baseline(overrides = {}) {
     accountIdentifierCollisionCount: "0",
     staffRegistryOverlapCount: "0",
     systemSitePrincipalOverlapCount: "0",
+    ordinaryIdentityContentSha256: "1".repeat(64),
     ...overrides,
   };
 }
@@ -161,6 +156,7 @@ function checker(overrides = {}) {
       accountIdentifierCollisionCount: 0,
       staffRegistryOverlapCount: 0,
       systemSitePrincipalOverlapCount: 0,
+      ordinaryIdentityContentSha256: "1".repeat(64),
     },
     status: "ready",
   };
@@ -183,7 +179,10 @@ async function writeCanonical(filePath, value) {
 
 async function fixture(directory) {
   const paths = {
-    backupAttestation: path.join(directory, "production-backup-attestation.json"),
+    backupAttestation: path.join(
+      directory,
+      "production-backup-attestation.json",
+    ),
     backupArtifact: path.join(directory, "backup-attestation-artifact.json"),
     checker: path.join(directory, "production-readiness-report.json"),
     readinessArtifact: path.join(directory, "readiness-report-artifact.json"),
@@ -281,17 +280,28 @@ async function assertCode(promise, expectedCode) {
 function cliArguments(value) {
   return [
     "create",
-    "--backup-attestation", value.paths.backupAttestation,
-    "--backup-attestation-artifact", value.paths.backupArtifact,
-    "--checker-report", value.paths.checker,
-    "--readiness-artifact", value.paths.readinessArtifact,
-    "--run", value.paths.run,
-    "--remote-source", value.paths.remoteSource,
-    "--container-id", CONTAINER_ID,
-    "--issued-at", NOW,
-    "--valid-until", "2026-08-20T14:00:00.000Z",
-    "--output", value.paths.output,
-    "--now", NOW,
+    "--backup-attestation",
+    value.paths.backupAttestation,
+    "--backup-attestation-artifact",
+    value.paths.backupArtifact,
+    "--checker-report",
+    value.paths.checker,
+    "--readiness-artifact",
+    value.paths.readinessArtifact,
+    "--run",
+    value.paths.run,
+    "--remote-source",
+    value.paths.remoteSource,
+    "--container-id",
+    CONTAINER_ID,
+    "--issued-at",
+    NOW,
+    "--valid-until",
+    "2026-08-20T14:00:00.000Z",
+    "--output",
+    value.paths.output,
+    "--now",
+    NOW,
   ];
 }
 
@@ -310,6 +320,7 @@ test("builder binds canonical backup, exact ready report, artifacts, run, source
     assert.deepEqual(parsed.database, database());
     assert.equal(parsed.baseline.merchantRecordCount, "11");
     assert.equal(parsed.baseline.personalCanonicalBindingCount, "6");
+    assert.equal(parsed.baseline.ordinaryIdentityContentSha256, "1".repeat(64));
     assert.equal(parsed.backup.attestation.run.id, "8001");
     assert.deepEqual(result.canonicalBytes, canonicalJsonBytes(parsed));
     assert.equal(result.sizeBytes, String(result.canonicalBytes.length));
@@ -338,7 +349,8 @@ test("CLI accepts only exact unique path arguments and atomically emits canonica
     await assertCode(
       runDatabaseReadinessAttestationCli([
         ...cliArguments(value),
-        "--output", path.join(directory, "duplicate.json"),
+        "--output",
+        path.join(directory, "duplicate.json"),
       ]),
       "readiness_attestation_cli_argument_invalid",
     );
@@ -368,13 +380,19 @@ test("builder rejects wrong backup scope and scheduled backup evidence", async (
       backup.remoteSource.headSha = wrongSha;
       backup.remoteSource.originMainSha = wrongSha;
       backup.backupArtifact.headSha = wrongSha;
-      const backupBytes = await writeCanonical(value.paths.backupAttestation, backup);
+      const backupBytes = await writeCanonical(
+        value.paths.backupAttestation,
+        backup,
+      );
       value.backupArtifactMetadata.headSha = wrongSha;
       value.backupArtifactMetadata.file = fileBinding(
         value.paths.backupAttestation,
         backupBytes,
       );
-      await writeCanonical(value.paths.backupArtifact, value.backupArtifactMetadata);
+      await writeCanonical(
+        value.paths.backupArtifact,
+        value.backupArtifactMetadata,
+      );
       await assertCode(
         createDatabaseReadinessAttestation(value.input, { nowMs: NOW_MS }),
         "attestation_run_head_sha_mismatch",
@@ -387,12 +405,18 @@ test("builder rejects wrong backup scope and scheduled backup evidence", async (
       const value = await fixture(directory);
       const backup = structuredClone(value.backup);
       backup.run.event = "schedule";
-      const backupBytes = await writeCanonical(value.paths.backupAttestation, backup);
+      const backupBytes = await writeCanonical(
+        value.paths.backupAttestation,
+        backup,
+      );
       value.backupArtifactMetadata.file = fileBinding(
         value.paths.backupAttestation,
         backupBytes,
       );
-      await writeCanonical(value.paths.backupArtifact, value.backupArtifactMetadata);
+      await writeCanonical(
+        value.paths.backupArtifact,
+        value.backupArtifactMetadata,
+      );
       await assertCode(
         createDatabaseReadinessAttestation(value.input, { nowMs: NOW_MS }),
         "readiness_backup_event_invalid",
@@ -405,17 +429,23 @@ test("builder rejects checker database identity and baseline drift", async (t) =
   for (const [name, mutate, code] of [
     [
       "container ID",
-      (value) => { value.input.containerId = "c".repeat(64); },
+      (value) => {
+        value.input.containerId = "c".repeat(64);
+      },
       "readiness_backup_database_mismatch",
     ],
     [
       "database name",
-      (value) => { value.report.databaseIdentity.dbName = "template1"; },
+      (value) => {
+        value.report.databaseIdentity.dbName = "template1";
+      },
       "readiness_backup_database_mismatch",
     ],
     [
       "system identifier",
-      (value) => { value.report.databaseIdentity.systemId = "7612345678901234568"; },
+      (value) => {
+        value.report.databaseIdentity.systemId = "7612345678901234568";
+      },
       "readiness_backup_database_mismatch",
     ],
     [
@@ -431,6 +461,13 @@ test("builder rejects checker database identity and baseline drift", async (t) =
       (value) => {
         value.report.readiness.merchantRecordCount = 12;
         value.report.readiness.merchantAuthoritativeBindingCount = 12;
+      },
+      "readiness_backup_baseline_mismatch",
+    ],
+    [
+      "same-count identity content changed after backup",
+      (value) => {
+        value.report.readiness.ordinaryIdentityContentSha256 = "2".repeat(64);
       },
       "readiness_backup_baseline_mismatch",
     ],
