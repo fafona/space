@@ -245,12 +245,276 @@ function defaultAclDiagnostic() {
   };
 }
 
+const objectContractObserverRelations = [
+  "auth.users",
+  "public.merchants",
+  "public.faolla_personal_accounts",
+  "public.merchant_enterprise_staff_identities",
+  "public.merchant_enterprise_employees",
+];
+const objectContractObserverColumns = [
+  "auth.users.id",
+  "public.merchants.id",
+  "public.merchants.user_id",
+  "public.merchants.auth_user_id",
+  "public.merchants.owner_user_id",
+  "public.merchants.owner_id",
+  "public.merchants.auth_id",
+  "public.merchants.created_by",
+  "public.merchants.created_by_user_id",
+  "public.faolla_personal_accounts.auth_user_id",
+  "public.faolla_personal_accounts.personal_account_id",
+  "public.faolla_personal_accounts.status",
+  "public.merchant_enterprise_staff_identities.auth_user_id",
+  "public.merchant_enterprise_employees.auth_user_id",
+];
+const objectContractMerchantPolicies = [
+  ["merchants_select_own", "r", true, "42205aae07118e35699a5507ffe3385a", null],
+  ["merchants_insert_self", "a", true, null, "899af52ac5bbc8824aa635183199f48a"],
+  ["merchants_update_own", "w", true, "42205aae07118e35699a5507ffe3385a", "42205aae07118e35699a5507ffe3385a"],
+  ["merchants_system_site_principal_isolation", "w", false, "1c08e1341a191bbc45013950a337671d", "1c08e1341a191bbc45013950a337671d"],
+  ["merchants_system_site_principal_insert_isolation", "a", false, null, "1c08e1341a191bbc45013950a337671d"],
+];
+const objectContractMerchantAclEntries = [
+  "PUBLIC",
+  "supabase_admin",
+  "postgres",
+  "anon",
+  "authenticated",
+  "service_role",
+].flatMap((principal) =>
+  [
+    "INSERT",
+    "SELECT",
+    "UPDATE",
+    "DELETE",
+    "TRUNCATE",
+    "REFERENCES",
+    "TRIGGER",
+  ].map((privilegeType) => {
+    const expected =
+      principal === "supabase_admin" ||
+      (principal === "authenticated" &&
+        ["SELECT", "INSERT", "UPDATE"].includes(privilegeType));
+    return {
+      principal,
+      privilegeType,
+      entryCount: expected ? 1 : 0,
+      ownerGrantorCount: expected ? 1 : 0,
+      grantableCount: 0,
+    };
+  }),
+);
+
+function objectContractDiagnostic() {
+  const components = [
+    {
+      code: "observer_schema",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        invalidRelationCount: 0,
+        invalidColumnCount: 0,
+        relations: objectContractObserverRelations.map((target) => ({
+          target,
+          present: true,
+          kindReady: true,
+          persistenceReady: true,
+          partitionReady: true,
+          inheritanceReady: true,
+        })),
+        columns: objectContractObserverColumns.map((target) => ({
+          target,
+          ready: true,
+        })),
+      },
+      violations: [],
+    },
+    {
+      code: "merchant_contract",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        relationPresent: true,
+        schemaReady: true,
+        ownerReady: true,
+        relationKind: "r",
+        persistence: "p",
+        rowSecurity: true,
+        forceRowSecurity: false,
+        partition: false,
+        replicaIdentity: "d",
+        policyCount: 5,
+        policies: objectContractMerchantPolicies.map(
+          ([target, command, permissive, qualMd5, checkMd5]) => ({
+            target,
+            count: 1,
+            command,
+            permissive,
+            authenticatedOnly: true,
+            qualMd5,
+            checkMd5,
+          }),
+        ),
+        aclEntryCount: 10,
+        unknownPrincipalEntryCount: 0,
+        unknownPrivilegeEntryCount: 0,
+        aclEntries: objectContractMerchantAclEntries,
+        columnAclCount: 0,
+        inheritanceEdgeCount: 0,
+        rewriteCount: 0,
+      },
+      violations: [],
+    },
+    {
+      code: "personal_contract",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        relationPresent: true,
+        schemaReady: true,
+        ownerReady: true,
+        relationKind: "r",
+        persistence: "p",
+        rowSecurity: true,
+        forceRowSecurity: false,
+        partition: false,
+        replicaIdentity: "d",
+        columnCount: 6,
+        columns: [
+          "auth_user_id",
+          "personal_account_id",
+          "status",
+          "version",
+          "created_at",
+          "updated_at",
+        ].map((name) => ({
+          target: `public.faolla_personal_accounts.${name}`,
+          ready: true,
+        })),
+        indexCount: 2,
+        indexes: [
+          "public.faolla_personal_accounts_auth_user_id_uidx",
+          "public.faolla_personal_accounts_personal_account_id_uidx",
+        ].map((target) => ({ target, ready: true })),
+        constraintCount: 4,
+        constraints: [
+          "faolla_personal_accounts_personal_account_id_safe",
+          "faolla_personal_accounts_status_valid",
+          "faolla_personal_accounts_version_valid",
+          "faolla_personal_accounts_timestamps_valid",
+        ].map((target) => ({ target, ready: true })),
+        triggerCount: 1,
+        bindingGuardReady: true,
+        policyCount: 0,
+        rewriteCount: 0,
+        inheritanceEdgeCount: 0,
+        aclEntryCount: 7,
+        invalidAclEntryCount: 0,
+        columnAclCount: 0,
+      },
+      violations: [],
+    },
+    {
+      code: "registry_structure",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        relationPresent: true,
+        schemaReady: true,
+        ownerReady: true,
+        relationKind: "r",
+        persistence: "p",
+        rowSecurity: true,
+        forceRowSecurity: false,
+        partition: false,
+        replicaIdentity: "d",
+        columnCount: 3,
+        columns: ["version", "name", "applied_at"].map((name) => ({
+          target: `public.faolla_schema_migrations.${name}`,
+          ready: true,
+        })),
+        constraintCount: 1,
+        primaryKeyReady: true,
+        indexCount: 1,
+        triggerCount: 0,
+        policyCount: 0,
+        rewriteCount: 0,
+        inheritanceEdgeCount: 0,
+      },
+      violations: [],
+    },
+    {
+      code: "forbidden_binder",
+      ready: false,
+      violationCount: 1,
+      facts: { forbiddenFunctionCount: 1 },
+      violations: [
+        {
+          code: "forbidden_binder_function_present",
+          target: "public.faolla_bind_ordinary_account_authorization_v1",
+        },
+      ],
+    },
+    {
+      code: "runtime_rpc_function_default_acl",
+      ready: true,
+      violationCount: 0,
+      facts: { contractReady: true },
+      violations: [],
+    },
+  ];
+  return {
+    schemaVersion: 1,
+    contract: "ordinary_account_object_contract_v1",
+    ready: false,
+    componentCount: 6,
+    failedComponentCount: 1,
+    violationCount: 1,
+    components,
+  };
+}
+
+function blockedObjectContractCheckerReport() {
+  return {
+    ...validCheckerReport(),
+    objectContractsReady: false,
+    objectContractDiagnostic: objectContractDiagnostic(),
+    status: "blocked",
+  };
+}
+
+function objectContractDefaultAclDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  diagnostic.components[5] = {
+    code: "runtime_rpc_function_default_acl",
+    ready: false,
+    violationCount: 1,
+    facts: { contractReady: false },
+    violations: [
+      {
+        code: "runtime_rpc_function_default_acl_invalid",
+        target: null,
+      },
+    ],
+  };
+  return diagnostic;
+}
+
 function blockedRuntimeRpcCheckerReport() {
   return {
     ...validCheckerReport(),
     runtimeRpcHardeningReady: false,
     objectContractsReady: false,
     defaultAclDiagnostic: defaultAclDiagnostic(),
+    objectContractDiagnostic: objectContractDefaultAclDiagnostic(),
     status: "blocked",
   };
 }
@@ -812,6 +1076,7 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
   for (const [status, report] of [
     ["0", validCheckerReport()],
     ["2", blockedCheckerReport()],
+    ["2", blockedObjectContractCheckerReport()],
     ["2", blockedRuntimeRpcCheckerReport()],
   ]) {
     const scenario = await runReadinessFrameScenario(
@@ -829,11 +1094,16 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
   }
 
   const secret = "private-customer@example.invalid";
+  const privateSqlBody = "SELECT private_policy_body FROM customer_rows";
   const nestedSecret = validCheckerReport();
   nestedSecret.readiness.customer_email = secret;
   const readyWithDiagnostic = {
     ...validCheckerReport(),
     defaultAclDiagnostic: defaultAclDiagnostic(),
+  };
+  const readyWithObjectContractDiagnostic = {
+    ...validCheckerReport(),
+    objectContractDiagnostic: objectContractDiagnostic(),
   };
   const blockedWithUnexpectedDiagnostic = {
     ...blockedCheckerReport(),
@@ -850,6 +1120,24 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
       violationCount: 0,
     },
   };
+  const blockedWithoutObjectContractDiagnostic =
+    blockedObjectContractCheckerReport();
+  delete blockedWithoutObjectContractDiagnostic.objectContractDiagnostic;
+  const blockedWithMalformedObjectContractDiagnostic = {
+    ...blockedObjectContractCheckerReport(),
+    objectContractDiagnostic: {
+      ...objectContractDiagnostic(),
+      violationCount: 0,
+    },
+  };
+  const blockedWithSecretObjectContractDiagnostic =
+    blockedObjectContractCheckerReport();
+  blockedWithSecretObjectContractDiagnostic.objectContractDiagnostic
+    .components[0].facts.customer_email = secret;
+  const blockedWithSqlBodyObjectContractDiagnostic =
+    blockedObjectContractCheckerReport();
+  blockedWithSqlBodyObjectContractDiagnostic.objectContractDiagnostic
+    .components[1].facts.policies[0].qualSql = privateSqlBody;
   const cases = [
     readinessFrame({ status: "0", report: blockedCheckerReport() }),
     readinessFrame({ status: "2", report: validCheckerReport() }),
@@ -870,9 +1158,26 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
     readinessFrame({ status: "0", report: null }),
     readinessFrame({ status: "0", report: nestedSecret }),
     readinessFrame({ status: "0", report: readyWithDiagnostic }),
+    readinessFrame({ status: "0", report: readyWithObjectContractDiagnostic }),
     readinessFrame({ status: "2", report: blockedWithUnexpectedDiagnostic }),
     readinessFrame({ status: "2", report: blockedWithoutRequiredDiagnostic }),
     readinessFrame({ status: "2", report: blockedWithMalformedDiagnostic }),
+    readinessFrame({
+      status: "2",
+      report: blockedWithoutObjectContractDiagnostic,
+    }),
+    readinessFrame({
+      status: "2",
+      report: blockedWithMalformedObjectContractDiagnostic,
+    }),
+    readinessFrame({
+      status: "2",
+      report: blockedWithSecretObjectContractDiagnostic,
+    }),
+    readinessFrame({
+      status: "2",
+      report: blockedWithSqlBodyObjectContractDiagnostic,
+    }),
     readinessFrame({
       status: "0",
       reportBytes: `${JSON.stringify(validCheckerReport())}\n{}\n`,
@@ -899,6 +1204,12 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
     assert.doesNotMatch(
       `${scenario.result.stdout}\n${scenario.result.stderr}`,
       new RegExp(secret.replace(".", "\\.")),
+    );
+    assert.equal(
+      `${scenario.result.stdout}\n${scenario.result.stderr}`.includes(
+        privateSqlBody,
+      ),
+      false,
     );
     assert.doesNotMatch(
       `${scenario.result.stdout}\n${scenario.result.stderr}`,
@@ -976,11 +1287,27 @@ test("readiness report and remote proof are aggregate-only canonical JSON", () =
   );
   assert.match(
     workflow,
+    /const hasObjectContractDiagnostic =[\s\S]*Object\.prototype\.hasOwnProperty\.call\(report, "objectContractDiagnostic"\)/,
+  );
+  assert.match(
+    workflow,
+    /hasObjectContractDiagnostic &&[\s\S]*report\.objectContractsReady !== false[\s\S]*report\.status !== "blocked"/,
+  );
+  assert.match(
+    workflow,
     /const reportSizeLimit = checkerExitStatus === "2"[\s\S]*\? 1024 \* 1024[\s\S]*: 256 \* 1024/,
   );
   assert.match(
     workflow,
-    /parsedHasDefaultAclDiagnostic !== hasDefaultAclDiagnostic/,
+    /const reportWrapperKeys = new Set\(\[[\s\S]*"databaseContainer", "mode", "ok", "schemaVersion", "status"/,
+  );
+  assert.match(
+    workflow,
+    /Object\.entries\(report\)\.filter\(\(\[key\]\) => !reportWrapperKeys\.has\(key\)\)/,
+  );
+  assert.match(
+    workflow,
+    /canonicalJsonBytes\(parsedReport\)\.equals\([\s\S]*canonicalJsonBytes\(\{ \.\.\.databaseReport, status: report\.status \}\)/,
   );
   assert.match(workflow, /const expectedRemoteKeys = \[/);
   assert.match(workflow, /canonicalJsonBytes\(report\)/);

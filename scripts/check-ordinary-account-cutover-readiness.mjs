@@ -123,6 +123,146 @@ const PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED_VALUES_SQL =
       `('${creatorName}', '${schemaName}', '${granteeName}', ${grantable})`,
   ).join(",\n    ");
 
+const OBJECT_CONTRACT_OBSERVER_RELATIONS = Object.freeze([
+  "auth.users",
+  "public.merchants",
+  "public.faolla_personal_accounts",
+  "public.merchant_enterprise_staff_identities",
+  "public.merchant_enterprise_employees",
+]);
+const OBJECT_CONTRACT_OBSERVER_COLUMNS = Object.freeze([
+  "auth.users.id",
+  "public.merchants.id",
+  "public.merchants.user_id",
+  "public.merchants.auth_user_id",
+  "public.merchants.owner_user_id",
+  "public.merchants.owner_id",
+  "public.merchants.auth_id",
+  "public.merchants.created_by",
+  "public.merchants.created_by_user_id",
+  "public.faolla_personal_accounts.auth_user_id",
+  "public.faolla_personal_accounts.personal_account_id",
+  "public.faolla_personal_accounts.status",
+  "public.merchant_enterprise_staff_identities.auth_user_id",
+  "public.merchant_enterprise_employees.auth_user_id",
+]);
+const OBJECT_CONTRACT_MERCHANT_POLICIES = Object.freeze(
+  [
+    [
+      "merchants_select_own",
+      "r",
+      true,
+      "42205aae07118e35699a5507ffe3385a",
+      null,
+    ],
+    [
+      "merchants_insert_self",
+      "a",
+      true,
+      null,
+      "899af52ac5bbc8824aa635183199f48a",
+    ],
+    [
+      "merchants_update_own",
+      "w",
+      true,
+      "42205aae07118e35699a5507ffe3385a",
+      "42205aae07118e35699a5507ffe3385a",
+    ],
+    [
+      "merchants_system_site_principal_isolation",
+      "w",
+      false,
+      "1c08e1341a191bbc45013950a337671d",
+      "1c08e1341a191bbc45013950a337671d",
+    ],
+    [
+      "merchants_system_site_principal_insert_isolation",
+      "a",
+      false,
+      null,
+      "1c08e1341a191bbc45013950a337671d",
+    ],
+  ].map((entry) => Object.freeze(entry)),
+);
+const OBJECT_CONTRACT_ACL_PRINCIPALS = Object.freeze([
+  "PUBLIC",
+  "supabase_admin",
+  "postgres",
+  "anon",
+  "authenticated",
+  "service_role",
+]);
+const OBJECT_CONTRACT_TABLE_PRIVILEGES = Object.freeze([
+  "INSERT",
+  "SELECT",
+  "UPDATE",
+  "DELETE",
+  "TRUNCATE",
+  "REFERENCES",
+  "TRIGGER",
+]);
+const OBJECT_CONTRACT_PERSONAL_COLUMNS = Object.freeze([
+  "public.faolla_personal_accounts.auth_user_id",
+  "public.faolla_personal_accounts.personal_account_id",
+  "public.faolla_personal_accounts.status",
+  "public.faolla_personal_accounts.version",
+  "public.faolla_personal_accounts.created_at",
+  "public.faolla_personal_accounts.updated_at",
+]);
+const OBJECT_CONTRACT_PERSONAL_INDEXES = Object.freeze([
+  "public.faolla_personal_accounts_auth_user_id_uidx",
+  "public.faolla_personal_accounts_personal_account_id_uidx",
+]);
+const OBJECT_CONTRACT_PERSONAL_CONSTRAINTS = Object.freeze([
+  "faolla_personal_accounts_personal_account_id_safe",
+  "faolla_personal_accounts_status_valid",
+  "faolla_personal_accounts_version_valid",
+  "faolla_personal_accounts_timestamps_valid",
+]);
+const OBJECT_CONTRACT_REGISTRY_COLUMNS = Object.freeze([
+  "public.faolla_schema_migrations.version",
+  "public.faolla_schema_migrations.name",
+  "public.faolla_schema_migrations.applied_at",
+]);
+
+function fixedTextArraySql(values) {
+  return `ARRAY[${values.map((value) => `'${value}'`).join(",")} ]::text[]`;
+}
+
+const OBJECT_CONTRACT_OBSERVER_RELATION_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_OBSERVER_RELATIONS,
+);
+const OBJECT_CONTRACT_OBSERVER_COLUMN_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_OBSERVER_COLUMNS,
+);
+const OBJECT_CONTRACT_MERCHANT_POLICY_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_MERCHANT_POLICIES.map(([policyName]) => policyName),
+);
+const OBJECT_CONTRACT_ACL_PRINCIPAL_VALUES_SQL =
+  OBJECT_CONTRACT_ACL_PRINCIPALS.map(
+    (principal, index) =>
+      `(${index + 1}, '${principal}', ${
+        principal === "PUBLIC" ? "0::oid" : `to_regrole('${principal}')`
+      })`,
+  ).join(",\n    ");
+const OBJECT_CONTRACT_TABLE_PRIVILEGE_VALUES_SQL =
+  OBJECT_CONTRACT_TABLE_PRIVILEGES.map(
+    (privilege, index) => `(${index + 1}, '${privilege}')`,
+  ).join(",\n    ");
+const OBJECT_CONTRACT_PERSONAL_COLUMN_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_PERSONAL_COLUMNS,
+);
+const OBJECT_CONTRACT_PERSONAL_INDEX_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_PERSONAL_INDEXES,
+);
+const OBJECT_CONTRACT_PERSONAL_CONSTRAINT_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_PERSONAL_CONSTRAINTS,
+);
+const OBJECT_CONTRACT_REGISTRY_COLUMN_ORDER_SQL = fixedTextArraySql(
+  OBJECT_CONTRACT_REGISTRY_COLUMNS,
+);
+
 const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migration(version, name) AS (
   VALUES
     (202608190035::bigint, 'ordinary_account_authorization_foundation'::text),
@@ -1224,6 +1364,1000 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
     AND (SELECT ready FROM forbidden_binder_state)
     AND (SELECT ready FROM creator_default_acl_state)
     AS ready
+), object_observer_relation_fact AS MATERIALIZED (
+  SELECT
+    expected.relation_name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_OBSERVER_RELATION_ORDER_SQL},
+      expected.relation_name
+    ) AS ordinal,
+    relation.oid IS NOT NULL AS present,
+    coalesce(relation.relkind = 'r', false) AS kind_ready,
+    coalesce(relation.relpersistence = 'p', false) AS persistence_ready,
+    coalesce(NOT relation.relispartition, false) AS partition_ready,
+    NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_inherits AS inheritance
+       WHERE inheritance.inhrelid = relation.oid
+          OR inheritance.inhparent = relation.oid
+    ) AS inheritance_ready
+  FROM expected_observer_relation AS expected
+  LEFT JOIN pg_catalog.pg_class AS relation
+    ON relation.oid = to_regclass(expected.relation_name)
+), object_observer_column_fact AS MATERIALIZED (
+  SELECT
+    expected.relation_name || '.' || expected.column_name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_OBSERVER_COLUMN_ORDER_SQL},
+      expected.relation_name || '.' || expected.column_name
+    ) AS ordinal,
+    to_regclass(expected.relation_name) IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+        FROM pg_catalog.pg_attribute AS attribute
+       WHERE attribute.attrelid = to_regclass(expected.relation_name)
+         AND attribute.attname = expected.column_name
+         AND attribute.attnum > 0
+         AND attribute.atttypid = expected.type_oid
+         AND attribute.atttypmod = expected.type_modifier
+         AND attribute.attnotnull = expected.not_null
+         AND attribute.attcollation = expected.collation_oid
+         AND attribute.attidentity = ''
+         AND attribute.attgenerated = ''
+         AND NOT attribute.attisdropped
+    ) AS ready
+  FROM expected_observer_column AS expected
+), object_merchant_relation_fact AS MATERIALIZED (
+  SELECT
+    merchant.oid AS relation_oid,
+    merchant.oid IS NOT NULL AS relation_present,
+    coalesce(merchant.relnamespace = to_regnamespace('public'), false)
+      AS schema_ready,
+    coalesce(merchant.relowner = to_regrole('supabase_admin'), false)
+      AS owner_ready,
+    merchant.relkind::text AS relation_kind,
+    merchant.relpersistence::text AS persistence,
+    merchant.relrowsecurity AS row_security,
+    merchant.relforcerowsecurity AS force_row_security,
+    merchant.relispartition AS partition,
+    merchant.relreplident::text AS replica_identity
+  FROM (SELECT to_regclass('public.merchants') AS oid) AS target
+  LEFT JOIN pg_catalog.pg_class AS merchant ON merchant.oid = target.oid
+), object_merchant_policy_fact AS MATERIALIZED (
+  SELECT
+    expected.policy_name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_MERCHANT_POLICY_ORDER_SQL}, expected.policy_name
+    ) AS ordinal,
+    policy_actual.policy_count,
+    policy_actual.command,
+    policy_actual.permissive,
+    policy_actual.authenticated_only,
+    policy_actual.qual_md5,
+    policy_actual.check_md5,
+    policy_actual.policy_count = 1
+      AND policy_actual.command = expected.command
+      AND policy_actual.permissive = expected.permissive
+      AND policy_actual.authenticated_only
+      AND policy_actual.qual_md5 IS NOT DISTINCT FROM expected.qual_md5
+      AND policy_actual.check_md5 IS NOT DISTINCT FROM expected.check_md5
+      AS ready
+  FROM expected_merchant_policy AS expected
+  CROSS JOIN object_merchant_relation_fact AS merchant
+  CROSS JOIN LATERAL (
+    SELECT
+      count(policy.oid)::integer AS policy_count,
+      min(policy.polcmd::text) AS command,
+      CASE WHEN count(policy.oid) = 0 THEN NULL ELSE
+        pg_catalog.bool_and(policy.polpermissive)
+      END AS permissive,
+      coalesce(pg_catalog.bool_and(
+        policy.polroles = ARRAY[to_regrole('authenticated')]::oid[]
+      ), false) AS authenticated_only,
+      min(pg_catalog.md5(pg_catalog.pg_get_expr(
+        policy.polqual, policy.polrelid, false
+      ))) AS qual_md5,
+      min(pg_catalog.md5(pg_catalog.pg_get_expr(
+        policy.polwithcheck, policy.polrelid, false
+      ))) AS check_md5
+    FROM pg_catalog.pg_policy AS policy
+    WHERE policy.polrelid = merchant.relation_oid
+      AND policy.polname = expected.policy_name
+  ) AS policy_actual
+), object_merchant_acl_actual AS MATERIALIZED (
+  SELECT acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable
+  FROM object_merchant_relation_fact AS merchant
+  CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+    (SELECT relation.relacl FROM pg_catalog.pg_class AS relation
+      WHERE relation.oid = merchant.relation_oid),
+    pg_catalog.acldefault('r', (
+      SELECT relation.relowner FROM pg_catalog.pg_class AS relation
+       WHERE relation.oid = merchant.relation_oid
+    ))
+  )) AS acl
+), object_merchant_acl_principal(ordinal, principal, principal_oid) AS (
+  VALUES
+    ${OBJECT_CONTRACT_ACL_PRINCIPAL_VALUES_SQL}
+), object_merchant_acl_privilege(ordinal, privilege_type) AS (
+  VALUES
+    ${OBJECT_CONTRACT_TABLE_PRIVILEGE_VALUES_SQL}
+), object_merchant_acl_matrix AS MATERIALIZED (
+  SELECT
+    principal.ordinal AS principal_ordinal,
+    privilege.ordinal AS privilege_ordinal,
+    principal.principal,
+    privilege.privilege_type,
+    count(actual.grantee)::integer AS entry_count,
+    count(actual.grantee) FILTER (
+      WHERE actual.grantor = merchant_owner.relowner
+    )::integer AS owner_grantor_count,
+    count(actual.grantee) FILTER (
+      WHERE actual.is_grantable
+    )::integer AS grantable_count
+  FROM object_merchant_acl_principal AS principal
+  CROSS JOIN object_merchant_acl_privilege AS privilege
+  CROSS JOIN object_merchant_relation_fact AS merchant
+  LEFT JOIN pg_catalog.pg_class AS merchant_owner
+    ON merchant_owner.oid = merchant.relation_oid
+  LEFT JOIN object_merchant_acl_actual AS actual
+    ON actual.grantee = principal.principal_oid
+   AND actual.privilege_type = privilege.privilege_type
+  GROUP BY
+    principal.ordinal, privilege.ordinal, principal.principal,
+    privilege.privilege_type, merchant_owner.relowner
+), object_personal_relation_fact AS MATERIALIZED (
+  SELECT
+    personal.oid AS relation_oid,
+    personal.oid IS NOT NULL AS relation_present,
+    coalesce(personal.relnamespace = to_regnamespace('public'), false)
+      AS schema_ready,
+    coalesce(personal.relowner = to_regrole('supabase_admin'), false)
+      AS owner_ready,
+    personal.relkind::text AS relation_kind,
+    personal.relpersistence::text AS persistence,
+    personal.relrowsecurity AS row_security,
+    personal.relforcerowsecurity AS force_row_security,
+    personal.relispartition AS partition,
+    personal.relreplident::text AS replica_identity
+  FROM (SELECT to_regclass('public.faolla_personal_accounts') AS oid) AS target
+  LEFT JOIN pg_catalog.pg_class AS personal ON personal.oid = target.oid
+), object_personal_column_fact AS MATERIALIZED (
+  SELECT
+    'public.faolla_personal_accounts.' || expected.name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_PERSONAL_COLUMN_ORDER_SQL},
+      'public.faolla_personal_accounts.' || expected.name
+    ) AS ordinal,
+    EXISTS (
+      SELECT 1
+        FROM pg_catalog.pg_attribute AS attribute
+        JOIN pg_catalog.pg_type AS type_metadata
+          ON type_metadata.oid = attribute.atttypid
+        LEFT JOIN pg_catalog.pg_attrdef AS default_metadata
+          ON default_metadata.adrelid = attribute.attrelid
+         AND default_metadata.adnum = attribute.attnum
+       WHERE attribute.attrelid = personal.relation_oid
+         AND attribute.attname = expected.name
+         AND attribute.attnum = expected.position
+         AND attribute.atttypid = expected.type_oid
+         AND attribute.atttypmod = expected.type_modifier
+         AND attribute.attnotnull = expected.not_null
+         AND attribute.attidentity = ''
+         AND attribute.attgenerated = ''
+         AND attribute.attcollation = expected.collation_oid
+         AND attribute.attcollation = type_metadata.typcollation
+         AND NOT attribute.attisdropped
+         AND (
+           (expected.default_expression IS NULL AND default_metadata.oid IS NULL)
+           OR lower(pg_catalog.pg_get_expr(
+                default_metadata.adbin, default_metadata.adrelid, true
+              )) = expected.default_expression
+         )
+    ) AS ready
+  FROM (VALUES
+    ('auth_user_id', 1, 'pg_catalog.uuid'::regtype, -1, true,
+     0::oid, NULL::text),
+    ('personal_account_id', 2, 'pg_catalog.text'::regtype, -1, true,
+     to_regcollation('pg_catalog.default'), NULL::text),
+    ('status', 3, 'pg_catalog.text'::regtype, -1, true,
+     to_regcollation('pg_catalog.default'), '''active''::text'),
+    ('version', 4, 'pg_catalog.int8'::regtype, -1, true,
+     0::oid, '1'),
+    ('created_at', 5, 'pg_catalog.timestamptz'::regtype, -1, true,
+     0::oid, 'now()'),
+    ('updated_at', 6, 'pg_catalog.timestamptz'::regtype, -1, true,
+     0::oid, 'now()')
+  ) AS expected(
+    name, position, type_oid, type_modifier, not_null,
+    collation_oid, default_expression
+  )
+  CROSS JOIN object_personal_relation_fact AS personal
+), object_personal_index_fact AS MATERIALIZED (
+  SELECT
+    expected.index_name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_PERSONAL_INDEX_ORDER_SQL}, expected.index_name
+    ) AS ordinal,
+    EXISTS (
+      SELECT 1
+        FROM pg_catalog.pg_index AS index_metadata
+        JOIN pg_catalog.pg_class AS index_relation
+          ON index_relation.oid = index_metadata.indexrelid
+        JOIN pg_catalog.pg_am AS index_method
+          ON index_method.oid = index_relation.relam
+       WHERE index_metadata.indexrelid = to_regclass(expected.index_name)
+         AND index_metadata.indrelid = personal.relation_oid
+         AND index_metadata.indisunique
+         AND NOT index_metadata.indisprimary
+         AND NOT index_metadata.indisexclusion
+         AND index_metadata.indimmediate
+         AND index_metadata.indisvalid
+         AND index_metadata.indisready
+         AND index_metadata.indislive
+         AND index_metadata.indpred IS NULL
+         AND index_metadata.indexprs IS NULL
+         AND index_metadata.indnkeyatts = 1
+         AND index_metadata.indnatts = 1
+         AND index_method.amname = 'btree'
+         AND NOT EXISTS (
+           SELECT 1
+             FROM unnest(index_metadata.indclass::oid[]) WITH ORDINALITY
+                  AS index_operator_class(operator_class_oid, ordinality)
+             JOIN unnest(index_metadata.indkey::smallint[]) WITH ORDINALITY
+                  AS index_column(attnum, ordinality) USING (ordinality)
+             JOIN pg_catalog.pg_attribute AS attribute
+               ON attribute.attrelid = personal.relation_oid
+              AND attribute.attnum = index_column.attnum
+             LEFT JOIN pg_catalog.pg_opclass AS operator_class
+               ON operator_class.oid = index_operator_class.operator_class_oid
+            WHERE operator_class.oid IS NULL
+               OR operator_class.opcmethod <> index_relation.relam
+               OR operator_class.opcintype <> attribute.atttypid
+               OR NOT operator_class.opcdefault
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM unnest(index_metadata.indcollation::oid[]) WITH ORDINALITY
+                  AS index_collation(collation_oid, ordinality)
+             JOIN unnest(index_metadata.indkey::smallint[]) WITH ORDINALITY
+                  AS index_column(attnum, ordinality) USING (ordinality)
+             JOIN pg_catalog.pg_attribute AS attribute
+               ON attribute.attrelid = personal.relation_oid
+              AND attribute.attnum = index_column.attnum
+            WHERE index_collation.collation_oid
+              IS DISTINCT FROM attribute.attcollation
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM unnest(index_metadata.indoption::smallint[])
+             AS index_option(option_bits)
+            WHERE index_option.option_bits <> 0
+         )
+         AND (
+           SELECT array_agg(attribute.attname::text ORDER BY key.ordinality)
+             FROM unnest(index_metadata.indkey::smallint[]) WITH ORDINALITY
+                  AS key(attnum, ordinality)
+             JOIN pg_catalog.pg_attribute AS attribute
+               ON attribute.attrelid = personal.relation_oid
+              AND attribute.attnum = key.attnum
+         ) = ARRAY[expected.column_name]::text[]
+    ) AS ready
+  FROM (VALUES
+    ('public.faolla_personal_accounts_auth_user_id_uidx', 'auth_user_id'),
+    ('public.faolla_personal_accounts_personal_account_id_uidx',
+     'personal_account_id')
+  ) AS expected(index_name, column_name)
+  CROSS JOIN object_personal_relation_fact AS personal
+), object_personal_constraint_fact AS MATERIALIZED (
+  SELECT
+    expected.name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_PERSONAL_CONSTRAINT_ORDER_SQL}, expected.name
+    ) AS ordinal,
+    EXISTS (
+      SELECT 1
+        FROM pg_catalog.pg_constraint AS constraint_metadata
+       WHERE constraint_metadata.conrelid = personal.relation_oid
+         AND constraint_metadata.conname = expected.name
+         AND constraint_metadata.contype = 'c'
+         AND constraint_metadata.convalidated
+         AND NOT constraint_metadata.condeferrable
+         AND NOT constraint_metadata.condeferred
+         AND NOT constraint_metadata.connoinherit
+         AND (
+           SELECT array_agg(attribute.attname::text ORDER BY key.ordinality)
+             FROM unnest(constraint_metadata.conkey) WITH ORDINALITY
+                  AS key(attnum, ordinality)
+             JOIN pg_catalog.pg_attribute AS attribute
+               ON attribute.attrelid = personal.relation_oid
+              AND attribute.attnum = key.attnum
+         ) = expected.columns
+         AND pg_catalog.md5(pg_catalog.pg_get_expr(
+               constraint_metadata.conbin,
+               constraint_metadata.conrelid,
+               false
+             )) = expected.expression_md5
+    ) AS ready
+  FROM (VALUES
+    ('faolla_personal_accounts_personal_account_id_safe',
+     ARRAY['personal_account_id']::text[],
+     '6c6a7472c2d303e319253578fc2a745a'),
+    ('faolla_personal_accounts_status_valid', ARRAY['status']::text[],
+     '8b4bd9cb5a89caab86807b61eb21151c'),
+    ('faolla_personal_accounts_version_valid', ARRAY['version']::text[],
+     '33e5475c2422f3c8d2ae88010bcee42a'),
+    ('faolla_personal_accounts_timestamps_valid',
+     ARRAY['updated_at','created_at']::text[],
+     'ba66117c8f4124ec62639bc9756ee764')
+  ) AS expected(name, columns, expression_md5)
+  CROSS JOIN object_personal_relation_fact AS personal
+), object_registry_relation_fact AS MATERIALIZED (
+  SELECT
+    registry.oid AS relation_oid,
+    registry.oid IS NOT NULL AS relation_present,
+    coalesce(registry.relnamespace = to_regnamespace('public'), false)
+      AS schema_ready,
+    coalesce(registry.relowner = to_regrole('supabase_admin'), false)
+      AS owner_ready,
+    registry.relkind::text AS relation_kind,
+    registry.relpersistence::text AS persistence,
+    registry.relrowsecurity AS row_security,
+    registry.relforcerowsecurity AS force_row_security,
+    registry.relispartition AS partition,
+    registry.relreplident::text AS replica_identity
+  FROM registry
+), object_registry_column_fact AS MATERIALIZED (
+  SELECT
+    'public.faolla_schema_migrations.' || expected.name AS target,
+    pg_catalog.array_position(
+      ${OBJECT_CONTRACT_REGISTRY_COLUMN_ORDER_SQL},
+      'public.faolla_schema_migrations.' || expected.name
+    ) AS ordinal,
+    EXISTS (
+      SELECT 1
+        FROM pg_catalog.pg_attribute AS attribute
+        JOIN pg_catalog.pg_type AS type_metadata
+          ON type_metadata.oid = attribute.atttypid
+        LEFT JOIN pg_catalog.pg_attrdef AS default_metadata
+          ON default_metadata.adrelid = attribute.attrelid
+         AND default_metadata.adnum = attribute.attnum
+       WHERE attribute.attrelid = registry_relation.relation_oid
+         AND attribute.attname = expected.name
+         AND attribute.attnum = expected.position
+         AND attribute.atttypid = expected.type_oid
+         AND attribute.atttypmod = expected.type_modifier
+         AND attribute.attnotnull = expected.not_null
+         AND attribute.attidentity = ''
+         AND attribute.attgenerated = ''
+         AND attribute.attcollation = expected.collation_oid
+         AND attribute.attcollation = type_metadata.typcollation
+         AND NOT attribute.attisdropped
+         AND (
+           (expected.default_expression IS NULL AND default_metadata.oid IS NULL)
+           OR lower(pg_catalog.pg_get_expr(
+                default_metadata.adbin, default_metadata.adrelid, true
+              )) = expected.default_expression
+         )
+    ) AS ready
+  FROM (VALUES
+    ('version', 1, 'pg_catalog.int8'::regtype, -1, true,
+     0::oid, NULL::text),
+    ('name', 2, 'pg_catalog.text'::regtype, -1, true,
+     to_regcollation('pg_catalog.default'), NULL::text),
+    ('applied_at', 3, 'pg_catalog.timestamptz'::regtype, -1, true,
+     0::oid, 'now()')
+  ) AS expected(
+    name, position, type_oid, type_modifier, not_null,
+    collation_oid, default_expression
+  )
+  CROSS JOIN object_registry_relation_fact AS registry_relation
+), object_registry_primary_key_fact AS MATERIALIZED (
+  SELECT EXISTS (
+    SELECT 1
+      FROM pg_catalog.pg_constraint AS constraint_metadata
+      JOIN pg_catalog.pg_index AS index_metadata
+        ON index_metadata.indexrelid = constraint_metadata.conindid
+      JOIN pg_catalog.pg_class AS index_relation
+        ON index_relation.oid = index_metadata.indexrelid
+      JOIN pg_catalog.pg_am AS index_method
+        ON index_method.oid = index_relation.relam
+     WHERE constraint_metadata.conrelid = registry_relation.relation_oid
+       AND constraint_metadata.conname = 'faolla_schema_migrations_pkey'
+       AND constraint_metadata.contype = 'p'
+       AND constraint_metadata.conkey = ARRAY[1]::smallint[]
+       AND NOT constraint_metadata.condeferrable
+       AND NOT constraint_metadata.condeferred
+       AND constraint_metadata.convalidated
+       AND index_metadata.indrelid = registry_relation.relation_oid
+       AND index_relation.relname = 'faolla_schema_migrations_pkey'
+       AND index_relation.relnamespace = to_regnamespace('public')
+       AND index_metadata.indisunique
+       AND index_metadata.indisprimary
+       AND NOT index_metadata.indisexclusion
+       AND index_metadata.indimmediate
+       AND index_metadata.indisvalid
+       AND index_metadata.indisready
+       AND index_metadata.indislive
+       AND index_metadata.indpred IS NULL
+       AND index_metadata.indexprs IS NULL
+       AND index_metadata.indnkeyatts = 1
+       AND index_metadata.indnatts = 1
+       AND index_method.amname = 'btree'
+       AND NOT EXISTS (
+         SELECT 1
+           FROM unnest(index_metadata.indclass::oid[]) WITH ORDINALITY
+                AS index_operator_class(operator_class_oid, ordinality)
+           JOIN unnest(index_metadata.indkey::smallint[]) WITH ORDINALITY
+                AS index_column(attnum, ordinality) USING (ordinality)
+           JOIN pg_catalog.pg_attribute AS attribute
+             ON attribute.attrelid = registry_relation.relation_oid
+            AND attribute.attnum = index_column.attnum
+           LEFT JOIN pg_catalog.pg_opclass AS operator_class
+             ON operator_class.oid = index_operator_class.operator_class_oid
+          WHERE operator_class.oid IS NULL
+             OR operator_class.opcmethod <> index_relation.relam
+             OR operator_class.opcintype <> attribute.atttypid
+             OR NOT operator_class.opcdefault
+       )
+       AND NOT EXISTS (
+         SELECT 1
+           FROM unnest(index_metadata.indcollation::oid[]) WITH ORDINALITY
+                AS index_collation(collation_oid, ordinality)
+           JOIN unnest(index_metadata.indkey::smallint[]) WITH ORDINALITY
+                AS index_column(attnum, ordinality) USING (ordinality)
+           JOIN pg_catalog.pg_attribute AS attribute
+             ON attribute.attrelid = registry_relation.relation_oid
+            AND attribute.attnum = index_column.attnum
+          WHERE index_collation.collation_oid
+            IS DISTINCT FROM attribute.attcollation
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM unnest(index_metadata.indoption::smallint[])
+           AS index_option(option_bits)
+          WHERE index_option.option_bits <> 0
+       )
+  ) AS ready
+  FROM object_registry_relation_fact AS registry_relation
+), object_merchant_count_fact AS MATERIALIZED (
+  SELECT
+    (SELECT count(*)::integer FROM pg_catalog.pg_policy AS policy
+      WHERE policy.polrelid = merchant.relation_oid) AS policy_count,
+    (SELECT count(*)::integer FROM object_merchant_acl_actual)
+      AS acl_entry_count,
+    (SELECT count(*)::integer
+       FROM object_merchant_acl_actual AS actual
+      WHERE NOT EXISTS (
+        SELECT 1 FROM object_merchant_acl_principal AS principal
+         WHERE principal.principal_oid IS NOT DISTINCT FROM actual.grantee
+      )) AS unknown_principal_entry_count,
+    (SELECT count(*)::integer
+       FROM object_merchant_acl_actual AS actual
+      WHERE NOT EXISTS (
+        SELECT 1 FROM object_merchant_acl_privilege AS privilege
+         WHERE privilege.privilege_type = actual.privilege_type
+      )) AS unknown_privilege_entry_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_attribute AS attribute
+      WHERE attribute.attrelid = merchant.relation_oid
+        AND attribute.attnum > 0 AND NOT attribute.attisdropped
+        AND attribute.attacl IS NOT NULL) AS column_acl_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_inherits AS inheritance
+      WHERE inheritance.inhrelid = merchant.relation_oid
+         OR inheritance.inhparent = merchant.relation_oid)
+      AS inheritance_edge_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_rewrite AS rule
+      WHERE rule.ev_class = merchant.relation_oid) AS rewrite_count
+  FROM object_merchant_relation_fact AS merchant
+), object_personal_count_fact AS MATERIALIZED (
+  SELECT
+    (SELECT count(*)::integer FROM pg_catalog.pg_attribute AS attribute
+      WHERE attribute.attrelid = personal.relation_oid
+        AND attribute.attnum > 0) AS column_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_index AS index_metadata
+      WHERE index_metadata.indrelid = personal.relation_oid) AS index_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_constraint AS constraint_metadata
+      WHERE constraint_metadata.conrelid = personal.relation_oid)
+      AS constraint_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_trigger AS trigger_metadata
+      WHERE trigger_metadata.tgrelid = personal.relation_oid
+        AND NOT trigger_metadata.tgisinternal) AS trigger_count,
+    EXISTS (
+      SELECT 1 FROM pg_catalog.pg_trigger AS trigger_metadata
+       WHERE trigger_metadata.tgrelid = personal.relation_oid
+         AND trigger_metadata.tgname = 'faolla_personal_accounts_binding_guard'
+         AND trigger_metadata.tgfoid = to_regprocedure(
+           'public.faolla_guard_personal_account_binding_v1()'
+         )
+         AND trigger_metadata.tgenabled = 'A'
+         AND trigger_metadata.tgtype = 27
+         AND trigger_metadata.tgnargs = 0
+         AND trigger_metadata.tgattr = ''::int2vector
+         AND trigger_metadata.tgqual IS NULL
+         AND NOT trigger_metadata.tgisinternal
+    ) AS binding_guard_ready,
+    (SELECT count(*)::integer FROM pg_catalog.pg_policy AS policy
+      WHERE policy.polrelid = personal.relation_oid) AS policy_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_rewrite AS rule
+      WHERE rule.ev_class = personal.relation_oid) AS rewrite_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_inherits AS inheritance
+      WHERE inheritance.inhrelid = personal.relation_oid
+         OR inheritance.inhparent = personal.relation_oid)
+      AS inheritance_edge_count,
+    (SELECT count(*)::integer
+       FROM pg_catalog.aclexplode(coalesce(
+         (SELECT relation.relacl FROM pg_catalog.pg_class AS relation
+           WHERE relation.oid = personal.relation_oid),
+         pg_catalog.acldefault('r', (
+           SELECT relation.relowner FROM pg_catalog.pg_class AS relation
+            WHERE relation.oid = personal.relation_oid
+         ))
+       )) AS acl) AS acl_entry_count,
+    (SELECT count(*)::integer
+       FROM pg_catalog.aclexplode(coalesce(
+         (SELECT relation.relacl FROM pg_catalog.pg_class AS relation
+           WHERE relation.oid = personal.relation_oid),
+         pg_catalog.acldefault('r', (
+           SELECT relation.relowner FROM pg_catalog.pg_class AS relation
+            WHERE relation.oid = personal.relation_oid
+         ))
+       )) AS acl
+      WHERE acl.grantee <> (
+              SELECT relation.relowner FROM pg_catalog.pg_class AS relation
+               WHERE relation.oid = personal.relation_oid
+            )
+         OR acl.grantor <> (
+              SELECT relation.relowner FROM pg_catalog.pg_class AS relation
+               WHERE relation.oid = personal.relation_oid
+            )
+         OR acl.is_grantable) AS invalid_acl_entry_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_attribute AS attribute
+      WHERE attribute.attrelid = personal.relation_oid
+        AND attribute.attnum > 0 AND NOT attribute.attisdropped
+        AND attribute.attacl IS NOT NULL) AS column_acl_count
+  FROM object_personal_relation_fact AS personal
+), object_registry_count_fact AS MATERIALIZED (
+  SELECT
+    (SELECT count(*)::integer FROM pg_catalog.pg_attribute AS attribute
+      WHERE attribute.attrelid = registry_relation.relation_oid
+        AND attribute.attnum > 0) AS column_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_constraint AS constraint_metadata
+      WHERE constraint_metadata.conrelid = registry_relation.relation_oid)
+      AS constraint_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_index AS index_metadata
+      WHERE index_metadata.indrelid = registry_relation.relation_oid)
+      AS index_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_trigger AS trigger_metadata
+      WHERE trigger_metadata.tgrelid = registry_relation.relation_oid
+        AND NOT trigger_metadata.tgisinternal) AS trigger_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_policy AS policy
+      WHERE policy.polrelid = registry_relation.relation_oid) AS policy_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_rewrite AS rule
+      WHERE rule.ev_class = registry_relation.relation_oid) AS rewrite_count,
+    (SELECT count(*)::integer FROM pg_catalog.pg_inherits AS inheritance
+      WHERE inheritance.inhrelid = registry_relation.relation_oid
+         OR inheritance.inhparent = registry_relation.relation_oid)
+      AS inheritance_edge_count
+  FROM object_registry_relation_fact AS registry_relation
+), object_binder_fact AS MATERIALIZED (
+  SELECT count(*)::integer AS forbidden_function_count
+  FROM pg_catalog.pg_proc AS function_metadata
+  WHERE function_metadata.proname =
+    'faolla_bind_ordinary_account_authorization_v1'
+    AND function_metadata.pronamespace = to_regnamespace('public')
+), object_contract_violation AS MATERIALIZED (
+  SELECT 'observer_schema'::text AS component_code,
+         relation.ordinal * 10 + violation.rank AS violation_rank,
+         violation.code, relation.target
+  FROM object_observer_relation_fact AS relation
+  CROSS JOIN LATERAL (VALUES
+    (1, 'observer_relation_missing'::text, relation.present),
+    (2, 'observer_relation_kind_invalid'::text, relation.kind_ready),
+    (3, 'observer_relation_persistence_invalid'::text,
+     relation.persistence_ready),
+    (4, 'observer_relation_partitioned'::text, relation.partition_ready),
+    (5, 'observer_relation_inheritance_present'::text,
+     relation.inheritance_ready)
+  ) AS violation(rank, code, ready)
+  WHERE NOT violation.ready
+  UNION ALL
+  SELECT 'observer_schema', 1000 + column_fact.ordinal,
+         'observer_column_invalid', column_fact.target
+  FROM object_observer_column_fact AS column_fact
+  WHERE NOT column_fact.ready
+  UNION ALL
+  SELECT 'merchant_contract', violation.rank, violation.code,
+         'public.merchants'
+  FROM object_merchant_relation_fact AS merchant
+  CROSS JOIN LATERAL (VALUES
+    (1, 'merchant_relation_missing'::text, merchant.relation_present),
+    (2, 'merchant_schema_invalid'::text, merchant.schema_ready),
+    (3, 'merchant_owner_invalid'::text, merchant.owner_ready),
+    (4, 'merchant_relation_kind_invalid'::text,
+     merchant.relation_kind = 'r'),
+    (5, 'merchant_relation_persistence_invalid'::text,
+     merchant.persistence = 'p'),
+    (6, 'merchant_row_security_disabled'::text,
+     merchant.row_security IS TRUE),
+    (7, 'merchant_force_row_security_enabled'::text,
+     merchant.force_row_security IS FALSE),
+    (8, 'merchant_relation_partitioned'::text,
+     merchant.partition IS FALSE),
+    (9, 'merchant_replica_identity_invalid'::text,
+     merchant.replica_identity = 'd')
+  ) AS violation(rank, code, ready)
+  WHERE violation.ready IS DISTINCT FROM true
+  UNION ALL
+  SELECT 'merchant_contract', 20,
+         'merchant_policy_count_invalid', 'public.merchants'
+  FROM object_merchant_count_fact AS count_fact
+  WHERE count_fact.policy_count <> 5
+  UNION ALL
+  SELECT 'merchant_contract', 30 + policy.ordinal,
+         'merchant_policy_invalid', policy.target
+  FROM object_merchant_policy_fact AS policy
+  WHERE NOT policy.ready
+  UNION ALL
+  SELECT 'merchant_contract', violation.rank, violation.code,
+         'public.merchants'
+  FROM object_merchant_count_fact AS count_fact
+  CROSS JOIN LATERAL (VALUES
+    (40, 'merchant_acl_entry_count_invalid'::text,
+     count_fact.acl_entry_count = 10),
+    (41, 'merchant_acl_unknown_principal'::text,
+     count_fact.unknown_principal_entry_count = 0),
+    (42, 'merchant_acl_unknown_privilege'::text,
+     count_fact.unknown_privilege_entry_count = 0),
+    (43, 'merchant_column_acl_present'::text,
+     count_fact.column_acl_count = 0),
+    (44, 'merchant_inheritance_present'::text,
+     count_fact.inheritance_edge_count = 0),
+    (45, 'merchant_rewrite_present'::text,
+     count_fact.rewrite_count = 0)
+  ) AS violation(rank, code, ready)
+  WHERE NOT violation.ready
+  UNION ALL
+  SELECT 'merchant_contract',
+         100 + matrix.principal_ordinal * 10 + matrix.privilege_ordinal,
+         'merchant_acl_matrix_invalid',
+         matrix.principal || ':' || matrix.privilege_type
+  FROM object_merchant_acl_matrix AS matrix
+  WHERE matrix.entry_count <> CASE
+          WHEN matrix.principal = 'supabase_admin' THEN 1
+          WHEN matrix.principal = 'authenticated'
+           AND matrix.privilege_type IN ('SELECT', 'INSERT', 'UPDATE') THEN 1
+          ELSE 0
+        END
+     OR matrix.owner_grantor_count <> CASE
+          WHEN matrix.principal = 'supabase_admin' THEN 1
+          WHEN matrix.principal = 'authenticated'
+           AND matrix.privilege_type IN ('SELECT', 'INSERT', 'UPDATE') THEN 1
+          ELSE 0
+        END
+     OR matrix.grantable_count <> 0
+  UNION ALL
+  SELECT 'personal_contract', violation.rank, violation.code,
+         'public.faolla_personal_accounts'
+  FROM object_personal_relation_fact AS personal
+  CROSS JOIN LATERAL (VALUES
+    (1, 'personal_relation_missing'::text, personal.relation_present),
+    (2, 'personal_schema_invalid'::text, personal.schema_ready),
+    (3, 'personal_owner_invalid'::text, personal.owner_ready),
+    (4, 'personal_relation_kind_invalid'::text,
+     personal.relation_kind = 'r'),
+    (5, 'personal_relation_persistence_invalid'::text,
+     personal.persistence = 'p'),
+    (6, 'personal_row_security_disabled'::text,
+     personal.row_security IS TRUE),
+    (7, 'personal_force_row_security_enabled'::text,
+     personal.force_row_security IS FALSE),
+    (8, 'personal_relation_partitioned'::text,
+     personal.partition IS FALSE),
+    (9, 'personal_replica_identity_invalid'::text,
+     personal.replica_identity = 'd')
+  ) AS violation(rank, code, ready)
+  WHERE violation.ready IS DISTINCT FROM true
+  UNION ALL
+  SELECT 'personal_contract', violation.rank, violation.code,
+         'public.faolla_personal_accounts'
+  FROM object_personal_count_fact AS count_fact
+  CROSS JOIN LATERAL (VALUES
+    (20, 'personal_column_count_invalid'::text,
+     count_fact.column_count = 6),
+    (30, 'personal_index_count_invalid'::text,
+     count_fact.index_count = 2),
+    (40, 'personal_constraint_count_invalid'::text,
+     count_fact.constraint_count = 4),
+    (50, 'personal_trigger_count_invalid'::text,
+     count_fact.trigger_count = 1),
+    (51, 'personal_binding_guard_invalid'::text,
+     count_fact.binding_guard_ready),
+    (60, 'personal_policy_present'::text,
+     count_fact.policy_count = 0),
+    (61, 'personal_rewrite_present'::text,
+     count_fact.rewrite_count = 0),
+    (62, 'personal_inheritance_present'::text,
+     count_fact.inheritance_edge_count = 0),
+    (70, 'personal_acl_entry_count_invalid'::text,
+     count_fact.acl_entry_count = 7),
+    (71, 'personal_acl_entry_invalid'::text,
+     count_fact.invalid_acl_entry_count = 0),
+    (72, 'personal_column_acl_present'::text,
+     count_fact.column_acl_count = 0)
+  ) AS violation(rank, code, ready)
+  WHERE NOT violation.ready
+  UNION ALL
+  SELECT 'personal_contract', 100 + column_fact.ordinal,
+         'personal_column_invalid', column_fact.target
+  FROM object_personal_column_fact AS column_fact
+  WHERE NOT column_fact.ready
+  UNION ALL
+  SELECT 'personal_contract', 200 + index_fact.ordinal,
+         'personal_index_invalid', index_fact.target
+  FROM object_personal_index_fact AS index_fact
+  WHERE NOT index_fact.ready
+  UNION ALL
+  SELECT 'personal_contract', 300 + constraint_fact.ordinal,
+         'personal_constraint_invalid', constraint_fact.target
+  FROM object_personal_constraint_fact AS constraint_fact
+  WHERE NOT constraint_fact.ready
+  UNION ALL
+  SELECT 'registry_structure', violation.rank, violation.code,
+         'public.faolla_schema_migrations'
+  FROM object_registry_relation_fact AS registry_relation
+  CROSS JOIN LATERAL (VALUES
+    (1, 'registry_relation_missing'::text,
+     registry_relation.relation_present),
+    (2, 'registry_schema_invalid'::text, registry_relation.schema_ready),
+    (3, 'registry_owner_invalid'::text, registry_relation.owner_ready),
+    (4, 'registry_relation_kind_invalid'::text,
+     registry_relation.relation_kind = 'r'),
+    (5, 'registry_relation_persistence_invalid'::text,
+     registry_relation.persistence = 'p'),
+    (6, 'registry_row_security_disabled'::text,
+     registry_relation.row_security IS TRUE),
+    (7, 'registry_force_row_security_enabled'::text,
+     registry_relation.force_row_security IS FALSE),
+    (8, 'registry_relation_partitioned'::text,
+     registry_relation.partition IS FALSE),
+    (9, 'registry_replica_identity_invalid'::text,
+     registry_relation.replica_identity = 'd')
+  ) AS violation(rank, code, ready)
+  WHERE violation.ready IS DISTINCT FROM true
+  UNION ALL
+  SELECT 'registry_structure', violation.rank, violation.code,
+         'public.faolla_schema_migrations'
+  FROM object_registry_count_fact AS count_fact
+  CROSS JOIN object_registry_primary_key_fact AS primary_key
+  CROSS JOIN LATERAL (VALUES
+    (20, 'registry_column_count_invalid'::text,
+     count_fact.column_count = 3),
+    (30, 'registry_constraint_count_invalid'::text,
+     count_fact.constraint_count = 1),
+    (31, 'registry_primary_key_invalid'::text, primary_key.ready),
+    (40, 'registry_index_count_invalid'::text,
+     count_fact.index_count = 1),
+    (50, 'registry_trigger_present'::text,
+     count_fact.trigger_count = 0),
+    (51, 'registry_policy_present'::text,
+     count_fact.policy_count = 0),
+    (52, 'registry_rewrite_present'::text,
+     count_fact.rewrite_count = 0),
+    (53, 'registry_inheritance_present'::text,
+     count_fact.inheritance_edge_count = 0)
+  ) AS violation(rank, code, ready)
+  WHERE NOT violation.ready
+  UNION ALL
+  SELECT 'registry_structure', 100 + column_fact.ordinal,
+         'registry_column_invalid', column_fact.target
+  FROM object_registry_column_fact AS column_fact
+  WHERE NOT column_fact.ready
+  UNION ALL
+  SELECT 'forbidden_binder', 1,
+         'forbidden_binder_function_present',
+         'public.faolla_bind_ordinary_account_authorization_v1'
+  FROM object_binder_fact AS binder
+  WHERE binder.forbidden_function_count <> 0
+  UNION ALL
+  SELECT 'runtime_rpc_function_default_acl', 1,
+         'runtime_rpc_function_default_acl_invalid', NULL::text
+  FROM creator_default_acl_state AS default_acl
+  WHERE NOT default_acl.ready
+), object_contract_component AS MATERIALIZED (
+  SELECT 1 AS component_ordinal, 'observer_schema'::text AS code,
+         (SELECT ready FROM observer_schema_state) AS ready,
+         pg_catalog.jsonb_build_object(
+           'invalidRelationCount', (
+             SELECT count(*) FROM object_observer_relation_fact AS fact
+              WHERE NOT (
+                fact.present AND fact.kind_ready AND fact.persistence_ready
+                AND fact.partition_ready AND fact.inheritance_ready
+              )
+           ),
+           'invalidColumnCount', (
+             SELECT count(*) FROM object_observer_column_fact AS fact
+              WHERE NOT fact.ready
+           ),
+           'relations', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', fact.target,
+               'present', fact.present,
+               'kindReady', fact.kind_ready,
+               'persistenceReady', fact.persistence_ready,
+               'partitionReady', fact.partition_ready,
+               'inheritanceReady', fact.inheritance_ready
+             ) ORDER BY fact.ordinal)
+             FROM object_observer_relation_fact AS fact
+           ),
+           'columns', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', fact.target, 'ready', fact.ready
+             ) ORDER BY fact.ordinal)
+             FROM object_observer_column_fact AS fact
+           )
+         ) AS facts
+  UNION ALL
+  SELECT 2, 'merchant_contract',
+         (SELECT ready FROM merchant_contract_state),
+         pg_catalog.jsonb_build_object(
+           'relationPresent', merchant.relation_present,
+           'schemaReady', merchant.schema_ready,
+           'ownerReady', merchant.owner_ready,
+           'relationKind', merchant.relation_kind,
+           'persistence', merchant.persistence,
+           'rowSecurity', merchant.row_security,
+           'forceRowSecurity', merchant.force_row_security,
+           'partition', merchant.partition,
+           'replicaIdentity', merchant.replica_identity,
+           'policyCount', count_fact.policy_count,
+           'policies', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', policy.target,
+               'count', policy.policy_count,
+               'command', policy.command,
+               'permissive', policy.permissive,
+               'authenticatedOnly', policy.authenticated_only,
+               'qualMd5', policy.qual_md5,
+               'checkMd5', policy.check_md5
+             ) ORDER BY policy.ordinal)
+             FROM object_merchant_policy_fact AS policy
+           ),
+           'aclEntryCount', count_fact.acl_entry_count,
+           'unknownPrincipalEntryCount',
+             count_fact.unknown_principal_entry_count,
+           'unknownPrivilegeEntryCount',
+             count_fact.unknown_privilege_entry_count,
+           'aclEntries', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'principal', matrix.principal,
+               'privilegeType', matrix.privilege_type,
+               'entryCount', matrix.entry_count,
+               'ownerGrantorCount', matrix.owner_grantor_count,
+               'grantableCount', matrix.grantable_count
+             ) ORDER BY matrix.principal_ordinal, matrix.privilege_ordinal)
+             FROM object_merchant_acl_matrix AS matrix
+           ),
+           'columnAclCount', count_fact.column_acl_count,
+           'inheritanceEdgeCount', count_fact.inheritance_edge_count,
+           'rewriteCount', count_fact.rewrite_count
+         )
+  FROM object_merchant_relation_fact AS merchant
+  CROSS JOIN object_merchant_count_fact AS count_fact
+  UNION ALL
+  SELECT 3, 'personal_contract',
+         (SELECT ready FROM personal_contract_state),
+         pg_catalog.jsonb_build_object(
+           'relationPresent', personal.relation_present,
+           'schemaReady', personal.schema_ready,
+           'ownerReady', personal.owner_ready,
+           'relationKind', personal.relation_kind,
+           'persistence', personal.persistence,
+           'rowSecurity', personal.row_security,
+           'forceRowSecurity', personal.force_row_security,
+           'partition', personal.partition,
+           'replicaIdentity', personal.replica_identity,
+           'columnCount', count_fact.column_count,
+           'columns', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', fact.target, 'ready', fact.ready
+             ) ORDER BY fact.ordinal)
+             FROM object_personal_column_fact AS fact
+           ),
+           'indexCount', count_fact.index_count,
+           'indexes', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', fact.target, 'ready', fact.ready
+             ) ORDER BY fact.ordinal)
+             FROM object_personal_index_fact AS fact
+           ),
+           'constraintCount', count_fact.constraint_count,
+           'constraints', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', fact.target, 'ready', fact.ready
+             ) ORDER BY fact.ordinal)
+             FROM object_personal_constraint_fact AS fact
+           ),
+           'triggerCount', count_fact.trigger_count,
+           'bindingGuardReady', count_fact.binding_guard_ready,
+           'policyCount', count_fact.policy_count,
+           'rewriteCount', count_fact.rewrite_count,
+           'inheritanceEdgeCount', count_fact.inheritance_edge_count,
+           'aclEntryCount', count_fact.acl_entry_count,
+           'invalidAclEntryCount', count_fact.invalid_acl_entry_count,
+           'columnAclCount', count_fact.column_acl_count
+         )
+  FROM object_personal_relation_fact AS personal
+  CROSS JOIN object_personal_count_fact AS count_fact
+  UNION ALL
+  SELECT 4, 'registry_structure',
+         (SELECT ready FROM registry_structure_state),
+         pg_catalog.jsonb_build_object(
+           'relationPresent', registry_relation.relation_present,
+           'schemaReady', registry_relation.schema_ready,
+           'ownerReady', registry_relation.owner_ready,
+           'relationKind', registry_relation.relation_kind,
+           'persistence', registry_relation.persistence,
+           'rowSecurity', registry_relation.row_security,
+           'forceRowSecurity', registry_relation.force_row_security,
+           'partition', registry_relation.partition,
+           'replicaIdentity', registry_relation.replica_identity,
+           'columnCount', count_fact.column_count,
+           'columns', (
+             SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'target', fact.target, 'ready', fact.ready
+             ) ORDER BY fact.ordinal)
+             FROM object_registry_column_fact AS fact
+           ),
+           'constraintCount', count_fact.constraint_count,
+           'primaryKeyReady', primary_key.ready,
+           'indexCount', count_fact.index_count,
+           'triggerCount', count_fact.trigger_count,
+           'policyCount', count_fact.policy_count,
+           'rewriteCount', count_fact.rewrite_count,
+           'inheritanceEdgeCount', count_fact.inheritance_edge_count
+         )
+  FROM object_registry_relation_fact AS registry_relation
+  CROSS JOIN object_registry_count_fact AS count_fact
+  CROSS JOIN object_registry_primary_key_fact AS primary_key
+  UNION ALL
+  SELECT 5, 'forbidden_binder', (SELECT ready FROM forbidden_binder_state),
+         pg_catalog.jsonb_build_object(
+           'forbiddenFunctionCount', binder.forbidden_function_count
+         )
+  FROM object_binder_fact AS binder
+  UNION ALL
+  SELECT 6, 'runtime_rpc_function_default_acl',
+         (SELECT ready FROM creator_default_acl_state),
+         pg_catalog.jsonb_build_object(
+           'contractReady', (SELECT ready FROM creator_default_acl_state)
+         )
+), object_contract_diagnostic AS MATERIALIZED (
+  SELECT pg_catalog.jsonb_build_object(
+    'schemaVersion', 1,
+    'contract', 'ordinary_account_object_contract_v1',
+    'ready', (SELECT ready FROM object_contract_state),
+    'componentCount', (SELECT count(*) FROM object_contract_component),
+    'failedComponentCount', (
+      SELECT count(*) FROM object_contract_component AS component
+       WHERE NOT component.ready
+    ),
+    'violationCount', (SELECT count(*) FROM object_contract_violation),
+    'components', (
+      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'code', component.code,
+        'ready', component.ready,
+        'violationCount', (
+          SELECT count(*) FROM object_contract_violation AS violation
+           WHERE violation.component_code = component.code
+        ),
+        'facts', component.facts,
+        'violations', coalesce((
+          SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+            'code', violation.code, 'target', violation.target
+          ) ORDER BY violation.violation_rank)
+          FROM object_contract_violation AS violation
+          WHERE violation.component_code = component.code
+        ), '[]'::jsonb)
+      ) ORDER BY component.component_ordinal)
+      FROM object_contract_component AS component
+    )
+  ) AS value
 ), ordinary_identity_content AS MATERIALIZED (
   SELECT ${ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL} AS value
 ), readiness AS MATERIALIZED (
@@ -1310,6 +2444,12 @@ pg_catalog.jsonb_build_object(
 || CASE WHEN NOT (SELECT ready FROM creator_default_acl_state)
   THEN pg_catalog.jsonb_build_object(
     'defaultAclDiagnostic', (SELECT value FROM creator_default_acl_diagnostic)
+  )
+  ELSE '{}'::jsonb
+END
+|| CASE WHEN NOT (SELECT ready FROM object_contract_state)
+  THEN pg_catalog.jsonb_build_object(
+    'objectContractDiagnostic', (SELECT value FROM object_contract_diagnostic)
   )
   ELSE '{}'::jsonb
 END
@@ -1460,6 +2600,132 @@ const DEFAULT_ACL_CATALOG_REFERENCE_VIOLATION =
   "function_default_acl_catalog_reference_unresolved";
 const DEFAULT_ACL_DIAGNOSTIC_CONTRACT =
   "runtime_rpc_function_default_acl_v1";
+const OBJECT_CONTRACT_DIAGNOSTIC_KEYS = [
+  "schemaVersion",
+  "contract",
+  "ready",
+  "componentCount",
+  "failedComponentCount",
+  "violationCount",
+  "components",
+];
+const OBJECT_CONTRACT_COMPONENT_KEYS = [
+  "code",
+  "ready",
+  "violationCount",
+  "facts",
+  "violations",
+];
+const OBJECT_CONTRACT_VIOLATION_KEYS = ["code", "target"];
+const OBJECT_CONTRACT_COMPONENT_CODES = [
+  "observer_schema",
+  "merchant_contract",
+  "personal_contract",
+  "registry_structure",
+  "forbidden_binder",
+  "runtime_rpc_function_default_acl",
+];
+const OBJECT_CONTRACT_OBSERVER_FACT_KEYS = [
+  "invalidRelationCount",
+  "invalidColumnCount",
+  "relations",
+  "columns",
+];
+const OBJECT_CONTRACT_OBSERVER_RELATION_KEYS = [
+  "target",
+  "present",
+  "kindReady",
+  "persistenceReady",
+  "partitionReady",
+  "inheritanceReady",
+];
+const OBJECT_CONTRACT_TARGET_READY_KEYS = ["target", "ready"];
+const OBJECT_CONTRACT_MERCHANT_FACT_KEYS = [
+  "relationPresent",
+  "schemaReady",
+  "ownerReady",
+  "relationKind",
+  "persistence",
+  "rowSecurity",
+  "forceRowSecurity",
+  "partition",
+  "replicaIdentity",
+  "policyCount",
+  "policies",
+  "aclEntryCount",
+  "unknownPrincipalEntryCount",
+  "unknownPrivilegeEntryCount",
+  "aclEntries",
+  "columnAclCount",
+  "inheritanceEdgeCount",
+  "rewriteCount",
+];
+const OBJECT_CONTRACT_MERCHANT_POLICY_KEYS = [
+  "target",
+  "count",
+  "command",
+  "permissive",
+  "authenticatedOnly",
+  "qualMd5",
+  "checkMd5",
+];
+const OBJECT_CONTRACT_MERCHANT_ACL_KEYS = [
+  "principal",
+  "privilegeType",
+  "entryCount",
+  "ownerGrantorCount",
+  "grantableCount",
+];
+const OBJECT_CONTRACT_PERSONAL_FACT_KEYS = [
+  "relationPresent",
+  "schemaReady",
+  "ownerReady",
+  "relationKind",
+  "persistence",
+  "rowSecurity",
+  "forceRowSecurity",
+  "partition",
+  "replicaIdentity",
+  "columnCount",
+  "columns",
+  "indexCount",
+  "indexes",
+  "constraintCount",
+  "constraints",
+  "triggerCount",
+  "bindingGuardReady",
+  "policyCount",
+  "rewriteCount",
+  "inheritanceEdgeCount",
+  "aclEntryCount",
+  "invalidAclEntryCount",
+  "columnAclCount",
+];
+const OBJECT_CONTRACT_REGISTRY_FACT_KEYS = [
+  "relationPresent",
+  "schemaReady",
+  "ownerReady",
+  "relationKind",
+  "persistence",
+  "rowSecurity",
+  "forceRowSecurity",
+  "partition",
+  "replicaIdentity",
+  "columnCount",
+  "columns",
+  "constraintCount",
+  "primaryKeyReady",
+  "indexCount",
+  "triggerCount",
+  "policyCount",
+  "rewriteCount",
+  "inheritanceEdgeCount",
+];
+const OBJECT_CONTRACT_BINDER_FACT_KEYS = ["forbiddenFunctionCount"];
+const OBJECT_CONTRACT_DEFAULT_ACL_FACT_KEYS = ["contractReady"];
+const OBJECT_CONTRACT_DIAGNOSTIC_CONTRACT =
+  "ordinary_account_object_contract_v1";
+const LOWER_MD5_PATTERN = /^[0-9a-f]{32}$/;
 function buildPlatformFunctionDefaultAclExpectedByCreator() {
   const byCreator = new Map();
   for (const [
@@ -1927,6 +3193,457 @@ function validateDefaultAclDiagnostic(diagnostic) {
   return true;
 }
 
+function isNullableCatalogCode(value) {
+  return value === null || (typeof value === "string" && /^[a-z]$/.test(value));
+}
+
+function isNullableBoolean(value) {
+  return value === null || typeof value === "boolean";
+}
+
+function isNullableMd5(value) {
+  return value === null ||
+    (typeof value === "string" && LOWER_MD5_PATTERN.test(value));
+}
+
+function sameObjectContractViolations(actual, expected) {
+  if (!Array.isArray(actual) || actual.length !== expected.length) return false;
+  return actual.every(
+    (violation, index) =>
+      exactKeys(violation, OBJECT_CONTRACT_VIOLATION_KEYS) &&
+      violation.code === expected[index].code &&
+      violation.target === expected[index].target,
+  );
+}
+
+function validateFixedTargetReadyFacts(facts, targets) {
+  if (!Array.isArray(facts) || facts.length !== targets.length) return false;
+  return facts.every(
+    (fact, index) =>
+      exactKeys(fact, OBJECT_CONTRACT_TARGET_READY_KEYS) &&
+      fact.target === targets[index] &&
+      typeof fact.ready === "boolean",
+  );
+}
+
+function relationMetadataViolations(prefix, facts, target) {
+  const checks = [
+    [facts.relationPresent, `${prefix}_relation_missing`],
+    [facts.schemaReady, `${prefix}_schema_invalid`],
+    [facts.ownerReady, `${prefix}_owner_invalid`],
+    [facts.relationKind === "r", `${prefix}_relation_kind_invalid`],
+    [facts.persistence === "p", `${prefix}_relation_persistence_invalid`],
+    [facts.rowSecurity === true, `${prefix}_row_security_disabled`],
+    [
+      facts.forceRowSecurity === false,
+      `${prefix}_force_row_security_enabled`,
+    ],
+    [facts.partition === false, `${prefix}_relation_partitioned`],
+    [facts.replicaIdentity === "d", `${prefix}_replica_identity_invalid`],
+  ];
+  return checks
+    .filter(([ready]) => !ready)
+    .map(([, code]) => ({ code, target }));
+}
+
+function validateRelationMetadataFacts(facts) {
+  return (
+    typeof facts.relationPresent === "boolean" &&
+    typeof facts.schemaReady === "boolean" &&
+    typeof facts.ownerReady === "boolean" &&
+    isNullableCatalogCode(facts.relationKind) &&
+    isNullableCatalogCode(facts.persistence) &&
+    isNullableBoolean(facts.rowSecurity) &&
+    isNullableBoolean(facts.forceRowSecurity) &&
+    isNullableBoolean(facts.partition) &&
+    isNullableCatalogCode(facts.replicaIdentity)
+  );
+}
+
+function validateObserverObjectContractFacts(facts) {
+  if (
+    !exactKeys(facts, OBJECT_CONTRACT_OBSERVER_FACT_KEYS) ||
+    !isNonNegativeSafeInteger(facts.invalidRelationCount) ||
+    !isNonNegativeSafeInteger(facts.invalidColumnCount) ||
+    !Array.isArray(facts.relations) ||
+    facts.relations.length !== OBJECT_CONTRACT_OBSERVER_RELATIONS.length ||
+    !validateFixedTargetReadyFacts(
+      facts.columns,
+      OBJECT_CONTRACT_OBSERVER_COLUMNS,
+    )
+  ) {
+    return null;
+  }
+  const violations = [];
+  let invalidRelationCount = 0;
+  for (const [index, relation] of facts.relations.entries()) {
+    if (
+      !exactKeys(relation, OBJECT_CONTRACT_OBSERVER_RELATION_KEYS) ||
+      relation.target !== OBJECT_CONTRACT_OBSERVER_RELATIONS[index] ||
+      [
+        "present",
+        "kindReady",
+        "persistenceReady",
+        "partitionReady",
+        "inheritanceReady",
+      ].some((key) => typeof relation[key] !== "boolean")
+    ) {
+      return null;
+    }
+    const checks = [
+      [relation.present, "observer_relation_missing"],
+      [relation.kindReady, "observer_relation_kind_invalid"],
+      [relation.persistenceReady, "observer_relation_persistence_invalid"],
+      [relation.partitionReady, "observer_relation_partitioned"],
+      [relation.inheritanceReady, "observer_relation_inheritance_present"],
+    ];
+    if (checks.some(([ready]) => !ready)) invalidRelationCount += 1;
+    for (const [ready, code] of checks) {
+      if (!ready) violations.push({ code, target: relation.target });
+    }
+  }
+  const invalidColumns = facts.columns.filter((column) => !column.ready);
+  violations.push(
+    ...invalidColumns.map((column) => ({
+      code: "observer_column_invalid",
+      target: column.target,
+    })),
+  );
+  if (
+    facts.invalidRelationCount !== invalidRelationCount ||
+    facts.invalidColumnCount !== invalidColumns.length
+  ) {
+    return null;
+  }
+  return violations;
+}
+
+function validateMerchantObjectContractFacts(facts) {
+  if (
+    !exactKeys(facts, OBJECT_CONTRACT_MERCHANT_FACT_KEYS) ||
+    !validateRelationMetadataFacts(facts) ||
+    !isNonNegativeSafeInteger(facts.policyCount) ||
+    !Array.isArray(facts.policies) ||
+    facts.policies.length !== OBJECT_CONTRACT_MERCHANT_POLICIES.length ||
+    !isNonNegativeSafeInteger(facts.aclEntryCount) ||
+    !isNonNegativeSafeInteger(facts.unknownPrincipalEntryCount) ||
+    !isNonNegativeSafeInteger(facts.unknownPrivilegeEntryCount) ||
+    !Array.isArray(facts.aclEntries) ||
+    facts.aclEntries.length !==
+      OBJECT_CONTRACT_ACL_PRINCIPALS.length *
+        OBJECT_CONTRACT_TABLE_PRIVILEGES.length ||
+    !isNonNegativeSafeInteger(facts.columnAclCount) ||
+    !isNonNegativeSafeInteger(facts.inheritanceEdgeCount) ||
+    !isNonNegativeSafeInteger(facts.rewriteCount)
+  ) {
+    return null;
+  }
+  const target = "public.merchants";
+  const violations = relationMetadataViolations("merchant", facts, target);
+  if (facts.policyCount !== 5) {
+    violations.push({ code: "merchant_policy_count_invalid", target });
+  }
+  for (const [index, policy] of facts.policies.entries()) {
+    const [policyName, command, permissive, qualMd5, checkMd5] =
+      OBJECT_CONTRACT_MERCHANT_POLICIES[index];
+    if (
+      !exactKeys(policy, OBJECT_CONTRACT_MERCHANT_POLICY_KEYS) ||
+      policy.target !== policyName ||
+      !isNonNegativeSafeInteger(policy.count) ||
+      !(policy.command === null ||
+        (typeof policy.command === "string" && /^[rawd*]$/.test(policy.command))) ||
+      !isNullableBoolean(policy.permissive) ||
+      typeof policy.authenticatedOnly !== "boolean" ||
+      !isNullableMd5(policy.qualMd5) ||
+      !isNullableMd5(policy.checkMd5)
+    ) {
+      return null;
+    }
+    if (
+      policy.count !== 1 ||
+      policy.command !== command ||
+      policy.permissive !== permissive ||
+      !policy.authenticatedOnly ||
+      policy.qualMd5 !== qualMd5 ||
+      policy.checkMd5 !== checkMd5
+    ) {
+      violations.push({ code: "merchant_policy_invalid", target: policyName });
+    }
+  }
+  for (const [ready, code] of [
+    [facts.aclEntryCount === 10, "merchant_acl_entry_count_invalid"],
+    [
+      facts.unknownPrincipalEntryCount === 0,
+      "merchant_acl_unknown_principal",
+    ],
+    [
+      facts.unknownPrivilegeEntryCount === 0,
+      "merchant_acl_unknown_privilege",
+    ],
+    [facts.columnAclCount === 0, "merchant_column_acl_present"],
+    [facts.inheritanceEdgeCount === 0, "merchant_inheritance_present"],
+    [facts.rewriteCount === 0, "merchant_rewrite_present"],
+  ]) {
+    if (!ready) violations.push({ code, target });
+  }
+  let aclIndex = 0;
+  for (const principal of OBJECT_CONTRACT_ACL_PRINCIPALS) {
+    for (const privilegeType of OBJECT_CONTRACT_TABLE_PRIVILEGES) {
+      const entry = facts.aclEntries[aclIndex];
+      aclIndex += 1;
+      if (
+        !exactKeys(entry, OBJECT_CONTRACT_MERCHANT_ACL_KEYS) ||
+        entry.principal !== principal ||
+        entry.privilegeType !== privilegeType ||
+        !isNonNegativeSafeInteger(entry.entryCount) ||
+        !isNonNegativeSafeInteger(entry.ownerGrantorCount) ||
+        !isNonNegativeSafeInteger(entry.grantableCount) ||
+        entry.ownerGrantorCount > entry.entryCount ||
+        entry.grantableCount > entry.entryCount
+      ) {
+        return null;
+      }
+      const expectedCount =
+        principal === "supabase_admin" ||
+        (principal === "authenticated" &&
+          ["SELECT", "INSERT", "UPDATE"].includes(privilegeType))
+          ? 1
+          : 0;
+      if (
+        entry.entryCount !== expectedCount ||
+        entry.ownerGrantorCount !== expectedCount ||
+        entry.grantableCount !== 0
+      ) {
+        violations.push({
+          code: "merchant_acl_matrix_invalid",
+          target: `${principal}:${privilegeType}`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+function validatePersonalObjectContractFacts(facts) {
+  if (
+    !exactKeys(facts, OBJECT_CONTRACT_PERSONAL_FACT_KEYS) ||
+    !validateRelationMetadataFacts(facts) ||
+    !isNonNegativeSafeInteger(facts.columnCount) ||
+    !validateFixedTargetReadyFacts(
+      facts.columns,
+      OBJECT_CONTRACT_PERSONAL_COLUMNS,
+    ) ||
+    !isNonNegativeSafeInteger(facts.indexCount) ||
+    !validateFixedTargetReadyFacts(
+      facts.indexes,
+      OBJECT_CONTRACT_PERSONAL_INDEXES,
+    ) ||
+    !isNonNegativeSafeInteger(facts.constraintCount) ||
+    !validateFixedTargetReadyFacts(
+      facts.constraints,
+      OBJECT_CONTRACT_PERSONAL_CONSTRAINTS,
+    ) ||
+    !isNonNegativeSafeInteger(facts.triggerCount) ||
+    typeof facts.bindingGuardReady !== "boolean" ||
+    ![
+      "policyCount",
+      "rewriteCount",
+      "inheritanceEdgeCount",
+      "aclEntryCount",
+      "invalidAclEntryCount",
+      "columnAclCount",
+    ].every((key) => isNonNegativeSafeInteger(facts[key]))
+  ) {
+    return null;
+  }
+  const target = "public.faolla_personal_accounts";
+  const violations = relationMetadataViolations("personal", facts, target);
+  const aggregateChecks = [
+    [facts.columnCount === 6, "personal_column_count_invalid"],
+    [facts.indexCount === 2, "personal_index_count_invalid"],
+    [facts.constraintCount === 4, "personal_constraint_count_invalid"],
+    [facts.triggerCount === 1, "personal_trigger_count_invalid"],
+    [facts.bindingGuardReady, "personal_binding_guard_invalid"],
+    [facts.policyCount === 0, "personal_policy_present"],
+    [facts.rewriteCount === 0, "personal_rewrite_present"],
+    [facts.inheritanceEdgeCount === 0, "personal_inheritance_present"],
+    [facts.aclEntryCount === 7, "personal_acl_entry_count_invalid"],
+    [facts.invalidAclEntryCount === 0, "personal_acl_entry_invalid"],
+    [facts.columnAclCount === 0, "personal_column_acl_present"],
+  ];
+  for (const [ready, code] of aggregateChecks) {
+    if (!ready) violations.push({ code, target });
+  }
+  violations.push(
+    ...facts.columns
+      .filter((fact) => !fact.ready)
+      .map((fact) => ({ code: "personal_column_invalid", target: fact.target })),
+    ...facts.indexes
+      .filter((fact) => !fact.ready)
+      .map((fact) => ({ code: "personal_index_invalid", target: fact.target })),
+    ...facts.constraints
+      .filter((fact) => !fact.ready)
+      .map((fact) => ({
+        code: "personal_constraint_invalid",
+        target: fact.target,
+      })),
+  );
+  return violations;
+}
+
+function validateRegistryObjectContractFacts(facts) {
+  if (
+    !exactKeys(facts, OBJECT_CONTRACT_REGISTRY_FACT_KEYS) ||
+    !validateRelationMetadataFacts(facts) ||
+    !isNonNegativeSafeInteger(facts.columnCount) ||
+    !validateFixedTargetReadyFacts(
+      facts.columns,
+      OBJECT_CONTRACT_REGISTRY_COLUMNS,
+    ) ||
+    ![
+      "constraintCount",
+      "indexCount",
+      "triggerCount",
+      "policyCount",
+      "rewriteCount",
+      "inheritanceEdgeCount",
+    ].every((key) => isNonNegativeSafeInteger(facts[key])) ||
+    typeof facts.primaryKeyReady !== "boolean"
+  ) {
+    return null;
+  }
+  const target = "public.faolla_schema_migrations";
+  const violations = relationMetadataViolations("registry", facts, target);
+  for (const [ready, code] of [
+    [facts.columnCount === 3, "registry_column_count_invalid"],
+    [facts.constraintCount === 1, "registry_constraint_count_invalid"],
+    [facts.primaryKeyReady, "registry_primary_key_invalid"],
+    [facts.indexCount === 1, "registry_index_count_invalid"],
+    [facts.triggerCount === 0, "registry_trigger_present"],
+    [facts.policyCount === 0, "registry_policy_present"],
+    [facts.rewriteCount === 0, "registry_rewrite_present"],
+    [facts.inheritanceEdgeCount === 0, "registry_inheritance_present"],
+  ]) {
+    if (!ready) violations.push({ code, target });
+  }
+  violations.push(
+    ...facts.columns
+      .filter((fact) => !fact.ready)
+      .map((fact) => ({ code: "registry_column_invalid", target: fact.target })),
+  );
+  return violations;
+}
+
+function validateObjectContractDiagnostic(diagnostic) {
+  if (
+    !exactKeys(diagnostic, OBJECT_CONTRACT_DIAGNOSTIC_KEYS) ||
+    diagnostic.schemaVersion !== 1 ||
+    diagnostic.contract !== OBJECT_CONTRACT_DIAGNOSTIC_CONTRACT ||
+    typeof diagnostic.ready !== "boolean" ||
+    diagnostic.componentCount !== OBJECT_CONTRACT_COMPONENT_CODES.length ||
+    !isNonNegativeSafeInteger(diagnostic.failedComponentCount) ||
+    !isNonNegativeSafeInteger(diagnostic.violationCount) ||
+    !Array.isArray(diagnostic.components) ||
+    diagnostic.components.length !== OBJECT_CONTRACT_COMPONENT_CODES.length
+  ) {
+    return false;
+  }
+
+  let recomputedFailedComponentCount = 0;
+  let recomputedViolationCount = 0;
+  for (const [index, component] of diagnostic.components.entries()) {
+    if (
+      !exactKeys(component, OBJECT_CONTRACT_COMPONENT_KEYS) ||
+      component.code !== OBJECT_CONTRACT_COMPONENT_CODES[index] ||
+      typeof component.ready !== "boolean" ||
+      !isNonNegativeSafeInteger(component.violationCount)
+    ) {
+      return false;
+    }
+    let expectedViolations;
+    switch (component.code) {
+      case "observer_schema":
+        expectedViolations = validateObserverObjectContractFacts(
+          component.facts,
+        );
+        break;
+      case "merchant_contract":
+        expectedViolations = validateMerchantObjectContractFacts(
+          component.facts,
+        );
+        break;
+      case "personal_contract":
+        expectedViolations = validatePersonalObjectContractFacts(
+          component.facts,
+        );
+        break;
+      case "registry_structure":
+        expectedViolations = validateRegistryObjectContractFacts(
+          component.facts,
+        );
+        break;
+      case "forbidden_binder": {
+        const facts = component.facts;
+        if (
+          !exactKeys(facts, OBJECT_CONTRACT_BINDER_FACT_KEYS) ||
+          !isNonNegativeSafeInteger(facts.forbiddenFunctionCount)
+        ) {
+          return false;
+        }
+        expectedViolations =
+          facts.forbiddenFunctionCount === 0
+            ? []
+            : [
+                {
+                  code: "forbidden_binder_function_present",
+                  target:
+                    "public.faolla_bind_ordinary_account_authorization_v1",
+                },
+              ];
+        break;
+      }
+      case "runtime_rpc_function_default_acl": {
+        const facts = component.facts;
+        if (
+          !exactKeys(facts, OBJECT_CONTRACT_DEFAULT_ACL_FACT_KEYS) ||
+          typeof facts.contractReady !== "boolean"
+        ) {
+          return false;
+        }
+        expectedViolations = facts.contractReady
+          ? []
+          : [
+              {
+                code: "runtime_rpc_function_default_acl_invalid",
+                target: null,
+              },
+            ];
+        break;
+      }
+      default:
+        return false;
+    }
+    if (
+      expectedViolations === null ||
+      component.violationCount !== expectedViolations.length ||
+      component.ready !== (expectedViolations.length === 0) ||
+      !sameObjectContractViolations(
+        component.violations,
+        expectedViolations,
+      )
+    ) {
+      return false;
+    }
+    if (!component.ready) recomputedFailedComponentCount += 1;
+    recomputedViolationCount += expectedViolations.length;
+  }
+  return (
+    diagnostic.failedComponentCount === recomputedFailedComponentCount &&
+    diagnostic.violationCount === recomputedViolationCount &&
+    diagnostic.ready === (recomputedFailedComponentCount === 0)
+  );
+}
+
 export function parseOrdinaryAccountCutoverReadinessArguments(argv = []) {
   let json = false;
   let failOnBlocked = false;
@@ -2017,12 +3734,17 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
     parsed ?? {},
     "defaultAclDiagnostic",
   );
+  const hasObjectContractDiagnostic = Object.hasOwn(
+    parsed ?? {},
+    "objectContractDiagnostic",
+  );
   if (
     !exactKeys(parsed, [
       ...READINESS_BOOLEAN_KEYS,
       "databaseIdentity",
       "readiness",
       ...(hasDefaultAclDiagnostic ? ["defaultAclDiagnostic"] : []),
+      ...(hasObjectContractDiagnostic ? ["objectContractDiagnostic"] : []),
     ])
   ) {
     throw readinessError("ordinary_account_readiness_output_invalid");
@@ -2032,10 +3754,17 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
   }
   if (
     hasDefaultAclDiagnostic === parsed.runtimeRpcHardeningReady ||
+    hasObjectContractDiagnostic === parsed.objectContractsReady ||
     (!parsed.runtimeRpcHardeningReady && parsed.objectContractsReady) ||
     (hasDefaultAclDiagnostic &&
       (!validateDefaultAclDiagnostic(parsed.defaultAclDiagnostic) ||
         parsed.defaultAclDiagnostic.ready !==
+          parsed.runtimeRpcHardeningReady)) ||
+    (hasObjectContractDiagnostic &&
+      (!validateObjectContractDiagnostic(parsed.objectContractDiagnostic) ||
+        parsed.objectContractDiagnostic.ready !==
+          parsed.objectContractsReady ||
+        parsed.objectContractDiagnostic.components[5].ready !==
           parsed.runtimeRpcHardeningReady))
   ) {
     throw readinessError("ordinary_account_readiness_output_invalid");

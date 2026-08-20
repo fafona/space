@@ -772,6 +772,11 @@ jobs:
             typeof report === "object" &&
             !Array.isArray(report) &&
             Object.prototype.hasOwnProperty.call(report, "defaultAclDiagnostic");
+          const hasObjectContractDiagnostic =
+            report !== null &&
+            typeof report === "object" &&
+            !Array.isArray(report) &&
+            Object.prototype.hasOwnProperty.call(report, "objectContractDiagnostic");
           const expectedReportKeys = [
             "baselineReady", "databaseActorReady", "databaseContainer",
             "databaseIdentity", "databaseIdentityReady", "functionAclReady",
@@ -779,6 +784,7 @@ jobs:
             "ok", "readiness", "registryAclReady", "runtimeRpcHardeningReady",
             "schemaVersion", "status",
             ...(hasDefaultAclDiagnostic ? ["defaultAclDiagnostic"] : []),
+            ...(hasObjectContractDiagnostic ? ["objectContractDiagnostic"] : []),
           ].sort();
           const reportKeys = Object.keys(report ?? {}).sort();
           if (
@@ -797,19 +803,16 @@ jobs:
             hasDefaultAclDiagnostic &&
             (report.runtimeRpcHardeningReady !== false || report.status !== "blocked")
           ) fail("readiness_default_acl_diagnostic_state_invalid");
-          const databaseReportKeys = [
-            "baselineReady", "databaseActorReady", "databaseIdentityReady",
-            "functionAclReady", "functionMetadataReady", "migrationsReady",
-            "objectContractsReady", "registryAclReady", "runtimeRpcHardeningReady",
-          ];
-          const databaseReport = Object.fromEntries([
-            ...databaseReportKeys.map((key) => [key, report[key]]),
-            ["databaseIdentity", report.databaseIdentity],
-            ["readiness", report.readiness],
-            ...(hasDefaultAclDiagnostic
-              ? [["defaultAclDiagnostic", report.defaultAclDiagnostic]]
-              : []),
+          if (
+            hasObjectContractDiagnostic &&
+            (report.objectContractsReady !== false || report.status !== "blocked")
+          ) fail("readiness_object_contract_diagnostic_state_invalid");
+          const reportWrapperKeys = new Set([
+            "databaseContainer", "mode", "ok", "schemaVersion", "status",
           ]);
+          const databaseReport = Object.fromEntries(
+            Object.entries(report).filter(([key]) => !reportWrapperKeys.has(key)),
+          );
           let parsedReport;
           try {
             parsedReport = parseOrdinaryAccountCutoverDatabaseReport(
@@ -818,17 +821,11 @@ jobs:
           } catch {
             fail("readiness_checker_report_semantics_invalid");
           }
-          const parsedHasDefaultAclDiagnostic = Object.prototype.hasOwnProperty.call(
-            parsedReport,
-            "defaultAclDiagnostic",
-          );
           if (
-            parsedHasDefaultAclDiagnostic !== hasDefaultAclDiagnostic ||
-            (hasDefaultAclDiagnostic &&
-              !canonicalJsonBytes(parsedReport.defaultAclDiagnostic).equals(
-                canonicalJsonBytes(report.defaultAclDiagnostic),
-              ))
-          ) fail("readiness_default_acl_diagnostic_semantics_invalid");
+            !canonicalJsonBytes(parsedReport).equals(
+              canonicalJsonBytes({ ...databaseReport, status: report.status }),
+            )
+          ) fail("readiness_checker_report_semantics_invalid");
           const expectedStatus = checkerExitStatus === "0" ? "ready" : "blocked";
           if (
             report.status !== expectedStatus ||

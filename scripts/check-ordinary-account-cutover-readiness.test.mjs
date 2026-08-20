@@ -92,7 +92,7 @@ function databaseIdentity(overrides = {}) {
 }
 
 function databaseReport(overrides = {}) {
-  return {
+  const report = {
     databaseActorReady: true,
     databaseIdentity: databaseIdentity(),
     databaseIdentityReady: true,
@@ -106,6 +106,15 @@ function databaseReport(overrides = {}) {
     readiness: readiness(),
     ...overrides,
   };
+  if (
+    report.runtimeRpcHardeningReady === false &&
+    report.objectContractsReady === false &&
+    Object.hasOwn(report, "defaultAclDiagnostic") &&
+    !Object.hasOwn(report, "objectContractDiagnostic")
+  ) {
+    report.objectContractDiagnostic = objectContractDefaultAclDiagnostic();
+  }
+  return report;
 }
 
 function defaultAclDiagnostic(overrides = {}) {
@@ -297,6 +306,377 @@ function platformDefaultAclDiagnostic({
       },
     ],
   };
+}
+
+const objectContractObserverRelations = [
+  "auth.users",
+  "public.merchants",
+  "public.faolla_personal_accounts",
+  "public.merchant_enterprise_staff_identities",
+  "public.merchant_enterprise_employees",
+];
+const objectContractObserverColumns = [
+  "auth.users.id",
+  "public.merchants.id",
+  "public.merchants.user_id",
+  "public.merchants.auth_user_id",
+  "public.merchants.owner_user_id",
+  "public.merchants.owner_id",
+  "public.merchants.auth_id",
+  "public.merchants.created_by",
+  "public.merchants.created_by_user_id",
+  "public.faolla_personal_accounts.auth_user_id",
+  "public.faolla_personal_accounts.personal_account_id",
+  "public.faolla_personal_accounts.status",
+  "public.merchant_enterprise_staff_identities.auth_user_id",
+  "public.merchant_enterprise_employees.auth_user_id",
+];
+const objectContractMerchantPolicies = [
+  ["merchants_select_own", "r", true, "42205aae07118e35699a5507ffe3385a", null],
+  ["merchants_insert_self", "a", true, null, "899af52ac5bbc8824aa635183199f48a"],
+  ["merchants_update_own", "w", true, "42205aae07118e35699a5507ffe3385a", "42205aae07118e35699a5507ffe3385a"],
+  ["merchants_system_site_principal_isolation", "w", false, "1c08e1341a191bbc45013950a337671d", "1c08e1341a191bbc45013950a337671d"],
+  ["merchants_system_site_principal_insert_isolation", "a", false, null, "1c08e1341a191bbc45013950a337671d"],
+];
+const objectContractMerchantAclEntries = [
+  "PUBLIC",
+  "supabase_admin",
+  "postgres",
+  "anon",
+  "authenticated",
+  "service_role",
+].flatMap((principal) =>
+  [
+    "INSERT",
+    "SELECT",
+    "UPDATE",
+    "DELETE",
+    "TRUNCATE",
+    "REFERENCES",
+    "TRIGGER",
+  ].map((privilegeType) => {
+    const expected =
+      principal === "supabase_admin" ||
+      (principal === "authenticated" &&
+        ["SELECT", "INSERT", "UPDATE"].includes(privilegeType));
+    return {
+      principal,
+      privilegeType,
+      entryCount: expected ? 1 : 0,
+      ownerGrantorCount: expected ? 1 : 0,
+      grantableCount: 0,
+    };
+  }),
+);
+
+function objectContractDiagnostic() {
+  const components = [
+    {
+      code: "observer_schema",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        invalidRelationCount: 0,
+        invalidColumnCount: 0,
+        relations: objectContractObserverRelations.map((target) => ({
+          target,
+          present: true,
+          kindReady: true,
+          persistenceReady: true,
+          partitionReady: true,
+          inheritanceReady: true,
+        })),
+        columns: objectContractObserverColumns.map((target) => ({
+          target,
+          ready: true,
+        })),
+      },
+      violations: [],
+    },
+    {
+      code: "merchant_contract",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        relationPresent: true,
+        schemaReady: true,
+        ownerReady: true,
+        relationKind: "r",
+        persistence: "p",
+        rowSecurity: true,
+        forceRowSecurity: false,
+        partition: false,
+        replicaIdentity: "d",
+        policyCount: 5,
+        policies: objectContractMerchantPolicies.map(
+          ([target, command, permissive, qualMd5, checkMd5]) => ({
+            target,
+            count: 1,
+            command,
+            permissive,
+            authenticatedOnly: true,
+            qualMd5,
+            checkMd5,
+          }),
+        ),
+        aclEntryCount: 10,
+        unknownPrincipalEntryCount: 0,
+        unknownPrivilegeEntryCount: 0,
+        aclEntries: objectContractMerchantAclEntries,
+        columnAclCount: 0,
+        inheritanceEdgeCount: 0,
+        rewriteCount: 0,
+      },
+      violations: [],
+    },
+    {
+      code: "personal_contract",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        relationPresent: true,
+        schemaReady: true,
+        ownerReady: true,
+        relationKind: "r",
+        persistence: "p",
+        rowSecurity: true,
+        forceRowSecurity: false,
+        partition: false,
+        replicaIdentity: "d",
+        columnCount: 6,
+        columns: [
+          "auth_user_id",
+          "personal_account_id",
+          "status",
+          "version",
+          "created_at",
+          "updated_at",
+        ].map((name) => ({
+          target: `public.faolla_personal_accounts.${name}`,
+          ready: true,
+        })),
+        indexCount: 2,
+        indexes: [
+          "public.faolla_personal_accounts_auth_user_id_uidx",
+          "public.faolla_personal_accounts_personal_account_id_uidx",
+        ].map((target) => ({ target, ready: true })),
+        constraintCount: 4,
+        constraints: [
+          "faolla_personal_accounts_personal_account_id_safe",
+          "faolla_personal_accounts_status_valid",
+          "faolla_personal_accounts_version_valid",
+          "faolla_personal_accounts_timestamps_valid",
+        ].map((target) => ({ target, ready: true })),
+        triggerCount: 1,
+        bindingGuardReady: true,
+        policyCount: 0,
+        rewriteCount: 0,
+        inheritanceEdgeCount: 0,
+        aclEntryCount: 7,
+        invalidAclEntryCount: 0,
+        columnAclCount: 0,
+      },
+      violations: [],
+    },
+    {
+      code: "registry_structure",
+      ready: true,
+      violationCount: 0,
+      facts: {
+        relationPresent: true,
+        schemaReady: true,
+        ownerReady: true,
+        relationKind: "r",
+        persistence: "p",
+        rowSecurity: true,
+        forceRowSecurity: false,
+        partition: false,
+        replicaIdentity: "d",
+        columnCount: 3,
+        columns: ["version", "name", "applied_at"].map((name) => ({
+          target: `public.faolla_schema_migrations.${name}`,
+          ready: true,
+        })),
+        constraintCount: 1,
+        primaryKeyReady: true,
+        indexCount: 1,
+        triggerCount: 0,
+        policyCount: 0,
+        rewriteCount: 0,
+        inheritanceEdgeCount: 0,
+      },
+      violations: [],
+    },
+    {
+      code: "forbidden_binder",
+      ready: false,
+      violationCount: 1,
+      facts: { forbiddenFunctionCount: 1 },
+      violations: [
+        {
+          code: "forbidden_binder_function_present",
+          target: "public.faolla_bind_ordinary_account_authorization_v1",
+        },
+      ],
+    },
+    {
+      code: "runtime_rpc_function_default_acl",
+      ready: true,
+      violationCount: 0,
+      facts: { contractReady: true },
+      violations: [],
+    },
+  ];
+  return {
+    schemaVersion: 1,
+    contract: "ordinary_account_object_contract_v1",
+    ready: false,
+    componentCount: 6,
+    failedComponentCount: 1,
+    violationCount: 1,
+    components,
+  };
+}
+
+function objectContractDefaultAclDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  diagnostic.components[5] = {
+    code: "runtime_rpc_function_default_acl",
+    ready: false,
+    violationCount: 1,
+    facts: { contractReady: false },
+    violations: [
+      {
+        code: "runtime_rpc_function_default_acl_invalid",
+        target: null,
+      },
+    ],
+  };
+  return diagnostic;
+}
+
+function objectContractMerchantAclDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  const merchant = diagnostic.components[1];
+  const aclEntries = merchant.facts.aclEntries.map((entry) =>
+    entry.principal === "authenticated" && entry.privilegeType === "TRIGGER"
+      ? { ...entry, entryCount: 1, ownerGrantorCount: 1 }
+      : entry,
+  );
+  diagnostic.components[1] = {
+    ...merchant,
+    ready: false,
+    violationCount: 2,
+    facts: {
+      ...merchant.facts,
+      aclEntryCount: 11,
+      aclEntries,
+    },
+    violations: [
+      {
+        code: "merchant_acl_entry_count_invalid",
+        target: "public.merchants",
+      },
+      {
+        code: "merchant_acl_matrix_invalid",
+        target: "authenticated:TRIGGER",
+      },
+    ],
+  };
+  diagnostic.violationCount = 2;
+  return diagnostic;
+}
+
+function objectContractObserverDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  const observer = diagnostic.components[0];
+  diagnostic.components[0] = {
+    ...observer,
+    ready: false,
+    violationCount: 1,
+    facts: {
+      ...observer.facts,
+      invalidColumnCount: 1,
+      columns: observer.facts.columns.map((column, index) =>
+        index === 0 ? { ...column, ready: false } : column,
+      ),
+    },
+    violations: [
+      { code: "observer_column_invalid", target: "auth.users.id" },
+    ],
+  };
+  return diagnostic;
+}
+
+function objectContractPersonalDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  const personal = diagnostic.components[2];
+  diagnostic.components[2] = {
+    ...personal,
+    ready: false,
+    violationCount: 1,
+    facts: { ...personal.facts, policyCount: 1 },
+    violations: [
+      {
+        code: "personal_policy_present",
+        target: "public.faolla_personal_accounts",
+      },
+    ],
+  };
+  return diagnostic;
+}
+
+function objectContractRegistryDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  const registry = diagnostic.components[3];
+  diagnostic.components[3] = {
+    ...registry,
+    ready: false,
+    violationCount: 1,
+    facts: { ...registry.facts, primaryKeyReady: false },
+    violations: [
+      {
+        code: "registry_primary_key_invalid",
+        target: "public.faolla_schema_migrations",
+      },
+    ],
+  };
+  return diagnostic;
 }
 
 test("the production probe is one read-only transaction with the exact runtime hardening gate", () => {
@@ -669,6 +1049,14 @@ test("the production probe is one read-only transaction with the exact runtime h
   );
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /object_contract_diagnostic AS MATERIALIZED/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /'objectContractDiagnostic'[\s\S]*object_contract_diagnostic/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /'pg_catalog\.trigger'::regtype, false/g,
   );
 });
@@ -914,6 +1302,7 @@ test("database report parser validates the exact bounded baseline shape", () => 
     `${JSON.stringify(databaseReport())}\n`,
   );
   assert.equal(parsed.status, "ready");
+  assert.equal(Object.hasOwn(parsed, "objectContractDiagnostic"), false);
   assert.equal(parsed.readiness.merchantRecordCount, 9);
   assert.equal(parsed.readiness.ordinaryIdentityContentSha256, "1".repeat(64));
   assert.deepEqual(parsed.databaseIdentity, databaseIdentity());
@@ -925,12 +1314,138 @@ test("database report parser validates the exact bounded baseline shape", () => 
     "blocked",
   );
 
-  assert.equal(
-    parseOrdinaryAccountCutoverDatabaseReport(
-      JSON.stringify(databaseReport({ objectContractsReady: false })),
-    ).status,
-    "blocked",
+  const objectContractBlocked = parseOrdinaryAccountCutoverDatabaseReport(
+    JSON.stringify(
+      databaseReport({
+        objectContractsReady: false,
+        objectContractDiagnostic: objectContractDiagnostic(),
+      }),
+    ),
   );
+  assert.equal(objectContractBlocked.status, "blocked");
+  assert.deepEqual(
+    objectContractBlocked.objectContractDiagnostic,
+    objectContractDiagnostic(),
+  );
+
+  const merchantAclBlocked = parseOrdinaryAccountCutoverDatabaseReport(
+    JSON.stringify(
+      databaseReport({
+        objectContractsReady: false,
+        objectContractDiagnostic: objectContractMerchantAclDiagnostic(),
+      }),
+    ),
+  );
+  assert.deepEqual(
+    merchantAclBlocked.objectContractDiagnostic,
+    objectContractMerchantAclDiagnostic(),
+  );
+  for (const diagnostic of [
+    objectContractObserverDiagnostic(),
+    objectContractPersonalDiagnostic(),
+    objectContractRegistryDiagnostic(),
+  ]) {
+    assert.deepEqual(
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(
+          databaseReport({
+            objectContractsReady: false,
+            objectContractDiagnostic: diagnostic,
+          }),
+        ),
+      ).objectContractDiagnostic,
+      diagnostic,
+    );
+  }
+
+  assert.throws(
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(databaseReport({ objectContractsReady: false })),
+      ),
+    /ordinary_account_readiness_output_invalid/,
+  );
+  assert.throws(
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(
+          databaseReport({
+            objectContractDiagnostic: objectContractDiagnostic(),
+          }),
+        ),
+      ),
+    /ordinary_account_readiness_output_invalid/,
+  );
+
+  for (const diagnostic of [
+    { ...objectContractDiagnostic(), ready: true },
+    { ...objectContractDiagnostic(), componentCount: 5 },
+    { ...objectContractDiagnostic(), failedComponentCount: 0 },
+    { ...objectContractDiagnostic(), violationCount: 0 },
+    {
+      ...objectContractDiagnostic(),
+      components: [...objectContractDiagnostic().components].reverse(),
+    },
+    {
+      ...objectContractDiagnostic(),
+      components: objectContractDiagnostic().components.map(
+        (component, index) =>
+          index === 4
+            ? {
+                ...component,
+                facts: { forbiddenFunctionCount: 0 },
+              }
+            : component,
+      ),
+    },
+    {
+      ...objectContractDiagnostic(),
+      components: objectContractDiagnostic().components.map(
+        (component, index) =>
+          index === 4
+            ? {
+                ...component,
+                violations: [
+                  {
+                    code: "forbidden_binder_function_present",
+                    target: "public.not_the_fixed_function",
+                  },
+                ],
+              }
+            : component,
+      ),
+    },
+    (() => {
+      const diagnostic = objectContractMerchantAclDiagnostic();
+      diagnostic.components[1].facts.aclEntries[0] = {
+        ...diagnostic.components[1].facts.aclEntries[0],
+        principal: "unknown_runtime_role",
+      };
+      return diagnostic;
+    })(),
+    (() => {
+      const diagnostic = objectContractDiagnostic();
+      diagnostic.components[1].facts.policies[0] = {
+        ...diagnostic.components[1].facts.policies[0],
+        qualMd5: "A".repeat(32),
+      };
+      return diagnostic;
+    })(),
+    { ...objectContractDiagnostic(), extra: true },
+  ]) {
+    assert.throws(
+      () =>
+        parseOrdinaryAccountCutoverDatabaseReport(
+          JSON.stringify(
+            databaseReport({
+              objectContractsReady: false,
+              objectContractDiagnostic: diagnostic,
+            }),
+          ),
+        ),
+      /ordinary_account_readiness_output_invalid/,
+    );
+  }
 
   const defaultAclBlocked = parseOrdinaryAccountCutoverDatabaseReport(
     JSON.stringify(
