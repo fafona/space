@@ -35,7 +35,11 @@ test("enterprise PostgreSQL acceptance uses the healthy service container client
   );
   assert.match(
     workflow,
-    /--env "PGOPTIONS=\$\{PGOPTIONS:-\}"/,
+    /docker_environment=\(--env "PGOPTIONS=\$\{PGOPTIONS:-\}"\)[\s\S]{0,200}if \[\[ -n "\$\{PGAPPNAME:-\}" \]\]; then[\s\S]{0,150}docker_environment\+\=\(--env "PGAPPNAME=\$PGAPPNAME"\)/,
+  );
+  assert.match(
+    workflow,
+    /--workdir \/workspace[\s\S]{0,100}"\$\{docker_environment\[@\]\}"[\s\S]{0,100}"\$POSTGRES_CONTAINER_ID"[\s\S]{0,100}psql "\$\{translated\[@\]\}"/,
   );
   assert.doesNotMatch(
     workflow,

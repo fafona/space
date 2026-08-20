@@ -77,10 +77,14 @@ jobs:
             fi
             translated+=("$argument")
           done
+          docker_environment=(--env "PGOPTIONS=${PGOPTIONS:-}")
+          if [[ -n "${PGAPPNAME:-}" ]]; then
+            docker_environment+=(--env "PGAPPNAME=$PGAPPNAME")
+          fi
           exec docker exec \
             -i \
             --workdir /workspace \
-            --env "PGOPTIONS=${PGOPTIONS:-}" \
+            "${docker_environment[@]}" \
             "$POSTGRES_CONTAINER_ID" \
             psql "${translated[@]}"
           PSQL_WRAPPER
