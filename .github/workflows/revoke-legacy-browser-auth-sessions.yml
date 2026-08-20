@@ -1,0 +1,187 @@
+name: Revoke Legacy Browser Auth Sessions
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_run_id:
+        description: Successful encrypted database backup run created within the last 24 hours
+        required: true
+      confirmation:
+        description: Type REVOKE_LEGACY_BROWSER_AUTH_SESSIONS to confirm
+        required: true
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  revoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      HOTFIX_COMMIT: 26a3b2b0d0a82b3f972d13102b1b87c6fec6e589
+      REVOCATION_CUTOFF: 2026-08-20T03:01:52Z
+
+    steps:
+      - name: Checkout Operation Source
+        uses: actions/checkout@v5
+
+      - name: Validate Request And Backup
+        env:
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$CONFIRMATION" = "REVOKE_LEGACY_BROWSER_AUTH_SESSIONS"
+          [[ "$BACKUP_RUN_ID" =~ ^[0-9]+$ ]]
+          git merge-base --is-ancestor "$HOTFIX_COMMIT" HEAD
+
+          backup_json="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}")"
+          jq -e '
+            .name == "Encrypted Database Backup" and
+            .path == ".github/workflows/database-backup.yml" and
+            .event == "workflow_dispatch" and
+            .head_branch == "main" and
+            .status == "completed" and
+            .conclusion == "success"
+          ' <<<"$backup_json" >/dev/null
+
+          artifact_json="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}/artifacts?per_page=100")"
+          jq -e --arg artifact_name \
+            "faolla-encrypted-disaster-recovery-${BACKUP_RUN_ID}" '
+              [.artifacts[] |
+                select(
+                  .name == $artifact_name and
+                  .expired == false and
+                  .size_in_bytes > 0
+                )
+              ] | length == 1
+            ' <<<"$artifact_json" >/dev/null
+
+          completed_at="$(jq -r '.updated_at' <<<"$backup_json")"
+          completed_epoch="$(date -u -d "$completed_at" +%s)"
+          current_epoch="$(date -u +%s)"
+          backup_age_seconds="$((current_epoch - completed_epoch))"
+          test "$backup_age_seconds" -ge 0
+          test "$backup_age_seconds" -le 86400
+          printf '[session-revocation] verified backup run=%s ageSeconds=%s cutoff=%s\n' \
+            "$BACKUP_RUN_ID" "$backup_age_seconds" "$REVOCATION_CUTOFF"
+
+      - name: Verify Target Release Is Live
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-production-smoke.mjs \
+            --origin https://faolla.com \
+            --paths /,/login,/admin \
+            --expected-build "$GITHUB_SHA" \
+            --attempts 8 \
+            --delay-ms 2000 \
+            --timeout-ms 12000
+
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" \
+              >> ~/.ssh/known_hosts; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Inspect Bounded Session Cohort
+        env:
+          APP_DIR: ${{ secrets.APP_DIR }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP_DIR"
+          test -n "$SSH_USER"
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          report="$(ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=5 \
+            -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" \
+            "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && test \"\$(git rev-parse HEAD)\" = '$GITHUB_SHA' && test -z \"\$(git status --porcelain --untracked-files=all -- scripts/revoke-legacy-browser-auth-sessions.mjs scripts/apply-production-database-migrations.mjs scripts/check-database-backup-readiness.mjs scripts/check-supabase-migrations.mjs)\" && node --env-file=.env.local scripts/revoke-legacy-browser-auth-sessions.mjs --dry-run --json")"
+          jq -e --arg cutoff "$REVOCATION_CUTOFF" '
+            .ok == true and
+            .mode == "dry_run" and
+            .status == "dry_run" and
+            .cutoff == $cutoff and
+            (.candidates.sessionCount | type) == "number" and
+            (.candidates.refreshTokenCount | type) == "number"
+          ' <<<"$report" >/dev/null
+          jq -c '{ok, status, cutoff, candidates}' <<<"$report"
+
+      - name: Revoke Bounded Legacy Sessions
+        env:
+          APP_DIR: ${{ secrets.APP_DIR }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$(ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=5 \
+            -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" \
+            "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && test \"\$(git rev-parse HEAD)\" = '$GITHUB_SHA' && test -z \"\$(git status --porcelain --untracked-files=all -- scripts/revoke-legacy-browser-auth-sessions.mjs scripts/apply-production-database-migrations.mjs scripts/check-database-backup-readiness.mjs scripts/check-supabase-migrations.mjs)\" && node --env-file=.env.local scripts/revoke-legacy-browser-auth-sessions.mjs --apply --confirmation=REVOKE_LEGACY_BROWSER_AUTH_SESSIONS --json")"
+          jq -e --arg cutoff "$REVOCATION_CUTOFF" '
+            .ok == true and
+            (.status == "revoked" or .status == "up_to_date") and
+            .cutoff == $cutoff and
+            .remaining.sessionCount == 0 and
+            .remaining.refreshTokenCount == 0
+          ' <<<"$report" >/dev/null
+          jq -c '{ok, status, cutoff, candidates, remaining, executed}' <<<"$report"
+
+      - name: Verify Idempotent Empty Cohort
+        env:
+          APP_DIR: ${{ secrets.APP_DIR }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$(ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=5 \
+            -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" \
+            "$SSH_USER@$SSH_HOST" \
+            "cd '$APP_DIR' && test \"\$(git rev-parse HEAD)\" = '$GITHUB_SHA' && test -z \"\$(git status --porcelain --untracked-files=all -- scripts/revoke-legacy-browser-auth-sessions.mjs scripts/apply-production-database-migrations.mjs scripts/check-database-backup-readiness.mjs scripts/check-supabase-migrations.mjs)\" && node --env-file=.env.local scripts/revoke-legacy-browser-auth-sessions.mjs --dry-run --json")"
+          jq -e --arg cutoff "$REVOCATION_CUTOFF" '
+            .ok == true and
+            .status == "dry_run" and
+            .cutoff == $cutoff and
+            .candidates.sessionCount == 0 and
+            .candidates.refreshTokenCount == 0
+          ' <<<"$report" >/dev/null
+          printf '[session-revocation] verified empty bounded cohort cutoff=%s\n' \
+            "$REVOCATION_CUTOFF"
