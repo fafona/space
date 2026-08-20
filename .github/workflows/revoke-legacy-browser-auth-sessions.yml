@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout Operation Source
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Validate Request And Backup
         env:
