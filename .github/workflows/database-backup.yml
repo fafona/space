@@ -4,13 +4,24 @@ on:
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact lowercase 40-hex commit currently at main to back up
+        required: true
+      confirmation:
+        description: Type BACKUP to confirm the production backup
+        required: true
 
 concurrency:
-  group: encrypted-database-backup
+  # Share the protected production lock with deploys and schema changes.
+  group: production-deploy
   cancel-in-progress: false
 
 permissions:
+  actions: read
+  attestations: write
   contents: read
+  id-token: write
 
 jobs:
   backup:
@@ -18,56 +29,181 @@ jobs:
     timeout-minutes: 360
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
       REMOTE_BACKUP_PATH: /tmp/faolla-database-backup-${{ github.run_id }}-${{ github.run_attempt }}.tar.enc
+      REMOTE_BACKUP_WORKTREE: /tmp/faolla-database-backup-source-${{ github.run_id }}-${{ github.run_attempt }}
       LOCAL_BACKUP_PATH: faolla-database-backup.tar.enc
       LOCAL_BACKUP_PART_PATH: faolla-database-backup.tar.enc.part
+      BACKUP_SUBJECT_PATH: database-backup-subject.json
+      BACKUP_ATTESTATION_PATH: database-backup-attestation.json
+      BACKUP_ARTIFACT_NAME: faolla-encrypted-disaster-recovery-${{ github.run_id }}-${{ github.run_attempt }}
       MAX_BACKUP_TRANSFER_ATTEMPTS: 2
-    steps:
-      - name: Checkout Backup Verifier
-        uses: actions/checkout@v4
 
-      - name: Setup SSH
+    steps:
+      - name: Checkout Exact Backup Source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Verify Current Main And Exact Successful Push CI
+        id: target
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch) test "$CONFIRMATION" = "BACKUP" ;;
+            schedule) test -z "$CONFIRMATION" ;;
+            *) exit 1 ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          resolved_sha="$(git rev-parse HEAD)"
+          test "$resolved_sha" = "$TARGET_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          test "$main_sha" = "$TARGET_SHA"
+
+          ci_runs="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f event=push \
+            -f branch=main \
+            -f status=success \
+            -f head_sha="$TARGET_SHA" \
+            -f per_page=100)"
+          ci_run="$(jq -cer --arg repository "$GITHUB_REPOSITORY" \
+            --arg target_sha "$TARGET_SHA" '
+              [.workflow_runs[] |
+                select(
+                  .name == "CI" and
+                  .path == ".github/workflows/ci.yml" and
+                  .event == "push" and
+                  .head_branch == "main" and
+                  .head_sha == $target_sha and
+                  .head_repository.full_name == $repository and
+                  .status == "completed" and
+                  .conclusion == "success"
+                )
+              ] | sort_by(.run_attempt, .id) | last
+            ' <<<"$ci_runs")"
+          ci_run_id="$(jq -er '.id | select(type == "number" and . > 0 and floor == .)' <<<"$ci_run")"
+          ci_run_url="$(jq -er '.html_url | select(type == "string" and startswith("https://github.com/"))' <<<"$ci_run")"
+          echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "ci-run-id=$ci_run_id" >> "$GITHUB_OUTPUT"
+          echo "ci-run-url=$ci_run_url" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Pinned SSH Host Trust
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         shell: bash
         run: |
+          set -euo pipefail
           test -n "$SSH_HOST"
           test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          if ! [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] \
+            || [ "${SSH_PORT:-22}" -lt 1 ] \
+            || [ "${SSH_PORT:-22}" -gt 65535 ]; then
+            exit 1
+          fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          scan_ok=0
-          for attempt in 1 2 3 4 5; do
-            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts; then
-              scan_ok=1
-              break
-            fi
-            sleep 5
-          done
-          if [ "$scan_ok" != "1" ]; then
-            echo "::warning::ssh-keyscan failed; the backup will use accept-new host verification."
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>&1
+          known_hosts_lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != "22" ]; then
+            known_hosts_lookup="[$SSH_HOST]:${SSH_PORT}"
           fi
+          ssh-keygen -F "$known_hosts_lookup" -f ~/.ssh/known_hosts >/dev/null 2>&1
 
-      - name: Verify Backup Configuration
+      - name: Prepare Remote Detached Exact Source
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
           APP_DIR: ${{ secrets.APP_DIR }}
-          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
         shell: bash
         run: |
+          set -euo pipefail
           test -n "$SSH_USER"
           test -n "$APP_DIR"
-          test -n "$DATABASE_BACKUP_PASSPHRASE"
-          ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-            "cd '$APP_DIR' && FAOLLA_BACKUP_ARTIFACT_TRANSPORT=true FAOLLA_BACKUP_PASSPHRASE_AVAILABLE=true FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE=true FAOLLA_STORAGE_BACKUP_ENABLED=true node --env-file=.env.local scripts/check-database-backup-readiness.mjs --fail-on-blocked --json" \
-            | tee database-backup-readiness-report.log
+          app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+          printf '::add-mask::%s\n' "$app_dir_b64"
+          ssh_args=(
+            -o BatchMode=yes
+            -o ConnectTimeout=20
+            -o ConnectionAttempts=3
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -p "${SSH_PORT:-22}"
+          )
+          ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
+            "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE bash -s" <<'REMOTE'
+          set -euo pipefail
+          app_dir="$(printf '%s' "$FAOLLA_APP_DIR_B64" | base64 -d)"
+          test -n "$app_dir"
+          test -d "$app_dir"
+          test ! -e "$FAOLLA_BACKUP_WORKTREE"
+          test "$(git -C "$app_dir" rev-parse --is-inside-work-tree)" = "true"
+          git -C "$app_dir" fetch --no-tags --prune origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git -C "$app_dir" rev-parse refs/remotes/origin/main)" = "$FAOLLA_TARGET_SHA"
+          git -C "$app_dir" cat-file -e "$FAOLLA_TARGET_SHA^{commit}"
+          git -C "$app_dir" worktree add --detach \
+            "$FAOLLA_BACKUP_WORKTREE" "$FAOLLA_TARGET_SHA"
+          test "$(git -C "$FAOLLA_BACKUP_WORKTREE" rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          test -z "$(git -C "$FAOLLA_BACKUP_WORKTREE" status --porcelain=v1 --untracked-files=all)"
+          test -f "$FAOLLA_BACKUP_WORKTREE/scripts/create-production-database-backup.mjs"
+          test -f "$app_dir/.env.local"
+          REMOTE
 
-      - name: Create Encrypted Database Backup
+      - name: Verify Backup Configuration From Exact Source
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+          printf '::add-mask::%s\n' "$app_dir_b64"
+          ssh_args=(
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -p "${SSH_PORT:-22}"
+          )
+          ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
+            "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE bash -s" <<'REMOTE' \
+            | tee database-backup-readiness-report.log
+          set -euo pipefail
+          app_dir="$(printf '%s' "$FAOLLA_APP_DIR_B64" | base64 -d)"
+          cd "$FAOLLA_BACKUP_WORKTREE"
+          test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          FAOLLA_BACKUP_ARTIFACT_TRANSPORT=true \
+          FAOLLA_BACKUP_PASSPHRASE_AVAILABLE=true \
+          FAOLLA_BACKUP_ISOLATED_DOCKER_RESTORE=true \
+          FAOLLA_STORAGE_BACKUP_ENABLED=true \
+            node --env-file="$app_dir/.env.local" \
+              scripts/check-database-backup-readiness.mjs \
+              --fail-on-blocked --json
+          test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          REMOTE
+
+      - name: Create Encrypted Database Backup From Exact Source
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
@@ -76,122 +212,84 @@ jobs:
           DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+          test -n "$DATABASE_BACKUP_PASSPHRASE"
+          app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+          printf '::add-mask::%s\n' "$app_dir_b64"
+          ssh_args=(
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -p "${SSH_PORT:-22}"
+          )
+          remote_script='set -euo pipefail; app_dir="$(printf "%s" "$FAOLLA_APP_DIR_B64" | base64 -d)"; cd "$FAOLLA_BACKUP_WORKTREE"; test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"; test -z "$(git status --porcelain=v1 --untracked-files=all)"; node --env-file="$app_dir/.env.local" scripts/create-production-database-backup.mjs --passphrase-stdin --output "$FAOLLA_REMOTE_BACKUP_PATH" --app-directory "$app_dir" --source-repository "$FAOLLA_SOURCE_REPOSITORY" --source-sha "$FAOLLA_TARGET_SHA" --json; test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"; test -z "$(git status --porcelain=v1 --untracked-files=all)"'
           printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
-            | ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-              "umask 077; cd '$APP_DIR' && node --env-file=.env.local scripts/create-production-database-backup.mjs --passphrase-stdin --output '$REMOTE_BACKUP_PATH' --json" \
+            | ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
+                "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH FAOLLA_SOURCE_REPOSITORY=$GITHUB_REPOSITORY bash -lc '$remote_script'" \
             | tee database-backup-create-report.log
 
-      - name: Transfer Encrypted Backup
+      - name: Transfer Complete Encrypted Backup
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           transfer_started_at="$(date +%s)"
-
           record_transfer() {
-            local outcome="$1"
-            local reason="$2"
-            local expected_bytes="$3"
-            local remote_bytes="$4"
-            local transferred_bytes="$5"
-            local exit_code="$6"
-            local duration_seconds="$(( $(date +%s) - transfer_started_at ))"
-            local average_bytes_per_second=0
-            local percent_basis_points=unknown
-            local transferred_for_metrics
-            case "$transferred_bytes" in
-              ''|*[!0-9]*) transferred_for_metrics=0 ;;
-              *) transferred_for_metrics="$transferred_bytes" ;;
-            esac
-            if [ "$duration_seconds" -gt 0 ]; then
-              average_bytes_per_second="$((transferred_for_metrics / duration_seconds))"
-            fi
-            case "$expected_bytes" in
+            local outcome="$1" reason="$2" expected="$3" remote="$4"
+            local transferred="$5" exit_code="$6"
+            local duration="$(( $(date +%s) - transfer_started_at ))"
+            local rate=0 percent=unknown metric_bytes=0
+            case "$transferred" in ''|*[!0-9]*) ;; *) metric_bytes="$transferred" ;; esac
+            if [ "$duration" -gt 0 ]; then rate="$((metric_bytes / duration))"; fi
+            case "$expected" in
               ''|*[!0-9]*) ;;
-              *)
-                if [ "$expected_bytes" -gt 0 ]; then
-                  percent_basis_points="$((transferred_for_metrics * 10000 / expected_bytes))"
-                fi
-                ;;
+              *) if [ "$expected" -gt 0 ]; then percent="$((metric_bytes * 10000 / expected))"; fi ;;
             esac
             printf '[database-backup-transfer] %s reason=%s expectedBytes=%s remoteBytes=%s transferredBytes=%s percentBasisPoints=%s averageBytesPerSecond=%s durationSeconds=%s exitCode=%s\n' \
-              "$outcome" "$reason" "$expected_bytes" "$remote_bytes" \
-              "$transferred_bytes" "$percent_basis_points" \
-              "$average_bytes_per_second" "$duration_seconds" "$exit_code" \
+              "$outcome" "$reason" "$expected" "$remote" "$transferred" \
+              "$percent" "$rate" "$duration" "$exit_code" \
               | tee -a database-backup-transfer-report.log
           }
-
           fail_transfer() {
-            local failure_reason="$1"
-            local expected_bytes="$2"
-            local remote_bytes="$3"
-            local transferred_bytes="$4"
-            local failure_exit_code="$5"
+            local reason="$1" expected="$2" remote="$3" transferred="$4" exit_code="$5"
             rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" || true
-            record_transfer FAILED "$failure_reason" "$expected_bytes" \
-              "$remote_bytes" "$transferred_bytes" "$failure_exit_code" || true
-            exit "$failure_exit_code"
+            record_transfer FAILED "$reason" "$expected" "$remote" "$transferred" "$exit_code" || true
+            exit "$exit_code"
           }
-
-          if ! rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
+          rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
             database-backup-transfer-report.log
-          then
-            fail_transfer initial_cleanup_failed unknown unknown 0 1
-          fi
+          create_report_json="$(tail -n 1 database-backup-create-report.log)"
+          expected_backup_bytes="$(jq -er '.outputBytes | select(type == "number" and . > 0 and floor == .)' <<<"$create_report_json")"
+          expected_backup_sha256="$(jq -er '.outputSha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' <<<"$create_report_json")"
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg target_sha "$TARGET_SHA" '
+            .schemaVersion == 2 and
+            .status == "created" and
+            .source.repository == $repository and
+            .source.sha == $target_sha and
+            .source.treeState == "clean" and
+            .source.stability.source == "matched_before_after" and
+            .source.stability.database == "matched_before_after"
+          ' <<<"$create_report_json" >/dev/null
 
-          if ! create_report_json="$(tail -n 1 database-backup-create-report.log)"; then
-            fail_transfer invalid_create_report unknown unknown 0 1
-          fi
-          if ! expected_backup_bytes="$(
-            printf '%s\n' "$create_report_json" \
-              | jq -er '.outputBytes | select(type == "number" and . > 0 and floor == .)'
-          )"; then
-            fail_transfer invalid_create_report unknown unknown 0 1
-          fi
-          if ! expected_backup_sha256="$(
-            printf '%s\n' "$create_report_json" \
-              | jq -er '.outputSha256 | select(type == "string" and test("^[0-9a-f]{64}$"))'
-          )"; then
-            fail_transfer invalid_create_report "$expected_backup_bytes" unknown 0 1
-          fi
-
-          if ! remote_backup_bytes="$(
-            ssh -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-              -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" \
-              "$SSH_USER@$SSH_HOST" "stat -c '%s' -- '$REMOTE_BACKUP_PATH'"
-          )"; then
+          ssh_args=(
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -p "${SSH_PORT:-22}"
+          )
+          if ! remote_backup_bytes="$(ssh "${ssh_args[@]}" \
+            "$SSH_USER@$SSH_HOST" "stat -c '%s' -- '$REMOTE_BACKUP_PATH'")"; then
             fail_transfer remote_size_unavailable "$expected_backup_bytes" unknown 0 1
           fi
-
           case "$remote_backup_bytes" in
-            ''|*[!0-9]*)
-              fail_transfer invalid_remote_size "$expected_backup_bytes" \
-                "${remote_backup_bytes:-unknown}" 0 1
-              ;;
+            ''|*[!0-9]*) fail_transfer invalid_remote_size "$expected_backup_bytes" unknown 0 1 ;;
           esac
-          if [ "$remote_backup_bytes" -le 0 ]; then
-            fail_transfer empty_remote_backup "$expected_backup_bytes" \
-              "$remote_backup_bytes" 0 1
-          fi
           if [ "$remote_backup_bytes" -ne "$expected_backup_bytes" ]; then
-            fail_transfer remote_size_mismatch "$expected_backup_bytes" \
-              "$remote_backup_bytes" 0 1
-          fi
-
-          case "$MAX_BACKUP_TRANSFER_ATTEMPTS" in
-            ''|*[!0-9]*)
-              fail_transfer invalid_transfer_attempts "$expected_backup_bytes" \
-                "$remote_backup_bytes" 0 1
-              ;;
-          esac
-          if [ "$MAX_BACKUP_TRANSFER_ATTEMPTS" -le 0 ]; then
-            fail_transfer invalid_transfer_attempts "$expected_backup_bytes" \
-              "$remote_backup_bytes" 0 1
+            fail_transfer remote_size_mismatch "$expected_backup_bytes" "$remote_backup_bytes" 0 1
           fi
 
           transfer_attempt=1
@@ -201,58 +299,41 @@ jobs:
             set +e
             printf 'reget %s %s\n' "$REMOTE_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
               | timeout --signal=TERM --kill-after=30s 110m sftp -b - \
-                -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-                -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-                -o StrictHostKeyChecking=accept-new -P "${SSH_PORT:-22}" \
-                "$SSH_USER@$SSH_HOST"
+                  -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+                  -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+                  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                  -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                  -P "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST"
             transfer_status="$?"
             set -e
-
-            local_backup_bytes=0
             if [ -f "$LOCAL_BACKUP_PART_PATH" ]; then
-              if ! local_backup_bytes="$(stat -c '%s' "$LOCAL_BACKUP_PART_PATH")"; then
-                fail_transfer local_size_unavailable "$expected_backup_bytes" \
-                  "$remote_backup_bytes" unknown 1
-              fi
+              local_backup_bytes="$(stat -c '%s' "$LOCAL_BACKUP_PART_PATH")"
+            else
+              local_backup_bytes=0
             fi
-            if [ "$transfer_status" -eq 0 ]; then
-              break
-            fi
-            if [ "$transfer_attempt" -ge "$MAX_BACKUP_TRANSFER_ATTEMPTS" ]; then
-              break
-            fi
-
+            if [ "$transfer_status" -eq 0 ]; then break; fi
+            if [ "$transfer_attempt" -ge "$MAX_BACKUP_TRANSFER_ATTEMPTS" ]; then break; fi
             record_transfer RETRYING "sftp_failed_attempt_${transfer_attempt}" \
               "$expected_backup_bytes" "$remote_backup_bytes" \
               "$local_backup_bytes" "$transfer_status" || true
-            sleep 10
             transfer_attempt="$((transfer_attempt + 1))"
+            sleep 10
           done
-
           if [ "$transfer_status" -ne 0 ]; then
             fail_transfer "sftp_failed_after_${transfer_attempt}_attempts" \
               "$expected_backup_bytes" "$remote_backup_bytes" \
               "$local_backup_bytes" "$transfer_status"
           fi
-
           if [ "$local_backup_bytes" -ne "$expected_backup_bytes" ]; then
             fail_transfer size_mismatch "$expected_backup_bytes" \
               "$remote_backup_bytes" "$local_backup_bytes" 1
           fi
-
-          if ! local_backup_sha256="$(sha256sum "$LOCAL_BACKUP_PART_PATH" | awk '{print $1}')"; then
-            fail_transfer local_checksum_unavailable "$expected_backup_bytes" \
-              "$remote_backup_bytes" "$local_backup_bytes" 1
-          fi
+          local_backup_sha256="$(sha256sum "$LOCAL_BACKUP_PART_PATH" | awk '{print $1}')"
           if [ "$local_backup_sha256" != "$expected_backup_sha256" ]; then
             fail_transfer checksum_mismatch "$expected_backup_bytes" \
               "$remote_backup_bytes" "$local_backup_bytes" 1
           fi
-
-          if ! mv -- "$LOCAL_BACKUP_PART_PATH" "$LOCAL_BACKUP_PATH"; then
-            fail_transfer promote_failed "$expected_backup_bytes" \
-              "$remote_backup_bytes" "$local_backup_bytes" 1
-          fi
+          mv -- "$LOCAL_BACKUP_PART_PATH" "$LOCAL_BACKUP_PATH"
           record_transfer TRANSFERRED "verified_after_${transfer_attempt}_attempts" \
             "$expected_backup_bytes" "$remote_backup_bytes" \
             "$local_backup_bytes" 0
@@ -262,9 +343,10 @@ jobs:
           DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
-            | node scripts/verify-production-database-backup.mjs --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
+            | node scripts/verify-production-database-backup.mjs \
+                --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
             | tee database-backup-verify-report.log
 
       - name: Rehearse Isolated Restore
@@ -272,59 +354,161 @@ jobs:
           DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
-            | node scripts/rehearse-production-database-restore.mjs --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
+            | node scripts/rehearse-production-database-restore.mjs \
+                --passphrase-stdin --input "$LOCAL_BACKUP_PATH" --json \
             | tee database-backup-restore-report.log
 
       - name: Confirm Backup Is Ready For Upload
+        id: backup-subject
         shell: bash
         run: |
           set -euo pipefail
           test -s "$LOCAL_BACKUP_PATH"
           test ! -e "$LOCAL_BACKUP_PART_PATH"
-          for report_path in \
-            database-backup-readiness-report.log \
-            database-backup-create-report.log \
-            database-backup-transfer-report.log \
-            database-backup-verify-report.log \
-            database-backup-restore-report.log
-          do
-            test -s "$report_path"
-          done
-          create_report_json="$(tail -n 1 database-backup-create-report.log)"
-          expected_backup_bytes="$(
-            printf '%s\n' "$create_report_json" \
-              | jq -er '.outputBytes | select(type == "number" and . > 0 and floor == .)'
-          )"
-          expected_backup_sha256="$(
-            printf '%s\n' "$create_report_json" \
-              | jq -er '.outputSha256 | select(type == "string" and test("^[0-9a-f]{64}$"))'
-          )"
-          test "$(stat -c '%s' "$LOCAL_BACKUP_PATH")" = "$expected_backup_bytes"
-          test "$(sha256sum "$LOCAL_BACKUP_PATH" | awk '{print $1}')" = "$expected_backup_sha256"
+          node scripts/create-database-backup-attestation.mjs subject \
+            --backup "$LOCAL_BACKUP_PATH" \
+            --readiness-report database-backup-readiness-report.log \
+            --create-report database-backup-create-report.log \
+            --transfer-report database-backup-transfer-report.log \
+            --verify-report database-backup-verify-report.log \
+            --restore-report database-backup-restore-report.log \
+            --repository "$GITHUB_REPOSITORY" \
+            --target-sha "$TARGET_SHA" \
+            --ci-run-id "${{ steps.target.outputs.ci-run-id }}" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-event "$GITHUB_EVENT_NAME" \
+            --output "$BACKUP_SUBJECT_PATH"
+          subject_bytes="$(jq -er '.subject.bytes | select(type == "number" and . > 0 and floor == .)' "$BACKUP_SUBJECT_PATH")"
+          subject_sha256="$(jq -er '.subject.digest | select(test("^sha256:[0-9a-f]{64}$")) | sub("^sha256:"; "")' "$BACKUP_SUBJECT_PATH")"
+          test "$(stat -c '%s' "$LOCAL_BACKUP_PATH")" = "$subject_bytes"
+          test "$(sha256sum "$LOCAL_BACKUP_PATH" | awk '{print $1}')" = "$subject_sha256"
+          echo "bytes=$subject_bytes" >> "$GITHUB_OUTPUT"
+          echo "sha256=$subject_sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload Verified Encrypted Backup
+        id: backup-artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: faolla-encrypted-disaster-recovery-${{ github.run_id }}
+          name: ${{ env.BACKUP_ARTIFACT_NAME }}
           path: ${{ env.LOCAL_BACKUP_PATH }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
 
-      - name: Upload Backup Verification Reports
-        if: success()
+      - name: Verify Uploaded Backup Artifact Identity
+        id: artifact
+        env:
+          ACTION_ARTIFACT_DIGEST: ${{ steps.backup-artifact.outputs.artifact-digest }}
+          ACTION_ARTIFACT_ID: ${{ steps.backup-artifact.outputs.artifact-id }}
+          ACTION_ARTIFACT_URL: ${{ steps.backup-artifact.outputs.artifact-url }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ACTION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACTION_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts/${ACTION_ARTIFACT_ID}"
+          test "$ACTION_ARTIFACT_URL" = "$expected_url"
+          artifact_json=""
+          for attempt in 1 2 3 4 5; do
+            if artifact_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ACTION_ARTIFACT_ID}")"; then
+              break
+            fi
+            sleep 2
+          done
+          test -n "$artifact_json"
+          jq -e --arg name "$BACKUP_ARTIFACT_NAME" \
+            --arg target_sha "$TARGET_SHA" \
+            --argjson artifact_id "$ACTION_ARTIFACT_ID" \
+            --argjson run_id "$GITHUB_RUN_ID" '
+              .id == $artifact_id and
+              .name == $name and
+              .expired == false and
+              .size_in_bytes > 0 and
+              .workflow_run.id == $run_id and
+              .workflow_run.head_sha == $target_sha
+            ' <<<"$artifact_json" >/dev/null
+          artifact_bytes="$(jq -er '.size_in_bytes | select(type == "number" and . > 0 and floor == .)' <<<"$artifact_json")"
+          artifact_digest="$(jq -er '.digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' <<<"$artifact_json")"
+          artifact_created_at="$(jq -er '.created_at | select(type == "string")' <<<"$artifact_json")"
+          artifact_expires_at="$(jq -er '.expires_at | select(type == "string")' <<<"$artifact_json")"
+          test "$artifact_digest" = "sha256:$ACTION_ARTIFACT_DIGEST"
+          echo "id=$ACTION_ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "url=$ACTION_ARTIFACT_URL" >> "$GITHUB_OUTPUT"
+          echo "bytes=$artifact_bytes" >> "$GITHUB_OUTPUT"
+          echo "digest=$ACTION_ARTIFACT_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "created-at=$artifact_created_at" >> "$GITHUB_OUTPUT"
+          echo "expires-at=$artifact_expires_at" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Backup Attestation Predicate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/create-database-backup-attestation.mjs predicate \
+            --subject "$BACKUP_SUBJECT_PATH" \
+            --backup "$LOCAL_BACKUP_PATH" \
+            --artifact-id "${{ steps.artifact.outputs.id }}" \
+            --artifact-name "$BACKUP_ARTIFACT_NAME" \
+            --artifact-bytes "${{ steps.artifact.outputs.bytes }}" \
+            --artifact-digest "${{ steps.artifact.outputs.digest }}" \
+            --artifact-created-at "${{ steps.artifact.outputs.created-at }}" \
+            --artifact-expires-at "${{ steps.artifact.outputs.expires-at }}" \
+            --output "$BACKUP_ATTESTATION_PATH"
+
+      - name: Upload Canonical Backup Attestation Input
+        id: backup-attestation-artifact
         uses: actions/upload-artifact@v4
         with:
-          name: faolla-backup-verification-reports-${{ github.run_id }}
+          name: faolla-production-backup-attestation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BACKUP_ATTESTATION_PATH }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Backup Verification And Attestation Inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-backup-verification-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             database-backup-readiness-report.log
             database-backup-create-report.log
             database-backup-transfer-report.log
             database-backup-verify-report.log
             database-backup-restore-report.log
+            ${{ env.BACKUP_SUBJECT_PATH }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attest Verified Encrypted Backup
+        id: encrypted-backup-attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.LOCAL_BACKUP_PATH }}
+          predicate-type: https://faolla.com/attestations/database-backup/v1
+          predicate-path: ${{ env.BACKUP_ATTESTATION_PATH }}
+
+      - name: Attest Canonical Backup Attestation Input
+        id: canonical-backup-attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.BACKUP_ATTESTATION_PATH }}
+
+      - name: Upload Encrypted Backup Attestation Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-encrypted-backup-attestation-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.encrypted-backup-attestation.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Canonical Backup Attestation Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-production-backup-attestation-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.canonical-backup-attestation.outputs.bundle-path }}
           if-no-files-found: error
           retention-days: 7
 
@@ -332,26 +516,44 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: faolla-backup-failure-diagnostics-${{ github.run_id }}
+          name: faolla-backup-failure-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             database-backup-readiness-report.log
             database-backup-create-report.log
             database-backup-transfer-report.log
             database-backup-verify-report.log
             database-backup-restore-report.log
+            ${{ env.BACKUP_SUBJECT_PATH }}
+            ${{ env.BACKUP_ATTESTATION_PATH }}
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Remove Temporary Backup
+      - name: Remove Temporary Backup And Exact Source
         if: always()
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
         shell: bash
         run: |
-          rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH"
-          if [ -n "${SSH_USER:-}" ] && [ -n "${SSH_HOST:-}" ]; then
-            ssh -o ConnectTimeout=20 -o ConnectionAttempts=2 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-              "rm -f -- '$REMOTE_BACKUP_PATH'" || true
+          set +e
+          rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
+            "$BACKUP_SUBJECT_PATH" "$BACKUP_ATTESTATION_PATH"
+          if [ -n "${SSH_USER:-}" ] && [ -n "${SSH_HOST:-}" ] \
+            && [ -n "${APP_DIR:-}" ] && [ -s "$HOME/.ssh/known_hosts" ]; then
+            app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+            printf '::add-mask::%s\n' "$app_dir_b64"
+            ssh -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=2 \
+              -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+              "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH bash -s" <<'REMOTE'
+          set -eu
+          app_dir="$(printf '%s' "$FAOLLA_APP_DIR_B64" | base64 -d)"
+          rm -f -- "$FAOLLA_REMOTE_BACKUP_PATH"
+          if [ -e "$FAOLLA_BACKUP_WORKTREE" ]; then
+            git -C "$app_dir" worktree remove --force "$FAOLLA_BACKUP_WORKTREE"
+          fi
+          REMOTE
           fi

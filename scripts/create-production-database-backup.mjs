@@ -19,8 +19,10 @@ import { pathToFileURL } from "node:url";
 
 import {
   buildDatabaseBackupManifest,
+  buildDatabaseBackupAuthoritativeBaselineJsonSql,
   DATABASE_BACKUP_ARCHIVE_FILES,
   sha256File,
+  validateDatabaseBackupSourceIdentity,
 } from "./database-backup-contract.mjs";
 import { inspectSelfHostedSupabaseTopology } from "./check-database-backup-readiness.mjs";
 
@@ -34,6 +36,9 @@ const CONFIG_ARCHIVE_EXCLUDES = [
   "./volumes/db/data",
   "./volumes/storage",
 ];
+const EXACT_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const GITHUB_REPOSITORY_PATTERN =
+  /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
 class DatabaseBackupError extends Error {
   constructor(code) {
@@ -250,13 +255,7 @@ function encryptArchiveStream(input) {
   return new Promise((resolve, reject) => {
     const tar = spawn(
       "tar",
-      [
-        "-cf",
-        "-",
-        "-C",
-        input.directory,
-        ...DATABASE_BACKUP_ARCHIVE_FILES,
-      ],
+      ["-cf", "-", "-C", input.directory, ...DATABASE_BACKUP_ARCHIVE_FILES],
       {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -334,15 +333,18 @@ function encryptArchiveStream(input) {
     });
     tar.stdout.pipe(openssl.stdin);
     openssl.stdio[3].end(`${input.passphrase}\n`);
-    timer = setTimeout(() => {
-      timedOut = true;
-      tar.kill("SIGTERM");
-      openssl.kill("SIGTERM");
-      setTimeout(() => {
-        tar.kill("SIGKILL");
-        openssl.kill("SIGKILL");
-      }, 5_000).unref();
-    }, 15 * 60 * 1000);
+    timer = setTimeout(
+      () => {
+        timedOut = true;
+        tar.kill("SIGTERM");
+        openssl.kill("SIGTERM");
+        setTimeout(() => {
+          tar.kill("SIGKILL");
+          openssl.kill("SIGKILL");
+        }, 5_000).unref();
+      },
+      15 * 60 * 1000,
+    );
   });
 }
 
@@ -375,6 +377,165 @@ async function readComposeDirectory(commandRunner, databaseName) {
     throw new DatabaseBackupError("compose_directory_invalid");
   }
   return directory;
+}
+
+function normalizeGitHubRepository(remoteUrl) {
+  const value = trimText(remoteUrl).replace(/\.git$/i, "");
+  for (const pattern of [
+    /^https:\/\/github\.com\/([^/]+\/[^/]+)$/i,
+    /^git@github\.com:([^/]+\/[^/]+)$/i,
+    /^ssh:\/\/git@github\.com\/([^/]+\/[^/]+)$/i,
+  ]) {
+    const match = value.match(pattern);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+async function captureBackupSourceIdentity(input) {
+  const expectedSha = trimText(input.expectedSha);
+  const expectedRepository = trimText(input.expectedRepository);
+  if (!EXACT_COMMIT_PATTERN.test(expectedSha)) {
+    throw new DatabaseBackupError("backup_source_sha_invalid");
+  }
+  if (!GITHUB_REPOSITORY_PATTERN.test(expectedRepository)) {
+    throw new DatabaseBackupError("backup_source_repository_invalid");
+  }
+
+  const revision = await input.commandRunner(
+    "git",
+    ["-C", input.directory, "rev-parse", "--verify", "HEAD^{commit}"],
+    { errorCode: "backup_source_revision_unavailable", timeoutMs: 60_000 },
+  );
+  const actualSha = trimText(revision.stdout);
+  if (actualSha !== expectedSha) {
+    throw new DatabaseBackupError("backup_source_sha_mismatch");
+  }
+  const originMain = await input.commandRunner(
+    "git",
+    ["-C", input.directory, "rev-parse", "refs/remotes/origin/main"],
+    { errorCode: "backup_source_origin_main_unavailable", timeoutMs: 60_000 },
+  );
+  const originMainSha = trimText(originMain.stdout);
+  if (originMainSha !== expectedSha) {
+    throw new DatabaseBackupError("backup_source_origin_main_mismatch");
+  }
+  const branch = await input.commandRunner(
+    "git",
+    ["-C", input.directory, "rev-parse", "--abbrev-ref", "HEAD"],
+    { errorCode: "backup_source_head_state_unavailable", timeoutMs: 60_000 },
+  );
+  if (trimText(branch.stdout) !== "HEAD") {
+    throw new DatabaseBackupError("backup_source_not_detached");
+  }
+
+  const remote = await input.commandRunner(
+    "git",
+    ["-C", input.directory, "config", "--get", "remote.origin.url"],
+    { errorCode: "backup_source_remote_unavailable", timeoutMs: 60_000 },
+  );
+  const actualRepository = normalizeGitHubRepository(remote.stdout);
+  if (
+    !actualRepository ||
+    actualRepository.toLowerCase() !== expectedRepository.toLowerCase()
+  ) {
+    throw new DatabaseBackupError("backup_source_repository_mismatch");
+  }
+
+  const status = await input.commandRunner(
+    "git",
+    [
+      "-C",
+      input.directory,
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ],
+    { errorCode: "backup_source_status_unavailable", timeoutMs: 60_000 },
+  );
+  if (trimText(status.stdout)) {
+    throw new DatabaseBackupError("backup_source_worktree_dirty");
+  }
+  return {
+    repository: expectedRepository,
+    sha: expectedSha,
+    originMainSha,
+    detached: true,
+  };
+}
+
+export async function captureDatabaseIdentity(commandRunner, databaseName) {
+  const inspectResult = await commandRunner(
+    "docker",
+    [
+      "inspect",
+      "--format",
+      '{"containerId":{{json .Id}},"imageId":{{json .Image}},"containerStartedAt":{{json .State.StartedAt}}}',
+      databaseName,
+    ],
+    {
+      errorCode: "database_identity_container_probe_failed",
+      timeoutMs: 60_000,
+    },
+  );
+  const probeSql = [
+    "WITH readiness AS MATERIALIZED (",
+    "  SELECT public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() AS value",
+    ") SELECT pg_catalog.json_build_object(",
+    "  'databaseName', pg_catalog.current_database(),",
+    "  'databaseOid', (SELECT oid::text FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()),",
+    "  'systemIdentifier', (SELECT system_identifier::text FROM pg_catalog.pg_control_system()),",
+    "  'serverVersionNum', pg_catalog.current_setting('server_version_num'),",
+    "  'postmasterStartedAt', pg_catalog.to_char(pg_catalog.pg_postmaster_start_time() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),",
+    "  'primary', NOT pg_catalog.pg_is_in_recovery(),",
+    "  'baseline',",
+    buildDatabaseBackupAuthoritativeBaselineJsonSql(),
+    ")::text FROM readiness;",
+  ].join("\n");
+  const probeScript = [
+    'export PGPASSWORD="${POSTGRES_PASSWORD:-}"',
+    'exec psql -h localhost -U supabase_admin -d "${POSTGRES_DB:?POSTGRES_DB is required}" --no-password --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "$1"',
+  ].join("\n");
+  const databaseResult = await commandRunner(
+    "docker",
+    [
+      "exec",
+      databaseName,
+      "sh",
+      "-lc",
+      probeScript,
+      "backup-identity",
+      probeSql,
+    ],
+    { errorCode: "database_identity_postgres_probe_failed", timeoutMs: 60_000 },
+  );
+
+  let identity;
+  try {
+    identity = {
+      containerName: databaseName,
+      ...JSON.parse(trimText(inspectResult.stdout)),
+      ...JSON.parse(trimText(databaseResult.stdout)),
+    };
+  } catch {
+    throw new DatabaseBackupError("database_identity_probe_invalid");
+  }
+  const validation = validateDatabaseBackupSourceIdentity({
+    repository: "validation/source",
+    sha: "0".repeat(40),
+    originMainSha: "0".repeat(40),
+    detached: true,
+    treeState: "clean",
+    stability: {
+      source: "matched_before_after",
+      database: "matched_before_after",
+    },
+    database: identity,
+  });
+  if (!validation.valid) {
+    throw new DatabaseBackupError("database_identity_probe_invalid");
+  }
+  return validation.source.database;
 }
 
 async function writeManifest(directory, metadata) {
@@ -432,8 +593,19 @@ export async function createProductionDatabaseBackup(input = {}) {
   const commandRunner = input.runCommand ?? runCommand;
   const encryptArchive = input.encryptArchive ?? encryptArchiveStream;
   const appDirectory = path.resolve(input.appDirectory ?? process.cwd());
+  const sourceDirectory = path.resolve(input.sourceDirectory ?? process.cwd());
 
   try {
+    const initialSourceIdentity = await captureBackupSourceIdentity({
+      commandRunner,
+      directory: sourceDirectory,
+      expectedRepository: input.sourceRepository,
+      expectedSha: input.sourceSha,
+    });
+    const initialDatabaseIdentity = await captureDatabaseIdentity(
+      commandRunner,
+      sources.database.name,
+    );
     const versionResult = await commandRunner(
       "docker",
       ["exec", sources.database.name, "pg_dumpall", "--version"],
@@ -443,8 +615,7 @@ export async function createProductionDatabaseBackup(input = {}) {
       },
     );
     const toolVersion =
-      trimText(versionResult.stdout).match(/\d+(?:\.\d+)+/)?.[0] ??
-      "unknown";
+      trimText(versionResult.stdout).match(/\d+(?:\.\d+)+/)?.[0] ?? "unknown";
     const composeDirectory = await readComposeDirectory(
       commandRunner,
       sources.database.name,
@@ -456,13 +627,7 @@ export async function createProductionDatabaseBackup(input = {}) {
     ].join("\n");
     await commandRunner(
       "docker",
-      [
-        "exec",
-        sources.database.name,
-        "sh",
-        "-lc",
-        databaseDumpScript,
-      ],
+      ["exec", sources.database.name, "sh", "-lc", databaseDumpScript],
       {
         errorCode: "database_dump_failed",
         outputPath: path.join(temporaryDirectory, "database.sql.gz"),
@@ -487,10 +652,7 @@ export async function createProductionDatabaseBackup(input = {}) {
       ],
       {
         errorCode: "postgres_config_backup_failed",
-        outputPath: path.join(
-          temporaryDirectory,
-          "postgres-config.tar.gz",
-        ),
+        outputPath: path.join(temporaryDirectory, "postgres-config.tar.gz"),
       },
     );
     await commandRunner(
@@ -515,9 +677,7 @@ export async function createProductionDatabaseBackup(input = {}) {
       [
         "-czf",
         path.join(temporaryDirectory, "supabase-config.tar.gz"),
-        ...CONFIG_ARCHIVE_EXCLUDES.flatMap((entry) => [
-          `--exclude=${entry}`,
-        ]),
+        ...CONFIG_ARCHIVE_EXCLUDES.flatMap((entry) => [`--exclude=${entry}`]),
         "--exclude=*.log",
         "-C",
         composeDirectory,
@@ -543,11 +703,37 @@ export async function createProductionDatabaseBackup(input = {}) {
       },
     );
 
+    const finalDatabaseIdentity = await captureDatabaseIdentity(
+      commandRunner,
+      sources.database.name,
+    );
+    if (
+      JSON.stringify(finalDatabaseIdentity) !==
+      JSON.stringify(initialDatabaseIdentity)
+    ) {
+      throw new DatabaseBackupError("database_identity_changed_during_backup");
+    }
+    const finalSourceIdentity = await captureBackupSourceIdentity({
+      commandRunner,
+      directory: sourceDirectory,
+      expectedRepository: input.sourceRepository,
+      expectedSha: input.sourceSha,
+    });
+    if (
+      JSON.stringify(finalSourceIdentity) !==
+      JSON.stringify(initialSourceIdentity)
+    ) {
+      throw new DatabaseBackupError("backup_source_changed_during_backup");
+    }
+
     const manifest = await writeManifest(temporaryDirectory, {
       toolVersion,
       databaseImage: sources.database.image,
       storageImage: sources.storage.image,
       storageBackend: sources.storage.backend,
+      sourceRepository: initialSourceIdentity.repository,
+      sourceSha: initialSourceIdentity.sha,
+      databaseIdentity: initialDatabaseIdentity,
     });
     await assertExpectedArchiveFiles(temporaryDirectory);
     await encryptArchive({
@@ -562,7 +748,7 @@ export async function createProductionDatabaseBackup(input = {}) {
       throw new DatabaseBackupError("encrypted_backup_invalid");
     }
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       createdAt: manifest.createdAt,
       status: "created",
       sourceConfiguration: "self_hosted_docker",
@@ -570,6 +756,7 @@ export async function createProductionDatabaseBackup(input = {}) {
       outputFile: path.basename(outputPath),
       outputBytes: outputDetails.size,
       outputSha256: await sha256File(outputPath),
+      source: manifest.source,
       dumpFiles: manifest.files.map((item) => ({
         name: item.name,
         bytes: item.bytes,
@@ -594,6 +781,10 @@ async function main() {
   const report = await createProductionDatabaseBackup({
     outputPath,
     passphrase,
+    appDirectory: readArgument("app-directory") || process.cwd(),
+    sourceDirectory: process.cwd(),
+    sourceRepository: readArgument("source-repository"),
+    sourceSha: readArgument("source-sha"),
   });
   console.log(
     `[database-backup] CREATED file=${report.outputFile} bytes=${report.outputBytes}`,

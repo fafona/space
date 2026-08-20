@@ -17,6 +17,37 @@ import {
 } from "./database-backup-contract.mjs";
 import { verifyProductionDatabaseBackup } from "./verify-production-database-backup.mjs";
 
+const SOURCE_IDENTITY = {
+  sourceRepository: "fafona/space",
+  sourceSha: "a".repeat(40),
+  databaseIdentity: {
+    containerName: "supabase-db",
+    containerId: "b".repeat(64),
+    imageId: `sha256:${"c".repeat(64)}`,
+    containerStartedAt: "2026-08-20T10:00:00.000Z",
+    databaseName: "postgres",
+    databaseOid: "16384",
+    systemIdentifier: "7612345678901234567",
+    serverVersionNum: "150008",
+    postmasterStartedAt: "2026-08-20T10:00:01.000Z",
+    primary: true,
+    baseline: {
+      merchantRecordCount: "10",
+      merchantAuthoritativeBindingCount: "10",
+      merchantInvalidBindingCount: "0",
+      personalCanonicalBindingCount: "5",
+      personalCanonicalOrphanCount: "0",
+      personalInvalidCanonicalCount: "0",
+      personalDuplicateAuthUserCount: "0",
+      personalDuplicateAccountIdCount: "0",
+      crossAccountTypeOverlapCount: "0",
+      accountIdentifierCollisionCount: "0",
+      staffRegistryOverlapCount: "0",
+      systemSitePrincipalOverlapCount: "0",
+    },
+  },
+};
+
 async function createFixture(directory) {
   const sourceDirectory = path.join(directory, "source");
   await mkdir(sourceDirectory, { recursive: true });
@@ -30,6 +61,7 @@ async function createFixture(directory) {
     databaseImage: "supabase/postgres:15.8.1.085",
     storageImage: "supabase/storage-api:v1.37.8",
     storageBackend: "file",
+    ...SOURCE_IDENTITY,
   });
   await writeFile(
     path.join(sourceDirectory, "manifest.json"),
@@ -92,6 +124,9 @@ test("encrypted database backup verifies every nested recovery component", async
     });
 
     assert.equal(report.status, "verified");
+    assert.equal(report.schemaVersion, 2);
+    assert.equal(report.manifestSchemaVersion, 2);
+    assert.equal(report.source.sha, SOURCE_IDENTITY.sourceSha);
     assert.equal(report.nestedArchives.postgresConfig.entryCount, 2);
     assert.equal(report.nestedArchives.storage.entryCount, 1);
     assert.equal(report.nestedArchives.supabaseConfig.entryCount, 2);

@@ -1,10 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  mkdir,
-  mkdtemp,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,10 +9,50 @@ import {
   rehearseVerifiedDatabaseBackup,
 } from "./rehearse-production-database-restore.mjs";
 
+const RESTORED_BASELINE = {
+  merchantRecordCount: "10",
+  merchantAuthoritativeBindingCount: "10",
+  merchantInvalidBindingCount: "0",
+  personalCanonicalBindingCount: "5",
+  personalCanonicalOrphanCount: "0",
+  personalInvalidCanonicalCount: "0",
+  personalDuplicateAuthUserCount: "0",
+  personalDuplicateAccountIdCount: "0",
+  crossAccountTypeOverlapCount: "0",
+  accountIdentifierCollisionCount: "0",
+  staffRegistryOverlapCount: "0",
+  systemSitePrincipalOverlapCount: "0",
+};
+
 function restoreManifest(image = "supabase/postgres:15.8.1.085") {
   return {
     source: {
+      strategy: "docker_exec_postgres",
       databaseImage: image,
+      storageImage: "supabase/storage-api:v1.37.8",
+      storageBackend: "file",
+      repository: "fafona/space",
+      sha: "a".repeat(40),
+      originMainSha: "a".repeat(40),
+      detached: true,
+      treeState: "clean",
+      stability: {
+        source: "matched_before_after",
+        database: "matched_before_after",
+      },
+      database: {
+        containerName: "supabase-db",
+        containerId: "b".repeat(64),
+        imageId: `sha256:${"c".repeat(64)}`,
+        containerStartedAt: "2026-08-20T10:00:00.000Z",
+        databaseName: "faolla",
+        databaseOid: "16384",
+        systemIdentifier: "7612345678901234567",
+        serverVersionNum: "150008",
+        postmasterStartedAt: "2026-08-20T10:00:01.000Z",
+        primary: true,
+        baseline: RESTORED_BASELINE,
+      },
     },
   };
 }
@@ -30,10 +65,7 @@ test("database restore rehearsal uses an isolated container and validates key da
   let restored = false;
   try {
     await writeFile(path.join(directory, "database.sql.gz"), "sql");
-    await writeFile(
-      path.join(directory, "postgres-config.tar.gz"),
-      "config",
-    );
+    await writeFile(path.join(directory, "postgres-config.tar.gz"), "config");
     await writeFile(path.join(directory, "storage.tar.gz"), "storage");
 
     const runCommand = async (command, args) => {
@@ -60,6 +92,13 @@ test("database restore rehearsal uses an isolated container and validates key da
       const sqlIndex = args.indexOf("-c");
       if (command === "docker" && sqlIndex >= 0) {
         const sql = args[sqlIndex + 1];
+        if (
+          sql.includes(
+            "faolla_get_ordinary_account_authoritative_cutover_readiness_v1",
+          )
+        ) {
+          return { stdout: `${JSON.stringify(RESTORED_BASELINE)}\n` };
+        }
         if (sql.includes("information_schema.schemata")) {
           return { stdout: "8\n" };
         }
@@ -94,6 +133,7 @@ test("database restore rehearsal uses an isolated container and validates key da
     assert.equal(restored, true);
     assert.equal(report.status, "restored");
     assert.equal(report.isolation, "ephemeral_docker_no_network");
+    assert.deepEqual(report.restoredBaseline, RESTORED_BASELINE);
     assert.deepEqual(report.database, {
       schemas: 8,
       tables: 42,
@@ -114,6 +154,18 @@ test("database restore rehearsal uses an isolated container and validates key da
       ),
       true,
     );
+    assert.equal(
+      calls
+        .filter(
+          (args) =>
+            args[0] === "docker" &&
+            args[1] === "exec" &&
+            args.includes("psql") &&
+            args.includes("-c"),
+        )
+        .every((args) => args[args.indexOf("-d") + 1] === "faolla"),
+      true,
+    );
     const databaseRun = calls.find(
       (args) =>
         args[0] === "docker" &&
@@ -131,9 +183,7 @@ test("database restore rehearsal uses an isolated container and validates key da
     );
     assert.equal(
       databaseRun.some((entry) =>
-        entry.includes(
-          "faolla-restore-config-test,dst=/etc/postgresql-custom",
-        ),
+        entry.includes("faolla-restore-config-test,dst=/etc/postgresql-custom"),
       ),
       true,
     );
@@ -160,11 +210,7 @@ test("database restore rehearsal uses an isolated container and validates key da
       true,
     );
     assert.equal(
-      calls.some(
-        (args) =>
-          args[0] === "docker" &&
-          args[1] === "restart",
-      ),
+      calls.some((args) => args[0] === "docker" && args[1] === "restart"),
       false,
     );
     assert.equal(
@@ -183,8 +229,7 @@ test("database restore rehearsal uses an isolated container and validates key da
       calls.some((args) =>
         args.some(
           (entry) =>
-            typeof entry === "string" &&
-            entry.includes("DROP DATABASE"),
+            typeof entry === "string" && entry.includes("DROP DATABASE"),
         ),
       ),
       false,
@@ -201,20 +246,71 @@ test("database restore rehearsal uses an isolated container and validates key da
     assert.equal(
       calls.some(
         (args) =>
-          args[0] === "docker" &&
-          args[1] === "volume" &&
-          args[2] === "rm",
+          args[0] === "docker" && args[1] === "volume" && args[2] === "rm",
       ),
       true,
     );
     assert.equal(
       calls.filter(
         (args) =>
-          args[0] === "docker" &&
-          args[1] === "volume" &&
-          args[2] === "rm",
+          args[0] === "docker" && args[1] === "volume" && args[2] === "rm",
       ).length,
       2,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("database restore rehearsal rejects a restored authoritative baseline mismatch", async () => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "faolla-restore-baseline-mismatch-test-"),
+  );
+  try {
+    await writeFile(path.join(directory, "database.sql.gz"), "sql");
+    await writeFile(path.join(directory, "postgres-config.tar.gz"), "config");
+    await writeFile(path.join(directory, "storage.tar.gz"), "storage");
+    await assert.rejects(
+      rehearseVerifiedDatabaseBackup({
+        directory,
+        manifest: restoreManifest(),
+        runCommand: async (command, args) => {
+          if (command === "tar") {
+            const destination = args[args.indexOf("-C") + 1];
+            await mkdir(destination, { recursive: true });
+            if (
+              args.some((entry) => entry.endsWith("postgres-config.tar.gz"))
+            ) {
+              await writeFile(
+                path.join(destination, "pgsodium_root.key"),
+                "fixture-key",
+              );
+            }
+            return { stdout: "" };
+          }
+          const sqlIndex = args.indexOf("-c");
+          if (command === "docker" && sqlIndex >= 0) {
+            const sql = args[sqlIndex + 1];
+            if (
+              sql.includes(
+                "faolla_get_ordinary_account_authoritative_cutover_readiness_v1",
+              )
+            ) {
+              return {
+                stdout: `${JSON.stringify({
+                  ...RESTORED_BASELINE,
+                  merchantRecordCount: "11",
+                })}\n`,
+              };
+            }
+          }
+          return { stdout: "" };
+        },
+        restoreSql: async () => ({ skippedGraphqlPublicAclCount: 0 }),
+        sleep: async () => {},
+        resourceSuffix: "baseline-mismatch",
+      }),
+      /restore_authoritative_baseline_mismatch/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -236,7 +332,7 @@ test("database restore defers only the known GraphQL public ACL statements", () 
   );
   assert.equal(
     isDeferredGraphqlAclStatement(
-      '\tGRANT ALL ON FUNCTION graphql_public.graphql(text,text,jsonb,jsonb) TO postgres;',
+      "\tGRANT ALL ON FUNCTION graphql_public.graphql(text,text,jsonb,jsonb) TO postgres;",
     ),
     false,
   );

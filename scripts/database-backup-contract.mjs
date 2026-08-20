@@ -3,6 +3,8 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
+import { PRODUCTION_RELEASE_AGGREGATE_KEYS } from "./production-release-attestation.mjs";
+
 export const DATABASE_BACKUP_DATA_FILES = [
   "database.sql.gz",
   "postgres-config.tar.gz",
@@ -16,12 +18,57 @@ export const DATABASE_BACKUP_ARCHIVE_FILES = [
   "manifest.json",
 ];
 
+const BACKUP_SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const BACKUP_SOURCE_REPOSITORY_PATTERN =
+  /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+const DOCKER_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
+const DOCKER_IMAGE_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
+const AUTHORITATIVE_BASELINE_PATHS = [
+  ["merchantRecordCount", "{merchant,recordCount}"],
+  ["merchantAuthoritativeBindingCount", "{merchant,authoritativeBindingCount}"],
+  ["merchantInvalidBindingCount", "{merchant,invalidBindingCount}"],
+  ["personalCanonicalBindingCount", "{personal,canonicalBindingCount}"],
+  ["personalCanonicalOrphanCount", "{personal,canonicalOrphanCount}"],
+  ["personalInvalidCanonicalCount", "{personal,invalidCanonicalCount}"],
+  ["personalDuplicateAuthUserCount", "{personal,duplicateAuthUserCount}"],
+  [
+    "personalDuplicateAccountIdCount",
+    "{personal,duplicatePersonalAccountIdCount}",
+  ],
+  ["crossAccountTypeOverlapCount", "{security,crossAccountTypeOverlapCount}"],
+  [
+    "accountIdentifierCollisionCount",
+    "{security,accountIdentifierCollisionCount}",
+  ],
+  ["staffRegistryOverlapCount", "{security,staffRegistryOverlapCount}"],
+  [
+    "systemSitePrincipalOverlapCount",
+    "{security,systemSitePrincipalOverlapCount}",
+  ],
+];
+
+export function buildDatabaseBackupAuthoritativeBaselineJsonSql() {
+  return [
+    "pg_catalog.json_build_object(",
+    ...AUTHORITATIVE_BASELINE_PATHS.map(
+      ([key, readinessPath], index) =>
+        `  '${key}', readiness.value #>> '${readinessPath}'${
+          index === AUTHORITATIVE_BASELINE_PATHS.length - 1 ? "" : ","
+        }`,
+    ),
+    ")",
+  ].join("\n");
+}
+
 function trimText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
 function normalizeArchiveEntry(value) {
-  return trimText(value).replaceAll("\\", "/").replace(/^\.\/+/, "");
+  return trimText(value)
+    .replaceAll("\\", "/")
+    .replace(/^\.\/+/, "");
 }
 
 export function validateDatabaseBackupNestedArchiveEntry(value) {
@@ -40,17 +87,13 @@ export function validateDatabaseBackupNestedArchiveEntry(value) {
   ) {
     return { valid: false, error: "nested_archive_entry_unsafe" };
   }
-  const normalized = raw
-    .replace(/^\.\/+/, "")
-    .replace(/\/+$/, "");
+  const normalized = raw.replace(/^\.\/+/, "").replace(/\/+$/, "");
   if (!normalized) {
     return { valid: true, entry: "", root: true };
   }
   const segments = normalized.split("/");
   if (
-    segments.some(
-      (segment) => !segment || segment === "." || segment === "..",
-    )
+    segments.some((segment) => !segment || segment === "." || segment === "..")
   ) {
     return { valid: false, error: "nested_archive_entry_unsafe" };
   }
@@ -63,6 +106,87 @@ export async function sha256File(filePath) {
     hash.update(chunk);
   }
   return hash.digest("hex");
+}
+
+export function validateDatabaseBackupSourceIdentity(value) {
+  const repository = trimText(value?.repository);
+  const sha = trimText(value?.sha);
+  const originMainSha = trimText(value?.originMainSha);
+  const database = value?.database;
+  const containerName = trimText(database?.containerName);
+  const containerId = trimText(database?.containerId);
+  const imageId = trimText(database?.imageId);
+  const containerStartedAt = trimText(database?.containerStartedAt);
+  const databaseName = trimText(database?.databaseName);
+  const databaseOid = trimText(database?.databaseOid);
+  const systemIdentifier = trimText(database?.systemIdentifier);
+  const serverVersionNum = trimText(database?.serverVersionNum);
+  const postmasterStartedAt = trimText(database?.postmasterStartedAt);
+  const baseline = database?.baseline;
+  const baselineKeys =
+    baseline && typeof baseline === "object" && !Array.isArray(baseline)
+      ? Object.keys(baseline).sort()
+      : [];
+  const expectedBaselineKeys = [...PRODUCTION_RELEASE_AGGREGATE_KEYS].sort();
+  const baselineValid =
+    baselineKeys.length === expectedBaselineKeys.length &&
+    baselineKeys.every((key, index) => key === expectedBaselineKeys[index]) &&
+    PRODUCTION_RELEASE_AGGREGATE_KEYS.every((key) =>
+      /^(?:0|[1-9][0-9]*)$/.test(baseline[key]),
+    );
+
+  if (
+    !BACKUP_SOURCE_REPOSITORY_PATTERN.test(repository) ||
+    !BACKUP_SOURCE_SHA_PATTERN.test(sha) ||
+    originMainSha !== sha ||
+    value?.detached !== true ||
+    value?.treeState !== "clean" ||
+    value?.stability?.source !== "matched_before_after" ||
+    value?.stability?.database !== "matched_before_after" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(containerName) ||
+    !DOCKER_CONTAINER_ID_PATTERN.test(containerId) ||
+    !DOCKER_IMAGE_ID_PATTERN.test(imageId) ||
+    !Number.isFinite(Date.parse(containerStartedAt)) ||
+    !/^[A-Za-z0-9_.-]{1,63}$/.test(databaseName) ||
+    !/^[1-9][0-9]{0,9}$/.test(databaseOid) ||
+    !/^[0-9]{10,24}$/.test(systemIdentifier) ||
+    !/^[0-9]{5,6}$/.test(serverVersionNum) ||
+    !Number.isFinite(Date.parse(postmasterStartedAt)) ||
+    database?.primary !== true ||
+    !baselineValid
+  ) {
+    return { valid: false, error: "manifest_source_identity_invalid" };
+  }
+
+  return {
+    valid: true,
+    source: {
+      repository,
+      sha,
+      originMainSha,
+      detached: true,
+      treeState: "clean",
+      stability: {
+        source: "matched_before_after",
+        database: "matched_before_after",
+      },
+      database: {
+        containerName,
+        containerId,
+        imageId,
+        containerStartedAt,
+        databaseName,
+        databaseOid,
+        systemIdentifier,
+        serverVersionNum,
+        postmasterStartedAt,
+        primary: true,
+        baseline: Object.fromEntries(
+          PRODUCTION_RELEASE_AGGREGATE_KEYS.map((key) => [key, baseline[key]]),
+        ),
+      },
+    },
+  };
 }
 
 export async function buildDatabaseBackupManifest(input) {
@@ -80,10 +204,26 @@ export async function buildDatabaseBackupManifest(input) {
       sha256: await sha256File(filePath),
     });
   }
+  const sourceIdentity = validateDatabaseBackupSourceIdentity({
+    repository: input.sourceRepository,
+    sha: input.sourceSha,
+    originMainSha: input.sourceSha,
+    detached: true,
+    treeState: "clean",
+    stability: {
+      source: "matched_before_after",
+      database: "matched_before_after",
+    },
+    database: input.databaseIdentity,
+  });
+  if (!sourceIdentity.valid) {
+    throw new Error(sourceIdentity.error);
+  }
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt: input.createdAt ?? new Date().toISOString(),
-    format: "self-hosted-supabase-dr-v1",
+    format: "self-hosted-supabase-dr-v2",
     dumpTool: {
       name: "pg_dumpall",
       version: trimText(input.toolVersion) || "unknown",
@@ -93,6 +233,7 @@ export async function buildDatabaseBackupManifest(input) {
       databaseImage: trimText(input.databaseImage),
       storageImage: trimText(input.storageImage),
       storageBackend: trimText(input.storageBackend) || "unknown",
+      ...sourceIdentity.source,
     },
     files,
   };
@@ -102,10 +243,11 @@ export function validateDatabaseBackupManifest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { valid: false, error: "manifest_not_object" };
   }
-  if (
-    value.schemaVersion !== 1 ||
-    value.format !== "self-hosted-supabase-dr-v1"
-  ) {
+  const legacyFormat =
+    value.schemaVersion === 1 && value.format === "self-hosted-supabase-dr-v1";
+  const stableIdentityFormat =
+    value.schemaVersion === 2 && value.format === "self-hosted-supabase-dr-v2";
+  if (!legacyFormat && !stableIdentityFormat) {
     return { valid: false, error: "manifest_version_unsupported" };
   }
   if (!Number.isFinite(Date.parse(trimText(value.createdAt)))) {
@@ -121,11 +263,15 @@ export function validateDatabaseBackupManifest(value) {
     value.source?.strategy !== "docker_exec_postgres" ||
     !/^[a-z0-9][a-z0-9._/:@-]{1,159}$/i.test(databaseImage) ||
     !/^[a-z0-9][a-z0-9._/:@-]{1,159}$/i.test(storageImage) ||
-    !["file", "s3", "unspecified", "other", "unknown"].includes(
-      storageBackend,
-    )
+    !["file", "s3", "unspecified", "other", "unknown"].includes(storageBackend)
   ) {
     return { valid: false, error: "manifest_source_invalid" };
+  }
+  const sourceIdentity = stableIdentityFormat
+    ? validateDatabaseBackupSourceIdentity(value.source)
+    : null;
+  if (sourceIdentity && !sourceIdentity.valid) {
+    return sourceIdentity;
   }
 
   const entries = new Map();
@@ -155,9 +301,9 @@ export function validateDatabaseBackupManifest(value) {
   return {
     valid: true,
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: value.schemaVersion,
       createdAt: trimText(value.createdAt),
-      format: "self-hosted-supabase-dr-v1",
+      format: value.format,
       dumpTool: {
         name: "pg_dumpall",
         version: trimText(value.dumpTool?.version) || "unknown",
@@ -167,6 +313,7 @@ export function validateDatabaseBackupManifest(value) {
         databaseImage,
         storageImage,
         storageBackend,
+        ...(sourceIdentity?.source ?? {}),
       },
       files: DATABASE_BACKUP_DATA_FILES.map((name) => entries.get(name)),
     },
@@ -177,9 +324,7 @@ export function validateDatabaseBackupArchiveEntries(entries) {
   if (!Array.isArray(entries)) {
     return { valid: false, error: "archive_entries_invalid" };
   }
-  const normalized = entries
-    .map(normalizeArchiveEntry)
-    .filter(Boolean);
+  const normalized = entries.map(normalizeArchiveEntry).filter(Boolean);
   const expected = new Set(DATABASE_BACKUP_ARCHIVE_FILES);
   const seen = new Set();
   for (const entry of normalized) {

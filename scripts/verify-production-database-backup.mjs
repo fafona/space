@@ -366,10 +366,11 @@ export async function withVerifiedProductionDatabaseBackup(input) {
     };
 
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       checkedAt: new Date().toISOString(),
       status: "verified",
       backupCreatedAt: verification.manifest.createdAt,
+      manifestSchemaVersion: verification.manifest.schemaVersion,
       format: verification.manifest.format,
       inputFile: path.basename(inputPath),
       inputBytes: inputDetails.size,
