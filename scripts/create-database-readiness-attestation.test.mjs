@@ -42,10 +42,10 @@ function database(overrides = {}) {
 
 function baseline(overrides = {}) {
   return {
-    merchantRecordCount: "10",
-    merchantAuthoritativeBindingCount: "10",
+    merchantRecordCount: "11",
+    merchantAuthoritativeBindingCount: "11",
     merchantInvalidBindingCount: "0",
-    personalCanonicalBindingCount: "5",
+    personalCanonicalBindingCount: "6",
     personalCanonicalOrphanCount: "0",
     personalInvalidCanonicalCount: "0",
     personalDuplicateAuthUserCount: "0",
@@ -425,6 +425,14 @@ test("builder rejects checker database identity and baseline drift", async (t) =
         value.report.status = "blocked";
       },
       "readiness_checker_not_ready",
+    ],
+    [
+      "ready population changed after backup",
+      (value) => {
+        value.report.readiness.merchantRecordCount = 12;
+        value.report.readiness.merchantAuthoritativeBindingCount = 12;
+      },
+      "readiness_backup_baseline_mismatch",
     ],
   ]) {
     await t.test(name, async () => {

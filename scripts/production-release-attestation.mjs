@@ -626,6 +626,9 @@ function parseReadinessAttestation(value, timeContext) {
   if (!canonicalValuesEqual(backupAttestation.database, database)) {
     fail("readiness_backup_database_mismatch");
   }
+  if (!canonicalValuesEqual(backupAttestation.baseline, baseline)) {
+    fail("readiness_backup_baseline_mismatch");
+  }
   if (
     lifetime.issuedAt.timestamp + PRODUCTION_RELEASE_MAX_CLOCK_SKEW_MS <
       backupLifetime.issuedAt.timestamp ||

@@ -151,11 +151,7 @@ function readinessAttestation(overrides = {}) {
       cleanAfter: true,
     },
     database: database(),
-    baseline: baseline({
-      merchantRecordCount: "11",
-      merchantAuthoritativeBindingCount: "11",
-      personalCanonicalBindingCount: "6",
-    }),
+    baseline: baseline(),
     readinessArtifact: artifact({
       id: "9003",
       runId: "8002",
@@ -243,7 +239,7 @@ test("backup attestation validates exact run, source, database, baseline, and ar
   assert.equal(validation.sha256, sha256Hex(validation.canonicalBytes));
 });
 
-test("readiness attestation recursively binds the complete backup and allows a newer population baseline", () => {
+test("readiness attestation recursively binds the complete backup and exact baseline", () => {
   const value = readinessAttestation();
   const parsed = parseProductionReleaseAttestation(value, { nowMs: NOW_MS });
   const summary = productionReleaseAttestationSummary(parsed);
@@ -251,7 +247,7 @@ test("readiness attestation recursively binds the complete backup and allows a n
   assert.equal(parsed.kind, PRODUCTION_READINESS_ATTESTATION_KIND);
   assert.equal(parsed.run.id, "8002");
   assert.equal(parsed.backup.attestation.run.id, "8001");
-  assert.equal(parsed.baseline.merchantRecordCount, "11");
+  assert.equal(parsed.baseline.merchantRecordCount, "10");
   assert.equal(parsed.backup.attestation.baseline.merchantRecordCount, "10");
   assert.equal(summary.backupRunId, "8001");
   assert.equal(summary.readinessRunId, "8002");
@@ -260,6 +256,13 @@ test("readiness attestation recursively binds the complete backup and allows a n
   assert.equal(summary.readinessArtifactId, "9003");
   assert.match(summary.databaseIdentitySha256, /^[0-9a-f]{64}$/);
   assert.match(summary.baselineSha256, /^[0-9a-f]{64}$/);
+});
+
+test("readiness rejects any population change after the verified backup", () => {
+  const value = readinessAttestation();
+  value.baseline.merchantRecordCount = "11";
+  value.baseline.merchantAuthoritativeBindingCount = "11";
+  assertInvalid(value, "readiness_backup_baseline_mismatch");
 });
 
 test("canonical JSON bytes sort every object key and include exactly one LF", () => {
