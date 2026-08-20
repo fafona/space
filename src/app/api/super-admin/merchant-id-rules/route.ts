@@ -16,12 +16,12 @@ function unauthorizedJson() {
   return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 }
 
-function ensureAuthorized(request: Request) {
+async function ensureAuthorized(request: Request) {
   return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 

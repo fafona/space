@@ -8,6 +8,7 @@ import {
 } from "@/lib/merchantBusinessCardShare";
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { loadCurrentMerchantSnapshotSites, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
+import { buildOriginScopedCacheKey, resolveConfiguredPublicRequestOrigin } from "@/lib/requestOrigin";
 
 const CARD_IMAGE_CACHE_TTL_MS = 60_000;
 const CARD_IMAGE_REDIRECT_CACHE_CONTROL = "no-store, max-age=0";
@@ -19,15 +20,6 @@ const cardImageUrlCache = new Map<
     imageUrl: string;
   }
 >();
-
-function resolveRequestOrigin(request: Request) {
-  const forwardedHost = String(request.headers.get("x-forwarded-host") ?? "").trim();
-  const host = forwardedHost || String(request.headers.get("host") ?? "").trim();
-  const forwardedProto = String(request.headers.get("x-forwarded-proto") ?? "").trim();
-  if (!host) return new URL(request.url).origin;
-  const protocol = forwardedProto || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
-  return `${protocol}://${host}`;
-}
 
 async function withCardImageTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -43,31 +35,47 @@ async function withCardImageTimeout<T>(promise: Promise<T>, fallback: T, timeout
   }
 }
 
-function readCachedCardImageUrl(shareKey: string) {
+function readCachedCardImageUrl(shareKey: string, requestOrigin: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
-  if (!normalizedShareKey) return "";
-  const cached = cardImageUrlCache.get(normalizedShareKey);
+  const cacheKey = buildOriginScopedCacheKey(normalizedShareKey, requestOrigin);
+  if (!cacheKey) return "";
+  const cached = cardImageUrlCache.get(cacheKey);
   if (!cached) return "";
   if (cached.expiresAt <= Date.now()) {
-    cardImageUrlCache.delete(normalizedShareKey);
+    cardImageUrlCache.delete(cacheKey);
     return "";
   }
   return cached.imageUrl;
 }
 
-function writeCachedCardImageUrl(shareKey: string, imageUrl: string | null | undefined) {
+function writeCachedCardImageUrl(
+  shareKey: string,
+  requestOrigin: string,
+  imageUrl: string | null | undefined,
+) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  const cacheKey = buildOriginScopedCacheKey(normalizedShareKey, requestOrigin);
   const normalizedImageUrl = String(imageUrl ?? "").trim();
-  if (!normalizedShareKey || !normalizedImageUrl) return;
-  cardImageUrlCache.set(normalizedShareKey, {
+  if (!cacheKey || !normalizedImageUrl) return;
+  cardImageUrlCache.set(cacheKey, {
     expiresAt: Date.now() + CARD_IMAGE_CACHE_TTL_MS,
     imageUrl: normalizedImageUrl,
   });
 }
 
-function clearCachedCardImageUrl(shareKey: string) {
+function clearCachedCardImageUrl(shareKey: string, requestOrigin?: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
-  if (normalizedShareKey) cardImageUrlCache.delete(normalizedShareKey);
+  if (!normalizedShareKey) return;
+  const cacheKey = requestOrigin
+    ? buildOriginScopedCacheKey(normalizedShareKey, requestOrigin)
+    : "";
+  if (cacheKey) {
+    cardImageUrlCache.delete(cacheKey);
+    return;
+  }
+  for (const key of Array.from(cardImageUrlCache.keys())) {
+    if (key.startsWith(`${normalizedShareKey}|`)) cardImageUrlCache.delete(key);
+  }
 }
 
 type CardImageSnapshotSite = {
@@ -166,9 +174,9 @@ export async function GET(
     });
   }
 
-  const requestOrigin = resolveRequestOrigin(request);
+  const requestOrigin = resolveConfiguredPublicRequestOrigin(request);
   const payloadOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin;
-  const cachedImageUrl = readCachedCardImageUrl(shareKey);
+  const cachedImageUrl = readCachedCardImageUrl(shareKey, requestOrigin);
   const payloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, payloadOrigin);
   const snapshotImagePromise = cachedImageUrl
     ? null
@@ -193,7 +201,7 @@ export async function GET(
   }
   if (cachedImageUrl) {
     void payloadPromise.then((freshPayload) => {
-      writeCachedCardImageUrl(shareKey, freshPayload?.imageUrl);
+      writeCachedCardImageUrl(shareKey, requestOrigin, freshPayload?.imageUrl);
     }).catch(() => null);
   }
   const imageUrl =
@@ -215,7 +223,7 @@ export async function GET(
       },
     });
   }
-  writeCachedCardImageUrl(shareKey, imageUrl);
+  writeCachedCardImageUrl(shareKey, requestOrigin, imageUrl);
 
   const response = NextResponse.redirect(imageUrl, { status: 302 });
   response.headers.set("cache-control", CARD_IMAGE_REDIRECT_CACHE_CONTROL);

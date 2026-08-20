@@ -22,7 +22,7 @@ function createServerSupabaseClient() {
 }
 
 export async function GET(request: Request) {
-  if (!isSuperAdminRequestAuthorized(request)) {
+  if (!(await isSuperAdminRequestAuthorized(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
-  if (!isSuperAdminRequestAuthorized(request)) {
+  if (!(await isSuperAdminRequestAuthorized(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

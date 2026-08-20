@@ -31,12 +31,12 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
-function isAuthorized(request: Request) {
+async function isAuthorized(request: Request) {
   return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {
-  if (!isAuthorized(request)) {
+  if (!(await isAuthorized(request))) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!isAuthorized(request)) {
+  if (!(await isAuthorized(request))) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
 

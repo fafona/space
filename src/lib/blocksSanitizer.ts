@@ -1,10 +1,14 @@
 import type { Block } from "../data/homeBlocks";
 import { BLOCKS_SCHEMA_VERSION } from "./blocksSchema";
+import { containsRichMarkup, toPlainRichText } from "./richTextSafety";
 
 const MAX_INLINE_IMAGE_URL_LENGTH = 6_000_000;
 const MAX_INLINE_AUDIO_URL_LENGTH = 4_000_000;
 
 function sanitizeInlineDataUrl(value: string): { value: string; removed: number } {
+  if (/^data:image\/svg\+xml(?:;|,)/i.test(value)) {
+    return { value: "", removed: 1 };
+  }
   if (/^data:image\//i.test(value) && value.length > MAX_INLINE_IMAGE_URL_LENGTH) {
     return { value: "", removed: 1 };
   }
@@ -16,7 +20,13 @@ function sanitizeInlineDataUrl(value: string): { value: string; removed: number 
 
 function sanitizeUnknown(input: unknown): { value: unknown; removed: number } {
   if (typeof input === "string") {
-    return sanitizeInlineDataUrl(input);
+    const inlineData = sanitizeInlineDataUrl(input);
+    if (inlineData.removed > 0 || /^data:/i.test(inlineData.value)) return inlineData;
+    if (containsRichMarkup(inlineData.value)) {
+      const value = toPlainRichText(inlineData.value);
+      return { value, removed: value === inlineData.value ? 0 : 1 };
+    }
+    return inlineData;
   }
 
   if (Array.isArray(input)) {

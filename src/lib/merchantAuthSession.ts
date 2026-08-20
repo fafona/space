@@ -1,11 +1,24 @@
 import type { NextResponse } from "next/server";
+import {
+  isCanonicalPortalRequest,
+  resolveCanonicalPortalHostname,
+  resolvePublicRequestHostname,
+} from "@/lib/canonicalPortalRequest";
+import { appendLegacyCookieExpiration } from "@/lib/legacyCookieCleanup";
 
-export const MERCHANT_AUTH_COOKIE = "merchant-space-merchant-auth";
-export const MERCHANT_AUTH_REFRESH_COOKIE = "merchant-space-merchant-refresh";
-export const MERCHANT_AUTH_MERCHANT_ID_COOKIE = "merchant-space-merchant-id";
-export const MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE = "merchant-space-account-type";
+export const MERCHANT_AUTH_COOKIE = "__Host-faolla-merchant-auth-v2";
+export const MERCHANT_AUTH_REFRESH_COOKIE = "__Host-faolla-merchant-refresh-v2";
+export const MERCHANT_AUTH_MERCHANT_ID_COOKIE = "__Host-faolla-merchant-id-v2";
+export const MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE = "__Host-faolla-account-type-v2";
 export const MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS = 60 * 60;
 export const MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+const LEGACY_MERCHANT_AUTH_COOKIE_NAMES = [
+  "merchant-space-merchant-auth",
+  "merchant-space-merchant-refresh",
+  "merchant-space-merchant-id",
+  "merchant-space-account-type",
+] as const;
 
 type MerchantAuthAccountType = "merchant" | "personal";
 
@@ -30,61 +43,31 @@ function normalizeCookieMaxAge(value: unknown, fallback: number) {
   return Math.max(60, Math.round(parsed));
 }
 
-function normalizeCookieBaseDomain(value: string | null | undefined) {
-  const trimmed = String(value ?? "").trim().toLowerCase();
-  if (!trimmed) return "";
-  try {
-    const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-    const hostname = new URL(candidate).hostname.trim().toLowerCase();
-    return hostname.replace(/^\.+/, "");
-  } catch {
-    return trimmed.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/^\.+/, "");
-  }
+function canUseMerchantAuthentication(request: Request) {
+  return isCanonicalPortalRequest(request);
 }
 
-function isLocalLikeHostname(value: string) {
-  const hostname = String(value ?? "").trim().toLowerCase();
-  return !hostname || hostname === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+function resolveLegacyMerchantCookieDomain(canonicalHostname: string) {
+  return canonicalHostname.replace(/^www\./, "");
 }
 
-function resolveMerchantCookieDomain(request?: Request) {
-  if (!request) return undefined;
-  const requestHost = (() => {
-    try {
-      return new URL(request.url).hostname.trim().toLowerCase();
-    } catch {
-      return "";
+function expireLegacyMerchantAuthCookies(response: NextResponse, request?: Request) {
+  const canonicalHostname = resolveCanonicalPortalHostname();
+  const legacyCookieDomain = resolveLegacyMerchantCookieDomain(canonicalHostname);
+  const requestHostname = request ? resolvePublicRequestHostname(request) : "";
+  const mayClearDomainCookie =
+    legacyCookieDomain &&
+    (requestHostname === legacyCookieDomain || requestHostname.endsWith(`.${legacyCookieDomain}`));
+
+  for (const name of LEGACY_MERCHANT_AUTH_COOKIE_NAMES) {
+    appendLegacyCookieExpiration(response, name, { httpOnly: true });
+    if (mayClearDomainCookie) {
+      appendLegacyCookieExpiration(response, name, {
+        domain: legacyCookieDomain,
+        httpOnly: true,
+      });
     }
-  })();
-  if (isLocalLikeHostname(requestHost)) {
-    return undefined;
   }
-  const configuredBaseDomain = normalizeCookieBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
-  const fallbackBaseDomain = requestHost.split(".").length >= 2 ? requestHost.split(".").slice(-2).join(".") : "";
-  const matchedConfiguredBaseDomain =
-    configuredBaseDomain &&
-    (requestHost === configuredBaseDomain || requestHost.endsWith(`.${configuredBaseDomain}`))
-      ? configuredBaseDomain
-      : "";
-  const baseDomain = matchedConfiguredBaseDomain || fallbackBaseDomain;
-  if (!baseDomain) return undefined;
-  if (requestHost !== baseDomain && !requestHost.endsWith(`.${baseDomain}`)) {
-    return undefined;
-  }
-  return baseDomain;
-}
-
-function resolveMerchantCookieSecureFlag(request?: Request) {
-  if (!request) return false;
-  const requestHost = (() => {
-    try {
-      return new URL(request.url).hostname.trim().toLowerCase();
-    } catch {
-      return "";
-    }
-  })();
-  // Public merchant auth cookies should not be sent over cleartext transport.
-  return !isLocalLikeHostname(requestHost);
 }
 
 export function parseCookieValues(cookieHeader: string, key: string) {
@@ -111,6 +94,7 @@ function uniqueCookieCandidates(values: string[]) {
 }
 
 function readMerchantCookieCandidates(request: Request, key: string) {
+  if (!canUseMerchantAuthentication(request)) return [];
   return uniqueCookieCandidates(parseCookieValues(request.headers.get("cookie") ?? "", key));
 }
 
@@ -123,14 +107,17 @@ export function readMerchantAuthRefreshCookie(request: Request) {
 }
 
 export function readMerchantAuthMerchantIdCookie(request: Request) {
+  if (!canUseMerchantAuthentication(request)) return "";
   return normalizeMerchantId(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_MERCHANT_ID_COOKIE));
 }
 
 export function readMerchantAuthAccountTypeCookie(request: Request) {
+  if (!canUseMerchantAuthentication(request)) return "";
   return normalizeMerchantAccountType(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE));
 }
 
 function readRequestTokenHeader(request: Request, key: string) {
+  if (!canUseMerchantAuthentication(request)) return [];
   const normalized = request.headers.get(key)?.trim() ?? "";
   return normalized ? [normalized] : [];
 }
@@ -175,6 +162,10 @@ export function setMerchantAuthCookies(
   },
   request?: Request,
 ) {
+  if (request && !canUseMerchantAuthentication(request)) {
+    expireLegacyMerchantAuthCookies(response, request);
+    return;
+  }
   const normalizedAccessToken = String(input.accessToken ?? "").trim();
   const normalizedRefreshToken = String(input.refreshToken ?? "").trim();
   const normalizedMerchantId = normalizeMerchantId(input.merchantId);
@@ -183,8 +174,6 @@ export function setMerchantAuthCookies(
     input.maxAgeSeconds,
     MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS,
   );
-  const cookieDomain = resolveMerchantCookieDomain(request);
-  const secure = resolveMerchantCookieSecureFlag(request);
   if (!normalizedAccessToken) {
     clearMerchantAuthCookies(response, request);
     return;
@@ -193,29 +182,26 @@ export function setMerchantAuthCookies(
   response.cookies.set(MERCHANT_AUTH_COOKIE, normalizedAccessToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: accessCookieMaxAge,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
 
   if (normalizedRefreshToken) {
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, normalizedRefreshToken, {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
-      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   } else if (!input.preserveRefreshToken) {
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: 0,
-      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   }
 
@@ -223,19 +209,17 @@ export function setMerchantAuthCookies(
     response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, normalizedMerchantId, {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
-      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   } else {
     response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: 0,
-      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   }
 
@@ -243,21 +227,20 @@ export function setMerchantAuthCookies(
     response.cookies.set(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE, normalizedAccountType, {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
-      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   } else if (!(input.preserveRefreshToken && input.accountType === undefined)) {
     response.cookies.set(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: 0,
-      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   }
+  expireLegacyMerchantAuthCookies(response, request);
 }
 
 export function clearMerchantAuthCookie(response: NextResponse, request?: Request) {
@@ -265,38 +248,33 @@ export function clearMerchantAuthCookie(response: NextResponse, request?: Reques
 }
 
 export function clearMerchantAuthCookies(response: NextResponse, request?: Request) {
-  const cookieDomain = resolveMerchantCookieDomain(request);
-  const secure = resolveMerchantCookieSecureFlag(request);
   response.cookies.set(MERCHANT_AUTH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
+  expireLegacyMerchantAuthCookies(response, request);
 }

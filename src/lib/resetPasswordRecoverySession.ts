@@ -1,8 +1,28 @@
 import type { NextResponse } from "next/server";
-import { resolveSecureCookieFlag } from "@/lib/requestOrigin";
+import { resolveCanonicalPortalHostname } from "@/lib/canonicalPortalRequest";
+import { appendLegacyCookieExpiration } from "@/lib/legacyCookieCleanup";
 
-export const RESET_PASSWORD_RECOVERY_COOKIE = "merchant-space-reset-recovery";
-export const RESET_PASSWORD_RECOVERY_REFRESH_COOKIE = "merchant-space-reset-recovery-refresh";
+export const RESET_PASSWORD_RECOVERY_COOKIE = "__Host-faolla-reset-recovery-v2";
+export const RESET_PASSWORD_RECOVERY_REFRESH_COOKIE = "__Host-faolla-reset-recovery-refresh-v2";
+export const LEGACY_RESET_PASSWORD_RECOVERY_COOKIE = "merchant-space-reset-recovery";
+export const LEGACY_RESET_PASSWORD_RECOVERY_REFRESH_COOKIE = "merchant-space-reset-recovery-refresh";
+
+function expireLegacyResetRecoveryCookies(response: NextResponse) {
+  const canonicalHostname = resolveCanonicalPortalHostname();
+  const rootHostname = canonicalHostname.replace(/^www\./, "");
+  for (const name of [
+    LEGACY_RESET_PASSWORD_RECOVERY_COOKIE,
+    LEGACY_RESET_PASSWORD_RECOVERY_REFRESH_COOKIE,
+  ]) {
+    appendLegacyCookieExpiration(response, name, { httpOnly: true });
+    if (rootHostname) {
+      appendLegacyCookieExpiration(response, name, {
+        domain: rootHostname,
+        httpOnly: true,
+      });
+    }
+  }
+}
 
 function normalizeMaxAge(value: unknown) {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
@@ -36,7 +56,6 @@ export function setResetRecoveryCookies(
   const accessToken = String(input.accessToken ?? "").trim();
   const refreshToken = String(input.refreshToken ?? "").trim();
   const maxAge = normalizeMaxAge(input.maxAgeSeconds);
-  const secure = resolveSecureCookieFlag(request);
 
   if (!accessToken) {
     clearResetRecoveryCookies(response, request);
@@ -46,7 +65,7 @@ export function setResetRecoveryCookies(
   response.cookies.set(RESET_PASSWORD_RECOVERY_COOKIE, accessToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge,
   });
@@ -55,7 +74,7 @@ export function setResetRecoveryCookies(
     response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, refreshToken, {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge,
     });
@@ -63,27 +82,29 @@ export function setResetRecoveryCookies(
     response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure,
+      secure: true,
       path: "/",
       maxAge: 0,
     });
   }
+  expireLegacyResetRecoveryCookies(response);
 }
 
 export function clearResetRecoveryCookies(response: NextResponse, request?: Request) {
-  const secure = resolveSecureCookieFlag(request);
+  void request;
   response.cookies.set(RESET_PASSWORD_RECOVERY_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
   });
   response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
   });
+  expireLegacyResetRecoveryCookies(response);
 }

@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { POST } from "@/app/api/super-admin/auth/request/route";
+import {
+  buildSuperAdminVerificationRedirectUrl,
+  POST,
+} from "@/app/api/super-admin/auth/request/route";
 
 function withSuperAdminAuthEnv(run: () => Promise<void>) {
   const previousAccount = process.env.SUPER_ADMIN_ACCOUNT;
@@ -67,4 +70,18 @@ test("super-admin auth request rejects malformed devices", async () => {
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_device" });
   });
+});
+
+test("super-admin verification links return directly to the dedicated console origin", () => {
+  const previous = process.env.FAOLLA_SUPER_ADMIN_ORIGIN;
+  process.env.FAOLLA_SUPER_ADMIN_ORIGIN = "https://console.faolla.com";
+  try {
+    assert.equal(
+      buildSuperAdminVerificationRedirectUrl("/super-admin/editor", "challenge-token").toString(),
+      "https://console.faolla.com/super-admin/login?next=%2Fsuper-admin%2Feditor&superAdminChallenge=challenge-token",
+    );
+  } finally {
+    if (previous === undefined) delete process.env.FAOLLA_SUPER_ADMIN_ORIGIN;
+    else process.env.FAOLLA_SUPER_ADMIN_ORIGIN = previous;
+  }
 });

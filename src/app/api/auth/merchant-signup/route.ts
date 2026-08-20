@@ -69,15 +69,12 @@ function normalizeRequestedAccountType(value: unknown): PlatformAccountType {
   return value === "personal" ? "personal" : "merchant";
 }
 
-function signUpNeedsEmailConfirmation(data: {
+export function signUpNeedsEmailConfirmation(data: {
   session?: { user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null } | null;
   user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null;
 }) {
   const user = data.session?.user ?? data.user ?? null;
-  const metadata = user?.user_metadata;
-  const emailVerified =
-    metadata && typeof metadata === "object" ? (metadata.email_verified as boolean | undefined) === true : false;
-  return !(data.session || user?.email_confirmed_at || emailVerified);
+  return !(data.session || user?.email_confirmed_at);
 }
 
 export async function POST(request: Request) {

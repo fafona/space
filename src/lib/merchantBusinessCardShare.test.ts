@@ -341,6 +341,9 @@ test("share helpers preserve contact card layout controls and custom links", () 
 test("share helpers normalize bare domain click links", () => {
   assert.equal(normalizeMerchantBusinessCardShareTargetUrl("www.faolla.com"), "https://www.faolla.com/");
   assert.equal(normalizeMerchantBusinessCardShareTargetUrl("faolla.com/card/felix"), "https://faolla.com/card/felix");
+  assert.equal(normalizeMerchantBusinessCardShareTargetUrl("javascript:alert(1)"), "");
+  assert.equal(normalizeMerchantBusinessCardShareTargetUrl("data:text/html,<script>alert(1)</script>"), "");
+  assert.equal(normalizeMerchantBusinessCardShareTargetUrl("https:\\evil.example"), "");
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin: "https://faolla.com",
     name: "fafona",
@@ -353,6 +356,24 @@ test("share helpers normalize bare domain click links", () => {
   assert.equal(url.searchParams.get("detailImageLink"), "https://www.faolla.com/");
   const parsed = parseMerchantBusinessCardShareParams(url.searchParams, "https://faolla.com");
   assert.equal(parsed?.detailImageLinkUrl, "https://www.faolla.com/");
+});
+
+test("custom contact icons do not fall back to rejected asset URLs", () => {
+  const contact = normalizeMerchantBusinessCardShareContact({
+    customLinks: [
+      {
+        id: "unsafe-icon",
+        label: "Unsafe",
+        displayText: "Open",
+        url: "https://example.com/",
+        iconPreset: "link",
+        iconUrl: "http://example.com/icon.png",
+        bgColor: "#0f172a",
+      },
+    ],
+  });
+
+  assert.equal(contact?.customLinks?.[0]?.iconUrl, "");
 });
 
 test("resolveMerchantBusinessCardShareOrigin prefers target root domain over localhost", () => {

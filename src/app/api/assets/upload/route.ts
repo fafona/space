@@ -636,7 +636,7 @@ export async function resolveAssetUploadActorContext(
   merchantHint: string,
   dependencies: AssetUploadActorContextDependencies = DEFAULT_ACTOR_CONTEXT_DEPENDENCIES,
 ): Promise<ActorContext> {
-  if (isSuperAdminRequestAuthorized(request)) {
+  if (await isSuperAdminRequestAuthorized(request)) {
     return {
       ok: true,
       effectiveMerchantHint: merchantHint || "platform",

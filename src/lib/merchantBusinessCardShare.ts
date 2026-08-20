@@ -313,7 +313,7 @@ function normalizeCustomContactLinks(value: unknown): MerchantBusinessCardCustom
         displayText: clampContactText(source.displayText, 160),
         url: clampContactText(source.url, 500),
         iconPreset: clampContactText(source.iconPreset, 32) || "link",
-        iconUrl: normalizeMerchantBusinessCardShareImageUrl(source.iconUrl, undefined) || clampContactText(source.iconUrl, 500),
+        iconUrl: normalizeMerchantBusinessCardShareImageUrl(source.iconUrl, undefined),
         bgColor: clampContactText(source.bgColor, 32) || "#0f172a",
       } satisfies MerchantBusinessCardCustomContactLink;
     })
@@ -366,7 +366,7 @@ function rewriteStorageUrlToOrigin(value: string, preferredOrigin: string) {
 
 export function normalizeMerchantBusinessCardShareTargetUrl(value: string | null | undefined) {
   const trimmed = normalizeText(value);
-  if (!trimmed) return "";
+  if (!trimmed || trimmed.length > 2048 || trimmed.includes("\\") || /[\u0000-\u001f\u007f]/.test(trimmed)) return "";
   const candidates = [
     trimmed,
     trimmed.startsWith("//") ? `https:${trimmed}` : "",

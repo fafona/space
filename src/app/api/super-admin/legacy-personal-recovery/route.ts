@@ -31,7 +31,7 @@ function unauthorizedResponse() {
   );
 }
 
-function loadDependencies(request?: Request) {
+function loadDependencies(authorized = false) {
   const service = createServerSupabaseServiceClient();
   if (!service) {
     throw new LegacyPersonalRecoveryError(
@@ -41,12 +41,20 @@ function loadDependencies(request?: Request) {
   }
   return createLegacyPersonalRecoveryApprovalDependencies(
     service as unknown as LegacyPersonalRecoverySupabaseServiceClient,
-    () => Boolean(request && isSuperAdminRequestAuthorized(request)),
+    () => authorized,
   );
 }
 
+export function isLegacyPersonalRecoveryApprovalBody(
+  body: unknown,
+): body is { confirm: true } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const record = body as Record<string, unknown>;
+  return Object.keys(record).length === 1 && record.confirm === true;
+}
+
 export async function GET(request: Request) {
-  if (!isSuperAdminRequestAuthorized(request)) return unauthorizedResponse();
+  if (!(await isSuperAdminRequestAuthorized(request))) return unauthorizedResponse();
   try {
     const recoveryCase = loadLegacyPersonalRecoveryCase();
     const status = await getLegacyPersonalRecoveryStatus(
@@ -63,7 +71,7 @@ export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return sameOriginLegacyPersonalRecoveryErrorResponse();
   }
-  if (!isSuperAdminRequestAuthorized(request)) return unauthorizedResponse();
+  if (!(await isSuperAdminRequestAuthorized(request))) return unauthorizedResponse();
   if (!hasAcceptableLegacyPersonalRecoveryBodySize(request)) {
     return bodyTooLargeLegacyPersonalRecoveryResponse();
   }
@@ -83,11 +91,7 @@ export async function POST(request: Request) {
       string,
       unknown
     > | null;
-    if (
-      !body ||
-      Object.keys(body).length !== 1 ||
-      body.confirm !== true
-    ) {
+    if (!isLegacyPersonalRecoveryApprovalBody(body)) {
       return legacyPersonalRecoveryJson(
         { ok: false, error: "legacy_personal_recovery_confirmation_required" },
         { status: 400 },
@@ -95,7 +99,7 @@ export async function POST(request: Request) {
     }
     const result = await approveLegacyPersonalRecovery(
       recoveryCase,
-      loadDependencies(request),
+      loadDependencies(true),
     );
     return legacyPersonalRecoveryJson(result);
   } catch (error) {

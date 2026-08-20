@@ -21,7 +21,7 @@ import {
   type MerchantBusinessCardShareContact,
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
-import { resolveForwardedRequestOrigin, resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
+import { buildOriginScopedCacheKey, resolveConfiguredPublicRequestOrigin } from "@/lib/requestOrigin";
 import {
   MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
   MERCHANT_BUSINESS_CARD_INTRO_IMAGE_MAX_DURATION_SECONDS,
@@ -2187,13 +2187,14 @@ const contactCardPayloadCache = new Map<
   }
 >();
 
-function readCachedContactCardPayload(shareKey: string) {
+function readCachedContactCardPayload(shareKey: string, requestOrigin: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
-  if (!normalizedShareKey) return null;
-  const cached = contactCardPayloadCache.get(normalizedShareKey);
+  const cacheKey = buildOriginScopedCacheKey(normalizedShareKey, requestOrigin);
+  if (!cacheKey) return null;
+  const cached = contactCardPayloadCache.get(cacheKey);
   if (!cached) return null;
   if (cached.expiresAt <= Date.now()) {
-    contactCardPayloadCache.delete(normalizedShareKey);
+    contactCardPayloadCache.delete(cacheKey);
     return null;
   }
   return cached.payload;
@@ -2205,20 +2206,35 @@ function writeCachedContactCardPayload(
   preferredOrigin?: string,
 ) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  const cacheKey = buildOriginScopedCacheKey(normalizedShareKey, preferredOrigin);
   const normalizedPayload = payload ? normalizeMerchantBusinessCardSharePayload(payload, preferredOrigin) : null;
-  if (!normalizedShareKey || !normalizedPayload) return;
-  contactCardPayloadCache.set(normalizedShareKey, {
+  if (!cacheKey || !normalizedPayload) return;
+  contactCardPayloadCache.set(cacheKey, {
     expiresAt: Date.now() + CONTACT_CARD_PAYLOAD_CACHE_TTL_MS,
     payload: normalizedPayload,
   });
 }
 
-function clearCachedContactCardPayload(shareKey: string) {
+function clearCachedContactCardPayload(shareKey: string, requestOrigin?: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
   if (!normalizedShareKey) return;
-  contactCardPayloadCache.delete(normalizedShareKey);
+  const cacheKey = requestOrigin
+    ? buildOriginScopedCacheKey(normalizedShareKey, requestOrigin)
+    : "";
+  if (cacheKey) {
+    contactCardPayloadCache.delete(cacheKey);
+  } else {
+    for (const key of Array.from(contactCardPayloadCache.keys())) {
+      if (key.startsWith(`${normalizedShareKey}|`)) {
+        contactCardPayloadCache.delete(key);
+      }
+    }
+  }
   for (const key of Array.from(contactCardHtmlCache.keys())) {
-    if (key === normalizedShareKey || key.startsWith(`${normalizedShareKey}|`)) {
+    if (
+      key === normalizedShareKey ||
+      (cacheKey ? key.startsWith(`${cacheKey}|`) : key.startsWith(`${normalizedShareKey}|`))
+    ) {
       contactCardHtmlCache.delete(key);
     }
   }
@@ -2845,7 +2861,7 @@ function buildShareCardHtml(input: {
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
-  const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl) || input.targetUrl;
+  const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const normalizedOpenTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.openTargetUrl) || normalizedTargetUrl;
   const targetUrl = escapeHtml(normalizedTargetUrl);
   const openTargetUrl = escapeHtml(normalizedOpenTargetUrl);
@@ -4250,8 +4266,7 @@ export async function GET(
   const shareKey = normalizeMerchantBusinessCardShareKey(card);
   const requestUrl = new URL(request.url);
   const introDebug = requestUrl.searchParams.get("introDebug") === "1";
-  const requestOrigin =
-    resolveTrustedPublicOrigin(resolveForwardedRequestOrigin(request)) || requestUrl.origin;
+  const requestOrigin = resolveConfiguredPublicRequestOrigin(request) || requestUrl.origin;
   if (!shareKey) {
     return withTiming(new NextResponse("Invalid business card link", {
       status: 404,
@@ -4282,7 +4297,7 @@ export async function GET(
     }));
   }
 
-  const cachedPayload = readCachedContactCardPayload(shareKey);
+  const cachedPayload = readCachedContactCardPayload(shareKey, requestOrigin);
   if (cachedPayload?.showContactPoll && cachedPayload.contactPagePollId && cachedPayload.ownerMerchantId) {
     const contactCardUrl = buildContactPollRedirectUrl(shareKey, requestOrigin, cachedPayload.targetUrl);
     const response = NextResponse.redirect(contactCardUrl, 307);

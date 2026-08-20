@@ -224,7 +224,7 @@ async function isAuthorizedForMerchant(
   supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
-  if (isSuperAdminRequestAuthorized(request)) {
+  if (await isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 
@@ -376,7 +376,7 @@ export async function POST(request: Request) {
     if (!authorized) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const isSuperAdminActor = isSuperAdminRequestAuthorized(request);
+    const isSuperAdminActor = await isSuperAdminRequestAuthorized(request);
 
     const snapshotStore = supabase as unknown as PlatformMerchantSnapshotStoreClient;
     const existingPayload = await loadStoredPlatformMerchantSnapshot(snapshotStore);

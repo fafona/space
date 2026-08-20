@@ -21,6 +21,7 @@ import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 import { buildFaollaShellHref } from "@/lib/faollaEntry";
 import { DEFAULT_LOCALE, readRequestedLocaleFromSearch } from "@/lib/i18n";
 import { resolveServerSupabaseUrl } from "@/lib/serverSupabaseUrl";
+import { resolvePublicOriginFromHeaders } from "@/lib/requestOrigin";
 
 type MerchantEntryPageProps = {
   params: Promise<{
@@ -250,12 +251,6 @@ function buildSearchString(searchParams: Record<string, string | string[] | unde
   return text ? `?${text}` : "";
 }
 
-function readRequestOrigin(headerList: Headers) {
-  const host = headerList.get("x-forwarded-host") || headerList.get("host") || "faolla.com";
-  const proto = headerList.get("x-forwarded-proto") || "https";
-  return `${proto}://${host}`;
-}
-
 export default async function MerchantEntryPage({ params, searchParams }: MerchantEntryPageProps) {
   const { merchantEntry } = await params;
   const resolvedSearchParams = await searchParams;
@@ -268,9 +263,14 @@ export default async function MerchantEntryPage({ params, searchParams }: Mercha
       const searchText = buildSearchString(resolvedSearchParams);
       const locale = readRequestedLocaleFromSearch(searchText) || DEFAULT_LOCALE;
       redirect(
-        buildFaollaShellHref(initialSourceHref, locale, readRequestOrigin(requestHeaders), {
+        buildFaollaShellHref(
+          initialSourceHref,
+          locale,
+          resolvePublicOriginFromHeaders(requestHeaders, "https://faolla.com"),
+          {
           preferRuntimeOrigin: true,
-        }),
+          },
+        ),
       );
     }
     const { default: MerchantNumericEntryPageClient } = await import("./MerchantNumericEntryPageClient");

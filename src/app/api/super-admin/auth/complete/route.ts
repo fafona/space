@@ -6,6 +6,7 @@ import {
 } from "@/lib/superAdminVerification";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
 import { readRequestClientIp } from "@/lib/superAdminServer";
+import { isCanonicalSuperAdminRequest } from "@/lib/canonicalSuperAdminRequest";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -17,6 +18,9 @@ type CompleteBody = {
 };
 
 export async function POST(request: Request) {
+  if (!isCanonicalSuperAdminRequest(request)) {
+    return NextResponse.json({ error: "super_admin_console_origin_required" }, { status: 421 });
+  }
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }

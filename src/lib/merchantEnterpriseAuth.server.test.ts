@@ -17,6 +17,9 @@ import {
   isEnterpriseOAuthTransientStorageKey,
 } from "@/lib/merchantEnterpriseSupabase";
 import type { loadAuthoritativeCurrentMerchantSnapshotSites } from "@/lib/publishedMerchantService";
+import { MERCHANT_AUTH_COOKIE } from "@/lib/merchantAuthSession";
+
+process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://faolla.com";
 
 type CurrentSnapshot = Awaited<
   ReturnType<typeof loadAuthoritativeCurrentMerchantSnapshotSites>
@@ -39,7 +42,7 @@ test("enterprise auth treats an explicit access-token header as authoritative", 
   const request = new Request("https://faolla.com/api/merchant-enterprise/overview", {
     headers: {
       "x-merchant-access-token": "employee-token",
-      cookie: "merchant-space-merchant-auth=owner-cookie-token",
+      cookie: `${MERCHANT_AUTH_COOKIE}=owner-cookie-token`,
     },
   });
 
@@ -52,7 +55,7 @@ test("enterprise auth never falls back to an owner cookie for an empty explicit 
   const request = new Request("https://faolla.com/api/merchant-enterprise/overview", {
     headers: {
       "x-merchant-access-token": "",
-      cookie: "merchant-space-merchant-auth=owner-cookie-token",
+      cookie: `${MERCHANT_AUTH_COOKIE}=owner-cookie-token`,
     },
   });
 
@@ -62,8 +65,7 @@ test("enterprise auth never falls back to an owner cookie for an empty explicit 
 test("enterprise auth keeps merchant cookie candidates when no explicit header is present", () => {
   const request = new Request("https://faolla.com/api/merchant-enterprise/overview", {
     headers: {
-      cookie:
-        "merchant-space-merchant-auth=stale-token; merchant-space-merchant-auth=fresh-token",
+      cookie: `${MERCHANT_AUTH_COOKIE}=stale-token; ${MERCHANT_AUTH_COOKIE}=fresh-token`,
     },
   });
 

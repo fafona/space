@@ -21,6 +21,8 @@ export const LEGACY_PERSONAL_RECOVERY_CASE_ENV =
 export const LEGACY_PERSONAL_RECOVERY_HMAC_ENV =
   "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET";
 export const LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE =
+  "__Host-faolla-legacy-personal-recovery-v2";
+export const LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE_V1 =
   "faolla-legacy-personal-recovery";
 export const LEGACY_PERSONAL_RECOVERY_VERIFIED_METADATA_KEY =
   "faolla_legacy_personal_recovery_verified_v1";

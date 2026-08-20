@@ -18,12 +18,12 @@ function trimText(value: unknown, maxLength = 1200) {
   return text.length > maxLength ? text.slice(0, maxLength).trimEnd() : text;
 }
 
-function normalizeHttpUrl(value: unknown) {
+export function normalizeGoogleReviewHttpsUrl(value: unknown) {
   const text = trimText(value, 2000);
   if (!text) return "";
   try {
     const url = new URL(text);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+    return url.protocol === "https:" ? url.toString() : "";
   } catch {
     return "";
   }
@@ -92,13 +92,13 @@ function normalizeReviewItem(value: unknown, index: number): GoogleReviewItem | 
     id,
     reviewerName,
     reviewerPhotoUrl:
-      normalizeHttpUrl(record.reviewerPhotoUrl) ||
-      normalizeHttpUrl(record.profilePhotoUrl) ||
-      normalizeHttpUrl(reviewer?.profilePhotoUrl),
+      normalizeGoogleReviewHttpsUrl(record.reviewerPhotoUrl) ||
+      normalizeGoogleReviewHttpsUrl(record.profilePhotoUrl) ||
+      normalizeGoogleReviewHttpsUrl(reviewer?.profilePhotoUrl),
     reviewerProfileUrl:
-      normalizeHttpUrl(record.reviewerProfileUrl) ||
-      normalizeHttpUrl(record.authorUrl) ||
-      normalizeHttpUrl(reviewer?.profileUrl),
+      normalizeGoogleReviewHttpsUrl(record.reviewerProfileUrl) ||
+      normalizeGoogleReviewHttpsUrl(record.authorUrl) ||
+      normalizeGoogleReviewHttpsUrl(reviewer?.profileUrl),
     rating,
     comment,
     createTime: normalizeIsoLikeTime(record.createTime ?? record.createdAt ?? record.time),

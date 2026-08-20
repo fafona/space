@@ -3,6 +3,8 @@ import {
   BUTTON_BLOCK_MIN_HEIGHT,
   BUTTON_BLOCK_MIN_WIDTH,
   getButtonHoverAnimationClassName,
+  isSafeButtonAnchor,
+  normalizeButtonNavigationTarget,
   resolveButtonContentPadding,
   resolveButtonJumpBlockId,
   resolveButtonJumpPageId,
@@ -46,13 +48,15 @@ function performJump(
   }
 
   if (/^block:/i.test(trimmed)) return;
+  if (/^page:/i.test(trimmed)) return;
 
   const anchorId = trimmed.startsWith("#") ? trimmed.slice(1).trim() : trimmed;
-  if (anchorId) {
+  if (isSafeButtonAnchor(anchorId)) {
     const targetElement =
       document.getElementById(anchorId) ??
-      document.querySelector<HTMLElement>(`[data-block-id="${anchorId}"]`) ??
-      document.querySelector<HTMLElement>(`[data-jump-target="${anchorId}"]`);
+      Array.from(document.querySelectorAll<HTMLElement>("[data-block-id], [data-jump-target]")).find(
+        (element) => element.dataset.blockId === anchorId || element.dataset.jumpTarget === anchorId,
+      );
     if (targetElement) {
       targetElement.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
       if (trimmed.startsWith("#")) {
@@ -62,7 +66,10 @@ function performJump(
     }
   }
 
-  window.location.assign(trimmed);
+  const safeNavigationTarget = normalizeButtonNavigationTarget(trimmed);
+  if (/^(?:https?:|\/|\.\/|\.\.\/|\?)/i.test(safeNavigationTarget)) {
+    window.location.assign(safeNavigationTarget);
+  }
 }
 
 export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
@@ -111,7 +118,11 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   const typographyStyle = getTypographyStyle(props);
   const hoverAnimationClassName = getButtonHoverAnimationClassName(props.buttonHoverAnimation);
   const jumpTarget = (props.buttonJumpTarget ?? "").trim();
-  const isClickable = jumpTarget.length > 0;
+  const isClickable = Boolean(
+    resolveButtonJumpPageId(jumpTarget, props.availablePages ?? []) ||
+    resolveButtonJumpBlockId(jumpTarget, props.availableBlocks ?? []) ||
+    normalizeButtonNavigationTarget(jumpTarget),
+  );
   const labelHtml = toRichHtml(resolveButtonLabel(props), "");
 
   return (

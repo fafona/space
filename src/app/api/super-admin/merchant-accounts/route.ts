@@ -740,12 +740,12 @@ function buildPersonalAccountItemFromAuthUser(user: AuthUserSummary): MerchantAc
   };
 }
 
-function ensureAuthorized(request: Request) {
+async function ensureAuthorized(request: Request) {
   return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 
@@ -1025,7 +1025,7 @@ export async function POST(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 
@@ -1255,7 +1255,7 @@ export async function PATCH(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 

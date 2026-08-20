@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { POST as requestSignup } from "@/app/api/auth/merchant-signup/route";
+import {
+  POST as requestSignup,
+  signUpNeedsEmailConfirmation,
+} from "@/app/api/auth/merchant-signup/route";
 import { POST as requestSignupCode } from "@/app/api/auth/merchant-signup/request-code/route";
 import { POST as verifySignupCode } from "@/app/api/auth/merchant-signup/verify-code/route";
 
@@ -54,4 +57,22 @@ test("signup code routes validate email and numeric code format before backend a
   );
   assert.equal(verifyResponse.status, 400);
   assert.deepEqual(await verifyResponse.json(), { ok: false, error: "signup_code_invalid_code" });
+});
+
+test("signup confirmation never trusts mutable user metadata", () => {
+  assert.equal(signUpNeedsEmailConfirmation({
+    user: {
+      email_confirmed_at: null,
+      user_metadata: { email_verified: true },
+    },
+  }), true);
+  assert.equal(signUpNeedsEmailConfirmation({
+    user: {
+      email_confirmed_at: "2026-08-20T00:00:00.000Z",
+      user_metadata: { email_verified: false },
+    },
+  }), false);
+  assert.equal(signUpNeedsEmailConfirmation({
+    session: { user: { email_confirmed_at: null, user_metadata: {} } },
+  }), false);
 });

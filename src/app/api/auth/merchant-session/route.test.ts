@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET, POST } from "@/app/api/auth/merchant-session/route";
+import {
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+} from "@/lib/merchantAuthSession";
 
 test("merchant-session rejects an immutable merchant staff principal", async () => {
   const originalFetch = globalThis.fetch;
@@ -36,7 +40,7 @@ test("merchant-session rejects an immutable merchant staff principal", async () 
     const response = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session", {
         headers: {
-          cookie: "merchant-space-merchant-auth=staff-access-token",
+          cookie: `${MERCHANT_AUTH_COOKIE}=staff-access-token`,
         },
       }),
     );
@@ -139,8 +143,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     const response = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=access-token-valid; merchant-space-merchant-auth=access-token-stale",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-valid; ${MERCHANT_AUTH_COOKIE}=access-token-stale`,
         },
       }),
     );
@@ -154,7 +157,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     assert.deepEqual(body.merchantIds, ["12345678"]);
     assert.equal(body.personalServiceConfig, null);
     assert.equal(body.personalServicePaused, false);
-    assert.equal(typeof body.frontendAuthProof, "string");
+    assert.equal(body.frontendAuthProof, undefined);
     assert.equal(body.accessToken, undefined);
     assert.equal(body.refreshToken, undefined);
     assert.deepEqual(body.user, {
@@ -167,16 +170,15 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     const accountSwitchResponse = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session?accountSwitch=1", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=access-token-valid; merchant-space-merchant-auth=access-token-stale; merchant-space-merchant-refresh=refresh-token-valid",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-valid; ${MERCHANT_AUTH_COOKIE}=access-token-stale; ${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token-valid`,
         },
       }),
     );
     assert.equal(accountSwitchResponse.status, 200);
     const accountSwitchBody = await accountSwitchResponse.json();
-    assert.equal(accountSwitchBody.accessToken, "access-token-valid");
-    assert.equal(accountSwitchBody.refreshToken, "refresh-token-valid");
-    assert.equal(accountSwitchBody.tokenType, "bearer");
+    assert.equal(accountSwitchBody.accessToken, undefined);
+    assert.equal(accountSwitchBody.refreshToken, undefined);
+    assert.equal(accountSwitchBody.tokenType, undefined);
     assert.equal(accountSwitchBody.accountType, "merchant");
     assert.equal(accountSwitchBody.merchantId, "12345678");
   } finally {
@@ -187,7 +189,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
   }
 });
 
-test("merchant-session account switch GET returns refreshed tokens", async () => {
+test("merchant-session account switch GET never returns refreshed tokens", async () => {
   const originalFetch = globalThis.fetch;
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -296,7 +298,7 @@ test("merchant-session account switch GET returns refreshed tokens", async () =>
     const response = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session?accountSwitch=1", {
         headers: {
-          cookie: "merchant-space-merchant-refresh=old-refresh-token",
+          cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=old-refresh-token`,
         },
       }),
     );
@@ -306,10 +308,10 @@ test("merchant-session account switch GET returns refreshed tokens", async () =>
     assert.equal(body.authenticated, true);
     assert.equal(body.accountType, "merchant");
     assert.equal(body.merchantId, "87654321");
-    assert.equal(body.accessToken, "new-access-token");
-    assert.equal(body.refreshToken, "new-refresh-token");
-    assert.equal(body.expiresIn, 3600);
-    assert.equal(body.tokenType, "bearer");
+    assert.equal(body.accessToken, undefined);
+    assert.equal(body.refreshToken, undefined);
+    assert.equal(body.expiresIn, undefined);
+    assert.equal(body.tokenType, undefined);
     assert.deepEqual(body.user, {
       id: "22222222-2222-4222-8222-222222222222",
       email: "owner2@example.com",

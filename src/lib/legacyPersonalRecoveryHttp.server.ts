@@ -1,13 +1,28 @@
 import { NextResponse } from "next/server";
 import {
   LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE,
+  LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE_V1,
   LegacyPersonalRecoveryError,
 } from "@/lib/legacyPersonalRecovery.server";
+import { resolveCanonicalPortalHostname } from "@/lib/canonicalPortalRequest";
+import { appendLegacyCookieExpiration } from "@/lib/legacyCookieCleanup";
 import { parseCookieValues } from "@/lib/merchantAuthSession";
-import { resolveSecureCookieFlag } from "@/lib/requestOrigin";
 
 const JSON_BODY_LIMIT_BYTES = 4_096;
 const NONCE_COOKIE_MAX_AGE_SECONDS = 15 * 60;
+
+function expireLegacyPersonalRecoveryNonceCookie(response: NextResponse) {
+  const rootHostname = resolveCanonicalPortalHostname().replace(/^www\./, "");
+  appendLegacyCookieExpiration(response, LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE_V1, {
+    httpOnly: true,
+  });
+  if (rootHostname) {
+    appendLegacyCookieExpiration(response, LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE_V1, {
+      domain: rootHostname,
+      httpOnly: true,
+    });
+  }
+}
 
 export function legacyPersonalRecoveryJson(
   body: unknown,
@@ -86,24 +101,28 @@ export function setLegacyPersonalRecoveryNonceCookie(
   request: Request,
   value: string,
 ) {
+  void request;
   response.cookies.set(LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE, value, {
-    path: "/api/auth/legacy-personal-recovery",
+    path: "/",
     maxAge: NONCE_COOKIE_MAX_AGE_SECONDS,
     sameSite: "strict",
-    secure: resolveSecureCookieFlag(request),
+    secure: true,
     httpOnly: true,
   });
+  expireLegacyPersonalRecoveryNonceCookie(response);
 }
 
 export function clearLegacyPersonalRecoveryNonceCookie(
   response: NextResponse,
   request: Request,
 ) {
+  void request;
   response.cookies.set(LEGACY_PERSONAL_RECOVERY_NONCE_COOKIE, "", {
-    path: "/api/auth/legacy-personal-recovery",
+    path: "/",
     maxAge: 0,
     sameSite: "strict",
-    secure: resolveSecureCookieFlag(request),
+    secure: true,
     httpOnly: true,
   });
+  expireLegacyPersonalRecoveryNonceCookie(response);
 }

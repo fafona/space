@@ -12,6 +12,7 @@ import {
 import { loadCurrentMerchantSnapshotSites, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
 import { createServerTiming } from "@/lib/serverTiming";
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import { buildOriginScopedCacheKey, resolveConfiguredPublicRequestOrigin } from "@/lib/requestOrigin";
 
 const CONTACT_DOWNLOAD_PAYLOAD_CACHE_TTL_MS = 60_000;
 const CONTACT_DOWNLOAD_REVOCATION_NEGATIVE_CACHE_TTL_MS = 5_000;
@@ -38,15 +39,6 @@ function buildContentDisposition(filename: string) {
   const safeAscii = filename.replace(/[^\x20-\x7E]+/g, "-").replace(/"/g, "");
   const encoded = encodeURIComponent(filename);
   return `attachment; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
-}
-
-function resolveRequestOrigin(request: Request) {
-  const forwardedHost = String(request.headers.get("x-forwarded-host") ?? "").trim();
-  const host = forwardedHost || String(request.headers.get("host") ?? "").trim();
-  const forwardedProto = String(request.headers.get("x-forwarded-proto") ?? "").trim();
-  if (!host) return new URL(request.url).origin;
-  const protocol = forwardedProto || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
-  return `${protocol}://${host}`;
 }
 
 function normalizeText(value: unknown) {
@@ -138,8 +130,7 @@ async function resolveContactDownloadPayloadFromSnapshot(shareKey: string, origi
 
 function buildContactDownloadCacheKey(shareKey: string, origin: string) {
   const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
-  const normalizedOrigin = String(origin ?? "").trim();
-  return normalizedShareKey && normalizedOrigin ? `${normalizedShareKey}|${normalizedOrigin}` : "";
+  return buildOriginScopedCacheKey(normalizedShareKey, origin);
 }
 
 function readCachedContactDownloadPayload(shareKey: string, origin: string) {
@@ -221,7 +212,7 @@ export async function GET(
     }));
   }
 
-  const requestOrigin = resolveRequestOrigin(request);
+  const requestOrigin = resolveConfiguredPublicRequestOrigin(request);
   const payloadOrigin = resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin;
   const cachedPayload = readCachedContactDownloadPayload(shareKey, payloadOrigin);
   const payloadPromise = loadMerchantBusinessCardSharePayloadByKey(shareKey, payloadOrigin);

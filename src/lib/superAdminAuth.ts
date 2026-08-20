@@ -8,7 +8,7 @@ import {
   SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_SESSION_KEY,
   SUPER_ADMIN_SESSION_VALUE,
-  resolveSuperAdminCookieDomainFromHostname,
+  LEGACY_SUPER_ADMIN_DEVICE_ID_COOKIE,
 } from "@/lib/superAdminSession";
 import type { SuperAdminTrustedDeviceDetails } from "@/lib/superAdminTrustedDevices";
 
@@ -85,12 +85,6 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function buildCookieDomainPart() {
-  if (typeof window === "undefined") return "";
-  const cookieDomain = resolveSuperAdminCookieDomainFromHostname(window.location.hostname);
-  return cookieDomain ? `; Domain=${cookieDomain}` : "";
-}
-
 function clearHostOnlyCookie(key: string) {
   if (typeof document === "undefined") return;
   document.cookie = `${key}=; Path=/; Max-Age=0; SameSite=Lax`;
@@ -103,13 +97,11 @@ function readSuperAdminDeviceIdCookie() {
 function writeSuperAdminDeviceIdCookie(deviceId: string) {
   if (typeof document === "undefined") return;
   const normalizedDeviceId = String(deviceId ?? "").trim();
-  const cookieDomainPart = buildCookieDomainPart();
-  if (cookieDomainPart) {
-    clearHostOnlyCookie(SUPER_ADMIN_DEVICE_ID_COOKIE);
-  }
+  clearHostOnlyCookie(LEGACY_SUPER_ADMIN_DEVICE_ID_COOKIE);
+  document.cookie = `${LEGACY_SUPER_ADMIN_DEVICE_ID_COOKIE}=; Path=/; Domain=.faolla.com; Max-Age=0; SameSite=Lax; Secure`;
   document.cookie = `${SUPER_ADMIN_DEVICE_ID_COOKIE}=${normalizedDeviceId}; Path=/; Max-Age=${
     normalizedDeviceId ? SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS : 0
-  }; SameSite=Lax${cookieDomainPart}`;
+  }; SameSite=Lax; Secure`;
 }
 
 function normalizeText(value: unknown) {

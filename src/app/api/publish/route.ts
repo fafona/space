@@ -265,7 +265,7 @@ async function isAuthorizedForMerchantIds(
   supabase: LooseSupabaseClient,
   merchantIds: string[],
 ) {
-  if (isSuperAdminRequestAuthorized(request)) {
+  if (await isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 
@@ -747,7 +747,7 @@ export async function POST(request: Request) {
     }) as unknown as LooseSupabaseClient;
 
     if (isPlatformEditor) {
-      if (!isSuperAdminRequestAuthorized(request)) {
+      if (!(await isSuperAdminRequestAuthorized(request))) {
         const status = 401;
         const responseBody = {
           ok: false,

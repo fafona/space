@@ -164,7 +164,8 @@ type SupabaseAuthSettings = {
 const googleOAuthAttemptStorageKey = "faolla.googleOAuthAttempt";
 const googleOAuthAttemptMaxAgeMs = 10 * 60 * 1000;
 const loginEntryAccountTypeStorageKey = "faolla.loginEntryAccountType";
-const googleOAuthEntryCookieKey = "faolla-google-oauth-entry";
+const googleOAuthEntryCookieKey = "__Host-faolla-google-oauth-entry-v2";
+const legacyGoogleOAuthEntryCookieKey = "faolla-google-oauth-entry";
 const googleOAuthEntryCookieMaxAgeSeconds = 10 * 60;
 
 type GoogleOAuthAttempt = {
@@ -256,16 +257,8 @@ function writeStoredLoginEntryAccountType(accountType: PlatformAccountType) {
   }
 }
 
-function resolveSharedFaollaCookieDomainAttribute() {
-  if (typeof window === "undefined") return "";
-  const hostname = window.location.hostname.trim().toLowerCase();
-  return hostname === "faolla.com" || hostname.endsWith(".faolla.com") ? "; Domain=.faolla.com" : "";
-}
-
 function buildGoogleOAuthCookieAttributes(maxAgeSeconds: number) {
-  if (typeof window === "undefined") return "; Path=/; SameSite=Lax";
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  return `; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${resolveSharedFaollaCookieDomainAttribute()}${secure}`;
+  return `; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax; Secure`;
 }
 
 function readCookieValue(key: string) {
@@ -288,6 +281,7 @@ function readGoogleOAuthEntryCookie(): PlatformAccountType | null {
 
 function writeGoogleOAuthEntryCookie(accountType: PlatformAccountType) {
   if (typeof document === "undefined") return;
+  clearGoogleOAuthEntryCookie();
   document.cookie = `${googleOAuthEntryCookieKey}=${encodeURIComponent(accountType)}${buildGoogleOAuthCookieAttributes(
     googleOAuthEntryCookieMaxAgeSeconds,
   )}`;
@@ -295,9 +289,9 @@ function writeGoogleOAuthEntryCookie(accountType: PlatformAccountType) {
 
 function clearGoogleOAuthEntryCookie() {
   if (typeof document === "undefined") return;
-  document.cookie = `${googleOAuthEntryCookieKey}=; Path=/; Max-Age=0; SameSite=Lax${
-    resolveSharedFaollaCookieDomainAttribute()
-  }${typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : ""}`;
+  document.cookie = `${googleOAuthEntryCookieKey}=; Path=/; Max-Age=0; SameSite=Lax; Secure`;
+  document.cookie = `${legacyGoogleOAuthEntryCookieKey}=; Path=/; Max-Age=0; SameSite=Lax; Secure`;
+  document.cookie = `${legacyGoogleOAuthEntryCookieKey}=; Path=/; Domain=.faolla.com; Max-Age=0; SameSite=Lax; Secure`;
 }
 
 function isAndroidBrowser() {

@@ -58,7 +58,7 @@ function createSupabase() {
 }
 
 export async function GET(request: Request) {
-  if (!isSuperAdminRequestAuthorized(request)) {
+  if (!(await isSuperAdminRequestAuthorized(request))) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
-  if (!isSuperAdminRequestAuthorized(request)) {
+  if (!(await isSuperAdminRequestAuthorized(request))) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -172,7 +172,7 @@ export async function PATCH(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
-  if (!isSuperAdminRequestAuthorized(request)) {
+  if (!(await isSuperAdminRequestAuthorized(request))) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
 

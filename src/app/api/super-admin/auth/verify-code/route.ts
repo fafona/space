@@ -9,6 +9,7 @@ import {
 } from "@/lib/superAdminServer";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
 import { readSuperAdminChallengeToken } from "@/lib/superAdminVerification";
+import { isCanonicalSuperAdminRequest } from "@/lib/canonicalSuperAdminRequest";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,6 +25,9 @@ function normalizeCode(value: unknown) {
 }
 
 export async function POST(request: Request) {
+  if (!isCanonicalSuperAdminRequest(request)) {
+    return NextResponse.json({ error: "super_admin_console_origin_required" }, { status: 421 });
+  }
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
