@@ -6,12 +6,6 @@ on:
       - CI
     types:
       - completed
-  workflow_dispatch:
-    inputs:
-      branch:
-        description: Branch to deploy
-        required: true
-        default: main
 
 concurrency:
   group: production-deploy
@@ -23,15 +17,16 @@ permissions:
 jobs:
   deploy:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master'))
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_branch }}
-      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_sha }}
+      DEPLOY_BRANCH: main
+      DEPLOY_REF: ${{ github.event.workflow_run.head_sha }}
 
     steps:
       - name: Checkout Tested Commit
@@ -41,33 +36,44 @@ jobs:
 
       - name: Resolve Deploy Commit
         id: deploy-commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_REF" =~ ^[0-9a-f]{40}$ ]]
+          resolved_sha="$(git rev-parse HEAD)"
+          test "$resolved_sha" = "$DEPLOY_REF"
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          test "$main_sha" = "$resolved_sha"
+          echo "sha=$resolved_sha" >> "$GITHUB_OUTPUT"
 
       - name: Setup SSH
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
+          set -euo pipefail
           test -n "$SSH_HOST"
           test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          if ! [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] \
+            || [ "${SSH_PORT:-22}" -lt 1 ] \
+            || [ "${SSH_PORT:-22}" -gt 65535 ]; then
+            exit 1
+          fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          scan_ok=0
-          for attempt in 1 2 3 4 5 6 7 8; do
-            if ssh-keyscan -T 15 -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts; then
-              scan_ok=1
-              break
-            fi
-            if [ "$attempt" != "8" ]; then
-              sleep 10
-            fi
-          done
-          if [ "$scan_ok" != "1" ]; then
-            echo "::warning::ssh-keyscan could not reach the deployment host; the deploy step will still attempt SSH with StrictHostKeyChecking=accept-new."
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>&1
+          known_hosts_lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != "22" ]; then
+            known_hosts_lookup="[$SSH_HOST]:${SSH_PORT}"
           fi
+          ssh-keygen -F "$known_hosts_lookup" -f ~/.ssh/known_hosts >/dev/null 2>&1
 
       - name: Deploy To Server
         env:
@@ -78,6 +84,7 @@ jobs:
           APP_NAME: ${{ secrets.APP_NAME }}
           APP_PORT: ${{ secrets.APP_PORT }}
           APP_BRANCH: ${{ env.DEPLOY_BRANCH }}
+          EXPECTED_DEPLOY_SHA: ${{ steps.deploy-commit.outputs.sha }}
           SUPABASE_INTERNAL_URL: ${{ vars.SUPABASE_INTERNAL_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -169,35 +176,128 @@ jobs:
           if ! [[ "${MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS:-3900}" =~ ^[0-9]{2,5}$ ]]; then
             MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS=3900
           fi
-          RECOVERY_DEPLOY_ENVELOPE_MAGIC="FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V1"
-          REMOTE_DEPLOY_COMMAND="IFS= read -r recovery_deploy_envelope_magic && [ \"\$recovery_deploy_envelope_magic\" = '$RECOVERY_DEPLOY_ENVELOPE_MAGIC' ] && IFS= read -r ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 && IFS= read -r ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64 && export ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64 && exec env APP_DIR='$APP_DIR' APP_NAME='${APP_NAME:-merchant-space}' APP_PORT='${APP_PORT:-3000}' APP_BRANCH='$APP_BRANCH' SUPABASE_INTERNAL_URL_B64='$SUPABASE_INTERNAL_URL_B64' NEXT_PUBLIC_SUPABASE_URL_B64='$NEXT_PUBLIC_SUPABASE_URL_B64' NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='$NEXT_PUBLIC_SUPABASE_ANON_KEY_B64' SUPABASE_SERVICE_ROLE_KEY_B64='$SUPABASE_SERVICE_ROLE_KEY_B64' GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64='$GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64' GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64='$GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64' GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64='$GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64' GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64='$GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64' GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS='${GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS:-}' MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED='$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED' MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE='$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE' MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED='$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED' MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS='$MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS' MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS='$MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS' MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64='$MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64' MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64='$MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64' MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64='$MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64' MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64='$MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64' MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64='$MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64' ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED='$ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED' RESEND_API_KEY_B64='$RESEND_API_KEY_B64' WEB_PUSH_PUBLIC_KEY='${WEB_PUSH_PUBLIC_KEY:-}' WEB_PUSH_PRIVATE_KEY='${WEB_PUSH_PRIVATE_KEY:-}' WEB_PUSH_SUBJECT='${WEB_PUSH_SUBJECT:-}' SUPER_ADMIN_ACCOUNT='${SUPER_ADMIN_ACCOUNT:-}' SUPER_ADMIN_PASSWORD='${SUPER_ADMIN_PASSWORD:-}' SUPER_ADMIN_VERIFICATION_EMAIL='${SUPER_ADMIN_VERIFICATION_EMAIL:-}' SUPER_ADMIN_VERIFICATION_SECRET='${SUPER_ADMIN_VERIFICATION_SECRET:-}' bash -s"
-          for attempt in 1 2 3 4 5; do
-            set +e
-            (
-              set -e
-              printf '%s\n' "$RECOVERY_DEPLOY_ENVELOPE_MAGIC"
-              printf '%s\n' "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64"
-              printf '%s\n' "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64"
-              cat scripts/deploy.production.sh
-            ) | ssh -T -o ConnectTimeout=20 -o ConnectionAttempts=3 -o StrictHostKeyChecking=accept-new -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$REMOTE_DEPLOY_COMMAND"
-            transport_status=("${PIPESTATUS[@]}")
-            frame_status="${transport_status[0]:-1}"
-            ssh_status="${transport_status[1]:-1}"
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          export \
+            APP_DIR APP_NAME APP_PORT APP_BRANCH EXPECTED_DEPLOY_SHA \
+            SUPABASE_INTERNAL_URL_B64 NEXT_PUBLIC_SUPABASE_URL_B64 \
+            NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 SUPABASE_SERVICE_ROLE_KEY_B64 \
+            GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64 \
+            GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64 \
+            GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64 \
+            GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64 \
+            GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS \
+            MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED \
+            MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE \
+            MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED \
+            MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS \
+            MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS \
+            MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64 \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64 \
+            RESEND_API_KEY_B64 WEB_PUSH_PUBLIC_KEY WEB_PUSH_PRIVATE_KEY \
+            WEB_PUSH_SUBJECT SUPER_ADMIN_ACCOUNT SUPER_ADMIN_PASSWORD \
+            SUPER_ADMIN_VERIFICATION_EMAIL SUPER_ADMIN_VERIFICATION_SECRET
+          DEPLOY_PAYLOAD_B64="$(node <<'NODE'
+          const keys = [
+            "APP_DIR", "APP_NAME", "APP_PORT", "APP_BRANCH",
+            "EXPECTED_DEPLOY_SHA", "SUPABASE_INTERNAL_URL_B64",
+            "NEXT_PUBLIC_SUPABASE_URL_B64", "NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+            "SUPABASE_SERVICE_ROLE_KEY_B64", "GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64",
+            "GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64",
+            "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64",
+            "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64",
+            "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS",
+            "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED",
+            "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE",
+            "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED",
+            "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS",
+            "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS",
+            "MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64",
+            "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64",
+            "MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64",
+            "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64",
+            "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64",
+            "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED",
+            "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64",
+            "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64",
+            "RESEND_API_KEY_B64", "WEB_PUSH_PUBLIC_KEY", "WEB_PUSH_PRIVATE_KEY",
+            "WEB_PUSH_SUBJECT", "SUPER_ADMIN_ACCOUNT", "SUPER_ADMIN_PASSWORD",
+            "SUPER_ADMIN_VERIFICATION_EMAIL", "SUPER_ADMIN_VERIFICATION_SECRET",
+          ];
+          const values = Object.fromEntries(keys.map((key) => [key, process.env[key] ?? ""]));
+          process.stdout.write(Buffer.from(JSON.stringify({ schemaVersion: 1, values })).toString("base64"));
+          NODE
+          )"
+          test -n "$DEPLOY_PAYLOAD_B64"
+          unset \
+            APP_DIR APP_NAME APP_PORT APP_BRANCH EXPECTED_DEPLOY_SHA \
+            SUPABASE_INTERNAL_URL SUPABASE_INTERNAL_URL_B64 \
+            NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_URL_B64 \
+            NEXT_PUBLIC_SUPABASE_ANON_KEY NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 \
+            SUPABASE_SERVICE_ROLE_KEY SUPABASE_SERVICE_ROLE_KEY_B64 \
+            GOOGLE_BUSINESS_PROFILE_CLIENT_ID GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64 \
+            GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64 \
+            GOOGLE_BUSINESS_PROFILE_TOKEN_KEY GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64 \
+            GOOGLE_BUSINESS_PROFILE_REDIRECT_URI GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64 \
+            GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS \
+            MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED \
+            MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE \
+            MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED \
+            MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS \
+            MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS \
+            MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON \
+            MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID \
+            MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN \
+            MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM \
+            MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64 \
+            MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO \
+            MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64 \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET \
+            ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64 \
+            RESEND_API_KEY RESEND_API_KEY_B64 \
+            WEB_PUSH_PUBLIC_KEY WEB_PUSH_PRIVATE_KEY WEB_PUSH_SUBJECT \
+            SUPER_ADMIN_ACCOUNT SUPER_ADMIN_PASSWORD \
+            SUPER_ADMIN_VERIFICATION_EMAIL SUPER_ADMIN_VERIFICATION_SECRET
+          DEPLOY_SCRIPT_BYTES="$(wc -c < scripts/deploy.production.sh | tr -d '[:space:]')"
+          DEPLOY_SCRIPT_SHA256="$(sha256sum scripts/deploy.production.sh | awk '{ print $1 }')"
+          [[ "$DEPLOY_SCRIPT_BYTES" =~ ^[1-9][0-9]*$ ]]
+          [[ "$DEPLOY_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          DEPLOY_ENVELOPE_MAGIC="FAOLLA_DEPLOY_ENVELOPE_V2"
+          REMOTE_DEPLOY_COMMAND='set -eu; umask 077; deploy_transport_dir="$(mktemp -d)"; trap "rm -rf -- \"$deploy_transport_dir\"" EXIT; IFS= read -r deploy_envelope_magic; test "$deploy_envelope_magic" = "FAOLLA_DEPLOY_ENVELOPE_V2"; IFS= read -r deploy_payload_b64; IFS= read -r expected_deploy_bytes; IFS= read -r expected_deploy_sha256; case "$expected_deploy_bytes" in ""|0|*[!0-9]*) exit 1;; esac; test "${#expected_deploy_sha256}" -eq 64; case "$expected_deploy_sha256" in *[!0-9a-f]*) exit 1;; esac; printf "%s" "$deploy_payload_b64" | base64 -d > "$deploy_transport_dir/payload.json"; chmod 600 "$deploy_transport_dir/payload.json"; cat > "$deploy_transport_dir/deploy.sh"; actual_deploy_bytes="$(wc -c < "$deploy_transport_dir/deploy.sh" | tr -d "[:space:]")"; actual_deploy_sha256="$(sha256sum "$deploy_transport_dir/deploy.sh")"; actual_deploy_sha256="${actual_deploy_sha256%% *}"; test "$actual_deploy_bytes" = "$expected_deploy_bytes"; test "$actual_deploy_sha256" = "$expected_deploy_sha256"; chmod 700 "$deploy_transport_dir/deploy.sh"; FAOLLA_DEPLOY_PAYLOAD_FILE="$deploy_transport_dir/payload.json" bash "$deploy_transport_dir/deploy.sh"'
+          set +e
+          (
             set -e
-            if [ "$ssh_status" = "0" ]; then
-              if [ "$frame_status" != "0" ]; then
-                exit "$frame_status"
-              fi
-              break
-            fi
-            if [ "$ssh_status" != "255" ]; then
-              exit "$ssh_status"
-            fi
-            if [ "$attempt" = "5" ]; then
-              exit "$ssh_status"
-            fi
-            sleep 10
-          done
+            printf '%s\n' "$DEPLOY_ENVELOPE_MAGIC"
+            printf '%s\n' "$DEPLOY_PAYLOAD_B64"
+            printf '%s\n' "$DEPLOY_SCRIPT_BYTES"
+            printf '%s\n' "$DEPLOY_SCRIPT_SHA256"
+            cat scripts/deploy.production.sh
+          ) | ssh -T -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$REMOTE_DEPLOY_COMMAND"
+          transport_status=("${PIPESTATUS[@]}")
+          frame_status="${transport_status[0]:-1}"
+          ssh_status="${transport_status[1]:-1}"
+          set -e
+          if [ "$ssh_status" != "0" ]; then
+            exit "$ssh_status"
+          fi
+          if [ "$frame_status" != "0" ]; then
+            exit "$frame_status"
+          fi
 
       - name: Verify Public Release
         env:

@@ -1,10 +1,165 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEPLOY_PAYLOAD_FILE="${FAOLLA_DEPLOY_PAYLOAD_FILE:-}"
+DEPLOY_PAYLOAD_KEYS=(
+  APP_DIR
+  APP_NAME
+  APP_PORT
+  APP_BRANCH
+  EXPECTED_DEPLOY_SHA
+  SUPABASE_INTERNAL_URL_B64
+  NEXT_PUBLIC_SUPABASE_URL_B64
+  NEXT_PUBLIC_SUPABASE_ANON_KEY_B64
+  SUPABASE_SERVICE_ROLE_KEY_B64
+  GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64
+  GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64
+  GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64
+  GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64
+  GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS
+  MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED
+  MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE
+  MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED
+  MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS
+  MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS
+  MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64
+  MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64
+  MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64
+  MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64
+  MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64
+  ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED
+  ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64
+  ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64
+  RESEND_API_KEY_B64
+  WEB_PUSH_PUBLIC_KEY
+  WEB_PUSH_PRIVATE_KEY
+  WEB_PUSH_SUBJECT
+  SUPER_ADMIN_ACCOUNT
+  SUPER_ADMIN_PASSWORD
+  SUPER_ADMIN_VERIFICATION_EMAIL
+  SUPER_ADMIN_VERIFICATION_SECRET
+)
+
+load_deploy_payload() {
+  local payload_key
+  local payload_value
+  local loaded_count=0
+  if [ -z "$DEPLOY_PAYLOAD_FILE" ] \
+    || [ ! -f "$DEPLOY_PAYLOAD_FILE" ] \
+    || [ -L "$DEPLOY_PAYLOAD_FILE" ]; then
+    echo "[deploy] a regular deployment payload file is required"
+    exit 1
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[deploy] node is required to validate the deployment payload"
+    exit 1
+  fi
+  while IFS= read -r -d '' payload_key \
+    && IFS= read -r -d '' payload_value; do
+    case "$payload_key" in
+      APP_DIR|APP_NAME|APP_PORT|APP_BRANCH|EXPECTED_DEPLOY_SHA|\
+      SUPABASE_INTERNAL_URL_B64|NEXT_PUBLIC_SUPABASE_URL_B64|\
+      NEXT_PUBLIC_SUPABASE_ANON_KEY_B64|SUPABASE_SERVICE_ROLE_KEY_B64|\
+      GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64|\
+      GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64|\
+      GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64|\
+      GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64|\
+      GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS|\
+      MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED|\
+      MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE|\
+      MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED|\
+      MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS|\
+      MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS|\
+      MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64|\
+      MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64|\
+      MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64|\
+      MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64|\
+      MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64|\
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED|\
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64|\
+      ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64|\
+      RESEND_API_KEY_B64|WEB_PUSH_PUBLIC_KEY|WEB_PUSH_PRIVATE_KEY|\
+      WEB_PUSH_SUBJECT|SUPER_ADMIN_ACCOUNT|SUPER_ADMIN_PASSWORD|\
+      SUPER_ADMIN_VERIFICATION_EMAIL|SUPER_ADMIN_VERIFICATION_SECRET)
+        printf -v "$payload_key" '%s' "$payload_value"
+        loaded_count=$((loaded_count + 1))
+        ;;
+      *)
+        echo "[deploy] deployment payload contains an unexpected key"
+        exit 1
+        ;;
+    esac
+  done < <(
+    node --input-type=module - "$DEPLOY_PAYLOAD_FILE" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const expectedKeys = [
+  "APP_DIR",
+  "APP_NAME",
+  "APP_PORT",
+  "APP_BRANCH",
+  "EXPECTED_DEPLOY_SHA",
+  "SUPABASE_INTERNAL_URL_B64",
+  "NEXT_PUBLIC_SUPABASE_URL_B64",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+  "SUPABASE_SERVICE_ROLE_KEY_B64",
+  "GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64",
+  "GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64",
+  "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64",
+  "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64",
+  "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS",
+  "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED",
+  "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE",
+  "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED",
+  "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS",
+  "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS",
+  "MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64",
+  "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED",
+  "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64",
+  "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64",
+  "RESEND_API_KEY_B64",
+  "WEB_PUSH_PUBLIC_KEY",
+  "WEB_PUSH_PRIVATE_KEY",
+  "WEB_PUSH_SUBJECT",
+  "SUPER_ADMIN_ACCOUNT",
+  "SUPER_ADMIN_PASSWORD",
+  "SUPER_ADMIN_VERIFICATION_EMAIL",
+  "SUPER_ADMIN_VERIFICATION_SECRET",
+];
+const payload = JSON.parse(readFileSync(process.argv[2], "utf8"));
+if (payload?.schemaVersion !== 1 || !payload.values) process.exit(1);
+const actualKeys = Object.keys(payload.values).sort();
+const sortedExpected = [...expectedKeys].sort();
+if (
+  actualKeys.length !== sortedExpected.length ||
+  actualKeys.some((key, index) => key !== sortedExpected[index])
+) process.exit(1);
+for (const key of expectedKeys) {
+  const value = payload.values[key];
+  if (typeof value !== "string" || value.includes("\0")) process.exit(1);
+  process.stdout.write(`${key}\0${value}\0`);
+}
+NODE
+  )
+  rm -f -- "$DEPLOY_PAYLOAD_FILE"
+  unset FAOLLA_DEPLOY_PAYLOAD_FILE DEPLOY_PAYLOAD_FILE payload_key payload_value
+  if [ "$loaded_count" -ne "${#DEPLOY_PAYLOAD_KEYS[@]}" ]; then
+    echo "[deploy] deployment payload is incomplete"
+    exit 1
+  fi
+}
+
+load_deploy_payload
+
 APP_DIR="${APP_DIR:-/var/www/merchant-space}"
 APP_NAME="${APP_NAME:-merchant-space}"
 APP_PORT="${APP_PORT:-3000}"
 APP_BRANCH="${APP_BRANCH:-main}"
+EXPECTED_DEPLOY_SHA="${EXPECTED_DEPLOY_SHA:-}"
 AUTOMATION_WORKER_NAME="${AUTOMATION_WORKER_NAME:-${APP_NAME}-enterprise-automation-worker}"
 AUTOMATION_WORKER_KILL_TIMEOUT_MS="${AUTOMATION_WORKER_KILL_TIMEOUT_MS:-180000}"
 MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="${MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:-false}"
@@ -77,6 +232,16 @@ fi
 
 if [ ! -d "$APP_DIR/.git" ]; then
   echo "[deploy] APP_DIR must already contain a git checkout: $APP_DIR"
+  exit 1
+fi
+
+if [ "$APP_BRANCH" != "main" ]; then
+  echo "[deploy] APP_BRANCH must be main"
+  exit 1
+fi
+
+if ! [[ "$EXPECTED_DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "[deploy] EXPECTED_DEPLOY_SHA must be an exact lowercase 40-hex commit"
   exit 1
 fi
 
@@ -284,8 +449,40 @@ ensure_disk_headroom() {
   fi
 }
 
+fetch_deploy_branch() {
+  local attempt
+  for attempt in $(seq 1 "$GIT_FETCH_ATTEMPTS"); do
+    if git \
+      -c http.lowSpeedLimit=1024 \
+      -c "http.lowSpeedTime=$GIT_FETCH_LOW_SPEED_TIME_SECONDS" \
+      fetch origin "$APP_BRANCH" --prune; then
+      return 0
+    fi
+    if [ "$attempt" = "$GIT_FETCH_ATTEMPTS" ]; then
+      echo "[deploy] Git fetch failed after $GIT_FETCH_ATTEMPTS attempts"
+      return 1
+    fi
+    echo "[deploy] Git fetch attempt $attempt failed; retrying in ${GIT_FETCH_DELAY_SECONDS}s"
+    sleep "$GIT_FETCH_DELAY_SECONDS"
+  done
+}
+
 validate_disk_thresholds
 acquire_deploy_lock
+fetch_deploy_branch
+REMOTE_DEPLOY_SHA="$(git rev-parse "origin/$APP_BRANCH")"
+if [ "$REMOTE_DEPLOY_SHA" != "$EXPECTED_DEPLOY_SHA" ]; then
+  echo "[deploy] origin/$APP_BRANCH no longer matches EXPECTED_DEPLOY_SHA"
+  exit 1
+fi
+git checkout "$APP_BRANCH"
+git reset --hard "$EXPECTED_DEPLOY_SHA"
+if [ "$(git rev-parse HEAD)" != "$EXPECTED_DEPLOY_SHA" ]; then
+  echo "[deploy] checked out revision does not match EXPECTED_DEPLOY_SHA"
+  exit 1
+fi
+FAOLLA_WEB_BUILD_ID="$EXPECTED_DEPLOY_SHA"
+FAOLLA_WEB_RELEASED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 report_disk_status
 cleanup_rebuildable_caches
 report_disk_status
@@ -325,24 +522,6 @@ decode_base64_value() {
     return 0
   fi
   printf '%s' "$value" | base64 -d
-}
-
-fetch_deploy_branch() {
-  local attempt
-  for attempt in $(seq 1 "$GIT_FETCH_ATTEMPTS"); do
-    if git \
-      -c http.lowSpeedLimit=1024 \
-      -c "http.lowSpeedTime=$GIT_FETCH_LOW_SPEED_TIME_SECONDS" \
-      fetch origin "$APP_BRANCH" --prune; then
-      return 0
-    fi
-    if [ "$attempt" = "$GIT_FETCH_ATTEMPTS" ]; then
-      echo "[deploy] Git fetch failed after $GIT_FETCH_ATTEMPTS attempts"
-      return 1
-    fi
-    echo "[deploy] Git fetch attempt $attempt failed; retrying in ${GIT_FETCH_DELAY_SECONDS}s"
-    sleep "$GIT_FETCH_DELAY_SECONDS"
-  done
 }
 
 write_env_value "WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
@@ -399,18 +578,12 @@ write_env_value "SUPER_ADMIN_PASSWORD" "${SUPER_ADMIN_PASSWORD:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_EMAIL" "${SUPER_ADMIN_VERIFICATION_EMAIL:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_SECRET" "${SUPER_ADMIN_VERIFICATION_SECRET:-}"
 
-fetch_deploy_branch
-git checkout "$APP_BRANCH"
-git reset --hard "origin/$APP_BRANCH"
-
 if [ -f "$APP_DIR/scripts/configure-production-log-retention.sh" ]; then
   if ! bash "$APP_DIR/scripts/configure-production-log-retention.sh"; then
     echo "[deploy] warning: production log retention configuration failed"
   fi
 fi
 
-FAOLLA_WEB_BUILD_ID="$(git rev-parse HEAD)"
-FAOLLA_WEB_RELEASED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 write_env_value "FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
 write_env_value "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID" "$FAOLLA_WEB_BUILD_ID"
 write_env_value "FAOLLA_WEB_RELEASED_AT" "$FAOLLA_WEB_RELEASED_AT"
@@ -829,7 +1002,7 @@ safe_remove_release_path "$RELEASE_BUILD_DIR"
 mkdir -p "$RELEASE_BUILD_DIR"
 
 echo "[deploy] building isolated release: $RELEASE_DIR"
-git archive --format=tar "origin/$APP_BRANCH" | tar -xf - -C "$RELEASE_BUILD_DIR"
+git archive --format=tar "$EXPECTED_DEPLOY_SHA" | tar -xf - -C "$RELEASE_BUILD_DIR"
 cp -p -- "$APP_DIR/.env.local" "$RELEASE_BUILD_DIR/.env.local"
 
 cd "$RELEASE_BUILD_DIR"
