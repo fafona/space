@@ -93,6 +93,36 @@ const PSQL_CONTAINER_SCRIPT = [
     "--quiet --tuples-only --no-align",
 ].join("\n");
 
+export const PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED = Object.freeze(
+  [
+    ["supabase_admin", "realtime", "postgres", false],
+    ["supabase_admin", "realtime", "dashboard_user", false],
+    ["supabase_admin", "graphql_public", "postgres", false],
+    ["supabase_admin", "graphql_public", "anon", false],
+    ["supabase_admin", "graphql_public", "authenticated", false],
+    ["supabase_admin", "graphql_public", "service_role", false],
+    ["supabase_admin", "graphql", "postgres", false],
+    ["supabase_admin", "graphql", "anon", false],
+    ["supabase_admin", "graphql", "authenticated", false],
+    ["supabase_admin", "graphql", "service_role", false],
+    ["supabase_admin", "extensions", "postgres", true],
+    ["postgres", "storage", "postgres", false],
+    ["postgres", "storage", "anon", false],
+    ["postgres", "storage", "authenticated", false],
+    ["postgres", "storage", "service_role", false],
+    ["postgres", "supabase_functions", "postgres", false],
+    ["postgres", "supabase_functions", "anon", false],
+    ["postgres", "supabase_functions", "authenticated", false],
+    ["postgres", "supabase_functions", "service_role", false],
+  ].map((entry) => Object.freeze(entry)),
+);
+
+const PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED_VALUES_SQL =
+  PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED.map(
+    ([creatorName, schemaName, granteeName, grantable]) =>
+      `('${creatorName}', '${schemaName}', '${granteeName}', ${grantable})`,
+  ).join(",\n    ");
+
 const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migration(version, name) AS (
   VALUES
     (202608190035::bigint, 'ordinary_account_authorization_foundation'::text),
@@ -890,6 +920,15 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
          creator.oid, to_regnamespace('public'), 'CREATE'
        )
      )
+), platform_function_default_acl_expected AS MATERIALIZED (
+  SELECT
+    expected.creator_name::text AS creator_name,
+    expected.schema_name::text AS schema_name,
+    expected.grantee_name::text AS grantee_name,
+    expected.grantable
+  FROM (VALUES
+    ${PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED_VALUES_SQL}
+  ) AS expected(creator_name, schema_name, grantee_name, grantable)
 ), creator_default_acl_fact AS MATERIALIZED (
   SELECT
     creator.oid AS creator_oid,
@@ -981,6 +1020,70 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
   WHERE fact.default_acl_oid IS NOT NULL
   GROUP BY
     fact.creator_oid, fact.default_acl_oid, fact.schema_oid, fact.schema_name
+), creator_default_acl_semantic_state AS MATERIALIZED (
+  SELECT
+    default_acl_row.*,
+    default_acl_row.acl_entry_count = 1
+      AND default_acl_row.owner_execute_count = 1
+      AS strict_owner_only_ready,
+    EXISTS (
+      SELECT 1
+      FROM platform_function_default_acl_expected AS expected
+      WHERE expected.creator_name = creator.creator_name
+        AND expected.schema_name = default_acl_row.schema_name
+    ) AS platform_contract_managed,
+    EXISTS (
+      SELECT 1
+      FROM platform_function_default_acl_expected AS expected
+      WHERE expected.creator_name = creator.creator_name
+        AND expected.schema_name = default_acl_row.schema_name
+    )
+      AND default_acl_row.catalog_reference_ready
+      AND default_acl_row.acl_entry_count = (
+        SELECT count(*)
+        FROM platform_function_default_acl_expected AS expected
+        WHERE expected.creator_name = creator.creator_name
+          AND expected.schema_name = default_acl_row.schema_name
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM creator_default_acl_fact AS fact
+        WHERE fact.default_acl_oid = default_acl_row.default_acl_oid
+          AND fact.acl_ordinality IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM platform_function_default_acl_expected AS expected
+            WHERE expected.creator_name = creator.creator_name
+              AND expected.schema_name = default_acl_row.schema_name
+              AND fact.grantor_oid = fact.creator_oid
+              AND fact.grantor_name = creator.creator_name
+              AND fact.grantee_kind = 'role'
+              AND fact.grantee_name = expected.grantee_name
+              AND fact.privilege_type = 'EXECUTE'
+              AND fact.is_grantable = expected.grantable
+          )
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM platform_function_default_acl_expected AS expected
+        WHERE expected.creator_name = creator.creator_name
+          AND expected.schema_name = default_acl_row.schema_name
+          AND NOT EXISTS (
+            SELECT 1
+            FROM creator_default_acl_fact AS fact
+            WHERE fact.default_acl_oid = default_acl_row.default_acl_oid
+              AND fact.acl_ordinality IS NOT NULL
+              AND fact.grantor_oid = fact.creator_oid
+              AND fact.grantor_name = creator.creator_name
+              AND fact.grantee_kind = 'role'
+              AND fact.grantee_name = expected.grantee_name
+              AND fact.privilege_type = 'EXECUTE'
+              AND fact.is_grantable = expected.grantable
+          )
+      ) AS platform_contract_ready
+  FROM creator_default_acl_row AS default_acl_row
+  JOIN creator_default_acl_creator AS creator
+    ON creator.creator_oid = default_acl_row.creator_oid
 ), creator_default_acl_violation AS MATERIALIZED (
   SELECT
     creator.creator_oid,
@@ -998,28 +1101,40 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
   )
   UNION ALL
   SELECT
-    default_acl_row.creator_oid,
-    default_acl_row.default_acl_oid,
+    semantic_state.creator_oid,
+    semantic_state.default_acl_oid,
     1 AS violation_rank,
-    'function_default_acl_entry_count_invalid'::text AS code
-  FROM creator_default_acl_row AS default_acl_row
-  WHERE default_acl_row.acl_entry_count <> 1
+    'function_default_acl_platform_contract_invalid'::text AS code
+  FROM creator_default_acl_semantic_state AS semantic_state
+  WHERE semantic_state.platform_contract_managed
+    AND NOT semantic_state.strict_owner_only_ready
+    AND NOT semantic_state.platform_contract_ready
   UNION ALL
   SELECT
-    default_acl_row.creator_oid,
-    default_acl_row.default_acl_oid,
+    semantic_state.creator_oid,
+    semantic_state.default_acl_oid,
     2 AS violation_rank,
-    'function_default_acl_owner_execute_missing'::text AS code
-  FROM creator_default_acl_row AS default_acl_row
-  WHERE default_acl_row.owner_execute_count = 0
+    'function_default_acl_entry_count_invalid'::text AS code
+  FROM creator_default_acl_semantic_state AS semantic_state
+  WHERE semantic_state.acl_entry_count <> 1
+    AND NOT semantic_state.platform_contract_ready
   UNION ALL
   SELECT
-    default_acl_row.creator_oid,
-    default_acl_row.default_acl_oid,
+    semantic_state.creator_oid,
+    semantic_state.default_acl_oid,
     3 AS violation_rank,
+    'function_default_acl_owner_execute_missing'::text AS code
+  FROM creator_default_acl_semantic_state AS semantic_state
+  WHERE semantic_state.owner_execute_count = 0
+    AND NOT semantic_state.platform_contract_ready
+  UNION ALL
+  SELECT
+    semantic_state.creator_oid,
+    semantic_state.default_acl_oid,
+    4 AS violation_rank,
     'function_default_acl_catalog_reference_unresolved'::text AS code
-  FROM creator_default_acl_row AS default_acl_row
-  WHERE NOT default_acl_row.catalog_reference_ready
+  FROM creator_default_acl_semantic_state AS semantic_state
+  WHERE NOT semantic_state.catalog_reference_ready
 ), creator_default_acl_state AS MATERIALIZED (
   SELECT NOT EXISTS (
     SELECT 1 FROM creator_default_acl_violation
@@ -1339,10 +1454,34 @@ const DEFAULT_ACL_ENTRY_COUNT_VIOLATION =
   "function_default_acl_entry_count_invalid";
 const DEFAULT_ACL_OWNER_EXECUTE_VIOLATION =
   "function_default_acl_owner_execute_missing";
+const DEFAULT_ACL_PLATFORM_CONTRACT_VIOLATION =
+  "function_default_acl_platform_contract_invalid";
 const DEFAULT_ACL_CATALOG_REFERENCE_VIOLATION =
   "function_default_acl_catalog_reference_unresolved";
 const DEFAULT_ACL_DIAGNOSTIC_CONTRACT =
   "runtime_rpc_function_default_acl_v1";
+function buildPlatformFunctionDefaultAclExpectedByCreator() {
+  const byCreator = new Map();
+  for (const [
+    creatorName,
+    schemaName,
+    granteeName,
+    grantable,
+  ] of PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED) {
+    const bySchema = byCreator.get(creatorName) ?? new Map();
+    const byGrantee = bySchema.get(schemaName) ?? new Map();
+    if (byGrantee.has(granteeName)) {
+      throw new Error("ordinary_account_readiness_platform_acl_duplicate");
+    }
+    byGrantee.set(granteeName, grantable);
+    bySchema.set(schemaName, byGrantee);
+    byCreator.set(creatorName, bySchema);
+  }
+  return byCreator;
+}
+
+const PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED_BY_CREATOR =
+  buildPlatformFunctionDefaultAclExpectedByCreator();
 const ACL_PRIVILEGE_TYPES = new Set([
   "ALTER SYSTEM",
   "CONNECT",
@@ -1486,13 +1625,50 @@ function isStableDefaultAclReasonList(reasons) {
   return true;
 }
 
-function isOwnerExecuteEntry(entry, creatorOid) {
+function isOwnerExecuteEntry(entry, creator) {
   return (
-    entry.grantorOid === creatorOid &&
-    entry.granteeOid === creatorOid &&
+    entry.grantorOid === creator.creatorOid &&
+    entry.grantorName === creator.creatorName &&
+    entry.granteeKind === "role" &&
+    entry.granteeOid === creator.creatorOid &&
+    entry.granteeName === creator.creatorName &&
     entry.privilegeType === "EXECUTE" &&
     entry.grantable === false
   );
+}
+
+function expectedPlatformDefaultAclEntries(creatorName, schemaName) {
+  return PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED_BY_CREATOR.get(
+    creatorName,
+  )?.get(schemaName);
+}
+
+function isExactPlatformDefaultAclRow(row, creator) {
+  const expectedEntries = expectedPlatformDefaultAclEntries(
+    creator.creatorName,
+    row.schemaName,
+  );
+  if (!expectedEntries || row.entries.length !== expectedEntries.size) {
+    return false;
+  }
+
+  const seenGrantees = new Set();
+  for (const entry of row.entries) {
+    if (
+      entry.grantorOid !== creator.creatorOid ||
+      entry.grantorName !== creator.creatorName ||
+      entry.granteeKind !== "role" ||
+      entry.granteeName === null ||
+      !expectedEntries.has(entry.granteeName) ||
+      entry.privilegeType !== "EXECUTE" ||
+      entry.grantable !== expectedEntries.get(entry.granteeName) ||
+      seenGrantees.has(entry.granteeName)
+    ) {
+      return false;
+    }
+    seenGrantees.add(entry.granteeName);
+  }
+  return seenGrantees.size === expectedEntries.size;
 }
 
 function compareDefaultAclEntries(left, right) {
@@ -1641,7 +1817,7 @@ function validateDefaultAclDiagnostic(diagnostic) {
       (row) =>
         row.schemaOid === "0" &&
         row.entries.length === 1 &&
-        isOwnerExecuteEntry(row.entries[0], creator.creatorOid),
+        isOwnerExecuteEntry(row.entries[0], creator),
     );
     if (!globalOwnerExecuteReady) {
       expectedViolations.push({
@@ -1651,7 +1827,27 @@ function validateDefaultAclDiagnostic(diagnostic) {
       });
     }
     for (const row of creatorRows) {
-      if (row.entries.length !== 1) {
+      const strictOwnerOnlyReady =
+        row.entries.length === 1 &&
+        isOwnerExecuteEntry(row.entries[0], creator);
+      const platformContractManaged =
+        expectedPlatformDefaultAclEntries(
+          creator.creatorName,
+          row.schemaName,
+        ) !== undefined;
+      const platformContractReady = isExactPlatformDefaultAclRow(row, creator);
+      if (
+        platformContractManaged &&
+        !strictOwnerOnlyReady &&
+        !platformContractReady
+      ) {
+        expectedViolations.push({
+          code: DEFAULT_ACL_PLATFORM_CONTRACT_VIOLATION,
+          creatorOid: creator.creatorOid,
+          defaultAclOid: row.defaultAclOid,
+        });
+      }
+      if (row.entries.length !== 1 && !platformContractReady) {
         expectedViolations.push({
           code: DEFAULT_ACL_ENTRY_COUNT_VIOLATION,
           creatorOid: creator.creatorOid,
@@ -1659,8 +1855,9 @@ function validateDefaultAclDiagnostic(diagnostic) {
         });
       }
       if (
+        !platformContractReady &&
         !row.entries.some((entry) =>
-          isOwnerExecuteEntry(entry, creator.creatorOid),
+          isOwnerExecuteEntry(entry, creator),
         )
       ) {
         expectedViolations.push({

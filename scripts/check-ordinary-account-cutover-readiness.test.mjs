@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
   OrdinaryAccountCutoverReadinessError,
+  PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED,
   checkOrdinaryAccountCutoverReadiness,
   parseOrdinaryAccountCutoverDatabaseReport,
   parseOrdinaryAccountCutoverReadinessArguments,
@@ -183,6 +184,118 @@ function defaultAclDiagnostic(overrides = {}) {
       },
     ],
     ...overrides,
+  };
+}
+
+function platformDefaultAclEntry({
+  grantorOid = "10",
+  grantorName = "supabase_admin",
+  granteeKind = "role",
+  granteeOid,
+  granteeName,
+  grantable = false,
+}) {
+  return {
+    ordinal: 0,
+    grantorOid,
+    grantorName,
+    granteeKind,
+    granteeOid,
+    granteeName,
+    privilegeType: "EXECUTE",
+    grantable,
+  };
+}
+
+function platformDefaultAclDiagnostic({
+  realtimeEntries = [
+    platformDefaultAclEntry({
+      granteeOid: "20",
+      granteeName: "postgres",
+    }),
+    platformDefaultAclEntry({
+      granteeOid: "30",
+      granteeName: "dashboard_user",
+    }),
+  ],
+  realtimeSchemaName = "realtime",
+  realtimeViolationCodes = [],
+} = {}) {
+  const normalizedRealtimeEntries = realtimeEntries.map((entry, index) => ({
+    ...entry,
+    ordinal: index + 1,
+  }));
+  return {
+    schemaVersion: 1,
+    contract: "runtime_rpc_function_default_acl_v1",
+    ready: false,
+    relevantCreatorCount: 2,
+    functionDefaultAclRowCount: 2,
+    aclEntryCount: normalizedRealtimeEntries.length + 1,
+    violationCount: realtimeViolationCodes.length + 1,
+    creators: [
+      {
+        creatorOid: "10",
+        creatorName: "supabase_admin",
+        reasons: ["supabase_admin_role"],
+        globalOwnerExecuteReady: true,
+        functionDefaultAclRowCount: 2,
+        aclEntryCount: normalizedRealtimeEntries.length + 1,
+        violationCount: realtimeViolationCodes.length,
+      },
+      {
+        creatorOid: "20",
+        creatorName: "postgres",
+        reasons: ["postgres_role"],
+        globalOwnerExecuteReady: false,
+        functionDefaultAclRowCount: 0,
+        aclEntryCount: 0,
+        violationCount: 1,
+      },
+    ],
+    rows: [
+      {
+        defaultAclOid: "500",
+        creatorOid: "10",
+        schemaOid: "0",
+        schemaName: null,
+        objectType: "FUNCTION",
+        aclEntryCount: 1,
+        entries: [
+          {
+            ordinal: 1,
+            grantorOid: "10",
+            grantorName: "supabase_admin",
+            granteeKind: "role",
+            granteeOid: "10",
+            granteeName: "supabase_admin",
+            privilegeType: "EXECUTE",
+            grantable: false,
+          },
+        ],
+      },
+      {
+        defaultAclOid: "501",
+        creatorOid: "10",
+        schemaOid: "2200",
+        schemaName: realtimeSchemaName,
+        objectType: "FUNCTION",
+        aclEntryCount: normalizedRealtimeEntries.length,
+        entries: normalizedRealtimeEntries,
+      },
+    ],
+    violations: [
+      ...realtimeViolationCodes.map((code) => ({
+        code,
+        creatorOid: "10",
+        defaultAclOid: "501",
+      })),
+      {
+        code: "global_function_default_acl_owner_execute_missing",
+        creatorOid: "20",
+        defaultAclOid: null,
+      },
+    ],
   };
 }
 
@@ -485,6 +598,64 @@ test("the production probe is one read-only transaction with the exact runtime h
   );
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /platform_function_default_acl_expected AS MATERIALIZED/,
+  );
+  const exactPlatformContracts = [
+    ["supabase_admin", "realtime", "postgres", false],
+    ["supabase_admin", "realtime", "dashboard_user", false],
+    ["supabase_admin", "graphql_public", "postgres", false],
+    ["supabase_admin", "graphql_public", "anon", false],
+    ["supabase_admin", "graphql_public", "authenticated", false],
+    ["supabase_admin", "graphql_public", "service_role", false],
+    ["supabase_admin", "graphql", "postgres", false],
+    ["supabase_admin", "graphql", "anon", false],
+    ["supabase_admin", "graphql", "authenticated", false],
+    ["supabase_admin", "graphql", "service_role", false],
+    ["supabase_admin", "extensions", "postgres", true],
+    ["postgres", "storage", "postgres", false],
+    ["postgres", "storage", "anon", false],
+    ["postgres", "storage", "authenticated", false],
+    ["postgres", "storage", "service_role", false],
+    ["postgres", "supabase_functions", "postgres", false],
+    ["postgres", "supabase_functions", "anon", false],
+    ["postgres", "supabase_functions", "authenticated", false],
+    ["postgres", "supabase_functions", "service_role", false],
+  ];
+  assert.deepEqual(PLATFORM_FUNCTION_DEFAULT_ACL_EXPECTED, exactPlatformContracts);
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /function_default_acl_platform_contract_invalid/,
+  );
+  const platformExpectedCteSql = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.slice(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
+      "platform_function_default_acl_expected AS MATERIALIZED",
+    ),
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
+      "creator_default_acl_fact AS MATERIALIZED",
+    ),
+  );
+  const sqlPlatformContracts = [
+    ...platformExpectedCteSql.matchAll(
+      /\('([^']+)', '([^']+)', '([^']+)', (true|false)\)/g,
+    ),
+  ].map((match) => [match[1], match[2], match[3], match[4] === "true"]);
+  assert.deepEqual(sqlPlatformContracts, exactPlatformContracts);
+  assert.doesNotMatch(platformExpectedCteSql, /\boid\b/i);
+  const platformSemanticSql = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.slice(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
+      "creator_default_acl_semantic_state AS MATERIALIZED",
+    ),
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
+      "creator_default_acl_violation AS MATERIALIZED",
+    ),
+  );
+  assert.doesNotMatch(
+    platformSemanticSql,
+    /(?:creator|schema|grantor|grantee)_oid\s*=\s*\d+/i,
+    "platform default ACL contracts must be role/schema-name based, not OID-pinned",
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /'defaultAclDiagnostic'[\s\S]*creator_default_acl_diagnostic/,
   );
   assert.doesNotMatch(
@@ -775,6 +946,221 @@ test("database report parser validates the exact bounded baseline shape", () => 
     defaultAclBlocked.defaultAclDiagnostic,
     defaultAclDiagnostic(),
   );
+
+  const exactPlatformDefaultAcl = platformDefaultAclDiagnostic();
+  assert.deepEqual(
+    parseOrdinaryAccountCutoverDatabaseReport(
+      JSON.stringify(
+        databaseReport({
+          runtimeRpcHardeningReady: false,
+          objectContractsReady: false,
+          defaultAclDiagnostic: exactPlatformDefaultAcl,
+        }),
+      ),
+    ).defaultAclDiagnostic,
+    exactPlatformDefaultAcl,
+  );
+
+  const restrictiveManagedDefaultAcl = platformDefaultAclDiagnostic({
+    realtimeEntries: [
+      platformDefaultAclEntry({
+        granteeOid: "10",
+        granteeName: "supabase_admin",
+      }),
+    ],
+  });
+  assert.deepEqual(
+    parseOrdinaryAccountCutoverDatabaseReport(
+      JSON.stringify(
+        databaseReport({
+          runtimeRpcHardeningReady: false,
+          objectContractsReady: false,
+          defaultAclDiagnostic: restrictiveManagedDefaultAcl,
+        }),
+      ),
+    ).defaultAclDiagnostic,
+    restrictiveManagedDefaultAcl,
+  );
+
+  const platformContractViolation =
+    "function_default_acl_platform_contract_invalid";
+  const entryCountViolation = "function_default_acl_entry_count_invalid";
+  const ownerExecuteViolation =
+    "function_default_acl_owner_execute_missing";
+  const catalogReferenceViolation =
+    "function_default_acl_catalog_reference_unresolved";
+  for (const [label, diagnostic] of [
+    [
+      "missing entry",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+    [
+      "extra entry",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+          platformDefaultAclEntry({
+            granteeOid: "30",
+            granteeName: "dashboard_user",
+          }),
+          platformDefaultAclEntry({
+            granteeOid: "40",
+            granteeName: "anon",
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          entryCountViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+    [
+      "PUBLIC entry",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            granteeKind: "public",
+            granteeOid: "0",
+            granteeName: null,
+          }),
+          platformDefaultAclEntry({
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          entryCountViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+    [
+      "unknown grantee",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+          platformDefaultAclEntry({
+            granteeOid: "40",
+            granteeName: "anon",
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          entryCountViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+    [
+      "wrong grantor",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            grantorOid: "20",
+            grantorName: "postgres",
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+          platformDefaultAclEntry({
+            grantorOid: "20",
+            grantorName: "postgres",
+            granteeOid: "30",
+            granteeName: "dashboard_user",
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          entryCountViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+    [
+      "wrong grantability",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+          platformDefaultAclEntry({
+            granteeOid: "30",
+            granteeName: "dashboard_user",
+            grantable: true,
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          entryCountViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+    [
+      "unresolved catalog role",
+      platformDefaultAclDiagnostic({
+        realtimeEntries: [
+          platformDefaultAclEntry({
+            granteeOid: "20",
+            granteeName: "postgres",
+          }),
+          platformDefaultAclEntry({
+            granteeOid: "30",
+            granteeName: null,
+          }),
+        ],
+        realtimeViolationCodes: [
+          platformContractViolation,
+          entryCountViolation,
+          ownerExecuteViolation,
+          catalogReferenceViolation,
+        ],
+      }),
+    ],
+    [
+      "platform tuple in unknown schema",
+      platformDefaultAclDiagnostic({
+        realtimeSchemaName: "unknown_platform_schema",
+        realtimeViolationCodes: [
+          entryCountViolation,
+          ownerExecuteViolation,
+        ],
+      }),
+    ],
+  ]) {
+    assert.deepEqual(
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(
+          databaseReport({
+            runtimeRpcHardeningReady: false,
+            objectContractsReady: false,
+            defaultAclDiagnostic: diagnostic,
+          }),
+        ),
+      ).defaultAclDiagnostic,
+      diagnostic,
+      label,
+    );
+  }
 
   const emptyDefaultAclDiagnostic = defaultAclDiagnostic({
     ready: false,

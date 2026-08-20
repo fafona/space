@@ -92,14 +92,16 @@ Coverage includes:
   alias (with duplicate multiplicity preserved),
   exact nine-function metadata/ACL modes, exact 037 merchant policy and ACL
   inventory, exact 038 five-relation/fourteen-column surface, exact personal and
-  migration-registry structures, forbidden-binder absence, all-schema creator
-  function-default ACL closure, bounded baseline output parsing, fail-on-blocked
+  migration-registry structures, forbidden-binder absence, exact global/public
+  creator function-default ACL closure plus full-set hosted platform-schema
+  tuples, bounded baseline output parsing, fail-on-blocked
   package execution, fixture-only merchant `service_role` ACL cleanup before
   the probe, and a read-only rollback boundary;
 - a production-normalized ready fixture followed by fail-closed drift and exact
   restoration probes for bridge/guard bodies and ACLs, merchant policy/table
   ACLs, the 038 relation-column surface, personal constraints/rules/inheritance,
-  registry persistence/rules/primary key, forbidden binders, non-public schema
+  registry persistence/rules/primary key, forbidden binders, hosted platform
+  default-ACL tuple acceptance and per-entry drift, unknown non-public schema
   function defaults, the pinned merchant baseline, and a same-count ordinary
   identity replacement that only the content SHA can detect; positive hostile
   `quote_all_identifiers` and public-first shadow-search-path probes; and two-
