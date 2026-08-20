@@ -86,6 +86,7 @@ const RELEASE_ATTESTATION_ENV_KEYS = [
   "PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID",
   "PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST",
   "PRODUCTION_BACKUP_RUN_ID",
+  "PRODUCTION_BACKUP_RUN_ATTEMPT",
   "PRODUCTION_BACKUP_ARTIFACT_ID",
   "PRODUCTION_BACKUP_ARTIFACT_DIGEST",
   "PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID",
@@ -101,6 +102,7 @@ const EXPECTED_RELEASE_ATTESTATION = Object.freeze({
   readinessAttestationArtifactId: "9004",
   readinessAttestationArtifactDigest: `sha256:${"9".repeat(64)}`,
   backupRunId: "8001",
+  backupRunAttempt: "2",
   backupArtifactId: "9001",
   backupArtifactDigest: `sha256:${"c".repeat(64)}`,
   backupAttestationArtifactId: "9002",
@@ -139,6 +141,38 @@ function extractWorkflowHeredoc(commandMarker) {
     .join("\n");
 }
 
+function extractWorkflowRunBlocks() {
+  const lines = deployWorkflow.split(/\r?\n/);
+  const blocks = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index] !== "        run: |") continue;
+    const body = [];
+    for (index += 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (line !== "" && !line.startsWith("          ")) {
+        index -= 1;
+        break;
+      }
+      body.push(line.startsWith("          ") ? line.slice(10) : line);
+    }
+    blocks.push(body.join("\n"));
+  }
+  return blocks;
+}
+
+function extractWorkflowHeredocs(tag) {
+  const pattern = new RegExp(
+    `<<'${tag}'\\r?\\n([\\s\\S]*?)\\r?\\n          ${tag}(?=\\r?\\n)`,
+    "g",
+  );
+  return [...deployWorkflow.matchAll(pattern)].map((match) =>
+    match[1]
+      .split(/\r?\n/)
+      .map((line) => line.startsWith("          ") ? line.slice(10) : line)
+      .join("\n"),
+  );
+}
+
 function resolveBashExecutable() {
   const candidates =
     process.platform === "win32"
@@ -154,6 +188,17 @@ function resolveBashExecutable() {
     if (probe.status === 0) return candidate;
   }
   throw new Error("bash is required for the deploy transport contract");
+}
+
+function resolvePythonExecutable() {
+  const candidates = process.platform === "win32"
+    ? [["python"], ["py", "-3"]]
+    : [["python3"], ["python"]];
+  for (const [candidate, ...prefix] of candidates) {
+    const probe = spawnSync(candidate, [...prefix, "--version"], { stdio: "ignore" });
+    if (probe.status === 0) return { candidate, prefix };
+  }
+  throw new Error("python is required for the deploy workflow syntax contract");
 }
 
 function toBashPath(value) {
@@ -310,6 +355,8 @@ sleep() { :; }
       PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST:
         EXPECTED_RELEASE_ATTESTATION.readinessAttestationArtifactDigest,
       PRODUCTION_BACKUP_RUN_ID: EXPECTED_RELEASE_ATTESTATION.backupRunId,
+      PRODUCTION_BACKUP_RUN_ATTEMPT:
+        EXPECTED_RELEASE_ATTESTATION.backupRunAttempt,
       PRODUCTION_BACKUP_ARTIFACT_ID:
         EXPECTED_RELEASE_ATTESTATION.backupArtifactId,
       PRODUCTION_BACKUP_ARTIFACT_DIGEST:
@@ -739,6 +786,16 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
       },
     });
   });
+  await t.test("backup run attempt substitution fails before SSH", async () => {
+    await runDeployTransportScenario({
+      statuses: [0],
+      expectedStatus: 1,
+      expectedSshCalls: 0,
+      evidenceEnvironment: {
+        PRODUCTION_BACKUP_RUN_ATTEMPT: "0",
+      },
+    });
+  });
 });
 
 test("remote deploy consumes one exact payload file and erases it before validation", async () => {
@@ -955,6 +1012,39 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex < fetchIndex);
 });
 
+test("deploy workflow bash and every embedded program have real syntax", () => {
+  const bash = resolveBashExecutable();
+  const runBlocks = extractWorkflowRunBlocks();
+  assert.ok(runBlocks.length >= 6);
+  for (const [index, source] of runBlocks.entries()) {
+    const result = spawnSync(bash, ["-n"], { encoding: "utf8", input: source });
+    assert.equal(result.status, 0, `workflow bash block ${index + 1}: ${result.stderr}`);
+  }
+  const nodeSources = extractWorkflowHeredocs("NODE");
+  assert.ok(nodeSources.length >= 8);
+  for (const [index, source] of nodeSources.entries()) {
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--check"],
+      { encoding: "utf8", input: source },
+    );
+    assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
+  }
+  const pythonSources = extractWorkflowHeredocs("PY");
+  assert.equal(pythonSources.length, 1);
+  const { candidate, prefix } = resolvePythonExecutable();
+  const python = spawnSync(
+    candidate,
+    [
+      ...prefix,
+      "-c",
+      "import sys; compile(sys.stdin.read(), '<deploy-workflow>', 'exec')",
+    ],
+    { encoding: "utf8", input: pythonSources[0] },
+  );
+  assert.equal(python.status, 0, python.stderr);
+});
+
 test("actual workflow-run validator rejects every substituted trust dimension", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "faolla-readiness-run-contract-"));
   const runPath = join(directory, "run.json");
@@ -1105,6 +1195,186 @@ test("actual artifact inventory validator rejects ambiguity, expiry, emptiness, 
   }
 });
 
+test("live nested backup revalidation rejects deleted, substituted, stale, and non-exact evidence", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "faolla-deploy-backup-revalidation-"));
+  const source = extractWorkflowHeredoc(
+    '"$run_json" "$workflow_json" "$artifact_pages" "$details_dir" <<\'NODE\'',
+  );
+  const readinessValidUntil = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    .toISOString();
+  const createdAt = new Date(Date.now() - 60_000).toISOString();
+  const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+  const artifact = (name, id, digestCharacter) => ({
+    id,
+    name,
+    size_in_bytes: 8192 + id,
+    expired: false,
+    created_at: createdAt,
+    expires_at: expiresAt,
+    digest: `sha256:${digestCharacter.repeat(64)}`,
+    workflow_run: {
+      id: 8001,
+      head_branch: "main",
+      head_sha: "a".repeat(40),
+    },
+  });
+  const validState = () => ({
+    run: {
+      id: 8001,
+      workflow_id: 7001,
+      run_attempt: 2,
+      status: "completed",
+      conclusion: "success",
+      event: "workflow_dispatch",
+      name: "Encrypted Database Backup",
+      path: ".github/workflows/database-backup.yml",
+      head_branch: "main",
+      head_sha: "a".repeat(40),
+      repository: { full_name: "fafona/space" },
+      head_repository: { full_name: "fafona/space" },
+    },
+    workflow: {
+      id: 7001,
+      name: "Encrypted Database Backup",
+      path: ".github/workflows/database-backup.yml",
+      state: "active",
+    },
+    pages: [{
+      total_count: 5,
+      artifacts: [
+        artifact("faolla-encrypted-disaster-recovery-8001-2", 91001, "1"),
+        artifact("faolla-production-backup-attestation-8001-2", 91002, "2"),
+        artifact("faolla-backup-verification-reports-8001-2", 91003, "3"),
+        artifact("faolla-encrypted-backup-attestation-bundle-8001-2", 91004, "4"),
+        artifact("faolla-production-backup-attestation-bundle-8001-2", 91005, "5"),
+      ],
+    }],
+  });
+  const run = async ({
+    mutate = () => {},
+    mutateDirect = () => {},
+    omitDetailId = null,
+    extraDetail = false,
+  } = {}) => {
+    const directory = await mkdtemp(join(root, "case-"));
+    try {
+      const state = validState();
+      mutate(state);
+      const runPath = join(directory, "run.json");
+      const workflowPath = join(directory, "workflow.json");
+      const pagesPath = join(directory, "pages.json");
+      const detailsDirectory = join(directory, "details");
+      await mkdir(detailsDirectory);
+      await Promise.all([
+        writeFile(runPath, `${JSON.stringify(state.run)}\n`),
+        writeFile(workflowPath, `${JSON.stringify(state.workflow)}\n`),
+        writeFile(pagesPath, `${JSON.stringify(state.pages)}\n`),
+      ]);
+      const directArtifacts = structuredClone(state.pages[0].artifacts);
+      mutateDirect(directArtifacts);
+      for (const direct of directArtifacts) {
+        if (direct.id === omitDetailId) continue;
+        await writeFile(
+          join(detailsDirectory, `${direct.id}.json`),
+          `${JSON.stringify(direct)}\n`,
+        );
+      }
+      if (extraDetail) {
+        await writeFile(
+          join(detailsDirectory, "99999.json"),
+          `${JSON.stringify(artifact("unexpected", 99999, "a"))}\n`,
+        );
+      }
+      return spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-",
+          runPath,
+          workflowPath,
+          pagesPath,
+          detailsDirectory,
+        ],
+        {
+          cwd: repositoryRoot,
+          encoding: "utf8",
+          input: source,
+          env: {
+            ...process.env,
+            BACKUP_RUN_ID: "8001",
+            BACKUP_RUN_ATTEMPT: "2",
+            BACKUP_PRIMARY_ARTIFACT_ID: "91001",
+            BACKUP_PRIMARY_ARTIFACT_DIGEST: `sha256:${"1".repeat(64)}`,
+            BACKUP_ATTESTATION_ARTIFACT_ID: "91002",
+            BACKUP_ATTESTATION_ARTIFACT_DIGEST: `sha256:${"2".repeat(64)}`,
+            BACKUP_WORKFLOW_NAME: "Encrypted Database Backup",
+            BACKUP_WORKFLOW_PATH: ".github/workflows/database-backup.yml",
+            DEPLOY_REF: "a".repeat(40),
+            GITHUB_REPOSITORY: "fafona/space",
+            READINESS_VALID_UNTIL: readinessValidUntil,
+          },
+        },
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  };
+  try {
+    const accepted = await run();
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const cases = [
+      ["deleted direct artifact", { omitDetailId: 91001 }],
+      ["extra direct artifact", { extraDetail: true }],
+      ["missing inventory artifact", {
+        mutate: (state) => {
+          state.pages[0].artifacts.pop();
+          state.pages[0].total_count = 4;
+        },
+      }],
+      ["extra inventory artifact", {
+        mutate: (state) => {
+          state.pages[0].artifacts.push(artifact("unexpected", 91006, "6"));
+          state.pages[0].total_count = 6;
+        },
+      }],
+      ["backup attempt", { mutate: (state) => { state.run.run_attempt = 3; } }],
+      ["attempt-bound artifact name", {
+        mutate: (state) => {
+          state.pages[0].artifacts[0].name = "faolla-encrypted-disaster-recovery-8001-3";
+        },
+      }],
+      ["backup run head", { mutate: (state) => { state.run.head_sha = "b".repeat(40); } }],
+      ["artifact head", {
+        mutate: (state) => { state.pages[0].artifacts[0].workflow_run.head_sha = "b".repeat(40); },
+      }],
+      ["primary digest", {
+        mutate: (state) => { state.pages[0].artifacts[0].digest = `sha256:${"a".repeat(64)}`; },
+      }],
+      ["primary ID", { mutate: (state) => { state.pages[0].artifacts[0].id = 91999; } }],
+      ["expired artifact", { mutate: (state) => { state.pages[0].artifacts[0].expired = true; } }],
+      ["artifact TTL", {
+        mutate: (state) => { state.pages[0].artifacts[0].expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString(); },
+      }],
+      ["direct digest substitution", {
+        mutateDirect: (details) => { details[0].digest = `sha256:${"b".repeat(64)}`; },
+      }],
+      ["workflow path", {
+        mutate: (state) => { state.workflow.path = ".github/workflows/other.yml"; },
+      }],
+      ["run event", { mutate: (state) => { state.run.event = "push"; } }],
+      ["run success", { mutate: (state) => { state.run.conclusion = "failure"; } }],
+    ];
+    for (const [name, options] of cases) {
+      await t.test(name, async () => {
+        const rejected = await run(options);
+        assert.notEqual(rejected.status, 0, `${rejected.stdout}\n${rejected.stderr}`);
+      });
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("production deployment accepts only a successful exact readiness run for current main", () => {
   assert.doesNotMatch(deployWorkflow, /^\s*workflow_dispatch:\s*$/m);
   assert.match(
@@ -1220,7 +1490,7 @@ test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bou
   assert.match(deployWorkflow, /--source-digest "\$DEPLOY_REF"/);
   assert.match(deployWorkflow, /--source-ref "refs\/heads\/main"/);
   assert.match(deployWorkflow, /--deny-self-hosted-runners/);
-  assert.match(deployWorkflow, /--no-public-good/);
+  assert.doesNotMatch(deployWorkflow, /--no-public-good/);
   assert.match(deployWorkflow, /results\.length !== 1/);
   assert.match(deployWorkflow, /"production-readiness-report\.json"/);
   assert.match(deployWorkflow, /"production-readiness-attestation\.json"/);
@@ -1245,10 +1515,60 @@ test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bou
     deployWorkflow,
     /--expected-readiness-artifact-digest "\$READINESS_REPORT_ARTIFACT_DIGEST"/,
   );
-  assert.match(deployWorkflow, /--minimum-remaining-seconds 3600/);
+  assert.match(deployWorkflow, /--minimum-remaining-seconds 4500/);
   assert.match(deployWorkflow, /summary\.backupRunId/);
+  assert.match(deployWorkflow, /summary\.backupRunAttempt/);
   assert.match(deployWorkflow, /summary\.backupArtifactId/);
   assert.match(deployWorkflow, /summary\.backupAttestationArtifactId/);
+});
+
+test("nested backup evidence is re-fetched and exact-five validated immediately before SSH", () => {
+  const revalidationIndex = deployWorkflow.indexOf(
+    "      - name: Revalidate Live Recursive Backup Evidence",
+  );
+  const setupSshIndex = deployWorkflow.indexOf("      - name: Setup SSH");
+  const deploySshIndex = deployWorkflow.indexOf("      - name: Deploy To Server");
+  assert.ok(revalidationIndex >= 0);
+  assert.ok(revalidationIndex < setupSshIndex && setupSshIndex < deploySshIndex);
+  assert.match(
+    deployWorkflow,
+    /repos\/\$GITHUB_REPOSITORY\/actions\/runs\/\$BACKUP_RUN_ID"/,
+  );
+  assert.match(
+    deployWorkflow,
+    /repos\/\$GITHUB_REPOSITORY\/actions\/workflows\/\$workflow_id"/,
+  );
+  assert.match(
+    deployWorkflow,
+    /repos\/\$GITHUB_REPOSITORY\/actions\/runs\/\$BACKUP_RUN_ID\/artifacts\?per_page=100/,
+  );
+  assert.match(
+    deployWorkflow,
+    /repos\/\$GITHUB_REPOSITORY\/actions\/artifacts\/\$artifact_id"/,
+  );
+  assert.match(deployWorkflow, /run\.run_attempt !== expectedRunAttempt/);
+  assert.match(deployWorkflow, /run\.event !== "workflow_dispatch"/);
+  assert.match(deployWorkflow, /run\.conclusion !== "success"/);
+  assert.match(deployWorkflow, /artifacts\.length !== 5/);
+  assert.match(deployWorkflow, /page\.total_count !== 5/);
+  for (const name of [
+    "faolla-encrypted-disaster-recovery-",
+    "faolla-production-backup-attestation-",
+    "faolla-backup-verification-reports-",
+    "faolla-encrypted-backup-attestation-bundle-",
+    "faolla-production-backup-attestation-bundle-",
+  ]) {
+    assert.ok(deployWorkflow.includes(name), `missing exact backup artifact name: ${name}`);
+  }
+  assert.match(deployWorkflow, /ids\.has\(artifact\.id\)/);
+  assert.match(deployWorkflow, /artifact\.size_in_bytes <= 0/);
+  assert.match(deployWorkflow, /artifact\.expired !== false/);
+  assert.match(deployWorkflow, /expiresAt\.milliseconds < readinessValidUntil\.milliseconds/);
+  assert.match(deployWorkflow, /primary\.id !== expectedPrimaryId/);
+  assert.match(deployWorkflow, /primary\.digest !== process\.env\.BACKUP_PRIMARY_ARTIFACT_DIGEST/);
+  assert.match(deployWorkflow, /attestation\.id !== expectedAttestationId/);
+  assert.match(deployWorkflow, /attestation\.digest !== process\.env\.BACKUP_ATTESTATION_ARTIFACT_DIGEST/);
+  assert.match(deployWorkflow, /readinessValidUntil\.milliseconds - Date\.now\(\) < 4_500_000/);
 });
 
 test("verified readiness bytes and artifact references ride inside the V2 payload without changing 35 deploy values", () => {
@@ -1262,6 +1582,7 @@ test("verified readiness bytes and artifact references ride inside the V2 payloa
     "readinessAttestationArtifactId",
     "readinessAttestationArtifactDigest",
     "backupRunId",
+    "backupRunAttempt",
     "backupArtifactId",
     "backupArtifactDigest",
     "backupAttestationArtifactId",

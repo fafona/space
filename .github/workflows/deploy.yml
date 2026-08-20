@@ -304,7 +304,6 @@ jobs:
               --source-ref "refs/heads/main" \
               --predicate-type "https://slsa.dev/provenance/v1" \
               --deny-self-hosted-runners \
-              --no-public-good \
               --limit 10 \
               --format json > "$verification_file"
             node --input-type=module - "$verification_file" "$subject_name" "$subject_sha" <<'NODE'
@@ -345,7 +344,7 @@ jobs:
             --expected-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
             --expected-readiness-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
             --expected-readiness-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
-            --minimum-remaining-seconds 3600 \
+            --minimum-remaining-seconds 4500 \
             > "$summary_file"
           report_bytes="$(wc -c < "$report_file" | tr -d '[:space:]')"
           report_sha256="$(sha256sum "$report_file" | awk '{ print $1 }')"
@@ -364,7 +363,7 @@ jobs:
           ) process.exit(1);
           const expectedSummaryKeys = [
             "artifactDigest", "artifactId", "backupArtifactDigest", "backupArtifactId",
-            "backupAttestationArtifactDigest", "backupAttestationArtifactId", "backupRunId",
+            "backupAttestationArtifactDigest", "backupAttestationArtifactId", "backupRunAttempt", "backupRunId",
             "baselineSha256", "canonicalSha256", "databaseIdentitySha256", "kind", "readinessArtifactDigest",
             "readinessArtifactId", "readinessRunId", "repository", "runAttempt", "runId", "targetSha",
             "valid", "validUntil",
@@ -389,6 +388,7 @@ jobs:
           const sha256Digest = (value) => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
           if (
             !positiveDecimal(summary.backupRunId) ||
+            !positiveDecimal(summary.backupRunAttempt) ||
             !positiveDecimal(summary.backupArtifactId) ||
             !sha256Digest(summary.backupArtifactDigest) ||
             !positiveDecimal(summary.backupAttestationArtifactId) ||
@@ -399,10 +399,12 @@ jobs:
             attestation_file: process.argv[2],
             canonical_sha256: summary.canonicalSha256,
             backup_run_id: summary.backupRunId,
+            backup_run_attempt: summary.backupRunAttempt,
             backup_artifact_id: summary.backupArtifactId,
             backup_artifact_digest: summary.backupArtifactDigest,
             backup_attestation_artifact_id: summary.backupAttestationArtifactId,
             backup_attestation_artifact_digest: summary.backupAttestationArtifactDigest,
+            valid_until: summary.validUntil,
           };
           appendFileSync(
             process.env.GITHUB_OUTPUT,
@@ -410,6 +412,232 @@ jobs:
           );
           NODE
           rm -f -- "$summary_file" "$report_file"
+
+      - name: Revalidate Live Recursive Backup Evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_RUN_ID: ${{ steps.readiness-evidence.outputs.backup_run_id }}
+          BACKUP_RUN_ATTEMPT: ${{ steps.readiness-evidence.outputs.backup_run_attempt }}
+          BACKUP_PRIMARY_ARTIFACT_ID: ${{ steps.readiness-evidence.outputs.backup_artifact_id }}
+          BACKUP_PRIMARY_ARTIFACT_DIGEST: ${{ steps.readiness-evidence.outputs.backup_artifact_digest }}
+          BACKUP_ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-evidence.outputs.backup_attestation_artifact_id }}
+          BACKUP_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.readiness-evidence.outputs.backup_attestation_artifact_digest }}
+          READINESS_VALID_UNTIL: ${{ steps.readiness-evidence.outputs.valid_until }}
+          BACKUP_WORKFLOW_NAME: Encrypted Database Backup
+          BACKUP_WORKFLOW_PATH: .github/workflows/database-backup.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BACKUP_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BACKUP_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BACKUP_PRIMARY_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BACKUP_ATTESTATION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BACKUP_PRIMARY_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$BACKUP_ATTESTATION_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$READINESS_VALID_UNTIL" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]]
+          current_main="$(gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$current_main" = "$DEPLOY_REF"
+          revalidation_root="$RUNNER_TEMP/faolla-deploy-backup-revalidation"
+          details_dir="$revalidation_root/artifacts"
+          mkdir "$revalidation_root" "$details_dir"
+          run_json="$revalidation_root/backup-run.json"
+          workflow_json="$revalidation_root/backup-workflow.json"
+          artifact_pages="$revalidation_root/backup-artifact-pages.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$BACKUP_RUN_ID" \
+            > "$run_json"
+          workflow_id="$(node --input-type=module - "$run_json" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const run = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Number.isSafeInteger(run?.workflow_id) || run.workflow_id <= 0) {
+            process.stderr.write("backup_revalidation_workflow_id_invalid\n");
+            process.exit(1);
+          }
+          process.stdout.write(String(run.workflow_id));
+          NODE
+          )"
+          [[ "$workflow_id" =~ ^[1-9][0-9]*$ ]]
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id" \
+            > "$workflow_json"
+          gh api --method GET --paginate --slurp \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$BACKUP_RUN_ID/artifacts?per_page=100" \
+            > "$artifact_pages"
+          mapfile -t artifact_ids < <(node --input-type=module - "$artifact_pages" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Array.isArray(pages) || pages.length === 0) process.exit(1);
+          const artifacts = pages.flatMap((page) => {
+            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 5) process.exit(1);
+            return page.artifacts;
+          });
+          const ids = artifacts.map((artifact) => artifact?.id);
+          if (
+            artifacts.length !== 5 ||
+            ids.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
+            new Set(ids).size !== 5
+          ) process.exit(1);
+          process.stdout.write(`${ids.sort((left, right) => left - right).join("\n")}\n`);
+          NODE
+          )
+          test "${#artifact_ids[@]}" -eq 5
+          for artifact_id in "${artifact_ids[@]}"; do
+            [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
+            gh api --method GET \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" \
+              > "$details_dir/$artifact_id.json"
+          done
+          node --input-type=module - \
+            "$run_json" "$workflow_json" "$artifact_pages" "$details_dir" <<'NODE'
+          import { readFileSync, readdirSync } from "node:fs";
+          import { join } from "node:path";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const positiveInteger = (value, code) => {
+            const parsed = Number(value);
+            if (!/^[1-9][0-9]*$/.test(value ?? "") || !Number.isSafeInteger(parsed)) fail(code);
+            return parsed;
+          };
+          const canonicalTimestamp = (value, code) => {
+            if (typeof value !== "string") fail(code);
+            const timestamp = Date.parse(value);
+            if (!Number.isFinite(timestamp)) fail(code);
+            return { milliseconds: timestamp, value: new Date(timestamp).toISOString() };
+          };
+          const expectedRunId = positiveInteger(process.env.BACKUP_RUN_ID, "backup_revalidation_run_id_invalid");
+          const expectedRunAttempt = positiveInteger(process.env.BACKUP_RUN_ATTEMPT, "backup_revalidation_attempt_invalid");
+          const expectedPrimaryId = positiveInteger(process.env.BACKUP_PRIMARY_ARTIFACT_ID, "backup_revalidation_primary_id_invalid");
+          const expectedAttestationId = positiveInteger(process.env.BACKUP_ATTESTATION_ARTIFACT_ID, "backup_revalidation_attestation_id_invalid");
+          if (
+            !/^sha256:[0-9a-f]{64}$/.test(process.env.BACKUP_PRIMARY_ARTIFACT_DIGEST ?? "") ||
+            !/^sha256:[0-9a-f]{64}$/.test(process.env.BACKUP_ATTESTATION_ARTIFACT_DIGEST ?? "")
+          ) fail("backup_revalidation_expected_digest_invalid");
+          const readinessValidUntil = canonicalTimestamp(
+            process.env.READINESS_VALID_UNTIL,
+            "backup_revalidation_readiness_ttl_invalid",
+          );
+          if (
+            readinessValidUntil.value !== process.env.READINESS_VALID_UNTIL ||
+            readinessValidUntil.milliseconds - Date.now() < 4_500_000
+          ) fail("backup_revalidation_readiness_ttl_insufficient");
+          const run = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const workflow = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const pages = JSON.parse(readFileSync(process.argv[4], "utf8"));
+          const detailsDirectory = process.argv[5];
+          if (
+            run?.id !== expectedRunId ||
+            run.run_attempt !== expectedRunAttempt ||
+            run.status !== "completed" ||
+            run.conclusion !== "success" ||
+            run.event !== "workflow_dispatch" ||
+            run.name !== process.env.BACKUP_WORKFLOW_NAME ||
+            run.path !== process.env.BACKUP_WORKFLOW_PATH ||
+            run.head_branch !== "main" ||
+            run.head_sha !== process.env.DEPLOY_REF ||
+            run.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            !Number.isSafeInteger(run.workflow_id) || run.workflow_id <= 0
+          ) fail("backup_revalidation_run_contract_invalid");
+          if (
+            workflow?.id !== run.workflow_id ||
+            workflow.name !== process.env.BACKUP_WORKFLOW_NAME ||
+            workflow.path !== process.env.BACKUP_WORKFLOW_PATH ||
+            workflow.state !== "active"
+          ) fail("backup_revalidation_workflow_contract_invalid");
+          if (!Array.isArray(pages) || pages.length === 0) fail("backup_revalidation_pages_invalid");
+          const artifacts = pages.flatMap((page) => {
+            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 5) {
+              fail("backup_revalidation_page_invalid");
+            }
+            return page.artifacts;
+          });
+          if (artifacts.length !== 5) fail("backup_revalidation_inventory_count_invalid");
+          const suffix = `${process.env.BACKUP_RUN_ID}-${process.env.BACKUP_RUN_ATTEMPT}`;
+          const expectedNames = new Map([
+            [`faolla-encrypted-disaster-recovery-${suffix}`, "primary"],
+            [`faolla-production-backup-attestation-${suffix}`, "attestation"],
+            [`faolla-backup-verification-reports-${suffix}`, "verificationReports"],
+            [`faolla-encrypted-backup-attestation-bundle-${suffix}`, "encryptedAttestationBundle"],
+            [`faolla-production-backup-attestation-bundle-${suffix}`, "productionAttestationBundle"],
+          ]);
+          const expectedFiles = artifacts
+            .map((artifact) => `${artifact?.id}.json`)
+            .sort();
+          const detailFiles = readdirSync(detailsDirectory).sort();
+          if (
+            detailFiles.length !== 5 ||
+            detailFiles.some((file, index) => file !== expectedFiles[index])
+          ) fail("backup_revalidation_direct_inventory_invalid");
+          const now = Date.now();
+          const ids = new Set();
+          const roles = new Map();
+          for (const artifact of artifacts) {
+            const role = expectedNames.get(artifact?.name);
+            if (!role || roles.has(role)) fail("backup_revalidation_name_invalid");
+            if (
+              !Number.isSafeInteger(artifact.id) || artifact.id <= 0 || ids.has(artifact.id) ||
+              !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes <= 0 ||
+              artifact.expired !== false ||
+              !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "") ||
+              artifact.workflow_run?.id !== expectedRunId ||
+              artifact.workflow_run?.head_branch !== "main" ||
+              artifact.workflow_run?.head_sha !== process.env.DEPLOY_REF
+            ) fail("backup_revalidation_entry_invalid");
+            const createdAt = canonicalTimestamp(artifact.created_at, "backup_revalidation_created_at_invalid");
+            const expiresAt = canonicalTimestamp(artifact.expires_at, "backup_revalidation_expires_at_invalid");
+            if (
+              createdAt.milliseconds > now + 300_000 ||
+              createdAt.milliseconds >= expiresAt.milliseconds ||
+              expiresAt.milliseconds < readinessValidUntil.milliseconds
+            ) fail("backup_revalidation_artifact_ttl_invalid");
+            const direct = JSON.parse(
+              readFileSync(join(detailsDirectory, `${artifact.id}.json`), "utf8"),
+            );
+            const directCreatedAt = canonicalTimestamp(direct?.created_at, "backup_revalidation_direct_created_at_invalid");
+            const directExpiresAt = canonicalTimestamp(direct?.expires_at, "backup_revalidation_direct_expires_at_invalid");
+            if (
+              direct?.id !== artifact.id ||
+              direct.name !== artifact.name ||
+              direct.digest !== artifact.digest ||
+              direct.size_in_bytes !== artifact.size_in_bytes ||
+              direct.expired !== false ||
+              directCreatedAt.value !== createdAt.value ||
+              directExpiresAt.value !== expiresAt.value ||
+              directExpiresAt.milliseconds < readinessValidUntil.milliseconds ||
+              direct.workflow_run?.id !== expectedRunId ||
+              direct.workflow_run?.head_branch !== "main" ||
+              direct.workflow_run?.head_sha !== process.env.DEPLOY_REF
+            ) fail("backup_revalidation_direct_artifact_mismatch");
+            ids.add(artifact.id);
+            roles.set(role, artifact);
+          }
+          if (ids.size !== 5 || roles.size !== 5) fail("backup_revalidation_contract_invalid");
+          const primary = roles.get("primary");
+          const attestation = roles.get("attestation");
+          if (
+            primary.id !== expectedPrimaryId ||
+            primary.digest !== process.env.BACKUP_PRIMARY_ARTIFACT_DIGEST ||
+            attestation.id !== expectedAttestationId ||
+            attestation.digest !== process.env.BACKUP_ATTESTATION_ARTIFACT_DIGEST ||
+            attestation.size_in_bytes > 2 * 1024 * 1024
+          ) fail("backup_revalidation_verified_binding_mismatch");
+          NODE
 
       - name: Setup SSH
         env:
@@ -459,6 +687,7 @@ jobs:
           PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-artifacts.outputs.attestation_id }}
           PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.readiness-artifacts.outputs.attestation_digest }}
           PRODUCTION_BACKUP_RUN_ID: ${{ steps.readiness-evidence.outputs.backup_run_id }}
+          PRODUCTION_BACKUP_RUN_ATTEMPT: ${{ steps.readiness-evidence.outputs.backup_run_attempt }}
           PRODUCTION_BACKUP_ARTIFACT_ID: ${{ steps.readiness-evidence.outputs.backup_artifact_id }}
           PRODUCTION_BACKUP_ARTIFACT_DIGEST: ${{ steps.readiness-evidence.outputs.backup_artifact_digest }}
           PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-evidence.outputs.backup_attestation_artifact_id }}
@@ -549,6 +778,7 @@ jobs:
           [[ "$PRODUCTION_READINESS_REPORT_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$PRODUCTION_BACKUP_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_BACKUP_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$PRODUCTION_BACKUP_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -584,7 +814,8 @@ jobs:
             PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST \
             PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID \
             PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST \
-            PRODUCTION_BACKUP_RUN_ID PRODUCTION_BACKUP_ARTIFACT_ID \
+            PRODUCTION_BACKUP_RUN_ID PRODUCTION_BACKUP_RUN_ATTEMPT \
+            PRODUCTION_BACKUP_ARTIFACT_ID \
             PRODUCTION_BACKUP_ARTIFACT_DIGEST \
             PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID \
             PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST \
@@ -664,6 +895,7 @@ jobs:
             readinessAttestationArtifactId: required("PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID", positiveDecimal),
             readinessAttestationArtifactDigest: required("PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST", sha256Digest),
             backupRunId: required("PRODUCTION_BACKUP_RUN_ID", positiveDecimal),
+            backupRunAttempt: required("PRODUCTION_BACKUP_RUN_ATTEMPT", positiveDecimal),
             backupArtifactId: required("PRODUCTION_BACKUP_ARTIFACT_ID", positiveDecimal),
             backupArtifactDigest: required("PRODUCTION_BACKUP_ARTIFACT_DIGEST", sha256Digest),
             backupAttestationArtifactId: required("PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID", positiveDecimal),
@@ -687,7 +919,8 @@ jobs:
             PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST \
             PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID \
             PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST \
-            PRODUCTION_BACKUP_RUN_ID PRODUCTION_BACKUP_ARTIFACT_ID \
+            PRODUCTION_BACKUP_RUN_ID PRODUCTION_BACKUP_RUN_ATTEMPT \
+            PRODUCTION_BACKUP_ARTIFACT_ID \
             PRODUCTION_BACKUP_ARTIFACT_DIGEST \
             PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID \
             PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST \
