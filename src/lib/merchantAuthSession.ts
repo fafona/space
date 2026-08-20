@@ -251,16 +251,14 @@ export function clearMerchantAuthMerchantIdCookie(
   response: NextResponse,
   request?: Request,
 ) {
-  const cookieDomain = resolveMerchantCookieDomain(request);
-  const secure = resolveMerchantCookieSecureFlag(request);
   response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure,
+    secure: true,
     path: "/",
     maxAge: 0,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
+  expireLegacyMerchantAuthCookies(response, request);
 }
 
 export function clearMerchantAuthCookies(response: NextResponse, request?: Request) {

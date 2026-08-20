@@ -7,6 +7,7 @@ import {
   resolvePersonalAccountSessionFromRequest,
   resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
 } from "@/lib/personalAccountSession.server";
+import { MERCHANT_AUTH_COOKIE } from "@/lib/merchantAuthSession";
 
 const USER_ID = "66666666-6666-4666-8666-666666666666";
 const LEGACY_PROOF_SECRET = "personal-proof-authority-regression-secret";
@@ -90,9 +91,9 @@ test("personal session ignores forged metadata and returns only the canonical ac
     },
     async () => {
       const session = await resolvePersonalAccountSessionFromRequest(
-        new Request("https://faolla.com/api/personal-profile", {
+        new Request("https://www.faolla.com/api/personal-profile", {
           headers: {
-            cookie: "merchant-space-merchant-auth=personal-access-token",
+            cookie: `${MERCHANT_AUTH_COOKIE}=personal-access-token`,
           },
         }),
       );
@@ -130,9 +131,9 @@ test("personal session rejects merchant, disabled and unbound authoritative resu
   for (const [index, payload] of denied.entries()) {
     await withPersonalSessionBackend(payload, async () => {
       const session = await resolvePersonalAccountSessionFromRequest(
-        new Request("https://faolla.com/api/personal-profile", {
+        new Request("https://www.faolla.com/api/personal-profile", {
           headers: {
-            cookie: `merchant-space-merchant-auth=denied-${index}`,
+            cookie: `${MERCHANT_AUTH_COOKIE}=denied-${index}`,
           },
         }),
       );
@@ -154,6 +155,7 @@ test("frontend proof payloads cannot establish a personal session", async () => 
       const base = {
         accountType: "personal" as const,
         userId: USER_ID,
+        email: "personal@example.com",
         iat: 1,
         exp: 4_000_000_000,
       };
@@ -192,7 +194,7 @@ test("a correctly signed legacy two-hour proof is rejected before direct-session
     await assert.rejects(
       () =>
         resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
-          new Request("https://faolla.com/api/orders"),
+          new Request("https://www.faolla.com/api/orders"),
           proof,
           async () => {
             directResolverCalls += 1;
@@ -225,6 +227,7 @@ test("personal proof rejects shadow-only nonnumeric canonical ids", async () => 
           accountType: "personal",
           accountId,
           userId: USER_ID,
+          email: "personal@example.com",
           iat: 1,
           exp: 4_000_000_000,
         });
@@ -247,10 +250,10 @@ test("an explicitly submitted empty or malformed proof never downgrades to a dir
         await assert.rejects(
           () =>
             resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
-              new Request("https://faolla.com/api/orders", {
+              new Request("https://www.faolla.com/api/orders", {
                 headers: {
                   cookie:
-                    "merchant-space-merchant-auth=personal-access-token",
+                    `${MERCHANT_AUTH_COOKIE}=personal-access-token`,
                 },
               }),
               proof,
@@ -271,7 +274,7 @@ test("an omitted proof preserves the canonical direct-session path", async () =>
   >;
 
   const session = await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
-    new Request("https://faolla.com/api/orders"),
+    new Request("https://www.faolla.com/api/orders"),
     undefined,
     async () => {
       directResolverCalls += 1;

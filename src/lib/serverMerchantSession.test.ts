@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveMerchantSessionFromRequest } from "./serverMerchantSession";
+import {
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+} from "./merchantAuthSession";
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 
@@ -40,7 +44,7 @@ function requestAuthorization(init?: RequestInit) {
 test("merchant session does not trust unauthenticated merchant hints", async () => {
   const session = await resolveMerchantSessionFromRequest(
     new Request(
-      "https://faolla.com/api/support-messages?siteId=87654321&merchantEmail=forged@example.com",
+      "https://www.faolla.com/api/support-messages?siteId=87654321&merchantEmail=forged@example.com",
       {
         headers: {
           "x-merchant-site-id": "87654321",
@@ -70,11 +74,10 @@ test("merchant session never rotates refresh cookies inside business routes", as
     async () => {
       const session = await resolveMerchantSessionFromRequest(
         new Request(
-          "https://faolla.com/api/bookings?siteId=12345678",
+          "https://www.faolla.com/api/bookings?siteId=12345678",
           {
             headers: {
-              cookie:
-                "merchant-space-merchant-auth=stale-access; merchant-space-merchant-refresh=refresh-token",
+              cookie: `${MERCHANT_AUTH_COOKIE}=stale-access; ${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token`,
             },
           },
         ),
@@ -126,10 +129,10 @@ test("merchant session selects an authoritative one-to-many binding and ignores 
     async () => {
       const selected = await resolveMerchantSessionFromRequest(
         new Request(
-          "https://faolla.com/api/support-messages?siteId=87654321&merchantEmail=forged@example.com",
+          "https://www.faolla.com/api/support-messages?siteId=87654321&merchantEmail=forged@example.com",
           {
             headers: {
-              cookie: "merchant-space-merchant-auth=access-token",
+              cookie: `${MERCHANT_AUTH_COOKIE}=access-token`,
             },
           },
         ),
@@ -142,10 +145,10 @@ test("merchant session selects an authoritative one-to-many binding and ignores 
 
       const forged = await resolveMerchantSessionFromRequest(
         new Request(
-          "https://faolla.com/api/support-messages?siteId=99999999",
+          "https://www.faolla.com/api/support-messages?siteId=99999999",
           {
             headers: {
-              cookie: "merchant-space-merchant-auth=access-token",
+              cookie: `${MERCHANT_AUTH_COOKIE}=access-token`,
             },
           },
         ),
@@ -216,9 +219,9 @@ test("merchant session rejects personal, disabled, unbound and employee-only res
       }) as typeof fetch,
       async () => {
         const session = await resolveMerchantSessionFromRequest(
-          new Request("https://faolla.com/api/orders?siteId=12345678", {
+          new Request("https://www.faolla.com/api/orders?siteId=12345678", {
             headers: {
-              cookie: `merchant-space-merchant-auth=denied-${deniedResults.indexOf(denied)}`,
+              cookie: `${MERCHANT_AUTH_COOKIE}=denied-${deniedResults.indexOf(denied)}`,
             },
           }),
         );
@@ -262,9 +265,9 @@ test("merchant session shares concurrent authoritative resolver work", async () 
     }) as typeof fetch,
     async () => {
       const makeRequest = () =>
-        new Request("https://faolla.com/api/assets/upload?siteId=24681357", {
+        new Request("https://www.faolla.com/api/assets/upload?siteId=24681357", {
           headers: {
-            cookie: "merchant-space-merchant-auth=shared-access-token",
+            cookie: `${MERCHANT_AUTH_COOKIE}=shared-access-token`,
           },
         });
       const [first, second] = await Promise.all([

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET, POST } from "@/app/api/auth/merchant-session/route";
+import {
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_MERCHANT_ID_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+} from "@/lib/merchantAuthSession";
 
 test("merchant-session rejects an immutable merchant staff principal", async () => {
   const originalFetch = globalThis.fetch;
@@ -36,7 +41,7 @@ test("merchant-session rejects an immutable merchant staff principal", async () 
     const response = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session", {
         headers: {
-          cookie: "merchant-space-merchant-auth=staff-access-token",
+          cookie: `${MERCHANT_AUTH_COOKIE}=staff-access-token`,
         },
       }),
     );
@@ -138,8 +143,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     const response = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=access-token-valid; merchant-space-merchant-auth=access-token-stale",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-valid; ${MERCHANT_AUTH_COOKIE}=access-token-stale`,
         },
       }),
     );
@@ -166,20 +170,19 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     const accountSwitchResponse = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session?accountSwitch=1", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=access-token-valid; merchant-space-merchant-auth=access-token-stale; merchant-space-merchant-refresh=refresh-token-valid",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-valid; ${MERCHANT_AUTH_COOKIE}=access-token-stale; ${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token-valid`,
         },
       }),
     );
     assert.equal(accountSwitchResponse.status, 200);
     const accountSwitchBody = await accountSwitchResponse.json();
-    assert.equal(accountSwitchBody.accessToken, "access-token-valid");
-    assert.equal(accountSwitchBody.refreshToken, null);
+    assert.equal(accountSwitchBody.accessToken, undefined);
+    assert.equal(accountSwitchBody.refreshToken, undefined);
     assert.match(
       accountSwitchResponse.headers.get("set-cookie") ?? "",
-      /merchant-space-merchant-refresh=;/,
+      new RegExp(`${MERCHANT_AUTH_REFRESH_COOKIE}=;`),
     );
-    assert.equal(accountSwitchBody.tokenType, "bearer");
+    assert.equal(accountSwitchBody.tokenType, undefined);
     assert.equal(accountSwitchBody.accountType, "merchant");
     assert.equal(accountSwitchBody.merchantId, "12345678");
   } finally {
@@ -190,7 +193,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
   }
 });
 
-test("merchant-session account switch GET returns refreshed tokens", async () => {
+test("merchant-session account switch GET never returns refreshed tokens", async () => {
   const originalFetch = globalThis.fetch;
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -298,7 +301,7 @@ test("merchant-session account switch GET returns refreshed tokens", async () =>
     const response = await GET(
       new Request("https://www.faolla.com/api/auth/merchant-session?accountSwitch=1", {
         headers: {
-          cookie: "merchant-space-merchant-refresh=old-refresh-token",
+          cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=old-refresh-token`,
         },
       }),
     );
@@ -308,10 +311,10 @@ test("merchant-session account switch GET returns refreshed tokens", async () =>
     assert.equal(body.authenticated, true);
     assert.equal(body.accountType, "merchant");
     assert.equal(body.merchantId, "87654321");
-    assert.equal(body.accessToken, "new-access-token");
-    assert.equal(body.refreshToken, "new-refresh-token");
-    assert.equal(body.expiresIn, 3600);
-    assert.equal(body.tokenType, "bearer");
+    assert.equal(body.accessToken, undefined);
+    assert.equal(body.refreshToken, undefined);
+    assert.equal(body.expiresIn, undefined);
+    assert.equal(body.tokenType, undefined);
     assert.deepEqual(body.user, {
       id: "22222222-2222-4222-8222-222222222222",
       email: "owner2@example.com",
@@ -405,11 +408,11 @@ test("merchant-session POST exchanges Google OAuth code before browser session s
 
   try {
     const response = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
+          origin: "https://www.faolla.com",
         },
         body: JSON.stringify({
           authCode: "google-auth-code",
@@ -462,11 +465,11 @@ test("merchant-session POST reports invalid Google OAuth code explicitly", async
 
   try {
     const response = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
+          origin: "https://www.faolla.com",
         },
         body: JSON.stringify({
           authCode: "expired-google-auth-code",
@@ -479,6 +482,63 @@ test("merchant-session POST reports invalid Google OAuth code explicitly", async
     assert.equal(response.status, 401);
     const body = await response.json();
     assert.equal(body.error, "merchant_session_google_code_invalid");
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+  }
+});
+
+test("merchant-session POST never reads an OAuth verifier from legacy browser cookies", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  let exchangedBody: Record<string, unknown> | null = null;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL =
+    "https://unit-test-oauth-cookie.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    const url = new URL(
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url,
+    );
+    if (url.pathname === "/auth/v1/token") {
+      exchangedBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const response = await POST(
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://www.faolla.com",
+          cookie:
+            "faolla-auth-storage.sb-unit-test-oauth-cookie-auth-token-code-verifier=legacy-cookie-verifier",
+        },
+        body: JSON.stringify({ authCode: "oauth-code-without-verifier" }),
+      }),
+    );
+
+    assert.equal(response.status, 401);
+    assert.equal(exchangedBody, null);
   } finally {
     globalThis.fetch = originalFetch;
     process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
@@ -539,10 +599,9 @@ test("merchant-session preserves an explicit one-auth-many merchant selection an
 
   try {
     const selectedGet = await GET(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=one-many-get; merchant-space-merchant-id=87654321",
+          cookie: `${MERCHANT_AUTH_COOKIE}=one-many-get; ${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=87654321`,
         },
       }),
     );
@@ -550,14 +609,13 @@ test("merchant-session preserves an explicit one-auth-many merchant selection an
     assert.equal((await selectedGet.json()).merchantId, "87654321");
     assert.match(
       selectedGet.headers.get("set-cookie") ?? "",
-      /merchant-space-merchant-id=87654321/,
+      new RegExp(`${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=87654321`),
     );
 
     const deniedGet = await GET(
-      new Request("https://faolla.com/api/auth/merchant-session?merchantId=99999999", {
+      new Request("https://www.faolla.com/api/auth/merchant-session?merchantId=99999999", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=one-many-get-denied; merchant-space-merchant-id=99999999",
+          cookie: `${MERCHANT_AUTH_COOKIE}=one-many-get-denied; ${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=99999999`,
         },
       }),
     );
@@ -567,15 +625,15 @@ test("merchant-session preserves an explicit one-auth-many merchant selection an
       "ordinary_account_merchant_selection_forbidden",
     );
     const deniedGetCookies = deniedGet.headers.get("set-cookie") ?? "";
-    assert.match(deniedGetCookies, /merchant-space-merchant-id=/);
-    assert.doesNotMatch(deniedGetCookies, /merchant-space-merchant-auth=/);
+    assert.match(deniedGetCookies, new RegExp(`${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=`));
+    assert.doesNotMatch(deniedGetCookies, new RegExp(`${MERCHANT_AUTH_COOKIE}=`));
 
     const selectedPost = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
+          origin: "https://www.faolla.com",
         },
         body: JSON.stringify({
           accessToken: "one-many-post",
@@ -587,11 +645,11 @@ test("merchant-session preserves an explicit one-auth-many merchant selection an
     assert.equal((await selectedPost.json()).merchantId, "87654321");
 
     const deniedPost = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
+          origin: "https://www.faolla.com",
         },
         body: JSON.stringify({
           accessToken: "one-many-post-denied",
@@ -664,13 +722,12 @@ test("merchant-session POST explicitly clears a stale merchant selection when sw
 
   try {
     const response = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
-          cookie:
-            "merchant-space-merchant-id=12345678; merchant-space-merchant-auth=personal-access",
+          origin: "https://www.faolla.com",
+          cookie: `${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=12345678; ${MERCHANT_AUTH_COOKIE}=personal-access`,
         },
         body: JSON.stringify({
           accessToken: "personal-access",
@@ -687,7 +744,7 @@ test("merchant-session POST explicitly clears a stale merchant selection when sw
     assert.equal(body.merchantId, null);
     assert.match(
       response.headers.get("set-cookie") ?? "",
-      /merchant-space-merchant-id=;/,
+      new RegExp(`${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=;`),
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -776,12 +833,12 @@ test("merchant-session POST never pairs access A with refresh B", async () => {
 
   try {
     const response = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
-          cookie: "merchant-space-merchant-refresh=refresh-b",
+          origin: "https://www.faolla.com",
+          cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-b`,
         },
         body: JSON.stringify({
           accessToken: "access-a",
@@ -796,7 +853,7 @@ test("merchant-session POST never pairs access A with refresh B", async () => {
     assert.equal(body.user.id, userA.id);
     assert.equal(body.merchantId, "12345678");
     const setCookie = response.headers.get("set-cookie") ?? "";
-    assert.match(setCookie, /merchant-space-merchant-refresh=;/);
+    assert.match(setCookie, new RegExp(`${MERCHANT_AUTH_REFRESH_COOKIE}=;`));
     assert.doesNotMatch(setCookie, /rotated-refresh-b/);
     assert.doesNotMatch(setCookie, /rotated-access-b/);
   } finally {
@@ -887,12 +944,12 @@ test("merchant-session POST can recover from an old body refresh with a verified
 
   try {
     const response = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
-          cookie: "merchant-space-merchant-refresh=current-cookie-refresh",
+          origin: "https://www.faolla.com",
+          cookie: `${MERCHANT_AUTH_REFRESH_COOKIE}=current-cookie-refresh`,
         },
         body: JSON.stringify({
           accessToken: "current-access",
@@ -973,8 +1030,8 @@ test("merchant-session GET revalidates a previously accepted access token", asyn
 
   try {
     const request = () =>
-      new Request("https://faolla.com/api/auth/merchant-session", {
-        headers: { cookie: "merchant-space-merchant-auth=revoked-access" },
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
+        headers: { cookie: `${MERCHANT_AUTH_COOKIE}=revoked-access` },
       });
     assert.equal((await GET(request())).status, 200);
     const revoked = await GET(request());
@@ -1046,11 +1103,11 @@ test("merchant-session never bootstraps an arbitrary authenticated unbound user"
 
   try {
     const response = await POST(
-      new Request("https://faolla.com/api/auth/merchant-session", {
+      new Request("https://www.faolla.com/api/auth/merchant-session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
+          origin: "https://www.faolla.com",
         },
         body: JSON.stringify({
           accessToken: "unbound-access",

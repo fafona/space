@@ -12,8 +12,10 @@ import {
 } from "@/lib/superAdminVerification";
 import { DELETE, GET, POST } from "@/app/api/super-admin/merchant-accounts/route";
 
+const AUTHORIZED_DEVICE_ID = "ordinary-auth-cutover-device";
+
 function authorizedCookie() {
-  const deviceId = "ordinary-auth-cutover-device";
+  const deviceId = AUTHORIZED_DEVICE_ID;
   const session = createSuperAdminSessionToken({
     deviceId,
     deviceLabel: "ordinary auth cutover test",
@@ -213,6 +215,20 @@ test("super-admin GET emits every authoritative merchant in one-auth-many and ig
       );
     }
     if (
+      url.pathname === "/rest/v1/pages" &&
+      url.searchParams.get("slug") === "eq.super-admin-trusted-devices"
+    ) {
+      return new Response(
+        JSON.stringify([
+          {
+            id: "trusted-devices-row",
+            blocks: { devices: [{ deviceId: AUTHORIZED_DEVICE_ID }] },
+          },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (
       url.pathname ===
       "/rest/v1/rpc/faolla_resolve_ordinary_account_authorization_v1"
     ) {
@@ -362,6 +378,20 @@ test("super-admin creation rejects a cross-type authoritative collision before c
             },
           ],
         }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (
+      url.pathname === "/rest/v1/pages" &&
+      url.searchParams.get("slug") === "eq.super-admin-trusted-devices"
+    ) {
+      return new Response(
+        JSON.stringify([
+          {
+            id: "trusted-devices-row",
+            blocks: { devices: [{ deviceId: AUTHORIZED_DEVICE_ID }] },
+          },
+        ]),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }

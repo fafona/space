@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET, POST } from "@/app/api/merchant-chat-business-card/route";
+import { MERCHANT_AUTH_COOKIE } from "@/lib/merchantAuthSession";
 import { buildMerchantPeerInboxBlocks } from "@/lib/merchantPeerInbox";
 
 test("business-card GET permits an established peer read while POST remains owner-only", async () => {
@@ -89,9 +90,9 @@ test("business-card GET permits an established peer read while POST remains owne
   try {
     const ownerPeerRead = await GET(
       new Request(
-        "https://faolla.com/api/merchant-chat-business-card?merchantId=22222222",
+        "https://www.faolla.com/api/merchant-chat-business-card?merchantId=22222222",
         {
-          headers: { cookie: "merchant-space-merchant-auth=owner-token" },
+          headers: { cookie: `${MERCHANT_AUTH_COOKIE}=owner-token` },
         },
       ),
     );
@@ -100,10 +101,10 @@ test("business-card GET permits an established peer read while POST remains owne
 
     const unrelatedRead = await GET(
       new Request(
-        "https://faolla.com/api/merchant-chat-business-card?merchantId=22222222",
+        "https://www.faolla.com/api/merchant-chat-business-card?merchantId=22222222",
         {
           headers: {
-            cookie: "merchant-space-merchant-auth=unrelated-token",
+            cookie: `${MERCHANT_AUTH_COOKIE}=unrelated-token`,
           },
         },
       ),
@@ -111,12 +112,12 @@ test("business-card GET permits an established peer read while POST remains owne
     assert.equal(unrelatedRead.status, 401);
 
     const peerWrite = await POST(
-      new Request("https://faolla.com/api/merchant-chat-business-card", {
+      new Request("https://www.faolla.com/api/merchant-chat-business-card", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "https://faolla.com",
-          cookie: "merchant-space-merchant-auth=owner-token",
+          origin: "https://www.faolla.com",
+          cookie: `${MERCHANT_AUTH_COOKIE}=owner-token`,
         },
         body: JSON.stringify({
           merchantId: "22222222",
