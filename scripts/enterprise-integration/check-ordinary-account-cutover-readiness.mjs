@@ -79,6 +79,15 @@ if (expectedStatus === "ready") {
   assert.equal(report.readiness.readyForCutover, true);
   assert.equal(report.readiness.schemaReady, true);
   assert.equal(report.readiness.aclReady, true);
+  assert.equal(report.databaseIdentity.primary, true);
+  assert.equal(
+    report.databaseIdentity.dbName,
+    expectedEnvironment.FAOLLA_EXPECTED_DATABASE_NAME,
+  );
+  assert.equal(
+    report.databaseIdentity.systemId,
+    expectedEnvironment.FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER,
+  );
 }
 
 console.log(

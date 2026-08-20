@@ -928,6 +928,7 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
         SELECT control.system_identifier::numeric
           FROM pg_catalog.pg_control_system() AS control
       ) = :'expected_database_system_identifier'::numeric
+      AND NOT pg_catalog.pg_is_in_recovery()
       AS database_identity_ready,
     (readiness.value #>> '{merchant,recordCount}')::numeric =
       :'expected_merchant_record_count'::numeric
@@ -940,6 +941,19 @@ SELECT pg_catalog.jsonb_build_object(
   'databaseActorReady', current_user = 'supabase_admin' AND EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles AS actor
      WHERE actor.rolname = current_user AND actor.rolsuper
+  ),
+  'databaseIdentity', pg_catalog.jsonb_build_object(
+    'dbName', pg_catalog.current_database(),
+    'dbOid', (
+      SELECT database_metadata.oid::text
+        FROM pg_catalog.pg_database AS database_metadata
+       WHERE database_metadata.datname = pg_catalog.current_database()
+    ),
+    'systemId', (
+      SELECT control.system_identifier::numeric::text
+        FROM pg_catalog.pg_control_system() AS control
+    ),
+    'primary', NOT pg_catalog.pg_is_in_recovery()
   ),
   'databaseIdentityReady', (SELECT database_identity_ready FROM expected_state),
   'baselineReady', (SELECT baseline_ready FROM expected_state),
@@ -1040,6 +1054,12 @@ const READINESS_BOOLEAN_KEYS = [
   "functionAclReady",
   "registryAclReady",
   "objectContractsReady",
+];
+const DATABASE_IDENTITY_REPORT_KEYS = [
+  "dbName",
+  "dbOid",
+  "systemId",
+  "primary",
 ];
 const READINESS_COUNT_KEYS = [
   "merchantRecordCount",
@@ -1207,10 +1227,29 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
   } catch {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
-  if (!exactKeys(parsed, [...READINESS_BOOLEAN_KEYS, "readiness"])) {
+  if (
+    !exactKeys(parsed, [
+      ...READINESS_BOOLEAN_KEYS,
+      "databaseIdentity",
+      "readiness",
+    ])
+  ) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
   if (READINESS_BOOLEAN_KEYS.some((key) => typeof parsed[key] !== "boolean")) {
+    throw readinessError("ordinary_account_readiness_output_invalid");
+  }
+  const databaseIdentity = parsed.databaseIdentity;
+  if (
+    !exactKeys(databaseIdentity, DATABASE_IDENTITY_REPORT_KEYS) ||
+    !DATABASE_NAME_PATTERN.test(databaseIdentity.dbName) ||
+    !POSITIVE_COUNT_PATTERN.test(databaseIdentity.dbOid) ||
+    BigInt(databaseIdentity.dbOid) > 4_294_967_295n ||
+    !UNSIGNED_DECIMAL_PATTERN.test(databaseIdentity.systemId) ||
+    BigInt(databaseIdentity.systemId) === 0n ||
+    BigInt(databaseIdentity.systemId) > MAX_UINT64 ||
+    typeof databaseIdentity.primary !== "boolean"
+  ) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
   const readiness = parsed.readiness;

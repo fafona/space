@@ -73,9 +73,20 @@ function readiness(overrides = {}) {
   };
 }
 
+function databaseIdentity(overrides = {}) {
+  return {
+    dbName: "faolla",
+    dbOid: "16384",
+    systemId: "7451234567890123456",
+    primary: true,
+    ...overrides,
+  };
+}
+
 function databaseReport(overrides = {}) {
   return {
     databaseActorReady: true,
+    databaseIdentity: databaseIdentity(),
     databaseIdentityReady: true,
     baselineReady: true,
     runtimeRpcHardeningReady: true,
@@ -98,6 +109,10 @@ test("the production probe is one read-only transaction with the exact runtime h
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /SET LOCAL search_path = pg_catalog, public;/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /'primary', NOT pg_catalog\.pg_is_in_recovery\(\)/,
   );
   assert.ok(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
@@ -467,6 +482,7 @@ test("database report parser validates the exact aggregate shape", () => {
   );
   assert.equal(parsed.status, "ready");
   assert.equal(parsed.readiness.merchantRecordCount, 9);
+  assert.deepEqual(parsed.databaseIdentity, databaseIdentity());
 
   assert.equal(
     parseOrdinaryAccountCutoverDatabaseReport(
@@ -497,6 +513,20 @@ test("database report parser validates the exact aggregate shape", () => {
     () => parseOrdinaryAccountCutoverDatabaseReport(JSON.stringify({ ...databaseReport(), row: {} })),
     /ordinary_account_readiness_output_invalid/,
   );
+  for (const identity of [
+    databaseIdentity({ dbOid: "0" }),
+    databaseIdentity({ systemId: "18446744073709551616" }),
+    databaseIdentity({ primary: "true" }),
+    { ...databaseIdentity(), extra: true },
+  ]) {
+    assert.throws(
+      () =>
+        parseOrdinaryAccountCutoverDatabaseReport(
+          JSON.stringify(databaseReport({ databaseIdentity: identity })),
+        ),
+      /ordinary_account_readiness_output_invalid/,
+    );
+  }
   assert.throws(
     () => parseOrdinaryAccountCutoverDatabaseReport("not-json"),
     /ordinary_account_readiness_output_invalid/,
