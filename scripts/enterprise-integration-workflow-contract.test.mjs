@@ -12,6 +12,7 @@ test("enterprise PostgreSQL acceptance uses the healthy service container client
     workflow,
     /node --test scripts\/enterprise-integration-workflow-contract\.test\.mjs/,
   );
+  assert.match(workflow, /set -euo pipefail\n\s+umask 077/);
   assert.match(
     workflow,
     /POSTGRES_CONTAINER_ID:\s*\$\{\{\s*job\.services\.postgres\.id\s*\}\}/,
@@ -22,11 +23,26 @@ test("enterprise PostgreSQL acceptance uses the healthy service container client
   );
   assert.match(
     workflow,
-    /docker exec[\s\S]{0,500}--workdir \/workspace[\s\S]{0,500}bash scripts\/enterprise-integration\/run\.sh/,
+    /cat > "\$psql_wrapper_dir\/psql" <<'PSQL_WRAPPER'[\s\S]{0,1200}exec docker exec[\s\S]{0,300}-i[\s\S]{0,300}--workdir \/workspace[\s\S]{0,300}psql "\$\{translated\[@\]\}"/,
   );
   assert.match(
     workflow,
-    /--env DATABASE_URL="\$\{DATABASE_URL\}"[\s\S]{0,240}--env ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE="\$\{ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE\}"/,
+    /if \[\[ "\$argument" == "\$GITHUB_WORKSPACE"\/\* \]\]; then[\s\S]{0,300}argument="\/workspace\/\$\{argument#"\$GITHUB_WORKSPACE"\/\}"/,
   );
-  assert.doesNotMatch(workflow, /apt-get|postgresql-client/);
+  assert.match(
+    workflow,
+    /chmod 700 "\$psql_wrapper_dir\/psql"[\s\S]{0,200}PATH="\$psql_wrapper_dir:\$PATH"[\s\S]{0,100}bash scripts\/enterprise-integration\/run\.sh/,
+  );
+  assert.match(
+    workflow,
+    /docker_environment=\(--env "PGOPTIONS=\$\{PGOPTIONS:-\}"\)[\s\S]{0,200}if \[\[ -n "\$\{PGAPPNAME:-\}" \]\]; then[\s\S]{0,150}docker_environment\+\=\(--env "PGAPPNAME=\$PGAPPNAME"\)/,
+  );
+  assert.match(
+    workflow,
+    /--workdir \/workspace[\s\S]{0,100}"\$\{docker_environment\[@\]\}"[\s\S]{0,100}"\$POSTGRES_CONTAINER_ID"[\s\S]{0,100}psql "\$\{translated\[@\]\}"/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /apt-get|postgresql-client|--env DATABASE_URL=/,
+  );
 });

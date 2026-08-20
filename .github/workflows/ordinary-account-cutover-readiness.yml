@@ -1,0 +1,1100 @@
+name: Ordinary Account Cutover Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact lowercase 40-hex commit currently at main
+        required: true
+      backup_run_id:
+        description: Successful manual encrypted database backup run ID for target_sha
+        required: true
+      confirmation:
+        description: Type CHECK_ORDINARY_ACCOUNT_CUTOVER to run the production gate
+        required: true
+      maintenance_window_confirmed:
+        description: Confirm application writes, DDL, and migrations are paused
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  attestations: write
+  contents: read
+  id-token: write
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TARGET_SHA: ${{ inputs.target_sha }}
+      BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+      BACKUP_WORKFLOW_NAME: Encrypted Database Backup
+      BACKUP_WORKFLOW_PATH: .github/workflows/database-backup.yml
+      BACKUP_ATTESTATION_PATH: production-backup-attestation.json
+      BACKUP_ATTESTATION_ARTIFACT_METADATA_PATH: backup-attestation-artifact.json
+      REMOTE_READINESS_WORKTREE: /tmp/faolla-ordinary-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+      REMOTE_FRAME_PATH: ordinary-account-readiness-remote-frame.txt
+      READINESS_REPORT_PATH: production-readiness-report.json
+      READINESS_ARTIFACT_METADATA_PATH: production-readiness-artifact.json
+      READINESS_RUN_METADATA_PATH: production-readiness-run.json
+      READINESS_REMOTE_SOURCE_PATH: production-readiness-remote-source.json
+      READINESS_ATTESTATION_PATH: production-readiness-attestation.json
+
+    steps:
+      - name: Validate Manual Release Chain
+        id: chain
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          MAINTENANCE_WINDOW_CONFIRMED: ${{ inputs.maintenance_window_confirmed }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$CONFIRMATION" = "CHECK_ORDINARY_ACCOUNT_CUTOVER"
+          test "$MAINTENANCE_WINDOW_CONFIRMED" = "true"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BACKUP_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$GITHUB_SHA" = "$TARGET_SHA"
+          test "$BACKUP_RUN_ID" != "$GITHUB_RUN_ID"
+
+          main_json="$RUNNER_TEMP/readiness-main-commit.json"
+          ci_json="$RUNNER_TEMP/readiness-ci-runs.json"
+          backup_json="$RUNNER_TEMP/readiness-backup-run.json"
+          backup_workflow_json="$RUNNER_TEMP/readiness-backup-workflow.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/commits/main" > "$main_json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f event=push -f branch=main -f status=success \
+            -f head_sha="$TARGET_SHA" -f per_page=100 > "$ci_json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$BACKUP_RUN_ID" \
+            > "$backup_json"
+          backup_workflow_id="$(node --input-type=module - "$backup_json" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const run = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Number.isSafeInteger(run?.workflow_id) || run.workflow_id <= 0) process.exit(1);
+          process.stdout.write(String(run.workflow_id));
+          NODE
+          )"
+          [[ "$backup_workflow_id" =~ ^[1-9][0-9]*$ ]]
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$backup_workflow_id" \
+            > "$backup_workflow_json"
+          node --input-type=module - \
+            "$main_json" "$ci_json" "$backup_json" \
+            "$backup_workflow_json" "$backup_workflow_id" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const main = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const ci = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const backup = JSON.parse(readFileSync(process.argv[4], "utf8"));
+          const workflow = JSON.parse(readFileSync(process.argv[5], "utf8"));
+          const expectedWorkflowId = Number(process.argv[6]);
+          const expectedBackupId = Number(process.env.BACKUP_RUN_ID);
+          if (!Number.isSafeInteger(expectedBackupId) || expectedBackupId <= 0) fail("backup_run_id_invalid");
+          if (main?.sha !== process.env.TARGET_SHA) fail("target_not_current_main");
+          if (
+            backup?.id !== expectedBackupId ||
+            !Number.isSafeInteger(backup.run_attempt) ||
+            backup.run_attempt <= 0 ||
+            backup.status !== "completed" ||
+            backup.conclusion !== "success" ||
+            backup.event !== "workflow_dispatch" ||
+            backup.name !== process.env.BACKUP_WORKFLOW_NAME ||
+            backup.path !== process.env.BACKUP_WORKFLOW_PATH ||
+            backup.head_branch !== "main" ||
+            backup.head_sha !== process.env.TARGET_SHA ||
+            backup.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            backup.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            backup.workflow_id !== expectedWorkflowId
+          ) fail("backup_run_contract_invalid");
+          if (
+            workflow?.id !== expectedWorkflowId ||
+            workflow.name !== process.env.BACKUP_WORKFLOW_NAME ||
+            workflow.path !== process.env.BACKUP_WORKFLOW_PATH ||
+            workflow.state !== "active"
+          ) fail("backup_workflow_contract_invalid");
+          if (!Array.isArray(ci?.workflow_runs)) fail("ci_runs_invalid");
+          const candidates = ci.workflow_runs.filter((run) =>
+            Number.isSafeInteger(run?.id) && run.id > 0 &&
+            Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0 &&
+            run.name === "CI" &&
+            run.path === ".github/workflows/ci.yml" &&
+            run.event === "push" &&
+            run.status === "completed" &&
+            run.conclusion === "success" &&
+            run.head_branch === "main" &&
+            run.head_sha === process.env.TARGET_SHA &&
+            run.repository?.full_name === process.env.GITHUB_REPOSITORY &&
+            run.head_repository?.full_name === process.env.GITHUB_REPOSITORY
+          );
+          if (candidates.length === 0) fail("successful_push_ci_missing");
+          candidates.sort((left, right) =>
+            left.run_attempt - right.run_attempt || left.id - right.id,
+          );
+          const selectedCi = candidates.at(-1);
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `target_sha=${process.env.TARGET_SHA}`,
+              `backup_run_id=${process.env.BACKUP_RUN_ID}`,
+              `backup_run_attempt=${backup.run_attempt}`,
+              `ci_run_id=${selectedCi.id}`,
+              `ci_run_attempt=${selectedCi.run_attempt}`,
+            ].join("\n") + "\n",
+          );
+          NODE
+          rm -f -- \
+            "$main_json" "$ci_json" "$backup_json" "$backup_workflow_json"
+
+      - name: Checkout Exact Readiness Source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.chain.outputs.target_sha }}
+
+      - name: Verify Exact Current Main Checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          test "$main_sha" = "$TARGET_SHA"
+
+      - name: Resolve Exact Successful Backup Artifact Inventory
+        id: backup-attestation-artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_RUN_ATTEMPT: ${{ steps.chain.outputs.backup_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pages_path="$RUNNER_TEMP/readiness-backup-artifact-pages.json"
+          gh api --method GET --paginate --slurp \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$BACKUP_RUN_ID/artifacts?per_page=100" \
+            > "$pages_path"
+          node --input-type=module - "$pages_path" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const canonicalTimestamp = (value) => {
+            if (typeof value !== "string") fail("backup_attestation_artifact_timestamp_invalid");
+            const timestamp = Date.parse(value);
+            if (!Number.isFinite(timestamp)) fail("backup_attestation_artifact_timestamp_invalid");
+            return new Date(timestamp).toISOString();
+          };
+          const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Array.isArray(pages) || pages.length === 0) fail("backup_artifact_pages_invalid");
+          const artifacts = pages.flatMap((page) => {
+            if (!page || !Array.isArray(page.artifacts)) fail("backup_artifact_page_invalid");
+            return page.artifacts;
+          });
+          if (
+            artifacts.length !== 5 ||
+            pages.some((page) => page.total_count !== 5)
+          ) fail("backup_artifact_inventory_count_invalid");
+          const suffix = `${process.env.BACKUP_RUN_ID}-${process.env.BACKUP_RUN_ATTEMPT}`;
+          const expected = new Map([
+            [`faolla-encrypted-disaster-recovery-${suffix}`, "primary"],
+            [`faolla-production-backup-attestation-${suffix}`, "attestation"],
+            [`faolla-backup-verification-reports-${suffix}`, "verificationReports"],
+            [`faolla-encrypted-backup-attestation-bundle-${suffix}`, "encryptedAttestationBundle"],
+            [`faolla-production-backup-attestation-bundle-${suffix}`, "productionAttestationBundle"],
+          ]);
+          const byRole = new Map();
+          const artifactIds = new Set();
+          const now = Date.now();
+          for (const artifact of artifacts) {
+            const role = expected.get(artifact?.name);
+            if (!role || byRole.has(role)) fail("backup_artifact_inventory_name_invalid");
+            if (
+              !Number.isSafeInteger(artifact.id) || artifact.id <= 0 ||
+              artifactIds.has(artifact.id) ||
+              !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes <= 0 ||
+              artifact.expired !== false ||
+              !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "") ||
+              artifact.workflow_run?.id !== Number(process.env.BACKUP_RUN_ID) ||
+              artifact.workflow_run?.head_branch !== "main" ||
+              artifact.workflow_run?.head_sha !== process.env.TARGET_SHA
+            ) fail("backup_artifact_inventory_entry_invalid");
+            const createdAt = canonicalTimestamp(artifact.created_at);
+            const expiresAt = canonicalTimestamp(artifact.expires_at);
+            if (
+              Date.parse(createdAt) > now + 300_000 ||
+              Date.parse(createdAt) >= Date.parse(expiresAt) ||
+              Date.parse(expiresAt) - now < 5_700_000
+            ) {
+              fail("backup_artifact_inventory_ttl_insufficient");
+            }
+            artifactIds.add(artifact.id);
+            byRole.set(role, { ...artifact, createdAt, expiresAt });
+          }
+          if (byRole.size !== expected.size) fail("backup_artifact_inventory_incomplete");
+          const artifact = byRole.get("attestation");
+          const primary = byRole.get("primary");
+          if (artifact.size_in_bytes > 2 * 1024 * 1024) {
+            fail("backup_attestation_artifact_size_invalid");
+          }
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `id=${artifact.id}`,
+              `name=${artifact.name}`,
+              `digest=${artifact.digest}`,
+              `size_bytes=${artifact.size_in_bytes}`,
+              `created_at=${artifact.createdAt}`,
+              `expires_at=${artifact.expiresAt}`,
+              `primary_id=${primary.id}`,
+              `primary_digest=${primary.digest}`,
+            ].join("\n") + "\n",
+          );
+          NODE
+          rm -f -- "$pages_path"
+
+      - name: Verify Recursive Backup Attestation Chain
+        id: backup-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_RUN_ATTEMPT: ${{ steps.chain.outputs.backup_run_attempt }}
+          BACKUP_ATTESTATION_ARTIFACT_ID: ${{ steps.backup-attestation-artifact.outputs.id }}
+          BACKUP_ATTESTATION_ARTIFACT_NAME: ${{ steps.backup-attestation-artifact.outputs.name }}
+          BACKUP_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.backup-attestation-artifact.outputs.digest }}
+          BACKUP_ATTESTATION_ARTIFACT_SIZE_BYTES: ${{ steps.backup-attestation-artifact.outputs.size_bytes }}
+          BACKUP_ATTESTATION_ARTIFACT_CREATED_AT: ${{ steps.backup-attestation-artifact.outputs.created_at }}
+          BACKUP_ATTESTATION_ARTIFACT_EXPIRES_AT: ${{ steps.backup-attestation-artifact.outputs.expires_at }}
+          INVENTORY_PRIMARY_ARTIFACT_ID: ${{ steps.backup-attestation-artifact.outputs.primary_id }}
+          INVENTORY_PRIMARY_ARTIFACT_DIGEST: ${{ steps.backup-attestation-artifact.outputs.primary_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_root="$RUNNER_TEMP/faolla-readiness-backup-evidence"
+          mkdir "$evidence_root"
+          archive_path="$evidence_root/backup-attestation.zip"
+          verification_path="$evidence_root/backup-attestation-verification.json"
+          summary_path="$evidence_root/backup-attestation-summary.json"
+          final_summary_path="$evidence_root/backup-attestation-final-summary.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$BACKUP_ATTESTATION_ARTIFACT_ID/zip" \
+            > "$archive_path"
+          archive_digest="sha256:$(sha256sum "$archive_path" | awk '{ print $1 }')"
+          test "$archive_digest" = "$BACKUP_ATTESTATION_ARTIFACT_DIGEST"
+          python3 - "$archive_path" "$BACKUP_ATTESTATION_PATH" <<'PY'
+          import os
+          import stat
+          import sys
+          import zipfile
+
+          archive, destination = sys.argv[1:]
+          expected_name = "production-backup-attestation.json"
+          with zipfile.ZipFile(archive, "r") as bundle:
+              entries = bundle.infolist()
+              if len(entries) != 1:
+                  raise SystemExit("backup_attestation_archive_inventory_invalid")
+              entry = entries[0]
+              mode = (entry.external_attr >> 16) & 0xFFFF
+              if (
+                  entry.filename != expected_name
+                  or entry.is_dir()
+                  or entry.flag_bits & 0x1
+                  or entry.file_size <= 0
+                  or entry.file_size > 1024 * 1024
+                  or entry.compress_size <= 0
+                  or entry.compress_size > 2 * 1024 * 1024
+                  or stat.S_ISLNK(mode)
+                  or entry.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+              ):
+                  raise SystemExit("backup_attestation_archive_entry_invalid")
+              payload = bundle.read(entry)
+              if len(payload) != entry.file_size:
+                  raise SystemExit("backup_attestation_archive_size_mismatch")
+          flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          descriptor = os.open(destination, flags, 0o600)
+          with os.fdopen(descriptor, "wb") as output:
+              output.write(payload)
+          PY
+          rm -f -- "$archive_path"
+          subject_sha256="$(sha256sum "$BACKUP_ATTESTATION_PATH" | awk '{ print $1 }')"
+          gh attestation verify "$BACKUP_ATTESTATION_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/$BACKUP_WORKFLOW_PATH" \
+            --source-digest "$TARGET_SHA" \
+            --source-ref "refs/heads/main" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --deny-self-hosted-runners \
+            --limit 10 \
+            --format json > "$verification_path"
+          node --input-type=module - "$verification_path" "$subject_sha256" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const results = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedSha = process.argv[3];
+          if (!Array.isArray(results) || results.length !== 1) process.exit(1);
+          const subjects = results[0]?.verificationResult?.statement?.subject;
+          const matches = Array.isArray(subjects)
+            ? subjects.filter((subject) =>
+                subject?.name === "production-backup-attestation.json" &&
+                subject?.digest?.sha256 === expectedSha)
+            : [];
+          if (matches.length !== 1) process.exit(1);
+          NODE
+          rm -f -- "$verification_path"
+          node scripts/production-release-attestation.mjs validate \
+            --input "$BACKUP_ATTESTATION_PATH" \
+            --kind backup \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-target-sha "$TARGET_SHA" \
+            --expected-run-id "$BACKUP_RUN_ID" \
+            --expected-run-attempt "$BACKUP_RUN_ATTEMPT" \
+            --expected-backup-run-id "$BACKUP_RUN_ID" \
+            --minimum-remaining-seconds 5700 > "$summary_path"
+          primary_artifact_id="$(jq -er '.backupArtifactId | select(type == "string" and test("^[1-9][0-9]*$"))' "$summary_path")"
+          primary_artifact_digest="$(jq -er '.backupArtifactDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$summary_path")"
+          test "$primary_artifact_id" = "$INVENTORY_PRIMARY_ARTIFACT_ID"
+          test "$primary_artifact_digest" = "$INVENTORY_PRIMARY_ARTIFACT_DIGEST"
+          primary_artifact_json="$evidence_root/primary-backup-artifact.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$primary_artifact_id" \
+            > "$primary_artifact_json"
+          node --input-type=module - \
+            "$BACKUP_ATTESTATION_PATH" "$summary_path" \
+            "$primary_artifact_json" <<'NODE'
+          import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+          import {
+            canonicalJsonBytes,
+            sha256Hex,
+          } from "./scripts/production-release-attestation.mjs";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const normalizeTimestamp = (value) => {
+            if (typeof value !== "string") fail("backup_primary_artifact_timestamp_invalid");
+            const timestamp = Date.parse(value);
+            if (!Number.isFinite(timestamp)) fail("backup_primary_artifact_timestamp_invalid");
+            return new Date(timestamp).toISOString();
+          };
+          const attestationBytes = readFileSync(process.argv[2]);
+          const attestation = JSON.parse(attestationBytes.toString("utf8"));
+          const summary = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const primary = JSON.parse(readFileSync(process.argv[4], "utf8"));
+          const embedded = attestation.backupArtifact;
+          const expectedPrimaryName = `faolla-encrypted-disaster-recovery-${process.env.BACKUP_RUN_ID}-${process.env.BACKUP_RUN_ATTEMPT}`;
+          if (
+            summary.valid !== true ||
+            summary.kind !== "faolla.production-backup.v1" ||
+            summary.repository !== process.env.GITHUB_REPOSITORY ||
+            summary.targetSha !== process.env.TARGET_SHA ||
+            summary.runId !== process.env.BACKUP_RUN_ID ||
+            summary.runAttempt !== process.env.BACKUP_RUN_ATTEMPT ||
+            summary.backupRunId !== process.env.BACKUP_RUN_ID ||
+            summary.artifactId !== summary.backupArtifactId ||
+            summary.artifactDigest !== summary.backupArtifactDigest ||
+            embedded?.id !== summary.backupArtifactId ||
+            embedded?.digest !== summary.backupArtifactDigest ||
+            embedded?.name !== expectedPrimaryName
+          ) fail("backup_attestation_summary_invalid");
+          if (
+            primary?.id !== Number(embedded.id) ||
+            primary.name !== embedded.name ||
+            primary.digest !== embedded.digest ||
+            String(primary.size_in_bytes) !== embedded.sizeBytes ||
+            primary.expired !== false ||
+            normalizeTimestamp(primary.created_at) !== embedded.createdAt ||
+            normalizeTimestamp(primary.expires_at) !== embedded.expiresAt ||
+            primary.workflow_run?.id !== Number(process.env.BACKUP_RUN_ID) ||
+            primary.workflow_run?.head_branch !== "main" ||
+            primary.workflow_run?.head_sha !== process.env.TARGET_SHA
+          ) fail("backup_primary_artifact_mismatch");
+          const positiveDecimal = (value) => typeof value === "string" && /^[1-9][0-9]*$/.test(value);
+          const unsignedDecimal = (value) => typeof value === "string" && /^(?:0|[1-9][0-9]*)$/.test(value);
+          const database = attestation.database;
+          const baseline = attestation.baseline;
+          if (
+            typeof database?.containerName !== "string" ||
+            !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(database.containerName) ||
+            !/^[0-9a-f]{64}$/.test(database.containerId ?? "") ||
+            typeof database.dbName !== "string" ||
+            !/^[A-Za-z_][A-Za-z0-9_$-]{0,62}$/.test(database.dbName) ||
+            !positiveDecimal(database.systemId) ||
+            database.primary !== true ||
+            !unsignedDecimal(baseline?.merchantRecordCount) ||
+            !unsignedDecimal(baseline?.personalCanonicalBindingCount) ||
+            !/^[0-9a-f]{64}$/.test(baseline?.ordinaryIdentityContentSha256 ?? "")
+          ) fail("backup_database_baseline_invalid");
+          const fileBytes = readFileSync(process.argv[2]);
+          const artifactMetadata = {
+            id: process.env.BACKUP_ATTESTATION_ARTIFACT_ID,
+            name: process.env.BACKUP_ATTESTATION_ARTIFACT_NAME,
+            digest: process.env.BACKUP_ATTESTATION_ARTIFACT_DIGEST,
+            sizeBytes: process.env.BACKUP_ATTESTATION_ARTIFACT_SIZE_BYTES,
+            createdAt: process.env.BACKUP_ATTESTATION_ARTIFACT_CREATED_AT,
+            expiresAt: process.env.BACKUP_ATTESTATION_ARTIFACT_EXPIRES_AT,
+            expired: false,
+            workflowRunId: process.env.BACKUP_RUN_ID,
+            workflowRunAttempt: process.env.BACKUP_RUN_ATTEMPT,
+            headSha: process.env.TARGET_SHA,
+            file: {
+              name: process.env.BACKUP_ATTESTATION_PATH,
+              sizeBytes: String(fileBytes.length),
+              sha256: sha256Hex(fileBytes),
+            },
+          };
+          writeFileSync(
+            process.env.BACKUP_ATTESTATION_ARTIFACT_METADATA_PATH,
+            canonicalJsonBytes(artifactMetadata),
+            { flag: "wx", mode: 0o600 },
+          );
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `primary_artifact_id=${embedded.id}`,
+              `primary_artifact_digest=${embedded.digest}`,
+              `container_name=${database.containerName}`,
+              `container_id=${database.containerId}`,
+              `database_name=${database.dbName}`,
+              `database_system_identifier=${database.systemId}`,
+              `merchant_record_count=${baseline.merchantRecordCount}`,
+              `personal_canonical_count=${baseline.personalCanonicalBindingCount}`,
+              `ordinary_identity_content_sha256=${baseline.ordinaryIdentityContentSha256}`,
+              `backup_valid_until=${attestation.validUntil}`,
+              `canonical_sha256=${sha256Hex(attestationBytes)}`,
+            ].join("\n") + "\n",
+          );
+          NODE
+          node scripts/production-release-attestation.mjs validate \
+            --input "$BACKUP_ATTESTATION_PATH" \
+            --kind backup \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-target-sha "$TARGET_SHA" \
+            --expected-run-id "$BACKUP_RUN_ID" \
+            --expected-run-attempt "$BACKUP_RUN_ATTEMPT" \
+            --expected-backup-run-id "$BACKUP_RUN_ID" \
+            --expected-artifact-id "$primary_artifact_id" \
+            --expected-artifact-digest "$primary_artifact_digest" \
+            --expected-backup-artifact-id "$primary_artifact_id" \
+            --expected-backup-artifact-digest "$primary_artifact_digest" \
+            --minimum-remaining-seconds 5700 > "$final_summary_path"
+          cmp --silent "$summary_path" "$final_summary_path"
+          rm -f -- \
+            "$summary_path" "$final_summary_path" "$primary_artifact_json"
+
+      - name: Setup Pinned SSH Host Trust
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          if ! [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] \
+            || [ "${SSH_PORT:-22}" -lt 1 ] \
+            || [ "${SSH_PORT:-22}" -gt 65535 ]; then
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>&1
+          known_hosts_lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != "22" ]; then
+            known_hosts_lookup="[$SSH_HOST]:${SSH_PORT}"
+          fi
+          ssh-keygen -F "$known_hosts_lookup" -f ~/.ssh/known_hosts >/dev/null 2>&1
+
+      - name: Prepare Remote Detached Exact Source
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_USER"
+          test -n "$APP_DIR"
+          repository_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+          printf '::add-mask::%s\n' "$repository_dir_b64"
+          ssh -T -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_READINESS_WORKTREE=$REMOTE_READINESS_WORKTREE bash -s" <<'REMOTE'
+          set -euo pipefail
+          repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
+          test -n "$repository_dir"
+          case "$FAOLLA_READINESS_WORKTREE" in
+            /tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*) ;;
+            *) exit 1 ;;
+          esac
+          test -d "$repository_dir"
+          test ! -e "$FAOLLA_READINESS_WORKTREE"
+          test "$(git -C "$repository_dir" rev-parse --is-inside-work-tree)" = "true"
+          git -C "$repository_dir" fetch --no-tags --prune origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git -C "$repository_dir" rev-parse refs/remotes/origin/main)" = "$FAOLLA_TARGET_SHA"
+          git -C "$repository_dir" cat-file -e "$FAOLLA_TARGET_SHA^{commit}"
+          git -C "$repository_dir" worktree add --detach \
+            "$FAOLLA_READINESS_WORKTREE" "$FAOLLA_TARGET_SHA"
+          test "$(git -C "$FAOLLA_READINESS_WORKTREE" rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          if git -C "$FAOLLA_READINESS_WORKTREE" symbolic-ref -q HEAD >/dev/null; then exit 1; fi
+          test -z "$(git -C "$FAOLLA_READINESS_WORKTREE" status --porcelain=v1 --untracked-files=all)"
+          test -f "$FAOLLA_READINESS_WORKTREE/scripts/check-ordinary-account-cutover-readiness.mjs"
+          test -f "$repository_dir/.env.local"
+          REMOTE
+
+      - name: Inspect Locked Production Readiness From Exact Source
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          EXPECTED_CONTAINER_NAME: ${{ steps.backup-evidence.outputs.container_name }}
+          EXPECTED_CONTAINER_ID: ${{ steps.backup-evidence.outputs.container_id }}
+          EXPECTED_DATABASE_NAME: ${{ steps.backup-evidence.outputs.database_name }}
+          EXPECTED_DATABASE_SYSTEM_IDENTIFIER: ${{ steps.backup-evidence.outputs.database_system_identifier }}
+          EXPECTED_MERCHANT_RECORD_COUNT: ${{ steps.backup-evidence.outputs.merchant_record_count }}
+          EXPECTED_PERSONAL_CANONICAL_COUNT: ${{ steps.backup-evidence.outputs.personal_canonical_count }}
+          EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256: ${{ steps.backup-evidence.outputs.ordinary_identity_content_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+          container_name_b64="$(printf '%s' "$EXPECTED_CONTAINER_NAME" | base64 -w0)"
+          database_name_b64="$(printf '%s' "$EXPECTED_DATABASE_NAME" | base64 -w0)"
+          printf '::add-mask::%s\n' "$repository_dir_b64"
+          ssh -T -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_EXPECTED_CONTAINER_NAME_B64=$container_name_b64 FAOLLA_EXPECTED_DATABASE_NAME_B64=$database_name_b64 FAOLLA_EXPECTED_CONTAINER_ID=$EXPECTED_CONTAINER_ID FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER=$EXPECTED_DATABASE_SYSTEM_IDENTIFIER FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT=$EXPECTED_MERCHANT_RECORD_COUNT FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT=$EXPECTED_PERSONAL_CANONICAL_COUNT FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256=$EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_READINESS_WORKTREE=$REMOTE_READINESS_WORKTREE bash -s" \
+            > "$REMOTE_FRAME_PATH" <<'REMOTE'
+          set -euo pipefail
+          repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
+          expected_container_name="$(printf '%s' "$FAOLLA_EXPECTED_CONTAINER_NAME_B64" | base64 -d)"
+          expected_database_name="$(printf '%s' "$FAOLLA_EXPECTED_DATABASE_NAME_B64" | base64 -d)"
+          cd "$FAOLLA_READINESS_WORKTREE"
+          test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          if git symbolic-ref -q HEAD >/dev/null; then exit 1; fi
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(git -C "$repository_dir" rev-parse refs/remotes/origin/main)" = "$FAOLLA_TARGET_SHA"
+          origin_main_before="$(git -C "$repository_dir" ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          test "$origin_main_before" = "$FAOLLA_TARGET_SHA"
+          container_id_before="$(docker inspect --format '{{.Id}}' "$expected_container_name")"
+          test "$container_id_before" = "$FAOLLA_EXPECTED_CONTAINER_ID"
+          checker_report="$(
+            FAOLLA_EXPECTED_DATABASE_NAME="$expected_database_name" \
+            FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER" \
+            FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT" \
+            FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT" \
+            FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256" \
+              node --env-file="$repository_dir/.env.local" \
+                scripts/check-ordinary-account-cutover-readiness.mjs \
+                --json --fail-on-blocked
+          )"
+          container_id_after="$(docker inspect --format '{{.Id}}' "$expected_container_name")"
+          test "$container_id_after" = "$container_id_before"
+          test "$container_id_after" = "$FAOLLA_EXPECTED_CONTAINER_ID"
+          test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          if git symbolic-ref -q HEAD >/dev/null; then exit 1; fi
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(git -C "$repository_dir" rev-parse refs/remotes/origin/main)" = "$FAOLLA_TARGET_SHA"
+          origin_main_after="$(git -C "$repository_dir" ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          test "$origin_main_after" = "$FAOLLA_TARGET_SHA"
+          remote_source="$(node --input-type=module - "$FAOLLA_TARGET_SHA" <<'NODE'
+          const targetSha = process.argv[2];
+          const value = {
+            cleanAfter: true,
+            cleanBefore: true,
+            detached: true,
+            headSha: targetSha,
+            originMainSha: targetSha,
+          };
+          process.stdout.write(`${JSON.stringify(value)}\n`);
+          NODE
+          )"
+          printf '%s\n' 'FAOLLA_ORDINARY_READINESS_FRAME_V1'
+          printf '%s\n' "$checker_report" | base64 -w0
+          printf '\n'
+          printf '%s\n' "$remote_source" | base64 -w0
+          printf '\n'
+          REMOTE
+          node --input-type=module - "$REMOTE_FRAME_PATH" <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { canonicalJsonBytes } from "./scripts/production-release-attestation.mjs";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const raw = readFileSync(process.argv[2]);
+          if (raw.length <= 0 || raw.length > 2 * 1024 * 1024) fail("readiness_remote_frame_size_invalid");
+          const lines = raw.toString("utf8").split("\n");
+          if (
+            lines.length !== 4 ||
+            lines[0] !== "FAOLLA_ORDINARY_READINESS_FRAME_V1" ||
+            lines[1] === "" || lines[2] === "" || lines[3] !== ""
+          ) fail("readiness_remote_frame_invalid");
+          const decode = (value) => {
+            if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+              fail("readiness_remote_frame_base64_invalid");
+            }
+            const bytes = Buffer.from(value, "base64");
+            if (bytes.toString("base64") !== value) fail("readiness_remote_frame_base64_invalid");
+            return bytes;
+          };
+          const reportBytes = decode(lines[1]);
+          const remoteSourceBytes = decode(lines[2]);
+          let report;
+          let remoteSource;
+          try {
+            report = JSON.parse(reportBytes.toString("utf8"));
+            remoteSource = JSON.parse(remoteSourceBytes.toString("utf8"));
+          } catch {
+            fail("readiness_remote_frame_json_invalid");
+          }
+          const expectedReportKeys = [
+            "baselineReady", "databaseActorReady", "databaseContainer",
+            "databaseIdentity", "databaseIdentityReady", "functionAclReady",
+            "functionMetadataReady", "migrationsReady", "mode", "objectContractsReady",
+            "ok", "readiness", "registryAclReady", "runtimeRpcHardeningReady",
+            "schemaVersion", "status",
+          ].sort();
+          const reportKeys = Object.keys(report ?? {}).sort();
+          if (
+            reportKeys.length !== expectedReportKeys.length ||
+            reportKeys.some((key, index) => key !== expectedReportKeys[index])
+          ) fail("readiness_report_keys_invalid");
+          const expectedRemoteKeys = [
+            "cleanAfter", "cleanBefore", "detached", "headSha", "originMainSha",
+          ].sort();
+          const remoteKeys = Object.keys(remoteSource ?? {}).sort();
+          if (
+            remoteKeys.length !== expectedRemoteKeys.length ||
+            remoteKeys.some((key, index) => key !== expectedRemoteKeys[index]) ||
+            remoteSource.cleanBefore !== true ||
+            remoteSource.cleanAfter !== true ||
+            remoteSource.detached !== true ||
+            remoteSource.headSha !== process.env.TARGET_SHA ||
+            remoteSource.originMainSha !== process.env.TARGET_SHA
+          ) fail("readiness_remote_source_invalid");
+          writeFileSync(
+            process.env.READINESS_REPORT_PATH,
+            canonicalJsonBytes(report),
+            { flag: "wx", mode: 0o600 },
+          );
+          writeFileSync(
+            process.env.READINESS_REMOTE_SOURCE_PATH,
+            canonicalJsonBytes(remoteSource),
+            { flag: "wx", mode: 0o600 },
+          );
+          NODE
+          rm -f -- "$REMOTE_FRAME_PATH"
+
+      - name: Upload Canonical Readiness Report
+        id: readiness-report-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-production-readiness-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.READINESS_REPORT_PATH }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Verify Uploaded Readiness Report Artifact
+        id: readiness-report-artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTION_ARTIFACT_ID: ${{ steps.readiness-report-upload.outputs.artifact-id }}
+          ACTION_ARTIFACT_DIGEST: ${{ steps.readiness-report-upload.outputs.artifact-digest }}
+          ACTION_ARTIFACT_URL: ${{ steps.readiness-report-upload.outputs.artifact-url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ACTION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACTION_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          expected_name="faolla-production-readiness-report-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts/${ACTION_ARTIFACT_ID}"
+          test "$ACTION_ARTIFACT_URL" = "$expected_url"
+          artifact_json="$RUNNER_TEMP/readiness-report-artifact.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$ACTION_ARTIFACT_ID" \
+            > "$artifact_json"
+          node --input-type=module - "$artifact_json" "$expected_name" <<'NODE'
+          import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+          import {
+            canonicalJsonBytes,
+            sha256Hex,
+          } from "./scripts/production-release-attestation.mjs";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const normalizeTimestamp = (value) => {
+            if (typeof value !== "string") fail("readiness_artifact_timestamp_invalid");
+            const timestamp = Date.parse(value);
+            if (!Number.isFinite(timestamp)) fail("readiness_artifact_timestamp_invalid");
+            return new Date(timestamp).toISOString();
+          };
+          const artifact = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedName = process.argv[3];
+          if (
+            artifact?.id !== Number(process.env.ACTION_ARTIFACT_ID) ||
+            artifact.name !== expectedName ||
+            artifact.digest !== `sha256:${process.env.ACTION_ARTIFACT_DIGEST}` ||
+            !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes <= 0 ||
+            artifact.expired !== false ||
+            artifact.workflow_run?.id !== Number(process.env.GITHUB_RUN_ID) ||
+            artifact.workflow_run?.head_branch !== "main" ||
+            artifact.workflow_run?.head_sha !== process.env.TARGET_SHA
+          ) fail("readiness_artifact_api_mismatch");
+          const createdAt = normalizeTimestamp(artifact.created_at);
+          const expiresAt = normalizeTimestamp(artifact.expires_at);
+          if (Date.parse(expiresAt) - Date.now() < 5_700_000) fail("readiness_artifact_ttl_insufficient");
+          const reportBytes = readFileSync(process.env.READINESS_REPORT_PATH);
+          const metadata = {
+            id: process.env.ACTION_ARTIFACT_ID,
+            name: expectedName,
+            digest: artifact.digest,
+            sizeBytes: String(artifact.size_in_bytes),
+            createdAt,
+            expiresAt,
+            expired: false,
+            workflowRunId: process.env.GITHUB_RUN_ID,
+            workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            headSha: process.env.TARGET_SHA,
+            file: {
+              name: process.env.READINESS_REPORT_PATH,
+              sizeBytes: String(reportBytes.length),
+              sha256: sha256Hex(reportBytes),
+            },
+          };
+          writeFileSync(
+            process.env.READINESS_ARTIFACT_METADATA_PATH,
+            canonicalJsonBytes(metadata),
+            { flag: "wx", mode: 0o600 },
+          );
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `id=${metadata.id}`,
+              `digest=${metadata.digest}`,
+              `created_at=${metadata.createdAt}`,
+              `expires_at=${metadata.expiresAt}`,
+            ].join("\n") + "\n",
+          );
+          NODE
+          rm -f -- "$artifact_json"
+
+      - name: Build Canonical Readiness Attestation
+        id: readiness-attestation
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ steps.chain.outputs.backup_run_attempt }}
+          BACKUP_ATTESTATION_ARTIFACT_ID: ${{ steps.backup-attestation-artifact.outputs.id }}
+          BACKUP_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.backup-attestation-artifact.outputs.digest }}
+          BACKUP_PRIMARY_ARTIFACT_ID: ${{ steps.backup-evidence.outputs.primary_artifact_id }}
+          BACKUP_PRIMARY_ARTIFACT_DIGEST: ${{ steps.backup-evidence.outputs.primary_artifact_digest }}
+          BACKUP_VALID_UNTIL: ${{ steps.backup-evidence.outputs.backup_valid_until }}
+          EXPECTED_CONTAINER_ID: ${{ steps.backup-evidence.outputs.container_id }}
+          READINESS_REPORT_ARTIFACT_ID: ${{ steps.readiness-report-artifact.outputs.id }}
+          READINESS_REPORT_ARTIFACT_DIGEST: ${{ steps.readiness-report-artifact.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          issued_at="$(node -e 'process.stdout.write(new Date().toISOString())')"
+          valid_until="$(node -e 'process.stdout.write(new Date(Date.parse(process.argv[1]) + 120 * 60 * 1000).toISOString())' "$issued_at")"
+          node -e '
+            const validUntil = Date.parse(process.argv[1]);
+            const backupValidUntil = Date.parse(process.argv[2]);
+            if (!Number.isFinite(validUntil) || !Number.isFinite(backupValidUntil) || validUntil > backupValidUntil) process.exit(1);
+          ' "$valid_until" "$BACKUP_VALID_UNTIL"
+          node --input-type=module - <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import { canonicalJsonBytes } from "./scripts/production-release-attestation.mjs";
+
+          const value = {
+            attempt: process.env.GITHUB_RUN_ATTEMPT,
+            event: "workflow_dispatch",
+            headBranch: "main",
+            headSha: process.env.TARGET_SHA,
+            id: process.env.GITHUB_RUN_ID,
+            workflowPath: ".github/workflows/ordinary-account-cutover-readiness.yml",
+          };
+          writeFileSync(
+            process.env.READINESS_RUN_METADATA_PATH,
+            canonicalJsonBytes(value),
+            { flag: "wx", mode: 0o600 },
+          );
+          NODE
+          node scripts/create-database-readiness-attestation.mjs create \
+            --backup-attestation "$BACKUP_ATTESTATION_PATH" \
+            --backup-attestation-artifact "$BACKUP_ATTESTATION_ARTIFACT_METADATA_PATH" \
+            --checker-report "$READINESS_REPORT_PATH" \
+            --readiness-artifact "$READINESS_ARTIFACT_METADATA_PATH" \
+            --run "$READINESS_RUN_METADATA_PATH" \
+            --remote-source "$READINESS_REMOTE_SOURCE_PATH" \
+            --container-id "$EXPECTED_CONTAINER_ID" \
+            --issued-at "$issued_at" \
+            --valid-until "$valid_until" \
+            --output "$READINESS_ATTESTATION_PATH" \
+            > "$RUNNER_TEMP/readiness-attestation-create-summary.json"
+          node scripts/production-release-attestation.mjs validate \
+            --input "$READINESS_ATTESTATION_PATH" \
+            --kind readiness \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-target-sha "$TARGET_SHA" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --expected-backup-run-id "$BACKUP_RUN_ID" \
+            --expected-readiness-run-id "$GITHUB_RUN_ID" \
+            --expected-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
+            --expected-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
+            --expected-backup-artifact-id "$BACKUP_PRIMARY_ARTIFACT_ID" \
+            --expected-backup-artifact-digest "$BACKUP_PRIMARY_ARTIFACT_DIGEST" \
+            --expected-backup-attestation-artifact-id "$BACKUP_ATTESTATION_ARTIFACT_ID" \
+            --expected-backup-attestation-artifact-digest "$BACKUP_ATTESTATION_ARTIFACT_DIGEST" \
+            --expected-readiness-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
+            --expected-readiness-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
+            --minimum-remaining-seconds 5100 \
+            > "$RUNNER_TEMP/readiness-attestation-validation-summary.json"
+          attestation_sha256="$(sha256sum "$READINESS_ATTESTATION_PATH" | awk '{ print $1 }')"
+          jq -e --arg sha256 "$attestation_sha256" '
+            .ok == true and .outputFile == "production-readiness-attestation.json" and
+            .sha256 == $sha256 and (.sizeBytes | test("^[1-9][0-9]*$"))
+          ' "$RUNNER_TEMP/readiness-attestation-create-summary.json" >/dev/null
+          jq -e --arg sha256 "$attestation_sha256" '
+            .valid == true and .kind == "faolla.production-readiness.v1" and
+            .canonicalSha256 == $sha256
+          ' "$RUNNER_TEMP/readiness-attestation-validation-summary.json" >/dev/null
+          echo "sha256=$attestation_sha256" >> "$GITHUB_OUTPUT"
+          rm -f -- \
+            "$RUNNER_TEMP/readiness-attestation-create-summary.json" \
+            "$RUNNER_TEMP/readiness-attestation-validation-summary.json"
+
+      - name: Upload Canonical Readiness Attestation
+        id: readiness-attestation-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-production-readiness-attestation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.READINESS_ATTESTATION_PATH }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Verify Uploaded Readiness Attestation Artifact
+        id: readiness-attestation-artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTION_ARTIFACT_ID: ${{ steps.readiness-attestation-upload.outputs.artifact-id }}
+          ACTION_ARTIFACT_DIGEST: ${{ steps.readiness-attestation-upload.outputs.artifact-digest }}
+          ACTION_ARTIFACT_URL: ${{ steps.readiness-attestation-upload.outputs.artifact-url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ACTION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACTION_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          expected_name="faolla-production-readiness-attestation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts/${ACTION_ARTIFACT_ID}"
+          test "$ACTION_ARTIFACT_URL" = "$expected_url"
+          artifact_json="$RUNNER_TEMP/readiness-attestation-artifact.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$ACTION_ARTIFACT_ID" \
+            > "$artifact_json"
+          node --input-type=module - "$artifact_json" "$expected_name" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const normalizeTimestamp = (value) => {
+            if (typeof value !== "string") process.exit(1);
+            const timestamp = Date.parse(value);
+            if (!Number.isFinite(timestamp)) process.exit(1);
+            return new Date(timestamp).toISOString();
+          };
+          const artifact = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedName = process.argv[3];
+          if (
+            artifact?.id !== Number(process.env.ACTION_ARTIFACT_ID) ||
+            artifact.name !== expectedName ||
+            artifact.digest !== `sha256:${process.env.ACTION_ARTIFACT_DIGEST}` ||
+            !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes <= 0 ||
+            artifact.expired !== false ||
+            artifact.workflow_run?.id !== Number(process.env.GITHUB_RUN_ID) ||
+            artifact.workflow_run?.head_branch !== "main" ||
+            artifact.workflow_run?.head_sha !== process.env.TARGET_SHA
+          ) process.exit(1);
+          const createdAt = normalizeTimestamp(artifact.created_at);
+          const expiresAt = normalizeTimestamp(artifact.expires_at);
+          if (
+            Date.parse(createdAt) > Date.now() + 300_000 ||
+            Date.parse(createdAt) >= Date.parse(expiresAt) ||
+            Date.parse(expiresAt) - Date.now() < 5_700_000
+          ) process.exit(1);
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `id=${artifact.id}\ndigest=${artifact.digest}\n`,
+          );
+          NODE
+          rm -f -- "$artifact_json"
+
+      - name: Attest Canonical Readiness Report
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.READINESS_REPORT_PATH }}
+
+      - name: Attest Canonical Readiness Attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.READINESS_ATTESTATION_PATH }}
+
+      - name: Confirm Exact Successful Readiness Artifact Inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_ARTIFACT_ID: ${{ steps.readiness-report-artifact.outputs.id }}
+          REPORT_ARTIFACT_DIGEST: ${{ steps.readiness-report-artifact.outputs.digest }}
+          ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-attestation-artifact.outputs.id }}
+          ATTESTATION_ARTIFACT_DIGEST: ${{ steps.readiness-attestation-artifact.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main="$(gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$current_main" = "$TARGET_SHA"
+          inventory_path="$RUNNER_TEMP/readiness-final-artifact-inventory.json"
+          for attempt in 1 2 3 4 5; do
+            gh api --method GET --paginate --slurp \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              > "$inventory_path"
+            if node --input-type=module - "$inventory_path" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Array.isArray(pages) || pages.length === 0) process.exit(1);
+          const artifacts = pages.flatMap((page) => Array.isArray(page?.artifacts) ? page.artifacts : []);
+          if (artifacts.length !== 2 || pages.some((page) => page.total_count !== 2)) process.exit(1);
+          const expected = new Map([
+            [`faolla-production-readiness-report-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, {
+              id: process.env.REPORT_ARTIFACT_ID,
+              digest: process.env.REPORT_ARTIFACT_DIGEST,
+            }],
+            [`faolla-production-readiness-attestation-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, {
+              id: process.env.ATTESTATION_ARTIFACT_ID,
+              digest: process.env.ATTESTATION_ARTIFACT_DIGEST,
+            }],
+          ]);
+          const artifactIds = new Set();
+          for (const artifact of artifacts) {
+            const wanted = expected.get(artifact?.name);
+            if (
+              !wanted ||
+              String(artifact.id) !== wanted.id ||
+              artifactIds.has(artifact.id) ||
+              artifact.digest !== wanted.digest ||
+              !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "") ||
+              artifact.expired !== false ||
+              !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes <= 0 ||
+              !Number.isFinite(Date.parse(artifact.created_at)) ||
+              !Number.isFinite(Date.parse(artifact.expires_at)) ||
+              Date.parse(artifact.created_at) >= Date.parse(artifact.expires_at) ||
+              Date.parse(artifact.expires_at) <= Date.now() ||
+              artifact.workflow_run?.id !== Number(process.env.GITHUB_RUN_ID) ||
+              artifact.workflow_run?.head_branch !== "main" ||
+              artifact.workflow_run?.head_sha !== process.env.TARGET_SHA
+            ) process.exit(1);
+            artifactIds.add(artifact.id);
+            expected.delete(artifact.name);
+          }
+          if (expected.size !== 0) process.exit(1);
+          NODE
+            then
+              rm -f -- "$inventory_path"
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Remove Remote Exact Readiness Source
+        if: always()
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_USER:-}" ] || [ -z "${SSH_HOST:-}" ] \
+            || [ -z "${APP_DIR:-}" ] || [ ! -s "$HOME/.ssh/known_hosts" ]; then
+            exit 0
+          fi
+          repository_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
+          printf '::add-mask::%s\n' "$repository_dir_b64"
+          ssh -T -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_READINESS_WORKTREE=$REMOTE_READINESS_WORKTREE bash -s" <<'REMOTE'
+          set -euo pipefail
+          repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
+          case "$FAOLLA_READINESS_WORKTREE" in
+            /tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*) ;;
+            *) exit 1 ;;
+          esac
+          if [ -e "$FAOLLA_READINESS_WORKTREE" ]; then
+            git -C "$repository_dir" worktree remove --force "$FAOLLA_READINESS_WORKTREE"
+          fi
+          test ! -e "$FAOLLA_READINESS_WORKTREE"
+          REMOTE

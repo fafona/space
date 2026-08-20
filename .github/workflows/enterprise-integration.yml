@@ -57,11 +57,37 @@ jobs:
         env:
           POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: |
+          set -euo pipefail
+          umask 077
           node --test scripts/enterprise-integration-workflow-contract.test.mjs
           docker cp "${GITHUB_WORKSPACE}/." "${POSTGRES_CONTAINER_ID}:/workspace"
-          docker exec \
+          psql_wrapper_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$psql_wrapper_dir"' EXIT
+          cat > "$psql_wrapper_dir/psql" <<'PSQL_WRAPPER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${POSTGRES_CONTAINER_ID:?POSTGRES_CONTAINER_ID is required}"
+          : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}"
+          translated=()
+          for argument in "$@"; do
+            if [[ "$argument" == "$GITHUB_WORKSPACE"/* ]]; then
+              argument="/workspace/${argument#"$GITHUB_WORKSPACE"/}"
+            elif [[ "$argument" == "$GITHUB_WORKSPACE" ]]; then
+              argument="/workspace"
+            fi
+            translated+=("$argument")
+          done
+          docker_environment=(--env "PGOPTIONS=${PGOPTIONS:-}")
+          if [[ -n "${PGAPPNAME:-}" ]]; then
+            docker_environment+=(--env "PGAPPNAME=$PGAPPNAME")
+          fi
+          exec docker exec \
+            -i \
             --workdir /workspace \
-            --env DATABASE_URL="${DATABASE_URL}" \
-            --env ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE="${ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE}" \
-            "${POSTGRES_CONTAINER_ID}" \
+            "${docker_environment[@]}" \
+            "$POSTGRES_CONTAINER_ID" \
+            psql "${translated[@]}"
+          PSQL_WRAPPER
+          chmod 700 "$psql_wrapper_dir/psql"
+          PATH="$psql_wrapper_dir:$PATH" \
             bash scripts/enterprise-integration/run.sh

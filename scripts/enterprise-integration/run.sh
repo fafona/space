@@ -18,6 +18,11 @@ run_psql() {
   "${PSQL_BASE[@]}" "$@" "${DATABASE_URL}"
 }
 
+capture_ordinary_identity_content_sha256() {
+  node "${REPOSITORY_ROOT}/scripts/ordinary-account-identity-content-contract.mjs" \
+    --select-sql | run_psql --tuples-only --no-align --file -
+}
+
 existing_relations="$(
   run_psql --tuples-only --no-align --command \
     "select count(*) from pg_class as relation join pg_namespace as namespace on namespace.oid = relation.relnamespace where namespace.nspname not in ('pg_catalog', 'information_schema') and namespace.nspname !~ '^pg_toast' and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f');"
@@ -1476,5 +1481,29 @@ run_sql_file "${SCRIPT_DIR}/30-post-concurrency.sql"
 run_sql_file "${SCRIPT_DIR}/42-workflow-post-concurrency.sql"
 run_sql_file "${SCRIPT_DIR}/45-workflow-restore-limit-post.sql"
 run_sql_file "${SCRIPT_DIR}/58-ordinary-account-lock-race-post.sql"
+run_psql --command \
+  "revoke select, insert, update on table public.merchants from service_role;"
+export FAOLLA_EXPECTED_DATABASE_NAME="$(
+  run_psql --tuples-only --no-align --command \
+    "select pg_catalog.current_database();"
+)"
+export FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$(
+  run_psql --tuples-only --no-align --command \
+    "select system_identifier::numeric::text from pg_catalog.pg_control_system();"
+)"
+export FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$(
+  run_psql --tuples-only --no-align --command \
+    "select count(*)::text from public.merchants where id <> 'site-main';"
+)"
+export FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$(
+  run_psql --tuples-only --no-align --command \
+    "select count(*)::text from public.faolla_personal_accounts;"
+)"
+export FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$(
+  capture_ordinary_identity_content_sha256
+)"
+FAOLLA_EXPECTED_READINESS_STATUS=blocked \
+  node "${SCRIPT_DIR}/check-ordinary-account-cutover-readiness.mjs"
+. "${SCRIPT_DIR}/62-ordinary-account-cutover-readiness-gate.sh"
 
 echo '[enterprise-integration] all PostgreSQL migration, security, transaction, and CAS checks passed'

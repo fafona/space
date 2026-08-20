@@ -76,12 +76,35 @@ Coverage includes:
   owner-only all-schema future function defaults and canaries, exact registry
   owner-plus-service-read table ACLs with no column grants, registry and
   postcondition rollback, quoted-identifier retry, and multi-session probes for
-  the fixed ten-catalog `SHARE ROW EXCLUSIVE` order, cluster-wide active and
+  the fixed twenty-catalog `SHARE ROW EXCLUSIVE` order, cluster-wide active and
   prepared-XID quiescence, controlled deployment-lock re-entry, safe retry,
   ordinary catalog-read availability, and post-gate owner-only DDL defaults.
   The catalog-writer timeout probe runs with `lc_messages=C` so its standard
   PostgreSQL `lock_timeout` text is deterministic; released-lock active or
   prepared XIDs are checked separately by the stable migration error;
+- the production ordinary-account cutover readiness query itself, including
+  its fixed migration mutex, ordered five-relation `SHARE` lock followed by the
+  twenty-catalog gate, cluster-wide active/prepared-XID rejection, then the
+  consistently ordered registry gate, frozen runtime-RPC postconditions,
+  exact database-name and
+  cluster system-identifier pinning, merchant/personal row-count baselines,
+  a canonical length-prefixed SHA-256 over every ordinary-identity row and UUID
+  alias (with duplicate multiplicity preserved),
+  exact nine-function metadata/ACL modes, exact 037 merchant policy and ACL
+  inventory, exact 038 five-relation/fourteen-column surface, exact personal and
+  migration-registry structures, forbidden-binder absence, all-schema creator
+  function-default ACL closure, bounded baseline output parsing, fail-on-blocked
+  package execution, fixture-only merchant `service_role` ACL cleanup before
+  the probe, and a read-only rollback boundary;
+- a production-normalized ready fixture followed by fail-closed drift and exact
+  restoration probes for bridge/guard bodies and ACLs, merchant policy/table
+  ACLs, the 038 relation-column surface, personal constraints/rules/inheritance,
+  registry persistence/rules/primary key, forbidden binders, non-public schema
+  function defaults, the pinned merchant baseline, and a same-count ordinary
+  identity replacement that only the content SHA can detect; positive hostile
+  `quote_all_identifiers` and public-first shadow-search-path probes; and two-
+  connection evidence that readiness-held relation locks make both merchant
+  DML and `ALTER POLICY` wait before either can mutate production state;
 - authoritative-readiness-gated removal of email-based owner authorization,
   mutable metadata/email DoS resistance, conflicting-registry and extra-policy
   rollback, exact pre/post protected-table ACLs (including custom delegated and
@@ -115,6 +138,13 @@ ENTERPRISE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE=1 \
 
 The runner refuses to start unless the explicit disposable-database flag is
 `1` and the target contains no user relations.
+
+Immediately before the final readiness probe, the runner derives the expected
+database name, PostgreSQL system identifier, ordinary-merchant count,
+canonical-personal count, and canonical ordinary-identity content SHA-256 from
+the disposable fixture. The PostgreSQL wrapper passes those five canonical
+values as fixed `psql` variables so the same SQL
+identity and baseline gates exercised in production are covered here.
 
 The GitHub Actions workflow provisions its own PostgreSQL 15 service. Plain
 PostgreSQL cannot reproduce PostgREST HTTP routing or the Supabase Auth service;

@@ -2,21 +2,26 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { Transform } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import {
-  chmod,
-  mkdir,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  buildDatabaseBackupAuthoritativeBaselineJsonSql,
+  validateDatabaseBackupSourceIdentity,
+} from "./database-backup-contract.mjs";
+import {
   DatabaseBackupVerificationError,
   withVerifiedProductionDatabaseBackup,
 } from "./verify-production-database-backup.mjs";
+import {
+  PRODUCTION_RELEASE_AGGREGATE_KEYS,
+  PRODUCTION_RELEASE_BASELINE_KEYS,
+} from "./production-release-attestation.mjs";
+import {
+  isOrdinaryAccountIdentityContentSha256,
+  ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY,
+} from "./ordinary-account-identity-content-contract.mjs";
 
 const RESTORE_DATABASE_IMAGE_PATTERN =
   /^supabase\/postgres:[a-z0-9][a-z0-9._-]{0,127}$/i;
@@ -133,11 +138,14 @@ function runCommand(command, args, options = {}) {
         ),
       );
     });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
-    }, options.timeoutMs ?? 10 * 60 * 1000);
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+      },
+      options.timeoutMs ?? 10 * 60 * 1000,
+    );
     child.on("close", (code) => {
       clearTimeout(timer);
       if (timedOut) {
@@ -217,14 +225,10 @@ function restoreSqlStream(databaseDumpPath, containerName) {
         reject(new DatabaseRestoreRehearsalError("database_restore_timeout"));
       } else if (filterFailed) {
         reject(
-          new DatabaseRestoreRehearsalError(
-            "database_restore_filter_failed",
-          ),
+          new DatabaseRestoreRehearsalError("database_restore_filter_failed"),
         );
       } else if (restoreCode !== 0) {
-        reject(
-          new DatabaseRestoreRehearsalError("database_restore_failed"),
-        );
+        reject(new DatabaseRestoreRehearsalError("database_restore_failed"));
       } else if (gzipCode !== 0) {
         reject(
           new DatabaseRestoreRehearsalError(
@@ -352,7 +356,13 @@ async function waitForPostgres(commandRunner, containerName, sleep) {
   }
 }
 
-async function queryCount(commandRunner, containerName, sql, errorCode) {
+async function queryScalar(
+  commandRunner,
+  containerName,
+  databaseName,
+  sql,
+  errorCode,
+) {
   const result = await commandRunner(
     "docker",
     [
@@ -365,22 +375,91 @@ async function queryCount(commandRunner, containerName, sql, errorCode) {
       "-U",
       RESTORE_BOOTSTRAP_USER,
       "-d",
-      "postgres",
+      databaseName,
       "-c",
       sql,
     ],
     { errorCode, timeoutMs: 60_000 },
   );
-  const value = Number.parseInt(trimText(result.stdout), 10);
+  return trimText(result.stdout);
+}
+
+async function queryCount(
+  commandRunner,
+  containerName,
+  databaseName,
+  sql,
+  errorCode,
+) {
+  const output = await queryScalar(
+    commandRunner,
+    containerName,
+    databaseName,
+    sql,
+    errorCode,
+  );
+  const value = Number.parseInt(output, 10);
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new DatabaseRestoreRehearsalError(
-      `${errorCode}_result_invalid`,
-    );
+    throw new DatabaseRestoreRehearsalError(`${errorCode}_result_invalid`);
   }
   return value;
 }
 
-async function repairDeferredGraphqlAcl(commandRunner, containerName) {
+async function queryAuthoritativeBaseline(
+  commandRunner,
+  containerName,
+  databaseName,
+) {
+  const sql = [
+    "WITH readiness AS MATERIALIZED (",
+    "  SELECT public.faolla_get_ordinary_account_authoritative_cutover_readiness_v1() AS value",
+    ")",
+    `SELECT ${buildDatabaseBackupAuthoritativeBaselineJsonSql()}::text FROM readiness;`,
+  ].join("\n");
+  const output = await queryScalar(
+    commandRunner,
+    containerName,
+    databaseName,
+    sql,
+    "restore_authoritative_baseline_probe_failed",
+  );
+  let parsed;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new DatabaseRestoreRehearsalError(
+      "restore_authoritative_baseline_invalid",
+    );
+  }
+  const keys =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.keys(parsed).sort()
+      : [];
+  const expectedKeys = [...PRODUCTION_RELEASE_BASELINE_KEYS].sort();
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index]) ||
+    PRODUCTION_RELEASE_AGGREGATE_KEYS.some(
+      (key) => !/^(?:0|[1-9][0-9]*)$/.test(parsed[key]),
+    ) ||
+    !isOrdinaryAccountIdentityContentSha256(
+      parsed[ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY],
+    )
+  ) {
+    throw new DatabaseRestoreRehearsalError(
+      "restore_authoritative_baseline_invalid",
+    );
+  }
+  return Object.fromEntries(
+    PRODUCTION_RELEASE_BASELINE_KEYS.map((key) => [key, parsed[key]]),
+  );
+}
+
+async function repairDeferredGraphqlAcl(
+  commandRunner,
+  containerName,
+  databaseName,
+) {
   const sql = [
     "SET ROLE supabase_admin;",
     "CREATE OR REPLACE FUNCTION graphql_public.graphql(",
@@ -421,7 +500,7 @@ async function repairDeferredGraphqlAcl(commandRunner, containerName) {
       "-U",
       RESTORE_BOOTSTRAP_USER,
       "-d",
-      "postgres",
+      databaseName,
       "-c",
       sql,
     ],
@@ -435,10 +514,18 @@ async function repairDeferredGraphqlAcl(commandRunner, containerName) {
 export async function rehearseVerifiedDatabaseBackup(input) {
   const databaseImage = trimText(input.manifest?.source?.databaseImage);
   if (!RESTORE_DATABASE_IMAGE_PATTERN.test(databaseImage)) {
+    throw new DatabaseRestoreRehearsalError("restore_database_image_rejected");
+  }
+  const sourceValidation = validateDatabaseBackupSourceIdentity(
+    input.manifest?.source,
+  );
+  if (!sourceValidation.valid) {
     throw new DatabaseRestoreRehearsalError(
-      "restore_database_image_rejected",
+      "restore_source_database_identity_invalid",
     );
   }
+  const sourceDatabase = sourceValidation.source.database;
+  const restoreDatabaseName = sourceDatabase.databaseName;
   const commandRunner = input.runCommand ?? runCommand;
   const restoreSql = input.restoreSql ?? restoreSqlStream;
   const sleep = input.sleep ?? delay;
@@ -487,9 +574,7 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       ],
       { errorCode: "storage_restore_extract_failed" },
     );
-    const rootKeyPath = await findPgsodiumRootKey(
-      postgresConfigDirectory,
-    );
+    const rootKeyPath = await findPgsodiumRootKey(postgresConfigDirectory);
     if (!rootKeyPath) {
       throw new DatabaseRestoreRehearsalError(
         "pgsodium_root_key_restore_missing",
@@ -528,13 +613,9 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       errorCode: "restore_database_volume_create_failed",
     });
     volumeCreated = true;
-    await commandRunner(
-      "docker",
-      ["volume", "create", configVolumeName],
-      {
-        errorCode: "restore_database_config_volume_create_failed",
-      },
-    );
+    await commandRunner("docker", ["volume", "create", configVolumeName], {
+      errorCode: "restore_database_config_volume_create_failed",
+    });
     configVolumeCreated = true;
     await commandRunner(
       "docker",
@@ -608,43 +689,68 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       );
     }
     if (skippedGraphqlPublicAclCount > 0) {
-      await repairDeferredGraphqlAcl(commandRunner, containerName);
+      await repairDeferredGraphqlAcl(
+        commandRunner,
+        containerName,
+        restoreDatabaseName,
+      );
+    }
+
+    const restoredBaseline = await queryAuthoritativeBaseline(
+      commandRunner,
+      containerName,
+      restoreDatabaseName,
+    );
+    if (
+      PRODUCTION_RELEASE_BASELINE_KEYS.some(
+        (key) => restoredBaseline[key] !== sourceDatabase.baseline[key],
+      )
+    ) {
+      throw new DatabaseRestoreRehearsalError(
+        "restore_authoritative_baseline_mismatch",
+      );
     }
 
     const database = {
       schemas: await queryCount(
         commandRunner,
         containerName,
+        restoreDatabaseName,
         "SELECT count(*) FROM information_schema.schemata;",
         "restore_schema_count_failed",
       ),
       tables: await queryCount(
         commandRunner,
         containerName,
+        restoreDatabaseName,
         "SELECT count(*) FROM information_schema.tables WHERE table_type = 'BASE TABLE';",
         "restore_table_count_failed",
       ),
       pages: await queryCount(
         commandRunner,
         containerName,
+        restoreDatabaseName,
         "SELECT count(*) FROM public.pages;",
         "restore_pages_table_check_failed",
       ),
       authUsers: await queryCount(
         commandRunner,
         containerName,
+        restoreDatabaseName,
         "SELECT count(*) FROM auth.users;",
         "restore_auth_users_check_failed",
       ),
       storageObjects: await queryCount(
         commandRunner,
         containerName,
+        restoreDatabaseName,
         "SELECT count(*) FROM storage.objects;",
         "restore_storage_objects_check_failed",
       ),
       graphqlPublicFunctions: await queryCount(
         commandRunner,
         containerName,
+        restoreDatabaseName,
         "SELECT CASE WHEN to_regprocedure('graphql_public.graphql(text,text,jsonb,jsonb)') IS NULL THEN 0 ELSE 1 END;",
         "restore_graphql_public_function_check_failed",
       ),
@@ -654,6 +760,7 @@ export async function rehearseVerifiedDatabaseBackup(input) {
         ? await queryCount(
             commandRunner,
             containerName,
+            restoreDatabaseName,
             "SELECT count(*) FROM (VALUES ('postgres'), ('anon'), ('authenticated'), ('service_role')) AS expected(role_name) WHERE has_function_privilege(role_name, 'graphql_public.graphql(text,text,jsonb,jsonb)', 'EXECUTE');",
             "restore_graphql_acl_check_failed",
           )
@@ -682,38 +789,27 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       isolation: "ephemeral_docker_no_network",
       databaseImage,
       database,
+      restoredBaseline,
       storage,
     };
   } finally {
     if (containerCreated) {
-      await commandRunner(
-        "docker",
-        ["rm", "-f", containerName],
-        {
-          errorCode: "restore_database_container_cleanup_failed",
-          timeoutMs: 60_000,
-        },
-      ).catch(() => {});
+      await commandRunner("docker", ["rm", "-f", containerName], {
+        errorCode: "restore_database_container_cleanup_failed",
+        timeoutMs: 60_000,
+      }).catch(() => {});
     }
     if (volumeCreated) {
-      await commandRunner(
-        "docker",
-        ["volume", "rm", "-f", volumeName],
-        {
-          errorCode: "restore_database_volume_cleanup_failed",
-          timeoutMs: 60_000,
-        },
-      ).catch(() => {});
+      await commandRunner("docker", ["volume", "rm", "-f", volumeName], {
+        errorCode: "restore_database_volume_cleanup_failed",
+        timeoutMs: 60_000,
+      }).catch(() => {});
     }
     if (configVolumeCreated) {
-      await commandRunner(
-        "docker",
-        ["volume", "rm", "-f", configVolumeName],
-        {
-          errorCode: "restore_database_config_volume_cleanup_failed",
-          timeoutMs: 60_000,
-        },
-      ).catch(() => {});
+      await commandRunner("docker", ["volume", "rm", "-f", configVolumeName], {
+        errorCode: "restore_database_config_volume_cleanup_failed",
+        timeoutMs: 60_000,
+      }).catch(() => {});
     }
     await rm(runtimeDirectory, { recursive: true, force: true });
   }
@@ -734,9 +830,12 @@ export async function rehearseProductionDatabaseRestore(input) {
       }),
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     backupCreatedAt: verified.report.backupCreatedAt,
     backupStatus: verified.report.status,
+    inputFile: verified.report.inputFile,
+    inputBytes: verified.report.inputBytes,
+    source: verified.report.source,
     ...verified.callbackResult,
   };
 }
@@ -746,9 +845,7 @@ async function readPassphraseFromStdin() {
   for await (const chunk of process.stdin) {
     value += chunk.toString("utf8");
     if (value.length > 16_384) {
-      throw new DatabaseRestoreRehearsalError(
-        "backup_passphrase_too_long",
-      );
+      throw new DatabaseRestoreRehearsalError("backup_passphrase_too_long");
     }
   }
   return value.replace(/[\r\n]+$/, "");
