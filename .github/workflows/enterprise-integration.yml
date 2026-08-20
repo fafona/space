@@ -5,6 +5,7 @@ on:
     paths:
       - "scripts/supabase-init.sql"
       - "scripts/supabase-migrations/**"
+      - "scripts/check-ordinary-account-cutover-readiness.mjs"
       - "scripts/enterprise-integration/**"
       - ".github/workflows/enterprise-integration.yml"
   push:
@@ -13,6 +14,7 @@ on:
     paths:
       - "scripts/supabase-init.sql"
       - "scripts/supabase-migrations/**"
+      - "scripts/check-ordinary-account-cutover-readiness.mjs"
       - "scripts/enterprise-integration/**"
       - ".github/workflows/enterprise-integration.yml"
   workflow_dispatch:
