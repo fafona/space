@@ -35,7 +35,7 @@ jobs:
       LOCAL_BACKUP_PATH: faolla-database-backup.tar.enc
       LOCAL_BACKUP_PART_PATH: faolla-database-backup.tar.enc.part
       BACKUP_SUBJECT_PATH: database-backup-subject.json
-      BACKUP_ATTESTATION_PATH: database-backup-attestation.json
+      BACKUP_ATTESTATION_PATH: production-backup-attestation.json
       BACKUP_ARTIFACT_NAME: faolla-encrypted-disaster-recovery-${{ github.run_id }}-${{ github.run_attempt }}
       MAX_BACKUP_TRANSFER_ATTEMPTS: 2
 

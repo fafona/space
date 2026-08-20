@@ -260,6 +260,11 @@ test("encrypted backup workflow requires an exact tested main commit", async () 
   assert.match(workflow, /actions\/attest@v4/);
   assert.match(
     workflow,
+    /BACKUP_ATTESTATION_PATH: production-backup-attestation\.json/,
+  );
+  assert.doesNotMatch(workflow, /database-backup-attestation\.json/);
+  assert.match(
+    workflow,
     /predicate-path: \$\{\{ env\.BACKUP_ATTESTATION_PATH \}\}/,
   );
   assert.match(
