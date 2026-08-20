@@ -830,13 +830,13 @@ export async function rehearseProductionDatabaseRestore(input) {
       }),
   });
   return {
-    schemaVersion: 2,
     backupCreatedAt: verified.report.backupCreatedAt,
     backupStatus: verified.report.status,
     inputFile: verified.report.inputFile,
     inputBytes: verified.report.inputBytes,
     source: verified.report.source,
     ...verified.callbackResult,
+    schemaVersion: 2,
   };
 }
 
