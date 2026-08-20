@@ -8,6 +8,13 @@ const workflow = readFileSync(
 ).replace(/\r\n/g, "\n");
 
 test("enterprise PostgreSQL acceptance uses the healthy service container client", () => {
+  assert.equal(
+    workflow.match(
+      /- "scripts\/check-ordinary-account-cutover-readiness\.mjs"/g,
+    )?.length,
+    2,
+    "checker SQL changes must trigger both pull-request and main-push PG15 acceptance",
+  );
   assert.match(
     workflow,
     /node --test scripts\/enterprise-integration-workflow-contract\.test\.mjs/,
