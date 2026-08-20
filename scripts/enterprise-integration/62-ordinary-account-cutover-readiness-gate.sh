@@ -268,12 +268,101 @@ run_psql --command \
   "drop function public.faolla_bind_ordinary_account_authorization_v1(integer);"
 assert_ordinary_readiness_ready
 
+echo '[enterprise-integration] accepting exact hosted platform function default ACL tuples'
+run_psql <<'SQL'
+create role dashboard_user nologin noinherit;
+create role redteam_platform_default_acl_extra nologin noinherit;
+create schema realtime authorization supabase_admin;
+create schema graphql_public authorization supabase_admin;
+create schema graphql authorization supabase_admin;
+create schema extensions authorization supabase_admin;
+create schema supabase_functions authorization postgres;
+
+alter default privileges for role supabase_admin in schema realtime
+  grant execute on functions to postgres, dashboard_user;
+alter default privileges for role supabase_admin in schema graphql_public
+  grant execute on functions to postgres, anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema graphql
+  grant execute on functions to postgres, anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema extensions
+  grant execute on functions to postgres with grant option;
+alter default privileges for role postgres in schema storage
+  grant execute on functions to postgres, anon, authenticated, service_role;
+alter default privileges for role postgres in schema supabase_functions
+  grant execute on functions to postgres, anon, authenticated, service_role;
+SQL
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] blocking PUBLIC added to an exact platform tuple'
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema graphql grant execute on functions to public;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema graphql revoke execute on functions from public;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] blocking a missing grantee from an exact platform tuple'
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema graphql revoke execute on functions from service_role;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema graphql grant execute on functions to service_role;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] blocking a platform tuple grant-option drift'
+run_psql --command \
+  "alter default privileges for role postgres in schema storage grant execute on functions to service_role with grant option;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "alter default privileges for role postgres in schema storage revoke grant option for execute on functions from service_role;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] blocking an extra role in an exact platform tuple'
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema realtime grant execute on functions to redteam_platform_default_acl_extra;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema realtime revoke execute on functions from redteam_platform_default_acl_extra;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] blocking an exact platform ACL set copied to an unknown schema'
+run_psql --command \
+  "create schema redteam_platform_tuple_copy authorization supabase_admin; alter default privileges for role supabase_admin in schema redteam_platform_tuple_copy grant execute on functions to postgres, dashboard_user;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "alter default privileges for role supabase_admin in schema redteam_platform_tuple_copy revoke execute on functions from postgres, dashboard_user; drop schema redteam_platform_tuple_copy;"
+assert_ordinary_readiness_ready
+
 echo '[enterprise-integration] blocking a non-public unsafe function default ACL'
 run_psql --command \
   "create schema redteam_readiness_defaults authorization supabase_admin; alter default privileges for role supabase_admin in schema redteam_readiness_defaults grant execute on functions to public;"
 assert_ordinary_readiness_status blocked
 run_psql --command \
   "alter default privileges for role supabase_admin in schema redteam_readiness_defaults revoke execute on functions from public; drop schema redteam_readiness_defaults;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] removing hosted platform default ACL fixtures'
+run_psql <<'SQL'
+alter default privileges for role supabase_admin in schema realtime
+  revoke execute on functions from postgres, dashboard_user;
+alter default privileges for role supabase_admin in schema graphql_public
+  revoke execute on functions from postgres, anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema graphql
+  revoke execute on functions from postgres, anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema extensions
+  revoke execute on functions from postgres;
+alter default privileges for role postgres in schema storage
+  revoke execute on functions from postgres, anon, authenticated, service_role;
+alter default privileges for role postgres in schema supabase_functions
+  revoke execute on functions from postgres, anon, authenticated, service_role;
+drop schema realtime;
+drop schema graphql_public;
+drop schema graphql;
+drop schema extensions;
+drop schema supabase_functions;
+drop role redteam_platform_default_acl_extra;
+drop role dashboard_user;
+SQL
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] blocking a +1 merchant baseline drift and restoring -1'
