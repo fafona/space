@@ -26,6 +26,10 @@ test("session revocation is a manual, serialized, main-only production operation
 test("workflow binds the immutable hotfix boundary and a fresh encrypted backup", () => {
   assert.match(
     workflow,
+    /- name: Checkout Operation Source\n\s+uses: actions\/checkout@v5\n\s+with:\n\s+fetch-depth: 0/,
+  );
+  assert.match(
+    workflow,
     /HOTFIX_COMMIT: 26a3b2b0d0a82b3f972d13102b1b87c6fec6e589/,
   );
   assert.match(workflow, /REVOCATION_CUTOFF: 2026-08-20T03:01:52Z/);
