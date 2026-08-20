@@ -742,13 +742,17 @@ test("checker stdout, stderr, and exit status are captured without errexit loss"
   try {
     const stdoutPath = join(directory, "checker.stdout");
     const stderrPath = join(directory, "checker.stderr");
-    const run = ({ status, stdout, stderr = "" }) => {
+    const stubStdoutPath = join(directory, "stub.stdout");
+    const stubStderrPath = join(directory, "stub.stderr");
+    const run = async ({ status, stdout, stderr = "" }) => {
+      await writeFile(stubStdoutPath, stdout, { mode: 0o600 });
+      await writeFile(stubStderrPath, stderr, { mode: 0o600 });
       const source = [
         "set -euo pipefail",
         `checker_stdout_path=${JSON.stringify(stdoutPath.replaceAll("\\", "/"))}`,
         `checker_stderr_path=${JSON.stringify(stderrPath.replaceAll("\\", "/"))}`,
         captureSource,
-        "capture_readiness_checker \"$checker_stdout_path\" \"$checker_stderr_path\" sh -c 'printf \"%s\" \"$STUB_STDOUT\"; printf \"%s\" \"$STUB_STDERR\" >&2; exit \"$STUB_STATUS\"'",
+        "capture_readiness_checker \"$checker_stdout_path\" \"$checker_stderr_path\" sh -c 'cat -- \"$STUB_STDOUT_PATH\"; cat -- \"$STUB_STDERR_PATH\" >&2; exit \"$STUB_STATUS\"'",
         validationSource,
         "printf 'status=%s\\n' \"$checker_status\"",
       ].join("\n");
@@ -757,14 +761,14 @@ test("checker stdout, stderr, and exit status are captured without errexit loss"
         env: {
           ...process.env,
           STUB_STATUS: String(status),
-          STUB_STDERR: stderr,
-          STUB_STDOUT: stdout,
+          STUB_STDERR_PATH: stubStderrPath.replaceAll("\\", "/"),
+          STUB_STDOUT_PATH: stubStdoutPath.replaceAll("\\", "/"),
         },
       });
     };
 
     for (const status of [0, 2]) {
-      const result = run({
+      const result = await run({
         status,
         stdout: `${JSON.stringify(
           status === 0 ? validCheckerReport() : blockedCheckerReport(),
@@ -775,7 +779,7 @@ test("checker stdout, stderr, and exit status are captured without errexit loss"
       assert.equal(result.stderr, "");
     }
 
-    const boundedBlockedDiagnostic = run({
+    const boundedBlockedDiagnostic = await run({
       status: 2,
       stdout: "x".repeat(256 * 1024 + 1),
     });
@@ -795,7 +799,7 @@ test("checker stdout, stderr, and exit status are captured without errexit loss"
       { status: 0, stdout: "x".repeat(256 * 1024 + 1) },
       { status: 2, stdout: "x".repeat(1024 * 1024 + 1) },
     ]) {
-      const result = run(value);
+      const result = await run(value);
       assert.notEqual(result.status, 0, "unsafe checker capture was accepted");
       assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /private-/);
     }
