@@ -683,8 +683,12 @@ jobs:
             exit 1
           fi
           checker_report_size="$(wc -c < "$checker_stdout_path")"
+          checker_report_max_size=$((256 * 1024))
+          if [ "$checker_status" = "2" ]; then
+            checker_report_max_size=$((1024 * 1024))
+          fi
           if ! [[ "$checker_report_size" =~ ^[0-9]+$ ]] ||
-             (( checker_report_size <= 0 || checker_report_size > 256 * 1024 )); then
+             (( checker_report_size <= 0 || checker_report_size > checker_report_max_size )); then
             printf '%s\n' 'readiness_checker_stdout_size_invalid' >&2
             exit 1
           fi
@@ -737,7 +741,10 @@ jobs:
           const checkerExitStatus = lines[1];
           const reportBytes = decode(lines[2]);
           const remoteSourceBytes = decode(lines[3]);
-          if (reportBytes.length <= 0 || reportBytes.length > 256 * 1024) {
+          const reportSizeLimit = checkerExitStatus === "2"
+            ? 1024 * 1024
+            : 256 * 1024;
+          if (reportBytes.length <= 0 || reportBytes.length > reportSizeLimit) {
             fail("readiness_checker_report_size_invalid");
           }
           if (remoteSourceBytes.length <= 0 || remoteSourceBytes.length > 4096) {
@@ -760,12 +767,18 @@ jobs:
             remoteSourceBytes,
             "readiness_remote_source",
           );
+          const hasDefaultAclDiagnostic =
+            report !== null &&
+            typeof report === "object" &&
+            !Array.isArray(report) &&
+            Object.prototype.hasOwnProperty.call(report, "defaultAclDiagnostic");
           const expectedReportKeys = [
             "baselineReady", "databaseActorReady", "databaseContainer",
             "databaseIdentity", "databaseIdentityReady", "functionAclReady",
             "functionMetadataReady", "migrationsReady", "mode", "objectContractsReady",
             "ok", "readiness", "registryAclReady", "runtimeRpcHardeningReady",
             "schemaVersion", "status",
+            ...(hasDefaultAclDiagnostic ? ["defaultAclDiagnostic"] : []),
           ].sort();
           const reportKeys = Object.keys(report ?? {}).sort();
           if (
@@ -780,6 +793,10 @@ jobs:
             !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,159}$/.test(report.databaseContainer) ||
             (report.status !== "ready" && report.status !== "blocked")
           ) fail("readiness_report_shape_invalid");
+          if (
+            hasDefaultAclDiagnostic &&
+            (report.runtimeRpcHardeningReady !== false || report.status !== "blocked")
+          ) fail("readiness_default_acl_diagnostic_state_invalid");
           const databaseReportKeys = [
             "baselineReady", "databaseActorReady", "databaseIdentityReady",
             "functionAclReady", "functionMetadataReady", "migrationsReady",
@@ -789,6 +806,9 @@ jobs:
             ...databaseReportKeys.map((key) => [key, report[key]]),
             ["databaseIdentity", report.databaseIdentity],
             ["readiness", report.readiness],
+            ...(hasDefaultAclDiagnostic
+              ? [["defaultAclDiagnostic", report.defaultAclDiagnostic]]
+              : []),
           ]);
           let parsedReport;
           try {
@@ -798,6 +818,17 @@ jobs:
           } catch {
             fail("readiness_checker_report_semantics_invalid");
           }
+          const parsedHasDefaultAclDiagnostic = Object.prototype.hasOwnProperty.call(
+            parsedReport,
+            "defaultAclDiagnostic",
+          );
+          if (
+            parsedHasDefaultAclDiagnostic !== hasDefaultAclDiagnostic ||
+            (hasDefaultAclDiagnostic &&
+              !canonicalJsonBytes(parsedReport.defaultAclDiagnostic).equals(
+                canonicalJsonBytes(report.defaultAclDiagnostic),
+              ))
+          ) fail("readiness_default_acl_diagnostic_semantics_invalid");
           const expectedStatus = checkerExitStatus === "0" ? "ready" : "blocked";
           if (
             report.status !== expectedStatus ||

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -22,7 +23,7 @@ const NON_NEGATIVE_COUNT_PATTERN = /^(?:0|[1-9][0-9]{0,14})$/;
 const MAX_UINT64 = 18_446_744_073_709_551_615n;
 const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const DEFAULT_COMMAND_TIMEOUT_MS = 2 * 60 * 1000;
-const DEFAULT_OUTPUT_LIMIT_BYTES = 256 * 1024;
+const DEFAULT_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 const RUNTIME_RPC_HARDENING_MIGRATION_SHA256 =
   "9adcb21146cf24ae25e1acb26ebe1709a6f93a99e7e950bca6daf5f4d2b88eed";
 const RUNTIME_RPC_HARDENING_MIGRATION_URL = new URL(
@@ -861,7 +862,22 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
        AND function_metadata.pronamespace = to_regnamespace('public')
   ) AS ready
 ), relevant_creator AS MATERIALIZED (
-  SELECT creator.oid
+  SELECT creator.oid, creator.rolname,
+         pg_catalog.array_remove(ARRAY[
+           CASE WHEN creator.oid = to_regrole(current_user)
+             THEN 'current_user'::text END,
+           CASE WHEN creator.oid = to_regrole(session_user)
+             THEN 'session_user'::text END,
+           CASE WHEN creator.oid = to_regrole('postgres')
+             THEN 'postgres_role'::text END,
+           CASE WHEN creator.oid = to_regrole('supabase_admin')
+             THEN 'supabase_admin_role'::text END,
+           CASE WHEN creator.oid = (SELECT relowner FROM registry)
+             THEN 'migration_registry_owner'::text END,
+           CASE WHEN pg_catalog.has_schema_privilege(
+             creator.oid, to_regnamespace('public'), 'CREATE'
+           ) THEN 'public_schema_create'::text END
+         ], NULL::text) AS reasons
     FROM pg_catalog.pg_roles AS creator
    WHERE creator.rolname !~ '^pg_'
      AND (
@@ -874,50 +890,216 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
          creator.oid, to_regnamespace('public'), 'CREATE'
        )
      )
+), creator_default_acl_fact AS MATERIALIZED (
+  SELECT
+    creator.oid AS creator_oid,
+    creator.rolname AS creator_name,
+    creator.reasons AS creator_reasons,
+    default_acl.oid AS default_acl_oid,
+    default_acl.defaclnamespace AS schema_oid,
+    schema_metadata.nspname AS schema_name,
+    CASE WHEN acl.ordinality IS NULL THEN NULL ELSE
+      pg_catalog.row_number() OVER (
+        PARTITION BY default_acl.oid
+        ORDER BY
+          acl.grantor, acl.grantee, acl.privilege_type COLLATE "C",
+          acl.is_grantable, acl.ordinality
+      )
+    END AS acl_ordinality,
+    acl.grantor AS grantor_oid,
+    grantor.rolname AS grantor_name,
+    acl.grantee AS grantee_oid,
+    CASE WHEN acl.grantee = 0 THEN 'public' ELSE 'role' END AS grantee_kind,
+    CASE WHEN acl.grantee = 0 THEN NULL ELSE grantee.rolname END
+      AS grantee_name,
+    acl.privilege_type,
+    acl.is_grantable
+  FROM relevant_creator AS creator
+  LEFT JOIN pg_catalog.pg_default_acl AS default_acl
+    ON default_acl.defaclrole = creator.oid
+   AND default_acl.defaclobjtype = 'f'
+  LEFT JOIN pg_catalog.pg_namespace AS schema_metadata
+    ON schema_metadata.oid = default_acl.defaclnamespace
+  LEFT JOIN LATERAL pg_catalog.aclexplode(default_acl.defaclacl)
+    WITH ORDINALITY AS acl(
+      grantor, grantee, privilege_type, is_grantable, ordinality
+    ) ON true
+  LEFT JOIN pg_catalog.pg_roles AS grantor
+    ON grantor.oid = acl.grantor
+  LEFT JOIN pg_catalog.pg_roles AS grantee
+    ON grantee.oid = acl.grantee
+), creator_default_acl_creator AS MATERIALIZED (
+  SELECT
+    fact.creator_oid,
+    fact.creator_name,
+    fact.creator_reasons
+  FROM creator_default_acl_fact AS fact
+  GROUP BY
+    fact.creator_oid, fact.creator_name, fact.creator_reasons
+), creator_default_acl_row AS MATERIALIZED (
+  SELECT
+    fact.creator_oid,
+    fact.default_acl_oid,
+    fact.schema_oid,
+    fact.schema_name,
+    count(fact.acl_ordinality)::integer AS acl_entry_count,
+    count(*) FILTER (
+      WHERE fact.grantee_oid = fact.creator_oid
+        AND fact.grantor_oid = fact.creator_oid
+        AND fact.privilege_type = 'EXECUTE'
+        AND NOT fact.is_grantable
+    )::integer AS owner_execute_count,
+    coalesce(pg_catalog.bool_and(
+      (fact.schema_oid = 0 OR fact.schema_name IS NOT NULL)
+      AND (
+        fact.acl_ordinality IS NULL
+        OR (
+          fact.grantor_oid IS NOT NULL
+          AND fact.grantor_oid <> 0
+          AND fact.grantor_name IS NOT NULL
+          AND fact.grantee_oid IS NOT NULL
+          AND (fact.grantee_oid = 0 OR fact.grantee_name IS NOT NULL)
+        )
+      )
+    ), false) AS catalog_reference_ready,
+    coalesce(
+      pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'ordinal', fact.acl_ordinality,
+          'grantorOid', fact.grantor_oid::text,
+          'grantorName', fact.grantor_name,
+          'granteeKind', fact.grantee_kind,
+          'granteeOid', fact.grantee_oid::text,
+          'granteeName', fact.grantee_name,
+          'privilegeType', fact.privilege_type,
+          'grantable', fact.is_grantable
+        ) ORDER BY fact.acl_ordinality
+      ) FILTER (WHERE fact.acl_ordinality IS NOT NULL),
+      '[]'::jsonb
+    ) AS entries
+  FROM creator_default_acl_fact AS fact
+  WHERE fact.default_acl_oid IS NOT NULL
+  GROUP BY
+    fact.creator_oid, fact.default_acl_oid, fact.schema_oid, fact.schema_name
+), creator_default_acl_violation AS MATERIALIZED (
+  SELECT
+    creator.creator_oid,
+    NULL::oid AS default_acl_oid,
+    0 AS violation_rank,
+    'global_function_default_acl_owner_execute_missing'::text AS code
+  FROM creator_default_acl_creator AS creator
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM creator_default_acl_row AS default_acl_row
+    WHERE default_acl_row.creator_oid = creator.creator_oid
+      AND default_acl_row.schema_oid = 0
+      AND default_acl_row.acl_entry_count = 1
+      AND default_acl_row.owner_execute_count = 1
+  )
+  UNION ALL
+  SELECT
+    default_acl_row.creator_oid,
+    default_acl_row.default_acl_oid,
+    1 AS violation_rank,
+    'function_default_acl_entry_count_invalid'::text AS code
+  FROM creator_default_acl_row AS default_acl_row
+  WHERE default_acl_row.acl_entry_count <> 1
+  UNION ALL
+  SELECT
+    default_acl_row.creator_oid,
+    default_acl_row.default_acl_oid,
+    2 AS violation_rank,
+    'function_default_acl_owner_execute_missing'::text AS code
+  FROM creator_default_acl_row AS default_acl_row
+  WHERE default_acl_row.owner_execute_count = 0
+  UNION ALL
+  SELECT
+    default_acl_row.creator_oid,
+    default_acl_row.default_acl_oid,
+    3 AS violation_rank,
+    'function_default_acl_catalog_reference_unresolved'::text AS code
+  FROM creator_default_acl_row AS default_acl_row
+  WHERE NOT default_acl_row.catalog_reference_ready
 ), creator_default_acl_state AS MATERIALIZED (
   SELECT NOT EXISTS (
-    SELECT 1
-      FROM relevant_creator AS creator
-     WHERE NOT EXISTS (
-          SELECT 1
-            FROM pg_catalog.pg_default_acl AS default_acl
-           WHERE default_acl.defaclrole = creator.oid
-             AND default_acl.defaclnamespace = 0
-             AND default_acl.defaclobjtype = 'f'
-             AND 1 = (
-               SELECT count(*)
-                 FROM pg_catalog.aclexplode(default_acl.defaclacl) AS acl
-                WHERE acl.grantee = creator.oid
-                  AND acl.grantor = creator.oid
-                  AND acl.privilege_type = 'EXECUTE'
-                  AND NOT acl.is_grantable
-             )
-             AND 1 = (
-               SELECT count(*)
-                 FROM pg_catalog.aclexplode(default_acl.defaclacl) AS acl
-             )
-        )
-        OR EXISTS (
-          SELECT 1
-            FROM pg_catalog.pg_default_acl AS default_acl
-           WHERE default_acl.defaclrole = creator.oid
-             AND default_acl.defaclobjtype = 'f'
-             AND (
-               1 <> (
-                 SELECT count(*)
-                   FROM pg_catalog.aclexplode(default_acl.defaclacl) AS acl
-               )
-               OR NOT EXISTS (
-                 SELECT 1
-                   FROM pg_catalog.aclexplode(default_acl.defaclacl) AS acl
-                  WHERE acl.grantee = creator.oid
-                    AND acl.grantor = creator.oid
-                    AND acl.privilege_type = 'EXECUTE'
-                    AND NOT acl.is_grantable
-               )
-             )
-        )
+    SELECT 1 FROM creator_default_acl_violation
   ) AS ready
+), creator_default_acl_diagnostic AS MATERIALIZED (
+  SELECT pg_catalog.jsonb_build_object(
+    'schemaVersion', 1,
+    'contract', 'runtime_rpc_function_default_acl_v1',
+    'ready', (SELECT ready FROM creator_default_acl_state),
+    'relevantCreatorCount',
+      (SELECT count(*) FROM creator_default_acl_creator),
+    'functionDefaultAclRowCount',
+      (SELECT count(*) FROM creator_default_acl_row),
+    'aclEntryCount', coalesce((
+      SELECT sum(default_acl_row.acl_entry_count)
+      FROM creator_default_acl_row AS default_acl_row
+    ), 0),
+    'violationCount', (SELECT count(*) FROM creator_default_acl_violation),
+    'creators', coalesce((
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'creatorOid', creator.creator_oid::text,
+          'creatorName', creator.creator_name,
+          'reasons', pg_catalog.to_jsonb(creator.creator_reasons),
+          'globalOwnerExecuteReady', EXISTS (
+            SELECT 1
+            FROM creator_default_acl_row AS default_acl_row
+            WHERE default_acl_row.creator_oid = creator.creator_oid
+              AND default_acl_row.schema_oid = 0
+              AND default_acl_row.acl_entry_count = 1
+              AND default_acl_row.owner_execute_count = 1
+          ),
+          'functionDefaultAclRowCount', (
+            SELECT count(*)
+            FROM creator_default_acl_row AS default_acl_row
+            WHERE default_acl_row.creator_oid = creator.creator_oid
+          ),
+          'aclEntryCount', coalesce((
+            SELECT sum(default_acl_row.acl_entry_count)
+            FROM creator_default_acl_row AS default_acl_row
+            WHERE default_acl_row.creator_oid = creator.creator_oid
+          ), 0),
+          'violationCount', (
+            SELECT count(*)
+            FROM creator_default_acl_violation AS violation
+            WHERE violation.creator_oid = creator.creator_oid
+          )
+        ) ORDER BY creator.creator_oid
+      )
+      FROM creator_default_acl_creator AS creator
+    ), '[]'::jsonb),
+    'rows', coalesce((
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'defaultAclOid', default_acl_row.default_acl_oid::text,
+          'creatorOid', default_acl_row.creator_oid::text,
+          'schemaOid', default_acl_row.schema_oid::text,
+          'schemaName', default_acl_row.schema_name,
+          'objectType', 'FUNCTION',
+          'aclEntryCount', default_acl_row.acl_entry_count,
+          'entries', default_acl_row.entries
+        ) ORDER BY
+          default_acl_row.creator_oid, default_acl_row.default_acl_oid
+      )
+      FROM creator_default_acl_row AS default_acl_row
+    ), '[]'::jsonb),
+    'violations', coalesce((
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'code', violation.code,
+          'creatorOid', violation.creator_oid::text,
+          'defaultAclOid', violation.default_acl_oid::text
+        ) ORDER BY
+          violation.creator_oid,
+          coalesce(violation.default_acl_oid, 0::oid),
+          violation.violation_rank
+      )
+      FROM creator_default_acl_violation AS violation
+    ), '[]'::jsonb)
+  ) AS value
 ), object_contract_state AS MATERIALIZED (
   SELECT
     (SELECT ready FROM observer_schema_state)
@@ -950,7 +1132,8 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
       AS baseline_ready
     FROM readiness
 )
-SELECT pg_catalog.jsonb_build_object(
+SELECT (
+pg_catalog.jsonb_build_object(
   'databaseActorReady', current_user = 'supabase_admin' AND EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles AS actor
      WHERE actor.rolname = current_user AND actor.rolsuper
@@ -1008,6 +1191,13 @@ SELECT pg_catalog.jsonb_build_object(
     'schemaReady', (SELECT value #> '{invariants,schemaReady}' FROM readiness),
     'aclReady', (SELECT value #> '{invariants,aclReady}' FROM readiness)
   )
+)
+|| CASE WHEN NOT (SELECT ready FROM creator_default_acl_state)
+  THEN pg_catalog.jsonb_build_object(
+    'defaultAclDiagnostic', (SELECT value FROM creator_default_acl_diagnostic)
+  )
+  ELSE '{}'::jsonb
+END
 )::text;`;
 
 export const ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL = [
@@ -1090,6 +1280,87 @@ const READINESS_COUNT_KEYS = [
   "staffRegistryOverlapCount",
   "systemSitePrincipalOverlapCount",
 ];
+const DEFAULT_ACL_DIAGNOSTIC_KEYS = [
+  "schemaVersion",
+  "contract",
+  "ready",
+  "relevantCreatorCount",
+  "functionDefaultAclRowCount",
+  "aclEntryCount",
+  "violationCount",
+  "creators",
+  "rows",
+  "violations",
+];
+const DEFAULT_ACL_CREATOR_KEYS = [
+  "creatorOid",
+  "creatorName",
+  "reasons",
+  "globalOwnerExecuteReady",
+  "functionDefaultAclRowCount",
+  "aclEntryCount",
+  "violationCount",
+];
+const DEFAULT_ACL_ROW_KEYS = [
+  "defaultAclOid",
+  "creatorOid",
+  "schemaOid",
+  "schemaName",
+  "objectType",
+  "aclEntryCount",
+  "entries",
+];
+const DEFAULT_ACL_ENTRY_KEYS = [
+  "ordinal",
+  "grantorOid",
+  "grantorName",
+  "granteeKind",
+  "granteeOid",
+  "granteeName",
+  "privilegeType",
+  "grantable",
+];
+const DEFAULT_ACL_VIOLATION_KEYS = [
+  "code",
+  "creatorOid",
+  "defaultAclOid",
+];
+const DEFAULT_ACL_REASONS = [
+  "current_user",
+  "session_user",
+  "postgres_role",
+  "supabase_admin_role",
+  "migration_registry_owner",
+  "public_schema_create",
+];
+const DEFAULT_ACL_GLOBAL_VIOLATION =
+  "global_function_default_acl_owner_execute_missing";
+const DEFAULT_ACL_ENTRY_COUNT_VIOLATION =
+  "function_default_acl_entry_count_invalid";
+const DEFAULT_ACL_OWNER_EXECUTE_VIOLATION =
+  "function_default_acl_owner_execute_missing";
+const DEFAULT_ACL_CATALOG_REFERENCE_VIOLATION =
+  "function_default_acl_catalog_reference_unresolved";
+const DEFAULT_ACL_DIAGNOSTIC_CONTRACT =
+  "runtime_rpc_function_default_acl_v1";
+const ACL_PRIVILEGE_TYPES = new Set([
+  "ALTER SYSTEM",
+  "CONNECT",
+  "CREATE",
+  "DELETE",
+  "EXECUTE",
+  "INSERT",
+  "MAINTAIN",
+  "REFERENCES",
+  "SELECT",
+  "SET",
+  "TEMPORARY",
+  "TRIGGER",
+  "TRUNCATE",
+  "UPDATE",
+  "USAGE",
+]);
+const MAX_OID = 4_294_967_295n;
 
 export class OrdinaryAccountCutoverReadinessError extends Error {
   constructor(code) {
@@ -1177,6 +1448,288 @@ function exactKeys(value, expectedKeys) {
   );
 }
 
+function isCanonicalOid(value, allowZero = false) {
+  if (typeof value !== "string" || !UNSIGNED_DECIMAL_PATTERN.test(value)) {
+    return false;
+  }
+  const oid = BigInt(value);
+  return oid <= MAX_OID && (allowZero || oid > 0n);
+}
+
+function compareCanonicalOid(left, right) {
+  const leftOid = BigInt(left);
+  const rightOid = BigInt(right);
+  return leftOid < rightOid ? -1 : leftOid > rightOid ? 1 : 0;
+}
+
+function isCatalogIdentifier(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= 63 &&
+    !value.includes("\0")
+  );
+}
+
+function isNonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isStableDefaultAclReasonList(reasons) {
+  if (!Array.isArray(reasons) || reasons.length === 0) return false;
+  let previousReasonIndex = -1;
+  for (const reason of reasons) {
+    const reasonIndex = DEFAULT_ACL_REASONS.indexOf(reason);
+    if (reasonIndex <= previousReasonIndex) return false;
+    previousReasonIndex = reasonIndex;
+  }
+  return true;
+}
+
+function isOwnerExecuteEntry(entry, creatorOid) {
+  return (
+    entry.grantorOid === creatorOid &&
+    entry.granteeOid === creatorOid &&
+    entry.privilegeType === "EXECUTE" &&
+    entry.grantable === false
+  );
+}
+
+function compareDefaultAclEntries(left, right) {
+  const grantorComparison = compareCanonicalOid(
+    left.grantorOid,
+    right.grantorOid,
+  );
+  if (grantorComparison !== 0) return grantorComparison;
+  const granteeComparison = compareCanonicalOid(
+    left.granteeOid,
+    right.granteeOid,
+  );
+  if (granteeComparison !== 0) return granteeComparison;
+  if (left.privilegeType !== right.privilegeType) {
+    return left.privilegeType < right.privilegeType ? -1 : 1;
+  }
+  return Number(left.grantable) - Number(right.grantable);
+}
+
+function validateDefaultAclDiagnostic(diagnostic) {
+  if (
+    !exactKeys(diagnostic, DEFAULT_ACL_DIAGNOSTIC_KEYS) ||
+    diagnostic.schemaVersion !== 1 ||
+    diagnostic.contract !== DEFAULT_ACL_DIAGNOSTIC_CONTRACT ||
+    typeof diagnostic.ready !== "boolean" ||
+    !isNonNegativeSafeInteger(diagnostic.relevantCreatorCount) ||
+    diagnostic.relevantCreatorCount === 0 ||
+    !isNonNegativeSafeInteger(diagnostic.functionDefaultAclRowCount) ||
+    !isNonNegativeSafeInteger(diagnostic.aclEntryCount) ||
+    !isNonNegativeSafeInteger(diagnostic.violationCount) ||
+    !Array.isArray(diagnostic.creators) ||
+    !Array.isArray(diagnostic.rows) ||
+    !Array.isArray(diagnostic.violations)
+  ) {
+    return false;
+  }
+
+  const creatorByOid = new Map();
+  let previousCreatorOid;
+  for (const creator of diagnostic.creators) {
+    if (
+      !exactKeys(creator, DEFAULT_ACL_CREATOR_KEYS) ||
+      !isCanonicalOid(creator.creatorOid) ||
+      !isCatalogIdentifier(creator.creatorName) ||
+      !isStableDefaultAclReasonList(creator.reasons) ||
+      typeof creator.globalOwnerExecuteReady !== "boolean" ||
+      !isNonNegativeSafeInteger(creator.functionDefaultAclRowCount) ||
+      !isNonNegativeSafeInteger(creator.aclEntryCount) ||
+      !isNonNegativeSafeInteger(creator.violationCount) ||
+      (previousCreatorOid !== undefined &&
+        compareCanonicalOid(previousCreatorOid, creator.creatorOid) >= 0) ||
+      creatorByOid.has(creator.creatorOid) ||
+      (creator.reasons.includes("postgres_role") &&
+        creator.creatorName !== "postgres") ||
+      (creator.reasons.includes("supabase_admin_role") &&
+        creator.creatorName !== "supabase_admin")
+    ) {
+      return false;
+    }
+    creatorByOid.set(creator.creatorOid, creator);
+    previousCreatorOid = creator.creatorOid;
+  }
+  if (diagnostic.relevantCreatorCount !== diagnostic.creators.length) {
+    return false;
+  }
+
+  const rowsByCreator = new Map(
+    diagnostic.creators.map((creator) => [creator.creatorOid, []]),
+  );
+  const rowByOid = new Map();
+  const creatorSchemaPairs = new Set();
+  let previousRow;
+  let recomputedAclEntryCount = 0;
+  for (const row of diagnostic.rows) {
+    if (
+      !exactKeys(row, DEFAULT_ACL_ROW_KEYS) ||
+      !isCanonicalOid(row.defaultAclOid) ||
+      !isCanonicalOid(row.creatorOid) ||
+      !isCanonicalOid(row.schemaOid, true) ||
+      !creatorByOid.has(row.creatorOid) ||
+      row.objectType !== "FUNCTION" ||
+      !isNonNegativeSafeInteger(row.aclEntryCount) ||
+      !Array.isArray(row.entries) ||
+      row.aclEntryCount !== row.entries.length ||
+      (row.schemaOid === "0"
+        ? row.schemaName !== null
+        : row.schemaName !== null &&
+          !isCatalogIdentifier(row.schemaName)) ||
+      rowByOid.has(row.defaultAclOid) ||
+      creatorSchemaPairs.has(`${row.creatorOid}:${row.schemaOid}`) ||
+      (previousRow !== undefined &&
+        (compareCanonicalOid(previousRow.creatorOid, row.creatorOid) > 0 ||
+          (previousRow.creatorOid === row.creatorOid &&
+            compareCanonicalOid(
+              previousRow.defaultAclOid,
+              row.defaultAclOid,
+            ) >= 0)))
+    ) {
+      return false;
+    }
+
+    let previousEntry;
+    for (const [entryIndex, entry] of row.entries.entries()) {
+      if (
+        !exactKeys(entry, DEFAULT_ACL_ENTRY_KEYS) ||
+        entry.ordinal !== entryIndex + 1 ||
+        !isCanonicalOid(entry.grantorOid, true) ||
+        (entry.grantorOid === "0"
+          ? entry.grantorName !== null
+          : entry.grantorName !== null &&
+            !isCatalogIdentifier(entry.grantorName)) ||
+        !["public", "role"].includes(entry.granteeKind) ||
+        !isCanonicalOid(entry.granteeOid, true) ||
+        (entry.granteeKind === "public"
+          ? entry.granteeOid !== "0" || entry.granteeName !== null
+          : !isCanonicalOid(entry.granteeOid) ||
+            (entry.granteeName !== null &&
+              !isCatalogIdentifier(entry.granteeName))) ||
+        !ACL_PRIVILEGE_TYPES.has(entry.privilegeType) ||
+        typeof entry.grantable !== "boolean" ||
+        (previousEntry !== undefined &&
+          compareDefaultAclEntries(previousEntry, entry) > 0)
+      ) {
+        return false;
+      }
+      previousEntry = entry;
+    }
+
+    rowsByCreator.get(row.creatorOid).push(row);
+    rowByOid.set(row.defaultAclOid, row);
+    creatorSchemaPairs.add(`${row.creatorOid}:${row.schemaOid}`);
+    recomputedAclEntryCount += row.entries.length;
+    previousRow = row;
+  }
+  if (
+    diagnostic.functionDefaultAclRowCount !== diagnostic.rows.length ||
+    diagnostic.aclEntryCount !== recomputedAclEntryCount
+  ) {
+    return false;
+  }
+
+  const expectedViolations = [];
+  for (const creator of diagnostic.creators) {
+    const creatorRows = rowsByCreator.get(creator.creatorOid);
+    const globalOwnerExecuteReady = creatorRows.some(
+      (row) =>
+        row.schemaOid === "0" &&
+        row.entries.length === 1 &&
+        isOwnerExecuteEntry(row.entries[0], creator.creatorOid),
+    );
+    if (!globalOwnerExecuteReady) {
+      expectedViolations.push({
+        code: DEFAULT_ACL_GLOBAL_VIOLATION,
+        creatorOid: creator.creatorOid,
+        defaultAclOid: null,
+      });
+    }
+    for (const row of creatorRows) {
+      if (row.entries.length !== 1) {
+        expectedViolations.push({
+          code: DEFAULT_ACL_ENTRY_COUNT_VIOLATION,
+          creatorOid: creator.creatorOid,
+          defaultAclOid: row.defaultAclOid,
+        });
+      }
+      if (
+        !row.entries.some((entry) =>
+          isOwnerExecuteEntry(entry, creator.creatorOid),
+        )
+      ) {
+        expectedViolations.push({
+          code: DEFAULT_ACL_OWNER_EXECUTE_VIOLATION,
+          creatorOid: creator.creatorOid,
+          defaultAclOid: row.defaultAclOid,
+        });
+      }
+      const catalogReferenceReady =
+        (row.schemaOid === "0" || row.schemaName !== null) &&
+        row.entries.every(
+          (entry) =>
+            entry.grantorOid !== "0" &&
+            entry.grantorName !== null &&
+            (entry.granteeKind === "public" ||
+              entry.granteeName !== null),
+        );
+      if (!catalogReferenceReady) {
+        expectedViolations.push({
+          code: DEFAULT_ACL_CATALOG_REFERENCE_VIOLATION,
+          creatorOid: creator.creatorOid,
+          defaultAclOid: row.defaultAclOid,
+        });
+      }
+    }
+
+    const creatorViolationCount = expectedViolations.filter(
+      (violation) => violation.creatorOid === creator.creatorOid,
+    ).length;
+    const creatorAclEntryCount = creatorRows.reduce(
+      (sum, row) => sum + row.entries.length,
+      0,
+    );
+    if (
+      creator.globalOwnerExecuteReady !== globalOwnerExecuteReady ||
+      creator.functionDefaultAclRowCount !== creatorRows.length ||
+      creator.aclEntryCount !== creatorAclEntryCount ||
+      creator.violationCount !== creatorViolationCount
+    ) {
+      return false;
+    }
+  }
+
+  if (
+    diagnostic.violationCount !== diagnostic.violations.length ||
+    diagnostic.violationCount !== expectedViolations.length ||
+    diagnostic.ready !== (expectedViolations.length === 0)
+  ) {
+    return false;
+  }
+  for (const [index, violation] of diagnostic.violations.entries()) {
+    const expected = expectedViolations[index];
+    if (
+      !exactKeys(violation, DEFAULT_ACL_VIOLATION_KEYS) ||
+      violation.code !== expected?.code ||
+      violation.creatorOid !== expected?.creatorOid ||
+      violation.defaultAclOid !== expected?.defaultAclOid ||
+      !creatorByOid.has(violation.creatorOid) ||
+      (violation.defaultAclOid !== null &&
+        (!isCanonicalOid(violation.defaultAclOid) ||
+          rowByOid.get(violation.defaultAclOid)?.creatorOid !==
+            violation.creatorOid))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function parseOrdinaryAccountCutoverReadinessArguments(argv = []) {
   let json = false;
   let failOnBlocked = false;
@@ -1247,7 +1800,11 @@ function dockerPsqlArguments(containerName, expectedEnvironment) {
 }
 
 export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
-  const lines = String(stdout)
+  const output = String(stdout);
+  if (Buffer.byteLength(output, "utf8") > DEFAULT_OUTPUT_LIMIT_BYTES) {
+    throw readinessError("ordinary_account_readiness_output_invalid");
+  }
+  const lines = output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -1259,16 +1816,31 @@ export function parseOrdinaryAccountCutoverDatabaseReport(stdout) {
   } catch {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
+  const hasDefaultAclDiagnostic = Object.hasOwn(
+    parsed ?? {},
+    "defaultAclDiagnostic",
+  );
   if (
     !exactKeys(parsed, [
       ...READINESS_BOOLEAN_KEYS,
       "databaseIdentity",
       "readiness",
+      ...(hasDefaultAclDiagnostic ? ["defaultAclDiagnostic"] : []),
     ])
   ) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
   if (READINESS_BOOLEAN_KEYS.some((key) => typeof parsed[key] !== "boolean")) {
+    throw readinessError("ordinary_account_readiness_output_invalid");
+  }
+  if (
+    hasDefaultAclDiagnostic === parsed.runtimeRpcHardeningReady ||
+    (!parsed.runtimeRpcHardeningReady && parsed.objectContractsReady) ||
+    (hasDefaultAclDiagnostic &&
+      (!validateDefaultAclDiagnostic(parsed.defaultAclDiagnostic) ||
+        parsed.defaultAclDiagnostic.ready !==
+          parsed.runtimeRpcHardeningReady))
+  ) {
     throw readinessError("ordinary_account_readiness_output_invalid");
   }
   const databaseIdentity = parsed.databaseIdentity;

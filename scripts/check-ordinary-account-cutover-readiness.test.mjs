@@ -107,6 +107,85 @@ function databaseReport(overrides = {}) {
   };
 }
 
+function defaultAclDiagnostic(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    contract: "runtime_rpc_function_default_acl_v1",
+    ready: false,
+    relevantCreatorCount: 1,
+    functionDefaultAclRowCount: 2,
+    aclEntryCount: 2,
+    violationCount: 1,
+    creators: [
+      {
+        creatorOid: "10",
+        creatorName: "supabase_admin",
+        reasons: [
+          "current_user",
+          "session_user",
+          "supabase_admin_role",
+          "migration_registry_owner",
+          "public_schema_create",
+        ],
+        globalOwnerExecuteReady: true,
+        functionDefaultAclRowCount: 2,
+        aclEntryCount: 2,
+        violationCount: 1,
+      },
+    ],
+    rows: [
+      {
+        defaultAclOid: "500",
+        creatorOid: "10",
+        schemaOid: "0",
+        schemaName: null,
+        objectType: "FUNCTION",
+        aclEntryCount: 1,
+        entries: [
+          {
+            ordinal: 1,
+            grantorOid: "10",
+            grantorName: "supabase_admin",
+            granteeKind: "role",
+            granteeOid: "10",
+            granteeName: "supabase_admin",
+            privilegeType: "EXECUTE",
+            grantable: false,
+          },
+        ],
+      },
+      {
+        defaultAclOid: "501",
+        creatorOid: "10",
+        schemaOid: "2200",
+        schemaName: "redteam_readiness_defaults",
+        objectType: "FUNCTION",
+        aclEntryCount: 1,
+        entries: [
+          {
+            ordinal: 1,
+            grantorOid: "10",
+            grantorName: "supabase_admin",
+            granteeKind: "public",
+            granteeOid: "0",
+            granteeName: null,
+            privilegeType: "EXECUTE",
+            grantable: false,
+          },
+        ],
+      },
+    ],
+    violations: [
+      {
+        code: "function_default_acl_owner_execute_missing",
+        creatorOid: "10",
+        defaultAclOid: "501",
+      },
+    ],
+    ...overrides,
+  };
+}
+
 test("the production probe is one read-only transaction with the exact runtime hardening gate", () => {
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
@@ -364,7 +443,7 @@ test("the production probe is one read-only transaction with the exact runtime h
       "relevant_creator AS MATERIALIZED",
     ),
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.indexOf(
-      "creator_default_acl_state AS MATERIALIZED",
+      "creator_default_acl_fact AS MATERIALIZED",
     ),
   );
   assert.doesNotMatch(relevantCreatorSql, /pg_default_acl/);
@@ -379,6 +458,39 @@ test("the production probe is one read-only transaction with the exact runtime h
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /'runtimeRpcHardeningReady', \(SELECT ready FROM creator_default_acl_state\)/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /creator_default_acl_fact AS MATERIALIZED/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /LEFT JOIN LATERAL pg_catalog\.aclexplode\(default_acl\.defaclacl\)/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /creator_default_acl_creator AS MATERIALIZED \([\s\S]*FROM creator_default_acl_fact AS fact/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /creator_default_acl_row AS MATERIALIZED \([\s\S]*FROM creator_default_acl_fact AS fact/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /'granteeKind', fact\.grantee_kind/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /function_default_acl_catalog_reference_unresolved/,
+  );
+  assert.match(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /'defaultAclDiagnostic'[\s\S]*creator_default_acl_diagnostic/,
+  );
+  assert.doesNotMatch(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
+    /pg_catalog\.(?:coalesce|greatest|least|nullif)\s*\(/i,
+    "SQL syntax constructs must not be schema-qualified as functions",
   );
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
@@ -649,6 +761,194 @@ test("database report parser validates the exact bounded baseline shape", () => 
     "blocked",
   );
 
+  const defaultAclBlocked = parseOrdinaryAccountCutoverDatabaseReport(
+    JSON.stringify(
+      databaseReport({
+        runtimeRpcHardeningReady: false,
+        objectContractsReady: false,
+        defaultAclDiagnostic: defaultAclDiagnostic(),
+      }),
+    ),
+  );
+  assert.equal(defaultAclBlocked.status, "blocked");
+  assert.deepEqual(
+    defaultAclBlocked.defaultAclDiagnostic,
+    defaultAclDiagnostic(),
+  );
+
+  const emptyDefaultAclDiagnostic = defaultAclDiagnostic({
+    ready: false,
+    functionDefaultAclRowCount: 1,
+    aclEntryCount: 0,
+    violationCount: 3,
+    creators: [
+      {
+        ...defaultAclDiagnostic().creators[0],
+        globalOwnerExecuteReady: false,
+        functionDefaultAclRowCount: 1,
+        aclEntryCount: 0,
+        violationCount: 3,
+      },
+    ],
+    rows: [
+      {
+        ...defaultAclDiagnostic().rows[0],
+        aclEntryCount: 0,
+        entries: [],
+      },
+    ],
+    violations: [
+      {
+        code: "global_function_default_acl_owner_execute_missing",
+        creatorOid: "10",
+        defaultAclOid: null,
+      },
+      {
+        code: "function_default_acl_entry_count_invalid",
+        creatorOid: "10",
+        defaultAclOid: "500",
+      },
+      {
+        code: "function_default_acl_owner_execute_missing",
+        creatorOid: "10",
+        defaultAclOid: "500",
+      },
+    ],
+  });
+  assert.deepEqual(
+    parseOrdinaryAccountCutoverDatabaseReport(
+      JSON.stringify(
+        databaseReport({
+          runtimeRpcHardeningReady: false,
+          objectContractsReady: false,
+          defaultAclDiagnostic: emptyDefaultAclDiagnostic,
+        }),
+      ),
+    ).defaultAclDiagnostic,
+    emptyDefaultAclDiagnostic,
+  );
+
+  const unresolvedDefaultAclDiagnostic = defaultAclDiagnostic({
+    violationCount: 2,
+    creators: [
+      {
+        ...defaultAclDiagnostic().creators[0],
+        violationCount: 2,
+      },
+    ],
+    rows: [
+      defaultAclDiagnostic().rows[0],
+      {
+        ...defaultAclDiagnostic().rows[1],
+        schemaName: null,
+        entries: [
+          {
+            ...defaultAclDiagnostic().rows[1].entries[0],
+            grantorName: null,
+            granteeKind: "role",
+            granteeOid: "20",
+            granteeName: null,
+          },
+        ],
+      },
+    ],
+    violations: [
+      defaultAclDiagnostic().violations[0],
+      {
+        code: "function_default_acl_catalog_reference_unresolved",
+        creatorOid: "10",
+        defaultAclOid: "501",
+      },
+    ],
+  });
+  assert.deepEqual(
+    parseOrdinaryAccountCutoverDatabaseReport(
+      JSON.stringify(
+        databaseReport({
+          runtimeRpcHardeningReady: false,
+          objectContractsReady: false,
+          defaultAclDiagnostic: unresolvedDefaultAclDiagnostic,
+        }),
+      ),
+    ).defaultAclDiagnostic,
+    unresolvedDefaultAclDiagnostic,
+  );
+
+  assert.throws(
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(
+          databaseReport({
+            defaultAclDiagnostic: defaultAclDiagnostic(),
+          }),
+        ),
+      ),
+    /ordinary_account_readiness_output_invalid/,
+  );
+  assert.throws(
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(
+        JSON.stringify(
+          databaseReport({
+            runtimeRpcHardeningReady: false,
+            objectContractsReady: false,
+          }),
+        ),
+      ),
+    /ordinary_account_readiness_output_invalid/,
+  );
+
+  for (const diagnostic of [
+    defaultAclDiagnostic({ violationCount: 0 }),
+    defaultAclDiagnostic({ ready: true }),
+    defaultAclDiagnostic({ extra: true }),
+    defaultAclDiagnostic({
+      creators: [
+        {
+          ...defaultAclDiagnostic().creators[0],
+          aclEntryCount: 1,
+        },
+      ],
+    }),
+    defaultAclDiagnostic({ rows: [...defaultAclDiagnostic().rows].reverse() }),
+    defaultAclDiagnostic({
+      rows: [
+        defaultAclDiagnostic().rows[0],
+        {
+          ...defaultAclDiagnostic().rows[1],
+          entries: [
+            {
+              ...defaultAclDiagnostic().rows[1].entries[0],
+              granteeName: "public",
+            },
+          ],
+        },
+      ],
+    }),
+    defaultAclDiagnostic({
+      violations: [
+        {
+          ...defaultAclDiagnostic().violations[0],
+          code: "unknown",
+        },
+      ],
+    }),
+  ]) {
+    assert.throws(
+      () =>
+        parseOrdinaryAccountCutoverDatabaseReport(
+          JSON.stringify(
+            databaseReport({
+              runtimeRpcHardeningReady: false,
+              objectContractsReady: false,
+              defaultAclDiagnostic: diagnostic,
+            }),
+          ),
+        ),
+      /ordinary_account_readiness_output_invalid/,
+    );
+  }
+
   const blocked = databaseReport({
     readiness: readiness({
       readyForCutover: false,
@@ -696,6 +996,11 @@ test("database report parser validates the exact bounded baseline shape", () => 
   );
   assert.throws(
     () => parseOrdinaryAccountCutoverDatabaseReport("not-json"),
+    /ordinary_account_readiness_output_invalid/,
+  );
+  assert.throws(
+    () =>
+      parseOrdinaryAccountCutoverDatabaseReport(" ".repeat(1024 * 1024 + 1)),
     /ordinary_account_readiness_output_invalid/,
   );
 });
@@ -748,6 +1053,7 @@ test("read-only inspection uses the selected database and always releases the mu
     /--set=expected_ordinary_identity_content_sha256=/,
   );
   assert.equal(calls[0].options.input, ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL);
+  assert.equal(calls[0].options.outputLimitBytes, 1024 * 1024);
   assert.equal(lock.wasReleased(), true);
 });
 

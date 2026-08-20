@@ -167,6 +167,94 @@ function blockedCheckerReport() {
   };
 }
 
+function defaultAclDiagnostic() {
+  return {
+    schemaVersion: 1,
+    contract: "runtime_rpc_function_default_acl_v1",
+    ready: false,
+    relevantCreatorCount: 1,
+    functionDefaultAclRowCount: 2,
+    aclEntryCount: 2,
+    violationCount: 1,
+    creators: [
+      {
+        creatorOid: "10",
+        creatorName: "supabase_admin",
+        reasons: [
+          "current_user",
+          "session_user",
+          "supabase_admin_role",
+          "migration_registry_owner",
+          "public_schema_create",
+        ],
+        globalOwnerExecuteReady: true,
+        functionDefaultAclRowCount: 2,
+        aclEntryCount: 2,
+        violationCount: 1,
+      },
+    ],
+    rows: [
+      {
+        defaultAclOid: "500",
+        creatorOid: "10",
+        schemaOid: "0",
+        schemaName: null,
+        objectType: "FUNCTION",
+        aclEntryCount: 1,
+        entries: [
+          {
+            ordinal: 1,
+            grantorOid: "10",
+            grantorName: "supabase_admin",
+            granteeKind: "role",
+            granteeOid: "10",
+            granteeName: "supabase_admin",
+            privilegeType: "EXECUTE",
+            grantable: false,
+          },
+        ],
+      },
+      {
+        defaultAclOid: "501",
+        creatorOid: "10",
+        schemaOid: "2200",
+        schemaName: "redteam_readiness_defaults",
+        objectType: "FUNCTION",
+        aclEntryCount: 1,
+        entries: [
+          {
+            ordinal: 1,
+            grantorOid: "10",
+            grantorName: "supabase_admin",
+            granteeKind: "public",
+            granteeOid: "0",
+            granteeName: null,
+            privilegeType: "EXECUTE",
+            grantable: false,
+          },
+        ],
+      },
+    ],
+    violations: [
+      {
+        code: "function_default_acl_owner_execute_missing",
+        creatorOid: "10",
+        defaultAclOid: "501",
+      },
+    ],
+  };
+}
+
+function blockedRuntimeRpcCheckerReport() {
+  return {
+    ...validCheckerReport(),
+    runtimeRpcHardeningReady: false,
+    objectContractsReady: false,
+    defaultAclDiagnostic: defaultAclDiagnostic(),
+    status: "blocked",
+  };
+}
+
 function validRemoteSource() {
   return {
     cleanAfter: true,
@@ -687,13 +775,25 @@ test("checker stdout, stderr, and exit status are captured without errexit loss"
       assert.equal(result.stderr, "");
     }
 
+    const boundedBlockedDiagnostic = run({
+      status: 2,
+      stdout: "x".repeat(256 * 1024 + 1),
+    });
+    assert.equal(
+      boundedBlockedDiagnostic.status,
+      0,
+      boundedBlockedDiagnostic.stderr,
+    );
+    assert.equal(boundedBlockedDiagnostic.stdout, "status=2\n");
+
     for (const value of [
       { status: 1, stdout: "private-row", stderr: "private-error" },
       { status: 3, stdout: "private-row", stderr: "private-error" },
       { status: 0, stdout: "{}\n", stderr: "private-warning" },
       { status: 2, stdout: "{}\n", stderr: "private-warning" },
       { status: 0, stdout: "" },
-      { status: 2, stdout: "x".repeat(256 * 1024 + 1) },
+      { status: 0, stdout: "x".repeat(256 * 1024 + 1) },
+      { status: 2, stdout: "x".repeat(1024 * 1024 + 1) },
     ]) {
       const result = run(value);
       assert.notEqual(result.status, 0, "unsafe checker capture was accepted");
@@ -708,11 +808,14 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
   for (const [status, report] of [
     ["0", validCheckerReport()],
     ["2", blockedCheckerReport()],
+    ["2", blockedRuntimeRpcCheckerReport()],
   ]) {
     const scenario = await runReadinessFrameScenario(
       readinessFrame({ status, report }),
     );
     assert.equal(scenario.result.status, 0, scenario.result.stderr);
+    assert.equal(scenario.result.stdout, "");
+    assert.equal(scenario.result.stderr, "");
     assert.equal(scenario.output, `checker_exit_status=${status}\n`);
     assert.deepEqual(scenario.report, canonicalJsonBytes(report));
     assert.deepEqual(
@@ -724,6 +827,25 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
   const secret = "private-customer@example.invalid";
   const nestedSecret = validCheckerReport();
   nestedSecret.readiness.customer_email = secret;
+  const readyWithDiagnostic = {
+    ...validCheckerReport(),
+    defaultAclDiagnostic: defaultAclDiagnostic(),
+  };
+  const blockedWithUnexpectedDiagnostic = {
+    ...blockedCheckerReport(),
+    defaultAclDiagnostic: defaultAclDiagnostic(),
+  };
+  const blockedWithoutRequiredDiagnostic = {
+    ...blockedRuntimeRpcCheckerReport(),
+  };
+  delete blockedWithoutRequiredDiagnostic.defaultAclDiagnostic;
+  const blockedWithMalformedDiagnostic = {
+    ...blockedRuntimeRpcCheckerReport(),
+    defaultAclDiagnostic: {
+      ...defaultAclDiagnostic(),
+      violationCount: 0,
+    },
+  };
   const cases = [
     readinessFrame({ status: "0", report: blockedCheckerReport() }),
     readinessFrame({ status: "2", report: validCheckerReport() }),
@@ -736,8 +858,17 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
       status: "0",
       reportBytes: Buffer.alloc(256 * 1024 + 1, 0x78),
     }),
+    readinessFrame({
+      status: "2",
+      reportBytes: Buffer.alloc(1024 * 1024 + 1, 0x78),
+    }),
     readinessFrame({ status: "0", reportBytes: Buffer.from([0xff, 0xfe]) }),
+    readinessFrame({ status: "0", report: null }),
     readinessFrame({ status: "0", report: nestedSecret }),
+    readinessFrame({ status: "0", report: readyWithDiagnostic }),
+    readinessFrame({ status: "2", report: blockedWithUnexpectedDiagnostic }),
+    readinessFrame({ status: "2", report: blockedWithoutRequiredDiagnostic }),
+    readinessFrame({ status: "2", report: blockedWithMalformedDiagnostic }),
     readinessFrame({
       status: "0",
       reportBytes: `${JSON.stringify(validCheckerReport())}\n{}\n`,
@@ -753,6 +884,7 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
       status: "0",
       remoteSource: { ...validRemoteSource(), detached: false },
     }),
+    `${readinessFrame({ status: "0" })}${"x".repeat(2 * 1024 * 1024)}`,
   ];
   for (const frame of cases) {
     const scenario = await runReadinessFrameScenario(frame);
@@ -763,6 +895,10 @@ test("V2 readiness frame accepts only status-matched exact aggregate reports", a
     assert.doesNotMatch(
       `${scenario.result.stdout}\n${scenario.result.stderr}`,
       new RegExp(secret.replace(".", "\\.")),
+    );
+    assert.doesNotMatch(
+      `${scenario.result.stdout}\n${scenario.result.stderr}`,
+      /TypeError|\bat file:/,
     );
   }
 });
@@ -820,11 +956,28 @@ test("blocked readiness preserves one report artifact then fails before attestat
 test("readiness report and remote proof are aggregate-only canonical JSON", () => {
   assert.match(workflow, /FAOLLA_ORDINARY_READINESS_FRAME_V2/);
   assert.match(workflow, /lines\.length !== 5/);
+  assert.match(workflow, /raw\.length > 2 \* 1024 \* 1024/);
   assert.match(
     workflow,
     /test ! -e "\$REMOTE_FRAME_PATH"\s+test ! -L "\$REMOTE_FRAME_PATH"/,
   );
   assert.match(workflow, /const expectedReportKeys = \[/);
+  assert.match(
+    workflow,
+    /const hasDefaultAclDiagnostic =[\s\S]*report !== null[\s\S]*typeof report === "object"[\s\S]*!Array\.isArray\(report\)[\s\S]*Object\.prototype\.hasOwnProperty\.call\(report, "defaultAclDiagnostic"\)/,
+  );
+  assert.match(
+    workflow,
+    /hasDefaultAclDiagnostic &&[\s\S]*report\.runtimeRpcHardeningReady !== false[\s\S]*report\.status !== "blocked"/,
+  );
+  assert.match(
+    workflow,
+    /const reportSizeLimit = checkerExitStatus === "2"[\s\S]*\? 1024 \* 1024[\s\S]*: 256 \* 1024/,
+  );
+  assert.match(
+    workflow,
+    /parsedHasDefaultAclDiagnostic !== hasDefaultAclDiagnostic/,
+  );
   assert.match(workflow, /const expectedRemoteKeys = \[/);
   assert.match(workflow, /canonicalJsonBytes\(report\)/);
   assert.match(workflow, /canonicalJsonBytes\(remoteSource\)/);
