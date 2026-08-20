@@ -72,6 +72,44 @@ const DEPLOY_PAYLOAD_KEYS = [
   "SUPER_ADMIN_VERIFICATION_EMAIL",
   "SUPER_ADMIN_VERIFICATION_SECRET",
 ];
+const READINESS_ATTESTATION_CANONICAL_BYTES = Buffer.from(
+  '{"kind":"faolla.production-readiness.v1","ready":true}\n',
+  "utf8",
+);
+const RELEASE_ATTESTATION_ENV_KEYS = [
+  "PRODUCTION_READINESS_ATTESTATION_FILE",
+  "PRODUCTION_READINESS_ATTESTATION_SHA256",
+  "PRODUCTION_READINESS_RUN_ID",
+  "PRODUCTION_READINESS_RUN_ATTEMPT",
+  "PRODUCTION_READINESS_REPORT_ARTIFACT_ID",
+  "PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST",
+  "PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID",
+  "PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST",
+  "PRODUCTION_BACKUP_RUN_ID",
+  "PRODUCTION_BACKUP_ARTIFACT_ID",
+  "PRODUCTION_BACKUP_ARTIFACT_DIGEST",
+  "PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID",
+  "PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST",
+];
+const EXPECTED_RELEASE_ATTESTATION = Object.freeze({
+  schemaVersion: 1,
+  targetSha: "a".repeat(40),
+  readinessRunId: "8002",
+  readinessRunAttempt: "1",
+  readinessReportArtifactId: "9003",
+  readinessReportArtifactDigest: `sha256:${"e".repeat(64)}`,
+  readinessAttestationArtifactId: "9004",
+  readinessAttestationArtifactDigest: `sha256:${"9".repeat(64)}`,
+  backupRunId: "8001",
+  backupArtifactId: "9001",
+  backupArtifactDigest: `sha256:${"c".repeat(64)}`,
+  backupAttestationArtifactId: "9002",
+  backupAttestationArtifactDigest: `sha256:${"d".repeat(64)}`,
+  canonicalSha256: createHash("sha256")
+    .update(READINESS_ATTESTATION_CANONICAL_BYTES)
+    .digest("hex"),
+  canonicalBytesBase64: READINESS_ATTESTATION_CANONICAL_BYTES.toString("base64"),
+});
 
 function extractDeployTransport() {
   const startMarker =
@@ -83,6 +121,19 @@ function extractDeployTransport() {
   assert.ok(end > start, "deploy transport end marker is missing");
   return deployWorkflow
     .slice(start, end)
+    .split(/\r?\n/)
+    .map((line) => line.slice(10))
+    .join("\n");
+}
+
+function extractWorkflowHeredoc(commandMarker) {
+  const commandStart = deployWorkflow.indexOf(commandMarker);
+  assert.ok(commandStart >= 0, `workflow command marker is missing: ${commandMarker}`);
+  const bodyStart = deployWorkflow.indexOf("\n", commandStart) + 1;
+  const bodyEnd = deployWorkflow.indexOf("\n          NODE", bodyStart);
+  assert.ok(bodyStart > 0 && bodyEnd > bodyStart, "workflow heredoc is incomplete");
+  return deployWorkflow
+    .slice(bodyStart, bodyEnd)
     .split(/\r?\n/)
     .map((line) => line.slice(10))
     .join("\n");
@@ -121,7 +172,12 @@ async function pathExists(path) {
   }
 }
 
-async function runDeployTransportScenario({ statuses, expectedStatus }) {
+async function runDeployTransportScenario({
+  statuses,
+  expectedStatus,
+  expectedSshCalls = 1,
+  evidenceEnvironment = {},
+}) {
   const captureDirectory = await mkdtemp(
     join(tmpdir(), "faolla-deploy-transport-contract-"),
   );
@@ -182,6 +238,15 @@ async function runDeployTransportScenario({ statuses, expectedStatus }) {
     SUPER_ADMIN_VERIFICATION_SECRET: superAdminVerificationSecret,
   };
   assert.deepEqual(Object.keys(expectedPayloadValues), DEPLOY_PAYLOAD_KEYS);
+  const readinessAttestationPath = join(
+    captureDirectory,
+    "production-readiness-attestation.json",
+  );
+  await writeFile(
+    readinessAttestationPath,
+    READINESS_ATTESTATION_CANONICAL_BYTES,
+    { mode: 0o600 },
+  );
   const transport = extractDeployTransport();
   const fakeSsh = String.raw`
 ssh() {
@@ -205,7 +270,7 @@ ssh() {
 sleep() { :; }
 `;
   const callsPath = join(captureDirectory, "calls");
-  const script = `set -uo pipefail\n${fakeSsh}\n: > "$FAKE_SSH_CALLS"\n${transport}\n`;
+  const script = `set -euo pipefail\n${fakeSsh}\n: > "$FAKE_SSH_CALLS"\n${transport}\n`;
   const result = spawnSync(resolveBashExecutable(), ["-s"], {
     cwd: repositoryRoot,
     input: script,
@@ -227,6 +292,32 @@ sleep() { :; }
       APP_PORT: "3000",
       APP_BRANCH: "main",
       EXPECTED_DEPLOY_SHA: "a".repeat(40),
+      PRODUCTION_READINESS_ATTESTATION_FILE: toBashPath(
+        readinessAttestationPath,
+      ),
+      PRODUCTION_READINESS_ATTESTATION_SHA256:
+        EXPECTED_RELEASE_ATTESTATION.canonicalSha256,
+      PRODUCTION_READINESS_RUN_ID:
+        EXPECTED_RELEASE_ATTESTATION.readinessRunId,
+      PRODUCTION_READINESS_RUN_ATTEMPT:
+        EXPECTED_RELEASE_ATTESTATION.readinessRunAttempt,
+      PRODUCTION_READINESS_REPORT_ARTIFACT_ID:
+        EXPECTED_RELEASE_ATTESTATION.readinessReportArtifactId,
+      PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST:
+        EXPECTED_RELEASE_ATTESTATION.readinessReportArtifactDigest,
+      PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID:
+        EXPECTED_RELEASE_ATTESTATION.readinessAttestationArtifactId,
+      PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST:
+        EXPECTED_RELEASE_ATTESTATION.readinessAttestationArtifactDigest,
+      PRODUCTION_BACKUP_RUN_ID: EXPECTED_RELEASE_ATTESTATION.backupRunId,
+      PRODUCTION_BACKUP_ARTIFACT_ID:
+        EXPECTED_RELEASE_ATTESTATION.backupArtifactId,
+      PRODUCTION_BACKUP_ARTIFACT_DIGEST:
+        EXPECTED_RELEASE_ATTESTATION.backupArtifactDigest,
+      PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID:
+        EXPECTED_RELEASE_ATTESTATION.backupAttestationArtifactId,
+      PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST:
+        EXPECTED_RELEASE_ATTESTATION.backupAttestationArtifactDigest,
       SUPABASE_INTERNAL_URL_B64: emptyBase64,
       NEXT_PUBLIC_SUPABASE_URL_B64: emptyBase64,
       NEXT_PUBLIC_SUPABASE_ANON_KEY_B64: emptyBase64,
@@ -261,6 +352,7 @@ sleep() { :; }
       SUPER_ADMIN_VERIFICATION_EMAIL:
         expectedPayloadValues.SUPER_ADMIN_VERIFICATION_EMAIL,
       SUPER_ADMIN_VERIFICATION_SECRET: superAdminVerificationSecret,
+      ...evidenceEnvironment,
     },
   });
 
@@ -268,9 +360,9 @@ sleep() { :; }
     assert.equal(result.status, expectedStatus, result.stderr);
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "");
-    const calls = (await readFile(callsPath, "utf8")).trim().split(/\r?\n/);
-    const expectedCalls = 1;
-    assert.equal(calls.length, expectedCalls);
+    const callsText = (await readFile(callsPath, "utf8")).trim();
+    const calls = callsText === "" ? [] : callsText.split(/\r?\n/);
+    assert.equal(calls.length, expectedSshCalls);
     if (statuses[0] === 255) {
       assert.equal(
         await pathExists(
@@ -279,7 +371,7 @@ sleep() { :; }
         true,
       );
     }
-    for (let index = 1; index <= expectedCalls; index += 1) {
+    for (let index = 1; index <= expectedSshCalls; index += 1) {
       const argv = await readFile(
         join(captureDirectory, `argv-${index}`),
         "utf8",
@@ -312,6 +404,7 @@ sleep() { :; }
       assert.deepEqual(payload, {
         schemaVersion: 1,
         values: expectedPayloadValues,
+        releaseAttestation: EXPECTED_RELEASE_ATTESTATION,
       });
       assert.equal(
         framedInput.subarray(secondNewline + 1, thirdNewline).toString("utf8"),
@@ -336,6 +429,8 @@ sleep() { :; }
         superAdminPassword,
         superAdminVerificationSecret,
         payloadBase64,
+        READINESS_ATTESTATION_CANONICAL_BYTES.toString("utf8"),
+        EXPECTED_RELEASE_ATTESTATION.canonicalBytesBase64,
       ]) {
         assert.equal(argv.includes(sensitive), false);
         assert.equal(childEnvironment.includes(sensitive), false);
@@ -353,6 +448,15 @@ sleep() { :; }
           childEnvironment
             .split(/\r?\n/)
             .some((entry) => entry.startsWith(`${payloadKey}=`)),
+          false,
+        );
+      }
+      for (const evidenceKey of RELEASE_ATTESTATION_ENV_KEYS) {
+        assert.equal(remoteCommand.includes(evidenceKey), false);
+        assert.equal(
+          childEnvironment
+            .split(/\r?\n/)
+            .some((entry) => entry.startsWith(`${evidenceKey}=`)),
           false,
         );
       }
@@ -615,6 +719,26 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   await t.test("non-255 SSH failure is returned without retry", async () => {
     await runDeployTransportScenario({ statuses: [37], expectedStatus: 37 });
   });
+  await t.test("attestation byte substitution fails before SSH", async () => {
+    await runDeployTransportScenario({
+      statuses: [0],
+      expectedStatus: 1,
+      expectedSshCalls: 0,
+      evidenceEnvironment: {
+        PRODUCTION_READINESS_ATTESTATION_SHA256: "0".repeat(64),
+      },
+    });
+  });
+  await t.test("artifact ID substitution fails before SSH", async () => {
+    await runDeployTransportScenario({
+      statuses: [0],
+      expectedStatus: 1,
+      expectedSshCalls: 0,
+      evidenceEnvironment: {
+        PRODUCTION_READINESS_REPORT_ARTIFACT_ID: "0",
+      },
+    });
+  });
 });
 
 test("remote deploy consumes one exact payload file and erases it before validation", async () => {
@@ -831,14 +955,227 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex < fetchIndex);
 });
 
-test("production deployment accepts only the exact tested current main commit", () => {
+test("actual workflow-run validator rejects every substituted trust dimension", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "faolla-readiness-run-contract-"));
+  const runPath = join(directory, "run.json");
+  const source = extractWorkflowHeredoc(
+    'workflow_id="$(node --input-type=module - "$run_json" <<\'NODE\'',
+  );
+  const expected = {
+    id: 8002,
+    run_attempt: 1,
+    status: "completed",
+    conclusion: "success",
+    event: "workflow_dispatch",
+    name: "Ordinary Account Cutover Readiness",
+    path: ".github/workflows/ordinary-account-cutover-readiness.yml",
+    head_branch: "main",
+    head_sha: "a".repeat(40),
+    repository: { full_name: "fafona/space" },
+    head_repository: { full_name: "fafona/space" },
+    workflow_id: 9001,
+  };
+  const run = async (value) => {
+    await writeFile(runPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    return spawnSync(process.execPath, ["--input-type=module", "-", runPath], {
+      cwd: repositoryRoot,
+      input: source,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        READINESS_RUN_ID: "8002",
+        READINESS_RUN_ATTEMPT: "1",
+        READINESS_WORKFLOW_NAME: "Ordinary Account Cutover Readiness",
+        READINESS_WORKFLOW_PATH:
+          ".github/workflows/ordinary-account-cutover-readiness.yml",
+        DEPLOY_REF: "a".repeat(40),
+        GITHUB_REPOSITORY: "fafona/space",
+      },
+    });
+  };
+  try {
+    const accepted = await run(expected);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(accepted.stdout, "9001");
+    for (const [name, mutate] of [
+      ["run id", (value) => { value.id = 8003; }],
+      ["attempt", (value) => { value.run_attempt = 2; }],
+      ["status", (value) => { value.status = "in_progress"; }],
+      ["conclusion", (value) => { value.conclusion = "failure"; }],
+      ["event", (value) => { value.event = "push"; }],
+      ["name", (value) => { value.name = "CI"; }],
+      ["path", (value) => { value.path = ".github/workflows/ci.yml"; }],
+      ["branch", (value) => { value.head_branch = "release"; }],
+      ["head", (value) => { value.head_sha = "b".repeat(40); }],
+      ["repository", (value) => { value.repository.full_name = "attacker/fork"; }],
+      ["head repository", (value) => { value.head_repository.full_name = "attacker/fork"; }],
+      ["workflow id", (value) => { value.workflow_id = 0; }],
+    ]) {
+      await t.test(name, async () => {
+        const value = structuredClone(expected);
+        mutate(value);
+        const rejected = await run(value);
+        assert.equal(rejected.status, 1, `${rejected.stdout}\n${rejected.stderr}`);
+      });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("actual artifact inventory validator rejects ambiguity, expiry, emptiness, and run substitution", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "faolla-readiness-artifact-contract-"));
+  const pagesPath = join(directory, "pages.json");
+  const outputPath = join(directory, "outputs");
+  const source = extractWorkflowHeredoc(
+    'node --input-type=module - "$artifact_pages" <<\'NODE\'',
+  );
+  const artifact = (name, id, digestCharacter) => ({
+    id,
+    name,
+    size_in_bytes: 4096,
+    expired: false,
+    expires_at: "2099-08-27T12:00:00Z",
+    digest: `sha256:${digestCharacter.repeat(64)}`,
+    workflow_run: {
+      id: 8002,
+      head_branch: "main",
+      head_sha: "a".repeat(40),
+    },
+  });
+  const expectedArtifacts = [
+    artifact("faolla-production-readiness-report-8002-1", 9003, "e"),
+    artifact("faolla-production-readiness-attestation-8002-1", 9004, "f"),
+  ];
+  const run = async (artifacts, totalCount = artifacts.length) => {
+    await writeFile(
+      pagesPath,
+      `${JSON.stringify([{ total_count: totalCount, artifacts }])}\n`,
+      { mode: 0o600 },
+    );
+    await writeFile(outputPath, "", { mode: 0o600 });
+    return spawnSync(process.execPath, ["--input-type=module", "-", pagesPath], {
+      cwd: repositoryRoot,
+      input: source,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        READINESS_RUN_ID: "8002",
+        READINESS_RUN_ATTEMPT: "1",
+        DEPLOY_REF: "a".repeat(40),
+        GITHUB_OUTPUT: outputPath,
+      },
+    });
+  };
+  try {
+    const accepted = await run(structuredClone(expectedArtifacts));
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const output = await readFile(outputPath, "utf8");
+    assert.match(output, /report_id=9003/);
+    assert.match(output, /attestation_id=9004/);
+    const cases = [
+      ["missing artifact", [structuredClone(expectedArtifacts[0])]],
+      ["extra artifact", [...structuredClone(expectedArtifacts), artifact("extra", 9005, "1")]],
+      ["duplicate name", [structuredClone(expectedArtifacts[0]), { ...structuredClone(expectedArtifacts[0]), id: 9004 }]],
+    ];
+    for (const [name, artifacts] of cases) {
+      await t.test(name, async () => {
+        const rejected = await run(artifacts);
+        assert.equal(rejected.status, 1, `${rejected.stdout}\n${rejected.stderr}`);
+      });
+    }
+    for (const [name, mutate] of [
+      ["expired", (value) => { value.expired = true; }],
+      ["past expiry", (value) => { value.expires_at = "2020-01-01T00:00:00Z"; }],
+      ["zero bytes", (value) => { value.size_in_bytes = 0; }],
+      ["missing digest", (value) => { value.digest = null; }],
+      ["wrong run", (value) => { value.workflow_run.id = 8003; }],
+      ["wrong branch", (value) => { value.workflow_run.head_branch = "release"; }],
+      ["wrong head", (value) => { value.workflow_run.head_sha = "b".repeat(40); }],
+    ]) {
+      await t.test(name, async () => {
+        const artifacts = structuredClone(expectedArtifacts);
+        mutate(artifacts[0]);
+        const rejected = await run(artifacts);
+        assert.equal(rejected.status, 1, `${rejected.stdout}\n${rejected.stderr}`);
+      });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("production deployment accepts only a successful exact readiness run for current main", () => {
   assert.doesNotMatch(deployWorkflow, /^\s*workflow_dispatch:\s*$/m);
-  assert.match(deployWorkflow, /github\.event\.workflow_run\.event == 'push'/);
+  assert.match(
+    deployWorkflow,
+    /workflows:\s*\n\s*- Ordinary Account Cutover Readiness/,
+  );
+  assert.doesNotMatch(deployWorkflow, /workflows:\s*\n\s*- CI/);
+  assert.match(
+    deployWorkflow,
+    /github\.event\.workflow_run\.conclusion == 'success'/,
+  );
+  assert.match(
+    deployWorkflow,
+    /github\.event\.workflow_run\.event == 'workflow_dispatch'/,
+  );
+  assert.doesNotMatch(
+    deployWorkflow,
+    /github\.event\.workflow_run\.event == 'push'/,
+  );
   assert.match(
     deployWorkflow,
     /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/,
   );
   assert.match(deployWorkflow, /github\.event\.workflow_run\.head_branch == 'main'/);
+  assert.match(deployWorkflow, /\[\[ "\$DEPLOY_REF" =~ \^\[0-9a-f\]\{40\}\$ \]\]/);
+  assert.match(
+    deployWorkflow,
+    /repos\/\$GITHUB_REPOSITORY\/actions\/runs\/\$READINESS_RUN_ID/,
+  );
+  assert.match(deployWorkflow, /run\.run_attempt !== expectedRunAttempt/);
+  assert.match(
+    deployWorkflow,
+    /run\.path !== process\.env\.READINESS_WORKFLOW_PATH/,
+  );
+  assert.match(
+    deployWorkflow,
+    /workflow\.path !== process\.env\.READINESS_WORKFLOW_PATH/,
+  );
+  assert.match(deployWorkflow, /workflow\.state !== "active"/);
+  assert.match(deployWorkflow, /actions:\s*read/);
+  assert.match(deployWorkflow, /attestations:\s*read/);
+  assert.match(deployWorkflow, /contents:\s*read/);
+
+  const eligible = (run) =>
+    run.conclusion === "success" &&
+    run.event === "workflow_dispatch" &&
+    run.headRepository === "fafona/space" &&
+    run.repository === "fafona/space" &&
+    run.headBranch === "main" &&
+    /^[0-9a-f]{40}$/.test(run.headSha);
+  const valid = {
+    conclusion: "success",
+    event: "workflow_dispatch",
+    headRepository: "fafona/space",
+    repository: "fafona/space",
+    headBranch: "main",
+    headSha: "a".repeat(40),
+  };
+  assert.equal(eligible(valid), true);
+  for (const rejected of [
+    { ...valid, conclusion: "failure" },
+    { ...valid, event: "push" },
+    { ...valid, headRepository: "attacker/fork" },
+    { ...valid, headBranch: "release" },
+    { ...valid, headSha: "a".repeat(39) },
+    { ...valid, headSha: "A".repeat(40) },
+    { ...valid, headSha: `${"a".repeat(40)}\nmalicious` },
+  ]) {
+    assert.equal(eligible(rejected), false);
+  }
+
   assert.match(deployWorkflow, /git ls-remote --exit-code origin refs\/heads\/main/);
   assert.match(deployWorkflow, /EXPECTED_DEPLOY_SHA: \$\{\{ steps\.deploy-commit\.outputs\.sha \}\}/);
   assert.match(deployWorkflow, /"EXPECTED_DEPLOY_SHA"/);
@@ -850,6 +1187,104 @@ test("production deployment accepts only the exact tested current main commit", 
   assert.match(deployScript, /git reset --hard "\$EXPECTED_DEPLOY_SHA"/);
   assert.match(deployScript, /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"/);
   assert.doesNotMatch(deployScript, /git archive --format=tar "origin\/\$APP_BRANCH"/);
+});
+
+test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bound", () => {
+  assert.match(deployWorkflow, /artifacts\.length !== 2/);
+  assert.match(
+    deployWorkflow,
+    /faolla-production-readiness-report-\$\{process\.env\.READINESS_RUN_ID\}-\$\{process\.env\.READINESS_RUN_ATTEMPT\}/,
+  );
+  assert.match(
+    deployWorkflow,
+    /faolla-production-readiness-attestation-\$\{process\.env\.READINESS_RUN_ID\}-\$\{process\.env\.READINESS_RUN_ATTEMPT\}/,
+  );
+  assert.match(deployWorkflow, /artifact\.expired !== false/);
+  assert.match(deployWorkflow, /artifact\.size_in_bytes <= 0/);
+  assert.match(deployWorkflow, /\^sha256:\[0-9a-f\]\{64\}\$/);
+  assert.match(deployWorkflow, /artifact\.workflow_run\?\.id !== Number/);
+  assert.match(deployWorkflow, /report_archive_sha.*READINESS_REPORT_ARTIFACT_DIGEST/);
+  assert.match(
+    deployWorkflow,
+    /attestation_archive_sha.*READINESS_ATTESTATION_ARTIFACT_DIGEST/,
+  );
+  assert.match(deployWorkflow, /if len\(entries\) != 1/);
+  assert.match(deployWorkflow, /entry\.filename != expected_name/);
+  assert.match(deployWorkflow, /stat\.S_ISLNK\(mode\)/);
+  assert.match(deployWorkflow, /os\.O_EXCL/);
+  assert.match(deployWorkflow, /raw\.equals\(canonicalJsonBytes\(parsed\)\)/);
+
+  assert.match(deployWorkflow, /gh attestation verify "\$subject_file"/);
+  assert.match(deployWorkflow, /--repo "\$GITHUB_REPOSITORY"/);
+  assert.match(deployWorkflow, /--signer-workflow "\$signer_workflow"/);
+  assert.match(deployWorkflow, /--source-digest "\$DEPLOY_REF"/);
+  assert.match(deployWorkflow, /--source-ref "refs\/heads\/main"/);
+  assert.match(deployWorkflow, /--deny-self-hosted-runners/);
+  assert.match(deployWorkflow, /--no-public-good/);
+  assert.match(deployWorkflow, /results\.length !== 1/);
+  assert.match(deployWorkflow, /"production-readiness-report\.json"/);
+  assert.match(deployWorkflow, /"production-readiness-attestation\.json"/);
+
+  assert.match(
+    deployWorkflow,
+    /node scripts\/production-release-attestation\.mjs validate/,
+  );
+  assert.match(deployWorkflow, /--kind readiness/);
+  assert.match(deployWorkflow, /--expected-repository "\$GITHUB_REPOSITORY"/);
+  assert.match(deployWorkflow, /--expected-target-sha "\$DEPLOY_REF"/);
+  assert.match(deployWorkflow, /--expected-run-id "\$READINESS_RUN_ID"/);
+  assert.match(
+    deployWorkflow,
+    /--expected-run-attempt "\$READINESS_RUN_ATTEMPT"/,
+  );
+  assert.match(
+    deployWorkflow,
+    /--expected-readiness-artifact-id "\$READINESS_REPORT_ARTIFACT_ID"/,
+  );
+  assert.match(
+    deployWorkflow,
+    /--expected-readiness-artifact-digest "\$READINESS_REPORT_ARTIFACT_DIGEST"/,
+  );
+  assert.match(deployWorkflow, /--minimum-remaining-seconds 3600/);
+  assert.match(deployWorkflow, /summary\.backupRunId/);
+  assert.match(deployWorkflow, /summary\.backupArtifactId/);
+  assert.match(deployWorkflow, /summary\.backupAttestationArtifactId/);
+});
+
+test("verified readiness bytes and artifact references ride inside the V2 payload without changing 35 deploy values", () => {
+  assert.equal(DEPLOY_PAYLOAD_KEYS.length, 35);
+  assert.match(deployWorkflow, /releaseAttestation = \{/);
+  for (const field of [
+    "readinessRunId",
+    "readinessRunAttempt",
+    "readinessReportArtifactId",
+    "readinessReportArtifactDigest",
+    "readinessAttestationArtifactId",
+    "readinessAttestationArtifactDigest",
+    "backupRunId",
+    "backupArtifactId",
+    "backupArtifactDigest",
+    "backupAttestationArtifactId",
+    "backupAttestationArtifactDigest",
+    "canonicalSha256",
+    "canonicalBytesBase64",
+  ]) {
+    assert.match(deployWorkflow, new RegExp(`\\b${field}\\b`));
+  }
+  assert.match(
+    deployWorkflow,
+    /JSON\.stringify\(\{ schemaVersion: 1, values, releaseAttestation \}\)/,
+  );
+  assert.match(
+    deployWorkflow,
+    /canonicalSha256 !== required\("PRODUCTION_READINESS_ATTESTATION_SHA256", sha256\)/,
+  );
+  assert.match(
+    deployWorkflow,
+    /rm -f -- "\$PRODUCTION_READINESS_ATTESTATION_FILE"/,
+  );
+  assert.doesNotMatch(deployWorkflow, /cat "\$PRODUCTION_READINESS_ATTESTATION_FILE"/);
+  assert.match(deployWorkflow, /DEPLOY_ENVELOPE_MAGIC="FAOLLA_DEPLOY_ENVELOPE_V2"/);
 });
 
 test("deployment SSH trust is pinned and never learned from the live network", () => {

@@ -3,7 +3,7 @@ name: Deploy Production
 on:
   workflow_run:
     workflows:
-      - CI
+      - Ordinary Account Cutover Readiness
     types:
       - completed
 
@@ -12,13 +12,15 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
+  attestations: read
   contents: read
 
 jobs:
   deploy:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
@@ -27,12 +29,88 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DEPLOY_BRANCH: main
       DEPLOY_REF: ${{ github.event.workflow_run.head_sha }}
+      READINESS_RUN_ID: ${{ github.event.workflow_run.id }}
+      READINESS_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
+      READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
 
     steps:
+      - name: Validate Readiness Workflow Run
+        id: readiness-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_run"
+          [[ "$DEPLOY_REF" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$READINESS_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$READINESS_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          run_json="$RUNNER_TEMP/readiness-workflow-run.json"
+          workflow_json="$RUNNER_TEMP/readiness-workflow-definition.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$READINESS_RUN_ID" \
+            > "$run_json"
+          workflow_id="$(node --input-type=module - "$run_json" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const fail = (message) => {
+            process.stderr.write(`${message}\n`);
+            process.exit(1);
+          };
+          const run = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedRunId = Number(process.env.READINESS_RUN_ID);
+          const expectedRunAttempt = Number(process.env.READINESS_RUN_ATTEMPT);
+          if (!Number.isSafeInteger(expectedRunId) || expectedRunId <= 0) fail("readiness_run_id_invalid");
+          if (!Number.isSafeInteger(expectedRunAttempt) || expectedRunAttempt <= 0) fail("readiness_run_attempt_invalid");
+          if (run.id !== expectedRunId) fail("readiness_run_id_mismatch");
+          if (run.run_attempt !== expectedRunAttempt) fail("readiness_run_attempt_mismatch");
+          if (run.status !== "completed" || run.conclusion !== "success") fail("readiness_run_not_successful");
+          if (run.event !== "workflow_dispatch") fail("readiness_run_event_mismatch");
+          if (run.name !== process.env.READINESS_WORKFLOW_NAME) fail("readiness_run_name_mismatch");
+          if (run.path !== process.env.READINESS_WORKFLOW_PATH) fail("readiness_run_path_mismatch");
+          if (run.head_branch !== "main") fail("readiness_run_branch_mismatch");
+          if (run.head_sha !== process.env.DEPLOY_REF) fail("readiness_run_head_mismatch");
+          if (run.repository?.full_name !== process.env.GITHUB_REPOSITORY) fail("readiness_run_repository_mismatch");
+          if (run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY) fail("readiness_run_head_repository_mismatch");
+          if (!Number.isSafeInteger(run.workflow_id) || run.workflow_id <= 0) fail("readiness_workflow_id_invalid");
+          process.stdout.write(String(run.workflow_id));
+          NODE
+          )"
+          [[ "$workflow_id" =~ ^[1-9][0-9]*$ ]]
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id" \
+            > "$workflow_json"
+          node --input-type=module - "$workflow_json" "$workflow_id" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const workflow = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedId = Number(process.argv[3]);
+          if (
+            workflow.id !== expectedId ||
+            workflow.name !== process.env.READINESS_WORKFLOW_NAME ||
+            workflow.path !== process.env.READINESS_WORKFLOW_PATH ||
+            workflow.state !== "active"
+          ) {
+            process.stderr.write("readiness_workflow_definition_mismatch\n");
+            process.exit(1);
+          }
+          NODE
+          rm -f -- "$run_json" "$workflow_json"
+          {
+            printf 'sha=%s\n' "$DEPLOY_REF"
+            printf 'run_id=%s\n' "$READINESS_RUN_ID"
+            printf 'run_attempt=%s\n' "$READINESS_RUN_ATTEMPT"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout Tested Commit
         uses: actions/checkout@v5
         with:
-          ref: ${{ env.DEPLOY_REF }}
+          ref: ${{ steps.readiness-run.outputs.sha }}
 
       - name: Resolve Deploy Commit
         id: deploy-commit
@@ -45,6 +123,293 @@ jobs:
           main_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
           test "$main_sha" = "$resolved_sha"
           echo "sha=$resolved_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Readiness Artifacts
+        id: readiness-artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_pages="$RUNNER_TEMP/readiness-artifact-pages.json"
+          gh api --method GET --paginate --slurp \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$READINESS_RUN_ID/artifacts?per_page=100" \
+            > "$artifact_pages"
+          node --input-type=module - "$artifact_pages" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const fail = (message) => {
+            process.stderr.write(`${message}\n`);
+            process.exit(1);
+          };
+          const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Array.isArray(pages) || pages.length === 0) fail("readiness_artifact_pages_invalid");
+          const artifacts = [];
+          for (const page of pages) {
+            if (!page || !Array.isArray(page.artifacts) || !Number.isSafeInteger(page.total_count)) {
+              fail("readiness_artifact_page_invalid");
+            }
+            artifacts.push(...page.artifacts);
+          }
+          if (artifacts.length !== 2 || pages.some((page) => page.total_count !== artifacts.length)) {
+            fail("readiness_artifact_inventory_invalid");
+          }
+          const expected = new Map([
+            [`faolla-production-readiness-report-${process.env.READINESS_RUN_ID}-${process.env.READINESS_RUN_ATTEMPT}`, "report"],
+            [`faolla-production-readiness-attestation-${process.env.READINESS_RUN_ID}-${process.env.READINESS_RUN_ATTEMPT}`, "attestation"],
+          ]);
+          const now = Date.now();
+          const outputs = new Map();
+          const ids = new Set();
+          for (const artifact of artifacts) {
+            const key = expected.get(artifact?.name);
+            if (!key || outputs.has(`${key}_id`)) fail("readiness_artifact_name_invalid");
+            if (!Number.isSafeInteger(artifact.id) || artifact.id <= 0 || ids.has(artifact.id)) {
+              fail("readiness_artifact_id_invalid");
+            }
+            ids.add(artifact.id);
+            if (!Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes <= 0 || artifact.size_in_bytes > 2 * 1024 * 1024) {
+              fail("readiness_artifact_size_invalid");
+            }
+            if (artifact.expired !== false) fail("readiness_artifact_expired");
+            const expiresAt = Date.parse(artifact.expires_at);
+            if (!Number.isFinite(expiresAt) || expiresAt <= now) fail("readiness_artifact_expiry_invalid");
+            if (!/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "")) {
+              fail("readiness_artifact_digest_invalid");
+            }
+            if (
+              artifact.workflow_run?.id !== Number(process.env.READINESS_RUN_ID) ||
+              artifact.workflow_run?.head_branch !== "main" ||
+              artifact.workflow_run?.head_sha !== process.env.DEPLOY_REF
+            ) {
+              fail("readiness_artifact_run_mismatch");
+            }
+            outputs.set(`${key}_id`, String(artifact.id));
+            outputs.set(`${key}_digest`, artifact.digest);
+          }
+          if (outputs.size !== 4) fail("readiness_artifact_inventory_incomplete");
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [...outputs].map(([key, value]) => `${key}=${value}\n`).join(""),
+          );
+          NODE
+          rm -f -- "$artifact_pages"
+
+      - name: Verify Readiness Evidence
+        id: readiness-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          READINESS_REPORT_ARTIFACT_ID: ${{ steps.readiness-artifacts.outputs.report_id }}
+          READINESS_REPORT_ARTIFACT_DIGEST: ${{ steps.readiness-artifacts.outputs.report_digest }}
+          READINESS_ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-artifacts.outputs.attestation_id }}
+          READINESS_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.readiness-artifacts.outputs.attestation_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_root="$RUNNER_TEMP/faolla-production-readiness-evidence"
+          mkdir "$evidence_root"
+          report_archive="$evidence_root/readiness-report.zip"
+          attestation_archive="$evidence_root/readiness-attestation.zip"
+          report_file="$evidence_root/production-readiness-report.json"
+          attestation_file="$evidence_root/production-readiness-attestation.json"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$READINESS_REPORT_ARTIFACT_ID/zip" \
+            > "$report_archive"
+          gh api --method GET \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$READINESS_ATTESTATION_ARTIFACT_ID/zip" \
+            > "$attestation_archive"
+          report_archive_sha="sha256:$(sha256sum "$report_archive" | awk '{ print $1 }')"
+          attestation_archive_sha="sha256:$(sha256sum "$attestation_archive" | awk '{ print $1 }')"
+          test "$report_archive_sha" = "$READINESS_REPORT_ARTIFACT_DIGEST"
+          test "$attestation_archive_sha" = "$READINESS_ATTESTATION_ARTIFACT_DIGEST"
+          extract_single_json() {
+            python3 - "$1" "$2" "$3" <<'PY'
+          import os
+          import stat
+          import sys
+          import zipfile
+
+          archive, expected_name, destination = sys.argv[1:]
+          maximum_bytes = 1024 * 1024
+          with zipfile.ZipFile(archive, "r") as bundle:
+              entries = bundle.infolist()
+              if len(entries) != 1:
+                  raise SystemExit("readiness_archive_inventory_invalid")
+              entry = entries[0]
+              mode = (entry.external_attr >> 16) & 0xFFFF
+              if (
+                  entry.filename != expected_name
+                  or entry.is_dir()
+                  or entry.flag_bits & 0x1
+                  or entry.file_size <= 0
+                  or entry.file_size > maximum_bytes
+                  or entry.compress_size <= 0
+                  or entry.compress_size > 2 * maximum_bytes
+                  or stat.S_ISLNK(mode)
+                  or entry.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+              ):
+                  raise SystemExit("readiness_archive_entry_invalid")
+              payload = bundle.read(entry)
+              if len(payload) != entry.file_size:
+                  raise SystemExit("readiness_archive_size_mismatch")
+          flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          descriptor = os.open(destination, flags, 0o600)
+          try:
+              with os.fdopen(descriptor, "wb") as output:
+                  output.write(payload)
+          except BaseException:
+              try:
+                  os.close(descriptor)
+              except OSError:
+                  pass
+              raise
+          PY
+          }
+          extract_single_json "$report_archive" "production-readiness-report.json" "$report_file"
+          extract_single_json "$attestation_archive" "production-readiness-attestation.json" "$attestation_file"
+          rm -f -- "$report_archive" "$attestation_archive"
+          node --input-type=module - "$report_file" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { canonicalJsonBytes } from "./scripts/production-release-attestation.mjs";
+
+          const raw = readFileSync(process.argv[2]);
+          let parsed;
+          try {
+            parsed = JSON.parse(raw.toString("utf8"));
+          } catch {
+            process.exit(1);
+          }
+          if (!raw.equals(canonicalJsonBytes(parsed))) process.exit(1);
+          NODE
+          signer_workflow="github.com/$GITHUB_REPOSITORY/$READINESS_WORKFLOW_PATH"
+          verify_provenance() {
+            local subject_file="$1"
+            local verification_file="$2"
+            local subject_name="$3"
+            local subject_sha
+            subject_sha="$(sha256sum "$subject_file" | awk '{ print $1 }')"
+            gh attestation verify "$subject_file" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$signer_workflow" \
+              --source-digest "$DEPLOY_REF" \
+              --source-ref "refs/heads/main" \
+              --predicate-type "https://slsa.dev/provenance/v1" \
+              --deny-self-hosted-runners \
+              --no-public-good \
+              --limit 10 \
+              --format json > "$verification_file"
+            node --input-type=module - "$verification_file" "$subject_name" "$subject_sha" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const results = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedName = process.argv[3];
+          const expectedSha = process.argv[4];
+          if (!Array.isArray(results) || results.length !== 1) process.exit(1);
+          const subjects = results[0]?.verificationResult?.statement?.subject;
+          if (
+            !Array.isArray(subjects) ||
+            subjects.length !== 1 ||
+            subjects[0]?.name !== expectedName ||
+            subjects[0]?.digest?.sha256 !== expectedSha
+          ) process.exit(1);
+          NODE
+          }
+          verify_provenance \
+            "$report_file" "$evidence_root/readiness-report-verification.json" \
+            "production-readiness-report.json"
+          verify_provenance \
+            "$attestation_file" "$evidence_root/readiness-attestation-verification.json" \
+            "production-readiness-attestation.json"
+          rm -f -- \
+            "$evidence_root/readiness-report-verification.json" \
+            "$evidence_root/readiness-attestation-verification.json"
+          summary_file="$evidence_root/production-readiness-attestation-summary.json"
+          node scripts/production-release-attestation.mjs validate \
+            --input "$attestation_file" \
+            --kind readiness \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-target-sha "$DEPLOY_REF" \
+            --expected-run-id "$READINESS_RUN_ID" \
+            --expected-run-attempt "$READINESS_RUN_ATTEMPT" \
+            --expected-readiness-run-id "$READINESS_RUN_ID" \
+            --expected-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
+            --expected-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
+            --expected-readiness-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
+            --expected-readiness-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
+            --minimum-remaining-seconds 3600 \
+            > "$summary_file"
+          report_bytes="$(wc -c < "$report_file" | tr -d '[:space:]')"
+          report_sha256="$(sha256sum "$report_file" | awk '{ print $1 }')"
+          node --input-type=module - \
+            "$attestation_file" "$summary_file" "$report_bytes" "$report_sha256" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const attestation = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const summary = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const reportBytes = process.argv[4];
+          const reportSha256 = process.argv[5];
+          if (
+            attestation.readinessArtifact?.file?.name !== "production-readiness-report.json" ||
+            attestation.readinessArtifact?.file?.sizeBytes !== reportBytes ||
+            attestation.readinessArtifact?.file?.sha256 !== reportSha256
+          ) process.exit(1);
+          const expectedSummaryKeys = [
+            "artifactDigest", "artifactId", "backupArtifactDigest", "backupArtifactId",
+            "backupAttestationArtifactDigest", "backupAttestationArtifactId", "backupRunId",
+            "baselineSha256", "canonicalSha256", "databaseIdentitySha256", "kind", "readinessArtifactDigest",
+            "readinessArtifactId", "readinessRunId", "repository", "runAttempt", "runId", "targetSha",
+            "valid", "validUntil",
+          ].sort();
+          const actualSummaryKeys = Object.keys(summary).sort();
+          if (
+            actualSummaryKeys.length !== expectedSummaryKeys.length ||
+            actualSummaryKeys.some((key, index) => key !== expectedSummaryKeys[index]) ||
+            summary.valid !== true ||
+            summary.kind !== "faolla.production-readiness.v1" ||
+            summary.repository !== process.env.GITHUB_REPOSITORY ||
+            summary.targetSha !== process.env.DEPLOY_REF ||
+            summary.runId !== process.env.READINESS_RUN_ID ||
+            summary.runAttempt !== process.env.READINESS_RUN_ATTEMPT ||
+            summary.readinessRunId !== process.env.READINESS_RUN_ID ||
+            summary.artifactId !== process.env.READINESS_REPORT_ARTIFACT_ID ||
+            summary.artifactDigest !== process.env.READINESS_REPORT_ARTIFACT_DIGEST ||
+            summary.readinessArtifactId !== process.env.READINESS_REPORT_ARTIFACT_ID ||
+            summary.readinessArtifactDigest !== process.env.READINESS_REPORT_ARTIFACT_DIGEST
+          ) process.exit(1);
+          const positiveDecimal = (value) => typeof value === "string" && /^[1-9][0-9]*$/.test(value);
+          const sha256Digest = (value) => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+          if (
+            !positiveDecimal(summary.backupRunId) ||
+            !positiveDecimal(summary.backupArtifactId) ||
+            !sha256Digest(summary.backupArtifactDigest) ||
+            !positiveDecimal(summary.backupAttestationArtifactId) ||
+            !sha256Digest(summary.backupAttestationArtifactDigest) ||
+            !/^[0-9a-f]{64}$/.test(summary.canonicalSha256)
+          ) process.exit(1);
+          const outputs = {
+            attestation_file: process.argv[2],
+            canonical_sha256: summary.canonicalSha256,
+            backup_run_id: summary.backupRunId,
+            backup_artifact_id: summary.backupArtifactId,
+            backup_artifact_digest: summary.backupArtifactDigest,
+            backup_attestation_artifact_id: summary.backupAttestationArtifactId,
+            backup_attestation_artifact_digest: summary.backupAttestationArtifactDigest,
+          };
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(""),
+          );
+          NODE
+          rm -f -- "$summary_file" "$report_file"
 
       - name: Setup SSH
         env:
@@ -85,6 +450,19 @@ jobs:
           APP_PORT: ${{ secrets.APP_PORT }}
           APP_BRANCH: ${{ env.DEPLOY_BRANCH }}
           EXPECTED_DEPLOY_SHA: ${{ steps.deploy-commit.outputs.sha }}
+          PRODUCTION_READINESS_ATTESTATION_FILE: ${{ steps.readiness-evidence.outputs.attestation_file }}
+          PRODUCTION_READINESS_ATTESTATION_SHA256: ${{ steps.readiness-evidence.outputs.canonical_sha256 }}
+          PRODUCTION_READINESS_RUN_ID: ${{ steps.readiness-run.outputs.run_id }}
+          PRODUCTION_READINESS_RUN_ATTEMPT: ${{ steps.readiness-run.outputs.run_attempt }}
+          PRODUCTION_READINESS_REPORT_ARTIFACT_ID: ${{ steps.readiness-artifacts.outputs.report_id }}
+          PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST: ${{ steps.readiness-artifacts.outputs.report_digest }}
+          PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-artifacts.outputs.attestation_id }}
+          PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.readiness-artifacts.outputs.attestation_digest }}
+          PRODUCTION_BACKUP_RUN_ID: ${{ steps.readiness-evidence.outputs.backup_run_id }}
+          PRODUCTION_BACKUP_ARTIFACT_ID: ${{ steps.readiness-evidence.outputs.backup_artifact_id }}
+          PRODUCTION_BACKUP_ARTIFACT_DIGEST: ${{ steps.readiness-evidence.outputs.backup_artifact_digest }}
+          PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID: ${{ steps.readiness-evidence.outputs.backup_attestation_artifact_id }}
+          PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST: ${{ steps.readiness-evidence.outputs.backup_attestation_artifact_digest }}
           SUPABASE_INTERNAL_URL: ${{ vars.SUPABASE_INTERNAL_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -116,6 +494,7 @@ jobs:
           SUPER_ADMIN_VERIFICATION_EMAIL: ${{ secrets.SUPER_ADMIN_VERIFICATION_EMAIL }}
           SUPER_ADMIN_VERIFICATION_SECRET: ${{ secrets.SUPER_ADMIN_VERIFICATION_SECRET }}
         run: |
+          set -euo pipefail
           test -n "$SSH_USER"
           test -n "$APP_DIR"
           SUPABASE_INTERNAL_URL_B64="$(printf '%s' "${SUPABASE_INTERNAL_URL:-}" | base64 -w0)"
@@ -158,6 +537,24 @@ jobs:
           unset derived_secret
           unset ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON
           unset ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET
+          test -f "$PRODUCTION_READINESS_ATTESTATION_FILE"
+          test ! -L "$PRODUCTION_READINESS_ATTESTATION_FILE"
+          PRODUCTION_READINESS_ATTESTATION_BYTES="$(wc -c < "$PRODUCTION_READINESS_ATTESTATION_FILE" | tr -d '[:space:]')"
+          PRODUCTION_READINESS_ATTESTATION_ACTUAL_SHA256="$(sha256sum "$PRODUCTION_READINESS_ATTESTATION_FILE" | awk '{ print $1 }')"
+          [[ "$PRODUCTION_READINESS_ATTESTATION_BYTES" =~ ^[1-9][0-9]*$ ]]
+          test "$PRODUCTION_READINESS_ATTESTATION_BYTES" -le 1048576
+          test "$PRODUCTION_READINESS_ATTESTATION_ACTUAL_SHA256" = "$PRODUCTION_READINESS_ATTESTATION_SHA256"
+          [[ "$PRODUCTION_READINESS_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_READINESS_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_READINESS_REPORT_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_BACKUP_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_BACKUP_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$PRODUCTION_BACKUP_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           if [ "${MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:-false}" != "true" ]; then
             MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED=false
           fi
@@ -180,6 +577,17 @@ jobs:
           APP_PORT="${APP_PORT:-3000}"
           export \
             APP_DIR APP_NAME APP_PORT APP_BRANCH EXPECTED_DEPLOY_SHA \
+            PRODUCTION_READINESS_ATTESTATION_FILE \
+            PRODUCTION_READINESS_ATTESTATION_SHA256 \
+            PRODUCTION_READINESS_RUN_ID PRODUCTION_READINESS_RUN_ATTEMPT \
+            PRODUCTION_READINESS_REPORT_ARTIFACT_ID \
+            PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST \
+            PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID \
+            PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST \
+            PRODUCTION_BACKUP_RUN_ID PRODUCTION_BACKUP_ARTIFACT_ID \
+            PRODUCTION_BACKUP_ARTIFACT_DIGEST \
+            PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID \
+            PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST \
             SUPABASE_INTERNAL_URL_B64 NEXT_PUBLIC_SUPABASE_URL_B64 \
             NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 SUPABASE_SERVICE_ROLE_KEY_B64 \
             GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64 \
@@ -204,6 +612,9 @@ jobs:
             WEB_PUSH_SUBJECT SUPER_ADMIN_ACCOUNT SUPER_ADMIN_PASSWORD \
             SUPER_ADMIN_VERIFICATION_EMAIL SUPER_ADMIN_VERIFICATION_SECRET
           DEPLOY_PAYLOAD_B64="$(node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { readFileSync } = require("node:fs");
+
           const keys = [
             "APP_DIR", "APP_NAME", "APP_PORT", "APP_BRANCH",
             "EXPECTED_DEPLOY_SHA", "SUPABASE_INTERNAL_URL_B64",
@@ -231,12 +642,55 @@ jobs:
             "SUPER_ADMIN_VERIFICATION_EMAIL", "SUPER_ADMIN_VERIFICATION_SECRET",
           ];
           const values = Object.fromEntries(keys.map((key) => [key, process.env[key] ?? ""]));
-          process.stdout.write(Buffer.from(JSON.stringify({ schemaVersion: 1, values })).toString("base64"));
+          const required = (key, pattern) => {
+            const value = process.env[key] ?? "";
+            if (!pattern.test(value)) process.exit(1);
+            return value;
+          };
+          const positiveDecimal = /^[1-9][0-9]*$/;
+          const sha256Digest = /^sha256:[0-9a-f]{64}$/;
+          const sha256 = /^[0-9a-f]{64}$/;
+          const canonicalBytes = readFileSync(process.env.PRODUCTION_READINESS_ATTESTATION_FILE ?? "");
+          if (canonicalBytes.length <= 0 || canonicalBytes.length > 1048576) process.exit(1);
+          const canonicalSha256 = createHash("sha256").update(canonicalBytes).digest("hex");
+          if (canonicalSha256 !== required("PRODUCTION_READINESS_ATTESTATION_SHA256", sha256)) process.exit(1);
+          const releaseAttestation = {
+            schemaVersion: 1,
+            targetSha: values.EXPECTED_DEPLOY_SHA,
+            readinessRunId: required("PRODUCTION_READINESS_RUN_ID", positiveDecimal),
+            readinessRunAttempt: required("PRODUCTION_READINESS_RUN_ATTEMPT", positiveDecimal),
+            readinessReportArtifactId: required("PRODUCTION_READINESS_REPORT_ARTIFACT_ID", positiveDecimal),
+            readinessReportArtifactDigest: required("PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST", sha256Digest),
+            readinessAttestationArtifactId: required("PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID", positiveDecimal),
+            readinessAttestationArtifactDigest: required("PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST", sha256Digest),
+            backupRunId: required("PRODUCTION_BACKUP_RUN_ID", positiveDecimal),
+            backupArtifactId: required("PRODUCTION_BACKUP_ARTIFACT_ID", positiveDecimal),
+            backupArtifactDigest: required("PRODUCTION_BACKUP_ARTIFACT_DIGEST", sha256Digest),
+            backupAttestationArtifactId: required("PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID", positiveDecimal),
+            backupAttestationArtifactDigest: required("PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST", sha256Digest),
+            canonicalSha256,
+            canonicalBytesBase64: canonicalBytes.toString("base64"),
+          };
+          process.stdout.write(Buffer.from(JSON.stringify({ schemaVersion: 1, values, releaseAttestation })).toString("base64"));
           NODE
           )"
           test -n "$DEPLOY_PAYLOAD_B64"
+          rm -f -- "$PRODUCTION_READINESS_ATTESTATION_FILE"
           unset \
             APP_DIR APP_NAME APP_PORT APP_BRANCH EXPECTED_DEPLOY_SHA \
+            PRODUCTION_READINESS_ATTESTATION_FILE \
+            PRODUCTION_READINESS_ATTESTATION_SHA256 \
+            PRODUCTION_READINESS_ATTESTATION_BYTES \
+            PRODUCTION_READINESS_ATTESTATION_ACTUAL_SHA256 \
+            PRODUCTION_READINESS_RUN_ID PRODUCTION_READINESS_RUN_ATTEMPT \
+            PRODUCTION_READINESS_REPORT_ARTIFACT_ID \
+            PRODUCTION_READINESS_REPORT_ARTIFACT_DIGEST \
+            PRODUCTION_READINESS_ATTESTATION_ARTIFACT_ID \
+            PRODUCTION_READINESS_ATTESTATION_ARTIFACT_DIGEST \
+            PRODUCTION_BACKUP_RUN_ID PRODUCTION_BACKUP_ARTIFACT_ID \
+            PRODUCTION_BACKUP_ARTIFACT_DIGEST \
+            PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_ID \
+            PRODUCTION_BACKUP_ATTESTATION_ARTIFACT_DIGEST \
             SUPABASE_INTERNAL_URL SUPABASE_INTERNAL_URL_B64 \
             NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_URL_B64 \
             NEXT_PUBLIC_SUPABASE_ANON_KEY NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 \
