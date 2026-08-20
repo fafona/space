@@ -568,10 +568,7 @@ jobs:
           set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
           test -n "$repository_dir"
-          case "$FAOLLA_READINESS_WORKTREE" in
-            /tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*) ;;
-            *) exit 1 ;;
-          esac
+          [[ "$FAOLLA_READINESS_WORKTREE" =~ ^/tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]
           test -d "$repository_dir"
           test ! -e "$FAOLLA_READINESS_WORKTREE"
           test "$(git -C "$repository_dir" rev-parse --is-inside-work-tree)" = "true"
@@ -1089,10 +1086,7 @@ jobs:
             "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_READINESS_WORKTREE=$REMOTE_READINESS_WORKTREE bash -s" <<'REMOTE'
           set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
-          case "$FAOLLA_READINESS_WORKTREE" in
-            /tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*) ;;
-            *) exit 1 ;;
-          esac
+          [[ "$FAOLLA_READINESS_WORKTREE" =~ ^/tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]
           if [ -e "$FAOLLA_READINESS_WORKTREE" ]; then
             git -C "$repository_dir" worktree remove --force "$FAOLLA_READINESS_WORKTREE"
           fi
