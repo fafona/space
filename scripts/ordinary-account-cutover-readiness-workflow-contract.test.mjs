@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { canonicalJsonBytes } from "./production-release-attestation.mjs";
+
 const workflow = await readFile(
   new URL("../.github/workflows/ordinary-account-cutover-readiness.yml", import.meta.url),
   "utf8",
@@ -58,6 +60,20 @@ function extractRunBlocks() {
   return blocks;
 }
 
+function sourceBetweenMarkers(startMarker, endMarker) {
+  const start = workflow.indexOf(startMarker);
+  const end = workflow.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0, `missing workflow marker: ${startMarker}`);
+  assert.ok(end > start, `missing workflow marker: ${endMarker}`);
+  return workflow
+    .slice(start + startMarker.length, end)
+    .replace(/^\r?\n/, "")
+    .split(/\r?\n/)
+    .map((line) => line.startsWith("          ") ? line.slice(10) : line)
+    .join("\n")
+    .replace(/\n\s*$/, "");
+}
+
 function resolveExecutable(candidates, versionArguments = ["--version"]) {
   for (const candidate of candidates) {
     if (!candidate) continue;
@@ -96,6 +112,133 @@ function runEmbeddedNode(source, arguments_, environment) {
       input: source,
     },
   );
+}
+
+function validCheckerReport() {
+  return {
+    ok: true,
+    schemaVersion: 1,
+    mode: "read_only",
+    databaseContainer: "supabase-db",
+    databaseIdentity: {
+      dbName: "postgres",
+      dbOid: "16384",
+      systemId: "7612345678901234567",
+      primary: true,
+    },
+    databaseActorReady: true,
+    databaseIdentityReady: true,
+    baselineReady: true,
+    runtimeRpcHardeningReady: true,
+    migrationsReady: true,
+    functionMetadataReady: true,
+    functionAclReady: true,
+    registryAclReady: true,
+    objectContractsReady: true,
+    readiness: {
+      schemaVersion: 1,
+      asOf: "2026-08-20T15:00:00.000Z",
+      readyForCutover: true,
+      merchantRecordCount: 9,
+      merchantAuthoritativeBindingCount: 9,
+      merchantInvalidBindingCount: 0,
+      personalCanonicalBindingCount: 5,
+      personalCanonicalOrphanCount: 0,
+      personalInvalidCanonicalCount: 0,
+      personalDuplicateAuthUserCount: 0,
+      personalDuplicateAccountIdCount: 0,
+      crossAccountTypeOverlapCount: 0,
+      accountIdentifierCollisionCount: 0,
+      staffRegistryOverlapCount: 0,
+      systemSitePrincipalOverlapCount: 0,
+      ordinaryIdentityContentSha256: "1".repeat(64),
+      schemaReady: true,
+      aclReady: true,
+    },
+    status: "ready",
+  };
+}
+
+function blockedCheckerReport() {
+  return {
+    ...validCheckerReport(),
+    baselineReady: false,
+    status: "blocked",
+  };
+}
+
+function validRemoteSource() {
+  return {
+    cleanAfter: true,
+    cleanBefore: true,
+    detached: true,
+    headSha: TARGET_SHA,
+    originMainSha: TARGET_SHA,
+  };
+}
+
+function readinessFrame({
+  status,
+  report = validCheckerReport(),
+  reportBytes,
+  remoteSource = validRemoteSource(),
+  remoteSourceBytes,
+}) {
+  const encodedReport = Buffer.from(
+    reportBytes ?? `${JSON.stringify(report)}\n`,
+  ).toString("base64");
+  const encodedRemoteSource = Buffer.from(
+    remoteSourceBytes ?? `${JSON.stringify(remoteSource)}\n`,
+  ).toString("base64");
+  return [
+    "FAOLLA_ORDINARY_READINESS_FRAME_V2",
+    status,
+    encodedReport,
+    encodedRemoteSource,
+    "",
+  ].join("\n");
+}
+
+async function runReadinessFrameScenario(frame) {
+  const directory = await mkdtemp(join(tmpdir(), "faolla-readiness-frame-"));
+  try {
+    const paths = {
+      frame: join(directory, "frame.txt"),
+      output: join(directory, "output.txt"),
+      report: join(directory, "report.json"),
+      remoteSource: join(directory, "remote-source.json"),
+    };
+    await Promise.all([
+      writeFile(paths.frame, frame),
+      writeFile(paths.output, ""),
+    ]);
+    const source = heredocContaining(
+      "NODE",
+      "readiness_checker_status_report_mismatch",
+    );
+    const result = runEmbeddedNode(source, [paths.frame], {
+      GITHUB_OUTPUT: paths.output,
+      READINESS_REMOTE_SOURCE_PATH: paths.remoteSource,
+      READINESS_REPORT_PATH: paths.report,
+      TARGET_SHA,
+    });
+    const readOptional = async (path) => {
+      try {
+        return await readFile(path);
+      } catch (error) {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      }
+    };
+    return {
+      result,
+      output: await readFile(paths.output, "utf8"),
+      report: await readOptional(paths.report),
+      remoteSource: await readOptional(paths.remoteSource),
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 const chainSource = heredocContaining("NODE", "successful_push_ci_missing");
@@ -497,9 +640,190 @@ test("backup database identity, all baselines, and container stability gate the 
   assert.match(workflow, /--json --fail-on-blocked/);
 });
 
+test("checker stdout, stderr, and exit status are captured without errexit loss", async () => {
+  const captureSource = sourceBetweenMarkers(
+    "# FAOLLA_READINESS_CHECKER_CAPTURE_BEGIN",
+    "# FAOLLA_READINESS_CHECKER_CAPTURE_END",
+  );
+  const validationSource = sourceBetweenMarkers(
+    "# FAOLLA_READINESS_CHECKER_VALIDATION_BEGIN",
+    "# FAOLLA_READINESS_CHECKER_VALIDATION_END",
+  );
+  const bash = resolveBash();
+  const directory = await mkdtemp(join(tmpdir(), "faolla-readiness-capture-"));
+  try {
+    const stdoutPath = join(directory, "checker.stdout");
+    const stderrPath = join(directory, "checker.stderr");
+    const run = ({ status, stdout, stderr = "" }) => {
+      const source = [
+        "set -euo pipefail",
+        `checker_stdout_path=${JSON.stringify(stdoutPath.replaceAll("\\", "/"))}`,
+        `checker_stderr_path=${JSON.stringify(stderrPath.replaceAll("\\", "/"))}`,
+        captureSource,
+        "capture_readiness_checker \"$checker_stdout_path\" \"$checker_stderr_path\" sh -c 'printf \"%s\" \"$STUB_STDOUT\"; printf \"%s\" \"$STUB_STDERR\" >&2; exit \"$STUB_STATUS\"'",
+        validationSource,
+        "printf 'status=%s\\n' \"$checker_status\"",
+      ].join("\n");
+      return spawnSync(bash, ["-c", source], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          STUB_STATUS: String(status),
+          STUB_STDERR: stderr,
+          STUB_STDOUT: stdout,
+        },
+      });
+    };
+
+    for (const status of [0, 2]) {
+      const result = run({
+        status,
+        stdout: `${JSON.stringify(
+          status === 0 ? validCheckerReport() : blockedCheckerReport(),
+        )}\n`,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, `status=${status}\n`);
+      assert.equal(result.stderr, "");
+    }
+
+    for (const value of [
+      { status: 1, stdout: "private-row", stderr: "private-error" },
+      { status: 3, stdout: "private-row", stderr: "private-error" },
+      { status: 0, stdout: "{}\n", stderr: "private-warning" },
+      { status: 2, stdout: "{}\n", stderr: "private-warning" },
+      { status: 0, stdout: "" },
+      { status: 2, stdout: "x".repeat(256 * 1024 + 1) },
+    ]) {
+      const result = run(value);
+      assert.notEqual(result.status, 0, "unsafe checker capture was accepted");
+      assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /private-/);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("V2 readiness frame accepts only status-matched exact aggregate reports", async () => {
+  for (const [status, report] of [
+    ["0", validCheckerReport()],
+    ["2", blockedCheckerReport()],
+  ]) {
+    const scenario = await runReadinessFrameScenario(
+      readinessFrame({ status, report }),
+    );
+    assert.equal(scenario.result.status, 0, scenario.result.stderr);
+    assert.equal(scenario.output, `checker_exit_status=${status}\n`);
+    assert.deepEqual(scenario.report, canonicalJsonBytes(report));
+    assert.deepEqual(
+      scenario.remoteSource,
+      canonicalJsonBytes(validRemoteSource()),
+    );
+  }
+
+  const secret = "private-customer@example.invalid";
+  const nestedSecret = validCheckerReport();
+  nestedSecret.readiness.customer_email = secret;
+  const cases = [
+    readinessFrame({ status: "0", report: blockedCheckerReport() }),
+    readinessFrame({ status: "2", report: validCheckerReport() }),
+    readinessFrame({ status: "1" }),
+    readinessFrame({ status: "3" }),
+    readinessFrame({ status: "02" }),
+    readinessFrame({ status: "", reportBytes: Buffer.alloc(0) }),
+    readinessFrame({ status: "0", reportBytes: Buffer.alloc(0) }),
+    readinessFrame({
+      status: "0",
+      reportBytes: Buffer.alloc(256 * 1024 + 1, 0x78),
+    }),
+    readinessFrame({ status: "0", reportBytes: Buffer.from([0xff, 0xfe]) }),
+    readinessFrame({ status: "0", report: nestedSecret }),
+    readinessFrame({
+      status: "0",
+      reportBytes: `${JSON.stringify(validCheckerReport())}\n{}\n`,
+    }),
+    readinessFrame({
+      status: "0",
+      reportBytes: `${JSON.stringify(validCheckerReport()).replace(
+        '"status":"ready"',
+        '"status":"blocked","status":"ready"',
+      )}\n`,
+    }),
+    readinessFrame({
+      status: "0",
+      remoteSource: { ...validRemoteSource(), detached: false },
+    }),
+  ];
+  for (const frame of cases) {
+    const scenario = await runReadinessFrameScenario(frame);
+    assert.notEqual(scenario.result.status, 0, "hostile V2 frame was accepted");
+    assert.equal(scenario.output, "");
+    assert.equal(scenario.report, null);
+    assert.equal(scenario.remoteSource, null);
+    assert.doesNotMatch(
+      `${scenario.result.stdout}\n${scenario.result.stderr}`,
+      new RegExp(secret.replace(".", "\\.")),
+    );
+  }
+});
+
+test("blocked readiness preserves one report artifact then fails before attestation", () => {
+  const gateMarker = "ordinary_account_readiness_blocked";
+  const gateBlocks = extractRunBlocks().filter((source) =>
+    source.includes(gateMarker),
+  );
+  assert.equal(gateBlocks.length, 1);
+  const bash = resolveBash();
+  for (const [status, accepted] of [["0", true], ["2", false], ["1", false]]) {
+    const result = spawnSync(bash, ["-c", gateBlocks[0]], {
+      encoding: "utf8",
+      env: { ...process.env, CHECKER_EXIT_STATUS: status },
+    });
+    assert.equal(result.status === 0, accepted, result.stderr);
+    if (status === "2") assert.match(result.stderr, new RegExp(gateMarker));
+  }
+
+  const reportUploadIndex = workflow.indexOf("- name: Upload Canonical Readiness Report");
+  const reportVerifyIndex = workflow.indexOf("- name: Verify Uploaded Readiness Report Artifact");
+  const gateIndex = workflow.indexOf("- name: Enforce Ready Cutover State");
+  const attestationBuildIndex = workflow.indexOf("- name: Build Canonical Readiness Attestation");
+  const attestationUploadIndex = workflow.indexOf("- name: Upload Canonical Readiness Attestation");
+  assert.ok(
+    reportUploadIndex < reportVerifyIndex &&
+      reportVerifyIndex < gateIndex &&
+      gateIndex < attestationBuildIndex &&
+      attestationBuildIndex < attestationUploadIndex,
+  );
+  assert.equal(
+    (workflow.slice(0, gateIndex).match(/uses: actions\/upload-artifact@v4/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (workflow.slice(0, gateIndex).match(/uses: actions\/attest@v4/g) ?? []).length,
+    0,
+  );
+  assert.equal(
+    (workflow.slice(gateIndex).match(/uses: actions\/upload-artifact@v4/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (workflow.slice(gateIndex).match(/uses: actions\/attest@v4/g) ?? []).length,
+    2,
+  );
+  const cleanupIndex = workflow.indexOf("- name: Remove Remote Exact Readiness Source");
+  assert.doesNotMatch(
+    workflow.slice(attestationBuildIndex, cleanupIndex),
+    /^\s+if:/m,
+  );
+});
+
 test("readiness report and remote proof are aggregate-only canonical JSON", () => {
-  assert.match(workflow, /FAOLLA_ORDINARY_READINESS_FRAME_V1/);
-  assert.match(workflow, /lines\.length !== 4/);
+  assert.match(workflow, /FAOLLA_ORDINARY_READINESS_FRAME_V2/);
+  assert.match(workflow, /lines\.length !== 5/);
+  assert.match(
+    workflow,
+    /test ! -e "\$REMOTE_FRAME_PATH"\s+test ! -L "\$REMOTE_FRAME_PATH"/,
+  );
   assert.match(workflow, /const expectedReportKeys = \[/);
   assert.match(workflow, /const expectedRemoteKeys = \[/);
   assert.match(workflow, /canonicalJsonBytes\(report\)/);
