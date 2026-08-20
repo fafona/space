@@ -1012,6 +1012,26 @@ test("query cancellation is causally bound to the same HTTP request with locale-
   await t.test("non-English messages with REST SQLSTATE and Auth error_code pass", async () => {
     assert.equal((await runWithResponse()).length, 4);
   });
+  await t.test("a cold GoTrue pool with no pre-existing Auth session still binds through the unique causal request", async () => {
+    const snapshots = successfulProbeSequence();
+    for (const index of [3, 9]) {
+      snapshots[index].serviceSessions = snapshots[index].serviceSessions.filter(
+        (session) => session.databaseUser !== "supabase_auth_admin",
+      );
+    }
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    const evidence = await probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      input,
+      {
+        ...common,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+      },
+    );
+    assert.equal(evidence.length, 4);
+  });
   await t.test("empty standard GoTrue application_name passes but candidate drift fails", async () => {
     const snapshots = successfulProbeSequence();
     snapshots[4].waiters[0].applicationName = "unexpected-auth-app";

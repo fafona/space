@@ -1271,10 +1271,11 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         )
         .map((session) => session.applicationName),
     );
-    if (frozenApplicationNames.size !== 1) {
+    if (frozenApplicationNames.size > 1) {
       fail("readiness_fence_probe_service_application_invalid");
     }
-    const applicationName = [...frozenApplicationNames][0];
+    const preexistingApplicationName =
+      frozenApplicationNames.size === 1 ? [...frozenApplicationNames][0] : null;
     const abortController = new AbortController();
     const externalSignal = dependencies.signal;
     const abortFromExternalSignal = () => abortController.abort();
@@ -1332,7 +1333,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
             notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
             clientAddresses: serviceIdentity.clientAddresses,
             databaseUser: serviceIdentity.databaseUser,
-            applicationName,
+            applicationName: preexistingApplicationName,
             queryMarker: specification.queryMarker,
           });
           accepted = candidates[0];
@@ -1341,6 +1342,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         await poll();
       }
       if (accepted === null) fail("readiness_fence_probe_waiter_missing");
+      const applicationName = accepted.applicationName;
       await cancelWaiter(accepted);
       let responseError = null;
       try {
