@@ -358,7 +358,9 @@ const objectContractMerchantAclEntries = [
     const expected =
       principal === "supabase_admin" ||
       (principal === "authenticated" &&
-        ["SELECT", "INSERT", "UPDATE"].includes(privilegeType));
+        ["SELECT", "INSERT", "UPDATE"].includes(privilegeType)) ||
+      (principal === "service_role" &&
+        ["SELECT", "INSERT", "UPDATE", "DELETE"].includes(privilegeType));
     return {
       principal,
       privilegeType,
@@ -419,7 +421,7 @@ function objectContractDiagnostic() {
             checkMd5,
           }),
         ),
-        aclEntryCount: 10,
+        aclEntryCount: 14,
         unknownPrincipalEntryCount: 0,
         unknownPrivilegeEntryCount: 0,
         aclEntries: objectContractMerchantAclEntries,
@@ -583,7 +585,7 @@ function objectContractMerchantAclDiagnostic() {
     violationCount: 2,
     facts: {
       ...merchant.facts,
-      aclEntryCount: 11,
+      aclEntryCount: 15,
       aclEntries,
     },
     violations: [
@@ -598,6 +600,64 @@ function objectContractMerchantAclDiagnostic() {
     ],
   };
   diagnostic.violationCount = 2;
+  return diagnostic;
+}
+
+function objectContractProductionMerchantAclDiagnostic() {
+  const diagnostic = objectContractDiagnostic();
+  diagnostic.components[4] = {
+    code: "forbidden_binder",
+    ready: true,
+    violationCount: 0,
+    facts: { forbiddenFunctionCount: 0 },
+    violations: [],
+  };
+  const merchant = diagnostic.components[1];
+  const aclEntries = merchant.facts.aclEntries.map((entry) =>
+    entry.principal === "PUBLIC"
+      ? entry
+      : { ...entry, entryCount: 1, ownerGrantorCount: 1 },
+  );
+  const invalidTargets = [
+    ...["postgres", "anon"].flatMap((principal) =>
+      [
+        "INSERT",
+        "SELECT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+      ].map((privilegeType) => `${principal}:${privilegeType}`),
+    ),
+    ...["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"].map(
+      (privilegeType) => `authenticated:${privilegeType}`,
+    ),
+    ...["TRUNCATE", "REFERENCES", "TRIGGER"].map(
+      (privilegeType) => `service_role:${privilegeType}`,
+    ),
+  ];
+  diagnostic.components[1] = {
+    ...merchant,
+    ready: false,
+    violationCount: 22,
+    facts: {
+      ...merchant.facts,
+      aclEntryCount: 35,
+      aclEntries,
+    },
+    violations: [
+      {
+        code: "merchant_acl_entry_count_invalid",
+        target: "public.merchants",
+      },
+      ...invalidTargets.map((target) => ({
+        code: "merchant_acl_matrix_invalid",
+        target,
+      })),
+    ],
+  };
+  diagnostic.violationCount = 22;
   return diagnostic;
 }
 
@@ -788,6 +848,7 @@ test("the production probe is one read-only transaction with the exact runtime h
   );
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190035/);
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190039/);
+  assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190040/);
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /current_user = 'supabase_admin'/,
@@ -1161,7 +1222,7 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     assert.match(wrapper, new RegExp(`--set=${variable}=`));
   }
   const merchantAclNormalization = runner.indexOf(
-    "revoke select, insert, update on table public.merchants from service_role;",
+    "grant select, insert, update, delete on table public.merchants to service_role;",
   );
   const readinessInvocation = runner.indexOf(
     'node "${SCRIPT_DIR}/check-ordinary-account-cutover-readiness.mjs"',
@@ -1176,9 +1237,14 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
   assert.doesNotMatch(wrapper, /result\.stderr/);
   for (const contract of [
     "normalizing the disposable fixture",
+    "exact merchant ACL target replay",
+    "merchant ACL unknown-principal drift",
+    "merchant ACL delegated grant drift",
+    "merchant column ACL drift",
+    "merchant owner drift",
     "guard body drift",
     "observer ACL drift",
-    "restrictive-policy expression drift",
+    "merchant policy drift",
     "merchant TRUNCATE and custom table grants",
     "referenced 038 column rename",
     "personal CHECK-expression drift",
@@ -1339,6 +1405,22 @@ test("database report parser validates the exact bounded baseline shape", () => 
   assert.deepEqual(
     merchantAclBlocked.objectContractDiagnostic,
     objectContractMerchantAclDiagnostic(),
+  );
+  const productionMerchantAclBlocked =
+    parseOrdinaryAccountCutoverDatabaseReport(
+      JSON.stringify(
+        databaseReport({
+          migrationsReady: false,
+          objectContractsReady: false,
+          objectContractDiagnostic:
+            objectContractProductionMerchantAclDiagnostic(),
+        }),
+      ),
+    );
+  assert.equal(productionMerchantAclBlocked.status, "blocked");
+  assert.deepEqual(
+    productionMerchantAclBlocked.objectContractDiagnostic,
+    objectContractProductionMerchantAclDiagnostic(),
   );
   for (const diagnostic of [
     objectContractObserverDiagnostic(),

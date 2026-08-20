@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,15 @@ import {
   canonicalJsonBytes,
   PRODUCTION_RELEASE_BASELINE_KEYS,
 } from "./production-release-attestation.mjs";
+import {
+  assertForwardRepairApplyReport,
+  assertForwardRepairDryRunReport,
+  assertForwardRepairPostDryRunReport,
+  assertForwardRepairPostflightState,
+  assertForwardRepairMigrationSource,
+  assertForwardRepairPreflightState,
+  DATABASE_MIGRATE_FORWARD_REPAIR,
+} from "./database-migrate-forward-repair-contract.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "..");
@@ -409,6 +419,201 @@ function validApplyReport() {
   };
 }
 
+function repairMigration(version, name) {
+  return {
+    version,
+    name,
+    fileName: `${version}_${name}.sql`,
+  };
+}
+
+const REPAIR_PREVIOUS_MIGRATIONS = [
+  repairMigration("202608190038", "ordinary_account_recovery_observer"),
+  repairMigration("202608190039", "runtime_rpc_execute_acl_hardening"),
+];
+const REPAIR_TARGET_MIGRATION = repairMigration(
+  DATABASE_MIGRATE_FORWARD_REPAIR.version,
+  DATABASE_MIGRATE_FORWARD_REPAIR.name,
+);
+const REPAIR_LATER_MIGRATION = repairMigration(
+  "202608200041",
+  "unrelated_later_migration",
+);
+
+function forwardRepairDryRunReport() {
+  const selected = [
+    ...deepClone(REPAIR_PREVIOUS_MIGRATIONS),
+    deepClone(REPAIR_TARGET_MIGRATION),
+  ];
+  return {
+    ok: true,
+    schemaVersion: 1,
+    mode: "dry_run",
+    databaseContainer: CONTAINER_NAME,
+    through: DATABASE_MIGRATE_FORWARD_REPAIR.version,
+    effectiveThrough: DATABASE_MIGRATE_FORWARD_REPAIR.version,
+    registryExists: true,
+    discovered: [...deepClone(selected), deepClone(REPAIR_LATER_MIGRATION)],
+    selected,
+    registeredVersions: REPAIR_PREVIOUS_MIGRATIONS.map(
+      (migration) => migration.version,
+    ),
+    registered: REPAIR_PREVIOUS_MIGRATIONS.map(({ version, name }) => ({
+      version,
+      name,
+    })),
+    pending: [deepClone(REPAIR_TARGET_MIGRATION)],
+    executed: [],
+    status: "dry_run",
+  };
+}
+
+function forwardRepairApplyReport() {
+  const report = forwardRepairDryRunReport();
+  return {
+    ...report,
+    mode: "apply",
+    registeredVersions: report.selected.map((migration) => migration.version),
+    registered: report.selected.map(({ version, name }) => ({ version, name })),
+    executed: [deepClone(REPAIR_TARGET_MIGRATION)],
+    status: "applied",
+  };
+}
+
+function forwardRepairPostDryRunReport() {
+  const report = forwardRepairDryRunReport();
+  return {
+    ...report,
+    registeredVersions: report.selected.map((migration) => migration.version),
+    registered: report.selected.map(({ version, name }) => ({ version, name })),
+    pending: [],
+  };
+}
+
+const REPAIR_ACL_PRINCIPALS = [
+  "PUBLIC",
+  "supabase_admin",
+  "postgres",
+  "anon",
+  "authenticated",
+  "service_role",
+];
+const REPAIR_TABLE_PRIVILEGES = [
+  "INSERT",
+  "SELECT",
+  "UPDATE",
+  "DELETE",
+  "TRUNCATE",
+  "REFERENCES",
+  "TRIGGER",
+];
+
+function forwardRepairPreflightState() {
+  const invalidTargets = [
+    ...["postgres", "anon"].flatMap((principal) =>
+      REPAIR_TABLE_PRIVILEGES.map(
+        (privilegeType) => `${principal}:${privilegeType}`,
+      ),
+    ),
+    ...["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"].map(
+      (privilegeType) => `authenticated:${privilegeType}`,
+    ),
+    ...["TRUNCATE", "REFERENCES", "TRIGGER"].map(
+      (privilegeType) => `service_role:${privilegeType}`,
+    ),
+  ];
+  const componentCodes = [
+    "observer_schema",
+    "merchant_contract",
+    "personal_contract",
+    "registry_structure",
+    "forbidden_binder",
+    "runtime_rpc_function_default_acl",
+  ];
+  const components = componentCodes.map((code, index) => ({
+    code,
+    ready: index !== 1,
+    violationCount: index === 1 ? 22 : 0,
+    facts: index === 1
+      ? {
+          aclEntryCount: 35,
+          unknownPrincipalEntryCount: 0,
+          unknownPrivilegeEntryCount: 0,
+          aclEntries: REPAIR_ACL_PRINCIPALS.flatMap((principal) =>
+            REPAIR_TABLE_PRIVILEGES.map((privilegeType) => {
+              const count = principal === "PUBLIC" ? 0 : 1;
+              return {
+                principal,
+                privilegeType,
+                entryCount: count,
+                ownerGrantorCount: count,
+                grantableCount: 0,
+              };
+            }),
+          ),
+        }
+      : {},
+    violations: index === 1
+      ? [
+          {
+            code: "merchant_acl_entry_count_invalid",
+            target: "public.merchants",
+          },
+          ...invalidTargets.map((target) => ({
+            code: "merchant_acl_matrix_invalid",
+            target,
+          })),
+        ]
+      : [],
+  }));
+  return {
+    status: "blocked",
+    databaseActorReady: true,
+    databaseIdentityReady: true,
+    baselineReady: true,
+    runtimeRpcHardeningReady: true,
+    migrationsReady: false,
+    functionMetadataReady: true,
+    functionAclReady: true,
+    registryAclReady: true,
+    objectContractsReady: false,
+    readiness: {
+      readyForCutover: true,
+      schemaReady: true,
+      aclReady: true,
+    },
+    objectContractDiagnostic: {
+      schemaVersion: 1,
+      contract: "ordinary_account_object_contract_v1",
+      ready: false,
+      componentCount: 6,
+      failedComponentCount: 1,
+      violationCount: 22,
+      components,
+    },
+  };
+}
+
+function forwardRepairPostflightState() {
+  return {
+    status: "ready",
+    databaseActorReady: true,
+    databaseIdentityReady: true,
+    baselineReady: true,
+    runtimeRpcHardeningReady: true,
+    migrationsReady: true,
+    functionMetadataReady: true,
+    functionAclReady: true,
+    registryAclReady: true,
+    objectContractsReady: true,
+    readiness: {
+      readyForCutover: true,
+      schemaReady: true,
+      aclReady: true,
+    },
+  };
+}
+
 async function runReportScenario(source, report, mutate = () => {}) {
   return withTemporaryDirectory("faolla-migrate-report-", async (directory) => {
     const value = deepClone(report);
@@ -793,4 +998,227 @@ test("remote worktree and local evidence are always cleaned without broad deleti
   assert.match(workflow, /rm -f -- "\$BACKUP_ATTESTATION_PATH" "\$BACKUP_SUMMARY_PATH" "\$MIGRATION_REPORT_PATH"/);
   assert.doesNotMatch(workflow, /rm\s+-rf|rm\s+-fr/);
   assert.doesNotMatch(workflow, /\beval\b/);
+});
+
+test("the blocked merchant ACL repair is an explicit exact allowlisted 040 mode", async () => {
+  for (const input of [
+    "forward_repair_confirmed",
+    "forward_repair_confirmation",
+  ]) assert.match(workflow, new RegExp(`^      ${input}:`, "m"));
+  assert.match(
+    workflow,
+    /FORWARD_REPAIR_CONFIRMED: \$\{\{ inputs\.forward_repair_confirmed \}\}/,
+  );
+  assert.match(
+    workflow,
+    /FORWARD_REPAIR_CONFIRMATION: \$\{\{ inputs\.forward_repair_confirmation \}\}/,
+  );
+  assert.match(workflow, /APPLY_MERCHANT_ACL_FORWARD_REPAIR_202608190040/);
+  assert.equal(
+    DATABASE_MIGRATE_FORWARD_REPAIR.path,
+    "scripts/supabase-migrations/" +
+      "202608190040_merchant_acl_contract_hardening.sql",
+  );
+  assert.equal(DATABASE_MIGRATE_FORWARD_REPAIR.version, "202608190040");
+  assert.equal(
+    DATABASE_MIGRATE_FORWARD_REPAIR.name,
+    "merchant_acl_contract_hardening",
+  );
+  assert.equal(
+    DATABASE_MIGRATE_FORWARD_REPAIR.fileName,
+    "202608190040_merchant_acl_contract_hardening.sql",
+  );
+  assert.equal(
+    DATABASE_MIGRATE_FORWARD_REPAIR.confirmation,
+    "APPLY_MERCHANT_ACL_FORWARD_REPAIR_202608190040",
+  );
+  assert.match(
+    workflow,
+    /test "\$FORWARD_REPAIR_CONFIRMATION" = \\\r?\n                "APPLY_MERCHANT_ACL_FORWARD_REPAIR_202608190040"/,
+  );
+  assert.match(
+    workflow,
+    /false\) test -z "\$FORWARD_REPAIR_CONFIRMATION" ;;/,
+  );
+  assert.match(
+    workflow,
+    /test "\$THROUGH_VERSION" = "202608190040"/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /inputs\.forward_repair_(?:version|name|path|file|sha|hash)/,
+  );
+  assert.match(
+    workflow,
+    /forward_repair_confirmed:\r?\n        description:[^\n]+\r?\n        required: true\r?\n        type: boolean\r?\n        default: false/,
+  );
+  assert.match(
+    workflow,
+    /else\r?\n            FAOLLA_EXPECTED_DATABASE_NAME=[\s\S]*?--json --fail-on-blocked > "\$preflight_report_path"/,
+  );
+  assert.match(workflow, /database-migrate-forward-repair-contract\.mjs/);
+  assert.match(workflow, /assertForwardRepairMigrationSource/);
+  assert.match(workflow, /assertForwardRepairPreflightReport/);
+  assert.match(workflow, /assertForwardRepairDryRunReport/);
+  assert.match(workflow, /assertForwardRepairApplyReport/);
+  assert.match(workflow, /assertForwardRepairPostflightReport/);
+  assert.match(workflow, /assertForwardRepairPostDryRunReport/);
+  assert.match(
+    DATABASE_MIGRATE_FORWARD_REPAIR.sha256 ?? "",
+    /^[0-9a-f]{64}$/,
+  );
+  const migrationBytes = await readFile(
+    join(repositoryRoot, DATABASE_MIGRATE_FORWARD_REPAIR.path),
+  );
+  assert.equal(
+    createHash("sha256").update(migrationBytes).digest("hex"),
+    DATABASE_MIGRATE_FORWARD_REPAIR.sha256,
+  );
+  await assert.doesNotReject(() =>
+    assertForwardRepairMigrationSource(repositoryRoot),
+  );
+});
+
+test("forward repair dry-run accepts only the exact prefix and sole pending 040", () => {
+  assert.doesNotThrow(() =>
+    assertForwardRepairDryRunReport(
+      forwardRepairDryRunReport(),
+      CONTAINER_NAME,
+    ),
+  );
+  const mutations = [
+    (report) => { report.through = "202608190039"; },
+    (report) => { report.effectiveThrough = "202608190039"; },
+    (report) => { report.registryExists = false; },
+    (report) => { report.selected.splice(1, 1); },
+    (report) => { report.registeredVersions.splice(0, 1); },
+    (report) => { report.registered[0].name = "substituted"; },
+    (report) => { report.registeredVersions.push(DATABASE_MIGRATE_FORWARD_REPAIR.version); },
+    (report) => { report.pending = []; },
+    (report) => { report.pending.push(deepClone(REPAIR_LATER_MIGRATION)); },
+    (report) => { report.pending[0].name = "substituted"; },
+    (report) => { report.executed.push(deepClone(REPAIR_TARGET_MIGRATION)); },
+    (report) => { report.databaseContainer = "other-db"; },
+  ];
+  for (const mutate of mutations) {
+    const report = forwardRepairDryRunReport();
+    mutate(report);
+    assert.throws(() =>
+      assertForwardRepairDryRunReport(report, CONTAINER_NAME),
+    );
+  }
+});
+
+test("forward repair apply and post dry-run bind exact execution and registry state", () => {
+  assert.doesNotThrow(() =>
+    assertForwardRepairApplyReport(
+      forwardRepairApplyReport(),
+      CONTAINER_NAME,
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertForwardRepairPostDryRunReport(
+      forwardRepairPostDryRunReport(),
+      CONTAINER_NAME,
+    ),
+  );
+  const applyMutations = [
+    (report) => { report.status = "up_to_date"; },
+    (report) => { report.pending = []; },
+    (report) => { report.executed = []; },
+    (report) => { report.executed.push(deepClone(REPAIR_LATER_MIGRATION)); },
+    (report) => { report.registeredVersions.pop(); },
+    (report) => { report.registered.pop(); },
+  ];
+  for (const mutate of applyMutations) {
+    const report = forwardRepairApplyReport();
+    mutate(report);
+    assert.throws(() =>
+      assertForwardRepairApplyReport(report, CONTAINER_NAME),
+    );
+  }
+  const postMutations = [
+    (report) => { report.pending.push(deepClone(REPAIR_TARGET_MIGRATION)); },
+    (report) => { report.executed.push(deepClone(REPAIR_TARGET_MIGRATION)); },
+    (report) => { report.registeredVersions.pop(); },
+    (report) => { report.registered.pop(); },
+  ];
+  for (const mutate of postMutations) {
+    const report = forwardRepairPostDryRunReport();
+    mutate(report);
+    assert.throws(() =>
+      assertForwardRepairPostDryRunReport(report, CONTAINER_NAME),
+    );
+  }
+});
+
+test("forward repair preflight accepts only the frozen merchant ACL blocker", () => {
+  assert.doesNotThrow(() =>
+    assertForwardRepairPreflightState(forwardRepairPreflightState()),
+  );
+  const mutations = [
+    (state) => { state.status = "ready"; },
+    (state) => { state.databaseActorReady = false; },
+    (state) => { state.databaseIdentityReady = false; },
+    (state) => { state.baselineReady = false; },
+    (state) => { state.runtimeRpcHardeningReady = false; },
+    (state) => { state.migrationsReady = true; },
+    (state) => { state.functionMetadataReady = false; },
+    (state) => { state.functionAclReady = false; },
+    (state) => { state.registryAclReady = false; },
+    (state) => { state.objectContractsReady = true; },
+    (state) => { state.readiness.readyForCutover = false; },
+    (state) => { state.objectContractDiagnostic.failedComponentCount = 2; },
+    (state) => { state.objectContractDiagnostic.components[0].ready = false; },
+    (state) => { state.objectContractDiagnostic.components[1].facts.aclEntryCount = 34; },
+    (state) => { state.objectContractDiagnostic.components[1].facts.unknownPrincipalEntryCount = 1; },
+    (state) => { state.objectContractDiagnostic.components[1].facts.aclEntries[0].entryCount = 1; },
+    (state) => { state.objectContractDiagnostic.components[1].violations.pop(); },
+    (state) => { state.objectContractDiagnostic.components[1].violations[1].target = "anon:INSERT"; },
+  ];
+  for (const mutate of mutations) {
+    const state = forwardRepairPreflightState();
+    mutate(state);
+    assert.throws(() => assertForwardRepairPreflightState(state));
+  }
+});
+
+test("forward repair postflight requires complete readiness without diagnostics", () => {
+  assert.doesNotThrow(() =>
+    assertForwardRepairPostflightState(forwardRepairPostflightState()),
+  );
+  const mutations = [
+    (state) => { state.status = "blocked"; },
+    (state) => { state.databaseActorReady = false; },
+    (state) => { state.migrationsReady = false; },
+    (state) => { state.objectContractsReady = false; },
+    (state) => { state.readiness.readyForCutover = false; },
+    (state) => { state.readiness.schemaReady = false; },
+    (state) => { state.readiness.aclReady = false; },
+    (state) => { state.objectContractDiagnostic = {}; },
+  ];
+  for (const mutate of mutations) {
+    const state = forwardRepairPostflightState();
+    mutate(state);
+    assert.throws(() => assertForwardRepairPostflightState(state));
+  }
+});
+
+test("temporary migration paths use four full-string Bash ERE checks", () => {
+  assert.equal(
+    (workflow.match(
+      /\[\[ "\$FAOLLA_MIGRATION_WORKTREE" =~ \^\/tmp\/faolla-database-migrate-\[1-9\]\[0-9\]\*-\[1-9\]\[0-9\]\*\$ \]\]/g,
+    ) ?? []).length,
+    3,
+  );
+  assert.equal(
+    (workflow.match(
+      /\[\[ "\$FAOLLA_REPORT_DIR" =~ \^\/tmp\/faolla-database-migrate-report-\[1-9\]\[0-9\]\*-\[1-9\]\[0-9\]\*\$ \]\]/g,
+    ) ?? []).length,
+    1,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /\/tmp\/faolla-database-migrate-(?:report-)?\[1-9\]\[0-9\]\*-\[1-9\]\[0-9\]\*\)\s*;;/,
+  );
 });

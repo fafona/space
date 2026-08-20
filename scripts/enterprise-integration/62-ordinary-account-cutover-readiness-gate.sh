@@ -16,10 +16,14 @@ run_psql <<'SQL'
 alter table public.merchants owner to supabase_admin;
 alter table public.faolla_personal_accounts owner to supabase_admin;
 
+set role supabase_admin;
 revoke all privileges on table public.merchants
-  from public, anon, authenticated, service_role,
+  from public, postgres, anon, authenticated, service_role,
        redteam_custom_api, redteam_custom_child cascade;
+grant all privileges on table public.merchants to current_user;
 grant select, insert, update on table public.merchants to authenticated;
+grant select, insert, update, delete on table public.merchants to service_role;
+reset role;
 revoke all privileges on table public.faolla_personal_accounts
   from public, anon, authenticated, service_role,
        redteam_custom_api, redteam_custom_child cascade;
@@ -96,6 +100,53 @@ export FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$(
 )"
 assert_ordinary_readiness_ready
 
+echo '[enterprise-integration] accepting the exact merchant ACL target replay'
+run_sql_file_as_role \
+  "${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql" \
+  supabase_admin
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] rejecting merchant ACL unknown-principal drift'
+run_psql --command \
+  "set role supabase_admin; grant select on table public.merchants to redteam_custom_api; reset role;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "set role supabase_admin; revoke all privileges on table public.merchants from redteam_custom_api cascade; reset role;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] rejecting merchant ACL delegated grant drift'
+run_psql --command \
+  "set role supabase_admin; grant select on table public.merchants to redteam_custom_api with grant option; set role redteam_custom_api; grant select on table public.merchants to redteam_custom_child; reset role;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "set role supabase_admin; revoke all privileges on table public.merchants from redteam_custom_api cascade; reset role;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] rejecting merchant column ACL drift'
+run_psql --command \
+  "set role supabase_admin; grant update(name) on table public.merchants to authenticated; reset role;"
+assert_ordinary_readiness_status blocked
+run_psql --command \
+  "set role supabase_admin; revoke update(name) on table public.merchants from authenticated; reset role;"
+assert_ordinary_readiness_ready
+
+echo '[enterprise-integration] rejecting merchant owner drift'
+run_psql --command \
+  "alter table public.merchants owner to postgres;"
+assert_ordinary_readiness_status blocked
+run_psql <<'SQL'
+alter table public.merchants owner to supabase_admin;
+set role supabase_admin;
+revoke all privileges on table public.merchants
+  from public, postgres, anon, authenticated, service_role,
+       redteam_custom_api, redteam_custom_child cascade;
+grant all privileges on table public.merchants to current_user;
+grant select, insert, update on table public.merchants to authenticated;
+grant select, insert, update, delete on table public.merchants to service_role;
+reset role;
+SQL
+assert_ordinary_readiness_ready
+
 echo '[enterprise-integration] blocking a guard body drift and restoring its exact definition'
 run_psql <<'SQL'
 create or replace function public.faolla_guard_personal_account_binding_v1()
@@ -148,7 +199,7 @@ run_psql --command \
   "set role supabase_admin; revoke execute on function public.faolla_observe_ordinary_account_recovery_v1(uuid,text) from authenticated;"
 assert_ordinary_readiness_ready
 
-echo '[enterprise-integration] blocking exact restrictive-policy expression drift'
+echo '[enterprise-integration] rejecting merchant policy drift'
 run_psql --command \
   "alter policy merchants_system_site_principal_isolation on public.merchants using (id <> 'site-main' and id <> 'redteam-readiness') with check (id <> 'site-main' and id <> 'redteam-readiness');"
 assert_ordinary_readiness_status blocked
