@@ -58,7 +58,7 @@ function installWindowStorage() {
   };
 }
 
-test("persisted browser auth snapshot is mirrored to durable localStorage fallback", () => {
+test("persisted browser auth snapshot remains in the current tab and clears durable legacy copies", () => {
   const harness = installWindowStorage();
   try {
     clearStoredBrowserSupabaseSessionTokens();
@@ -78,7 +78,7 @@ test("persisted browser auth snapshot is mirrored to durable localStorage fallba
     assert.ok(storageKeys.length > 0);
     storageKeys.forEach((key) => {
       assert.match(String(harness.sessionStorage.getItem(key)), /access-token/);
-      assert.match(String(harness.localStorage.getItem(key)), /access-token/);
+      assert.equal(harness.localStorage.getItem(key), null);
     });
     assert.equal(hasStoredBrowserSupabaseSessionTokens(), true);
   } finally {
@@ -86,7 +86,7 @@ test("persisted browser auth snapshot is mirrored to durable localStorage fallba
   }
 });
 
-test("stored browser auth snapshot still counts when only durable localStorage remains", () => {
+test("durable legacy browser auth snapshots are rejected and removed", () => {
   const harness = installWindowStorage();
   try {
     clearStoredBrowserSupabaseSessionTokens();
@@ -101,8 +101,16 @@ test("stored browser auth snapshot still counts when only durable localStorage r
       },
     });
 
+    const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(Boolean);
     harness.sessionStorage.clear();
-    assert.equal(hasStoredBrowserSupabaseSessionTokens(), true);
+    storageKeys.forEach((key) => {
+      harness.localStorage.setItem(
+        key,
+        JSON.stringify({ access_token: "legacy-access", refresh_token: "legacy-refresh" }),
+      );
+    });
+    assert.equal(hasStoredBrowserSupabaseSessionTokens(), false);
+    storageKeys.forEach((key) => assert.equal(harness.localStorage.getItem(key), null));
 
     clearStoredBrowserSupabaseSessionTokens();
     assert.equal(hasStoredBrowserSupabaseSessionTokens(), false);

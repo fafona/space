@@ -5,6 +5,7 @@ import {
   type MerchantEnterpriseMembershipsRouteDependencies,
 } from "@/app/api/merchant-enterprise/memberships/route";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
+import { MERCHANT_AUTH_COOKIE } from "@/lib/merchantAuthSession";
 import {
   loadMerchantEnterpriseMembershipRecords,
   type MerchantEnterpriseMembershipDirectoryClient,
@@ -75,7 +76,7 @@ test("membership directory requires an explicit enterprise token and never falls
   const response = await handleMerchantEnterpriseMembershipsGet(
     new Request(
       "https://www.faolla.com/api/merchant-enterprise/memberships",
-      { headers: { cookie: "merchant-space-merchant-auth=owner-token" } },
+      { headers: { cookie: `${MERCHANT_AUTH_COOKIE}=owner-token` } },
     ),
     dependencies({
       resolveAuthUser: async () => {

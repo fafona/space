@@ -105,7 +105,21 @@ test("prefers runtime origin over stale env when no preferred origin is provided
   }
 });
 
-test("keeps data and blob urls unchanged", () => {
+test("allows only inert inline media and same-origin blob urls", () => {
+  const previousWindow = globalThis.window;
+  Object.assign(globalThis, { window: { location: { origin: "https://faolla.com" } } });
   assert.equal(normalizePublicAssetUrl("data:image/png;base64,abc", "https://faolla.com"), "data:image/png;base64,abc");
-  assert.equal(normalizePublicAssetUrl("blob:http://faolla.com/test", "https://faolla.com"), "blob:http://faolla.com/test");
+  assert.equal(normalizePublicAssetUrl("data:image/svg+xml,<svg onload='x'>", "https://faolla.com"), "");
+  assert.equal(normalizePublicAssetUrl("data:text/html,<script>x</script>", "https://faolla.com"), "");
+  assert.equal(normalizePublicAssetUrl("blob:https://faolla.com/test", "https://faolla.com"), "blob:https://faolla.com/test");
+  assert.equal(normalizePublicAssetUrl("blob:https://attacker.example/test", "https://faolla.com"), "");
+  if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window");
+  else Object.assign(globalThis, { window: previousWindow });
+});
+
+test("rejects executable, insecure, and protocol-relative asset URLs", () => {
+  assert.equal(normalizePublicAssetUrl("javascript:alert(1)"), "");
+  assert.equal(normalizePublicAssetUrl("http://example.com/a.png"), "");
+  assert.equal(normalizePublicAssetUrl("//example.com/a.png"), "");
+  assert.equal(normalizePublicAssetUrl("/\\example.com/a.png"), "");
 });

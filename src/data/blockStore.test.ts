@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { homeBlocks, type Block } from "./homeBlocks";
+import { sanitizeBlocksForRuntime } from "../lib/blocksSanitizer";
 import {
   flushScheduledBlocksToStorage,
   loadBlocksFromStorage,
@@ -45,7 +46,8 @@ function createBlockSet(id: string, text: string): Block[] {
       },
     } as unknown as Block,
   ];
-  return JSON.parse(JSON.stringify(blocks)) as Block[];
+  const cloned = JSON.parse(JSON.stringify(blocks)) as Block[];
+  return sanitizeBlocksForRuntime(cloned).blocks;
 }
 
 function delay(ms: number) {

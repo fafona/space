@@ -5,6 +5,7 @@ import {
   buildButtonLabelPatch,
   DEFAULT_BUTTON_LABEL,
   getButtonHoverAnimationClassName,
+  normalizeButtonNavigationTarget,
   normalizeButtonHoverAnimation,
   resolveButtonJumpBlockId,
   resolveButtonJumpPageId,
@@ -99,4 +100,28 @@ test("buildButtonLabelPatch clears legacy content fields", () => {
     heading: undefined,
     text: undefined,
   });
+});
+
+test("button navigation target rejects executable and malformed schemes", () => {
+  for (const target of [
+    "javascript:alert(1)",
+    "JaVaScRiPt:alert(1)",
+    "java\nscript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "blob:https://example.com/id",
+    "file:///tmp/test",
+    "vbscript:msgbox(1)",
+    "//attacker.example/path",
+    "/\\attacker.example/path",
+    "https:\\attacker.example/path",
+    '#x\"] [onclick="alert(1)',
+  ]) {
+    assert.equal(normalizeButtonNavigationTarget(target), "", target);
+  }
+});
+
+test("button navigation target permits safe anchors, paths, and HTTP links", () => {
+  assert.equal(normalizeButtonNavigationTarget("#section-1"), "#section-1");
+  assert.equal(normalizeButtonNavigationTarget("/booking?step=1"), "/booking?step=1");
+  assert.equal(normalizeButtonNavigationTarget("https://example.com/path"), "https://example.com/path");
 });

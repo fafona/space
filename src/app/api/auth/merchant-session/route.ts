@@ -29,7 +29,6 @@ import {
   assertLegacyMerchantIdentityAllowed,
   isMerchantStaffPrincipalError,
 } from "@/lib/merchantStaffPrincipal.server";
-import { createFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -119,34 +118,6 @@ function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
 
-function readCookieValue(request: Request, name: string) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const prefix = `${name}=`;
-  for (const part of cookieHeader.split(";")) {
-    const trimmed = part.trim();
-    if (!trimmed.startsWith(prefix)) continue;
-    try {
-      return decodeURIComponent(trimmed.slice(prefix.length));
-    } catch {
-      return trimmed.slice(prefix.length);
-    }
-  }
-  return "";
-}
-
-function buildBrowserAuthStorageCookieName(storageKey: string) {
-  return `faolla-auth-storage.${String(storageKey).replace(/[^A-Za-z0-9_-]/g, "_")}`;
-}
-
-function readSupabaseStorageProjectRef() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  try {
-    return new URL(supabaseUrl).hostname.split(".")[0]?.trim() ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function normalizeOAuthCodeVerifier(value: unknown) {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw) return "";
@@ -157,20 +128,6 @@ function normalizeOAuthCodeVerifier(value: unknown) {
     // Fall back to the raw cookie value below.
   }
   return raw.replace(/^"+|"+$/g, "").split("/")[0]?.trim() ?? "";
-}
-
-function readOAuthCodeVerifierFromRequest(request: Request) {
-  const projectRef = readSupabaseStorageProjectRef();
-  const storageKeys = [
-    projectRef ? `sb-${projectRef}-auth-token-code-verifier` : "",
-    projectRef ? `sb-${projectRef}-auth-token-code_verifier` : "",
-  ].filter(Boolean);
-  for (const storageKey of storageKeys) {
-    const cookieValue = readCookieValue(request, buildBrowserAuthStorageCookieName(storageKey));
-    const verifier = normalizeOAuthCodeVerifier(cookieValue);
-    if (verifier) return verifier;
-  }
-  return "";
 }
 
 function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountType | null {
@@ -525,17 +482,8 @@ function clearMerchantSessionCacheFromCandidates(accessTokens: string[], refresh
   });
 }
 
-function shouldIncludeAccountSwitchTokens(request: Request) {
-  try {
-    return new URL(request.url).searchParams.get("accountSwitch") === "1";
-  } catch {
-    return false;
-  }
-}
-
 function toPublicMerchantSessionPayload(
   payload: AuthenticatedMerchantSessionPayload,
-  options?: { includeAccountSwitchTokens?: boolean },
 ): PublicMerchantSessionPayload {
   return {
     authenticated: true,
@@ -543,32 +491,16 @@ function toPublicMerchantSessionPayload(
     accountId: payload.accountId,
     merchantId: payload.merchantId,
     merchantIds: payload.merchantIds,
-    ...(options?.includeAccountSwitchTokens
-      ? {
-          accessToken: payload.accessToken,
-          refreshToken: payload.refreshToken,
-          expiresIn: payload.expiresIn,
-          tokenType: payload.tokenType,
-        }
-      : {}),
     personalServiceConfig: payload.personalServiceConfig,
     personalServicePaused: payload.personalServicePaused,
-    frontendAuthProof: createFrontendAuthProof({
-      accountType: payload.accountType,
-      accountId: payload.accountId ?? payload.merchantId,
-      userId: payload.user.id,
-      email: payload.user.email,
-    }),
+    // Cross-subdomain proof issuance is disabled until a site-scoped,
+    // one-time exchange with bounded audience and replay protection exists.
     user: payload.user,
   };
 }
 
 function respondWithMerchantSession(request: Request, payload: AuthenticatedMerchantSessionPayload) {
-  const response = noStoreJson(
-    toPublicMerchantSessionPayload(payload, {
-      includeAccountSwitchTokens: shouldIncludeAccountSwitchTokens(request),
-    }),
-  );
+  const response = noStoreJson(toPublicMerchantSessionPayload(payload));
   setMerchantAuthCookies(response, {
     accessToken: payload.accessToken,
     refreshToken: payload.refreshToken,
@@ -589,13 +521,7 @@ export async function GET(request: Request) {
     const cached = readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
     if (cached) {
       await assertLegacyMerchantIdentityAllowed(adminSupabase, cached.user);
-      const needsAccountSwitchRefreshToken =
-        shouldIncludeAccountSwitchTokens(request) &&
-        !String(cached.refreshToken ?? "").trim() &&
-        cookieRefreshTokens.length > 0;
-      if (!needsAccountSwitchRefreshToken) {
-        return respondWithMerchantSession(request, cached);
-      }
+      return respondWithMerchantSession(request, cached);
     }
 
     const supabase = createServerSupabaseClient();
@@ -749,7 +675,7 @@ export async function POST(request: Request) {
     if (!accessToken && authCode) {
       const exchanged = await exchangeOAuthCodeForSession(
         authCode,
-        providedCodeVerifier || readOAuthCodeVerifierFromRequest(request),
+        providedCodeVerifier,
       );
       if (exchanged.status === "unavailable") {
         return noStoreJson({ ok: false, error: "merchant_session_google_code_unavailable" }, { status: 503 });

@@ -31,7 +31,7 @@ class MemoryStorage implements Storage {
 }
 
 function withWindowStorageHarness(
-  run: (harness: { sessionStorage: MemoryStorage; localStorage: MemoryStorage }) => void,
+  run: (harness: { sessionStorage: MemoryStorage; localStorage: MemoryStorage; cookieWrites: string[] }) => void,
   options: { cookies?: boolean } = {},
 ) {
   const sessionStorage = new MemoryStorage();
@@ -39,6 +39,7 @@ function withWindowStorageHarness(
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const cookieJar = new Map<string, string>();
+  const cookieWrites: string[] = [];
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
@@ -58,6 +59,7 @@ function withWindowStorageHarness(
           return [...cookieJar.entries()].map(([key, value]) => `${key}=${value}`).join("; ");
         },
         set cookie(value: string) {
+          cookieWrites.push(String(value));
           const [pair, ...attributes] = String(value).split(";");
           const separatorIndex = pair.indexOf("=");
           if (separatorIndex < 0) return;
@@ -74,7 +76,7 @@ function withWindowStorageHarness(
     });
   }
   try {
-    run({ sessionStorage, localStorage });
+    run({ sessionStorage, localStorage, cookieWrites });
   } finally {
     if (typeof previousWindow === "undefined") {
       Reflect.deleteProperty(globalThis, "window");
@@ -95,21 +97,22 @@ function withWindowStorageHarness(
   }
 }
 
-test("browser auth storage adapter mirrors writes into session and local storage", () => {
+test("browser auth storage adapter keeps bearer sessions in the current tab only", () => {
   withWindowStorageHarness(({ sessionStorage, localStorage }) => {
     const adapter = createMirroredBrowserAuthStorageAdapter();
     adapter.setItem("sb-demo-auth-token", '{"access_token":"access-token","refresh_token":"refresh-token"}');
     assert.match(String(sessionStorage.getItem("sb-demo-auth-token")), /access-token/);
-    assert.match(String(localStorage.getItem("sb-demo-auth-token")), /access-token/);
+    assert.equal(localStorage.getItem("sb-demo-auth-token"), null);
   });
 });
 
-test("browser auth storage adapter falls back to localStorage and rehydrates sessionStorage", () => {
+test("browser auth storage adapter rejects and clears legacy localStorage bearer sessions", () => {
   withWindowStorageHarness(({ sessionStorage, localStorage }) => {
     const adapter = createMirroredBrowserAuthStorageAdapter();
     localStorage.setItem("sb-demo-auth-token", '{"access_token":"access-token","refresh_token":"refresh-token"}');
-    assert.match(String(adapter.getItem("sb-demo-auth-token")), /access-token/);
-    assert.match(String(sessionStorage.getItem("sb-demo-auth-token")), /access-token/);
+    assert.equal(adapter.getItem("sb-demo-auth-token"), null);
+    assert.equal(sessionStorage.getItem("sb-demo-auth-token"), null);
+    assert.equal(localStorage.getItem("sb-demo-auth-token"), null);
   });
 });
 
@@ -123,9 +126,9 @@ test("browser auth storage adapter clears both storage layers", () => {
   });
 });
 
-test("browser auth storage adapter writes a compact cookie snapshot for PWA recovery", () => {
+test("browser auth storage adapter never mirrors bearer tokens into cookies", () => {
   withWindowStorageHarness(
-    () => {
+    ({ cookieWrites }) => {
       const adapter = createMirroredBrowserAuthStorageAdapter();
       adapter.setItem(
         "sb-demo-auth-token",
@@ -142,8 +145,10 @@ test("browser auth storage adapter writes a compact cookie snapshot for PWA reco
       );
 
       const cookieValue = readBrowserAuthStorageCookie("sb-demo-auth-token");
-      assert.match(String(cookieValue), /access-token/);
-      assert.doesNotMatch(String(cookieValue), /person@example.com/);
+      assert.equal(cookieValue, null);
+      assert.equal(cookieWrites.some((value) => value.includes("access-token")), false);
+      assert.equal(cookieWrites.some((value) => value.includes("refresh-token")), false);
+      assert.ok(cookieWrites.some((value) => value.includes("Domain=.faolla.com") && value.includes("Max-Age=0")));
 
       adapter.removeItem("sb-demo-auth-token");
       assert.equal(readBrowserAuthStorageCookie("sb-demo-auth-token"), null);
@@ -152,20 +157,38 @@ test("browser auth storage adapter writes a compact cookie snapshot for PWA reco
   );
 });
 
-test("browser auth storage adapter preserves OAuth verifier fallback in cookies", () => {
+test("browser auth storage adapter rejects legacy OAuth verifier cookies", () => {
   withWindowStorageHarness(
-    ({ sessionStorage, localStorage }) => {
+    ({ sessionStorage, localStorage, cookieWrites }) => {
       const adapter = createMirroredBrowserAuthStorageAdapter();
       const key = "sb-demo-auth-token-code-verifier";
       adapter.setItem(key, "oauth-verifier-value");
       sessionStorage.removeItem(key);
       localStorage.removeItem(key);
 
-      assert.equal(readBrowserAuthStorageCookie(key), "oauth-verifier-value");
-      assert.equal(adapter.getItem(key), "oauth-verifier-value");
-      assert.equal(sessionStorage.getItem(key), "oauth-verifier-value");
-      assert.equal(localStorage.getItem(key), "oauth-verifier-value");
+      assert.equal(readBrowserAuthStorageCookie(key), null);
+      assert.equal(adapter.getItem(key), null);
+      assert.equal(sessionStorage.getItem(key), null);
+      assert.equal(localStorage.getItem(key), null);
+      assert.ok(cookieWrites.some((value) => value.includes("Domain=.faolla.com") && value.includes("Max-Age=0")));
     },
     { cookies: true },
   );
+});
+
+test("browser auth storage adapter bounds same-origin OAuth transient persistence", () => {
+  withWindowStorageHarness(({ sessionStorage, localStorage }) => {
+    const adapter = createMirroredBrowserAuthStorageAdapter();
+    const key = "sb-demo-auth-token-code-verifier";
+    adapter.setItem(key, "oauth-verifier-value");
+
+    assert.equal(sessionStorage.getItem(key), null);
+    assert.equal(localStorage.getItem(key), "oauth-verifier-value");
+    assert.equal(adapter.getItem(key), "oauth-verifier-value");
+
+    localStorage.setItem(`${key}.faolla-created-at`, String(Date.now() - 16 * 60 * 1000));
+    assert.equal(adapter.getItem(key), null);
+    assert.equal(localStorage.getItem(key), null);
+    assert.equal(localStorage.getItem(`${key}.faolla-created-at`), null);
+  });
 });

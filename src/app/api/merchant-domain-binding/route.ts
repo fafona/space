@@ -195,7 +195,7 @@ async function isAuthorizedForMerchant(
   supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
-  if (isSuperAdminRequestAuthorized(request)) {
+  if (await isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 

@@ -1,15 +1,10 @@
+import { escapePlainTextAsHtml } from "@/lib/richTextSafety";
+
 export function toRichHtml(value: string | undefined, fallback: string): string {
   const source = value && value.length ? value : fallback;
-  if (/<[a-z][\s\S]*>/i.test(source)) {
-    return source;
-  }
-
-  const escaped = source
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-
-  return escaped.replaceAll("\n", "<br />");
+  // Emergency trust boundary: stored merchant markup is rendered as inert
+  // text until a reviewed allowlist sanitizer is deployed.
+  return escapePlainTextAsHtml(source);
 }
 
 const TEXT_COLOR_STYLE_PROPERTIES = new Set([

@@ -16,6 +16,36 @@ export type ButtonJumpBlock = {
 export const BUTTON_BLOCK_MIN_WIDTH = 18;
 export const BUTTON_BLOCK_MIN_HEIGHT = 18;
 
+const SAFE_BUTTON_ANCHOR_PATTERN = /^[\p{L}\p{N}_-]{1,128}$/u;
+
+export function normalizeButtonNavigationTarget(value: unknown) {
+  const target = typeof value === "string" ? value.trim() : "";
+  if (!target || target.length > 2048 || /[\u0000-\u001f\u007f]/.test(target)) return "";
+  if (target.includes("\\")) return "";
+  if (/^(?:javascript|data|blob|file|vbscript):/i.test(target)) return "";
+  if (target.startsWith("//")) return "";
+
+  if (/^https?:/i.test(target)) {
+    try {
+      const url = new URL(target);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  if (/^(?:\/|\.\/|\.\.\/|\?)/.test(target)) return target;
+  if (target.startsWith("#")) {
+    const anchor = target.slice(1);
+    return SAFE_BUTTON_ANCHOR_PATTERN.test(anchor) ? `#${anchor}` : "";
+  }
+  return SAFE_BUTTON_ANCHOR_PATTERN.test(target) ? target : "";
+}
+
+export function isSafeButtonAnchor(value: unknown) {
+  return SAFE_BUTTON_ANCHOR_PATTERN.test(typeof value === "string" ? value : "");
+}
+
 export const BUTTON_HOVER_ANIMATION_OPTIONS: Array<{
   value: ButtonHoverAnimation;
   label: string;

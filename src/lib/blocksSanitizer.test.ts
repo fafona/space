@@ -55,6 +55,23 @@ test("drops oversized inline image/audio data URLs", () => {
   assert.ok(result.removed >= 3);
 });
 
+test("drops inline SVG and reduces stored HTML to plain text", () => {
+  const input = [
+    makeCommonBlock({
+      commonTextBoxes: [{ html: '<img src=x onerror="steal()"><b>Hello</b><script>steal()</script>' }],
+      icon: "data:image/svg+xml,<svg onload='steal()'></svg>",
+    }),
+  ];
+
+  const result = sanitizeBlocksForRuntime(input);
+  const props = result.blocks[0].props as Record<string, unknown>;
+  const boxes = props.commonTextBoxes as Array<{ html: string }>;
+
+  assert.equal(boxes[0]?.html, "Hello");
+  assert.equal(props.icon, "");
+  assert.ok(result.removed >= 3);
+});
+
 test("keeps current schemaVersion and normal URLs unchanged", () => {
   const smallImage = `data:image/png;base64,${"c".repeat(1024)}`;
   const input = [

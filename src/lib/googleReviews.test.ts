@@ -3,9 +3,25 @@ import test from "node:test";
 import {
   normalizeGoogleBusinessProfileReviewList,
   normalizeGoogleReviewAverage,
+  normalizeGoogleReviewHttpsUrl,
   normalizeGoogleReviewItems,
   normalizeGoogleReviewRating,
 } from "./googleReviews";
+
+test("Google review links require HTTPS", () => {
+  assert.equal(
+    normalizeGoogleReviewHttpsUrl("https://maps.google.com/place/1"),
+    "https://maps.google.com/place/1",
+  );
+  for (const value of [
+    "http://maps.google.com",
+    "javascript:alert(1)",
+    "data:text/html,x",
+    "//maps.google.com",
+  ]) {
+    assert.equal(normalizeGoogleReviewHttpsUrl(value), "", value);
+  }
+});
 
 test("normalizes Google review ratings and aggregate counts", () => {
   assert.equal(normalizeGoogleReviewRating("FIVE"), 5);

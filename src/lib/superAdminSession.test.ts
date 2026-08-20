@@ -1,44 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { NextResponse } from "next/server";
 import {
-  resolveSuperAdminCookieDomain,
-  resolveSuperAdminCookieDomainFromHostname,
+  LEGACY_SUPER_ADMIN_SESSION_COOKIE,
+  SUPER_ADMIN_DEVICE_ID_COOKIE,
+  SUPER_ADMIN_SESSION_COOKIE,
+  SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+  clearSuperAdminSessionCookies,
 } from "./superAdminSession";
 
-test("resolveSuperAdminCookieDomainFromHostname folds www portal config back to root domain", () => {
-  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
-  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.faolla.com";
-  try {
-    assert.equal(resolveSuperAdminCookieDomainFromHostname("faolla.com"), "faolla.com");
-    assert.equal(resolveSuperAdminCookieDomainFromHostname("www.faolla.com"), "faolla.com");
-    assert.equal(resolveSuperAdminCookieDomainFromHostname("ops.faolla.com"), "faolla.com");
-  } finally {
-    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+test("super-admin cookie names are host-prefixed", () => {
+  for (const name of [
+    SUPER_ADMIN_SESSION_COOKIE,
+    SUPER_ADMIN_DEVICE_ID_COOKIE,
+    SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+  ]) {
+    assert.match(name, /^__Host-/);
   }
 });
 
-test("resolveSuperAdminCookieDomain uses host header when present", () => {
-  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
-  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.faolla.com";
-  try {
-    const request = new Request("https://www.faolla.com/api/super-admin/auth/complete", {
-      headers: {
-        host: "faolla.com",
-      },
-    });
-    assert.equal(resolveSuperAdminCookieDomain(request), "faolla.com");
-  } finally {
-    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
-  }
-});
-
-test("resolveSuperAdminCookieDomainFromHostname falls back to the live request domain when portal config is stale", () => {
-  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
-  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
-  try {
-    assert.equal(resolveSuperAdminCookieDomainFromHostname("www.faolla.com"), "faolla.com");
-    assert.equal(resolveSuperAdminCookieDomainFromHostname("faolla.com"), "faolla.com");
-  } finally {
-    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
-  }
+test("super-admin cleanup expires new and legacy parent-domain cookies", () => {
+  const response = NextResponse.json({ ok: true });
+  clearSuperAdminSessionCookies(response, new Request("https://console.faolla.com/super-admin/logout"));
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  assert.match(setCookie, new RegExp(`${SUPER_ADMIN_SESSION_COOKIE}=`));
+  assert.match(setCookie, new RegExp(`${LEGACY_SUPER_ADMIN_SESSION_COOKIE}=`));
+  assert.equal((setCookie.match(new RegExp(`${LEGACY_SUPER_ADMIN_SESSION_COOKIE}=`, "g")) ?? []).length, 2);
+  assert.match(setCookie, /Domain=faolla\.com/i);
+  assert.match(setCookie, /Max-Age=0/i);
 });

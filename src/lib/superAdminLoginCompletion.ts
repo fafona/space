@@ -20,14 +20,17 @@ import {
   SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
-  resolveSuperAdminCookieDomain,
-  resolveSuperAdminCookieSecureFlag,
+  expireLegacySuperAdminCookies,
 } from "@/lib/superAdminSession";
+import { isCanonicalSuperAdminRequest } from "@/lib/canonicalSuperAdminRequest";
 
 export async function finalizeSuperAdminLogin(
   challengePayload: SuperAdminChallengePayload,
   options?: { loginIp?: string | null; request?: Request },
 ) {
+  if (!options?.request || !isCanonicalSuperAdminRequest(options.request)) {
+    return NextResponse.json({ error: "super_admin_console_origin_required" }, { status: 421 });
+  }
   const sessionToken = createSuperAdminSessionToken({
     deviceId: challengePayload.deviceId,
     deviceLabel: challengePayload.deviceLabel,
@@ -39,8 +42,10 @@ export async function finalizeSuperAdminLogin(
 
   let replacedDeviceLabel = "";
   const serviceSupabase = createServerSupabaseServiceClient();
-  if (serviceSupabase) {
-    try {
+  if (!serviceSupabase) {
+    return NextResponse.json({ error: "super_admin_trusted_devices_unavailable" }, { status: 503 });
+  }
+  try {
       const { rowId, maxDevices, devices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
       let nextDevices = devices;
 
@@ -73,9 +78,8 @@ export async function finalizeSuperAdminLogin(
           details: challengePayload.deviceDetails ?? null,
         }),
       );
-    } catch {
-      // Keep login available even if the whitelist store is temporarily unavailable.
-    }
+  } catch {
+    return NextResponse.json({ error: "super_admin_trusted_devices_unavailable" }, { status: 503 });
   }
 
   const response = NextResponse.json({
@@ -84,30 +88,26 @@ export async function finalizeSuperAdminLogin(
     deviceLabel: challengePayload.deviceLabel,
     replacedDeviceLabel: replacedDeviceLabel || undefined,
   });
-  const cookieDomain = resolveSuperAdminCookieDomain(options?.request);
-  const secure = resolveSuperAdminCookieSecureFlag(options?.request);
   response.cookies.set(SUPER_ADMIN_SESSION_COOKIE, sessionToken, {
     path: "/",
     maxAge: SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
-    secure,
+    secure: true,
     httpOnly: true,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(SUPER_ADMIN_DEVICE_ID_COOKIE, challengePayload.deviceId, {
     path: "/",
     maxAge: SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
-    secure,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
+    secure: true,
   });
   response.cookies.set(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE, trustedDeviceToken, {
     path: "/",
     maxAge: SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
-    secure,
+    secure: true,
     httpOnly: true,
-    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
+  expireLegacySuperAdminCookies(response);
   return response;
 }

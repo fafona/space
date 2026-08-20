@@ -1,16 +1,21 @@
 import { createHash, createHmac } from "node:crypto";
 import { readSuperAdminVerificationSecret } from "@/lib/superAdminServer";
-import { SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS } from "@/lib/superAdminSession";
+import {
+  SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
+  SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
+} from "@/lib/superAdminSession";
 import type { SuperAdminTrustedDeviceDetails } from "@/lib/superAdminTrustedDevices";
 
 const SUPER_ADMIN_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const SUPER_ADMIN_EMAIL_PROOF_TTL_MS = 15 * 60 * 1000;
 const SUPER_ADMIN_SESSION_TTL_MS = SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS * 1000;
-const SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS = SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS * 1000;
+export const SUPER_ADMIN_TOKEN_VERSION = 2;
 
 type SuperAdminTokenKind = "challenge" | "email-proof" | "session" | "trusted-device";
 
 type SignedSuperAdminTokenPayload = {
+  version: typeof SUPER_ADMIN_TOKEN_VERSION;
   kind: SuperAdminTokenKind;
   issuedAt: number;
   expiresAt: number;
@@ -70,7 +75,7 @@ function readSignedTokenPayload<T extends SignedSuperAdminTokenPayload>(token: s
 
   try {
     const parsed = JSON.parse(base64UrlDecode(encodedPayload)) as T;
-    if (!parsed || parsed.kind !== expectedKind) return null;
+    if (!parsed || parsed.version !== SUPER_ADMIN_TOKEN_VERSION || parsed.kind !== expectedKind) return null;
     if (!Number.isFinite(parsed.issuedAt) || !Number.isFinite(parsed.expiresAt)) return null;
     if (Date.now() > parsed.expiresAt) return null;
     return parsed;
@@ -97,6 +102,7 @@ export function createSuperAdminChallengeToken(input: {
 }) {
   const issuedAt = Date.now();
   const payload: SuperAdminChallengePayload = {
+    version: SUPER_ADMIN_TOKEN_VERSION,
     kind: "challenge",
     issuedAt,
     expiresAt: issuedAt + SUPER_ADMIN_CHALLENGE_TTL_MS,
@@ -118,6 +124,7 @@ export function createSuperAdminEmailProofToken(challengeToken: string) {
   if (!challenge) return "";
   const issuedAt = Date.now();
   const payload: SuperAdminEmailProofPayload = {
+    version: SUPER_ADMIN_TOKEN_VERSION,
     kind: "email-proof",
     issuedAt,
     expiresAt: Math.min(challenge.expiresAt + 5 * 60 * 1000, issuedAt + SUPER_ADMIN_EMAIL_PROOF_TTL_MS),
@@ -135,6 +142,7 @@ export function verifySuperAdminEmailProofToken(proofToken: string, challengeTok
 export function createSuperAdminSessionToken(input: { deviceId: string; deviceLabel: string }) {
   const issuedAt = Date.now();
   const payload: SuperAdminSessionPayload = {
+    version: SUPER_ADMIN_TOKEN_VERSION,
     kind: "session",
     issuedAt,
     expiresAt: issuedAt + SUPER_ADMIN_SESSION_TTL_MS,
@@ -152,6 +160,7 @@ export function readSuperAdminSessionToken(token: string) {
 export function createSuperAdminTrustedDeviceToken(input: { deviceId: string; deviceLabel: string }) {
   const issuedAt = Date.now();
   const payload: SuperAdminTrustedDevicePayload = {
+    version: SUPER_ADMIN_TOKEN_VERSION,
     kind: "trusted-device",
     issuedAt,
     expiresAt: issuedAt + SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS,

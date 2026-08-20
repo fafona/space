@@ -3,6 +3,7 @@ import {
   createSuperAdminChallengeToken,
   normalizeSuperAdminNextPath,
   readSuperAdminTrustedDeviceToken,
+  SUPER_ADMIN_TOKEN_VERSION,
 } from "@/lib/superAdminVerification";
 import {
   createServerSupabaseAuthClient,
@@ -13,7 +14,6 @@ import {
   maskEmailAddress,
   readRequestClientIp,
   readSuperAdminVerificationEmail,
-  resolvePublicOrigin,
   validateSuperAdminCredentials,
 } from "@/lib/superAdminServer";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
@@ -25,6 +25,10 @@ import {
   pickLeastRecentlyVerifiedSuperAdminTrustedDevice,
 } from "@/lib/superAdminTrustedDevices";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
+import {
+  isCanonicalSuperAdminRequest,
+  resolveCanonicalSuperAdminOrigin,
+} from "@/lib/canonicalSuperAdminRequest";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -63,7 +67,17 @@ function readRequestDeviceDetails(request: Request, rawDetails: unknown) {
   });
 }
 
+export function buildSuperAdminVerificationRedirectUrl(nextPath: string, challengeToken: string) {
+  const redirectUrl = new URL("/super-admin/login", resolveCanonicalSuperAdminOrigin());
+  redirectUrl.searchParams.set("next", nextPath);
+  redirectUrl.searchParams.set("superAdminChallenge", challengeToken);
+  return redirectUrl;
+}
+
 export async function POST(request: Request) {
+  if (!isCanonicalSuperAdminRequest(request)) {
+    return NextResponse.json({ error: "super_admin_console_origin_required" }, { status: 421 });
+  }
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
@@ -105,39 +119,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "invalid_device" }, { status: 400 });
     }
 
-    const requestUrl = new URL(request.url);
-    const publicOrigin = resolvePublicOrigin(request, requestUrl);
-    const redirectUrl = new URL("/super-admin/login", publicOrigin);
-    redirectUrl.searchParams.set("next", nextPath);
-    redirectUrl.searchParams.set("superAdminChallenge", challengeToken);
+    const redirectUrl = buildSuperAdminVerificationRedirectUrl(nextPath, challengeToken);
 
     const verificationEmail = readSuperAdminVerificationEmail();
     const trustedDeviceToken = parseCookieValue(request.headers.get("cookie") ?? "", SUPER_ADMIN_TRUSTED_DEVICE_COOKIE);
     const trustedDevice = readSuperAdminTrustedDeviceToken(trustedDeviceToken);
-    let currentDeviceTrusted = trustedDevice?.deviceId === deviceId;
+    let currentDeviceTrusted = false;
     let maxDevices: number | null = null;
     let currentCount = 0;
     let replacedDeviceLabel = "";
 
     const serviceSupabase = createServerSupabaseServiceClient();
-    if (serviceSupabase) {
-      try {
+    if (!serviceSupabase) {
+      return NextResponse.json({ error: "super_admin_trusted_devices_unavailable" }, { status: 503 });
+    }
+    try {
         const { devices, maxDevices: storedMaxDevices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
-        currentDeviceTrusted = currentDeviceTrusted || devices.some((item) => item.deviceId === deviceId);
+        currentDeviceTrusted =
+          trustedDevice?.deviceId === deviceId &&
+          devices.some((item) => item.deviceId === deviceId);
         maxDevices = storedMaxDevices;
         currentCount = devices.length;
         if (!canRegisterAnotherSuperAdminDevice(devices, storedMaxDevices, deviceId)) {
           replacedDeviceLabel = pickLeastRecentlyVerifiedSuperAdminTrustedDevice(devices)?.deviceLabel ?? "";
         }
-      } catch {
-        // Keep the cookie-based fallback if the device whitelist store is temporarily unavailable.
-      }
+    } catch {
+      return NextResponse.json({ error: "super_admin_trusted_devices_unavailable" }, { status: 503 });
     }
 
     if (currentDeviceTrusted) {
       const challengePayload = readSuperAdminTrustedDeviceToken(trustedDeviceToken);
       return finalizeSuperAdminLogin(
         {
+          version: SUPER_ADMIN_TOKEN_VERSION,
           kind: "challenge",
           issuedAt: Date.now(),
           expiresAt: Date.now() + 10 * 60 * 1000,

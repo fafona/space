@@ -576,7 +576,7 @@ async function findSnapshotShareOwnerMerchantId(
 }
 
 async function resolveShareActorContext(request: Request, hintedMerchantId: string) {
-  if (isSuperAdminRequestAuthorized(request)) {
+  if (await isSuperAdminRequestAuthorized(request)) {
     return {
       kind: "super-admin",
       merchantId: hintedMerchantId,

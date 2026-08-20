@@ -15,22 +15,9 @@ function collectUsableBrowserStorages(candidates: Array<Storage | null | undefin
   return storages;
 }
 
-function getBrowserAuthStorages() {
-  if (typeof window === "undefined") return [];
-  return collectUsableBrowserStorages([window.sessionStorage, window.localStorage]);
-}
-
 const browserAuthCookiePrefix = "faolla-auth-storage.";
-const browserAuthCookieMaxAgeSeconds = 60 * 60 * 24 * 180;
-const browserAuthCookieMaxValueLength = 3800;
-
-type CompactAuthSession = {
-  access_token: string;
-  refresh_token: string;
-  expires_at?: number;
-  expires_in?: number;
-  token_type?: string;
-};
+const BROWSER_OAUTH_TRANSIENT_TTL_MS = 15 * 60 * 1000;
+const BROWSER_OAUTH_TRANSIENT_CREATED_AT_SUFFIX = ".faolla-created-at";
 
 function canUseDocumentCookies() {
   return typeof document !== "undefined" && typeof window !== "undefined";
@@ -62,149 +49,128 @@ function getBrowserAuthCookieName(key: string) {
   return `${browserAuthCookiePrefix}${String(key).replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
 
-function getBrowserAuthCookieAttributes() {
-  if (typeof window === "undefined") return "; Path=/; SameSite=Lax";
-  const hostname = window.location.hostname.toLowerCase();
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  const domain = hostname === "faolla.com" || hostname.endsWith(".faolla.com") ? "; Domain=.faolla.com" : "";
-  return `; Path=/; SameSite=Lax${domain}${secure}`;
+function getBrowserStorage(candidate: Storage | null | undefined) {
+  return collectUsableBrowserStorages([candidate])[0] ?? null;
 }
 
-function readCookieValue(name: string) {
-  if (!canUseDocumentCookies()) return null;
-  const prefix = `${name}=`;
-  const parts = document.cookie.split("; ");
-  for (const part of parts) {
-    if (!part.startsWith(prefix)) continue;
+function cleanupLegacyAccountSwitchStorage() {
+  if (typeof window === "undefined") return;
+  for (const storage of [window.sessionStorage, window.localStorage]) {
     try {
-      return decodeURIComponent(part.slice(prefix.length));
+      storage.removeItem("faolla.accountSwitch.v1");
     } catch {
-      return part.slice(prefix.length);
+      // Best-effort cleanup of legacy multi-account bearer tokens.
     }
   }
-  return null;
 }
 
-function normalizeFiniteNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function transientCreatedAtKey(key: string) {
+  return `${key}${BROWSER_OAUTH_TRANSIENT_CREATED_AT_SUFFIX}`;
 }
 
-function compactAuthStorageValue(key: string, value: string) {
-  if (isBrowserOAuthTransientStorageKey(key) && !isBrowserAuthTokenStorageKey(key)) {
-    const raw = String(value ?? "");
-    return raw.length > 0 && raw.length <= browserAuthCookieMaxValueLength ? raw : "";
-  }
-
+function clearLegacyPersistentAuthValue(key: string) {
+  if (typeof window === "undefined") return;
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object") return "";
-    const record = parsed as Record<string, unknown>;
-    const containers = [record, record.currentSession, record.session];
-    for (const container of containers) {
-      if (!container || typeof container !== "object") continue;
-      const candidate = container as Record<string, unknown>;
-      const accessToken = typeof candidate.access_token === "string" ? candidate.access_token.trim() : "";
-      const refreshToken = typeof candidate.refresh_token === "string" ? candidate.refresh_token.trim() : "";
-      if (!accessToken || !refreshToken) continue;
-      const compact: CompactAuthSession = {
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      };
-      const expiresAt = normalizeFiniteNumber(candidate.expires_at);
-      const expiresIn = normalizeFiniteNumber(candidate.expires_in);
-      const tokenType = typeof candidate.token_type === "string" ? candidate.token_type.trim() : "";
-      if (expiresAt !== undefined) compact.expires_at = expiresAt;
-      if (expiresIn !== undefined) compact.expires_in = expiresIn;
-      if (tokenType) compact.token_type = tokenType;
-      return JSON.stringify({
-        currentSession: compact,
-        session: compact,
-      });
-    }
+    window.localStorage.removeItem(key);
+    window.localStorage.removeItem(transientCreatedAtKey(key));
   } catch {
-    // Ignore malformed storage values; they are not useful for cookie-backed recovery.
+    // Storage can be unavailable in restricted browser contexts.
   }
-  return "";
+}
+
+function removeOAuthTransientValue(key: string) {
+  clearLegacyPersistentAuthValue(key);
 }
 
 export function readBrowserAuthStorageCookie(key: string) {
-  if (!isBrowserAuthStorageKey(key)) return null;
-  return readCookieValue(getBrowserAuthCookieName(key));
+  if (isBrowserAuthStorageKey(key)) deleteBrowserAuthStorageCookie(key);
+  return null;
 }
 
 export function writeBrowserAuthStorageCookie(key: string, value: string) {
-  if (!canUseDocumentCookies() || !isBrowserAuthStorageKey(key)) return false;
-  const compact = compactAuthStorageValue(key, value);
-  if (!compact) return false;
-  const encoded = encodeURIComponent(compact);
-  if (encoded.length > browserAuthCookieMaxValueLength) return false;
-  document.cookie = `${getBrowserAuthCookieName(key)}=${encoded}; Max-Age=${browserAuthCookieMaxAgeSeconds}${getBrowserAuthCookieAttributes()}`;
-  return true;
+  void value;
+  if (isBrowserAuthStorageKey(key)) deleteBrowserAuthStorageCookie(key);
+  return false;
 }
 
 export function deleteBrowserAuthStorageCookie(key: string) {
   if (!canUseDocumentCookies() || !isBrowserAuthStorageKey(key)) return;
-  document.cookie = `${getBrowserAuthCookieName(key)}=; Max-Age=0${getBrowserAuthCookieAttributes()}`;
+  const cookieName = getBrowserAuthCookieName(key);
+  document.cookie = `${cookieName}=; Path=/; Max-Age=0; SameSite=Lax; Secure`;
+  document.cookie = `${cookieName}=; Path=/; Domain=.faolla.com; Max-Age=0; SameSite=Lax; Secure`;
 }
 
 export function createMirroredBrowserAuthStorageAdapter() {
   return {
     getItem(key: string) {
-      const storages = getBrowserAuthStorages();
-      for (let index = 0; index < storages.length; index += 1) {
-        const storage = storages[index];
+      cleanupLegacyAccountSwitchStorage();
+      deleteBrowserAuthStorageCookie(key);
+
+      if (isBrowserOAuthTransientStorageKey(key)) {
         try {
-          const raw = storage.getItem(key);
-          if (raw === null) continue;
-          if (index > 0) {
-            for (let copyIndex = 0; copyIndex < index; copyIndex += 1) {
-              try {
-                if (storages[copyIndex].getItem(key) === null) {
-                  storages[copyIndex].setItem(key, raw);
-                }
-              } catch {
-                // Ignore best-effort mirroring failures.
-              }
-            }
+          const localStorage = getBrowserStorage(window.localStorage);
+          const value = localStorage?.getItem(key) ?? null;
+          const createdAt = Number(localStorage?.getItem(transientCreatedAtKey(key)) ?? "");
+          if (
+            value &&
+            Number.isFinite(createdAt) &&
+            createdAt > 0 &&
+            Date.now() - createdAt <= BROWSER_OAUTH_TRANSIENT_TTL_MS
+          ) {
+            return value;
           }
-          return raw;
         } catch {
-          // Ignore failed storage reads and keep trying fallbacks.
+          // Fall through to fail-closed cleanup.
+        }
+        removeOAuthTransientValue(key);
+        return null;
+      }
+
+      let value: string | null = null;
+      if (typeof window !== "undefined") {
+        try {
+          value = getBrowserStorage(window.sessionStorage)?.getItem(key) ?? null;
+        } catch {
+          // Treat unavailable current-tab storage as a signed-out session.
         }
       }
-      const cookieValue = readBrowserAuthStorageCookie(key);
-      if (cookieValue !== null) {
-        for (const storage of storages) {
-          try {
-            if (storage.getItem(key) === null) {
-              storage.setItem(key, cookieValue);
-            }
-          } catch {
-            // Ignore best-effort mirroring failures.
-          }
-        }
-        return cookieValue;
-      }
-      return null;
+      clearLegacyPersistentAuthValue(key);
+      return value;
     },
     setItem(key: string, value: string) {
-      for (const storage of getBrowserAuthStorages()) {
+      cleanupLegacyAccountSwitchStorage();
+      if (isBrowserOAuthTransientStorageKey(key)) {
         try {
-          storage.setItem(key, value);
+          const localStorage = getBrowserStorage(window.localStorage);
+          localStorage?.setItem(key, value);
+          localStorage?.setItem(transientCreatedAtKey(key), String(Date.now()));
         } catch {
-          // Ignore partial persistence failures.
+          // Supabase will surface an unusable PKCE flow if persistence is blocked.
+        }
+        deleteBrowserAuthStorageCookie(key);
+        return;
+      }
+      if (typeof window !== "undefined") {
+        try {
+          getBrowserStorage(window.sessionStorage)?.setItem(key, value);
+        } catch {
+          // Supabase will surface an unusable current-tab session if storage is blocked.
         }
       }
-      writeBrowserAuthStorageCookie(key, value);
+      clearLegacyPersistentAuthValue(key);
+      deleteBrowserAuthStorageCookie(key);
     },
     removeItem(key: string) {
-      for (const storage of getBrowserAuthStorages()) {
+      cleanupLegacyAccountSwitchStorage();
+      if (typeof window !== "undefined") {
         try {
-          storage.removeItem(key);
+          getBrowserStorage(window.sessionStorage)?.removeItem(key);
         } catch {
-          // Ignore partial cleanup failures.
+          // Best-effort cleanup.
         }
       }
+      if (isBrowserOAuthTransientStorageKey(key)) removeOAuthTransientValue(key);
+      else clearLegacyPersistentAuthValue(key);
       deleteBrowserAuthStorageCookie(key);
     },
   };

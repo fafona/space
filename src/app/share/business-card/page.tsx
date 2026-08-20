@@ -20,22 +20,11 @@ import {
   loadPublishedMerchantServiceStateByTargetUrl,
 } from "@/lib/publishedMerchantService";
 import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
+import { resolveConfiguredPublicOriginFromHeaders } from "@/lib/requestOrigin";
 
 type ShareBusinessCardPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
-
-function resolveRequestOrigin(requestHeaders: Headers) {
-  const host =
-    requestHeaders.get("x-forwarded-host")?.trim() ||
-    requestHeaders.get("host")?.trim() ||
-    "";
-  if (!host) return "";
-  const protocol =
-    requestHeaders.get("x-forwarded-proto")?.trim() ||
-    (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
-  return `${protocol}://${host}`.replace(/\/+$/g, "");
-}
 
 function looksLikeMobileRequest(requestHeaders: Headers) {
   const userAgent = requestHeaders.get("user-agent")?.trim() || "";
@@ -100,7 +89,7 @@ function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof res
 
 export async function generateMetadata({ searchParams }: ShareBusinessCardPageProps): Promise<Metadata> {
   const requestHeaders = await headers();
-  const origin = resolveRequestOrigin(requestHeaders);
+  const origin = resolveConfiguredPublicOriginFromHeaders(requestHeaders);
   const resolvedSearchParams = await searchParams;
   const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
   const serviceState = payload
@@ -197,7 +186,7 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
 
 export default async function ShareBusinessCardPage({ searchParams }: ShareBusinessCardPageProps) {
   const requestHeaders = await headers();
-  const origin = resolveRequestOrigin(requestHeaders);
+  const origin = resolveConfiguredPublicOriginFromHeaders(requestHeaders);
   const resolvedSearchParams = await searchParams;
   const shareKey = readMerchantBusinessCardShareKey(resolvedSearchParams);
   const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);

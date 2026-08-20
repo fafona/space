@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
-import { normalizeOrigin, readOriginFromReferer, resolveConfiguredPublicOrigin, resolveRequestOrigin } from "@/lib/requestOrigin";
+import {
+  normalizeOrigin,
+  readOriginFromReferer,
+  resolvePublicOriginFromHeaders,
+  resolveRequestOrigin,
+} from "@/lib/requestOrigin";
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function readOriginProtocol(value: string) {
-  const normalized = trimText(value);
-  if (!normalized) return "";
-  try {
-    return new URL(normalized).protocol.replace(/:$/, "");
-  } catch {
-    return "";
-  }
 }
 
 function resolveTrustedMutationTargetOrigins(request: Request) {
@@ -26,15 +21,10 @@ function resolveTrustedMutationTargetOrigins(request: Request) {
 
   const originHeader = trimText(request.headers.get("origin"));
   const refererOrigin = readOriginFromReferer(request.headers.get("referer"));
-  const hostHeader = trimText(request.headers.get("host"));
   const requestOrigin = resolveRequestOrigin(request);
-  const configuredOrigin = resolveConfiguredPublicOrigin();
 
   pushCandidate(requestOrigin);
-  pushCandidate(configuredOrigin);
-  if (hostHeader) {
-    pushCandidate(hostHeader, readOriginProtocol(originHeader) || readOriginProtocol(refererOrigin) || readOriginProtocol(requestOrigin) || "https");
-  }
+  pushCandidate(resolvePublicOriginFromHeaders(request.headers, requestOrigin));
 
   return {
     originHeader,

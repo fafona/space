@@ -8,8 +8,7 @@ import {
 } from "@/lib/superAdminTrustedDevices";
 import {
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
-  resolveSuperAdminCookieDomain,
-  resolveSuperAdminCookieSecureFlag,
+  clearSuperAdminSessionCookies,
 } from "@/lib/superAdminSession";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
@@ -30,12 +29,12 @@ function unauthorizedJson() {
   return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 }
 
-function ensureAuthorized(request: Request) {
+async function ensureAuthorized(request: Request) {
   return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 
@@ -63,7 +62,7 @@ export async function DELETE(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 
@@ -91,15 +90,7 @@ export async function DELETE(request: Request) {
     const currentDeviceToken = parseCookieValue(request.headers.get("cookie") ?? "", SUPER_ADMIN_TRUSTED_DEVICE_COOKIE);
     const currentDevice = readSuperAdminTrustedDeviceToken(currentDeviceToken);
     if (currentDevice?.deviceId === deviceId) {
-      const cookieDomain = resolveSuperAdminCookieDomain(request);
-      response.cookies.set(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE, "", {
-        path: "/",
-        maxAge: 0,
-        sameSite: "lax",
-        secure: resolveSuperAdminCookieSecureFlag(request),
-        httpOnly: true,
-        ...(cookieDomain ? { domain: cookieDomain } : {}),
-      });
+      clearSuperAdminSessionCookies(response, request);
     }
     return response;
   } catch (error) {
@@ -118,7 +109,7 @@ export async function PATCH(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 

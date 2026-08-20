@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { POST as requestCode } from "./request-code/route";
-import { POST as approveRecovery } from "@/app/api/super-admin/legacy-personal-recovery/route";
+import {
+  isLegacyPersonalRecoveryApprovalBody,
+  POST as approveRecovery,
+} from "@/app/api/super-admin/legacy-personal-recovery/route";
 import {
   LEGACY_PERSONAL_RECOVERY_CASE_ENV,
   LEGACY_PERSONAL_RECOVERY_ENABLED_ENV,
@@ -135,6 +138,16 @@ test("public recovery body cannot add an Auth UUID target selector", async () =>
 });
 
 test("super-admin approval body accepts only confirm and cannot select UUID or ID", async () => {
+  assert.equal(isLegacyPersonalRecoveryApprovalBody({ confirm: true }), true);
+  assert.equal(
+    isLegacyPersonalRecoveryApprovalBody({
+      confirm: true,
+      authUserId: FIXED_AUTH_USER_ID,
+      personalAccountId: FIXED_PERSONAL_ID,
+    }),
+    false,
+  );
+
   await withRecoveryEnv(async () => {
     const deviceId = "route-test-device";
     const session = createSuperAdminSessionToken({
@@ -147,11 +160,11 @@ test("super-admin approval body accepts only confirm and cannot select UUID or I
     });
     const response = await approveRecovery(
       new Request(
-        "https://faolla.com/api/super-admin/legacy-personal-recovery",
+        "https://console.faolla.com/api/super-admin/legacy-personal-recovery",
         {
           method: "POST",
           headers: {
-            origin: "https://faolla.com",
+            origin: "https://console.faolla.com",
             "content-type": "application/json",
             cookie: `${SUPER_ADMIN_SESSION_COOKIE}=${session}; ${SUPER_ADMIN_TRUSTED_DEVICE_COOKIE}=${trusted}`,
           },
@@ -163,11 +176,11 @@ test("super-admin approval body accepts only confirm and cannot select UUID or I
         },
       ),
     );
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 401);
     const body = await response.json();
     assert.deepEqual(body, {
       ok: false,
-      error: "legacy_personal_recovery_confirmation_required",
+      error: "unauthorized",
     });
     assert.equal(JSON.stringify(body).includes(FIXED_AUTH_USER_ID), false);
     assert.equal(JSON.stringify(body).includes(FIXED_PERSONAL_ID), false);

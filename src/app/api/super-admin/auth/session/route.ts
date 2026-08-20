@@ -11,7 +11,7 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 }
 
 export async function GET(request: Request) {
-  const session = readSuperAdminAuthorizedSession(request);
+  const session = await readSuperAdminAuthorizedSession(request);
   if (!session) {
     return noStoreJson({ ok: true, authenticated: false }, { status: 401 });
   }

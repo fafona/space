@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import {
   createSuperAdminChallengeToken,
   createSuperAdminEmailProofToken,
@@ -93,5 +94,22 @@ test("session token preserves device identity", async () => {
   const payload = readSuperAdminSessionToken(token);
   assert.equal(payload?.deviceId, "device-session-1234");
   assert.equal(payload?.deviceLabel, "Mac / Safari");
+  });
+});
+
+test("tokens issued before the versioned cookie boundary are rejected", async () => {
+  await withSuperAdminVerificationSecret(() => {
+    const payload = Buffer.from(JSON.stringify({
+      kind: "session",
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      deviceId: "legacy-device",
+      deviceLabel: "Legacy",
+    }), "utf8").toString("base64url");
+    const signature = createHmac("sha256", "test-super-admin-secret")
+      .update(payload)
+      .digest("base64url");
+
+    assert.equal(readSuperAdminSessionToken(`${payload}.${signature}`), null);
   });
 });

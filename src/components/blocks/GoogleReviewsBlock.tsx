@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import type { GoogleReviewDisplayMode, GoogleReviewItem, GoogleReviewsProps } from "@/data/homeBlocks";
 import {
   normalizeGoogleReviewAverage,
+  normalizeGoogleReviewHttpsUrl,
   normalizeGoogleReviewItems,
   normalizeGoogleReviewTotalCount,
 } from "@/lib/googleReviews";
@@ -216,8 +217,8 @@ export default function GoogleReviewsBlock({
   const hasExplicitAverage = typeof effectiveAverageRating === "number" && Number.isFinite(effectiveAverageRating);
   const averageRating = hasExplicitAverage ? normalizeGoogleReviewAverage(effectiveAverageRating) : derivedAverage;
   const totalCount = normalizeGoogleReviewTotalCount(liveSnapshot?.totalReviewCount ?? googleReviewTotalCount, items.length);
-  const effectiveReviewUrl = liveSnapshot?.mapsUri || googleReviewUrl;
-  const effectiveWriteUrl = liveSnapshot?.newReviewUri || googleReviewWriteUrl;
+  const effectiveReviewUrl = normalizeGoogleReviewHttpsUrl(liveSnapshot?.mapsUri || googleReviewUrl);
+  const effectiveWriteUrl = normalizeGoogleReviewHttpsUrl(liveSnapshot?.newReviewUri || googleReviewWriteUrl);
   const cardStyle = getBackgroundStyle({
     imageUrl: backgroundProps.bgImageUrl,
     fillMode: backgroundProps.bgFillMode,

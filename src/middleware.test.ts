@@ -15,6 +15,9 @@ import {
   MERCHANT_AUTH_REFRESH_COOKIE,
 } from "./lib/merchantAuthSession";
 
+process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://faolla.com";
+process.env.FAOLLA_SUPER_ADMIN_ORIGIN = "https://console.faolla.com";
+
 test("isLocalLikeRequestHostname only treats local hosts and IPs as local-like", () => {
   assert.equal(isLocalLikeRequestHostname("localhost"), true);
   assert.equal(isLocalLikeRequestHostname("127.0.0.1"), true);
@@ -71,7 +74,7 @@ test("resolveHttpsRedirectUrl avoids redirecting when a proxy omits forwarded pr
 });
 
 test("middleware matcher now covers api routes for https enforcement", () => {
-  assert.deepEqual(config.matcher, ["/", "/_next/static/:path*", "/((?!_next/image|favicon.ico|icon.svg|.*\\..*).*)"]);
+  assert.deepEqual(config.matcher, ["/", "/_next/static/:path*", "/((?!_next/image(?:/|$)).*)"]);
 });
 
 test("middleware leaves hashed static assets cacheable", async () => {
@@ -136,15 +139,161 @@ test("middleware redirects numeric Faolla section to the public app shell before
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });
 
-test("middleware lets unauthenticated numeric merchant entries render the client login guard", async () => {
+test("middleware moves unauthenticated numeric merchant entries to a tenant origin", async () => {
   const request = new NextRequest("https://faolla.com/10000000");
 
   const response = await middleware(request);
 
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("location"), null);
-  assert.equal(response.headers.get("x-middleware-rewrite"), null);
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get("location"), "https://10000000.faolla.com/10000000");
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
+test("middleware moves direct published-site routes off the authenticated portal origin", async () => {
+  const response = await middleware(new NextRequest("https://faolla.com/site/10000000?preview=0"));
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get("location"), "https://10000000.faolla.com/site/10000000?preview=0");
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
+test("middleware moves public card and share routes off the authenticated portal origin", async () => {
+  for (const path of ["/card/public-card", "/share/business-card?key=public-card"]) {
+    const response = await middleware(new NextRequest(`https://faolla.com${path}`));
+    assert.equal(response.status, 308);
+    assert.equal(new URL(response.headers.get("location") ?? "https://invalid").hostname, "public.faolla.com");
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+  }
+});
+
+test("middleware isolates portal auth and super-admin console hosts", async () => {
+  const tenantAuth = await middleware(
+    new NextRequest("https://merchant.faolla.com/api/auth/merchant-session", {
+      headers: { cookie: `${MERCHANT_AUTH_COOKIE}=forged-tenant-cookie` },
+    }),
+  );
+  assert.equal(tenantAuth.status, 421);
+
+  const portalSuperAdmin = await middleware(
+    new NextRequest("https://faolla.com/api/super-admin/auth/session"),
+  );
+  assert.equal(portalSuperAdmin.status, 421);
+
+  const consoleTenantPath = await middleware(
+    new NextRequest("https://console.faolla.com/merchant-slug"),
+  );
+  assert.equal(consoleTenantPath.status, 404);
+
+  const consoleApi = await middleware(
+    new NextRequest("https://console.faolla.com/api/super-admin/auth/session"),
+  );
+  assert.equal(consoleApi.status, 200);
+  assert.match(consoleApi.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+  assert.equal(consoleApi.headers.get("x-frame-options"), "DENY");
+  assert.match(consoleApi.headers.get("cache-control") ?? "", /no-store/);
+
+  for (const path of ["/api/merchant-draft", "/api/publish", "/api/assets/upload"]) {
+    const allowed = await middleware(new NextRequest(`https://console.faolla.com${path}`));
+    assert.equal(allowed.headers.get("x-middleware-next"), "1");
+    assert.match(allowed.headers.get("cache-control") ?? "", /no-store/);
+  }
+  const unrelatedApi = await middleware(new NextRequest("https://console.faolla.com/api/orders"));
+  assert.equal(unrelatedApi.status, 404);
+});
+
+test("middleware cannot bypass portal or console isolation with dotted merchant entries", async () => {
+  const consoleResponse = await middleware(new NextRequest("https://console.faolla.com/victim."));
+  assert.equal(consoleResponse.status, 404);
+
+  const portalResponse = await middleware(new NextRequest("https://faolla.com/victim."));
+  assert.equal(portalResponse.status, 308);
+  assert.equal(new URL(portalResponse.headers.get("location") ?? "https://invalid").hostname, "victim.faolla.com");
+  assert.match(portalResponse.headers.get("cache-control") ?? "", /no-store/);
+
+  const trustedAsset = await middleware(new NextRequest("https://console.faolla.com/faolla-logo-f.png"));
+  assert.equal(trustedAsset.headers.get("x-middleware-next"), "1");
+  for (const path of ["/icon.svgvictim", "/favicon.icovictim"]) {
+    const response = await middleware(new NextRequest(`https://console.faolla.com${path}`));
+    assert.equal(response.status, 404);
+  }
+});
+
+test("middleware refuses forwarded-host spoofing for sensitive routes", async () => {
+  const response = await middleware(
+    new NextRequest("https://merchant.faolla.com/api/auth/merchant-session", {
+      headers: {
+        host: "merchant.faolla.com",
+        "x-forwarded-host": "faolla.com",
+      },
+    }),
+  );
+  assert.equal(response.status, 421);
+});
+
+test("middleware does not resolve tenant content from a spoofed forwarded host on the portal root", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify([{ merchant_id: "10000000" }]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const response = await middleware(
+      new NextRequest("https://faolla.com/", {
+        headers: {
+          host: "faolla.com",
+          "x-forwarded-host": "victim.faolla.com",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+    assert.equal(calls, 0);
+    assert.equal(response.headers.get("x-middleware-rewrite"), null);
+    assert.equal(response.headers.get("x-middleware-next"), "1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("middleware expires legacy cross-subdomain auth cookies without reflecting their values", async () => {
+  const response = await middleware(
+    new NextRequest("https://faolla.com/login", {
+      headers: {
+        cookie:
+          "faolla-auth-storage.sb-project-auth-token=legacy-secret; faolla-google-oauth-entry=merchant; merchant-space-merchant-refresh=legacy-refresh; merchant-space-super-admin=legacy-admin; merchant-space-super-admin-device=legacy-device",
+      },
+    }),
+  );
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  assert.match(setCookie, /faolla-auth-storage\.sb-project-auth-token=/);
+  assert.match(setCookie, /faolla-google-oauth-entry=/);
+  assert.match(setCookie, /merchant-space-merchant-refresh=/);
+  assert.match(setCookie, /merchant-space-super-admin=/);
+  assert.match(setCookie, /merchant-space-super-admin-device=/);
+  assert.match(setCookie, /Domain=faolla\.com/i);
+  assert.match(setCookie, /Max-Age=0/i);
+  assert.equal((setCookie.match(/faolla-auth-storage\.sb-project-auth-token=/g) ?? []).length, 2);
+  assert.doesNotMatch(setCookie, /legacy-secret|legacy-refresh|legacy-admin|legacy-device/);
+});
+
+test("middleware prioritizes fixed legacy session cookies over attacker-shaped cleanup noise", async () => {
+  const noise = Array.from(
+    { length: 20 },
+    (_value, index) => `faolla-auth-storage.noise-${index}=noise-${index}`,
+  ).join("; ");
+  const response = await middleware(
+    new NextRequest("https://faolla.com/login", {
+      headers: {
+        cookie: `${noise}; merchant-space-super-admin=legacy-admin; merchant-space-merchant-refresh=legacy-refresh`,
+      },
+    }),
+  );
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  assert.match(setCookie, /merchant-space-super-admin=/);
+  assert.match(setCookie, /merchant-space-merchant-refresh=/);
+  assert.doesNotMatch(setCookie, /legacy-admin|legacy-refresh/);
 });
 
 test("middleware keeps an authenticated merchant on their backend Faolla section", async () => {

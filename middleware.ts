@@ -8,8 +8,23 @@ import {
   MERCHANT_AUTH_MERCHANT_ID_COOKIE,
   MERCHANT_AUTH_REFRESH_COOKIE,
 } from "@/lib/merchantAuthSession";
+import {
+  LEGACY_SUPER_ADMIN_DEVICE_ID_COOKIE,
+  LEGACY_SUPER_ADMIN_SESSION_COOKIE,
+  LEGACY_SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+} from "@/lib/superAdminSession";
+import { appendLegacyCookieExpiration } from "@/lib/legacyCookieCleanup";
+import {
+  isCanonicalPortalRequest,
+  resolveCanonicalPortalHostname,
+  resolveCanonicalPortalOrigin,
+} from "@/lib/canonicalPortalRequest";
+import {
+  isCanonicalSuperAdminRequest,
+  resolveCanonicalSuperAdminOrigin,
+} from "@/lib/canonicalSuperAdminRequest";
 
-const RESERVED_SUBDOMAIN_PREFIXES = new Set(["www", "main", "portal"]);
+const RESERVED_SUBDOMAIN_PREFIXES = new Set(["www", "main", "portal", "console", "public", "admin"]);
 const RESERVED_PATH_SEGMENTS = new Set([
   "admin",
   "api",
@@ -26,6 +41,53 @@ const RESERVED_PATH_SEGMENTS = new Set([
   "site",
   "super-admin",
 ]);
+const TRUSTED_PLATFORM_ROOT_ASSET_PATHS = new Set([
+  "/apple-icon.png",
+  "/apple-touch-icon.png",
+  "/favicon.ico",
+  "/faolla-app-icon.svg",
+  "/faolla-app-icon-192.png",
+  "/faolla-app-icon-512.png",
+  "/faolla-login-logo.png",
+  "/faolla-logo-f.png",
+  "/faolla-sw.js",
+  "/file.svg",
+  "/globe.svg",
+  "/icon.png",
+  "/icon.svg",
+  "/manifest.webmanifest",
+  "/next.svg",
+  "/robots.txt",
+  "/sitemap.xml",
+  "/vercel.svg",
+  "/window.svg",
+  "/loading-progress-desktop-en.webp",
+  "/loading-progress-desktop-zh.webp",
+  "/loading-progress-mobile-en.webp",
+  "/loading-progress-mobile-zh.webp",
+]);
+const SUPER_ADMIN_CONSOLE_SHARED_API_PATHS = new Set([
+  "/api/assets/upload",
+  "/api/merchant-chat-business-card",
+  "/api/merchant-draft",
+  "/api/publish",
+  "/api/site-published",
+]);
+const LEGACY_CROSS_SUBDOMAIN_COOKIE_NAMES = new Set([
+  "merchant-space-account-type",
+  "merchant-space-merchant-auth",
+  "merchant-space-merchant-id",
+  "merchant-space-merchant-refresh",
+  "merchant-space-reset-recovery",
+  "merchant-space-reset-recovery-refresh",
+  "faolla-legacy-personal-recovery",
+  "faolla-google-oauth-entry",
+  LEGACY_SUPER_ADMIN_DEVICE_ID_COOKIE,
+  LEGACY_SUPER_ADMIN_SESSION_COOKIE,
+  LEGACY_SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+]);
+const LEGACY_BROWSER_AUTH_COOKIE_NAME_PATTERN = /^faolla-auth-storage\.[A-Za-z0-9_-]{1,80}$/;
+const MAX_LEGACY_COOKIE_EXPIRATIONS_PER_RESPONSE = 16;
 const INTERNAL_MERCHANT_REWRITE_PARAM = "__merchantInternalRewrite";
 const HTTPS_REDIRECT_STATUS = 308;
 const FORWARDED_PROTO_HEADER = "x-forwarded-proto";
@@ -144,7 +206,9 @@ export function isLocalLikeRequestHostname(value: string) {
 }
 
 function readRequestPublicHost(headers: Headers, requestUrl: URL) {
-  return readForwardedHeaderValue(headers, FORWARDED_HOST_HEADER) || (headers.get("host") ?? "").trim() || requestUrl.host;
+  const host = (headers.get("host") ?? "").trim();
+  if (host && !isLocalLikeRequestHostname(host)) return host;
+  return readForwardedHeaderValue(headers, FORWARDED_HOST_HEADER) || host || requestUrl.host;
 }
 
 function hasProxyHints(headers: Headers) {
@@ -227,6 +291,9 @@ function shouldNoStoreAppShellPath(pathname: string) {
     pathname === "/admin" ||
     pathname === "/me" ||
     pathname === "/login" ||
+    pathname.startsWith("/super-admin") ||
+    pathname.startsWith("/api/super-admin") ||
+    SUPER_ADMIN_CONSOLE_SHARED_API_PATHS.has(pathname) ||
     pathname.startsWith("/me/") ||
     /^\/\d{8}(?:\/|$)/.test(pathname)
   );
@@ -329,8 +396,11 @@ function buildBadOauthStateRedirectUrl(request: NextRequest) {
 }
 
 function withAppShellNoStore(response: NextResponse, request: NextRequest) {
-  if (!shouldNoStoreAppShellPath(request.nextUrl.pathname) && !shouldNoStoreRootRequest(request)) return response;
-  return withNoStore(response);
+  const nextResponse =
+    shouldNoStoreAppShellPath(request.nextUrl.pathname) || shouldNoStoreRootRequest(request)
+      ? withNoStore(response)
+      : response;
+  return withSecurityHeaders(nextResponse, request);
 }
 
 function withNoStore(response: NextResponse) {
@@ -338,6 +408,96 @@ function withNoStore(response: NextResponse) {
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Expires", "0");
   return response;
+}
+
+function isTrustedPlatformRootAssetPath(pathname: string) {
+  return TRUSTED_PLATFORM_ROOT_ASSET_PATHS.has(pathname.toLowerCase());
+}
+
+function isSensitiveUiOrAuthPath(pathname: string) {
+  return /^(?:\/(?:admin|login|launch|me|reset-password|super-admin))(?:\/|$)/i.test(pathname) ||
+    /^\/api\/(?:auth|super-admin)(?:\/|$)/i.test(pathname);
+}
+
+function withSecurityHeaders(response: NextResponse, request: NextRequest) {
+  expireLegacyCrossSubdomainCookies(response, request);
+  const sensitive = isSensitiveUiOrAuthPath(request.nextUrl.pathname) || isCanonicalSuperAdminRequest(request);
+  const frameAncestors = sensitive
+    ? "'none'"
+    : `'self' ${resolveCanonicalPortalOrigin()}`;
+  response.headers.set(
+    "Content-Security-Policy",
+    `frame-ancestors ${frameAncestors}; object-src 'none'; base-uri 'self'; form-action 'self'`,
+  );
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("Permissions-Policy", "camera=(), microphone=(), payment=()");
+  if (sensitive) response.headers.set("X-Frame-Options", "DENY");
+  else response.headers.delete("X-Frame-Options");
+  return response;
+}
+
+function expireLegacyCrossSubdomainCookies(response: NextResponse, request: NextRequest) {
+  const names = (request.headers.get("cookie") ?? "")
+    .split(";")
+    .map((part) => part.trim().split("=")[0]?.trim() ?? "")
+    .filter(
+      (name, index, values) =>
+        Boolean(name) &&
+        (LEGACY_CROSS_SUBDOMAIN_COOKIE_NAMES.has(name) || LEGACY_BROWSER_AUTH_COOKIE_NAME_PATTERN.test(name)) &&
+        values.indexOf(name) === index,
+    )
+    .sort(
+      (left, right) =>
+        Number(LEGACY_CROSS_SUBDOMAIN_COOKIE_NAMES.has(right)) -
+        Number(LEGACY_CROSS_SUBDOMAIN_COOKIE_NAMES.has(left)),
+    )
+    .slice(0, MAX_LEGACY_COOKIE_EXPIRATIONS_PER_RESPONSE);
+  if (names.length === 0) return;
+
+  const portalHostname = resolveCanonicalPortalHostname();
+  const rootHostname = portalHostname.startsWith("www.") ? portalHostname.slice(4) : portalHostname;
+  const requestHostname = normalizeRequestHostname(readRequestPublicHost(request.headers, request.nextUrl));
+  const canClearRootDomain =
+    Boolean(rootHostname) &&
+    (requestHostname === rootHostname || requestHostname.endsWith(`.${rootHostname}`));
+
+  for (const name of names) {
+    appendLegacyCookieExpiration(response, name);
+    if (canClearRootDomain) {
+      appendLegacyCookieExpiration(response, name, { domain: rootHostname });
+    }
+  }
+}
+
+function redirectToOrigin(request: NextRequest, origin: string, pathname = request.nextUrl.pathname) {
+  const target = new URL(pathname, origin);
+  target.search = request.nextUrl.search;
+  return NextResponse.redirect(target, HTTPS_REDIRECT_STATUS);
+}
+
+function resolvePublicContentOrigin() {
+  const portalHostname = resolveCanonicalPortalHostname();
+  const rootHostname = portalHostname.startsWith("www.") ? portalHostname.slice(4) : portalHostname;
+  return rootHostname ? `https://public.${rootHostname}` : "";
+}
+
+function wrongOriginResponse(request: NextRequest, error: string) {
+  return withSecurityHeaders(
+    NextResponse.json({ error }, { status: 421 }),
+    request,
+  );
+}
+
+function buildTenantOriginRedirect(request: NextRequest, entry: string, pathname = "/") {
+  const normalizedEntry = normalizeDomainPrefix(entry);
+  if (!normalizedEntry || RESERVED_PATH_SEGMENTS.has(normalizedEntry)) return null;
+  const portalHostname = resolveCanonicalPortalHostname();
+  const rootHostname = portalHostname.startsWith("www.") ? portalHostname.slice(4) : portalHostname;
+  if (!rootHostname || isLocalLikeRequestHostname(rootHostname)) return null;
+  const target = new URL(pathname, `https://${normalizedEntry}.${rootHostname}/`);
+  target.search = request.nextUrl.search;
+  return target;
 }
 
 function isAuthenticatedRequest(request: NextRequest) {
@@ -441,7 +601,7 @@ async function resolveSiteIdByPrefix(prefix: string, request: NextRequest) {
           apikey: serviceRoleKey,
           Authorization: `Bearer ${serviceRoleKey}`,
           Accept: "application/json",
-          "x-forwarded-host": request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "",
+          "x-forwarded-host": readRequestPublicHost(request.headers, request.nextUrl),
         },
         cache: "no-store",
         signal: controller.signal,
@@ -473,10 +633,60 @@ async function resolveSiteIdByPrefix(prefix: string, request: NextRequest) {
 export async function middleware(request: NextRequest) {
   const httpsRedirectUrl = resolveHttpsRedirectUrl(request.nextUrl, request.headers);
   if (httpsRedirectUrl) {
-    return NextResponse.redirect(httpsRedirectUrl, HTTPS_REDIRECT_STATUS);
+    return withSecurityHeaders(NextResponse.redirect(httpsRedirectUrl, HTTPS_REDIRECT_STATUS), request);
   }
 
   const pathname = request.nextUrl.pathname;
+  const isConsoleHost = isCanonicalSuperAdminRequest(request);
+  const isPortalHost = isCanonicalPortalRequest(request);
+
+  if (isConsoleHost) {
+    if (pathname === "/") {
+      return withSecurityHeaders(redirectToOrigin(request, resolveCanonicalSuperAdminOrigin(), "/super-admin"), request);
+    }
+    if (
+      pathname.startsWith("/_next/") ||
+      pathname === "/favicon.ico" ||
+      pathname === "/icon.svg" ||
+      isTrustedPlatformRootAssetPath(pathname) ||
+      pathname === "/api/app-web-version" ||
+      SUPER_ADMIN_CONSOLE_SHARED_API_PATHS.has(pathname) ||
+      /^\/(?:super-admin|api\/super-admin)(?:\/|$)/i.test(pathname)
+    ) {
+      return withAppShellNoStore(NextResponse.next(), request);
+    }
+    return withSecurityHeaders(new NextResponse("Not Found", { status: 404 }), request);
+  }
+
+  if (/^\/(?:super-admin|api\/super-admin)(?:\/|$)/i.test(pathname)) {
+    if (request.method === "GET" && !pathname.startsWith("/api/")) {
+      return withSecurityHeaders(redirectToOrigin(request, resolveCanonicalSuperAdminOrigin()), request);
+    }
+    return wrongOriginResponse(request, "super_admin_console_origin_required");
+  }
+
+  if (!isPortalHost && /^\/api\/auth(?:\/|$)/i.test(pathname)) {
+    return wrongOriginResponse(request, "portal_origin_required");
+  }
+
+  if (!isPortalHost && /^\/(?:admin|login|launch|me|reset-password)(?:\/|$)/i.test(pathname)) {
+    if (request.method === "GET") {
+      return withSecurityHeaders(redirectToOrigin(request, resolveCanonicalPortalOrigin()), request);
+    }
+    return wrongOriginResponse(request, "portal_origin_required");
+  }
+
+  if (isPortalHost && /^\/(?:card|share)(?:\/|$)/i.test(pathname)) {
+    const publicContentOrigin = resolvePublicContentOrigin();
+    if (publicContentOrigin) {
+      return withSecurityHeaders(withNoStore(redirectToOrigin(request, publicContentOrigin)), request);
+    }
+  }
+
+  if (isTrustedPlatformRootAssetPath(pathname)) {
+    return withSecurityHeaders(NextResponse.next(), request);
+  }
+
   const badOauthStateRedirectUrl = buildBadOauthStateRedirectUrl(request);
   if (badOauthStateRedirectUrl) {
     return withAppShellNoStore(NextResponse.redirect(badOauthStateRedirectUrl), request);
@@ -494,7 +704,21 @@ export async function middleware(request: NextRequest) {
 
   const segments = pathname.split("/").filter(Boolean);
 
+  const directPublishedSiteMatch = pathname.match(/^\/site\/(\d{8})(?:\/|$)/);
+  if (isPortalHost && directPublishedSiteMatch) {
+    const tenantUrl = buildTenantOriginRedirect(request, directPublishedSiteMatch[1] ?? "", pathname);
+    if (tenantUrl) {
+      return withSecurityHeaders(withNoStore(NextResponse.redirect(tenantUrl, HTTPS_REDIRECT_STATUS)), request);
+    }
+  }
+
   if (segments.length === 1 && isMerchantNumericId(segments[0] ?? "")) {
+    if (isPortalHost && !isAuthenticatedOwnMerchantRequest(request, segments[0] ?? "")) {
+      const tenantUrl = buildTenantOriginRedirect(request, segments[0] ?? "", pathname);
+      if (tenantUrl) {
+        return withSecurityHeaders(withNoStore(NextResponse.redirect(tenantUrl, HTTPS_REDIRECT_STATUS)), request);
+      }
+    }
     if (!isAuthenticatedOwnMerchantRequest(request, segments[0] ?? "")) {
       return withAppShellNoStore(NextResponse.next(), request);
     }
@@ -520,10 +744,16 @@ export async function middleware(request: NextRequest) {
   if (segments.length === 1) {
     const firstSegment = normalizeDomainPrefix(segments[0] ?? "");
     if (!firstSegment || RESERVED_PATH_SEGMENTS.has(firstSegment)) return withAppShellNoStore(NextResponse.next(), request);
+    if (isPortalHost) {
+      const tenantUrl = buildTenantOriginRedirect(request, firstSegment);
+      if (tenantUrl) {
+        return withSecurityHeaders(withNoStore(NextResponse.redirect(tenantUrl, HTTPS_REDIRECT_STATUS)), request);
+      }
+    }
     return withAppShellNoStore((await rewriteToPublishedSite(firstSegment)) ?? NextResponse.next(), request);
   }
 
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
+  const host = readRequestPublicHost(request.headers, request.nextUrl);
   const baseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "";
   const domainPrefix = extractMerchantPrefixFromHost(host, baseDomain) || getFallbackPrefixFromHost(host);
   if (!domainPrefix) return withAppShellNoStore(NextResponse.next(), request);
@@ -533,9 +763,9 @@ export async function middleware(request: NextRequest) {
 
   const rewriteUrl = request.nextUrl.clone();
   rewriteUrl.pathname = `/${encodeURIComponent(domainPrefix)}`;
-  return withNoStore(NextResponse.rewrite(rewriteUrl));
+  return withSecurityHeaders(withNoStore(NextResponse.rewrite(rewriteUrl)), request);
 }
 
 export const config = {
-  matcher: ["/", "/_next/static/:path*", "/((?!_next/image|favicon.ico|icon.svg|.*\\..*).*)"],
+  matcher: ["/", "/_next/static/:path*", "/((?!_next/image(?:/|$)).*)"],
 };

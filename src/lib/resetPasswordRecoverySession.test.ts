@@ -30,12 +30,15 @@ test("reset recovery cookies can be written and cleared", () => {
   });
 
   const setCookieHeader = response.headers.get("set-cookie") ?? "";
-  assert.match(setCookieHeader, /merchant-space-reset-recovery=access-token/i);
-  assert.match(setCookieHeader, /merchant-space-reset-recovery-refresh=refresh-token/i);
+  assert.match(setCookieHeader, /__Host-faolla-reset-recovery-v2=access-token/i);
+  assert.match(setCookieHeader, /__Host-faolla-reset-recovery-refresh-v2=refresh-token/i);
+  assert.match(setCookieHeader, /Secure/i);
+  assert.match(setCookieHeader, /merchant-space-reset-recovery=;/i);
+  assert.match(setCookieHeader, /Domain=faolla\.com/i);
 
   const clearedResponse = NextResponse.json({ ok: true });
   clearResetRecoveryCookies(clearedResponse);
   const clearedSetCookieHeader = clearedResponse.headers.get("set-cookie") ?? "";
-  assert.match(clearedSetCookieHeader, /merchant-space-reset-recovery=;/i);
-  assert.match(clearedSetCookieHeader, /merchant-space-reset-recovery-refresh=;/i);
+  assert.match(clearedSetCookieHeader, /__Host-faolla-reset-recovery-v2=;/i);
+  assert.match(clearedSetCookieHeader, /__Host-faolla-reset-recovery-refresh-v2=;/i);
 });

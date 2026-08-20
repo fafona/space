@@ -43,6 +43,66 @@ export function normalizeOrigin(value: string | null | undefined, fallbackProtoc
   }
 }
 
+function readFirstHeaderValue(value: string | null | undefined) {
+  return trimText(value).split(",")[0]?.trim() ?? "";
+}
+
+function readHostnameFromHost(value: string | null | undefined) {
+  const host = readFirstHeaderValue(value);
+  if (!host || /[\\/@?#\s]/.test(host)) return "";
+  try {
+    return new URL(`http://${host}`).hostname;
+  } catch {
+    return "";
+  }
+}
+
+export function resolvePublicOriginFromHeaders(
+  requestHeaders: Headers,
+  fallbackOrigin: string | null | undefined = "",
+) {
+  const normalizedFallbackOrigin = normalizeOrigin(fallbackOrigin, "http");
+  let fallbackUrl: URL | null = null;
+  try {
+    fallbackUrl = normalizedFallbackOrigin ? new URL(normalizedFallbackOrigin) : null;
+  } catch {
+    fallbackUrl = null;
+  }
+
+  const headerHost = readFirstHeaderValue(requestHeaders.get("host"));
+  const directHost = headerHost || fallbackUrl?.host || "";
+  const directHostname = readHostnameFromHost(directHost);
+  const mayUseForwardedHost = Boolean(directHostname && isLocalLikeHostname(directHostname));
+  const forwardedHost = mayUseForwardedHost
+    ? readFirstHeaderValue(requestHeaders.get("x-forwarded-host"))
+    : "";
+  const forwardedHostname = readHostnameFromHost(forwardedHost);
+  const selectedHost = forwardedHostname ? forwardedHost : directHostname ? directHost : "";
+  const selectedHostname = forwardedHostname || directHostname;
+  if (!selectedHost || !selectedHostname) return normalizedFallbackOrigin;
+
+  const selectedIsLocal = isLocalLikeHostname(selectedHostname);
+  const forwardedProtocol = mayUseForwardedHost
+    ? readFirstHeaderValue(requestHeaders.get("x-forwarded-proto")).toLowerCase()
+    : "";
+  const fallbackProtocol = fallbackUrl?.protocol.replace(/:$/, "") || "http";
+  const protocol = selectedIsLocal
+    ? forwardedProtocol === "http" || forwardedProtocol === "https"
+      ? forwardedProtocol
+      : fallbackProtocol
+    : "https";
+  return normalizeOrigin(`${protocol}://${selectedHost}`, protocol) || normalizedFallbackOrigin;
+}
+
+export function buildOriginScopedCacheKey(
+  key: string | null | undefined,
+  origin: string | null | undefined,
+) {
+  const normalizedKey = trimText(key);
+  const normalizedOrigin = normalizeOrigin(origin);
+  return normalizedKey && normalizedOrigin ? `${normalizedKey}|${normalizedOrigin}` : "";
+}
+
 export function resolveConfiguredPublicOrigin() {
   return normalizeOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
 }
@@ -63,19 +123,31 @@ export function resolveRequestOrigin(request: Request | URL | string) {
 
 export function resolveForwardedRequestOrigin(request: Request) {
   const requestOrigin = resolveRequestOrigin(request);
-  const forwardedHost = trimText(request.headers.get("x-forwarded-host")).split(",")[0]?.trim() ?? "";
-  const host = forwardedHost || trimText(request.headers.get("host")).split(",")[0]?.trim() || "";
-  if (!host) return requestOrigin;
+  return resolvePublicOriginFromHeaders(request.headers, requestOrigin) || requestOrigin;
+}
 
-  const forwardedProtocol = trimText(request.headers.get("x-forwarded-proto")).split(",")[0]?.trim() ?? "";
-  let requestProtocol = "";
+export function resolveConfiguredPublicOriginFromHeaders(
+  requestHeaders: Headers,
+  fallbackOrigin: string | null | undefined = "",
+) {
+  const requestOrigin = resolvePublicOriginFromHeaders(requestHeaders, fallbackOrigin);
+  const configuredOrigin = resolveConfiguredPublicOrigin();
+  if (!configuredOrigin) return requestOrigin;
+  if (!requestOrigin) return configuredOrigin;
+
   try {
-    requestProtocol = new URL(request.url).protocol.replace(/:$/, "");
+    const configuredHostname = new URL(configuredOrigin).hostname;
+    const requestHostname = new URL(requestOrigin).hostname;
+    return resolveBaseDomain(configuredHostname) === resolveBaseDomain(requestHostname)
+      ? requestOrigin
+      : configuredOrigin;
   } catch {
-    requestProtocol = "";
+    return configuredOrigin;
   }
-  const protocol = forwardedProtocol || (isLocalLikeHostname(host.split(":")[0]) ? requestProtocol || "http" : "https");
-  return normalizeOrigin(`${protocol}://${host}`, protocol) || requestOrigin;
+}
+
+export function resolveConfiguredPublicRequestOrigin(request: Request) {
+  return resolveConfiguredPublicOriginFromHeaders(request.headers, resolveRequestOrigin(request));
 }
 
 export function resolveTrustedPublicOrigin(request: Request | URL | string) {

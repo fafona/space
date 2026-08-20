@@ -9,7 +9,7 @@ export function buildSiteHref(siteId: string) {
   return `/site/${encodeURIComponent(siteId)}`;
 }
 
-const RESERVED_PLATFORM_SUBDOMAINS = new Set(["www", "main", "portal"]);
+const RESERVED_PLATFORM_SUBDOMAINS = new Set(["www", "main", "portal", "console", "public", "admin"]);
 
 function normalizeDomainPrefix(value: string | null | undefined) {
   return String(value ?? "")
@@ -91,7 +91,7 @@ function deriveRootHostFromCurrentHost(currentHost?: string | null) {
 
 export function buildMerchantDomain(baseDomain: string | null | undefined, domainPrefix?: string | null, protocol?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
-  if (!prefix || isReservedInternalPrefix(prefix)) return "";
+  if (!prefix || isReservedInternalPrefix(prefix) || RESERVED_PLATFORM_SUBDOMAINS.has(prefix)) return "";
   const rootHost = resolveMerchantRootHost(baseDomain);
   if (!rootHost) return "";
   const { hostname, port } = splitHostAndPort(rootHost);

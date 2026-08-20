@@ -40,7 +40,7 @@ const productionWorkflowPath = path.join(
   "database-migrate.yml",
 );
 
-const read = (file) => fs.readFileSync(file, "utf8");
+const read = (file) => fs.readFileSync(file, "utf8").replace(/\r\n?/g, "\n");
 
 const signatures = [
   "faolla_is_merchant_owner(text)",

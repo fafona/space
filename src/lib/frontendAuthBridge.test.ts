@@ -1,44 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  installFrontendAuthBridgeResponder,
+  isDirectFrontendAuthBridgeChild,
   isTrustedFrontendAuthBridgeOrigin,
   normalizeFrontendAuthBridgePayload,
+  requestParentFrontendAuthPayload,
 } from "@/lib/frontendAuthBridge";
 
-test("frontend auth bridge trusts faolla subdomains", () => {
-  assert.equal(isTrustedFrontendAuthBridgeOrigin("https://www.faolla.com", "https://faolla.com"), true);
-  assert.equal(isTrustedFrontendAuthBridgeOrigin("https://fafona.faolla.com", "https://www.faolla.com"), true);
-  assert.equal(isTrustedFrontendAuthBridgeOrigin("https://example.com", "https://faolla.com"), false);
-});
-
-test("frontend auth bridge keeps only public authenticated session fields", () => {
-  assert.deepEqual(
+test("frontend auth bridge rejects every origin and payload", async () => {
+  assert.equal(
+    isTrustedFrontendAuthBridgeOrigin("https://www.faolla.com", "https://www.faolla.com"),
+    false,
+  );
+  assert.equal(
+    isTrustedFrontendAuthBridgeOrigin("https://merchant.faolla.com", "https://www.faolla.com"),
+    false,
+  );
+  assert.equal(isDirectFrontendAuthBridgeChild({} as Window, null), false);
+  assert.equal(
     normalizeFrontendAuthBridgePayload({
       authenticated: true,
-      accountType: "personal",
-      accountId: " 50010105 ",
-      merchantId: null,
-      merchantIds: ["", "10000000"],
-      accessToken: "secret",
-      user: {
-        email: "user@example.com",
-        user_metadata: {
-          displayName: "Nana",
-        },
-      },
+      frontendAuthProof: "legacy-proof",
+      user: { id: "user-1", email: "person@example.com" },
     }),
-    {
-      authenticated: true,
-      accountType: "personal",
-      accountId: "50010105",
-      merchantId: null,
-      merchantIds: ["10000000"],
-      user: {
-        email: "user@example.com",
-        user_metadata: {
-          displayName: "Nana",
-        },
-      },
-    },
+    null,
   );
+  assert.equal(await requestParentFrontendAuthPayload(), null);
+});
+
+test("frontend auth responder is a no-op", () => {
+  let reads = 0;
+  const uninstall = installFrontendAuthBridgeResponder(() => {
+    reads += 1;
+    return { authenticated: true, user: { id: "user-1" } };
+  });
+  uninstall();
+  assert.equal(reads, 0);
 });

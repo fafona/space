@@ -9,6 +9,8 @@ import {
   type ReactNode,
   type CSSProperties,
   type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import NextImage from "next/image";
@@ -36,6 +38,7 @@ import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtmlSegments, toRichHtml } from "@/components/blocks/richText";
+import { toPlainRichText } from "@/lib/richTextSafety";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -972,7 +975,7 @@ type GalleryEditorImage = {
   const updateCommonTextBoxRef = useRef(updateCommonTextBox);
   const persistEditorTypographyChangeRef = useRef<(editor: HTMLDivElement, options?: { includeBlockLevelPatch?: boolean }) => void>(() => {});
   const typographyEditorSnapshotRef = useRef<{
-    html: string;
+    text: string;
     range: SerializedEditorRange | null;
   } | null>(null);
   const typographyDialogInitialValuesRef = useRef<TypographyDialogValues | null>(null);
@@ -1639,7 +1642,7 @@ type GalleryEditorImage = {
     if (typographyDialogOpen) {
       const editor = activeEditorRef.current;
       if (typographyTarget === "editor" && typographyPreviewAppliedRef.current && editor && typographyEditorSnapshotRef.current) {
-        editor.innerHTML = typographyEditorSnapshotRef.current.html;
+        editor.textContent = typographyEditorSnapshotRef.current.text;
         persistEditorTypographyChangeRef.current(editor);
       }
       typographyEditorSnapshotRef.current = null;
@@ -2284,11 +2287,12 @@ type GalleryEditorImage = {
     const commonBoxId = editor.dataset.commonBoxId?.trim();
     const fieldName = editor.dataset.field as RichFieldName | undefined;
     const blockLevelTypographyPatch = options?.includeBlockLevelPatch ? buildBlockLevelTypographyPatch(getCurrentTypographyDialogValues()) : null;
+    const editorText = (editor.textContent ?? "").replaceAll("\u200B", "");
 
     if (isCommonCanvasBlockType(block.type) && commonBoxId) {
-      updateCommonTextBoxRef.current(commonBoxId, { html: editor.innerHTML });
+      updateCommonTextBoxRef.current(commonBoxId, { html: editorText });
     } else {
-      const contentPatch = fieldName ? getRichFieldPatchRef.current(fieldName, editor.innerHTML) : null;
+      const contentPatch = fieldName ? getRichFieldPatchRef.current(fieldName, editorText) : null;
       const mergedPatch: Partial<Block["props"]> = {
         ...(contentPatch ?? {}),
         ...(block.type !== "nav" ? (blockLevelTypographyPatch ?? {}) : {}),
@@ -2300,7 +2304,7 @@ type GalleryEditorImage = {
     if (block.type === "nav") {
       const navItemId = editor.dataset.navItemId?.trim();
       if (navItemId) {
-        updateNavItemRef.current(navItemId, { label: editor.innerHTML });
+        updateNavItemRef.current(navItemId, { label: editorText });
       }
     }
   }, [block.type, getCurrentTypographyDialogValues, onChange]);
@@ -2310,7 +2314,7 @@ type GalleryEditorImage = {
     const editor = activeEditorRef.current;
     const snapshot = typographyEditorSnapshotRef.current;
     if (!editor || !snapshot) return;
-    editor.innerHTML = snapshot.html;
+    editor.textContent = snapshot.text;
     const range = restoreEditorRange(editor, snapshot.range);
     if (!range) return;
 
@@ -2335,7 +2339,7 @@ type GalleryEditorImage = {
   const cancelTypographyEditing = useCallback(() => {
     const editor = activeEditorRef.current;
     if (typographyTarget === "editor" && typographyPreviewAppliedRef.current && editor && typographyEditorSnapshotRef.current) {
-      editor.innerHTML = typographyEditorSnapshotRef.current.html;
+      editor.textContent = typographyEditorSnapshotRef.current.text;
       persistEditorTypographyChange(editor);
     }
     clearTypographyPreviewSession();
@@ -2412,7 +2416,7 @@ type GalleryEditorImage = {
     const dialogValuesFromSelection = readTypographyDialogValuesFromSelection(editor, currentRange);
     typographyDialogInitialValuesRef.current = dialogValuesFromSelection;
     typographyEditorSnapshotRef.current = {
-      html: editor.innerHTML,
+      text: (editor.textContent ?? "").replaceAll("\u200B", ""),
       range: currentRange && editor.contains(currentRange.commonAncestorContainer) ? serializeEditorRange(editor, currentRange) : null,
     };
     typographyPreviewAppliedRef.current = false;
@@ -2527,7 +2531,7 @@ type GalleryEditorImage = {
     if (unchanged && !typographyPreviewAppliedRef.current) return;
 
     if (unchanged) {
-      editor.innerHTML = snapshot.html;
+      editor.textContent = snapshot.text;
       persistEditorTypographyChangeRef.current(editor);
       typographyPreviewAppliedRef.current = false;
       return;
@@ -13416,14 +13420,40 @@ function RichTextEditor({
 
   useEffect(() => {
     if (!ref.current) return;
-    if (ref.current.innerHTML !== value) {
-      ref.current.innerHTML = value;
+    const safeValue = toPlainRichText(value);
+    if (ref.current.textContent !== safeValue) {
+      ref.current.textContent = safeValue;
     }
   }, [value]);
 
   function readCurrentHtml() {
     if (!ref.current) return;
-    return ref.current.innerHTML.replaceAll("\u200B", "");
+    return (ref.current.textContent ?? "").replaceAll("\u200B", "");
+  }
+
+  function insertPlainText(text: string) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!ref.current?.contains(range.commonAncestorContainer)) return;
+    range.deleteContents();
+    const node = document.createTextNode(text);
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    emitChange();
+  }
+
+  function pastePlainText(event: ReactClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+    insertPlainText(event.clipboardData.getData("text/plain"));
+  }
+
+  function dropPlainText(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    insertPlainText(event.dataTransfer.getData("text/plain"));
   }
 
   function emitChange() {
@@ -13461,6 +13491,8 @@ function RichTextEditor({
       suppressContentEditableWarning
       onFocus={() => onActivate(ref.current)}
       onInput={emitChange}
+      onPaste={pastePlainText}
+      onDrop={dropPlainText}
       onCompositionStart={() => {
         composingRef.current = true;
       }}

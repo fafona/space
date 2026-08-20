@@ -35,7 +35,7 @@ function filterArchivePayloadBySiteId(
 }
 
 export async function GET(request: Request) {
-  if (!isSuperAdminRequestAuthorized(request)) {
+  if (!(await isSuperAdminRequestAuthorized(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

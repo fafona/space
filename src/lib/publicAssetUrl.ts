@@ -4,7 +4,7 @@ function trimTrailingSlash(value: string) {
 
 function normalizeOrigin(value: string) {
   const trimmed = String(value ?? "").trim();
-  if (!trimmed) return "";
+  if (!trimmed || trimmed.includes("\\")) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimTrailingSlash(trimmed);
   if (typeof window !== "undefined" && window.location?.protocol) {
     return `${window.location.protocol}//${trimTrailingSlash(trimmed)}`;
@@ -53,10 +53,27 @@ function readPublicStoragePath(value: string) {
 export function normalizePublicAssetUrl(value: string, preferredOrigin?: string) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
-  if (/^(data|blob):/i.test(trimmed)) return trimmed;
+  if (trimmed.includes("\\")) return "";
+  if (/^data:/i.test(trimmed)) {
+    return /^data:(?:image\/(?:png|jpe?g|gif|webp|avif)|audio\/(?:mpeg|mp3|wav|ogg|webm));base64,/i.test(trimmed)
+      ? trimmed
+      : "";
+  }
+  if (/^blob:/i.test(trimmed)) {
+    if (typeof window === "undefined" || !window.location?.origin) return "";
+    return trimmed.startsWith(`blob:${window.location.origin}/`) ? trimmed : "";
+  }
 
   const storagePath = readPublicStoragePath(trimmed);
-  if (!storagePath) return trimmed;
+  if (!storagePath) {
+    if (trimmed.startsWith("/")) return trimmed.startsWith("//") ? "" : trimmed;
+    try {
+      const url = new URL(trimmed);
+      return url.protocol === "https:" ? url.toString() : "";
+    } catch {
+      return "";
+    }
+  }
   const runtimeOrigin = resolvePreferredAssetOrigin(preferredOrigin);
 
   if (!runtimeOrigin) return trimmed;

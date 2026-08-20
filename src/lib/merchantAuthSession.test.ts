@@ -125,7 +125,7 @@ test("setMerchantAuthCookies can update access without clearing refresh cookie",
   assert.equal(response.cookies.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE), undefined);
 });
 
-test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
+test("setMerchantAuthCookies refuses merchant subdomains", () => {
   const response = NextResponse.json({ ok: true });
   const request = new Request("https://fafona.faolla.com/api/auth/merchant-login");
   setMerchantAuthCookies(
@@ -140,19 +140,15 @@ test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
     request,
   );
 
-  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, "faolla.com");
-  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, "faolla.com");
-  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.domain, "faolla.com");
-  assert.equal(response.cookies.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE)?.domain, "faolla.com");
-  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, true);
-  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, true);
-  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.secure, true);
-  assert.equal(response.cookies.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE)?.secure, true);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE), undefined);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE), undefined);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE), undefined);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_ACCOUNT_TYPE_COOKIE), undefined);
 });
 
-test("setMerchantAuthCookies falls back to the live request domain when portal config is stale", () => {
-  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
-  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
+test("setMerchantAuthCookies writes secure host-only cookies on the exact portal", () => {
+  const previousOrigin = process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
+  process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://www.faolla.com";
   try {
     const response = NextResponse.json({ ok: true });
     const request = new Request("https://www.faolla.com/api/auth/merchant-login");
@@ -167,15 +163,23 @@ test("setMerchantAuthCookies falls back to the live request domain when portal c
       request,
     );
 
-    assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, "faolla.com");
-    assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, "faolla.com");
-    assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.domain, "faolla.com");
+    assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, undefined);
+    assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, undefined);
+    assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.domain, undefined);
+    assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, true);
+    assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, true);
+    assert.match(response.headers.get("set-cookie") ?? "", /Domain=faolla\.com/i);
+    assert.equal(
+      (response.headers.get("set-cookie")?.match(/merchant-space-merchant-auth=/g) ?? []).length,
+      2,
+    );
   } finally {
-    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+    if (previousOrigin === undefined) delete process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
+    else process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = previousOrigin;
   }
 });
 
-test("setMerchantAuthCookies keeps localhost cookies non-secure for local development", () => {
+test("host-prefixed localhost cookies remain Secure", () => {
   const response = NextResponse.json({ ok: true });
   const request = new Request("http://localhost:3000/api/auth/merchant-login");
   setMerchantAuthCookies(
@@ -189,9 +193,16 @@ test("setMerchantAuthCookies keeps localhost cookies non-secure for local develo
     request,
   );
 
-  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, false);
-  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, false);
-  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.secure, false);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, true);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, true);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.secure, true);
+});
+
+test("legacy domain cookie names are ignored", () => {
+  const request = new Request("https://www.faolla.com/api/auth/merchant-session", {
+    headers: { cookie: "merchant-space-merchant-auth=legacy-token" },
+  });
+  assert.deepEqual(readMerchantRequestAccessTokens(request), []);
 });
 
 test("readMerchantAuthMerchantIdCookie reads the merchant id cookie", () => {

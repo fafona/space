@@ -4,6 +4,13 @@ import {
   merchantAuthorizationRecordMatchesUser,
   resolveMerchantSessionFromRequest,
 } from "./serverMerchantSession";
+import {
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_MERCHANT_ID_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+} from "./merchantAuthSession";
+
+process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://faolla.com";
 
 test("merchantAuthorizationRecordMatchesUser accepts linked ids and normalized emails only", () => {
   const user = {
@@ -86,8 +93,7 @@ test("resolveMerchantSessionFromRequest does not rotate refresh cookies inside b
     const session = await resolveMerchantSessionFromRequest(
       new Request("https://faolla.com/api/merchant-peer-messages?siteId=12345678", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=stale-access; merchant-space-merchant-refresh=refresh-token",
+          cookie: `${MERCHANT_AUTH_COOKIE}=stale-access; ${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token`,
         },
       }),
       { hintedMerchantId: "12345678" },
@@ -166,7 +172,7 @@ test("resolveMerchantSessionFromRequest accepts an authorized hinted merchant id
     const session = await resolveMerchantSessionFromRequest(
       new Request("https://faolla.com/api/support-messages?siteId=87654321", {
         headers: {
-          cookie: "merchant-space-merchant-auth=access-token-query",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-query`,
         },
       }),
     );
@@ -247,7 +253,7 @@ test("resolveMerchantSessionFromRequest rejects unauthorized hinted merchant ids
     const session = await resolveMerchantSessionFromRequest(
       new Request("https://faolla.com/api/support-messages?siteId=99999999", {
         headers: {
-          cookie: "merchant-space-merchant-auth=access-token-fallback",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-fallback`,
         },
       }),
     );
@@ -328,8 +334,7 @@ test("resolveMerchantSessionFromRequest falls back to older duplicate cookies wh
     const session = await resolveMerchantSessionFromRequest(
       new Request("https://faolla.com/api/bookings?siteId=12345678", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=access-token-valid; merchant-space-merchant-auth=access-token-stale",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-valid; ${MERCHANT_AUTH_COOKIE}=access-token-stale`,
         },
       }),
       { hintedMerchantId: "12345678" },
@@ -415,8 +420,7 @@ test("resolveMerchantSessionFromRequest shares concurrent hinted lookups and avo
     const makeRequest = () =>
       new Request("https://faolla.com/api/assets/upload", {
         headers: {
-          cookie:
-            "merchant-space-merchant-auth=access-token-fast-path; merchant-space-merchant-id=24681357",
+          cookie: `${MERCHANT_AUTH_COOKIE}=access-token-fast-path; ${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=24681357`,
         },
       });
     const [first, second] = await Promise.all([
