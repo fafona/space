@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep deployment sources, server output, runtime state, and secret-bearing
+# files private. The immutable Next.js static subtree is opened explicitly
+# after the build so the unprivileged reverse proxy can read only that content.
+umask 077
+
 DEPLOY_PAYLOAD_FILE="${FAOLLA_DEPLOY_PAYLOAD_FILE:-}"
 DEPLOY_PAYLOAD_KEYS=(
   APP_DIR
@@ -1108,6 +1113,91 @@ if [ -e "$RELEASE_BUILD_DIR/.runtime" ] || [ -L "$RELEASE_BUILD_DIR/.runtime" ];
   exit 1
 fi
 ln -s "$SHARED_RUNTIME_DIR" "$RELEASE_BUILD_DIR/.runtime"
+
+prepare_public_static_permissions() {
+  local release_path="$1"
+  local static_path="$release_path/.next/static"
+  local env_path="$release_path/.env.local"
+  local invalid_path
+  if [ -L "$RELEASES_DIR" ] \
+    || [ -L "$release_path" ] \
+    || [ -L "$release_path/.next" ] \
+    || [ -L "$static_path" ] \
+    || [ -L "$env_path" ] \
+    || [ ! -d "$RELEASES_DIR" ] \
+    || [ ! -d "$release_path" ] \
+    || [ ! -d "$release_path/.next" ] \
+    || [ ! -d "$static_path" ] \
+    || [ ! -f "$env_path" ]; then
+    echo "[deploy] release static tree or environment file is missing"
+    return 1
+  fi
+  invalid_path="$(find "$static_path" ! -type d ! -type f -print -quit)"
+  if [ -n "$invalid_path" ]; then
+    echo "[deploy] release static tree contains an unsupported file type"
+    return 1
+  fi
+  chmod 755 "$RELEASES_DIR" "$release_path" "$release_path/.next" "$static_path" || return 1
+  find "$static_path" -type d -exec chmod 755 {} + || return 1
+  find "$static_path" -type f -exec chmod 644 {} + || return 1
+  chmod 600 "$env_path" || return 1
+  if [ "$(stat -c %a "$RELEASES_DIR")" != "755" ] \
+    || [ "$(stat -c %a "$release_path")" != "755" ] \
+    || [ "$(stat -c %a "$release_path/.next")" != "755" ] \
+    || [ "$(stat -c %a "$static_path")" != "755" ] \
+    || [ "$(stat -c %a "$env_path")" != "600" ]; then
+    echo "[deploy] release path permissions do not match the exact contract"
+    return 1
+  fi
+  invalid_path="$(find "$static_path" -type d ! -perm 0755 -print -quit)"
+  if [ -n "$invalid_path" ]; then
+    echo "[deploy] release static directory permissions are not exact"
+    return 1
+  fi
+  invalid_path="$(find "$static_path" -type f ! -perm 0644 -print -quit)"
+  if [ -n "$invalid_path" ]; then
+    echo "[deploy] release static file permissions are not exact"
+    return 1
+  fi
+}
+
+prepare_public_static_permissions "$RELEASE_BUILD_DIR"
+
+verify_public_static_access_for_nginx() {
+  local release_path="$1"
+  local static_path="$release_path/.next/static"
+  local nginx_runtime_user="www"
+  local ancestor="$release_path"
+  local static_file
+  local checked=0
+  if ! command -v runuser >/dev/null 2>&1 \
+    || [ "$(id -u)" != "0" ] \
+    || ! id -u "$nginx_runtime_user" >/dev/null 2>&1; then
+    echo "[deploy] the production nginx runtime identity cannot be verified"
+    return 1
+  fi
+  while :; do
+    if ! runuser -u "$nginx_runtime_user" -- test -x "$ancestor"; then
+      echo "[deploy] nginx cannot traverse the release path"
+      return 1
+    fi
+    [ "$ancestor" = "/" ] && break
+    ancestor="$(dirname "$ancestor")"
+  done
+  while IFS= read -r -d '' static_file; do
+    if ! runuser -u "$nginx_runtime_user" -- test -r "$static_file"; then
+      echo "[deploy] nginx cannot read a release static file"
+      return 1
+    fi
+    checked=$((checked + 1))
+  done < <(find "$static_path" -type f -print0)
+  if [ "$checked" -lt 1 ]; then
+    echo "[deploy] release static tree is empty"
+    return 1
+  fi
+}
+
+verify_public_static_access_for_nginx "$RELEASE_BUILD_DIR"
 mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"
 
 cd "$APP_DIR"

@@ -7,6 +7,8 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -357,6 +359,11 @@ sleep() { :; }
         );
       }
       assert.match(remoteCommand, /set -eu; umask 077;/);
+      assert.match(
+        remoteCommand,
+        /chmod 700 "\$deploy_transport_dir\/deploy\.sh"; FAOLLA_DEPLOY_PAYLOAD_FILE=/,
+      );
+      assert.doesNotMatch(remoteCommand, /umask 022/);
       assert.match(remoteCommand, /IFS= read -r deploy_envelope_magic/);
       assert.match(remoteCommand, /IFS= read -r expected_deploy_bytes/);
       assert.match(remoteCommand, /actual_deploy_sha256/);
@@ -368,6 +375,7 @@ sleep() { :; }
       const payloadCopy = join(captureDirectory, `remote-payload-${index}.json`);
       const remoteProbeScript = [
         "set -eu",
+        '[ "$(umask)" = "0077" ]',
         'printf executed > "$FAKE_REMOTE_EXECUTION_MARKER"',
         'cp -- "$FAOLLA_DEPLOY_PAYLOAD_FILE" "$FAKE_REMOTE_PAYLOAD_COPY"',
         "",
@@ -830,6 +838,129 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex < cacheIndex);
   assert.ok(lockIndex < fetchIndex);
 });
+
+test("secret transport permissions do not leak into public release assets", () => {
+  assert.match(deployScript, /^umask 077$/m);
+  assert.doesNotMatch(deployScript, /^umask 022$/m);
+  assert.match(deployScript, /prepare_public_static_permissions "\$RELEASE_BUILD_DIR"/);
+  assert.match(
+    deployScript,
+    /chmod 755 "\$RELEASES_DIR" "\$release_path" "\$release_path\/\.next" "\$static_path"/,
+  );
+  assert.match(deployScript, /find "\$static_path" -type d -exec chmod 755 \{\} \+/);
+  assert.match(deployScript, /find "\$static_path" -type f -exec chmod 644 \{\} \+/);
+  assert.match(deployScript, /chmod 600 "\$env_path"/);
+  assert.match(deployScript, /find "\$static_path" ! -type d ! -type f/);
+  assert.match(deployScript, /-type d ! -perm 0755/);
+  assert.match(deployScript, /-type f ! -perm 0644/);
+  assert.match(deployScript, /stat -c %a "\$env_path"/);
+  assert.match(
+    deployScript,
+    /verify_public_static_access_for_nginx "\$RELEASE_BUILD_DIR"/,
+  );
+  assert.match(deployScript, /local nginx_runtime_user="www"/);
+  assert.match(deployScript, /runuser -u "\$nginx_runtime_user" -- test -x "\$ancestor"/);
+  assert.match(deployScript, /runuser -u "\$nginx_runtime_user" -- test -r "\$static_file"/);
+  const normalizeIndex = deployScript.indexOf(
+    'prepare_public_static_permissions "$RELEASE_BUILD_DIR"',
+  );
+  const nginxProbeIndex = deployScript.indexOf(
+    'verify_public_static_access_for_nginx "$RELEASE_BUILD_DIR"',
+  );
+  const moveIndex = deployScript.indexOf(
+    'mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"',
+  );
+  const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1");
+  assert.ok(normalizeIndex >= 0);
+  assert.ok(normalizeIndex < nginxProbeIndex);
+  assert.ok(nginxProbeIndex < moveIndex);
+  assert.ok(moveIndex < processMutationIndex);
+});
+
+test(
+  "Linux release permissions expose only immutable static assets",
+  { skip: process.platform === "win32" },
+  async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "faolla-release-permissions-contract-"),
+    );
+    const releaseDirectory = join(temporaryDirectory, ".release.building");
+    const functionStart = deployScript.indexOf(
+      "prepare_public_static_permissions() {",
+    );
+    const functionEnd = deployScript.indexOf(
+      "\n}\n\nprepare_public_static_permissions",
+      functionStart,
+    );
+    assert.ok(functionStart >= 0 && functionEnd > functionStart);
+    const permissionFunction = deployScript.slice(functionStart, functionEnd + 2);
+    const fixtureScript = [
+      "set -euo pipefail",
+      "umask 077",
+      'RELEASES_DIR="$1"',
+      'RELEASE_BUILD_DIR="$RELEASES_DIR/.release.building"',
+      'mkdir -p "$RELEASE_BUILD_DIR/.next/static/chunks" "$RELEASE_BUILD_DIR/.next/server"',
+      'printf secret > "$RELEASE_BUILD_DIR/.env.local"',
+      'printf public > "$RELEASE_BUILD_DIR/.next/static/chunks/app.js"',
+      'printf private > "$RELEASE_BUILD_DIR/.next/server/private.js"',
+      permissionFunction,
+      'prepare_public_static_permissions "$RELEASE_BUILD_DIR"',
+      "",
+    ].join("\n");
+    try {
+      const result = spawnSync(
+        resolveBashExecutable(),
+        ["-c", fixtureScript, "release-permission-fixture", temporaryDirectory],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const mode = async (path) => (await stat(path)).mode & 0o777;
+      assert.equal(await mode(temporaryDirectory), 0o755);
+      assert.equal(await mode(releaseDirectory), 0o755);
+      assert.equal(await mode(join(releaseDirectory, ".next")), 0o755);
+      assert.equal(
+        await mode(join(releaseDirectory, ".next", "static", "chunks")),
+        0o755,
+      );
+      assert.equal(
+        await mode(join(releaseDirectory, ".next", "static", "chunks", "app.js")),
+        0o644,
+      );
+      assert.equal(await mode(join(releaseDirectory, ".env.local")), 0o600);
+      assert.equal(
+        await mode(join(releaseDirectory, ".next", "server")),
+        0o700,
+      );
+      assert.equal(
+        await mode(join(releaseDirectory, ".next", "server", "private.js")),
+        0o600,
+      );
+
+      await symlink(
+        "../../server/private.js",
+        join(releaseDirectory, ".next", "static", "private-link.js"),
+      );
+      const symlinkProbe = spawnSync(
+        resolveBashExecutable(),
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            'RELEASES_DIR="$1"',
+            permissionFunction,
+            'prepare_public_static_permissions "$RELEASES_DIR/.release.building"',
+          ].join("\n"),
+          "release-permission-symlink-fixture",
+          temporaryDirectory,
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      assert.notEqual(symlinkProbe.status, 0);
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("production deployment accepts only the exact tested current main commit", () => {
   assert.doesNotMatch(deployWorkflow, /^\s*workflow_dispatch:\s*$/m);
