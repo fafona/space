@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -24,6 +24,18 @@ const RESTORED_BASELINE = {
   systemSitePrincipalOverlapCount: "0",
   ordinaryIdentityContentSha256: "1".repeat(64),
 };
+
+test("database restore report cannot let callback fields downgrade its schema", async () => {
+  const source = await readFile(
+    new URL("./rehearse-production-database-restore.mjs", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /\.\.\.verified\.callbackResult,\s*schemaVersion:\s*2,/,
+  );
+});
 
 function restoreManifest(image = "supabase/postgres:15.8.1.085") {
   return {
