@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Keep source, server output, runtime state, and secret-bearing files private.
-# Only the immutable Next.js static subtree is opened for nginx after build.
+# Keep deployment sources, server output, runtime state, and secret-bearing
+# files private. The immutable Next.js static subtree is opened explicitly
+# after the build so the unprivileged reverse proxy can read only that content.
 umask 077
 
 DEPLOY_PAYLOAD_FILE="${FAOLLA_DEPLOY_PAYLOAD_FILE:-}"
@@ -1393,6 +1394,38 @@ for (;;) {
   ancestor = dirname(ancestor);
 }
 NODE
+}
+
+verify_public_static_access_for_nginx() {
+  local release_path="$1"
+  local static_path="$release_path/.next/static"
+  local ancestor="$release_path"
+  local static_file
+  local checked=0
+  if [ "$(id -u)" != "0" ] \
+    || ! id -u "$NGINX_RUNTIME_USER" >/dev/null 2>&1; then
+    echo "[deploy] the production nginx runtime identity cannot be verified"
+    return 1
+  fi
+  while :; do
+    if ! runuser -u "$NGINX_RUNTIME_USER" -- test -x "$ancestor"; then
+      echo "[deploy] nginx cannot traverse the release path"
+      return 1
+    fi
+    [ "$ancestor" = "/" ] && break
+    ancestor="$(dirname "$ancestor")"
+  done
+  while IFS= read -r -d '' static_file; do
+    if ! runuser -u "$NGINX_RUNTIME_USER" -- test -r "$static_file"; then
+      echo "[deploy] nginx cannot read a release static file"
+      return 1
+    fi
+    checked=$((checked + 1))
+  done < <(find "$static_path" -type f -print0)
+  if [ "$checked" -lt 1 ]; then
+    echo "[deploy] release static tree is empty"
+    return 1
+  fi
 }
 
 prepare_shared_runtime() {
@@ -3077,6 +3110,7 @@ if [ -e "$RELEASE_BUILD_DIR/.runtime" ] || [ -L "$RELEASE_BUILD_DIR/.runtime" ];
 fi
 ln -s "$SHARED_RUNTIME_DIR" "$RELEASE_BUILD_DIR/.runtime"
 normalize_and_verify_release_permissions "$RELEASE_BUILD_DIR"
+verify_public_static_access_for_nginx "$RELEASE_BUILD_DIR"
 mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"
 
 cd "$APP_DIR"

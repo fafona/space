@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -700,6 +701,10 @@ sleep() { :; }
         );
       }
       assert.match(remoteCommand, /set -eu; umask 077;/);
+      assert.match(
+        remoteCommand,
+        /chmod 700 "\$deploy_transport_dir\/deploy\.sh"; FAOLLA_DEPLOY_PAYLOAD_FILE=/,
+      );
       assert.doesNotMatch(remoteCommand, /umask 022/);
       assert.match(remoteCommand, /IFS= read -r deploy_envelope_magic/);
       assert.match(remoteCommand, /IFS= read -r expected_deploy_bytes/);
@@ -1304,7 +1309,7 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex < fetchIndex);
 });
 
-test("private deployment output exposes only immutable static assets to nginx", () => {
+test("private deployment output exposes only immutable static assets to nginx before activation", () => {
   assert.match(deployScript, /^umask 077$/m);
   assert.doesNotMatch(deployScript, /^umask 022$/m);
   assert.doesNotMatch(deployWorkflow, /umask 022/);
@@ -1315,9 +1320,28 @@ test("private deployment output exposes only immutable static assets to nginx", 
   );
   assert.match(deployScript, /find "\$static_root" -type d -exec chmod 755/);
   assert.match(deployScript, /find "\$static_root" -type f -exec chmod 644/);
+  assert.match(deployScript, /find "\$static_root" ! -type d ! -type f/);
   assert.match(deployScript, /find "\$server_root" -type d -exec chmod 700/);
   assert.match(deployScript, /find "\$server_root" -type f -exec chmod 600/);
   assert.match(deployScript, /chmod 600 "\$env_file"/);
+  assert.match(
+    deployScript,
+    /verify_public_static_access_for_nginx "\$RELEASE_BUILD_DIR"/,
+  );
+  assert.match(
+    deployScript,
+    /NGINX_RUNTIME_USER="\$\{NGINX_RUNTIME_USER:-www\}"/,
+  );
+  assert.match(deployScript, /if \[ "\$NGINX_RUNTIME_USER" != "www" \]/);
+  assert.match(
+    deployScript,
+    /runuser -u "\$NGINX_RUNTIME_USER" -- test -x "\$ancestor"/,
+  );
+  assert.match(
+    deployScript,
+    /runuser -u "\$NGINX_RUNTIME_USER" -- test -r "\$static_file"/,
+  );
+  assert.match(deployScript, /find "\$static_(?:root|path)" -type f -print0/);
   assert.match(deployScript, /runuser -u "\$FAOLLA_NGINX_RUNTIME_USER" -- test -x/);
   assert.match(
     deployScript,
@@ -1328,15 +1352,19 @@ test("private deployment output exposes only immutable static assets to nginx", 
   const permissionIndex = deployScript.indexOf(
     'normalize_and_verify_release_permissions "$RELEASE_BUILD_DIR"',
   );
+  const nginxPreMoveIndex = deployScript.indexOf(
+    'verify_public_static_access_for_nginx "$RELEASE_BUILD_DIR"',
+  );
   const moveIndex = deployScript.indexOf('mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"');
   const fenceIndex = deployScript.lastIndexOf("start_readiness_fence || exit 1");
   const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1");
-  assert.ok(permissionIndex >= 0 && permissionIndex < moveIndex);
+  assert.ok(permissionIndex >= 0 && permissionIndex < nginxPreMoveIndex);
+  assert.ok(nginxPreMoveIndex < moveIndex);
   assert.ok(moveIndex < fenceIndex && fenceIndex < processMutationIndex);
 });
 
 test(
-  "Linux release modes remain private outside the exact static subtree",
+  "Linux release permissions expose only immutable static assets and reject special entries",
   { skip: process.platform === "win32" },
   async () => {
     const temporaryDirectory = await mkdtemp(
@@ -1381,6 +1409,38 @@ test(
       assert.equal(await mode(join(releaseDirectory, "package.json")), 0o600);
       assert.equal(await mode(join(releaseDirectory, "node_modules", "private")), 0o700);
       assert.equal(await mode(join(releaseDirectory, "node_modules", "private", "index.js")), 0o600);
+
+      const specialPath = join(
+        releaseDirectory,
+        ".next",
+        "static",
+        "private.fifo",
+      );
+      const createSpecial = spawnSync("mkfifo", [specialPath], {
+        encoding: "utf8",
+      });
+      assert.equal(
+        createSpecial.status,
+        0,
+        `${createSpecial.stdout}\n${createSpecial.stderr}`,
+      );
+      const specialProbe = spawnSync(
+        resolveBashExecutable(),
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            'RELEASES_DIR="$1"',
+            permissionFunction,
+            'normalize_and_verify_release_permissions "$RELEASES_DIR/.release.building"',
+          ].join("\n"),
+          "release-permission-special-fixture",
+          temporaryDirectory,
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      assert.notEqual(specialProbe.status, 0);
+      await unlink(specialPath);
 
       await symlink(
         "../../server/app/private.js",
