@@ -35,6 +35,9 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_RELEASE_REQUEST_BYTES = 8 * 1024;
 const ENDPOINT_PROBE_TIMEOUT_MS = 15_000;
 const ENDPOINT_PROBE_POLL_MS = 50;
+const EXTERNAL_OPERATION_TIMEOUT_MS = 10_000;
+const QUERY_CANCEL_RESPONSE_TIMEOUT_MS = 5_000;
+const ENDPOINT_PROBE_TOTAL_TIMEOUT_MS = 90_000;
 const FENCE_KIND = "faolla.ordinary-account-cutover-readiness-fence.v1";
 const RELEASE_REQUEST_KIND =
   "faolla.ordinary-account-cutover-readiness-fence-release.v1";
@@ -130,6 +133,10 @@ const OBSERVE_WAITERS_SQL = String.raw`WITH waiters AS (
     lock.relation::text AS relation_oid,
     namespace.nspname AS schema_name,
     relation.relname AS relation_name,
+    activity.usename AS database_user,
+    activity.application_name,
+    COALESCE(activity.client_addr::text, '') AS client_address,
+    activity.query,
     lock.mode,
     lock.granted,
     pg_catalog.floor(
@@ -164,6 +171,32 @@ SELECT pg_catalog.json_build_object(
   'clockEpochMilliseconds', pg_catalog.floor(
     EXTRACT(EPOCH FROM pg_catalog.clock_timestamp()) * 1000::numeric
   )::bigint::text,
+  'serviceSessions', COALESCE(
+    (
+      SELECT pg_catalog.json_agg(
+        pg_catalog.json_build_object(
+          'databaseUser', session.usename,
+          'applicationName', session.application_name,
+          'clientAddress', session.client_address
+        )
+        ORDER BY session.client_address, session.usename, session.application_name
+      )
+      FROM (
+        SELECT DISTINCT
+          activity.usename,
+          activity.application_name,
+          activity.client_addr::text AS client_address
+        FROM pg_catalog.pg_stat_activity AS activity
+        WHERE activity.client_addr IS NOT NULL
+          AND activity.datid = (
+            SELECT database.oid
+            FROM pg_catalog.pg_database AS database
+            WHERE database.datname = pg_catalog.current_database()
+          )
+      ) AS session
+    ),
+    '[]'::pg_catalog.json
+  ),
   'waiters', COALESCE(
     (
       SELECT pg_catalog.json_agg(
@@ -173,6 +206,10 @@ SELECT pg_catalog.json_build_object(
           'relationOid', waiters.relation_oid,
           'schemaName', waiters.schema_name,
           'relationName', waiters.relation_name,
+          'databaseUser', waiters.database_user,
+          'applicationName', waiters.application_name,
+          'clientAddress', waiters.client_address,
+          'query', waiters.query,
           'mode', waiters.mode,
           'granted', waiters.granted,
           'queryStartedAtEpochMilliseconds', waiters.query_started_at_epoch_ms,
@@ -195,6 +232,9 @@ const CANCEL_WAITER_CONTAINER_SCRIPT = [
   ': "${FAOLLA_RELATION_OID:?FAOLLA_RELATION_OID is required}"',
   ': "${FAOLLA_SCHEMA_NAME:?FAOLLA_SCHEMA_NAME is required}"',
   ': "${FAOLLA_RELATION_NAME:?FAOLLA_RELATION_NAME is required}"',
+  ': "${FAOLLA_DATABASE_USER:?FAOLLA_DATABASE_USER is required}"',
+  ': "${FAOLLA_APPLICATION_NAME:?FAOLLA_APPLICATION_NAME is required}"',
+  ': "${FAOLLA_CLIENT_ADDRESS:?FAOLLA_CLIENT_ADDRESS is required}"',
   ': "${FAOLLA_QUERY_STARTED_AT_EPOCH_MS:?FAOLLA_QUERY_STARTED_AT_EPOCH_MS is required}"',
   ': "${FAOLLA_FENCE_BACKEND_PID:?FAOLLA_FENCE_BACKEND_PID is required}"',
   'export PGPASSWORD="$POSTGRES_PASSWORD"',
@@ -207,6 +247,9 @@ const CANCEL_WAITER_CONTAINER_SCRIPT = [
     '--set=relation_oid="$FAOLLA_RELATION_OID" ' +
     '--set=schema_name="$FAOLLA_SCHEMA_NAME" ' +
     '--set=relation_name="$FAOLLA_RELATION_NAME" ' +
+    '--set=database_user="$FAOLLA_DATABASE_USER" ' +
+    '--set=application_name="$FAOLLA_APPLICATION_NAME" ' +
+    '--set=client_address="$FAOLLA_CLIENT_ADDRESS" ' +
     '--set=query_started_at_epoch_ms="$FAOLLA_QUERY_STARTED_AT_EPOCH_MS" ' +
     '--set=fence_backend_pid="$FAOLLA_FENCE_BACKEND_PID" ' +
     "--quiet --tuples-only --no-align",
@@ -226,11 +269,14 @@ const CANCEL_WAITER_SQL = String.raw`WITH candidate AS (
     AND lock.relation = :'relation_oid'::oid
     AND namespace.nspname = :'schema_name'::text
     AND relation.relname = :'relation_name'::text
+    AND activity.usename = :'database_user'::text
+    AND activity.application_name = :'application_name'::text
+    AND COALESCE(activity.client_addr::text, '') = :'client_address'::text
     AND lock.mode = 'AccessShareLock'
     AND NOT lock.granted
     AND pg_catalog.floor(
       EXTRACT(EPOCH FROM activity.query_start) * 1000::numeric
-    )::bigint >= :'query_started_at_epoch_ms'::bigint
+    )::bigint = :'query_started_at_epoch_ms'::bigint
     AND pg_catalog.pg_blocking_pids(activity.pid)
       = ARRAY[:'fence_backend_pid'::integer]::integer[]
 ), cancelled AS (
@@ -315,14 +361,54 @@ export function buildOrdinaryAccountCutoverReadinessFenceSql(
     `${reportQuery} AS report`,
     String.raw`\gset fence_`,
     `SET LOCAL statement_timeout = '${seconds + DATABASE_TIMEOUT_MARGIN_SECONDS}s';`,
+    "LOCK TABLE public.faolla_schema_migrations IN ACCESS EXCLUSIVE MODE;",
+    "SAVEPOINT endpoint_probe_locks;",
     "LOCK TABLE auth.users IN ACCESS EXCLUSIVE MODE;",
     "LOCK TABLE public.pages IN ACCESS EXCLUSIVE MODE;",
-    "LOCK TABLE public.faolla_schema_migrations IN ACCESS EXCLUSIVE MODE;",
     String.raw`SELECT '{"backendPid":"'
   || pg_catalog.pg_backend_pid()::text
   || '","report":'
   || :'fence_report'::text
   || '}' AS fence_result;`,
+    "ROLLBACK TO SAVEPOINT endpoint_probe_locks;",
+    "RELEASE SAVEPOINT endpoint_probe_locks;",
+    String.raw`SELECT pg_catalog.json_build_object(
+  'backendPid', pg_catalog.pg_backend_pid()::text,
+  'holdLocks', pg_catalog.json_build_object(
+    'authShareLockCount', (
+      SELECT pg_catalog.count(*)::text
+      FROM pg_catalog.pg_locks AS lock
+      WHERE lock.pid = pg_catalog.pg_backend_pid()
+        AND lock.relation = 'auth.users'::pg_catalog.regclass
+        AND lock.mode = 'ShareLock'
+        AND lock.granted
+    ),
+    'authAccessExclusiveLockCount', (
+      SELECT pg_catalog.count(*)::text
+      FROM pg_catalog.pg_locks AS lock
+      WHERE lock.pid = pg_catalog.pg_backend_pid()
+        AND lock.relation = 'auth.users'::pg_catalog.regclass
+        AND lock.mode = 'AccessExclusiveLock'
+        AND lock.granted
+    ),
+    'pagesAccessExclusiveLockCount', (
+      SELECT pg_catalog.count(*)::text
+      FROM pg_catalog.pg_locks AS lock
+      WHERE lock.pid = pg_catalog.pg_backend_pid()
+        AND lock.relation = 'public.pages'::pg_catalog.regclass
+        AND lock.mode = 'AccessExclusiveLock'
+        AND lock.granted
+    ),
+    'registryAccessExclusiveLockCount', (
+      SELECT pg_catalog.count(*)::text
+      FROM pg_catalog.pg_locks AS lock
+      WHERE lock.pid = pg_catalog.pg_backend_pid()
+        AND lock.relation = 'public.faolla_schema_migrations'::pg_catalog.regclass
+        AND lock.mode = 'AccessExclusiveLock'
+        AND lock.granted
+    )
+  )
+)::text AS fence_hold_result;`,
     `SELECT pg_catalog.pg_sleep(${seconds}::double precision);`,
     "ROLLBACK;",
   ].join("\n\n");
@@ -453,6 +539,23 @@ function childCompletion(child) {
   });
 }
 
+async function withWallClockDeadline(promise, milliseconds, code, onTimeout) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      try {
+        onTimeout?.();
+      } catch {}
+      reject(new OrdinaryAccountCutoverReadinessFenceError(code));
+    }, milliseconds);
+  });
+  try {
+    return await Promise.race([Promise.resolve(promise), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function runDockerWaiterObservation(input) {
   const child = spawnDocker(
     input.spawnProcess ?? spawn,
@@ -476,7 +579,12 @@ async function runDockerWaiterObservation(input) {
   child.stderr?.resume();
   const completion = childCompletion(child);
   child.stdin.end(OBSERVE_WAITERS_SQL);
-  const result = await completion;
+  const result = await (input.deadline ?? withWallClockDeadline)(
+    completion,
+    EXTERNAL_OPERATION_TIMEOUT_MS,
+    "readiness_fence_probe_observer_timeout",
+    () => child.kill("SIGKILL"),
+  );
   if (tooLarge || result.error || result.code !== 0) {
     fail("readiness_fence_probe_observer_failed");
   }
@@ -496,6 +604,9 @@ async function cancelObservedWaiter(input) {
     FAOLLA_RELATION_OID: input.waiter.relationOid,
     FAOLLA_SCHEMA_NAME: input.waiter.schemaName,
     FAOLLA_RELATION_NAME: input.waiter.relationName,
+    FAOLLA_DATABASE_USER: input.waiter.databaseUser,
+    FAOLLA_APPLICATION_NAME: input.waiter.applicationName,
+    FAOLLA_CLIENT_ADDRESS: input.waiter.clientAddress,
     FAOLLA_QUERY_STARTED_AT_EPOCH_MS:
       input.waiter.queryStartedAtEpochMilliseconds,
     FAOLLA_FENCE_BACKEND_PID: input.fenceBackendPid,
@@ -520,7 +631,12 @@ async function cancelObservedWaiter(input) {
   child.stderr?.resume();
   const completion = childCompletion(child);
   child.stdin.end(CANCEL_WAITER_SQL);
-  const result = await completion;
+  const result = await (input.deadline ?? withWallClockDeadline)(
+    completion,
+    EXTERNAL_OPERATION_TIMEOUT_MS,
+    "readiness_fence_probe_waiter_cancel_timeout",
+    () => child.kill("SIGKILL"),
+  );
   if (
     result.error ||
     result.code !== 0 ||
@@ -531,10 +647,197 @@ async function cancelObservedWaiter(input) {
   }
 }
 
+async function captureDockerOutput(
+  argumentsList,
+  spawnProcess,
+  code,
+  deadline = withWallClockDeadline,
+) {
+  const child = spawnDocker(spawnProcess ?? spawn, argumentsList);
+  let stdout = Buffer.alloc(0);
+  child.stdout.on("data", (chunk) => {
+    stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
+    if (stdout.length > MAX_OUTPUT_BYTES) {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }
+  });
+  child.stderr?.resume();
+  child.stdin.end();
+  const result = await deadline(
+    childCompletion(child),
+    EXTERNAL_OPERATION_TIMEOUT_MS,
+    `${code}_timeout`,
+    () => child.kill("SIGKILL"),
+  );
+  if (result.error || result.code !== 0 || stdout.length > MAX_OUTPUT_BYTES) {
+    fail(code);
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
+}
+
+export async function resolveSupabaseServiceClientAddresses(
+  service,
+  databaseContainerId,
+  expectedDatabaseName,
+  spawnProcess,
+  deadline = withWallClockDeadline,
+) {
+  if (service !== "rest" && service !== "auth") {
+    fail("readiness_fence_probe_service_invalid");
+  }
+  let databaseInspect;
+  try {
+    databaseInspect = JSON.parse(
+      await captureDockerOutput(
+        ["inspect", databaseContainerId],
+        spawnProcess,
+        "readiness_fence_probe_service_identity_invalid",
+        deadline,
+      ),
+    );
+  } catch (error) {
+    if (error instanceof OrdinaryAccountCutoverReadinessFenceError) throw error;
+    fail("readiness_fence_probe_service_identity_invalid");
+  }
+  const database = databaseInspect?.[0];
+  const project =
+    database?.Config?.Labels?.["com.docker.compose.project"];
+  const databaseNetworks = new Set(
+    Object.keys(database?.NetworkSettings?.Networks ?? {}),
+  );
+  const databaseHosts = new Set(
+    [
+      typeof database?.Name === "string" ? database.Name.replace(/^\//, "") : null,
+      ...Object.values(database?.NetworkSettings?.Networks ?? {}).flatMap(
+        (identity) => [identity?.IPAddress, ...(identity?.Aliases ?? [])],
+      ),
+    ].filter((value) => typeof value === "string" && value !== ""),
+  );
+  if (
+    database?.Id !== databaseContainerId ||
+    typeof project !== "string" ||
+    project.length === 0 ||
+    project.length > 128 ||
+    databaseNetworks.size === 0
+  ) {
+    fail("readiness_fence_probe_service_identity_invalid");
+  }
+  const databaseEnvironmentName =
+    service === "rest" ? "PGRST_DB_URI" : "GOTRUE_DB_DATABASE_URL";
+  const serviceIds = (
+    await captureDockerOutput(
+      [
+        "ps",
+        "--no-trunc",
+        "--filter",
+        `label=com.docker.compose.project=${project}`,
+        "--filter",
+        `label=com.docker.compose.service=${service}`,
+        "--filter",
+        "status=running",
+        "--format",
+        "{{.ID}}",
+      ],
+      spawnProcess,
+      "readiness_fence_probe_service_identity_invalid",
+      deadline,
+    )
+  )
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value !== "");
+  if (
+    serviceIds.length !== 1 ||
+    !CONTAINER_ID_PATTERN.test(serviceIds[0])
+  ) {
+    fail("readiness_fence_probe_service_identity_invalid");
+  }
+  let serviceInspect;
+  try {
+    serviceInspect = JSON.parse(
+      await captureDockerOutput(
+        ["inspect", serviceIds[0]],
+        spawnProcess,
+        "readiness_fence_probe_service_identity_invalid",
+        deadline,
+      ),
+    );
+  } catch (error) {
+    if (error instanceof OrdinaryAccountCutoverReadinessFenceError) throw error;
+    fail("readiness_fence_probe_service_identity_invalid");
+  }
+  const serviceContainer = serviceInspect?.[0];
+  if (
+    serviceContainer?.Config?.Labels?.["com.docker.compose.project"] !== project ||
+    serviceContainer?.Config?.Labels?.["com.docker.compose.service"] !== service ||
+    serviceContainer?.Id !== serviceIds[0] ||
+    !/^sha256:[0-9a-f]{64}$/.test(serviceContainer?.Image ?? "")
+  ) {
+    fail("readiness_fence_probe_service_identity_invalid");
+  }
+  const databaseEnvironmentValues = (serviceContainer.Config.Env ?? [])
+    .filter(
+      (entry) =>
+        typeof entry === "string" &&
+        entry.startsWith(`${databaseEnvironmentName}=`),
+    )
+    .map((entry) => entry.slice(databaseEnvironmentName.length + 1));
+  let databaseUrl;
+  let databaseUser;
+  let databaseName;
+  try {
+    if (databaseEnvironmentValues.length !== 1) throw new Error("invalid");
+    databaseUrl = new URL(databaseEnvironmentValues[0]);
+    databaseUser = decodeURIComponent(databaseUrl.username);
+    databaseName = decodeURIComponent(
+      databaseUrl.pathname.replace(/^\//, ""),
+    );
+  } catch {
+    fail("readiness_fence_probe_service_database_route_invalid");
+  }
+  if (
+    (databaseUrl.protocol !== "postgres:" &&
+      databaseUrl.protocol !== "postgresql:") ||
+    !databaseHosts.has(databaseUrl.hostname) ||
+    databaseName !== expectedDatabaseName ||
+    databaseUser.length === 0 ||
+    (databaseUrl.port !== "" && databaseUrl.port !== "5432")
+  ) {
+    fail("readiness_fence_probe_service_database_route_invalid");
+  }
+  const addresses = Object.entries(
+    serviceContainer?.NetworkSettings?.Networks ?? {},
+  )
+    .filter(([network]) => databaseNetworks.has(network))
+    .map(([, identity]) => identity?.IPAddress)
+    .filter((value) => typeof value === "string" && value !== "");
+  if (
+    addresses.length === 0 ||
+    new Set(addresses).size !== addresses.length ||
+    addresses.some(
+      (value) =>
+        value.length > 128 ||
+        !/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^[0-9a-fA-F:]+$/.test(value),
+    )
+  ) {
+    fail("readiness_fence_probe_service_identity_invalid");
+  }
+  return {
+    containerId: serviceIds[0],
+    imageId: serviceContainer.Image,
+    clientAddresses: addresses.sort(),
+    databaseUser,
+    databaseName: expectedDatabaseName,
+    databasePort: databaseUrl.port || "5432",
+  };
+}
+
 function parseWaiterObservation(value) {
   const source = exactRecord(
     value,
-    ["databaseOid", "clockEpochMilliseconds", "waiters"],
+    ["databaseOid", "clockEpochMilliseconds", "serviceSessions", "waiters"],
     "readiness_fence_probe_observer_invalid",
   );
   if (
@@ -542,10 +845,31 @@ function parseWaiterObservation(value) {
     !POSITIVE_DECIMAL_PATTERN.test(source.databaseOid) ||
     typeof source.clockEpochMilliseconds !== "string" ||
     !EPOCH_MILLISECONDS_PATTERN.test(source.clockEpochMilliseconds) ||
+    !Array.isArray(source.serviceSessions) ||
     !Array.isArray(source.waiters)
   ) {
     fail("readiness_fence_probe_observer_invalid");
   }
+  const serviceSessions = source.serviceSessions.map((session) => {
+    const row = exactRecord(
+      session,
+      ["databaseUser", "applicationName", "clientAddress"],
+      "readiness_fence_probe_observer_invalid",
+    );
+    if (
+      typeof row.databaseUser !== "string" ||
+      row.databaseUser.length === 0 ||
+      row.databaseUser.length > 128 ||
+      typeof row.applicationName !== "string" ||
+      row.applicationName.length > 256 ||
+      typeof row.clientAddress !== "string" ||
+      row.clientAddress.length === 0 ||
+      row.clientAddress.length > 128
+    ) {
+      fail("readiness_fence_probe_observer_invalid");
+    }
+    return row;
+  });
   const waiters = source.waiters.map((waiter) => {
     const row = exactRecord(
       waiter,
@@ -555,6 +879,10 @@ function parseWaiterObservation(value) {
         "relationOid",
         "schemaName",
         "relationName",
+        "databaseUser",
+        "applicationName",
+        "clientAddress",
+        "query",
         "mode",
         "granted",
         "queryStartedAtEpochMilliseconds",
@@ -574,6 +902,17 @@ function parseWaiterObservation(value) {
       row.schemaName.length === 0 ||
       typeof row.relationName !== "string" ||
       row.relationName.length === 0 ||
+      typeof row.databaseUser !== "string" ||
+      row.databaseUser.length === 0 ||
+      row.databaseUser.length > 128 ||
+      typeof row.applicationName !== "string" ||
+      row.applicationName.length > 256 ||
+      typeof row.clientAddress !== "string" ||
+      row.clientAddress.length === 0 ||
+      row.clientAddress.length > 128 ||
+      typeof row.query !== "string" ||
+      row.query.length === 0 ||
+      row.query.length > 128 * 1024 ||
       typeof row.mode !== "string" ||
       typeof row.granted !== "boolean" ||
       typeof row.queryStartedAtEpochMilliseconds !== "string" ||
@@ -590,7 +929,7 @@ function parseWaiterObservation(value) {
     }
     return row;
   });
-  return { ...source, waiters };
+  return { ...source, serviceSessions, waiters };
 }
 
 function requiredProbeEnvironment(environment) {
@@ -659,6 +998,7 @@ function probeRequestSpecifications(environment, randomHex) {
   const createPair = (base, scope) => {
     const baseEndpointSha256 = sha256Hex(Buffer.from(base.href, "utf8"));
     const pageIdentity = nonce(16);
+    const queryMarker = `probe_${nonce(12)}`;
     const pageUuid = [
       pageIdentity.slice(0, 8),
       pageIdentity.slice(8, 12),
@@ -671,11 +1011,13 @@ function probeRequestSpecifications(environment, randomHex) {
     return [
       {
         probe: `${scope}Rest`,
+        service: "rest",
         baseEndpointSha256,
         url: endpointUrl(
           base,
-          `rest/v1/pages?select=id&id=eq.${pageUuid}&limit=1`,
+          `rest/v1/pages?select=${queryMarker}:id&id=eq.${pageUuid}&limit=1`,
         ),
+        queryMarker,
         schemaName: "public",
         relationName: "pages",
         request: {
@@ -687,10 +1029,12 @@ function probeRequestSpecifications(environment, randomHex) {
       },
       {
         probe: `${scope}Auth`,
+        service: "auth",
         baseEndpointSha256,
         url: endpointUrl(base, "auth/v1/token?grant_type=password"),
         schemaName: "auth",
         relationName: "users",
+        queryMarker: null,
         request: {
           method: "POST",
           headers: {
@@ -723,9 +1067,55 @@ function validateCandidateWaiter(candidate, expected) {
     BigInt(candidate.queryStartedAtEpochMilliseconds) <
       BigInt(expected.notBeforeEpochMilliseconds) ||
     candidate.blockingPids.length !== 1 ||
-    candidate.blockingPids[0] !== expected.fenceBackendPid
+    candidate.blockingPids[0] !== expected.fenceBackendPid ||
+    candidate.databaseUser !== expected.databaseUser ||
+    !expected.clientAddresses.includes(candidate.clientAddress) ||
+    (expected.applicationName !== null &&
+      candidate.applicationName !== expected.applicationName) ||
+    (expected.queryMarker !== null &&
+      !candidate.query.includes(`"${expected.queryMarker}"`))
   ) {
     fail("readiness_fence_probe_waiter_invalid");
+  }
+}
+
+async function validateQueryCancelledHttpResponse(
+  specification,
+  response,
+  deadline,
+) {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    !Number.isInteger(response.status) ||
+    response.status < 500 ||
+    response.status > 599 ||
+    typeof response.text !== "function"
+  ) {
+    fail("readiness_fence_probe_query_cancel_response_invalid");
+  }
+  const body = await deadline(
+    response.text(),
+    QUERY_CANCEL_RESPONSE_TIMEOUT_MS,
+    "readiness_fence_probe_query_cancel_response_timeout",
+  );
+  if (typeof body !== "string" || Buffer.byteLength(body, "utf8") > 64 * 1024) {
+    fail("readiness_fence_probe_query_cancel_response_invalid");
+  }
+  let value;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    fail("readiness_fence_probe_query_cancel_response_invalid");
+  }
+  if (specification.service === "rest") {
+    if (value?.code !== "57014") {
+      fail("readiness_fence_probe_query_cancel_response_invalid");
+    }
+    return;
+  }
+  if (value?.error_code !== "unexpected_failure") {
+    fail("readiness_fence_probe_query_cancel_response_invalid");
   }
 }
 
@@ -735,7 +1125,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
 ) {
   const source = exactRecord(
     input,
-    ["containerId", "databaseOid", "fenceBackendPid"],
+    ["containerId", "databaseName", "databaseOid", "fenceBackendPid"],
     "readiness_fence_probe_input_invalid",
   );
   if (
@@ -744,7 +1134,10 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     typeof source.databaseOid !== "string" ||
     !POSITIVE_DECIMAL_PATTERN.test(source.databaseOid) ||
     typeof source.fenceBackendPid !== "string" ||
-    !PID_PATTERN.test(source.fenceBackendPid)
+    !PID_PATTERN.test(source.fenceBackendPid) ||
+    typeof source.databaseName !== "string" ||
+    source.databaseName.length === 0 ||
+    source.databaseName.length > 128
   ) {
     fail("readiness_fence_probe_input_invalid");
   }
@@ -758,14 +1151,16 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
   const randomHex =
     dependencies.randomProbeHex ??
     ((byteLength) => randomBytes(byteLength).toString("hex"));
-  const observeWaiters =
+  const deadline = dependencies.deadline ?? withWallClockDeadline;
+  const rawObserveWaiters =
     dependencies.observeWaiters ??
     (() =>
       runDockerWaiterObservation({
         containerId: source.containerId,
         spawnProcess: dependencies.spawnProcess,
+        deadline,
       }));
-  const cancelWaiter =
+  const rawCancelWaiter =
     dependencies.cancelWaiter ??
     ((waiter) =>
       cancelObservedWaiter({
@@ -773,11 +1168,85 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         fenceBackendPid: source.fenceBackendPid,
         waiter,
         spawnProcess: dependencies.spawnProcess,
+        deadline,
       }));
-  const poll =
+  const rawPoll =
     dependencies.poll ??
     (() =>
       new Promise((resolve) => setTimeout(resolve, ENDPOINT_PROBE_POLL_MS)));
+  const observeWaiters = () =>
+    dependencies.observeWaiters
+      ? deadline(
+          rawObserveWaiters(),
+          EXTERNAL_OPERATION_TIMEOUT_MS,
+          "readiness_fence_probe_observer_timeout",
+        )
+      : rawObserveWaiters();
+  const cancelWaiter = (waiter) =>
+    dependencies.cancelWaiter
+      ? deadline(
+          rawCancelWaiter(waiter),
+          EXTERNAL_OPERATION_TIMEOUT_MS,
+          "readiness_fence_probe_waiter_cancel_timeout",
+        )
+      : rawCancelWaiter(waiter);
+  const poll = () =>
+    deadline(
+      rawPoll(),
+      EXTERNAL_OPERATION_TIMEOUT_MS,
+      "readiness_fence_probe_poll_timeout",
+    );
+  const serviceIdentities =
+    dependencies.serviceIdentities ?? {
+      rest: await resolveSupabaseServiceClientAddresses(
+        "rest",
+        source.containerId,
+        source.databaseName,
+        dependencies.spawnProcess,
+        deadline,
+      ),
+      auth: await resolveSupabaseServiceClientAddresses(
+        "auth",
+        source.containerId,
+        source.databaseName,
+        dependencies.spawnProcess,
+        deadline,
+      ),
+    };
+  exactRecord(
+    serviceIdentities,
+    ["rest", "auth"],
+    "readiness_fence_probe_service_identity_invalid",
+  );
+  for (const service of ["rest", "auth"]) {
+    const identity = exactRecord(
+      serviceIdentities[service],
+      [
+        "containerId",
+        "imageId",
+        "clientAddresses",
+        "databaseUser",
+        "databaseName",
+        "databasePort",
+      ],
+      "readiness_fence_probe_service_identity_invalid",
+    );
+    if (
+      !CONTAINER_ID_PATTERN.test(identity.containerId) ||
+      !/^sha256:[0-9a-f]{64}$/.test(identity.imageId) ||
+      !Array.isArray(identity.clientAddresses) ||
+      identity.clientAddresses.length === 0 ||
+      identity.clientAddresses.some(
+        (address) => typeof address !== "string" || address.length === 0,
+      ) ||
+      typeof identity.databaseUser !== "string" ||
+      identity.databaseUser.length === 0 ||
+      identity.databaseName !== source.databaseName ||
+      identity.databasePort !== "5432"
+    ) {
+      fail("readiness_fence_probe_service_identity_invalid");
+    }
+  }
   const maximumPolls = Math.ceil(
     ENDPOINT_PROBE_TIMEOUT_MS / ENDPOINT_PROBE_POLL_MS,
   );
@@ -792,7 +1261,29 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
       fail("readiness_fence_probe_database_mismatch");
     }
     const previousPids = new Set(before.waiters.map((waiter) => waiter.pid));
+    const serviceIdentity = serviceIdentities[specification.service];
+    const frozenApplicationNames = new Set(
+      before.serviceSessions
+        .filter(
+          (session) =>
+            session.databaseUser === serviceIdentity.databaseUser &&
+            serviceIdentity.clientAddresses.includes(session.clientAddress),
+        )
+        .map((session) => session.applicationName),
+    );
+    if (frozenApplicationNames.size !== 1) {
+      fail("readiness_fence_probe_service_application_invalid");
+    }
+    const applicationName = [...frozenApplicationNames][0];
     const abortController = new AbortController();
+    const externalSignal = dependencies.signal;
+    const abortFromExternalSignal = () => abortController.abort();
+    if (externalSignal?.aborted) {
+      fail("readiness_fence_probe_cancelled");
+    }
+    externalSignal?.addEventListener("abort", abortFromExternalSignal, {
+      once: true,
+    });
     let requestSettled = false;
     let requestOutcome = null;
     const requestPromise = Promise.resolve()
@@ -839,6 +1330,10 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
             relationName: specification.relationName,
             fenceBackendPid: source.fenceBackendPid,
             notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
+            clientAddresses: serviceIdentity.clientAddresses,
+            databaseUser: serviceIdentity.databaseUser,
+            applicationName,
+            queryMarker: specification.queryMarker,
           });
           accepted = candidates[0];
           break;
@@ -846,58 +1341,89 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         await poll();
       }
       if (accepted === null) fail("readiness_fence_probe_waiter_missing");
+      await cancelWaiter(accepted);
+      let responseError = null;
+      try {
+        await deadline(
+          requestPromise,
+          QUERY_CANCEL_RESPONSE_TIMEOUT_MS,
+          "readiness_fence_probe_query_cancel_response_timeout",
+          () => abortController.abort(),
+        );
+        if (!requestOutcome?.response || requestOutcome?.error) {
+          fail("readiness_fence_probe_query_cancel_response_invalid");
+        }
+        await validateQueryCancelledHttpResponse(
+          specification,
+          requestOutcome.response,
+          deadline,
+        );
+      } catch (error) {
+        responseError = error;
+      }
+      let disappeared = false;
+      for (let attempt = 0; attempt < maximumPolls; attempt += 1) {
+        const observation = parseWaiterObservation(await observeWaiters());
+        if (observation.databaseOid !== source.databaseOid) {
+          fail("readiness_fence_probe_database_mismatch");
+        }
+        const newWaiters = observation.waiters.filter(
+          (waiter) => !previousPids.has(waiter.pid),
+        );
+        if (newWaiters.length === 0) {
+          disappeared = true;
+          break;
+        }
+        if (
+          newWaiters.length !== 1 ||
+          newWaiters[0].pid !== accepted.pid
+        ) {
+          fail("readiness_fence_probe_waiter_count_invalid");
+        }
+        validateCandidateWaiter(newWaiters[0], {
+          databaseOid: source.databaseOid,
+          schemaName: specification.schemaName,
+          relationName: specification.relationName,
+          fenceBackendPid: source.fenceBackendPid,
+          notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
+          clientAddresses: serviceIdentity.clientAddresses,
+          databaseUser: serviceIdentity.databaseUser,
+          applicationName,
+          queryMarker: specification.queryMarker,
+        });
+        await poll();
+      }
+      if (!disappeared) fail("readiness_fence_probe_waiter_residual");
+      if (responseError !== null) throw responseError;
+    } catch (error) {
+      if (!requestSettled) {
+        abortController.abort();
+        try {
+          await deadline(
+            requestPromise,
+            QUERY_CANCEL_RESPONSE_TIMEOUT_MS,
+            "readiness_fence_probe_abort_timeout",
+          );
+        } catch {}
+      }
+      throw error;
     } finally {
-      abortController.abort();
-      await requestPromise;
-    }
-    if (requestOutcome?.response) {
-      fail("readiness_fence_probe_http_completed_early");
-    }
-    if (
-      !requestOutcome?.error ||
-      (requestOutcome.error.name !== "AbortError" &&
-        requestOutcome.error.code !== "ABORT_ERR")
-    ) {
-      fail("readiness_fence_probe_abort_failed");
-    }
-    let disappeared = false;
-    let cancellationAttempted = false;
-    for (let attempt = 0; attempt < maximumPolls; attempt += 1) {
-      const observation = parseWaiterObservation(await observeWaiters());
-      if (observation.databaseOid !== source.databaseOid) {
-        fail("readiness_fence_probe_database_mismatch");
-      }
-      const newWaiters = observation.waiters.filter(
-        (waiter) => !previousPids.has(waiter.pid),
+      externalSignal?.removeEventListener(
+        "abort",
+        abortFromExternalSignal,
       );
-      if (newWaiters.length === 0) {
-        disappeared = true;
-        break;
-      }
-      if (
-        newWaiters.length !== 1 ||
-        newWaiters[0].pid !== accepted.pid
-      ) {
-        fail("readiness_fence_probe_waiter_count_invalid");
-      }
-      validateCandidateWaiter(newWaiters[0], {
-        databaseOid: source.databaseOid,
-        schemaName: specification.schemaName,
-        relationName: specification.relationName,
-        fenceBackendPid: source.fenceBackendPid,
-        notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
-      });
-      if (!cancellationAttempted) {
-        await cancelWaiter(newWaiters[0]);
-        cancellationAttempted = true;
-      }
-      await poll();
     }
-    if (!disappeared) fail("readiness_fence_probe_waiter_residual");
     evidence.push({
       probe: specification.probe,
       baseEndpointSha256: specification.baseEndpointSha256,
       endpointSha256: sha256Hex(Buffer.from(specification.url.href, "utf8")),
+      serviceIdentitySha256: sha256Hex(
+        canonicalJsonBytes({
+          ...serviceIdentity,
+          applicationName: accepted.applicationName,
+        }),
+      ),
+      databaseQuerySha256: sha256Hex(Buffer.from(accepted.query, "utf8")),
       databaseOid: accepted.databaseOid,
       relationOid: accepted.relationOid,
       schemaName: accepted.schemaName,
@@ -950,7 +1476,12 @@ export async function terminateOrdinaryAccountCutoverReadinessFenceSession(
   child.stderr?.resume();
   const completion = childCompletion(child);
   child.stdin.end(TERMINATE_FENCE_SQL);
-  const result = await completion;
+  const result = await withWallClockDeadline(
+    completion,
+    EXTERNAL_OPERATION_TIMEOUT_MS,
+    "readiness_fence_termination_timeout",
+    () => child.kill("SIGKILL"),
+  );
   if (result.error || result.code !== 0 || stdout.length > 4096) {
     fail("readiness_fence_termination_failed");
   }
@@ -1025,6 +1556,40 @@ function parseFenceOutputLine(line) {
     fail("readiness_fence_report_invalid");
   }
   return { backendPid: source.backendPid, report };
+}
+
+function parseFenceHoldOutputLine(line, expectedBackendPid) {
+  let value;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    fail("readiness_fence_hold_output_invalid");
+  }
+  const source = exactRecord(
+    value,
+    ["backendPid", "holdLocks"],
+    "readiness_fence_hold_output_invalid",
+  );
+  const holdLocks = exactRecord(
+    source.holdLocks,
+    [
+      "authShareLockCount",
+      "authAccessExclusiveLockCount",
+      "pagesAccessExclusiveLockCount",
+      "registryAccessExclusiveLockCount",
+    ],
+    "readiness_fence_hold_output_invalid",
+  );
+  if (
+    source.backendPid !== expectedBackendPid ||
+    holdLocks.authShareLockCount !== "1" ||
+    holdLocks.authAccessExclusiveLockCount !== "0" ||
+    holdLocks.pagesAccessExclusiveLockCount !== "0" ||
+    holdLocks.registryAccessExclusiveLockCount !== "1"
+  ) {
+    fail("readiness_fence_hold_locks_invalid");
+  }
+  return { backendPid: source.backendPid, holdLocks };
 }
 
 function validateLiveReport(report, attestation) {
@@ -1286,6 +1851,8 @@ function validateEndpointEvidence(value) {
         "probe",
         "baseEndpointSha256",
         "endpointSha256",
+        "serviceIdentitySha256",
+        "databaseQuerySha256",
         "databaseOid",
         "relationOid",
         "schemaName",
@@ -1306,6 +1873,10 @@ function validateEndpointEvidence(value) {
       !SHA256_PATTERN.test(source.baseEndpointSha256) ||
       typeof source.endpointSha256 !== "string" ||
       !SHA256_PATTERN.test(source.endpointSha256) ||
+      typeof source.serviceIdentitySha256 !== "string" ||
+      !SHA256_PATTERN.test(source.serviceIdentitySha256) ||
+      typeof source.databaseQuerySha256 !== "string" ||
+      !SHA256_PATTERN.test(source.databaseQuerySha256) ||
       typeof source.databaseOid !== "string" ||
       !POSITIVE_DECIMAL_PATTERN.test(source.databaseOid) ||
       typeof source.relationOid !== "string" ||
@@ -1341,6 +1912,7 @@ function markerBytes(
   releaseToken,
   releaseRequestPath,
   endpointEvidence,
+  holdLocks,
 ) {
   return canonicalJsonBytes({
     schemaVersion: 1,
@@ -1361,6 +1933,7 @@ function markerBytes(
       Buffer.from(releaseRequestPath, "utf8"),
     ),
     endpointEvidence,
+    holdLocks,
     startedAt,
     validUntil: attestation.validUntil,
   });
@@ -1396,7 +1969,9 @@ function normalizeCoreInput(input) {
   );
   if (
     minimumRemainingTtlSeconds <
-    maximumHoldSeconds + MINIMUM_ROLLBACK_MARGIN_SECONDS
+    STARTUP_WATCHDOG_SECONDS +
+      maximumHoldSeconds +
+      MINIMUM_ROLLBACK_MARGIN_SECONDS
   ) {
     fail("readiness_fence_ttl_below_hold");
   }
@@ -1494,12 +2069,19 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   let markerResult = null;
   let releaseRequestIdentity = null;
   let backendPid = null;
+  let pendingEndpointEvidence = null;
   let authorizedRelease = false;
   let terminationPromise = null;
   let forceTimer = null;
+  let childExitTimer = null;
+  let resolveChildExitFallback;
+  const childExitFallback = new Promise((resolve) => {
+    resolveChildExitFallback = resolve;
+  });
   const releaseWaitAbort = new AbortController();
   const scheduleTimer = dependencies.setTimer ?? setTimeout;
   const cancelTimer = dependencies.clearTimer ?? clearTimeout;
+  const operationDeadline = dependencies.deadline ?? withWallClockDeadline;
   const signalSource = dependencies.signalSource ?? process;
   const markerWriter =
     dependencies.markerWriter ?? writeAtomicReadinessFenceMarker;
@@ -1516,6 +2098,8 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
       probeOrdinaryAccountCutoverReadinessFenceEndpoints(probeInput, {
         environment: runtimeEnvironment,
         spawnProcess,
+        signal: releaseWaitAbort.signal,
+        deadline: dependencies.deadline,
       }));
   const waitForReleaseRequest =
     dependencies.waitForReleaseRequest ??
@@ -1539,12 +2123,21 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
       }
       terminationPromise = Promise.resolve()
         .then(() =>
-          terminateSession({
-            containerId: normalized.expectedContainerId,
-            applicationName,
-            backendPid,
-            requireExactOne: options.authorized === true,
-          }),
+          operationDeadline(
+            terminateSession({
+              containerId: normalized.expectedContainerId,
+              applicationName,
+              backendPid,
+              requireExactOne: options.authorized === true,
+            }),
+            EXTERNAL_OPERATION_TIMEOUT_MS,
+            "readiness_fence_termination_timeout",
+            () => {
+              try {
+                child.kill("SIGKILL");
+              } catch {}
+            },
+          ),
         )
         .catch(() => {
           terminalCode = "readiness_fence_termination_failed";
@@ -1557,6 +2150,12 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
           child.kill("SIGKILL");
         } catch {}
       }, 5_000);
+      childExitTimer = scheduleTimer(() => {
+        if (terminalCode === null) {
+          terminalCode = "readiness_fence_child_exit_timeout";
+        }
+        resolveChildExitFallback({ error: true, code: null, signal: "SIGKILL" });
+      }, EXTERNAL_OPERATION_TIMEOUT_MS);
     }
   };
 
@@ -1578,65 +2177,102 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   const processLine = async (line) => {
     if (line.trim() === "") return;
     nonemptyLineCount += 1;
-    if (nonemptyLineCount !== 1) {
+    if (nonemptyLineCount > 2) {
       fail("readiness_fence_output_invalid");
     }
-    const parsed = parseFenceOutputLine(line);
-    backendPid = parsed.backendPid;
-    validateLiveReport(parsed.report, attestation);
-    const endpointEvidence = validateEndpointEvidence(
-      await probeEndpoints({
-        containerId: normalized.expectedContainerId,
-        databaseOid: attestation.database.dbOid,
-        fenceBackendPid: parsed.backendPid,
-      }),
+    const fullSql = buildOrdinaryAccountCutoverReadinessFenceSql(
+      String(normalized.maximumHoldSeconds),
     );
+    const downgradeBoundary =
+      "\n\nROLLBACK TO SAVEPOINT endpoint_probe_locks;";
+    const holdBoundary = "\n\nSELECT pg_catalog.pg_sleep(";
+    const downgradeIndex = fullSql.indexOf(downgradeBoundary);
+    const holdIndex = fullSql.indexOf(holdBoundary);
     if (
-      endpointEvidence.some(
-        (entry) =>
-          entry.databaseOid !== attestation.database.dbOid ||
-          entry.blockingPids[0] !== parsed.backendPid,
-      )
+      downgradeIndex <= 0 ||
+      holdIndex <= downgradeIndex
     ) {
-      fail("readiness_fence_probe_evidence_invalid");
+      fail("readiness_fence_sql_source_invalid");
     }
+    if (nonemptyLineCount === 1) {
+      const parsed = parseFenceOutputLine(line);
+      backendPid = parsed.backendPid;
+      validateLiveReport(parsed.report, attestation);
+      const endpointEvidence = validateEndpointEvidence(
+        await operationDeadline(
+          probeEndpoints({
+            containerId: normalized.expectedContainerId,
+            databaseName: attestation.database.dbName,
+            databaseOid: attestation.database.dbOid,
+            fenceBackendPid: parsed.backendPid,
+          }),
+          ENDPOINT_PROBE_TOTAL_TIMEOUT_MS,
+          "readiness_fence_probe_timeout",
+          () => releaseWaitAbort.abort(),
+        ),
+      );
+      if (
+        endpointEvidence.some(
+          (entry) =>
+            entry.databaseOid !== attestation.database.dbOid ||
+            entry.blockingPids[0] !== parsed.backendPid,
+        )
+      ) {
+        fail("readiness_fence_probe_evidence_invalid");
+      }
+      if (terminalCode !== null) fail(terminalCode);
+      pendingEndpointEvidence = endpointEvidence;
+      child.stdin.write(
+        fullSql.slice(downgradeIndex + 2, holdIndex + 2),
+      );
+      return;
+    }
+    if (backendPid === null || pendingEndpointEvidence === null) {
+      fail("readiness_fence_hold_output_invalid");
+    }
+    const holdProof = parseFenceHoldOutputLine(line, backendPid);
     if (terminalCode !== null) fail(terminalCode);
     await assertReleaseRequestPathAbsent(normalized.releaseRequestPath);
-    const startedAt = new Date(
-      dependencies.clockMs?.() ?? Date.now(),
-    ).toISOString();
+    const markerClockMs = dependencies.clockMs?.() ?? Date.now();
+    if (
+      Date.parse(attestation.validUntil) - markerClockMs <
+      (normalized.maximumHoldSeconds + MINIMUM_ROLLBACK_MARGIN_SECONDS) * 1000
+    ) {
+      fail("readiness_fence_marker_ttl_insufficient");
+    }
+    const startedAt = new Date(markerClockMs).toISOString();
     const bytes = markerBytes(
       attestation,
       validation,
-      parsed.backendPid,
+      backendPid,
       startedAt,
       applicationName,
       releaseToken,
       normalized.releaseRequestPath,
-      endpointEvidence,
+      pendingEndpointEvidence,
+      holdProof.holdLocks,
     );
     markerIdentity = await markerWriter(normalized.markerPath, bytes);
     markerResult = {
-      backendPid: parsed.backendPid,
+      backendPid,
       markerSha256: sha256Hex(bytes),
       markerSizeBytes: String(bytes.length),
     };
-    const fullSql = buildOrdinaryAccountCutoverReadinessFenceSql(
-      String(normalized.maximumHoldSeconds),
-    );
-    const holdBoundary = "\n\nSELECT pg_catalog.pg_sleep(";
-    const holdIndex = fullSql.indexOf(holdBoundary);
-    if (holdIndex <= 0) fail("readiness_fence_sql_source_invalid");
     child.stdin.end(fullSql.slice(holdIndex + 2));
     cancelTimer(timeoutTimer);
     timeoutTimer = scheduleTimer(
       () => stop("readiness_fence_timeout"),
       (normalized.maximumHoldSeconds + WATCHDOG_MARGIN_SECONDS) * 1000,
     );
-    const releaseRequest = await waitForReleaseRequest({
-      markerSha256: markerResult.markerSha256,
-      releaseToken,
-    });
+    const releaseRequest = await operationDeadline(
+      waitForReleaseRequest({
+        markerSha256: markerResult.markerSha256,
+        releaseToken,
+      }),
+      (normalized.maximumHoldSeconds + WATCHDOG_MARGIN_SECONDS + 5) * 1000,
+      "readiness_fence_release_wait_timeout",
+      () => releaseWaitAbort.abort(),
+    );
     releaseRequestIdentity = releaseRequest?.identity ?? null;
     if (terminalCode !== null) fail(terminalCode);
     stop(null, { authorized: true });
@@ -1687,12 +2323,18 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
     const fullSql = buildOrdinaryAccountCutoverReadinessFenceSql(
       String(normalized.maximumHoldSeconds),
     );
-    const holdBoundary = "\n\nSELECT pg_catalog.pg_sleep(";
-    const holdIndex = fullSql.indexOf(holdBoundary);
-    if (holdIndex <= 0) fail("readiness_fence_sql_source_invalid");
-    child.stdin.write(fullSql.slice(0, holdIndex + 2));
-    const childResult = await completion;
-    await lineQueue;
+    const downgradeBoundary =
+      "\n\nROLLBACK TO SAVEPOINT endpoint_probe_locks;";
+    const downgradeIndex = fullSql.indexOf(downgradeBoundary);
+    if (downgradeIndex <= 0) fail("readiness_fence_sql_source_invalid");
+    child.stdin.write(fullSql.slice(0, downgradeIndex + 2));
+    const childResult = await Promise.race([completion, childExitFallback]);
+    await operationDeadline(
+      lineQueue,
+      ENDPOINT_PROBE_TOTAL_TIMEOUT_MS + EXTERNAL_OPERATION_TIMEOUT_MS,
+      "readiness_fence_line_processing_timeout",
+      () => releaseWaitAbort.abort(),
+    );
     if (terminationPromise) await terminationPromise;
     if (terminalCode === null) {
       if (!authorizedRelease) {
@@ -1709,6 +2351,7 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   } finally {
     cancelTimer(timeoutTimer);
     if (forceTimer !== null) cancelTimer(forceTimer);
+    if (childExitTimer !== null) cancelTimer(childExitTimer);
     signalSource.removeListener("SIGTERM", interrupt);
     signalSource.removeListener("SIGINT", interrupt);
     let cleanupError = null;

@@ -26,6 +26,7 @@ import {
   OrdinaryAccountCutoverReadinessFenceError,
   probeOrdinaryAccountCutoverReadinessFenceEndpoints,
   readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest,
+  resolveSupabaseServiceClientAddresses,
   runOrdinaryAccountCutoverReadinessFenceCli,
   terminateOrdinaryAccountCutoverReadinessFenceSession,
   writeAtomicReadinessFenceMarker,
@@ -42,6 +43,26 @@ const NOW = "2026-08-20T12:00:00.000Z";
 const NOW_MS = Date.parse(NOW);
 const TARGET_SHA = "a".repeat(40);
 const CONTAINER_ID = "b".repeat(64);
+const REST_SERVICE_IDENTITY = {
+  containerId: "c".repeat(64),
+  imageId: `sha256:${"d".repeat(64)}`,
+  clientAddresses: ["172.20.0.10"],
+  databaseUser: "authenticator",
+  databaseName: "postgres",
+  databasePort: "5432",
+};
+const AUTH_SERVICE_IDENTITY = {
+  containerId: "e".repeat(64),
+  imageId: `sha256:${"f".repeat(64)}`,
+  clientAddresses: ["172.20.0.11"],
+  databaseUser: "supabase_auth_admin",
+  databaseName: "postgres",
+  databasePort: "5432",
+};
+const SERVICE_IDENTITIES = {
+  rest: REST_SERVICE_IDENTITY,
+  auth: AUTH_SERVICE_IDENTITY,
+};
 
 function database(overrides = {}) {
   return {
@@ -241,8 +262,21 @@ function fenceLine(report = readyReport()) {
   return `${JSON.stringify({ backendPid: "4321", report })}\n`;
 }
 
+function fenceHoldLine(overrides = {}) {
+  return `${JSON.stringify({
+    backendPid: "4321",
+    holdLocks: {
+      authShareLockCount: "1",
+      authAccessExclusiveLockCount: "0",
+      pagesAccessExclusiveLockCount: "0",
+      registryAccessExclusiveLockCount: "1",
+      ...overrides,
+    },
+  })}\n`;
+}
+
 class FakeChild extends EventEmitter {
-  constructor() {
+  constructor({ holdOutput = fenceHoldLine() } = {}) {
     super();
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();
@@ -252,6 +286,9 @@ class FakeChild extends EventEmitter {
     this.stdin = new Writable({
       write: (chunk, _encoding, callback) => {
         this.input = Buffer.concat([this.input, Buffer.from(chunk)]);
+        if (Buffer.from(chunk).includes(Buffer.from("AS fence_hold_result;"))) {
+          queueMicrotask(() => this.stdout.write(holdOutput));
+        }
         callback();
       },
     });
@@ -270,6 +307,20 @@ class FakeChild extends EventEmitter {
     this.stderr.end();
     this.emit("close", code, signal);
   }
+}
+
+function outputChild(stdout, code = 0) {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new Writable({ write: (_chunk, _encoding, callback) => callback() });
+  child.kill = () => true;
+  queueMicrotask(() => {
+    child.stdout.end(stdout);
+    child.stderr.end();
+    child.emit("close", code, null);
+  });
+  return child;
 }
 
 async function temporaryDirectory(callback) {
@@ -304,7 +355,7 @@ async function fixture(directory, attestation = readinessAttestation()) {
       expectedArtifactId: "9003",
       expectedArtifactDigest: `sha256:${"f".repeat(64)}`,
       expectedContainerId: CONTAINER_ID,
-      minimumRemainingTtlSeconds: "360",
+      minimumRemainingTtlSeconds: "570",
       markerPath,
       releaseRequestPath,
       maximumHoldSeconds: "30",
@@ -361,6 +412,8 @@ function coreDependencies(child, overrides = {}) {
         probe,
         baseEndpointSha256: String(index < 2 ? "2" : "3").repeat(64),
         endpointSha256: String(index + 4).repeat(64),
+        serviceIdentitySha256: ["8", "9", "a", "b"][index].repeat(64),
+        databaseQuerySha256: String(index + 1).repeat(64),
         databaseOid,
         relationOid: String(18000 + index),
         schemaName,
@@ -381,6 +434,10 @@ function waiter(overrides = {}) {
     relationOid: "18000",
     schemaName: "public",
     relationName: "pages",
+    databaseUser: "authenticator",
+    applicationName: "PostgREST 12.1",
+    clientAddress: "172.20.0.10",
+    query: `SELECT "probe_${"a".repeat(24)}" FROM public.pages`,
     mode: "AccessShareLock",
     granted: false,
     queryStartedAtEpochMilliseconds: "1787227200001",
@@ -393,6 +450,18 @@ function observation(waiters = [], overrides = {}) {
   return {
     databaseOid: "16384",
     clockEpochMilliseconds: "1787227200000",
+    serviceSessions: [
+      {
+        databaseUser: "authenticator",
+        applicationName: "PostgREST 12.1",
+        clientAddress: "172.20.0.10",
+      },
+      {
+        databaseUser: "supabase_auth_admin",
+        applicationName: "",
+        clientAddress: "172.20.0.11",
+      },
+    ],
     waiters,
     ...overrides,
   };
@@ -413,7 +482,38 @@ function pendingFetchRecorder(calls) {
   };
 }
 
-function successfulProbeSequence({ lingerAfterAbort = false } = {}) {
+function causalFetchRecorder(calls, cancelled = [], responseForCandidate = null) {
+  let active = null;
+  const fetchImpl = (url, options) => {
+    calls.push({ url: url.href, options });
+    return new Promise((resolve, reject) => {
+      active = { resolve, reject };
+      options.signal.addEventListener(
+        "abort",
+        () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+        { once: true },
+      );
+    });
+  };
+  const cancelWaiter = async (candidate) => {
+    cancelled.push(candidate.pid);
+    assert.ok(active);
+    const isRest = candidate.schemaName === "public";
+    const body = responseForCandidate?.(candidate) ??
+      (isRest
+        ? { code: "57014", message: "语句已因用户请求而取消" }
+        : { error_code: "unexpected_failure", msg: "查询已取消" });
+    active.resolve(
+      body && typeof body.status === "number" && typeof body.text === "function"
+        ? body
+        : { status: 500, text: async () => JSON.stringify(body) },
+    );
+    active = null;
+  };
+  return { fetchImpl, cancelWaiter };
+}
+
+function successfulProbeSequence({ lingerAfterCancel = false } = {}) {
   const relations = [
     ["public", "pages"],
     ["auth", "users"],
@@ -426,11 +526,79 @@ function successfulProbeSequence({ lingerAfterAbort = false } = {}) {
       relationOid: String(18000 + index),
       schemaName,
       relationName,
+      ...(schemaName === "auth"
+        ? {
+            databaseUser: "supabase_auth_admin",
+            applicationName: "",
+            clientAddress: "172.20.0.11",
+            query: "SELECT id FROM auth.users WHERE email = $1",
+          }
+        : {}),
     });
-    return lingerAfterAbort
+    return lingerAfterCancel
       ? [observation(), observation([candidate]), observation([candidate]), observation()]
       : [observation(), observation([candidate]), observation()];
   });
+}
+
+function serviceIdentityDockerSpawner({
+  service = "rest",
+  databaseHost = "db",
+  duplicateService = false,
+} = {}) {
+  const serviceId = service === "rest" ? "c".repeat(64) : "e".repeat(64);
+  const secondId = "7".repeat(64);
+  const databaseUser =
+    service === "rest" ? "authenticator" : "supabase_auth_admin";
+  const environmentName =
+    service === "rest" ? "PGRST_DB_URI" : "GOTRUE_DB_DATABASE_URL";
+  const outputs = [
+    JSON.stringify([
+      {
+        Id: CONTAINER_ID,
+        Name: "/supabase-db",
+        Config: { Labels: { "com.docker.compose.project": "supabase" } },
+        NetworkSettings: {
+          Networks: {
+            supabase_default: {
+              IPAddress: "172.20.0.2",
+              Aliases: ["db", "supabase-db"],
+            },
+          },
+        },
+      },
+    ]),
+    `${serviceId}${duplicateService ? `\n${secondId}` : ""}\n`,
+    JSON.stringify([
+      {
+        Id: serviceId,
+        Image: `sha256:${"d".repeat(64)}`,
+        Config: {
+          Labels: {
+            "com.docker.compose.project": "supabase",
+            "com.docker.compose.service": service,
+          },
+          Env: [
+            `${environmentName}=postgres://${databaseUser}:never-log-this@${databaseHost}:5432/postgres`,
+          ],
+        },
+        NetworkSettings: {
+          Networks: {
+            supabase_default: { IPAddress: "172.20.0.10", Aliases: [service] },
+          },
+        },
+      },
+    ]),
+  ];
+  const calls = [];
+  return {
+    calls,
+    spawnProcess(command, argumentsList) {
+      calls.push({ command, argumentsList });
+      assert.equal(command, "docker");
+      return outputChild(outputs.shift() ?? "");
+    },
+  };
 }
 
 test("fence SQL derives from the complete checker SQL, raises its timeout, upgrades all three relations before output, and has one final rollback", () => {
@@ -459,12 +627,24 @@ test("fence SQL derives from the complete checker SQL, raises its timeout, upgra
     "SET LOCAL statement_timeout = '930s';",
   );
   const outputIndex = sql.indexOf("AS fence_result;");
+  const savepointIndex = sql.indexOf("SAVEPOINT endpoint_probe_locks;");
+  const rollbackToIndex = sql.indexOf(
+    "ROLLBACK TO SAVEPOINT endpoint_probe_locks;",
+  );
+  const releaseSavepointIndex = sql.indexOf(
+    "RELEASE SAVEPOINT endpoint_probe_locks;",
+  );
+  const holdProofIndex = sql.indexOf("AS fence_hold_result;");
   assert.ok(lateTimeout > captureIndex);
-  assert.ok(authExclusiveLock > lateTimeout);
+  assert.ok(registryExclusiveLock > lateTimeout);
+  assert.ok(savepointIndex > registryExclusiveLock);
+  assert.ok(authExclusiveLock > savepointIndex);
   assert.ok(pagesExclusiveLock > authExclusiveLock);
-  assert.ok(registryExclusiveLock > pagesExclusiveLock);
-  assert.ok(outputIndex > registryExclusiveLock);
-  assert.ok(sql.indexOf("pg_sleep") > outputIndex);
+  assert.ok(outputIndex > pagesExclusiveLock);
+  assert.ok(rollbackToIndex > outputIndex);
+  assert.ok(releaseSavepointIndex > rollbackToIndex);
+  assert.ok(holdProofIndex > releaseSavepointIndex);
+  assert.ok(sql.indexOf("pg_sleep") > holdProofIndex);
   assert.ok(sql.indexOf("pg_sleep") > captureIndex);
   assert.equal(
     sql.slice(0, sql.indexOf("pg_sleep")).includes("ROLLBACK;"),
@@ -478,14 +658,81 @@ test("fence SQL derives from the complete checker SQL, raises its timeout, upgra
   );
 });
 
+test("service identity is derived from the attested compose project and direct database route without exposing its URI", async (t) => {
+  const docker = serviceIdentityDockerSpawner();
+  const identity = await resolveSupabaseServiceClientAddresses(
+    "rest",
+    CONTAINER_ID,
+    "postgres",
+    docker.spawnProcess,
+  );
+  assert.deepEqual(identity, REST_SERVICE_IDENTITY);
+  assert.equal(docker.calls.length, 3);
+  assert.match(docker.calls[1].argumentsList.join(" "), /compose\.service=rest/);
+  assert.doesNotMatch(JSON.stringify(identity), /never-log-this|postgres:\/\//);
+
+  await t.test("pooler or other non-attested database hop is rejected", async () => {
+    const hostile = serviceIdentityDockerSpawner({ databaseHost: "pooler" });
+    await assertCode(
+      resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        hostile.spawnProcess,
+      ),
+      "readiness_fence_probe_service_database_route_invalid",
+    );
+  });
+  await t.test("multiple running compose services are rejected", async () => {
+    const hostile = serviceIdentityDockerSpawner({ duplicateService: true });
+    await assertCode(
+      resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        hostile.spawnProcess,
+      ),
+      "readiness_fence_probe_service_identity_invalid",
+    );
+  });
+  await t.test("a Docker inspect child that never closes is killed at its deadline", async () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write: (_chunk, _encoding, callback) => callback() });
+    const kills = [];
+    child.kill = (signal) => {
+      kills.push(signal);
+      return true;
+    };
+    const deadline = async (_promise, _milliseconds, code, onTimeout) => {
+      onTimeout?.();
+      throw new OrdinaryAccountCutoverReadinessFenceError(code);
+    };
+    await assertCode(
+      resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        () => child,
+        deadline,
+      ),
+      "readiness_fence_probe_service_identity_invalid_timeout",
+    );
+    assert.deepEqual(kills, ["SIGKILL"]);
+  });
+});
+
 test("four anon behavior probes bind internal/public REST pages and Auth users waiters without exposing service credentials", async () => {
   const calls = [];
-  const snapshots = successfulProbeSequence({ lingerAfterAbort: true });
+  const snapshots = successfulProbeSequence({ lingerAfterCancel: true });
   const cancelled = [];
+  const causal = causalFetchRecorder(calls, cancelled);
   const evidence =
     await probeOrdinaryAccountCutoverReadinessFenceEndpoints(
       {
         containerId: CONTAINER_ID,
+        databaseName: "postgres",
         databaseOid: "16384",
         fenceBackendPid: "4321",
       },
@@ -497,9 +744,10 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
           SUPABASE_SERVICE_ROLE_KEY: "must-never-be-used",
         },
         randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
-        fetchImpl: pendingFetchRecorder(calls),
+        fetchImpl: causal.fetchImpl,
         observeWaiters: async () => snapshots.shift(),
-        cancelWaiter: async (candidate) => cancelled.push(candidate.pid),
+        cancelWaiter: causal.cancelWaiter,
+        serviceIdentities: SERVICE_IDENTITIES,
         poll: async () => {},
       },
     );
@@ -555,6 +803,10 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
   assert.doesNotMatch(JSON.stringify(calls), /must-never-be-used/);
   assert.match(calls[1].options.body, /@invalid\.example/);
   assert.match(calls[1].url, /grant_type=password/);
+  assert.equal(
+    new URL(calls[0].url).searchParams.get("select"),
+    `probe_${"a".repeat(24)}:id`,
+  );
   assert.deepEqual(cancelled, ["5101", "5102", "5103", "5104"]);
   assert.deepEqual(
     evidence.map((entry) => [
@@ -574,8 +826,25 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
     evidence.every(
       (entry) =>
         /^[0-9a-f]{64}$/.test(entry.baseEndpointSha256) &&
-        /^[0-9a-f]{64}$/.test(entry.endpointSha256),
+        /^[0-9a-f]{64}$/.test(entry.endpointSha256) &&
+        /^[0-9a-f]{64}$/.test(entry.serviceIdentitySha256) &&
+        /^[0-9a-f]{64}$/.test(entry.databaseQuerySha256),
     ),
+  );
+  assert.deepEqual(
+    evidence.map((entry) => entry.baseEndpointSha256),
+    [
+      sha256Hex(Buffer.from("http://127.0.0.1:8000/")),
+      sha256Hex(Buffer.from("http://127.0.0.1:8000/")),
+      sha256Hex(Buffer.from("https://db.example.test/")),
+      sha256Hex(Buffer.from("https://db.example.test/")),
+    ],
+  );
+  assert.deepEqual(
+    evidence.map((entry) => entry.databaseQuerySha256),
+    successfulProbeSequence()
+      .filter((_entry, index) => index % 3 === 1)
+      .map((entry) => sha256Hex(Buffer.from(entry.waiters[0].query))),
   );
   assert.doesNotMatch(
     JSON.stringify(evidence),
@@ -586,6 +855,7 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
 test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, and cancellation residue", async (t) => {
   const baseInput = {
     containerId: CONTAINER_ID,
+    databaseName: "postgres",
     databaseOid: "16384",
     fenceBackendPid: "4321",
   };
@@ -599,6 +869,7 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
     randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
     poll: async () => {},
     cancelWaiter: async () => {},
+    serviceIdentities: SERVICE_IDENTITIES,
   };
   const cases = [
     [
@@ -633,6 +904,47 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
       null,
       "readiness_fence_probe_waiter_invalid",
     ],
+    [
+      "wrong database user",
+      [observation(), observation([waiter({ databaseUser: "other" })])],
+      null,
+      "readiness_fence_probe_waiter_invalid",
+    ],
+    [
+      "wrong service client address",
+      [observation(), observation([waiter({ clientAddress: "172.20.0.99" })])],
+      null,
+      "readiness_fence_probe_waiter_invalid",
+    ],
+    [
+      "wrong frozen application name",
+      [observation(), observation([waiter({ applicationName: "Other" })])],
+      null,
+      "readiness_fence_probe_waiter_invalid",
+    ],
+    [
+      "missing REST query nonce",
+      [observation(), observation([waiter({ query: "SELECT id FROM public.pages" })])],
+      null,
+      "readiness_fence_probe_waiter_invalid",
+    ],
+    [
+      "ambiguous pre-probe service application",
+      [
+        observation([], {
+          serviceSessions: [
+            ...observation().serviceSessions,
+            {
+              databaseUser: "authenticator",
+              applicationName: "PostgREST 13.0",
+              clientAddress: "172.20.0.10",
+            },
+          ],
+        }),
+      ],
+      null,
+      "readiness_fence_probe_service_application_invalid",
+    ],
   ];
   for (const [name, snapshots, fetchOverride, code] of cases) {
     await t.test(name, async () => {
@@ -650,6 +962,7 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
   await t.test("waiter remains after abort and exact cancellation", async () => {
     const calls = [];
     const candidate = waiter();
+    const causal = causalFetchRecorder(calls);
     const snapshots = [
       observation(),
       observation([candidate]),
@@ -658,11 +971,221 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
     await assertCode(
       probeOrdinaryAccountCutoverReadinessFenceEndpoints(baseInput, {
         ...baseDependencies,
-        fetchImpl: pendingFetchRecorder(calls),
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
         observeWaiters: async () => snapshots.shift() ?? observation([candidate]),
       }),
       "readiness_fence_probe_waiter_residual",
     );
+  });
+});
+
+test("query cancellation is causally bound to the same HTTP request with locale-stable machine codes and bounded awaits", async (t) => {
+  const input = {
+    containerId: CONTAINER_ID,
+    databaseName: "postgres",
+    databaseOid: "16384",
+    fenceBackendPid: "4321",
+  };
+  const common = {
+    environment: {
+      SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+      NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-only-key",
+    },
+    randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+    serviceIdentities: SERVICE_IDENTITIES,
+    poll: async () => {},
+  };
+  const runWithResponse = async (responseForCandidate) => {
+    const snapshots = successfulProbeSequence();
+    const calls = [];
+    const causal = causalFetchRecorder(calls, [], responseForCandidate);
+    return probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+      ...common,
+      fetchImpl: causal.fetchImpl,
+      cancelWaiter: causal.cancelWaiter,
+      observeWaiters: async () => snapshots.shift() ?? observation(),
+    });
+  };
+
+  await t.test("non-English messages with REST SQLSTATE and Auth error_code pass", async () => {
+    assert.equal((await runWithResponse()).length, 4);
+  });
+  await t.test("empty standard GoTrue application_name passes but candidate drift fails", async () => {
+    const snapshots = successfulProbeSequence();
+    snapshots[4].waiters[0].applicationName = "unexpected-auth-app";
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+      }),
+      "readiness_fence_probe_waiter_invalid",
+    );
+  });
+  await t.test("wrong REST SQLSTATE fails", async () => {
+    await assertCode(
+      runWithResponse((candidate) =>
+        candidate.schemaName === "public"
+          ? { code: "XX000", message: "已取消" }
+          : { error_code: "unexpected_failure" },
+      ),
+      "readiness_fence_probe_query_cancel_response_invalid",
+    );
+  });
+  await t.test("wrong Auth machine code fails", async () => {
+    await assertCode(
+      runWithResponse((candidate) =>
+        candidate.schemaName === "public"
+          ? { code: "57014", message: "已取消" }
+          : { error_code: "other_failure", msg: "已取消" },
+      ),
+      "readiness_fence_probe_query_cancel_response_invalid",
+    );
+  });
+  await t.test("an unrelated waiter cannot satisfy a still-pending HTTP request", async () => {
+    const snapshots = [observation(), observation([waiter()]), observation()];
+    const calls = [];
+    const deadline = async (promise, _milliseconds, code, onTimeout) => {
+      if (code === "readiness_fence_probe_query_cancel_response_timeout") {
+        onTimeout?.();
+        throw new OrdinaryAccountCutoverReadinessFenceError(code);
+      }
+      return await promise;
+    };
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        fetchImpl: pendingFetchRecorder(calls),
+        cancelWaiter: async () => {},
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        deadline,
+      }),
+      "readiness_fence_probe_query_cancel_response_timeout",
+    );
+    assert.equal(snapshots.length, 0);
+  });
+  await t.test("a response body that never resolves is bounded after residual-zero proof", async () => {
+    const snapshots = [observation(), observation([waiter()]), observation()];
+    const calls = [];
+    const causal = causalFetchRecorder(calls, [], () => ({
+      status: 500,
+      text: async () => await new Promise(() => {}),
+    }));
+    const deadline = async (promise, _milliseconds, code, onTimeout) => {
+      if (code === "readiness_fence_probe_query_cancel_response_timeout") {
+        onTimeout?.();
+        throw new OrdinaryAccountCutoverReadinessFenceError(code);
+      }
+      return await promise;
+    };
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        deadline,
+      }),
+      "readiness_fence_probe_query_cancel_response_timeout",
+    );
+    assert.equal(snapshots.length, 0);
+  });
+  for (const [name, awaitedCode, dependency] of [
+    [
+      "observer",
+      "readiness_fence_probe_observer_timeout",
+      { observeWaiters: async () => await new Promise(() => {}) },
+    ],
+    [
+      "cancel",
+      "readiness_fence_probe_waiter_cancel_timeout",
+      {
+        observeWaiters: (() => {
+          const snapshots = [observation(), observation([waiter()])];
+          return async () => snapshots.shift() ?? observation();
+        })(),
+        cancelWaiter: async () => await new Promise(() => {}),
+      },
+    ],
+  ]) {
+    await t.test(`${name} await has an absolute deadline`, async () => {
+      const deadline = async (promise, _milliseconds, code, onTimeout) => {
+        if (code === awaitedCode) {
+          onTimeout?.();
+          throw new OrdinaryAccountCutoverReadinessFenceError(code);
+        }
+        return await promise;
+      };
+      await assertCode(
+        probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+          ...common,
+          fetchImpl: pendingFetchRecorder([]),
+          ...dependency,
+          deadline,
+        }),
+        awaitedCode,
+      );
+    });
+  }
+  await t.test("the exact pg_cancel_backend Docker child is killed if it never closes", async () => {
+    const snapshots = [observation(), observation([waiter()])];
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    const sqlChunks = [];
+    child.stdin = new Writable({
+      write: (chunk, _encoding, callback) => {
+        sqlChunks.push(Buffer.from(chunk));
+        callback();
+      },
+    });
+    const kills = [];
+    let spawnArguments = [];
+    child.kill = (signal) => {
+      kills.push(signal);
+      return true;
+    };
+    const deadline = async (promise, _milliseconds, code, onTimeout) => {
+      if (code === "readiness_fence_probe_waiter_cancel_timeout") {
+        onTimeout?.();
+        throw new OrdinaryAccountCutoverReadinessFenceError(code);
+      }
+      return await promise;
+    };
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        fetchImpl: pendingFetchRecorder([]),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        spawnProcess: (_command, argumentsList) => {
+          spawnArguments = argumentsList;
+          return child;
+        },
+        deadline,
+      }),
+      "readiness_fence_probe_waiter_cancel_timeout",
+    );
+    assert.deepEqual(kills, ["SIGKILL"]);
+    for (const binding of [
+      "FAOLLA_WAITER_PID=5101",
+      "FAOLLA_DATABASE_OID=16384",
+      "FAOLLA_RELATION_OID=18000",
+      "FAOLLA_SCHEMA_NAME=public",
+      "FAOLLA_RELATION_NAME=pages",
+      "FAOLLA_DATABASE_USER=authenticator",
+      "FAOLLA_APPLICATION_NAME=PostgREST 12.1",
+      "FAOLLA_CLIENT_ADDRESS=172.20.0.10",
+      "FAOLLA_QUERY_STARTED_AT_EPOCH_MS=1787227200001",
+      "FAOLLA_FENCE_BACKEND_PID=4321",
+    ]) {
+      assert.ok(spawnArguments.includes(binding));
+    }
+    assert.match(Buffer.concat(sqlChunks).toString("utf8"), /pg_cancel_backend/);
   });
 });
 
@@ -1046,17 +1569,18 @@ test("SIGTERM kills the psql child, waits termination, and removes the complete 
   });
 });
 
-test("a canonical private release request is the only successful path and preserves more than 120 seconds of marker-ready hold budget", async () => {
+test("a canonical private release request is the only successful path after a 240-second startup budget and preserves the full 900-second marker-ready hold", async () => {
   await temporaryDirectory(async (directory) => {
     const value = await fixture(directory);
-    value.input.maximumHoldSeconds = "121";
-    value.input.minimumRemainingTtlSeconds = "421";
+    value.input.maximumHoldSeconds = "900";
+    value.input.minimumRemainingTtlSeconds = "1440";
     const child = new FakeChild();
     const scheduled = [];
     let terminationInput = null;
     const promise = holdOrdinaryAccountCutoverReadinessFence(
       value.input,
       coreDependencies(child, {
+        clockMs: () => NOW_MS + 240_000,
         spawnProcess: () => {
           queueMicrotask(() => child.stdout.write(fenceLine()));
           return child;
@@ -1074,6 +1598,7 @@ test("a canonical private release request is the only successful path and preser
     const markerBytes = await waitForFile(value.markerPath);
     const marker = JSON.parse(markerBytes);
     assert.equal(marker.releaseToken, "9".repeat(64));
+    assert.equal(marker.startedAt, "2026-08-20T12:04:00.000Z");
     assert.equal(marker.releaseTokenSha256, sha256Hex(Buffer.from(marker.releaseToken)));
     assert.equal(marker.endpointEvidence.length, 4);
     assert.deepEqual(
@@ -1098,7 +1623,7 @@ test("a canonical private release request is the only successful path and preser
     assert.equal(result.markerSha256, sha256Hex(markerBytes));
     assert.equal(terminationInput.backendPid, "4321");
     assert.equal(terminationInput.requireExactOne, true);
-    assert.ok(scheduled.includes(181_000));
+    assert.ok(scheduled.includes(960_000));
     assert.ok(scheduled.includes(240_000));
     await assertMissing(value.markerPath);
     await assertMissing(value.releaseRequestPath);
@@ -1143,10 +1668,140 @@ test("child exit before a report fails closed without orphaning a marker", async
   });
 });
 
+test("marker publication is impossible until the downgraded hold-lock proof is exact", async (t) => {
+  for (const [name, holdOutput, expectedCode] of [
+    [
+      "registry AX missing",
+      fenceHoldLine({ registryAccessExclusiveLockCount: "0" }),
+      "readiness_fence_hold_locks_invalid",
+    ],
+    [
+      "pages AX retained",
+      fenceHoldLine({ pagesAccessExclusiveLockCount: "1" }),
+      "readiness_fence_hold_locks_invalid",
+    ],
+    ["malformed hold proof", "{}\n", "readiness_fence_hold_output_invalid"],
+  ]) {
+    await t.test(name, async () => {
+      await temporaryDirectory(async (directory) => {
+        const value = await fixture(directory);
+        const child = new FakeChild({ holdOutput });
+        let releaseWaitCalled = false;
+        let terminationInput = null;
+        await assertCode(
+          holdOrdinaryAccountCutoverReadinessFence(
+            value.input,
+            coreDependencies(child, {
+              spawnProcess: () => {
+                queueMicrotask(() => child.stdout.write(fenceLine()));
+                return child;
+              },
+              waitForReleaseRequest: async () => {
+                releaseWaitCalled = true;
+              },
+              terminateSession: async (input) => {
+                terminationInput = input;
+              },
+            }),
+          ),
+          expectedCode,
+        );
+        assert.equal(releaseWaitCalled, false);
+        assert.equal(terminationInput.requireExactOne, false);
+        await assertMissing(value.markerPath);
+      });
+    });
+  }
+});
+
+test("marker-ready time revalidates enough attestation TTL for the full hold plus rollback margin", async () => {
+  await temporaryDirectory(async (directory) => {
+    const value = await fixture(directory);
+    const child = new FakeChild();
+    await assertCode(
+      holdOrdinaryAccountCutoverReadinessFence(
+        value.input,
+        coreDependencies(child, {
+          clockMs: () => Date.parse("2026-08-20T13:54:31.000Z"),
+          spawnProcess: () => {
+            queueMicrotask(() => child.stdout.write(fenceLine()));
+            return child;
+          },
+        }),
+      ),
+      "readiness_fence_marker_ttl_insufficient",
+    );
+    await assertMissing(value.markerPath);
+  });
+});
+
+test("the whole endpoint probe and custom terminator remain wall-clock bounded", async (t) => {
+  await t.test("never-resolving endpoint probe cannot outlive its total deadline", async () => {
+    await temporaryDirectory(async (directory) => {
+      const value = await fixture(directory);
+      const child = new FakeChild();
+      const deadline = async (promise, _milliseconds, code, onTimeout) => {
+        if (code === "readiness_fence_probe_timeout") {
+          onTimeout?.();
+          throw new OrdinaryAccountCutoverReadinessFenceError(code);
+        }
+        return await promise;
+      };
+      await assertCode(
+        holdOrdinaryAccountCutoverReadinessFence(
+          value.input,
+          coreDependencies(child, {
+            spawnProcess: () => {
+              queueMicrotask(() => child.stdout.write(fenceLine()));
+              return child;
+            },
+            probeEndpoints: async () => await new Promise(() => {}),
+            deadline,
+          }),
+        ),
+        "readiness_fence_probe_timeout",
+      );
+      assert.deepEqual(child.signals, ["SIGTERM"]);
+      await assertMissing(value.markerPath);
+    });
+  });
+
+  await t.test("never-resolving terminator cannot leave the helper alive", async () => {
+    await temporaryDirectory(async (directory) => {
+      const value = await fixture(directory);
+      const child = new FakeChild();
+      const signals = new EventEmitter();
+      const deadline = async (promise, _milliseconds, code, onTimeout) => {
+        if (code === "readiness_fence_termination_timeout") {
+          onTimeout?.();
+          throw new OrdinaryAccountCutoverReadinessFenceError(code);
+        }
+        return await promise;
+      };
+      const promise = holdOrdinaryAccountCutoverReadinessFence(
+        value.input,
+        coreDependencies(child, {
+          signalSource: signals,
+          spawnProcess: () => {
+            queueMicrotask(() => child.stdout.write(fenceLine()));
+            return child;
+          },
+          terminateSession: async () => await new Promise(() => {}),
+          deadline,
+        }),
+      );
+      await waitForFile(value.markerPath);
+      signals.emit("SIGTERM");
+      await assertCode(promise, "readiness_fence_termination_failed");
+      await assertMissing(value.markerPath);
+    });
+  });
+});
+
 test("finite maximum hold timeout terminates the child without an orphan marker", async () => {
   await temporaryDirectory(async (directory) => {
     const value = await fixture(directory);
-    value.input.minimumRemainingTtlSeconds = "301";
+    value.input.minimumRemainingTtlSeconds = "541";
     value.input.maximumHoldSeconds = "1";
     const child = new FakeChild();
     const scheduled = [];
@@ -1193,7 +1848,7 @@ function cliArguments(value) {
     "--expected-container-id",
     CONTAINER_ID,
     "--minimum-remaining-ttl-seconds",
-    "360",
+    "570",
     "--ready-marker",
     value.markerPath,
     "--release-request",
