@@ -501,7 +501,8 @@ test("builder and readiness validator bind every upstream ID, digest, TTL, and s
   ]) {
     assert.ok(workflow.includes(argument), `missing readiness binding: ${argument}`);
   }
-  assert.match(workflow, /90 \* 60 \* 1000/);
+  assert.match(workflow, /120 \* 60 \* 1000/);
+  assert.doesNotMatch(workflow, /90 \* 60 \* 1000/);
   assert.match(workflow, /validUntil > backupValidUntil/);
   assert.match(workflow, /new Date\(timestamp\)\.toISOString\(\)/);
 });
