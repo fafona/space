@@ -440,6 +440,39 @@ test("SSH trust and exact remote source are pinned without live-tree execution",
   assert.doesNotMatch(workflow, /cd "\$APP_DIR"/);
 });
 
+test("remote worktree guards accept attempt one and reject unsafe paths", () => {
+  const guard =
+    '[[ "$FAOLLA_READINESS_WORKTREE" =~ ^/tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]';
+  assert.equal(workflow.split(guard).length - 1, 2);
+
+  const bash = resolveBash();
+  for (const [candidate, accepted] of [
+    ["/tmp/faolla-ordinary-readiness-32383310388-1", true],
+    ["/tmp/faolla-ordinary-readiness-1-10", true],
+    ["/tmp/faolla-ordinary-readiness-0-1", false],
+    ["/tmp/faolla-ordinary-readiness-1-01", false],
+    ["/tmp/faolla-ordinary-readiness-1-1-extra", false],
+    ["/tmp/faolla-ordinary-readiness-1-a", false],
+  ]) {
+    const result = spawnSync(
+      bash,
+      ["-c", `set -euo pipefail\n${guard}`, "readiness-guard", candidate],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FAOLLA_READINESS_WORKTREE: candidate,
+        },
+      },
+    );
+    assert.equal(
+      result.status === 0,
+      accepted,
+      `${candidate}: ${result.stderr}`,
+    );
+  }
+});
+
 test("backup database identity, all baselines, and container stability gate the checker", () => {
   assert.match(workflow, /database\?\.containerName/);
   assert.match(workflow, /database\.containerId/);
