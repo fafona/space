@@ -21,7 +21,6 @@ import {
   type PersonalAccountServiceConfig,
 } from "@/lib/personalAccountServiceConfig";
 import { isOrdinaryAccountPrincipalError } from "@/lib/ordinaryAccountPrincipal.server";
-import { createFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +67,6 @@ type AuthenticatedMerchantSessionPayload = {
   merchantIds: string[];
   personalServiceConfig: PersonalAccountServiceConfig | null;
   personalServicePaused: boolean;
-  frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
 
@@ -84,7 +82,6 @@ type PublicMerchantSessionPayload = {
   tokenType?: string;
   personalServiceConfig: PersonalAccountServiceConfig | null;
   personalServicePaused: boolean;
-  frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
 
@@ -487,11 +484,9 @@ function toPublicMerchantSessionPayload(
       : {}),
     personalServiceConfig: payload.personalServiceConfig,
     personalServicePaused: payload.personalServicePaused,
-    frontendAuthProof: createFrontendAuthProof({
-      accountType: payload.accountType,
-      accountId: payload.accountId ?? payload.merchantId,
-      userId: payload.user.id,
-    }),
+    // Cross-subdomain proof issuance is disabled until a site-scoped,
+    // one-time exchange with bounded audience and replay protection exists.
+    // Same-origin callers continue to use the HttpOnly session cookie.
     user: payload.user,
   };
 }

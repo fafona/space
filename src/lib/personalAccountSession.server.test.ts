@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 import {
   FrontendPersonalSessionProofError,
@@ -6,9 +7,19 @@ import {
   resolvePersonalAccountSessionFromRequest,
   resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
 } from "@/lib/personalAccountSession.server";
-import { createFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 
 const USER_ID = "66666666-6666-4666-8666-666666666666";
+const LEGACY_PROOF_SECRET = "personal-proof-authority-regression-secret";
+
+function signLegacyFrontendProof(payload: Record<string, unknown>) {
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString(
+    "base64url",
+  );
+  const signature = createHmac("sha256", LEGACY_PROOF_SECRET)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
+}
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -130,7 +141,7 @@ test("personal session rejects merchant, disabled and unbound authoritative resu
   }
 });
 
-test("frontend proof is only a hint and must exactly match the canonical personal account", async () => {
+test("frontend proof payloads cannot establish a personal session", async () => {
   await withPersonalSessionBackend(
     {
       schemaVersion: 1,
@@ -153,85 +164,46 @@ test("frontend proof is only a hint and must exactly match the canonical persona
         }),
         null,
       );
-      const session =
+      assert.equal(
         await resolvePersonalAccountSessionFromFrontendAuthProofPayload({
           ...base,
           accountId: "50010105",
-        });
-      assert.equal(session?.accountId, "50010105");
-      assert.equal(session?.email, "personal@example.com");
+        }),
+        null,
+      );
     },
   );
 });
 
-test("a transported frontend proof is re-resolved on every request and rejects disabled, changed-type and unbound principals", async () => {
+test("a correctly signed legacy two-hour proof is rejected before direct-session resolution", async () => {
   const previousSecret = process.env.FRONTEND_AUTH_PROOF_SECRET;
-  process.env.FRONTEND_AUTH_PROOF_SECRET =
-    "personal-proof-authority-regression-secret";
-  const proof = createFrontendAuthProof({
+  process.env.FRONTEND_AUTH_PROOF_SECRET = LEGACY_PROOF_SECRET;
+  const now = Math.floor(Date.now() / 1000);
+  const proof = signLegacyFrontendProof({
     accountType: "personal",
     accountId: "50010105",
     userId: USER_ID,
+    iat: now,
+    exp: now + 2 * 60 * 60,
   });
-  assert.ok(proof);
 
   try {
-    await withPersonalSessionBackend(
-      {
-        schemaVersion: 1,
-        status: "resolved",
-        accountType: "personal",
-        merchantIds: [],
-        personalAccountId: "50010105",
-      },
-      async () => {
-        const session =
-          await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
-            new Request("https://faolla.com/api/orders"),
-            proof,
-          );
-        assert.equal(session?.accountId, "50010105");
-        assert.equal(session?.userId, USER_ID);
-        assert.equal(session?.email, "personal@example.com");
-      },
+    let directResolverCalls = 0;
+    await assert.rejects(
+      () =>
+        resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+          new Request("https://faolla.com/api/orders"),
+          proof,
+          async () => {
+            directResolverCalls += 1;
+            return null;
+          },
+        ),
+      (error: unknown) =>
+        error instanceof FrontendPersonalSessionProofError &&
+        error.status === 401,
     );
-
-    for (const resolverPayload of [
-      {
-        schemaVersion: 1,
-        status: "disabled",
-        accountType: "personal",
-        merchantIds: [],
-        personalAccountId: "50010105",
-      },
-      {
-        schemaVersion: 1,
-        status: "resolved",
-        accountType: "merchant",
-        merchantIds: ["12345678"],
-        personalAccountId: null,
-      },
-      {
-        schemaVersion: 1,
-        status: "unbound",
-        accountType: null,
-        merchantIds: [],
-        personalAccountId: null,
-      },
-    ]) {
-      await withPersonalSessionBackend(resolverPayload, async () => {
-        await assert.rejects(
-          () =>
-            resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
-              new Request("https://faolla.com/api/orders"),
-              proof,
-            ),
-          (error: unknown) =>
-            error instanceof FrontendPersonalSessionProofError &&
-            error.status === 401,
-        );
-      });
-    }
+    assert.equal(directResolverCalls, 0);
   } finally {
     process.env.FRONTEND_AUTH_PROOF_SECRET = previousSecret;
   }
@@ -292,6 +264,25 @@ test("an explicitly submitted empty or malformed proof never downgrades to a dir
   );
 });
 
+test("an omitted proof preserves the canonical direct-session path", async () => {
+  let directResolverCalls = 0;
+  const expectedSession = { marker: "canonical-direct-session" } as unknown as Awaited<
+    ReturnType<typeof resolvePersonalAccountSessionFromRequestOrFrontendAuthProof>
+  >;
+
+  const session = await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+    new Request("https://faolla.com/api/orders"),
+    undefined,
+    async () => {
+      directResolverCalls += 1;
+      return expectedSession;
+    },
+  );
+
+  assert.equal(session, expectedSession);
+  assert.equal(directResolverCalls, 1);
+});
+
 test("all API frontend proof consumers use the canonical personal-session resolver", async () => {
   const fs = await import("node:fs");
   const path = await import("node:path");
@@ -318,6 +309,18 @@ test("all API frontend proof consumers use the canonical personal-session resolv
     assert.match(
       source,
       /resolvePersonalAccountSessionFromRequestOrFrontendAuthProof/,
+    );
+  }
+
+  for (const clientPath of [
+    "src/components/MerchantMembershipEntry.tsx",
+    "src/components/blocks/BookingBlock.tsx",
+    "src/components/blocks/PollBlock.tsx",
+    "src/components/blocks/ProductBlock.tsx",
+  ]) {
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(process.cwd(), clientPath), "utf8"),
+      /frontendAuthProof/,
     );
   }
 });

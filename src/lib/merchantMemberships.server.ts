@@ -45,6 +45,7 @@ import {
 import { appendMutationOperationMarker, buildMutationOperationMarker } from "@/lib/mutationOperationId";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type { PersonalAccountSession } from "@/lib/personalAccountSession.server";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 
 function requireMembershipsStoreClient() {
   const supabase = createServerSupabaseServiceClient();
@@ -651,18 +652,19 @@ export async function updateMerchantMembershipAllergens(input: {
 
 type MerchantMembershipPointRuleAction = "checkin" | "invitation" | "review";
 
-function findActiveMembershipIndex(
+export function findActiveMembershipIndex(
   memberships: MerchantMembershipRecord[],
   input: { membershipId?: unknown; session?: PersonalAccountSession | null },
 ) {
   const membershipId = trimText(input.membershipId, 160);
   return memberships.findIndex((membership) => {
     if (membership.status !== "active") return false;
-    if (membershipId && membership.id === membershipId) return true;
-    if (!input.session) return false;
-    if (membership.accountId && membership.accountId === input.session.accountId) return true;
-    if (membership.userId && membership.userId === input.session.userId) return true;
-    return Boolean(input.session.email && membership.email.toLowerCase() === input.session.email.toLowerCase());
+    if (membershipId && membership.id !== membershipId) return false;
+    if (!input.session) return Boolean(membershipId);
+    return matchesExactPersonalIdentity(
+      { accountId: membership.accountId, userId: membership.userId },
+      { accountId: input.session.accountId, userId: input.session.userId },
+    );
   });
 }
 
@@ -1265,7 +1267,6 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
     note: fallbackNote || `积分兑换使用卡券：${row.couponTitle || row.item.name}`,
     expectedAccountId: currentMembership.accountId,
     expectedUserId: currentMembership.userId,
-    expectedEmail: currentMembership.email,
     allowedDiscountTypes: MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES,
   }));
   const couponPreviews =
@@ -1428,14 +1429,29 @@ export async function applyMerchantMembershipRedemptionCart(
   );
 }
 
-function findMembershipIndexForOrder(memberships: MerchantMembershipRecord[], order: MerchantOrderRecord) {
-  const normalizedEmail = trimText(order.customerLoginEmail || order.customer.email).toLowerCase();
+export function findMembershipIndexForOrder(memberships: MerchantMembershipRecord[], order: MerchantOrderRecord) {
   return memberships.findIndex((membership) => {
     if (membership.status !== "active") return false;
-    if (order.customerAccountId && membership.accountId === order.customerAccountId) return true;
-    if (order.customerUserId && membership.userId === order.customerUserId) return true;
-    return Boolean(normalizedEmail) && membership.email.toLowerCase() === normalizedEmail;
+    return matchesExactPersonalIdentity(
+      {
+        accountId: order.customerAccountId,
+        userId: order.customerUserId,
+      },
+      { accountId: membership.accountId, userId: membership.userId },
+    );
   });
+}
+
+export function findMembershipIndexForPersonalSession(
+  memberships: MerchantMembershipRecord[],
+  session: Pick<PersonalAccountSession, "accountId" | "userId">,
+) {
+  return memberships.findIndex((membership) =>
+    matchesExactPersonalIdentity(
+      { accountId: membership.accountId, userId: membership.userId },
+      { accountId: session.accountId, userId: session.userId },
+    ),
+  );
 }
 
 function findActiveOrderPointAward(membership: MerchantMembershipRecord, orderId: string) {
@@ -1705,11 +1721,15 @@ export async function joinMerchantMembership(input: {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const stored = await loadStoredMerchantMemberships(supabase, siteId);
       const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-      const existingIndex = current.findIndex(
+      const existingIndex = findMembershipIndexForPersonalSession(current, input.session);
+      const conflictingIndex = current.findIndex(
         (membership) =>
-          (membership.accountId && membership.accountId === input.session.accountId) ||
-          (membership.userId && membership.userId === input.session.userId),
+          (Boolean(membership.accountId) && membership.accountId === input.session.accountId) ||
+          (Boolean(membership.userId) && membership.userId === input.session.userId),
       );
+      if (existingIndex < 0 && conflictingIndex >= 0) {
+        throw new Error("membership_identity_conflict");
+      }
       const now = new Date().toISOString();
       const baseProfile = {
         siteName,
@@ -1795,11 +1815,7 @@ export async function leaveMerchantMembership(input: {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const stored = await loadStoredMerchantMemberships(supabase, siteId);
       const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-      const index = current.findIndex(
-        (membership) =>
-          (membership.accountId && membership.accountId === input.session.accountId) ||
-          (membership.userId && membership.userId === input.session.userId),
-      );
+      const index = findMembershipIndexForPersonalSession(current, input.session);
       if (index < 0) throw new Error("membership_not_found");
       if (current[index]?.status === "left") return current[index];
       const now = new Date().toISOString();

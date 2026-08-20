@@ -153,7 +153,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     assert.deepEqual(body.merchantIds, ["12345678"]);
     assert.equal(body.personalServiceConfig, null);
     assert.equal(body.personalServicePaused, false);
-    assert.equal(typeof body.frontendAuthProof, "string");
+    assert.equal(body.frontendAuthProof, undefined);
     assert.equal(body.accessToken, undefined);
     assert.equal(body.refreshToken, undefined);
     assert.deepEqual(body.user, {

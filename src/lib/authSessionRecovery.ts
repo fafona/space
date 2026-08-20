@@ -24,7 +24,6 @@ export type MerchantCookieSessionPayload = {
   refreshToken?: unknown;
   expiresIn?: unknown;
   tokenType?: unknown;
-  frontendAuthProof?: unknown;
   accountType?: unknown;
   accountId?: unknown;
   merchantId?: unknown;
@@ -123,6 +122,45 @@ export function readMerchantSessionMerchantIds(
   }
 
   return merchantIds;
+}
+
+export function resolveAuthorizedMerchantIds(
+  payload: MerchantCookieSessionPayload | null | undefined,
+  expectedUserId: unknown,
+  selectionHints: unknown[] = [],
+) {
+  const expected =
+    typeof expectedUserId === "string" ? expectedUserId.trim() : "";
+  const payloadUserId =
+    typeof payload?.user?.id === "string" ? payload.user.id.trim() : "";
+  if (
+    !expected ||
+    payload?.authenticated !== true ||
+    !payloadUserId ||
+    payloadUserId !== expected
+  ) {
+    return [];
+  }
+  const authoritative = readMerchantSessionMerchantIds(payload);
+  if (authoritative.length === 0) return [];
+  const authorizedSet = new Set(authoritative);
+  const preferred: string[] = [];
+  selectionHints.forEach((value) => {
+    if (typeof value !== "string") return;
+    const normalized = value.trim();
+    if (
+      !normalized ||
+      !authorizedSet.has(normalized) ||
+      preferred.includes(normalized)
+    ) {
+      return;
+    }
+    preferred.push(normalized);
+  });
+  authoritative.forEach((merchantId) => {
+    if (!preferred.includes(merchantId)) preferred.push(merchantId);
+  });
+  return preferred;
 }
 
 function collectUsableBrowserStorages(candidates: Array<Storage | null | undefined>) {

@@ -7,6 +7,7 @@ import {
   persistBrowserSupabaseSessionSnapshot,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
+  resolveAuthorizedMerchantIds,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
 import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey } from "@/lib/supabase";
@@ -127,6 +128,42 @@ test("merchant session payload ids keep server primary id first and dedupe extra
       merchantIds: ["10000003", "10000002", "10000004", "", null],
     }),
     ["10000002", "10000003", "10000004"],
+  );
+});
+
+test("merchant selection hints can only reorder an exact authenticated server-session set", () => {
+  const payload = {
+    authenticated: true as const,
+    merchantId: "10000001",
+    merchantIds: ["10000002"],
+    user: { id: "user-canonical" } as never,
+  };
+  assert.deepEqual(
+    resolveAuthorizedMerchantIds(payload, "user-canonical", [
+      "99999999",
+      "10000002",
+    ]),
+    ["10000002", "10000001"],
+  );
+  assert.deepEqual(
+    resolveAuthorizedMerchantIds(payload, "user-other", ["10000001"]),
+    [],
+  );
+  assert.deepEqual(
+    resolveAuthorizedMerchantIds(
+      { ...payload, authenticated: false },
+      "user-canonical",
+      ["10000001"],
+    ),
+    [],
+  );
+  assert.deepEqual(
+    resolveAuthorizedMerchantIds(
+      { ...payload, merchantId: "", merchantIds: [] },
+      "user-canonical",
+      ["10000001"],
+    ),
+    [],
   );
 });
 

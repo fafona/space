@@ -225,9 +225,6 @@ export default function PollBlock({
           participantName: participantName.trim(),
           anonymous,
           answers: validation.answers,
-          ...(isRegistered || authPayload?.frontendAuthProof
-            ? { frontendAuthProof: authPayload?.frontendAuthProof ?? "" }
-            : {}),
           guestToken: isRegistered ? "" : readPersonalGuestMergeToken(),
           source: runtimeSource,
         }),

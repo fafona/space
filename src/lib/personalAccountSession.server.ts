@@ -9,10 +9,8 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import { loadActiveOrdinaryAccountAuthorization } from "@/lib/ordinaryAccountPrincipal.server";
-import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
-  verifyFrontendAuthProof,
   type FrontendAuthProofPayload,
 } from "@/lib/frontendAuthProof.server";
 
@@ -135,44 +133,14 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
 export async function resolvePersonalAccountSessionFromFrontendAuthProofPayload(
   payload: FrontendAuthProofPayload | null | undefined,
 ): Promise<PersonalAccountSession | null> {
-  if (!payload || payload.accountType !== "personal") return null;
-  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
-  if (!adminSupabase) return null;
-
-  const userId = trimText(payload.userId, 128);
-  if (!userId) return null;
-  const user = await loadFreshAuthUser(adminSupabase, userId);
-  if (!user || trimText(user.id, 128) !== userId) return null;
-
-  const authorization = await loadActiveOrdinaryAccountAuthorization(
-    adminSupabase,
-    user,
-  ).catch(() => null);
-  if (!authorization || authorization.accountType !== "personal") return null;
-  const accountId = authorization.personalAccountId;
-  const proofAccountId = normalizeCanonicalPersonalAccountId(
-    payload.accountId,
-  );
-  if (!proofAccountId || proofAccountId !== accountId) return null;
-
-  const serviceConfig = readPersonalAccountServiceConfigFromMetadata(user);
-  return {
-    adminSupabase,
-    user,
-    accountId,
-    userId,
-    email: trimText(user.email, 320).toLowerCase(),
-    serviceConfig,
-    servicePaused: serviceConfig.servicePaused,
-    permissionConfig: buildPersonalAccountPermissionConfig(serviceConfig),
-  };
+  void payload;
+  return null;
 }
 
-
 /**
- * The signed proof transports a candidate Auth UUID only. It never establishes
- * a principal by itself: the current 035 resolver result must still be active,
- * personal, and exactly match both the proof userId and accountId.
+ * Legacy frontend proofs are rejected even when a direct cookie session is
+ * present. Cross-origin proof authority stays disabled until a separate
+ * audience/site-bound, one-time exchange is deployed.
  */
 export async function resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
   request: Request,
@@ -181,25 +149,8 @@ export async function resolvePersonalAccountSessionFromRequestOrFrontendAuthProo
     request: Request,
   ) => Promise<PersonalAccountSession | null> = resolvePersonalAccountSessionFromRequest,
 ): Promise<PersonalAccountSession | null> {
-  let proofSession: PersonalAccountSession | null = null;
   if (frontendAuthProof !== undefined) {
-    const payload = verifyFrontendAuthProof(frontendAuthProof);
-    if (!payload) throw new FrontendPersonalSessionProofError();
-    proofSession =
-      await resolvePersonalAccountSessionFromFrontendAuthProofPayload(payload);
-    if (!proofSession) throw new FrontendPersonalSessionProofError();
+    throw new FrontendPersonalSessionProofError();
   }
-
-  const directSession = await requestSessionResolver(request);
-  if (directSession) {
-    if (
-      proofSession &&
-      (proofSession.userId !== directSession.userId ||
-        proofSession.accountId !== directSession.accountId)
-    ) {
-      throw new FrontendPersonalSessionProofError();
-    }
-    return directSession;
-  }
-  return proofSession;
+  return requestSessionResolver(request);
 }

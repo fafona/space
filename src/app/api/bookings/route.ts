@@ -63,6 +63,40 @@ async function resolveBookingAdminSession(request: Request, siteId: string) {
   return session;
 }
 
+async function notifyBookingCreated(
+  siteId: string,
+  created: Awaited<ReturnType<typeof createMerchantBooking>>,
+) {
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) return;
+  const notification = buildMerchantBookingPushNotification({
+    siteId,
+    booking: created.booking,
+  });
+  await notifyMerchantPushSubscribers(
+    supabase as unknown as MerchantPushSubscriptionStoreClient,
+    {
+      merchantId: siteId,
+      ...notification,
+    },
+  ).catch(() => {
+    // Ignore notification delivery failures; the booking itself should still succeed.
+  });
+}
+
+export type MerchantBookingPostRouteDependencies = {
+  resolvePersonalSession: typeof resolvePersonalAccountSessionFromRequestOrFrontendAuthProof;
+  createBooking: typeof createMerchantBooking;
+  notifyCreated: typeof notifyBookingCreated;
+};
+
+const DEFAULT_POST_DEPENDENCIES: MerchantBookingPostRouteDependencies = {
+  resolvePersonalSession:
+    resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
+  createBooking: createMerchantBooking,
+  notifyCreated: notifyBookingCreated,
+};
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -75,7 +109,6 @@ export async function GET(request: Request) {
         {
           accountId: session.accountId,
           userId: session.userId,
-          email: session.email,
         },
         {
           includeAutomationState: true,
@@ -127,7 +160,11 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function handleMerchantBookingPost(
+  request: Request,
+  dependencyOverrides: Partial<MerchantBookingPostRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_POST_DEPENDENCIES, ...dependencyOverrides };
   try {
     const body = (await request.json()) as Partial<MerchantBookingCreateInput> & {
       frontendAuthProof?: unknown;
@@ -137,11 +174,20 @@ export async function POST(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }
-    const personalSession =
-      await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
-        request,
-        body.frontendAuthProof,
-      );
+    const trustedMutation = isTrustedSameOriginMutationRequest(request);
+    const hasFrontendAuthProof = Object.prototype.hasOwnProperty.call(
+      body,
+      "frontendAuthProof",
+    );
+    if (hasFrontendAuthProof && !trustedMutation) {
+      return getTrustedMutationRequestErrorResponse();
+    }
+    const personalSession = trustedMutation
+      ? await dependencies.resolvePersonalSession(
+          request,
+          body.frontendAuthProof,
+        )
+      : null;
     const personalProfile = personalSession
       ? readPersonalCustomerProfileFromSession({
           authenticated: true,
@@ -154,7 +200,7 @@ export async function POST(request: Request) {
     const fallbackCustomerName =
       personalProfile?.name ||
       (fallbackCustomerEmail.includes("@") ? fallbackCustomerEmail.split("@")[0] ?? "" : "");
-    const created = await createMerchantBooking({
+    const created = await dependencies.createBooking({
       siteId,
       siteName: String(body.siteName ?? "").trim(),
       bookingBlockId: String(body.bookingBlockId ?? "").trim() || undefined,
@@ -173,19 +219,7 @@ export async function POST(request: Request) {
       customerGuestHash: personalSession ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
     });
 
-    const supabase = createServerSupabaseServiceClient();
-    if (supabase) {
-      const notification = buildMerchantBookingPushNotification({
-        siteId,
-        booking: created.booking,
-      });
-      await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
-        merchantId: siteId,
-        ...notification,
-      }).catch(() => {
-        // Ignore notification delivery failures; the booking itself should still succeed.
-      });
-    }
+    await dependencies.notifyCreated(siteId, created);
 
     return NextResponse.json({ ok: true, ...created });
   } catch (error) {
@@ -200,6 +234,10 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+}
+
+export async function POST(request: Request) {
+  return handleMerchantBookingPost(request);
 }
 
 export async function PATCH(request: Request) {
@@ -230,7 +268,6 @@ export async function PATCH(request: Request) {
         action: body.action,
         accountId: session.accountId,
         userId: session.userId,
-        email: session.email,
         updates: body.updates,
       });
       return NextResponse.json({ ok: true, booking });

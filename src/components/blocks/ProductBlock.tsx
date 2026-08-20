@@ -989,7 +989,6 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [loadedCartStorageIdentity, setLoadedCartStorageIdentity] = useState("");
   const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerDefaults, setCartCustomerDefaults] = useState<MerchantOrderCustomerInput>({});
-  const [cartCustomerAuthProof, setCartCustomerAuthProof] = useState("");
   const [cartCustomerOpen, setCartCustomerOpen] = useState(false);
   const [cartSubmitting, setCartSubmitting] = useState(false);
   const [cartError, setCartError] = useState("");
@@ -1070,7 +1069,6 @@ export default function ProductBlock(props: ProductBlockProps) {
       setCartItems([]);
       setCartCustomer({});
       setCartCustomerDefaults({});
-      setCartCustomerAuthProof("");
       setCartClientRequestId("");
       setLoadedCartStorageIdentity("");
       return;
@@ -1220,7 +1218,6 @@ export default function ProductBlock(props: ProductBlockProps) {
   useEffect(() => {
     if (!cartEnabled) {
       setCartCustomerDefaults({});
-      setCartCustomerAuthProof("");
       return;
     }
     if (!cartOpen) return;
@@ -1236,15 +1233,12 @@ export default function ProductBlock(props: ProductBlockProps) {
         if (cancelled) return;
         if (payload?.authenticated !== true || !payload.user) {
           setCartCustomerDefaults({});
-          setCartCustomerAuthProof("");
           return;
         }
-        setCartCustomerAuthProof(typeof payload.frontendAuthProof === "string" ? payload.frontendAuthProof.trim() : "");
         setCartCustomerDefaults(buildCartCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
       } catch {
         if (!cancelled) {
           setCartCustomerDefaults({});
-          setCartCustomerAuthProof("");
         }
       }
     };
@@ -1616,9 +1610,6 @@ export default function ProductBlock(props: ProductBlockProps) {
         import("@/lib/personalConsumptionBridge"),
       ]);
       const latestAuthPayload = await resolveFrontendAuthPayload(2600).catch(() => null);
-      const frontendAuthProof =
-        (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
-        cartCustomerAuthProof;
       const isPersonalAuthenticated = latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal";
       const clientRequestId = cartClientRequestId || createProductCartRequestId();
       if (!cartClientRequestId) {
@@ -1644,9 +1635,6 @@ export default function ProductBlock(props: ProductBlockProps) {
           catalogRevision: operatingCatalog?.revision,
           clientRequestId,
           pricePrefix,
-          ...(isPersonalAuthenticated || frontendAuthProof
-            ? { frontendAuthProof }
-            : {}),
           customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
           customer: cartCustomer,
           items: checkedCartItems.map((item) => ({

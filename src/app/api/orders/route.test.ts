@@ -461,6 +461,82 @@ test("GET applies private headers to unauthenticated personal reads", async () =
   assert.equal(personalListCalls, 0);
 });
 
+test("personal order routes forward canonical ids without using session email as authority", async () => {
+  const session = {
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "shared@example.com",
+  };
+  const lookupInputs: unknown[] = [];
+  const getResponse = await handleMerchantOrdersGet(
+    new Request("https://merchant.faolla.test/api/orders?scope=personal"),
+    {
+      async resolvePersonalSession() {
+        return session as never;
+      },
+      async listPersonalOrders(input) {
+        lookupInputs.push(input);
+        return [];
+      },
+      async buildPersonalContacts() {
+        return {};
+      },
+    },
+  );
+  assert.equal(getResponse.status, 200);
+  assert.deepEqual(lookupInputs, [
+    {
+      accountId: session.accountId,
+      userId: session.userId,
+    },
+  ]);
+
+  const order = createMerchantOrder(
+    {
+      siteId: SITE_ID,
+      customerAccountId: session.accountId,
+      customerUserId: session.userId,
+      customerLoginEmail: session.email,
+      customer: { name: "Customer", email: session.email },
+      items: [{ productId: PRODUCT_ID, name: "Product", quantity: 1, unitPrice: 10 }],
+    },
+    { id: "order-personal-cancel" },
+  );
+  const cancelInputs: unknown[] = [];
+  const cancelledOrder = {
+    ...order,
+    status: "cancelled" as const,
+    updatedAt: "2026-08-20T12:00:00.000Z",
+    cancelledAt: "2026-08-20T12:00:00.000Z",
+  };
+  const patchResponse = await handleMerchantOrderPatch(
+    orderPatchRequest({
+      scope: "personal",
+      siteId: SITE_ID,
+      orderId: order.id,
+      action: "cancel",
+    }),
+    {
+      async resolvePersonalSession() {
+        return session as never;
+      },
+      async cancelPersonalOrder(input) {
+        cancelInputs.push(input);
+        return cancelledOrder;
+      },
+    },
+  );
+  assert.equal(patchResponse.status, 200);
+  assert.deepEqual(cancelInputs, [
+    {
+      siteId: SITE_ID,
+      orderId: order.id,
+      accountId: session.accountId,
+      userId: session.userId,
+    },
+  ]);
+});
+
 test("GET applies private headers to unexpected read failures", async () => {
   const response = await handleMerchantOrdersGet(
     new Request(`https://merchant.faolla.test/api/orders?siteId=${SITE_ID}`),

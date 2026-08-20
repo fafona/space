@@ -253,7 +253,6 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   const [personalProfile, setPersonalProfile] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
   const [profileDraft, setProfileDraft] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
   const [birthdayFullBackup, setBirthdayFullBackup] = useState("");
-  const [frontendAuthProof, setFrontendAuthProof] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -275,7 +274,6 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
       const current = memberships.find((item) => item.siteId === normalizedSiteId) ?? null;
       const profile = readProfileFromAuthPayload(payload);
       setAuthenticated(true);
-      setFrontendAuthProof(trimText(payload.frontendAuthProof, 5000));
       setMembership(current);
       setPersonalProfile(profile);
       setProfileDraft(profile);
@@ -390,13 +388,9 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
         throw new Error(submitProfile.birthdayMonthDayOnly ? "请填写生日月日" : "请填写生日");
       }
       const latestAuthPayload = await resolveDeferredFrontendAuthPayload(2600).catch(() => null);
-      const latestFrontendAuthProof =
-        (latestAuthPayload?.accountType === "personal" ? trimText(latestAuthPayload.frontendAuthProof, 5000) : "") ||
-        frontendAuthProof;
       if (latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal") {
         const nextProfile = readProfileFromAuthPayload(latestAuthPayload);
         setAuthenticated(true);
-        setFrontendAuthProof(latestFrontendAuthProof);
         setPersonalProfile(nextProfile);
       }
       const response = await fetch("/api/memberships", {
@@ -411,9 +405,6 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
           siteId: normalizedSiteId,
           siteName,
           profile: submitProfile,
-          ...(authenticated || latestAuthPayload?.authenticated === true || latestFrontendAuthProof
-            ? { frontendAuthProof: latestFrontendAuthProof }
-            : {}),
         }),
       });
       if (response.status === 401) {

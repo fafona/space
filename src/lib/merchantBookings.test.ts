@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  handleMerchantBookingPost,
+  type MerchantBookingPostRouteDependencies,
+} from "@/app/api/bookings/route";
+import {
   buildDefaultBookingStoreOptions,
   buildMerchantBookingId,
   formatMerchantBookingIdDate,
@@ -9,6 +13,7 @@ import {
   getMerchantBookingSlotCapacityIssue,
   isMerchantBookingNewForMerchant,
   isMerchantBookingPendingMerchantTouch,
+  matchesPersonalMerchantBookingIdentity,
   getMerchantBookingTimeAvailabilityIssue,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
@@ -38,6 +43,130 @@ import {
   MERCHANT_BOOKING_ITEM_COLOR_PRESETS,
   normalizeMerchantBookingWorkbenchSettings,
 } from "./merchantBookingWorkbench";
+
+function bookingPostRequest(
+  origin: string,
+  body: Record<string, unknown>,
+  cookie = "",
+) {
+  return new Request("https://merchant.faolla.test/api/bookings", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      host: "merchant.faolla.test",
+      origin,
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify({
+      siteId: "10000000",
+      store: "Main",
+      item: "Consultation",
+      appointmentAt: "2026-08-22T10:00",
+      customerName: "Customer",
+      email: "shared@example.com",
+      ...body,
+    }),
+  });
+}
+
+test("booking POST permits canonical attribution only on trusted same-origin requests", async () => {
+  const session = {
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "shared@example.com",
+    user: { id: "11111111-1111-4111-8111-111111111111" },
+  };
+  const createdInputs: Array<Record<string, unknown>> = [];
+  let sessionCalls = 0;
+  const dependencies: Partial<MerchantBookingPostRouteDependencies> = {
+    async resolvePersonalSession(_request, proof) {
+      sessionCalls += 1;
+      assert.deepEqual(proof, { accessToken: "signed-proof" });
+      return session as never;
+    },
+    async createBooking(input) {
+      createdInputs.push(structuredClone(input) as Record<string, unknown>);
+      return {
+        booking: {
+          id: `booking-${createdInputs.length}`,
+          siteId: "10000000",
+        },
+        editToken: "edit-token",
+      } as never;
+    },
+    async notifyCreated() {},
+  };
+
+  const foreignProof = await handleMerchantBookingPost(
+    bookingPostRequest("https://attacker.example", {
+      frontendAuthProof: { accessToken: "signed-proof" },
+    }),
+    dependencies,
+  );
+  assert.equal(foreignProof.status, 403);
+  assert.equal(sessionCalls, 0);
+  assert.equal(createdInputs.length, 0);
+
+  const sameOriginProof = await handleMerchantBookingPost(
+    bookingPostRequest("https://merchant.faolla.test", {
+      frontendAuthProof: { accessToken: "signed-proof" },
+    }),
+    dependencies,
+  );
+  assert.equal(sameOriginProof.status, 200);
+  assert.equal(sessionCalls, 1);
+  assert.equal(createdInputs.length, 1);
+  assert.equal(createdInputs[0]?.customerAccountId, session.accountId);
+  assert.equal(createdInputs[0]?.customerUserId, session.userId);
+
+  const foreignAnonymous = await handleMerchantBookingPost(
+    bookingPostRequest(
+      "https://attacker.example",
+      {},
+      "merchant_access_token=untrusted-cross-site-cookie",
+    ),
+    dependencies,
+  );
+  assert.equal(foreignAnonymous.status, 200);
+  assert.equal(sessionCalls, 1);
+  assert.equal(createdInputs.length, 2);
+  assert.equal(createdInputs[1]?.customerAccountId, "");
+  assert.equal(createdInputs[1]?.customerUserId, "");
+  assert.equal(createdInputs[1]?.customerLoginEmail, "");
+});
+
+test("personal booking identity requires every stored canonical id and never email", () => {
+  const record = {
+    customerAccountId: "50010105",
+    customerUserId: "user-canonical",
+    customerLoginEmail: "shared@example.com",
+    email: "shared@example.com",
+  };
+  assert.equal(
+    matchesPersonalMerchantBookingIdentity(record, {
+      accountId: "50010105",
+      userId: "user-canonical",
+    }),
+    true,
+  );
+  assert.equal(
+    matchesPersonalMerchantBookingIdentity(record, {
+      accountId: "50010105",
+      userId: "user-other",
+    }),
+    false,
+  );
+  assert.equal(
+    matchesPersonalMerchantBookingIdentity(
+      {
+        customerAccountId: "",
+        customerUserId: "",
+      },
+      { accountId: "50010105", userId: "user-canonical" },
+    ),
+    false,
+  );
+});
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
   assert.deepEqual(

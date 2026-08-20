@@ -46,3 +46,69 @@ test("business-card user changes have specific actions and use the stable callba
   assert.match(source, /onCardsChange: handleMerchantBusinessCardsChange/);
   assert.doesNotMatch(source, /action: "更新名片夹"/);
 });
+
+test("merchant editor ids are authorized by an exact server session before any hint is used", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const resolverStart = source.indexOf("async function resolveMerchantIds(");
+  const resolverEnd = source.indexOf(
+    "async function loadBlocksFromSupabaseFallback",
+    resolverStart,
+  );
+  assert.ok(resolverStart >= 0 && resolverEnd > resolverStart);
+  const resolver = source.slice(resolverStart, resolverEnd);
+
+  assert.match(resolver, /resolveAuthorizedMerchantIds\(payload, sessionUserId/);
+  assert.match(resolver, /readMerchantIdsFromMetadata\(metadataRecord\)/);
+  assert.match(resolver, /readCachedMerchantIds\(sessionUserId, email\)/);
+  assert.doesNotMatch(resolver, /Keep cached \+ metadata ids/);
+  assert.doesNotMatch(resolver, /payloadMatchesCurrentUser/);
+
+  assert.match(
+    source,
+    /const initialCached = isPlatformEditor \? applyCachedEditorBlocks\(\) : \[\]/,
+  );
+  assert.match(
+    source,
+    /preferredByScope && !merchantIds\.includes\(preferredByScope\)/,
+  );
+  assert.match(source, /scopedSiteId && !merchantIds\.includes\(scopedSiteId\)/);
+  assert.doesNotMatch(
+    source,
+    /preferredByScope \? \[preferredByScope\] : mergePreferredMerchantIds\(merchantIdsRef\.current\)/,
+  );
+  assert.doesNotMatch(source, /if \(scopedSiteId\) return Promise\.resolve\(\[scopedSiteId\]\)/);
+  assert.doesNotMatch(source, /return Promise\.resolve\(hintedMerchantIds\)/);
+
+  const clearStart = source.indexOf("const clearMerchantAuthorizedIdentity = useCallback");
+  const clearEnd = source.indexOf("const themeBaseBlocksByPageRef", clearStart);
+  assert.ok(clearStart >= 0 && clearEnd > clearStart);
+  const clearBoundary = source.slice(clearStart, clearEnd);
+  assert.match(clearBoundary, /merchantIdsRef\.current = \[\]/);
+  assert.match(clearBoundary, /merchantSessionIdentityRef\.current = \{/);
+  assert.match(clearBoundary, /merchantId: ""/);
+  assert.match(clearBoundary, /setMerchantSiteIdOverride\(""\)/);
+
+  assert.match(
+    source,
+    /const authorizedOverrideSiteId = authorizedMerchantSiteIds\.includes\(merchantSiteIdOverride\)/,
+  );
+  assert.match(
+    source,
+    /const authorizedScopedSiteId = authorizedMerchantSiteIds\.includes\(scopedSiteId\)/,
+  );
+  assert.match(
+    source,
+    /\? authorizedOverrideSiteId \|\| authorizedScopedSiteId \|\| fallbackMerchantSiteId/,
+  );
+  assert.match(source, /clearMerchantAuthorizedIdentity\(\);\s+const merchantGatewayReady/);
+  assert.match(source, /function selectAuthorizedMerchantSiteId\(/);
+  assert.doesNotMatch(source, /readRecentMerchantLaunchMerchantId/);
+  assert.doesNotMatch(
+    source,
+    /editingSiteId \|\|\s+merchantSessionIdentityRef\.current\.merchantId/,
+  );
+  assert.doesNotMatch(
+    source,
+    /setMerchantSiteIdOverride\(\(current\) => current \|\| merchantId\)/,
+  );
+});

@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   buildMerchantBookingId,
   getMerchantBookingSlotCapacityIssue,
+  matchesPersonalMerchantBookingIdentity,
   sanitizeMerchantBookingEditableInput,
   type MerchantBookingActionInput,
   type MerchantBookingCustomerEmailLogKind,
@@ -968,32 +969,21 @@ export async function listMerchantBookingsWindow(
   });
 }
 
-function matchesPersonalBookingCustomer(
-  record: MerchantBookingStoredRecord,
-  input: { accountId: string; userId: string; email: string },
-) {
-  if (input.accountId && trimText(record.customerAccountId) === input.accountId) return true;
-  if (input.userId && trimText(record.customerUserId) === input.userId) return true;
-  if (!input.email) return false;
-  return trimText(record.customerLoginEmail).toLowerCase() === input.email || trimText(record.email).toLowerCase() === input.email;
-}
-
 export async function listPersonalMerchantBookings(
-  input: { accountId?: string | null; userId?: string | null; email?: string | null },
+  input: { accountId?: string | null; userId?: string | null },
   options?: { includeAutomationState?: boolean; includeCustomerEmailLogs?: boolean; includeTimeline?: boolean },
 ): Promise<MerchantBookingRecord[]> {
   const lookup = {
     accountId: trimText(input.accountId),
     userId: trimText(input.userId),
-    email: trimText(input.email).toLowerCase(),
   };
-  if (!lookup.accountId && !lookup.userId && !lookup.email) return [];
+  if (!lookup.accountId && !lookup.userId) return [];
 
   let store = await readMerchantBookingStore();
   const siteIds = Array.from(
     new Set(
       store.records
-        .filter((record) => matchesPersonalBookingCustomer(record, lookup))
+        .filter((record) => matchesPersonalMerchantBookingIdentity(record, lookup))
         .map((record) => record.siteId)
         .filter(Boolean),
     ),
@@ -1013,7 +1003,7 @@ export async function listPersonalMerchantBookings(
 
   return sortNewestFirst(
     store.records
-      .filter((record) => matchesPersonalBookingCustomer(record, lookup))
+      .filter((record) => matchesPersonalMerchantBookingIdentity(record, lookup))
       .map((record) => withoutMerchantBookingToken(record, options)),
   );
 }
@@ -1029,7 +1019,7 @@ export async function attachPersonalMerchantBookingsByGuestHash(input: {
   const accountId = trimText(input.accountId);
   const userId = trimText(input.userId);
   const email = trimText(input.email).toLowerCase();
-  if (!guestHash || (!accountId && !userId && !email)) return [];
+  if (!guestHash || (!accountId && !userId)) return [];
 
   const targetKeys = new Set<string>();
   for (const record of Array.isArray(input.records) ? input.records : []) {
@@ -1049,13 +1039,15 @@ export async function attachPersonalMerchantBookingsByGuestHash(input: {
     store.records = store.records.map((record) => {
       if (!targetKeys.has(`${record.siteId}:${record.id}`)) return record;
       if (trimText(record.customerGuestHash) !== guestHash) return record;
-      const existingOwner =
-        trimText(record.customerAccountId) || trimText(record.customerUserId) || trimText(record.customerLoginEmail).toLowerCase();
-      const ownedByCurrent =
-        (accountId && trimText(record.customerAccountId) === accountId) ||
-        (userId && trimText(record.customerUserId) === userId) ||
-        (email && trimText(record.customerLoginEmail).toLowerCase() === email);
-      if (existingOwner && !ownedByCurrent) return record;
+      const hasCanonicalOwner = Boolean(
+        trimText(record.customerAccountId) || trimText(record.customerUserId),
+      );
+      if (
+        hasCanonicalOwner &&
+        !matchesPersonalMerchantBookingIdentity(record, { accountId, userId })
+      ) {
+        return record;
+      }
       const next: MerchantBookingStoredRecord = {
         ...record,
         customerAccountId: accountId || record.customerAccountId,
@@ -1078,15 +1070,13 @@ export async function cancelPersonalMerchantBooking(input: {
   bookingId: string;
   accountId?: string | null;
   userId?: string | null;
-  email?: string | null;
 }): Promise<MerchantBookingRecord> {
   const bookingId = trimText(input.bookingId);
   const lookup = {
     accountId: trimText(input.accountId),
     userId: trimText(input.userId),
-    email: trimText(input.email).toLowerCase(),
   };
-  if (!bookingId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
+  if (!bookingId || (!lookup.accountId && !lookup.userId)) {
     throw new Error("booking_not_found");
   }
 
@@ -1095,7 +1085,7 @@ export async function cancelPersonalMerchantBooking(input: {
     const targetIndex = store.records.findIndex((record) => record.id === bookingId);
     if (targetIndex < 0) throw new Error("booking_not_found");
     const current = store.records[targetIndex];
-    if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
+    if (!matchesPersonalMerchantBookingIdentity(current, lookup)) throw new Error("booking_not_found");
     if (current.status !== "active" || trimText(current.merchantTouchedAt)) {
       throw new Error("booking_customer_action_locked");
     }
@@ -1130,16 +1120,14 @@ export async function updatePersonalMerchantBooking(input: {
   action: "update" | "cancel" | "restore";
   accountId?: string | null;
   userId?: string | null;
-  email?: string | null;
   updates?: Partial<MerchantBookingEditableInput>;
 }): Promise<MerchantBookingRecord> {
   const bookingId = trimText(input.bookingId);
   const lookup = {
     accountId: trimText(input.accountId),
     userId: trimText(input.userId),
-    email: trimText(input.email).toLowerCase(),
   };
-  if (!bookingId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
+  if (!bookingId || (!lookup.accountId && !lookup.userId)) {
     throw new Error("booking_not_found");
   }
 
@@ -1148,7 +1136,7 @@ export async function updatePersonalMerchantBooking(input: {
     const targetIndex = store.records.findIndex((record) => record.id === bookingId);
     if (targetIndex < 0) throw new Error("booking_not_found");
     const current = store.records[targetIndex];
-    if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
+    if (!matchesPersonalMerchantBookingIdentity(current, lookup)) throw new Error("booking_not_found");
     if (trimText(current.merchantTouchedAt)) {
       throw new Error("booking_customer_action_locked");
     }

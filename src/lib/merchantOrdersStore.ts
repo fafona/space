@@ -1,4 +1,5 @@
 import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/merchantOrders";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
 
 const MERCHANT_ORDER_SLUG_PREFIX = "__merchant_orders__:";
@@ -106,7 +107,6 @@ type StoredMerchantOrdersRowWithChunk = StoredMerchantOrdersRow & {
 type MerchantOrderCustomerLookup = {
   accountId?: string | null;
   userId?: string | null;
-  email?: string | null;
 };
 
 export function chunkMerchantOrderRecords(orders: MerchantOrderRecord[], chunkSize = MERCHANT_ORDER_CHUNK_SIZE) {
@@ -478,13 +478,16 @@ async function listStoredMerchantOrdersRowsBySlugPrefix(supabase: MerchantOrders
   return rows;
 }
 
-function matchesStoredMerchantOrderCustomer(order: MerchantOrderRecord, lookup: Required<MerchantOrderCustomerLookup>) {
-  if (lookup.accountId && normalizeText(order.customerAccountId) === lookup.accountId) return true;
-  if (lookup.userId && normalizeText(order.customerUserId) === lookup.userId) return true;
-  if (!lookup.email) return false;
-  return (
-    normalizeText(order.customerLoginEmail).toLowerCase() === lookup.email ||
-    normalizeText(order.customer.email).toLowerCase() === lookup.email
+function matchesStoredMerchantOrderCustomer(
+  order: MerchantOrderRecord,
+  lookup: Required<MerchantOrderCustomerLookup>,
+) {
+  return matchesExactPersonalIdentity(
+    {
+      accountId: order.customerAccountId,
+      userId: order.customerUserId,
+    },
+    lookup,
   );
 }
 
@@ -495,9 +498,8 @@ export async function listStoredMerchantOrdersByCustomer(
   const lookup = {
     accountId: normalizeText(input.accountId),
     userId: normalizeText(input.userId),
-    email: normalizeText(input.email).toLowerCase(),
   };
-  if (!lookup.accountId && !lookup.userId && !lookup.email) return [];
+  if (!lookup.accountId && !lookup.userId) return [];
 
   const rows = await listStoredMerchantOrdersRowsBySlugPrefix(supabase);
   const orderMap = new Map<string, MerchantOrderRecord>();

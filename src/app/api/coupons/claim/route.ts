@@ -23,6 +23,7 @@ import { getMerchantMembershipsSnapshot } from "@/lib/merchantMemberships.server
 import { isCouponWebsiteBlockEnabled } from "@/lib/merchantCouponPermissions.server";
 import { buildPersonalClaimedCoupon, writePersonalClaimedCouponToUserMetadata, type PersonalClaimedCoupon } from "@/lib/personalCoupons";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 import { resolvePersonalAccountSessionFromRequest, type PersonalAccountSession } from "@/lib/personalAccountSession.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { readMerchantAuthAccountTypeCookie } from "@/lib/merchantAuthSession";
@@ -118,20 +119,22 @@ function getPeriodStart(date: Date, period: "hour" | "day" | "week" | "month") {
   return next.getTime();
 }
 
-function claimEventMatchesSession(event: MerchantCouponClaimEvent, session: PersonalAccountSession, email: string) {
-  return Boolean(
-    (event.accountId && event.accountId === session.accountId) ||
-      (event.userId && event.userId === session.userId) ||
-      (event.email && email && event.email.toLowerCase() === email.toLowerCase()),
+function claimEventMatchesSession(
+  event: MerchantCouponClaimEvent,
+  session: PersonalAccountSession,
+) {
+  return matchesExactPersonalIdentity(
+    { accountId: event.accountId, userId: event.userId },
+    { accountId: session.accountId, userId: session.userId },
   );
 }
 
-function countClaimEvents(coupon: MerchantCouponRecord, input: { after?: number; session?: PersonalAccountSession | null; email?: string }) {
+function countClaimEvents(coupon: MerchantCouponRecord, input: { after?: number; session?: PersonalAccountSession | null }) {
   return coupon.claimEvents.filter((event) => {
     const timestamp = Date.parse(event.at);
     if (!Number.isFinite(timestamp)) return false;
     if (input.after !== undefined && timestamp < input.after) return false;
-    if (input.session && !claimEventMatchesSession(event, input.session, input.email ?? "")) return false;
+    if (input.session && !claimEventMatchesSession(event, input.session)) return false;
     return true;
   }).length;
 }
@@ -170,7 +173,7 @@ function assertCouponClaimStockAllowed(coupon: MerchantCouponRecord, now: Date) 
   });
 }
 
-function assertCouponPerUserClaimAllowed(coupon: MerchantCouponRecord, session: PersonalAccountSession, email: string, now: Date) {
+function assertCouponPerUserClaimAllowed(coupon: MerchantCouponRecord, session: PersonalAccountSession, now: Date) {
   const limits: Array<[number, number | undefined, string]> = [
     [coupon.claimPerUserTotalLimit, undefined, "coupon_user_total_limit_reached"],
     [coupon.claimPerUserDailyLimit, getPeriodStart(now, "day"), "coupon_user_daily_limit_reached"],
@@ -178,7 +181,7 @@ function assertCouponPerUserClaimAllowed(coupon: MerchantCouponRecord, session: 
     [coupon.claimPerUserMonthlyLimit, getPeriodStart(now, "month"), "coupon_user_monthly_limit_reached"],
   ];
   limits.forEach(([limit, after, error]) => {
-    if (limit > 0 && countClaimEvents(coupon, { after, session, email }) >= limit) throw new Error(error);
+    if (limit > 0 && countClaimEvents(coupon, { after, session }) >= limit) throw new Error(error);
   });
 }
 
@@ -199,18 +202,10 @@ async function assertCouponClaimIdentityAllowed(
 
   const session = personalSessionTask ? await personalSessionTask : await resolvePersonalAccountSessionFromRequest(request);
   if (!session) throw new Error("coupon_login_required");
-  const profile = readPersonalCustomerProfileFromSession({
-    authenticated: true,
-    accountType: "personal",
-    accountId: session.accountId,
-    user: session.user,
-  });
   const metadataProfile =
     session.user.user_metadata?.personal_profile && typeof session.user.user_metadata.personal_profile === "object"
       ? (session.user.user_metadata.personal_profile as Record<string, unknown>)
       : {};
-  const email = session.email || profile.email || profile.loginEmail || "";
-
   if (coupon.claimRequiresMember) {
     const membershipSnapshot = await getMerchantMembershipsSnapshot(coupon.siteId, {
       applyScheduledRules: false,
@@ -219,7 +214,6 @@ async function assertCouponClaimIdentityAllowed(
       !hasActiveMerchantMembershipForCouponClaim(membershipSnapshot.memberships, {
         accountId: session.accountId,
         userId: session.userId,
-        email,
       })
     ) {
       throw new Error("coupon_membership_required");
@@ -252,16 +246,20 @@ async function assertCouponClaimIdentityAllowed(
     if (coupon.claimMinSpendAmount > 0 || coupon.claimMinOrderCount > 0) {
       const orders = (await listMerchantOrders(coupon.siteId)).filter((order) => {
         if (order.status !== "completed") return false;
-        if (order.customerAccountId && order.customerAccountId === session.accountId) return true;
-        if (order.customerUserId && order.customerUserId === session.userId) return true;
-        return Boolean(email) && (order.customerLoginEmail === email || order.customer.email === email);
+        return matchesExactPersonalIdentity(
+          {
+            accountId: order.customerAccountId,
+            userId: order.customerUserId,
+          },
+          { accountId: session.accountId, userId: session.userId },
+        );
       });
       const totalSpend = orders.reduce((sum, order) => sum + order.totalAmount, 0);
       if (coupon.claimMinOrderCount > 0 && orders.length < coupon.claimMinOrderCount) throw new Error("coupon_order_count_not_met");
       if (coupon.claimMinSpendAmount > 0 && totalSpend < coupon.claimMinSpendAmount) throw new Error("coupon_spend_not_met");
     }
   }
-  assertCouponPerUserClaimAllowed(coupon, session, email, now);
+  assertCouponPerUserClaimAllowed(coupon, session, now);
   return session;
 }
 

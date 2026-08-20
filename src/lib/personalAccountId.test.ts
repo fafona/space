@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isCanonicalPersonalAccountId,
+  matchesExactPersonalIdentity,
   normalizeCanonicalPersonalAccountId,
 } from "@/lib/personalAccountId";
 
@@ -23,4 +24,42 @@ test("personal account ids use only the reserved eight-digit product range", () 
     assert.equal(normalizeCanonicalPersonalAccountId(value), "");
     assert.equal(isCanonicalPersonalAccountId(value), false);
   }
+});
+
+test("stored personal ownership requires every present canonical identifier and never falls back", () => {
+  assert.equal(
+    matchesExactPersonalIdentity(
+      { accountId: "50010105", userId: "11111111-1111-4111-8111-111111111111" },
+      { accountId: "50010105", userId: "11111111-1111-4111-8111-111111111111" },
+    ),
+    true,
+  );
+  assert.equal(
+    matchesExactPersonalIdentity(
+      { accountId: "50010105", userId: "11111111-1111-4111-8111-111111111111" },
+      { accountId: "50010105", userId: "22222222-2222-4222-8222-222222222222" },
+    ),
+    false,
+  );
+  assert.equal(
+    matchesExactPersonalIdentity(
+      { accountId: "50010105" },
+      { accountId: "50010105", userId: "22222222-2222-4222-8222-222222222222" },
+    ),
+    true,
+  );
+  assert.equal(
+    matchesExactPersonalIdentity(
+      { accountId: "", userId: "" },
+      { accountId: "50010105", userId: "11111111-1111-4111-8111-111111111111" },
+    ),
+    false,
+  );
+  assert.equal(
+    matchesExactPersonalIdentity(
+      { accountId: " 50010105", userId: "" },
+      { accountId: "50010105", userId: "" },
+    ),
+    false,
+  );
 });

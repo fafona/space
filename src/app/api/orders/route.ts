@@ -247,7 +247,6 @@ export async function handleMerchantOrdersGet(
       const orders = await dependencies.listPersonalOrders({
         accountId: session.accountId,
         userId: session.userId,
-        email: session.email,
       });
       const merchantContacts = await dependencies.buildPersonalContacts(orders.map((order) => order.siteId));
       return privateOrderGetJson({ ok: true, orders, merchantContacts });
@@ -561,7 +560,6 @@ export async function handleMerchantOrderPatch(
         orderId: String(body?.orderId ?? "").trim(),
         accountId: session.accountId,
         userId: session.userId,
-        email: session.email,
       });
       return NextResponse.json({ ok: true, order });
     }

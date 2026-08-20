@@ -201,6 +201,138 @@ test("merchant-signup bootstraps through the service-only RPC and returns only t
   }
 });
 
+test("sessionless signup requires a fresh matching top-level confirmation before bootstrap", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const previousIntentSecret = process.env.ORDINARY_SIGNUP_INTENT_SECRET;
+  const userId = "45454545-4545-4454-8454-454545454545";
+  let freshLookups = 0;
+  let bootstrapCalls = 0;
+  let completionCalls = 0;
+  let storedUser: Record<string, unknown> = {
+    id: userId,
+    email: "fresh-confirmed@example.com",
+    email_confirmed_at: "2026-08-20T08:00:00.000Z",
+    user_metadata: {
+      account_type: "personal",
+      email_verified: false,
+    },
+    app_metadata: {},
+  };
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL =
+    "https://unit-test-fresh-confirmed-signup.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  process.env.ORDINARY_SIGNUP_INTENT_SECRET = "fresh-confirmed-secret";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url,
+    );
+    if (url.pathname === "/auth/v1/signup") {
+      return new Response(
+        JSON.stringify({
+          id: userId,
+          email: "fresh-confirmed@example.com",
+          email_confirmed_at: "2026-08-20T08:00:00.000Z",
+          identities: [{ id: "identity-fresh-confirmed" }],
+          user_metadata: {
+            account_type: "personal",
+            email_verified: false,
+          },
+          app_metadata: {},
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname === `/auth/v1/admin/users/${userId}`) {
+      if (init?.body === undefined) {
+        freshLookups += 1;
+        return new Response(JSON.stringify({ user: storedUser }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const attributes = JSON.parse(String(init.body)) as {
+        app_metadata?: Record<string, unknown>;
+      };
+      const intent = attributes.app_metadata?.[
+        ORDINARY_SIGNUP_INTENT_APP_METADATA_KEY
+      ] as { status?: unknown } | undefined;
+      if (intent?.status === "completed") completionCalls += 1;
+      storedUser = {
+        ...storedUser,
+        app_metadata: attributes.app_metadata ?? {},
+      };
+      return new Response(JSON.stringify({ user: storedUser }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url.pathname ===
+      "/rest/v1/rpc/faolla_bootstrap_ordinary_account_authorization_v1"
+    ) {
+      bootstrapCalls += 1;
+      return new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "personal",
+          merchantIds: [],
+          personalAccountId: "50010105",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (
+      url.pathname ===
+      "/rest/v1/rpc/faolla_resolve_ordinary_account_authorization_v1"
+    ) {
+      return new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "personal",
+          merchantIds: [],
+          personalAccountId: "50010105",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const response = await requestSignup(
+      createMutationRequest("/api/auth/merchant-signup", {
+        email: "fresh-confirmed@example.com",
+        password: "secret123",
+        accountType: "personal",
+      }),
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.needsConfirmation, false);
+    assert.equal(body.accountId, "50010105");
+    assert.equal(freshLookups, 1);
+    assert.equal(bootstrapCalls, 1);
+    assert.equal(completionCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+    process.env.ORDINARY_SIGNUP_INTENT_SECRET = previousIntentSecret;
+  }
+});
+
 test("merchant-signup never bootstraps an obfuscated existing auth user", async () => {
   const originalFetch = globalThis.fetch;
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -621,6 +753,7 @@ test("unconfirmed signup persists an immutable intent and does not bootstrap bef
   const previousIntentSecret = process.env.ORDINARY_SIGNUP_INTENT_SECRET;
   const userId = "88888888-8888-4888-8888-888888888888";
   let bootstrapCalls = 0;
+  let completionCalls = 0;
   process.env.NEXT_PUBLIC_SUPABASE_URL =
     "https://unit-test-pending-signup.supabase.co";
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
@@ -642,7 +775,10 @@ test("unconfirmed signup persists an immutable intent and does not bootstrap bef
           email: "pending@example.com",
           email_confirmed_at: null,
           identities: [{ id: "identity-1" }],
-          user_metadata: { account_type: "personal" },
+          user_metadata: {
+            account_type: "personal",
+            email_verified: true,
+          },
           app_metadata: {},
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -652,8 +788,12 @@ test("unconfirmed signup persists an immutable intent and does not bootstrap bef
       const body = JSON.parse(String(init?.body ?? "{}")) as {
         app_metadata?: Record<string, unknown>;
       };
+      const intent = body.app_metadata?.[
+        ORDINARY_SIGNUP_INTENT_APP_METADATA_KEY
+      ] as { status?: unknown } | undefined;
+      if (intent?.status === "completed") completionCalls += 1;
       assert.equal(
-        typeof body.app_metadata?.[ORDINARY_SIGNUP_INTENT_APP_METADATA_KEY],
+        typeof intent,
         "object",
       );
       return new Response(
@@ -662,7 +802,10 @@ test("unconfirmed signup persists an immutable intent and does not bootstrap bef
             id: userId,
             email: "pending@example.com",
             email_confirmed_at: null,
-            user_metadata: { account_type: "personal" },
+            user_metadata: {
+              account_type: "personal",
+              email_verified: true,
+            },
             app_metadata: body.app_metadata,
           },
         }),
@@ -688,6 +831,7 @@ test("unconfirmed signup persists an immutable intent and does not bootstrap bef
     assert.equal(body.needsConfirmation, true);
     assert.equal(body.accountId, null);
     assert.equal(bootstrapCalls, 0);
+    assert.equal(completionCalls, 0);
     assert.match(
       response.headers.get("set-cookie") ?? "",
       new RegExp(`${ORDINARY_SIGNUP_INTENT_COOKIE}=`),

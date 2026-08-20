@@ -120,10 +120,10 @@ import {
 import {
   clearStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
-  readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
   recoverBrowserSupabaseSessionViaMerchantCookies,
   recoverBrowserSupabaseSessionWithRefresh,
+  resolveAuthorizedMerchantIds,
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
@@ -132,7 +132,6 @@ import { flushBufferedEditorTextCommits } from "@/lib/editorTextCommitBuffer";
 import {
   clearRecentMerchantLaunchState,
   persistRecentMerchantLaunchState,
-  readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import {
@@ -308,7 +307,6 @@ import {
   FAOLLA_APP_SHELL_LOCATION_MESSAGE,
   buildFaollaShellHref,
   isFaollaBackendShellUrl,
-  isFaollaAppShellSearch,
   isFaollaSectionSearch,
   normalizeFaollaEntryUrl,
   readStoredFaollaEntryUrl,
@@ -1336,6 +1334,23 @@ function mergePreferredMerchantIds(primaryIds: string[], ...otherIdGroups: Array
   return next;
 }
 
+function selectAuthorizedMerchantSiteId(
+  authorizedMerchantIds: readonly string[],
+  ...selectionHints: unknown[]
+) {
+  const authorized = new Set(
+    authorizedMerchantIds
+      .map((merchantId) => merchantId.trim())
+      .filter(Boolean),
+  );
+  for (const hint of selectionHints) {
+    if (typeof hint !== "string") continue;
+    const merchantId = hint.trim();
+    if (merchantId && authorized.has(merchantId)) return merchantId;
+  }
+  return "";
+}
+
 function normalizeDomainPrefixForMerchant(value: string) {
   return String(value ?? "")
     .trim()
@@ -2127,46 +2142,24 @@ function readMerchantIdsFromMetadata(...records: Array<Record<string, unknown> |
   return ids;
 }
 
-async function resolveMerchantIds(sessionUserId?: string, email?: string, metadata?: Record<string, unknown>): Promise<string[]> {
-  const ids: string[] = [];
+async function resolveMerchantIds(
+  sessionUserId?: string,
+  email?: string,
+  metadata?: Record<string, unknown>,
+  selectionHints: unknown[] = [],
+): Promise<string[]> {
   const cachedIds = readCachedMerchantIds(sessionUserId, email);
-  const pushId = (value: unknown) => {
-    if (typeof value !== "string") return;
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    if (!ids.includes(trimmed)) ids.push(trimmed);
-  };
-
   const metadataRecord = metadata ?? {};
-  readMerchantIdsFromMetadata(metadataRecord).forEach(pushId);
-  cachedIds.forEach(pushId);
-
-  try {
-    const payload = await readMerchantSessionPayload(2600).catch(() => null);
-    const expectedUserId = String(sessionUserId ?? "").trim();
-    const expectedEmail = String(email ?? "").trim().toLowerCase();
-    const payloadUserId = typeof payload?.user?.id === "string" ? payload.user.id.trim() : "";
-    const payloadEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim().toLowerCase() : "";
-    const payloadMatchesCurrentUser =
-      payload?.authenticated === true &&
-      (!expectedUserId || !payloadUserId || payloadUserId === expectedUserId) &&
-      (!expectedEmail || !payloadEmail || payloadEmail === expectedEmail);
-    if (payloadMatchesCurrentUser) {
-      readMerchantSessionMerchantIds(payload).forEach(pushId);
-    }
-  } catch {
-    // Keep cached + metadata ids when server-backed identity read fails.
+  const payload = await readMerchantSessionPayload(2600).catch(() => null);
+  const authorized = resolveAuthorizedMerchantIds(payload, sessionUserId, [
+    ...selectionHints,
+    ...readMerchantIdsFromMetadata(metadataRecord),
+    ...cachedIds,
+  ]);
+  if (sessionUserId && authorized.length > 0) {
+    writeCachedMerchantIds(sessionUserId, email, authorized);
   }
-
-  if (!sessionUserId) {
-    return ids;
-  }
-
-  const numericIds = ids.filter((item) => isMerchantNumericId(item)).sort((a, b) => Number(a) - Number(b));
-  const legacyIds = ids.filter((item) => !isMerchantNumericId(item));
-  const merged = [...numericIds, ...legacyIds];
-  writeCachedMerchantIds(sessionUserId, email, merged);
-  return merged;
+  return authorized;
 }
 
 async function loadBlocksFromSupabaseFallback(merchantIds: string[]) {
@@ -4867,6 +4860,14 @@ export default function AdminClient({
   const lastMerchantResumeAtRef = useRef(0);
   const playNotificationSound = useNotificationSound();
   const merchantSessionIdentityTaskRef = useRef<Promise<{ merchantId: string; email: string | null } | null> | null>(null);
+  const clearMerchantAuthorizedIdentity = useCallback(() => {
+    merchantIdsRef.current = [];
+    merchantSessionIdentityRef.current = {
+      merchantId: "",
+      email: null,
+    };
+    setMerchantSiteIdOverride("");
+  }, []);
   const themeBaseBlocksByPageRef = useRef<Map<string, Block[]>>(new Map());
   const themePresetApplyRequestRef = useRef(0);
   const backgroundLayerRef = useRef<HTMLDivElement>(null);
@@ -4904,12 +4905,6 @@ export default function AdminClient({
     async (timeoutMs = Math.max(1400, Math.min(2600, AUTH_CHECK_TIMEOUT_MS))) => {
       if (isPlatformEditor || typeof window === "undefined") return null;
 
-      const cachedMerchantId = merchantSessionIdentityRef.current.merchantId.trim();
-      const cachedEmail = String(merchantSessionIdentityRef.current.email ?? "").trim();
-      if (cachedMerchantId || cachedEmail) {
-        return merchantSessionIdentityRef.current;
-      }
-
       if (merchantSessionIdentityTaskRef.current) {
         return merchantSessionIdentityTaskRef.current;
       }
@@ -4918,30 +4913,38 @@ export default function AdminClient({
       task = (async () => {
         try {
           const payload = await withTimeout(readMerchantSessionPayload(timeoutMs), timeoutMs, "商户身份识别超时，请稍后重试");
-          if (!payload || payload.authenticated !== true) return null;
-          const merchantIds = readMerchantSessionMerchantIds(payload);
+          const activeSession = await supabase.auth
+            .getSession()
+            .then((result) => result.data.session)
+            .catch(() => null);
+          const merchantIds = resolveAuthorizedMerchantIds(
+            payload,
+            activeSession?.user?.id,
+            [
+              merchantSessionIdentityRef.current.merchantId,
+              ...merchantIdsRef.current,
+            ],
+          );
           const merchantId =
-            (typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "") ||
             merchantIds.find((item) => isMerchantNumericId(item)) ||
             merchantIds[0] ||
             "";
           const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
-          if (!merchantId && !email) return null;
+          if (!merchantId) {
+            clearMerchantAuthorizedIdentity();
+            return null;
+          }
           merchantSessionIdentityRef.current = {
             merchantId,
             email: email || null,
           };
           if (merchantIds.length > 0 || merchantId) {
-            merchantIdsRef.current = mergePreferredMerchantIds(
-              merchantIds.length > 0 ? merchantIds : [merchantId],
-              merchantIdsRef.current,
-            );
+            merchantIdsRef.current = merchantIds;
           }
-          if (merchantId) {
-            setMerchantSiteIdOverride((current) => current || merchantId);
-          }
+          setMerchantSiteIdOverride(merchantId);
           return merchantSessionIdentityRef.current;
         } catch {
+          clearMerchantAuthorizedIdentity();
           return null;
         } finally {
           if (task && merchantSessionIdentityTaskRef.current === task) {
@@ -4953,7 +4956,7 @@ export default function AdminClient({
       merchantSessionIdentityTaskRef.current = task;
       return task;
     },
-    [isPlatformEditor],
+    [clearMerchantAuthorizedIdentity, isPlatformEditor],
   );
 
   const readFreshMerchantSessionIdentity = useCallback(
@@ -4962,115 +4965,91 @@ export default function AdminClient({
 
       try {
         const payload = await withTimeout(readMerchantSessionPayload(timeoutMs), timeoutMs, "商户身份识别超时，请稍后重试");
-        if (!payload || payload.authenticated !== true) {
-          return null;
-        }
-        const merchantIds = readMerchantSessionMerchantIds(payload);
+        const activeSession = await supabase.auth
+          .getSession()
+          .then((result) => result.data.session)
+          .catch(() => null);
+        const merchantIds = resolveAuthorizedMerchantIds(
+          payload,
+          activeSession?.user?.id,
+          [
+            merchantSessionIdentityRef.current.merchantId,
+            ...merchantIdsRef.current,
+          ],
+        );
         const merchantId =
-          (typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "") ||
           merchantIds.find((item) => isMerchantNumericId(item)) ||
           merchantIds[0] ||
           "";
         const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
-        if (!merchantId && !email) return null;
+        if (!merchantId) {
+          clearMerchantAuthorizedIdentity();
+          return null;
+        }
         merchantSessionIdentityRef.current = {
           merchantId,
           email: email || null,
         };
         if (merchantIds.length > 0 || merchantId) {
-          merchantIdsRef.current = mergePreferredMerchantIds(
-            merchantIds.length > 0 ? merchantIds : [merchantId],
-            merchantIdsRef.current,
-          );
+          merchantIdsRef.current = merchantIds;
         }
-        if (merchantId) {
-          setMerchantSiteIdOverride((current) => current || merchantId);
-        }
+        setMerchantSiteIdOverride(merchantId);
         return merchantSessionIdentityRef.current;
       } catch {
+        clearMerchantAuthorizedIdentity();
         return null;
       }
     },
-    [isPlatformEditor],
+    [clearMerchantAuthorizedIdentity, isPlatformEditor],
   );
 
   const ensureEditableMerchantSiteId = useCallback(async () => {
     if (isPlatformEditor) return "";
-
-    let sessionUserEmail = String(merchantSessionIdentityRef.current.email ?? "").trim() || null;
-    let targetSiteId =
-      getSiteIdFromStoreScope(storeScope).trim() ||
-      merchantSiteIdOverride ||
-      merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-      merchantIdsRef.current[0] ||
-      merchantSessionIdentityRef.current.merchantId.trim() ||
-      "";
-
-    if (!targetSiteId || !sessionUserEmail) {
-      const prefetchedIdentity = await prefetchMerchantSessionIdentity().catch(() => null);
-      const prefetchedMerchantId = prefetchedIdentity?.merchantId?.trim() ?? "";
-      const prefetchedEmail = typeof prefetchedIdentity?.email === "string" ? prefetchedIdentity.email.trim() : "";
-      if (!sessionUserEmail && prefetchedEmail) {
-        sessionUserEmail = prefetchedEmail;
-      }
-      if (!targetSiteId && prefetchedMerchantId) {
-        targetSiteId = prefetchedMerchantId;
-      }
+    const authoritativeIdentity = await prefetchMerchantSessionIdentity(
+      Math.max(2200, AUTH_CHECK_TIMEOUT_MS),
+    ).catch(() => null);
+    const authorizedMerchantIds = [...merchantIdsRef.current];
+    const authoritativeMerchantId =
+      authoritativeIdentity?.merchantId?.trim() ?? "";
+    if (
+      !authoritativeMerchantId ||
+      authorizedMerchantIds.length === 0 ||
+      !authorizedMerchantIds.includes(authoritativeMerchantId)
+    ) {
+      clearMerchantAuthorizedIdentity();
+      return "";
     }
-
-    if (!targetSiteId) {
-      try {
-        const freshIdentity = await readFreshMerchantSessionIdentity(Math.max(2600, AUTH_CHECK_TIMEOUT_MS));
-        const recoveredSessionEmail = typeof freshIdentity?.email === "string" ? freshIdentity.email.trim() : "";
-        if (recoveredSessionEmail) {
-          sessionUserEmail = recoveredSessionEmail;
-          merchantSessionIdentityRef.current = {
-            merchantId: merchantSessionIdentityRef.current.merchantId,
-            email: recoveredSessionEmail,
-          };
-        }
-        if (!targetSiteId) {
-          const resolvedMerchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
-          if (resolvedMerchantIds.length > 0) {
-            merchantIdsRef.current = mergePreferredMerchantIds(resolvedMerchantIds, merchantIdsRef.current);
-            targetSiteId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? resolvedMerchantIds[0] ?? "";
-            if (targetSiteId) {
-              merchantSessionIdentityRef.current = {
-                merchantId: targetSiteId,
-                email: sessionUserEmail,
-              };
-            }
-          }
-        }
-      } catch {
-        // Fall back to cookie-backed identity when auth refresh is temporarily unavailable.
-      }
+    const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+    if (scopedSiteId && !authorizedMerchantIds.includes(scopedSiteId)) {
+      clearMerchantAuthorizedIdentity();
+      return "";
     }
-
-    if (!targetSiteId) {
-      const cookieIdentity = await prefetchMerchantSessionIdentity(Math.max(2200, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
-      const cookieMerchantId = cookieIdentity?.merchantId?.trim() ?? "";
-      const cookieSessionEmail = typeof cookieIdentity?.email === "string" ? cookieIdentity.email.trim() : "";
-      if (cookieSessionEmail) {
-        sessionUserEmail = cookieSessionEmail;
-      }
-      if (cookieMerchantId) {
-        targetSiteId = cookieMerchantId;
-      }
-    }
-
-    if (!targetSiteId) return "";
+    const hintedOverride = String(merchantSiteIdOverride ?? "").trim();
+    const targetSiteId =
+      scopedSiteId ||
+      (authorizedMerchantIds.includes(hintedOverride) ? hintedOverride : "") ||
+      authoritativeMerchantId;
+    const sessionUserEmail =
+      typeof authoritativeIdentity?.email === "string"
+        ? authoritativeIdentity.email.trim() || null
+        : null;
     const ensuredSite = ensureScopedMerchantSite(targetSiteId, sessionUserEmail);
     const ensuredSiteId = String(ensuredSite?.id ?? targetSiteId).trim();
-    if (!ensuredSiteId) return "";
-    merchantIdsRef.current = mergePreferredMerchantIds([ensuredSiteId], merchantIdsRef.current);
+    if (!ensuredSiteId || !authorizedMerchantIds.includes(ensuredSiteId)) {
+      clearMerchantAuthorizedIdentity();
+      return "";
+    }
+    merchantIdsRef.current = mergePreferredMerchantIds(
+      [ensuredSiteId],
+      authorizedMerchantIds,
+    );
     merchantSessionIdentityRef.current = {
       merchantId: ensuredSiteId,
       email: sessionUserEmail,
     };
     setMerchantSiteIdOverride(ensuredSiteId);
     return ensuredSiteId;
-  }, [isPlatformEditor, merchantSiteIdOverride, prefetchMerchantSessionIdentity, readFreshMerchantSessionIdentity, storeScope]);
+  }, [clearMerchantAuthorizedIdentity, isPlatformEditor, merchantSiteIdOverride, prefetchMerchantSessionIdentity, storeScope]);
 
   useEffect(() => {
     if (isPlatformEditor || explicitFaollaSectionEntry || typeof window === "undefined") return;
@@ -5181,29 +5160,34 @@ export default function AdminClient({
     };
   }
 
-  function applyMerchantSessionIdentityPayload(payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null) {
-    if (!payload || payload.authenticated !== true) return false;
-    const merchantIds = readMerchantSessionMerchantIds(payload);
+  function applyMerchantSessionIdentityPayload(
+    payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null,
+    expectedUserId: unknown,
+  ) {
+    const merchantIds = resolveAuthorizedMerchantIds(
+      payload,
+      expectedUserId,
+      [
+        getSiteIdFromStoreScope(storeScope).trim(),
+        merchantSessionIdentityRef.current.merchantId,
+        ...merchantIdsRef.current,
+      ],
+    );
     const merchantId =
-      (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "") ||
       merchantIds.find((item) => isMerchantNumericId(item)) ||
       merchantIds[0] ||
       "";
-    const email = typeof payload.user?.email === "string" ? payload.user.email.trim() : "";
-    if (!merchantId && !email) return false;
-    if (merchantIds.length > 0 || merchantId) {
-      merchantIdsRef.current = mergePreferredMerchantIds(
-        merchantIds.length > 0 ? merchantIds : [merchantId],
-        merchantIdsRef.current,
-      );
+    const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
+    if (!merchantId) {
+      clearMerchantAuthorizedIdentity();
+      return false;
     }
+    merchantIdsRef.current = merchantIds;
     merchantSessionIdentityRef.current = {
       merchantId,
       email: email || null,
     };
-    if (merchantId) {
-      setMerchantSiteIdOverride((current) => current || merchantId);
-    }
+    setMerchantSiteIdOverride(merchantId);
     return true;
   }
 
@@ -5225,49 +5209,68 @@ export default function AdminClient({
       return true;
     };
 
+    let activeSession = await supabase.auth
+      .getSession()
+      .then((result) => result.data.session)
+      .catch(() => null);
+
     const currentPayload = await readMerchantSessionPayload(Math.max(2200, Math.min(6200, AUTH_CHECK_TIMEOUT_MS))).catch(
       () => null,
     );
-    if (applyMerchantSessionIdentityPayload(currentPayload)) return acceptRecoveredIdentity();
+    if (applyMerchantSessionIdentityPayload(currentPayload, activeSession?.user?.id)) {
+      return acceptRecoveredIdentity();
+    }
 
     const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
       Math.max(3200, Math.min(9000, AUTH_CHECK_TIMEOUT_MS + 1800)),
     ).catch(() => null);
     if (recoveredSession) {
+      activeSession = recoveredSession;
       const syncedPayload = await syncMerchantSessionCookies(
         recoveredSession,
         Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
       ).catch(() => null);
-      if (applyMerchantSessionIdentityPayload(syncedPayload)) return acceptRecoveredIdentity();
+      if (applyMerchantSessionIdentityPayload(syncedPayload, recoveredSession.user.id)) {
+        return acceptRecoveredIdentity();
+      }
     }
 
     const cookieSession = await recoverBrowserSupabaseSessionViaMerchantCookies(
       Math.max(2600, Math.min(7600, AUTH_CHECK_TIMEOUT_MS)),
     ).catch(() => null);
     if (cookieSession) {
+      activeSession = cookieSession;
       const syncedPayload = await syncMerchantSessionCookies(
         cookieSession,
         Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
       ).catch(() => null);
-      if (applyMerchantSessionIdentityPayload(syncedPayload)) return acceptRecoveredIdentity();
+      if (applyMerchantSessionIdentityPayload(syncedPayload, cookieSession.user.id)) {
+        return acceptRecoveredIdentity();
+      }
     }
 
     const retryPayload = await readMerchantSessionPayload(Math.max(2200, Math.min(6200, AUTH_CHECK_TIMEOUT_MS))).catch(
       () => null,
     );
-    if (applyMerchantSessionIdentityPayload(retryPayload)) return acceptRecoveredIdentity();
+    if (applyMerchantSessionIdentityPayload(retryPayload, activeSession?.user?.id)) {
+      return acceptRecoveredIdentity();
+    }
 
     const freshIdentity = await readFreshMerchantSessionIdentity(Math.max(2600, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
     const freshMerchantId = freshIdentity?.merchantId?.trim() ?? "";
-    const freshEmail = typeof freshIdentity?.email === "string" ? freshIdentity.email.trim() : "";
-    if (freshMerchantId || freshEmail) return acceptRecoveredIdentity();
+    if (freshMerchantId) return acceptRecoveredIdentity();
 
     showTip("登录状态恢复失败，请稍后再试");
     return false;
   }
 
   function getMerchantRemoteVerificationScopes(merchantIds: string[]) {
-    return [...new Set([storeScope, ...merchantIds.map((siteId) => buildSiteStoreScope(siteId))].filter(Boolean))];
+    const authorizedScopes = merchantIds
+      .map((siteId) => buildSiteStoreScope(siteId))
+      .filter((scope) => scope && scope !== "default");
+    return isPlatformEditor
+      ? [...new Set([storeScope, ...authorizedScopes].filter(Boolean))]
+      : [...new Set(authorizedScopes)];
   }
 
   function markMerchantRemoteContentVerified(merchantIds: string[], recordedAt?: string | null | undefined) {
@@ -5278,21 +5281,28 @@ export default function AdminClient({
   }
 
   async function ensureRemoteContentVerifiedBeforePublish(targetSiteId = "") {
-    if (isPlatformEditor || remoteContentVerified) return true;
+    if (isPlatformEditor) return true;
     const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
     const preferredIds = [targetSiteId, scopedSiteId, editingSiteId].filter(Boolean);
-    const candidateMerchantIds = mergePreferredMerchantIds(preferredIds, merchantIdsRef.current);
-    if (candidateMerchantIds.length === 0) return false;
-
-    const candidateScopes = getMerchantRemoteVerificationScopes(candidateMerchantIds);
+    showSavePublishTip("正在验证远端内容...");
+    const freshIdentity = await readFreshMerchantSessionIdentity(
+      Math.min(3000, AUTH_CHECK_TIMEOUT_MS),
+    ).catch(() => null);
+    if (!freshIdentity?.merchantId || merchantIdsRef.current.length === 0) {
+      return false;
+    }
+    if (preferredIds.some((merchantId) => !merchantIdsRef.current.includes(merchantId))) {
+      return false;
+    }
+    const resolvedMerchantIds = mergePreferredMerchantIds(
+      preferredIds,
+      merchantIdsRef.current,
+    );
+    const candidateScopes = getMerchantRemoteVerificationScopes(resolvedMerchantIds);
     if (hasRemoteContentVerifiedStamp(candidateScopes)) {
       setRemoteContentVerified(true);
       return true;
     }
-
-    showSavePublishTip("正在验证远端内容...");
-    await readFreshMerchantSessionIdentity(Math.min(3000, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
-    const resolvedMerchantIds = mergePreferredMerchantIds(preferredIds, merchantIdsRef.current, candidateMerchantIds);
     const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
     if (!gatewayReady) return false;
 
@@ -6755,84 +6765,14 @@ export default function AdminClient({
         setCheckingAuth(false);
       }
     };
-    const isNativeMerchantShellRuntime = () => {
-      if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return false;
-      return (
-        document.documentElement.dataset.capacitor === "true" ||
-        Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
-      );
-    };
-    const isNativeNotificationLaunch = () => {
-      if (typeof window === "undefined") return false;
-      return new URLSearchParams(window.location.search).get("nativeNotification") === "1";
-    };
     const isExplicitFaollaSectionLaunch = () =>
       typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
-    const preserveNativeFaollaShell = () => {
-      const faollaAppShellActive =
-        typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search);
-      if (!isNativeMerchantShellRuntime() && !faollaAppShellActive) return false;
-      const faollaSectionActive =
-        supportMobileHomeTabRef.current === "faolla" ||
-        (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search)) ||
-        faollaAppShellActive;
-      if (!faollaSectionActive) return false;
-      const recentMerchantId = readRecentMerchantLaunchMerchantId();
-      if (isMerchantNumericId(recentMerchantId)) {
-        merchantIdsRef.current = mergePreferredMerchantIds([recentMerchantId], merchantIdsRef.current);
-        setMerchantSiteIdOverride((current) => current || recentMerchantId);
-      }
-      setRemoteContentVerified(false);
-      setHasEditorContent(true);
-      setSelectedId("");
-      setBackendNotice(null);
-      setMerchantDesktopSection("faolla");
-      setSupportMobileHomeTab("faolla");
-      releaseCheckingScreen({ notice: null });
-      return true;
-    };
-    const redirectNativeMerchantShellToLaunch = () => {
-      if (!isNativeMerchantShellRuntime()) return false;
-      const recentMerchantId = readRecentMerchantLaunchMerchantId();
-      if (!isMerchantNumericId(recentMerchantId)) return false;
-
-      const retryStorageKey = "faolla:native-merchant-auth-retry";
-      let retryCount = 0;
-      try {
-        const raw = window.sessionStorage.getItem(retryStorageKey);
-        const parsed = raw ? (JSON.parse(raw) as { count?: unknown; at?: unknown }) : null;
-        const timestamp = typeof parsed?.at === "number" && Number.isFinite(parsed.at) ? parsed.at : 0;
-        if (Date.now() - timestamp <= 60_000) {
-          retryCount = Math.max(0, Math.min(3, Number(parsed?.count) || 0));
-        }
-      } catch {
-        retryCount = 0;
-      }
-      if (retryCount >= 2) return false;
-      try {
-        window.sessionStorage.setItem(
-          retryStorageKey,
-          JSON.stringify({
-            count: retryCount + 1,
-            at: Date.now(),
-          }),
-        );
-      } catch {
-        // Best effort only; the redirect itself is what matters.
-      }
-      window.location.replace(`/launch?nativeAuthRetry=${retryCount + 1}`);
-      return true;
-    };
     const releaseMerchantUnauthenticatedState = () => {
       if (!mounted) return;
-      if (preserveNativeFaollaShell()) return;
-      if (shouldPreserveMerchantSessionDuringResume()) {
-        setRemoteContentVerified(false);
-        setHasEditorContent(true);
-        releaseCheckingScreen({ notice: null });
-        return;
-      }
-      if (redirectNativeMerchantShellToLaunch()) return;
+      clearMerchantAuthorizedIdentity();
+      setRemoteContentVerified(false);
+      setHasEditorContent(false);
+      setBackendNotice(BACKEND_UNAVAILABLE_NOTICE);
       let reloadStorage: AdminAutoReloadStorage | null = null;
       try {
         reloadStorage = window.sessionStorage;
@@ -6845,18 +6785,6 @@ export default function AdminClient({
       }
       const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       window.location.replace(`/login?redirect=${encodeURIComponent(currentHref)}`);
-    };
-    const shouldPreserveMerchantSessionDuringResume = () => {
-      if (isPlatformEditor || typeof document === "undefined") return false;
-      if (document.visibilityState !== "visible") return true;
-      if (Date.now() - lastMerchantResumeAtRef.current <= 45_000) return true;
-      if (!isNativeMerchantShellRuntime()) return false;
-      if (isNativeNotificationLaunch()) return true;
-      const recentMerchantId = readRecentMerchantLaunchMerchantId();
-      if (!isMerchantNumericId(recentMerchantId)) return false;
-      const backgroundedAt = lastMerchantBackgroundedAtRef.current;
-      if (backgroundedAt <= 0) return true;
-      return Date.now() - backgroundedAt <= 12 * 60 * 60 * 1000;
     };
     const releaseExplicitFaollaSectionShell = () => {
       if (!explicitFaollaSectionEntry) return false;
@@ -6874,8 +6802,13 @@ export default function AdminClient({
       releaseCheckingScreen({ notice: null });
       return true;
     };
-    const getCandidateStoreScopes = () =>
-      storeScope !== "default"
+    const getCandidateStoreScopes = () => {
+      if (!isPlatformEditor) {
+        return merchantIdsRef.current
+          .map((merchantId) => buildSiteStoreScope(merchantId))
+          .filter((scope) => scope && scope !== "default");
+      }
+      return storeScope !== "default"
         ? [storeScope]
         : (() => {
             const siteScopes = loadPlatformState()
@@ -6884,6 +6817,7 @@ export default function AdminClient({
             const discoveredScopes = discoverSiteScopesFromLocalStorage();
             return [...new Set([...siteScopes, ...discoveredScopes, "default"])];
           })();
+    };
     const isMeaningfulCachedSnapshot = (candidate: Block[]) =>
       candidate.length > 0 &&
       !isSameBlocksSnapshot(candidate, defaultEditorBlocks) &&
@@ -6897,8 +6831,13 @@ export default function AdminClient({
       }
       return false;
     };
-    const getRemoteDraftSyncScopes = (merchantIds: string[]) =>
-      [...new Set([storeScope, ...merchantIds.map((siteId) => buildSiteStoreScope(siteId))].filter(Boolean))];
+    const getRemoteDraftSyncScopes = (merchantIds: string[]) => {
+      const authorizedScopes = merchantIds
+        .map((siteId) => buildSiteStoreScope(siteId))
+        .filter((scope) => scope && scope !== "default");
+      if (!isPlatformEditor) return [...new Set(authorizedScopes)];
+      return [...new Set([storeScope, ...authorizedScopes].filter(Boolean))];
+    };
     const getRemoteVerificationScopes = (merchantIds: string[]) => getRemoteDraftSyncScopes(merchantIds);
     const resolveCachedRemoteVerification = (candidateScopes = getCandidateStoreScopes()) =>
       hasRemoteContentVerifiedStamp(candidateScopes);
@@ -6945,39 +6884,26 @@ export default function AdminClient({
       }
       return [];
     };
-    const tryLoadJustSignedInPublishedContent = async () => {
-      if (isPlatformEditor || !justSignedIn) return false;
-      const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
-      if (!scopedSiteId) return false;
-      const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
-      if (!mounted || !publishedSnapshot) return false;
-      merchantIdsRef.current = [scopedSiteId];
-      applyPublishedSiteSnapshotToScopedMerchantSite(scopedSiteId, publishedSnapshot, null);
-      setHasEditorContent(true);
-      markRemoteContentVerified([storeScope, buildSiteStoreScope(scopedSiteId)]);
-      applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
-      const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
-      const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
-      const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
-      savePublishedBlocksToStorage(combinedLoaded, storeScope);
-      savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(scopedSiteId));
-      await hydrateSupportMerchantProfileRef.current(scopedSiteId, {
-        persistToLocalSite: true,
-      }).catch(() => null);
-      if (!mounted) return false;
-      releaseCheckingScreen({ notice: null });
-      return true;
-    };
-    if (releaseExplicitFaollaSectionShell()) {
+    if (isPlatformEditor && releaseExplicitFaollaSectionShell()) {
       return () => {
         mounted = false;
-        merchantIdsRef.current = [];
+        if (isPlatformEditor) {
+          merchantIdsRef.current = [];
+        } else {
+          clearMerchantAuthorizedIdentity();
+        }
       };
     }
     if (!isSupabaseEnabled || isSupabaseFallbackMode) {
-      applyCachedEditorBlocks();
-      setHasEditorContent(true);
-      setRemoteContentVerified(true);
+      if (isPlatformEditor) {
+        applyCachedEditorBlocks();
+        setHasEditorContent(true);
+        setRemoteContentVerified(true);
+      } else {
+        clearMerchantAuthorizedIdentity();
+        setHasEditorContent(false);
+        setRemoteContentVerified(false);
+      }
       releaseCheckingScreen({
         notice:
           supabaseMissingEnvNotice ??
@@ -6987,38 +6913,64 @@ export default function AdminClient({
       });
       return () => {
         mounted = false;
-        merchantIdsRef.current = [];
+        if (isPlatformEditor) {
+          merchantIdsRef.current = [];
+        } else {
+          clearMerchantAuthorizedIdentity();
+        }
       };
     }
 
-    setRemoteContentVerified(resolveCachedRemoteVerification(getCandidateStoreScopes()));
-    const initialCached = applyCachedEditorBlocks();
-    if (initialCached.length === 0) {
+    setRemoteContentVerified(
+      isPlatformEditor
+        ? resolveCachedRemoteVerification(getCandidateStoreScopes())
+        : false,
+    );
+    const initialCached = isPlatformEditor ? applyCachedEditorBlocks() : [];
+    if (isPlatformEditor && initialCached.length === 0) {
       setHasEditorContent(true);
+    } else if (!isPlatformEditor) {
+      setHasEditorContent(false);
     }
 
     const safetyTimeoutId = setTimeout(() => {
-      applyCachedEditorBlocks();
-      setHasEditorContent(true);
-      releaseCheckingScreen({ notice: null });
+      if (isPlatformEditor) {
+        applyCachedEditorBlocks();
+        setHasEditorContent(true);
+        releaseCheckingScreen({ notice: null });
+        return;
+      }
+      clearMerchantAuthorizedIdentity();
+      setHasEditorContent(false);
+      setRemoteContentVerified(false);
+      releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
     }, AUTH_CHECK_TIMEOUT_MS);
     let authSubscription: { unsubscribe: () => void } | null = null;
     let detachKeepAlive: (() => void) | null = null;
     let recoverSessionInFlight: Promise<Awaited<ReturnType<typeof recoverBrowserSupabaseSessionWithRefresh>>> | null = null;
     const recoverCookieBackedMerchantAccess = async (timeoutMs: number) => {
       if (isPlatformEditor) return null;
-      const [cookieSession, freshIdentity] = await Promise.all([
-        recoverBrowserSupabaseSessionViaMerchantCookies(Math.max(2200, Math.min(7000, timeoutMs))).catch(() => null),
-        readFreshMerchantSessionIdentity(Math.max(2200, Math.min(7000, timeoutMs))).catch(() => null),
-      ]);
+      const cookieSession = await recoverBrowserSupabaseSessionViaMerchantCookies(
+        Math.max(2200, Math.min(7000, timeoutMs)),
+      ).catch(() => null);
+      if (!cookieSession?.user?.id) {
+        clearMerchantAuthorizedIdentity();
+        return null;
+      }
+      const freshIdentity = await readFreshMerchantSessionIdentity(
+        Math.max(2200, Math.min(7000, timeoutMs)),
+      ).catch(() => null);
       const merchantId = freshIdentity?.merchantId?.trim() ?? "";
       const email =
         (typeof freshIdentity?.email === "string" ? freshIdentity.email.trim() : "") ||
         (typeof cookieSession?.user?.email === "string" ? cookieSession.user.email.trim() : "");
-      if (!cookieSession && !merchantId && !email) return null;
+      if (!merchantId) {
+        clearMerchantAuthorizedIdentity();
+        return null;
+      }
       if (merchantId) {
-        merchantIdsRef.current = mergePreferredMerchantIds([merchantId], merchantIdsRef.current);
-        setMerchantSiteIdOverride((current) => current || merchantId);
+        merchantIdsRef.current = [merchantId];
+        setMerchantSiteIdOverride(merchantId);
       }
       merchantSessionIdentityRef.current = {
         merchantId,
@@ -7065,9 +7017,6 @@ export default function AdminClient({
             releaseCheckingScreen({ notice: null });
             return;
           }
-          if (shouldPreserveMerchantSessionDuringResume()) {
-            return;
-          }
           if (justSignedIn) {
             releaseMerchantUnauthenticatedState();
             return;
@@ -7100,18 +7049,60 @@ export default function AdminClient({
 
         if (!isPlatformEditor) {
           let merchantPayload = initialMerchantPayloadTask ? await initialMerchantPayloadTask : null;
-          let merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
+          let activeMerchantSession = await withTimeout(
+            supabase.auth.getSession(),
+            AUTH_CHECK_TIMEOUT_MS,
+            "登录检查超时，请重新登录后重试",
+          )
+            .then((result) => result.data.session)
+            .catch(() => null);
+          if (!activeMerchantSession) {
+            activeMerchantSession = await recoverSession(
+              justSignedIn ? 7000 : 5200,
+            );
+          }
+          const resolveCurrentMerchantIds = () => {
+            const activeUser = activeMerchantSession?.user;
+            if (!activeUser) return [];
+            return resolveAuthorizedMerchantIds(
+              merchantPayload,
+              activeUser.id,
+              [
+                getSiteIdFromStoreScope(storeScope).trim(),
+                ...readMerchantIdsFromMetadata(
+                  activeUser.user_metadata as
+                    | Record<string, unknown>
+                    | null
+                    | undefined,
+                  activeUser.app_metadata as
+                    | Record<string, unknown>
+                    | null
+                    | undefined,
+                ),
+                merchantSessionIdentityRef.current.merchantId,
+                ...merchantIdsRef.current,
+                ...readCachedMerchantIds(
+                  activeUser.id,
+                  activeUser.email ?? undefined,
+                ),
+              ],
+            );
+          };
+          let merchantIds = resolveCurrentMerchantIds();
           let merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
           let merchantEmail =
-            typeof merchantPayload?.user?.email === "string" ? merchantPayload.user.email.trim() : "";
+            merchantId && typeof merchantPayload?.user?.email === "string"
+              ? merchantPayload.user.email.trim()
+              : "";
 
           if (!mounted) return;
           clearTimeout(safetyTimeoutId);
 
-          if (!merchantId && !merchantEmail) {
+          if (!merchantId) {
             const recoveredSession = await recoverSession(justSignedIn ? 7000 : 5200);
             if (!mounted) return;
             if (recoveredSession?.user) {
+              activeMerchantSession = recoveredSession;
               await syncMerchantSessionCookies(
                 recoveredSession,
                 Math.max(2400, Math.min(6500, AUTH_CHECK_TIMEOUT_MS)),
@@ -7121,24 +7112,31 @@ export default function AdminClient({
                 AUTH_CHECK_TIMEOUT_MS,
                 "登录检查超时，已使用本地缓存继续编辑",
               ).catch(() => null);
-              merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
+              merchantIds = resolveCurrentMerchantIds();
               merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
               merchantEmail =
-                typeof merchantPayload?.user?.email === "string" ? merchantPayload.user.email.trim() : "";
+                merchantId && typeof merchantPayload?.user?.email === "string"
+                  ? merchantPayload.user.email.trim()
+                  : "";
             }
           }
 
           if (merchantIds.length > 0) {
-            merchantIdsRef.current = mergePreferredMerchantIds(merchantIds, merchantIdsRef.current);
+            merchantIdsRef.current = merchantIds;
+            if (activeMerchantSession?.user?.id) {
+              writeCachedMerchantIds(
+                activeMerchantSession.user.id,
+                activeMerchantSession.user.email ?? undefined,
+                merchantIds,
+              );
+            }
           }
-          if (merchantId || merchantEmail) {
+          if (merchantId) {
             merchantSessionIdentityRef.current = {
               merchantId,
               email: merchantEmail || null,
             };
-            if (merchantId) {
-              setMerchantSiteIdOverride((current) => current || merchantId);
-            }
+            setMerchantSiteIdOverride(merchantId);
             if (!detachKeepAlive) {
               detachKeepAlive = startMerchantSessionKeepAlive({
                 intervalMs: 2 * 60_000,
@@ -7147,7 +7145,8 @@ export default function AdminClient({
             }
           }
 
-          if (!merchantId && !merchantEmail) {
+          if (!merchantId) {
+            clearMerchantAuthorizedIdentity();
             const merchantGatewayReady = await readGatewayReady();
             if (!mounted) return;
             if (!merchantGatewayReady) {
@@ -7155,9 +7154,6 @@ export default function AdminClient({
               return;
             }
             if (justSignedIn) {
-              const restored = await tryLoadJustSignedInPublishedContent();
-              if (!mounted) return;
-              if (restored) return;
               releaseMerchantUnauthenticatedState();
               return;
             }
@@ -7177,8 +7173,17 @@ export default function AdminClient({
             releaseCheckingScreen();
           }
 
-          const preferredByScope = getSiteIdFromStoreScope(storeScope);
-          const resolvedMerchantIds = preferredByScope ? [preferredByScope] : mergePreferredMerchantIds(merchantIdsRef.current);
+          const preferredByScope = getSiteIdFromStoreScope(storeScope).trim();
+          if (preferredByScope && !merchantIds.includes(preferredByScope)) {
+            clearMerchantAuthorizedIdentity();
+            setHasEditorContent(false);
+            setRemoteContentVerified(false);
+            releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+            return;
+          }
+          const resolvedMerchantIds = preferredByScope
+            ? [preferredByScope]
+            : merchantIds;
           merchantIdsRef.current = resolvedMerchantIds;
           const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
           const preferredNumericId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? "";
@@ -7383,21 +7388,11 @@ export default function AdminClient({
             }
           } else {
             if (justSignedIn) {
-              const restored = await tryLoadJustSignedInPublishedContent();
-              if (!mounted) return;
-              if (restored) return;
               releaseMerchantUnauthenticatedState();
               return;
             }
-            if (cookieBackedMerchantIdentity) {
-              setBackendNotice(null);
-              setRemoteContentVerified(resolveCachedRemoteVerification());
-              setHasEditorContent(true);
-              releaseCheckingScreen({ notice: null });
-            } else {
-              releaseMerchantUnauthenticatedState();
-              return;
-            }
+            releaseMerchantUnauthenticatedState();
+            return;
           }
         }
         if (session) {
@@ -7420,47 +7415,47 @@ export default function AdminClient({
         let resolvedMerchantIds: string[] = [];
           if (!isPlatformEditor) {
             const activeSession = session;
-            if (!activeSession && !cookieBackedMerchantIdentity) {
+            if (!activeSession) {
+              clearMerchantAuthorizedIdentity();
+              setHasEditorContent(false);
+              setRemoteContentVerified(false);
               releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
               return;
             }
-            const merchantIds = activeSession
-              ? await withTimeout(
-                  (() => {
-                    const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
-                    if (scopedSiteId) return Promise.resolve([scopedSiteId]);
-                    const hintedMerchantIds = mergePreferredMerchantIds([
-                      ...readMerchantIdsFromMetadata(
-                        activeSession.user.user_metadata as Record<string, unknown> | null | undefined,
-                        activeSession.user.app_metadata as Record<string, unknown> | null | undefined,
-                      ),
-                      cookieBackedMerchantIdentity?.merchantId ?? "",
-                      merchantSessionIdentityRef.current.merchantId,
-                      ...merchantIdsRef.current,
-                    ]);
-                    if (hintedMerchantIds.length > 0) {
-                      writeCachedMerchantIds(activeSession.user.id, activeSession.user.email ?? undefined, hintedMerchantIds);
-                      return Promise.resolve(hintedMerchantIds);
-                    }
-                    return resolveMerchantIds(activeSession.user.id, activeSession.user.email, {
-                      ...(activeSession.user.user_metadata ?? {}),
-                      ...(activeSession.user.app_metadata ?? {}),
-                    });
-                  })(),
-                  AUTH_CHECK_TIMEOUT_MS,
-                  "商户识别超时，已使用本地缓存继续编辑",
-                )
-              : mergePreferredMerchantIds(
-                  [
-                    cookieBackedMerchantIdentity?.merchantId ?? "",
-                    ...(merchantIdsRef.current ?? []),
-                  ].filter(Boolean),
-                );
-            if (!mounted) return;
-            const preferredByScope = getSiteIdFromStoreScope(storeScope);
-            resolvedMerchantIds = preferredByScope ? [preferredByScope] : mergePreferredMerchantIds(merchantIds);
-            merchantIdsRef.current = resolvedMerchantIds;
             const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+            const merchantIds = await withTimeout(
+              resolveMerchantIds(
+                activeSession.user.id,
+                activeSession.user.email,
+                {
+                  ...(activeSession.user.user_metadata ?? {}),
+                  ...(activeSession.user.app_metadata ?? {}),
+                },
+                [
+                  scopedSiteId,
+                  cookieBackedMerchantIdentity?.merchantId ?? "",
+                  merchantSessionIdentityRef.current.merchantId,
+                  ...merchantIdsRef.current,
+                ],
+              ),
+              AUTH_CHECK_TIMEOUT_MS,
+              "商户识别超时，请重新登录后重试",
+            );
+            if (!mounted) return;
+            if (
+              merchantIds.length === 0 ||
+              (scopedSiteId && !merchantIds.includes(scopedSiteId))
+            ) {
+              clearMerchantAuthorizedIdentity();
+              setHasEditorContent(false);
+              setRemoteContentVerified(false);
+              releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+              return;
+            }
+            resolvedMerchantIds = scopedSiteId
+              ? [scopedSiteId]
+              : mergePreferredMerchantIds(merchantIds);
+            merchantIdsRef.current = resolvedMerchantIds;
             const preferredNumericId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? "";
             const currentMerchantSiteId = scopedSiteId || preferredNumericId || resolvedMerchantIds[0] || "";
             if (!scopedSiteId && preferredNumericId) {
@@ -7597,6 +7592,17 @@ export default function AdminClient({
         if (!mounted) return;
         clearTimeout(safetyTimeoutId);
         const message = error instanceof Error ? error.message : "";
+        if (!isPlatformEditor) {
+          clearMerchantAuthorizedIdentity();
+          setHasEditorContent(false);
+          setRemoteContentVerified(false);
+          releaseCheckingScreen({
+            notice: message.includes("超时")
+              ? "当前内容加载超时，请刷新页面或重新登录后重试。"
+              : "当前内容加载失败，请重新登录后重试。",
+          });
+          return;
+        }
         if (message.includes("超时")) {
           applyCachedEditorBlocks();
           setHasEditorContent(true);
@@ -7622,10 +7628,15 @@ export default function AdminClient({
       clearTimeout(safetyTimeoutId);
       if (authSubscription) authSubscription.unsubscribe();
       if (detachKeepAlive) detachKeepAlive();
-      merchantIdsRef.current = [];
+      if (isPlatformEditor) {
+        merchantIdsRef.current = [];
+      } else {
+        clearMerchantAuthorizedIdentity();
+      }
     };
   }, [
     defaultEditorBlocks,
+    clearMerchantAuthorizedIdentity,
     explicitFaollaSectionEntry,
     isMobileMerchantSupportOnlyMode,
     isPlatformEditor,
@@ -9812,13 +9823,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
+  const authorizedMerchantSiteIds = !isPlatformEditor ? merchantIdsRef.current : [];
+  const authorizedOverrideSiteId = authorizedMerchantSiteIds.includes(merchantSiteIdOverride)
+    ? merchantSiteIdOverride
+    : "";
+  const authorizedScopedSiteId = authorizedMerchantSiteIds.includes(scopedSiteId)
+    ? scopedSiteId
+    : "";
   const fallbackMerchantSiteId =
     !isPlatformEditor
-      ? merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ?? merchantIdsRef.current[0] ?? ""
+      ? authorizedMerchantSiteIds.find((item) => isMerchantNumericId(item)) ?? authorizedMerchantSiteIds[0] ?? ""
       : "";
   const editingSiteId =
     !isPlatformEditor && merchantPlatformState
-      ? merchantSiteIdOverride || scopedSiteId || fallbackMerchantSiteId
+      ? authorizedOverrideSiteId || authorizedScopedSiteId || fallbackMerchantSiteId
       : "";
   const editingSite =
     editingSiteId && merchantPlatformState
@@ -10186,19 +10204,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []),
         })
       : "";
-  const currentSupportMerchantId = (
-    editingSiteId ||
-    merchantSessionIdentityRef.current.merchantId ||
-    supportThread?.merchantId ||
-    ""
-  ).trim();
+  const currentSupportMerchantId = selectAuthorizedMerchantSiteId(
+    authorizedMerchantSiteIds,
+    editingSiteId,
+    merchantSessionIdentityRef.current.merchantId,
+    supportThread?.merchantId,
+  );
   const latestSupportAdminMessage = [...(supportThread?.messages ?? [])]
     .reverse()
     .find((message) => message.sender === "super_admin") ?? null;
   const latestSupportAdminMessageKey = latestSupportAdminMessage
     ? `${latestSupportAdminMessage.id}:${latestSupportAdminMessage.createdAt}`
     : "";
-  const supportReadMerchantId = (supportThread?.merchantId || editingSiteId || "").trim();
+  const supportReadMerchantId = selectAuthorizedMerchantSiteId(
+    authorizedMerchantSiteIds,
+    supportThread?.merchantId,
+    editingSiteId,
+  );
   const rememberSupportNotificationEvent = useCallback((eventKey: string) => {
     const normalizedEventKey = eventKey.trim();
     if (!normalizedEventKey || typeof window === "undefined") return true;
@@ -10669,9 +10691,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
-  const supportSelfQrMerchantId =
-    normalizeSupportDisplayValue(editingSiteId) ||
-    normalizeSupportDisplayValue(merchantSessionIdentityRef.current.merchantId);
+  const supportSelfQrMerchantId = selectAuthorizedMerchantSiteId(
+    authorizedMerchantSiteIds,
+    normalizeSupportDisplayValue(editingSiteId),
+    normalizeSupportDisplayValue(merchantSessionIdentityRef.current.merchantId),
+  );
   const [supportSelfQrToken, setSupportSelfQrToken] = useState("");
   useEffect(() => {
     if (supportSelfSectionView !== "qr" || !supportSelfQrMerchantId) {
@@ -10712,12 +10736,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const handleSupportQrScanResult = useCallback((value: string) => {
     void openScannedQrValue(value, window.location.origin, setSupportPeerError);
   }, []);
-  const supportMobileBookingSiteId = (
-    editingSiteId ||
-    merchantSessionIdentityRef.current.merchantId ||
-    getSiteIdFromStoreScope(storeScope) ||
-    ""
-  ).trim();
+  const supportMobileBookingSiteId = selectAuthorizedMerchantSiteId(
+    authorizedMerchantSiteIds,
+    editingSiteId,
+    merchantSessionIdentityRef.current.merchantId,
+    getSiteIdFromStoreScope(storeScope),
+  );
   useEffect(() => {
     setMerchantEnterpriseTodoCount(0);
   }, [supportMobileBookingSiteId]);
@@ -11399,65 +11423,93 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
 
   const ensureMerchantChatSessionReady = useCallback(async () => {
-    const applyPayloadIdentity = (payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null) => {
-      if (!payload || payload.authenticated !== true) return null;
-      const merchantIds = readMerchantSessionMerchantIds(payload);
+    const applyPayloadIdentity = (
+      payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null,
+      expectedUserId: unknown,
+    ) => {
+      const merchantIds = resolveAuthorizedMerchantIds(
+        payload,
+        expectedUserId,
+        [
+          merchantSessionIdentityRef.current.merchantId,
+          ...merchantIdsRef.current,
+        ],
+      );
       const merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
-      const email = typeof payload.user?.email === "string" ? payload.user.email.trim() : "";
-      if (merchantIds.length > 0) {
-        merchantIdsRef.current = mergePreferredMerchantIds(merchantIds, merchantIdsRef.current);
+      const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
+      if (!merchantId) {
+        clearMerchantAuthorizedIdentity();
+        return null;
       }
-      if (merchantId || email) {
-        merchantSessionIdentityRef.current = {
-          merchantId,
-          email: email || null,
-        };
-        if (merchantId) {
-          setMerchantSiteIdOverride((current) => current || merchantId);
-        }
-      }
+      merchantIdsRef.current = merchantIds;
+      merchantSessionIdentityRef.current = {
+        merchantId,
+        email: email || null,
+      };
+      setMerchantSiteIdOverride(merchantId);
       return payload;
     };
+
+    let activeSession = await supabase.auth
+      .getSession()
+      .then((result) => result.data.session)
+      .catch(() => null);
 
     const cookiePayload = await readMerchantSessionPayload(Math.max(1800, Math.min(5200, AUTH_CHECK_TIMEOUT_MS))).catch(
       () => null,
     );
-    const acceptedCookiePayload = applyPayloadIdentity(cookiePayload);
+    const acceptedCookiePayload = applyPayloadIdentity(
+      cookiePayload,
+      activeSession?.user?.id,
+    );
     if (acceptedCookiePayload) return acceptedCookiePayload;
 
     const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
       Math.max(2600, Math.min(8200, AUTH_CHECK_TIMEOUT_MS + 1600)),
     ).catch(() => null);
     if (recoveredSession) {
+      activeSession = recoveredSession;
       const syncedPayload = await syncMerchantSessionCookies(
         recoveredSession,
         Math.max(2200, Math.min(6200, AUTH_CHECK_TIMEOUT_MS)),
       ).catch(() => null);
-      const acceptedSyncedPayload = applyPayloadIdentity(syncedPayload);
+      const acceptedSyncedPayload = applyPayloadIdentity(
+        syncedPayload,
+        recoveredSession.user.id,
+      );
       if (acceptedSyncedPayload) return acceptedSyncedPayload;
     }
 
     const retryPayload = await readMerchantSessionPayload(Math.max(1800, Math.min(5200, AUTH_CHECK_TIMEOUT_MS))).catch(
       () => null,
     );
-    return applyPayloadIdentity(retryPayload);
-  }, []);
+    return applyPayloadIdentity(retryPayload, activeSession?.user?.id);
+  }, [clearMerchantAuthorizedIdentity]);
 
   const requestMerchantChatWithSessionRecovery = useCallback(async (path: string, init: RequestInit) => {
     const buildSupportRequestInit = async (allowRecovery: boolean) => {
       const headers = new Headers(init.headers ?? undefined);
       headers.set("accept", "application/json");
 
+      if (allowRecovery) {
+        await ensureMerchantChatSessionReady();
+      }
+
       const cachedMerchantId = merchantSessionIdentityRef.current.merchantId.trim();
       const cachedEmail = String(merchantSessionIdentityRef.current.email ?? "").trim();
-      const knownSiteId = (
-        editingSiteId ||
-        getSiteIdFromStoreScope(storeScope) ||
-        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-        merchantIdsRef.current[0] ||
-        cachedMerchantId ||
-        ""
-      ).trim();
+      const authorizedMerchantIds = merchantIdsRef.current;
+      const hintedSiteIds = [
+        editingSiteId,
+        getSiteIdFromStoreScope(storeScope),
+        cachedMerchantId,
+      ]
+        .map((merchantId) => merchantId.trim())
+        .filter((merchantId) => authorizedMerchantIds.includes(merchantId));
+      const knownSiteId =
+        hintedSiteIds[0] ||
+        authorizedMerchantIds.find((item) => isMerchantNumericId(item)) ||
+        authorizedMerchantIds[0] ||
+        "";
       const knownEmail = ((editingSite?.contactEmail ?? "").trim() || cachedEmail) ?? "";
       const prefetchedIdentity =
         knownSiteId || knownEmail
@@ -11477,9 +11529,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         headers.set("x-merchant-name", merchantDisplayName);
       }
 
-      if (allowRecovery) {
-        await ensureMerchantChatSessionReady();
-      }
       const {
         data: { session },
       } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
@@ -11653,14 +11702,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const requestMerchantPushWithSessionRecovery = useCallback(
     (init: RequestInit) => {
       const params = new URLSearchParams();
-      const pushSiteId = (
-        editingSiteId ||
-        getSiteIdFromStoreScope(storeScope) ||
-        merchantSessionIdentityRef.current.merchantId ||
-        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-        merchantIdsRef.current[0] ||
-        ""
-      ).trim();
+      const pushSiteId = selectAuthorizedMerchantSiteId(
+        merchantIdsRef.current,
+        editingSiteId,
+        getSiteIdFromStoreScope(storeScope),
+        merchantSessionIdentityRef.current.merchantId,
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)),
+        merchantIdsRef.current[0],
+      );
       const pushEmail =
         ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ??
         "";
@@ -11990,14 +12039,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const requestSupportWithSessionRecovery = useCallback(
     (init: RequestInit) => {
       const params = new URLSearchParams();
-      const supportSiteId = (
-        editingSiteId ||
-        getSiteIdFromStoreScope(storeScope) ||
-        merchantSessionIdentityRef.current.merchantId ||
-        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-        merchantIdsRef.current[0] ||
-        ""
-      ).trim();
+      const supportSiteId = selectAuthorizedMerchantSiteId(
+        merchantIdsRef.current,
+        editingSiteId,
+        getSiteIdFromStoreScope(storeScope),
+        merchantSessionIdentityRef.current.merchantId,
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)),
+        merchantIdsRef.current[0],
+      );
       const supportEmail =
         ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ??
         "";
@@ -12041,14 +12090,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const requestMerchantPeerWithSessionRecovery = useCallback(
     (init: RequestInit, extraParams?: Record<string, string>) => {
       const params = new URLSearchParams();
-      const peerSiteId = (
-        editingSiteId ||
-        getSiteIdFromStoreScope(storeScope) ||
-        merchantSessionIdentityRef.current.merchantId ||
-        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-        merchantIdsRef.current[0] ||
-        ""
-      ).trim();
+      const peerSiteId = selectAuthorizedMerchantSiteId(
+        merchantIdsRef.current,
+        editingSiteId,
+        getSiteIdFromStoreScope(storeScope),
+        merchantSessionIdentityRef.current.merchantId,
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)),
+        merchantIdsRef.current[0],
+      );
       const peerEmail =
         ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ??
         "";
@@ -12257,14 +12306,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     (merchantId: string, init?: RequestInit) => {
       const params = new URLSearchParams();
       params.set("merchantId", merchantId);
-      const cardSiteId = (
-        editingSiteId ||
-        getSiteIdFromStoreScope(storeScope) ||
-        merchantSessionIdentityRef.current.merchantId ||
-        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-        merchantIdsRef.current[0] ||
-        ""
-      ).trim();
+      const cardSiteId = selectAuthorizedMerchantSiteId(
+        merchantIdsRef.current,
+        editingSiteId,
+        getSiteIdFromStoreScope(storeScope),
+        merchantSessionIdentityRef.current.merchantId,
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)),
+        merchantIdsRef.current[0],
+      );
       if (cardSiteId) {
         params.set("siteId", cardSiteId);
       }
@@ -12423,13 +12472,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           imageUrl =
             (await uploadImageDataUrlToSupabase(
               preferredPreviewUrl,
-              (
-                editingSiteId ||
-                merchantSessionIdentityRef.current.merchantId ||
-                supportReadMerchantId ||
-                merchantDisplayName ||
-                "public"
-              ).trim(),
+              selectAuthorizedMerchantSiteId(
+                merchantIdsRef.current,
+                editingSiteId,
+                merchantSessionIdentityRef.current.merchantId,
+                supportReadMerchantId,
+              ) || merchantDisplayName.trim() || "public",
               "business-card-export",
               {
                 skipOperationLog: true,
@@ -12472,12 +12520,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            merchantId: (
-              editingSiteId ||
-              merchantSessionIdentityRef.current.merchantId ||
-              supportReadMerchantId ||
-              ""
-            ).trim(),
+            merchantId: selectAuthorizedMerchantSiteId(
+              merchantIdsRef.current,
+              editingSiteId,
+              merchantSessionIdentityRef.current.merchantId,
+              supportReadMerchantId,
+            ),
             key: shareInput.shareKey,
             name: shareInput.name,
             imageUrl,
@@ -12756,13 +12804,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const nextContacts = Array.isArray(payload?.contacts) ? payload.contacts : [];
       const nextThreads = Array.isArray(payload?.threads) ? payload.threads : [];
       const responseMerchantId = String(payload?.currentMerchantId ?? "").trim();
-      const readStateMerchantId = (
-        responseMerchantId ||
-        currentSupportMerchantId ||
-        editingSiteId ||
-        merchantSessionIdentityRef.current.merchantId ||
-        ""
-      ).trim();
+      const readStateMerchantId = selectAuthorizedMerchantSiteId(
+        merchantIdsRef.current,
+        responseMerchantId,
+        currentSupportMerchantId,
+        editingSiteId,
+        merchantSessionIdentityRef.current.merchantId,
+      );
       const remoteLastReadMap = normalizeSupportPeerLastReadRecord(payload?.readState?.peerLastRead);
       const localLastReadMap = readStateMerchantId ? readLocalSupportPeerLastReadMap(readStateMerchantId, nextContacts) : {};
       const nextLastReadMap = mergeSupportPeerLastReadMaps(remoteLastReadMap, localLastReadMap);
@@ -14046,16 +14094,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || supportFaollaActive || typeof window === "undefined" || !canUseFaollaNativeNotifications()) return;
-    const siteId = (
-      currentSupportMerchantId ||
-      supportReadMerchantId ||
-      editingSiteId ||
-      merchantSessionIdentityRef.current.merchantId ||
-      merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
-      merchantIdsRef.current[0] ||
-      readRecentMerchantLaunchMerchantId() ||
-      ""
-    ).trim();
+    const siteId = selectAuthorizedMerchantSiteId(
+      merchantIdsRef.current,
+      currentSupportMerchantId,
+      supportReadMerchantId,
+      editingSiteId,
+      merchantSessionIdentityRef.current.merchantId,
+      merchantIdsRef.current.find((item) => isMerchantNumericId(item)),
+      merchantIdsRef.current[0],
+    );
     if (!siteId) return;
     if (!supportDataActivated || !supportUnreadStateHydrated) return;
     configureFaollaNativeNotificationSync({
@@ -14394,13 +14441,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function buildSupportUploadMerchantHint() {
-    return (
-      editingSiteId ||
-      merchantSessionIdentityRef.current.merchantId ||
-      supportReadMerchantId ||
-      merchantDisplayName ||
-      "public"
-    ).trim();
+    return selectAuthorizedMerchantSiteId(
+      merchantIdsRef.current,
+      editingSiteId,
+      merchantSessionIdentityRef.current.merchantId,
+      supportReadMerchantId,
+    ) || merchantDisplayName.trim() || "public";
   }
 
   async function uploadSupportAssetDataUrl(
@@ -14521,7 +14567,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       showTip("请先在左侧精确搜索商户ID或邮箱");
       return false;
     }
-    const merchantId = supportReadMerchantId || editingSiteId || merchantSessionIdentityRef.current.merchantId || "default";
+    const merchantId = selectAuthorizedMerchantSiteId(
+      merchantIdsRef.current,
+      supportReadMerchantId,
+      editingSiteId,
+      merchantSessionIdentityRef.current.merchantId,
+    ) || "default";
     const requestId = ++supportRequestIdRef.current;
     supportSendingRef.current = true;
     setSupportSending(true);
@@ -14556,7 +14607,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               (editingSite?.contactEmail ?? "").trim() ||
               merchantSessionIdentityRef.current.email ||
               "",
-            siteId: (editingSiteId || merchantSessionIdentityRef.current.merchantId || "").trim(),
+            siteId: selectAuthorizedMerchantSiteId(
+              merchantIdsRef.current,
+              editingSiteId,
+              merchantSessionIdentityRef.current.merchantId,
+            ),
           }),
         });
         const payload = (await response.json().catch(() => null)) as
@@ -16105,19 +16160,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
     const explicitFaollaSection = typeof window !== "undefined" && isFaollaSectionSearch(window.location.search);
-    const merchantWorkspaceSiteId = (
-      editingSiteId ||
-      merchantSiteIdOverride ||
-      getSiteIdFromStoreScope(storeScope) ||
-      merchantSessionIdentityRef.current.merchantId ||
-      ""
-    ).trim();
+    const authorizedMerchantIds = merchantIdsRef.current;
+    const merchantWorkspaceSiteId =
+      [
+        editingSiteId,
+        merchantSiteIdOverride,
+        getSiteIdFromStoreScope(storeScope),
+        merchantSessionIdentityRef.current.merchantId,
+      ]
+        .map((merchantId) => merchantId.trim())
+        .find((merchantId) => authorizedMerchantIds.includes(merchantId)) ?? "";
     if (!isMerchantNumericId(merchantWorkspaceSiteId)) return;
     if (merchantDesktopDefaultSectionSiteRef.current === merchantWorkspaceSiteId) return;
     if (explicitFaollaSection) {
       merchantDesktopDefaultSectionSiteRef.current = merchantWorkspaceSiteId;
       if (!editingSiteId) {
-        setMerchantSiteIdOverride((current) => current || merchantWorkspaceSiteId);
+        setMerchantSiteIdOverride(merchantWorkspaceSiteId);
       }
       setMerchantDesktopSection("faolla");
       return;
@@ -16125,7 +16183,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     if (merchantDesktopSection !== "editor" && merchantDesktopSection !== "faolla") return;
     merchantDesktopDefaultSectionSiteRef.current = merchantWorkspaceSiteId;
     if (!editingSiteId) {
-      setMerchantSiteIdOverride((current) => current || merchantWorkspaceSiteId);
+      setMerchantSiteIdOverride(merchantWorkspaceSiteId);
     }
     if (defaultMerchantDesktopSection === "pointRedemption") {
       void loadMerchantPointRedemptionCashier().catch(() => undefined);

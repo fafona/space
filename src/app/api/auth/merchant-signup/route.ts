@@ -55,6 +55,10 @@ type SignupIntentAdminClient = PlatformIdentitySupabaseClient & {
   };
 };
 
+type SignupAuthUser = MerchantAuthUserSummary & {
+  email_confirmed_at?: string | null;
+};
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -97,12 +101,45 @@ function normalizeRequestedAccountType(value: unknown): PlatformAccountType | nu
   return null;
 }
 
+function hasTopLevelEmailConfirmation(
+  user: SignupAuthUser | null | undefined,
+) {
+  return (
+    typeof user?.email_confirmed_at === "string" &&
+    Boolean(user.email_confirmed_at.trim())
+  );
+}
+
 export function signUpNeedsEmailConfirmation(data: {
-  session?: { user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null } | null;
-  user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null;
+  session?: { user?: SignupAuthUser | null } | null;
+  user?: SignupAuthUser | null;
 }) {
   const user = data.session?.user ?? data.user ?? null;
-  return !(data.session || user?.email_confirmed_at);
+  return !(data.session || hasTopLevelEmailConfirmation(user));
+}
+
+async function loadFreshSignupAuthUser(
+  supabase: SignupIntentAdminClient,
+  candidate: SignupAuthUser,
+  expectedEmail: string,
+) {
+  const candidateId = String(candidate.id ?? "").trim().toLowerCase();
+  if (!candidateId) return null;
+  const result = await supabase.auth.admin
+    .getUserById(candidateId)
+    .catch(() => null);
+  const freshUser =
+    result && !result.error
+      ? ((result.data?.user ?? null) as SignupAuthUser | null)
+      : null;
+  if (
+    !freshUser ||
+    String(freshUser.id ?? "").trim().toLowerCase() !== candidateId ||
+    normalizeAuthEmail(freshUser.email) !== expectedEmail
+  ) {
+    return null;
+  }
+  return freshUser;
 }
 
 function isObfuscatedExistingSignupUser(user: unknown) {
@@ -374,7 +411,7 @@ export async function POST(request: Request) {
   }
 
   let effectiveSession = data.session;
-  let authUser = (data.session?.user ?? data.user ?? null) as MerchantAuthUserSummary | null;
+  let authUser = (data.session?.user ?? data.user ?? null) as SignupAuthUser | null;
   let resumedExistingAuthUser = false;
   if (authUser && isObfuscatedExistingSignupUser(authUser)) {
     // Supabase intentionally obscures duplicate signup identities. The
@@ -387,7 +424,7 @@ export async function POST(request: Request) {
       resumedExistingAuthUser = true;
     }
   }
-  const needsConfirmation = signUpNeedsEmailConfirmation({
+  let needsConfirmation = signUpNeedsEmailConfirmation({
     session: effectiveSession,
     user: authUser,
   });
@@ -409,6 +446,21 @@ export async function POST(request: Request) {
       { ok: false, error: "ordinary_signup_intent_mismatch" },
       { status: 403 },
     );
+  }
+  if (!effectiveSession && !needsConfirmation) {
+    const freshAuthUser = await loadFreshSignupAuthUser(
+      adminSupabase as SignupIntentAdminClient,
+      authUser,
+      email,
+    );
+    if (!freshAuthUser) {
+      return noStoreJson(
+        { ok: false, error: "ordinary_signup_confirmation_lookup_unavailable" },
+        { status: 503 },
+      );
+    }
+    authUser = freshAuthUser;
+    needsConfirmation = !hasTopLevelEmailConfirmation(freshAuthUser);
   }
   if (resumedExistingAuthUser) {
     try {

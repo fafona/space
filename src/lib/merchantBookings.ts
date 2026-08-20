@@ -1,5 +1,6 @@
 import { getUtf8ByteLength, truncateUtf8ByBytes } from "./merchantProfileBinding";
 import type { MerchantBookingRuleViewport } from "./merchantBookingRules";
+import { matchesExactPersonalIdentity } from "./personalAccountId";
 
 export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "completed", "no_show", "cancelled"] as const;
 export const MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES = 40;
@@ -112,6 +113,23 @@ export type MerchantBookingStoredRecord = MerchantBookingRecord & {
   customerEmailLogs?: MerchantBookingCustomerEmailLogEntry[];
   timeline?: MerchantBookingTimelineEntry[];
 };
+
+export function matchesPersonalMerchantBookingIdentity(
+  record: Pick<
+    MerchantBookingRecord,
+    | "customerAccountId"
+    | "customerUserId"
+  >,
+  identity: { accountId?: unknown; userId?: unknown },
+) {
+  return matchesExactPersonalIdentity(
+    {
+      accountId: record.customerAccountId,
+      userId: record.customerUserId,
+    },
+    identity,
+  );
+}
 
 export type MerchantBookingUpdateAction = "update" | "cancel";
 
