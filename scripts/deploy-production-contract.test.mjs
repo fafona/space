@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,19 +34,55 @@ const envExample = await readFile(new URL("../.env.example", import.meta.url), "
 const envCheckUrl = new URL("./check-env.mjs", import.meta.url);
 const envCheckScript = await readFile(envCheckUrl, "utf8");
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const RECOVERY_DEPLOY_ENVELOPE_MAGIC =
-  "FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V1";
+const DEPLOY_ENVELOPE_MAGIC = "FAOLLA_DEPLOY_ENVELOPE_V2";
+const DEPLOY_PAYLOAD_KEYS = [
+  "APP_DIR",
+  "APP_NAME",
+  "APP_PORT",
+  "APP_BRANCH",
+  "EXPECTED_DEPLOY_SHA",
+  "SUPABASE_INTERNAL_URL_B64",
+  "NEXT_PUBLIC_SUPABASE_URL_B64",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+  "SUPABASE_SERVICE_ROLE_KEY_B64",
+  "GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64",
+  "GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64",
+  "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64",
+  "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64",
+  "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS",
+  "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED",
+  "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE",
+  "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED",
+  "MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS",
+  "MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS",
+  "MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64",
+  "MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64",
+  "ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED",
+  "ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64",
+  "ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64",
+  "RESEND_API_KEY_B64",
+  "WEB_PUSH_PUBLIC_KEY",
+  "WEB_PUSH_PRIVATE_KEY",
+  "WEB_PUSH_SUBJECT",
+  "SUPER_ADMIN_ACCOUNT",
+  "SUPER_ADMIN_PASSWORD",
+  "SUPER_ADMIN_VERIFICATION_EMAIL",
+  "SUPER_ADMIN_VERIFICATION_SECRET",
+];
 
-function extractRecoveryDeployTransport() {
+function extractDeployTransport() {
   const startMarker =
     "          unset ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON";
-  const endMarker = "\n          done\n\n      - name: Verify Public Release";
+  const endMarker = "\n\n      - name: Verify Public Release";
   const start = deployWorkflow.indexOf(startMarker);
   const end = deployWorkflow.indexOf(endMarker, start);
-  assert.ok(start >= 0, "recovery deploy transport start marker is missing");
-  assert.ok(end > start, "recovery deploy transport end marker is missing");
+  assert.ok(start >= 0, "deploy transport start marker is missing");
+  assert.ok(end > start, "deploy transport end marker is missing");
   return deployWorkflow
-    .slice(start, end + "\n          done".length)
+    .slice(start, end)
     .split(/\r?\n/)
     .map((line) => line.slice(10))
     .join("\n");
@@ -68,9 +112,18 @@ function toBashPath(value) {
   return match ? `/${match[1].toLowerCase()}/${match[2]}` : normalized;
 }
 
-async function runRecoveryTransportScenario({ statuses, expectedStatus }) {
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runDeployTransportScenario({ statuses, expectedStatus }) {
   const captureDirectory = await mkdtemp(
-    join(tmpdir(), "faolla-recovery-deploy-contract-"),
+    join(tmpdir(), "faolla-deploy-transport-contract-"),
   );
   const caseJson = JSON.stringify({
     caseId: "transport_case_20260819",
@@ -80,9 +133,56 @@ async function runRecoveryTransportScenario({ statuses, expectedStatus }) {
     expiresAt: "2026-08-20T12:00:00.000Z",
   });
   const hmacSecret = "fedcba9876543210".repeat(4);
+  const serviceRoleKey = "service'role\nkey-contract-value";
+  const webPushPrivateKey = "web'push\nprivate-contract-value";
+  const superAdminPassword = "admin'password\nsecond-contract-line";
+  const superAdminVerificationSecret =
+    'verify"secret\nthird-contract-line';
   const caseBase64 = Buffer.from(caseJson, "utf8").toString("base64");
   const hmacBase64 = Buffer.from(hmacSecret, "utf8").toString("base64");
-  const transport = extractRecoveryDeployTransport();
+  const emptyBase64 = Buffer.from("contract-safe", "utf8").toString("base64");
+  const serviceRoleKeyBase64 = Buffer.from(serviceRoleKey, "utf8").toString(
+    "base64",
+  );
+  const expectedPayloadValues = {
+    APP_DIR: "contract-app-dir",
+    APP_NAME: "merchant-space",
+    APP_PORT: "3000",
+    APP_BRANCH: "main",
+    EXPECTED_DEPLOY_SHA: "a".repeat(40),
+    SUPABASE_INTERNAL_URL_B64: emptyBase64,
+    NEXT_PUBLIC_SUPABASE_URL_B64: emptyBase64,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY_B64: emptyBase64,
+    SUPABASE_SERVICE_ROLE_KEY_B64: serviceRoleKeyBase64,
+    GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64: emptyBase64,
+    GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64: emptyBase64,
+    GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64: emptyBase64,
+    GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64: emptyBase64,
+    GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS: "",
+    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
+    MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
+    MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS: "3600",
+    MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS: "3900",
+    MERCHANT_ENTERPRISE_INVITATION_HMAC_KEYRING_JSON_B64: emptyBase64,
+    MERCHANT_ENTERPRISE_INVITATION_HMAC_ACTIVE_KEY_ID_B64: emptyBase64,
+    MERCHANT_ENTERPRISE_INVITATION_PUBLIC_ORIGIN_B64: emptyBase64,
+    MERCHANT_ENTERPRISE_INVITATION_EMAIL_FROM_B64: emptyBase64,
+    MERCHANT_ENTERPRISE_INVITATION_EMAIL_REPLY_TO_B64: emptyBase64,
+    ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "true",
+    ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64: caseBase64,
+    ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64: hmacBase64,
+    RESEND_API_KEY_B64: emptyBase64,
+    WEB_PUSH_PUBLIC_KEY: "web-push-public-contract-value",
+    WEB_PUSH_PRIVATE_KEY: webPushPrivateKey,
+    WEB_PUSH_SUBJECT: "mailto:security@example.test",
+    SUPER_ADMIN_ACCOUNT: "admin@example.test",
+    SUPER_ADMIN_PASSWORD: superAdminPassword,
+    SUPER_ADMIN_VERIFICATION_EMAIL: "verify@example.test",
+    SUPER_ADMIN_VERIFICATION_SECRET: superAdminVerificationSecret,
+  };
+  assert.deepEqual(Object.keys(expectedPayloadValues), DEPLOY_PAYLOAD_KEYS);
+  const transport = extractDeployTransport();
   const fakeSsh = String.raw`
 ssh() {
   fake_index="$(wc -l < "$FAKE_SSH_CALLS")"
@@ -96,15 +196,19 @@ ssh() {
   if [ "$fake_status_index" -ge "${"$"}{#fake_statuses[@]}" ]; then
     fake_status_index=$((${"$"}{#fake_statuses[@]} - 1))
   fi
-  return "${"$"}{fake_statuses[$fake_status_index]}"
+  fake_status="${"$"}{fake_statuses[$fake_status_index]}"
+  if [ "$fake_status" = "255" ]; then
+    printf completed > "$FAKE_REMOTE_COMPLETION_MARKER"
+  fi
+  return "$fake_status"
 }
 sleep() { :; }
 `;
   const callsPath = join(captureDirectory, "calls");
-  const script = `set -uo pipefail\n${fakeSsh}\n: > "$FAKE_SSH_CALLS"\nexport -n ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64\n${transport}\n`;
-  const emptyBase64 = Buffer.from("contract-safe", "utf8").toString("base64");
-  const result = spawnSync(resolveBashExecutable(), ["-c", script], {
+  const script = `set -uo pipefail\n${fakeSsh}\n: > "$FAKE_SSH_CALLS"\n${transport}\n`;
+  const result = spawnSync(resolveBashExecutable(), ["-s"], {
     cwd: repositoryRoot,
+    input: script,
     encoding: "utf8",
     timeout: 20_000,
     env: {
@@ -112,17 +216,22 @@ sleep() { :; }
       FAKE_SSH_CALLS: toBashPath(callsPath),
       FAKE_SSH_CAPTURE_DIR: toBashPath(captureDirectory),
       FAKE_SSH_STATUSES: statuses.join(","),
+      FAKE_REMOTE_COMPLETION_MARKER: toBashPath(
+        join(captureDirectory, "remote-completed-before-status-loss"),
+      ),
       SSH_USER: "deployer",
       SSH_HOST: "production.invalid",
       SSH_PORT: "22",
-      APP_DIR: "/srv/faolla",
+      APP_DIR: "contract-app-dir",
       APP_NAME: "merchant-space",
       APP_PORT: "3000",
       APP_BRANCH: "main",
+      EXPECTED_DEPLOY_SHA: "a".repeat(40),
       SUPABASE_INTERNAL_URL_B64: emptyBase64,
       NEXT_PUBLIC_SUPABASE_URL_B64: emptyBase64,
       NEXT_PUBLIC_SUPABASE_ANON_KEY_B64: emptyBase64,
-      SUPABASE_SERVICE_ROLE_KEY_B64: emptyBase64,
+      SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      SUPABASE_SERVICE_ROLE_KEY_B64: serviceRoleKeyBase64,
       GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64: emptyBase64,
       GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET_B64: emptyBase64,
       GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64: emptyBase64,
@@ -144,13 +253,14 @@ sleep() { :; }
       ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64: caseBase64,
       ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64: hmacBase64,
       RESEND_API_KEY_B64: emptyBase64,
-      WEB_PUSH_PUBLIC_KEY: "",
-      WEB_PUSH_PRIVATE_KEY: "",
-      WEB_PUSH_SUBJECT: "",
-      SUPER_ADMIN_ACCOUNT: "",
-      SUPER_ADMIN_PASSWORD: "",
-      SUPER_ADMIN_VERIFICATION_EMAIL: "",
-      SUPER_ADMIN_VERIFICATION_SECRET: "",
+      WEB_PUSH_PUBLIC_KEY: expectedPayloadValues.WEB_PUSH_PUBLIC_KEY,
+      WEB_PUSH_PRIVATE_KEY: webPushPrivateKey,
+      WEB_PUSH_SUBJECT: expectedPayloadValues.WEB_PUSH_SUBJECT,
+      SUPER_ADMIN_ACCOUNT: expectedPayloadValues.SUPER_ADMIN_ACCOUNT,
+      SUPER_ADMIN_PASSWORD: superAdminPassword,
+      SUPER_ADMIN_VERIFICATION_EMAIL:
+        expectedPayloadValues.SUPER_ADMIN_VERIFICATION_EMAIL,
+      SUPER_ADMIN_VERIFICATION_SECRET: superAdminVerificationSecret,
     },
   });
 
@@ -159,12 +269,16 @@ sleep() { :; }
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "");
     const calls = (await readFile(callsPath, "utf8")).trim().split(/\r?\n/);
-    const expectedCalls = statuses.includes(0)
-      ? statuses.indexOf(0) + 1
-      : statuses[0] === 255
-        ? 5
-        : 1;
+    const expectedCalls = 1;
     assert.equal(calls.length, expectedCalls);
+    if (statuses[0] === 255) {
+      assert.equal(
+        await pathExists(
+          join(captureDirectory, "remote-completed-before-status-loss"),
+        ),
+        true,
+      );
+    }
     for (let index = 1; index <= expectedCalls; index += 1) {
       const argv = await readFile(
         join(captureDirectory, `argv-${index}`),
@@ -180,25 +294,49 @@ sleep() { :; }
       const firstNewline = framedInput.indexOf(0x0a);
       const secondNewline = framedInput.indexOf(0x0a, firstNewline + 1);
       const thirdNewline = framedInput.indexOf(0x0a, secondNewline + 1);
+      const fourthNewline = framedInput.indexOf(0x0a, thirdNewline + 1);
       assert.ok(firstNewline > 0 && secondNewline > firstNewline);
-      assert.ok(thirdNewline > secondNewline);
+      assert.ok(
+        thirdNewline > secondNewline && fourthNewline > thirdNewline,
+      );
       assert.equal(
         framedInput.subarray(0, firstNewline).toString("utf8"),
-        RECOVERY_DEPLOY_ENVELOPE_MAGIC,
+        DEPLOY_ENVELOPE_MAGIC,
       );
-      assert.equal(
-        framedInput.subarray(firstNewline + 1, secondNewline).toString("utf8"),
-        caseBase64,
+      const payloadBase64 = framedInput
+        .subarray(firstNewline + 1, secondNewline)
+        .toString("utf8");
+      const payload = JSON.parse(
+        Buffer.from(payloadBase64, "base64").toString("utf8"),
       );
+      assert.deepEqual(payload, {
+        schemaVersion: 1,
+        values: expectedPayloadValues,
+      });
       assert.equal(
         framedInput.subarray(secondNewline + 1, thirdNewline).toString("utf8"),
-        hmacBase64,
+        String(Buffer.byteLength(deployScript, "utf8")),
+      );
+      assert.equal(
+        framedInput.subarray(thirdNewline + 1, fourthNewline).toString("utf8"),
+        createHash("sha256").update(deployScript, "utf8").digest("hex"),
       );
       assert.deepEqual(
-        framedInput.subarray(thirdNewline + 1),
+        framedInput.subarray(fourthNewline + 1),
         Buffer.from(deployScript, "utf8"),
       );
-      for (const sensitive of [caseJson, hmacSecret, caseBase64, hmacBase64]) {
+      for (const sensitive of [
+        caseJson,
+        hmacSecret,
+        caseBase64,
+        hmacBase64,
+        serviceRoleKey,
+        serviceRoleKeyBase64,
+        webPushPrivateKey,
+        superAdminPassword,
+        superAdminVerificationSecret,
+        payloadBase64,
+      ]) {
         assert.equal(argv.includes(sensitive), false);
         assert.equal(childEnvironment.includes(sensitive), false);
         assert.equal(result.stdout.includes(sensitive), false);
@@ -209,23 +347,37 @@ sleep() { :; }
       const argvEntries = argv.split("\0").filter(Boolean);
       assert.ok(argvEntries.includes("-T"));
       const remoteCommand = argvEntries.at(-1) ?? "";
-      assert.match(
-        remoteCommand,
-        /IFS= read -r recovery_deploy_envelope_magic/,
+      for (const payloadKey of DEPLOY_PAYLOAD_KEYS) {
+        assert.equal(remoteCommand.includes(payloadKey), false);
+        assert.equal(
+          childEnvironment
+            .split(/\r?\n/)
+            .some((entry) => entry.startsWith(`${payloadKey}=`)),
+          false,
+        );
+      }
+      assert.match(remoteCommand, /set -eu; umask 077;/);
+      assert.match(remoteCommand, /IFS= read -r deploy_envelope_magic/);
+      assert.match(remoteCommand, /IFS= read -r expected_deploy_bytes/);
+      assert.match(remoteCommand, /actual_deploy_sha256/);
+      assert.doesNotMatch(remoteCommand, /SUPABASE|SUPER_ADMIN|WEB_PUSH/);
+      const executionMarker = join(
+        captureDirectory,
+        `remote-executed-${index}`,
       );
-      assert.match(
-        remoteCommand,
-        /export ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64/,
-      );
-      assert.match(remoteCommand, /exec env [\s\S]+ bash -s$/);
+      const payloadCopy = join(captureDirectory, `remote-payload-${index}.json`);
       const remoteProbeScript = [
         "set -eu",
-        'test -n "$ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64"',
-        'test -n "$ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64"',
+        'printf executed > "$FAKE_REMOTE_EXECUTION_MARKER"',
+        'cp -- "$FAOLLA_DEPLOY_PAYLOAD_FILE" "$FAKE_REMOTE_PAYLOAD_COPY"',
         "",
       ].join("\n");
+      const remoteProbeBytes = Buffer.byteLength(remoteProbeScript, "utf8");
+      const remoteProbeSha256 = createHash("sha256")
+        .update(remoteProbeScript, "utf8")
+        .digest("hex");
       const remoteProbeInput = Buffer.from(
-        `${RECOVERY_DEPLOY_ENVELOPE_MAGIC}\n${caseBase64}\n${hmacBase64}\n${remoteProbeScript}`,
+        `${DEPLOY_ENVELOPE_MAGIC}\n${payloadBase64}\n${remoteProbeBytes}\n${remoteProbeSha256}\n${remoteProbeScript}`,
         "utf8",
       );
       const remoteProbe = spawnSync(
@@ -236,27 +388,78 @@ sleep() { :; }
           input: remoteProbeInput,
           encoding: "utf8",
           timeout: 10_000,
+          env: {
+            ...process.env,
+            FAKE_REMOTE_EXECUTION_MARKER: toBashPath(executionMarker),
+            FAKE_REMOTE_PAYLOAD_COPY: toBashPath(payloadCopy),
+          },
         },
       );
       assert.equal(remoteProbe.status, 0, remoteProbe.stderr);
       assert.equal(remoteProbe.stdout, "");
       assert.equal(remoteProbe.stderr, "");
+      assert.equal(await pathExists(executionMarker), true);
+      assert.deepEqual(
+        JSON.parse(await readFile(payloadCopy, "utf8")),
+        payload,
+      );
       const rejectedMagic = spawnSync(
         resolveBashExecutable(),
         ["-c", remoteCommand],
         {
           cwd: repositoryRoot,
           input: Buffer.from(
-            `FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V0\n${caseBase64}\n${hmacBase64}\n${remoteProbeScript}`,
+            `FAOLLA_DEPLOY_ENVELOPE_V1\n${payloadBase64}\n${remoteProbeBytes}\n${remoteProbeSha256}\n${remoteProbeScript}`,
             "utf8",
           ),
           encoding: "utf8",
           timeout: 10_000,
+          env: {
+            ...process.env,
+            FAKE_REMOTE_EXECUTION_MARKER: toBashPath(
+              `${executionMarker}-bad-magic`,
+            ),
+            FAKE_REMOTE_PAYLOAD_COPY: toBashPath(`${payloadCopy}-bad-magic`),
+          },
         },
       );
       assert.notEqual(rejectedMagic.status, 0);
       assert.equal(rejectedMagic.stdout, "");
       assert.equal(rejectedMagic.stderr, "");
+      assert.equal(await pathExists(`${executionMarker}-bad-magic`), false);
+
+      const completeLineOffsets = [...remoteProbeScript.matchAll(/\n/g)].map(
+        (match) => (match.index ?? 0) + 1,
+      );
+      for (const [truncationIndex, offset] of completeLineOffsets.entries()) {
+        if (offset >= remoteProbeBytes) continue;
+        const truncatedMarker = `${executionMarker}-truncated-${truncationIndex}`;
+        const truncatedInput = Buffer.from(
+          `${DEPLOY_ENVELOPE_MAGIC}\n${payloadBase64}\n${remoteProbeBytes}\n${remoteProbeSha256}\n${remoteProbeScript.slice(0, offset)}`,
+          "utf8",
+        );
+        const truncated = spawnSync(
+          resolveBashExecutable(),
+          ["-c", remoteCommand],
+          {
+            cwd: repositoryRoot,
+            input: truncatedInput,
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              ...process.env,
+              FAKE_REMOTE_EXECUTION_MARKER: toBashPath(truncatedMarker),
+              FAKE_REMOTE_PAYLOAD_COPY: toBashPath(
+                `${payloadCopy}-truncated-${truncationIndex}`,
+              ),
+            },
+          },
+        );
+        assert.notEqual(truncated.status, 0);
+        assert.equal(truncated.stdout, "");
+        assert.equal(truncated.stderr, "");
+        assert.equal(await pathExists(truncatedMarker), false);
+      }
     }
   } finally {
     await rm(captureDirectory, { recursive: true, force: true });
@@ -327,18 +530,18 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
     assert.ok(unsetIndex > derivedSecretMaskIndex);
     assert.ok(unsetIndex < deploySshIndex);
   }
-  const recoveryTransport = extractRecoveryDeployTransport();
+  const recoveryTransport = extractDeployTransport();
   assert.match(
     recoveryTransport,
-    /RECOVERY_DEPLOY_ENVELOPE_MAGIC="FAOLLA_RECOVERY_DEPLOY_ENVELOPE_V1"/,
+    /DEPLOY_ENVELOPE_MAGIC="FAOLLA_DEPLOY_ENVELOPE_V2"/,
   );
   assert.match(
     recoveryTransport,
-    /IFS= read -r ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 && IFS= read -r ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64/,
+    /DEPLOY_PAYLOAD_B64="\$\(node <<'NODE'/,
   );
   assert.match(
     recoveryTransport,
-    /export ORDINARY_LEGACY_PERSONAL_RECOVERY_CASE_JSON_B64 ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64 && exec env/,
+    /FAOLLA_DEPLOY_PAYLOAD_FILE="\$deploy_transport_dir\/payload\.json" bash "\$deploy_transport_dir\/deploy\.sh"/,
   );
   assert.doesNotMatch(
     recoveryTransport,
@@ -351,6 +554,8 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
   assert.match(recoveryTransport, /transport_status=\("\$\{PIPESTATUS\[@\]\}"\)/);
   assert.match(recoveryTransport, /frame_status="\$\{transport_status\[0\]:-1\}"/);
   assert.match(recoveryTransport, /ssh_status="\$\{transport_status\[1\]:-1\}"/);
+  assert.match(recoveryTransport, /ConnectionAttempts=1/);
+  assert.doesNotMatch(recoveryTransport, /for attempt in|sleep 10/);
   assert.doesNotMatch(
     deployWorkflow,
     /NEXT_PUBLIC_ORDINARY_LEGACY_PERSONAL_RECOVERY/,
@@ -400,22 +605,168 @@ test("one-time personal recovery deploy config is secret-only, fail-closed, and 
   assert.match(envCheckScript, /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(hmacSecret\)/);
 });
 
-test("recovery deploy keeps case and HMAC material in the versioned SSH stdin envelope", async (t) => {
+test("deploy keeps every config value in an integrity-checked SSH stdin envelope", async (t) => {
   await t.test("success sends one complete frame", async () => {
-    await runRecoveryTransportScenario({ statuses: [0], expectedStatus: 0 });
+    await runDeployTransportScenario({ statuses: [0], expectedStatus: 0 });
   });
-  await t.test("SSH 255 retries with a fresh complete frame", async () => {
-    await runRecoveryTransportScenario({
-      statuses: [255, 255, 0],
-      expectedStatus: 0,
-    });
-  });
-  await t.test("persistent SSH 255 stops after the fifth frame", async () => {
-    await runRecoveryTransportScenario({ statuses: [255], expectedStatus: 255 });
+  await t.test("ambiguous SSH 255 is never replayed", async () => {
+    await runDeployTransportScenario({ statuses: [255], expectedStatus: 255 });
   });
   await t.test("non-255 SSH failure is returned without retry", async () => {
-    await runRecoveryTransportScenario({ statuses: [37], expectedStatus: 37 });
+    await runDeployTransportScenario({ statuses: [37], expectedStatus: 37 });
   });
+});
+
+test("remote deploy consumes one exact payload file and erases it before validation", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-deploy-payload-contract-"),
+  );
+  const payloadPath = join(temporaryDirectory, "payload.json");
+  const bashEnvironmentPath = join(temporaryDirectory, "bash-env");
+  const missingAppPath = join(temporaryDirectory, "missing-app");
+  const hostileSecret = "admin'payload\ncontract-second-line";
+  const values = Object.fromEntries(
+    DEPLOY_PAYLOAD_KEYS.map((key) => [key, ""]),
+  );
+  Object.assign(values, {
+    APP_DIR: missingAppPath,
+    APP_NAME: "merchant-space",
+    APP_PORT: "3000",
+    APP_BRANCH: "main",
+    EXPECTED_DEPLOY_SHA: "a".repeat(40),
+    SUPER_ADMIN_PASSWORD: hostileSecret,
+  });
+  await writeFile(
+    payloadPath,
+    JSON.stringify({ schemaVersion: 1, values }),
+    "utf8",
+  );
+  await writeFile(
+    bashEnvironmentPath,
+    "pm2() { :; }\nflock() { :; }\n",
+    "utf8",
+  );
+  try {
+    const result = spawnSync(
+      resolveBashExecutable(),
+      [toBashPath(fileURLToPath(new URL("./deploy.production.sh", import.meta.url)))],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          BASH_ENV: toBashPath(bashEnvironmentPath),
+          FAOLLA_DEPLOY_PAYLOAD_FILE: toBashPath(payloadPath),
+        },
+      },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout, /APP_DIR must already contain a git checkout/);
+    assert.equal(result.stdout.includes(hostileSecret), false);
+    assert.equal(result.stderr.includes(hostileSecret), false);
+    assert.equal(await pathExists(payloadPath), false);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("a moving main ref fails before production config or caches are mutated", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-deploy-sha-mismatch-contract-"),
+  );
+  const appDirectory = join(temporaryDirectory, "app");
+  const homeDirectory = join(temporaryDirectory, "home");
+  const cacheDirectory = join(
+    homeDirectory,
+    ".cache",
+    "ffmpeg-static-nodejs",
+  );
+  const payloadPath = join(temporaryDirectory, "payload.json");
+  const bashEnvironmentPath = join(temporaryDirectory, "bash-env");
+  const gitCallsPath = join(temporaryDirectory, "git-calls");
+  const envPath = join(appDirectory, ".env.local");
+  const cacheSentinelPath = join(cacheDirectory, "sentinel");
+  await mkdir(join(appDirectory, ".git"), { recursive: true });
+  await mkdir(cacheDirectory, { recursive: true });
+  await writeFile(envPath, "PRODUCTION_SENTINEL=unchanged\n", "utf8");
+  await writeFile(cacheSentinelPath, "unchanged\n", "utf8");
+  const values = Object.fromEntries(
+    DEPLOY_PAYLOAD_KEYS.map((key) => [key, ""]),
+  );
+  Object.assign(values, {
+    APP_DIR: toBashPath(appDirectory),
+    APP_NAME: "merchant-space",
+    APP_PORT: "3000",
+    APP_BRANCH: "main",
+    EXPECTED_DEPLOY_SHA: "a".repeat(40),
+    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
+    MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
+    MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS: "3600",
+    MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS: "3900",
+    ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "false",
+  });
+  await writeFile(
+    payloadPath,
+    JSON.stringify({ schemaVersion: 1, values }),
+    "utf8",
+  );
+  await writeFile(
+    bashEnvironmentPath,
+    [
+      "git() {",
+      "  printf '%s\\n' \"$*\" >> \"$FAKE_GIT_CALLS\"",
+      '  if [ "$1" = "rev-parse" ]; then',
+      `    printf '%s\\n' '${"b".repeat(40)}'`,
+      "  fi",
+      "  return 0",
+      "}",
+      "npm() { :; }",
+      "pm2() { :; }",
+      "flock() { :; }",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  try {
+    const result = spawnSync(
+      resolveBashExecutable(),
+      [toBashPath(fileURLToPath(new URL("./deploy.production.sh", import.meta.url)))],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          BASH_ENV: toBashPath(bashEnvironmentPath),
+          DEPLOY_LOCK_FILE: toBashPath(
+            join(temporaryDirectory, "deploy.lock"),
+          ),
+          FAKE_GIT_CALLS: toBashPath(gitCallsPath),
+          FAOLLA_DEPLOY_PAYLOAD_FILE: toBashPath(payloadPath),
+          HOME: toBashPath(homeDirectory),
+        },
+      },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(
+      result.stdout,
+      /origin\/main no longer matches EXPECTED_DEPLOY_SHA/,
+    );
+    assert.equal(
+      await readFile(envPath, "utf8"),
+      "PRODUCTION_SENTINEL=unchanged\n",
+    );
+    assert.equal(await readFile(cacheSentinelPath, "utf8"), "unchanged\n");
+    const gitCalls = await readFile(gitCallsPath, "utf8");
+    assert.match(gitCalls, /fetch origin main --prune/);
+    assert.match(gitCalls, /rev-parse origin\/main/);
+    assert.doesNotMatch(gitCalls, /checkout|reset/);
+    assert.equal(await pathExists(payloadPath), false);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test("strict env gate accepts only compact case JSON and a safe lowercase 64-hex HMAC", () => {
@@ -478,6 +829,35 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex >= 0);
   assert.ok(lockIndex < cacheIndex);
   assert.ok(lockIndex < fetchIndex);
+});
+
+test("production deployment accepts only the exact tested current main commit", () => {
+  assert.doesNotMatch(deployWorkflow, /^\s*workflow_dispatch:\s*$/m);
+  assert.match(deployWorkflow, /github\.event\.workflow_run\.event == 'push'/);
+  assert.match(
+    deployWorkflow,
+    /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/,
+  );
+  assert.match(deployWorkflow, /github\.event\.workflow_run\.head_branch == 'main'/);
+  assert.match(deployWorkflow, /git ls-remote --exit-code origin refs\/heads\/main/);
+  assert.match(deployWorkflow, /EXPECTED_DEPLOY_SHA: \$\{\{ steps\.deploy-commit\.outputs\.sha \}\}/);
+  assert.match(deployWorkflow, /"EXPECTED_DEPLOY_SHA"/);
+  assert.doesNotMatch(deployWorkflow, /EXPECTED_DEPLOY_SHA='\$EXPECTED_DEPLOY_SHA'/);
+
+  assert.match(deployScript, /APP_BRANCH must be main/);
+  assert.match(deployScript, /EXPECTED_DEPLOY_SHA must be an exact lowercase 40-hex commit/);
+  assert.match(deployScript, /REMOTE_DEPLOY_SHA="\$\(git rev-parse "origin\/\$APP_BRANCH"\)"/);
+  assert.match(deployScript, /git reset --hard "\$EXPECTED_DEPLOY_SHA"/);
+  assert.match(deployScript, /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"/);
+  assert.doesNotMatch(deployScript, /git archive --format=tar "origin\/\$APP_BRANCH"/);
+});
+
+test("deployment SSH trust is pinned and never learned from the live network", () => {
+  assert.match(deployWorkflow, /SSH_KNOWN_HOSTS: \$\{\{ secrets\.SSH_KNOWN_HOSTS \}\}/);
+  assert.match(deployWorkflow, /ssh-keygen -F "\$known_hosts_lookup"/);
+  assert.match(deployWorkflow, /StrictHostKeyChecking=yes/);
+  assert.match(deployWorkflow, /UserKnownHostsFile="\$HOME\/\.ssh\/known_hosts"/);
+  assert.doesNotMatch(deployWorkflow, /ssh-keyscan|StrictHostKeyChecking=accept-new/);
 });
 
 test("dependency installation and workflow runtime are bounded", () => {
@@ -587,7 +967,11 @@ test("durable invitation settings deploy fail-closed without erasing existing se
       new RegExp(`${secret}:\\s*\\$\\{\\{ secrets\\.${secret} \\}\\}`),
     );
     assert.match(deployWorkflow, new RegExp(`${secret}_B64=`));
-    assert.match(deployWorkflow, new RegExp(`${secret}_B64='\\$${secret}_B64'`));
+    assert.match(deployWorkflow, new RegExp(`"${secret}_B64"`));
+    assert.doesNotMatch(
+      deployWorkflow,
+      new RegExp(`${secret}_B64='\\$${secret}_B64'`),
+    );
     assert.match(
       deployScript,
       new RegExp(`write_env_value "${secret}" "\\$\\(decode_base64_value`),
