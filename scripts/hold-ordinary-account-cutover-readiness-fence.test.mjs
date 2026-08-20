@@ -1319,7 +1319,7 @@ test("attestation validation fails closed on wrong, expired, noncanonical, and c
 });
 
 test("blocked and live-database-mismatched reports terminate the session without a marker", async (t) => {
-  const blocked = readyReport({ objectContractsReady: false });
+  const blocked = readyReport({ migrationsReady: false });
   const wrongDatabase = readyReport({
     databaseIdentity: {
       dbName: "postgres",
