@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { link, lstat, open, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -21,12 +21,23 @@ import { ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_KEY } from "./ordinary-account
 
 const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
 const POSITIVE_DECIMAL_PATTERN = /^[1-9][0-9]{0,9}$/;
+const EPOCH_MILLISECONDS_PATTERN = /^[1-9][0-9]{0,15}$/;
 const PID_PATTERN = /^[1-9][0-9]{0,9}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_PID = 2_147_483_647n;
-const MAX_HOLD_SECONDS = 120;
+const MAX_HOLD_SECONDS = 900;
 const MAX_TTL_SECONDS = 2 * 60 * 60;
+const MINIMUM_ROLLBACK_MARGIN_SECONDS = 300;
+const DATABASE_TIMEOUT_MARGIN_SECONDS = 30;
+const WATCHDOG_MARGIN_SECONDS = 60;
+const STARTUP_WATCHDOG_SECONDS = 240;
 const MAX_OUTPUT_BYTES = 256 * 1024;
+const MAX_RELEASE_REQUEST_BYTES = 8 * 1024;
+const ENDPOINT_PROBE_TIMEOUT_MS = 15_000;
+const ENDPOINT_PROBE_POLL_MS = 50;
 const FENCE_KIND = "faolla.ordinary-account-cutover-readiness-fence.v1";
+const RELEASE_REQUEST_KIND =
+  "faolla.ordinary-account-cutover-readiness-fence-release.v1";
 const ROLLBACK_SUFFIX = "\n\nROLLBACK;";
 const REPORT_SUFFIX = ")::text;";
 
@@ -42,7 +53,7 @@ const PSQL_CONTAINER_SCRIPT = [
   ': "${FAOLLA_FENCE_APPLICATION_NAME:?FAOLLA_FENCE_APPLICATION_NAME is required}"',
   'export PGPASSWORD="$POSTGRES_PASSWORD"',
   'export PGAPPNAME="$FAOLLA_FENCE_APPLICATION_NAME"',
-  "export PGOPTIONS='-c lock_timeout=15s -c statement_timeout=120s'",
+  "export PGOPTIONS='-c lock_timeout=15s -c statement_timeout=960s'",
   "exec psql --host=localhost --username=supabase_admin " +
     '--dbname="$POSTGRES_DB" --no-password --no-psqlrc ' +
     "--set=ON_ERROR_STOP=1 --set=VERBOSITY=verbose " +
@@ -59,18 +70,179 @@ const TERMINATE_PSQL_CONTAINER_SCRIPT = [
   ': "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"',
   ': "${POSTGRES_DB:?POSTGRES_DB is required}"',
   ': "${FAOLLA_FENCE_APPLICATION_NAME:?FAOLLA_FENCE_APPLICATION_NAME is required}"',
+  ': "${FAOLLA_FENCE_BACKEND_PID:?FAOLLA_FENCE_BACKEND_PID is required}"',
   'export PGPASSWORD="$POSTGRES_PASSWORD"',
   "exec psql --host=localhost --username=supabase_admin " +
     '--dbname="$POSTGRES_DB" --no-password --no-psqlrc ' +
     "--set=ON_ERROR_STOP=1 --set=VERBOSITY=terse " +
     '--set=fence_application_name="$FAOLLA_FENCE_APPLICATION_NAME" ' +
+    '--set=fence_backend_pid="$FAOLLA_FENCE_BACKEND_PID" ' +
     "--quiet --tuples-only --no-align",
 ].join("\n");
 
-const TERMINATE_FENCE_SQL = String.raw`SELECT pg_catalog.pg_terminate_backend(activity.pid)
+const TERMINATE_FENCE_SQL = String.raw`WITH matching_sessions AS MATERIALIZED (
+  SELECT activity.pid
+  FROM pg_catalog.pg_stat_activity AS activity
+  WHERE activity.application_name = :'fence_application_name'::text
+    AND (
+      :'fence_backend_pid'::text = '0'::text
+      OR activity.pid = :'fence_backend_pid'::integer
+    )
+    AND activity.pid <> pg_catalog.pg_backend_pid()
+), terminated AS (
+  SELECT pg_catalog.pg_terminate_backend(matching_sessions.pid, 5000) AS ok
+  FROM matching_sessions
+)
+SELECT pg_catalog.json_build_object(
+  'matchedCount', pg_catalog.count(*)::text,
+  'terminatedCount',
+    pg_catalog.count(*) FILTER (WHERE terminated.ok)::text
+)::text
+FROM terminated;
+
+SELECT pg_catalog.json_build_object(
+  'remainingCount', pg_catalog.count(*)::text
+)::text
 FROM pg_catalog.pg_stat_activity AS activity
 WHERE activity.application_name = :'fence_application_name'::text
+  AND (
+    :'fence_backend_pid'::text = '0'::text
+    OR activity.pid = :'fence_backend_pid'::integer
+  )
   AND activity.pid <> pg_catalog.pg_backend_pid();`;
+
+const OBSERVE_WAITERS_CONTAINER_SCRIPT = [
+  "set -eu",
+  ': "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"',
+  ': "${POSTGRES_DB:?POSTGRES_DB is required}"',
+  'export PGPASSWORD="$POSTGRES_PASSWORD"',
+  "export PGOPTIONS='-c lock_timeout=5s -c statement_timeout=10s'",
+  "exec psql --host=localhost --username=supabase_admin " +
+    '--dbname="$POSTGRES_DB" --no-password --no-psqlrc ' +
+    "--set=ON_ERROR_STOP=1 --set=VERBOSITY=terse " +
+    "--quiet --tuples-only --no-align",
+].join("\n");
+
+const OBSERVE_WAITERS_SQL = String.raw`WITH waiters AS (
+  SELECT
+    activity.pid::text AS pid,
+    lock.database::text AS database_oid,
+    lock.relation::text AS relation_oid,
+    namespace.nspname AS schema_name,
+    relation.relname AS relation_name,
+    lock.mode,
+    lock.granted,
+    pg_catalog.floor(
+      EXTRACT(EPOCH FROM activity.query_start) * 1000::numeric
+    )::bigint::text AS query_started_at_epoch_ms,
+    ARRAY(
+      SELECT blocker::text
+      FROM pg_catalog.unnest(pg_catalog.pg_blocking_pids(activity.pid)) AS blocker
+      ORDER BY blocker
+    ) AS blocking_pids
+  FROM pg_catalog.pg_locks AS lock
+  JOIN pg_catalog.pg_stat_activity AS activity
+    ON activity.pid = lock.pid
+  JOIN pg_catalog.pg_class AS relation
+    ON relation.oid = lock.relation
+  JOIN pg_catalog.pg_namespace AS namespace
+    ON namespace.oid = relation.relnamespace
+  WHERE lock.locktype = 'relation'
+    AND lock.database = (
+      SELECT database.oid
+      FROM pg_catalog.pg_database AS database
+      WHERE database.datname = pg_catalog.current_database()
+    )
+    AND NOT lock.granted
+)
+SELECT pg_catalog.json_build_object(
+  'databaseOid', (
+    SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database()
+  ),
+  'clockEpochMilliseconds', pg_catalog.floor(
+    EXTRACT(EPOCH FROM pg_catalog.clock_timestamp()) * 1000::numeric
+  )::bigint::text,
+  'waiters', COALESCE(
+    (
+      SELECT pg_catalog.json_agg(
+        pg_catalog.json_build_object(
+          'pid', waiters.pid,
+          'databaseOid', waiters.database_oid,
+          'relationOid', waiters.relation_oid,
+          'schemaName', waiters.schema_name,
+          'relationName', waiters.relation_name,
+          'mode', waiters.mode,
+          'granted', waiters.granted,
+          'queryStartedAtEpochMilliseconds', waiters.query_started_at_epoch_ms,
+          'blockingPids', waiters.blocking_pids
+        )
+        ORDER BY waiters.pid::integer
+      )
+      FROM waiters
+    ),
+    '[]'::pg_catalog.json
+  )
+)::text;`;
+
+const CANCEL_WAITER_CONTAINER_SCRIPT = [
+  "set -eu",
+  ': "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"',
+  ': "${POSTGRES_DB:?POSTGRES_DB is required}"',
+  ': "${FAOLLA_WAITER_PID:?FAOLLA_WAITER_PID is required}"',
+  ': "${FAOLLA_DATABASE_OID:?FAOLLA_DATABASE_OID is required}"',
+  ': "${FAOLLA_RELATION_OID:?FAOLLA_RELATION_OID is required}"',
+  ': "${FAOLLA_SCHEMA_NAME:?FAOLLA_SCHEMA_NAME is required}"',
+  ': "${FAOLLA_RELATION_NAME:?FAOLLA_RELATION_NAME is required}"',
+  ': "${FAOLLA_QUERY_STARTED_AT_EPOCH_MS:?FAOLLA_QUERY_STARTED_AT_EPOCH_MS is required}"',
+  ': "${FAOLLA_FENCE_BACKEND_PID:?FAOLLA_FENCE_BACKEND_PID is required}"',
+  'export PGPASSWORD="$POSTGRES_PASSWORD"',
+  "export PGOPTIONS='-c lock_timeout=5s -c statement_timeout=10s'",
+  "exec psql --host=localhost --username=supabase_admin " +
+    '--dbname="$POSTGRES_DB" --no-password --no-psqlrc ' +
+    "--set=ON_ERROR_STOP=1 --set=VERBOSITY=terse " +
+    '--set=waiter_pid="$FAOLLA_WAITER_PID" ' +
+    '--set=database_oid="$FAOLLA_DATABASE_OID" ' +
+    '--set=relation_oid="$FAOLLA_RELATION_OID" ' +
+    '--set=schema_name="$FAOLLA_SCHEMA_NAME" ' +
+    '--set=relation_name="$FAOLLA_RELATION_NAME" ' +
+    '--set=query_started_at_epoch_ms="$FAOLLA_QUERY_STARTED_AT_EPOCH_MS" ' +
+    '--set=fence_backend_pid="$FAOLLA_FENCE_BACKEND_PID" ' +
+    "--quiet --tuples-only --no-align",
+].join("\n");
+
+const CANCEL_WAITER_SQL = String.raw`WITH candidate AS (
+  SELECT activity.pid
+  FROM pg_catalog.pg_locks AS lock
+  JOIN pg_catalog.pg_stat_activity AS activity
+    ON activity.pid = lock.pid
+  JOIN pg_catalog.pg_class AS relation
+    ON relation.oid = lock.relation
+  JOIN pg_catalog.pg_namespace AS namespace
+    ON namespace.oid = relation.relnamespace
+  WHERE activity.pid = :'waiter_pid'::integer
+    AND lock.database = :'database_oid'::oid
+    AND lock.relation = :'relation_oid'::oid
+    AND namespace.nspname = :'schema_name'::text
+    AND relation.relname = :'relation_name'::text
+    AND lock.mode = 'AccessShareLock'
+    AND NOT lock.granted
+    AND pg_catalog.floor(
+      EXTRACT(EPOCH FROM activity.query_start) * 1000::numeric
+    )::bigint >= :'query_started_at_epoch_ms'::bigint
+    AND pg_catalog.pg_blocking_pids(activity.pid)
+      = ARRAY[:'fence_backend_pid'::integer]::integer[]
+), cancelled AS (
+  SELECT pg_catalog.pg_cancel_backend(candidate.pid) AS ok
+  FROM candidate
+)
+SELECT CASE
+  WHEN pg_catalog.count(*) = 1 AND pg_catalog.bool_and(cancelled.ok)
+  THEN 'cancelled'
+  ELSE 'not_cancelled'
+END
+FROM cancelled;`;
 
 export class OrdinaryAccountCutoverReadinessFenceError extends Error {
   constructor(code) {
@@ -142,12 +314,16 @@ export function buildOrdinaryAccountCutoverReadinessFenceSql(
   return [
     `${reportQuery} AS report`,
     String.raw`\gset fence_`,
+    `SET LOCAL statement_timeout = '${seconds + DATABASE_TIMEOUT_MARGIN_SECONDS}s';`,
+    "LOCK TABLE auth.users IN ACCESS EXCLUSIVE MODE;",
+    "LOCK TABLE public.pages IN ACCESS EXCLUSIVE MODE;",
+    "LOCK TABLE public.faolla_schema_migrations IN ACCESS EXCLUSIVE MODE;",
     String.raw`SELECT '{"backendPid":"'
   || pg_catalog.pg_backend_pid()::text
   || '","report":'
   || :'fence_report'::text
   || '}' AS fence_result;`,
-    `SELECT pg_catalog.pg_sleep(GREATEST(0::double precision, ${seconds}::double precision - EXTRACT(EPOCH FROM (pg_catalog.clock_timestamp() - pg_catalog.transaction_timestamp()))));`,
+    `SELECT pg_catalog.pg_sleep(${seconds}::double precision);`,
     "ROLLBACK;",
   ].join("\n\n");
 }
@@ -277,22 +453,546 @@ function childCompletion(child) {
   });
 }
 
-export async function terminateOrdinaryAccountCutoverReadinessFenceSession(
-  input,
-) {
+async function runDockerWaiterObservation(input) {
   const child = spawnDocker(
     input.spawnProcess ?? spawn,
     dockerExecArguments(
       input.containerId,
-      { FAOLLA_FENCE_APPLICATION_NAME: input.applicationName },
+      {},
+      OBSERVE_WAITERS_CONTAINER_SCRIPT,
+    ),
+  );
+  let stdout = Buffer.alloc(0);
+  let tooLarge = false;
+  child.stdout.on("data", (chunk) => {
+    stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
+    if (stdout.length > MAX_OUTPUT_BYTES) {
+      tooLarge = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }
+  });
+  child.stderr?.resume();
+  const completion = childCompletion(child);
+  child.stdin.end(OBSERVE_WAITERS_SQL);
+  const result = await completion;
+  if (tooLarge || result.error || result.code !== 0) {
+    fail("readiness_fence_probe_observer_failed");
+  }
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(stdout));
+  } catch {
+    fail("readiness_fence_probe_observer_invalid");
+  }
+  return parseWaiterObservation(value);
+}
+
+async function cancelObservedWaiter(input) {
+  const environment = {
+    FAOLLA_WAITER_PID: input.waiter.pid,
+    FAOLLA_DATABASE_OID: input.waiter.databaseOid,
+    FAOLLA_RELATION_OID: input.waiter.relationOid,
+    FAOLLA_SCHEMA_NAME: input.waiter.schemaName,
+    FAOLLA_RELATION_NAME: input.waiter.relationName,
+    FAOLLA_QUERY_STARTED_AT_EPOCH_MS:
+      input.waiter.queryStartedAtEpochMilliseconds,
+    FAOLLA_FENCE_BACKEND_PID: input.fenceBackendPid,
+  };
+  const child = spawnDocker(
+    input.spawnProcess ?? spawn,
+    dockerExecArguments(
+      input.containerId,
+      environment,
+      CANCEL_WAITER_CONTAINER_SCRIPT,
+    ),
+  );
+  let stdout = Buffer.alloc(0);
+  child.stdout.on("data", (chunk) => {
+    stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
+    if (stdout.length > 1024) {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }
+  });
+  child.stderr?.resume();
+  const completion = childCompletion(child);
+  child.stdin.end(CANCEL_WAITER_SQL);
+  const result = await completion;
+  if (
+    result.error ||
+    result.code !== 0 ||
+    new TextDecoder("utf-8", { fatal: true }).decode(stdout).trim() !==
+      "cancelled"
+  ) {
+    fail("readiness_fence_probe_waiter_cancel_failed");
+  }
+}
+
+function parseWaiterObservation(value) {
+  const source = exactRecord(
+    value,
+    ["databaseOid", "clockEpochMilliseconds", "waiters"],
+    "readiness_fence_probe_observer_invalid",
+  );
+  if (
+    typeof source.databaseOid !== "string" ||
+    !POSITIVE_DECIMAL_PATTERN.test(source.databaseOid) ||
+    typeof source.clockEpochMilliseconds !== "string" ||
+    !EPOCH_MILLISECONDS_PATTERN.test(source.clockEpochMilliseconds) ||
+    !Array.isArray(source.waiters)
+  ) {
+    fail("readiness_fence_probe_observer_invalid");
+  }
+  const waiters = source.waiters.map((waiter) => {
+    const row = exactRecord(
+      waiter,
+      [
+        "pid",
+        "databaseOid",
+        "relationOid",
+        "schemaName",
+        "relationName",
+        "mode",
+        "granted",
+        "queryStartedAtEpochMilliseconds",
+        "blockingPids",
+      ],
+      "readiness_fence_probe_observer_invalid",
+    );
+    if (
+      typeof row.pid !== "string" ||
+      !PID_PATTERN.test(row.pid) ||
+      BigInt(row.pid) > MAX_PID ||
+      typeof row.databaseOid !== "string" ||
+      !POSITIVE_DECIMAL_PATTERN.test(row.databaseOid) ||
+      typeof row.relationOid !== "string" ||
+      !POSITIVE_DECIMAL_PATTERN.test(row.relationOid) ||
+      typeof row.schemaName !== "string" ||
+      row.schemaName.length === 0 ||
+      typeof row.relationName !== "string" ||
+      row.relationName.length === 0 ||
+      typeof row.mode !== "string" ||
+      typeof row.granted !== "boolean" ||
+      typeof row.queryStartedAtEpochMilliseconds !== "string" ||
+      !EPOCH_MILLISECONDS_PATTERN.test(row.queryStartedAtEpochMilliseconds) ||
+      !Array.isArray(row.blockingPids) ||
+      row.blockingPids.some(
+        (pid) =>
+          typeof pid !== "string" ||
+          !PID_PATTERN.test(pid) ||
+          BigInt(pid) > MAX_PID,
+      )
+    ) {
+      fail("readiness_fence_probe_observer_invalid");
+    }
+    return row;
+  });
+  return { ...source, waiters };
+}
+
+function requiredProbeEnvironment(environment) {
+  const internalUrl = environment.SUPABASE_INTERNAL_URL;
+  const publicUrl = environment.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = environment.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (
+    typeof internalUrl !== "string" ||
+    internalUrl.length === 0 ||
+    typeof publicUrl !== "string" ||
+    publicUrl.length === 0 ||
+    typeof anonKey !== "string" ||
+    anonKey.length === 0 ||
+    anonKey.length > 16 * 1024
+  ) {
+    fail("readiness_fence_probe_environment_invalid");
+  }
+  const parseBase = (raw) => {
+    let value;
+    try {
+      value = new URL(raw);
+    } catch {
+      fail("readiness_fence_probe_environment_invalid");
+    }
+    if (
+      (value.protocol !== "http:" && value.protocol !== "https:") ||
+      value.username !== "" ||
+      value.password !== "" ||
+      value.search !== "" ||
+      value.hash !== ""
+    ) {
+      fail("readiness_fence_probe_environment_invalid");
+    }
+    return value;
+  };
+  return {
+    internalUrl: parseBase(internalUrl),
+    publicUrl: parseBase(publicUrl),
+    anonKey,
+  };
+}
+
+function endpointUrl(base, relativePath) {
+  const prefix = base.href.endsWith("/") ? base.href : `${base.href}/`;
+  return new URL(relativePath, prefix);
+}
+
+function probeRequestSpecifications(environment, randomHex) {
+  const commonHeaders = {
+    accept: "application/json",
+    apikey: environment.anonKey,
+    authorization: `Bearer ${environment.anonKey}`,
+    "cache-control": "no-cache, no-store, max-age=0",
+    pragma: "no-cache",
+  };
+  const nonce = (byteLength) => {
+    const value = randomHex(byteLength);
+    if (
+      typeof value !== "string" ||
+      !new RegExp(`^[0-9a-f]{${byteLength * 2}}$`).test(value)
+    ) {
+      fail("readiness_fence_probe_random_invalid");
+    }
+    return value;
+  };
+  const createPair = (base, scope) => {
+    const baseEndpointSha256 = sha256Hex(Buffer.from(base.href, "utf8"));
+    const pageIdentity = nonce(16);
+    const pageUuid = [
+      pageIdentity.slice(0, 8),
+      pageIdentity.slice(8, 12),
+      pageIdentity.slice(12, 16),
+      pageIdentity.slice(16, 20),
+      pageIdentity.slice(20, 32),
+    ].join("-");
+    const emailNonce = nonce(16);
+    const passwordNonce = nonce(16);
+    return [
+      {
+        probe: `${scope}Rest`,
+        baseEndpointSha256,
+        url: endpointUrl(
+          base,
+          `rest/v1/pages?select=id&id=eq.${pageUuid}&limit=1`,
+        ),
+        schemaName: "public",
+        relationName: "pages",
+        request: {
+          method: "GET",
+          headers: commonHeaders,
+          cache: "no-store",
+          redirect: "error",
+        },
+      },
+      {
+        probe: `${scope}Auth`,
+        baseEndpointSha256,
+        url: endpointUrl(base, "auth/v1/token?grant_type=password"),
+        schemaName: "auth",
+        relationName: "users",
+        request: {
+          method: "POST",
+          headers: {
+            ...commonHeaders,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            email: `faolla-fence-${emailNonce}@invalid.example`,
+            password: `Ff1!${passwordNonce}`,
+          }),
+          cache: "no-store",
+          redirect: "error",
+        },
+      },
+    ];
+  };
+  return [
+    ...createPair(environment.internalUrl, "internal"),
+    ...createPair(environment.publicUrl, "public"),
+  ];
+}
+
+function validateCandidateWaiter(candidate, expected) {
+  if (
+    candidate.databaseOid !== expected.databaseOid ||
+    candidate.schemaName !== expected.schemaName ||
+    candidate.relationName !== expected.relationName ||
+    candidate.mode !== "AccessShareLock" ||
+    candidate.granted !== false ||
+    BigInt(candidate.queryStartedAtEpochMilliseconds) <
+      BigInt(expected.notBeforeEpochMilliseconds) ||
+    candidate.blockingPids.length !== 1 ||
+    candidate.blockingPids[0] !== expected.fenceBackendPid
+  ) {
+    fail("readiness_fence_probe_waiter_invalid");
+  }
+}
+
+export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+  input,
+  dependencies = {},
+) {
+  const source = exactRecord(
+    input,
+    ["containerId", "databaseOid", "fenceBackendPid"],
+    "readiness_fence_probe_input_invalid",
+  );
+  if (
+    typeof source.containerId !== "string" ||
+    !CONTAINER_ID_PATTERN.test(source.containerId) ||
+    typeof source.databaseOid !== "string" ||
+    !POSITIVE_DECIMAL_PATTERN.test(source.databaseOid) ||
+    typeof source.fenceBackendPid !== "string" ||
+    !PID_PATTERN.test(source.fenceBackendPid)
+  ) {
+    fail("readiness_fence_probe_input_invalid");
+  }
+  const environment = requiredProbeEnvironment(
+    dependencies.environment ?? process.env,
+  );
+  const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    fail("readiness_fence_probe_fetch_unavailable");
+  }
+  const randomHex =
+    dependencies.randomProbeHex ??
+    ((byteLength) => randomBytes(byteLength).toString("hex"));
+  const observeWaiters =
+    dependencies.observeWaiters ??
+    (() =>
+      runDockerWaiterObservation({
+        containerId: source.containerId,
+        spawnProcess: dependencies.spawnProcess,
+      }));
+  const cancelWaiter =
+    dependencies.cancelWaiter ??
+    ((waiter) =>
+      cancelObservedWaiter({
+        containerId: source.containerId,
+        fenceBackendPid: source.fenceBackendPid,
+        waiter,
+        spawnProcess: dependencies.spawnProcess,
+      }));
+  const poll =
+    dependencies.poll ??
+    (() =>
+      new Promise((resolve) => setTimeout(resolve, ENDPOINT_PROBE_POLL_MS)));
+  const maximumPolls = Math.ceil(
+    ENDPOINT_PROBE_TIMEOUT_MS / ENDPOINT_PROBE_POLL_MS,
+  );
+  const evidence = [];
+
+  for (const specification of probeRequestSpecifications(
+    environment,
+    randomHex,
+  )) {
+    const before = parseWaiterObservation(await observeWaiters());
+    if (before.databaseOid !== source.databaseOid) {
+      fail("readiness_fence_probe_database_mismatch");
+    }
+    const previousPids = new Set(before.waiters.map((waiter) => waiter.pid));
+    const abortController = new AbortController();
+    let requestSettled = false;
+    let requestOutcome = null;
+    const requestPromise = Promise.resolve()
+      .then(() =>
+        fetchImpl(specification.url, {
+          ...specification.request,
+          signal: abortController.signal,
+        }),
+      )
+      .then(
+        (response) => {
+          requestSettled = true;
+          requestOutcome = { response };
+        },
+        (error) => {
+          requestSettled = true;
+          requestOutcome = { error };
+        },
+      );
+    let accepted = null;
+    try {
+      for (let attempt = 0; attempt < maximumPolls; attempt += 1) {
+        if (requestSettled) {
+          fail("readiness_fence_probe_http_completed_early");
+        }
+        const observation = parseWaiterObservation(await observeWaiters());
+        if (observation.databaseOid !== source.databaseOid) {
+          fail("readiness_fence_probe_database_mismatch");
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        if (requestSettled) {
+          fail("readiness_fence_probe_http_completed_early");
+        }
+        const candidates = observation.waiters.filter(
+          (waiter) => !previousPids.has(waiter.pid),
+        );
+        if (candidates.length > 1) {
+          fail("readiness_fence_probe_waiter_count_invalid");
+        }
+        if (candidates.length === 1) {
+          validateCandidateWaiter(candidates[0], {
+            databaseOid: source.databaseOid,
+            schemaName: specification.schemaName,
+            relationName: specification.relationName,
+            fenceBackendPid: source.fenceBackendPid,
+            notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
+          });
+          accepted = candidates[0];
+          break;
+        }
+        await poll();
+      }
+      if (accepted === null) fail("readiness_fence_probe_waiter_missing");
+    } finally {
+      abortController.abort();
+      await requestPromise;
+    }
+    if (requestOutcome?.response) {
+      fail("readiness_fence_probe_http_completed_early");
+    }
+    if (
+      !requestOutcome?.error ||
+      (requestOutcome.error.name !== "AbortError" &&
+        requestOutcome.error.code !== "ABORT_ERR")
+    ) {
+      fail("readiness_fence_probe_abort_failed");
+    }
+    let disappeared = false;
+    let cancellationAttempted = false;
+    for (let attempt = 0; attempt < maximumPolls; attempt += 1) {
+      const observation = parseWaiterObservation(await observeWaiters());
+      if (observation.databaseOid !== source.databaseOid) {
+        fail("readiness_fence_probe_database_mismatch");
+      }
+      const newWaiters = observation.waiters.filter(
+        (waiter) => !previousPids.has(waiter.pid),
+      );
+      if (newWaiters.length === 0) {
+        disappeared = true;
+        break;
+      }
+      if (
+        newWaiters.length !== 1 ||
+        newWaiters[0].pid !== accepted.pid
+      ) {
+        fail("readiness_fence_probe_waiter_count_invalid");
+      }
+      validateCandidateWaiter(newWaiters[0], {
+        databaseOid: source.databaseOid,
+        schemaName: specification.schemaName,
+        relationName: specification.relationName,
+        fenceBackendPid: source.fenceBackendPid,
+        notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
+      });
+      if (!cancellationAttempted) {
+        await cancelWaiter(newWaiters[0]);
+        cancellationAttempted = true;
+      }
+      await poll();
+    }
+    if (!disappeared) fail("readiness_fence_probe_waiter_residual");
+    evidence.push({
+      probe: specification.probe,
+      baseEndpointSha256: specification.baseEndpointSha256,
+      endpointSha256: sha256Hex(Buffer.from(specification.url.href, "utf8")),
+      databaseOid: accepted.databaseOid,
+      relationOid: accepted.relationOid,
+      schemaName: accepted.schemaName,
+      relationName: accepted.relationName,
+      waiterPid: accepted.pid,
+      databaseClockEpochMilliseconds: before.clockEpochMilliseconds,
+      queryStartedAtEpochMilliseconds:
+        accepted.queryStartedAtEpochMilliseconds,
+      blockingPids: accepted.blockingPids,
+    });
+  }
+  return evidence;
+}
+
+export async function terminateOrdinaryAccountCutoverReadinessFenceSession(
+  input,
+) {
+  if (
+    typeof input.applicationName !== "string" ||
+    !/^faolla_readiness_fence_[1-9][0-9]*_[0-9a-f]{24}$/.test(
+      input.applicationName,
+    ) ||
+    (input.backendPid !== null &&
+      input.backendPid !== undefined &&
+      (!PID_PATTERN.test(input.backendPid) || BigInt(input.backendPid) > MAX_PID)) ||
+    typeof input.requireExactOne !== "boolean"
+  ) {
+    fail("readiness_fence_termination_input_invalid");
+  }
+  const child = spawnDocker(
+    input.spawnProcess ?? spawn,
+    dockerExecArguments(
+      input.containerId,
+      {
+        FAOLLA_FENCE_APPLICATION_NAME: input.applicationName,
+        FAOLLA_FENCE_BACKEND_PID: input.backendPid ?? "0",
+      },
       TERMINATE_PSQL_CONTAINER_SCRIPT,
     ),
   );
+  let stdout = Buffer.alloc(0);
+  child.stdout.on("data", (chunk) => {
+    stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
+    if (stdout.length > 4096) {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }
+  });
   child.stderr?.resume();
   const completion = childCompletion(child);
   child.stdin.end(TERMINATE_FENCE_SQL);
   const result = await completion;
-  if (result.error || result.code !== 0) {
+  if (result.error || result.code !== 0 || stdout.length > 4096) {
+    fail("readiness_fence_termination_failed");
+  }
+  const lines = new TextDecoder("utf-8", { fatal: true })
+    .decode(stdout)
+    .split(/\r?\n/)
+    .filter((line) => line !== "");
+  if (lines.length !== 2) fail("readiness_fence_termination_failed");
+  let counts;
+  let remaining;
+  try {
+    counts = exactRecord(
+      JSON.parse(lines[0]),
+      ["matchedCount", "terminatedCount"],
+      "readiness_fence_termination_failed",
+    );
+    remaining = exactRecord(
+      JSON.parse(lines[1]),
+      ["remainingCount"],
+      "readiness_fence_termination_failed",
+    );
+  } catch (error) {
+    if (error instanceof OrdinaryAccountCutoverReadinessFenceError) throw error;
+    fail("readiness_fence_termination_failed");
+  }
+  if (
+    !/^[0-9]+$/.test(counts.matchedCount) ||
+    !/^[0-9]+$/.test(counts.terminatedCount) ||
+    !/^[0-9]+$/.test(remaining.remainingCount)
+  ) {
+    fail("readiness_fence_termination_failed");
+  }
+  const matchedCount = Number(counts.matchedCount);
+  const terminatedCount = Number(counts.terminatedCount);
+  if (
+    !Number.isSafeInteger(matchedCount) ||
+    !Number.isSafeInteger(terminatedCount) ||
+    matchedCount > 1 ||
+    terminatedCount !== matchedCount ||
+    remaining.remainingCount !== "0" ||
+    (input.requireExactOne && matchedCount !== 1)
+  ) {
     fail("readiness_fence_termination_failed");
   }
 }
@@ -395,12 +1095,141 @@ export async function writeAtomicReadinessFenceMarker(
   }
 }
 
+async function assertReleaseRequestPathAbsent(releaseRequestPath) {
+  try {
+    await lstat(releaseRequestPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    fail("readiness_fence_release_request_path_invalid");
+  }
+  fail("readiness_fence_release_request_exists");
+}
+
+export async function readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
+  releaseRequestPath,
+  expected,
+  options = {},
+) {
+  const operations = options.fileOperations ?? { lstat, open };
+  let handle;
+  let bytes;
+  let identity;
+  try {
+    const before = await operations.lstat(releaseRequestPath, { bigint: true });
+    if (
+      before.isSymbolicLink() ||
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      before.size <= 0n ||
+      before.size > BigInt(MAX_RELEASE_REQUEST_BYTES) ||
+      (process.platform !== "win32" && (before.mode & 0o077n) !== 0n)
+    ) {
+      fail("readiness_fence_release_request_file_invalid");
+    }
+    handle = await operations.open(releaseRequestPath, "r");
+    const opened = await handle.stat({ bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      opened.size !== before.size ||
+      opened.nlink !== 1n
+    ) {
+      fail("readiness_fence_release_request_changed");
+    }
+    identity = { dev: String(opened.dev), ino: String(opened.ino) };
+    bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    const current = await operations.lstat(releaseRequestPath, {
+      bigint: true,
+    });
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      after.dev !== opened.dev ||
+      after.ino !== opened.ino ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino ||
+      after.size !== BigInt(bytes.length) ||
+      current.size !== after.size ||
+      after.mtimeNs !== opened.mtimeNs ||
+      current.mtimeNs !== after.mtimeNs ||
+      after.nlink !== 1n ||
+      current.nlink !== 1n
+    ) {
+      fail("readiness_fence_release_request_changed");
+    }
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    if (error instanceof OrdinaryAccountCutoverReadinessFenceError) throw error;
+    fail("readiness_fence_release_request_file_invalid");
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+  }
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    fail("readiness_fence_release_request_invalid");
+  }
+  const source = exactRecord(
+    value,
+    ["schemaVersion", "kind", "markerSha256", "releaseToken"],
+    "readiness_fence_release_request_invalid",
+  );
+  if (
+    source.schemaVersion !== 1 ||
+    source.kind !== RELEASE_REQUEST_KIND ||
+    typeof source.markerSha256 !== "string" ||
+    !SHA256_PATTERN.test(source.markerSha256) ||
+    typeof source.releaseToken !== "string" ||
+    !SHA256_PATTERN.test(source.releaseToken) ||
+    !bytes.equals(canonicalJsonBytes(source))
+  ) {
+    fail("readiness_fence_release_request_invalid");
+  }
+  const actualMarkerSha = Buffer.from(source.markerSha256, "ascii");
+  const expectedMarkerSha = Buffer.from(expected.markerSha256, "ascii");
+  const actualToken = Buffer.from(source.releaseToken, "ascii");
+  const expectedToken = Buffer.from(expected.releaseToken, "ascii");
+  if (
+    actualMarkerSha.length !== expectedMarkerSha.length ||
+    actualToken.length !== expectedToken.length ||
+    !timingSafeEqual(actualMarkerSha, expectedMarkerSha) ||
+    !timingSafeEqual(actualToken, expectedToken)
+  ) {
+    fail("readiness_fence_release_request_binding_mismatch");
+  }
+  return { bytes, source, identity };
+}
+
+async function waitForAuthorizedReleaseRequest(
+  releaseRequestPath,
+  expected,
+  signal,
+  dependencies,
+) {
+  const poll =
+    dependencies.releaseRequestPoll ??
+    (() => new Promise((resolve) => setTimeout(resolve, 50)));
+  while (!signal.aborted) {
+    const request =
+      await readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
+        releaseRequestPath,
+        expected,
+        { fileOperations: dependencies.releaseRequestFileOperations },
+      );
+    if (request !== null) return request;
+    await poll();
+  }
+  fail("readiness_fence_release_wait_cancelled");
+}
+
 async function removeReadinessFenceMarker(markerPath, identity) {
   let current;
   try {
     current = await lstat(markerPath);
   } catch (error) {
-    if (error?.code === "ENOENT") return;
     fail("readiness_fence_marker_cleanup_failed");
   }
   if (
@@ -418,7 +1247,101 @@ async function removeReadinessFenceMarker(markerPath, identity) {
   }
 }
 
-function markerBytes(attestation, validation, backendPid, startedAt) {
+async function removeBoundReleaseRequest(releaseRequestPath, identity) {
+  let current;
+  try {
+    current = await lstat(releaseRequestPath, { bigint: true });
+  } catch {
+    fail("readiness_fence_release_request_cleanup_failed");
+  }
+  if (
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    String(current.dev) !== identity.dev ||
+    String(current.ino) !== identity.ino
+  ) {
+    fail("readiness_fence_release_request_cleanup_failed");
+  }
+  try {
+    await unlink(releaseRequestPath);
+  } catch {
+    fail("readiness_fence_release_request_cleanup_failed");
+  }
+}
+
+function validateEndpointEvidence(value) {
+  const expectedProbes = [
+    ["internalRest", "public", "pages"],
+    ["internalAuth", "auth", "users"],
+    ["publicRest", "public", "pages"],
+    ["publicAuth", "auth", "users"],
+  ];
+  if (!Array.isArray(value) || value.length !== expectedProbes.length) {
+    fail("readiness_fence_probe_evidence_invalid");
+  }
+  return value.map((entry, index) => {
+    const source = exactRecord(
+      entry,
+      [
+        "probe",
+        "baseEndpointSha256",
+        "endpointSha256",
+        "databaseOid",
+        "relationOid",
+        "schemaName",
+        "relationName",
+        "waiterPid",
+        "databaseClockEpochMilliseconds",
+        "queryStartedAtEpochMilliseconds",
+        "blockingPids",
+      ],
+      "readiness_fence_probe_evidence_invalid",
+    );
+    const [probe, schemaName, relationName] = expectedProbes[index];
+    if (
+      source.probe !== probe ||
+      source.schemaName !== schemaName ||
+      source.relationName !== relationName ||
+      typeof source.baseEndpointSha256 !== "string" ||
+      !SHA256_PATTERN.test(source.baseEndpointSha256) ||
+      typeof source.endpointSha256 !== "string" ||
+      !SHA256_PATTERN.test(source.endpointSha256) ||
+      typeof source.databaseOid !== "string" ||
+      !POSITIVE_DECIMAL_PATTERN.test(source.databaseOid) ||
+      typeof source.relationOid !== "string" ||
+      !POSITIVE_DECIMAL_PATTERN.test(source.relationOid) ||
+      typeof source.waiterPid !== "string" ||
+      !PID_PATTERN.test(source.waiterPid) ||
+      typeof source.databaseClockEpochMilliseconds !== "string" ||
+      !EPOCH_MILLISECONDS_PATTERN.test(
+        source.databaseClockEpochMilliseconds,
+      ) ||
+      typeof source.queryStartedAtEpochMilliseconds !== "string" ||
+      !EPOCH_MILLISECONDS_PATTERN.test(
+        source.queryStartedAtEpochMilliseconds,
+      ) ||
+      BigInt(source.queryStartedAtEpochMilliseconds) <
+        BigInt(source.databaseClockEpochMilliseconds) ||
+      !Array.isArray(source.blockingPids) ||
+      source.blockingPids.length !== 1 ||
+      !PID_PATTERN.test(source.blockingPids[0])
+    ) {
+      fail("readiness_fence_probe_evidence_invalid");
+    }
+    return source;
+  });
+}
+
+function markerBytes(
+  attestation,
+  validation,
+  backendPid,
+  startedAt,
+  applicationName,
+  releaseToken,
+  releaseRequestPath,
+  endpointEvidence,
+) {
   return canonicalJsonBytes({
     schemaVersion: 1,
     kind: FENCE_KIND,
@@ -429,7 +1352,15 @@ function markerBytes(attestation, validation, backendPid, startedAt) {
     readinessArtifactDigest: attestation.readinessArtifact.digest,
     attestationSha256: validation.sha256,
     database: attestation.database,
+    holderPid: String(process.pid),
     backendPid,
+    applicationName,
+    releaseToken,
+    releaseTokenSha256: sha256Hex(Buffer.from(releaseToken, "ascii")),
+    releaseRequestPathSha256: sha256Hex(
+      Buffer.from(releaseRequestPath, "utf8"),
+    ),
+    endpointEvidence,
     startedAt,
     validUntil: attestation.validUntil,
   });
@@ -448,6 +1379,7 @@ function normalizeCoreInput(input) {
       "expectedContainerId",
       "minimumRemainingTtlSeconds",
       "markerPath",
+      "releaseRequestPath",
       "maximumHoldSeconds",
     ],
     "readiness_fence_input_invalid",
@@ -462,7 +1394,10 @@ function normalizeCoreInput(input) {
     MAX_HOLD_SECONDS,
     "readiness_fence_max_hold_seconds_invalid",
   );
-  if (minimumRemainingTtlSeconds < maximumHoldSeconds) {
+  if (
+    minimumRemainingTtlSeconds <
+    maximumHoldSeconds + MINIMUM_ROLLBACK_MARGIN_SECONDS
+  ) {
     fail("readiness_fence_ttl_below_hold");
   }
   if (
@@ -473,11 +1408,17 @@ function normalizeCoreInput(input) {
   }
   const attestationPath = path.resolve(source.attestationPath);
   const markerPath = path.resolve(source.markerPath);
-  if (attestationPath === markerPath) fail("readiness_fence_path_reused");
+  const releaseRequestPath = path.resolve(source.releaseRequestPath);
+  if (
+    new Set([attestationPath, markerPath, releaseRequestPath]).size !== 3
+  ) {
+    fail("readiness_fence_path_reused");
+  }
   return {
     ...source,
     attestationPath,
     markerPath,
+    releaseRequestPath,
     minimumRemainingTtlSeconds,
     maximumHoldSeconds,
   };
@@ -492,6 +1433,7 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
     fail("readiness_fence_now_invalid");
   }
+  const runtimeEnvironment = dependencies.environment ?? process.env;
   const validation = await readCanonicalAttestation(
     normalized.attestationPath,
     {
@@ -516,10 +1458,22 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   if (attestation.backup.attestation.run.event !== "workflow_dispatch") {
     fail("readiness_fence_backup_event_invalid");
   }
+  const releaseToken = runtimeEnvironment.FAOLLA_READINESS_FENCE_RELEASE_TOKEN;
+  if (
+    typeof releaseToken !== "string" ||
+    !SHA256_PATTERN.test(releaseToken)
+  ) {
+    fail("readiness_fence_release_token_invalid");
+  }
+  requiredProbeEnvironment(runtimeEnvironment);
+  await assertReleaseRequestPathAbsent(normalized.releaseRequestPath);
 
   const applicationName =
     `faolla_readiness_fence_${process.pid}_` +
     (dependencies.randomHex?.() ?? randomBytes(12).toString("hex"));
+  if (!/^faolla_readiness_fence_[1-9][0-9]*_[0-9a-f]{24}$/.test(applicationName)) {
+    fail("readiness_fence_application_name_invalid");
+  }
   const environment = expectedEnvironment(attestation, applicationName);
   const spawnProcess = dependencies.spawnProcess ?? spawn;
   const child = spawnDocker(
@@ -538,8 +1492,12 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   let terminalCode = null;
   let markerIdentity = null;
   let markerResult = null;
+  let releaseRequestIdentity = null;
+  let backendPid = null;
+  let authorizedRelease = false;
   let terminationPromise = null;
   let forceTimer = null;
+  const releaseWaitAbort = new AbortController();
   const scheduleTimer = dependencies.setTimer ?? setTimeout;
   const cancelTimer = dependencies.clearTimer ?? clearTimeout;
   const signalSource = dependencies.signalSource ?? process;
@@ -552,23 +1510,48 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
         ...terminationInput,
         spawnProcess,
       }));
+  const probeEndpoints =
+    dependencies.probeEndpoints ??
+    ((probeInput) =>
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(probeInput, {
+        environment: runtimeEnvironment,
+        spawnProcess,
+      }));
+  const waitForReleaseRequest =
+    dependencies.waitForReleaseRequest ??
+    ((requestInput) =>
+      waitForAuthorizedReleaseRequest(
+        normalized.releaseRequestPath,
+        requestInput,
+        releaseWaitAbort.signal,
+        dependencies,
+      ));
 
-  const stop = (code) => {
-    if (terminalCode === null) terminalCode = code;
+  const stop = (code, options = {}) => {
+    if (code !== null && terminalCode === null) terminalCode = code;
+    if (options.authorized === true) authorizedRelease = true;
+    releaseWaitAbort.abort();
     if (terminationPromise === null) {
-      try {
-        child.kill("SIGTERM");
-      } catch {}
-      terminationPromise = Promise.resolve(
-        terminateSession({
-          containerId: normalized.expectedContainerId,
-          applicationName,
-        }),
-      ).catch(() => {
-        if (terminalCode === null) {
+      if (!options.authorized) {
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+      }
+      terminationPromise = Promise.resolve()
+        .then(() =>
+          terminateSession({
+            containerId: normalized.expectedContainerId,
+            applicationName,
+            backendPid,
+            requireExactOne: options.authorized === true,
+          }),
+        )
+        .catch(() => {
           terminalCode = "readiness_fence_termination_failed";
-        }
-      });
+          try {
+            child.kill("SIGTERM");
+          } catch {}
+        });
       forceTimer = scheduleTimer(() => {
         try {
           child.kill("SIGKILL");
@@ -576,6 +1559,20 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
       }, 5_000);
     }
   };
+
+  let timeoutTimer = scheduleTimer(
+    () => stop("readiness_fence_startup_timeout"),
+    STARTUP_WATCHDOG_SECONDS * 1000,
+  );
+  completion.then((result) => {
+    if (!authorizedRelease && terminalCode === null) {
+      terminalCode =
+        result.error || result.code !== 0
+          ? "readiness_fence_child_failed"
+          : "readiness_fence_ended_before_release";
+      releaseWaitAbort.abort();
+    }
+  });
 
   let lineQueue = Promise.resolve();
   const processLine = async (line) => {
@@ -585,7 +1582,26 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
       fail("readiness_fence_output_invalid");
     }
     const parsed = parseFenceOutputLine(line);
+    backendPid = parsed.backendPid;
     validateLiveReport(parsed.report, attestation);
+    const endpointEvidence = validateEndpointEvidence(
+      await probeEndpoints({
+        containerId: normalized.expectedContainerId,
+        databaseOid: attestation.database.dbOid,
+        fenceBackendPid: parsed.backendPid,
+      }),
+    );
+    if (
+      endpointEvidence.some(
+        (entry) =>
+          entry.databaseOid !== attestation.database.dbOid ||
+          entry.blockingPids[0] !== parsed.backendPid,
+      )
+    ) {
+      fail("readiness_fence_probe_evidence_invalid");
+    }
+    if (terminalCode !== null) fail(terminalCode);
+    await assertReleaseRequestPathAbsent(normalized.releaseRequestPath);
     const startedAt = new Date(
       dependencies.clockMs?.() ?? Date.now(),
     ).toISOString();
@@ -594,6 +1610,10 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
       validation,
       parsed.backendPid,
       startedAt,
+      applicationName,
+      releaseToken,
+      normalized.releaseRequestPath,
+      endpointEvidence,
     );
     markerIdentity = await markerWriter(normalized.markerPath, bytes);
     markerResult = {
@@ -601,6 +1621,25 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
       markerSha256: sha256Hex(bytes),
       markerSizeBytes: String(bytes.length),
     };
+    const fullSql = buildOrdinaryAccountCutoverReadinessFenceSql(
+      String(normalized.maximumHoldSeconds),
+    );
+    const holdBoundary = "\n\nSELECT pg_catalog.pg_sleep(";
+    const holdIndex = fullSql.indexOf(holdBoundary);
+    if (holdIndex <= 0) fail("readiness_fence_sql_source_invalid");
+    child.stdin.end(fullSql.slice(holdIndex + 2));
+    cancelTimer(timeoutTimer);
+    timeoutTimer = scheduleTimer(
+      () => stop("readiness_fence_timeout"),
+      (normalized.maximumHoldSeconds + WATCHDOG_MARGIN_SECONDS) * 1000,
+    );
+    const releaseRequest = await waitForReleaseRequest({
+      markerSha256: markerResult.markerSha256,
+      releaseToken,
+    });
+    releaseRequestIdentity = releaseRequest?.identity ?? null;
+    if (terminalCode !== null) fail(terminalCode);
+    stop(null, { authorized: true });
   };
   const queueLine = (line) => {
     lineQueue = lineQueue
@@ -643,23 +1682,24 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   const interrupt = () => stop("readiness_fence_interrupted");
   signalSource.on("SIGTERM", interrupt);
   signalSource.on("SIGINT", interrupt);
-  const timeoutTimer = scheduleTimer(
-    () => stop("readiness_fence_timeout"),
-    normalized.maximumHoldSeconds * 1000,
-  );
 
   try {
-    child.stdin.end(
-      buildOrdinaryAccountCutoverReadinessFenceSql(
-        String(normalized.maximumHoldSeconds),
-      ),
+    const fullSql = buildOrdinaryAccountCutoverReadinessFenceSql(
+      String(normalized.maximumHoldSeconds),
     );
+    const holdBoundary = "\n\nSELECT pg_catalog.pg_sleep(";
+    const holdIndex = fullSql.indexOf(holdBoundary);
+    if (holdIndex <= 0) fail("readiness_fence_sql_source_invalid");
+    child.stdin.write(fullSql.slice(0, holdIndex + 2));
     const childResult = await completion;
     await lineQueue;
     if (terminationPromise) await terminationPromise;
     if (terminalCode === null) {
-      if (childResult.error || childResult.code !== 0) {
-        terminalCode = "readiness_fence_child_failed";
+      if (!authorizedRelease) {
+        terminalCode =
+          childResult.error || childResult.code !== 0
+            ? "readiness_fence_child_failed"
+            : "readiness_fence_ended_before_release";
       } else if (!markerIdentity || !markerResult) {
         terminalCode = "readiness_fence_output_missing";
       }
@@ -671,9 +1711,28 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
     if (forceTimer !== null) cancelTimer(forceTimer);
     signalSource.removeListener("SIGTERM", interrupt);
     signalSource.removeListener("SIGINT", interrupt);
-    if (markerIdentity !== null) {
-      await removeReadinessFenceMarker(normalized.markerPath, markerIdentity);
+    let cleanupError = null;
+    if (releaseRequestIdentity !== null) {
+      try {
+        await removeBoundReleaseRequest(
+          normalized.releaseRequestPath,
+          releaseRequestIdentity,
+        );
+      } catch (error) {
+        cleanupError = error;
+      }
     }
+    if (markerIdentity !== null) {
+      try {
+        await removeReadinessFenceMarker(
+          normalized.markerPath,
+          markerIdentity,
+        );
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    }
+    if (cleanupError) throw cleanupError;
   }
 }
 
@@ -689,6 +1748,7 @@ function parseCliArguments(argv) {
     "--expected-container-id",
     "--minimum-remaining-ttl-seconds",
     "--ready-marker",
+    "--release-request",
     "--maximum-hold-seconds",
   ];
   const allowed = new Set(flags);
@@ -714,6 +1774,7 @@ function parseCliArguments(argv) {
     expectedContainerId: values.get("--expected-container-id"),
     minimumRemainingTtlSeconds: values.get("--minimum-remaining-ttl-seconds"),
     markerPath: values.get("--ready-marker"),
+    releaseRequestPath: values.get("--release-request"),
     maximumHoldSeconds: values.get("--maximum-hold-seconds"),
   };
 }
