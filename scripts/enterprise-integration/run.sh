@@ -78,6 +78,55 @@ expect_sql_file_error_as_role() {
   fi
 }
 
+HOSTED_POSTGRES_CONTRACT_SQL='alter role postgres nosuperuser inherit createdb createrole login replication bypassrls;'
+
+run_merchant_acl_040_with_hosted_postgres() {
+  local file="$1"
+  run_psql \
+    --command "begin; set role supabase_admin; ${HOSTED_POSTGRES_CONTRACT_SQL}" \
+    --file "${file}" \
+    --command "alter role postgres superuser;"
+}
+
+expect_merchant_acl_040_error() {
+  local file="$1"
+  local expected_message="$2"
+  local output
+  echo "[enterprise-integration] expecting ${expected_message} from ${file#"${REPOSITORY_ROOT}/"} with hosted postgres role contract"
+  if output="$(
+    run_psql \
+      --command "begin; set role supabase_admin; ${HOSTED_POSTGRES_CONTRACT_SQL}" \
+      --file "${file}" 2>&1
+  )"; then
+    echo "Expected migration failure containing ${expected_message}" >&2
+    exit 1
+  fi
+  if [[ "${output}" != *"${expected_message}"* ]]; then
+    echo "Expected migration failure containing ${expected_message}, got:" >&2
+    echo "${output}" >&2
+    exit 1
+  fi
+}
+
+expect_merchant_acl_040_postgres_role_error() {
+  local file="$1"
+  local role_mutation="$2"
+  local output
+  if output="$(
+    run_psql \
+      --command "begin; set role supabase_admin; ${HOSTED_POSTGRES_CONTRACT_SQL} alter role postgres ${role_mutation};" \
+      --file "${file}" 2>&1
+  )"; then
+    echo "040 accepted postgres role drift: ${role_mutation}" >&2
+    exit 1
+  fi
+  if [[ "${output}" != *'merchant_acl_contract_hardening_prerequisite_missing'* ]]; then
+    echo "Expected merchant_acl_contract_hardening_prerequisite_missing for ${role_mutation}, got:" >&2
+    echo "${output}" >&2
+    exit 1
+  fi
+}
+
 wait_for_sql_true() {
   local label="$1"
   local query="$2"
@@ -1110,37 +1159,29 @@ for migration in "${enterprise_migrations[@]}"; do
     echo '[enterprise-integration] freezing the observed production merchant ACL prestate'
     seed_merchant_acl_production_prestate
 
-    echo '[enterprise-integration] rejecting a non-superuser postgres prerequisite'
-    merchant_acl_postgres_prerequisite_output=''
-    if merchant_acl_postgres_prerequisite_output="$(
-      run_psql \
-        --command \
-        "begin; set role supabase_admin; alter role postgres nosuperuser bypassrls;" \
-        --file "${migration}" \
-        2>&1
-    )"; then
-      echo '040 accepted a non-superuser postgres prerequisite' >&2
-      exit 1
-    fi
-    if [[ "${merchant_acl_postgres_prerequisite_output}" != \
-      *'merchant_acl_contract_hardening_prerequisite_missing'* ]]; then
-      echo 'Expected merchant_acl_contract_hardening_prerequisite_missing from 040, got:' >&2
-      echo "${merchant_acl_postgres_prerequisite_output}" >&2
-      exit 1
-    fi
+    echo '[enterprise-integration] rejecting superuser postgres drift'
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_prerequisite_missing'
+
+    echo '[enterprise-integration] rejecting every missing hosted postgres capability'
+    for postgres_role_mutation in \
+      noinherit nocreatedb nocreaterole nologin noreplication nobypassrls; do
+      expect_merchant_acl_040_postgres_role_error \
+        "${migration}" "${postgres_role_mutation}"
+    done
     merchant_acl_postgres_prerequisite_state="$(
       run_psql --tuples-only --no-align --command \
         "with merchant as (select relowner, relacl from pg_catalog.pg_class where oid = 'public.merchants'::regclass), actual as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(coalesce(merchant.relacl, pg_catalog.acldefault('r', merchant.relowner))) as acl), expected as (select merchant.relowner as grantor, principal.oid as grantee, privilege.privilege_type, false as is_grantable from merchant cross join lateral (values (merchant.relowner), (to_regrole('postgres')), (to_regrole('anon')), (to_regrole('authenticated')), (to_regrole('service_role'))) as principal(oid) cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']::text[]) as privilege(privilege_type)), delta as ((select * from actual except all select * from expected) union all (select * from expected except all select * from actual)) select (select role_metadata.rolsuper from pg_catalog.pg_roles as role_metadata where role_metadata.rolname = 'postgres') and (select count(*) = 35 from actual) and not exists (select 1 from delta) and not exists (select 1 from public.faolla_schema_migrations where version = 202608190040);"
     )"
     if [[ "${merchant_acl_postgres_prerequisite_state}" != 't' ]]; then
-      echo '040 non-superuser postgres rejection did not roll back role, ACL35, and registry state' >&2
+      echo '040 postgres role drift rejection did not roll back role, ACL35, and registry state' >&2
       exit 1
     fi
 
     echo '[enterprise-integration] rejecting a conflicting 040 registry row before ACL mutation'
     run_psql --command \
       "insert into public.faolla_schema_migrations(version, name) values (202608190040, 'redteam_wrong_040');"
-    expect_sql_file_error_as_role "${migration}" supabase_admin \
+    expect_merchant_acl_040_error "${migration}" \
       'merchant_acl_contract_hardening_registry_conflict'
     merchant_acl_registry_conflict_state="$(
       run_psql --tuples-only --no-align --command \
@@ -1156,7 +1197,7 @@ for migration in "${enterprise_migrations[@]}"; do
     echo '[enterprise-integration] rejecting merchant ACL unknown-principal drift'
     run_psql --command \
       "set role supabase_admin; grant select on table public.merchants to redteam_custom_api; reset role;"
-    expect_sql_file_error_as_role "${migration}" supabase_admin \
+    expect_merchant_acl_040_error "${migration}" \
       'merchant_acl_contract_hardening_acl_prestate_invalid'
     merchant_acl_unknown_state="$(
       run_psql --tuples-only --no-align --command \
@@ -1172,7 +1213,7 @@ for migration in "${enterprise_migrations[@]}"; do
     echo '[enterprise-integration] rejecting merchant ACL delegated grant drift'
     run_psql --command \
       "set role supabase_admin; grant select on table public.merchants to redteam_custom_api with grant option; set role redteam_custom_api; grant select on table public.merchants to redteam_custom_child; reset role;"
-    expect_sql_file_error_as_role "${migration}" supabase_admin \
+    expect_merchant_acl_040_error "${migration}" \
       'merchant_acl_contract_hardening_acl_prestate_invalid'
     merchant_acl_delegated_state="$(
       run_psql --tuples-only --no-align --command \
@@ -1188,7 +1229,7 @@ for migration in "${enterprise_migrations[@]}"; do
     echo '[enterprise-integration] rejecting merchant column ACL drift'
     run_psql --command \
       "set role supabase_admin; grant update(name) on table public.merchants to authenticated; reset role;"
-    expect_sql_file_error_as_role "${migration}" supabase_admin \
+    expect_merchant_acl_040_error "${migration}" \
       'merchant_acl_contract_hardening_object_contract_invalid'
     merchant_column_acl_state="$(
       run_psql --tuples-only --no-align --command \
@@ -1204,7 +1245,7 @@ for migration in "${enterprise_migrations[@]}"; do
     echo '[enterprise-integration] rejecting merchant owner drift'
     run_psql --command \
       "alter table public.merchants owner to postgres;"
-    expect_sql_file_error_as_role "${migration}" supabase_admin \
+    expect_merchant_acl_040_error "${migration}" \
       'merchant_acl_contract_hardening_object_contract_invalid'
     merchant_owner_drift_state="$(
       run_psql --tuples-only --no-align --command \
@@ -1219,7 +1260,7 @@ for migration in "${enterprise_migrations[@]}"; do
     echo '[enterprise-integration] rejecting merchant policy drift'
     run_psql --command \
       "alter policy merchants_system_site_principal_isolation on public.merchants using (id <> 'site-main' and id <> 'redteam-040') with check (id <> 'site-main' and id <> 'redteam-040');"
-    expect_sql_file_error_as_role "${migration}" supabase_admin \
+    expect_merchant_acl_040_error "${migration}" \
       'merchant_acl_contract_hardening_object_contract_invalid'
     merchant_policy_drift_state="$(
       run_psql --tuples-only --no-align --command \
@@ -1232,15 +1273,15 @@ for migration in "${enterprise_migrations[@]}"; do
     run_psql --command \
       "alter policy merchants_system_site_principal_isolation on public.merchants using (id <> 'site-main') with check (id <> 'site-main');"
 
-    echo '[enterprise-integration] applying the exact production merchant ACL repair'
+    echo '[enterprise-integration] accepting the hosted nosuperuser postgres prerequisite'
     PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" \
-      run_sql_file_as_role "${migration}" supabase_admin
+      run_merchant_acl_040_with_hosted_postgres "${migration}"
     merchant_acl_target_state="$(
       run_psql --tuples-only --no-align --command \
-        "with merchant as (select relowner, relacl from pg_catalog.pg_class where oid = 'public.merchants'::regclass), actual as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(coalesce(merchant.relacl, pg_catalog.acldefault('r', merchant.relowner))) as acl), owner_acl as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(pg_catalog.acldefault('r', merchant.relowner)) as acl), expected as (select * from owner_acl union all select merchant.relowner, to_regrole('authenticated'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE']::text[]) as privilege(privilege_type) union all select merchant.relowner, to_regrole('service_role'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']::text[]) as privilege(privilege_type)), delta as ((select * from actual except all select * from expected) union all (select * from expected except all select * from actual)) select (select count(*) = 14 from actual) and not exists (select 1 from delta) and exists (select 1 from public.faolla_schema_migrations where version = 202608190040 and name = 'merchant_acl_contract_hardening');"
+        "with merchant as (select relowner, relacl from pg_catalog.pg_class where oid = 'public.merchants'::regclass), actual as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(coalesce(merchant.relacl, pg_catalog.acldefault('r', merchant.relowner))) as acl), owner_acl as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(pg_catalog.acldefault('r', merchant.relowner)) as acl), expected as (select * from owner_acl union all select merchant.relowner, to_regrole('postgres'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']::text[]) as privilege(privilege_type) union all select merchant.relowner, to_regrole('authenticated'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE']::text[]) as privilege(privilege_type) union all select merchant.relowner, to_regrole('service_role'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']::text[]) as privilege(privilege_type)), delta as ((select * from actual except all select * from expected) union all (select * from expected except all select * from actual)) select (select count(*) = 21 from actual) and not exists (select 1 from delta) and exists (select 1 from public.faolla_schema_migrations where version = 202608190040 and name = 'merchant_acl_contract_hardening');"
     )"
     if [[ "${merchant_acl_target_state}" != 't' ]]; then
-      echo '040 did not produce the exact 14-entry merchant ACL target' >&2
+      echo '040 did not produce the exact 21-entry merchant ACL target' >&2
       exit 1
     fi
 
@@ -1249,7 +1290,7 @@ for migration in "${enterprise_migrations[@]}"; do
       run_psql --tuples-only --no-align --command \
         "select merchant.relacl::text || '|' || migration.applied_at::text from pg_catalog.pg_class as merchant cross join public.faolla_schema_migrations as migration where merchant.oid = 'public.merchants'::regclass and migration.version = 202608190040 and migration.name = 'merchant_acl_contract_hardening';"
     )"
-    run_sql_file_as_role "${migration}" supabase_admin
+    run_merchant_acl_040_with_hosted_postgres "${migration}"
     merchant_acl_replay_after="$(
       run_psql --tuples-only --no-align --command \
         "select merchant.relacl::text || '|' || migration.applied_at::text from pg_catalog.pg_class as merchant cross join public.faolla_schema_migrations as migration where merchant.oid = 'public.merchants'::regclass and migration.version = 202608190040 and migration.name = 'merchant_acl_contract_hardening';"

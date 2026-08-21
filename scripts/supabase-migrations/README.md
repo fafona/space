@@ -158,14 +158,19 @@ unprivileged and is treated as a trusted CLI login whose only membership is
 must compare this fail-closed catalog preflight with its read-only role snapshot
 before apply. It changes no function body or business result.
 
-Migration `202608190040_merchant_acl_contract_hardening.sql` removes the
-hosted platform's broad direct grants from `public.merchants` and freezes the
-ordinary-account object contract at 14 raw ACL entries: the seven owner
-privileges, authenticated `SELECT`/`INSERT`/`UPDATE`, and service-role
+Migration `202608190040_merchant_acl_contract_hardening.sql` removes only the
+unneeded hosted broad grants from `public.merchants` and freezes the
+ordinary-account object contract at 21 raw ACL entries: the seven owner
+privileges, the hosted `postgres` role's seven direct management privileges,
+authenticated `SELECT`/`INSERT`/`UPDATE`, and service-role
 `SELECT`/`INSERT`/`UPDATE`/`DELETE`, all issued by the owner without grant
-options. `postgres` and `anon` retain no direct tuple, and no non-owner receives
-relation-maintenance privileges. The migration accepts only the observed
-35-entry hosted production prestate or that exact target. Before mutation it
+options. `anon` retains no direct tuple, and browser/service roles receive no
+relation-maintenance privileges. Preserving the direct `postgres` tuple is
+required because the hosted role is deliberately `NOSUPERUSER`; `BYPASSRLS`
+and `pg_read_all_data` do not replace its write and relation-maintenance ACLs.
+The migration accepts only the observed 35-entry hosted production prestate or
+that exact target and requires the hosted seven-bit `postgres` role contract
+before and after catalog locking. Before mutation it
 also requires the exact owner, persistent RLS relation shape, five policy
 definitions and hashes, absence of column ACLs, rules, and inheritance, and
 the exact 035-039 registry prerequisites. Unknown or delegated grants and any
@@ -215,7 +220,7 @@ applies through the newest migration in the deployed revision:
    verified `supabase_admin`, and re-probe all 16 RPCs (including all 15
    historically over-granted functions and the already narrow health RPC).
 5. With the production merchant object diagnostic frozen, apply merchant ACL
-   hardening 040 as the verified `supabase_admin`; require the exact 14-entry
+   hardening 040 as the verified `supabase_admin`; require the exact 21-entry
    target and a no-op replay before rerunning cutover readiness.
 6. Perform the separately supervised legacy personal recovery through the
    observer/create-only path without any direct protected-table read grant.

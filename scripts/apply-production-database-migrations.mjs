@@ -65,6 +65,70 @@ const MIGRATION_ADVISORY_LOCK_SQL =
 const MIGRATION_ADVISORY_UNLOCK_SQL =
   "SELECT pg_advisory_unlock(20260731, 1);";
 
+const MERCHANT_ACL_MIGRATION_FILE =
+  "202608190040_merchant_acl_contract_hardening.sql";
+const MERCHANT_ACL_DATABASE_ERROR_CODES = new Set([
+  "merchant_acl_contract_hardening_untrusted_migrator",
+  "merchant_acl_contract_hardening_prerequisite_missing",
+  "merchant_acl_contract_hardening_registry_conflict",
+  "merchant_acl_contract_hardening_registry_invalid",
+  "merchant_acl_contract_hardening_object_contract_invalid",
+  "merchant_acl_contract_hardening_acl_prestate_invalid",
+  "merchant_acl_contract_hardening_registered_state_invalid",
+  "merchant_acl_contract_hardening_postcondition_failed",
+  "merchant_acl_contract_hardening_registry_postcondition_failed",
+]);
+const DATABASE_FAILURE_DIAGNOSTIC_KEYS = [
+  "databaseErrorCode",
+  "fileName",
+  "phase",
+  "schemaVersion",
+  "sqlState",
+  "status",
+  "timedOut",
+];
+const PUBLIC_MIGRATION_ERROR_CODES = new Set([
+  "migration_already_running",
+  "migration_apply_and_dry_run_conflict",
+  "migration_apply_failed",
+  "migration_argument_apply_duplicate",
+  "migration_argument_dry_run_duplicate",
+  "migration_argument_json_duplicate",
+  "migration_argument_through_duplicate",
+  "migration_argument_through_missing",
+  "migration_argument_unknown",
+  "migration_database_container_ambiguous",
+  "migration_database_container_name_invalid",
+  "migration_database_container_unavailable",
+  "migration_directory_invalid",
+  "migration_directory_outside_root",
+  "migration_file_outside_directory",
+  "migration_file_size_invalid",
+  "migration_file_type_invalid",
+  "migration_filename_invalid",
+  "migration_files_missing",
+  "migration_lock_failed",
+  "migration_lock_release_failed",
+  "migration_path_invalid",
+  "migration_psql_meta_command_forbidden",
+  "migration_registration_missing",
+  "migration_registry_name_mismatch",
+  "migration_registry_name_missing",
+  "migration_registry_not_contiguous",
+  "migration_registry_output_invalid",
+  "migration_registry_query_failed",
+  "migration_registry_version_unknown",
+  "migration_root_unavailable",
+  "migration_scripts_path_invalid",
+  "migration_self_hosted_topology_unavailable",
+  "migration_source_invalid",
+  "migration_source_utf8_invalid",
+  "migration_through_invalid",
+  "migration_through_not_found",
+  "migration_version_duplicate",
+  "production_database_migration_failed",
+]);
+
 export class ProductionDatabaseMigrationError extends Error {
   constructor(code, details = {}) {
     super(code);
@@ -356,6 +420,7 @@ export function runMigrationCommand(command, args, options = {}) {
       options.outputLimitBytes ?? DEFAULT_OUTPUT_LIMIT_BYTES;
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
+    let stderrTruncated = false;
     let timedOut = false;
     let settled = false;
     let timeout;
@@ -369,6 +434,7 @@ export function runMigrationCommand(command, args, options = {}) {
         ...result,
         stdout: stdout.toString("utf8"),
         stderr: stderr.toString("utf8"),
+        stderrTruncated,
         timedOut,
       });
     };
@@ -382,6 +448,9 @@ export function runMigrationCommand(command, args, options = {}) {
       stdout = appendOutput(stdout, chunk, outputLimit);
     });
     child.stderr.on("data", (chunk) => {
+      if (stderr.length + Buffer.byteLength(chunk) > outputLimit) {
+        stderrTruncated = true;
+      }
       stderr = appendOutput(stderr, chunk, outputLimit);
     });
     child.stdin.on("error", () => {});
@@ -495,6 +564,187 @@ function dockerPsqlArguments(containerName) {
   ];
 }
 
+function parsePsqlErrorHeader(stderr) {
+  const headers = [];
+  const pattern =
+    /^(?:ERROR:|psql:(?:[^\r\n]*?:)?\s*ERROR:)\s+([0-9A-Z]{5}):\s+([^\r\n]+?)\s*$/gm;
+  for (const match of String(stderr).matchAll(pattern)) {
+    headers.push({ sqlState: match[1], message: match[2].trim() });
+  }
+  return headers.length === 1 ? headers[0] : null;
+}
+
+function buildDatabaseFailureDiagnostic(input) {
+  const stderr = typeof input.stderr === "string" ? input.stderr : "";
+  const errorHeader = input.stderrTruncated === false
+    ? parsePsqlErrorHeader(stderr)
+    : null;
+  const fileName =
+    typeof input.fileName === "string" ? input.fileName : null;
+  const phase = input.phase === "migration_apply"
+    ? "migration_apply"
+    : "registry_query";
+  const databaseErrorCode =
+    phase === "migration_apply" &&
+    fileName === MERCHANT_ACL_MIGRATION_FILE &&
+    errorHeader?.sqlState === "P0001" &&
+    MERCHANT_ACL_DATABASE_ERROR_CODES.has(errorHeader.message)
+      ? errorHeader.message
+      : null;
+
+  return {
+    schemaVersion: 1,
+    phase,
+    fileName,
+    status: Number.isInteger(input.status) ? input.status : null,
+    timedOut: Boolean(input.timedOut),
+    sqlState: errorHeader?.sqlState ?? null,
+    databaseErrorCode,
+  };
+}
+
+function validateDatabaseFailureDiagnostic(value) {
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    return null;
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype) return null;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key !== "string")) return null;
+  ownKeys.sort(compareAscii);
+  if (
+    ownKeys.length !== DATABASE_FAILURE_DIAGNOSTIC_KEYS.length ||
+    ownKeys.some(
+      (key, index) =>
+        key !== DATABASE_FAILURE_DIAGNOSTIC_KEYS[index],
+    )
+  ) {
+    return null;
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (
+    DATABASE_FAILURE_DIAGNOSTIC_KEYS.some((key) => {
+      const descriptor = descriptors[key];
+      return (
+        !descriptor ||
+        descriptor.enumerable !== true ||
+        !("value" in descriptor)
+      );
+    })
+  ) {
+    return null;
+  }
+  const candidate = Object.create(null);
+  for (const key of DATABASE_FAILURE_DIAGNOSTIC_KEYS) {
+    candidate[key] = descriptors[key].value;
+  }
+  if (candidate.schemaVersion !== 1) return null;
+  if (
+    candidate.phase !== "migration_apply" &&
+    candidate.phase !== "registry_query"
+  ) {
+    return null;
+  }
+  if (
+    candidate.fileName !== null &&
+    (typeof candidate.fileName !== "string" ||
+      candidate.fileName.length > 255 ||
+      !MIGRATION_FILENAME_PATTERN.test(candidate.fileName))
+  ) {
+    return null;
+  }
+  if (
+    candidate.phase === "registry_query" &&
+    candidate.fileName !== null
+  ) {
+    return null;
+  }
+  if (
+    candidate.phase === "migration_apply" &&
+    candidate.fileName === null
+  ) {
+    return null;
+  }
+  if (
+    candidate.status !== null &&
+    (!Number.isSafeInteger(candidate.status) ||
+      candidate.status < -2147483648 ||
+      candidate.status > 2147483647)
+  ) {
+    return null;
+  }
+  if (typeof candidate.timedOut !== "boolean") return null;
+  if (candidate.status === 0 && candidate.timedOut === false) return null;
+  if (
+    candidate.sqlState !== null &&
+    (typeof candidate.sqlState !== "string" ||
+      !/^[0-9A-Z]{5}$/.test(candidate.sqlState))
+  ) {
+    return null;
+  }
+  if (
+    candidate.databaseErrorCode !== null &&
+    (candidate.phase !== "migration_apply" ||
+      candidate.fileName !== MERCHANT_ACL_MIGRATION_FILE ||
+      candidate.sqlState !== "P0001" ||
+      candidate.timedOut !== false ||
+      !Number.isSafeInteger(candidate.status) ||
+      candidate.status === 0 ||
+      !MERCHANT_ACL_DATABASE_ERROR_CODES.has(candidate.databaseErrorCode))
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+function normalizePublicMigrationErrorCode(error) {
+  try {
+    if (!(error instanceof ProductionDatabaseMigrationError)) {
+      return "production_database_migration_failed";
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+    const code = descriptor && "value" in descriptor
+      ? descriptor.value
+      : null;
+    return typeof code === "string" && PUBLIC_MIGRATION_ERROR_CODES.has(code)
+      ? code
+      : "production_database_migration_failed";
+  } catch {
+    return "production_database_migration_failed";
+  }
+}
+
+function readValidatedDatabaseFailureDiagnostic(error, code) {
+  try {
+    if (!(error instanceof ProductionDatabaseMigrationError)) return null;
+    const detailsDescriptor = Object.getOwnPropertyDescriptor(error, "details");
+    if (!detailsDescriptor || !("value" in detailsDescriptor)) return null;
+    const details = detailsDescriptor.value;
+    if (!details || typeof details !== "object") return null;
+    const diagnosticDescriptor = Object.getOwnPropertyDescriptor(
+      details,
+      "diagnostic",
+    );
+    if (!diagnosticDescriptor || !("value" in diagnosticDescriptor)) {
+      return null;
+    }
+    const diagnostic = validateDatabaseFailureDiagnostic(
+      diagnosticDescriptor.value,
+    );
+    if (!diagnostic) return null;
+    if (
+      (code === "migration_apply_failed" &&
+        diagnostic.phase === "migration_apply") ||
+      (code === "migration_registry_query_failed" &&
+        diagnostic.phase === "registry_query")
+    ) {
+      return diagnostic;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function runPsql(input) {
   let result;
   try {
@@ -518,9 +768,14 @@ async function runPsql(input) {
 
   if (!result || result.status !== 0 || result.timedOut) {
     throw migrationError(input.errorCode, {
-      fileName: input.fileName,
-      status: Number.isInteger(result?.status) ? result.status : null,
-      timedOut: Boolean(result?.timedOut),
+      diagnostic: buildDatabaseFailureDiagnostic({
+        phase: input.phase,
+        fileName: input.fileName,
+        status: result?.status,
+        timedOut: result?.timedOut,
+        stderr: result?.stderr,
+        stderrTruncated: result?.stderrTruncated,
+      }),
     });
   }
   return typeof result.stdout === "string" ? result.stdout : "";
@@ -773,12 +1028,16 @@ export async function runProductionMigrationCli(input = {}) {
     }
     return 0;
   } catch (error) {
-    const code =
-      error instanceof ProductionDatabaseMigrationError
-        ? error.code
-        : "production_database_migration_failed";
+    const code = normalizePublicMigrationErrorCode(error);
     if (wantsJson) {
-      writeStderr(`${JSON.stringify({ ok: false, error: code })}\n`);
+      const diagnostic = readValidatedDatabaseFailureDiagnostic(error, code);
+      writeStderr(
+        `${JSON.stringify({
+          ok: false,
+          error: code,
+          ...(diagnostic ? { diagnostic } : {}),
+        })}\n`,
+      );
     } else {
       writeStderr(`[database-migrations] ERROR ${code}\n`);
     }

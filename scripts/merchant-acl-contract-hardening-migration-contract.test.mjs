@@ -22,6 +22,11 @@ const readinessAcceptancePath = path.join(
   "enterprise-integration",
   "62-ordinary-account-cutover-readiness-gate.sh",
 );
+const migrationExecutorPath = path.join(
+  root,
+  "scripts",
+  "apply-production-database-migrations.mjs",
+);
 const runnerPath = path.join(
   root,
   "scripts",
@@ -34,26 +39,44 @@ const read = (file) => fs.readFileSync(file, "utf8").replace(/\r\n?/g, "\n");
 
 test("040 accepts only the frozen production prestate or exact target before mutation", () => {
   const source = read(migrationPath);
+  const migrationExecutor = read(migrationExecutorPath);
   const catalogLock = source.indexOf("lock table\n  pg_catalog.pg_authid");
   const preflight = source.indexOf("do $preflight$");
   const mutation = source.indexOf("do $acl_mutation$");
   assert.match(source, /^--[^]*?\nbegin;/i);
   assert.match(source, /set transaction isolation level read committed/i);
   assert.match(source, /current_user <> 'supabase_admin'[\s\S]+rolsuper/i);
-  const postgresSuperChecks = [
+  const postgresPlatformChecks = [
     ...source.matchAll(
-      /from pg_catalog\.pg_roles as postgres_role[\s\S]*?where postgres_role\.rolname = 'postgres'[\s\S]*?and postgres_role\.rolsuper/gi,
+      /(?:not exists|if not exists)\s*\(\s*select 1\s+from pg_catalog\.pg_roles as postgres_role\s+where postgres_role\.rolname = 'postgres'\s+and not postgres_role\.rolsuper\s+and postgres_role\.rolinherit\s+and postgres_role\.rolcreatedb\s+and postgres_role\.rolcreaterole\s+and postgres_role\.rolcanlogin\s+and postgres_role\.rolreplication\s+and postgres_role\.rolbypassrls\s*\)/gi,
     ),
   ];
-  assert.equal(postgresSuperChecks.length, 2);
+  assert.equal(postgresPlatformChecks.length, 2);
   assert.ok(
-    postgresSuperChecks[0].index < catalogLock &&
-      postgresSuperChecks[1].index > catalogLock &&
-      postgresSuperChecks[1].index < mutation,
+    postgresPlatformChecks[0].index < catalogLock &&
+      postgresPlatformChecks[1].index > catalogLock &&
+      postgresPlatformChecks[1].index < mutation,
   );
   assert.doesNotMatch(
     source,
-    /postgres_role\.rolsuper\s+or\s+postgres_role\.rolbypassrls/i,
+    /\band postgres_role\.rolsuper\b/i,
+  );
+  const databaseErrorCodes = [
+    ...new Set(
+      [...source.matchAll(/raise exception\s+'([a-z0-9_]+)'/gi)].map(
+        (match) => match[1],
+      ),
+    ),
+  ].sort();
+  const diagnosticAllowlist = migrationExecutor.match(
+    /const MERCHANT_ACL_DATABASE_ERROR_CODES = new Set\(\[([\s\S]*?)\]\);/,
+  );
+  assert.ok(diagnosticAllowlist);
+  assert.deepEqual(
+    [...diagnosticAllowlist[1].matchAll(/"([a-z0-9_]+)"/g)]
+      .map((match) => match[1])
+      .sort(),
+    databaseErrorCodes,
   );
   assert.match(source, /pg_catalog\.pg_advisory_xact_lock\(20260731, 1\)/i);
   assert.match(
@@ -76,10 +99,14 @@ test("040 accepts only the frozen production prestate or exact target before mut
   assert.ok(catalogLock > 0 && preflight > catalogLock && mutation > preflight);
 });
 
-test("040 preserves the minimal owner, browser, and service table ACL", () => {
+test("040 preserves the hosted postgres, owner, browser, and service table ACL", () => {
   const source = read(migrationPath);
   assert.match(source, /count\(\*\)[\s\S]+35[\s\S]+v_production_acl_ready/i);
-  assert.match(source, /count\(\*\)[\s\S]+14[\s\S]+v_target_acl_ready/i);
+  assert.match(source, /count\(\*\)[\s\S]+21[\s\S]+v_target_acl_ready/i);
+  assert.match(
+    source,
+    /to_regrole\('postgres'\)[\s\S]+owner_acl\.privilege_type[\s\S]+cross join owner_acl/i,
+  );
   assert.match(
     source,
     /authenticated'[\s\S]+ARRAY\['SELECT','INSERT','UPDATE'\]::text\[\]/i,
@@ -88,9 +115,13 @@ test("040 preserves the minimal owner, browser, and service table ACL", () => {
     source,
     /service_role'[\s\S]+ARRAY\['SELECT','INSERT','UPDATE','DELETE'\]::text\[\]/i,
   );
+  assert.doesNotMatch(
+    source,
+    /revoke all privileges on table public\.merchants[^;]*\bpostgres\b/i,
+  );
   assert.match(
     source,
-    /revoke all privileges on table public\.merchants[\s\S]+from public, postgres, anon, authenticated, service_role/i,
+    /revoke all privileges on table public\.merchants[\s\S]+from public, anon, authenticated, service_role/i,
   );
   assert.doesNotMatch(
     source,
@@ -175,7 +206,11 @@ test("040 target is wired into init, readiness, PostgreSQL acceptance, and tests
   const packageSource = read(packagePath);
   assert.match(
     init,
-    /revoke all privileges on table public\.merchants[\s\S]+from public, postgres, anon, authenticated, service_role/i,
+    /revoke all privileges on table public\.merchants[\s\S]+from public, anon, authenticated, service_role/i,
+  );
+  assert.doesNotMatch(
+    init,
+    /revoke all privileges on table public\.merchants[^;]*\bpostgres\b/i,
   );
   assert.doesNotMatch(
     init,
@@ -189,8 +224,25 @@ test("040 target is wired into init, readiness, PostgreSQL acceptance, and tests
     init,
     /grant all privileges on table public\.merchants to current_user/i,
   );
+  assert.match(
+    init,
+    /grant all privileges on table public\.merchants to postgres/i,
+  );
   assert.match(readiness, /202608190040[\s\S]+merchant_acl_contract_hardening/i);
-  assert.match(readiness, /acl_entry_count = 14/i);
+  assert.match(readiness, /acl_entry_count = 21/i);
+  const merchantState = readiness.match(
+    /merchant_contract_state AS MATERIALIZED \([\s\S]*?\), personal_contract_state AS MATERIALIZED/i,
+  );
+  assert.ok(merchantState);
+  assert.match(
+    merchantState[0],
+    /select to_regrole\('postgres'\), merchant\.relowner,[\s\S]+acl\.privilege_type, false[\s\S]+pg_catalog\.aclexplode\([\s\S]+pg_catalog\.acldefault\('r', merchant\.relowner\)/i,
+  );
+  assert.equal(
+    (readiness.match(/when matrix\.principal = 'postgres' then 1/gi) ?? [])
+      .length,
+    2,
+  );
   assert.match(
     readiness,
     /matrix\.principal = 'service_role'[\s\S]+matrix\.privilege_type IN\s*\([\s\S]+?'SELECT'[\s\S]+?'INSERT'[\s\S]+?'UPDATE'[\s\S]+?'DELETE'/i,
@@ -198,11 +250,20 @@ test("040 target is wired into init, readiness, PostgreSQL acceptance, and tests
   assert.match(acceptance, /rejecting merchant ACL unknown-principal drift/i);
   assert.match(
     runner,
-    /rejecting a non-superuser postgres prerequisite[\s\S]+begin; set role supabase_admin; alter role postgres nosuperuser bypassrls;[\s\S]+merchant_acl_contract_hardening_prerequisite_missing/i,
+    /HOSTED_POSTGRES_CONTRACT_SQL='alter role postgres nosuperuser inherit createdb createrole login replication bypassrls;'/i,
+  );
+  assert.match(runner, /accepting the hosted nosuperuser postgres prerequisite/i);
+  assert.match(
+    runner,
+    /run_merchant_acl_040_with_hosted_postgres[\s\S]+begin; set role supabase_admin; \$\{HOSTED_POSTGRES_CONTRACT_SQL\}[\s\S]+--file "\$\{file\}"[\s\S]+alter role postgres superuser;/i,
   );
   assert.match(
     runner,
-    /merchant_acl_postgres_prerequisite_state[\s\S]+rolsuper[\s\S]+count\(\*\) = 35[\s\S]+version = 202608190040/i,
+    /rejecting superuser postgres drift[\s\S]+expect_sql_file_error_as_role "\$\{migration\}" supabase_admin[\s\S]+merchant_acl_contract_hardening_prerequisite_missing/i,
+  );
+  assert.match(
+    runner,
+    /rejecting every missing hosted postgres capability[\s\S]+noinherit nocreatedb nocreaterole nologin noreplication nobypassrls/i,
   );
   assert.match(
     acceptance,
@@ -213,6 +274,10 @@ test("040 target is wired into init, readiness, PostgreSQL acceptance, and tests
   assert.match(acceptance, /rejecting merchant owner drift/i);
   assert.match(acceptance, /rejecting merchant policy drift/i);
   assert.match(acceptance, /accepting the exact merchant ACL target replay/i);
+  assert.match(
+    acceptance,
+    /accepting the exact merchant ACL target replay[\s\S]+run_merchant_acl_040_with_hosted_postgres[\s\S]+202608190040_merchant_acl_contract_hardening\.sql/i,
+  );
   assert.match(runner, /202608190040_merchant_acl_contract_hardening\.sql/i);
   assert.match(packageSource, /merchant-acl-contract-hardening-migration-contract\.test\.mjs/i);
 });

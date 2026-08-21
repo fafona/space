@@ -357,6 +357,7 @@ const objectContractMerchantAclEntries = [
   ].map((privilegeType) => {
     const expected =
       principal === "supabase_admin" ||
+      principal === "postgres" ||
       (principal === "authenticated" &&
         ["SELECT", "INSERT", "UPDATE"].includes(privilegeType)) ||
       (principal === "service_role" &&
@@ -421,7 +422,7 @@ function objectContractDiagnostic() {
             checkMd5,
           }),
         ),
-        aclEntryCount: 14,
+        aclEntryCount: 21,
         unknownPrincipalEntryCount: 0,
         unknownPrivilegeEntryCount: 0,
         aclEntries: objectContractMerchantAclEntries,
@@ -585,7 +586,7 @@ function objectContractMerchantAclDiagnostic() {
     violationCount: 2,
     facts: {
       ...merchant.facts,
-      aclEntryCount: 15,
+      aclEntryCount: 22,
       aclEntries,
     },
     violations: [
@@ -619,7 +620,7 @@ function objectContractProductionMerchantAclDiagnostic() {
       : { ...entry, entryCount: 1, ownerGrantorCount: 1 },
   );
   const invalidTargets = [
-    ...["postgres", "anon"].flatMap((principal) =>
+    ...["anon"].flatMap((principal) =>
       [
         "INSERT",
         "SELECT",
@@ -640,7 +641,7 @@ function objectContractProductionMerchantAclDiagnostic() {
   diagnostic.components[1] = {
     ...merchant,
     ready: false,
-    violationCount: 22,
+    violationCount: 15,
     facts: {
       ...merchant.facts,
       aclEntryCount: 35,
@@ -657,7 +658,7 @@ function objectContractProductionMerchantAclDiagnostic() {
       })),
     ],
   };
-  diagnostic.violationCount = 22;
+  diagnostic.violationCount = 15;
   return diagnostic;
 }
 

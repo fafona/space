@@ -18,9 +18,10 @@ alter table public.faolla_personal_accounts owner to supabase_admin;
 
 set role supabase_admin;
 revoke all privileges on table public.merchants
-  from public, postgres, anon, authenticated, service_role,
+  from public, anon, authenticated, service_role,
        redteam_custom_api, redteam_custom_child cascade;
 grant all privileges on table public.merchants to current_user;
+grant all privileges on table public.merchants to postgres;
 grant select, insert, update on table public.merchants to authenticated;
 grant select, insert, update, delete on table public.merchants to service_role;
 reset role;
@@ -101,9 +102,8 @@ export FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$(
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] accepting the exact merchant ACL target replay'
-run_sql_file_as_role \
-  "${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql" \
-  supabase_admin
+run_merchant_acl_040_with_hosted_postgres \
+  "${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql"
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] rejecting merchant ACL unknown-principal drift'
@@ -138,9 +138,10 @@ run_psql <<'SQL'
 alter table public.merchants owner to supabase_admin;
 set role supabase_admin;
 revoke all privileges on table public.merchants
-  from public, postgres, anon, authenticated, service_role,
+  from public, anon, authenticated, service_role,
        redteam_custom_api, redteam_custom_child cascade;
 grant all privileges on table public.merchants to current_user;
+grant all privileges on table public.merchants to postgres;
 grant select, insert, update on table public.merchants to authenticated;
 grant select, insert, update, delete on table public.merchants to service_role;
 reset role;

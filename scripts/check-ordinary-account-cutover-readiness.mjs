@@ -581,6 +581,12 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
                pg_catalog.acldefault('r', merchant.relowner)
              ) AS acl
            UNION ALL
+           SELECT to_regrole('postgres'), merchant.relowner,
+                  acl.privilege_type, false
+             FROM pg_catalog.aclexplode(
+               pg_catalog.acldefault('r', merchant.relowner)
+             ) AS acl
+           UNION ALL
            SELECT to_regrole('authenticated'), merchant.relowner,
                   privilege_type, false
              FROM unnest(ARRAY['SELECT','INSERT','UPDATE']::text[])
@@ -2005,7 +2011,7 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
   FROM object_merchant_count_fact AS count_fact
   CROSS JOIN LATERAL (VALUES
     (40, 'merchant_acl_entry_count_invalid'::text,
-     count_fact.acl_entry_count = 14),
+     count_fact.acl_entry_count = 21),
     (41, 'merchant_acl_unknown_principal'::text,
      count_fact.unknown_principal_entry_count = 0),
     (42, 'merchant_acl_unknown_privilege'::text,
@@ -2025,7 +2031,8 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
          matrix.principal || ':' || matrix.privilege_type
   FROM object_merchant_acl_matrix AS matrix
   WHERE matrix.entry_count <> CASE
-          WHEN matrix.principal = 'supabase_admin' THEN 1
+         WHEN matrix.principal = 'supabase_admin' THEN 1
+         WHEN matrix.principal = 'postgres' THEN 1
           WHEN matrix.principal = 'authenticated'
            AND matrix.privilege_type IN ('SELECT', 'INSERT', 'UPDATE') THEN 1
           WHEN matrix.principal = 'service_role'
@@ -2035,7 +2042,8 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
           ELSE 0
         END
      OR matrix.owner_grantor_count <> CASE
-          WHEN matrix.principal = 'supabase_admin' THEN 1
+         WHEN matrix.principal = 'supabase_admin' THEN 1
+         WHEN matrix.principal = 'postgres' THEN 1
           WHEN matrix.principal = 'authenticated'
            AND matrix.privilege_type IN ('SELECT', 'INSERT', 'UPDATE') THEN 1
           WHEN matrix.principal = 'service_role'
@@ -3385,7 +3393,7 @@ function validateMerchantObjectContractFacts(facts) {
     }
   }
   for (const [ready, code] of [
-    [facts.aclEntryCount === 14, "merchant_acl_entry_count_invalid"],
+    [facts.aclEntryCount === 21, "merchant_acl_entry_count_invalid"],
     [
       facts.unknownPrincipalEntryCount === 0,
       "merchant_acl_unknown_principal",
@@ -3419,6 +3427,7 @@ function validateMerchantObjectContractFacts(facts) {
       }
       const expectedCount =
         principal === "supabase_admin" ||
+        principal === "postgres" ||
         (principal === "authenticated" &&
           ["SELECT", "INSERT", "UPDATE"].includes(privilegeType)) ||
         (principal === "service_role" &&

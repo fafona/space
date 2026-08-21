@@ -1,6 +1,7 @@
--- Normalize the merchants table to the least-privilege browser and service
--- ACL required by the frozen ordinary-account object contract. No table row,
--- function body, policy, ownership, or relation shape is changed.
+-- Normalize the merchants table to the least-privilege hosted-platform,
+-- browser, and service ACL required by the frozen ordinary-account object
+-- contract. No table row, function body, policy, ownership, or relation shape
+-- is changed.
 
 begin;
 
@@ -30,9 +31,15 @@ begin
      or to_regrole('service_role') is null
      or not exists (
        select 1
-         from pg_catalog.pg_roles as postgres_role
-        where postgres_role.rolname = 'postgres'
-          and postgres_role.rolsuper
+        from pg_catalog.pg_roles as postgres_role
+       where postgres_role.rolname = 'postgres'
+          and not postgres_role.rolsuper
+          and postgres_role.rolinherit
+          and postgres_role.rolcreatedb
+          and postgres_role.rolcreaterole
+          and postgres_role.rolcanlogin
+          and postgres_role.rolreplication
+          and postgres_role.rolbypassrls
      )
      or not exists (
        select 1
@@ -114,7 +121,13 @@ begin
     select 1
       from pg_catalog.pg_roles as postgres_role
      where postgres_role.rolname = 'postgres'
-       and postgres_role.rolsuper
+       and not postgres_role.rolsuper
+       and postgres_role.rolinherit
+       and postgres_role.rolcreatedb
+       and postgres_role.rolcreaterole
+       and postgres_role.rolcanlogin
+       and postgres_role.rolreplication
+       and postgres_role.rolbypassrls
   )
      or exists (
        select 1
@@ -297,6 +310,11 @@ begin
            owner_acl.privilege_type, owner_acl.is_grantable
       from owner_acl
     union all
+    select merchant.relowner, to_regrole('postgres'),
+           owner_acl.privilege_type, false
+      from merchant
+      cross join owner_acl
+    union all
     select merchant.relowner, to_regrole('authenticated'),
            privilege.privilege_type, false
       from merchant
@@ -321,7 +339,7 @@ begin
        except all
        select * from actual_acl)
     ),
-    (select count(*) = 14 from actual_acl)
+    (select count(*) = 21 from actual_acl)
     and not exists (
       (select * from actual_acl
        except all
@@ -371,6 +389,11 @@ begin
            owner_acl.privilege_type, owner_acl.is_grantable
       from owner_acl
     union all
+    select merchant.relowner, to_regrole('postgres'),
+           owner_acl.privilege_type, false
+      from merchant
+      cross join owner_acl
+    union all
     select merchant.relowner, to_regrole('authenticated'),
            privilege.privilege_type, false
       from merchant
@@ -384,7 +407,7 @@ begin
         array['SELECT','INSERT','UPDATE','DELETE']::text[]
       ) as privilege(privilege_type)
   )
-  select (select count(*) = 14 from actual_acl)
+  select (select count(*) = 21 from actual_acl)
      and not exists (
        (select * from actual_acl
         except all
@@ -397,14 +420,14 @@ begin
     into v_target_acl_ready;
 
   if not v_target_acl_ready then
-    execute 'revoke all privileges on table public.merchants from public, postgres, anon, authenticated, service_role';
+    execute 'revoke all privileges on table public.merchants from public, anon, authenticated, service_role';
     execute 'grant select, insert, update on table public.merchants to authenticated';
     execute 'grant select, insert, update, delete on table public.merchants to service_role';
   end if;
 end;
 $acl_mutation$;
 
--- Recheck the complete frozen object contract and exact 14-entry ACL before
+-- Recheck the complete frozen object contract and exact 21-entry ACL before
 -- the registry can claim success.
 do $postcondition$
 declare
@@ -505,6 +528,11 @@ begin
            owner_acl.privilege_type, owner_acl.is_grantable
       from owner_acl
     union all
+    select merchant.relowner, to_regrole('postgres'),
+           owner_acl.privilege_type, false
+      from merchant
+      cross join owner_acl
+    union all
     select merchant.relowner, to_regrole('authenticated'),
            privilege.privilege_type, false
       from merchant
@@ -518,7 +546,7 @@ begin
         array['SELECT','INSERT','UPDATE','DELETE']::text[]
       ) as privilege(privilege_type)
   )
-  select (select count(*) = 14 from actual_acl)
+  select (select count(*) = 21 from actual_acl)
      and not exists (
        (select * from actual_acl
         except all
@@ -566,6 +594,11 @@ begin
            owner_acl.privilege_type, owner_acl.is_grantable
       from owner_acl
     union all
+    select merchant.relowner, to_regrole('postgres'),
+           owner_acl.privilege_type, false
+      from merchant
+      cross join owner_acl
+    union all
     select merchant.relowner, to_regrole('authenticated'),
            privilege.privilege_type, false
       from merchant
@@ -579,7 +612,7 @@ begin
         array['SELECT','INSERT','UPDATE','DELETE']::text[]
       ) as privilege(privilege_type)
   )
-  select (select count(*) = 14 from actual_acl)
+  select (select count(*) = 21 from actual_acl)
      and not exists (
        (select * from actual_acl
         except all

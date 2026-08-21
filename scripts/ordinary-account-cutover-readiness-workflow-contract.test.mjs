@@ -294,6 +294,7 @@ const objectContractMerchantAclEntries = [
   ].map((privilegeType) => {
     const expected =
       principal === "supabase_admin" ||
+      principal === "postgres" ||
       (principal === "authenticated" &&
         ["SELECT", "INSERT", "UPDATE"].includes(privilegeType)) ||
       (principal === "service_role" &&
@@ -358,7 +359,7 @@ function objectContractDiagnostic() {
             checkMd5,
           }),
         ),
-        aclEntryCount: 14,
+        aclEntryCount: 21,
         unknownPrincipalEntryCount: 0,
         unknownPrivilegeEntryCount: 0,
         aclEntries: objectContractMerchantAclEntries,
