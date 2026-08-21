@@ -7,6 +7,7 @@ begin;
 
 set transaction isolation level read committed;
 set local quote_all_identifiers = off;
+set local search_path = pg_catalog, public;
 set local lock_timeout = '15s';
 set local statement_timeout = '60s';
 

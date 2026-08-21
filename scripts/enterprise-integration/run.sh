@@ -79,11 +79,12 @@ expect_sql_file_error_as_role() {
 }
 
 HOSTED_POSTGRES_CONTRACT_SQL='alter role postgres nosuperuser inherit createdb createrole login replication bypassrls;'
+HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL='set search_path = "$user", public, auth, extensions;'
 
 run_merchant_acl_040_with_hosted_postgres() {
   local file="$1"
   run_psql \
-    --command "begin; set role supabase_admin; ${HOSTED_POSTGRES_CONTRACT_SQL}" \
+    --command "begin; set role supabase_admin; ${HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL} ${HOSTED_POSTGRES_CONTRACT_SQL}" \
     --file "${file}" \
     --command "alter role postgres superuser;"
 }
@@ -95,7 +96,7 @@ expect_merchant_acl_040_error() {
   echo "[enterprise-integration] expecting ${expected_message} from ${file#"${REPOSITORY_ROOT}/"} with hosted postgres role contract"
   if output="$(
     run_psql \
-      --command "begin; set role supabase_admin; ${HOSTED_POSTGRES_CONTRACT_SQL}" \
+      --command "begin; set role supabase_admin; ${HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL} ${HOSTED_POSTGRES_CONTRACT_SQL}" \
       --file "${file}" 2>&1
   )"; then
     echo "Expected migration failure containing ${expected_message}" >&2
@@ -114,7 +115,7 @@ expect_merchant_acl_040_postgres_role_error() {
   local output
   if output="$(
     run_psql \
-      --command "begin; set role supabase_admin; ${HOSTED_POSTGRES_CONTRACT_SQL} alter role postgres ${role_mutation};" \
+      --command "begin; set role supabase_admin; ${HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL} ${HOSTED_POSTGRES_CONTRACT_SQL} alter role postgres ${role_mutation};" \
       --file "${file}" 2>&1
   )"; then
     echo "040 accepted postgres role drift: ${role_mutation}" >&2

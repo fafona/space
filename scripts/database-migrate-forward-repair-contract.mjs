@@ -19,7 +19,7 @@ export const DATABASE_MIGRATE_FORWARD_REPAIR = Object.freeze({
   path:
     "scripts/supabase-migrations/" +
     "202608190040_merchant_acl_contract_hardening.sql",
-  sha256: "fbb5c989d0a9a82f01ae9f4835e74a30c7d7ff8fa1ddbf9e637b549c1e54df82",
+  sha256: "e4e794d1cf79e178ab1c9223490ea77aa673131e86c85c5c4974a56eee15695a",
   confirmation: "APPLY_MERCHANT_ACL_FORWARD_REPAIR_202608190040",
 });
 
