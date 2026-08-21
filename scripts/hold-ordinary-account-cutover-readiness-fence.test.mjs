@@ -969,7 +969,7 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
         ]),
       ],
       null,
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_query_started_invalid",
     ],
     [
       "multiple new waiters",
@@ -984,31 +984,31 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
       "wrong blocker",
       [observation(), observation([waiter({ blockingPids: ["4999"] })])],
       null,
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_blocker_pid_invalid",
     ],
     [
       "wrong database user",
       [observation(), observation([waiter({ databaseUser: "other" })])],
       null,
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_database_user_invalid",
     ],
     [
       "wrong service client address",
       [observation(), observation([waiter({ clientAddress: "172.20.0.99" })])],
       null,
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_client_address_invalid",
     ],
     [
       "wrong frozen application name",
       [observation(), observation([waiter({ applicationName: "Other" })])],
       null,
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_application_name_invalid",
     ],
     [
       "missing REST query nonce",
       [observation(), observation([waiter({ query: "SELECT id FROM public.pages" })])],
       null,
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_query_marker_invalid",
     ],
     [
       "ambiguous pre-probe service application",
@@ -1060,6 +1060,230 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
       "readiness_fence_probe_waiter_residual",
     );
   });
+});
+
+test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, canonical, and value-free", async () => {
+  const input = {
+    containerId: CONTAINER_ID,
+    databaseName: "postgres",
+    databaseOid: "16384",
+    fenceBackendPid: "4321",
+  };
+  const environment = {
+    SUPABASE_INTERNAL_URL:
+      "http://127.0.0.1:8000/hostile-internal-url-secret/",
+    NEXT_PUBLIC_SUPABASE_URL:
+      "https://hostile-public-url-secret.example/tenant/",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-anon-key-secret",
+  };
+  const stages = ["initial", "post_cancel"];
+  const probes = [
+    "internalRest",
+    "internalAuth",
+    "publicRest",
+    "publicAuth",
+  ];
+  const predicateCases = [
+    ["databaseOid", (candidate) => {
+      candidate.databaseOid = "98765";
+    }],
+    ["schemaName", (candidate) => {
+      candidate.schemaName = "hostile_schema_secret";
+    }],
+    ["relationName", (candidate) => {
+      candidate.relationName = "hostile_relation_secret";
+    }],
+    ["mode", (candidate) => {
+      candidate.mode = "HostileLockSecret";
+    }],
+    ["granted", (candidate) => {
+      candidate.granted = true;
+    }],
+    ["queryStarted", (candidate) => {
+      candidate.queryStartedAtEpochMilliseconds = "1787227199999";
+    }],
+    ["blockerCount", (candidate) => {
+      candidate.blockingPids = ["4321", "4999"];
+    }],
+    ["blockerPid", (candidate) => {
+      candidate.blockingPids = ["4999"];
+    }],
+    ["databaseUser", (candidate) => {
+      candidate.databaseUser = "hostile_user_secret";
+    }],
+    ["clientAddress", (candidate) => {
+      candidate.clientAddress = "203.0.113.77";
+    }],
+    ["applicationName", (candidate) => {
+      candidate.applicationName = "hostile_app_secret";
+    }],
+    ["queryMarker", (candidate) => {
+      candidate.query = "SELECT 'hostile_query_secret'";
+    }],
+  ];
+  const diagnosticProbeNames = {
+    internalRest: "internal_rest",
+    internalAuth: "internal_auth",
+    publicRest: "public_rest",
+    publicAuth: "public_auth",
+  };
+  const diagnosticPredicateNames = {
+    databaseOid: "database_oid",
+    schemaName: "schema_name",
+    relationName: "relation_name",
+    mode: "mode",
+    granted: "granted",
+    queryStarted: "query_started",
+    blockerCount: "blocker_count",
+    blockerPid: "blocker_pid",
+    databaseUser: "database_user",
+    clientAddress: "client_address",
+    applicationName: "application_name",
+    queryMarker: "query_marker",
+  };
+  const codeFor = (stage, probe, predicate) =>
+    `readiness_fence_probe_waiter_${stage}_` +
+    `${diagnosticProbeNames[probe]}_` +
+    `${diagnosticPredicateNames[predicate]}_invalid`;
+  const confidentialValues = [
+    "987654321",
+    "16384",
+    "98765",
+    "4321",
+    "4999",
+    "1787227200001",
+    "1787227199999",
+    "172.20.0.10",
+    "172.20.0.11",
+    "203.0.113.77",
+    "authenticator",
+    "supabase_auth_admin",
+    "PostgREST 12.1",
+    "hostile_schema_secret",
+    "hostile_relation_secret",
+    "HostileLockSecret",
+    "hostile_user_secret",
+    "hostile_app_secret",
+    "hostile_query_secret",
+    "probe_aaaaaaaaaaaaaaaaaaaaaaaa",
+    "hostile-internal-url-secret",
+    "hostile-public-url-secret",
+    "hostile-anon-key-secret",
+  ];
+
+  for (const stage of stages) {
+    for (const [probeIndex, probe] of probes.entries()) {
+      for (const [predicate, mutate] of predicateCases) {
+        if (predicate === "queryMarker" && probe.endsWith("Auth")) continue;
+        const snapshots = successfulProbeSequence({ lingerAfterCancel: true });
+        snapshots[probeIndex * 4 + 2].waiters[0] = {
+          ...snapshots[probeIndex * 4 + 2].waiters[0],
+          blockingPids: [
+            ...snapshots[probeIndex * 4 + 2].waiters[0].blockingPids,
+          ],
+        };
+        const initialCandidate = snapshots[probeIndex * 4 + 1].waiters[0];
+        const postCancelCandidate = snapshots[probeIndex * 4 + 2].waiters[0];
+        initialCandidate.pid = "987654321";
+        postCancelCandidate.pid = "987654321";
+        const targetCandidate =
+          stage === "initial" ? initialCandidate : postCancelCandidate;
+        mutate(targetCandidate);
+        const calls = [];
+        const causal = causalFetchRecorder(calls);
+        let failure;
+        try {
+          await probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+            environment,
+            randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+            fetchImpl: causal.fetchImpl,
+            observeWaiters: async () => snapshots.shift() ?? observation(),
+            cancelWaiter: causal.cancelWaiter,
+            serviceIdentities: SERVICE_IDENTITIES,
+            poll: async () => {},
+          });
+          assert.fail(`expected ${stage}/${probe}/${predicate} to fail`);
+        } catch (error) {
+          failure = error;
+        }
+        const expectedCode = codeFor(stage, probe, predicate);
+        assert.ok(
+          failure instanceof OrdinaryAccountCutoverReadinessFenceError,
+          `${stage}/${probe}/${predicate} returned the wrong error type`,
+        );
+        assert.equal(
+          failure.code,
+          expectedCode,
+          `${stage}/${probe}/${predicate} returned the wrong code`,
+        );
+        const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(failure);
+        assert.ok(
+          bytes.length <= 512,
+          `${stage}/${probe}/${predicate} exceeded the failure-record bound`,
+        );
+        const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+        assert.equal(record?.error, expectedCode);
+        assert.deepEqual(bytes, canonicalJsonBytes(record));
+        const serialized = bytes.toString("utf8");
+        for (const confidential of confidentialValues) {
+          assert.equal(
+            serialized.includes(confidential),
+            false,
+            `${stage}/${probe}/${predicate} exposed ${confidential}`,
+          );
+        }
+      }
+    }
+  }
+
+  for (const stage of stages) {
+    for (const probe of probes) {
+      for (const [predicate] of predicateCases) {
+        const code = codeFor(stage, probe, predicate);
+        const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+          new OrdinaryAccountCutoverReadinessFenceError(code),
+        );
+        assert.ok(bytes.length <= 512, `${code} exceeded the failure-record bound`);
+        const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+        assert.equal(record?.error, code, `${code} was not allowlisted`);
+        assert.deepEqual(bytes, canonicalJsonBytes(record));
+      }
+    }
+  }
+
+  const defaultDiagnostic = {
+    childExitCode: null,
+    childResult: "not_observed",
+    childSignal: null,
+    ok: false,
+    sqlstate: null,
+    sqlstateStatus: "absent",
+  };
+  for (const hostileCode of [
+    "readiness_fence_probe_waiter_invalid",
+    "readiness_fence_probe_waiter_initial_internal_rest_database_oid_invalid_suffix",
+    "readiness_fence_probe_waiter_arbitrary_internal_rest_database_oid_invalid",
+    "readiness_fence_probe_waiter_initial_arbitrary_database_oid_invalid",
+    "readiness_fence_probe_waiter_initial_internal_rest_arbitrary_invalid",
+  ]) {
+    const serialized = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+      new OrdinaryAccountCutoverReadinessFenceError(hostileCode),
+    );
+    assert.equal(
+      parseOrdinaryAccountCutoverReadinessFenceFailureLog(serialized).error,
+      "readiness_fence_unexpected_error",
+    );
+    assert.doesNotMatch(serialized.toString("utf8"), /arbitrary|suffix/);
+    assert.equal(
+      parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+        canonicalJsonBytes({
+          ...defaultDiagnostic,
+          error: hostileCode,
+        }),
+      ),
+      null,
+    );
+  }
 });
 
 test("query cancellation is causally bound to the same HTTP request with locale-stable machine codes and bounded awaits", async (t) => {
@@ -1126,7 +1350,7 @@ test("query cancellation is causally bound to the same HTTP request with locale-
         cancelWaiter: causal.cancelWaiter,
         observeWaiters: async () => snapshots.shift() ?? observation(),
       }),
-      "readiness_fence_probe_waiter_invalid",
+      "readiness_fence_probe_waiter_initial_internal_auth_application_name_invalid",
     );
   });
   await t.test("wrong REST SQLSTATE fails", async () => {
