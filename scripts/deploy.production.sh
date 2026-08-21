@@ -472,7 +472,6 @@ MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="${MERCHANT_ENTERPRISE_INVITATION_
 MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS="${MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS:-3600}"
 MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS="${MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS:-3900}"
 ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED="${ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED:-false}"
-SUPABASE_INTERNAL_URL="${SUPABASE_INTERNAL_URL:-http://127.0.0.1:8000}"
 RELEASES_DIR="${RELEASES_DIR:-${APP_DIR}.releases}"
 CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}.current}"
 SHARED_DIR="${SHARED_DIR:-${APP_DIR}.shared}"
@@ -1081,24 +1080,48 @@ elif [ -d "$APP_DIR/.next" ]; then
 else
   PREVIOUS_RUNTIME_DIR=""
 fi
-PREVIOUS_BUILD_ID=""
-if [ -n "$PREVIOUS_RUNTIME_DIR" ] && [ -f "$PREVIOUS_RUNTIME_DIR/.env.local" ]; then
-  PREVIOUS_BUILD_ID="$(grep '^FAOLLA_WEB_BUILD_ID=' "$PREVIOUS_RUNTIME_DIR/.env.local" \
-    | tail -n 1 \
-    | cut -d= -f2- || true)"
-fi
-if ! [[ "$PREVIOUS_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]; then
-  PREVIOUS_BUILD_ID=""
-fi
 PREVIOUS_RUNTIME_PARENT="$(readlink -f "$(dirname "$PREVIOUS_RUNTIME_DIR")" 2>/dev/null || true)"
+PREVIOUS_RELEASE_NAME="$(basename -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)"
+PREVIOUS_BUILD_PREFIX=""
+PREVIOUS_WEB_PID="$(timeout --signal=TERM --kill-after=1s 2s \
+  pm2 pid "$APP_NAME" 2>/dev/null | tail -n 1 | tr -d '[:space:]' || true)"
+PREVIOUS_RUNTIME_IDENTITY=""
+PREVIOUS_WEB_CWD_IDENTITY=""
+PREVIOUS_WEB_PROCESS_IDENTITY=""
+if [[ "$PREVIOUS_WEB_PID" =~ ^[1-9][0-9]*$ ]]; then
+  PREVIOUS_RUNTIME_IDENTITY="$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)"
+  PREVIOUS_WEB_CWD_IDENTITY="$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)"
+  PREVIOUS_WEB_PROCESS_IDENTITY="$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)"
+fi
+if [[ "$PREVIOUS_RELEASE_NAME" =~ ^([0-9a-f]{12})-[0-9]{14}$ ]]; then
+  PREVIOUS_BUILD_PREFIX="${BASH_REMATCH[1]}"
+fi
 if [ -z "$PREVIOUS_LINK_TARGET" ] \
   || [ "$PREVIOUS_RUNTIME_DIR" = "$APP_DIR" ] \
   || [ "$PREVIOUS_RUNTIME_PARENT" != "$(readlink -f "$RELEASES_DIR" 2>/dev/null || true)" ] \
-  || ! [[ "$PREVIOUS_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]; then
+  || [ -z "$PREVIOUS_BUILD_PREFIX" ] \
+  || ! [[ "$PREVIOUS_RUNTIME_IDENTITY" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+  || [ "$PREVIOUS_WEB_CWD_IDENTITY" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+  || ! [[ "$PREVIOUS_WEB_PROCESS_IDENTITY" =~ ^[0-9]+:[0-9]+$ ]] \
+  || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
   echo "[deploy] an exact previous atomic release is required before environment mutation"
   exit 1
 fi
-unset PREVIOUS_RUNTIME_PARENT
+if ! PREVIOUS_BUILD_ID="$(
+  timeout --signal=TERM --kill-after=1s 5s \
+    node scripts/read-production-supabase-environment.mjs build-id \
+      "$PREVIOUS_RUNTIME_DIR/.env.local" "$PREVIOUS_BUILD_PREFIX" 2>/dev/null
+)" \
+  || ! [[ "$PREVIOUS_BUILD_ID" =~ ^[0-9a-f]{40}$ ]] \
+  || [ "${PREVIOUS_BUILD_ID:0:12}" != "$PREVIOUS_BUILD_PREFIX" ] \
+  || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+  || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+  || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
+  || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
+  echo "[deploy] an exact previous atomic release is required before environment mutation"
+  exit 1
+fi
+unset PREVIOUS_RUNTIME_PARENT PREVIOUS_RELEASE_NAME PREVIOUS_BUILD_PREFIX
 
 FAOLLA_WEB_BUILD_ID="$EXPECTED_DEPLOY_SHA"
 FAOLLA_WEB_RELEASED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -1153,8 +1176,50 @@ write_env_value "WEB_PUSH_PRIVATE_KEY" "${WEB_PUSH_PRIVATE_KEY:-}"
 write_env_value "WEB_PUSH_SUBJECT" "${WEB_PUSH_SUBJECT:-}"
 FINAL_NEXT_PUBLIC_SUPABASE_URL="$(decode_base64_value "${NEXT_PUBLIC_SUPABASE_URL_B64:-}")"
 SUPABASE_INTERNAL_URL_FROM_B64="$(decode_base64_value "${SUPABASE_INTERNAL_URL_B64:-}")"
-FINAL_SUPABASE_INTERNAL_URL="${SUPABASE_INTERNAL_URL_FROM_B64:-$SUPABASE_INTERNAL_URL}"
+FINAL_SUPABASE_INTERNAL_URL="${SUPABASE_INTERNAL_URL_FROM_B64:-http://127.0.0.1:8000}"
 FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(decode_base64_value "${NEXT_PUBLIC_SUPABASE_ANON_KEY_B64:-}")"
+if [ -z "$FINAL_NEXT_PUBLIC_SUPABASE_URL" ]; then
+  echo "[deploy] the current Supabase public URL is unavailable"
+  exit 1
+fi
+if [ -z "$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+  if [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
+    || ! PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="$(
+      timeout --signal=TERM --kill-after=1s 5s \
+        node scripts/read-production-supabase-environment.mjs anon-key \
+          "$PREVIOUS_RUNTIME_DIR/.env.local" "$PREVIOUS_BUILD_ID" \
+          "$FINAL_NEXT_PUBLIC_SUPABASE_URL" 2>/dev/null
+    )" \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
+    || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
+    echo "[deploy] the previous atomic release Supabase environment is unavailable"
+    exit 1
+  fi
+  if [ -z "$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    || ! [[ "$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+    echo "[deploy] the previous atomic release Supabase environment is unavailable"
+    exit 1
+  fi
+  if ! PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(
+    decode_base64_value "$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"
+  )"; then
+    echo "[deploy] the previous atomic release Supabase environment is unavailable"
+    exit 1
+  fi
+  FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY="$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY"
+  unset PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 \
+    PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY
+fi
+unset PREVIOUS_WEB_PID PREVIOUS_RUNTIME_IDENTITY \
+  PREVIOUS_WEB_CWD_IDENTITY PREVIOUS_WEB_PROCESS_IDENTITY
+export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"
+export NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL"
+export NEXT_PUBLIC_SUPABASE_ANON_KEY="$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"
 write_env_value "NEXT_PUBLIC_SUPABASE_URL" "$FINAL_NEXT_PUBLIC_SUPABASE_URL"
 write_env_value "SUPABASE_INTERNAL_URL" "$FINAL_SUPABASE_INTERNAL_URL"
 write_env_value "NEXT_PUBLIC_SUPABASE_ANON_KEY" "$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"
