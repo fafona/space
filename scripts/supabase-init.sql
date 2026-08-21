@@ -92,7 +92,11 @@ grant usage on schema public to anon, authenticated;
 grant usage, select on all sequences in schema public to anon, authenticated;
 grant select on public.pages to anon;
 grant select, insert, update, delete on public.pages to authenticated;
+revoke all privileges on table public.merchants
+  from public, postgres, anon, authenticated, service_role;
+grant all privileges on table public.merchants to current_user;
 grant select, insert, update on public.merchants to authenticated;
+grant select, insert, update, delete on public.merchants to service_role;
 grant select on public.page_events to authenticated;
 grant insert on public.page_events to anon, authenticated;
 

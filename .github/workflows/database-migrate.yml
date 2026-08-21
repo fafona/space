@@ -18,6 +18,15 @@ on:
       confirmation:
         description: Type APPLY_PRODUCTION_MIGRATIONS to confirm the production mutation
         required: true
+      forward_repair_confirmed:
+        description: Explicitly enable the one-time allowlisted merchant ACL forward repair
+        required: true
+        type: boolean
+        default: false
+      forward_repair_confirmation:
+        description: Exact independent token required only for the allowlisted merchant ACL forward repair
+        required: false
+        default: ""
       maintenance_window_confirmed:
         description: Confirm application writes, DDL, and other migrations are paused
         required: true
@@ -42,6 +51,8 @@ jobs:
       TARGET_SHA: ${{ inputs.target_sha }}
       EXPECTED_LIVE_APP_SHA: ${{ inputs.expected_live_app_sha }}
       THROUGH_VERSION: ${{ inputs.through }}
+      FORWARD_REPAIR_CONFIRMED: ${{ inputs.forward_repair_confirmed }}
+      FORWARD_REPAIR_CONFIRMATION: ${{ inputs.forward_repair_confirmation }}
       BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
       BACKUP_WORKFLOW_NAME: Encrypted Database Backup
       BACKUP_WORKFLOW_PATH: .github/workflows/database-backup.yml
@@ -65,6 +76,15 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$CONFIRMATION" = "APPLY_PRODUCTION_MIGRATIONS"
           test "$MAINTENANCE_WINDOW_CONFIRMED" = "true"
+          case "$FORWARD_REPAIR_CONFIRMED" in
+            false) test -z "$FORWARD_REPAIR_CONFIRMATION" ;;
+            true)
+              test "$FORWARD_REPAIR_CONFIRMATION" = \
+                "APPLY_MERCHANT_ACL_FORWARD_REPAIR_202608190040"
+              test "$THROUGH_VERSION" = "202608190040"
+              ;;
+            *) exit 1 ;;
+          esac
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXPECTED_LIVE_APP_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$THROUGH_VERSION" =~ ^[0-9]{12}$ ]]
@@ -199,6 +219,21 @@ jobs:
             discovery.selected.some((migration) => migration.version > through) ||
             discovery.migrations.filter((migration) => migration.version === through).length !== 1
           ) process.exit(1);
+          if (process.env.FORWARD_REPAIR_CONFIRMED === "true") {
+            const {
+              assertForwardRepairMigrationSource,
+              DATABASE_MIGRATE_FORWARD_REPAIR,
+            } = await import(
+              "./scripts/database-migrate-forward-repair-contract.mjs"
+            );
+            const target = discovery.selected.at(-1);
+            if (
+              through !== DATABASE_MIGRATE_FORWARD_REPAIR.version ||
+              target?.name !== DATABASE_MIGRATE_FORWARD_REPAIR.name ||
+              target?.fileName !== DATABASE_MIGRATE_FORWARD_REPAIR.fileName
+            ) process.exit(1);
+            await assertForwardRepairMigrationSource(process.cwd());
+          }
           NODE
 
       - name: Resolve Exact Successful Backup Artifact Inventory
@@ -553,10 +588,7 @@ jobs:
           set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
           test -n "$repository_dir"
-          case "$FAOLLA_MIGRATION_WORKTREE" in
-            /tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*) ;;
-            *) exit 1 ;;
-          esac
+          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
           test -d "$repository_dir"
           test ! -e "$FAOLLA_MIGRATION_WORKTREE"
           test "$(git -C "$repository_dir" rev-parse --is-inside-work-tree)" = "true"
@@ -571,6 +603,7 @@ jobs:
           test -z "$(git -C "$FAOLLA_MIGRATION_WORKTREE" status --porcelain=v1 --untracked-files=all)"
           test -f "$FAOLLA_MIGRATION_WORKTREE/scripts/apply-production-database-migrations.mjs"
           test -f "$FAOLLA_MIGRATION_WORKTREE/scripts/check-ordinary-account-cutover-readiness.mjs"
+          test -f "$FAOLLA_MIGRATION_WORKTREE/scripts/database-migrate-forward-repair-contract.mjs"
           test -f "$FAOLLA_MIGRATION_WORKTREE/scripts/production-release-attestation.mjs"
           test -f "$repository_dir/.env.local"
           REMOTE
@@ -795,22 +828,17 @@ jobs:
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_THROUGH=$THROUGH_VERSION FAOLLA_MIGRATION_WORKTREE=$REMOTE_MIGRATION_WORKTREE FAOLLA_REPORT_DIR=$REMOTE_MIGRATION_REPORT_DIR FAOLLA_EXPECTED_DATABASE_B64=$EXPECTED_DATABASE_B64 FAOLLA_EXPECTED_DATABASE_SHA256=$EXPECTED_DATABASE_SHA256 FAOLLA_EXPECTED_BASELINE_B64=$EXPECTED_BASELINE_B64 FAOLLA_EXPECTED_BASELINE_SHA256=$EXPECTED_BASELINE_SHA256 FAOLLA_EXPECTED_CONTAINER_ID=$EXPECTED_CONTAINER_ID bash -s" \
+            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_THROUGH=$THROUGH_VERSION FAOLLA_FORWARD_REPAIR_CONFIRMED=$FORWARD_REPAIR_CONFIRMED FAOLLA_MIGRATION_WORKTREE=$REMOTE_MIGRATION_WORKTREE FAOLLA_REPORT_DIR=$REMOTE_MIGRATION_REPORT_DIR FAOLLA_EXPECTED_DATABASE_B64=$EXPECTED_DATABASE_B64 FAOLLA_EXPECTED_DATABASE_SHA256=$EXPECTED_DATABASE_SHA256 FAOLLA_EXPECTED_BASELINE_B64=$EXPECTED_BASELINE_B64 FAOLLA_EXPECTED_BASELINE_SHA256=$EXPECTED_BASELINE_SHA256 FAOLLA_EXPECTED_CONTAINER_ID=$EXPECTED_CONTAINER_ID bash -s" \
             > "$MIGRATION_REPORT_PATH" <<'REMOTE'
           set -euo pipefail
           umask 077
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
-          case "$FAOLLA_MIGRATION_WORKTREE" in
-            /tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*) ;;
-            *) exit 1 ;;
-          esac
-          case "$FAOLLA_REPORT_DIR" in
-            /tmp/faolla-database-migrate-report-[1-9][0-9]*-[1-9][0-9]*) ;;
-            *) exit 1 ;;
-          esac
+          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_REPORT_DIR" =~ ^/tmp/faolla-database-migrate-report-[1-9][0-9]*-[1-9][0-9]*$ ]]
           [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$FAOLLA_THROUGH" =~ ^[0-9]{12}$ ]]
           [[ "$FAOLLA_EXPECTED_CONTAINER_ID" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" =~ ^(true|false)$ ]]
           test ! -e "$FAOLLA_REPORT_DIR"
           mkdir -m 700 "$FAOLLA_REPORT_DIR"
           database_path="$FAOLLA_REPORT_DIR/database.json"
@@ -818,9 +846,12 @@ jobs:
           dry_report_path="$FAOLLA_REPORT_DIR/dry-run.json"
           preflight_report_path="$FAOLLA_REPORT_DIR/preflight.json"
           apply_report_path="$FAOLLA_REPORT_DIR/apply.json"
+          postflight_report_path="$FAOLLA_REPORT_DIR/postflight.json"
+          post_dry_report_path="$FAOLLA_REPORT_DIR/post-dry-run.json"
           cleanup_reports() {
             rm -f -- "$database_path" "$baseline_path" "$dry_report_path" \
-              "$preflight_report_path" "$apply_report_path"
+              "$preflight_report_path" "$apply_report_path" \
+              "$postflight_report_path" "$post_dry_report_path"
             rmdir "$FAOLLA_REPORT_DIR" 2>/dev/null || true
           }
           trap cleanup_reports EXIT
@@ -885,6 +916,15 @@ jobs:
 
           assert_exact_source
           assert_container
+          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then
+            node --input-type=module - <<'NODE'
+          import {
+            assertForwardRepairMigrationSource,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          await assertForwardRepairMigrationSource(process.cwd());
+          NODE
+          fi
           node --env-file="$repository_dir/.env.local" \
             scripts/apply-production-database-migrations.mjs \
             --dry-run --through="$FAOLLA_THROUGH" --json > "$dry_report_path"
@@ -915,16 +955,54 @@ jobs:
           }
           NODE
 
-          FAOLLA_EXPECTED_DATABASE_NAME="$expected_database_name" \
-          FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$expected_database_system_identifier" \
-          FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$expected_merchant_record_count" \
-          FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$expected_personal_canonical_count" \
-          FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$expected_identity_content_sha256" \
-            node --env-file="$repository_dir/.env.local" \
-              scripts/check-ordinary-account-cutover-readiness.mjs \
-              --json --fail-on-blocked > "$preflight_report_path"
-          node --input-type=module - \
-            "$preflight_report_path" "$database_path" "$baseline_path" <<'NODE'
+          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then
+            node --input-type=module - \
+              "$dry_report_path" "$expected_container_name" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import {
+            assertForwardRepairDryRunReport,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          assertForwardRepairDryRunReport(
+            JSON.parse(readFileSync(process.argv[2], "utf8")),
+            process.argv[3],
+          );
+          NODE
+          fi
+
+          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then
+            FAOLLA_EXPECTED_DATABASE_NAME="$expected_database_name" \
+            FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$expected_database_system_identifier" \
+            FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$expected_merchant_record_count" \
+            FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$expected_personal_canonical_count" \
+            FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$expected_identity_content_sha256" \
+              node --env-file="$repository_dir/.env.local" \
+                scripts/check-ordinary-account-cutover-readiness.mjs \
+                --json > "$preflight_report_path"
+            node --input-type=module - \
+              "$preflight_report_path" "$database_path" "$baseline_path" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import {
+            assertForwardRepairPreflightReport,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          assertForwardRepairPreflightReport(
+            JSON.parse(readFileSync(process.argv[2], "utf8")),
+            JSON.parse(readFileSync(process.argv[3], "utf8")),
+            JSON.parse(readFileSync(process.argv[4], "utf8")),
+          );
+          NODE
+          else
+            FAOLLA_EXPECTED_DATABASE_NAME="$expected_database_name" \
+            FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$expected_database_system_identifier" \
+            FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$expected_merchant_record_count" \
+            FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$expected_personal_canonical_count" \
+            FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$expected_identity_content_sha256" \
+              node --env-file="$repository_dir/.env.local" \
+                scripts/check-ordinary-account-cutover-readiness.mjs \
+                --json --fail-on-blocked > "$preflight_report_path"
+            node --input-type=module - \
+              "$preflight_report_path" "$database_path" "$baseline_path" <<'NODE'
           import { readFileSync } from "node:fs";
           import {
             canonicalJsonBytes,
@@ -960,6 +1038,7 @@ jobs:
             process.exit(1);
           }
           NODE
+          fi
 
           # The existing advisory lock serializes migration runners, not arbitrary DML.
           # The preflight-to-apply DML exclusion boundary is the operator-confirmed maintenance window.
@@ -995,6 +1074,63 @@ jobs:
             process.exit(1);
           }
           NODE
+
+          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then
+            node --input-type=module - \
+              "$apply_report_path" "$expected_container_name" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import {
+            assertForwardRepairApplyReport,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          assertForwardRepairApplyReport(
+            JSON.parse(readFileSync(process.argv[2], "utf8")),
+            process.argv[3],
+          );
+          NODE
+
+            assert_exact_source
+            assert_container
+            FAOLLA_EXPECTED_DATABASE_NAME="$expected_database_name" \
+            FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$expected_database_system_identifier" \
+            FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$expected_merchant_record_count" \
+            FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$expected_personal_canonical_count" \
+            FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$expected_identity_content_sha256" \
+              node --env-file="$repository_dir/.env.local" \
+                scripts/check-ordinary-account-cutover-readiness.mjs \
+                --json --fail-on-blocked > "$postflight_report_path"
+            node --input-type=module - \
+              "$postflight_report_path" "$database_path" "$baseline_path" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import {
+            assertForwardRepairPostflightReport,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          assertForwardRepairPostflightReport(
+            JSON.parse(readFileSync(process.argv[2], "utf8")),
+            JSON.parse(readFileSync(process.argv[3], "utf8")),
+            JSON.parse(readFileSync(process.argv[4], "utf8")),
+          );
+          NODE
+
+            assert_exact_source
+            assert_container
+            node --env-file="$repository_dir/.env.local" \
+              scripts/apply-production-database-migrations.mjs \
+              --dry-run --through="$FAOLLA_THROUGH" --json > "$post_dry_report_path"
+            node --input-type=module - \
+              "$post_dry_report_path" "$expected_container_name" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import {
+            assertForwardRepairPostDryRunReport,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          assertForwardRepairPostDryRunReport(
+            JSON.parse(readFileSync(process.argv[2], "utf8")),
+            process.argv[3],
+          );
+          NODE
+          fi
           assert_exact_source
           assert_container
           cat "$apply_report_path"
@@ -1007,6 +1143,22 @@ jobs:
             report.through !== process.argv[3] || report.effectiveThrough !== process.argv[3]
           ) process.exit(1);
           NODE
+          if [ "$FORWARD_REPAIR_CONFIRMED" = "true" ]; then
+            node --input-type=module - \
+              "$MIGRATION_REPORT_PATH" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import {
+            assertForwardRepairApplyReport,
+          } from "./scripts/database-migrate-forward-repair-contract.mjs";
+
+          const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expectedContainer = Buffer.from(
+            process.env.EXPECTED_CONTAINER_NAME_B64,
+            "base64",
+          ).toString("utf8");
+          assertForwardRepairApplyReport(report, expectedContainer);
+          NODE
+          fi
 
       - name: Verify Expected Live Application Build Remains Exact
         shell: bash
@@ -1042,10 +1194,7 @@ jobs:
               "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_MIGRATION_WORKTREE=$REMOTE_MIGRATION_WORKTREE bash -s" <<'REMOTE'
           set -eu
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
-          case "$FAOLLA_MIGRATION_WORKTREE" in
-            /tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*) ;;
-            *) exit 1 ;;
-          esac
+          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
           if [ -e "$FAOLLA_MIGRATION_WORKTREE" ]; then
             git -C "$repository_dir" worktree remove --force "$FAOLLA_MIGRATION_WORKTREE"
           fi

@@ -163,6 +163,20 @@ run_pre_cutover_acceptance() {
   run_sql_file "${SCRIPT_DIR}/55-ordinary-account-authorization-bootstrap.sql"
 }
 
+seed_merchant_acl_production_prestate() {
+  run_psql <<'SQL'
+alter table public.merchants owner to supabase_admin;
+set role supabase_admin;
+revoke all privileges on table public.merchants
+  from public, postgres, anon, authenticated, service_role,
+       redteam_custom_api, redteam_custom_child cascade;
+grant all privileges on table public.merchants to current_user;
+grant all privileges on table public.merchants
+  to postgres, anon, authenticated, service_role;
+reset role;
+SQL
+}
+
 run_sql_file "${SCRIPT_DIR}/00-supabase-stubs.sql"
 run_psql --command \
   "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text null, raw_app_meta_data jsonb not null default '{}'::jsonb, raw_user_meta_data jsonb not null default '{}'::jsonb, created_at timestamptz not null default now());"
@@ -178,19 +192,21 @@ run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/20260725000
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' -o -name '*_merchant_acl_contract_hardening.sql' \) \
     -print | sort
 )
 
 isolation_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_system_site_principal_isolation.sql"
 recovery_observer_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190038_ordinary_account_recovery_observer.sql"
 rpc_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190039_runtime_rpc_execute_acl_hardening.sql"
+merchant_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
 expected_registry_count=39
 isolation_present=0
 recovery_observer_present=0
 rpc_acl_hardening_present=0
+merchant_acl_hardening_present=0
 cutover_present=0
 if [[ -f "${isolation_migration_path}" ]]; then
   expected_enterprise_migration_count=32
@@ -215,6 +231,15 @@ if [[ -f "${rpc_acl_hardening_migration_path}" ]]; then
   expected_registry_count=42
   rpc_acl_hardening_present=1
 fi
+if [[ -f "${merchant_acl_hardening_migration_path}" ]]; then
+  if [[ "${rpc_acl_hardening_present}" -ne 1 ]]; then
+    echo 'Merchant ACL hardening 040 requires the exact 039 runtime ACL migration' >&2
+    exit 1
+  fi
+  expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
+  expected_registry_count=43
+  merchant_acl_hardening_present=1
+fi
 if [[ -f "${cutover_migration_path}" ]]; then
   if [[ "${isolation_present}" -eq 1 ]]; then
     echo 'Refusing colliding 202608190037 isolation and cutover migrations' >&2
@@ -226,7 +251,7 @@ if [[ -f "${cutover_migration_path}" ]]; then
 fi
 
 if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
-  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-039), found ${#enterprise_migrations[@]}" >&2
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-040), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -1081,6 +1106,159 @@ for migration in "${enterprise_migrations[@]}"; do
     fi
     run_psql --command "drop role redteam_rpc_acl_database_owner_039;"
   elif [[ "$(basename -- "${migration}")" == \
+    "202608190040_merchant_acl_contract_hardening.sql" ]]; then
+    echo '[enterprise-integration] freezing the observed production merchant ACL prestate'
+    seed_merchant_acl_production_prestate
+
+    echo '[enterprise-integration] rejecting a non-superuser postgres prerequisite'
+    merchant_acl_postgres_prerequisite_output=''
+    if merchant_acl_postgres_prerequisite_output="$(
+      run_psql \
+        --command \
+        "begin; set role supabase_admin; alter role postgres nosuperuser bypassrls;" \
+        --file "${migration}" \
+        2>&1
+    )"; then
+      echo '040 accepted a non-superuser postgres prerequisite' >&2
+      exit 1
+    fi
+    if [[ "${merchant_acl_postgres_prerequisite_output}" != \
+      *'merchant_acl_contract_hardening_prerequisite_missing'* ]]; then
+      echo 'Expected merchant_acl_contract_hardening_prerequisite_missing from 040, got:' >&2
+      echo "${merchant_acl_postgres_prerequisite_output}" >&2
+      exit 1
+    fi
+    merchant_acl_postgres_prerequisite_state="$(
+      run_psql --tuples-only --no-align --command \
+        "with merchant as (select relowner, relacl from pg_catalog.pg_class where oid = 'public.merchants'::regclass), actual as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(coalesce(merchant.relacl, pg_catalog.acldefault('r', merchant.relowner))) as acl), expected as (select merchant.relowner as grantor, principal.oid as grantee, privilege.privilege_type, false as is_grantable from merchant cross join lateral (values (merchant.relowner), (to_regrole('postgres')), (to_regrole('anon')), (to_regrole('authenticated')), (to_regrole('service_role'))) as principal(oid) cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']::text[]) as privilege(privilege_type)), delta as ((select * from actual except all select * from expected) union all (select * from expected except all select * from actual)) select (select role_metadata.rolsuper from pg_catalog.pg_roles as role_metadata where role_metadata.rolname = 'postgres') and (select count(*) = 35 from actual) and not exists (select 1 from delta) and not exists (select 1 from public.faolla_schema_migrations where version = 202608190040);"
+    )"
+    if [[ "${merchant_acl_postgres_prerequisite_state}" != 't' ]]; then
+      echo '040 non-superuser postgres rejection did not roll back role, ACL35, and registry state' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting a conflicting 040 registry row before ACL mutation'
+    run_psql --command \
+      "insert into public.faolla_schema_migrations(version, name) values (202608190040, 'redteam_wrong_040');"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_registry_conflict'
+    merchant_acl_registry_conflict_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select count(*) = 1 and (select count(*) = 35 from pg_catalog.pg_class as merchant cross join lateral pg_catalog.aclexplode(coalesce(merchant.relacl, pg_catalog.acldefault('r', merchant.relowner))) as acl where merchant.oid = 'public.merchants'::regclass) from public.faolla_schema_migrations where version = 202608190040 and name = 'redteam_wrong_040';"
+    )"
+    if [[ "${merchant_acl_registry_conflict_state}" != 't' ]]; then
+      echo '040 registry conflict changed the merchant ACL or registry row' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.faolla_schema_migrations where version = 202608190040 and name = 'redteam_wrong_040';"
+
+    echo '[enterprise-integration] rejecting merchant ACL unknown-principal drift'
+    run_psql --command \
+      "set role supabase_admin; grant select on table public.merchants to redteam_custom_api; reset role;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_acl_prestate_invalid'
+    merchant_acl_unknown_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190040) and exists (select 1 from pg_catalog.pg_class as merchant cross join lateral pg_catalog.aclexplode(merchant.relacl) as acl where merchant.oid = 'public.merchants'::regclass and acl.grantee = to_regrole('redteam_custom_api') and acl.privilege_type = 'SELECT');"
+    )"
+    if [[ "${merchant_acl_unknown_state}" != 't' ]]; then
+      echo '040 unknown-principal rejection did not preserve the drift' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "set role supabase_admin; revoke all privileges on table public.merchants from redteam_custom_api cascade; reset role;"
+
+    echo '[enterprise-integration] rejecting merchant ACL delegated grant drift'
+    run_psql --command \
+      "set role supabase_admin; grant select on table public.merchants to redteam_custom_api with grant option; set role redteam_custom_api; grant select on table public.merchants to redteam_custom_child; reset role;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_acl_prestate_invalid'
+    merchant_acl_delegated_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190040) and exists (select 1 from pg_catalog.pg_class as merchant cross join lateral pg_catalog.aclexplode(merchant.relacl) as acl where merchant.oid = 'public.merchants'::regclass and acl.grantee = to_regrole('redteam_custom_child') and acl.grantor = to_regrole('redteam_custom_api') and acl.privilege_type = 'SELECT');"
+    )"
+    if [[ "${merchant_acl_delegated_state}" != 't' ]]; then
+      echo '040 delegated-grant rejection did not preserve the drift' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "set role supabase_admin; revoke all privileges on table public.merchants from redteam_custom_api cascade; reset role;"
+
+    echo '[enterprise-integration] rejecting merchant column ACL drift'
+    run_psql --command \
+      "set role supabase_admin; grant update(name) on table public.merchants to authenticated; reset role;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_object_contract_invalid'
+    merchant_column_acl_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190040) and exists (select 1 from pg_catalog.pg_attribute as attribute cross join lateral pg_catalog.aclexplode(attribute.attacl) as acl where attribute.attrelid = 'public.merchants'::regclass and attribute.attname = 'name' and acl.grantee = to_regrole('authenticated') and acl.privilege_type = 'UPDATE');"
+    )"
+    if [[ "${merchant_column_acl_state}" != 't' ]]; then
+      echo '040 column-ACL rejection did not preserve the drift' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "set role supabase_admin; revoke update(name) on table public.merchants from authenticated; reset role;"
+
+    echo '[enterprise-integration] rejecting merchant owner drift'
+    run_psql --command \
+      "alter table public.merchants owner to postgres;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_object_contract_invalid'
+    merchant_owner_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190040) and relowner = to_regrole('postgres') from pg_catalog.pg_class where oid = 'public.merchants'::regclass;"
+    )"
+    if [[ "${merchant_owner_drift_state}" != 't' ]]; then
+      echo '040 owner rejection did not preserve the drift' >&2
+      exit 1
+    fi
+    seed_merchant_acl_production_prestate
+
+    echo '[enterprise-integration] rejecting merchant policy drift'
+    run_psql --command \
+      "alter policy merchants_system_site_principal_isolation on public.merchants using (id <> 'site-main' and id <> 'redteam-040') with check (id <> 'site-main' and id <> 'redteam-040');"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_acl_contract_hardening_object_contract_invalid'
+    merchant_policy_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608190040) and pg_catalog.md5(pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false)) <> '1c08e1341a191bbc45013950a337671d' from pg_catalog.pg_policy as policy where policy.polrelid = 'public.merchants'::regclass and policy.polname = 'merchants_system_site_principal_isolation';"
+    )"
+    if [[ "${merchant_policy_drift_state}" != 't' ]]; then
+      echo '040 policy rejection did not preserve the drift' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "alter policy merchants_system_site_principal_isolation on public.merchants using (id <> 'site-main') with check (id <> 'site-main');"
+
+    echo '[enterprise-integration] applying the exact production merchant ACL repair'
+    PGOPTIONS="${PGOPTIONS} -c quote_all_identifiers=on" \
+      run_sql_file_as_role "${migration}" supabase_admin
+    merchant_acl_target_state="$(
+      run_psql --tuples-only --no-align --command \
+        "with merchant as (select relowner, relacl from pg_catalog.pg_class where oid = 'public.merchants'::regclass), actual as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(coalesce(merchant.relacl, pg_catalog.acldefault('r', merchant.relowner))) as acl), owner_acl as (select acl.grantor, acl.grantee, acl.privilege_type, acl.is_grantable from merchant cross join lateral pg_catalog.aclexplode(pg_catalog.acldefault('r', merchant.relowner)) as acl), expected as (select * from owner_acl union all select merchant.relowner, to_regrole('authenticated'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE']::text[]) as privilege(privilege_type) union all select merchant.relowner, to_regrole('service_role'), privilege_type, false from merchant cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']::text[]) as privilege(privilege_type)), delta as ((select * from actual except all select * from expected) union all (select * from expected except all select * from actual)) select (select count(*) = 14 from actual) and not exists (select 1 from delta) and exists (select 1 from public.faolla_schema_migrations where version = 202608190040 and name = 'merchant_acl_contract_hardening');"
+    )"
+    if [[ "${merchant_acl_target_state}" != 't' ]]; then
+      echo '040 did not produce the exact 14-entry merchant ACL target' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] accepting the exact merchant ACL target replay'
+    merchant_acl_replay_before="$(
+      run_psql --tuples-only --no-align --command \
+        "select merchant.relacl::text || '|' || migration.applied_at::text from pg_catalog.pg_class as merchant cross join public.faolla_schema_migrations as migration where merchant.oid = 'public.merchants'::regclass and migration.version = 202608190040 and migration.name = 'merchant_acl_contract_hardening';"
+    )"
+    run_sql_file_as_role "${migration}" supabase_admin
+    merchant_acl_replay_after="$(
+      run_psql --tuples-only --no-align --command \
+        "select merchant.relacl::text || '|' || migration.applied_at::text from pg_catalog.pg_class as merchant cross join public.faolla_schema_migrations as migration where merchant.oid = 'public.merchants'::regclass and migration.version = 202608190040 and migration.name = 'merchant_acl_contract_hardening';"
+    )"
+    if [[ "${merchant_acl_replay_after}" != "${merchant_acl_replay_before}" ]]; then
+      echo '040 exact-target replay changed ACL or registry state' >&2
+      exit 1
+    fi
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -1226,7 +1404,7 @@ fi
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040) or version between 202607310001 and 202608040026;"
 )"
 if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
   echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2
@@ -1482,7 +1660,7 @@ run_sql_file "${SCRIPT_DIR}/42-workflow-post-concurrency.sql"
 run_sql_file "${SCRIPT_DIR}/45-workflow-restore-limit-post.sql"
 run_sql_file "${SCRIPT_DIR}/58-ordinary-account-lock-race-post.sql"
 run_psql --command \
-  "revoke select, insert, update on table public.merchants from service_role;"
+  "grant select, insert, update, delete on table public.merchants to service_role;"
 export FAOLLA_EXPECTED_DATABASE_NAME="$(
   run_psql --tuples-only --no-align --command \
     "select pg_catalog.current_database();"

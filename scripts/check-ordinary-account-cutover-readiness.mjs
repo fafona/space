@@ -269,7 +269,8 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
     (202608190036::bigint, 'ordinary_account_authorization_bootstrap'::text),
     (202608190037::bigint, 'ordinary_account_system_site_principal_isolation'::text),
     (202608190038::bigint, 'ordinary_account_recovery_observer'::text),
-    (202608190039::bigint, 'runtime_rpc_execute_acl_hardening'::text)
+    (202608190039::bigint, 'runtime_rpc_execute_acl_hardening'::text),
+    (202608190040::bigint, 'merchant_acl_contract_hardening'::text)
 ), registry AS MATERIALIZED (
   SELECT registry_metadata.oid, registry_metadata.relowner,
          registry_metadata.relacl, registry_metadata.relkind,
@@ -281,7 +282,7 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
       ON registry_metadata.oid = target.oid
 ), migration_state AS MATERIALIZED (
   SELECT
-    5 = (
+    6 = (
       SELECT count(*)
         FROM expected_migration AS expected
         JOIN public.faolla_schema_migrations AS actual
@@ -583,6 +584,11 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
            SELECT to_regrole('authenticated'), merchant.relowner,
                   privilege_type, false
              FROM unnest(ARRAY['SELECT','INSERT','UPDATE']::text[])
+                  AS privilege(privilege_type)
+           UNION ALL
+           SELECT to_regrole('service_role'), merchant.relowner,
+                  privilege_type, false
+             FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']::text[])
                   AS privilege(privilege_type)
          )
          (SELECT * FROM actual EXCEPT SELECT * FROM expected)
@@ -1999,7 +2005,7 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
   FROM object_merchant_count_fact AS count_fact
   CROSS JOIN LATERAL (VALUES
     (40, 'merchant_acl_entry_count_invalid'::text,
-     count_fact.acl_entry_count = 10),
+     count_fact.acl_entry_count = 14),
     (41, 'merchant_acl_unknown_principal'::text,
      count_fact.unknown_principal_entry_count = 0),
     (42, 'merchant_acl_unknown_privilege'::text,
@@ -2022,12 +2028,20 @@ const ORDINARY_ACCOUNT_CUTOVER_AGGREGATE_SQL = String.raw`WITH expected_migratio
           WHEN matrix.principal = 'supabase_admin' THEN 1
           WHEN matrix.principal = 'authenticated'
            AND matrix.privilege_type IN ('SELECT', 'INSERT', 'UPDATE') THEN 1
+          WHEN matrix.principal = 'service_role'
+           AND matrix.privilege_type IN (
+             'SELECT', 'INSERT', 'UPDATE', 'DELETE'
+           ) THEN 1
           ELSE 0
         END
      OR matrix.owner_grantor_count <> CASE
           WHEN matrix.principal = 'supabase_admin' THEN 1
           WHEN matrix.principal = 'authenticated'
            AND matrix.privilege_type IN ('SELECT', 'INSERT', 'UPDATE') THEN 1
+          WHEN matrix.principal = 'service_role'
+           AND matrix.privilege_type IN (
+             'SELECT', 'INSERT', 'UPDATE', 'DELETE'
+           ) THEN 1
           ELSE 0
         END
      OR matrix.grantable_count <> 0
@@ -3371,7 +3385,7 @@ function validateMerchantObjectContractFacts(facts) {
     }
   }
   for (const [ready, code] of [
-    [facts.aclEntryCount === 10, "merchant_acl_entry_count_invalid"],
+    [facts.aclEntryCount === 14, "merchant_acl_entry_count_invalid"],
     [
       facts.unknownPrincipalEntryCount === 0,
       "merchant_acl_unknown_principal",
@@ -3406,7 +3420,9 @@ function validateMerchantObjectContractFacts(facts) {
       const expectedCount =
         principal === "supabase_admin" ||
         (principal === "authenticated" &&
-          ["SELECT", "INSERT", "UPDATE"].includes(privilegeType))
+          ["SELECT", "INSERT", "UPDATE"].includes(privilegeType)) ||
+        (principal === "service_role" &&
+          ["SELECT", "INSERT", "UPDATE", "DELETE"].includes(privilegeType))
           ? 1
           : 0;
       if (

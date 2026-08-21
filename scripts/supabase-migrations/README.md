@@ -158,6 +158,22 @@ unprivileged and is treated as a trusted CLI login whose only membership is
 must compare this fail-closed catalog preflight with its read-only role snapshot
 before apply. It changes no function body or business result.
 
+Migration `202608190040_merchant_acl_contract_hardening.sql` removes the
+hosted platform's broad direct grants from `public.merchants` and freezes the
+ordinary-account object contract at 14 raw ACL entries: the seven owner
+privileges, authenticated `SELECT`/`INSERT`/`UPDATE`, and service-role
+`SELECT`/`INSERT`/`UPDATE`/`DELETE`, all issued by the owner without grant
+options. `postgres` and `anon` retain no direct tuple, and no non-owner receives
+relation-maintenance privileges. The migration accepts only the observed
+35-entry hosted production prestate or that exact target. Before mutation it
+also requires the exact owner, persistent RLS relation shape, five policy
+definitions and hashes, absence of column ACLs, rules, and inheritance, and
+the exact 035-039 registry prerequisites. Unknown or delegated grants and any
+partial repair fail closed. A registered replay is accepted only at the target
+and performs no ACL mutation. Migration 040 changes no merchant row, policy,
+function, ownership, or application behavior; the retained service-role DML
+set preserves privileged operational access.
+
 The separately staged irreversible behavior cutover formerly used version
 `202608190039`. It must be renumbered after this hotfix before publication and
 must never coexist with the hotfix at the same registry version. Apply that
@@ -198,12 +214,15 @@ applies through the newest migration in the deployed revision:
 4. Take a fresh backup, deploy urgent runtime ACL hotfix 039, apply it as the
    verified `supabase_admin`, and re-probe all 16 RPCs (including all 15
    historically over-granted functions and the already narrow health RPC).
-5. Perform the separately supervised legacy personal recovery through the
+5. With the production merchant object diagnostic frozen, apply merchant ACL
+   hardening 040 as the verified `supabase_admin`; require the exact 14-entry
+   target and a no-op replay before rerunning cutover readiness.
+6. Perform the separately supervised legacy personal recovery through the
    observer/create-only path without any direct protected-table read grant.
-6. Perform the remaining controlled canonical backfill, then deploy the
+7. Perform the remaining controlled canonical backfill, then deploy the
    application positive-resolver cutover. Require authoritative readiness to
    be true.
-7. A later PR adds the renumbered behavior-cutover migration and its
+8. A later PR adds the renumbered behavior-cutover migration and its
    acceptance/contract. Deploy, back up, and apply it manually. Never publish
    the behavior cutover before the
    intervening isolation, backfill, and application gates pass.
