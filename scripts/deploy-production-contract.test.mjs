@@ -2162,6 +2162,145 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   assert.doesNotMatch(deployScript, /cat\s+[^\n]*READINESS_FENCE_LOG|tail\s+[^\n]*READINESS_FENCE_LOG/);
 });
 
+test("only a missing Supabase anon key inherits from the URL-bound frozen previous release", () => {
+  const resolution = extractShellRegion(
+    'FINAL_NEXT_PUBLIC_SUPABASE_URL="$(decode_base64_value',
+    'write_env_value "NEXT_PUBLIC_SUPABASE_URL"',
+  );
+  assert.match(
+    resolution,
+    /timeout --signal=TERM --kill-after=1s 5s[\s\S]+read-production-supabase-environment\.mjs anon-key[\s\S]+PREVIOUS_RUNTIME_DIR.*\.env\.local.*PREVIOUS_BUILD_ID[\s\S]+FINAL_NEXT_PUBLIC_SUPABASE_URL/,
+  );
+  assert.match(
+    resolution,
+    /if \[ -z "\$FINAL_NEXT_PUBLIC_SUPABASE_URL" \]; then[\s\S]+current Supabase public URL is unavailable[\s\S]+if \[ -z "\$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY" \]; then/,
+  );
+  assert.doesNotMatch(resolution, /FINAL_NEXT_PUBLIC_SUPABASE_URL="\$PERSISTED/);
+  assert.match(
+    resolution,
+    /FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY="\$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY"/,
+  );
+  assert.match(
+    resolution,
+    /FINAL_SUPABASE_INTERNAL_URL="\$\{SUPABASE_INTERNAL_URL_FROM_B64:-http:\/\/127\.0\.0\.1:8000\}"/,
+  );
+  assert.doesNotMatch(
+    resolution,
+    /FINAL_SUPABASE_INTERNAL_URL="\$\{SUPABASE_INTERNAL_URL_FROM_B64:-\$SUPABASE_INTERNAL_URL\}"/,
+  );
+  for (const assignment of [
+    'export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"',
+    'export NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL"',
+    'export NEXT_PUBLIC_SUPABASE_ANON_KEY="$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"',
+  ]) {
+    assert.ok(resolution.includes(assignment));
+  }
+  assert.match(
+    deployScript,
+    /write_env_value "NEXT_PUBLIC_SUPABASE_ANON_KEY" "\$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"/,
+  );
+});
+
+test("previous release identity is independently prefix-bound and rechecked around frozen reads", () => {
+  const identity = extractShellRegion(
+    'PREVIOUS_LINK_TARGET="$(readlink -f',
+    'FAOLLA_WEB_BUILD_ID="$EXPECTED_DEPLOY_SHA"',
+  );
+  assert.doesNotMatch(identity, /grep '\^FAOLLA_WEB_BUILD_ID=/);
+  assert.match(
+    identity,
+    /PREVIOUS_RELEASE_NAME="\$\(basename -- "\$PREVIOUS_RUNTIME_DIR"/,
+  );
+  assert.match(identity, /\^\(\[0-9a-f\]\{12\}\)-\[0-9\]\{14\}\$/);
+  assert.match(
+    identity,
+    /timeout --signal=TERM --kill-after=1s 5s[\s\S]+read-production-supabase-environment\.mjs build-id/,
+  );
+  assert.match(identity, /pm2 pid "\$APP_NAME"/);
+  assert.match(identity, /stat -Lc '%d:%i:%Z' -- "\$PREVIOUS_RUNTIME_DIR"/);
+  assert.match(identity, /stat -Lc '%d:%i:%Z' -- "\/proc\/\$PREVIOUS_WEB_PID\/cwd"/);
+  assert.match(identity, /PREVIOUS_WEB_CWD_IDENTITY" != "\$PREVIOUS_RUNTIME_IDENTITY"/);
+  assert.ok(
+    identity.match(/readlink -f "\$CURRENT_LINK"/g)?.length >= 2,
+    "current release link must be checked before and after the frozen build read",
+  );
+});
+
+test("resolved probe inputs use the current public URL, frozen anon key, and literal internal default", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-deploy-probe-environment-contract-"),
+  );
+  const previousRuntime = join(temporaryDirectory, "previous-release");
+  const previousEnvironment = join(previousRuntime, ".env.local");
+  const currentUrl = "https://current.contract.supabase.co";
+  const previousUrl = currentUrl;
+  const persistedAnonKey = "persisted_contract_anon.key-safe_value";
+  const resolution = extractShellRegion(
+    'FINAL_NEXT_PUBLIC_SUPABASE_URL="$(decode_base64_value',
+    'write_env_value "NEXT_PUBLIC_SUPABASE_URL"',
+  );
+  await mkdir(previousRuntime, { recursive: true });
+  await writeFile(
+    previousEnvironment,
+    `FAOLLA_WEB_BUILD_ID=${FIXTURE_TARGET_SHA}\n` +
+      `NEXT_PUBLIC_SUPABASE_URL=${previousUrl}\n` +
+      `NEXT_PUBLIC_SUPABASE_ANON_KEY=${persistedAnonKey}\n`,
+    { mode: 0o600 },
+  );
+  try {
+    const script = [
+      "set -euo pipefail",
+      "decode_base64_value() {",
+      '  local value="$1"',
+      '  if [ -z "$value" ]; then return 0; fi',
+      "  printf '%s' \"$value\" | base64 -d",
+      "}",
+      'NEXT_PUBLIC_SUPABASE_URL_B64="$CONTRACT_PUBLIC_URL_B64"',
+      'NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""',
+      'SUPABASE_INTERNAL_URL_B64=""',
+      'SUPABASE_INTERNAL_URL="https://ambient.invalid/?secret=must-not-win"',
+      'PREVIOUS_RUNTIME_DIR="$CONTRACT_PREVIOUS_RUNTIME"',
+      'PREVIOUS_BUILD_ID="$CONTRACT_PREVIOUS_BUILD_ID"',
+      'PREVIOUS_WEB_PID="4321"',
+      'PREVIOUS_RUNTIME_IDENTITY="10:20:30"',
+      'PREVIOUS_WEB_PROCESS_IDENTITY="40:50"',
+      'CURRENT_LINK="/contract/current"',
+      'readlink() { printf \'%s\\n\' "$PREVIOUS_RUNTIME_DIR"; }',
+      "stat() {",
+      '  case "$*" in',
+      '    *"/proc/$PREVIOUS_WEB_PID/cwd"*) printf \'%s\\n\' "$PREVIOUS_RUNTIME_IDENTITY" ;;',
+      '    *"/proc/$PREVIOUS_WEB_PID"*) printf \'%s\\n\' "$PREVIOUS_WEB_PROCESS_IDENTITY" ;;',
+      '    *) printf \'%s\\n\' "$PREVIOUS_RUNTIME_IDENTITY" ;;',
+      "  esac",
+      "}",
+      resolution,
+      'printf \'%s\\0%s\\0%s\\0\' "$FINAL_NEXT_PUBLIC_SUPABASE_URL" "$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY" "$FINAL_SUPABASE_INTERNAL_URL"',
+      "",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      input: script,
+      env: {
+        ...process.env,
+        CONTRACT_PUBLIC_URL_B64: Buffer.from(currentUrl).toString("base64"),
+        CONTRACT_PREVIOUS_RUNTIME: toBashPath(previousRuntime),
+        CONTRACT_PREVIOUS_BUILD_ID: FIXTURE_TARGET_SHA,
+      },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(result.stdout.split("\0").slice(0, 3), [
+      currentUrl,
+      persistedAnonKey,
+      "http://127.0.0.1:8000",
+    ]);
+    assert.equal(result.stdout.includes("ambient.invalid"), false);
+    assert.equal(result.stderr, "");
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("deployment SSH trust is pinned and never learned from the live network", () => {
   assert.match(deployWorkflow, /SSH_KNOWN_HOSTS: \$\{\{ secrets\.SSH_KNOWN_HOSTS \}\}/);
   assert.match(deployWorkflow, /ssh-keygen -F "\$known_hosts_lookup"/);
