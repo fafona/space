@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { link, lstat, open, unlink } from "node:fs/promises";
+import { isIP } from "node:net";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -58,23 +59,44 @@ const WAITER_VALIDATION_PREDICATES = Object.freeze([
   Object.freeze(["blockerCount", "blocker_count"]),
   Object.freeze(["blockerPid", "blocker_pid"]),
   Object.freeze(["databaseUser", "database_user"]),
-  Object.freeze(["clientAddress", "client_address"]),
   Object.freeze(["applicationName", "application_name"]),
   Object.freeze(["queryMarker", "query_marker"]),
+]);
+const WAITER_CLIENT_ADDRESS_CLASSIFICATIONS = Object.freeze([
+  Object.freeze(["dockerIpv4", "docker_ipv4"]),
+  Object.freeze(["dockerIpv6", "docker_ipv6"]),
+  Object.freeze(["ipv4Mapped", "ipv4_mapped"]),
+  Object.freeze(["sharedGateway", "shared_gateway"]),
+  Object.freeze(["unmatched", "unmatched"]),
 ]);
 const WAITER_VALIDATION_FAILURE_CONTEXTS = Object.freeze(
   WAITER_VALIDATION_STAGES.flatMap((stage) =>
     WAITER_VALIDATION_PROBES.flatMap(([probe, probeCode]) =>
-      WAITER_VALIDATION_PREDICATES.map(([predicate, predicateCode]) =>
-        Object.freeze({
-          stage,
-          probe,
-          predicate,
-          code:
-            `readiness_fence_probe_waiter_${stage}_${probeCode}_` +
-            `${predicateCode}_invalid`,
-        }),
-      ),
+      [
+        ...WAITER_VALIDATION_PREDICATES.map(([predicate, predicateCode]) =>
+          Object.freeze({
+            stage,
+            probe,
+            predicate,
+            classification: null,
+            code:
+              `readiness_fence_probe_waiter_${stage}_${probeCode}_` +
+              `${predicateCode}_invalid`,
+          }),
+        ),
+        ...WAITER_CLIENT_ADDRESS_CLASSIFICATIONS.map(
+          ([classification, classificationCode]) =>
+            Object.freeze({
+              stage,
+              probe,
+              predicate: "clientAddress",
+              classification,
+              code:
+                `readiness_fence_probe_waiter_${stage}_${probeCode}_` +
+                `client_address_${classificationCode}_invalid`,
+            }),
+        ),
+      ],
     ),
   ),
 );
@@ -1150,6 +1172,95 @@ async function captureDockerOutput(
   return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
 }
 
+function canonicalIpAddress(value) {
+  const family = isIP(value);
+  if (family === 4) {
+    return { family, value: value.split(".").map(Number).join(".") };
+  }
+  if (family !== 6) return null;
+  try {
+    const hostname = new URL(`http://[${value}]/`).hostname;
+    if (!hostname.startsWith("[") || !hostname.endsWith("]")) return null;
+    return { family, value: hostname.slice(1, -1).toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
+function ipv4MappedAddress(canonicalAddress) {
+  if (canonicalAddress?.family !== 6) return null;
+  const match = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(
+    canonicalAddress.value,
+  );
+  if (!match) return null;
+  const high = Number.parseInt(match[1], 16);
+  const low = Number.parseInt(match[2], 16);
+  return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
+}
+
+function clientAddressSourcesForClassification(value) {
+  const empty = () => ({ dockerIpv4: [], dockerIpv6: [], sharedGateway: [] });
+  try {
+    if (!isPlainRecord(value)) return empty();
+    const addresses = (candidate, families) => {
+      if (!Array.isArray(candidate)) return [];
+      const canonical = new Map();
+      for (const address of candidate) {
+        if (
+          typeof address !== "string" ||
+          address.length === 0 ||
+          address.length > 128
+        ) {
+          continue;
+        }
+        const normalized = canonicalIpAddress(address);
+        if (normalized === null || !families.has(normalized.family)) continue;
+        canonical.set(
+          `${normalized.family}:${normalized.value}`,
+          normalized.value,
+        );
+      }
+      return [...canonical.values()].sort();
+    };
+    return {
+      dockerIpv4: addresses(value.dockerIpv4, new Set([4])),
+      dockerIpv6: addresses(value.dockerIpv6, new Set([6])),
+      sharedGateway: addresses(value.sharedGateway, new Set([4, 6])),
+    };
+  } catch {
+    return empty();
+  }
+}
+
+function classifyRejectedClientAddress(value, sources) {
+  const candidate = canonicalIpAddress(value);
+  if (candidate === null) return "unmatched";
+  const dockerIpv4 = new Set(
+    sources.dockerIpv4.map((address) => canonicalIpAddress(address).value),
+  );
+  const dockerIpv6 = new Set(
+    sources.dockerIpv6.map((address) => canonicalIpAddress(address).value),
+  );
+  const sharedGateway = new Set(
+    sources.sharedGateway.map((address) => {
+      const canonical = canonicalIpAddress(address);
+      return `${canonical.family}:${canonical.value}`;
+    }),
+  );
+  if (candidate.family === 4 && dockerIpv4.has(candidate.value)) {
+    return "dockerIpv4";
+  }
+  if (candidate.family === 6 && dockerIpv6.has(candidate.value)) {
+    return "dockerIpv6";
+  }
+  const mapped = ipv4MappedAddress(candidate);
+  if (mapped !== null && dockerIpv4.has(mapped)) return "ipv4Mapped";
+  if (sharedGateway.has(`${candidate.family}:${candidate.value}`)) {
+    return "sharedGateway";
+  }
+  return "unmatched";
+}
+
 export async function resolveSupabaseServiceClientAddresses(
   service,
   databaseContainerId,
@@ -1280,12 +1391,21 @@ export async function resolveSupabaseServiceClientAddresses(
   ) {
     fail("readiness_fence_probe_service_database_route_invalid");
   }
-  const addresses = Object.entries(
+  const sharedNetworkIdentities = Object.entries(
     serviceContainer?.NetworkSettings?.Networks ?? {},
-  )
-    .filter(([network]) => databaseNetworks.has(network))
+  ).filter(([network]) => databaseNetworks.has(network));
+  const addresses = sharedNetworkIdentities
     .map(([, identity]) => identity?.IPAddress)
     .filter((value) => typeof value === "string" && value !== "");
+  const dockerIpv6 = sharedNetworkIdentities.map(
+    ([, identity]) => identity?.GlobalIPv6Address,
+  );
+  const ipv4Gateways = sharedNetworkIdentities.map(
+    ([, identity]) => identity?.Gateway,
+  );
+  const ipv6Gateways = sharedNetworkIdentities.map(
+    ([, identity]) => identity?.IPv6Gateway,
+  );
   if (
     addresses.length === 0 ||
     new Set(addresses).size !== addresses.length ||
@@ -1297,10 +1417,16 @@ export async function resolveSupabaseServiceClientAddresses(
   ) {
     fail("readiness_fence_probe_service_identity_invalid");
   }
+  const clientAddressSources = clientAddressSourcesForClassification({
+    dockerIpv4: addresses,
+    dockerIpv6,
+    sharedGateway: [...ipv4Gateways, ...ipv6Gateways],
+  });
   return {
     containerId: serviceIds[0],
     imageId: serviceContainer.Image,
     clientAddresses: addresses.sort(),
+    clientAddressSources,
     databaseUser,
     databaseName: expectedDatabaseName,
     databasePort: databaseUrl.port || "5432",
@@ -1530,20 +1656,26 @@ function probeRequestSpecifications(environment, randomHex) {
   ];
 }
 
-function waiterValidationFailureCode(stage, probe, predicate) {
+function waiterValidationFailureCode(
+  stage,
+  probe,
+  predicate,
+  classification = null,
+) {
   const context = WAITER_VALIDATION_FAILURE_CONTEXTS.find(
     (candidate) =>
       candidate.stage === stage &&
       candidate.probe === probe &&
-      candidate.predicate === predicate,
+      candidate.predicate === predicate &&
+      candidate.classification === classification,
   );
   if (context === undefined) fail("readiness_fence_unexpected_error");
   return context.code;
 }
 
 function validateCandidateWaiter(candidate, expected, stage, probe) {
-  const invalid = (predicate) =>
-    fail(waiterValidationFailureCode(stage, probe, predicate));
+  const invalid = (predicate, classification = null) =>
+    fail(waiterValidationFailureCode(stage, probe, predicate, classification));
   if (candidate.databaseOid !== expected.databaseOid) invalid("databaseOid");
   if (candidate.schemaName !== expected.schemaName) invalid("schemaName");
   if (candidate.relationName !== expected.relationName) invalid("relationName");
@@ -1561,7 +1693,13 @@ function validateCandidateWaiter(candidate, expected, stage, probe) {
   }
   if (candidate.databaseUser !== expected.databaseUser) invalid("databaseUser");
   if (!expected.clientAddresses.includes(candidate.clientAddress)) {
-    invalid("clientAddress");
+    invalid(
+      "clientAddress",
+      classifyRejectedClientAddress(
+        candidate.clientAddress,
+        expected.clientAddressSources,
+      ),
+    );
   }
   if (
     expected.applicationName !== null &&
@@ -1716,6 +1854,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     ["rest", "auth"],
     "readiness_fence_probe_service_identity_invalid",
   );
+  const classifiedClientAddressSources = new Map();
   for (const service of ["rest", "auth"]) {
     const identity = exactRecord(
       serviceIdentities[service],
@@ -1723,6 +1862,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         "containerId",
         "imageId",
         "clientAddresses",
+        "clientAddressSources",
         "databaseUser",
         "databaseName",
         "databasePort",
@@ -1744,6 +1884,10 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     ) {
       fail("readiness_fence_probe_service_identity_invalid");
     }
+    classifiedClientAddressSources.set(
+      service,
+      clientAddressSourcesForClassification(identity.clientAddressSources),
+    );
   }
   const maximumPolls = Math.ceil(
     ENDPOINT_PROBE_TIMEOUT_MS / ENDPOINT_PROBE_POLL_MS,
@@ -1832,6 +1976,9 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
               fenceBackendPid: source.fenceBackendPid,
               notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
               clientAddresses: serviceIdentity.clientAddresses,
+              clientAddressSources: classifiedClientAddressSources.get(
+                specification.service,
+              ),
               databaseUser: serviceIdentity.databaseUser,
               applicationName: preexistingApplicationName,
               queryMarker: specification.queryMarker,
@@ -1894,6 +2041,9 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
             fenceBackendPid: source.fenceBackendPid,
             notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
             clientAddresses: serviceIdentity.clientAddresses,
+            clientAddressSources: classifiedClientAddressSources.get(
+              specification.service,
+            ),
             databaseUser: serviceIdentity.databaseUser,
             applicationName,
             queryMarker: specification.queryMarker,
