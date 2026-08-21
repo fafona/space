@@ -41,6 +41,47 @@ const ENDPOINT_PROBE_POLL_MS = 50;
 const EXTERNAL_OPERATION_TIMEOUT_MS = 10_000;
 const QUERY_CANCEL_RESPONSE_TIMEOUT_MS = 5_000;
 
+const WAITER_VALIDATION_STAGES = Object.freeze(["initial", "post_cancel"]);
+const WAITER_VALIDATION_PROBES = Object.freeze([
+  Object.freeze(["internalRest", "internal_rest"]),
+  Object.freeze(["internalAuth", "internal_auth"]),
+  Object.freeze(["publicRest", "public_rest"]),
+  Object.freeze(["publicAuth", "public_auth"]),
+]);
+const WAITER_VALIDATION_PREDICATES = Object.freeze([
+  Object.freeze(["databaseOid", "database_oid"]),
+  Object.freeze(["schemaName", "schema_name"]),
+  Object.freeze(["relationName", "relation_name"]),
+  Object.freeze(["mode", "mode"]),
+  Object.freeze(["granted", "granted"]),
+  Object.freeze(["queryStarted", "query_started"]),
+  Object.freeze(["blockerCount", "blocker_count"]),
+  Object.freeze(["blockerPid", "blocker_pid"]),
+  Object.freeze(["databaseUser", "database_user"]),
+  Object.freeze(["clientAddress", "client_address"]),
+  Object.freeze(["applicationName", "application_name"]),
+  Object.freeze(["queryMarker", "query_marker"]),
+]);
+const WAITER_VALIDATION_FAILURE_CONTEXTS = Object.freeze(
+  WAITER_VALIDATION_STAGES.flatMap((stage) =>
+    WAITER_VALIDATION_PROBES.flatMap(([probe, probeCode]) =>
+      WAITER_VALIDATION_PREDICATES.map(([predicate, predicateCode]) =>
+        Object.freeze({
+          stage,
+          probe,
+          predicate,
+          code:
+            `readiness_fence_probe_waiter_${stage}_${probeCode}_` +
+            `${predicateCode}_invalid`,
+        }),
+      ),
+    ),
+  ),
+);
+const WAITER_VALIDATION_FAILURE_CODES = Object.freeze(
+  WAITER_VALIDATION_FAILURE_CONTEXTS.map(({ code }) => code),
+);
+
 const PUBLIC_FAILURE_CODES = new Set([
   "attestation_json_not_canonical",
   "readiness_fence_application_name_invalid",
@@ -103,7 +144,6 @@ const PUBLIC_FAILURE_CODES = new Set([
   "readiness_fence_probe_waiter_cancel_failed",
   "readiness_fence_probe_waiter_cancel_timeout",
   "readiness_fence_probe_waiter_count_invalid",
-  "readiness_fence_probe_waiter_invalid",
   "readiness_fence_probe_waiter_missing",
   "readiness_fence_probe_waiter_residual",
   "readiness_fence_release_request_binding_mismatch",
@@ -126,6 +166,7 @@ const PUBLIC_FAILURE_CODES = new Set([
   "readiness_fence_timeout",
   "readiness_fence_ttl_below_hold",
   "readiness_fence_unexpected_error",
+  ...WAITER_VALIDATION_FAILURE_CODES,
 ]);
 const ENDPOINT_PROBE_TOTAL_TIMEOUT_MS = 90_000;
 const FENCE_KIND = "faolla.ordinary-account-cutover-readiness-fence.v1";
@@ -1489,25 +1530,50 @@ function probeRequestSpecifications(environment, randomHex) {
   ];
 }
 
-function validateCandidateWaiter(candidate, expected) {
+function waiterValidationFailureCode(stage, probe, predicate) {
+  const context = WAITER_VALIDATION_FAILURE_CONTEXTS.find(
+    (candidate) =>
+      candidate.stage === stage &&
+      candidate.probe === probe &&
+      candidate.predicate === predicate,
+  );
+  if (context === undefined) fail("readiness_fence_unexpected_error");
+  return context.code;
+}
+
+function validateCandidateWaiter(candidate, expected, stage, probe) {
+  const invalid = (predicate) =>
+    fail(waiterValidationFailureCode(stage, probe, predicate));
+  if (candidate.databaseOid !== expected.databaseOid) invalid("databaseOid");
+  if (candidate.schemaName !== expected.schemaName) invalid("schemaName");
+  if (candidate.relationName !== expected.relationName) invalid("relationName");
+  if (candidate.mode !== "AccessShareLock") invalid("mode");
+  if (candidate.granted !== false) invalid("granted");
   if (
-    candidate.databaseOid !== expected.databaseOid ||
-    candidate.schemaName !== expected.schemaName ||
-    candidate.relationName !== expected.relationName ||
-    candidate.mode !== "AccessShareLock" ||
-    candidate.granted !== false ||
     BigInt(candidate.queryStartedAtEpochMilliseconds) <
-      BigInt(expected.notBeforeEpochMilliseconds) ||
-    candidate.blockingPids.length !== 1 ||
-    candidate.blockingPids[0] !== expected.fenceBackendPid ||
-    candidate.databaseUser !== expected.databaseUser ||
-    !expected.clientAddresses.includes(candidate.clientAddress) ||
-    (expected.applicationName !== null &&
-      candidate.applicationName !== expected.applicationName) ||
-    (expected.queryMarker !== null &&
-      !candidate.query.includes(`"${expected.queryMarker}"`))
+    BigInt(expected.notBeforeEpochMilliseconds)
   ) {
-    fail("readiness_fence_probe_waiter_invalid");
+    invalid("queryStarted");
+  }
+  if (candidate.blockingPids.length !== 1) invalid("blockerCount");
+  if (candidate.blockingPids[0] !== expected.fenceBackendPid) {
+    invalid("blockerPid");
+  }
+  if (candidate.databaseUser !== expected.databaseUser) invalid("databaseUser");
+  if (!expected.clientAddresses.includes(candidate.clientAddress)) {
+    invalid("clientAddress");
+  }
+  if (
+    expected.applicationName !== null &&
+    candidate.applicationName !== expected.applicationName
+  ) {
+    invalid("applicationName");
+  }
+  if (
+    expected.queryMarker !== null &&
+    !candidate.query.includes(`"${expected.queryMarker}"`)
+  ) {
+    invalid("queryMarker");
   }
 }
 
@@ -1757,17 +1823,22 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
           fail("readiness_fence_probe_waiter_count_invalid");
         }
         if (candidates.length === 1) {
-          validateCandidateWaiter(candidates[0], {
-            databaseOid: source.databaseOid,
-            schemaName: specification.schemaName,
-            relationName: specification.relationName,
-            fenceBackendPid: source.fenceBackendPid,
-            notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
-            clientAddresses: serviceIdentity.clientAddresses,
-            databaseUser: serviceIdentity.databaseUser,
-            applicationName: preexistingApplicationName,
-            queryMarker: specification.queryMarker,
-          });
+          validateCandidateWaiter(
+            candidates[0],
+            {
+              databaseOid: source.databaseOid,
+              schemaName: specification.schemaName,
+              relationName: specification.relationName,
+              fenceBackendPid: source.fenceBackendPid,
+              notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
+              clientAddresses: serviceIdentity.clientAddresses,
+              databaseUser: serviceIdentity.databaseUser,
+              applicationName: preexistingApplicationName,
+              queryMarker: specification.queryMarker,
+            },
+            "initial",
+            specification.probe,
+          );
           accepted = candidates[0];
           break;
         }
@@ -1814,17 +1885,22 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         ) {
           fail("readiness_fence_probe_waiter_count_invalid");
         }
-        validateCandidateWaiter(newWaiters[0], {
-          databaseOid: source.databaseOid,
-          schemaName: specification.schemaName,
-          relationName: specification.relationName,
-          fenceBackendPid: source.fenceBackendPid,
-          notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
-          clientAddresses: serviceIdentity.clientAddresses,
-          databaseUser: serviceIdentity.databaseUser,
-          applicationName,
-          queryMarker: specification.queryMarker,
-        });
+        validateCandidateWaiter(
+          newWaiters[0],
+          {
+            databaseOid: source.databaseOid,
+            schemaName: specification.schemaName,
+            relationName: specification.relationName,
+            fenceBackendPid: source.fenceBackendPid,
+            notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
+            clientAddresses: serviceIdentity.clientAddresses,
+            databaseUser: serviceIdentity.databaseUser,
+            applicationName,
+            queryMarker: specification.queryMarker,
+          },
+          "post_cancel",
+          specification.probe,
+        );
         await poll();
       }
       if (!disappeared) fail("readiness_fence_probe_waiter_residual");
