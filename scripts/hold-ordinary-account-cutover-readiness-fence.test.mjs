@@ -51,6 +51,11 @@ const REST_SERVICE_IDENTITY = {
   containerId: "c".repeat(64),
   imageId: `sha256:${"d".repeat(64)}`,
   clientAddresses: ["172.20.0.10"],
+  clientAddressSources: {
+    dockerIpv4: ["172.20.0.10"],
+    dockerIpv6: ["2001:db8:20::10"],
+    sharedGateway: ["172.20.0.1", "2001:db8:20::1"],
+  },
   databaseUser: "authenticator",
   databaseName: "postgres",
   databasePort: "5432",
@@ -59,6 +64,11 @@ const AUTH_SERVICE_IDENTITY = {
   containerId: "e".repeat(64),
   imageId: `sha256:${"f".repeat(64)}`,
   clientAddresses: ["172.20.0.11"],
+  clientAddressSources: {
+    dockerIpv4: ["172.20.0.11"],
+    dockerIpv6: ["2001:db8:20::11"],
+    sharedGateway: ["172.20.0.1", "2001:db8:20::1"],
+  },
   databaseUser: "supabase_auth_admin",
   databaseName: "postgres",
   databasePort: "5432",
@@ -551,6 +561,24 @@ function serviceIdentityDockerSpawner({
   service = "rest",
   databaseHost = "db",
   duplicateService = false,
+  databaseNetworks = {
+    supabase_default: {
+      IPAddress: "172.20.0.2",
+      GlobalIPv6Address: "2001:db8:20::2",
+      Gateway: "172.20.0.1",
+      IPv6Gateway: "2001:db8:20::1",
+      Aliases: ["db", "supabase-db"],
+    },
+  },
+  serviceNetworks = {
+    supabase_default: {
+      IPAddress: "172.20.0.10",
+      GlobalIPv6Address: "2001:db8:20::10",
+      Gateway: "172.20.0.1",
+      IPv6Gateway: "2001:db8:20::1",
+      Aliases: [service],
+    },
+  },
 } = {}) {
   const serviceId = service === "rest" ? "c".repeat(64) : "e".repeat(64);
   const secondId = "7".repeat(64);
@@ -564,14 +592,7 @@ function serviceIdentityDockerSpawner({
         Id: CONTAINER_ID,
         Name: "/supabase-db",
         Config: { Labels: { "com.docker.compose.project": "supabase" } },
-        NetworkSettings: {
-          Networks: {
-            supabase_default: {
-              IPAddress: "172.20.0.2",
-              Aliases: ["db", "supabase-db"],
-            },
-          },
-        },
+        NetworkSettings: { Networks: databaseNetworks },
       },
     ]),
     `${serviceId}${duplicateService ? `\n${secondId}` : ""}\n`,
@@ -588,11 +609,7 @@ function serviceIdentityDockerSpawner({
             `${environmentName}=postgres://${databaseUser}:never-log-this@${databaseHost}:5432/postgres`,
           ],
         },
-        NetworkSettings: {
-          Networks: {
-            supabase_default: { IPAddress: "172.20.0.10", Aliases: [service] },
-          },
-        },
+        NetworkSettings: { Networks: serviceNetworks },
       },
     ]),
   ];
@@ -676,6 +693,149 @@ test("service identity is derived from the attested compose project and direct d
   assert.equal(docker.calls.length, 3);
   assert.match(docker.calls[1].argumentsList.join(" "), /compose\.service=rest/);
   assert.doesNotMatch(JSON.stringify(identity), /never-log-this|postgres:\/\//);
+
+  await t.test("only shared-network Docker and gateway addresses are frozen", async () => {
+    const isolated = serviceIdentityDockerSpawner({
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:0db8:0020:0000:0000:0000:0000:0010",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:0db8:0020:0000:0000:0000:0000:0001",
+          Aliases: ["rest"],
+        },
+        service_only: {
+          IPAddress: "not-an-ipv4-address",
+          GlobalIPv6Address: "hostile-nonshared-ipv6",
+          Gateway: "hostile-nonshared-gateway",
+          IPv6Gateway: "hostile-nonshared-ipv6-gateway",
+          Aliases: ["rest-external"],
+        },
+      },
+    });
+    const isolatedIdentity = await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      isolated.spawnProcess,
+    );
+    assert.deepEqual(isolatedIdentity, REST_SERVICE_IDENTITY);
+  });
+
+  await t.test("multiple shared networks remain source-specific and deterministic", async () => {
+    const multiple = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.2",
+          GlobalIPv6Address: "2001:db8:20::2",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          Aliases: ["db", "supabase-db"],
+        },
+        supabase_secondary: {
+          IPAddress: "172.21.0.2",
+          GlobalIPv6Address: "2001:db8:21::2",
+          Gateway: "172.21.0.1",
+          IPv6Gateway: "2001:db8:21::1",
+          Aliases: ["db-secondary"],
+        },
+      },
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:db8:20::10",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          Aliases: ["rest"],
+        },
+        supabase_secondary: {
+          IPAddress: "172.21.0.10",
+          GlobalIPv6Address: "2001:db8:21::10",
+          Gateway: "172.21.0.1",
+          IPv6Gateway: "2001:db8:21::1",
+          Aliases: ["rest-secondary"],
+        },
+        service_only: {
+          IPAddress: "192.0.2.10",
+          GlobalIPv6Address: "2001:db8:ffff::10",
+          Gateway: "192.0.2.1",
+          IPv6Gateway: "2001:db8:ffff::1",
+          Aliases: ["rest-external"],
+        },
+      },
+    });
+    assert.deepEqual(
+      await resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        multiple.spawnProcess,
+      ),
+      {
+        ...REST_SERVICE_IDENTITY,
+        clientAddresses: ["172.20.0.10", "172.21.0.10"],
+        clientAddressSources: {
+          dockerIpv4: ["172.20.0.10", "172.21.0.10"],
+          dockerIpv6: ["2001:db8:20::10", "2001:db8:21::10"],
+          sharedGateway: [
+            "172.20.0.1",
+            "172.21.0.1",
+            "2001:db8:20::1",
+            "2001:db8:21::1",
+          ],
+        },
+      },
+    );
+  });
+
+  await t.test("malformed and duplicate diagnostic addresses never become a new gate", async () => {
+    const bestEffort = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.2",
+          Aliases: ["db", "supabase-db"],
+        },
+        supabase_secondary: {
+          IPAddress: "172.21.0.2",
+          Aliases: ["db-secondary"],
+        },
+      },
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:db8:20::10",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          Aliases: ["rest"],
+        },
+        supabase_secondary: {
+          IPAddress: "172.21.0.10",
+          GlobalIPv6Address:
+            "2001:0db8:0020:0000:0000:0000:0000:0010",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "hostile-shared-ipv6-gateway",
+          Aliases: ["rest-secondary"],
+        },
+      },
+    });
+    assert.deepEqual(
+      await resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        bestEffort.spawnProcess,
+      ),
+      {
+        ...REST_SERVICE_IDENTITY,
+        clientAddresses: ["172.20.0.10", "172.21.0.10"],
+        clientAddressSources: {
+          dockerIpv4: ["172.20.0.10", "172.21.0.10"],
+          dockerIpv6: ["2001:db8:20::10"],
+          sharedGateway: ["172.20.0.1", "2001:db8:20::1"],
+        },
+      },
+    );
+  });
 
   await t.test("pooler or other non-attested database hop is rejected", async () => {
     const hostile = serviceIdentityDockerSpawner({ databaseHost: "pooler" });
@@ -996,7 +1156,7 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
       "wrong service client address",
       [observation(), observation([waiter({ clientAddress: "172.20.0.99" })])],
       null,
-      "readiness_fence_probe_waiter_initial_internal_rest_client_address_invalid",
+      "readiness_fence_probe_waiter_initial_internal_rest_client_address_unmatched_invalid",
     ],
     [
       "wrong frozen application name",
@@ -1062,6 +1222,38 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
   });
 });
 
+test("a rejected waiter client address emits a fixed unmatched classification", async () => {
+  const snapshots = [
+    observation(),
+    observation([waiter({ clientAddress: "203.0.113.77" })]),
+  ];
+  const calls = [];
+  await assertCode(
+    probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      {
+        containerId: CONTAINER_ID,
+        databaseName: "postgres",
+        databaseOid: "16384",
+        fenceBackendPid: "4321",
+      },
+      {
+        environment: {
+          SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+          NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-only-key",
+        },
+        randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+        fetchImpl: pendingFetchRecorder(calls),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        cancelWaiter: async () => {},
+        serviceIdentities: SERVICE_IDENTITIES,
+        poll: async () => {},
+      },
+    ),
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_unmatched_invalid",
+  );
+});
+
 test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, canonical, and value-free", async () => {
   const input = {
     containerId: CONTAINER_ID,
@@ -1111,9 +1303,6 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     ["databaseUser", (candidate) => {
       candidate.databaseUser = "hostile_user_secret";
     }],
-    ["clientAddress", (candidate) => {
-      candidate.clientAddress = "203.0.113.77";
-    }],
     ["applicationName", (candidate) => {
       candidate.applicationName = "hostile_app_secret";
     }],
@@ -1137,7 +1326,6 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     blockerCount: "blocker_count",
     blockerPid: "blocker_pid",
     databaseUser: "database_user",
-    clientAddress: "client_address",
     applicationName: "application_name",
     queryMarker: "query_marker",
   };
@@ -1145,6 +1333,21 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     `readiness_fence_probe_waiter_${stage}_` +
     `${diagnosticProbeNames[probe]}_` +
     `${diagnosticPredicateNames[predicate]}_invalid`;
+  const clientAddressClasses = [
+    ["dockerIpv4", "docker_ipv4"],
+    ["dockerIpv6", "docker_ipv6"],
+    ["ipv4Mapped", "ipv4_mapped"],
+    ["sharedGateway", "shared_gateway"],
+    ["unmatched", "unmatched"],
+  ];
+  // A resolver-consistent Docker IPv4 is accepted by the preceding raw match.
+  // Its diagnostic code remains fixed and parser-covered for schema completeness.
+  const observableRejectedClientAddressClasses = clientAddressClasses.filter(
+    ([classification]) => classification !== "dockerIpv4",
+  );
+  const clientAddressCodeFor = (stage, probe, classification) =>
+    `readiness_fence_probe_waiter_${stage}_` +
+    `${diagnosticProbeNames[probe]}_client_address_${classification}_invalid`;
   const confidentialValues = [
     "987654321",
     "16384",
@@ -1156,6 +1359,15 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     "172.20.0.10",
     "172.20.0.11",
     "203.0.113.77",
+    "2001:0db8:0020:0000:0000:0000:0000:0010",
+    "2001:0db8:0020:0000:0000:0000:0000:0011",
+    "2001:db8:20::10",
+    "2001:db8:20::11",
+    "::ffff:172.20.0.10",
+    "::ffff:172.20.0.11",
+    "2001:0db8:0020:0000:0000:0000:0000:0001",
+    "2001:db8:20::1",
+    "2001:db8:ffff::77",
     "authenticator",
     "supabase_auth_admin",
     "PostgREST 12.1",
@@ -1237,9 +1449,111 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
   }
 
   for (const stage of stages) {
+    for (const [probeIndex, probe] of probes.entries()) {
+      for (const [
+        classification,
+        classificationCode,
+      ] of observableRejectedClientAddressClasses) {
+        const snapshots = successfulProbeSequence({ lingerAfterCancel: true });
+        snapshots[probeIndex * 4 + 2].waiters[0] = {
+          ...snapshots[probeIndex * 4 + 2].waiters[0],
+          blockingPids: [
+            ...snapshots[probeIndex * 4 + 2].waiters[0].blockingPids,
+          ],
+        };
+        const initialCandidate = snapshots[probeIndex * 4 + 1].waiters[0];
+        const postCancelCandidate = snapshots[probeIndex * 4 + 2].waiters[0];
+        initialCandidate.pid = "987654321";
+        postCancelCandidate.pid = "987654321";
+        const targetCandidate =
+          stage === "initial" ? initialCandidate : postCancelCandidate;
+        const service = probe.endsWith("Auth") ? "auth" : "rest";
+        const suffix = service === "auth" ? "11" : "10";
+        switch (classification) {
+          case "dockerIpv6":
+            targetCandidate.clientAddress =
+              `2001:0db8:0020:0000:0000:0000:0000:00${suffix}`;
+            break;
+          case "ipv4Mapped":
+            targetCandidate.clientAddress = `::ffff:172.20.0.${suffix}`;
+            break;
+          case "sharedGateway":
+            targetCandidate.clientAddress =
+              "2001:0db8:0020:0000:0000:0000:0000:0001";
+            break;
+          case "unmatched":
+            targetCandidate.clientAddress = "2001:db8:ffff::77";
+            break;
+          default:
+            assert.fail(`unexpected client address class ${classification}`);
+        }
+        const calls = [];
+        const causal = causalFetchRecorder(calls);
+        let failure;
+        try {
+          await probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+            environment,
+            randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+            fetchImpl: causal.fetchImpl,
+            observeWaiters: async () => snapshots.shift() ?? observation(),
+            cancelWaiter: causal.cancelWaiter,
+            serviceIdentities: SERVICE_IDENTITIES,
+            poll: async () => {},
+          });
+          assert.fail(
+            `expected ${stage}/${probe}/clientAddress/${classification} to fail`,
+          );
+        } catch (error) {
+          failure = error;
+        }
+        const expectedCode = clientAddressCodeFor(
+          stage,
+          probe,
+          classificationCode,
+        );
+        assert.ok(
+          failure instanceof OrdinaryAccountCutoverReadinessFenceError,
+          `${stage}/${probe}/clientAddress/${classification} returned the wrong error type`,
+        );
+        assert.equal(
+          failure.code,
+          expectedCode,
+          `${stage}/${probe}/clientAddress/${classification} returned the wrong code`,
+        );
+        const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(failure);
+        assert.ok(
+          bytes.length <= 512,
+          `${stage}/${probe}/clientAddress/${classification} exceeded the failure-record bound`,
+        );
+        const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+        assert.equal(record?.error, expectedCode);
+        assert.deepEqual(bytes, canonicalJsonBytes(record));
+        const serialized = bytes.toString("utf8");
+        for (const confidential of confidentialValues) {
+          assert.equal(
+            serialized.includes(confidential),
+            false,
+            `${stage}/${probe}/clientAddress/${classification} exposed ${confidential}`,
+          );
+        }
+      }
+    }
+  }
+
+  for (const stage of stages) {
     for (const probe of probes) {
       for (const [predicate] of predicateCases) {
         const code = codeFor(stage, probe, predicate);
+        const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+          new OrdinaryAccountCutoverReadinessFenceError(code),
+        );
+        assert.ok(bytes.length <= 512, `${code} exceeded the failure-record bound`);
+        const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+        assert.equal(record?.error, code, `${code} was not allowlisted`);
+        assert.deepEqual(bytes, canonicalJsonBytes(record));
+      }
+      for (const [, classificationCode] of clientAddressClasses) {
+        const code = clientAddressCodeFor(stage, probe, classificationCode);
         const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
           new OrdinaryAccountCutoverReadinessFenceError(code),
         );
@@ -1261,7 +1575,15 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
   };
   for (const hostileCode of [
     "readiness_fence_probe_waiter_invalid",
+    ...stages.flatMap((stage) =>
+      probes.map(
+        (probe) =>
+          `readiness_fence_probe_waiter_${stage}_${diagnosticProbeNames[probe]}_client_address_invalid`,
+      ),
+    ),
     "readiness_fence_probe_waiter_initial_internal_rest_database_oid_invalid_suffix",
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_arbitrary_invalid",
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_docker_ipv6_invalid_suffix",
     "readiness_fence_probe_waiter_arbitrary_internal_rest_database_oid_invalid",
     "readiness_fence_probe_waiter_initial_arbitrary_database_oid_invalid",
     "readiness_fence_probe_waiter_initial_internal_rest_arbitrary_invalid",
