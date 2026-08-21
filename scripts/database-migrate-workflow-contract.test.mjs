@@ -903,6 +903,133 @@ test("pinned SSH creates and executes only a clean detached target worktree", ()
   assert.match(workflow, /cd "\$FAOLLA_MIGRATION_WORKTREE"/);
   assert.doesNotMatch(workflow, /cd "\$APP_DIR"/);
   assert.doesNotMatch(workflow, /node[^\n]*"?\$APP_DIR[^\n]*scripts\//);
+
+  const firstSshIndex = workflow.indexOf("ssh -T");
+  const finalEvidenceWriteIndex = workflow.indexOf(
+    '--minimum-remaining-seconds 5700 > "$BACKUP_SUMMARY_PATH"',
+  );
+  const finalCleanlinessIndex = workflow.lastIndexOf(
+    'test -z "$(git status --porcelain=v1 --untracked-files=all)"',
+    firstSshIndex,
+  );
+  assert.ok(finalEvidenceWriteIndex >= 0);
+  assert.ok(firstSshIndex > finalEvidenceWriteIndex);
+  assert.ok(finalCleanlinessIndex > finalEvidenceWriteIndex);
+});
+
+test("runner evidence and remote phase reports stay in separate temporary domains", () => {
+  const parsed = loadYamlParser().load(workflow);
+  const environment = parsed.jobs.migrate.env;
+  const localPaths = [
+    ["BACKUP_ATTESTATION_PATH", "production-backup-attestation.json"],
+    ["BACKUP_SUMMARY_PATH", "production-backup-attestation-summary.json"],
+    ["MIGRATION_REPORT_PATH", "production-database-migration-report.json"],
+  ];
+  for (const [name] of localPaths) assert.equal(Object.hasOwn(environment, name), false);
+  assert.doesNotMatch(workflow, /\$\{\{\s*runner\.temp\s*\}\}/);
+
+  const steps = parsed.jobs.migrate.steps;
+  const initializeIndex = steps.findIndex(
+    (step) => step.name === "Initialize Runner Temporary Evidence Paths",
+  );
+  const checkoutIndex = steps.findIndex(
+    (step) => step.name === "Checkout Exact Migration Source",
+  );
+  assert.ok(initializeIndex >= 0 && initializeIndex < checkoutIndex);
+  const initializeSource = steps[initializeIndex].run;
+  for (const [name, fileName] of localPaths) {
+    assert.ok(
+      initializeSource.includes(
+        `"${name}=$RUNNER_TEMP/${fileName}"`,
+      ),
+    );
+  }
+  assert.match(initializeSource, />> "\$GITHUB_ENV"/);
+
+  const remoteApplySource = heredocContaining(
+    "REMOTE",
+    "migration_dry_run_contract_invalid",
+  );
+  for (const [name, fileName] of [
+    ["database_path", "database.json"],
+    ["baseline_path", "baseline.json"],
+    ["dry_report_path", "dry-run.json"],
+    ["preflight_report_path", "preflight.json"],
+    ["apply_report_path", "apply.json"],
+    ["postflight_report_path", "postflight.json"],
+    ["post_dry_report_path", "post-dry-run.json"],
+  ]) {
+    assert.match(
+      remoteApplySource,
+      new RegExp(`^${name}="\\$FAOLLA_REPORT_DIR/${fileName}"$`, "m"),
+    );
+  }
+  assert.doesNotMatch(remoteApplySource, /\$RUNNER_TEMP|production-backup-attestation/);
+});
+
+test("runner evidence paths keep checkout clean and cleanup removes only exact files", () => {
+  const parsed = loadYamlParser().load(workflow);
+  const initializeSource = parsed.jobs.migrate.steps.find(
+    (step) => step.name === "Initialize Runner Temporary Evidence Paths",
+  )?.run;
+  const cleanupSource = parsed.jobs.migrate.steps.find(
+    (step) => step.name === "Remove Remote Exact Migration Source",
+  )?.run;
+  assert.equal(typeof initializeSource, "string");
+  assert.equal(typeof cleanupSource, "string");
+
+  const source = [
+    "set -euo pipefail",
+    "runner_temp=\"$(mktemp -d)\"",
+    "trap 'rm -rf -- \"$runner_temp\"' EXIT",
+    "export GITHUB_ENV=\"$runner_temp/github-env\"",
+    "export SSH_USER= SSH_HOST= APP_DIR=",
+    "unset RUNNER_TEMP BACKUP_ATTESTATION_PATH BACKUP_SUMMARY_PATH MIGRATION_REPORT_PATH",
+    cleanupSource,
+    "set -euo pipefail",
+    "export RUNNER_TEMP=\"$runner_temp\"",
+    initializeSource,
+    "test \"$(wc -l < \"$GITHUB_ENV\")\" = \"3\"",
+    "while IFS='=' read -r name value; do",
+    "  case \"$name\" in",
+    "    BACKUP_ATTESTATION_PATH|BACKUP_SUMMARY_PATH|MIGRATION_REPORT_PATH)",
+    "      export \"$name=$value\" ;;",
+    "    *) exit 42 ;;",
+    "  esac",
+    "done < \"$GITHUB_ENV\"",
+    "checkout_dir=\"$RUNNER_TEMP/checkout\"",
+    "mkdir \"$checkout_dir\"",
+    "git -C \"$checkout_dir\" init -q",
+    "git -C \"$checkout_dir\" config user.email contract@example.invalid",
+    "git -C \"$checkout_dir\" config user.name contract",
+    "touch \"$checkout_dir/tracked\"",
+    "git -C \"$checkout_dir\" add tracked",
+    "git -C \"$checkout_dir\" commit -qm initial",
+    "cd \"$checkout_dir\"",
+    "for evidence_path in \"$BACKUP_ATTESTATION_PATH\" \"$BACKUP_SUMMARY_PATH\" \"$MIGRATION_REPORT_PATH\"; do",
+    "  case \"$evidence_path\" in \"$RUNNER_TEMP\"/*) ;; *) exit 41 ;; esac",
+    "  : > \"$evidence_path\"",
+    "done",
+    "test -z \"$(git status --porcelain=v1 --untracked-files=all)\"",
+    ": > \"$RUNNER_TEMP/unrelated-sentinel\"",
+    cleanupSource,
+    "set -euo pipefail",
+    "test ! -e \"$BACKUP_ATTESTATION_PATH\"",
+    "test ! -e \"$BACKUP_SUMMARY_PATH\"",
+    "test ! -e \"$MIGRATION_REPORT_PATH\"",
+    "test -f \"$RUNNER_TEMP/unrelated-sentinel\"",
+  ].join("\n");
+  const result = spawnSync(resolveBash(), ["-c", source], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      BACKUP_ATTESTATION_PATH: "hostile-parent-value",
+      BACKUP_SUMMARY_PATH: "hostile-parent-value",
+      MIGRATION_REPORT_PATH: "hostile-parent-value",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("all attested DB identity fields and all baseline fields gate the live preflight", async () => {
@@ -992,10 +1119,28 @@ test("the preflight-to-apply DML TOCTOU boundary is explicitly maintenance-contr
 });
 
 test("remote worktree and local evidence are always cleaned without broad deletion", () => {
+  const parsed = loadYamlParser().load(workflow);
+  const cleanupSource = parsed.jobs.migrate.steps.find(
+    (step) => step.name === "Remove Remote Exact Migration Source",
+  )?.run.replace(/\r\n/g, "\n");
+  assert.equal(typeof cleanupSource, "string");
   assert.match(workflow, /- name: Remove Remote Exact Migration Source\r?\n        if: always\(\)/);
   assert.match(workflow, /git -C "\$repository_dir" worktree remove --force "\$FAOLLA_MIGRATION_WORKTREE"/);
   assert.match(workflow, /test ! -e "\$FAOLLA_MIGRATION_WORKTREE"/);
-  assert.match(workflow, /rm -f -- "\$BACKUP_ATTESTATION_PATH" "\$BACKUP_SUMMARY_PATH" "\$MIGRATION_REPORT_PATH"/);
+  for (const [name, fileName] of [
+    ["BACKUP_ATTESTATION_PATH", "production-backup-attestation.json"],
+    ["BACKUP_SUMMARY_PATH", "production-backup-attestation-summary.json"],
+    ["MIGRATION_REPORT_PATH", "production-database-migration-report.json"],
+  ]) {
+    const guardStart = [
+      `if [ -n "\${RUNNER_TEMP:-}" ] && [ "\${${name}:-}" = \\`,
+      `  "\${RUNNER_TEMP:-}/${fileName}" ]; then`,
+    ].join("\n");
+    assert.ok(
+      cleanupSource.includes(guardStart) &&
+        cleanupSource.includes(`rm -f -- "$${name}"`),
+    );
+  }
   assert.doesNotMatch(workflow, /rm\s+-rf|rm\s+-fr/);
   assert.doesNotMatch(workflow, /\beval\b/);
 });
