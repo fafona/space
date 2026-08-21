@@ -43,8 +43,21 @@ test("040 accepts only the frozen production prestate or exact target before mut
   const catalogLock = source.indexOf("lock table\n  pg_catalog.pg_authid");
   const preflight = source.indexOf("do $preflight$");
   const mutation = source.indexOf("do $acl_mutation$");
+  const firstPolicyDeparse = source.indexOf("pg_catalog.pg_get_expr(");
+  const hardenedSearchPath = source.indexOf(
+    "set local search_path = pg_catalog, public;",
+  );
   assert.match(source, /^--[^]*?\nbegin;/i);
   assert.match(source, /set transaction isolation level read committed/i);
+  assert.equal(
+    (source.match(/set local search_path = pg_catalog, public;/gi) ?? []).length,
+    1,
+  );
+  assert.ok(
+    hardenedSearchPath > 0 &&
+      hardenedSearchPath < catalogLock &&
+      hardenedSearchPath < firstPolicyDeparse,
+  );
   assert.match(source, /current_user <> 'supabase_admin'[\s\S]+rolsuper/i);
   const postgresPlatformChecks = [
     ...source.matchAll(
@@ -252,10 +265,18 @@ test("040 target is wired into init, readiness, PostgreSQL acceptance, and tests
     runner,
     /HOSTED_POSTGRES_CONTRACT_SQL='alter role postgres nosuperuser inherit createdb createrole login replication bypassrls;'/i,
   );
+  assert.match(
+    runner,
+    /HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL='set search_path = "\$user", public, auth, extensions;'/i,
+  );
+  assert.equal(
+    (runner.match(/\$\{HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL\}/g) ?? []).length,
+    3,
+  );
   assert.match(runner, /accepting the hosted nosuperuser postgres prerequisite/i);
   assert.match(
     runner,
-    /run_merchant_acl_040_with_hosted_postgres[\s\S]+begin; set role supabase_admin; \$\{HOSTED_POSTGRES_CONTRACT_SQL\}[\s\S]+--file "\$\{file\}"[\s\S]+alter role postgres superuser;/i,
+    /run_merchant_acl_040_with_hosted_postgres[\s\S]+begin; set role supabase_admin; \$\{HOSTED_SUPABASE_ADMIN_SEARCH_PATH_SQL\} \$\{HOSTED_POSTGRES_CONTRACT_SQL\}[\s\S]+--file "\$\{file\}"[\s\S]+alter role postgres superuser;/i,
   );
   assert.match(
     runner,
