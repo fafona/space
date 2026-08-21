@@ -2411,7 +2411,9 @@ fail_readiness_fence_start() {
   READINESS_FENCE_ACTIVE=0
   READINESS_FENCE_RELEASED=0
   READINESS_FENCE_RELEASE_REQUESTED=0
-  cleanup_readiness_fence_files >/dev/null 2>&1 || true
+  if ! cleanup_readiness_fence_files >/dev/null 2>&1; then
+    echo "[deploy] readiness fence cleanup could not be proven: readiness_fence_cleanup_unverified"
+  fi
   READINESS_FENCE_PID=""
   READINESS_FENCE_DIR=""
   READINESS_FENCE_MARKER=""
@@ -2422,6 +2424,57 @@ fail_readiness_fence_start() {
   READINESS_FENCE_APPLICATION_NAME=""
   READINESS_FENCE_PROCESS_IDENTITY_SHA256=""
   READINESS_FENCE_PROCESS_START_TICKS=""
+  return 1
+}
+
+readiness_fence_safe_failure_record() {
+  local helper_module="$RELEASE_DIR/scripts/hold-ordinary-account-cutover-readiness-fence.mjs"
+  if [ -z "${READINESS_FENCE_LOG:-}" ] \
+    || [ -z "${RELEASE_DIR:-}" ] \
+    || [ ! -f "$helper_module" ] \
+    || [ -L "$helper_module" ]; then
+    return 1
+  fi
+  timeout --signal=TERM --kill-after=1s 2s \
+    node --input-type=module - "$READINESS_FENCE_LOG" "$helper_module" <<'NODE'
+import { pathToFileURL } from "node:url";
+
+const [logPath, modulePath] = process.argv.slice(2);
+try {
+  const module = await import(pathToFileURL(modulePath).href);
+  const record =
+    await module.readOrdinaryAccountCutoverReadinessFenceFailureRecord(logPath);
+  if (record === null) process.exit(1);
+  const bytes = Buffer.from(JSON.stringify(record), "utf8");
+  if (bytes.length === 0 || bytes.length > 512 || bytes.includes(0x0a)) {
+    process.exit(1);
+  }
+  process.stdout.write(bytes);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
+report_readiness_fence_failure() {
+  local failure_record=""
+  if failure_record="$(readiness_fence_safe_failure_record 2>/dev/null)" \
+    && [ -n "$failure_record" ] \
+    && [ "${#failure_record}" -le 512 ] \
+    && [[ "$failure_record" != *$'\n'* ]]; then
+    echo "[deploy] readiness fence helper failure $failure_record"
+  else
+    echo "[deploy] readiness fence helper failure readiness_fence_diagnostic_unavailable"
+  fi
+}
+
+reject_failed_readiness_fence() {
+  report_readiness_fence_failure
+  if discard_failed_readiness_fence; then
+    echo "[deploy] readiness fence cleanup completed"
+  else
+    echo "[deploy] readiness fence cleanup could not be proven: readiness_fence_cleanup_unverified"
+  fi
   return 1
 }
 
@@ -2513,7 +2566,7 @@ start_readiness_fence() {
   if [ -z "$READINESS_FENCE_PROCESS_START_TICKS" ]; then
     echo "[deploy] readiness fence helper start identity could not be frozen"
     READINESS_FENCE_ACTIVE=1
-    discard_failed_readiness_fence || true
+    reject_failed_readiness_fence
     return 1
   fi
   identity_deadline=$((SECONDS + 10))
@@ -2529,7 +2582,7 @@ start_readiness_fence() {
   if [ -z "$READINESS_FENCE_PROCESS_IDENTITY_SHA256" ]; then
     echo "[deploy] readiness fence helper process identity could not be frozen"
     READINESS_FENCE_ACTIVE=1
-    discard_failed_readiness_fence || true
+    reject_failed_readiness_fence
     return 1
   fi
   READINESS_FENCE_ACTIVE=1
@@ -2553,13 +2606,13 @@ start_readiness_fence() {
       # transaction remained alive. Keep the holder PID trust root and use the
       # exact prefix cleanup path; failure is not returned until the database
       # proves that no matching session remains.
-      discard_failed_readiness_fence || true
+      reject_failed_readiness_fence
       return 1
     fi
     sleep 1
   done
   echo "[deploy] readiness fence failed to produce verifiable held evidence"
-  discard_failed_readiness_fence || true
+  reject_failed_readiness_fence
   return 1
 }
 
