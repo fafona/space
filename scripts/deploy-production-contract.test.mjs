@@ -2126,7 +2126,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   assert.match(deployScript, /pg_catalog\.pg_terminate_backend\(blocked_waiters\.pid, 5000\)/);
   assert.match(
     deployScript,
-    /exited or changed identity before its ready marker[\s\S]{0,500}discard_failed_readiness_fence/,
+    /exited or changed identity before its ready marker[\s\S]{0,500}reject_failed_readiness_fence/,
   );
   assert.match(
     deployScript,
@@ -2142,6 +2142,24 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   assert.match(deployScript, /READINESS_FENCE_MINIMUM_TTL_SECONDS="\$\{[^}]+:-1440\}"/);
   assert.match(deployScript, /RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS="\$\{[^}]+:-5700\}"/);
   assert.match(deployScript, /an exact previous atomic release is required before environment mutation/);
+  const fenceStartup = extractShellRegion(
+    "start_readiness_fence() {",
+    "\nrelease_readiness_fence() {",
+  );
+  assert.doesNotMatch(fenceStartup, /discard_failed_readiness_fence \|\| true/);
+  assert.match(
+    fenceStartup,
+    /reject_failed_readiness_fence/,
+  );
+  assert.match(
+    deployScript,
+    /reject_failed_readiness_fence\(\)[\s\S]+report_readiness_fence_failure[\s\S]+discard_failed_readiness_fence/,
+  );
+  assert.match(
+    deployScript,
+    /readiness fence cleanup completed[\s\S]+readiness fence cleanup could not be proven/,
+  );
+  assert.doesNotMatch(deployScript, /cat\s+[^\n]*READINESS_FENCE_LOG|tail\s+[^\n]*READINESS_FENCE_LOG/);
 });
 
 test("deployment SSH trust is pinned and never learned from the live network", () => {
@@ -2205,11 +2223,88 @@ test("fence startup remains fail-fast when invoked from cleanup set +e", async (
     "",
   ].join("\n");
   try {
-    const result = spawnSync(resolveBashExecutable(), ["-c", script], {
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
       encoding: "utf8",
+      input: script,
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("fence failure reporting exposes only a frozen diagnostic and an explicit cleanup outcome", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-fence-diagnostic-contract-"),
+  );
+  const logPath = join(temporaryDirectory, "helper.log");
+  const functions = extractShellRegion(
+    "readiness_fence_safe_failure_record() {",
+    "\nstart_readiness_fence() {",
+  );
+  const safeRecord = {
+    childExitCode: "3",
+    childResult: "exit",
+    childSignal: null,
+    error: "readiness_fence_child_failed",
+    ok: false,
+    sqlstate: "P0001",
+    sqlstateStatus: "exact",
+  };
+  const run = (script) => spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: script,
+    timeout: 10_000,
+  });
+  try {
+    await writeFile(logPath, canonicalJsonBytes(safeRecord), { mode: 0o600 });
+    const validScript = [
+      "set -euo pipefail",
+      `RELEASE_DIR='${toBashPath(repositoryRoot)}'`,
+      `READINESS_FENCE_LOG='${toBashPath(logPath)}'`,
+      functions,
+      "report_readiness_fence_failure",
+      "",
+    ].join("\n");
+    const valid = run(validScript);
+    assert.equal(valid.status, 0, `${valid.stdout}\n${valid.stderr}`);
+    assert.equal(
+      valid.stdout.trim(),
+      `[deploy] readiness fence helper failure ${JSON.stringify(safeRecord)}`,
+    );
+
+    const secret = "do-not-log::error::private-value";
+    await writeFile(
+      logPath,
+      Buffer.concat([canonicalJsonBytes(safeRecord), Buffer.from(secret)]),
+      { mode: 0o600 },
+    );
+    const hostile = run(validScript);
+    assert.equal(hostile.status, 0, `${hostile.stdout}\n${hostile.stderr}`);
+    assert.equal(
+      hostile.stdout.trim(),
+      "[deploy] readiness fence helper failure readiness_fence_diagnostic_unavailable",
+    );
+    assert.doesNotMatch(`${hostile.stdout}\n${hostile.stderr}`, /do-not-log|::error::|private-value/);
+
+    for (const [discardStatus, expectedMarker] of [
+      [0, "readiness fence cleanup completed"],
+      [1, "readiness_fence_cleanup_unverified"],
+    ]) {
+      const cleanupScript = [
+        "set +e",
+        functions,
+        "readiness_fence_safe_failure_record() { return 1; }",
+        `discard_failed_readiness_fence() { return ${discardStatus}; }`,
+        "if reject_failed_readiness_fence; then status=0; else status=$?; fi",
+        '[ "$status" -eq 1 ]',
+        "",
+      ].join("\n");
+      const cleanup = run(cleanupScript);
+      assert.equal(cleanup.status, 0, `${cleanup.stdout}\n${cleanup.stderr}`);
+      assert.match(cleanup.stdout, new RegExp(expectedMarker));
+    }
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

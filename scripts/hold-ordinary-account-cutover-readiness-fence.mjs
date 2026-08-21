@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import { link, lstat, open, unlink } from "node:fs/promises";
 import path from "node:path";
 import { TextDecoder } from "node:util";
@@ -33,10 +34,99 @@ const WATCHDOG_MARGIN_SECONDS = 60;
 const STARTUP_WATCHDOG_SECONDS = 240;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_RELEASE_REQUEST_BYTES = 8 * 1024;
+const MAX_FAILURE_LOG_BYTES = 512;
+const MAX_CHILD_STDERR_BYTES = 64 * 1024;
 const ENDPOINT_PROBE_TIMEOUT_MS = 15_000;
 const ENDPOINT_PROBE_POLL_MS = 50;
 const EXTERNAL_OPERATION_TIMEOUT_MS = 10_000;
 const QUERY_CANCEL_RESPONSE_TIMEOUT_MS = 5_000;
+
+const PUBLIC_FAILURE_CODES = new Set([
+  "attestation_json_not_canonical",
+  "readiness_fence_application_name_invalid",
+  "readiness_fence_attestation_file_changed",
+  "readiness_fence_attestation_file_invalid",
+  "readiness_fence_attestation_invalid",
+  "readiness_fence_attestation_sha256_invalid",
+  "readiness_fence_attestation_sha256_mismatch",
+  "readiness_fence_attestation_symlink",
+  "readiness_fence_backend_pid_invalid",
+  "readiness_fence_backup_event_invalid",
+  "readiness_fence_baseline_mismatch",
+  "readiness_fence_child_exit_timeout",
+  "readiness_fence_child_failed",
+  "readiness_fence_child_spawn_failed",
+  "readiness_fence_cli_argument_invalid",
+  "readiness_fence_cli_argument_missing",
+  "readiness_fence_cli_command_invalid",
+  "readiness_fence_container_id_invalid",
+  "readiness_fence_container_id_mismatch",
+  "readiness_fence_database_identity_mismatch",
+  "readiness_fence_ended_before_release",
+  "readiness_fence_hold_locks_invalid",
+  "readiness_fence_hold_output_invalid",
+  "readiness_fence_input_invalid",
+  "readiness_fence_interrupted",
+  "readiness_fence_line_processing_timeout",
+  "readiness_fence_marker_cleanup_failed",
+  "readiness_fence_marker_exists",
+  "readiness_fence_marker_invalid",
+  "readiness_fence_marker_ttl_insufficient",
+  "readiness_fence_marker_write_failed",
+  "readiness_fence_max_hold_seconds_invalid",
+  "readiness_fence_minimum_ttl_invalid",
+  "readiness_fence_now_invalid",
+  "readiness_fence_output_invalid",
+  "readiness_fence_output_missing",
+  "readiness_fence_output_too_large",
+  "readiness_fence_path_reused",
+  "readiness_fence_probe_abort_timeout",
+  "readiness_fence_probe_cancelled",
+  "readiness_fence_probe_database_mismatch",
+  "readiness_fence_probe_environment_invalid",
+  "readiness_fence_probe_evidence_invalid",
+  "readiness_fence_probe_fetch_unavailable",
+  "readiness_fence_probe_http_completed_early",
+  "readiness_fence_probe_input_invalid",
+  "readiness_fence_probe_observer_failed",
+  "readiness_fence_probe_observer_invalid",
+  "readiness_fence_probe_observer_timeout",
+  "readiness_fence_probe_poll_timeout",
+  "readiness_fence_probe_query_cancel_response_invalid",
+  "readiness_fence_probe_query_cancel_response_timeout",
+  "readiness_fence_probe_random_invalid",
+  "readiness_fence_probe_service_application_invalid",
+  "readiness_fence_probe_service_database_route_invalid",
+  "readiness_fence_probe_service_identity_invalid",
+  "readiness_fence_probe_service_invalid",
+  "readiness_fence_probe_timeout",
+  "readiness_fence_probe_waiter_cancel_failed",
+  "readiness_fence_probe_waiter_cancel_timeout",
+  "readiness_fence_probe_waiter_count_invalid",
+  "readiness_fence_probe_waiter_invalid",
+  "readiness_fence_probe_waiter_missing",
+  "readiness_fence_probe_waiter_residual",
+  "readiness_fence_release_request_binding_mismatch",
+  "readiness_fence_release_request_changed",
+  "readiness_fence_release_request_cleanup_failed",
+  "readiness_fence_release_request_exists",
+  "readiness_fence_release_request_file_invalid",
+  "readiness_fence_release_request_invalid",
+  "readiness_fence_release_request_path_invalid",
+  "readiness_fence_release_token_invalid",
+  "readiness_fence_release_wait_cancelled",
+  "readiness_fence_release_wait_timeout",
+  "readiness_fence_report_blocked",
+  "readiness_fence_report_invalid",
+  "readiness_fence_sql_source_invalid",
+  "readiness_fence_startup_timeout",
+  "readiness_fence_termination_failed",
+  "readiness_fence_termination_input_invalid",
+  "readiness_fence_termination_timeout",
+  "readiness_fence_timeout",
+  "readiness_fence_ttl_below_hold",
+  "readiness_fence_unexpected_error",
+]);
 const ENDPOINT_PROBE_TOTAL_TIMEOUT_MS = 90_000;
 const FENCE_KIND = "faolla.ordinary-account-cutover-readiness-fence.v1";
 const RELEASE_REQUEST_KIND =
@@ -46,6 +136,7 @@ const REPORT_SUFFIX = ")::text;";
 
 const PSQL_CONTAINER_SCRIPT = [
   "set -eu",
+  "export LC_ALL=C",
   ': "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"',
   ': "${POSTGRES_DB:?POSTGRES_DB is required}"',
   ': "${FAOLLA_EXPECTED_DATABASE_NAME:?FAOLLA_EXPECTED_DATABASE_NAME is required}"',
@@ -291,15 +382,16 @@ END
 FROM cancelled;`;
 
 export class OrdinaryAccountCutoverReadinessFenceError extends Error {
-  constructor(code) {
+  constructor(code, diagnostic = null) {
     super(code);
     this.name = "OrdinaryAccountCutoverReadinessFenceError";
     this.code = code;
+    this.diagnostic = diagnostic;
   }
 }
 
-function fail(code) {
-  throw new OrdinaryAccountCutoverReadinessFenceError(code);
+function fail(code, diagnostic = null) {
+  throw new OrdinaryAccountCutoverReadinessFenceError(code, diagnostic);
 }
 
 function parsePositiveSeconds(value, maximum, code) {
@@ -323,6 +415,343 @@ function isPlainRecord(value) {
   }
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+const PUBLIC_FAILURE_RECORD_KEYS = [
+  "childExitCode",
+  "childResult",
+  "childSignal",
+  "error",
+  "ok",
+  "sqlstate",
+  "sqlstateStatus",
+];
+const CHILD_RESULT_VALUES = new Set([
+  "not_observed",
+  "spawn_error",
+  "exit",
+  "signal",
+]);
+const CHILD_SIGNAL_VALUES = new Set(["SIGTERM", "SIGKILL", "OTHER"]);
+const SQLSTATE_STATUS_VALUES = new Set([
+  "absent",
+  "ambiguous",
+  "exact",
+  "invalid_utf8",
+  "overflow",
+]);
+
+function defaultChildFailureDiagnostic() {
+  return {
+    childExitCode: null,
+    childResult: "not_observed",
+    childSignal: null,
+    sqlstate: null,
+    sqlstateStatus: "absent",
+  };
+}
+
+function normalizeChildSignal(signal) {
+  if (signal === null || signal === undefined) return null;
+  if (signal === "SIGTERM" || signal === "SIGKILL") return signal;
+  return "OTHER";
+}
+
+function parseCompletePsqlSqlstate(stderr, overflow, complete = true) {
+  if (overflow) return { sqlstate: null, sqlstateStatus: "overflow" };
+  if (!complete) return { sqlstate: null, sqlstateStatus: "absent" };
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(stderr);
+  } catch {
+    return { sqlstate: null, sqlstateStatus: "invalid_utf8" };
+  }
+  const headers = [];
+  const pattern = /^(?:(?:ERROR|FATAL|PANIC):|psql:[^\r\n]*:\s*(?:ERROR|FATAL|PANIC):)\s+([0-9A-Z]{5}):[^\r\n]*$/gm;
+  for (const match of text.matchAll(pattern)) headers.push(match[1]);
+  if (headers.length === 0) {
+    return { sqlstate: null, sqlstateStatus: "absent" };
+  }
+  if (headers.length !== 1) {
+    return { sqlstate: null, sqlstateStatus: "ambiguous" };
+  }
+  return { sqlstate: headers[0], sqlstateStatus: "exact" };
+}
+
+function childFailureDiagnostic(result, stderr, overflow, stderrComplete = true) {
+  const source = isPlainRecord(result) ? result : null;
+  let childResult = "not_observed";
+  if (source?.error === true) {
+    childResult = "spawn_error";
+  } else if (source?.signal !== null && source?.signal !== undefined) {
+    childResult = "signal";
+  } else if (Number.isInteger(source?.code)) {
+    childResult = "exit";
+  }
+  const childExitCode =
+    childResult === "exit" &&
+    Number.isSafeInteger(source.code) &&
+    source.code >= 0 &&
+    source.code <= 255
+      ? String(source.code)
+      : null;
+  const childSignal = childResult === "signal"
+    ? normalizeChildSignal(source.signal)
+    : null;
+  return {
+    childExitCode,
+    childResult,
+    childSignal,
+    ...parseCompletePsqlSqlstate(stderr, overflow, stderrComplete),
+  };
+}
+
+function validateChildFailureDiagnostic(value) {
+  if (!isPlainRecord(value)) return null;
+  const keys = Reflect.ownKeys(value);
+  const expected = [
+    "childExitCode",
+    "childResult",
+    "childSignal",
+    "sqlstate",
+    "sqlstateStatus",
+  ];
+  if (
+    keys.some((key) => typeof key !== "string") ||
+    keys.length !== expected.length ||
+    [...keys].sort().some((key, index) => key !== [...expected].sort()[index])
+  ) {
+    return null;
+  }
+  const candidate = Object.create(null);
+  for (const key of expected) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      return null;
+    }
+    candidate[key] = descriptor.value;
+  }
+  if (
+    candidate.childExitCode !== null &&
+    (typeof candidate.childExitCode !== "string" ||
+      !/^(?:0|[1-9][0-9]{0,2})$/.test(candidate.childExitCode) ||
+      Number(candidate.childExitCode) > 255)
+  ) {
+    return null;
+  }
+  if (!CHILD_RESULT_VALUES.has(candidate.childResult)) return null;
+  if (
+    candidate.childSignal !== null &&
+    !CHILD_SIGNAL_VALUES.has(candidate.childSignal)
+  ) {
+    return null;
+  }
+  if (
+    (candidate.childResult === "exit") !==
+      (candidate.childExitCode !== null) ||
+    (candidate.childResult === "signal") !==
+      (candidate.childSignal !== null)
+  ) {
+    return null;
+  }
+  if (
+    candidate.sqlstate !== null &&
+    (typeof candidate.sqlstate !== "string" ||
+      !/^[0-9A-Z]{5}$/.test(candidate.sqlstate))
+  ) {
+    return null;
+  }
+  if (!SQLSTATE_STATUS_VALUES.has(candidate.sqlstateStatus)) return null;
+  if (
+    (candidate.sqlstateStatus === "exact") !==
+    (candidate.sqlstate !== null)
+  ) {
+    return null;
+  }
+  return {
+    childExitCode: candidate.childExitCode,
+    childResult: candidate.childResult,
+    childSignal: candidate.childSignal,
+    sqlstate: candidate.sqlstate,
+    sqlstateStatus: candidate.sqlstateStatus,
+  };
+}
+
+function publicFailureRecord(error) {
+  let code = "readiness_fence_unexpected_error";
+  let diagnostic = defaultChildFailureDiagnostic();
+  try {
+    if (error instanceof OrdinaryAccountCutoverReadinessFenceError) {
+      const codeDescriptor = Object.getOwnPropertyDescriptor(error, "code");
+      if (
+        codeDescriptor &&
+        "value" in codeDescriptor &&
+        typeof codeDescriptor.value === "string" &&
+        PUBLIC_FAILURE_CODES.has(codeDescriptor.value)
+      ) {
+        code = codeDescriptor.value;
+      } else if (
+        codeDescriptor &&
+        "value" in codeDescriptor &&
+        typeof codeDescriptor.value === "string" &&
+        codeDescriptor.value.startsWith("attestation_")
+      ) {
+        code = "readiness_fence_attestation_invalid";
+      }
+      const diagnosticDescriptor = Object.getOwnPropertyDescriptor(
+        error,
+        "diagnostic",
+      );
+      if (diagnosticDescriptor && "value" in diagnosticDescriptor) {
+        diagnostic =
+          validateChildFailureDiagnostic(diagnosticDescriptor.value) ?? diagnostic;
+      }
+    }
+  } catch {}
+  return {
+    childExitCode: diagnostic.childExitCode,
+    childResult: diagnostic.childResult,
+    childSignal: diagnostic.childSignal,
+    error: code,
+    ok: false,
+    sqlstate: diagnostic.sqlstate,
+    sqlstateStatus: diagnostic.sqlstateStatus,
+  };
+}
+
+export function ordinaryAccountCutoverReadinessFenceFailureLogBytes(error) {
+  return canonicalJsonBytes(publicFailureRecord(error));
+}
+
+export function parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes) {
+  let source;
+  try {
+    source = Buffer.from(bytes);
+  } catch {
+    return null;
+  }
+  if (source.length === 0 || source.length > MAX_FAILURE_LOG_BYTES) return null;
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(source));
+  } catch {
+    return null;
+  }
+  if (!isPlainRecord(value)) return null;
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.some((key) => typeof key !== "string") ||
+    keys.length !== PUBLIC_FAILURE_RECORD_KEYS.length ||
+    [...keys]
+      .sort()
+      .some((key, index) => key !== [...PUBLIC_FAILURE_RECORD_KEYS].sort()[index]) ||
+    value.ok !== false ||
+    typeof value.error !== "string" ||
+    !PUBLIC_FAILURE_CODES.has(value.error)
+  ) {
+    return null;
+  }
+  const diagnostic = validateChildFailureDiagnostic({
+    childExitCode: value.childExitCode,
+    childResult: value.childResult,
+    childSignal: value.childSignal,
+    sqlstate: value.sqlstate,
+    sqlstateStatus: value.sqlstateStatus,
+  });
+  if (!diagnostic) return null;
+  const projection = {
+    childExitCode: diagnostic.childExitCode,
+    childResult: diagnostic.childResult,
+    childSignal: diagnostic.childSignal,
+    error: value.error,
+    ok: false,
+    sqlstate: diagnostic.sqlstate,
+    sqlstateStatus: diagnostic.sqlstateStatus,
+  };
+  const canonical = canonicalJsonBytes(projection);
+  if (
+    canonical.length !== source.length ||
+    !timingSafeEqual(canonical, source)
+  ) {
+    return null;
+  }
+  return projection;
+}
+
+export async function readOrdinaryAccountCutoverReadinessFenceFailureRecord(
+  filePath,
+  fileOperations = {},
+) {
+  const operations = {
+    lstat: fileOperations.lstat ?? lstat,
+    open: fileOperations.open ?? open,
+  };
+  let handle;
+  try {
+    if (typeof filePath !== "string" || filePath.length === 0) return null;
+    const expectedUid = typeof process.getuid === "function"
+      ? BigInt(process.getuid())
+      : null;
+    const before = await operations.lstat(filePath, { bigint: true });
+    if (
+      before.isSymbolicLink() ||
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      before.size <= 0n ||
+      before.size > BigInt(MAX_FAILURE_LOG_BYTES) ||
+      (process.platform !== "win32" &&
+        ((before.mode & 0o777n) !== 0o600n || before.uid !== expectedUid))
+    ) {
+      return null;
+    }
+    handle = await operations.open(
+      filePath,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    );
+    const opened = await handle.stat({ bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1n ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      opened.size !== before.size ||
+      opened.mtimeNs !== before.mtimeNs ||
+      (process.platform !== "win32" &&
+        ((opened.mode & 0o777n) !== 0o600n || opened.uid !== expectedUid))
+    ) {
+      return null;
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    const current = await operations.lstat(filePath, { bigint: true });
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      current.nlink !== 1n ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino ||
+      current.size !== opened.size ||
+      current.mtimeNs !== opened.mtimeNs ||
+      after.nlink !== 1n ||
+      after.dev !== opened.dev ||
+      after.ino !== opened.ino ||
+      after.size !== opened.size ||
+      after.mtimeNs !== opened.mtimeNs ||
+      (process.platform !== "win32" &&
+        ((after.mode & 0o777n) !== 0o600n ||
+          after.uid !== expectedUid ||
+          (current.mode & 0o777n) !== 0o600n ||
+          current.uid !== expectedUid)) ||
+      BigInt(bytes.length) !== opened.size
+    ) {
+      return null;
+    }
+    return parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+  } catch {
+    return null;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+  }
 }
 
 function exactRecord(value, keys, code) {
@@ -518,7 +947,10 @@ function spawnDocker(spawnProcess, argumentsList) {
       windowsHide: true,
     });
   } catch {
-    fail("readiness_fence_child_spawn_failed");
+    fail("readiness_fence_child_spawn_failed", {
+      ...defaultChildFailureDiagnostic(),
+      childResult: "spawn_error",
+    });
   }
 }
 
@@ -2074,6 +2506,9 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
   const completion = childCompletion(child);
   let stdoutBytes = 0;
   let stdoutBuffer = "";
+  let childStderr = Buffer.alloc(0);
+  let childStderrOverflow = false;
+  let childStderrComplete = false;
   const stdoutDecoder = new TextDecoder("utf-8", { fatal: true });
   let nonemptyLineCount = 0;
   let terminalCode = null;
@@ -2166,7 +2601,7 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
         if (terminalCode === null) {
           terminalCode = "readiness_fence_child_exit_timeout";
         }
-        resolveChildExitFallback({ error: true, code: null, signal: "SIGKILL" });
+        resolveChildExitFallback({ error: false, code: null, signal: "SIGKILL" });
       }, EXTERNAL_OPERATION_TIMEOUT_MS);
     }
   };
@@ -2325,7 +2760,19 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
     if (stdoutBuffer !== "") queueLine(stdoutBuffer.replace(/\r$/, ""));
     stdoutBuffer = "";
   });
-  child.stderr?.resume();
+  child.stderr?.on("data", (chunk) => {
+    if (childStderrOverflow) return;
+    const bytes = Buffer.from(chunk);
+    if (childStderr.length + bytes.length > MAX_CHILD_STDERR_BYTES) {
+      childStderr = Buffer.alloc(0);
+      childStderrOverflow = true;
+      return;
+    }
+    childStderr = Buffer.concat([childStderr, bytes]);
+  });
+  child.stderr?.once("end", () => {
+    childStderrComplete = true;
+  });
 
   const interrupt = () => stop("readiness_fence_interrupted");
   signalSource.on("SIGTERM", interrupt);
@@ -2359,7 +2806,17 @@ export async function holdOrdinaryAccountCutoverReadinessFence(
         terminalCode = "readiness_fence_output_missing";
       }
     }
-    if (terminalCode !== null) fail(terminalCode);
+    if (terminalCode !== null) {
+      fail(
+        terminalCode,
+        childFailureDiagnostic(
+          childResult,
+          childStderr,
+          childStderrOverflow,
+          childStderrComplete,
+        ),
+      );
+    }
     return markerResult;
   } finally {
     cancelTimer(timeoutTimer);
@@ -2455,8 +2912,9 @@ async function main() {
   try {
     await runOrdinaryAccountCutoverReadinessFenceCli(process.argv.slice(2));
   } catch (error) {
-    const code = fenceErrorCode(error, "readiness_fence_unexpected_error");
-    process.stderr.write(canonicalJsonBytes({ ok: false, error: code }));
+    process.stderr.write(
+      ordinaryAccountCutoverReadinessFenceFailureLogBytes(error),
+    );
     process.exitCode = 1;
   }
 }

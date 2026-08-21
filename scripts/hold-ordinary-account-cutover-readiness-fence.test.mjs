@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   access,
+  chmod,
   link,
   lstat,
   mkdtemp,
@@ -23,8 +24,11 @@ import { ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL } from "./check-ordinary-account
 import {
   buildOrdinaryAccountCutoverReadinessFenceSql,
   holdOrdinaryAccountCutoverReadinessFence,
+  ordinaryAccountCutoverReadinessFenceFailureLogBytes,
   OrdinaryAccountCutoverReadinessFenceError,
   probeOrdinaryAccountCutoverReadinessFenceEndpoints,
+  parseOrdinaryAccountCutoverReadinessFenceFailureLog,
+  readOrdinaryAccountCutoverReadinessFenceFailureRecord,
   readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest,
   resolveSupabaseServiceClientAddresses,
   runOrdinaryAccountCutoverReadinessFenceCli,
@@ -303,9 +307,9 @@ class FakeChild extends EventEmitter {
   close(code = 0, signal = null) {
     if (this.closed) return;
     this.closed = true;
+    this.stderr.once("end", () => this.emit("close", code, signal));
     this.stdout.end();
     this.stderr.end();
-    this.emit("close", code, signal);
   }
 }
 
@@ -851,6 +855,82 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
     JSON.stringify(evidence),
     /127\.0\.0\.1|db\.example|anon-only|invalid\.example/,
   );
+});
+
+test("child diagnostics expose only bounded status and an exact SQLSTATE", async (t) => {
+  const runFailure = async (stderr, code = 3, signal = null) => {
+    let failureBytes;
+    await temporaryDirectory(async (directory) => {
+      const value = await fixture(directory);
+      const child = new FakeChild();
+      try {
+        await holdOrdinaryAccountCutoverReadinessFence(
+          value.input,
+          coreDependencies(child, {
+            spawnProcess: () => {
+              queueMicrotask(() => {
+                if (stderr !== null) child.stderr.write(stderr);
+                child.close(code, signal);
+              });
+              return child;
+            },
+          }),
+        );
+        assert.fail("expected the fence helper to fail");
+      } catch (error) {
+        failureBytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(error);
+      }
+    });
+    return failureBytes;
+  };
+
+  await t.test("one verbose PSQL header yields only its SQLSTATE", async () => {
+    const secret = "password-do-not-log::error::";
+    const bytes = await runFailure(`ERROR:  P0001: ${secret}\n`);
+    const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+    assert.deepEqual(record, {
+      childExitCode: "3",
+      childResult: "exit",
+      childSignal: null,
+      error: "readiness_fence_child_failed",
+      ok: false,
+      sqlstate: "P0001",
+      sqlstateStatus: "exact",
+    });
+    assert.doesNotMatch(bytes.toString("utf8"), /password-do-not-log|::error::/);
+  });
+  await t.test("missing and ambiguous headers never expose text", async () => {
+    const absent = parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+      await runFailure("password-do-not-log\n"),
+    );
+    assert.equal(absent.sqlstate, null);
+    assert.equal(absent.sqlstateStatus, "absent");
+    const ambiguous = parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+      await runFailure("ERROR:  P0001: first\nFATAL:  42501: second\n"),
+    );
+    assert.equal(ambiguous.sqlstate, null);
+    assert.equal(ambiguous.sqlstateStatus, "ambiguous");
+  });
+  await t.test("invalid UTF-8 and overflow discard all stderr", async () => {
+    const invalid = parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+      await runFailure(Buffer.from([0xff, 0xfe, 0xfd])),
+    );
+    assert.equal(invalid.sqlstateStatus, "invalid_utf8");
+    assert.equal(invalid.sqlstate, null);
+    const overflow = parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+      await runFailure(Buffer.alloc(64 * 1024 + 1, 0x61)),
+    );
+    assert.equal(overflow.sqlstateStatus, "overflow");
+    assert.equal(overflow.sqlstate, null);
+  });
+  await t.test("signals are normalized without a raw signal string", async () => {
+    const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+      await runFailure(null, null, "SIGUSR1"),
+    );
+    assert.equal(record.childExitCode, null);
+    assert.equal(record.childResult, "signal");
+    assert.equal(record.childSignal, "OTHER");
+  });
 });
 
 test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, and cancellation residue", async (t) => {
@@ -1969,4 +2049,128 @@ test("CLI rejects duplicate and extra arguments and emits only canonical aggrega
     assert.match(summary.markerSha256, /^[0-9a-f]{64}$/);
     await assertMissing(value.markerPath);
   });
+});
+
+test("private helper failure logs expose only an allowlisted canonical code", async () => {
+  const allowedRecord = {
+    childExitCode: null,
+    childResult: "not_observed",
+    childSignal: null,
+    error: "readiness_fence_probe_environment_invalid",
+    ok: false,
+    sqlstate: null,
+    sqlstateStatus: "absent",
+  };
+  const allowedBytes = canonicalJsonBytes(allowedRecord);
+  assert.deepEqual(
+    parseOrdinaryAccountCutoverReadinessFenceFailureLog(allowedBytes),
+    allowedRecord,
+  );
+  for (const hostileBytes of [
+    Buffer.from(
+      '{"error":"readiness_fence_probe_environment_invalid_secret","ok":false}\n',
+    ),
+    Buffer.from(
+      '{"ok":false,"error":"readiness_fence_probe_environment_invalid"}\n',
+    ),
+    Buffer.from(
+      '{"error":"readiness_fence_probe_environment_invalid","ok":false,"secret":"do-not-log"}\n',
+    ),
+    Buffer.concat([allowedBytes, Buffer.from("do-not-log")]),
+    Buffer.alloc(8 * 1024, 0x61),
+  ]) {
+    assert.equal(
+      parseOrdinaryAccountCutoverReadinessFenceFailureLog(hostileBytes),
+      null,
+    );
+  }
+
+  await temporaryDirectory(async (directory) => {
+    const logPath = path.join(directory, "helper.log");
+    const hardLinkPath = path.join(directory, "helper-hard-link.log");
+    const targetPath = path.join(directory, "target.log");
+    await writeFile(logPath, allowedBytes, { mode: 0o600 });
+    await chmod(logPath, 0o600);
+    assert.deepEqual(
+      await readOrdinaryAccountCutoverReadinessFenceFailureRecord(logPath),
+      allowedRecord,
+    );
+    await link(logPath, hardLinkPath);
+    assert.equal(
+      await readOrdinaryAccountCutoverReadinessFenceFailureRecord(logPath),
+      null,
+    );
+    await unlink(hardLinkPath);
+    const before = await lstat(logPath, { bigint: true });
+    let lstatCount = 0;
+    assert.equal(
+      await readOrdinaryAccountCutoverReadinessFenceFailureRecord(logPath, {
+        lstat: async () => {
+          lstatCount += 1;
+          if (lstatCount === 1) return before;
+          return {
+            ...before,
+            ino: before.ino + 1n,
+            isFile: () => true,
+            isSymbolicLink: () => false,
+          };
+        },
+      }),
+      null,
+    );
+    await unlink(logPath);
+    await writeFile(targetPath, allowedBytes, { mode: 0o600 });
+    await symlink(targetPath, logPath);
+    assert.equal(
+      await readOrdinaryAccountCutoverReadinessFenceFailureRecord(logPath),
+      null,
+    );
+  });
+});
+
+test("failure serialization rejects accessors, prototypes, and attacker-shaped codes", () => {
+  const secret = "do-not-log::error::private-value";
+  const hostile = new OrdinaryAccountCutoverReadinessFenceError(
+    "readiness_fence_child_failed",
+    Object.assign(Object.create({
+      toJSON: () => secret,
+    }), {
+      childExitCode: "3",
+      childResult: "exit",
+      childSignal: null,
+      sqlstate: "P0001",
+      sqlstateStatus: "exact",
+    }),
+  );
+  Object.defineProperty(hostile, "code", {
+    configurable: true,
+    get() {
+      throw new Error(secret);
+    },
+  });
+  const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(hostile);
+  assert.doesNotMatch(bytes.toString("utf8"), /do-not-log|::error::|private-value/);
+  assert.deepEqual(
+    parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes),
+    {
+      childExitCode: null,
+      childResult: "not_observed",
+      childSignal: null,
+      error: "readiness_fence_unexpected_error",
+      ok: false,
+      sqlstate: null,
+      sqlstateStatus: "absent",
+    },
+  );
+
+  const attestationError = new OrdinaryAccountCutoverReadinessFenceError(
+    `attestation_${secret}`,
+  );
+  const attestationBytes =
+    ordinaryAccountCutoverReadinessFenceFailureLogBytes(attestationError);
+  assert.doesNotMatch(attestationBytes.toString("utf8"), /do-not-log|private-value/);
+  assert.equal(
+    parseOrdinaryAccountCutoverReadinessFenceFailureLog(attestationBytes).error,
+    "readiness_fence_attestation_invalid",
+  );
 });
