@@ -510,7 +510,7 @@ const REPAIR_TABLE_PRIVILEGES = [
 
 function forwardRepairPreflightState() {
   const invalidTargets = [
-    ...["postgres", "anon"].flatMap((principal) =>
+    ...["anon"].flatMap((principal) =>
       REPAIR_TABLE_PRIVILEGES.map(
         (privilegeType) => `${principal}:${privilegeType}`,
       ),
@@ -533,7 +533,7 @@ function forwardRepairPreflightState() {
   const components = componentCodes.map((code, index) => ({
     code,
     ready: index !== 1,
-    violationCount: index === 1 ? 22 : 0,
+    violationCount: index === 1 ? 15 : 0,
     facts: index === 1
       ? {
           aclEntryCount: 35,
@@ -588,7 +588,7 @@ function forwardRepairPreflightState() {
       ready: false,
       componentCount: 6,
       failedComponentCount: 1,
-      violationCount: 22,
+      violationCount: 15,
       components,
     },
   };
@@ -1319,7 +1319,7 @@ test("forward repair preflight accepts only the frozen merchant ACL blocker", ()
     (state) => { state.objectContractDiagnostic.components[1].facts.unknownPrincipalEntryCount = 1; },
     (state) => { state.objectContractDiagnostic.components[1].facts.aclEntries[0].entryCount = 1; },
     (state) => { state.objectContractDiagnostic.components[1].violations.pop(); },
-    (state) => { state.objectContractDiagnostic.components[1].violations[1].target = "anon:INSERT"; },
+    (state) => { state.objectContractDiagnostic.components[1].violations[1].target = "postgres:INSERT"; },
   ];
   for (const mutate of mutations) {
     const state = forwardRepairPreflightState();

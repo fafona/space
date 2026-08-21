@@ -140,6 +140,7 @@ function createRegistryCommandRunner(input = {}) {
         status: 1,
         stdout: "",
         stderr: input.failureStderr ?? "simulated psql failure",
+        stderrTruncated: input.failureStderrTruncated ?? false,
         timedOut: false,
       };
     }
@@ -502,14 +503,18 @@ test("apply mode verifies every migration registration and fails closed", async 
 
 test("psql failure is non-success, does not expose stderr, and releases the mutex", async (t) => {
   const fixture = await createFixture(t, [
-    [VERSIONS[0], "core_transaction_foundation"],
+    ["202608190040", "merchant_acl_contract_hardening"],
   ]);
   const lockPath = path.join(fixture.root, "migration.lock");
   const secret = "password-printed-by-a-broken-command";
+  const failureStderr =
+    "psql: ERROR: P0001: " +
+    "merchant_acl_contract_hardening_prerequisite_missing\n" +
+    `DETAIL: ${secret}\n`;
   const failing = createRegistryCommandRunner({
     registryExists: false,
-    failVersion: VERSIONS[0],
-    failureStderr: `ERROR: ${secret}`,
+    failVersion: "202608190040",
+    failureStderr,
   });
 
   let caught;
@@ -526,6 +531,15 @@ test("psql failure is non-success, does not expose stderr, and releases the mute
   }
   assertMigrationError(caught, "migration_apply_failed");
   assert.equal(JSON.stringify(caught).includes(secret), false);
+  assert.deepEqual(caught.details.diagnostic, {
+    schemaVersion: 1,
+    phase: "migration_apply",
+    fileName: "202608190040_merchant_acl_contract_hardening.sql",
+    status: 1,
+    timedOut: false,
+    sqlState: "P0001",
+    databaseErrorCode: "merchant_acl_contract_hardening_prerequisite_missing",
+  });
   assert.equal(await exists(lockPath), false);
 
   const healthy = createRegistryCommandRunner({ registryExists: false });
@@ -536,6 +550,113 @@ test("psql failure is non-success, does not expose stderr, and releases the mute
     lockPath,
   });
   assert.equal(report.status, "dry_run");
+});
+
+test("database error classification is bound to the exact 040 ERROR header", async (t) => {
+  const cases = [
+    {
+      label: "allowlisted marker only in DETAIL",
+      stderr:
+        "psql: ERROR: P0001: unrelated_database_failure\n" +
+        "DETAIL: merchant_acl_contract_hardening_prerequisite_missing\n",
+      sqlState: "P0001",
+      databaseErrorCode: null,
+    },
+    {
+      label: "a truncated stderr tail cannot establish a unique header",
+      stderr:
+        "psql: ERROR: P0001: " +
+        "merchant_acl_contract_hardening_prerequisite_missing\n",
+      stderrTruncated: true,
+      sqlState: null,
+      databaseErrorCode: null,
+    },
+    {
+      label: "DETAIL cannot masquerade as an ERROR header",
+      stderr:
+        "psql: ERROR: P0001: unrelated failure with spaces\n" +
+        "DETAIL: ERROR: P0001: " +
+        "merchant_acl_contract_hardening_prerequisite_missing\n",
+      sqlState: "P0001",
+      databaseErrorCode: null,
+    },
+    {
+      label: "allowlisted marker with a different SQLSTATE",
+      stderr:
+        "psql: ERROR: XX000: " +
+        "merchant_acl_contract_hardening_prerequisite_missing\n",
+      sqlState: "XX000",
+      databaseErrorCode: null,
+    },
+    {
+      label: "ambiguous ERROR headers",
+      stderr:
+        "psql: ERROR: P0001: " +
+        "merchant_acl_contract_hardening_prerequisite_missing\n" +
+        "psql: ERROR: P0001: " +
+        "merchant_acl_contract_hardening_prerequisite_missing\n",
+      sqlState: null,
+      databaseErrorCode: null,
+    },
+  ];
+
+  for (const item of cases) {
+    await t.test(item.label, async (subtest) => {
+      const fixture = await createFixture(subtest, [
+        ["202608190040", "merchant_acl_contract_hardening"],
+      ]);
+      const failing = createRegistryCommandRunner({
+        registryExists: false,
+        failVersion: "202608190040",
+        failureStderr: item.stderr,
+        failureStderrTruncated: item.stderrTruncated,
+      });
+      let caught;
+      try {
+        await applyProductionDatabaseMigrations({
+          apply: true,
+          rootDir: fixture.root,
+          selfHostedTopology: selfHostedTopology(),
+          runCommand: failing.runner,
+          lockPath: path.join(fixture.root, "migration.lock"),
+        });
+      } catch (error) {
+        caught = error;
+      }
+      assertMigrationError(caught, "migration_apply_failed");
+      assert.equal(caught.details.diagnostic.sqlState, item.sqlState);
+      assert.equal(
+        caught.details.diagnostic.databaseErrorCode,
+        item.databaseErrorCode,
+      );
+    });
+  }
+
+  const otherMigration = await createFixture(t, [
+    ["202608190041", "other_migration"],
+  ]);
+  const otherFailure = createRegistryCommandRunner({
+    registryExists: false,
+    failVersion: "202608190041",
+    failureStderr:
+      "psql: ERROR: P0001: " +
+      "merchant_acl_contract_hardening_prerequisite_missing\n",
+  });
+  let otherCaught;
+  try {
+    await applyProductionDatabaseMigrations({
+      apply: true,
+      rootDir: otherMigration.root,
+      selfHostedTopology: selfHostedTopology(),
+      runCommand: otherFailure.runner,
+      lockPath: path.join(otherMigration.root, "migration.lock"),
+    });
+  } catch (error) {
+    otherCaught = error;
+  }
+  assertMigrationError(otherCaught, "migration_apply_failed");
+  assert.equal(otherCaught.details.diagnostic.sqlState, "P0001");
+  assert.equal(otherCaught.details.diagnostic.databaseErrorCode, null);
 });
 
 test("an existing migration lock prevents concurrent database access", async (t) => {
@@ -618,7 +739,7 @@ test("CLI returns nonzero structured errors and preserves default dry-run mode",
   const failureCode = await runProductionMigrationCli({
     argv: ["--apply", "--through=202607310001", "--json"],
     execute: async () => {
-      throw new ProductionDatabaseMigrationError("simulated_failure");
+      throw new ProductionDatabaseMigrationError("migration_apply_failed");
     },
     writeStderr: (value) => {
       stderr += value;
@@ -627,6 +748,178 @@ test("CLI returns nonzero structured errors and preserves default dry-run mode",
   assert.equal(failureCode, 1);
   assert.deepEqual(JSON.parse(stderr), {
     ok: false,
-    error: "simulated_failure",
+    error: "migration_apply_failed",
   });
+});
+
+test("CLI emits only an exact bounded database failure diagnostic", async () => {
+  const diagnostic = {
+    schemaVersion: 1,
+    phase: "migration_apply",
+    fileName: "202608190040_merchant_acl_contract_hardening.sql",
+    status: 1,
+    timedOut: false,
+    sqlState: "P0001",
+    databaseErrorCode: "merchant_acl_contract_hardening_prerequisite_missing",
+  };
+  let stderr = "";
+  const code = await runProductionMigrationCli({
+    argv: ["--apply", "--through=202608190040", "--json"],
+    execute: async () => {
+      throw new ProductionDatabaseMigrationError("migration_apply_failed", {
+        diagnostic,
+        rawStderr: "must-not-appear",
+      });
+    },
+    writeStderr: (value) => {
+      stderr += value;
+    },
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(stderr), {
+    ok: false,
+    error: "migration_apply_failed",
+    diagnostic,
+  });
+  assert.equal(stderr.includes("must-not-appear"), false);
+
+  stderr = "";
+  await runProductionMigrationCli({
+    argv: ["--apply", "--through=202608190040", "--json"],
+    execute: async () => {
+      throw new ProductionDatabaseMigrationError("migration_apply_failed", {
+        diagnostic: { ...diagnostic, leaked: "must-not-appear" },
+      });
+    },
+    writeStderr: (value) => {
+      stderr += value;
+    },
+  });
+  assert.deepEqual(JSON.parse(stderr), {
+    ok: false,
+    error: "migration_apply_failed",
+  });
+
+  for (const invalidDiagnostic of [
+    { ...diagnostic, phase: "registry_query" },
+    { ...diagnostic, fileName: "202608190041_other_migration.sql" },
+    { ...diagnostic, sqlState: "XX000" },
+    { ...diagnostic, status: 0 },
+    { ...diagnostic, status: null },
+    { ...diagnostic, timedOut: true },
+    {
+      ...diagnostic,
+      databaseErrorCode: null,
+      fileName: `202608190040_${"a".repeat(256)}.sql`,
+    },
+  ]) {
+    stderr = "";
+    await runProductionMigrationCli({
+      argv: ["--apply", "--through=202608190040", "--json"],
+      execute: async () => {
+        throw new ProductionDatabaseMigrationError(
+          "migration_apply_failed",
+          { diagnostic: invalidDiagnostic },
+        );
+      },
+      writeStderr: (value) => {
+        stderr += value;
+      },
+    });
+    assert.deepEqual(JSON.parse(stderr), {
+      ok: false,
+      error: "migration_apply_failed",
+    });
+  }
+
+  stderr = "";
+  await runProductionMigrationCli({
+    argv: ["--apply", "--through=202608190040", "--json"],
+    execute: async () => {
+      throw new ProductionDatabaseMigrationError("migration_lock_failed", {
+        diagnostic,
+      });
+    },
+    writeStderr: (value) => {
+      stderr += value;
+    },
+  });
+  assert.deepEqual(JSON.parse(stderr), {
+    ok: false,
+    error: "migration_lock_failed",
+  });
+
+  const secret = "diagnostic-secret-must-not-appear";
+  const nonEnumerableToJson = { ...diagnostic };
+  Object.defineProperty(nonEnumerableToJson, "toJSON", {
+    value: () => ({ secret }),
+  });
+  const inheritedToJson = Object.assign(
+    Object.create({ toJSON: () => ({ secret }) }),
+    diagnostic,
+  );
+  for (const hostileDiagnostic of [nonEnumerableToJson, inheritedToJson]) {
+    stderr = "";
+    await runProductionMigrationCli({
+      argv: ["--apply", "--through=202608190040", "--json"],
+      execute: async () => {
+        throw new ProductionDatabaseMigrationError(
+          "migration_apply_failed",
+          { diagnostic: hostileDiagnostic },
+        );
+      },
+      writeStderr: (value) => {
+        stderr += value;
+      },
+    });
+    assert.deepEqual(JSON.parse(stderr), {
+      ok: false,
+      error: "migration_apply_failed",
+    });
+    assert.equal(stderr.includes(secret), false);
+  }
+
+  stderr = "";
+  await runProductionMigrationCli({
+    argv: ["--apply", "--through=202608190040", "--json"],
+    execute: async () => {
+      const error = new ProductionDatabaseMigrationError(
+        "migration_apply_failed",
+      );
+      Object.defineProperty(error.details, "diagnostic", {
+        get() {
+          throw new Error(secret);
+        },
+      });
+      throw error;
+    },
+    writeStderr: (value) => {
+      stderr += value;
+    },
+  });
+  assert.deepEqual(JSON.parse(stderr), {
+    ok: false,
+    error: "migration_apply_failed",
+  });
+  assert.equal(stderr.includes(secret), false);
+
+  stderr = "";
+  await runProductionMigrationCli({
+    argv: ["--apply", "--through=202608190040", "--json"],
+    execute: async () => {
+      const error = new ProductionDatabaseMigrationError(
+        "migration_apply_failed",
+      );
+      error.code = { toJSON: () => secret };
+      throw error;
+    },
+    writeStderr: (value) => {
+      stderr += value;
+    },
+  });
+  assert.deepEqual(JSON.parse(stderr), {
+    ok: false,
+    error: "production_database_migration_failed",
+  });
+  assert.equal(stderr.includes(secret), false);
 });

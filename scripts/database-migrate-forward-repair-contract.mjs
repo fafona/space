@@ -19,7 +19,7 @@ export const DATABASE_MIGRATE_FORWARD_REPAIR = Object.freeze({
   path:
     "scripts/supabase-migrations/" +
     "202608190040_merchant_acl_contract_hardening.sql",
-  sha256: "1b0bff4e67d490a07440d606b7182d77fd8952a9138e0743b8a7afc13de65cdd",
+  sha256: "fbb5c989d0a9a82f01ae9f4835e74a30c7d7ff8fa1ddbf9e637b549c1e54df82",
   confirmation: "APPLY_MERCHANT_ACL_FORWARD_REPAIR_202608190040",
 });
 
@@ -60,7 +60,6 @@ const TABLE_PRIVILEGES = Object.freeze([
   "TRIGGER",
 ]);
 const PRESTATE_MATRIX_VIOLATIONS = Object.freeze([
-  ...TABLE_PRIVILEGES.map((privilege) => `postgres:${privilege}`),
   ...TABLE_PRIVILEGES.map((privilege) => `anon:${privilege}`),
   ...["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"].map(
     (privilege) => `authenticated:${privilege}`,
@@ -327,7 +326,7 @@ export function assertForwardRepairPreflightState(parsed) {
     diagnostic?.ready !== false ||
     diagnostic.componentCount !== OBJECT_COMPONENT_CODES.length ||
     diagnostic.failedComponentCount !== 1 ||
-    diagnostic.violationCount !== 22 ||
+    diagnostic.violationCount !== 15 ||
     !Array.isArray(components) ||
     !exactArray(
       components.map((component) => component?.code),
@@ -335,7 +334,7 @@ export function assertForwardRepairPreflightState(parsed) {
     ) ||
     components.some((component, index) =>
       index === 1
-        ? component.ready !== false || component.violationCount !== 22
+        ? component.ready !== false || component.violationCount !== 15
         : component.ready !== true || component.violationCount !== 0,
     )
   ) {
