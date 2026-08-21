@@ -341,7 +341,7 @@ const OBSERVE_WAITERS_SQL = String.raw`WITH waiters AS (
     relation.relname AS relation_name,
     activity.usename AS database_user,
     activity.application_name,
-    COALESCE(activity.client_addr::text, '') AS client_address,
+    COALESCE(pg_catalog.host(activity.client_addr), '') AS client_address,
     activity.query,
     lock.mode,
     lock.granted,
@@ -402,7 +402,7 @@ SELECT pg_catalog.json_build_object(
             )::bigint::text AS backend_start_epoch_ms,
             activity.usename,
             activity.application_name,
-            activity.client_addr::text AS client_address
+            pg_catalog.host(activity.client_addr) AS client_address
           FROM pg_catalog.pg_stat_activity AS activity
           WHERE activity.client_addr IS NOT NULL
             AND activity.datid = (
@@ -518,7 +518,7 @@ const CANCEL_WAITER_SQL = String.raw`WITH candidate AS (
     AND relation.relname = :'relation_name'::text
     AND activity.usename = :'database_user'::text
     AND activity.application_name = :'application_name'::text
-    AND COALESCE(activity.client_addr::text, '') = :'client_address'::text
+    AND COALESCE(pg_catalog.host(activity.client_addr), '') = :'client_address'::text
     AND lock.mode = 'AccessShareLock'
     AND NOT lock.granted
     AND pg_catalog.floor(

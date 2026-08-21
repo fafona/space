@@ -820,6 +820,28 @@ test("waiter observation keeps per-backend identity through 256 rows and falls b
   assert.match(helperSource, /NULL::text AS backend_start_epoch_ms/);
 });
 
+test("waiter SQL strips inet masks at observation and cancellation boundaries", async () => {
+  const helperSource = await readFile(
+    new URL("./hold-ordinary-account-cutover-readiness-fence.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    helperSource,
+    /COALESCE\(pg_catalog\.host\(activity\.client_addr\), ''\) AS client_address/,
+  );
+  assert.equal(
+    helperSource.match(
+      /pg_catalog\.host\(activity\.client_addr\)/g,
+    )?.length,
+    3,
+  );
+  assert.match(
+    helperSource,
+    /COALESCE\(pg_catalog\.host\(activity\.client_addr\), ''\) = :'client_address'::text/,
+  );
+  assert.doesNotMatch(helperSource, /activity\.client_addr::text/);
+});
+
 test("service identity is derived from the attested compose project and direct database route without exposing its URI", async (t) => {
   const docker = serviceIdentityDockerSpawner();
   const identity = await resolveSupabaseServiceClientAddresses(
