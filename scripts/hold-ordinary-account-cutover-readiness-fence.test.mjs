@@ -381,16 +381,17 @@ async function assertMissing(filePath) {
   await assert.rejects(access(filePath), { code: "ENOENT" });
 }
 
-async function waitForFile(filePath) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitForFile(filePath, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
     try {
       return await readFile(filePath);
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
-      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (Date.now() >= deadline) throw new Error("marker_not_created");
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
-  throw new Error("marker_not_created");
 }
 
 function coreDependencies(child, overrides = {}) {
@@ -1651,6 +1652,10 @@ test("SIGTERM kills the psql child, waits termination, and removes the complete 
         terminateSession: async () => {
           await new Promise((resolve) => setTimeout(resolve, 5));
           terminationFinished = true;
+        },
+        markerWriter: async (...argumentsList) => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return writeAtomicReadinessFenceMarker(...argumentsList);
         },
       }),
     );
