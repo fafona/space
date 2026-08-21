@@ -55,6 +55,12 @@ const REST_SERVICE_IDENTITY = {
     dockerIpv4: ["172.20.0.10"],
     dockerIpv6: ["2001:db8:20::10"],
     sharedGateway: ["172.20.0.1", "2001:db8:20::1"],
+    networkIpamGateway: [],
+    networkServiceEndpoint: [],
+    databaseEndpoint: [],
+    composePeerEndpoint: [],
+    hostInterface: [],
+    sharedNetworkSubnet: [],
   },
   databaseUser: "authenticator",
   databaseName: "postgres",
@@ -68,6 +74,12 @@ const AUTH_SERVICE_IDENTITY = {
     dockerIpv4: ["172.20.0.11"],
     dockerIpv6: ["2001:db8:20::11"],
     sharedGateway: ["172.20.0.1", "2001:db8:20::1"],
+    networkIpamGateway: [],
+    networkServiceEndpoint: [],
+    databaseEndpoint: [],
+    composePeerEndpoint: [],
+    hostInterface: [],
+    sharedNetworkSubnet: [],
   },
   databaseUser: "supabase_auth_admin",
   databaseName: "postgres",
@@ -76,6 +88,32 @@ const AUTH_SERVICE_IDENTITY = {
 const SERVICE_IDENTITIES = {
   rest: REST_SERVICE_IDENTITY,
   auth: AUTH_SERVICE_IDENTITY,
+};
+const DIAGNOSTIC_SERVICE_IDENTITIES = {
+  rest: {
+    ...REST_SERVICE_IDENTITY,
+    clientAddressSources: {
+      ...REST_SERVICE_IDENTITY.clientAddressSources,
+      networkIpamGateway: ["172.20.0.254", "2001:db8:20::fe"],
+      networkServiceEndpoint: ["172.20.0.110", "2001:db8:20::110"],
+      databaseEndpoint: ["172.20.0.2", "2001:db8:20::2"],
+      composePeerEndpoint: ["172.20.0.30", "2001:db8:20::30"],
+      hostInterface: ["192.0.2.44", "2001:db8:99::44"],
+      sharedNetworkSubnet: ["172.20.0.0/24", "2001:db8:20::/64"],
+    },
+  },
+  auth: {
+    ...AUTH_SERVICE_IDENTITY,
+    clientAddressSources: {
+      ...AUTH_SERVICE_IDENTITY.clientAddressSources,
+      networkIpamGateway: ["172.20.0.254", "2001:db8:20::fe"],
+      networkServiceEndpoint: ["172.20.0.111", "2001:db8:20::111"],
+      databaseEndpoint: ["172.20.0.2", "2001:db8:20::2"],
+      composePeerEndpoint: ["172.20.0.30", "2001:db8:20::30"],
+      hostInterface: ["192.0.2.44", "2001:db8:99::44"],
+      sharedNetworkSubnet: ["172.20.0.0/24", "2001:db8:20::/64"],
+    },
+  },
 };
 
 function database(overrides = {}) {
@@ -446,6 +484,7 @@ function coreDependencies(child, overrides = {}) {
 function waiter(overrides = {}) {
   return {
     pid: "5101",
+    backendStartEpochMilliseconds: "1787227100000",
     databaseOid: "16384",
     relationOid: "18000",
     schemaName: "public",
@@ -468,11 +507,15 @@ function observation(waiters = [], overrides = {}) {
     clockEpochMilliseconds: "1787227200000",
     serviceSessions: [
       {
+        pid: "6101",
+        backendStartEpochMilliseconds: "1787227000001",
         databaseUser: "authenticator",
         applicationName: "PostgREST 12.1",
         clientAddress: "172.20.0.10",
       },
       {
+        pid: "6102",
+        backendStartEpochMilliseconds: "1787227000002",
         databaseUser: "supabase_auth_admin",
         applicationName: "",
         clientAddress: "172.20.0.11",
@@ -579,6 +622,7 @@ function serviceIdentityDockerSpawner({
       Aliases: [service],
     },
   },
+  diagnosticOutputs = [],
 } = {}) {
   const serviceId = service === "rest" ? "c".repeat(64) : "e".repeat(64);
   const secondId = "7".repeat(64);
@@ -612,6 +656,7 @@ function serviceIdentityDockerSpawner({
         NetworkSettings: { Networks: serviceNetworks },
       },
     ]),
+    ...diagnosticOutputs,
   ];
   const calls = [];
   return {
@@ -619,7 +664,10 @@ function serviceIdentityDockerSpawner({
     spawnProcess(command, argumentsList) {
       calls.push({ command, argumentsList });
       assert.equal(command, "docker");
-      return outputChild(outputs.shift() ?? "");
+      const output = outputs.shift() ?? "";
+      return typeof output === "string"
+        ? outputChild(output)
+        : outputChild(output.stdout ?? "", output.code ?? 0);
     },
   };
 }
@@ -681,6 +729,17 @@ test("fence SQL derives from the complete checker SQL, raises its timeout, upgra
   );
 });
 
+test("waiter observation keeps per-backend identity through 256 rows and falls back to legacy tuples above the bound", async () => {
+  const helperSource = await readFile(
+    new URL("./hold-ordinary-account-cutover-readiness-fence.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(helperSource, /backend_count <= 256/);
+  assert.match(helperSource, /backend_count > 256/);
+  assert.match(helperSource, /NULL::text AS pid/);
+  assert.match(helperSource, /NULL::text AS backend_start_epoch_ms/);
+});
+
 test("service identity is derived from the attested compose project and direct database route without exposing its URI", async (t) => {
   const docker = serviceIdentityDockerSpawner();
   const identity = await resolveSupabaseServiceClientAddresses(
@@ -723,6 +782,8 @@ test("service identity is derived from the attested compose project and direct d
   });
 
   await t.test("multiple shared networks remain source-specific and deterministic", async () => {
+    const primaryNetworkId = "1".repeat(64);
+    const secondaryNetworkId = "2".repeat(64);
     const multiple = serviceIdentityDockerSpawner({
       databaseNetworks: {
         supabase_default: {
@@ -730,6 +791,7 @@ test("service identity is derived from the attested compose project and direct d
           GlobalIPv6Address: "2001:db8:20::2",
           Gateway: "172.20.0.1",
           IPv6Gateway: "2001:db8:20::1",
+          NetworkID: primaryNetworkId,
           Aliases: ["db", "supabase-db"],
         },
         supabase_secondary: {
@@ -737,6 +799,7 @@ test("service identity is derived from the attested compose project and direct d
           GlobalIPv6Address: "2001:db8:21::2",
           Gateway: "172.21.0.1",
           IPv6Gateway: "2001:db8:21::1",
+          NetworkID: secondaryNetworkId,
           Aliases: ["db-secondary"],
         },
       },
@@ -746,6 +809,7 @@ test("service identity is derived from the attested compose project and direct d
           GlobalIPv6Address: "2001:db8:20::10",
           Gateway: "172.20.0.1",
           IPv6Gateway: "2001:db8:20::1",
+          NetworkID: primaryNetworkId,
           Aliases: ["rest"],
         },
         supabase_secondary: {
@@ -753,6 +817,7 @@ test("service identity is derived from the attested compose project and direct d
           GlobalIPv6Address: "2001:db8:21::10",
           Gateway: "172.21.0.1",
           IPv6Gateway: "2001:db8:21::1",
+          NetworkID: secondaryNetworkId,
           Aliases: ["rest-secondary"],
         },
         service_only: {
@@ -760,9 +825,34 @@ test("service identity is derived from the attested compose project and direct d
           GlobalIPv6Address: "2001:db8:ffff::10",
           Gateway: "192.0.2.1",
           IPv6Gateway: "2001:db8:ffff::1",
+          NetworkID: "3".repeat(64),
           Aliases: ["rest-external"],
         },
       },
+      diagnosticOutputs: [
+        JSON.stringify([
+          {
+            Id: primaryNetworkId,
+            IPAM: {
+              Config: [
+                { Subnet: "172.20.0.0/24", Gateway: "172.20.0.254" },
+              ],
+            },
+            Containers: {},
+          },
+        ]),
+        JSON.stringify([
+          {
+            Id: secondaryNetworkId,
+            IPAM: {
+              Config: [
+                { Subnet: "172.21.0.0/24", Gateway: "172.21.0.254" },
+              ],
+            },
+            Containers: {},
+          },
+        ]),
+      ],
     });
     assert.deepEqual(
       await resolveSupabaseServiceClientAddresses(
@@ -775,6 +865,7 @@ test("service identity is derived from the attested compose project and direct d
         ...REST_SERVICE_IDENTITY,
         clientAddresses: ["172.20.0.10", "172.21.0.10"],
         clientAddressSources: {
+          ...REST_SERVICE_IDENTITY.clientAddressSources,
           dockerIpv4: ["172.20.0.10", "172.21.0.10"],
           dockerIpv6: ["2001:db8:20::10", "2001:db8:21::10"],
           sharedGateway: [
@@ -783,8 +874,17 @@ test("service identity is derived from the attested compose project and direct d
             "2001:db8:20::1",
             "2001:db8:21::1",
           ],
+          networkIpamGateway: ["172.20.0.254", "172.21.0.254"],
+          sharedNetworkSubnet: ["172.20.0.0/24", "172.21.0.0/24"],
         },
       },
+    );
+    assert.deepEqual(
+      multiple.calls.slice(3).map(({ argumentsList }) => argumentsList),
+      [
+        ["network", "inspect", primaryNetworkId],
+        ["network", "inspect", secondaryNetworkId],
+      ],
     );
   });
 
@@ -829,12 +929,407 @@ test("service identity is derived from the attested compose project and direct d
         ...REST_SERVICE_IDENTITY,
         clientAddresses: ["172.20.0.10", "172.21.0.10"],
         clientAddressSources: {
+          ...REST_SERVICE_IDENTITY.clientAddressSources,
           dockerIpv4: ["172.20.0.10", "172.21.0.10"],
           dockerIpv6: ["2001:db8:20::10"],
           sharedGateway: ["172.20.0.1", "2001:db8:20::1"],
         },
       },
     );
+  });
+
+  await t.test("shared NetworkID topology is frozen once with exact running compose-peer proof", async () => {
+    const networkId = "1".repeat(64);
+    const peerId = "2".repeat(64);
+    const stoppedPeerId = "3".repeat(64);
+    const foreignPeerId = "4".repeat(64);
+    const otherNetworkPeerId = "5".repeat(64);
+    const databaseNetworks = {
+      supabase_default: {
+        IPAddress: "172.20.0.2",
+        GlobalIPv6Address: "2001:db8:20::2",
+        Gateway: "172.20.0.1",
+        IPv6Gateway: "2001:db8:20::1",
+        NetworkID: networkId,
+        Aliases: ["db", "supabase-db"],
+      },
+    };
+    const serviceNetworks = {
+      supabase_default: {
+        IPAddress: "172.20.0.10",
+        GlobalIPv6Address: "2001:db8:20::10",
+        Gateway: "172.20.0.1",
+        IPv6Gateway: "2001:db8:20::1",
+        NetworkID: networkId,
+        Aliases: ["rest"],
+      },
+    };
+    const endpoint = (ipv4, ipv6) => ({
+      IPv4Address: `${ipv4}/24`,
+      IPv6Address: `${ipv6}/64`,
+    });
+    const networkInspect = JSON.stringify([
+      {
+        Id: networkId,
+        IPAM: {
+          Config: [
+            { Subnet: "172.20.0.99/24", Gateway: "172.20.0.254" },
+            {
+              Subnet: "2001:0db8:0020::1234/64",
+              Gateway: "2001:0db8:0020::00fe",
+            },
+            { Subnet: "hostile-subnet", Gateway: "hostile-gateway" },
+            { Subnet: "172.20.0.0/24", Gateway: "172.20.0.254" },
+          ],
+        },
+        Containers: {
+          [CONTAINER_ID]: endpoint("172.20.0.2", "2001:db8:20::2"),
+          [REST_SERVICE_IDENTITY.containerId]: endpoint(
+            "172.20.0.110",
+            "2001:db8:20::110",
+          ),
+          [peerId]: endpoint("172.20.0.30", "2001:db8:20::30"),
+          [stoppedPeerId]: endpoint("172.20.0.31", "2001:db8:20::31"),
+          [foreignPeerId]: endpoint("172.20.0.32", "2001:db8:20::32"),
+          [otherNetworkPeerId]: endpoint(
+            "172.20.0.33",
+            "2001:db8:20::33",
+          ),
+        },
+      },
+    ]);
+    const inspectedPeer = (
+      id,
+      { project = "supabase", running = true, peerNetworkId = networkId } = {},
+    ) => ({
+      Id: id,
+      Config: { Labels: { "com.docker.compose.project": project } },
+      State: { Running: running },
+      NetworkSettings: {
+        Networks: { supabase_default: { NetworkID: peerNetworkId } },
+      },
+    });
+    const peersInspect = JSON.stringify([
+      inspectedPeer(peerId),
+      inspectedPeer(stoppedPeerId, { running: false }),
+      inspectedPeer(foreignPeerId, { project: "foreign" }),
+      inspectedPeer(otherNetworkPeerId, { peerNetworkId: "6".repeat(64) }),
+    ]);
+    const topology = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+      diagnosticOutputs: [networkInspect, peersInspect],
+    });
+    const sharedCache = {
+      networkTopologyCache: new Map(),
+      composeProjectCache: new Map(),
+      networkInterfaces: () => ({
+        Ethernet: [
+          { address: "192.0.2.44" },
+          { address: "2001:0db8:0099::0044" },
+        ],
+      }),
+    };
+    assert.deepEqual(
+      await resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        topology.spawnProcess,
+        undefined,
+        sharedCache,
+      ),
+      {
+        ...REST_SERVICE_IDENTITY,
+        clientAddressSources: {
+          ...REST_SERVICE_IDENTITY.clientAddressSources,
+          networkIpamGateway: ["172.20.0.254", "2001:db8:20::fe"],
+          networkServiceEndpoint: [
+            "172.20.0.110",
+            "2001:db8:20::110",
+          ],
+          databaseEndpoint: ["172.20.0.2", "2001:db8:20::2"],
+          composePeerEndpoint: ["172.20.0.30", "2001:db8:20::30"],
+          hostInterface: ["192.0.2.44", "2001:db8:99::44"],
+          sharedNetworkSubnet: ["172.20.0.0/24", "2001:db8:20::/64"],
+        },
+      },
+    );
+    assert.equal(topology.calls.length, 5);
+    assert.deepEqual(topology.calls[3].argumentsList, [
+      "network",
+      "inspect",
+      networkId,
+    ]);
+    assert.deepEqual(topology.calls[4].argumentsList, [
+      "inspect",
+      ...[
+        foreignPeerId,
+        peerId,
+        stoppedPeerId,
+        otherNetworkPeerId,
+      ].sort(),
+    ]);
+
+    const cached = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+    });
+    await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      cached.spawnProcess,
+      undefined,
+      sharedCache,
+    );
+    assert.equal(
+      cached.calls.some(({ argumentsList }) => argumentsList[0] === "network"),
+      false,
+    );
+  });
+
+  await t.test("same-name networks with different NetworkIDs cannot contribute topology", async () => {
+    const unbound = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.2",
+          NetworkID: "1".repeat(64),
+          Aliases: ["db", "supabase-db"],
+        },
+      },
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:db8:20::10",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          NetworkID: "2".repeat(64),
+          Aliases: ["rest"],
+        },
+      },
+      diagnosticOutputs: ["hostile-network-output-must-not-be-read"],
+    });
+    assert.deepEqual(
+      await resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        unbound.spawnProcess,
+      ),
+      REST_SERVICE_IDENTITY,
+    );
+    assert.equal(unbound.calls.length, 3);
+  });
+
+  await t.test("optional network inspection failure preserves authoritative service IPv4", async () => {
+    const networkId = "1".repeat(64);
+    const failing = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.2",
+          NetworkID: networkId,
+          Aliases: ["db", "supabase-db"],
+        },
+      },
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:db8:20::10",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          NetworkID: networkId,
+          Aliases: ["rest"],
+        },
+      },
+      diagnosticOutputs: [{ stdout: "hostile-network-secret", code: 1 }],
+    });
+    assert.deepEqual(
+      await resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        failing.spawnProcess,
+      ),
+      REST_SERVICE_IDENTITY,
+    );
+    assert.equal(failing.calls.length, 4);
+
+    const timingOut = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.2",
+          NetworkID: networkId,
+          Aliases: ["db", "supabase-db"],
+        },
+      },
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:db8:20::10",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          NetworkID: networkId,
+          Aliases: ["rest"],
+        },
+      },
+      diagnosticOutputs: ["network-inspect-must-time-out"],
+    });
+    let operation = 0;
+    const diagnosticDeadline = async (promise, _milliseconds, code, onTimeout) => {
+      operation += 1;
+      if (operation === 4) {
+        onTimeout?.();
+        throw new OrdinaryAccountCutoverReadinessFenceError(code);
+      }
+      return promise;
+    };
+    assert.deepEqual(
+      await resolveSupabaseServiceClientAddresses(
+        "rest",
+        CONTAINER_ID,
+        "postgres",
+        timingOut.spawnProcess,
+        diagnosticDeadline,
+      ),
+      REST_SERVICE_IDENTITY,
+    );
+    assert.equal(timingOut.calls.length, 4);
+  });
+
+  await t.test("deferred topology performs no network inspection until its provider is requested", async () => {
+    const networkId = "7".repeat(64);
+    const deferred = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.2",
+          GlobalIPv6Address: "2001:db8:20::2",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          NetworkID: networkId,
+          Aliases: ["db", "supabase-db"],
+        },
+      },
+      serviceNetworks: {
+        supabase_default: {
+          IPAddress: "172.20.0.10",
+          GlobalIPv6Address: "2001:db8:20::10",
+          Gateway: "172.20.0.1",
+          IPv6Gateway: "2001:db8:20::1",
+          NetworkID: networkId,
+          Aliases: ["rest"],
+        },
+      },
+      diagnosticOutputs: [
+        JSON.stringify([
+          {
+            Id: networkId,
+            IPAM: {
+              Config: [
+                { Subnet: "172.20.0.0/24", Gateway: "172.20.0.254" },
+              ],
+            },
+            Containers: {},
+          },
+        ]),
+      ],
+    });
+    const providers = new Map();
+    const identity = await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      deferred.spawnProcess,
+      undefined,
+      {
+        clientAddressSourceProviders: providers,
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+      },
+    );
+    assert.deepEqual(identity, REST_SERVICE_IDENTITY);
+    assert.equal(deferred.calls.length, 3);
+    assert.equal(typeof providers.get("rest"), "function");
+    const sources = await providers.get("rest")();
+    assert.deepEqual(sources.networkIpamGateway, ["172.20.0.254"]);
+    assert.equal(deferred.calls.length, 4);
+  });
+
+  await t.test("compose peer endpoints retain their originating NetworkID", async () => {
+    const networkA = "8".repeat(64);
+    const networkB = "9".repeat(64);
+    const peerId = "a".repeat(64);
+    const crossNetwork = serviceIdentityDockerSpawner({
+      databaseNetworks: {
+        network_a: {
+          IPAddress: "172.30.0.2",
+          NetworkID: networkA,
+          Aliases: ["db", "supabase-db"],
+        },
+        network_b: {
+          IPAddress: "172.31.0.2",
+          NetworkID: networkB,
+          Aliases: ["db-secondary"],
+        },
+      },
+      serviceNetworks: {
+        network_a: {
+          IPAddress: "172.30.0.10",
+          NetworkID: networkA,
+          Aliases: ["rest"],
+        },
+        network_b: {
+          IPAddress: "172.31.0.10",
+          NetworkID: networkB,
+          Aliases: ["rest-secondary"],
+        },
+      },
+      diagnosticOutputs: [
+        JSON.stringify([
+          {
+            Id: networkA,
+            IPAM: { Config: [] },
+            Containers: {
+              [peerId]: { IPv4Address: "172.30.0.77/24", IPv6Address: "" },
+            },
+          },
+        ]),
+        JSON.stringify([
+          {
+            Id: networkB,
+            IPAM: { Config: [] },
+            Containers: {},
+          },
+        ]),
+        JSON.stringify([
+          {
+            Id: peerId,
+            Config: {
+              Labels: { "com.docker.compose.project": "supabase" },
+            },
+            State: { Running: true },
+            NetworkSettings: {
+              Networks: { network_b: { NetworkID: networkB } },
+            },
+          },
+        ]),
+      ],
+    });
+    const identity = await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      crossNetwork.spawnProcess,
+      undefined,
+      {
+        eagerTopology: true,
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+      },
+    );
+    assert.deepEqual(identity.clientAddressSources.composePeerEndpoint, []);
   });
 
   await t.test("pooler or other non-attested database hop is rejected", async () => {
@@ -1254,6 +1749,278 @@ test("a rejected waiter client address emits a fixed unmatched classification", 
   );
 });
 
+test("a rejected waiter client address is classified by a shared-network IPAM gateway", async () => {
+  const snapshots = [
+    observation(),
+    observation([waiter({ clientAddress: "172.20.0.254" })]),
+  ];
+  const calls = [];
+  await assertCode(
+    probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      {
+        containerId: CONTAINER_ID,
+        databaseName: "postgres",
+        databaseOid: "16384",
+        fenceBackendPid: "4321",
+      },
+      {
+        environment: {
+          SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+          NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-key-never-log",
+        },
+        randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+        fetchImpl: pendingFetchRecorder(calls),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        cancelWaiter: async () => {},
+        serviceIdentities: {
+          ...SERVICE_IDENTITIES,
+          rest: {
+            ...REST_SERVICE_IDENTITY,
+            clientAddressSources: {
+              ...REST_SERVICE_IDENTITY.clientAddressSources,
+              networkIpamGateway: ["172.20.0.254"],
+            },
+          },
+        },
+        poll: async () => {},
+      },
+    ),
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_network_ipam_gateway_invalid",
+  );
+});
+
+test("optional topology and backend metadata cannot block raw-exact waiter acceptance", async () => {
+  const snapshots = successfulProbeSequence();
+  for (const snapshot of snapshots) {
+    for (const session of snapshot.serviceSessions) {
+      // This is the bounded SQL overflow representation: the legacy tuple is
+      // retained, while per-backend diagnostic identity is deliberately null.
+      session.pid = null;
+      session.backendStartEpochMilliseconds = null;
+    }
+    for (const candidate of snapshot.waiters) {
+      delete candidate.backendStartEpochMilliseconds;
+      Object.defineProperty(candidate, "backendStartEpochMilliseconds", {
+        enumerable: true,
+        get() {
+          throw new Error("optional-waiter-start-must-not-be-read");
+        },
+      });
+    }
+  }
+  const hostileSources = () => {
+    const value = {};
+    Object.defineProperty(value, "networkIpamGateway", {
+      enumerable: true,
+      get() {
+        throw new Error("optional-topology-must-not-be-read");
+      },
+    });
+    return value;
+  };
+  let topologyProviderCalls = 0;
+  const clientAddressSourceProviders = new Map(
+    ["rest", "auth"].map((service) => [
+      service,
+      async () => {
+        topologyProviderCalls += 1;
+        throw new Error("raw-exact-must-not-request-optional-topology");
+      },
+    ]),
+  );
+  const calls = [];
+  const causal = causalFetchRecorder(calls);
+  const evidence = await probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+    {
+      containerId: CONTAINER_ID,
+      databaseName: "postgres",
+      databaseOid: "16384",
+      fenceBackendPid: "4321",
+    },
+    {
+      environment: {
+        SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+        NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-key-never-log",
+      },
+      randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+      fetchImpl: causal.fetchImpl,
+      observeWaiters: async () => snapshots.shift() ?? observation(),
+      cancelWaiter: causal.cancelWaiter,
+      serviceIdentities: {
+        rest: {
+          ...REST_SERVICE_IDENTITY,
+          clientAddressSources: hostileSources(),
+        },
+        auth: {
+          ...AUTH_SERVICE_IDENTITY,
+          clientAddressSources: hostileSources(),
+        },
+      },
+      clientAddressSourceProviders,
+      poll: async () => {},
+    },
+  );
+  assert.equal(evidence.length, 4);
+  assert.equal(snapshots.length, 0);
+  assert.equal(topologyProviderCalls, 0);
+});
+
+test("preexisting backend classification requires the exact frozen five-field identity", async () => {
+  const mismatches = [
+    ["pid", "5102"],
+    ["backendStartEpochMilliseconds", "1787227100001"],
+    ["databaseUser", "other_valid_user"],
+    ["applicationName", "Other valid application"],
+    ["clientAddress", "172.20.0.78"],
+  ];
+  for (const [field, replacement] of mismatches) {
+    const candidate = waiter({ clientAddress: "172.20.0.77" });
+    const frozen = {
+      pid: candidate.pid,
+      backendStartEpochMilliseconds: candidate.backendStartEpochMilliseconds,
+      databaseUser: candidate.databaseUser,
+      applicationName: candidate.applicationName,
+      clientAddress: candidate.clientAddress,
+      [field]: replacement,
+    };
+    const snapshots = [
+      observation([], {
+        serviceSessions: [...observation().serviceSessions, frozen],
+      }),
+      observation([candidate]),
+    ];
+    const calls = [];
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+        {
+          containerId: CONTAINER_ID,
+          databaseName: "postgres",
+          databaseOid: "16384",
+          fenceBackendPid: "4321",
+        },
+        {
+          environment: {
+            SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+            NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-key-never-log",
+          },
+          randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+          fetchImpl: pendingFetchRecorder(calls),
+          observeWaiters: async () => snapshots.shift() ?? observation(),
+          cancelWaiter: async () => {},
+          serviceIdentities: DIAGNOSTIC_SERVICE_IDENTITIES,
+          poll: async () => {},
+        },
+      ),
+      "readiness_fence_probe_waiter_initial_internal_rest_client_address_shared_network_subnet_invalid",
+    );
+  }
+});
+
+test("per-backend observation distinguishes duplicate tuples by PID and backend start", async () => {
+  const candidate = waiter({
+    pid: "5102",
+    backendStartEpochMilliseconds: "1787227100002",
+    clientAddress: "198.51.100.80",
+  });
+  const duplicateTuple = {
+    databaseUser: candidate.databaseUser,
+    applicationName: candidate.applicationName,
+    clientAddress: candidate.clientAddress,
+  };
+  const snapshots = [
+    observation([], {
+      serviceSessions: [
+        ...observation().serviceSessions,
+        {
+          ...duplicateTuple,
+          pid: "5101",
+          backendStartEpochMilliseconds: "1787227100001",
+        },
+        {
+          ...duplicateTuple,
+          pid: candidate.pid,
+          backendStartEpochMilliseconds:
+            candidate.backendStartEpochMilliseconds,
+        },
+      ],
+    }),
+    observation([candidate]),
+  ];
+  const calls = [];
+  await assertCode(
+    probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      {
+        containerId: CONTAINER_ID,
+        databaseName: "postgres",
+        databaseOid: "16384",
+        fenceBackendPid: "4321",
+      },
+      {
+        environment: {
+          SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+          NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-key-never-log",
+        },
+        randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+        fetchImpl: pendingFetchRecorder(calls),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        cancelWaiter: async () => {},
+        serviceIdentities: DIAGNOSTIC_SERVICE_IDENTITIES,
+        poll: async () => {},
+      },
+    ),
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_preexisting_backend_other_invalid",
+  );
+});
+
+test("an exact preexisting backend plus shared gateway emits the fixed composite code", async () => {
+  const candidate = waiter({ clientAddress: "172.20.0.1" });
+  const snapshots = [
+    observation([], {
+      serviceSessions: [
+        ...observation().serviceSessions,
+        {
+          pid: candidate.pid,
+          backendStartEpochMilliseconds:
+            candidate.backendStartEpochMilliseconds,
+          databaseUser: candidate.databaseUser,
+          applicationName: candidate.applicationName,
+          clientAddress: candidate.clientAddress,
+        },
+      ],
+    }),
+    observation([candidate]),
+  ];
+  const calls = [];
+  await assertCode(
+    probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      {
+        containerId: CONTAINER_ID,
+        databaseName: "postgres",
+        databaseOid: "16384",
+        fenceBackendPid: "4321",
+      },
+      {
+        environment: {
+          SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+          NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-key-never-log",
+        },
+        randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+        fetchImpl: pendingFetchRecorder(calls),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        cancelWaiter: async () => {},
+        serviceIdentities: DIAGNOSTIC_SERVICE_IDENTITIES,
+        poll: async () => {},
+      },
+    ),
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_preexisting_backend_shared_gateway_invalid",
+  );
+});
+
 test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, canonical, and value-free", async () => {
   const input = {
     containerId: CONTAINER_ID,
@@ -1338,6 +2105,35 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     ["dockerIpv6", "docker_ipv6"],
     ["ipv4Mapped", "ipv4_mapped"],
     ["sharedGateway", "shared_gateway"],
+    ["ipv4MappedSharedGateway", "ipv4_mapped_shared_gateway"],
+    ["networkIpamGateway", "network_ipam_gateway"],
+    [
+      "ipv4MappedNetworkIpamGateway",
+      "ipv4_mapped_network_ipam_gateway",
+    ],
+    ["networkServiceEndpoint", "network_service_endpoint"],
+    ["databaseEndpoint", "database_endpoint"],
+    ["composePeerEndpoint", "compose_peer_endpoint"],
+    ["loopback", "loopback"],
+    [
+      "preexistingBackendSharedGateway",
+      "preexisting_backend_shared_gateway",
+    ],
+    [
+      "preexistingBackendNetworkIpamGateway",
+      "preexisting_backend_network_ipam_gateway",
+    ],
+    [
+      "preexistingBackendHostInterface",
+      "preexisting_backend_host_interface",
+    ],
+    [
+      "preexistingBackendSharedNetworkSubnet",
+      "preexisting_backend_shared_network_subnet",
+    ],
+    ["preexistingBackendOther", "preexisting_backend_other"],
+    ["hostInterface", "host_interface"],
+    ["sharedNetworkSubnet", "shared_network_subnet"],
     ["unmatched", "unmatched"],
   ];
   // A resolver-consistent Docker IPv4 is accepted by the preceding raw match.
@@ -1359,6 +2155,7 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     "172.20.0.10",
     "172.20.0.11",
     "203.0.113.77",
+    "hostile-unmatched-address-secret",
     "2001:0db8:0020:0000:0000:0000:0000:0010",
     "2001:0db8:0020:0000:0000:0000:0000:0011",
     "2001:db8:20::10",
@@ -1367,7 +2164,25 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     "::ffff:172.20.0.11",
     "2001:0db8:0020:0000:0000:0000:0000:0001",
     "2001:db8:20::1",
-    "2001:db8:ffff::77",
+    "172.20.0.254",
+    "2001:db8:20::fe",
+    "::ffff:172.20.0.1",
+    "::ffff:172.20.0.254",
+    "172.20.0.110",
+    "172.20.0.111",
+    "172.20.0.2",
+    "172.20.0.30",
+    "127.0.0.77",
+    "::ffff:127.0.0.77",
+    "0:0:0:0:0:0:0:1",
+    "192.0.2.44",
+    "172.20.0.77",
+    "198.51.100.77",
+    "2001:0db8:0020:0000:0000:0000:0000:0077",
+    "172.20.0.88",
+    "2001:0db8:0020:0000:0000:0000:0000:0088",
+    "203.0.113.77",
+    "1787227100000",
     "authenticator",
     "supabase_auth_admin",
     "PostgREST 12.1",
@@ -1381,6 +2196,9 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     "hostile-internal-url-secret",
     "hostile-public-url-secret",
     "hostile-anon-key-secret",
+    "1".repeat(64),
+    REST_SERVICE_IDENTITY.containerId,
+    "2".repeat(64),
   ];
 
   for (const stage of stages) {
@@ -1469,6 +2287,16 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
           stage === "initial" ? initialCandidate : postCancelCandidate;
         const service = probe.endsWith("Auth") ? "auth" : "rest";
         const suffix = service === "auth" ? "11" : "10";
+        const freezeTargetBackend = () => {
+          snapshots[probeIndex * 4].serviceSessions.push({
+            pid: targetCandidate.pid,
+            backendStartEpochMilliseconds:
+              targetCandidate.backendStartEpochMilliseconds,
+            databaseUser: targetCandidate.databaseUser,
+            applicationName: targetCandidate.applicationName,
+            clientAddress: targetCandidate.clientAddress,
+          });
+        };
         switch (classification) {
           case "dockerIpv6":
             targetCandidate.clientAddress =
@@ -1481,8 +2309,74 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
             targetCandidate.clientAddress =
               "2001:0db8:0020:0000:0000:0000:0000:0001";
             break;
+          case "ipv4MappedSharedGateway":
+            targetCandidate.clientAddress = "::ffff:172.20.0.1";
+            break;
+          case "networkIpamGateway":
+            targetCandidate.clientAddress = "2001:0db8:0020::00fe";
+            break;
+          case "ipv4MappedNetworkIpamGateway":
+            targetCandidate.clientAddress = "::ffff:172.20.0.254";
+            break;
+          case "networkServiceEndpoint":
+            targetCandidate.clientAddress = `172.20.0.1${suffix}`;
+            freezeTargetBackend();
+            break;
+          case "databaseEndpoint":
+            targetCandidate.clientAddress = "172.20.0.2";
+            freezeTargetBackend();
+            break;
+          case "composePeerEndpoint":
+            targetCandidate.clientAddress = "172.20.0.30";
+            freezeTargetBackend();
+            break;
+          case "loopback":
+            targetCandidate.clientAddress = [
+              "127.0.0.77",
+              "0:0:0:0:0:0:0:1",
+              "::ffff:127.0.0.77",
+              "::ffff:127.0.0.77",
+            ][probeIndex];
+            freezeTargetBackend();
+            break;
+          case "preexistingBackendSharedGateway":
+            targetCandidate.clientAddress = probeIndex % 2 === 0
+              ? "172.20.0.1"
+              : "::ffff:172.20.0.1";
+            freezeTargetBackend();
+            break;
+          case "preexistingBackendNetworkIpamGateway":
+            targetCandidate.clientAddress = probeIndex % 2 === 0
+              ? "172.20.0.254"
+              : "::ffff:172.20.0.254";
+            freezeTargetBackend();
+            break;
+          case "preexistingBackendHostInterface":
+            targetCandidate.clientAddress = "192.0.2.44";
+            freezeTargetBackend();
+            break;
+          case "preexistingBackendSharedNetworkSubnet":
+            targetCandidate.clientAddress = probe.endsWith("Auth")
+              ? "2001:0db8:0020:0000:0000:0000:0000:0077"
+              : "172.20.0.77";
+            freezeTargetBackend();
+            break;
+          case "preexistingBackendOther":
+            targetCandidate.clientAddress = "198.51.100.77";
+            freezeTargetBackend();
+            break;
+          case "hostInterface":
+            targetCandidate.clientAddress = "2001:0db8:0099::0044";
+            break;
+          case "sharedNetworkSubnet":
+            targetCandidate.clientAddress = probe.endsWith("Auth")
+              ? "2001:0db8:0020:0000:0000:0000:0000:0088"
+              : "172.20.0.88";
+            break;
           case "unmatched":
-            targetCandidate.clientAddress = "2001:db8:ffff::77";
+            targetCandidate.clientAddress = probe === "publicAuth"
+              ? "hostile-unmatched-address-secret"
+              : "203.0.113.77";
             break;
           default:
             assert.fail(`unexpected client address class ${classification}`);
@@ -1497,7 +2391,7 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
             fetchImpl: causal.fetchImpl,
             observeWaiters: async () => snapshots.shift() ?? observation(),
             cancelWaiter: causal.cancelWaiter,
-            serviceIdentities: SERVICE_IDENTITIES,
+            serviceIdentities: DIAGNOSTIC_SERVICE_IDENTITIES,
             poll: async () => {},
           });
           assert.fail(
@@ -1540,10 +2434,12 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     }
   }
 
+  const allowlistedWaiterDiagnosticCodes = new Set();
   for (const stage of stages) {
     for (const probe of probes) {
       for (const [predicate] of predicateCases) {
         const code = codeFor(stage, probe, predicate);
+        allowlistedWaiterDiagnosticCodes.add(code);
         const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
           new OrdinaryAccountCutoverReadinessFenceError(code),
         );
@@ -1554,6 +2450,7 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
       }
       for (const [, classificationCode] of clientAddressClasses) {
         const code = clientAddressCodeFor(stage, probe, classificationCode);
+        allowlistedWaiterDiagnosticCodes.add(code);
         const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
           new OrdinaryAccountCutoverReadinessFenceError(code),
         );
@@ -1564,6 +2461,8 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
       }
     }
   }
+  assert.equal(allowlistedWaiterDiagnosticCodes.size, 240);
+  assert.ok(allowlistedWaiterDiagnosticCodes.size <= 512);
 
   const defaultDiagnostic = {
     childExitCode: null,
@@ -1583,6 +2482,7 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
     ),
     "readiness_fence_probe_waiter_initial_internal_rest_database_oid_invalid_suffix",
     "readiness_fence_probe_waiter_initial_internal_rest_client_address_arbitrary_invalid",
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_preexisting_backend_invalid",
     "readiness_fence_probe_waiter_initial_internal_rest_client_address_docker_ipv6_invalid_suffix",
     "readiness_fence_probe_waiter_arbitrary_internal_rest_database_oid_invalid",
     "readiness_fence_probe_waiter_initial_arbitrary_database_oid_invalid",

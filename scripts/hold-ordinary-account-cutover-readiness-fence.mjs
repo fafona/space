@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { link, lstat, open, unlink } from "node:fs/promises";
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -67,6 +68,35 @@ const WAITER_CLIENT_ADDRESS_CLASSIFICATIONS = Object.freeze([
   Object.freeze(["dockerIpv6", "docker_ipv6"]),
   Object.freeze(["ipv4Mapped", "ipv4_mapped"]),
   Object.freeze(["sharedGateway", "shared_gateway"]),
+  Object.freeze(["ipv4MappedSharedGateway", "ipv4_mapped_shared_gateway"]),
+  Object.freeze(["networkIpamGateway", "network_ipam_gateway"]),
+  Object.freeze([
+    "ipv4MappedNetworkIpamGateway",
+    "ipv4_mapped_network_ipam_gateway",
+  ]),
+  Object.freeze(["networkServiceEndpoint", "network_service_endpoint"]),
+  Object.freeze(["databaseEndpoint", "database_endpoint"]),
+  Object.freeze(["composePeerEndpoint", "compose_peer_endpoint"]),
+  Object.freeze(["loopback", "loopback"]),
+  Object.freeze([
+    "preexistingBackendSharedGateway",
+    "preexisting_backend_shared_gateway",
+  ]),
+  Object.freeze([
+    "preexistingBackendNetworkIpamGateway",
+    "preexisting_backend_network_ipam_gateway",
+  ]),
+  Object.freeze([
+    "preexistingBackendHostInterface",
+    "preexisting_backend_host_interface",
+  ]),
+  Object.freeze([
+    "preexistingBackendSharedNetworkSubnet",
+    "preexisting_backend_shared_network_subnet",
+  ]),
+  Object.freeze(["preexistingBackendOther", "preexisting_backend_other"]),
+  Object.freeze(["hostInterface", "host_interface"]),
+  Object.freeze(["sharedNetworkSubnet", "shared_network_subnet"]),
   Object.freeze(["unmatched", "unmatched"]),
 ]);
 const WAITER_VALIDATION_FAILURE_CONTEXTS = Object.freeze(
@@ -103,6 +133,12 @@ const WAITER_VALIDATION_FAILURE_CONTEXTS = Object.freeze(
 const WAITER_VALIDATION_FAILURE_CODES = Object.freeze(
   WAITER_VALIDATION_FAILURE_CONTEXTS.map(({ code }) => code),
 );
+if (
+  WAITER_VALIDATION_FAILURE_CONTEXTS.length !== 240 ||
+  new Set(WAITER_VALIDATION_FAILURE_CODES).size !== 240
+) {
+  throw new Error("invalid waiter diagnostic registry");
+}
 
 const PUBLIC_FAILURE_CODES = new Set([
   "attestation_json_not_canonical",
@@ -190,6 +226,9 @@ const PUBLIC_FAILURE_CODES = new Set([
   "readiness_fence_unexpected_error",
   ...WAITER_VALIDATION_FAILURE_CODES,
 ]);
+if (PUBLIC_FAILURE_CODES.size !== 323 || PUBLIC_FAILURE_CODES.size > 512) {
+  throw new Error("invalid public failure registry");
+}
 const ENDPOINT_PROBE_TOTAL_TIMEOUT_MS = 90_000;
 const FENCE_KIND = "faolla.ordinary-account-cutover-readiness-fence.v1";
 const RELEASE_REQUEST_KIND =
@@ -283,6 +322,9 @@ const OBSERVE_WAITERS_CONTAINER_SCRIPT = [
 const OBSERVE_WAITERS_SQL = String.raw`WITH waiters AS (
   SELECT
     activity.pid::text AS pid,
+    pg_catalog.floor(
+      EXTRACT(EPOCH FROM activity.backend_start) * 1000::numeric
+    )::bigint::text AS backend_start_epoch_ms,
     lock.database::text AS database_oid,
     lock.relation::text AS relation_oid,
     namespace.nspname AS schema_name,
@@ -329,24 +371,64 @@ SELECT pg_catalog.json_build_object(
     (
       SELECT pg_catalog.json_agg(
         pg_catalog.json_build_object(
+          'pid', session.pid,
+          'backendStartEpochMilliseconds', session.backend_start_epoch_ms,
           'databaseUser', session.usename,
           'applicationName', session.application_name,
           'clientAddress', session.client_address
         )
-        ORDER BY session.client_address, session.usename, session.application_name
+        ORDER BY
+          session.client_address,
+          session.usename,
+          session.application_name,
+          session.pid::integer NULLS LAST
       )
       FROM (
-        SELECT DISTINCT
-          activity.usename,
-          activity.application_name,
-          activity.client_addr::text AS client_address
-        FROM pg_catalog.pg_stat_activity AS activity
-        WHERE activity.client_addr IS NOT NULL
-          AND activity.datid = (
-            SELECT database.oid
-            FROM pg_catalog.pg_database AS database
-            WHERE database.datname = pg_catalog.current_database()
-          )
+        WITH service_backends AS MATERIALIZED (
+          SELECT
+            activity.pid::text AS pid,
+            pg_catalog.floor(
+              EXTRACT(EPOCH FROM activity.backend_start) * 1000::numeric
+            )::bigint::text AS backend_start_epoch_ms,
+            activity.usename,
+            activity.application_name,
+            activity.client_addr::text AS client_address
+          FROM pg_catalog.pg_stat_activity AS activity
+          WHERE activity.client_addr IS NOT NULL
+            AND activity.datid = (
+              SELECT database.oid
+              FROM pg_catalog.pg_database AS database
+              WHERE database.datname = pg_catalog.current_database()
+            )
+        ), service_backend_count AS MATERIALIZED (
+          SELECT pg_catalog.count(*) AS backend_count
+          FROM service_backends
+        )
+        SELECT
+          service_backends.pid,
+          service_backends.backend_start_epoch_ms,
+          service_backends.usename,
+          service_backends.application_name,
+          service_backends.client_address
+        FROM service_backends
+        CROSS JOIN service_backend_count
+        WHERE service_backend_count.backend_count <= 256
+
+        UNION ALL
+
+        SELECT
+          NULL::text AS pid,
+          NULL::text AS backend_start_epoch_ms,
+          service_backends.usename,
+          service_backends.application_name,
+          service_backends.client_address
+        FROM service_backends
+        CROSS JOIN service_backend_count
+        WHERE service_backend_count.backend_count > 256
+        GROUP BY
+          service_backends.usename,
+          service_backends.application_name,
+          service_backends.client_address
       ) AS session
     ),
     '[]'::pg_catalog.json
@@ -356,6 +438,7 @@ SELECT pg_catalog.json_build_object(
       SELECT pg_catalog.json_agg(
         pg_catalog.json_build_object(
           'pid', waiters.pid,
+          'backendStartEpochMilliseconds', waiters.backend_start_epoch_ms,
           'databaseOid', waiters.database_oid,
           'relationOid', waiters.relation_oid,
           'schemaName', waiters.schema_name,
@@ -830,6 +913,37 @@ function exactRecord(value, keys, code) {
   return value;
 }
 
+function recordWithOptionalDiagnosticKeys(
+  value,
+  requiredKeys,
+  optionalKeys,
+  code,
+) {
+  if (!isPlainRecord(value)) fail(code);
+  const actual = Object.keys(value);
+  const required = new Set(requiredKeys);
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  if (
+    requiredKeys.some((key) => !Object.hasOwn(value, key)) ||
+    actual.some((key) => !allowed.has(key)) ||
+    actual.length < required.size
+  ) {
+    fail(code);
+  }
+  return value;
+}
+
+function optionalDiagnosticDataValue(value, key) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor
+      ? descriptor.value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildOrdinaryAccountCutoverReadinessFenceSql(
   maximumHoldSeconds,
 ) {
@@ -1173,7 +1287,12 @@ async function captureDockerOutput(
 }
 
 function canonicalIpAddress(value) {
-  const family = isIP(value);
+  let family;
+  try {
+    family = isIP(value);
+  } catch {
+    return null;
+  }
   if (family === 4) {
     return { family, value: value.split(".").map(Number).join(".") };
   }
@@ -1198,12 +1317,105 @@ function ipv4MappedAddress(canonicalAddress) {
   return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
 }
 
+function ipAddressInteger(canonicalAddress) {
+  if (canonicalAddress.family === 4) {
+    return canonicalAddress.value
+      .split(".")
+      .reduce((value, octet) => (value << 8n) | BigInt(octet), 0n);
+  }
+  const halves = canonicalAddress.value.split("::");
+  if (halves.length > 2) return null;
+  const parseHalf = (value) =>
+    value === ""
+      ? []
+      : value.split(":").map((segment) => Number.parseInt(segment, 16));
+  const left = parseHalf(halves[0]);
+  const right = halves.length === 1 ? [] : parseHalf(halves[1]);
+  const missing = 8 - left.length - right.length;
+  if (
+    (halves.length === 1 && missing !== 0) ||
+    (halves.length === 2 && missing < 1) ||
+    [...left, ...right].some(
+      (segment) =>
+        !Number.isInteger(segment) || segment < 0 || segment > 0xffff,
+    )
+  ) {
+    return null;
+  }
+  return [...left, ...Array(missing).fill(0), ...right].reduce(
+    (value, segment) => (value << 16n) | BigInt(segment),
+    0n,
+  );
+}
+
+function ipAddressFromInteger(family, value) {
+  if (family === 4) {
+    return [24n, 16n, 8n, 0n]
+      .map((shift) => Number((value >> shift) & 0xffn))
+      .join(".");
+  }
+  const expanded = Array.from({ length: 8 }, (_, index) =>
+    Number((value >> BigInt((7 - index) * 16)) & 0xffffn).toString(16),
+  ).join(":");
+  return canonicalIpAddress(expanded)?.value ?? null;
+}
+
+function canonicalIpNetwork(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 132) {
+    return null;
+  }
+  const separator = value.indexOf("/");
+  if (separator <= 0 || separator !== value.lastIndexOf("/")) return null;
+  const address = canonicalIpAddress(value.slice(0, separator));
+  const prefixText = value.slice(separator + 1);
+  if (address === null || !/^(?:0|[1-9][0-9]{0,2})$/.test(prefixText)) {
+    return null;
+  }
+  const bitLength = address.family === 4 ? 32 : 128;
+  const prefixLength = Number.parseInt(prefixText, 10);
+  if (prefixLength > bitLength) return null;
+  const addressInteger = ipAddressInteger(address);
+  if (addressInteger === null) return null;
+  const hostBits = BigInt(bitLength - prefixLength);
+  const networkInteger = (addressInteger >> hostBits) << hostBits;
+  const networkAddress = ipAddressFromInteger(address.family, networkInteger);
+  if (networkAddress === null) return null;
+  return {
+    family: address.family,
+    networkInteger,
+    prefixLength,
+    value: `${networkAddress}/${prefixLength}`,
+  };
+}
+
+function ipAddressInNetwork(candidate, network) {
+  if (candidate.family !== network.family) return false;
+  const candidateInteger = ipAddressInteger(candidate);
+  if (candidateInteger === null) return false;
+  const bitLength = candidate.family === 4 ? 32 : 128;
+  const hostBits = BigInt(bitLength - network.prefixLength);
+  return ((candidateInteger >> hostBits) << hostBits) === network.networkInteger;
+}
+
 function clientAddressSourcesForClassification(value) {
-  const empty = () => ({ dockerIpv4: [], dockerIpv6: [], sharedGateway: [] });
+  const empty = () =>
+    Object.freeze({
+      dockerIpv4: Object.freeze([]),
+      dockerIpv6: Object.freeze([]),
+      sharedGateway: Object.freeze([]),
+      networkIpamGateway: Object.freeze([]),
+      networkServiceEndpoint: Object.freeze([]),
+      databaseEndpoint: Object.freeze([]),
+      composePeerEndpoint: Object.freeze([]),
+      hostInterface: Object.freeze([]),
+      sharedNetworkSubnet: Object.freeze([]),
+    });
   try {
     if (!isPlainRecord(value)) return empty();
     const addresses = (candidate, families) => {
-      if (!Array.isArray(candidate)) return [];
+      if (!Array.isArray(candidate) || candidate.length > 512) {
+        return Object.freeze([]);
+      }
       const canonical = new Map();
       for (const address of candidate) {
         if (
@@ -1220,33 +1432,88 @@ function clientAddressSourcesForClassification(value) {
           normalized.value,
         );
       }
-      return [...canonical.values()].sort();
+      return Object.freeze([...canonical.values()].sort());
     };
-    return {
+    const networks = (candidate) => {
+      if (!Array.isArray(candidate) || candidate.length > 512) {
+        return Object.freeze([]);
+      }
+      const canonical = new Map();
+      for (const network of candidate) {
+        const normalized = canonicalIpNetwork(network);
+        if (normalized === null) continue;
+        canonical.set(
+          `${normalized.family}:${normalized.value}`,
+          normalized.value,
+        );
+      }
+      return Object.freeze([...canonical.values()].sort());
+    };
+    return Object.freeze({
       dockerIpv4: addresses(value.dockerIpv4, new Set([4])),
       dockerIpv6: addresses(value.dockerIpv6, new Set([6])),
       sharedGateway: addresses(value.sharedGateway, new Set([4, 6])),
-    };
+      networkIpamGateway: addresses(
+        value.networkIpamGateway,
+        new Set([4, 6]),
+      ),
+      networkServiceEndpoint: addresses(
+        value.networkServiceEndpoint,
+        new Set([4, 6]),
+      ),
+      databaseEndpoint: addresses(value.databaseEndpoint, new Set([4, 6])),
+      composePeerEndpoint: addresses(
+        value.composePeerEndpoint,
+        new Set([4, 6]),
+      ),
+      hostInterface: addresses(value.hostInterface, new Set([4, 6])),
+      sharedNetworkSubnet: networks(value.sharedNetworkSubnet),
+    });
   } catch {
     return empty();
   }
 }
 
-function classifyRejectedClientAddress(value, sources) {
+function classifyRejectedClientAddress(
+  value,
+  sources,
+  candidateRow,
+  preexistingBackends,
+) {
   const candidate = canonicalIpAddress(value);
   if (candidate === null) return "unmatched";
+  const addressSet = (addresses) =>
+    new Set(
+      addresses.map((address) => {
+        const canonical = canonicalIpAddress(address);
+        return `${canonical.family}:${canonical.value}`;
+      }),
+    );
   const dockerIpv4 = new Set(
     sources.dockerIpv4.map((address) => canonicalIpAddress(address).value),
   );
   const dockerIpv6 = new Set(
     sources.dockerIpv6.map((address) => canonicalIpAddress(address).value),
   );
-  const sharedGateway = new Set(
-    sources.sharedGateway.map((address) => {
-      const canonical = canonicalIpAddress(address);
-      return `${canonical.family}:${canonical.value}`;
-    }),
-  );
+  const sharedGateway = addressSet(sources.sharedGateway);
+  const networkIpamGateway = addressSet(sources.networkIpamGateway);
+  const networkServiceEndpoint = addressSet(sources.networkServiceEndpoint);
+  const databaseEndpoint = addressSet(sources.databaseEndpoint);
+  const composePeerEndpoint = addressSet(sources.composePeerEndpoint);
+  const hostInterface = addressSet(sources.hostInterface);
+  const candidateKey = `${candidate.family}:${candidate.value}`;
+  const preexistingBackend =
+    typeof candidateRow?.backendStartEpochMilliseconds === "string" &&
+    Array.isArray(preexistingBackends) &&
+    preexistingBackends.some(
+      (backend) =>
+        backend.pid === candidateRow.pid &&
+        backend.backendStartEpochMilliseconds ===
+          candidateRow.backendStartEpochMilliseconds &&
+        backend.databaseUser === candidateRow.databaseUser &&
+        backend.applicationName === candidateRow.applicationName &&
+        backend.clientAddress === candidateRow.clientAddress,
+    );
   if (candidate.family === 4 && dockerIpv4.has(candidate.value)) {
     return "dockerIpv4";
   }
@@ -1255,10 +1522,321 @@ function classifyRejectedClientAddress(value, sources) {
   }
   const mapped = ipv4MappedAddress(candidate);
   if (mapped !== null && dockerIpv4.has(mapped)) return "ipv4Mapped";
-  if (sharedGateway.has(`${candidate.family}:${candidate.value}`)) {
+  if (networkServiceEndpoint.has(candidateKey)) {
+    return "networkServiceEndpoint";
+  }
+  if (databaseEndpoint.has(candidateKey)) return "databaseEndpoint";
+  if (composePeerEndpoint.has(candidateKey)) return "composePeerEndpoint";
+  if (
+    (candidate.family === 4 && candidate.value.startsWith("127.")) ||
+    (candidate.family === 6 && candidate.value === "::1") ||
+    (mapped !== null && mapped.startsWith("127."))
+  ) {
+    return "loopback";
+  }
+  const matchesSharedGateway =
+    sharedGateway.has(candidateKey) ||
+    (mapped !== null && sharedGateway.has(`4:${mapped}`));
+  if (preexistingBackend && matchesSharedGateway) {
+    return "preexistingBackendSharedGateway";
+  }
+  if (sharedGateway.has(candidateKey)) {
     return "sharedGateway";
   }
+  if (mapped !== null && sharedGateway.has(`4:${mapped}`)) {
+    return "ipv4MappedSharedGateway";
+  }
+  const matchesNetworkIpamGateway =
+    networkIpamGateway.has(candidateKey) ||
+    (mapped !== null && networkIpamGateway.has(`4:${mapped}`));
+  if (preexistingBackend && matchesNetworkIpamGateway) {
+    return "preexistingBackendNetworkIpamGateway";
+  }
+  if (networkIpamGateway.has(candidateKey)) return "networkIpamGateway";
+  if (mapped !== null && networkIpamGateway.has(`4:${mapped}`)) {
+    return "ipv4MappedNetworkIpamGateway";
+  }
+  if (preexistingBackend && hostInterface.has(candidateKey)) {
+    return "preexistingBackendHostInterface";
+  }
+  if (hostInterface.has(candidateKey)) return "hostInterface";
+  const matchesSharedNetworkSubnet = sources.sharedNetworkSubnet.some(
+    (value) => {
+      const network = canonicalIpNetwork(value);
+      return network !== null && ipAddressInNetwork(candidate, network);
+    },
+  );
+  if (preexistingBackend && matchesSharedNetworkSubnet) {
+    return "preexistingBackendSharedNetworkSubnet";
+  }
+  if (matchesSharedNetworkSubnet) {
+    return "sharedNetworkSubnet";
+  }
+  if (preexistingBackend) return "preexistingBackendOther";
   return "unmatched";
+}
+
+function emptyDockerNetworkTopology() {
+  return Object.freeze({
+    networkIpamGateway: Object.freeze([]),
+    sharedNetworkSubnet: Object.freeze([]),
+    containerEndpoints: new Map(),
+  });
+}
+
+function dockerNetworkEndpointAddresses(value) {
+  if (!isPlainRecord(value)) return Object.freeze([]);
+  const addresses = [];
+  for (const field of ["IPv4Address", "IPv6Address"]) {
+    const endpoint = value[field];
+    if (typeof endpoint !== "string" || endpoint.length > 132) continue;
+    if (canonicalIpNetwork(endpoint) === null) continue;
+    const address = endpoint.slice(0, endpoint.indexOf("/"));
+    const canonical = canonicalIpAddress(address);
+    if (canonical !== null) addresses.push(canonical.value);
+  }
+  return clientAddressSourcesForClassification({
+    networkServiceEndpoint: addresses,
+  }).networkServiceEndpoint;
+}
+
+function parseDockerNetworkTopology(value, expectedNetworkId) {
+  const empty = emptyDockerNetworkTopology();
+  if (!Array.isArray(value) || value.length !== 1) return empty;
+  const network = value[0];
+  if (!isPlainRecord(network) || network.Id !== expectedNetworkId) return empty;
+  const ipamConfigurations = isPlainRecord(network.IPAM)
+    ? network.IPAM.Config
+    : null;
+  const gateways = [];
+  const subnets = [];
+  if (Array.isArray(ipamConfigurations) && ipamConfigurations.length <= 64) {
+    for (const configuration of ipamConfigurations) {
+      if (!isPlainRecord(configuration)) continue;
+      gateways.push(configuration.Gateway);
+      subnets.push(configuration.Subnet);
+    }
+  }
+  const sanitized = clientAddressSourcesForClassification({
+    networkIpamGateway: gateways,
+    sharedNetworkSubnet: subnets,
+  });
+  const containerEndpoints = new Map();
+  if (isPlainRecord(network.Containers)) {
+    const containers = Object.entries(network.Containers);
+    if (containers.length <= 128) {
+      for (const [containerId, endpoint] of containers) {
+        if (!CONTAINER_ID_PATTERN.test(containerId)) continue;
+        const addresses = dockerNetworkEndpointAddresses(endpoint);
+        if (addresses.length !== 0) containerEndpoints.set(containerId, addresses);
+      }
+    }
+  }
+  return Object.freeze({
+    networkIpamGateway: sanitized.networkIpamGateway,
+    sharedNetworkSubnet: sanitized.sharedNetworkSubnet,
+    containerEndpoints,
+  });
+}
+
+async function bestEffortDockerNetworkTopology(
+  networkId,
+  spawnProcess,
+  deadline,
+  cache,
+) {
+  if (!CONTAINER_ID_PATTERN.test(networkId)) return emptyDockerNetworkTopology();
+  if (cache.has(networkId)) return cache.get(networkId);
+  const pending = (async () => {
+    try {
+      const output = await captureDockerOutput(
+        ["network", "inspect", networkId],
+        spawnProcess,
+        "readiness_fence_probe_service_identity_invalid",
+        deadline,
+      );
+      return parseDockerNetworkTopology(JSON.parse(output), networkId);
+    } catch {
+      return emptyDockerNetworkTopology();
+    }
+  })();
+  cache.set(networkId, pending);
+  return pending;
+}
+
+async function bestEffortComposePeerNetworkIds(
+  containerIds,
+  project,
+  spawnProcess,
+  deadline,
+  cache,
+) {
+  const candidates = [...new Set(containerIds)]
+    .filter((containerId) => CONTAINER_ID_PATTERN.test(containerId))
+    .sort();
+  if (candidates.length > 128) return new Map();
+  const cacheKey = (containerId) => JSON.stringify([project, containerId]);
+  const unknown = candidates.filter(
+    (containerId) => !cache.has(cacheKey(containerId)),
+  );
+  if (unknown.length !== 0) {
+    const verified = new Map();
+    try {
+      const output = await captureDockerOutput(
+        ["inspect", ...unknown],
+        spawnProcess,
+        "readiness_fence_probe_service_identity_invalid",
+        deadline,
+      );
+      const inspected = JSON.parse(output);
+      if (Array.isArray(inspected) && inspected.length <= unknown.length) {
+        const expected = new Set(unknown);
+        for (const container of inspected) {
+          const labels = container?.Config?.Labels;
+          const state = container?.State;
+          const networks = container?.NetworkSettings?.Networks;
+          if (
+            isPlainRecord(container) &&
+            expected.has(container.Id) &&
+            isPlainRecord(labels) &&
+            labels["com.docker.compose.project"] === project &&
+            isPlainRecord(state) &&
+            state.Running === true &&
+            isPlainRecord(networks)
+          ) {
+            verified.set(
+              container.Id,
+              Object.freeze(
+                [
+                  ...new Set(
+                    Object.values(networks).flatMap((identity) =>
+                      isPlainRecord(identity) &&
+                      CONTAINER_ID_PATTERN.test(identity.NetworkID)
+                        ? [identity.NetworkID]
+                        : [],
+                    ),
+                  ),
+                ].sort(),
+              ),
+            );
+          }
+        }
+      }
+    } catch {}
+    for (const containerId of unknown) {
+      cache.set(
+        cacheKey(containerId),
+        verified.get(containerId) ?? Object.freeze([]),
+      );
+    }
+  }
+  return new Map(
+    candidates.map((containerId) => [
+      containerId,
+      new Set(cache.get(cacheKey(containerId)) ?? []),
+    ]),
+  );
+}
+
+function bestEffortHostInterfaceAddresses(provider) {
+  try {
+    const interfaces = provider();
+    if (!isPlainRecord(interfaces)) return Object.freeze([]);
+    const interfaceEntries = Object.values(interfaces);
+    if (interfaceEntries.length > 128) return Object.freeze([]);
+    const addresses = [];
+    for (const entries of interfaceEntries) {
+      if (!Array.isArray(entries) || entries.length > 128) continue;
+      for (const entry of entries) {
+        if (isPlainRecord(entry)) addresses.push(entry.address);
+        if (addresses.length > 512) return Object.freeze([]);
+      }
+    }
+    return clientAddressSourcesForClassification({
+      hostInterface: addresses,
+    }).hostInterface;
+  } catch {
+    return Object.freeze([]);
+  }
+}
+
+async function resolveOptionalClientAddressTopology({
+  databaseContainerId,
+  serviceContainerId,
+  project,
+  sharedNetworkIds,
+  spawnProcess,
+  deadline,
+  networkTopologyCache,
+  composeProjectCache,
+  hostInterface,
+}) {
+  try {
+    if (sharedNetworkIds.length > 8) return { hostInterface };
+    const networkIpamGateway = [];
+    const networkServiceEndpoint = [];
+    const databaseEndpoint = [];
+    const sharedNetworkSubnet = [];
+    const peerEndpoints = new Map();
+    const topologies = await Promise.all(
+      sharedNetworkIds.map((networkId) =>
+        bestEffortDockerNetworkTopology(
+          networkId,
+          spawnProcess,
+          deadline,
+          networkTopologyCache,
+        ),
+      ),
+    );
+    for (const [index, topology] of topologies.entries()) {
+      const networkId = sharedNetworkIds[index];
+      networkIpamGateway.push(...topology.networkIpamGateway);
+      sharedNetworkSubnet.push(...topology.sharedNetworkSubnet);
+      networkServiceEndpoint.push(
+        ...(topology.containerEndpoints.get(serviceContainerId) ?? []),
+      );
+      databaseEndpoint.push(
+        ...(topology.containerEndpoints.get(databaseContainerId) ?? []),
+      );
+      for (const [containerId, endpoints] of topology.containerEndpoints) {
+        if (
+          containerId === serviceContainerId ||
+          containerId === databaseContainerId
+        ) {
+          continue;
+        }
+        const endpointsByNetwork =
+          peerEndpoints.get(containerId) ?? new Map();
+        endpointsByNetwork.set(networkId, endpoints);
+        peerEndpoints.set(containerId, endpointsByNetwork);
+      }
+    }
+    const composePeerNetworkIds = await bestEffortComposePeerNetworkIds(
+      [...peerEndpoints.keys()],
+      project,
+      spawnProcess,
+      deadline,
+      composeProjectCache,
+    );
+    const composePeerEndpoint = [...peerEndpoints].flatMap(
+      ([containerId, endpointsByNetwork]) =>
+        [...endpointsByNetwork].flatMap(([networkId, endpoints]) =>
+          composePeerNetworkIds.get(containerId)?.has(networkId)
+            ? endpoints
+            : [],
+        ),
+    );
+    return {
+      networkIpamGateway,
+      networkServiceEndpoint,
+      databaseEndpoint,
+      composePeerEndpoint,
+      hostInterface,
+      sharedNetworkSubnet,
+    };
+  } catch {
+    return {};
+  }
 }
 
 export async function resolveSupabaseServiceClientAddresses(
@@ -1267,6 +1845,7 @@ export async function resolveSupabaseServiceClientAddresses(
   expectedDatabaseName,
   spawnProcess,
   deadline = withWallClockDeadline,
+  diagnosticDependencies = {},
 ) {
   if (service !== "rest" && service !== "auth") {
     fail("readiness_fence_probe_service_invalid");
@@ -1288,9 +1867,9 @@ export async function resolveSupabaseServiceClientAddresses(
   const database = databaseInspect?.[0];
   const project =
     database?.Config?.Labels?.["com.docker.compose.project"];
-  const databaseNetworks = new Set(
-    Object.keys(database?.NetworkSettings?.Networks ?? {}),
-  );
+  const databaseNetworkIdentities =
+    database?.NetworkSettings?.Networks ?? Object.create(null);
+  const databaseNetworks = new Set(Object.keys(databaseNetworkIdentities));
   const databaseHosts = new Set(
     [
       typeof database?.Name === "string" ? database.Name.replace(/^\//, "") : null,
@@ -1417,11 +1996,79 @@ export async function resolveSupabaseServiceClientAddresses(
   ) {
     fail("readiness_fence_probe_service_identity_invalid");
   }
-  const clientAddressSources = clientAddressSourcesForClassification({
+  let sharedNetworkIds = [];
+  try {
+    sharedNetworkIds = [
+      ...new Set(
+        sharedNetworkIdentities.flatMap(([network, identity]) => {
+          const serviceNetworkId = identity?.NetworkID;
+          const databaseNetworkId =
+            databaseNetworkIdentities[network]?.NetworkID;
+          return typeof serviceNetworkId === "string" &&
+            serviceNetworkId === databaseNetworkId &&
+            CONTAINER_ID_PATTERN.test(serviceNetworkId)
+            ? [serviceNetworkId]
+            : [];
+        }),
+      ),
+    ].sort();
+  } catch {}
+  const diagnostic = isPlainRecord(diagnosticDependencies)
+    ? diagnosticDependencies
+    : {};
+  const baseClientAddressSources = clientAddressSourcesForClassification({
     dockerIpv4: addresses,
     dockerIpv6,
     sharedGateway: [...ipv4Gateways, ...ipv6Gateways],
   });
+  let clientAddressSourcesPromise;
+  const resolveClientAddressSources = () => {
+    if (clientAddressSourcesPromise !== undefined) {
+      return clientAddressSourcesPromise;
+    }
+    clientAddressSourcesPromise = Promise.resolve()
+      .then(async () => {
+        const networkTopologyCache =
+          diagnostic.networkTopologyCache instanceof Map
+            ? diagnostic.networkTopologyCache
+            : new Map();
+        const composeProjectCache =
+          diagnostic.composeProjectCache instanceof Map
+            ? diagnostic.composeProjectCache
+            : new Map();
+        const hostInterface = Array.isArray(diagnostic.hostInterface)
+          ? diagnostic.hostInterface
+          : typeof diagnostic.networkInterfaces === "function"
+            ? bestEffortHostInterfaceAddresses(diagnostic.networkInterfaces)
+            : [];
+        const optionalTopology = await resolveOptionalClientAddressTopology({
+          databaseContainerId,
+          serviceContainerId: serviceIds[0],
+          project,
+          sharedNetworkIds,
+          spawnProcess,
+          deadline,
+          networkTopologyCache,
+          composeProjectCache,
+          hostInterface,
+        });
+        return clientAddressSourcesForClassification({
+          ...baseClientAddressSources,
+          ...optionalTopology,
+        });
+      })
+      .catch(() => baseClientAddressSources);
+    return clientAddressSourcesPromise;
+  };
+  let clientAddressSources = baseClientAddressSources;
+  if (diagnostic.clientAddressSourceProviders instanceof Map) {
+    diagnostic.clientAddressSourceProviders.set(
+      service,
+      resolveClientAddressSources,
+    );
+  } else {
+    clientAddressSources = await resolveClientAddressSources();
+  }
   return {
     containerId: serviceIds[0],
     imageId: serviceContainer.Image,
@@ -1450,9 +2097,10 @@ function parseWaiterObservation(value) {
     fail("readiness_fence_probe_observer_invalid");
   }
   const serviceSessions = source.serviceSessions.map((session) => {
-    const row = exactRecord(
+    const row = recordWithOptionalDiagnosticKeys(
       session,
       ["databaseUser", "applicationName", "clientAddress"],
+      ["pid", "backendStartEpochMilliseconds"],
       "readiness_fence_probe_observer_invalid",
     );
     if (
@@ -1467,10 +2115,30 @@ function parseWaiterObservation(value) {
     ) {
       fail("readiness_fence_probe_observer_invalid");
     }
-    return row;
+    const diagnosticPid = optionalDiagnosticDataValue(row, "pid");
+    const diagnosticBackendStart = optionalDiagnosticDataValue(
+      row,
+      "backendStartEpochMilliseconds",
+    );
+    return {
+      databaseUser: row.databaseUser,
+      applicationName: row.applicationName,
+      clientAddress: row.clientAddress,
+      pid:
+        typeof diagnosticPid === "string" &&
+        PID_PATTERN.test(diagnosticPid) &&
+        BigInt(diagnosticPid) <= MAX_PID
+          ? diagnosticPid
+          : null,
+      backendStartEpochMilliseconds:
+        typeof diagnosticBackendStart === "string" &&
+        EPOCH_MILLISECONDS_PATTERN.test(diagnosticBackendStart)
+          ? diagnosticBackendStart
+          : null,
+    };
   });
   const waiters = source.waiters.map((waiter) => {
-    const row = exactRecord(
+    const row = recordWithOptionalDiagnosticKeys(
       waiter,
       [
         "pid",
@@ -1487,6 +2155,7 @@ function parseWaiterObservation(value) {
         "queryStartedAtEpochMilliseconds",
         "blockingPids",
       ],
+      ["backendStartEpochMilliseconds"],
       "readiness_fence_probe_observer_invalid",
     );
     if (
@@ -1526,7 +2195,30 @@ function parseWaiterObservation(value) {
     ) {
       fail("readiness_fence_probe_observer_invalid");
     }
-    return row;
+    const diagnosticBackendStart = optionalDiagnosticDataValue(
+      row,
+      "backendStartEpochMilliseconds",
+    );
+    return {
+      pid: row.pid,
+      backendStartEpochMilliseconds:
+        typeof diagnosticBackendStart === "string" &&
+        EPOCH_MILLISECONDS_PATTERN.test(diagnosticBackendStart)
+          ? diagnosticBackendStart
+          : null,
+      databaseOid: row.databaseOid,
+      relationOid: row.relationOid,
+      schemaName: row.schemaName,
+      relationName: row.relationName,
+      databaseUser: row.databaseUser,
+      applicationName: row.applicationName,
+      clientAddress: row.clientAddress,
+      query: row.query,
+      mode: row.mode,
+      granted: row.granted,
+      queryStartedAtEpochMilliseconds: row.queryStartedAtEpochMilliseconds,
+      blockingPids: row.blockingPids,
+    };
   });
   return { ...source, serviceSessions, waiters };
 }
@@ -1673,7 +2365,7 @@ function waiterValidationFailureCode(
   return context.code;
 }
 
-function validateCandidateWaiter(candidate, expected, stage, probe) {
+async function validateCandidateWaiter(candidate, expected, stage, probe) {
   const invalid = (predicate, classification = null) =>
     fail(waiterValidationFailureCode(stage, probe, predicate, classification));
   if (candidate.databaseOid !== expected.databaseOid) invalid("databaseOid");
@@ -1693,11 +2385,14 @@ function validateCandidateWaiter(candidate, expected, stage, probe) {
   }
   if (candidate.databaseUser !== expected.databaseUser) invalid("databaseUser");
   if (!expected.clientAddresses.includes(candidate.clientAddress)) {
+    const clientAddressSources = await expected.clientAddressSourcesProvider();
     invalid(
       "clientAddress",
       classifyRejectedClientAddress(
         candidate.clientAddress,
-        expected.clientAddressSources,
+        clientAddressSources,
+        candidate,
+        expected.preexistingBackends,
       ),
     );
   }
@@ -1832,14 +2527,26 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
       EXTERNAL_OPERATION_TIMEOUT_MS,
       "readiness_fence_probe_poll_timeout",
     );
-  const serviceIdentities =
-    dependencies.serviceIdentities ?? {
+  const clientAddressSourceProviders =
+    dependencies.clientAddressSourceProviders instanceof Map
+      ? dependencies.clientAddressSourceProviders
+      : new Map();
+  let serviceIdentities = dependencies.serviceIdentities;
+  if (serviceIdentities === undefined || serviceIdentities === null) {
+    const diagnosticContext = {
+      networkTopologyCache: new Map(),
+      composeProjectCache: new Map(),
+      clientAddressSourceProviders,
+      networkInterfaces: dependencies.networkInterfaces ?? networkInterfaces,
+    };
+    serviceIdentities = {
       rest: await resolveSupabaseServiceClientAddresses(
         "rest",
         source.containerId,
         source.databaseName,
         dependencies.spawnProcess,
         deadline,
+        diagnosticContext,
       ),
       auth: await resolveSupabaseServiceClientAddresses(
         "auth",
@@ -1847,14 +2554,17 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         source.databaseName,
         dependencies.spawnProcess,
         deadline,
+        diagnosticContext,
       ),
     };
+  }
   exactRecord(
     serviceIdentities,
     ["rest", "auth"],
     "readiness_fence_probe_service_identity_invalid",
   );
-  const classifiedClientAddressSources = new Map();
+  const validatedServiceIdentities = new Map();
+  const validatedClientAddressSourceProviders = new Map();
   for (const service of ["rest", "auth"]) {
     const identity = exactRecord(
       serviceIdentities[service],
@@ -1884,10 +2594,44 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     ) {
       fail("readiness_fence_probe_service_identity_invalid");
     }
-    classifiedClientAddressSources.set(
+    let clientAddressSources;
+    try {
+      clientAddressSources = clientAddressSourcesForClassification(
+        identity.clientAddressSources,
+      );
+    } catch {
+      clientAddressSources = clientAddressSourcesForClassification(null);
+    }
+    const rawClientAddressSourcesProvider =
+      clientAddressSourceProviders.get(service);
+    let resolvedClientAddressSources;
+    const clientAddressSourcesProvider = () => {
+      if (resolvedClientAddressSources !== undefined) {
+        return resolvedClientAddressSources;
+      }
+      resolvedClientAddressSources = Promise.resolve()
+        .then(() =>
+          typeof rawClientAddressSourcesProvider === "function"
+            ? rawClientAddressSourcesProvider()
+            : clientAddressSources,
+        )
+        .then((value) => clientAddressSourcesForClassification(value))
+        .catch(() => clientAddressSources);
+      return resolvedClientAddressSources;
+    };
+    validatedClientAddressSourceProviders.set(
       service,
-      clientAddressSourcesForClassification(identity.clientAddressSources),
+      clientAddressSourcesProvider,
     );
+    validatedServiceIdentities.set(service, {
+      containerId: identity.containerId,
+      imageId: identity.imageId,
+      clientAddresses: identity.clientAddresses,
+      clientAddressSources,
+      databaseUser: identity.databaseUser,
+      databaseName: identity.databaseName,
+      databasePort: identity.databasePort,
+    });
   }
   const maximumPolls = Math.ceil(
     ENDPOINT_PROBE_TIMEOUT_MS / ENDPOINT_PROBE_POLL_MS,
@@ -1903,7 +2647,9 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
       fail("readiness_fence_probe_database_mismatch");
     }
     const previousPids = new Set(before.waiters.map((waiter) => waiter.pid));
-    const serviceIdentity = serviceIdentities[specification.service];
+    const serviceIdentity = validatedServiceIdentities.get(
+      specification.service,
+    );
     const frozenApplicationNames = new Set(
       before.serviceSessions
         .filter(
@@ -1967,7 +2713,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
           fail("readiness_fence_probe_waiter_count_invalid");
         }
         if (candidates.length === 1) {
-          validateCandidateWaiter(
+          await validateCandidateWaiter(
             candidates[0],
             {
               databaseOid: source.databaseOid,
@@ -1976,9 +2722,11 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
               fenceBackendPid: source.fenceBackendPid,
               notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
               clientAddresses: serviceIdentity.clientAddresses,
-              clientAddressSources: classifiedClientAddressSources.get(
-                specification.service,
-              ),
+              clientAddressSourcesProvider:
+                validatedClientAddressSourceProviders.get(
+                  specification.service,
+                ),
+              preexistingBackends: before.serviceSessions,
               databaseUser: serviceIdentity.databaseUser,
               applicationName: preexistingApplicationName,
               queryMarker: specification.queryMarker,
@@ -2032,7 +2780,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         ) {
           fail("readiness_fence_probe_waiter_count_invalid");
         }
-        validateCandidateWaiter(
+        await validateCandidateWaiter(
           newWaiters[0],
           {
             databaseOid: source.databaseOid,
@@ -2041,9 +2789,11 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
             fenceBackendPid: source.fenceBackendPid,
             notBeforeEpochMilliseconds: before.clockEpochMilliseconds,
             clientAddresses: serviceIdentity.clientAddresses,
-            clientAddressSources: classifiedClientAddressSources.get(
-              specification.service,
-            ),
+            clientAddressSourcesProvider:
+              validatedClientAddressSourceProviders.get(
+                specification.service,
+              ),
+            preexistingBackends: before.serviceSessions,
             databaseUser: serviceIdentity.databaseUser,
             applicationName,
             queryMarker: specification.queryMarker,
