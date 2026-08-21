@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import {
   access,
   chmod,
@@ -47,6 +47,24 @@ const NOW = "2026-08-20T12:00:00.000Z";
 const NOW_MS = Date.parse(NOW);
 const TARGET_SHA = "a".repeat(40);
 const CONTAINER_ID = "b".repeat(64);
+
+function failureAddressEvidence(overrides = {}) {
+  return {
+    backend: "unknown",
+    composePeer: false,
+    containerGateway: false,
+    dbEndpoint: false,
+    family: "local_or_invalid",
+    hostInterface: false,
+    inspect: "not_attempted",
+    ipamGateway: false,
+    serviceEndpoint: false,
+    sharedNetwork: "absent",
+    sharedSubnet: false,
+    ...overrides,
+  };
+}
+
 const REST_SERVICE_IDENTITY = {
   containerId: "c".repeat(64),
   imageId: `sha256:${"d".repeat(64)}`,
@@ -100,6 +118,8 @@ const DIAGNOSTIC_SERVICE_IDENTITIES = {
       composePeerEndpoint: ["172.20.0.30", "2001:db8:20::30"],
       hostInterface: ["192.0.2.44", "2001:db8:99::44"],
       sharedNetworkSubnet: ["172.20.0.0/24", "2001:db8:20::/64"],
+      topologySharedNetwork: "present",
+      topologyInspect: "complete",
     },
   },
   auth: {
@@ -112,6 +132,8 @@ const DIAGNOSTIC_SERVICE_IDENTITIES = {
       composePeerEndpoint: ["172.20.0.30", "2001:db8:20::30"],
       hostInterface: ["192.0.2.44", "2001:db8:99::44"],
       sharedNetworkSubnet: ["172.20.0.0/24", "2001:db8:20::/64"],
+      topologySharedNetwork: "present",
+      topologyInspect: "complete",
     },
   },
 };
@@ -538,6 +560,64 @@ function pendingFetchRecorder(calls) {
         { once: true },
       );
     });
+  };
+}
+
+async function rejectedClientAddressFailure({
+  candidate = waiter({ clientAddress: "203.0.113.77" }),
+  before = observation(),
+  clientAddressSources = {
+    ...REST_SERVICE_IDENTITY.clientAddressSources,
+    topologySharedNetwork: "absent",
+    topologyInspect: "not_attempted",
+  },
+  clientAddressSourcesProvider,
+} = {}) {
+  const snapshots = [before, observation([candidate])];
+  const calls = [];
+  const providers =
+    typeof clientAddressSourcesProvider === "function"
+      ? new Map([["rest", clientAddressSourcesProvider]])
+      : undefined;
+  let failure;
+  try {
+    await probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      {
+        containerId: CONTAINER_ID,
+        databaseName: "postgres",
+        databaseOid: "16384",
+        fenceBackendPid: "4321",
+      },
+      {
+        environment: {
+          SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+          NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "hostile-key-never-log",
+        },
+        randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
+        fetchImpl: pendingFetchRecorder(calls),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        cancelWaiter: async () => {},
+        serviceIdentities: {
+          ...SERVICE_IDENTITIES,
+          rest: {
+            ...REST_SERVICE_IDENTITY,
+            clientAddressSources,
+          },
+        },
+        ...(providers ? { clientAddressSourceProviders: providers } : {}),
+        poll: async () => {},
+      },
+    );
+    assert.fail("expected the rejected client address to fail");
+  } catch (error) {
+    failure = error;
+  }
+  const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(failure);
+  return {
+    bytes,
+    error: failure,
+    record: parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes),
   };
 }
 
@@ -1009,16 +1089,28 @@ test("service identity is derived from the attested compose project and direct d
         Networks: { supabase_default: { NetworkID: peerNetworkId } },
       },
     });
-    const peersInspect = JSON.stringify([
-      inspectedPeer(peerId),
-      inspectedPeer(stoppedPeerId, { running: false }),
-      inspectedPeer(foreignPeerId, { project: "foreign" }),
-      inspectedPeer(otherNetworkPeerId, { peerNetworkId: "6".repeat(64) }),
+    const peersInspect = new Map([
+      [peerId, inspectedPeer(peerId)],
+      [stoppedPeerId, inspectedPeer(stoppedPeerId, { running: false })],
+      [foreignPeerId, inspectedPeer(foreignPeerId, { project: "foreign" })],
+      [
+        otherNetworkPeerId,
+        inspectedPeer(otherNetworkPeerId, { peerNetworkId: "6".repeat(64) }),
+      ],
     ]);
+    const sortedPeerIds = [
+      foreignPeerId,
+      peerId,
+      stoppedPeerId,
+      otherNetworkPeerId,
+    ].sort();
     const topology = serviceIdentityDockerSpawner({
       databaseNetworks,
       serviceNetworks,
-      diagnosticOutputs: [networkInspect, peersInspect],
+      diagnosticOutputs: [
+        networkInspect,
+        ...sortedPeerIds.map((id) => JSON.stringify([peersInspect.get(id)])),
+      ],
     });
     const sharedCache = {
       networkTopologyCache: new Map(),
@@ -1055,21 +1147,16 @@ test("service identity is derived from the attested compose project and direct d
         },
       },
     );
-    assert.equal(topology.calls.length, 5);
+    assert.equal(topology.calls.length, 8);
     assert.deepEqual(topology.calls[3].argumentsList, [
       "network",
       "inspect",
       networkId,
     ]);
-    assert.deepEqual(topology.calls[4].argumentsList, [
-      "inspect",
-      ...[
-        foreignPeerId,
-        peerId,
-        stoppedPeerId,
-        otherNetworkPeerId,
-      ].sort(),
-    ]);
+    assert.deepEqual(
+      topology.calls.slice(4).map(({ argumentsList }) => argumentsList),
+      sortedPeerIds.map((id) => ["inspect", id]),
+    );
 
     const cached = serviceIdentityDockerSpawner({
       databaseNetworks,
@@ -1384,6 +1471,667 @@ test("service identity is derived from the attested compose project and direct d
   });
 });
 
+test("deferred Docker topology preserves complete, partial, and unavailable inspection evidence", async (t) => {
+  const networkId = "1".repeat(64);
+  const peerId = "2".repeat(64);
+  const databaseNetworks = {
+    supabase_default: {
+      IPAddress: "172.20.0.2",
+      Gateway: "172.20.0.1",
+      NetworkID: networkId,
+      Aliases: ["db", "supabase-db"],
+    },
+  };
+  const serviceNetworks = {
+    supabase_default: {
+      IPAddress: "172.20.0.10",
+      Gateway: "172.20.0.1",
+      NetworkID: networkId,
+      Aliases: ["rest"],
+    },
+  };
+  const endpoint = (address) => ({
+    IPv4Address: `${address}/24`,
+    IPv6Address: "",
+  });
+  const resolveFailure = async (diagnosticOutputs) => {
+    const docker = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+      diagnosticOutputs,
+    });
+    const providers = new Map();
+    const identity = await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      docker.spawnProcess,
+      undefined,
+      {
+        clientAddressSourceProviders: providers,
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+      },
+    );
+    let providerCalls = 0;
+    const failure = await rejectedClientAddressFailure({
+      clientAddressSources: identity.clientAddressSources,
+      clientAddressSourcesProvider: async () => {
+        providerCalls += 1;
+        return providers.get("rest")();
+      },
+    });
+    assert.equal(providerCalls, 1);
+    return { docker, failure };
+  };
+
+  await t.test("malformed bounded entries retain valid sources and mark partial", async () => {
+    const { failure } = await resolveFailure([
+      JSON.stringify([
+        {
+          Id: networkId,
+          IPAM: {
+            Config: [
+              { Subnet: "172.20.0.0/24", Gateway: "172.20.0.254" },
+              { Subnet: "hostile-subnet", Gateway: "hostile-gateway" },
+            ],
+          },
+          Containers: {
+            [CONTAINER_ID]: endpoint("172.20.0.2"),
+            [REST_SERVICE_IDENTITY.containerId]: endpoint("172.20.0.110"),
+          },
+        },
+      ]),
+    ]);
+    assert.deepEqual(
+      failure.record?.addressEvidence,
+      failureAddressEvidence({
+        backend: "prebaseline_unseen",
+        containerGateway: true,
+        dbEndpoint: true,
+        family: "ipv4",
+        inspect: "partial",
+        ipamGateway: true,
+        serviceEndpoint: true,
+        sharedNetwork: "present",
+        sharedSubnet: true,
+      }),
+    );
+  });
+
+  await t.test("a failed network inspect is unavailable with no network-derived sources", async () => {
+    const { failure } = await resolveFailure([
+      { stdout: "hostile-network-inspect-secret", code: 1 },
+    ]);
+    assert.deepEqual(
+      failure.record?.addressEvidence,
+      failureAddressEvidence({
+        backend: "prebaseline_unseen",
+        containerGateway: true,
+        family: "ipv4",
+        inspect: "unavailable",
+        sharedNetwork: "present",
+      }),
+    );
+    assert.doesNotMatch(
+      failure.bytes.toString("utf8"),
+      /hostile-network-inspect/,
+    );
+  });
+
+  await t.test("compose-peer inspection failure does not downgrade complete network inspection", async () => {
+    const { docker, failure } = await resolveFailure([
+      JSON.stringify([
+        {
+          Id: networkId,
+          IPAM: {
+            Config: [
+              { Subnet: "172.20.0.0/24", Gateway: "172.20.0.254" },
+            ],
+          },
+          Containers: {
+            [CONTAINER_ID]: endpoint("172.20.0.2"),
+            [REST_SERVICE_IDENTITY.containerId]: endpoint("172.20.0.110"),
+            [peerId]: endpoint("172.20.0.30"),
+          },
+        },
+      ]),
+      "[]",
+    ]);
+    assert.equal(
+      docker.calls.some(
+        ({ argumentsList }) =>
+          argumentsList[0] === "inspect" && argumentsList[1] === peerId,
+      ),
+      true,
+    );
+    assert.deepEqual(
+      failure.record?.addressEvidence,
+      failureAddressEvidence({
+        backend: "prebaseline_unseen",
+        containerGateway: true,
+        dbEndpoint: true,
+        family: "ipv4",
+        inspect: "complete",
+        ipamGateway: true,
+        serviceEndpoint: true,
+        sharedNetwork: "present",
+        sharedSubnet: true,
+      }),
+    );
+  });
+});
+
+test("compose-peer diagnostics bound concurrency, deduplicate overlapping caches, and aggregate network inspection status", async (t) => {
+  const endpoint = (address) => ({
+    IPv4Address: `${address}/24`,
+    IPv6Address: "",
+  });
+  const inspectedPeer = (containerId, networkId) => ({
+    Id: containerId,
+    Config: {
+      Labels: { "com.docker.compose.project": "supabase" },
+    },
+    State: { Running: true },
+    NetworkSettings: {
+      Networks: { shared: { NetworkID: networkId } },
+    },
+  });
+
+  await t.test("at most eight compose peers are inspected concurrently", async () => {
+    const networkId = "6".repeat(64);
+    const peerIds = Array.from({ length: 20 }, (_value, index) =>
+      (index + 16).toString(16).padStart(64, "0"),
+    ).sort();
+    const peerIdSet = new Set(peerIds);
+    const databaseNetworks = {
+      shared: {
+        IPAddress: "172.24.0.2",
+        Gateway: "172.24.0.1",
+        NetworkID: networkId,
+        Aliases: ["db", "supabase-db"],
+      },
+    };
+    const serviceNetworks = {
+      shared: {
+        IPAddress: "172.24.0.10",
+        Gateway: "172.24.0.1",
+        NetworkID: networkId,
+        Aliases: ["rest"],
+      },
+    };
+    const networkInspect = JSON.stringify([
+      {
+        Id: networkId,
+        IPAM: {
+          Config: [{ Subnet: "172.24.0.0/24", Gateway: "172.24.0.1" }],
+        },
+        Containers: Object.fromEntries([
+          [CONTAINER_ID, endpoint("172.24.0.2")],
+          [REST_SERVICE_IDENTITY.containerId, endpoint("172.24.0.10")],
+          ...peerIds.map((peerId, index) => [
+            peerId,
+            endpoint(`172.24.0.${20 + index}`),
+          ]),
+        ]),
+      },
+    ]);
+    const docker = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+      diagnosticOutputs: [
+        networkInspect,
+        ...peerIds.map((peerId) =>
+          JSON.stringify([inspectedPeer(peerId, networkId)]),
+        ),
+      ],
+    });
+    let activePeerInspections = 0;
+    let maximumPeerInspections = 0;
+    const spawnProcess = (command, argumentsList) => {
+      const child = docker.spawnProcess(command, argumentsList);
+      if (
+        argumentsList[0] === "inspect" &&
+        peerIdSet.has(argumentsList[1])
+      ) {
+        activePeerInspections += 1;
+        maximumPeerInspections = Math.max(
+          maximumPeerInspections,
+          activePeerInspections,
+        );
+        child.once("close", () => {
+          activePeerInspections -= 1;
+        });
+      }
+      return child;
+    };
+
+    const identity = await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      spawnProcess,
+      undefined,
+      {
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+      },
+    );
+    const peerCalls = docker.calls.filter(
+      ({ argumentsList }) =>
+        argumentsList[0] === "inspect" && peerIdSet.has(argumentsList[1]),
+    );
+    assert.equal(maximumPeerInspections, 8);
+    assert.equal(activePeerInspections, 0);
+    assert.equal(peerCalls.length, peerIds.length);
+    assert.deepEqual(
+      peerCalls.map(({ argumentsList }) => argumentsList[1]).sort(),
+      peerIds,
+    );
+    assert.equal(
+      identity.clientAddressSources.composePeerEndpoint.length,
+      peerIds.length,
+    );
+  });
+
+  await t.test("overlapping providers inspect each cached peer at most once", async () => {
+    const networkId = "7".repeat(64);
+    const peerIds = Array.from({ length: 12 }, (_value, index) =>
+      (index + 64).toString(16).padStart(64, "0"),
+    ).sort();
+    const peerIdSet = new Set(peerIds);
+    const databaseNetworks = {
+      shared: {
+        IPAddress: "172.25.0.2",
+        Gateway: "172.25.0.1",
+        NetworkID: networkId,
+        Aliases: ["db", "supabase-db"],
+      },
+    };
+    const serviceNetworks = {
+      shared: {
+        IPAddress: "172.25.0.10",
+        Gateway: "172.25.0.1",
+        NetworkID: networkId,
+        Aliases: ["rest"],
+      },
+    };
+    const networkInspect = JSON.stringify([
+      {
+        Id: networkId,
+        IPAM: {
+          Config: [{ Subnet: "172.25.0.0/24", Gateway: "172.25.0.1" }],
+        },
+        Containers: Object.fromEntries([
+          [CONTAINER_ID, endpoint("172.25.0.2")],
+          [REST_SERVICE_IDENTITY.containerId, endpoint("172.25.0.10")],
+          ...peerIds.map((peerId, index) => [
+            peerId,
+            endpoint(`172.25.0.${20 + index}`),
+          ]),
+        ]),
+      },
+    ]);
+    const first = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+    });
+    const second = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+    });
+    const peerCalls = new Map(peerIds.map((peerId) => [peerId, 0]));
+    let networkCalls = 0;
+    const diagnosticSpawner = (base) => (command, argumentsList) => {
+      if (
+        argumentsList[0] === "network" &&
+        argumentsList[1] === "inspect" &&
+        argumentsList[2] === networkId
+      ) {
+        assert.equal(command, "docker");
+        networkCalls += 1;
+        return outputChild(networkInspect);
+      }
+      const peerId = argumentsList[1];
+      if (argumentsList[0] === "inspect" && peerIdSet.has(peerId)) {
+        assert.equal(command, "docker");
+        peerCalls.set(peerId, peerCalls.get(peerId) + 1);
+        return outputChild(JSON.stringify([inspectedPeer(peerId, networkId)]));
+      }
+      return base.spawnProcess(command, argumentsList);
+    };
+    const networkTopologyCache = new Map();
+    const composeProjectCache = new Map();
+    const firstProviders = new Map();
+    const secondProviders = new Map();
+    await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      diagnosticSpawner(first),
+      undefined,
+      {
+        clientAddressSourceProviders: firstProviders,
+        networkTopologyCache,
+        composeProjectCache,
+        networkInterfaces: () => ({}),
+      },
+    );
+    await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      diagnosticSpawner(second),
+      undefined,
+      {
+        clientAddressSourceProviders: secondProviders,
+        networkTopologyCache,
+        composeProjectCache,
+        networkInterfaces: () => ({}),
+      },
+    );
+
+    const [firstSources, secondSources] = await Promise.all([
+      firstProviders.get("rest")(),
+      secondProviders.get("rest")(),
+    ]);
+    assert.equal(networkCalls, 1);
+    assert.ok([...peerCalls.values()].every((count) => count === 1));
+    assert.equal(
+      firstSources.composePeerEndpoint.length,
+      peerIds.length,
+    );
+    assert.deepEqual(
+      firstSources.composePeerEndpoint,
+      secondSources.composePeerEndpoint,
+    );
+  });
+
+  await t.test("mixed complete, partial, and unavailable networks aggregate to partial", async () => {
+    const networkIds = ["1".repeat(64), "2".repeat(64), "3".repeat(64)];
+    const databaseNetworks = Object.fromEntries(
+      networkIds.map((networkId, index) => [
+        `network_${index}`,
+        {
+          IPAddress: `172.${26 + index}.0.2`,
+          Gateway: `172.${26 + index}.0.1`,
+          NetworkID: networkId,
+          Aliases: index === 0 ? ["db", "supabase-db"] : ["db-secondary"],
+        },
+      ]),
+    );
+    const serviceNetworks = Object.fromEntries(
+      networkIds.map((networkId, index) => [
+        `network_${index}`,
+        {
+          IPAddress: `172.${26 + index}.0.10`,
+          Gateway: `172.${26 + index}.0.1`,
+          NetworkID: networkId,
+          Aliases: ["rest"],
+        },
+      ]),
+    );
+    const inspectedNetwork = (networkId, index, extraConfiguration = []) =>
+      JSON.stringify([
+        {
+          Id: networkId,
+          IPAM: {
+            Config: [
+              {
+                Subnet: `172.${26 + index}.0.0/24`,
+                Gateway: `172.${26 + index}.0.254`,
+              },
+              ...extraConfiguration,
+            ],
+          },
+          Containers: {
+            [CONTAINER_ID]: endpoint(`172.${26 + index}.0.2`),
+            [REST_SERVICE_IDENTITY.containerId]: endpoint(
+              `172.${26 + index}.0.110`,
+            ),
+          },
+        },
+      ]);
+    const docker = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+      diagnosticOutputs: [
+        inspectedNetwork(networkIds[0], 0),
+        inspectedNetwork(networkIds[1], 1, [
+          {
+            Subnet: "hostile-partial-subnet",
+            Gateway: "hostile-partial-gateway",
+          },
+        ]),
+        { stdout: "hostile-unavailable-network-secret", code: 1 },
+      ],
+    });
+    const providers = new Map();
+    const identity = await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      docker.spawnProcess,
+      undefined,
+      {
+        clientAddressSourceProviders: providers,
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+      },
+    );
+    const failure = await rejectedClientAddressFailure({
+      clientAddressSources: identity.clientAddressSources,
+      clientAddressSourcesProvider: providers.get("rest"),
+    });
+    assert.deepEqual(
+      failure.record?.addressEvidence,
+      failureAddressEvidence({
+        backend: "prebaseline_unseen",
+        containerGateway: true,
+        dbEndpoint: true,
+        family: "ipv4",
+        inspect: "partial",
+        ipamGateway: true,
+        serviceEndpoint: true,
+        sharedNetwork: "present",
+        sharedSubnet: true,
+      }),
+    );
+    assert.deepEqual(
+      docker.calls.slice(3).map(({ argumentsList }) => argumentsList),
+      networkIds.map((networkId) => ["network", "inspect", networkId]),
+    );
+    assert.doesNotMatch(
+      failure.bytes.toString("utf8"),
+      /hostile-partial|hostile-unavailable/,
+    );
+  });
+
+  await t.test("abort kills the active wave, discards queued peers, and resolves the provider", async () => {
+    const networkId = "8".repeat(64);
+    const peerIds = Array.from({ length: 12 }, (_value, index) =>
+      (index + 96).toString(16).padStart(64, "0"),
+    ).sort();
+    const peerIdSet = new Set(peerIds);
+    const databaseNetworks = {
+      shared: {
+        IPAddress: "172.30.0.2",
+        Gateway: "172.30.0.1",
+        NetworkID: networkId,
+        Aliases: ["db", "supabase-db"],
+      },
+    };
+    const serviceNetworks = {
+      shared: {
+        IPAddress: "172.30.0.10",
+        Gateway: "172.30.0.1",
+        NetworkID: networkId,
+        Aliases: ["rest"],
+      },
+    };
+    const networkInspect = JSON.stringify([
+      {
+        Id: networkId,
+        IPAM: {
+          Config: [{ Subnet: "172.30.0.0/24", Gateway: "172.30.0.1" }],
+        },
+        Containers: Object.fromEntries([
+          [CONTAINER_ID, endpoint("172.30.0.2")],
+          [REST_SERVICE_IDENTITY.containerId, endpoint("172.30.0.10")],
+          ...peerIds.map((peerId, index) => [
+            peerId,
+            endpoint(`172.30.0.${20 + index}`),
+          ]),
+        ]),
+      },
+    ]);
+    const docker = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+    });
+    const controller = new AbortController();
+    const providers = new Map();
+    const activeChildren = [];
+    let startedPeerInspections = 0;
+    let resolveFirstWave;
+    const firstWave = new Promise((resolve) => {
+      resolveFirstWave = resolve;
+    });
+    const spawnProcess = (command, argumentsList) => {
+      if (
+        argumentsList[0] === "network" &&
+        argumentsList[1] === "inspect" &&
+        argumentsList[2] === networkId
+      ) {
+        assert.equal(command, "docker");
+        return outputChild(networkInspect);
+      }
+      if (
+        argumentsList[0] === "inspect" &&
+        peerIdSet.has(argumentsList[1])
+      ) {
+        assert.equal(command, "docker");
+        startedPeerInspections += 1;
+        const child = new EventEmitter();
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.stdin = new Writable({
+          write: (_chunk, _encoding, callback) => callback(),
+        });
+        child.signals = [];
+        child.kill = (signal) => {
+          child.signals.push(signal);
+          return true;
+        };
+        activeChildren.push(child);
+        if (startedPeerInspections === 8) resolveFirstWave();
+        return child;
+      }
+      return docker.spawnProcess(command, argumentsList);
+    };
+    const bounded = async (promise) => {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_resolve, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("aborted topology did not settle")),
+              1_000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      spawnProcess,
+      undefined,
+      {
+        clientAddressSourceProviders: providers,
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+        signal: controller.signal,
+      },
+    );
+
+    const provider = providers.get("rest")();
+    await bounded(firstWave);
+    assert.equal(startedPeerInspections, 8);
+    controller.abort();
+    const sources = await bounded(provider);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(startedPeerInspections, 8);
+    assert.equal(activeChildren.length, 8);
+    assert.ok(
+      activeChildren.every(
+        (child) =>
+          child.signals.length === 1 &&
+          child.signals[0] === "SIGKILL" &&
+          child.stdout.listenerCount("data") === 0,
+      ),
+    );
+    assert.deepEqual(sources.composePeerEndpoint, []);
+    assert.deepEqual(sources.networkIpamGateway, ["172.30.0.1"]);
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  });
+
+  await t.test("an already-aborted provider starts no diagnostic Docker child", async () => {
+    const networkId = "9".repeat(64);
+    const databaseNetworks = {
+      shared: {
+        IPAddress: "172.31.0.2",
+        Gateway: "172.31.0.1",
+        NetworkID: networkId,
+        Aliases: ["db", "supabase-db"],
+      },
+    };
+    const serviceNetworks = {
+      shared: {
+        IPAddress: "172.31.0.10",
+        Gateway: "172.31.0.1",
+        NetworkID: networkId,
+        Aliases: ["rest"],
+      },
+    };
+    const docker = serviceIdentityDockerSpawner({
+      databaseNetworks,
+      serviceNetworks,
+    });
+    const controller = new AbortController();
+    const providers = new Map();
+    await resolveSupabaseServiceClientAddresses(
+      "rest",
+      CONTAINER_ID,
+      "postgres",
+      docker.spawnProcess,
+      undefined,
+      {
+        clientAddressSourceProviders: providers,
+        networkTopologyCache: new Map(),
+        composeProjectCache: new Map(),
+        networkInterfaces: () => ({}),
+        signal: controller.signal,
+      },
+    );
+    controller.abort();
+    const sources = await providers.get("rest")();
+    assert.equal(docker.calls.length, 3);
+    assert.deepEqual(sources.networkIpamGateway, []);
+    assert.deepEqual(sources.composePeerEndpoint, []);
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  });
+});
+
 test("four anon behavior probes bind internal/public REST pages and Auth users waiters without exposing service credentials", async () => {
   const calls = [];
   const snapshots = successfulProbeSequence({ lingerAfterCancel: true });
@@ -1545,6 +2293,7 @@ test("child diagnostics expose only bounded status and an exact SQLSTATE", async
     const bytes = await runFailure(`ERROR:  P0001: ${secret}\n`);
     const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
     assert.deepEqual(record, {
+      addressEvidence: null,
       childExitCode: "3",
       childResult: "exit",
       childSignal: null,
@@ -1718,35 +2467,294 @@ test("behavior probes fail closed on early HTTP, stale/multiple/wrong waiters, a
 });
 
 test("a rejected waiter client address emits a fixed unmatched classification", async () => {
-  const snapshots = [
-    observation(),
-    observation([waiter({ clientAddress: "203.0.113.77" })]),
-  ];
-  const calls = [];
-  await assertCode(
-    probeOrdinaryAccountCutoverReadinessFenceEndpoints(
-      {
-        containerId: CONTAINER_ID,
-        databaseName: "postgres",
-        databaseOid: "16384",
-        fenceBackendPid: "4321",
-      },
-      {
-        environment: {
-          SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
-          NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-only-key",
-        },
-        randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
-        fetchImpl: pendingFetchRecorder(calls),
-        observeWaiters: async () => snapshots.shift() ?? observation(),
-        cancelWaiter: async () => {},
-        serviceIdentities: SERVICE_IDENTITIES,
-        poll: async () => {},
-      },
-    ),
+  const failure = await rejectedClientAddressFailure();
+  assert.equal(
+    failure.error.code,
     "readiness_fence_probe_waiter_initial_internal_rest_client_address_unmatched_invalid",
   );
+  assert.deepEqual(
+    failure.record?.addressEvidence,
+    failureAddressEvidence({
+      backend: "prebaseline_unseen",
+      containerGateway: true,
+      family: "ipv4",
+    }),
+  );
+});
+
+test("unmatched client-address evidence is bounded, source-set based, status-exact, and value-free", async (t) => {
+  await t.test("family and backend enums come only from sanitized clocks and coherent baseline tuples", async () => {
+    const familyCases = [
+      ["203.0.113.77", "ipv4"],
+      ["2001:db8:ffff::77", "ipv6"],
+      ["hostile-local-or-invalid-address-secret", "local_or_invalid"],
+    ];
+    for (const [clientAddress, family] of familyCases) {
+      const failure = await rejectedClientAddressFailure({
+        candidate: waiter({ clientAddress }),
+      });
+      assert.equal(failure.record?.addressEvidence.family, family);
+    }
+
+    const backendCases = [
+      [
+        "post_baseline",
+        waiter({
+          clientAddress: "203.0.113.77",
+          backendStartEpochMilliseconds: "1787227200001",
+        }),
+        observation(),
+      ],
+      [
+        "prebaseline_unseen",
+        waiter({ clientAddress: "203.0.113.77" }),
+        observation(),
+      ],
+      [
+        "unknown",
+        waiter({
+          clientAddress: "203.0.113.77",
+          backendStartEpochMilliseconds: "1787227200000",
+        }),
+        observation(),
+      ],
+    ];
+    const overflowCandidate = waiter({ clientAddress: "203.0.113.77" });
+    const overflowTuple = {
+      pid: null,
+      backendStartEpochMilliseconds: null,
+      databaseUser: overflowCandidate.databaseUser,
+      applicationName: overflowCandidate.applicationName,
+      clientAddress: overflowCandidate.clientAddress,
+    };
+    backendCases.push([
+      "snapshot_overflow",
+      overflowCandidate,
+      observation([], { serviceSessions: [overflowTuple] }),
+    ]);
+    for (const [backend, candidate, before] of backendCases) {
+      const failure = await rejectedClientAddressFailure({ candidate, before });
+      assert.equal(failure.record?.addressEvidence.backend, backend);
+    }
+    const incoherent = await rejectedClientAddressFailure({
+      candidate: overflowCandidate,
+      before: observation([], {
+        serviceSessions: [
+          overflowTuple,
+          {
+            ...overflowTuple,
+            pid: "6101",
+            backendStartEpochMilliseconds: "1787227000001",
+          },
+        ],
+      }),
+    });
+    assert.equal(
+      incoherent.record?.addressEvidence.backend,
+      "prebaseline_unseen",
+    );
+  });
+
+  await t.test("topology enums and booleans report source-set availability, not candidate membership", async () => {
+    const base = {
+      ...REST_SERVICE_IDENTITY.clientAddressSources,
+      hostInterface: ["192.0.2.44"],
+    };
+    const derived = {
+      networkIpamGateway: ["172.20.0.254"],
+      networkServiceEndpoint: ["172.20.0.110"],
+      databaseEndpoint: ["172.20.0.2"],
+      composePeerEndpoint: ["172.20.0.30"],
+      sharedNetworkSubnet: ["172.20.0.0/24"],
+    };
+    const cases = [
+      ["absent", "not_attempted", false],
+      ["overflow", "not_attempted", false],
+      ["present", "unavailable", false],
+      ["present", "partial", true],
+      ["present", "complete", true],
+    ];
+    for (const [sharedNetwork, inspect, hasDerivedSources] of cases) {
+      const failure = await rejectedClientAddressFailure({
+        clientAddressSources: {
+          ...base,
+          ...(hasDerivedSources ? derived : {}),
+          topologySharedNetwork: sharedNetwork,
+          topologyInspect: inspect,
+        },
+      });
+      assert.deepEqual(
+        failure.record?.addressEvidence,
+        failureAddressEvidence({
+          backend: "prebaseline_unseen",
+          composePeer: hasDerivedSources,
+          containerGateway: true,
+          dbEndpoint: hasDerivedSources,
+          family: "ipv4",
+          hostInterface: true,
+          inspect,
+          ipamGateway: hasDerivedSources,
+          serviceEndpoint: hasDerivedSources,
+          sharedNetwork,
+          sharedSubnet: hasDerivedSources,
+        }),
+      );
+    }
+  });
+
+  await t.test("missing, inconsistent, and accessor-backed topology status downgrades the public record", async () => {
+    const secret = "hostile-topology-status-secret";
+    const hostileSources = {
+      ...REST_SERVICE_IDENTITY.clientAddressSources,
+      topologySharedNetwork: "absent",
+    };
+    Object.defineProperty(hostileSources, "topologyInspect", {
+      enumerable: true,
+      get() {
+        throw new Error(secret);
+      },
+    });
+    for (const clientAddressSources of [
+      REST_SERVICE_IDENTITY.clientAddressSources,
+      {
+        ...REST_SERVICE_IDENTITY.clientAddressSources,
+        topologySharedNetwork: "absent",
+        topologyInspect: "complete",
+      },
+      hostileSources,
+    ]) {
+      const failure = await rejectedClientAddressFailure({
+        clientAddressSources,
+      });
+      assert.equal(failure.record?.error, "readiness_fence_unexpected_error");
+      assert.equal(failure.record?.addressEvidence, null);
+      assert.doesNotMatch(failure.bytes.toString("utf8"), /hostile-topology/);
+    }
+  });
+
+  await t.test("all valid enum, boolean, stage, probe, and maximum child-diagnostic combinations stay within 512 bytes", () => {
+    const codes = ["initial", "post_cancel"].flatMap((stage) =>
+      ["internal_rest", "internal_auth", "public_rest", "public_auth"].map(
+        (probe) =>
+          `readiness_fence_probe_waiter_${stage}_${probe}_client_address_unmatched_invalid`,
+      ),
+    );
+    const families = ["ipv4", "ipv6", "local_or_invalid"];
+    const backends = [
+      "post_baseline",
+      "prebaseline_unseen",
+      "snapshot_overflow",
+      "unknown",
+    ];
+    const topologyStates = [
+      ["absent", "not_attempted"],
+      ["overflow", "not_attempted"],
+      ["present", "unavailable"],
+      ["present", "partial"],
+      ["present", "complete"],
+    ];
+    const maximumChildDiagnostic = {
+      childExitCode: null,
+      childResult: "not_observed",
+      childSignal: null,
+      sqlstate: null,
+      sqlstateStatus: "invalid_utf8",
+    };
+    let maximumBytes = 0;
+    let records = 0;
+    for (const code of codes) {
+      for (const family of families) {
+        for (const backend of backends) {
+          for (const [sharedNetwork, inspect] of topologyStates) {
+            const variableBooleanCount =
+              inspect === "complete" || inspect === "partial" ? 7 : 2;
+            for (let mask = 0; mask < 2 ** variableBooleanCount; mask += 1) {
+              const bit = (index) => (mask & (1 << index)) !== 0;
+              const derivedAllowed = variableBooleanCount === 7;
+              const evidence = failureAddressEvidence({
+                backend,
+                composePeer: derivedAllowed && bit(0),
+                containerGateway: bit(derivedAllowed ? 1 : 0),
+                dbEndpoint: derivedAllowed && bit(2),
+                family,
+                hostInterface: bit(derivedAllowed ? 3 : 1),
+                inspect,
+                ipamGateway: derivedAllowed && bit(4),
+                serviceEndpoint: derivedAllowed && bit(5),
+                sharedNetwork,
+                sharedSubnet: derivedAllowed && bit(6),
+              });
+              const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+                new OrdinaryAccountCutoverReadinessFenceError(
+                  code,
+                  maximumChildDiagnostic,
+                  evidence,
+                ),
+              );
+              maximumBytes = Math.max(maximumBytes, bytes.length);
+              records += 1;
+              assert.ok(bytes.length <= 512, `${code} emitted ${bytes.length} bytes`);
+              const record =
+                parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+              assert.equal(record?.error, code);
+              assert.deepEqual(record?.addressEvidence, evidence);
+              assert.deepEqual(bytes, canonicalJsonBytes(record));
+            }
+          }
+        }
+      }
+    }
+    assert.equal(records, 25_728);
+    assert.equal(maximumBytes, 511);
+  });
+
+  await t.test("the canonical parser requires exact evidence shape and null on every non-unmatched code", async () => {
+    const valid = (await rejectedClientAddressFailure()).record;
+    assert.ok(valid);
+    const invalidRecords = [
+      { ...valid, addressEvidence: null },
+      {
+        ...valid,
+        addressEvidence: { ...valid.addressEvidence, family: "ipv5" },
+      },
+      {
+        ...valid,
+        addressEvidence: {
+          ...valid.addressEvidence,
+          inspect: "complete",
+          sharedNetwork: "absent",
+        },
+      },
+      {
+        ...valid,
+        addressEvidence: { ...valid.addressEvidence, rawAddress: "203.0.113.77" },
+      },
+      {
+        ...valid,
+        error: "readiness_fence_probe_environment_invalid",
+      },
+    ];
+    for (const invalid of invalidRecords) {
+      assert.equal(
+        parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+          canonicalJsonBytes(invalid),
+        ),
+        null,
+      );
+    }
+    const injected = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+      new OrdinaryAccountCutoverReadinessFenceError(
+        "readiness_fence_probe_environment_invalid",
+        null,
+        valid.addressEvidence,
+      ),
+    );
+    assert.equal(
+      parseOrdinaryAccountCutoverReadinessFenceFailureLog(injected)
+        ?.addressEvidence,
+      null,
+    );
+  });
 });
 
 test("a rejected waiter client address is classified by a shared-network IPAM gateway", async () => {
@@ -2253,6 +3261,7 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
         );
         const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
         assert.equal(record?.error, expectedCode);
+        assert.equal(record?.addressEvidence, null);
         assert.deepEqual(bytes, canonicalJsonBytes(record));
         const serialized = bytes.toString("utf8");
         for (const confidential of confidentialValues) {
@@ -2421,6 +3430,28 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
         );
         const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
         assert.equal(record?.error, expectedCode);
+        assert.deepEqual(
+          record?.addressEvidence,
+          classification === "unmatched"
+            ? failureAddressEvidence({
+                backend: "prebaseline_unseen",
+                composePeer: true,
+                containerGateway: true,
+                dbEndpoint: true,
+                family:
+                  targetCandidate.clientAddress ===
+                  "hostile-unmatched-address-secret"
+                    ? "local_or_invalid"
+                    : "ipv4",
+                hostInterface: true,
+                inspect: "complete",
+                ipamGateway: true,
+                serviceEndpoint: true,
+                sharedNetwork: "present",
+                sharedSubnet: true,
+              })
+            : null,
+        );
         assert.deepEqual(bytes, canonicalJsonBytes(record));
         const serialized = bytes.toString("utf8");
         for (const confidential of confidentialValues) {
@@ -2452,7 +3483,13 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
         const code = clientAddressCodeFor(stage, probe, classificationCode);
         allowlistedWaiterDiagnosticCodes.add(code);
         const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
-          new OrdinaryAccountCutoverReadinessFenceError(code),
+          new OrdinaryAccountCutoverReadinessFenceError(
+            code,
+            null,
+            classificationCode === "unmatched"
+              ? failureAddressEvidence()
+              : null,
+          ),
         );
         assert.ok(bytes.length <= 512, `${code} exceeded the failure-record bound`);
         const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
@@ -2465,6 +3502,7 @@ test("waiter validation diagnostics are fixed, stage/probe/predicate-specific, c
   assert.ok(allowlistedWaiterDiagnosticCodes.size <= 512);
 
   const defaultDiagnostic = {
+    addressEvidence: null,
     childExitCode: null,
     childResult: "not_observed",
     childSignal: null,
@@ -3427,6 +4465,117 @@ test("finite maximum hold timeout terminates the child without an orphan marker"
   });
 });
 
+test("the hold orchestrator preserves only validated unmatched address evidence through its terminal path", async (t) => {
+  const unmatchedCode =
+    "readiness_fence_probe_waiter_initial_internal_rest_client_address_unmatched_invalid";
+  const evidence = failureAddressEvidence({
+    backend: "post_baseline",
+    composePeer: true,
+    containerGateway: true,
+    dbEndpoint: true,
+    family: "ipv6",
+    hostInterface: true,
+    inspect: "partial",
+    ipamGateway: true,
+    serviceEndpoint: true,
+    sharedNetwork: "present",
+    sharedSubnet: true,
+  });
+  const run = async ({ thrown, terminateSession = async () => {} }) => {
+    let failure;
+    await temporaryDirectory(async (directory) => {
+      const value = await fixture(directory);
+      const child = new FakeChild();
+      try {
+        await holdOrdinaryAccountCutoverReadinessFence(
+          value.input,
+          coreDependencies(child, {
+            spawnProcess: () => {
+              queueMicrotask(() => child.stdout.write(fenceLine()));
+              return child;
+            },
+            probeEndpoints: async () => {
+              throw thrown;
+            },
+            terminateSession,
+          }),
+        );
+        assert.fail("expected the fence helper to fail");
+      } catch (error) {
+        failure = error;
+      }
+      await assertMissing(value.markerPath);
+    });
+    const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(failure);
+    return {
+      bytes,
+      error: failure,
+      record: parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes),
+    };
+  };
+
+  await t.test("the winning unmatched code and evidence are retained atomically", async () => {
+    const failure = await run({
+      thrown: new OrdinaryAccountCutoverReadinessFenceError(
+        unmatchedCode,
+        null,
+        evidence,
+      ),
+    });
+    assert.equal(failure.error.code, unmatchedCode);
+    assert.deepEqual(failure.record?.addressEvidence, evidence);
+    assert.equal(failure.record?.childResult, "signal");
+    assert.equal(failure.record?.childSignal, "SIGTERM");
+  });
+
+  await t.test("malformed evidence and hostile code accessors cannot cross the queue boundary", async () => {
+    const secret = "hostile-address-evidence-secret";
+    const malformed = await run({
+      thrown: new OrdinaryAccountCutoverReadinessFenceError(
+        unmatchedCode,
+        null,
+        { ...evidence, rawAddress: secret },
+      ),
+    });
+    assert.equal(malformed.record?.error, "readiness_fence_unexpected_error");
+    assert.equal(malformed.record?.addressEvidence, null);
+    assert.doesNotMatch(malformed.bytes.toString("utf8"), /hostile-address/);
+
+    const accessor = new OrdinaryAccountCutoverReadinessFenceError(
+      unmatchedCode,
+      null,
+      evidence,
+    );
+    Object.defineProperty(accessor, "code", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        throw new Error(secret);
+      },
+    });
+    const hostile = await run({ thrown: accessor });
+    assert.equal(hostile.record?.error, "readiness_fence_output_invalid");
+    assert.equal(hostile.record?.addressEvidence, null);
+    assert.doesNotMatch(hostile.bytes.toString("utf8"), /hostile-address/);
+  });
+
+  await t.test("a termination failure replaces the diagnostic code and clears evidence", async () => {
+    const failure = await run({
+      thrown: new OrdinaryAccountCutoverReadinessFenceError(
+        unmatchedCode,
+        null,
+        evidence,
+      ),
+      terminateSession: async () => {
+        throw new Error("termination-secret");
+      },
+    });
+    assert.equal(failure.record?.error, "readiness_fence_termination_failed");
+    assert.equal(failure.record?.addressEvidence, null);
+    assert.doesNotMatch(failure.bytes.toString("utf8"), /termination-secret/);
+  });
+});
+
 function cliArguments(value) {
   return [
     "hold",
@@ -3504,6 +4653,7 @@ test("CLI rejects duplicate and extra arguments and emits only canonical aggrega
 
 test("private helper failure logs expose only an allowlisted canonical code", async () => {
   const allowedRecord = {
+    addressEvidence: null,
     childExitCode: null,
     childResult: "not_observed",
     childSignal: null,
@@ -3604,6 +4754,7 @@ test("failure serialization rejects accessors, prototypes, and attacker-shaped c
   assert.deepEqual(
     parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes),
     {
+      addressEvidence: null,
       childExitCode: null,
       childResult: "not_observed",
       childSignal: null,

@@ -2383,6 +2383,7 @@ test("fence failure reporting exposes only a frozen diagnostic and an explicit c
     "\nstart_readiness_fence() {",
   );
   const safeRecord = {
+    addressEvidence: null,
     childExitCode: "3",
     childResult: "exit",
     childSignal: null,
