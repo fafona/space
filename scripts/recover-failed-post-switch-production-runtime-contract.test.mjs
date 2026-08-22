@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -19,12 +31,17 @@ function between(start, end) {
   return source.slice(from, to);
 }
 
+function nodeHeredocs(block) {
+  return [...block.matchAll(/<<'NODE'\r?\n([\s\S]*?)\r?\nNODE/g)]
+    .map((match) => match[1]);
+}
+
 test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32598424716"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="7478fb9d1d65463639eeecd09b17efd80df2d64a"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32602232601"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="760318e0e8a3996e66892a28fa01ade5de5ecf2a"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
@@ -69,25 +86,301 @@ test("deploy lock is held, identity-frozen, and normalized without replacement",
   assert.doesNotMatch(lock, /mv\s/);
 });
 
-test("candidate and frozen releases are independently unique and immutable", () => {
-  const releases = between("find_unique_release()", "decode_strict_base64()");
-  assert.match(releases, /-mindepth 1 -maxdepth 1 -type d/);
-  assert.match(releases, /\[ "\$\{#matches\[@\]\}" -eq 1 \]/);
-  assert.match(releases, /CANDIDATE_RUNTIME_DIR=.*EXPECTED_CANDIDATE_BUILD_ID/);
-  assert.match(releases, /FROZEN_RUNTIME_DIR=.*EXPECTED_OLD_BUILD_ID/);
-  assert.match(releases, /readlink -- "\$CURRENT_LINK".*CANDIDATE_RUNTIME_DIR/s);
-  assert.match(releases, /stat -Lc '%d:%i'.*CANDIDATE_RUNTIME_DIR.*!=.*FROZEN_RUNTIME_DIR/s);
-  assert.match(releases, /\.next\/BUILD_ID/);
-  assert.match(releases, /build_id.*expected_build/s);
-  assert.match(releases, /FROZEN_ENV_HELPER=.*FROZEN_RUNTIME_DIR/);
-  assert.match(releases, /FROZEN_FENCE_HELPER=.*FROZEN_RUNTIME_DIR/);
-  assert.match(releases, /FROZEN_SMOKE_HELPER=.*FROZEN_RUNTIME_DIR/);
-  assert.match(releases, /FROZEN_PACKAGE_FILE=.*FROZEN_RUNTIME_DIR/);
-  assert.match(releases, /FROZEN_WORKER_FILE=.*FROZEN_RUNTIME_DIR/);
+test("candidate and frozen inventory and identity have distinct pre-mutation stages", () => {
+  const stages = [
+    "candidate_inventory",
+    "frozen_inventory",
+    "candidate_current_link",
+    "candidate_structure",
+    "candidate_env_build_binding",
+    "candidate_next_build_identity",
+    "frozen_structure",
+    "frozen_env_build_binding",
+    "frozen_next_build_identity",
+  ];
+  const positions = stages.map((stage) => source.indexOf(`RECOVERY_FAILURE_STAGE="${stage}"`));
+  assert.ok(positions.every((position) => position >= 0), "split release stages missing");
+  assert.deepEqual([...positions].sort((left, right) => left - right), positions);
+
+  const firstProtectedMutation = source.indexOf("FENCE_CLEANUP_STARTED=1");
+  assert.ok(firstProtectedMutation > positions.at(-1));
+  const releasePreflight = source.slice(
+    positions[0],
+    source.indexOf('RECOVERY_FAILURE_STAGE="frozen_environment"', positions[0]),
+  );
+  assert.doesNotMatch(
+    releasePreflight,
+    /\b(?:unlink|rmdir|mv|chmod)\b|\bln\s+-s\b|\bpm2\s+(?:start|delete|save|stop|restart)\b|pg_(?:cancel|terminate)_backend/,
+  );
+
+  const candidateInventory = between(
+    'RECOVERY_FAILURE_STAGE="candidate_inventory"',
+    'RECOVERY_FAILURE_STAGE="frozen_inventory"',
+  );
+  const frozenInventory = between(
+    'RECOVERY_FAILURE_STAGE="frozen_inventory"',
+    'RECOVERY_FAILURE_STAGE="candidate_current_link"',
+  );
+  const candidateCurrentLink = between(
+    'RECOVERY_FAILURE_STAGE="candidate_current_link"',
+    'RECOVERY_FAILURE_STAGE="candidate_structure"',
+  );
+  const candidateStructure = between(
+    'RECOVERY_FAILURE_STAGE="candidate_structure"',
+    'RECOVERY_FAILURE_STAGE="candidate_env_build_binding"',
+  );
+  const candidateEnvironment = between(
+    'RECOVERY_FAILURE_STAGE="candidate_env_build_binding"',
+    'RECOVERY_FAILURE_STAGE="candidate_next_build_identity"',
+  );
+  const candidateNextBuild = between(
+    'RECOVERY_FAILURE_STAGE="candidate_next_build_identity"',
+    'RECOVERY_FAILURE_STAGE="frozen_structure"',
+  );
+  const frozenStructure = between(
+    'RECOVERY_FAILURE_STAGE="frozen_structure"',
+    'RECOVERY_FAILURE_STAGE="frozen_env_build_binding"',
+  );
+  const frozenEnvironment = between(
+    'RECOVERY_FAILURE_STAGE="frozen_env_build_binding"',
+    'RECOVERY_FAILURE_STAGE="frozen_next_build_identity"',
+  );
+  const frozenNextBuild = between(
+    'RECOVERY_FAILURE_STAGE="frozen_next_build_identity"',
+    'RECOVERY_FAILURE_STAGE="frozen_environment"',
+  );
+  assert.match(candidateInventory, /CANDIDATE_RUNTIME_DIR/);
+  assert.match(frozenInventory, /FROZEN_RUNTIME_DIR/);
+  assert.match(candidateCurrentLink, /readlink -- "\$CURRENT_LINK"/);
+  assert.match(candidateStructure, /release_structure_identity/);
+  assert.match(candidateNextBuild, /next_build_identity/);
+  assert.match(candidateEnvironment, /environment_build_binding_snapshot/);
+  assert.match(candidateEnvironment, /EXPECTED_CANDIDATE_BUILD_ID/);
+  assert.match(frozenStructure, /release_structure_identity/);
+  assert.match(frozenNextBuild, /next_build_identity/);
+  assert.match(frozenEnvironment, /\.env\.local/);
+  assert.match(frozenEnvironment, /EXPECTED_OLD_BUILD_ID/);
+  assert.match(source, /stat -Lc '%d:%i'.*CANDIDATE_RUNTIME_DIR.*!=.*FROZEN_RUNTIME_DIR/s);
+  assert.doesNotMatch(source, /FROZEN_ENV_HELPER/);
+  assert.doesNotMatch(source, /FROZEN_FENCE_HELPER/);
+  assert.match(
+    source,
+    /capture_trusted_environment_helper_output\(\)[\s\S]*"\$CANDIDATE_ENV_HELPER" "\$EXPECTED_CANDIDATE_BUILD_ID"[\s\S]*"\$CANDIDATE_RUNTIME_DIR" "\$CANDIDATE_ENV_HELPER_SNAPSHOT"/,
+  );
+  assert.match(source, /FROZEN_SMOKE_HELPER=.*FROZEN_RUNTIME_DIR/);
+  assert.match(source, /FROZEN_PACKAGE_FILE=.*FROZEN_RUNTIME_DIR/);
+  assert.match(source, /FROZEN_WORKER_FILE=.*FROZEN_RUNTIME_DIR/);
   assert.match(source, /FROZEN_PACKAGE_SNAPSHOT/);
   assert.match(source, /FROZEN_WORKER_SNAPSHOT/);
   assert.match(source, /"\$expected_commit:\$helper_relative"/);
-  assert.match(releases, /git -C "\$APP_DIR" cat-file -e "\$EXPECTED_OLD_BUILD_ID\^\{commit\}"/);
+  assert.match(source, /git -C "\$APP_DIR" cat-file -e "\$EXPECTED_OLD_BUILD_ID\^\{commit\}"/);
+});
+
+test("the incident-pinned environment reader supports the historical frozen tree", () => {
+  const oldBuild = "2a121454a18a16ae30e356977ca82b24a310e8e5";
+  const probe = spawnSync("git", ["cat-file", "-e", `${oldBuild}^{commit}`], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  });
+  if (probe.status === 0) {
+    const tree = spawnSync("git", ["ls-tree", "-r", "--name-only", oldBuild], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    });
+    assert.equal(tree.status, 0);
+    const paths = new Set(tree.stdout.trim().split(/\r?\n/));
+    assert.equal(paths.has("scripts/read-production-supabase-environment.mjs"), false);
+    assert.equal(paths.has("scripts/hold-ordinary-account-cutover-readiness-fence.mjs"), false);
+    assert.equal(paths.has("scripts/check-production-smoke.mjs"), true);
+    assert.equal(paths.has("scripts/run-merchant-enterprise-automation-worker.ts"), true);
+  }
+  assert.doesNotMatch(source, /FROZEN_(?:ENV|FENCE)_HELPER/);
+  assert.match(source, /rollback-snapshot "\$FROZEN_RUNTIME_DIR\/\.env\.local" "\$EXPECTED_OLD_BUILD_ID"/);
+});
+
+test("opaque Next BUILD_ID is snapshotted while the Git build is bound by the exact environment assignment", () => {
+  const environmentCode = between("environment_build_binding_snapshot()", "next_build_identity()");
+  const environmentValidator = nodeHeredocs(environmentCode).find((code) =>
+    code.includes('exactAssignment(lines, "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID")'));
+  assert.ok(environmentValidator, "dual environment build binding validator missing");
+  assert.match(environmentValidator, /exactAssignment\(lines, "FAOLLA_WEB_BUILD_ID"\) !== expected/);
+  assert.match(environmentValidator, /exactAssignment\(lines, "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID"\) !== expected/);
+  const releaseCode = between("next_build_identity()", 'RECOVERY_FAILURE_STAGE="frozen_environment"');
+  const validator = nodeHeredocs(releaseCode).find((code) =>
+    code.includes("lstatSync(path") && code.includes("readFileSync(descriptor)"));
+  assert.ok(validator, "Next BUILD_ID validator missing");
+  assert.doesNotMatch(validator, /\^\[0-9a-f\]\{40\}\$/);
+  assert.match(validator, /before\.isSymbolicLink\(\)/);
+  assert.match(validator, /before\.nlink !== 1n/);
+  assert.match(validator, /const current = lstatSync\(path/);
+  assert.match(validator, /ctimeNs/);
+  assert.match(validator, /uid/);
+  assert.match(validator, /mode/);
+  assert.match(validator, /sameIdentity\([^)]+,\s*current\)/);
+  assert.doesNotMatch(releaseCode, /\.next\/BUILD_ID[\s\S]{0,500}EXPECTED_(?:CANDIDATE|OLD)_BUILD_ID/);
+  assert.doesNotMatch(releaseCode, /\[ "\$(?:next_)?build_id" = "\$expected_build" \]/);
+
+  const directory = mkdtempSync(join(tmpdir(), "faolla-next-build-id-"));
+  const nextDirectory = join(directory, ".next");
+  const buildPath = join(nextDirectory, "BUILD_ID");
+  const runValidator = (path) => spawnSync(
+    process.execPath,
+    ["--input-type=module", "-", path],
+    { input: validator, encoding: "utf8" },
+  );
+  try {
+    mkdirSync(nextDirectory, { mode: 0o700 });
+    // The production validator deliberately depends on Linux-only ownership,
+    // no-follow, and inode semantics. Keep those assertions real on Linux
+    // instead of weakening the validator in-memory to manufacture a Windows pass.
+    if (process.platform !== "win32") {
+      writeFileSync(buildPath, "opaque_next-build_ID-2026", { mode: 0o600 });
+      chmodSync(buildPath, 0o600);
+      assert.equal(runValidator(buildPath).status, 0, "valid opaque Next BUILD_ID rejected");
+
+      const hardlinkPath = join(nextDirectory, "BUILD_ID-hardlink");
+      linkSync(buildPath, hardlinkPath);
+      assert.notEqual(runValidator(buildPath).status, 0, "hard-linked Next BUILD_ID accepted");
+      rmSync(hardlinkPath);
+
+      const symlinkTarget = join(nextDirectory, "BUILD_ID-target");
+      const symlinkPath = join(nextDirectory, "BUILD_ID-symlink");
+      writeFileSync(symlinkTarget, "opaque_target", { mode: 0o600 });
+      symlinkSync(symlinkTarget, symlinkPath, "file");
+      assert.notEqual(runValidator(symlinkPath).status, 0, "symlinked Next BUILD_ID accepted");
+
+      for (const [label, value] of [
+        ["empty", ""],
+        ["newline", "opaque\nsecond-line"],
+        ["nul", "opaque\0suffix"],
+        ["path punctuation", "../opaque"],
+        ["non-ascii", "opaque-\u00e9"],
+        ["oversized", "x".repeat(129)],
+      ]) {
+        writeFileSync(buildPath, value, { mode: 0o600 });
+        assert.notEqual(runValidator(buildPath).status, 0, `${label} Next BUILD_ID accepted`);
+      }
+    }
+
+    const expectedBuild = "a".repeat(40);
+    const environmentPath = join(directory, ".env.local");
+    const baseEnvironment = [
+      `FAOLLA_WEB_BUILD_ID=${expectedBuild}`,
+      `NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${expectedBuild}`,
+      "NEXT_PUBLIC_SUPABASE_URL=https://example.invalid",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY=fixture-token",
+      "",
+    ].join("\n");
+    const environmentHelper = fileURLToPath(
+      new URL("./read-production-supabase-environment.mjs", import.meta.url),
+    );
+    const readBuild = () => spawnSync(
+      process.execPath,
+      [environmentHelper, "build-id", environmentPath, expectedBuild.slice(0, 12)],
+      { encoding: "utf8" },
+    );
+    const validateBinding = () => spawnSync(
+      process.execPath,
+      ["--input-type=module", "-", environmentPath, directory],
+      {
+        input: environmentValidator,
+        encoding: "utf8",
+        env: { ...process.env, FAOLLA_EXPECTED_BUILD_ID: expectedBuild },
+      },
+    );
+    writeFileSync(environmentPath, baseEnvironment, { mode: 0o600 });
+    chmodSync(environmentPath, 0o600);
+    const validEnvironment = readBuild();
+    assert.equal(validEnvironment.status, 0, validEnvironment.stderr);
+    assert.equal(validEnvironment.stdout, expectedBuild);
+    if (process.platform !== "win32") {
+      assert.equal(validateBinding().status, 0, "valid dual build binding rejected");
+    }
+
+    writeFileSync(
+      environmentPath,
+      baseEnvironment.replace(expectedBuild, "b".repeat(40)),
+      { mode: 0o600 },
+    );
+    assert.notEqual(readBuild().status, 0, "wrong environment build id accepted");
+    if (process.platform !== "win32") {
+      assert.notEqual(validateBinding().status, 0, "wrong private environment build id accepted");
+    }
+
+    writeFileSync(
+      environmentPath,
+      `${baseEnvironment}FAOLLA_WEB_BUILD_ID=${expectedBuild}\n`,
+      { mode: 0o600 },
+    );
+    assert.notEqual(readBuild().status, 0, "duplicate environment build id accepted");
+    if (process.platform !== "win32") {
+      assert.notEqual(validateBinding().status, 0, "duplicate private environment build id accepted");
+    }
+    if (process.platform !== "win32") {
+      writeFileSync(
+        environmentPath,
+        baseEnvironment.replace(
+          `NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${expectedBuild}`,
+          `NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${"b".repeat(40)}`,
+        ),
+        { mode: 0o600 },
+      );
+      assert.notEqual(validateBinding().status, 0, "wrong public environment build id accepted");
+      writeFileSync(
+        environmentPath,
+        `${baseEnvironment}NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${expectedBuild}\n`,
+        { mode: 0o600 },
+      );
+      assert.notEqual(validateBinding().status, 0, "duplicate public environment build id accepted");
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("release inventory failures have exact fixed codes and cannot enter production cleanup", () => {
+  assert.ok(bash, "bash unavailable");
+  const finish = between("finish_recovery()", "trap finish_recovery EXIT");
+  const stages = new Map([
+    ["candidate_inventory", "recovery_failed_pre_runtime_candidate_inventory"],
+    ["frozen_inventory", "recovery_failed_pre_runtime_frozen_inventory"],
+    ["candidate_current_link", "recovery_failed_pre_runtime_candidate_current_link"],
+    ["candidate_structure", "recovery_failed_pre_runtime_candidate_structure"],
+    ["candidate_next_build_identity", "recovery_failed_pre_runtime_candidate_next_build_identity"],
+    ["candidate_env_build_binding", "recovery_failed_pre_runtime_candidate_env_build_binding"],
+    ["frozen_structure", "recovery_failed_pre_runtime_frozen_structure"],
+    ["frozen_next_build_identity", "recovery_failed_pre_runtime_frozen_next_build_identity"],
+    ["frozen_env_build_binding", "recovery_failed_pre_runtime_frozen_env_build_binding"],
+  ]);
+  for (const [stage, code] of stages) {
+    const harness = `
+set -u
+RECOVERY_PAYLOAD_FILE=''
+RECOVERY_COMPLETE=0
+FENCE_CLEANUP_STARTED=0
+FENCE_CLEANUP_VERIFIED=0
+WORKER_START_ATTEMPTED=0
+WEB_START_ATTEMPTED=0
+FROZEN_WEB_COMMITTED=0
+CURRENT_SWITCH_ARMED=0
+CANDIDATE_PREFLIGHT_VERIFIED=0
+PM2_STATE_MUTATED=0
+SWITCH_TEMP_LINK=''
+COMPENSATION_TEMP_LINK=''
+RECOVERY_FAILURE_STAGE='${stage}'
+cleanup_started_process() { printf mutation >&2; return 1; }
+restore_candidate_before_web_commit() { printf mutation >&2; return 1; }
+verify_precommit_safe_state() { printf mutation >&2; return 1; }
+timeout() { printf mutation >&2; return 1; }
+${finish}
+false
+finish_recovery
+`;
+    const result = spawnSync(bash, ["-c", harness], { encoding: "utf8" });
+    assert.notEqual(result.status, 0, stage);
+    assert.equal(result.stdout, "", stage);
+    assert.equal(result.stderr, `${code}\n`, stage);
+  }
 });
 
 test("legacy compatibility links have the exact atomic layout and no backups", () => {
@@ -117,6 +410,22 @@ test("stale fence cleanup is canonical, time-bound, non-recursive, and starts at
   assert.match(cleanup, /FAILED_RUN_STARTED_EPOCH/);
   assert.match(cleanup, /FAILED_RUN_COMPLETED_EPOCH \+ 1500/);
   assert.match(cleanup, /readOrdinaryAccountCutoverReadinessFenceFailureRecord/);
+  const mutation = cleanup.indexOf("FENCE_CLEANUP_STARTED=1");
+  const preMutation = cleanup.slice(0, mutation);
+  assert.ok(preMutation.lastIndexOf("verify_database_fence_clear") >= 0);
+  assert.ok(
+    preMutation.lastIndexOf("revalidate_incident_runtimes") >
+      preMutation.lastIndexOf("verify_database_fence_clear"),
+    "runtime identity is not revalidated after the final database proof",
+  );
+  assert.ok(
+    preMutation.lastIndexOf("revalidate_deploy_lock") >
+      preMutation.lastIndexOf("revalidate_incident_runtimes"),
+    "deploy lock is not the final cross-resource guard",
+  );
+  assert.ok(preMutation.lastIndexOf("trusted_helper_matches") > preMutation.lastIndexOf("revalidate_deploy_lock"));
+  assert.ok(preMutation.lastIndexOf("stale_log_identity") > preMutation.lastIndexOf("trusted_helper_matches"));
+  assert.ok(preMutation.lastIndexOf("stale_dir_identity") > preMutation.lastIndexOf("trusted_helper_matches"));
   assert.match(cleanup, /FENCE_CLEANUP_STARTED=1\s+FENCE_CLEANUP_VERIFIED=0\s+unlink -- "\$stale_log"/);
   assert.match(cleanup, /rmdir -- "\$stale_dir"/);
   assert.doesNotMatch(cleanup, /rm\s+-[A-Za-z]*[rR]/);
@@ -148,9 +457,38 @@ test("current switch is exact, atomic, and never removes candidate files", () =>
   assert.match(change, /FROZEN_CURRENT_LINK_IDENTITY="\$\(trusted_symlink_identity "\$SWITCH_TEMP_LINK"\)"/);
   assert.ok(change.indexOf("FROZEN_CURRENT_LINK_IDENTITY=") < change.indexOf("CURRENT_SWITCH_ARMED=1"));
   assert.ok(change.indexOf("CURRENT_SWITCH_ARMED=1") < change.indexOf("mv -T"));
+  const preMove = change.slice(
+    change.indexOf("CURRENT_SWITCH_ARMED=1"),
+    change.indexOf("mv -T"),
+  );
+  for (const required of [
+    "revalidate_incident_release_pair",
+    "revalidate_deploy_lock",
+    "candidate_pm2_state web",
+    "candidate_pm2_state worker",
+    "port_is_free",
+    "verify_database_fence_clear",
+    "current_link_is_exact",
+    "CURRENT_LINK_IDENTITY",
+    "FROZEN_CURRENT_LINK_IDENTITY",
+  ]) assert.ok(preMove.includes(required), `pre-mv revalidation missing ${required}`);
+  assert.match(preMove, /readlink -- "\$SWITCH_TEMP_LINK"/);
+  assert.match(preMove, /readlink -f -- "\$SWITCH_TEMP_LINK"/);
   assert.match(change, /mv -T -- "\$SWITCH_TEMP_LINK" "\$CURRENT_LINK"/);
   assert.match(change, /CURRENT_SWITCH_COMPLETED=1/);
-  assert.match(change, /release_identity "\$CANDIDATE_RUNTIME_DIR".*EXPECTED_CANDIDATE_BUILD_ID/s);
+  assert.match(change, /revalidate_incident_release_pair/);
+  const releasePair = between("revalidate_incident_release_pair()", "revalidate_incident_runtimes()");
+  assert.match(releasePair, /release_structure_identity "\$CANDIDATE_RUNTIME_DIR" "\$EXPECTED_CANDIDATE_BUILD_ID"/);
+  assert.match(releasePair, /release_structure_identity "\$FROZEN_RUNTIME_DIR" "\$EXPECTED_OLD_BUILD_ID"/);
+  assert.match(releasePair, /find_unique_release "\$\{EXPECTED_CANDIDATE_BUILD_ID:0:12\}"/);
+  assert.match(releasePair, /find_unique_release "\$\{EXPECTED_OLD_BUILD_ID:0:12\}"/);
+  assert.match(releasePair, /next_build_identity "\$CANDIDATE_RUNTIME_DIR"/);
+  assert.match(releasePair, /next_build_identity "\$FROZEN_RUNTIME_DIR"/);
+  const structure = between("trusted_directory_identity()", "environment_build_binding_snapshot()");
+  assert.match(structure, /trusted_directory_identity "\$runtime_dir"/);
+  assert.match(structure, /trusted_directory_identity "\$runtime_dir\/\.next"/);
+  assert.match(structure, /trusted_directory_identity "\$runtime_dir\/node_modules"/);
+  assert.match(structure, /trusted_symlink_identity "\$runtime_dir\/\.runtime"/);
   assert.doesNotMatch(source, /rm\s+[^\n]*CANDIDATE_RUNTIME_DIR/);
   assert.doesNotMatch(source, /unlink\s+[^\n]*CANDIDATE_RUNTIME_DIR/);
 });

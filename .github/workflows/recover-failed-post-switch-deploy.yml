@@ -44,11 +44,11 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32598424716"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32602232601"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: 7478fb9d1d65463639eeecd09b17efd80df2d64a
-      PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Pre-Forward Production Runtime
-      PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-pre-forward-deploy.yml
+      PRIOR_FAILED_RECOVERY_SHA: 760318e0e8a3996e66892a28fa01ade5de5ecf2a
+      PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
+      PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
       INCIDENT_OLD_BUILD_ID: 2a121454a18a16ae30e356977ca82b24a310e8e5
       SSH_ALIAS: faolla-incident-recovery
@@ -404,7 +404,7 @@ jobs:
             [2, "Validate Unique Manual Recovery Chain", "success"],
             [3, "Checkout Exact Recovery Source", "success"],
             [4, "Verify Exact Current Main Checkout", "success"],
-            [5, "Validate Failed Deploy And Readiness Boundary", "success"],
+            [5, "Validate Incident Deploy Readiness And Failed Recovery Boundary", "success"],
             [6, "Resolve Exact Readiness Artifact Inventory", "success"],
             [7, "Verify Canonical Historical Readiness Evidence", "success"],
             [8, "Setup Pinned SSH Recovery Alias", "success"],
@@ -1010,10 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
             values.READINESS_RUN_ID !== "32596977165" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32598424716" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32602232601" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "7478fb9d1d65463639eeecd09b17efd80df2d64a" ||
+              "760318e0e8a3996e66892a28fa01ade5de5ecf2a" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -1096,8 +1096,15 @@ jobs:
             ["recovery_failed_pre_runtime_repository", "remote_recovery_failed_phase_pre_runtime_repository", 0],
             ["recovery_failed_pre_runtime_deploy_lock", "remote_recovery_failed_phase_pre_runtime_deploy_lock", 0],
             ["recovery_failed_pre_runtime_helpers", "remote_recovery_failed_phase_pre_runtime_helpers", 0],
-            ["recovery_failed_pre_runtime_candidate_release", "remote_recovery_failed_phase_pre_runtime_candidate_release", 0],
-            ["recovery_failed_pre_runtime_frozen_release", "remote_recovery_failed_phase_pre_runtime_frozen_release", 0],
+            ["recovery_failed_pre_runtime_candidate_inventory", "remote_recovery_failed_phase_pre_runtime_candidate_inventory", 0],
+            ["recovery_failed_pre_runtime_frozen_inventory", "remote_recovery_failed_phase_pre_runtime_frozen_inventory", 0],
+            ["recovery_failed_pre_runtime_candidate_current_link", "remote_recovery_failed_phase_pre_runtime_candidate_current_link", 0],
+            ["recovery_failed_pre_runtime_candidate_structure", "remote_recovery_failed_phase_pre_runtime_candidate_structure", 0],
+            ["recovery_failed_pre_runtime_candidate_env_build_binding", "remote_recovery_failed_phase_pre_runtime_candidate_env_build_binding", 0],
+            ["recovery_failed_pre_runtime_candidate_next_build_identity", "remote_recovery_failed_phase_pre_runtime_candidate_next_build_identity", 0],
+            ["recovery_failed_pre_runtime_frozen_structure", "remote_recovery_failed_phase_pre_runtime_frozen_structure", 0],
+            ["recovery_failed_pre_runtime_frozen_env_build_binding", "remote_recovery_failed_phase_pre_runtime_frozen_env_build_binding", 0],
+            ["recovery_failed_pre_runtime_frozen_next_build_identity", "remote_recovery_failed_phase_pre_runtime_frozen_next_build_identity", 0],
             ["recovery_failed_pre_runtime_frozen_environment", "remote_recovery_failed_phase_pre_runtime_frozen_environment", 0],
             ["recovery_failed_pre_runtime_database_preflight", "remote_recovery_failed_phase_pre_runtime_database_preflight", 0],
             ["recovery_failed_runtime_fence_cleanup", "remote_recovery_failed_phase_fence_cleanup", 0],
@@ -1159,8 +1166,15 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_repository|\
               remote_recovery_failed_phase_pre_runtime_deploy_lock|\
               remote_recovery_failed_phase_pre_runtime_helpers|\
-              remote_recovery_failed_phase_pre_runtime_candidate_release|\
-              remote_recovery_failed_phase_pre_runtime_frozen_release|\
+              remote_recovery_failed_phase_pre_runtime_candidate_inventory|\
+              remote_recovery_failed_phase_pre_runtime_frozen_inventory|\
+              remote_recovery_failed_phase_pre_runtime_candidate_current_link|\
+              remote_recovery_failed_phase_pre_runtime_candidate_structure|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_build_binding|\
+              remote_recovery_failed_phase_pre_runtime_candidate_next_build_identity|\
+              remote_recovery_failed_phase_pre_runtime_frozen_structure|\
+              remote_recovery_failed_phase_pre_runtime_frozen_env_build_binding|\
+              remote_recovery_failed_phase_pre_runtime_frozen_next_build_identity|\
               remote_recovery_failed_phase_pre_runtime_frozen_environment|\
               remote_recovery_failed_phase_pre_runtime_database_preflight|\
               remote_recovery_failed_phase_fence_cleanup|\
