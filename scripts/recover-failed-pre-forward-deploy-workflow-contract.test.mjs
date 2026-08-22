@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -602,6 +603,10 @@ test("SSH uses one pinned alias and keeps the bounded remote result hidden", () 
       "frozen_runtime_restored",
       "worker_state_restored",
       "recovery_complete",
+      "remote_recovery_failed_phase_pre_runtime",
+      "remote_recovery_failed_phase_web_restore",
+      "remote_recovery_failed_phase_worker_restore",
+      "remote_recovery_failed_phase_persist_and_verify",
       "recovery_output_invalid",
     ],
     "fixed remote result parser",
@@ -609,6 +614,10 @@ test("SSH uses one pinned alias and keeps the bounded remote result hidden", () 
   assert.doesNotMatch(recover.run, /\btee\b/);
   assert.doesNotMatch(recover.run, /(?:cat|head|tail)\s+"?\$RECOVERY_STD(?:OUT|ERR)_PATH/);
   assert.doesNotMatch(recover.run, /set\s+-[A-Za-z]*x[A-Za-z]*(?:\s|;|$)/);
+  assert.doesNotMatch(
+    recover.run,
+    /process\.stdout\.write\("remote_recovery_failed"\)/,
+  );
 
   const finalGate = stepContaining(job, "final-recovery-workflow-runs.json");
   assert.match(
@@ -620,6 +629,102 @@ test("SSH uses one pinned alias and keeps the bounded remote result hidden", () 
     finalGate.run,
     /recoveryRun\?\.id\s*!==\s*Number\(process\.env\.GITHUB_RUN_ID\)/,
   );
+});
+
+test("remote recovery result classifier exposes only fixed safe failure phases", async () => {
+  const recover = stepMatching(
+    job,
+    (step) => typeof step?.run === "string" &&
+      step.run.includes("const expectedLines") &&
+      step.run.includes("recovery_output_invalid"),
+    "remote recovery result classifier",
+  );
+  const classifiers = extractHeredocs(recover.run, "NODE").filter(
+    (source) => source.includes("const expectedLines") &&
+      source.includes("failurePrefixCodes"),
+  );
+  assert.equal(classifiers.length, 1);
+  const classifier = classifiers[0];
+  const directory = await mkdtemp(join(tmpdir(), "faolla-recovery-classifier-"));
+  const stdoutPath = join(directory, "stdout.bin");
+  const stderrPath = join(directory, "stderr.bin");
+  const markers = [
+    "fence_cleanup_verified",
+    "frozen_runtime_restored",
+    "worker_state_restored",
+    "recovery_complete",
+  ];
+  const phaseCodes = [
+    "remote_recovery_failed_phase_pre_runtime",
+    "remote_recovery_failed_phase_web_restore",
+    "remote_recovery_failed_phase_worker_restore",
+    "remote_recovery_failed_phase_persist_and_verify",
+  ];
+  const transcript = (length) =>
+    length === 0 ? "" : markers.slice(0, length).join("\n") + "\n";
+  const classify = async (stdout, stderr, status) => {
+    await Promise.all([
+      writeFile(stdoutPath, Buffer.from(stdout, "utf8")),
+      writeFile(stderrPath, Buffer.from(stderr, "utf8")),
+    ]);
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-",
+        stdoutPath,
+        stderrPath,
+        String(status),
+      ],
+      { encoding: "utf8", input: classifier },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    return result.stdout;
+  };
+
+  try {
+    assert.equal(await classify(transcript(4), "", 0), "success");
+    for (const status of [1, 124, 255]) {
+      for (let length = 0; length < 4; length += 1) {
+        assert.equal(
+          await classify(transcript(length), "recovery_failed\n", status),
+          phaseCodes[length],
+          "recovery failure phase " + length + " at status " + status,
+        );
+        assert.equal(
+          await classify(transcript(length), "cleanup_unverified\n", status),
+          "remote_cleanup_unverified",
+          "cleanup classification at phase " + length + " and status " + status,
+        );
+      }
+    }
+
+    const canary = "PRIVATE_RECOVERY_CANARY";
+    const invalidCases = [
+      [transcript(4), "recovery_failed\n", 1],
+      [transcript(4), "cleanup_unverified\n", 1],
+      [transcript(3) + canary, "recovery_failed\n", 1],
+      [markers[1] + "\n", "recovery_failed\n", 1],
+      [markers[0], "recovery_failed\n", 1],
+      [transcript(1), "recovery_failed\n" + canary, 1],
+      [transcript(1), "cleanup_unverified\n\n", 1],
+      [transcript(1), "", 1],
+      ["", "", 1],
+      [transcript(3), "", 0],
+      [transcript(4), "recovery_failed\n", 0],
+      [transcript(4), "", -1],
+      [transcript(4), "", 256],
+      [transcript(4), "", "not-a-status"],
+    ];
+    for (const [stdout, stderr, status] of invalidCases) {
+      const classification = await classify(stdout, stderr, status);
+      assert.equal(classification, "recovery_output_invalid");
+      assert.equal(classification.includes(canary), false);
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
 });
 
 test("public verification expects the frozen build on every required route", () => {

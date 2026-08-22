@@ -993,14 +993,25 @@ jobs:
             "recovery_complete",
           ];
           const expected = Buffer.from(`${expectedLines.join("\n")}\n`, "utf8");
-          const allowedPrefixes = new Set(
-            Array.from({ length: expectedLines.length + 1 }, (_, length) =>
+          const failurePhaseCodes = [
+            "remote_recovery_failed_phase_pre_runtime",
+            "remote_recovery_failed_phase_web_restore",
+            "remote_recovery_failed_phase_worker_restore",
+            "remote_recovery_failed_phase_persist_and_verify",
+          ];
+          const failurePrefixCodes = new Map(
+            failurePhaseCodes.map((code, length) => [
               Buffer.from(
                 length === 0 ? "" : `${expectedLines.slice(0, length).join("\n")}\n`,
                 "utf8",
               ).toString("base64"),
-            ),
+              code,
+            ]),
           );
+          if (!Number.isSafeInteger(status) || status < 0 || status > 255) {
+            process.stdout.write("recovery_output_invalid");
+            process.exit(0);
+          }
           if (status === 0) {
             if (!stdout.equals(expected) || stderr.length !== 0) {
               process.stdout.write("recovery_output_invalid");
@@ -1009,12 +1020,13 @@ jobs:
             }
             process.exit(0);
           }
-          if (!allowedPrefixes.has(stdout.toString("base64"))) {
+          const failurePhaseCode = failurePrefixCodes.get(stdout.toString("base64"));
+          if (!failurePhaseCode) {
             process.stdout.write("recovery_output_invalid");
           } else if (stderr.equals(Buffer.from("cleanup_unverified\n", "utf8"))) {
             process.stdout.write("remote_cleanup_unverified");
           } else if (stderr.equals(Buffer.from("recovery_failed\n", "utf8"))) {
-            process.stdout.write("remote_recovery_failed");
+            process.stdout.write(failurePhaseCode);
           } else {
             process.stdout.write("recovery_output_invalid");
           }
@@ -1022,7 +1034,12 @@ jobs:
           )"
           if [ "$classification" != "success" ]; then
             case "$classification" in
-              remote_cleanup_unverified|remote_recovery_failed|recovery_output_invalid)
+              remote_cleanup_unverified|\
+              remote_recovery_failed_phase_pre_runtime|\
+              remote_recovery_failed_phase_web_restore|\
+              remote_recovery_failed_phase_worker_restore|\
+              remote_recovery_failed_phase_persist_and_verify|\
+              recovery_output_invalid)
                 printf '%s\n' "$classification"
                 ;;
               *) printf '%s\n' 'recovery_output_invalid' ;;
