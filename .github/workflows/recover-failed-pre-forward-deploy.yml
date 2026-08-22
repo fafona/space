@@ -46,7 +46,6 @@ jobs:
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
       INCIDENT_OLD_BUILD_ID: 2a121454a18a16ae30e356977ca82b24a310e8e5
       SSH_ALIAS: faolla-incident-recovery
-      SSH_CONFIG_PATH: ${{ runner.temp }}/faolla-incident-recovery-ssh-config
 
     steps:
       - name: Validate Unique Manual Recovery Chain
@@ -729,6 +728,7 @@ jobs:
 
       - name: Setup Pinned SSH Recovery Alias
         env:
+          SSH_CONFIG_PATH: ${{ runner.temp }}/faolla-incident-recovery-ssh-config
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -853,6 +853,7 @@ jobs:
 
       - name: Recover Frozen Production Runtime
         env:
+          SSH_CONFIG_PATH: ${{ runner.temp }}/faolla-incident-recovery-ssh-config
           APP_DIR: ${{ secrets.APP_DIR }}
           APP_NAME: ${{ secrets.APP_NAME }}
           APP_PORT: ${{ secrets.APP_PORT }}
