@@ -9,6 +9,11 @@ umask 077
 DEPLOY_PAYLOAD_FILE="${FAOLLA_DEPLOY_PAYLOAD_FILE:-}"
 DEPLOY_ATTESTATION_FILE=""
 DEPLOY_RELEASE_BINDING_FILE=""
+# This is the one production build known to predate exporting the validated
+# Supabase values into the PM2 process environment. The exception is immutable,
+# exact, and self-extinguishing after the first successful atomic replacement.
+LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
+readonly LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID
 DEPLOY_PAYLOAD_KEYS=(
   APP_DIR
   APP_NAME
@@ -1128,6 +1133,30 @@ if ! PREVIOUS_BUILD_ID="$(
   echo "[deploy] an exact previous atomic release is required before environment mutation"
   exit 1
 fi
+
+linux_process_start_ticks() {
+  local process_pid="$1"
+  if ! [[ "$process_pid" =~ ^[1-9][0-9]*$ ]]; then return 1; fi
+  timeout --signal=TERM --kill-after=1s 2s \
+    node --input-type=module - "$process_pid" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const pid = process.argv[2];
+let rawStat;
+try {
+  rawStat = readFileSync(`/proc/${pid}/stat`, "utf8");
+} catch (error) {
+  process.exit(error?.code === "ENOENT" ? 2 : 1);
+}
+
+const close = rawStat.lastIndexOf(")");
+const fields = close >= 0 ? rawStat.slice(close + 2).trim().split(/\s+/) : [];
+const startTicks = fields[19];
+if (!/^[1-9][0-9]*$/.test(startTicks ?? "") || fields[0] === "Z") process.exit(1);
+process.stdout.write(startTicks);
+NODE
+}
+
 PREVIOUS_SUPABASE_INTERNAL_URL=""
 PREVIOUS_NEXT_PUBLIC_SUPABASE_URL=""
 PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY=""
@@ -1139,93 +1168,50 @@ PREVIOUS_ENVIRONMENT_CAPTURE=""
 PREVIOUS_ENVIRONMENT_PARTS=()
 if ! PREVIOUS_ENVIRONMENT_CAPTURE="$(
   timeout --signal=TERM --kill-after=1s 5s \
-    node --input-type=module - "$PREVIOUS_WEB_PID" "$PREVIOUS_RUNTIME_DIR" <<'NODE'
-import { readFileSync, readlinkSync, realpathSync } from "node:fs";
-
-const pid = process.argv[2];
-const expectedRuntime = realpathSync(process.argv[3]);
-if (!/^[1-9][0-9]*$/.test(pid ?? "")) process.exit(1);
-const readIdentity = () => {
-  const rawStat = readFileSync(`/proc/${pid}/stat`, "utf8");
-  const close = rawStat.lastIndexOf(")");
-  const fields = close >= 0 ? rawStat.slice(close + 2).trim().split(/\s+/) : [];
-  const startTicks = fields[19];
-  const cwd = realpathSync(readlinkSync(`/proc/${pid}/cwd`));
-  if (!/^[1-9][0-9]*$/.test(startTicks ?? "") || fields[0] === "Z" || cwd !== expectedRuntime) {
-    process.exit(1);
-  }
-  return { cwd, startTicks };
-};
-let before;
-let after;
-let environmentBytes;
-try {
-  before = readIdentity();
-  environmentBytes = readFileSync(`/proc/${pid}/environ`);
-  after = readIdentity();
-} catch {
-  process.exit(1);
-}
-if (
-  before.cwd !== after.cwd || before.startTicks !== after.startTicks ||
-  environmentBytes.length === 0 || environmentBytes.length > 1024 * 1024
-) process.exit(1);
-let environmentText;
-try {
-  environmentText = new TextDecoder("utf-8", { fatal: true }).decode(environmentBytes);
-} catch {
-  process.exit(1);
-}
-const entries = environmentText.split("\0").filter((entry) => entry.length > 0);
-const keys = [
-  "SUPABASE_INTERNAL_URL",
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-];
-const values = keys.map((key) => {
-  const prefix = `${key}=`;
-  const matches = entries.filter((entry) => entry.startsWith(prefix));
-  if (matches.length !== 1) process.exit(1);
-  const value = matches[0].slice(prefix.length);
-  if (value.length === 0 || value.length > 16_384 || /[\r\n\0]/.test(value)) process.exit(1);
-  return Buffer.from(value, "utf8").toString("base64");
-});
-process.stdout.write([before.startTicks, ...values].join("\n"));
-NODE
+    node scripts/read-production-supabase-environment.mjs process-snapshot \
+      "$PREVIOUS_WEB_PID" "$PREVIOUS_RUNTIME_DIR" 2>/dev/null
 )"; then
   echo "[deploy] the previous atomic release process environment is unavailable"
   exit 1
 fi
 mapfile -t PREVIOUS_ENVIRONMENT_PARTS <<< "$PREVIOUS_ENVIRONMENT_CAPTURE"
 unset PREVIOUS_ENVIRONMENT_CAPTURE
-if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -ne 4 ] \
-  || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[0]}" =~ ^[1-9][0-9]*$ ]] \
-  || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[1]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
-  || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[2]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
-  || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
-  echo "[deploy] the previous atomic release process environment is unavailable"
-  exit 1
-fi
-PREVIOUS_WEB_PROCESS_START_TICKS="${PREVIOUS_ENVIRONMENT_PARTS[0]}"
-if ! PREVIOUS_SUPABASE_INTERNAL_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_PARTS[1]}" | base64 -d)" \
-  || ! PREVIOUS_NEXT_PUBLIC_SUPABASE_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_PARTS[2]}" | base64 -d)" \
-  || ! PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(printf '%s' "${PREVIOUS_ENVIRONMENT_PARTS[3]}" | base64 -d)" \
-  || [ -z "$PREVIOUS_SUPABASE_INTERNAL_URL" ] \
-  || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL" ] \
-  || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY" ] \
-  || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
-  || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
-  || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
-  || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
-  echo "[deploy] the previous atomic release process environment is unavailable"
-  exit 1
-fi
+PREVIOUS_PROCESS_ENVIRONMENT_STATUS="${PREVIOUS_ENVIRONMENT_PARTS[0]:-}"
+case "$PREVIOUS_PROCESS_ENVIRONMENT_STATUS" in
+  present)
+    if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -ne 5 ] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[1]}" =~ ^[1-9][0-9]*$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[2]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+      echo "[deploy] the previous atomic release process environment is unavailable"
+      exit 1
+    fi
+    PREVIOUS_WEB_PROCESS_START_TICKS="${PREVIOUS_ENVIRONMENT_PARTS[1]}"
+    PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64="${PREVIOUS_ENVIRONMENT_PARTS[2]}"
+    PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64="${PREVIOUS_ENVIRONMENT_PARTS[3]}"
+    PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${PREVIOUS_ENVIRONMENT_PARTS[4]}"
+    ;;
+  absent)
+    if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -ne 2 ] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[1]}" =~ ^[1-9][0-9]*$ ]] \
+      || [ "$PREVIOUS_BUILD_ID" != "$LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID" ]; then
+      echo "[deploy] the previous atomic release process environment is unavailable"
+      exit 1
+    fi
+    PREVIOUS_WEB_PROCESS_START_TICKS="${PREVIOUS_ENVIRONMENT_PARTS[1]}"
+    ;;
+  *)
+    echo "[deploy] the previous atomic release process environment is unavailable"
+    exit 1
+    ;;
+esac
 unset PREVIOUS_ENVIRONMENT_PARTS
 PREVIOUS_ENVIRONMENT_SNAPSHOT=""
 PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS=()
 if ! PREVIOUS_ENVIRONMENT_SNAPSHOT="$(
   timeout --signal=TERM --kill-after=1s 5s \
-    node scripts/read-production-supabase-environment.mjs snapshot \
+    node scripts/read-production-supabase-environment.mjs rollback-snapshot \
       "$PREVIOUS_RUNTIME_DIR/.env.local" "$PREVIOUS_BUILD_ID" 2>/dev/null
 )"; then
   echo "[deploy] the previous atomic release environment identity is unavailable"
@@ -1233,10 +1219,13 @@ if ! PREVIOUS_ENVIRONMENT_SNAPSHOT="$(
 fi
 mapfile -t PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS <<< "$PREVIOUS_ENVIRONMENT_SNAPSHOT"
 unset PREVIOUS_ENVIRONMENT_SNAPSHOT
-if [ "${#PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[@]}" -ne 3 ] \
+if [ "${#PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[@]}" -ne 6 ] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[2]}" =~ ^[0-9a-f]{64}$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[5]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
   || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
   || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
   || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
@@ -1247,7 +1236,49 @@ fi
 PREVIOUS_ENVIRONMENT_DIRECTORY_IDENTITY="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[0]}"
 PREVIOUS_ENVIRONMENT_FILE_IDENTITY="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[1]}"
 PREVIOUS_ENVIRONMENT_SHA256="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[2]}"
+if ! PREVIOUS_SUPABASE_INTERNAL_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[3]}" | base64 -d)" \
+  || ! PREVIOUS_NEXT_PUBLIC_SUPABASE_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[4]}" | base64 -d)" \
+  || ! PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[5]}" | base64 -d)" \
+  || [ -z "$PREVIOUS_SUPABASE_INTERNAL_URL" ] \
+  || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL" ] \
+  || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+  echo "[deploy] the previous atomic release environment identity is unavailable"
+  exit 1
+fi
 unset PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS
+if [ "$PREVIOUS_PROCESS_ENVIRONMENT_STATUS" = "present" ]; then
+  if ! PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL="$(printf '%s' "$PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64" | base64 -d)" \
+    || ! PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL="$(printf '%s' "$PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64" | base64 -d)" \
+    || ! PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(printf '%s' "$PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" | base64 -d)" \
+    || [ "$PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL" != "$PREVIOUS_SUPABASE_INTERNAL_URL" ] \
+    || [ "$PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL" != "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL" ] \
+    || [ "$PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY" != "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+    echo "[deploy] the previous atomic release process environment is unavailable"
+    exit 1
+  fi
+fi
+unset PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64 \
+  PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64 \
+  PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 \
+  PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL \
+  PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL \
+  PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY
+CURRENT_PREVIOUS_WEB_PID=""
+CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS=""
+if ! CURRENT_PREVIOUS_WEB_PID="$(timeout --signal=TERM --kill-after=1s 2s \
+    pm2 pid "$APP_NAME" 2>/dev/null | tail -n 1 | tr -d '[:space:]')" \
+  || [ "$CURRENT_PREVIOUS_WEB_PID" != "$PREVIOUS_WEB_PID" ] \
+  || ! CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS="$(linux_process_start_ticks "$PREVIOUS_WEB_PID")" \
+  || [ "$CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS" != "$PREVIOUS_WEB_PROCESS_START_TICKS" ] \
+  || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+  || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+  || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
+  || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
+  echo "[deploy] the previous atomic release process environment is unavailable"
+  exit 1
+fi
+unset CURRENT_PREVIOUS_WEB_PID CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS \
+  PREVIOUS_PROCESS_ENVIRONMENT_STATUS
 unset PREVIOUS_RUNTIME_PARENT PREVIOUS_RELEASE_NAME PREVIOUS_BUILD_PREFIX
 
 FAOLLA_WEB_BUILD_ID="$EXPECTED_DEPLOY_SHA"
@@ -1904,29 +1935,6 @@ pm2_process_state() {
     running:[1-9][0-9]*) printf 'running\n' ;;
     *) return 1 ;;
   esac
-}
-
-linux_process_start_ticks() {
-  local process_pid="$1"
-  if ! [[ "$process_pid" =~ ^[1-9][0-9]*$ ]]; then return 1; fi
-  timeout --signal=TERM --kill-after=1s 2s \
-    node --input-type=module - "$process_pid" <<'NODE'
-import { readFileSync } from "node:fs";
-
-const pid = process.argv[2];
-let rawStat;
-try {
-  rawStat = readFileSync(`/proc/${pid}/stat`, "utf8");
-} catch (error) {
-  process.exit(error?.code === "ENOENT" ? 2 : 1);
-}
-
-const close = rawStat.lastIndexOf(")");
-const fields = close >= 0 ? rawStat.slice(close + 2).trim().split(/\s+/) : [];
-const startTicks = fields[19];
-if (!/^[1-9][0-9]*$/.test(startTicks ?? "") || fields[0] === "Z") process.exit(1);
-process.stdout.write(startTicks);
-NODE
 }
 
 previous_web_process_identity_matches() {

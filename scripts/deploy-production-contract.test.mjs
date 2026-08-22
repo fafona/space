@@ -1501,7 +1501,7 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
-  assert.equal(deployNodeSources.length, 13);
+  assert.equal(deployNodeSources.length, 12);
   for (const [index, source] of deployNodeSources.entries()) {
     const result = spawnSync(
       process.execPath,
@@ -2430,9 +2430,25 @@ test("previous release identity is independently prefix-bound and rechecked arou
   assert.match(identity, /stat -Lc '%d:%i:%Z' -- "\$PREVIOUS_RUNTIME_DIR"/);
   assert.match(identity, /stat -Lc '%d:%i:%Z' -- "\/proc\/\$PREVIOUS_WEB_PID\/cwd"/);
   assert.match(identity, /PREVIOUS_WEB_CWD_IDENTITY" != "\$PREVIOUS_RUNTIME_IDENTITY"/);
-  assert.match(identity, /readFileSync\(`\/proc\/\$\{pid\}\/environ`\)/);
+  assert.match(
+    identity,
+    /read-production-supabase-environment\.mjs process-snapshot/,
+  );
+  assert.match(
+    identity,
+    /read-production-supabase-environment\.mjs rollback-snapshot/,
+  );
   assert.match(identity, /PREVIOUS_WEB_PROCESS_START_TICKS/);
   assert.match(identity, /SUPABASE_INTERNAL_URL[\s\S]+NEXT_PUBLIC_SUPABASE_URL[\s\S]+NEXT_PUBLIC_SUPABASE_ANON_KEY/);
+  assert.match(
+    identity,
+    /PREVIOUS_BUILD_ID" != "\$LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID/,
+  );
+  assert.match(identity, /CURRENT_PREVIOUS_WEB_PID" != "\$PREVIOUS_WEB_PID/);
+  assert.match(
+    identity,
+    /CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS" != "\$PREVIOUS_WEB_PROCESS_START_TICKS/,
+  );
   assert.ok(
     identity.match(/readlink -f "\$CURRENT_LINK"/g)?.length >= 2,
     "current release link must be checked before and after the frozen build read",
@@ -2440,6 +2456,153 @@ test("previous release identity is independently prefix-bound and rechecked arou
   const captureIndex = deployScript.indexOf('PREVIOUS_ENVIRONMENT_CAPTURE="$(');
   const finalExportIndex = deployScript.indexOf('export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"');
   assert.ok(captureIndex >= 0 && captureIndex < finalExportIndex);
+});
+
+test("missing process environment compatibility is exact-build-only and reconciles frozen values", () => {
+  const legacyBuild = "2a121454a18a16ae30e356977ca82b24a310e8e5";
+  assert.match(
+    deployScript,
+    new RegExp(
+      `LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID="${legacyBuild}"[\\s\\S]+` +
+        "readonly LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID",
+    ),
+  );
+  const gate = extractShellRegion(
+    'PREVIOUS_PROCESS_ENVIRONMENT_STATUS="${PREVIOUS_ENVIRONMENT_PARTS[0]:-}"',
+    "unset PREVIOUS_ENVIRONMENT_PARTS",
+  );
+  const presentValues = ["old-internal", "old-public", "old-anon"];
+  const presentFrame = [
+    "present",
+    "4242",
+    ...presentValues.map((value) => Buffer.from(value).toString("base64")),
+  ];
+  const fixtures = [
+    {
+      name: "known legacy build with all values absent",
+      build: legacyBuild,
+      frame: ["absent", "4242"],
+      expectedStatus: 0,
+    },
+    {
+      name: "modern build with all values absent",
+      build: "b".repeat(40),
+      frame: ["absent", "4242"],
+      expectedStatus: 1,
+    },
+    {
+      name: "unknown old build with all values absent",
+      build: "c".repeat(40),
+      frame: ["absent", "4242"],
+      expectedStatus: 1,
+    },
+    {
+      name: "malformed absent frame",
+      build: legacyBuild,
+      frame: ["absent", "4242", "unexpected"],
+      expectedStatus: 1,
+    },
+    {
+      name: "absent frame with invalid start ticks",
+      build: legacyBuild,
+      frame: ["absent", "0"],
+      expectedStatus: 1,
+    },
+    {
+      name: "present frame with invalid base64",
+      build: "b".repeat(40),
+      frame: ["present", "4242", "not_base64", presentFrame[3], presentFrame[4]],
+      expectedStatus: 1,
+    },
+    {
+      name: "present frame with missing field",
+      build: "b".repeat(40),
+      frame: presentFrame.slice(0, 4),
+      expectedStatus: 1,
+    },
+    {
+      name: "complete process environment on a modern build",
+      build: "b".repeat(40),
+      frame: presentFrame,
+      expectedStatus: 0,
+    },
+  ];
+  for (const fixture of fixtures) {
+    const array = fixture.frame.map((value) => `'${value}'`).join(" ");
+    const script = [
+      "set -euo pipefail",
+      `LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID='${legacyBuild}'`,
+      `PREVIOUS_BUILD_ID='${fixture.build}'`,
+      `PREVIOUS_ENVIRONMENT_PARTS=(${array})`,
+      gate,
+      "printf 'accepted\\n'",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(
+      result.status,
+      fixture.expectedStatus,
+      `${fixture.name}\n${result.stdout}\n${result.stderr}`,
+    );
+    assert.equal(result.stderr, "", fixture.name);
+    for (const value of presentValues) {
+      assert.equal(`${result.stdout}${result.stderr}`.includes(value), false);
+    }
+  }
+
+  const reconciliation = extractShellRegion(
+    'if [ "$PREVIOUS_PROCESS_ENVIRONMENT_STATUS" = "present" ]; then',
+    "\nunset PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64",
+  );
+  for (const fixture of [
+    { name: "all values match", values: presentValues, expectedStatus: 0 },
+    {
+      name: "internal mismatch",
+      values: ["different-internal", presentValues[1], presentValues[2]],
+      expectedStatus: 1,
+    },
+    {
+      name: "public mismatch",
+      values: [presentValues[0], "different-public", presentValues[2]],
+      expectedStatus: 1,
+    },
+    {
+      name: "anon mismatch",
+      values: [presentValues[0], presentValues[1], "different-anon"],
+      expectedStatus: 1,
+    },
+  ]) {
+    const encoded = fixture.values.map((value) => Buffer.from(value).toString("base64"));
+    const script = [
+      "set -euo pipefail",
+      "PREVIOUS_PROCESS_ENVIRONMENT_STATUS=present",
+      `PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64='${encoded[0]}'`,
+      `PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64='${encoded[1]}'`,
+      `PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='${encoded[2]}'`,
+      `PREVIOUS_SUPABASE_INTERNAL_URL='${presentValues[0]}'`,
+      `PREVIOUS_NEXT_PUBLIC_SUPABASE_URL='${presentValues[1]}'`,
+      `PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY='${presentValues[2]}'`,
+      reconciliation,
+      "printf 'accepted\\n'",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(
+      result.status,
+      fixture.expectedStatus,
+      `${fixture.name}\n${result.stdout}\n${result.stderr}`,
+    );
+    assert.equal(result.stderr, "", fixture.name);
+    for (const value of [...presentValues, ...fixture.values]) {
+      assert.equal(`${result.stdout}${result.stderr}`.includes(value), false);
+    }
+  }
 });
 
 test("rollback process launch receives the frozen previous Supabase environment", () => {

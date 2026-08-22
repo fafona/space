@@ -14,14 +14,18 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  captureStableProductionProcessSupabaseEnvironment,
+  parseProductionProcessSupabaseEnvironment,
   readFrozenProductionSupabaseEnvironment,
   readFrozenProductionSupabaseEnvironmentSnapshot,
+  readFrozenProductionSupabaseRollbackEnvironmentSnapshot,
 } from "./read-production-supabase-environment.mjs";
 
 const helperPath = fileURLToPath(
   new URL("./read-production-supabase-environment.mjs", import.meta.url),
 );
 const buildId = "a".repeat(40);
+const internalUrl = "http://127.0.0.1:8000";
 const publicUrl = "https://contract.supabase.co";
 const anonKey = "contract_anon.key-safe_value~2026";
 
@@ -29,10 +33,12 @@ const environmentBytes = ({
   build = buildId,
   url = publicUrl,
   key = anonKey,
+  internal = internalUrl,
   prefix = "",
   suffix = "",
 } = {}) => Buffer.from(
   `${prefix}FAOLLA_WEB_BUILD_ID=${build}\n` +
+    `SUPABASE_INTERNAL_URL=${internal}\n` +
     `NEXT_PUBLIC_SUPABASE_URL=${url}\n` +
     `NEXT_PUBLIC_SUPABASE_ANON_KEY=${key}\n${suffix}`,
   "utf8",
@@ -63,6 +69,28 @@ test("reads an exact previous atomic release Supabase environment without normal
       assert.equal(
         snapshot.sha256,
         createHash("sha256").update(readFileSync(path)).digest("hex"),
+      );
+      const rollbackSnapshot =
+        readFrozenProductionSupabaseRollbackEnvironmentSnapshot(path, buildId);
+      assert.deepEqual(
+        {
+          buildId: rollbackSnapshot.buildId,
+          internalUrl: rollbackSnapshot.internalUrl,
+          publicUrl: rollbackSnapshot.publicUrl,
+          anonKey: rollbackSnapshot.anonKey,
+          directoryIdentity: rollbackSnapshot.directoryIdentity,
+          fileIdentity: rollbackSnapshot.fileIdentity,
+          sha256: rollbackSnapshot.sha256,
+        },
+        {
+          buildId,
+          internalUrl,
+          publicUrl,
+          anonKey,
+          directoryIdentity: snapshot.directoryIdentity,
+          fileIdentity: snapshot.fileIdentity,
+          sha256: snapshot.sha256,
+        },
       );
       const buildResult = spawnSync(
         process.execPath,
@@ -96,6 +124,24 @@ test("reads an exact previous atomic release Supabase environment without normal
       ]);
       assert.equal(snapshotResult.stdout.includes(publicUrl), false);
       assert.equal(snapshotResult.stdout.includes(anonKey), false);
+      const rollbackResult = spawnSync(
+        process.execPath,
+        [helperPath, "rollback-snapshot", path, buildId],
+        { encoding: "utf8" },
+      );
+      assert.equal(rollbackResult.status, 0, rollbackResult.stderr);
+      assert.equal(rollbackResult.stderr, "");
+      assert.deepEqual(rollbackResult.stdout.split("\n"), [
+        snapshot.directoryIdentity,
+        snapshot.fileIdentity,
+        snapshot.sha256,
+        Buffer.from(internalUrl).toString("base64"),
+        Buffer.from(publicUrl).toString("base64"),
+        Buffer.from(anonKey).toString("base64"),
+      ]);
+      assert.equal(rollbackResult.stdout.includes(internalUrl), false);
+      assert.equal(rollbackResult.stdout.includes(publicUrl), false);
+      assert.equal(rollbackResult.stdout.includes(anonKey), false);
     },
   );
 });
@@ -130,6 +176,178 @@ test("rejects missing, duplicate, malformed, or mismatched persisted values", as
   }
 });
 
+test("rollback snapshots require one valid internal URL from the same frozen read", async (t) => {
+  const cases = [
+    [
+      "missing internal URL",
+      Buffer.from(environmentBytes().toString("utf8").replace(
+        `SUPABASE_INTERNAL_URL=${internalUrl}\n`,
+        "",
+      )),
+    ],
+    ["duplicate internal URL", environmentBytes({
+      suffix: `SUPABASE_INTERNAL_URL=${internalUrl}\n`,
+    })],
+    ["internal credentials", environmentBytes({
+      internal: "http://user:pass@127.0.0.1:8000",
+    })],
+    ["internal query", environmentBytes({
+      internal: "http://127.0.0.1:8000?secret=value",
+    })],
+    ["internal fragment", environmentBytes({
+      internal: "http://127.0.0.1:8000#fragment",
+    })],
+    ["internal unsafe scheme", environmentBytes({ internal: "file:///tmp/database" })],
+    ["oversized internal URL", environmentBytes({
+      internal: `https://${"a".repeat(4097)}.example.com`,
+    })],
+  ];
+  for (const [name, bytes] of cases) {
+    await t.test(name, async () => {
+      await withEnvironmentFile(bytes, async ({ path }) => {
+        assert.throws(
+          () => readFrozenProductionSupabaseRollbackEnvironmentSnapshot(path, buildId),
+          /production_supabase_environment_invalid/,
+        );
+      });
+    });
+  }
+});
+
+test("process environment parser accepts only exact all-present or all-absent states", async (t) => {
+  const processBytes = (entries) => Buffer.from(`${entries.join("\0")}\0`, "utf8");
+  const exactEntries = [
+    `SUPABASE_INTERNAL_URL=${internalUrl}`,
+    `NEXT_PUBLIC_SUPABASE_URL=${publicUrl}`,
+    `NEXT_PUBLIC_SUPABASE_ANON_KEY=${anonKey}`,
+  ];
+  assert.deepEqual(
+    parseProductionProcessSupabaseEnvironment(
+      processBytes(["UNRELATED=preserved", ...exactEntries]),
+    ),
+    { status: "present", internalUrl, publicUrl, anonKey },
+  );
+  assert.deepEqual(
+    parseProductionProcessSupabaseEnvironment(processBytes(["UNRELATED=preserved"])),
+    { status: "absent" },
+  );
+
+  const rejected = [
+    ["internal only", [exactEntries[0]]],
+    ["public only", [exactEntries[1]]],
+    ["anon only", [exactEntries[2]]],
+    ["one missing", exactEntries.slice(0, 2)],
+    ["duplicate", [...exactEntries, exactEntries[2]]],
+    ["empty", [exactEntries[0], exactEntries[1], "NEXT_PUBLIC_SUPABASE_ANON_KEY="]],
+    ["assignment without equals", ["SUPABASE_INTERNAL_URL"]],
+    [
+      "malformed internal URL",
+      ["SUPABASE_INTERNAL_URL=file:///tmp/database", exactEntries[1], exactEntries[2]],
+    ],
+    [
+      "malformed public URL",
+      [exactEntries[0], "NEXT_PUBLIC_SUPABASE_URL=https://user:pass@example.com", exactEntries[2]],
+    ],
+    [
+      "malformed anon key",
+      [exactEntries[0], exactEntries[1], "NEXT_PUBLIC_SUPABASE_ANON_KEY=unsafe value"],
+    ],
+    [
+      "oversized target value",
+      [exactEntries[0], exactEntries[1], `NEXT_PUBLIC_SUPABASE_ANON_KEY=${"a".repeat(16 * 1024 + 1)}`],
+    ],
+  ];
+  for (const [name, entries] of rejected) {
+    await t.test(name, () => {
+      assert.throws(
+        () => parseProductionProcessSupabaseEnvironment(processBytes(entries)),
+        /production_supabase_environment_invalid/,
+      );
+    });
+  }
+  assert.throws(
+    () => parseProductionProcessSupabaseEnvironment(Buffer.from([0xff])),
+    /production_supabase_environment_invalid/,
+  );
+});
+
+test("process environment capture binds PID start time and runtime across the read", async (t) => {
+  const presentBytes = Buffer.from(
+    `SUPABASE_INTERNAL_URL=${internalUrl}\0` +
+      `NEXT_PUBLIC_SUPABASE_URL=${publicUrl}\0` +
+      `NEXT_PUBLIC_SUPABASE_ANON_KEY=${anonKey}\0`,
+  );
+  const stableIdentity = { cwd: "/srv/releases/exact", startTicks: "4242", state: "S" };
+  const stable = captureStableProductionProcessSupabaseEnvironment(
+    "1234",
+    "/srv/releases/exact",
+    {
+      resolveRuntime: (value) => value,
+      readIdentity: () => stableIdentity,
+      readEnvironment: () => presentBytes,
+    },
+  );
+  assert.deepEqual(stable, {
+    startTicks: "4242",
+    status: "present",
+    internalUrl,
+    publicUrl,
+    anonKey,
+  });
+  assert.deepEqual(
+    captureStableProductionProcessSupabaseEnvironment(
+      "1234",
+      "/srv/releases/exact",
+      {
+        resolveRuntime: (value) => value,
+        readIdentity: () => stableIdentity,
+        readEnvironment: () => Buffer.from("UNRELATED=value\0"),
+      },
+    ),
+    { startTicks: "4242", status: "absent" },
+  );
+
+  const rejected = [
+    {
+      name: "PID start time drift",
+      identities: [stableIdentity, { ...stableIdentity, startTicks: "4243" }],
+    },
+    {
+      name: "runtime drift",
+      identities: [stableIdentity, { ...stableIdentity, cwd: "/srv/releases/other" }],
+    },
+    {
+      name: "zombie process",
+      identities: [{ ...stableIdentity, state: "Z" }, stableIdentity],
+    },
+    {
+      name: "unreadable process environment",
+      identities: [stableIdentity],
+      unreadable: true,
+    },
+  ];
+  for (const fixture of rejected) {
+    await t.test(fixture.name, () => {
+      const identities = [...fixture.identities];
+      assert.throws(
+        () => captureStableProductionProcessSupabaseEnvironment(
+          "1234",
+          "/srv/releases/exact",
+          {
+            resolveRuntime: (value) => value,
+            readIdentity: () => identities.shift(),
+            readEnvironment: () => {
+              if (fixture.unreadable) throw new Error("secret-bearing producer failure");
+              return presentBytes;
+            },
+          },
+        ),
+        /production_supabase_environment_invalid/,
+      );
+    });
+  }
+});
+
 test("rejects path replacement between read and final identity checks", async () => {
   await withEnvironmentFile(environmentBytes(), async ({ directory, path }) => {
     const replacement = environmentBytes({
@@ -139,7 +357,7 @@ test("rejects path replacement between read and final identity checks", async ()
     const replacementPath = join(directory, "replacement.env");
     writeFileSync(replacementPath, replacement, { mode: 0o600 });
     assert.throws(
-      () => readFrozenProductionSupabaseEnvironment(path, buildId, {
+      () => readFrozenProductionSupabaseRollbackEnvironmentSnapshot(path, buildId, {
         afterRead() {
           rmSync(path);
           renameSync(replacementPath, path);
@@ -234,6 +452,21 @@ test("CLI failures and URL mismatches are silent even with hostile persisted tex
       assert.equal(result.stdout, "");
       assert.equal(result.stderr, "");
       assert.equal(`${result.stdout}${result.stderr}`.includes(hostile), false);
+      const rollbackResult = spawnSync(process.execPath, [
+        helperPath,
+        "rollback-snapshot",
+        path,
+        buildId,
+      ], {
+        encoding: "utf8",
+      });
+      assert.equal(rollbackResult.status, 1);
+      assert.equal(rollbackResult.stdout, "");
+      assert.equal(rollbackResult.stderr, "");
+      assert.equal(
+        `${rollbackResult.stdout}${rollbackResult.stderr}`.includes(hostile),
+        false,
+      );
     },
   );
 });
