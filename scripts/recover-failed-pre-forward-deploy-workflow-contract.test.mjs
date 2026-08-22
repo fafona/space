@@ -242,6 +242,32 @@ test("manual entry is main-only, incident-bound, unique, and serialized with dep
   assert.doesNotMatch(workflow, /cancel-in-progress:\s*true/);
 });
 
+test("runner-scoped SSH path is defined only on the two steps that use it", () => {
+  assert.doesNotMatch(
+    JSON.stringify(job.env ?? {}),
+    /\$\{\{\s*runner\./,
+    "job-level env cannot use the runner context",
+  );
+  assert.equal(job.env?.SSH_CONFIG_PATH, undefined);
+
+  const expectedPath = "${{ runner.temp }}/faolla-incident-recovery-ssh-config";
+  const setup = stepContaining(job, "KnownHostsCommand none");
+  const recover = stepMatching(
+    job,
+    (step) => typeof step?.run === "string" &&
+      /\bssh\b/.test(step.run) &&
+      step.run.includes("fence_cleanup_verified"),
+    "hidden recovery transport",
+  );
+  assert.equal(setup.env?.SSH_CONFIG_PATH, expectedPath);
+  assert.equal(recover.env?.SSH_CONFIG_PATH, expectedPath);
+
+  const otherDefinitions = (job.steps ?? [])
+    .filter((step) => step !== setup && step !== recover)
+    .filter((step) => step?.env?.SSH_CONFIG_PATH !== undefined);
+  assert.deepEqual(otherDefinitions, []);
+});
+
 test("checkout is the exact current main SHA with one successful push CI attempt", () => {
   const checkout = (job.steps ?? []).find((step) => step?.uses?.startsWith("actions/checkout@"));
   assert.ok(checkout, "missing exact checkout");
