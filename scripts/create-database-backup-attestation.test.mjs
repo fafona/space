@@ -214,6 +214,70 @@ test("backup attestation binds stable source, reports, and uploaded artifact", a
   }
 });
 
+test("default backup attestation issuance matches artifact API second precision", async (t) => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "faolla-backup-attestation-time-test-"),
+  );
+  try {
+    const fixture = await createEvidenceFixture(directory);
+    const subjectEvidence = await createDatabaseBackupSubjectEvidence({
+      ...fixture,
+      repository: REPOSITORY,
+      targetSha: TARGET_SHA,
+      ciRunId: "101",
+      workflowRunId: "202",
+      workflowRunAttempt: "1",
+      workflowEvent: "workflow_dispatch",
+    });
+    let nowMs = Date.parse("2026-08-20T12:00:00.001Z");
+    t.mock.method(Date, "now", () => nowMs);
+    for (const [now, expectedIssuedAt] of [
+      ["2026-08-20T12:00:00.001Z", "2026-08-20T12:00:00.000Z"],
+      ["2026-08-20T12:00:00.999Z", "2026-08-20T12:00:00.000Z"],
+      ["2026-08-20T12:00:01.000Z", "2026-08-20T12:00:01.000Z"],
+    ]) {
+      nowMs = Date.parse(now);
+      const predicate = await buildDatabaseBackupAttestationPredicate({
+        subjectEvidence,
+        backupPath: fixture.backupPath,
+        artifactId: "303",
+        artifactName: "faolla-encrypted-disaster-recovery-202-1",
+        artifactBytes: "4096",
+        artifactDigest: "d".repeat(64),
+        artifactCreatedAt: new Date(nowMs - 60_000).toISOString(),
+        artifactExpiresAt: new Date(
+          nowMs + 7 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
+      });
+      assert.equal(predicate.issuedAt, expectedIssuedAt);
+      assert.equal(
+        Date.parse(predicate.validUntil) - Date.parse(predicate.issuedAt),
+        24 * 60 * 60 * 1000,
+      );
+    }
+
+    const explicitIssuedAt = "2026-08-20T12:05:00.069Z";
+    const explicitPredicate = await buildDatabaseBackupAttestationPredicate({
+      subjectEvidence,
+      backupPath: fixture.backupPath,
+      artifactId: "303",
+      artifactName: "faolla-encrypted-disaster-recovery-202-1",
+      artifactBytes: "4096",
+      artifactDigest: "d".repeat(64),
+      artifactCreatedAt: "2026-08-20T12:04:00.000Z",
+      artifactExpiresAt: "2026-08-27T12:05:00.000Z",
+      issuedAt: explicitIssuedAt,
+    });
+    assert.equal(explicitPredicate.issuedAt, explicitIssuedAt);
+    assert.equal(
+      Date.parse(explicitPredicate.validUntil) - Date.parse(explicitIssuedAt),
+      24 * 60 * 60 * 1000,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("backup attestation rejects subject changes after upload", async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "faolla-backup-attestation-change-test-"),

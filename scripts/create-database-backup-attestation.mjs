@@ -356,7 +356,7 @@ export async function buildDatabaseBackupAttestationPredicate(input) {
 
   const issuedAt =
     input.issuedAt === undefined
-      ? new Date().toISOString()
+      ? new Date(Math.floor(Date.now() / 1000) * 1000).toISOString()
       : normalizeTimestamp(input.issuedAt, "attestation_issued_at_invalid");
   const issuedAtMs = Date.parse(issuedAt);
   const validUntil = new Date(issuedAtMs + 24 * 60 * 60 * 1000).toISOString();
