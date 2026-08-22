@@ -1976,6 +1976,9 @@ switch_current_release() {
 }
 
 validate_readiness_fence_marker() {
+  local candidate_application_name=""
+  local candidate_backend_pid=""
+  local candidate_marker_sha256=""
   local marker_key
   local marker_value
   local marker_value_count=0
@@ -1991,8 +1994,19 @@ validate_readiness_fence_marker() {
   while IFS= read -r -d '' marker_key \
     && IFS= read -r -d '' marker_value; do
     case "$marker_key" in
-      READINESS_FENCE_BACKEND_PID|READINESS_FENCE_APPLICATION_NAME|READINESS_FENCE_MARKER_SHA256)
-        printf -v "$marker_key" '%s' "$marker_value"
+      READINESS_FENCE_BACKEND_PID)
+        [ -z "$candidate_backend_pid" ] || return 1
+        candidate_backend_pid="$marker_value"
+        marker_value_count=$((marker_value_count + 1))
+        ;;
+      READINESS_FENCE_APPLICATION_NAME)
+        [ -z "$candidate_application_name" ] || return 1
+        candidate_application_name="$marker_value"
+        marker_value_count=$((marker_value_count + 1))
+        ;;
+      READINESS_FENCE_MARKER_SHA256)
+        [ -z "$candidate_marker_sha256" ] || return 1
+        candidate_marker_sha256="$marker_value"
         marker_value_count=$((marker_value_count + 1))
         ;;
       *) return 1 ;;
@@ -2177,7 +2191,15 @@ for (const [key, value] of [
 ]) process.stdout.write(`${key}\0${value}\0`);
 NODE
   )
-  [ "$marker_value_count" -eq 3 ]
+  if [ "$marker_value_count" -ne 3 ] \
+    || ! [[ "$candidate_backend_pid" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "$candidate_application_name" =~ ^faolla_readiness_fence_${READINESS_FENCE_PID}_[0-9a-f]{24}$ ]] \
+    || ! [[ "$candidate_marker_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    return 1
+  fi
+  READINESS_FENCE_BACKEND_PID="$candidate_backend_pid"
+  READINESS_FENCE_APPLICATION_NAME="$candidate_application_name"
+  READINESS_FENCE_MARKER_SHA256="$candidate_marker_sha256"
 }
 
 assert_readiness_fence_database_locks() {
@@ -2448,6 +2470,25 @@ assert_readiness_fence_before_forward_operation() {
   ))"
 }
 
+accept_readiness_fence_candidate() {
+  local attempt=0
+  local minimum_hold_remaining_seconds="$1"
+  while [ "$attempt" -lt 3 ]; do
+    attempt=$((attempt + 1))
+    if ! readiness_fence_process_identity_matches; then return 2; fi
+    if validate_readiness_fence_marker "$minimum_hold_remaining_seconds"; then
+      # The marker writer publishes with link(2) before removing its private
+      # temporary hard link. Only the pure marker check is retried; the
+      # stateful database lock check below is executed exactly once.
+      if ! assert_readiness_fence_database_locks; then return 3; fi
+      if ! readiness_fence_process_identity_matches; then return 2; fi
+      return 0
+    fi
+    if [ "$attempt" -lt 3 ]; then sleep 0.1; fi
+  done
+  return 4
+}
+
 cleanup_readiness_fence_files() {
   local cleanup_status=0
   if [ -n "${READINESS_FENCE_DIR:-}" ]; then
@@ -2493,7 +2534,12 @@ fail_readiness_fence_start() {
 }
 
 readiness_fence_safe_failure_record() {
+  local fallback_code="${1:-}"
   local helper_module="$RELEASE_DIR/scripts/hold-ordinary-account-cutover-readiness-fence.mjs"
+  case "$fallback_code" in
+    ""|readiness_fence_database_locks_invalid|readiness_fence_marker_invalid|readiness_fence_process_identity_invalid|readiness_fence_startup_timeout) ;;
+    *) fallback_code="" ;;
+  esac
   if [ -z "${READINESS_FENCE_LOG:-}" ] \
     || [ -z "${RELEASE_DIR:-}" ] \
     || [ ! -f "$helper_module" ] \
@@ -2501,14 +2547,25 @@ readiness_fence_safe_failure_record() {
     return 1
   fi
   timeout --signal=TERM --kill-after=1s 2s \
-    node --input-type=module - "$READINESS_FENCE_LOG" "$helper_module" <<'NODE'
+    node --input-type=module - \
+      "$READINESS_FENCE_LOG" "$helper_module" "$fallback_code" <<'NODE'
 import { pathToFileURL } from "node:url";
 
-const [logPath, modulePath] = process.argv.slice(2);
+const [logPath, modulePath, fallbackCode] = process.argv.slice(2);
 try {
   const module = await import(pathToFileURL(modulePath).href);
-  const record =
+  let record =
     await module.readOrdinaryAccountCutoverReadinessFenceFailureRecord(logPath);
+  if (
+    fallbackCode !== "" &&
+    (record === null || record.error === "readiness_fence_interrupted")
+  ) {
+    record = module.parseOrdinaryAccountCutoverReadinessFenceFailureLog(
+      module.ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+        new module.OrdinaryAccountCutoverReadinessFenceError(fallbackCode),
+      ),
+    );
+  }
   if (record === null) process.exit(1);
   const bytes = Buffer.from(JSON.stringify(record), "utf8");
   if (bytes.length === 0 || bytes.length > 512 || bytes.includes(0x0a)) {
@@ -2522,9 +2579,11 @@ NODE
 }
 
 report_readiness_fence_failure() {
-  local failure_record=""
-  if failure_record="$(readiness_fence_safe_failure_record 2>/dev/null)" \
-    && [ -n "$failure_record" ] \
+  local failure_record="${1:-}"
+  if [ "$#" -eq 0 ]; then
+    failure_record="$(readiness_fence_safe_failure_record 2>/dev/null)" || failure_record=""
+  fi
+  if [ -n "$failure_record" ] \
     && [ "${#failure_record}" -le 512 ] \
     && [[ "$failure_record" != *$'\n'* ]]; then
     echo "[deploy] readiness fence helper failure $failure_record"
@@ -2534,8 +2593,16 @@ report_readiness_fence_failure() {
 }
 
 reject_failed_readiness_fence() {
-  report_readiness_fence_failure
-  if discard_failed_readiness_fence; then
+  local cleanup_status=0
+  local failure_record=""
+  local fallback_code="${1:-}"
+  if ! quiesce_failed_readiness_fence; then cleanup_status=1; fi
+  if ! failure_record="$(readiness_fence_safe_failure_record "$fallback_code" 2>/dev/null)"; then
+    failure_record=""
+  fi
+  if ! cleanup_readiness_fence_files; then cleanup_status=1; fi
+  report_readiness_fence_failure "$failure_record"
+  if [ "$cleanup_status" -eq 0 ]; then
     echo "[deploy] readiness fence cleanup completed"
   else
     echo "[deploy] readiness fence cleanup could not be proven: readiness_fence_cleanup_unverified"
@@ -2545,7 +2612,9 @@ reject_failed_readiness_fence() {
 
 start_readiness_fence() {
   local attempt
+  local candidate_status
   local identity_deadline
+  local minimum_hold_remaining_seconds
   local startup_deadline
   local readiness_fence_parent
   READINESS_FENCE_PID=""
@@ -2631,7 +2700,7 @@ start_readiness_fence() {
   if [ -z "$READINESS_FENCE_PROCESS_START_TICKS" ]; then
     echo "[deploy] readiness fence helper start identity could not be frozen"
     READINESS_FENCE_ACTIVE=1
-    reject_failed_readiness_fence
+    reject_failed_readiness_fence readiness_fence_process_identity_invalid
     return 1
   fi
   identity_deadline=$((SECONDS + 10))
@@ -2647,23 +2716,34 @@ start_readiness_fence() {
   if [ -z "$READINESS_FENCE_PROCESS_IDENTITY_SHA256" ]; then
     echo "[deploy] readiness fence helper process identity could not be frozen"
     READINESS_FENCE_ACTIVE=1
-    reject_failed_readiness_fence
+    reject_failed_readiness_fence readiness_fence_process_identity_invalid
     return 1
   fi
   READINESS_FENCE_ACTIVE=1
   READINESS_FENCE_RELEASED=0
   READINESS_FENCE_RELEASE_REQUESTED=0
+  minimum_hold_remaining_seconds="$((
+    READINESS_FENCE_ROLLBACK_RESERVE_SECONDS +
+    READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS +
+    AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS +
+    WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS +
+    PORT_RELEASE_TOTAL_TIMEOUT_SECONDS +
+    READINESS_FENCE_OPERATION_MARGIN_SECONDS
+  ))"
   startup_deadline=$((SECONDS + READINESS_FENCE_STARTUP_WAIT_SECONDS))
   while [ "$SECONDS" -lt "$startup_deadline" ]; do
     if [ -e "$READINESS_FENCE_MARKER" ] || [ -L "$READINESS_FENCE_MARKER" ]; then
-      if assert_readiness_fence_before_forward_operation "$((
-        AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS +
-        WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS +
-        PORT_RELEASE_TOTAL_TIMEOUT_SECONDS
-      ))"; then
+      if accept_readiness_fence_candidate "$minimum_hold_remaining_seconds"; then
         return 0
+      else
+        candidate_status=$?
       fi
-      break
+      case "$candidate_status" in
+        2) reject_failed_readiness_fence readiness_fence_process_identity_invalid ;;
+        3) reject_failed_readiness_fence readiness_fence_database_locks_invalid ;;
+        *) reject_failed_readiness_fence readiness_fence_marker_invalid ;;
+      esac
+      return 1
     fi
     if ! readiness_fence_process_identity_matches; then
       echo "[deploy] readiness fence exited or changed identity before its ready marker"
@@ -2671,13 +2751,13 @@ start_readiness_fence() {
       # transaction remained alive. Keep the holder PID trust root and use the
       # exact prefix cleanup path; failure is not returned until the database
       # proves that no matching session remains.
-      reject_failed_readiness_fence
+      reject_failed_readiness_fence readiness_fence_process_identity_invalid
       return 1
     fi
     sleep 1
   done
   echo "[deploy] readiness fence failed to produce verifiable held evidence"
-  reject_failed_readiness_fence
+  reject_failed_readiness_fence readiness_fence_startup_timeout
   return 1
 }
 
@@ -2908,7 +2988,7 @@ if (
 NODE
 }
 
-discard_failed_readiness_fence() {
+quiesce_failed_readiness_fence() {
   local cleanup_status=0
   local process_deadline
   local original_process_alive=0
@@ -2946,7 +3026,13 @@ discard_failed_readiness_fence() {
     wait "$READINESS_FENCE_PID" 2>/dev/null || true
   fi
   READINESS_FENCE_ACTIVE=0
-  cleanup_readiness_fence_files || cleanup_status=1
+  return "$cleanup_status"
+}
+
+discard_failed_readiness_fence() {
+  local cleanup_status=0
+  if ! quiesce_failed_readiness_fence; then cleanup_status=1; fi
+  if ! cleanup_readiness_fence_files; then cleanup_status=1; fi
   return "$cleanup_status"
 }
 

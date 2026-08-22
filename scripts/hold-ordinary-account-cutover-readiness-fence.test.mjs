@@ -2188,7 +2188,7 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
         },
         randomProbeHex: (byteLength) => "a".repeat(byteLength * 2),
         fetchImpl: causal.fetchImpl,
-        observeWaiters: async () => snapshots.shift(),
+        observeWaiters: async () => snapshots.shift() ?? observation(),
         cancelWaiter: causal.cancelWaiter,
         serviceIdentities: SERVICE_IDENTITIES,
         poll: async () => {},
@@ -3612,8 +3612,8 @@ test("query cancellation is causally bound to the same HTTP request with locale-
   await t.test("non-English messages with REST SQLSTATE and Auth error_code pass", async () => {
     assert.equal((await runWithResponse()).length, 4);
   });
-  await t.test("the real cancellation child binds an empty standard Auth application name", async () => {
-    const snapshots = successfulProbeSequence();
+  await t.test("the real cancellation child binds an empty standard Auth application name through post-cancel observation", async () => {
+    const snapshots = successfulProbeSequence({ lingerAfterCancel: true });
     const cancellationArguments = [];
     const sqlChunks = [];
     let resolveRequest = null;
@@ -3666,6 +3666,130 @@ test("query cancellation is causally bound to the same HTTP request with locale-
         .length,
       4,
     );
+  });
+  await t.test("a zero observation followed by a cross-probe late waiter fails closed", async () => {
+    const snapshots = successfulProbeSequence();
+    snapshots[3] = observation([
+      waiter({
+        pid: "5199",
+        queryStartedAtEpochMilliseconds: "1787227200200",
+      }),
+    ]);
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    let pollCalls = 0;
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        poll: async () => {
+          pollCalls += 1;
+        },
+      }),
+      "readiness_fence_probe_waiter_residual",
+    );
+    assert.ok(pollCalls > 1 && pollCalls <= 100);
+  });
+  await t.test("the final global observation rejects a waiter arriving after the last quiet proof", async () => {
+    const snapshots = successfulProbeSequence();
+    snapshots.push(
+      observation(),
+      observation([
+        waiter({
+          pid: "5200",
+          queryStartedAtEpochMilliseconds: "1787227200300",
+        }),
+      ]),
+    );
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+      }),
+      "readiness_fence_probe_waiter_residual",
+    );
+    assert.equal(snapshots.length, 0);
+  });
+  await t.test("an external abort during the last quiet poll cannot return successful evidence", async () => {
+    const snapshots = successfulProbeSequence();
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    const abortController = new AbortController();
+    let pollCalls = 0;
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        signal: abortController.signal,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        poll: async () => {
+          pollCalls += 1;
+          if (pollCalls === 40) abortController.abort();
+        },
+      }),
+      "readiness_fence_probe_cancelled",
+    );
+    assert.equal(pollCalls, 40);
+    assert.equal(calls.length, 4);
+    assert.equal(getEventListeners(abortController.signal, "abort").length, 0);
+  });
+  await t.test("an external abort during the final poll cannot return successful evidence", async () => {
+    const snapshots = successfulProbeSequence();
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    const abortController = new AbortController();
+    let pollCalls = 0;
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        signal: abortController.signal,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        poll: async () => {
+          pollCalls += 1;
+          if (pollCalls === 41) abortController.abort();
+        },
+      }),
+      "readiness_fence_probe_cancelled",
+    );
+    assert.equal(pollCalls, 41);
+    assert.equal(calls.length, 4);
+    assert.equal(getEventListeners(abortController.signal, "abort").length, 0);
+  });
+  await t.test("an external abort during the final observation cannot return successful evidence", async () => {
+    const snapshots = successfulProbeSequence();
+    const calls = [];
+    const causal = causalFetchRecorder(calls);
+    const abortController = new AbortController();
+    let pollCalls = 0;
+    await assertCode(
+      probeOrdinaryAccountCutoverReadinessFenceEndpoints(input, {
+        ...common,
+        signal: abortController.signal,
+        fetchImpl: causal.fetchImpl,
+        cancelWaiter: causal.cancelWaiter,
+        observeWaiters: async () => {
+          const snapshot = snapshots.shift() ?? observation();
+          if (pollCalls === 41) abortController.abort();
+          return snapshot;
+        },
+        poll: async () => {
+          pollCalls += 1;
+        },
+      }),
+      "readiness_fence_probe_cancelled",
+    );
+    assert.equal(pollCalls, 41);
+    assert.equal(calls.length, 4);
+    assert.equal(getEventListeners(abortController.signal, "abort").length, 0);
   });
   await t.test("a cold GoTrue pool with no pre-existing Auth session still binds through the unique causal request", async () => {
     const snapshots = successfulProbeSequence();
@@ -4040,6 +4164,74 @@ test("atomic marker creation refuses symlinks and cleans a failed partial tempor
     });
   });
 
+  await t.test("hard-link publication stays provisional until the private name is removed", async () => {
+    await temporaryDirectory(async (directory) => {
+      const marker = path.join(directory, "marker.json");
+      let releaseTemporaryUnlink;
+      const temporaryUnlinkGate = new Promise((resolve) => {
+        releaseTemporaryUnlink = resolve;
+      });
+      let gated = false;
+      const operations = {
+        link,
+        lstat,
+        open,
+        unlink: async (candidate) => {
+          if (candidate !== marker && !gated) {
+            gated = true;
+            await temporaryUnlinkGate;
+          }
+          return unlink(candidate);
+        },
+      };
+      const writing = writeAtomicReadinessFenceMarker(
+        marker,
+        canonicalJsonBytes({ ok: true }),
+        { operations },
+      );
+      await waitForFile(marker);
+      try {
+        assert.equal((await lstat(marker)).nlink, 2);
+      } finally {
+        releaseTemporaryUnlink();
+      }
+      await writing;
+      assert.equal((await lstat(marker)).nlink, 1);
+      await unlink(marker);
+    });
+  });
+
+  await t.test("a private hard-link removal failure retracts the public marker", async () => {
+    await temporaryDirectory(async (directory) => {
+      const marker = path.join(directory, "marker.json");
+      let injected = false;
+      const operations = {
+        link,
+        lstat,
+        open,
+        unlink: async (candidate) => {
+          if (candidate !== marker && !injected) {
+            injected = true;
+            throw Object.assign(new Error("injected_unlink_failure"), {
+              code: "EIO",
+            });
+          }
+          return unlink(candidate);
+        },
+      };
+      await assertCode(
+        writeAtomicReadinessFenceMarker(
+          marker,
+          canonicalJsonBytes({ ok: true }),
+          { operations },
+        ),
+        "readiness_fence_marker_write_failed",
+      );
+      await assertMissing(marker);
+      assert.deepEqual(await readdir(directory), []);
+    });
+  });
+
   await t.test("partial temporary write", async () => {
     await temporaryDirectory(async (directory) => {
       const marker = path.join(directory, "marker.json");
@@ -4302,6 +4494,8 @@ test("a canonical private release request is the only successful path after a 24
     const child = new FakeChild();
     const scheduled = [];
     let terminationInput = null;
+    let releaseTemporaryUnlink = null;
+    let provisionalPolls = 0;
     const promise = holdOrdinaryAccountCutoverReadinessFence(
       value.input,
       coreDependencies(child, {
@@ -4317,6 +4511,17 @@ test("a canonical private release request is the only successful path after a 24
         terminateSession: async (input) => {
           terminationInput = input;
           child.close(1);
+        },
+        releaseRequestPoll: async () => {
+          try {
+            if ((await lstat(value.releaseRequestPath)).nlink === 2) {
+              provisionalPolls += 1;
+              releaseTemporaryUnlink?.();
+            }
+          } catch (error) {
+            if (error?.code !== "ENOENT") throw error;
+          }
+          await new Promise((resolve) => setImmediate(resolve));
         },
       }),
     );
@@ -4334,6 +4539,21 @@ test("a canonical private release request is the only successful path after a 24
       markerBytes.toString("utf8"),
       /127\.0\.0\.1|db\.example\.test|anon-key-do-not-log/,
     );
+    let gatedTemporaryUnlink = false;
+    const releaseRequestOperations = {
+      link,
+      lstat,
+      open,
+      unlink: async (candidate) => {
+        if (candidate !== value.releaseRequestPath && !gatedTemporaryUnlink) {
+          gatedTemporaryUnlink = true;
+          await new Promise((resolve) => {
+            releaseTemporaryUnlink = resolve;
+          });
+        }
+        return unlink(candidate);
+      },
+    };
     await writeAtomicReadinessFenceMarker(
       value.releaseRequestPath,
       canonicalJsonBytes({
@@ -4342,6 +4562,7 @@ test("a canonical private release request is the only successful path after a 24
         markerSha256: sha256Hex(markerBytes),
         releaseToken: marker.releaseToken,
       }),
+      { operations: releaseRequestOperations },
     );
     const result = await promise;
     assert.equal(result.markerSha256, sha256Hex(markerBytes));
@@ -4349,8 +4570,145 @@ test("a canonical private release request is the only successful path after a 24
     assert.equal(terminationInput.requireExactOne, true);
     assert.ok(scheduled.includes(960_000));
     assert.ok(scheduled.includes(240_000));
+    assert.ok(provisionalPolls >= 1);
     await assertMissing(value.markerPath);
     await assertMissing(value.releaseRequestPath);
+  });
+});
+
+test("release request publication retries only an authenticated identity-bound hard-link transition", async (t) => {
+  const startFence = async (directory, overrides = {}) => {
+    const value = await fixture(directory);
+    const child = new FakeChild();
+    const resolvedOverrides =
+      typeof overrides === "function" ? overrides(value) : overrides;
+    const promise = holdOrdinaryAccountCutoverReadinessFence(
+      value.input,
+      coreDependencies(child, {
+        spawnProcess: () => {
+          queueMicrotask(() => child.stdout.write(fenceLine()));
+          return child;
+        },
+        ...resolvedOverrides,
+      }),
+    );
+    const markerBytes = await waitForFile(value.markerPath);
+    const marker = JSON.parse(markerBytes);
+    const releaseRequestBytes = canonicalJsonBytes({
+      schemaVersion: 1,
+      kind: "faolla.ordinary-account-cutover-readiness-fence-release.v1",
+      markerSha256: sha256Hex(markerBytes),
+      releaseToken: marker.releaseToken,
+    });
+    return { value, child, promise, releaseRequestBytes };
+  };
+
+  for (const [name, mutate, expectedCode] of [
+    [
+      "noncanonical payload",
+      (bytes) => Buffer.concat([bytes.subarray(0, -1), Buffer.from(" \n")]),
+      "readiness_fence_release_request_invalid",
+    ],
+    [
+      "wrong token",
+      (bytes) =>
+        canonicalJsonBytes({
+          ...JSON.parse(bytes),
+          releaseToken: "8".repeat(64),
+        }),
+      "readiness_fence_release_request_binding_mismatch",
+    ],
+  ]) {
+    await t.test(`${name} is rejected while nlink is two`, async () => {
+      await temporaryDirectory(async (directory) => {
+        const { value, promise, releaseRequestBytes } = await startFence(directory, {
+          releaseRequestPoll: async () => {
+            await new Promise((resolve) => setImmediate(resolve));
+          },
+        });
+        const privatePath = path.join(directory, `.${name.replaceAll(" ", "-")}.tmp`);
+        await writeFile(privatePath, mutate(releaseRequestBytes), {
+          flag: "wx",
+          mode: 0o600,
+        });
+        await link(privatePath, value.releaseRequestPath);
+        assert.equal((await lstat(value.releaseRequestPath)).nlink, 2);
+        await assertCode(promise, expectedCode);
+        await assertMissing(value.markerPath);
+      });
+    });
+  }
+
+  await t.test("a permanent authenticated nlink-two request fails within the fixed poll bound", async () => {
+    await temporaryDirectory(async (directory) => {
+      let pollCalls = 0;
+      const { value, promise, releaseRequestBytes } = await startFence(directory, (fenceValue) => ({
+        releaseRequestPoll: async () => {
+          try {
+            if ((await lstat(fenceValue.releaseRequestPath)).nlink === 2) {
+              pollCalls += 1;
+            }
+          } catch (error) {
+            if (error?.code !== "ENOENT") throw error;
+          }
+        },
+      }));
+      const privatePath = path.join(directory, ".permanent-release.tmp");
+      await writeFile(privatePath, releaseRequestBytes, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      await link(privatePath, value.releaseRequestPath);
+      await assertCode(
+        promise,
+        "readiness_fence_release_request_file_invalid",
+      );
+      assert.ok(pollCalls >= 200 && pollCalls <= 202);
+      await assertMissing(value.markerPath);
+    });
+  });
+
+  await t.test("a path replacement after authenticated provisional publication fails changed", async () => {
+    await temporaryDirectory(async (directory) => {
+      const privatePath = path.join(directory, ".replace-release.tmp");
+      let releaseRequestBytes;
+      let replaced = false;
+      let nlinkTwoPolls = 0;
+      const started = await startFence(directory, (fenceValue) => ({
+        releaseRequestPoll: async () => {
+          if (!replaced) {
+            try {
+              if ((await lstat(fenceValue.releaseRequestPath)).nlink === 2) {
+                nlinkTwoPolls += 1;
+                if (nlinkTwoPolls >= 2) {
+                  await unlink(fenceValue.releaseRequestPath);
+                  await unlink(privatePath);
+                  await writeFile(
+                    fenceValue.releaseRequestPath,
+                    Buffer.concat([releaseRequestBytes, Buffer.from(" ")]),
+                    { flag: "wx", mode: 0o600 },
+                  );
+                  replaced = true;
+                }
+              }
+            } catch (error) {
+              if (error?.code !== "ENOENT") throw error;
+            }
+          }
+          await new Promise((resolve) => setImmediate(resolve));
+        },
+      }));
+      const { value, promise } = started;
+      releaseRequestBytes = started.releaseRequestBytes;
+      await writeFile(privatePath, releaseRequestBytes, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      await link(privatePath, value.releaseRequestPath);
+      await assertCode(promise, "readiness_fence_release_request_changed");
+      assert.equal(replaced, true);
+      await assertMissing(value.markerPath);
+    });
   });
 });
 
@@ -4756,6 +5114,18 @@ test("private helper failure logs expose only an allowlisted canonical code", as
     parseOrdinaryAccountCutoverReadinessFenceFailureLog(allowedBytes),
     allowedRecord,
   );
+  for (const error of [
+    "readiness_fence_database_locks_invalid",
+    "readiness_fence_process_identity_invalid",
+  ]) {
+    const bytes = ordinaryAccountCutoverReadinessFenceFailureLogBytes(
+      new OrdinaryAccountCutoverReadinessFenceError(error),
+    );
+    const record = parseOrdinaryAccountCutoverReadinessFenceFailureLog(bytes);
+    assert.ok(bytes.length > 0 && bytes.length <= 512);
+    assert.equal(record?.error, error);
+    assert.deepEqual(bytes, canonicalJsonBytes(record));
+  }
   for (const hostileBytes of [
     Buffer.from(
       '{"error":"readiness_fence_probe_environment_invalid_secret","ok":false}\n',
