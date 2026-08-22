@@ -2712,7 +2712,10 @@ SQL
       return 1
       ;;
     blocked_cancelled)
-      echo "[deploy] readiness fence cancelled a newly queued database waiter; deployment will fail closed"
+      if [ "$allow_waiters" = "0" ]; then
+        echo "[deploy] readiness fence cancelled a newly queued database waiter; retrying protected quiescence"
+        return 2
+      fi
       return 1
       ;;
     *) return 1 ;;
@@ -2812,8 +2815,14 @@ readiness_fence_process_identity_matches() {
 
 assert_readiness_fence_held() {
   local minimum_hold_remaining_seconds="${1:-0}"
-  local deadline=$((SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))
-  local query_timeout_seconds
+  local query_timeout_seconds="${2:-$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}"
+  local deadline
+  local database_status
+  if ! [[ "$query_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
+    return 1
+  fi
+  deadline=$((SECONDS + query_timeout_seconds))
   if [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
     || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
     || ! readiness_fence_process_identity_matches \
@@ -2822,12 +2831,21 @@ assert_readiness_fence_held() {
     return 1
   fi
   query_timeout_seconds=$((deadline - SECONDS))
-  assert_readiness_fence_database_locks 0 "$query_timeout_seconds" || return 1
+  if assert_readiness_fence_database_locks 0 "$query_timeout_seconds"; then
+    database_status=0
+  else
+    database_status=$?
+  fi
+  case "$database_status" in
+    0|2) ;;
+    *) return 1 ;;
+  esac
   if [ "$SECONDS" -ge "$deadline" ] \
     || ! readiness_fence_process_identity_matches \
     || [ "$SECONDS" -ge "$deadline" ]; then
     return 1
   fi
+  return "$database_status"
 }
 
 readiness_fence_process_quiescence_checkpoint() {
@@ -2916,6 +2934,7 @@ assert_readiness_fence_before_process_quiescence() {
 
 wait_for_readiness_fence_database_quiescence() {
   local checkpoint_status
+  local strict_status
   local deadline=$((SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))
   local minimum_hold_remaining_seconds="$((
     READINESS_FENCE_ROLLBACK_RESERVE_SECONDS +
@@ -2928,11 +2947,17 @@ wait_for_readiness_fence_database_quiescence() {
     if readiness_fence_process_quiescence_checkpoint \
       "$minimum_hold_remaining_seconds" "$remaining_seconds" "$deadline"; then
       if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
-      if assert_readiness_fence_held "$minimum_hold_remaining_seconds"; then
+      remaining_seconds=$((deadline - SECONDS))
+      if assert_readiness_fence_held \
+        "$minimum_hold_remaining_seconds" "$remaining_seconds"; then
+        if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
         READINESS_FENCE_FORWARD_READY=1
         return 0
+      else
+        strict_status=$?
       fi
-      return 1
+      if [ "$strict_status" -ne 2 ]; then return 1; fi
+      checkpoint_status=2
     else
       checkpoint_status=$?
     fi
@@ -3647,8 +3672,142 @@ READINESS_FENCE_RELEASE_TOKEN=""
 READINESS_FENCE_PROCESS_IDENTITY_SHA256=""
 READINESS_FENCE_PROCESS_START_TICKS=""
 LEGACY_COMPATIBILITY_LINKS_INSTALLED=0
+PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED=0
+PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED=0
+PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED=0
+PRE_FORWARD_RECOVERY_WEB_PID=""
+PRE_FORWARD_RECOVERY_WEB_START_TICKS=""
+PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY=""
+PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY=""
+PRE_FORWARD_RECOVERY_WORKER_PID=""
+PRE_FORWARD_RECOVERY_WORKER_START_TICKS=""
+PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY=""
+PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY=""
+
+capture_pre_forward_recovery_process_identity() {
+  local prefix="$1"
+  local process_name="$2"
+  local process_snapshot
+  local process_pid
+  local process_start_ticks
+  local process_identity
+  local cwd_identity
+  if ! process_snapshot="$(pm2_process_snapshot "$process_name")" \
+    || ! [[ "$process_snapshot" =~ ^running:([1-9][0-9]*)$ ]]; then
+    return 1
+  fi
+  process_pid="${process_snapshot#running:}"
+  [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" = "$PREVIOUS_RUNTIME_DIR" ] \
+    || return 1
+  process_start_ticks="$(linux_process_start_ticks "$process_pid")" || return 1
+  process_identity="$(stat -Lc '%d:%i' -- "/proc/$process_pid" 2>/dev/null || true)"
+  cwd_identity="$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)"
+  [[ "$process_identity" =~ ^[0-9]+:[0-9]+$ ]] \
+    && [[ "$cwd_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 1
+  [ "$(pm2_process_snapshot "$process_name")" = "running:$process_pid" ] \
+    && [ "$(linux_process_start_ticks "$process_pid" 2>/dev/null || true)" = "$process_start_ticks" ] \
+    && [ "$(stat -Lc '%d:%i' -- "/proc/$process_pid" 2>/dev/null || true)" = "$process_identity" ] \
+    && [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)" = "$cwd_identity" ] \
+    && [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" = "$PREVIOUS_RUNTIME_DIR" ] \
+    || return 1
+  printf -v "${prefix}_PID" '%s' "$process_pid"
+  printf -v "${prefix}_START_TICKS" '%s' "$process_start_ticks"
+  printf -v "${prefix}_PROCESS_IDENTITY" '%s' "$process_identity"
+  printf -v "${prefix}_CWD_IDENTITY" '%s' "$cwd_identity"
+}
+
+pre_forward_recovery_process_identity_matches() {
+  local process_name="$1"
+  local process_pid="$2"
+  local process_start_ticks="$3"
+  local process_identity="$4"
+  local cwd_identity="$5"
+  [[ "$process_pid" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$process_start_ticks" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$process_identity" =~ ^[0-9]+:[0-9]+$ ]] \
+    && [[ "$cwd_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    && [ "$(pm2_process_snapshot "$process_name")" = "running:$process_pid" ] \
+    && [ "$(linux_process_start_ticks "$process_pid" 2>/dev/null || true)" = "$process_start_ticks" ] \
+    && [ "$(stat -Lc '%d:%i' -- "/proc/$process_pid" 2>/dev/null || true)" = "$process_identity" ] \
+    && [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)" = "$cwd_identity" ] \
+    && [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" = "$PREVIOUS_RUNTIME_DIR" ]
+}
+
+pre_forward_recovery_original_process_is_gone() {
+  local process_pid="$1"
+  local process_start_ticks="$2"
+  local current_start_ticks
+  local process_status
+  if current_start_ticks="$(linux_process_start_ticks "$process_pid")"; then
+    [ "$current_start_ticks" != "$process_start_ticks" ]
+  else
+    process_status=$?
+    [ "$process_status" -eq 2 ]
+  fi
+}
+
+cleanup_pre_forward_recovery_started_process() {
+  local process_name="$1"
+  local process_pid="$2"
+  local process_start_ticks="$3"
+  local process_identity="$4"
+  local cwd_identity="$5"
+  local require_free_port="$6"
+  local process_snapshot
+  process_snapshot="$(pm2_process_snapshot "$process_name")" || return 1
+  if [ -z "$process_pid" ] || [ -z "$process_start_ticks" ] \
+    || [ -z "$process_identity" ] || [ -z "$cwd_identity" ]; then
+    [ "$process_snapshot" = "absent" ] || return 1
+    [ "$require_free_port" = "0" ] || wait_for_port_release
+    return
+  fi
+  case "$process_snapshot" in
+    "running:$process_pid")
+      pre_forward_recovery_process_identity_matches "$process_name" \
+        "$process_pid" "$process_start_ticks" "$process_identity" "$cwd_identity" \
+        || return 1
+      timeout --signal=TERM --kill-after=5s 25s pm2 delete "$process_name" \
+        >/dev/null 2>&1 || return 1
+      ;;
+    absent) ;;
+    *) return 1 ;;
+  esac
+  [ "$(pm2_process_snapshot "$process_name")" = "absent" ] \
+    && pre_forward_recovery_original_process_is_gone \
+      "$process_pid" "$process_start_ticks" \
+    || return 1
+  [ "$require_free_port" = "0" ] || wait_for_port_release
+}
+
+cleanup_pre_forward_previous_runtime_attempts() {
+  local cleanup_status=0
+  if [ "$PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED" = "1" ]; then
+    cleanup_pre_forward_recovery_started_process "$AUTOMATION_WORKER_NAME" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PID" \
+      "$PRE_FORWARD_RECOVERY_WORKER_START_TICKS" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY" \
+      "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" 0 \
+      || cleanup_status=1
+  fi
+  if [ "$PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED" = "1" ]; then
+    cleanup_pre_forward_recovery_started_process "$APP_NAME" \
+      "$PRE_FORWARD_RECOVERY_WEB_PID" \
+      "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
+      "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
+      "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" 1 \
+      || cleanup_status=1
+  fi
+  if [ "$PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED" = "1" ] \
+    && [ "$cleanup_status" -eq 0 ]; then
+    timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 \
+      || cleanup_status=1
+  fi
+  return "$cleanup_status"
+}
 
 recover_pre_forward_previous_runtime() {
+  local web_start_status=0
+  local worker_start_status=0
   if [ "${FORWARD_MUTATION_STARTED:-0}" != "0" ] \
     || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
     || [ "${WEB_COMMITTED:-0}" != "0" ] \
@@ -3674,13 +3833,58 @@ recover_pre_forward_previous_runtime() {
   fi
   if [ "${READINESS_FENCE_CLEANUP_VERIFIED:-0}" != "1" ]; then return 1; fi
   previous_runtime_recovery_identity_matches || return 1
-  start_frozen_previous_release >/dev/null 2>&1 || return 1
+  PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED=1
+  start_frozen_previous_release >/dev/null 2>&1 || web_start_status=$?
+  capture_pre_forward_recovery_process_identity \
+    PRE_FORWARD_RECOVERY_WEB "$APP_NAME" || return 1
+  [ "$web_start_status" -eq 0 ] || return 1
+  pre_forward_recovery_process_identity_matches "$APP_NAME" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
+    "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
+    "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
   wait_for_release_health "$PREVIOUS_BUILD_ID" || return 1
+  pre_forward_recovery_process_identity_matches "$APP_NAME" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
+    "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
+    "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
   if [ "$PREVIOUS_AUTOMATION_WORKER_RUNNING" = "1" ]; then
-    start_frozen_previous_automation_worker_process >/dev/null 2>&1 || return 1
+    PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED=1
+    start_frozen_previous_automation_worker_process >/dev/null 2>&1 \
+      || worker_start_status=$?
+    capture_pre_forward_recovery_process_identity \
+      PRE_FORWARD_RECOVERY_WORKER "$AUTOMATION_WORKER_NAME" || return 1
+    [ "$worker_start_status" -eq 0 ] || return 1
+    pre_forward_recovery_process_identity_matches "$AUTOMATION_WORKER_NAME" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PID" \
+      "$PRE_FORWARD_RECOVERY_WORKER_START_TICKS" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY" \
+      "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" || return 1
     wait_for_automation_worker_online || return 1
+    pre_forward_recovery_process_identity_matches "$AUTOMATION_WORKER_NAME" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PID" \
+      "$PRE_FORWARD_RECOVERY_WORKER_START_TICKS" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY" \
+      "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" || return 1
   fi
+  previous_runtime_recovery_identity_matches || return 1
+  pre_forward_recovery_process_identity_matches "$APP_NAME" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
+    "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
+    "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
+  PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED=1
   timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 || return 1
+  previous_runtime_recovery_identity_matches || return 1
+  pre_forward_recovery_process_identity_matches "$APP_NAME" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
+    "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
+    "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
+  if [ "$PREVIOUS_AUTOMATION_WORKER_RUNNING" = "1" ]; then
+    pre_forward_recovery_process_identity_matches "$AUTOMATION_WORKER_NAME" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PID" \
+      "$PRE_FORWARD_RECOVERY_WORKER_START_TICKS" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY" \
+      "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" || return 1
+  fi
   PROCESSES_STOPPED=0
   ROLLBACK_COMPLETED=1
   echo "[deploy] restored the frozen previous runtime before any forward mutation"
@@ -3737,6 +3941,19 @@ cleanup_failed_build() {
     && [ "$FORWARD_MUTATION_STARTED" = "0" ]; then
     if ! recover_pre_forward_previous_runtime; then
       echo "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence"
+      if ! cleanup_pre_forward_previous_runtime_attempts; then
+        echo "[deploy] pre-forward runtime recovery cleanup could not be proven: cleanup_unverified"
+      fi
+      if [ "${READINESS_FENCE_ACTIVE:-0}" != "0" ] \
+        || [ "${READINESS_FENCE_CLEANUP_VERIFIED:-0}" != "1" ]; then
+        if discard_failed_readiness_fence; then :; fi
+      fi
+      if [ "${READINESS_FENCE_ACTIVE:-0}" = "0" ] \
+        && [ "${READINESS_FENCE_CLEANUP_VERIFIED:-0}" = "1" ]; then
+        echo "[deploy] readiness fence cleanup completed"
+      else
+        echo "[deploy] readiness fence cleanup could not be proven: readiness_fence_cleanup_unverified"
+      fi
       cleanup_status=1
     fi
   elif [ "$SWITCH_COMPLETED" = "1" ] || [ "$PROCESSES_STOPPED" = "1" ]; then
