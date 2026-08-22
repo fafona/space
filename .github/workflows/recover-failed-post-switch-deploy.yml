@@ -1,4 +1,4 @@
-name: Recover Failed Pre-Forward Production Runtime
+name: Recover Failed Post-Switch Production Runtime
 
 on:
   workflow_dispatch:
@@ -29,10 +29,10 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       RECOVERY_SOURCE_SHA: ${{ inputs.recovery_source_sha }}
       RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
-      EXPECTED_CONFIRMATION: RECOVER_FAILED_PRE_FORWARD_DEPLOY_32597015446
-      RECOVERY_WORKFLOW_NAME: Recover Failed Pre-Forward Production Runtime
-      RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-pre-forward-deploy.yml
-      RECOVERY_WORKFLOW_FILE: recover-failed-pre-forward-deploy.yml
+      EXPECTED_CONFIRMATION: RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446
+      RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
+      RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
+      RECOVERY_WORKFLOW_FILE: recover-failed-post-switch-deploy.yml
       CI_WORKFLOW_NAME: CI
       CI_WORKFLOW_PATH: .github/workflows/ci.yml
       INCIDENT_DEPLOY_RUN_ID: "32597015446"
@@ -44,6 +44,12 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32598424716"
+      PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
+      PRIOR_FAILED_RECOVERY_SHA: 7478fb9d1d65463639eeecd09b17efd80df2d64a
+      PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Pre-Forward Production Runtime
+      PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-pre-forward-deploy.yml
+      INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
       INCIDENT_OLD_BUILD_ID: 2a121454a18a16ae30e356977ca82b24a310e8e5
       SSH_ALIAS: faolla-incident-recovery
 
@@ -109,7 +115,7 @@ jobs:
           gh api --method GET \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-pre-forward-deploy.yml/runs?branch=main&event=workflow_dispatch&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-post-switch-deploy.yml/runs?branch=main&event=workflow_dispatch&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
             > "$workflow_runs"
           gh api --method GET \
             -H "Accept: application/vnd.github+json" \
@@ -213,11 +219,11 @@ jobs:
             main:refs/remotes/origin/main >/dev/null 2>&1
           test "$(git rev-parse origin/main)" = "$RECOVERY_SOURCE_SHA"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          test "$(git hash-object scripts/recover-failed-pre-forward-production-runtime.sh)" = \
-            "$(git rev-parse "$RECOVERY_SOURCE_SHA:scripts/recover-failed-pre-forward-production-runtime.sh")"
-          bash -n scripts/recover-failed-pre-forward-production-runtime.sh
+          test "$(git hash-object scripts/recover-failed-post-switch-production-runtime.sh)" = \
+            "$(git rev-parse "$RECOVERY_SOURCE_SHA:scripts/recover-failed-post-switch-production-runtime.sh")"
+          bash -n scripts/recover-failed-post-switch-production-runtime.sh
 
-      - name: Validate Failed Deploy And Readiness Boundary
+      - name: Validate Incident Deploy Readiness And Failed Recovery Boundary
         id: incident-boundary
         env:
           GH_TOKEN: ${{ github.token }}
@@ -233,6 +239,8 @@ jobs:
           readiness_jobs="$RUNNER_TEMP/incident-readiness-jobs.json"
           readiness_workflow="$RUNNER_TEMP/incident-readiness-workflow.json"
           readiness_runs="$RUNNER_TEMP/incident-readiness-runs.json"
+          failed_recovery_run="$RUNNER_TEMP/prior-failed-recovery-run.json"
+          failed_recovery_jobs="$RUNNER_TEMP/prior-failed-recovery-jobs.json"
 
           gh api --method GET -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -263,11 +271,19 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "repos/$GITHUB_REPOSITORY/actions/workflows/ordinary-account-cutover-readiness.yml/runs?branch=main&event=workflow_dispatch&per_page=100" \
             > "$readiness_runs"
+          gh api --method GET -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PRIOR_FAILED_RECOVERY_RUN_ID" \
+            > "$failed_recovery_run"
+          gh api --method GET -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PRIOR_FAILED_RECOVERY_RUN_ID/attempts/1/jobs" \
+            > "$failed_recovery_jobs"
 
           node --input-type=module - \
             "$deploy_run" "$deploy_jobs" "$deploy_workflow" "$deploy_runs" \
             "$readiness_run" "$readiness_jobs" "$readiness_workflow" \
-            "$readiness_runs" <<'NODE'
+            "$readiness_runs" "$failed_recovery_run" "$failed_recovery_jobs" <<'NODE'
           import { appendFileSync, readFileSync } from "node:fs";
 
           const fail = (code) => {
@@ -282,6 +298,8 @@ jobs:
           const readinessJobsPage = JSON.parse(readFileSync(process.argv[7], "utf8"));
           const readinessWorkflow = JSON.parse(readFileSync(process.argv[8], "utf8"));
           const readinessRunPages = JSON.parse(readFileSync(process.argv[9], "utf8"));
+          const failedRecovery = JSON.parse(readFileSync(process.argv[10], "utf8"));
+          const failedRecoveryJobsPage = JSON.parse(readFileSync(process.argv[11], "utf8"));
           const canonicalTime = (value, code) => {
             if (typeof value !== "string") fail(code);
             const milliseconds = Date.parse(value);
@@ -365,6 +383,64 @@ jobs:
           }
 
           if (
+            failedRecovery?.id !== Number(process.env.PRIOR_FAILED_RECOVERY_RUN_ID) ||
+            failedRecovery.run_attempt !== 1 ||
+            failedRecovery.name !== process.env.PRIOR_FAILED_RECOVERY_WORKFLOW_NAME ||
+            failedRecovery.path !== process.env.PRIOR_FAILED_RECOVERY_WORKFLOW_PATH ||
+            failedRecovery.event !== "workflow_dispatch" ||
+            failedRecovery.status !== "completed" || failedRecovery.conclusion !== "failure" ||
+            failedRecovery.head_branch !== "main" ||
+            failedRecovery.head_sha !== process.env.PRIOR_FAILED_RECOVERY_SHA ||
+            failedRecovery.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            failedRecovery.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) fail("prior_failed_recovery_run_invalid");
+          const failedRecoveryJobs = failedRecoveryJobsPage?.jobs;
+          if (!Array.isArray(failedRecoveryJobs) || failedRecoveryJobs.length !== 1) {
+            fail("prior_failed_recovery_jobs_invalid");
+          }
+          const failedRecoveryJob = failedRecoveryJobs[0];
+          const expectedFailedRecoverySteps = [
+            [1, "Set up job", "success"],
+            [2, "Validate Unique Manual Recovery Chain", "success"],
+            [3, "Checkout Exact Recovery Source", "success"],
+            [4, "Verify Exact Current Main Checkout", "success"],
+            [5, "Validate Failed Deploy And Readiness Boundary", "success"],
+            [6, "Resolve Exact Readiness Artifact Inventory", "success"],
+            [7, "Verify Canonical Historical Readiness Evidence", "success"],
+            [8, "Setup Pinned SSH Recovery Alias", "success"],
+            [9, "Revalidate Main And CI Immediately Before Recovery", "success"],
+            [10, "Recover Frozen Production Runtime", "failure"],
+            [11, "Verify Public Frozen Runtime Recovery", "skipped"],
+            [22, "Post Checkout Exact Recovery Source", "success"],
+            [23, "Complete job", "success"],
+          ];
+          if (
+            failedRecoveryJob?.name !== "recover" ||
+            failedRecoveryJob.conclusion !== "failure" ||
+            failedRecoveryJob.run_attempt !== 1 ||
+            !Array.isArray(failedRecoveryJob.steps) ||
+            failedRecoveryJob.steps.length !== expectedFailedRecoverySteps.length ||
+            failedRecoveryJob.steps.some((step, index) =>
+              step.number !== expectedFailedRecoverySteps[index][0] ||
+              step.name !== expectedFailedRecoverySteps[index][1] ||
+              step.conclusion !== expectedFailedRecoverySteps[index][2]
+            )
+          ) fail("prior_failed_recovery_steps_invalid");
+          const failedRecoveryStarted = canonicalTime(
+            failedRecoveryJob.started_at,
+            "prior_failed_recovery_started_at_invalid",
+          );
+          const failedRecoveryCompleted = canonicalTime(
+            failedRecoveryJob.completed_at,
+            "prior_failed_recovery_completed_at_invalid",
+          );
+          if (
+            failedRecoveryStarted <= completedEpoch ||
+            failedRecoveryCompleted <= failedRecoveryStarted ||
+            failedRecoveryCompleted - failedRecoveryStarted > 1_800
+          ) fail("prior_failed_recovery_time_window_invalid");
+
+          if (
             readiness?.id !== Number(process.env.READINESS_RUN_ID) ||
             readiness.run_attempt !== 1 ||
             readiness.name !== "Ordinary Account Cutover Readiness" ||
@@ -445,7 +521,7 @@ jobs:
           rm -f -- \
             "$deploy_run" "$deploy_jobs" "$deploy_workflow" "$deploy_runs" \
             "$readiness_run" "$readiness_jobs" "$readiness_workflow" \
-            "$readiness_runs"
+            "$readiness_runs" "$failed_recovery_run" "$failed_recovery_jobs"
 
       - name: Resolve Exact Readiness Artifact Inventory
         id: readiness-artifacts
@@ -812,7 +888,7 @@ jobs:
           gh api --method GET \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-pre-forward-deploy.yml/runs?branch=main&event=workflow_dispatch&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-post-switch-deploy.yml/runs?branch=main&event=workflow_dispatch&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
             > "$recovery_runs"
           node --input-type=module - "$ci_runs" "$recovery_runs" <<'NODE'
           import { readFileSync } from "node:fs";
@@ -871,11 +947,11 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          payload_path="$RUNNER_TEMP/failed-pre-forward-recovery-payload.json"
-          envelope_path="$RUNNER_TEMP/failed-pre-forward-recovery-envelope.bin"
+          payload_path="$RUNNER_TEMP/failed-post-switch-recovery-payload.json"
+          envelope_path="$RUNNER_TEMP/failed-post-switch-recovery-envelope.bin"
           RECOVERY_ENVELOPE_PATH="$envelope_path"
-          RECOVERY_STDOUT_PATH="$RUNNER_TEMP/failed-pre-forward-recovery.stdout"
-          RECOVERY_STDERR_PATH="$RUNNER_TEMP/failed-pre-forward-recovery.stderr"
+          RECOVERY_STDOUT_PATH="$RUNNER_TEMP/failed-post-switch-recovery.stdout"
+          RECOVERY_STDERR_PATH="$RUNNER_TEMP/failed-post-switch-recovery.stderr"
           export RECOVERY_ENVELOPE_PATH RECOVERY_STDOUT_PATH RECOVERY_STDERR_PATH
           cleanup_runner_recovery_files() {
             rm -f -- "$payload_path" "$RECOVERY_ENVELOPE_PATH" \
@@ -906,6 +982,12 @@ jobs:
             DATABASE_SYSTEM_ID: process.env.DATABASE_SYSTEM_ID ?? "",
             FAILED_RUN_COMPLETED_EPOCH: process.env.FAILED_RUN_COMPLETED_EPOCH ?? "",
             FAILED_RUN_STARTED_EPOCH: process.env.FAILED_RUN_STARTED_EPOCH ?? "",
+            PRIOR_FAILED_RECOVERY_RUN_ATTEMPT:
+              process.env.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT ?? "",
+            PRIOR_FAILED_RECOVERY_RUN_ID:
+              process.env.PRIOR_FAILED_RECOVERY_RUN_ID ?? "",
+            PRIOR_FAILED_RECOVERY_SHA:
+              process.env.PRIOR_FAILED_RECOVERY_SHA ?? "",
             INCIDENT_DEPLOY_RUN_ID: process.env.INCIDENT_DEPLOY_RUN_ID ?? "",
             INCIDENT_SHA: process.env.INCIDENT_SHA ?? "",
             READINESS_RUN_ATTEMPT: process.env.READINESS_RUN_ATTEMPT ?? "",
@@ -913,10 +995,10 @@ jobs:
           };
           const keys = Object.keys(values).sort();
           if (
-            keys.length !== 16 ||
-            values.CONFIRMATION !== "RECOVER_FAILED_PRE_FORWARD_DEPLOY_32597015446" ||
+            keys.length !== 19 ||
+            values.CONFIRMATION !== "RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446" ||
             !/^\/[A-Za-z0-9._/-]{1,1023}$/.test(values.APP_DIR) ||
-            !/^[A-Za-z0-9._-]{1,128}$/.test(values.APP_NAME) ||
+            !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(values.APP_NAME) ||
             !/^[1-9][0-9]{0,4}$/.test(values.APP_PORT) || Number(values.APP_PORT) > 65535 ||
             !/^[0-9a-f]{64}$/.test(values.DATABASE_CONTAINER_ID) ||
             !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(values.DATABASE_CONTAINER_NAME) ||
@@ -928,6 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
             values.READINESS_RUN_ID !== "32596977165" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32598424716" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
+            values.PRIOR_FAILED_RECOVERY_SHA !==
+              "7478fb9d1d65463639eeecd09b17efd80df2d64a" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -945,29 +1031,29 @@ jobs:
           NODE
           payloadBytes="$(wc -c < "$payload_path" | tr -d '[:space:]')"
           payloadSha256="$(sha256sum "$payload_path" | awk '{print $1}')"
-          scriptBytes="$(wc -c < scripts/recover-failed-pre-forward-production-runtime.sh | tr -d '[:space:]')"
-          scriptSha256="$(sha256sum scripts/recover-failed-pre-forward-production-runtime.sh | awk '{print $1}')"
+          scriptBytes="$(wc -c < scripts/recover-failed-post-switch-production-runtime.sh | tr -d '[:space:]')"
+          scriptSha256="$(sha256sum scripts/recover-failed-post-switch-production-runtime.sh | awk '{print $1}')"
           [[ "$payloadBytes" =~ ^[1-9][0-9]*$ ]]
           [[ "$payloadSha256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$scriptBytes" =~ ^[1-9][0-9]*$ ]]
           [[ "$scriptSha256" =~ ^[0-9a-f]{64}$ ]]
           [ "$payloadBytes" -le 65536 ]
           [ "$scriptBytes" -le 131072 ]
-          test "$(git hash-object scripts/recover-failed-pre-forward-production-runtime.sh)" = \
-            "$(git rev-parse "$RECOVERY_SOURCE_SHA:scripts/recover-failed-pre-forward-production-runtime.sh")"
+          test "$(git hash-object scripts/recover-failed-post-switch-production-runtime.sh)" = \
+            "$(git rev-parse "$RECOVERY_SOURCE_SHA:scripts/recover-failed-post-switch-production-runtime.sh")"
           {
-            printf '%s\n' 'FAOLLA_FAILED_PRE_FORWARD_RECOVERY_ENVELOPE_V1'
+            printf '%s\n' 'FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1'
             printf '%s\n' "$payloadBytes"
             printf '%s\n' "$payloadSha256"
             printf '%s\n' "$scriptBytes"
             printf '%s\n' "$scriptSha256"
             cat "$payload_path"
-            cat scripts/recover-failed-pre-forward-production-runtime.sh
+            cat scripts/recover-failed-post-switch-production-runtime.sh
           } > "$RECOVERY_ENVELOPE_PATH"
           chmod 600 "$RECOVERY_ENVELOPE_PATH"
           rm -f -- "$payload_path"
 
-          REMOTE_RECOVERY_COMMAND='set -eu; umask 077; recovery_transport_dir="$(mktemp -d)"; recovery_payload="$recovery_transport_dir/payload.json"; recovery_script="$recovery_transport_dir/recovery.sh"; cleanup_recovery_transport() { rm -f -- "$recovery_payload" "$recovery_script"; rmdir -- "$recovery_transport_dir"; }; trap cleanup_recovery_transport EXIT; IFS= read -r recovery_magic; test "$recovery_magic" = "FAOLLA_FAILED_PRE_FORWARD_RECOVERY_ENVELOPE_V1"; IFS= read -r expected_payload_bytes; IFS= read -r expected_payload_sha256; IFS= read -r expected_script_bytes; IFS= read -r expected_script_sha256; case "$expected_payload_bytes:$expected_script_bytes" in *[!0-9:]*|0:*|*:0) exit 1;; esac; test "$expected_payload_bytes" -le 65536; test "$expected_script_bytes" -le 131072; case "$expected_payload_sha256:$expected_script_sha256" in *[!0-9a-f:]*) exit 1;; esac; case "$expected_payload_sha256:$expected_script_sha256" in ????????????????????????????????????????????????????????????????:????????????????????????????????????????????????????????????????) :;; *) exit 1;; esac; dd bs=1 count="$expected_payload_bytes" of="$recovery_payload" status=none; dd bs=1 count="$expected_script_bytes" of="$recovery_script" status=none; test "$(dd bs=1 count=1 status=none | wc -c | tr -d "[:space:]")" = "0"; test "$(wc -c < "$recovery_payload" | tr -d "[:space:]")" = "$expected_payload_bytes"; test "$(sha256sum "$recovery_payload" | awk "{print \$1}")" = "$expected_payload_sha256"; test "$(wc -c < "$recovery_script" | tr -d "[:space:]")" = "$expected_script_bytes"; test "$(sha256sum "$recovery_script" | awk "{print \$1}")" = "$expected_script_sha256"; chmod 600 "$recovery_payload"; chmod 700 "$recovery_script"; FAOLLA_RECOVERY_PAYLOAD_FILE="$recovery_payload" bash "$recovery_script"'
+          REMOTE_RECOVERY_COMMAND='set -eu; umask 077; recovery_transport_dir="$(mktemp -d)"; recovery_payload="$recovery_transport_dir/payload.json"; recovery_script="$recovery_transport_dir/recovery.sh"; cleanup_recovery_transport() { rm -f -- "$recovery_payload" "$recovery_script"; rmdir -- "$recovery_transport_dir"; }; trap cleanup_recovery_transport EXIT; IFS= read -r recovery_magic; test "$recovery_magic" = "FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1"; IFS= read -r expected_payload_bytes; IFS= read -r expected_payload_sha256; IFS= read -r expected_script_bytes; IFS= read -r expected_script_sha256; case "$expected_payload_bytes:$expected_script_bytes" in *[!0-9:]*|0:*|*:0) exit 1;; esac; test "$expected_payload_bytes" -le 65536; test "$expected_script_bytes" -le 131072; case "$expected_payload_sha256:$expected_script_sha256" in *[!0-9a-f:]*) exit 1;; esac; case "$expected_payload_sha256:$expected_script_sha256" in ????????????????????????????????????????????????????????????????:????????????????????????????????????????????????????????????????) :;; *) exit 1;; esac; dd bs=1 count="$expected_payload_bytes" of="$recovery_payload" status=none; dd bs=1 count="$expected_script_bytes" of="$recovery_script" status=none; test "$(dd bs=1 count=1 status=none | wc -c | tr -d "[:space:]")" = "0"; test "$(wc -c < "$recovery_payload" | tr -d "[:space:]")" = "$expected_payload_bytes"; test "$(sha256sum "$recovery_payload" | awk "{print \$1}")" = "$expected_payload_sha256"; test "$(wc -c < "$recovery_script" | tr -d "[:space:]")" = "$expected_script_bytes"; test "$(sha256sum "$recovery_script" | awk "{print \$1}")" = "$expected_script_sha256"; chmod 600 "$recovery_payload"; chmod 700 "$recovery_script"; env -u NODE_OPTIONS -u NODE_PATH -u npm_config_node_options -u NPM_CONFIG_NODE_OPTIONS -u BASH_ENV -u ENV FAOLLA_RECOVERY_PAYLOAD_FILE="$recovery_payload" bash --noprofile --norc "$recovery_script"'
           export REMOTE_RECOVERY_COMMAND
           set +e
           (
@@ -980,7 +1066,8 @@ jobs:
           ssh_status=$?
           set -e
           classification="$(node --input-type=module - \
-            "$RECOVERY_STDOUT_PATH" "$RECOVERY_STDERR_PATH" "$ssh_status" <<'NODE'
+            "$RECOVERY_STDOUT_PATH" "$RECOVERY_STDERR_PATH" "$ssh_status" \
+            2>/dev/null <<'NODE'
           import { readFileSync } from "node:fs";
 
           const stdout = readFileSync(process.argv[2]);
@@ -988,7 +1075,10 @@ jobs:
           const status = Number(process.argv[4]);
           const expectedLines = [
             "fence_cleanup_verified",
-            "frozen_runtime_restored",
+            "candidate_state_verified",
+            "candidate_processes_stopped",
+            "current_switched_to_frozen_release",
+            "frozen_web_restored",
             "worker_state_restored",
             "recovery_complete",
           ];
@@ -1000,36 +1090,38 @@ jobs:
               "utf8",
             ).toString("base64"),
           );
-          const cleanupPrefixes = new Set(failurePrefixes);
-          const runtimeFailurePrefixCodes = new Map([
-            [failurePrefixes[1], "remote_recovery_failed_phase_web_restore"],
-            [failurePrefixes[3], "remote_recovery_failed_phase_persist_and_verify"],
-          ]);
-          const workerFailurePrefix = failurePrefixes[2];
-          const workerFailureCodes = new Map([
-            ["recovery_failed_runtime_worker_preflight", "remote_recovery_failed_phase_worker_restore_preflight"],
-            ["recovery_failed_runtime_worker_start", "remote_recovery_failed_phase_worker_restore_start"],
-            ["recovery_failed_runtime_worker_stability", "remote_recovery_failed_phase_worker_restore_stability"],
-            ["recovery_failed_runtime_worker_identity", "remote_recovery_failed_phase_worker_restore_identity"],
-            ["recovery_failed_runtime_worker_environment", "remote_recovery_failed_phase_worker_restore_environment"],
-            ["recovery_failed_runtime_worker_flags", "remote_recovery_failed_phase_worker_restore_flags"],
-            ["recovery_failed_runtime_worker_launch_contract", "remote_recovery_failed_phase_worker_restore_launch_contract"],
-            ["recovery_failed_runtime_worker_disabled_absence", "remote_recovery_failed_phase_worker_restore_disabled_absence"],
-          ].map(([remoteCode, publicCode]) => [
+          const allowedPrefixes = new Set(failurePrefixes);
+          const failureCodes = new Map([
+            ["recovery_failed_pre_runtime_input", "remote_recovery_failed_phase_pre_runtime_input", 0],
+            ["recovery_failed_pre_runtime_repository", "remote_recovery_failed_phase_pre_runtime_repository", 0],
+            ["recovery_failed_pre_runtime_deploy_lock", "remote_recovery_failed_phase_pre_runtime_deploy_lock", 0],
+            ["recovery_failed_pre_runtime_helpers", "remote_recovery_failed_phase_pre_runtime_helpers", 0],
+            ["recovery_failed_pre_runtime_candidate_release", "remote_recovery_failed_phase_pre_runtime_candidate_release", 0],
+            ["recovery_failed_pre_runtime_frozen_release", "remote_recovery_failed_phase_pre_runtime_frozen_release", 0],
+            ["recovery_failed_pre_runtime_frozen_environment", "remote_recovery_failed_phase_pre_runtime_frozen_environment", 0],
+            ["recovery_failed_pre_runtime_database_preflight", "remote_recovery_failed_phase_pre_runtime_database_preflight", 0],
+            ["recovery_failed_runtime_fence_cleanup", "remote_recovery_failed_phase_fence_cleanup", 0],
+            ["recovery_failed_runtime_candidate_process_preflight", "remote_recovery_failed_phase_candidate_process_preflight", 1],
+            ["recovery_failed_runtime_candidate_stop", "remote_recovery_failed_phase_candidate_stop", 2],
+            ["recovery_failed_runtime_current_switch", "remote_recovery_failed_phase_current_switch", 3],
+            ["recovery_failed_runtime_web_start", "remote_recovery_failed_phase_web_restore_start", 4],
+            ["recovery_failed_runtime_web_stability", "remote_recovery_failed_phase_web_restore_stability", 4],
+            ["recovery_failed_runtime_web_identity", "remote_recovery_failed_phase_web_restore_identity", 4],
+            ["recovery_failed_runtime_web_environment", "remote_recovery_failed_phase_web_restore_environment", 4],
+            ["recovery_failed_runtime_web_launch_contract", "remote_recovery_failed_phase_web_restore_launch_contract", 4],
+            ["recovery_failed_runtime_local_smoke", "remote_recovery_failed_phase_local_smoke", 4],
+            ["recovery_failed_runtime_worker_preflight", "remote_recovery_failed_phase_worker_restore_preflight", 5],
+            ["recovery_failed_runtime_worker_start", "remote_recovery_failed_phase_worker_restore_start", 5],
+            ["recovery_failed_runtime_worker_stability", "remote_recovery_failed_phase_worker_restore_stability", 5],
+            ["recovery_failed_runtime_worker_identity", "remote_recovery_failed_phase_worker_restore_identity", 5],
+            ["recovery_failed_runtime_worker_environment", "remote_recovery_failed_phase_worker_restore_environment", 5],
+            ["recovery_failed_runtime_worker_flags", "remote_recovery_failed_phase_worker_restore_flags", 5],
+            ["recovery_failed_runtime_worker_launch_contract", "remote_recovery_failed_phase_worker_restore_launch_contract", 5],
+            ["recovery_failed_runtime_worker_disabled_absence", "remote_recovery_failed_phase_worker_restore_disabled_absence", 5],
+            ["recovery_failed_runtime_persist_and_verify", "remote_recovery_failed_phase_persist_and_verify", 6],
+          ].map(([remoteCode, publicCode, prefixLength]) => [
             Buffer.from(`${remoteCode}\n`, "utf8").toString("base64"),
-            publicCode,
-          ]));
-          const preRuntimeFailureCodes = new Map([
-            ["recovery_failed_pre_runtime_input", "remote_recovery_failed_phase_pre_runtime_input"],
-            ["recovery_failed_pre_runtime_repository", "remote_recovery_failed_phase_pre_runtime_repository"],
-            ["recovery_failed_pre_runtime_deploy_lock", "remote_recovery_failed_phase_pre_runtime_deploy_lock"],
-            ["recovery_failed_pre_runtime_helpers", "remote_recovery_failed_phase_pre_runtime_helpers"],
-            ["recovery_failed_pre_runtime_legacy_release", "remote_recovery_failed_phase_pre_runtime_legacy_release"],
-            ["recovery_failed_pre_runtime_legacy_environment", "remote_recovery_failed_phase_pre_runtime_legacy_environment"],
-            ["recovery_failed_pre_runtime_database_preflight", "remote_recovery_failed_phase_pre_runtime_database_preflight"],
-          ].map(([remoteCode, publicCode]) => [
-            Buffer.from(`${remoteCode}\n`, "utf8").toString("base64"),
-            publicCode,
+            { publicCode, stdoutKey: failurePrefixes[prefixLength] },
           ]));
           if (!Number.isSafeInteger(status) || status < 0 || status > 255) {
             process.stdout.write("recovery_output_invalid");
@@ -1046,27 +1138,20 @@ jobs:
           const stdoutKey = stdout.toString("base64");
           const stderrKey = stderr.toString("base64");
           if (
-            cleanupPrefixes.has(stdoutKey) &&
+            allowedPrefixes.has(stdoutKey) &&
             stderr.equals(Buffer.from("cleanup_unverified\n", "utf8"))
           ) {
             process.stdout.write("remote_cleanup_unverified");
           } else {
-            const preRuntimeFailureCode = stdout.length === 0
-              ? preRuntimeFailureCodes.get(stderrKey)
-              : undefined;
-            const runtimeFailureCode = stderr.equals(Buffer.from("recovery_failed\n", "utf8"))
-              ? runtimeFailurePrefixCodes.get(stdoutKey)
-              : undefined;
-            const workerFailureCode = stdoutKey === workerFailurePrefix
-              ? workerFailureCodes.get(stderrKey)
-              : undefined;
+            const failure = failureCodes.get(stderrKey);
             process.stdout.write(
-              preRuntimeFailureCode ?? runtimeFailureCode ?? workerFailureCode ??
-                "recovery_output_invalid",
+              failure?.stdoutKey === stdoutKey
+                ? failure.publicCode
+                : "recovery_output_invalid",
             );
           }
           NODE
-          )"
+          )" || classification="recovery_output_invalid"
           if [ "$classification" != "success" ]; then
             case "$classification" in
               remote_cleanup_unverified|\
@@ -1074,10 +1159,20 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_repository|\
               remote_recovery_failed_phase_pre_runtime_deploy_lock|\
               remote_recovery_failed_phase_pre_runtime_helpers|\
-              remote_recovery_failed_phase_pre_runtime_legacy_release|\
-              remote_recovery_failed_phase_pre_runtime_legacy_environment|\
+              remote_recovery_failed_phase_pre_runtime_candidate_release|\
+              remote_recovery_failed_phase_pre_runtime_frozen_release|\
+              remote_recovery_failed_phase_pre_runtime_frozen_environment|\
               remote_recovery_failed_phase_pre_runtime_database_preflight|\
-              remote_recovery_failed_phase_web_restore|\
+              remote_recovery_failed_phase_fence_cleanup|\
+              remote_recovery_failed_phase_candidate_process_preflight|\
+              remote_recovery_failed_phase_candidate_stop|\
+              remote_recovery_failed_phase_current_switch|\
+              remote_recovery_failed_phase_web_restore_start|\
+              remote_recovery_failed_phase_web_restore_stability|\
+              remote_recovery_failed_phase_web_restore_identity|\
+              remote_recovery_failed_phase_web_restore_environment|\
+              remote_recovery_failed_phase_web_restore_launch_contract|\
+              remote_recovery_failed_phase_local_smoke|\
               remote_recovery_failed_phase_worker_restore_preflight|\
               remote_recovery_failed_phase_worker_restore_start|\
               remote_recovery_failed_phase_worker_restore_stability|\
@@ -1095,7 +1190,10 @@ jobs:
             exit 1
           fi
           printf '%s\n' 'fence_cleanup_verified'
-          printf '%s\n' 'frozen_runtime_restored'
+          printf '%s\n' 'candidate_state_verified'
+          printf '%s\n' 'candidate_processes_stopped'
+          printf '%s\n' 'current_switched_to_frozen_release'
+          printf '%s\n' 'frozen_web_restored'
           printf '%s\n' 'worker_state_restored'
           printf '%s\n' 'recovery_complete'
 
