@@ -88,13 +88,10 @@ test("only the new machine interface is dispatchable", () => {
   assert.match(workflow, /recover-failed-post-switch-deploy\.yml/);
   assert.match(workflow, /recover-failed-post-switch-production-runtime\.sh/);
   assert.match(workflow, /FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1/);
-  const historicalLines = workflow.split(/\r?\n/).filter((line) => /pre[-_ ]forward|failed-pre-forward/i.test(line));
-  assert.equal(historicalLines.length, 2);
-  for (const line of historicalLines) {
-    assert.match(line, /PRIOR_FAILED_RECOVERY_WORKFLOW_(?:NAME|PATH): (?:Recover Failed Pre-Forward Production Runtime|\.github\/workflows\/recover-failed-pre-forward-deploy\.yml)/);
-  }
   assert.doesNotMatch(runtime, /PRE[_-]FORWARD|PREFORWARD/i);
-  assert.doesNotMatch(workflow.replace(historicalLines.join("\n"), ""), /PRE[_-]FORWARD|PREFORWARD/i);
+  assert.doesNotMatch(workflow, /PRE[_-]FORWARD|PREFORWARD/i);
+  assert.match(workflow, /PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime/);
+  assert.match(workflow, /PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: \.github\/workflows\/recover-failed-post-switch-deploy\.yml/);
 });
 
 test("new source has exactly one successful push CI and one recovery dispatch", () => {
@@ -110,7 +107,7 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
-    "32598424716", "7478fb9d1d65463639eeecd09b17efd80df2d64a",
+    "32602232601", "760318e0e8a3996e66892a28fa01ade5de5ecf2a",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
@@ -120,6 +117,7 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   assert.match(allRuns, /failedRecovery\.run_attempt !== 1/);
   assert.match(allRuns, /\[10, "Recover Frozen Production Runtime", "failure"\]/);
   assert.match(allRuns, /\[11, "Verify Public Frozen Runtime Recovery", "skipped"\]/);
+  assert.match(allRuns, /\[5, "Validate Incident Deploy Readiness And Failed Recovery Boundary", "success"\]/);
   assert.match(allRuns, /failedRecoveryStarted <= completedEpoch/);
 });
 
@@ -168,7 +166,11 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
   ];
   for (const marker of markers) assert.ok(allRuns.includes(`"${marker}"`));
   for (const phase of [
-    "pre_runtime_candidate_release", "pre_runtime_frozen_release",
+    "pre_runtime_candidate_inventory", "pre_runtime_frozen_inventory",
+    "pre_runtime_candidate_current_link", "pre_runtime_candidate_structure",
+    "pre_runtime_candidate_env_build_binding", "pre_runtime_candidate_next_build_identity",
+    "pre_runtime_frozen_structure", "pre_runtime_frozen_env_build_binding",
+    "pre_runtime_frozen_next_build_identity",
     "candidate_process_preflight", "candidate_stop", "current_switch",
     "web_restore_start", "web_restore_stability", "web_restore_identity",
     "web_restore_environment", "web_restore_launch_contract", "local_smoke",
@@ -196,7 +198,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const mappings = [...classifier.matchAll(
     /\["(recovery_failed_(?:pre_)?runtime_[a-z_]+)", "(remote_recovery_failed_phase_[a-z_]+)", ([0-6])\]/g,
   )].map((match) => ({ remote: match[1], public: match[2], prefix: Number(match[3]) }));
-  assert.equal(mappings.length, 27);
+  assert.equal(mappings.length, 34);
   const markers = [
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
     "current_switched_to_frozen_release", "frozen_web_restored",

@@ -10,9 +10,9 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"
 readonly EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32598424716"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32602232601"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="7478fb9d1d65463639eeecd09b17efd80df2d64a"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="760318e0e8a3996e66892a28fa01ade5de5ecf2a"
 readonly EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
 readonly EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"
@@ -54,6 +54,12 @@ CANDIDATE_WORKER_PID=""
 CANDIDATE_WORKER_START_TICKS=""
 CANDIDATE_WORKER_PROCESS_IDENTITY=""
 CANDIDATE_WORKER_CWD_IDENTITY=""
+CANDIDATE_NEXT_BUILD_SNAPSHOT=""
+FROZEN_NEXT_BUILD_SNAPSHOT=""
+CANDIDATE_ENV_HELPER_SNAPSHOT=""
+CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY=""
+CANDIDATE_ENVIRONMENT_FILE_IDENTITY=""
+CANDIDATE_ENVIRONMENT_SHA256=""
 
 port_is_free() {
   local state
@@ -212,11 +218,32 @@ finish_recovery() {
         helpers)
           printf '%s\n' 'recovery_failed_pre_runtime_helpers' >&2
           ;;
-        candidate_release)
-          printf '%s\n' 'recovery_failed_pre_runtime_candidate_release' >&2
+        candidate_inventory)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_inventory' >&2
           ;;
-        frozen_release)
-          printf '%s\n' 'recovery_failed_pre_runtime_frozen_release' >&2
+        frozen_inventory)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_inventory' >&2
+          ;;
+        candidate_current_link)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_current_link' >&2
+          ;;
+        candidate_structure)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_structure' >&2
+          ;;
+        candidate_env_build_binding)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_build_binding' >&2
+          ;;
+        candidate_next_build_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_next_build_identity' >&2
+          ;;
+        frozen_structure)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_structure' >&2
+          ;;
+        frozen_env_build_binding)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_env_build_binding' >&2
+          ;;
+        frozen_next_build_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_next_build_identity' >&2
           ;;
         frozen_environment)
           printf '%s\n' 'recovery_failed_pre_runtime_frozen_environment' >&2
@@ -581,7 +608,9 @@ trusted_helper_snapshot() {
     *) return 1 ;;
   esac
   case "$expected_commit:$expected_root" in
-    "$EXPECTED_INCIDENT_SHA:$APP_DIR"|"$EXPECTED_OLD_BUILD_ID:"*) ;;
+    "$EXPECTED_INCIDENT_SHA:$APP_DIR"|\
+    "$EXPECTED_CANDIDATE_BUILD_ID:${CANDIDATE_RUNTIME_DIR:-__candidate_unset__}"|\
+    "$EXPECTED_OLD_BUILD_ID:${FROZEN_RUNTIME_DIR:-__frozen_unset__}") ;;
     *) return 1 ;;
   esac
   [ "$helper_path" = "$expected_root/$helper_relative" ] || return 1
@@ -686,34 +715,46 @@ INCIDENT_FENCE_HELPER_FROZEN_SNAPSHOT="$(trusted_helper_snapshot \
   "$EXPECTED_INCIDENT_SHA" "$APP_DIR")" || exit 1
 readonly INCIDENT_FENCE_HELPER_FROZEN_SNAPSHOT
 
-RECOVERY_FAILURE_STAGE="candidate_release"
+RECOVERY_FAILURE_STAGE="candidate_inventory"
 
-capture_trusted_environment_helper_output() {
+capture_trusted_release_environment_helper_output() {
   local output_name="$1"
   local timeout_seconds="$2"
-  shift 2
+  local helper_path="$3"
+  local expected_commit="$4"
+  local expected_root="$5"
+  local helper_snapshot="$6"
+  shift 6
   local captured=""
   local helper_status=0
   [[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
   [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || return 1
   trusted_helper_matches \
-    "$FROZEN_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
-    "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR" \
-    "$FROZEN_ENV_HELPER_SNAPSHOT" \
+    "$helper_path" "$ENV_HELPER_RELATIVE" \
+    "$expected_commit" "$expected_root" "$helper_snapshot" \
     || return 1
   if captured="$(timeout --signal=TERM --kill-after=1s \
-    "${timeout_seconds}s" node "$FROZEN_ENV_HELPER" "$@" 2>/dev/null)"; then
+    "${timeout_seconds}s" node "$helper_path" "$@" 2>/dev/null)"; then
     helper_status=0
   else
     helper_status=$?
   fi
   trusted_helper_matches \
-    "$FROZEN_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
-    "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR" \
-    "$FROZEN_ENV_HELPER_SNAPSHOT" \
+    "$helper_path" "$ENV_HELPER_RELATIVE" \
+    "$expected_commit" "$expected_root" "$helper_snapshot" \
     || return 1
   [ "$helper_status" -eq 0 ] || return 1
   printf -v "$output_name" '%s' "$captured"
+}
+
+capture_trusted_environment_helper_output() {
+  local output_name="$1"
+  local timeout_seconds="$2"
+  shift 2
+  capture_trusted_release_environment_helper_output \
+    "$output_name" "$timeout_seconds" \
+    "$CANDIDATE_ENV_HELPER" "$EXPECTED_CANDIDATE_BUILD_ID" \
+    "$CANDIDATE_RUNTIME_DIR" "$CANDIDATE_ENV_HELPER_SNAPSHOT" "$@"
 }
 
 RELEASES_REAL="$(readlink -f -- "$RELEASES_DIR" 2>/dev/null || true)"
@@ -740,14 +781,40 @@ find_unique_release() {
   printf '%s' "${matches[0]}"
 }
 
-release_identity() {
+trusted_directory_identity() {
+  local path="$1"
+  local identity
+  local directory_uid
+  local directory_raw_mode
+  local directory_links
+  local directory_mode
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  identity="$(stat -c '%d:%i:%Y:%Z:%u:%f:%h:%a' -- "$path" 2>/dev/null || true)"
+  [[ "$identity" =~ ^([0-9]+:){5}[0-9a-fA-F]+:[0-9]+:[0-7]{3,4}$ ]] \
+    || return 1
+  IFS=: read -r _ _ _ _ directory_uid directory_raw_mode directory_links \
+    directory_mode <<< "$identity"
+  (( (16#$directory_raw_mode & 0170000) == 0040000 )) || return 1
+  [ "$directory_uid" = "$(id -u)" ] \
+    && [ "$directory_links" -ge 1 ] \
+    && [ $((8#$directory_mode & 8#022)) -eq 0 ] \
+    || return 1
+  printf '%s' "$identity"
+}
+
+release_structure_identity() {
   local runtime_dir="$1"
   local expected_build="$2"
   local identity
-  local runtime_uid
-  local runtime_mode
-  local build_id
+  local next_identity
+  local modules_identity
+  local runtime_link_identity
+  [[ "$expected_build" =~ ^[0-9a-f]{40}$ ]] || return 1
   [ "$(dirname -- "$runtime_dir")" = "$RELEASES_REAL" ] || return 1
+  [[ "$(basename -- "$runtime_dir")" =~ ^${expected_build:0:12}-[0-9]{14}$ ]] \
+    || return 1
+  [ "$(readlink -f -- "$runtime_dir" 2>/dev/null || true)" = "$runtime_dir" ] \
+    || return 1
   [ -d "$runtime_dir" ] && [ ! -L "$runtime_dir" ] || return 1
   [ -d "$runtime_dir/.next" ] && [ ! -L "$runtime_dir/.next" ] || return 1
   [ -f "$runtime_dir/.next/BUILD_ID" ] && [ ! -L "$runtime_dir/.next/BUILD_ID" ] \
@@ -758,52 +825,197 @@ release_identity() {
   [ -L "$runtime_dir/.runtime" ] || return 1
   [ "$(readlink -f -- "$runtime_dir/.runtime" 2>/dev/null || true)" = "$SHARED_RUNTIME_DIR" ] \
     || return 1
-  identity="$(stat -Lc '%d:%i:%Y:%Z:%u:%a' -- "$runtime_dir" 2>/dev/null || true)"
-  [[ "$identity" =~ ^([0-9]+:){5}[0-9]+$ ]] || return 1
-  IFS=: read -r _ _ _ _ runtime_uid runtime_mode <<< "$identity"
-  [ "$runtime_uid" = "$(id -u)" ] && [[ "$runtime_mode" =~ ^[0-7]{3,4}$ ]] \
+  identity="$(trusted_directory_identity "$runtime_dir")" || return 1
+  next_identity="$(trusted_directory_identity "$runtime_dir/.next")" || return 1
+  modules_identity="$(trusted_directory_identity "$runtime_dir/node_modules")" \
     || return 1
-  [ $((8#$runtime_mode & 8#022)) -eq 0 ] || return 1
-  build_id="$(timeout --signal=TERM --kill-after=1s 3s node --input-type=module - \
-    "$runtime_dir/.next/BUILD_ID" 2>/dev/null <<'NODE'
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+  runtime_link_identity="$(trusted_symlink_identity "$runtime_dir/.runtime")" \
+    || return 1
+  printf '%s/%s/%s/%s' \
+    "$identity" "$next_identity" "$modules_identity" "$runtime_link_identity"
+}
+
+environment_build_binding_snapshot() {
+  local runtime_dir="$1"
+  local expected_build="$2"
+  local snapshot
+  local -a parts=()
+  [[ "$expected_build" =~ ^[0-9a-f]{40}$ ]] || return 1
+  snapshot="$(FAOLLA_EXPECTED_BUILD_ID="$expected_build" \
+    timeout --signal=TERM --kill-after=1s 5s node --input-type=module - \
+      "$runtime_dir/.env.local" "$runtime_dir" 2>/dev/null <<'NODE'
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { dirname } from "node:path";
+
+const fail = () => process.exit(1);
+const sameFile = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs && left.nlink === right.nlink &&
+  left.uid === right.uid && left.mode === right.mode;
+const sameDirectory = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs &&
+  left.nlink === right.nlink && left.uid === right.uid && left.mode === right.mode;
+const directoryIdentity = (value) => [
+  value.dev, value.ino, value.mtimeNs, value.ctimeNs,
+  value.nlink, value.uid, value.mode,
+].map(String).join(":");
+const fileIdentity = (value) => [
+  value.dev, value.ino, value.size, value.mtimeNs,
+  value.ctimeNs, value.nlink, value.uid, value.mode,
+].map(String).join(":");
+const safeDirectory = (value) =>
+  !value.isSymbolicLink() && value.isDirectory() && value.nlink >= 1n &&
+  typeof process.getuid === "function" && value.uid === BigInt(process.getuid()) &&
+  (value.mode & 0o022n) === 0n;
+const safeFile = (value) =>
+  !value.isSymbolicLink() && value.isFile() && value.nlink === 1n &&
+  value.size > 0n && value.size <= 1024n * 1024n &&
+  typeof process.getuid === "function" && value.uid === BigInt(process.getuid()) &&
+  (value.mode & 0o777n) === 0o600n;
+const exactAssignment = (lines, key) => {
+  const prefix = `${key}=`;
+  const values = lines.filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length));
+  if (values.length !== 1 || values[0].length === 0) fail();
+  return values[0];
+};
+
 let descriptor;
 try {
   const path = process.argv[2];
+  const runtime = process.argv[3];
+  const expected = process.env.FAOLLA_EXPECTED_BUILD_ID ?? "";
+  if (
+    !/^[0-9a-f]{40}$/.test(expected) ||
+    typeof path !== "string" || path !== `${runtime}/.env.local` ||
+    dirname(path) !== runtime || realpathSync(runtime) !== runtime ||
+    !Number.isInteger(constants.O_NOFOLLOW) || typeof process.getuid !== "function"
+  ) fail();
+  const directoryBefore = lstatSync(runtime, { bigint: true });
   const before = lstatSync(path, { bigint: true });
-  if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n || before.size <= 0n || before.size > 128n) process.exit(1);
-  descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  if (!safeDirectory(directoryBefore) || !safeFile(before)) fail();
+  descriptor = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   const opened = fstatSync(descriptor, { bigint: true });
-  if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size || opened.mtimeNs !== before.mtimeNs) process.exit(1);
+  if (!safeFile(opened) || !sameFile(before, opened)) fail();
   const bytes = readFileSync(descriptor);
   const after = fstatSync(descriptor, { bigint: true });
-  if (after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeNs !== opened.mtimeNs) process.exit(1);
-  const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim();
-  if (!/^[0-9a-f]{40}$/.test(value)) process.exit(1);
-  process.stdout.write(value);
-} catch { process.exit(1); } finally { if (descriptor !== undefined) closeSync(descriptor); }
+  const current = lstatSync(path, { bigint: true });
+  const directoryAfter = lstatSync(runtime, { bigint: true });
+  if (
+    BigInt(bytes.length) !== opened.size || !sameFile(opened, after) ||
+    !safeFile(current) || !sameFile(opened, current) ||
+    !safeDirectory(directoryAfter) || !sameDirectory(directoryBefore, directoryAfter)
+  ) fail();
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (source.includes("\0") || source.includes("\r")) fail();
+  const lines = source.split("\n");
+  if (
+    exactAssignment(lines, "FAOLLA_WEB_BUILD_ID") !== expected ||
+    exactAssignment(lines, "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID") !== expected
+  ) fail();
+  process.stdout.write([
+    directoryIdentity(directoryBefore),
+    fileIdentity(opened),
+    createHash("sha256").update(bytes).digest("hex"),
+  ].join("\n"));
+} catch {
+  fail();
+} finally {
+  if (descriptor !== undefined) closeSync(descriptor);
+}
 NODE
   )" || return 1
-  [ "$build_id" = "$expected_build" ] || return 1
-  printf '%s' "$identity"
+  mapfile -t parts <<< "$snapshot"
+  [ "${#parts[@]}" -eq 3 ] \
+    && [[ "${parts[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+    && [[ "${parts[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    && [[ "${parts[2]}" =~ ^[0-9a-f]{64}$ ]] \
+    || return 1
+  printf '%s' "$snapshot"
 }
 
+next_build_identity() {
+  local runtime_dir="$1"
+  local snapshot
+  snapshot="$(timeout --signal=TERM --kill-after=1s 3s node --input-type=module - \
+    "$runtime_dir/.next/BUILD_ID" 2>/dev/null <<'NODE'
+import { createHash } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+
+const fail = () => process.exit(1);
+const sameIdentity = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs && left.nlink === right.nlink &&
+  left.uid === right.uid && left.mode === right.mode;
+const identity = (value) => [
+  value.dev, value.ino, value.size, value.mtimeNs,
+  value.ctimeNs, value.nlink, value.uid, value.mode,
+].map(String).join(":");
+let descriptor;
+try {
+  const path = process.argv[2];
+  if (typeof process.getuid !== "function" || !Number.isInteger(constants.O_NOFOLLOW)) fail();
+  const before = lstatSync(path, { bigint: true });
+  if (
+    before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n ||
+    before.uid !== BigInt(process.getuid()) || (before.mode & 0o022n) !== 0n ||
+    before.size <= 0n || before.size > 129n
+  ) fail();
+  descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const opened = fstatSync(descriptor, { bigint: true });
+  if (!opened.isFile() || !sameIdentity(before, opened)) fail();
+  const bytes = readFileSync(descriptor);
+  const after = fstatSync(descriptor, { bigint: true });
+  const current = lstatSync(path, { bigint: true });
+  if (
+    BigInt(bytes.length) !== opened.size || !sameIdentity(opened, after) ||
+    current.isSymbolicLink() || !current.isFile() ||
+    !sameIdentity(opened, current)
+  ) fail();
+  const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const value = decoded.endsWith("\n") ? decoded.slice(0, -1) : decoded;
+  if (
+    (decoded !== value && decoded !== `${value}\n`) ||
+    !/^[A-Za-z0-9._~-]{1,128}$/.test(value)
+  ) fail();
+  process.stdout.write(
+    `${identity(opened)}:${createHash("sha256").update(bytes).digest("hex")}`,
+  );
+} catch {
+  fail();
+} finally {
+  if (descriptor !== undefined) closeSync(descriptor);
+}
+NODE
+  )" || return 1
+  [[ "$snapshot" =~ ^([0-9]+:){7}[0-9]+:[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$snapshot"
+}
+
+RECOVERY_FAILURE_STAGE="candidate_inventory"
 CANDIDATE_RUNTIME_DIR="$(find_unique_release "${EXPECTED_CANDIDATE_BUILD_ID:0:12}")" || exit 1
+
+RECOVERY_FAILURE_STAGE="frozen_inventory"
 FROZEN_RUNTIME_DIR="$(find_unique_release "${EXPECTED_OLD_BUILD_ID:0:12}")" || exit 1
 [ "$CANDIDATE_RUNTIME_DIR" != "$FROZEN_RUNTIME_DIR" ] || exit 1
+
+RECOVERY_FAILURE_STAGE="candidate_current_link"
 [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_DIR" ] \
   || exit 1
 [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_DIR" ] \
   || exit 1
-CANDIDATE_RUNTIME_IDENTITY="$(release_identity \
-  "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || exit 1
-
-RECOVERY_FAILURE_STAGE="frozen_release"
-FROZEN_RUNTIME_IDENTITY="$(release_identity \
-  "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" || exit 1
-[ "$(stat -Lc '%d:%i' -- "$CANDIDATE_RUNTIME_DIR" 2>/dev/null || true)" != \
-  "$(stat -Lc '%d:%i' -- "$FROZEN_RUNTIME_DIR" 2>/dev/null || true)" ] || exit 1
-
 CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")" || exit 1
 [ -L "$APP_DIR/.next" ] && [ "$(readlink -- "$APP_DIR/.next")" = "$CURRENT_LINK/.next" ] \
   || exit 1
@@ -815,20 +1027,52 @@ CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")" || exit 1
 [ ! -e "$APP_DIR/node_modules.pre-atomic-deploy" ] \
   && [ ! -L "$APP_DIR/node_modules.pre-atomic-deploy" ] || exit 1
 
+RECOVERY_FAILURE_STAGE="candidate_structure"
+git -C "$APP_DIR" cat-file -e "$EXPECTED_CANDIDATE_BUILD_ID^{commit}" >/dev/null 2>&1 \
+  || exit 1
+[ "$(git -C "$APP_DIR" rev-parse "$EXPECTED_CANDIDATE_BUILD_ID^{commit}" 2>/dev/null || true)" = \
+  "$EXPECTED_CANDIDATE_BUILD_ID" ] || exit 1
+CANDIDATE_RUNTIME_IDENTITY="$(release_structure_identity \
+  "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || exit 1
+
+readonly CANDIDATE_ENV_HELPER="$CANDIDATE_RUNTIME_DIR/$ENV_HELPER_RELATIVE"
+RECOVERY_FAILURE_STAGE="candidate_env_build_binding"
+CANDIDATE_ENV_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
+  "$CANDIDATE_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
+  "$EXPECTED_CANDIDATE_BUILD_ID" "$CANDIDATE_RUNTIME_DIR")" || exit 1
+CANDIDATE_ENVIRONMENT_SNAPSHOT="$(environment_build_binding_snapshot \
+  "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || exit 1
+mapfile -t CANDIDATE_ENVIRONMENT_PARTS <<< "$CANDIDATE_ENVIRONMENT_SNAPSHOT"
+[ "${#CANDIDATE_ENVIRONMENT_PARTS[@]}" -eq 3 ] || exit 1
+CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY="${CANDIDATE_ENVIRONMENT_PARTS[0]}"
+CANDIDATE_ENVIRONMENT_FILE_IDENTITY="${CANDIDATE_ENVIRONMENT_PARTS[1]}"
+CANDIDATE_ENVIRONMENT_SHA256="${CANDIDATE_ENVIRONMENT_PARTS[2]}"
+[[ "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+  || exit 1
+[[ "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+  || exit 1
+[[ "$CANDIDATE_ENVIRONMENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+unset CANDIDATE_ENVIRONMENT_SNAPSHOT CANDIDATE_ENVIRONMENT_PARTS
+readonly CANDIDATE_ENV_HELPER_SNAPSHOT \
+  CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY \
+  CANDIDATE_ENVIRONMENT_FILE_IDENTITY CANDIDATE_ENVIRONMENT_SHA256
+
+RECOVERY_FAILURE_STAGE="candidate_next_build_identity"
+CANDIDATE_NEXT_BUILD_SNAPSHOT="$(next_build_identity "$CANDIDATE_RUNTIME_DIR")" \
+  || exit 1
+readonly CANDIDATE_NEXT_BUILD_SNAPSHOT
+
+RECOVERY_FAILURE_STAGE="frozen_structure"
 git -C "$APP_DIR" cat-file -e "$EXPECTED_OLD_BUILD_ID^{commit}" >/dev/null 2>&1 || exit 1
 [ "$(git -C "$APP_DIR" rev-parse "$EXPECTED_OLD_BUILD_ID^{commit}" 2>/dev/null || true)" = \
   "$EXPECTED_OLD_BUILD_ID" ] || exit 1
-readonly FROZEN_ENV_HELPER="$FROZEN_RUNTIME_DIR/$ENV_HELPER_RELATIVE"
-readonly FROZEN_FENCE_HELPER="$FROZEN_RUNTIME_DIR/$FENCE_HELPER_RELATIVE"
+FROZEN_RUNTIME_IDENTITY="$(release_structure_identity \
+  "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" || exit 1
+[ "$(stat -Lc '%d:%i' -- "$CANDIDATE_RUNTIME_DIR" 2>/dev/null || true)" != \
+  "$(stat -Lc '%d:%i' -- "$FROZEN_RUNTIME_DIR" 2>/dev/null || true)" ] || exit 1
 readonly FROZEN_SMOKE_HELPER="$FROZEN_RUNTIME_DIR/$SMOKE_HELPER_RELATIVE"
 readonly FROZEN_PACKAGE_FILE="$FROZEN_RUNTIME_DIR/$PACKAGE_RELATIVE"
 readonly FROZEN_WORKER_FILE="$FROZEN_RUNTIME_DIR/$WORKER_RELATIVE"
-FROZEN_ENV_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
-  "$FROZEN_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
-  "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
-FROZEN_FENCE_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
-  "$FROZEN_FENCE_HELPER" "$FENCE_HELPER_RELATIVE" \
-  "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
 FROZEN_SMOKE_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_SMOKE_HELPER" "$SMOKE_HELPER_RELATIVE" \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
@@ -838,10 +1082,10 @@ FROZEN_PACKAGE_SNAPSHOT="$(trusted_helper_snapshot \
 FROZEN_WORKER_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_WORKER_FILE" "$WORKER_RELATIVE" \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
-readonly FROZEN_ENV_HELPER_SNAPSHOT FROZEN_FENCE_HELPER_SNAPSHOT \
-  FROZEN_SMOKE_HELPER_SNAPSHOT FROZEN_PACKAGE_SNAPSHOT FROZEN_WORKER_SNAPSHOT
+readonly FROZEN_SMOKE_HELPER_SNAPSHOT FROZEN_PACKAGE_SNAPSHOT \
+  FROZEN_WORKER_SNAPSHOT
 
-RECOVERY_FAILURE_STAGE="frozen_environment"
+RECOVERY_FAILURE_STAGE="frozen_env_build_binding"
 
 ROLLBACK_SNAPSHOT=""
 capture_trusted_environment_helper_output ROLLBACK_SNAPSHOT 5 \
@@ -859,6 +1103,21 @@ unset ROLLBACK_SNAPSHOT ROLLBACK_PARTS
 [[ "$ENVIRONMENT_DIRECTORY_IDENTITY" =~ ^([0-9]+:){6}[0-9]+$ ]] || exit 1
 [[ "$ENVIRONMENT_FILE_IDENTITY" =~ ^([0-9]+:){7}[0-9]+$ ]] || exit 1
 [[ "$ENVIRONMENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+FROZEN_BUILD_BINDING_SNAPSHOT="$(environment_build_binding_snapshot \
+  "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" || exit 1
+mapfile -t FROZEN_BUILD_BINDING_PARTS <<< "$FROZEN_BUILD_BINDING_SNAPSHOT"
+[ "${#FROZEN_BUILD_BINDING_PARTS[@]}" -eq 3 ] \
+  && [ "${FROZEN_BUILD_BINDING_PARTS[0]}" = "$ENVIRONMENT_DIRECTORY_IDENTITY" ] \
+  && [ "${FROZEN_BUILD_BINDING_PARTS[1]}" = "$ENVIRONMENT_FILE_IDENTITY" ] \
+  && [ "${FROZEN_BUILD_BINDING_PARTS[2]}" = "$ENVIRONMENT_SHA256" ] \
+  || exit 1
+unset FROZEN_BUILD_BINDING_SNAPSHOT FROZEN_BUILD_BINDING_PARTS
+
+RECOVERY_FAILURE_STAGE="frozen_next_build_identity"
+FROZEN_NEXT_BUILD_SNAPSHOT="$(next_build_identity "$FROZEN_RUNTIME_DIR")" || exit 1
+readonly FROZEN_NEXT_BUILD_SNAPSHOT
+
+RECOVERY_FAILURE_STAGE="frozen_environment"
 
 decode_strict_base64() {
   local encoded="$1"
@@ -923,10 +1182,14 @@ INVITATION_WORKER_ENABLED="${WORKER_CONFIGURATION_PARTS[1]}"
 unset WORKER_CONFIGURATION WORKER_CONFIGURATION_PARTS
 
 revalidate_incident_release_pair() {
+  local candidate_snapshot
   local current_snapshot
+  local -a candidate_parts=()
   local -a current_parts=()
-  [ "$(stat -Lc '%d:%i:%Y:%Z:%u:%a' -- "$CANDIDATE_RUNTIME_DIR" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_IDENTITY" ] \
-    && [ "$(stat -Lc '%d:%i:%Y:%Z:%u:%a' -- "$FROZEN_RUNTIME_DIR" 2>/dev/null || true)" = "$FROZEN_RUNTIME_IDENTITY" ] \
+  [ "$(find_unique_release "${EXPECTED_CANDIDATE_BUILD_ID:0:12}")" = \
+    "$CANDIDATE_RUNTIME_DIR" ] \
+    && [ "$(find_unique_release "${EXPECTED_OLD_BUILD_ID:0:12}")" = \
+      "$FROZEN_RUNTIME_DIR" ] \
     && [ -L "$APP_DIR/.next" ] \
     && [ "$(readlink -- "$APP_DIR/.next" 2>/dev/null || true)" = "$CURRENT_LINK/.next" ] \
     && [ -L "$APP_DIR/node_modules" ] \
@@ -936,10 +1199,23 @@ revalidate_incident_release_pair() {
     && [ ! -e "$APP_DIR/node_modules.pre-atomic-deploy" ] \
     && [ ! -L "$APP_DIR/node_modules.pre-atomic-deploy" ] \
     || return 1
-  [ "$(release_identity "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" = \
+  [ "$(release_structure_identity "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" = \
     "$CANDIDATE_RUNTIME_IDENTITY" ] || return 1
-  [ "$(release_identity "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" = \
+  [ "$(release_structure_identity "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" = \
     "$FROZEN_RUNTIME_IDENTITY" ] || return 1
+  trusted_helper_matches \
+    "$CANDIDATE_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
+    "$EXPECTED_CANDIDATE_BUILD_ID" "$CANDIDATE_RUNTIME_DIR" \
+    "$CANDIDATE_ENV_HELPER_SNAPSHOT" || return 1
+  candidate_snapshot=""
+  candidate_snapshot="$(environment_build_binding_snapshot \
+    "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || return 1
+  mapfile -t candidate_parts <<< "$candidate_snapshot"
+  [ "${#candidate_parts[@]}" -eq 3 ] \
+    && [ "${candidate_parts[0]}" = "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" ] \
+    && [ "${candidate_parts[1]}" = "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" ] \
+    && [ "${candidate_parts[2]}" = "$CANDIDATE_ENVIRONMENT_SHA256" ] \
+    || return 1
   trusted_helper_matches \
     "$FROZEN_PACKAGE_FILE" "$PACKAGE_RELATIVE" \
     "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR" \
@@ -956,7 +1232,12 @@ revalidate_incident_release_pair() {
   [ "${#current_parts[@]}" -eq 3 ] \
     && [ "${current_parts[0]}" = "$ENVIRONMENT_DIRECTORY_IDENTITY" ] \
     && [ "${current_parts[1]}" = "$ENVIRONMENT_FILE_IDENTITY" ] \
-    && [ "${current_parts[2]}" = "$ENVIRONMENT_SHA256" ]
+    && [ "${current_parts[2]}" = "$ENVIRONMENT_SHA256" ] \
+    || return 1
+  [ "$(next_build_identity "$CANDIDATE_RUNTIME_DIR")" = \
+    "$CANDIDATE_NEXT_BUILD_SNAPSHOT" ] || return 1
+  [ "$(next_build_identity "$FROZEN_RUNTIME_DIR")" = \
+    "$FROZEN_NEXT_BUILD_SNAPSHOT" ]
 }
 
 revalidate_incident_runtimes() {
@@ -1225,6 +1506,18 @@ NODE
     "$INCIDENT_FENCE_HELPER_FROZEN_SNAPSHOT" \
     || exit 1
   [ "$fence_parser_status" -eq 0 ] || exit 1
+  [ "$(stat -c '%d:%i:%s:%Y:%Z:%h:%u:%a' -- "$stale_log" 2>/dev/null || true)" = "$stale_log_identity" ] || exit 1
+  [ "$(stat -c '%d:%i:%Y:%Z:%u:%a' -- "$stale_dir" 2>/dev/null || true)" = "$stale_dir_identity" ] || exit 1
+  revalidate_incident_runtimes || exit 1
+  revalidate_deploy_lock || exit 1
+  verify_database_fence_clear || exit 1
+  revalidate_incident_runtimes || exit 1
+  revalidate_deploy_lock || exit 1
+  trusted_helper_matches \
+    "$INCIDENT_FENCE_HELPER" "$FENCE_HELPER_RELATIVE" \
+    "$EXPECTED_INCIDENT_SHA" "$APP_DIR" \
+    "$INCIDENT_FENCE_HELPER_FROZEN_SNAPSHOT" \
+    || exit 1
   [ "$(stat -c '%d:%i:%s:%Y:%Z:%h:%u:%a' -- "$stale_log" 2>/dev/null || true)" = "$stale_log_identity" ] || exit 1
   [ "$(stat -c '%d:%i:%Y:%Z:%u:%a' -- "$stale_dir" 2>/dev/null || true)" = "$stale_dir_identity" ] || exit 1
   FENCE_CLEANUP_STARTED=1
@@ -1533,10 +1826,7 @@ RECOVERY_FAILURE_STAGE="current_switch"
   "$CURRENT_LINK_IDENTITY" ] || exit 1
 [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_DIR" ] \
   || exit 1
-[ "$(release_identity "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" = \
-  "$CANDIDATE_RUNTIME_IDENTITY" ] || exit 1
-[ "$(release_identity "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" = \
-  "$FROZEN_RUNTIME_IDENTITY" ] || exit 1
+revalidate_incident_release_pair || exit 1
 SWITCH_TEMP_LINK="${CURRENT_LINK}.recover-${EXPECTED_INCIDENT_DEPLOY_RUN_ID}"
 [ ! -e "$SWITCH_TEMP_LINK" ] && [ ! -L "$SWITCH_TEMP_LINK" ] || exit 1
 ln -s -- "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK" >/dev/null 2>&1 || exit 1
@@ -1545,6 +1835,21 @@ ln -s -- "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK" >/dev/null 2>&1 || exit 1
 FROZEN_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$SWITCH_TEMP_LINK")" \
   || exit 1
 CURRENT_SWITCH_ARMED=1
+revalidate_incident_release_pair || exit 1
+revalidate_deploy_lock || exit 1
+[ "$(candidate_pm2_state web)" = "absent" ] || exit 1
+[ "$(candidate_pm2_state worker)" = "absent" ] || exit 1
+port_is_free || exit 1
+verify_database_fence_clear || exit 1
+current_link_is_exact "$CANDIDATE_RUNTIME_DIR" || exit 1
+[ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+  "$CURRENT_LINK_IDENTITY" ] || exit 1
+[ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+  "$FROZEN_RUNTIME_DIR" ] || exit 1
+[ "$(readlink -f -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+  "$FROZEN_RUNTIME_DIR" ] || exit 1
+[ "$(trusted_symlink_identity "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+  "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
 mv -T -- "$SWITCH_TEMP_LINK" "$CURRENT_LINK" >/dev/null 2>&1 || exit 1
 SWITCH_TEMP_LINK=""
 CURRENT_SWITCH_COMPLETED=1
@@ -1555,8 +1860,6 @@ CURRENT_SWITCH_COMPLETED=1
 revalidate_incident_runtimes || exit 1
 revalidate_deploy_lock || exit 1
 verify_database_fence_clear || exit 1
-[ "$(release_identity "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" = \
-  "$CANDIDATE_RUNTIME_IDENTITY" ] || exit 1
 printf '%s\n' 'current_switched_to_frozen_release'
 
 RECOVERY_FAILURE_STAGE="web_start"
@@ -1964,8 +2267,7 @@ else
 fi
 [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
   "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
-[ "$(release_identity "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" = \
-  "$CANDIDATE_RUNTIME_IDENTITY" ] || exit 1
+revalidate_incident_runtimes || exit 1
 verify_database_fence_clear || exit 1
 
 RECOVERY_COMPLETE=1
