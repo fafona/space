@@ -842,6 +842,18 @@ test("waiter SQL strips inet masks at observation and cancellation boundaries", 
   assert.doesNotMatch(helperSource, /activity\.client_addr::text/);
 });
 
+test("waiter cancellation preserves a set but empty standard Auth application name", async () => {
+  const helperSource = await readFile(
+    new URL("./hold-ordinary-account-cutover-readiness-fence.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    helperSource,
+    /\$\{FAOLLA_APPLICATION_NAME\?FAOLLA_APPLICATION_NAME is required\}/,
+  );
+  assert.doesNotMatch(helperSource, /\$\{FAOLLA_APPLICATION_NAME:\?/);
+});
+
 test("service identity is derived from the attested compose project and direct database route without exposing its URI", async (t) => {
   const docker = serviceIdentityDockerSpawner();
   const identity = await resolveSupabaseServiceClientAddresses(
@@ -3599,6 +3611,61 @@ test("query cancellation is causally bound to the same HTTP request with locale-
 
   await t.test("non-English messages with REST SQLSTATE and Auth error_code pass", async () => {
     assert.equal((await runWithResponse()).length, 4);
+  });
+  await t.test("the real cancellation child binds an empty standard Auth application name", async () => {
+    const snapshots = successfulProbeSequence();
+    const cancellationArguments = [];
+    const sqlChunks = [];
+    let resolveRequest = null;
+    const fetchImpl = (_url, options) =>
+      new Promise((resolve, reject) => {
+        resolveRequest = resolve;
+        options.signal.addEventListener("abort", reject, { once: true });
+      });
+    const evidence = await probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      input,
+      {
+        ...common,
+        fetchImpl,
+        observeWaiters: async () => snapshots.shift() ?? observation(),
+        spawnProcess: (_command, argumentsList) => {
+          assert.equal(typeof resolveRequest, "function");
+          const completeRequest = resolveRequest;
+          resolveRequest = null;
+          const isRest = argumentsList.includes("FAOLLA_SCHEMA_NAME=public");
+          completeRequest({
+            status: 500,
+            text: async () =>
+              JSON.stringify(
+                isRest
+                  ? { code: "57014" }
+                  : { error_code: "unexpected_failure" },
+              ),
+          });
+          cancellationArguments.push(argumentsList);
+          const child = outputChild("cancelled\n");
+          child.stdin = new Writable({
+            write: (chunk, _encoding, callback) => {
+              sqlChunks.push(Buffer.from(chunk));
+              callback();
+            },
+          });
+          return child;
+        },
+      },
+    );
+    assert.equal(evidence.length, 4);
+    assert.equal(cancellationArguments.length, 4);
+    for (const index of [1, 3]) {
+      assert.ok(
+        cancellationArguments[index].includes("FAOLLA_APPLICATION_NAME="),
+      );
+    }
+    assert.equal(
+      sqlChunks.filter((chunk) => /pg_cancel_backend/.test(chunk.toString("utf8")))
+        .length,
+      4,
+    );
   });
   await t.test("a cold GoTrue pool with no pre-existing Auth session still binds through the unique causal request", async () => {
     const snapshots = successfulProbeSequence();
