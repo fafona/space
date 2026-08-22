@@ -2116,6 +2116,14 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   assert.match(sequence, /BOOKING_PERSISTENCE_STATUS" -ne 0[\s\S]+exit 1/);
   assert.match(sequence, /assert_readiness_fence_forward_checkpoint \|\| exit 1/g);
   assert.match(deployScript, /blocked_cancelled[\s\S]+deployment will fail closed/);
+  assert.doesNotMatch(
+    deployScript,
+    /pg_catalog\.(?:coalesce|greatest|least|nullif)\s*\(/i,
+  );
+  assert.match(
+    deployScript,
+    /COALESCE\([\s\S]{0,160}pg_catalog\.bool_and\(cancelled_waiters\.cancelled\)/,
+  );
   assert.match(deployScript, /pg_catalog\.pg_cancel_backend\(blocked_waiters\.pid\)/);
   assert.match(deployScript, /auth_share <> 1[\s\S]+auth_ax <> 0[\s\S]+pages_ax <> 0[\s\S]+registry_ax <> 1/);
   assert.match(deployScript, /trap 'handle_deploy_signal 129' HUP/);
@@ -2385,6 +2393,102 @@ test("fence startup remains fail-fast when invoked from cleanup set +e", async (
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("database lock checker accepts only exact held output from a successful producer", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-fence-lock-check-contract-"),
+  );
+  const lockFunction = extractShellRegion(
+    "assert_readiness_fence_database_locks() {",
+    "\nreadiness_fence_process_identity_sha256() {",
+  );
+  const blockedWarning =
+    "[deploy] readiness fence cancelled a newly queued database waiter; deployment will fail closed\n";
+  const fixtures = [
+    { name: "standard psql LF", stdout: "held\n", producerStatus: 0, expectedStatus: 0 },
+    { name: "no trailing LF", stdout: "held", producerStatus: 0, expectedStatus: 0 },
+    { name: "multiple trailing LF", stdout: "held\n\n", producerStatus: 0, expectedStatus: 0 },
+    {
+      name: "stderr does not contaminate stdout",
+      stdout: "held\n",
+      stderr: "NOTICE fake diagnostic\n",
+      producerStatus: 0,
+      expectedStatus: 0,
+    },
+    {
+      name: "blocked waiter remains fail closed",
+      stdout: "blocked_cancelled\n",
+      producerStatus: 0,
+      expectedStatus: 1,
+      warning: blockedWarning,
+    },
+    { name: "locks not held", stdout: "not_held\n", producerStatus: 0, expectedStatus: 1 },
+    { name: "empty stdout", stdout: "", producerStatus: 0, expectedStatus: 1 },
+    { name: "leading LF", stdout: "\nheld\n", producerStatus: 0, expectedStatus: 1 },
+    { name: "trailing space", stdout: "held \n", producerStatus: 0, expectedStatus: 1 },
+    {
+      name: "multiple result lines",
+      stdout: "held\nnot_held\n",
+      producerStatus: 0,
+      expectedStatus: 1,
+    },
+    { name: "psql script failure", stdout: "held\n", producerStatus: 3, expectedStatus: 1 },
+    { name: "transport failure", stdout: "held\n", producerStatus: 7, expectedStatus: 1 },
+    { name: "timeout", stdout: "held\n", producerStatus: 124, expectedStatus: 1 },
+  ];
+
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const callsPath = join(temporaryDirectory, `calls-${index}`);
+      const stdoutBase64 = Buffer.from(fixture.stdout, "utf8").toString("base64");
+      const stderrBase64 = Buffer.from(fixture.stderr ?? "", "utf8").toString("base64");
+      const script = [
+        "set -euo pipefail",
+        lockFunction,
+        `CALLS='${toBashPath(callsPath)}'`,
+        `FIXTURE_STDOUT_B64='${stdoutBase64}'`,
+        `FIXTURE_STDERR_B64='${stderrBase64}'`,
+        `FIXTURE_STATUS='${fixture.producerStatus}'`,
+        "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+        "READINESS_FENCE_APPLICATION_NAME=faolla_readiness_fence_1234_aaaaaaaaaaaaaaaaaaaaaaaa",
+        "READINESS_FENCE_BACKEND_PID=4321",
+        `RELEASE_DATABASE_CONTAINER_ID='${"b".repeat(64)}'`,
+        "timeout() {",
+        "  printf x >> \"$CALLS\"",
+        "  if [ -n \"$FIXTURE_STDOUT_B64\" ]; then",
+        "    printf '%s' \"$FIXTURE_STDOUT_B64\" | base64 --decode",
+        "  fi",
+        "  if [ -n \"$FIXTURE_STDERR_B64\" ]; then",
+        "    printf '%s' \"$FIXTURE_STDERR_B64\" | base64 --decode >&2",
+        "  fi",
+        "  return \"$FIXTURE_STATUS\"",
+        "}",
+        "if assert_readiness_fence_database_locks; then status=0; else status=$?; fi",
+        "printf '%s\\n' \"$status\"",
+        "",
+      ].join("\n");
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: script,
+        timeout: 10_000,
+      });
+      assert.equal(
+        result.status,
+        0,
+        `${fixture.name}\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.equal(
+        result.stdout,
+        `${fixture.warning ?? ""}${fixture.expectedStatus}\n`,
+        fixture.name,
+      );
+      assert.equal(result.stderr, fixture.stderr ?? "", fixture.name);
+      assert.equal(await readFile(callsPath, "utf8"), "x", fixture.name);
+    }
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

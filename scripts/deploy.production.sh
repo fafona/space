@@ -2204,7 +2204,7 @@ NODE
 
 assert_readiness_fence_database_locks() {
   local lock_state
-  lock_state="$(
+  if ! lock_state="$(
     timeout --signal=TERM --kill-after=5s \
       "${READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}s" \
     docker exec --interactive \
@@ -2273,7 +2273,7 @@ SELECT
     AND lock_counts.registry_ax = 1
   ) AS locks_held,
   ((SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0) AS had_waiters,
-  pg_catalog.coalesce(
+  COALESCE(
     (SELECT pg_catalog.bool_and(cancelled_waiters.cancelled) FROM cancelled_waiters),
     true
   ) AS all_cancelled
@@ -2340,7 +2340,9 @@ SELECT CASE
 END
 FROM lock_counts;
 SQL
-  )"
+  )"; then
+    return 1
+  fi
   case "$lock_state" in
     held) return 0 ;;
     blocked_cancelled)
