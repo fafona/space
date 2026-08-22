@@ -106,15 +106,15 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "repos/$GITHUB_REPOSITORY/actions/workflows/$recovery_workflow_id" \
             > "$workflow_definition"
-          gh api --method GET --paginate --slurp \
+          gh api --method GET \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-pre-forward-deploy.yml/runs?branch=main&event=workflow_dispatch&per_page=100" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-pre-forward-deploy.yml/runs?branch=main&event=workflow_dispatch&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
             > "$workflow_runs"
-          gh api --method GET --paginate --slurp \
+          gh api --method GET \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
             > "$ci_runs"
           gh api --method GET \
             -H "Accept: application/vnd.github+json" \
@@ -131,8 +131,8 @@ jobs:
             process.exit(1);
           };
           const workflow = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          const workflowPages = JSON.parse(readFileSync(process.argv[3], "utf8"));
-          const ciPages = JSON.parse(readFileSync(process.argv[4], "utf8"));
+          const workflowPage = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const ciPage = JSON.parse(readFileSync(process.argv[4], "utf8"));
           const ciWorkflow = JSON.parse(readFileSync(process.argv[5], "utf8"));
           const workflowId = Number(process.argv[6]);
           if (
@@ -141,42 +141,47 @@ jobs:
             workflow.path !== process.env.RECOVERY_WORKFLOW_PATH ||
             workflow.state !== "active"
           ) fail("recovery_workflow_definition_invalid");
-          const flattenRuns = (pages, code) => {
-            if (!Array.isArray(pages) || pages.length === 0) fail(code);
-            return pages.flatMap((page) => {
-              if (!page || !Array.isArray(page.workflow_runs)) fail(code);
-              return page.workflow_runs;
-            });
+          const exactSingleRun = (page, invalidCode, uniquenessCode) => {
+            if (
+              !page || !Number.isSafeInteger(page.total_count) ||
+              !Array.isArray(page.workflow_runs)
+            ) fail(invalidCode);
+            if (page.total_count !== 1 || page.workflow_runs.length !== 1) {
+              fail(uniquenessCode);
+            }
+            return page.workflow_runs[0];
           };
-          const workflow_runs = flattenRuns(
-            workflowPages,
+          const candidate = exactSingleRun(
+            workflowPage,
             "recovery_workflow_runs_invalid",
-          );
-          const candidates = workflow_runs.filter(
-            (run) => run?.head_sha === process.env.RECOVERY_SOURCE_SHA,
+            "recovery_dispatch_not_unique",
           );
           if (
-            candidates.length !== 1 ||
-            candidates[0].id !== Number(process.env.GITHUB_RUN_ID) ||
-            candidates[0].run_attempt !== 1 ||
-            candidates[0].event !== "workflow_dispatch" ||
-            candidates[0].head_branch !== "main"
+            candidate?.id !== Number(process.env.GITHUB_RUN_ID) ||
+            candidate.workflow_id !== workflowId ||
+            candidate.run_attempt !== 1 ||
+            candidate.event !== "workflow_dispatch" ||
+            candidate.head_branch !== "main" ||
+            candidate.head_sha !== process.env.RECOVERY_SOURCE_SHA
           ) fail("recovery_dispatch_not_unique");
           if (
+            !Number.isSafeInteger(ciWorkflow?.id) || ciWorkflow.id <= 0 ||
             ciWorkflow?.name !== "CI" ||
             ciWorkflow.path !== ".github/workflows/ci.yml" ||
             ciWorkflow.state !== "active"
           ) fail("recovery_ci_workflow_invalid");
-          const ciRuns = flattenRuns(ciPages, "recovery_ci_runs_invalid");
-          const matches = ciRuns.filter(
-            (run) => run?.head_sha === process.env.RECOVERY_SOURCE_SHA,
+          const ci = exactSingleRun(
+            ciPage,
+            "recovery_ci_runs_invalid",
+            "recovery_ci_not_unique",
           );
-          if (matches.length !== 1) fail("recovery_ci_not_unique");
-          const ci = matches[0];
           if (
+            !Number.isSafeInteger(ci?.id) || ci.id <= 0 ||
+            ci.workflow_id !== ciWorkflow.id ||
             ci.name !== "CI" ||
             ci.path !== ".github/workflows/ci.yml" ||
             ci.event !== "push" ||
+            ci.head_sha !== process.env.RECOVERY_SOURCE_SHA ||
             ci.status !== "completed" ||
             ci.conclusion !== "success" ||
             ci.head_branch !== "main" ||
@@ -799,54 +804,51 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           ci_runs="$RUNNER_TEMP/final-recovery-source-ci-runs.json"
           recovery_runs="$RUNNER_TEMP/final-recovery-workflow-runs.json"
-          gh api --method GET --paginate --slurp \
+          gh api --method GET \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
             > "$ci_runs"
-          gh api --method GET --paginate --slurp \
+          gh api --method GET \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-pre-forward-deploy.yml/runs?branch=main&event=workflow_dispatch&per_page=100" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/recover-failed-pre-forward-deploy.yml/runs?branch=main&event=workflow_dispatch&head_sha=$RECOVERY_SOURCE_SHA&per_page=2&page=1" \
             > "$recovery_runs"
           node --input-type=module - "$ci_runs" "$recovery_runs" <<'NODE'
           import { readFileSync } from "node:fs";
-          const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          const recoveryPages = JSON.parse(readFileSync(process.argv[3], "utf8"));
-          if (!Array.isArray(pages) || pages.length === 0) process.exit(1);
-          const runs = pages.flatMap((page) => {
-            if (!page || !Array.isArray(page.workflow_runs)) process.exit(1);
-            return page.workflow_runs;
-          });
-          const matches = runs.filter((run) => run?.head_sha === process.env.RECOVERY_SOURCE_SHA);
-          if (matches.length !== 1) process.exit(1);
-          const run = matches[0];
+          const page = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const recoveryPage = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const exactSingleRun = (value) => {
+            if (
+              !value || value.total_count !== 1 ||
+              !Array.isArray(value.workflow_runs) || value.workflow_runs.length !== 1
+            ) process.exit(1);
+            return value.workflow_runs[0];
+          };
+          const run = exactSingleRun(page);
           if (
+            !Number.isSafeInteger(run?.id) || run.id <= 0 ||
+            !Number.isSafeInteger(run.workflow_id) || run.workflow_id <= 0 ||
             run.name !== "CI" || run.path !== ".github/workflows/ci.yml" ||
             run.event !== "push" || run.status !== "completed" ||
             run.conclusion !== "success" || run.head_branch !== "main" ||
+            run.head_sha !== process.env.RECOVERY_SOURCE_SHA ||
             run.run_attempt !== 1 ||
             run.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
             run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
           ) process.exit(1);
-          if (!Array.isArray(recoveryPages) || recoveryPages.length === 0) process.exit(1);
-          const recoveryRuns = recoveryPages.flatMap((page) => {
-            if (!page || !Array.isArray(page.workflow_runs)) process.exit(1);
-            return page.workflow_runs;
-          });
-          const recoveryMatches = recoveryRuns.filter(
-            (candidate) => candidate?.head_sha === process.env.RECOVERY_SOURCE_SHA,
-          );
+          const recoveryRun = exactSingleRun(recoveryPage);
           if (
-            recoveryMatches.length !== 1 ||
-            recoveryMatches[0].id !== Number(process.env.GITHUB_RUN_ID) ||
-            recoveryMatches[0].run_attempt !== 1 ||
-            recoveryMatches[0].event !== "workflow_dispatch" ||
-            recoveryMatches[0].head_branch !== "main" ||
-            recoveryMatches[0].status !== "in_progress" ||
-            recoveryMatches[0].conclusion !== null ||
-            recoveryMatches[0].repository?.full_name !== process.env.GITHUB_REPOSITORY ||
-            recoveryMatches[0].head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            recoveryRun?.id !== Number(process.env.GITHUB_RUN_ID) ||
+            !Number.isSafeInteger(recoveryRun.workflow_id) || recoveryRun.workflow_id <= 0 ||
+            recoveryRun.run_attempt !== 1 ||
+            recoveryRun.event !== "workflow_dispatch" ||
+            recoveryRun.head_branch !== "main" ||
+            recoveryRun.head_sha !== process.env.RECOVERY_SOURCE_SHA ||
+            recoveryRun.status !== "in_progress" ||
+            recoveryRun.conclusion !== null ||
+            recoveryRun.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            recoveryRun.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
           ) process.exit(1);
           NODE
           rm -f -- "$ci_runs" "$recovery_runs"

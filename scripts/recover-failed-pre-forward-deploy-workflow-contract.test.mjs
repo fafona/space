@@ -234,7 +234,8 @@ test("manual entry is main-only, incident-bound, unique, and serialized with dep
   assert.match(workflow, /actions\/workflows\/(?:\$RECOVERY_WORKFLOW_PATH|recover-failed-pre-forward-deploy\.yml)\/runs/);
   assert.match(workflow, /event=workflow_dispatch|event:\s*"workflow_dispatch"/);
   assert.match(allRunSource, /workflow_runs/);
-  assert.match(allRunSource, /(?:candidates|matchingRuns|matches)\.length\s*!==\s*1/);
+  assert.match(allRunSource, /total_count\s*!==\s*1/);
+  assert.match(allRunSource, /workflow_runs\.length\s*!==\s*1/);
   assert.match(allRunSource, /run_attempt\s*!==\s*1/);
   assert.match(allRunSource, /Number\(process\.env\.GITHUB_RUN_ID\)/);
 
@@ -295,9 +296,96 @@ test("checkout is the exact current main SHA with one successful push CI attempt
     "CI validator",
   );
   assert.match(allRunSource, /run_attempt\s*!==\s*1/);
-  assert.match(allRunSource, /(?:candidates|matches)\.length\s*!==\s*1/);
+  assert.match(allRunSource, /total_count\s*!==\s*1/);
   assert.match(workflow, /status --porcelain=v1 --untracked-files=all/);
   assert.match(workflow, /symbolic-ref -q HEAD/);
+});
+
+test("CI and recovery uniqueness use exact SHA-filtered single API pages", () => {
+  const initialGate = stepContaining(job, "current-recovery-workflow-runs.json");
+  const finalGate = stepContaining(job, "final-recovery-workflow-runs.json");
+  const ciQuery = /actions\/workflows\/ci\.yml\/runs\?branch=main&event=push&head_sha=\$RECOVERY_SOURCE_SHA&per_page=2&page=1/;
+  const recoveryQuery = /actions\/workflows\/recover-failed-pre-forward-deploy\.yml\/runs\?branch=main&event=workflow_dispatch&head_sha=\$RECOVERY_SOURCE_SHA&per_page=2&page=1/;
+
+  for (const [label, source] of [
+    ["initial recovery gate", initialGate.run],
+    ["final recovery gate", finalGate.run],
+  ]) {
+    assert.match(source, ciQuery, label + " must server-filter the CI SHA");
+    assert.match(source, recoveryQuery, label + " must server-filter the recovery SHA");
+    assert.doesNotMatch(source, /--paginate|--slurp/, label + " must not scan mutable history");
+    assert.match(source, /total_count\s*!==\s*1/);
+    assert.match(source, /workflow_runs\.length\s*!==\s*1/);
+    assert.match(
+      source,
+      /head_sha\s*!==\s*process\.env\.RECOVERY_SOURCE_SHA/,
+      label + " must revalidate the returned object's SHA",
+    );
+  }
+
+  assertContainsAll(
+    initialGate.run,
+    [
+      "Number.isSafeInteger(page.total_count)",
+      "recovery_workflow_runs_invalid",
+      "recovery_dispatch_not_unique",
+      "recovery_ci_runs_invalid",
+      "recovery_ci_not_unique",
+      "Number.isSafeInteger(ciWorkflow?.id)",
+      "ciWorkflow.id <= 0",
+      "Number.isSafeInteger(ci?.id)",
+      "ci.id <= 0",
+      "ci.workflow_id !== ciWorkflow.id",
+      "candidate.workflow_id !== workflowId",
+      "candidate?.id !== Number(process.env.GITHUB_RUN_ID)",
+      "candidate.run_attempt !== 1",
+      'candidate.event !== "workflow_dispatch"',
+      'candidate.head_branch !== "main"',
+      "candidate.head_sha !== process.env.RECOVERY_SOURCE_SHA",
+      'ci.name !== "CI"',
+      'ci.path !== ".github/workflows/ci.yml"',
+      'ci.event !== "push"',
+      "ci.head_sha !== process.env.RECOVERY_SOURCE_SHA",
+      'ci.status !== "completed"',
+      'ci.conclusion !== "success"',
+      'ci.head_branch !== "main"',
+      "ci.run_attempt !== 1",
+      "ci.repository?.full_name !== process.env.GITHUB_REPOSITORY",
+      "ci.head_repository?.full_name !== process.env.GITHUB_REPOSITORY",
+    ],
+    "initial exact-page validator",
+  );
+  assertContainsAll(
+    finalGate.run,
+    [
+      "Number.isSafeInteger(run?.id)",
+      "run.id <= 0",
+      "Number.isSafeInteger(run.workflow_id)",
+      "run.workflow_id <= 0",
+      'run.name !== "CI"',
+      'run.path !== ".github/workflows/ci.yml"',
+      'run.event !== "push"',
+      'run.status !== "completed"',
+      'run.conclusion !== "success"',
+      'run.head_branch !== "main"',
+      "run.head_sha !== process.env.RECOVERY_SOURCE_SHA",
+      "run.run_attempt !== 1",
+      "run.repository?.full_name !== process.env.GITHUB_REPOSITORY",
+      "run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY",
+      "recoveryRun?.id !== Number(process.env.GITHUB_RUN_ID)",
+      "Number.isSafeInteger(recoveryRun.workflow_id)",
+      "recoveryRun.workflow_id <= 0",
+      "recoveryRun.run_attempt !== 1",
+      'recoveryRun.event !== "workflow_dispatch"',
+      'recoveryRun.head_branch !== "main"',
+      "recoveryRun.head_sha !== process.env.RECOVERY_SOURCE_SHA",
+      'recoveryRun.status !== "in_progress"',
+      "recoveryRun.conclusion !== null",
+      "recoveryRun.repository?.full_name !== process.env.GITHUB_REPOSITORY",
+      "recoveryRun.head_repository?.full_name !== process.env.GITHUB_REPOSITORY",
+    ],
+    "final exact-page validator",
+  );
 });
 
 test("the failed deploy and its pre-forward step boundary are validated historically", () => {
@@ -525,12 +613,12 @@ test("SSH uses one pinned alias and keeps the bounded remote result hidden", () 
   const finalGate = stepContaining(job, "final-recovery-workflow-runs.json");
   assert.match(
     finalGate.run,
-    /actions\/workflows\/recover-failed-pre-forward-deploy\.yml\/runs\?branch=main&event=workflow_dispatch/,
+    /actions\/workflows\/recover-failed-pre-forward-deploy\.yml\/runs\?branch=main&event=workflow_dispatch&head_sha=\$RECOVERY_SOURCE_SHA&per_page=2&page=1/,
   );
-  assert.match(finalGate.run, /recoveryMatches\.length\s*!==\s*1/);
+  assert.match(finalGate.run, /const recoveryRun = exactSingleRun\(recoveryPage\)/);
   assert.match(
     finalGate.run,
-    /recoveryMatches\[0\]\.id\s*!==\s*Number\(process\.env\.GITHUB_RUN_ID\)/,
+    /recoveryRun\?\.id\s*!==\s*Number\(process\.env\.GITHUB_RUN_ID\)/,
   );
 });
 
