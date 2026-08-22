@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   access,
+  chmod,
   link,
   mkdir,
   mkdtemp,
@@ -1310,10 +1311,46 @@ test("strict env gate accepts only compact case JSON and a safe lowercase 64-hex
 
 test("production deployment is serialized before mutable work", () => {
   assert.match(deployScript, /command -v flock/);
-  assert.match(
-    deployScript,
-    /flock -w "\$DEPLOY_LOCK_WAIT_SECONDS" 9/,
+  const lockNormalization = extractShellRegion(
+    "normalize_deploy_lock_permissions() {",
+    "\nacquire_deploy_lock() {",
   );
+  const lockAcquisition = extractShellRegion(
+    "acquire_deploy_lock() {",
+    "\ndisk_usage_percent() {",
+  );
+  assert.match(lockAcquisition, /exec 9<>"\$DEPLOY_LOCK_FILE"/);
+  assert.doesNotMatch(lockAcquisition, /exec 9>(?!<)/);
+  assert.match(lockAcquisition, /flock -w "\$DEPLOY_LOCK_WAIT_SECONDS" 9/);
+  assert.match(lockAcquisition, /normalize_deploy_lock_permissions/);
+  assert.ok(
+    lockAcquisition.indexOf('flock -w "$DEPLOY_LOCK_WAIT_SECONDS" 9') <
+      lockAcquisition.indexOf("normalize_deploy_lock_permissions"),
+  );
+  assert.match(lockNormalization, /\[ -f "\$DEPLOY_LOCK_FILE" \]/);
+  assert.match(lockNormalization, /\[ ! -L "\$DEPLOY_LOCK_FILE" \]/);
+  assert.match(lockNormalization, /\[ -f "\/proc\/\$\$\/fd\/9" \]/);
+  assert.match(lockNormalization, /%d:%i:%h:%u:%f:%a/);
+  assert.match(lockNormalization, /16#\$deploy_lock_raw_mode & 0170000/);
+  assert.match(lockNormalization, /deploy_lock_links" = "1"/);
+  assert.match(lockNormalization, /deploy_lock_uid" = "\$\(id -u\)"/);
+  assert.match(lockNormalization, /600\|644\) ;;/);
+  assert.equal((lockNormalization.match(/\bchmod\b/g) ?? []).length, 1);
+  assert.match(lockNormalization, /chmod 600 -- "\/proc\/\$\$\/fd\/9"/);
+  assert.doesNotMatch(lockNormalization, /chmod[^\n]*\$DEPLOY_LOCK_FILE/);
+  const lockObserved = lockNormalization.indexOf("deploy_lock_observed_identity=");
+  const lockPreMutationRecheck = lockNormalization.indexOf(
+    '= "$deploy_lock_observed_identity" ]',
+    lockObserved,
+  );
+  const lockNormalized = lockNormalization.indexOf('chmod 600 -- "/proc/$$/fd/9"');
+  const lockPostObserved = lockNormalization.indexOf("deploy_lock_post_identity=");
+  const lockFrozen = lockNormalization.indexOf("DEPLOY_LOCK_IDENTITY=");
+  assert.ok(lockObserved >= 0);
+  assert.ok(lockPreMutationRecheck > lockObserved);
+  assert.ok(lockNormalized > lockPreMutationRecheck);
+  assert.ok(lockPostObserved > lockNormalized);
+  assert.ok(lockFrozen > lockPostObserved);
 
   const lockIndex = deployScript.indexOf("acquire_deploy_lock\n");
   const cacheIndex = deployScript.indexOf("cleanup_rebuildable_caches\n");
@@ -1322,6 +1359,280 @@ test("production deployment is serialized before mutable work", () => {
   assert.ok(lockIndex < cacheIndex);
   assert.ok(lockIndex < fetchIndex);
 });
+
+test(
+  "Linux deploy locking safely normalizes only the legacy lock inode",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-deploy-lock-contract-"));
+    const lockFunctions = extractShellRegion(
+      "normalize_deploy_lock_permissions() {",
+      "\ndisk_usage_percent() {",
+    );
+    const recordedWrappers = [
+      "flock() {",
+      '  if command flock "$@"; then',
+      '    printf \'%s\\n\' flock-acquired >> "$CONTRACT_EVENTS_PATH"',
+      '    if [ -n "${CONTRACT_FD_IDENTITY_PATH:-}" ]; then',
+      '      stat -Lc \'%d:%i\' -- "/proc/$$/fd/9" > "$CONTRACT_FD_IDENTITY_PATH"',
+      "    fi",
+      "    return 0",
+      "  fi",
+      "  return 1",
+      "}",
+      "chmod() {",
+      '  printf \'%s\\n\' chmod >> "$CONTRACT_EVENTS_PATH"',
+      '  command chmod "$@"',
+      "}",
+    ].join("\n");
+    const runAcquire = ({ lockPath, eventsPath, wrappers = recordedWrappers, extraEnv = {} }) =>
+      spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CONTRACT_EVENTS_PATH: eventsPath,
+          CONTRACT_FD_IDENTITY_PATH: "",
+          CONTRACT_LOCK_PATH: lockPath,
+          ...extraEnv,
+        },
+        input: [
+          "set -Eeuo pipefail",
+          "umask 077",
+          lockFunctions,
+          'DEPLOY_LOCK_FILE="$CONTRACT_LOCK_PATH"',
+          "DEPLOY_LOCK_WAIT_SECONDS=1",
+          wrappers,
+          "acquire_deploy_lock",
+          "",
+        ].join("\n"),
+        timeout: 10_000,
+      });
+    const readEvents = async (eventsPath) => {
+      try {
+        const events = await readFile(eventsPath, "utf8");
+        return events.trim() ? events.trim().split("\n") : [];
+      } catch (error) {
+        if (error?.code === "ENOENT") return [];
+        throw error;
+      }
+    };
+    const fileMode = async (path) => Number((await stat(path, { bigint: true })).mode & 0o777n);
+    const fileIdentity = async (path) => {
+      const metadata = await stat(path, { bigint: true });
+      return `${metadata.dev}:${metadata.ino}`;
+    };
+    const assertSafeFailure = (result, scenario) => {
+      const details = `${scenario}\n${result.stdout}\n${result.stderr}`;
+      assert.equal(result.error, undefined, details);
+      assert.equal(result.signal, null, details);
+      assert.equal(result.status, 1, details);
+    };
+
+    try {
+      const newLock = join(temporaryDirectory, "new.lock");
+      const newEvents = join(temporaryDirectory, "new.events");
+      const newFdIdentity = join(temporaryDirectory, "new-fd-identity");
+      let result = runAcquire({
+        lockPath: newLock,
+        eventsPath: newEvents,
+        extraEnv: { CONTRACT_FD_IDENTITY_PATH: newFdIdentity },
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(await readFile(newLock, "utf8"), "");
+      assert.equal(await fileMode(newLock), 0o600);
+      assert.equal((await readFile(newFdIdentity, "utf8")).trim(), await fileIdentity(newLock));
+      assert.deepEqual(await readEvents(newEvents), ["flock-acquired"]);
+
+      const legacyLock = join(temporaryDirectory, "legacy.lock");
+      const legacyEvents = join(temporaryDirectory, "legacy.events");
+      await writeFile(legacyLock, "legacy-canary");
+      await chmod(legacyLock, 0o644);
+      const legacyIdentity = await fileIdentity(legacyLock);
+      result = runAcquire({
+        lockPath: legacyLock,
+        eventsPath: legacyEvents,
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(await fileIdentity(legacyLock), legacyIdentity);
+      assert.equal(await readFile(legacyLock, "utf8"), "legacy-canary");
+      assert.equal(await fileMode(legacyLock), 0o600);
+      assert.deepEqual(await readEvents(legacyEvents), ["flock-acquired", "chmod"]);
+
+      await writeFile(legacyEvents, "");
+      result = runAcquire({ lockPath: legacyLock, eventsPath: legacyEvents });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(await fileIdentity(legacyLock), legacyIdentity);
+      assert.equal(await readFile(legacyLock, "utf8"), "legacy-canary");
+      assert.equal(await fileMode(legacyLock), 0o600);
+      assert.deepEqual(await readEvents(legacyEvents), ["flock-acquired"]);
+
+      const unsupportedLock = join(temporaryDirectory, "unsupported.lock");
+      const unsupportedEvents = join(temporaryDirectory, "unsupported.events");
+      await writeFile(unsupportedLock, "unsupported-canary");
+      await chmod(unsupportedLock, 0o640);
+      const unsupportedIdentity = await fileIdentity(unsupportedLock);
+      result = runAcquire({ lockPath: unsupportedLock, eventsPath: unsupportedEvents });
+      assertSafeFailure(result, "unsupported mode");
+      assert.equal(await fileIdentity(unsupportedLock), unsupportedIdentity);
+      assert.equal(await readFile(unsupportedLock, "utf8"), "unsupported-canary");
+      assert.equal(await fileMode(unsupportedLock), 0o640);
+      assert.deepEqual(await readEvents(unsupportedEvents), ["flock-acquired"]);
+
+      const hardlinkTarget = join(temporaryDirectory, "hardlink-target");
+      const hardlinkLock = join(temporaryDirectory, "hardlink.lock");
+      const hardlinkEvents = join(temporaryDirectory, "hardlink.events");
+      await writeFile(hardlinkTarget, "hardlink-canary");
+      await chmod(hardlinkTarget, 0o644);
+      await link(hardlinkTarget, hardlinkLock);
+      result = runAcquire({ lockPath: hardlinkLock, eventsPath: hardlinkEvents });
+      assertSafeFailure(result, "hard link");
+      assert.equal((await stat(hardlinkLock)).nlink, 2);
+      assert.equal(await readFile(hardlinkLock, "utf8"), "hardlink-canary");
+      assert.equal(await readFile(hardlinkTarget, "utf8"), "hardlink-canary");
+      assert.equal(await fileMode(hardlinkLock), 0o644);
+      assert.deepEqual(await readEvents(hardlinkEvents), ["flock-acquired"]);
+
+      const symlinkTarget = join(temporaryDirectory, "symlink-target");
+      const symlinkLock = join(temporaryDirectory, "symlink.lock");
+      const symlinkEvents = join(temporaryDirectory, "symlink.events");
+      await writeFile(symlinkTarget, "symlink-canary");
+      await chmod(symlinkTarget, 0o644);
+      await symlink(symlinkTarget, symlinkLock);
+      result = runAcquire({ lockPath: symlinkLock, eventsPath: symlinkEvents });
+      assertSafeFailure(result, "symbolic link");
+      assert.equal(await readFile(symlinkTarget, "utf8"), "symlink-canary");
+      assert.equal(await fileMode(symlinkTarget), 0o644);
+      assert.deepEqual(await readEvents(symlinkEvents), []);
+
+      const ownerLock = join(temporaryDirectory, "owner.lock");
+      const ownerEvents = join(temporaryDirectory, "owner.events");
+      await writeFile(ownerLock, "owner-canary");
+      await chmod(ownerLock, 0o644);
+      result = runAcquire({
+        lockPath: ownerLock,
+        eventsPath: ownerEvents,
+        wrappers: [
+          recordedWrappers,
+          "id() {",
+          '  if [ "${1:-}" = "-u" ]; then printf \'%s\\n\' 4294967294; else command id "$@"; fi',
+          "}",
+        ].join("\n"),
+      });
+      assertSafeFailure(result, "owner mismatch");
+      assert.equal(await readFile(ownerLock, "utf8"), "owner-canary");
+      assert.equal(await fileMode(ownerLock), 0o644);
+      assert.deepEqual(await readEvents(ownerEvents), ["flock-acquired"]);
+
+      const swappedLock = join(temporaryDirectory, "swapped.lock");
+      const swappedOriginal = join(temporaryDirectory, "swapped-original");
+      const swappedEvents = join(temporaryDirectory, "swapped.events");
+      await writeFile(swappedLock, "swapped-canary");
+      await chmod(swappedLock, 0o644);
+      result = runAcquire({
+        lockPath: swappedLock,
+        eventsPath: swappedEvents,
+        extraEnv: { CONTRACT_MOVED_PATH: swappedOriginal },
+        wrappers: [
+          "flock() {",
+          '  if command flock "$@"; then',
+          '    printf \'%s\\n\' flock-acquired >> "$CONTRACT_EVENTS_PATH"',
+          '    mv -- "$DEPLOY_LOCK_FILE" "$CONTRACT_MOVED_PATH"',
+          '    printf \'%s\' replacement > "$DEPLOY_LOCK_FILE"',
+          '    command chmod 640 -- "$DEPLOY_LOCK_FILE"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          "chmod() {",
+          '  printf \'%s\\n\' chmod >> "$CONTRACT_EVENTS_PATH"',
+          '  command chmod "$@"',
+          "}",
+        ].join("\n"),
+      });
+      assertSafeFailure(result, "path replacement after flock");
+      assert.equal(await readFile(swappedOriginal, "utf8"), "swapped-canary");
+      assert.equal(await fileMode(swappedOriginal), 0o644);
+      assert.equal(await readFile(swappedLock, "utf8"), "replacement");
+      assert.equal(await fileMode(swappedLock), 0o640);
+      assert.deepEqual(await readEvents(swappedEvents), ["flock-acquired"]);
+
+      const chmodSwapLock = join(temporaryDirectory, "chmod-swap.lock");
+      const chmodSwapOriginal = join(temporaryDirectory, "chmod-swap-original");
+      const chmodSwapEvents = join(temporaryDirectory, "chmod-swap.events");
+      await writeFile(chmodSwapLock, "chmod-swap-canary");
+      await chmod(chmodSwapLock, 0o644);
+      result = runAcquire({
+        lockPath: chmodSwapLock,
+        eventsPath: chmodSwapEvents,
+        extraEnv: { CONTRACT_MOVED_PATH: chmodSwapOriginal },
+        wrappers: [
+          "flock() {",
+          '  if command flock "$@"; then',
+          '    printf \'%s\\n\' flock-acquired >> "$CONTRACT_EVENTS_PATH"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          "chmod() {",
+          '  printf \'%s\\n\' chmod >> "$CONTRACT_EVENTS_PATH"',
+          '  mv -- "$DEPLOY_LOCK_FILE" "$CONTRACT_MOVED_PATH"',
+          '  printf \'%s\' replacement > "$DEPLOY_LOCK_FILE"',
+          '  command chmod 640 -- "$DEPLOY_LOCK_FILE"',
+          '  command chmod "$@"',
+          "}",
+        ].join("\n"),
+      });
+      assertSafeFailure(result, "path replacement during chmod");
+      assert.equal(await readFile(chmodSwapOriginal, "utf8"), "chmod-swap-canary");
+      assert.equal(await fileMode(chmodSwapOriginal), 0o600);
+      assert.equal(await readFile(chmodSwapLock, "utf8"), "replacement");
+      assert.equal(await fileMode(chmodSwapLock), 0o640);
+      assert.deepEqual(await readEvents(chmodSwapEvents), ["flock-acquired", "chmod"]);
+
+      const ineffectiveLock = join(temporaryDirectory, "ineffective.lock");
+      const ineffectiveEvents = join(temporaryDirectory, "ineffective.events");
+      await writeFile(ineffectiveLock, "ineffective-canary");
+      await chmod(ineffectiveLock, 0o644);
+      result = runAcquire({
+        lockPath: ineffectiveLock,
+        eventsPath: ineffectiveEvents,
+        wrappers: [
+          recordedWrappers.slice(0, recordedWrappers.indexOf("chmod() {")),
+          "chmod() {",
+          '  printf \'%s\\n\' chmod >> "$CONTRACT_EVENTS_PATH"',
+          "  return 0",
+          "}",
+        ].join("\n"),
+      });
+      assertSafeFailure(result, "ineffective chmod");
+      assert.equal(await readFile(ineffectiveLock, "utf8"), "ineffective-canary");
+      assert.equal(await fileMode(ineffectiveLock), 0o644);
+      assert.deepEqual(await readEvents(ineffectiveEvents), ["flock-acquired", "chmod"]);
+
+      const contendedLock = join(temporaryDirectory, "contended.lock");
+      const contendedEvents = join(temporaryDirectory, "contended.events");
+      await writeFile(contendedLock, "contended-canary");
+      await chmod(contendedLock, 0o644);
+      result = runAcquire({
+        lockPath: contendedLock,
+        eventsPath: contendedEvents,
+        wrappers: [
+          "flock() { return 1; }",
+          "chmod() {",
+          '  printf \'%s\\n\' chmod >> "$CONTRACT_EVENTS_PATH"',
+          '  command chmod "$@"',
+          "}",
+        ].join("\n"),
+      });
+      assertSafeFailure(result, "lock contention");
+      assert.equal(await readFile(contendedLock, "utf8"), "contended-canary");
+      assert.equal(await fileMode(contendedLock), 0o644);
+      assert.deepEqual(await readEvents(contendedEvents), []);
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("private deployment output exposes only immutable static assets to nginx before activation", () => {
   assert.match(deployScript, /^umask 077$/m);
