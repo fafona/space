@@ -128,6 +128,30 @@ finish_recovery() {
         database_preflight)
           printf '%s\n' 'recovery_failed_pre_runtime_database_preflight' >&2
           ;;
+        worker_preflight)
+          printf '%s\n' 'recovery_failed_runtime_worker_preflight' >&2
+          ;;
+        worker_start)
+          printf '%s\n' 'recovery_failed_runtime_worker_start' >&2
+          ;;
+        worker_stability)
+          printf '%s\n' 'recovery_failed_runtime_worker_stability' >&2
+          ;;
+        worker_identity)
+          printf '%s\n' 'recovery_failed_runtime_worker_identity' >&2
+          ;;
+        worker_environment)
+          printf '%s\n' 'recovery_failed_runtime_worker_environment' >&2
+          ;;
+        worker_flags)
+          printf '%s\n' 'recovery_failed_runtime_worker_flags' >&2
+          ;;
+        worker_launch_contract)
+          printf '%s\n' 'recovery_failed_runtime_worker_launch_contract' >&2
+          ;;
+        worker_disabled_absence)
+          printf '%s\n' 'recovery_failed_runtime_worker_disabled_absence' >&2
+          ;;
         runtime)
           printf '%s\n' 'recovery_failed' >&2
           ;;
@@ -1030,19 +1054,69 @@ verify_worker_flags() {
     "$STARTED_WORKER_PROCESS_IDENTITY" "$STARTED_WORKER_CWD_IDENTITY"
 }
 
-verify_worker_command_line() {
+verify_worker_launch_contract() {
   local pid="$1"
   local tsx_entry="$PREVIOUS_RUNTIME_DIR/node_modules/tsx/dist/cli.mjs"
   local worker_entry="$PREVIOUS_RUNTIME_DIR/scripts/run-merchant-enterprise-automation-worker.ts"
+  local process_list
   started_process_identity_matches "$AUTOMATION_WORKER_NAME" \
     "$STARTED_WORKER_PID" "$STARTED_WORKER_START_TICKS" \
     "$STARTED_WORKER_PROCESS_IDENTITY" "$STARTED_WORKER_CWD_IDENTITY" || return 1
-  FAOLLA_EXPECTED_TSX="$tsx_entry" FAOLLA_EXPECTED_WORKER="$worker_entry" \
-    node --input-type=module - "$pid" >/dev/null 2>&1 <<'NODE' || return 1
-import { readFileSync } from "node:fs";
-const entries = readFileSync(`/proc/${process.argv[2]}/cmdline`).toString("utf8").split("\0").filter(Boolean);
-if (!entries.includes(process.env.FAOLLA_EXPECTED_TSX) || !entries.includes(process.env.FAOLLA_EXPECTED_WORKER)) process.exit(1);
-NODE
+  process_list="$(PM2_SILENT=true timeout --signal=TERM --kill-after=2s 5s \
+    pm2 jlist 2>/dev/null)" || return 1
+  FAOLLA_EXPECTED_WORKER_NAME="$AUTOMATION_WORKER_NAME" \
+    FAOLLA_EXPECTED_WORKER_PID="$pid" \
+    FAOLLA_EXPECTED_TSX="$tsx_entry" \
+    FAOLLA_EXPECTED_WORKER="$worker_entry" \
+    FAOLLA_EXPECTED_CWD="$PREVIOUS_RUNTIME_DIR" \
+    timeout --signal=TERM --kill-after=1s 3s node -e '
+      const fs = require("node:fs");
+      let list;
+      try { list = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(1); }
+      const expectedName = process.env.FAOLLA_EXPECTED_WORKER_NAME;
+      const expectedPid = process.env.FAOLLA_EXPECTED_WORKER_PID;
+      const expectedTsx = process.env.FAOLLA_EXPECTED_TSX;
+      const expectedWorker = process.env.FAOLLA_EXPECTED_WORKER;
+      const expectedCwd = process.env.FAOLLA_EXPECTED_CWD;
+      if (
+        !Array.isArray(list) ||
+        !expectedName ||
+        !/^[1-9][0-9]*$/.test(expectedPid || "") ||
+        !expectedTsx ||
+        !expectedWorker ||
+        !expectedCwd
+      ) process.exit(1);
+      const matches = list.filter((entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        entry.pm2_env !== null &&
+        typeof entry.pm2_env === "object" &&
+        !Array.isArray(entry.pm2_env) &&
+        entry.name === expectedName &&
+        entry.pm2_env.name === expectedName
+      );
+      if (matches.length !== 1) process.exit(1);
+      const entry = matches[0];
+      const environment = entry.pm2_env;
+      if (
+        !Number.isSafeInteger(entry.pid) ||
+        String(entry.pid) !== expectedPid ||
+        !Number.isSafeInteger(entry.pm_id) ||
+        entry.pm_id < 0 ||
+        environment.pm_id !== entry.pm_id ||
+        environment.status !== "online" ||
+        environment.pm_exec_path !== expectedTsx ||
+        environment.pm_cwd !== expectedCwd ||
+        environment.exec_interpreter !== "node" ||
+        environment.exec_mode !== "fork_mode" ||
+        !Array.isArray(environment.args) ||
+        environment.args.length !== 1 ||
+        environment.args[0] !== expectedWorker ||
+        !Array.isArray(environment.node_args) ||
+        environment.node_args.length !== 0
+      ) process.exit(1);
+    ' >/dev/null 2>&1 <<< "$process_list" || return 1
   started_process_identity_matches "$AUTOMATION_WORKER_NAME" \
     "$STARTED_WORKER_PID" "$STARTED_WORKER_START_TICKS" \
     "$STARTED_WORKER_PROCESS_IDENTITY" "$STARTED_WORKER_CWD_IDENTITY"
@@ -1055,6 +1129,7 @@ started_process_identity_matches "$APP_NAME" \
   "$STARTED_WEB_PROCESS_IDENTITY" "$STARTED_WEB_CWD_IDENTITY" || exit 1
 printf '%s\n' 'frozen_runtime_restored'
 
+RECOVERY_FAILURE_STAGE="worker_preflight"
 if [ "$AUTOMATION_WORKER_ENABLED" = "true" ] \
   || [ "$INVITATION_WORKER_ENABLED" = "true" ]; then
   remove_inactive_process "$AUTOMATION_WORKER_NAME" || exit 1
@@ -1062,6 +1137,7 @@ if [ "$AUTOMATION_WORKER_ENABLED" = "true" ] \
   worker_entry="$PREVIOUS_RUNTIME_DIR/scripts/run-merchant-enterprise-automation-worker.ts"
   [ -f "$tsx_entry" ] && [ -f "$worker_entry" ] || exit 1
   revalidate_frozen_runtime || exit 1
+  RECOVERY_FAILURE_STAGE="worker_start"
   WORKER_START_ATTEMPTED=1
   (
     cd "$PREVIOUS_RUNTIME_DIR"
@@ -1081,6 +1157,7 @@ if [ "$AUTOMATION_WORKER_ENABLED" = "true" ] \
           --listen-timeout 20000 \
           -- "$worker_entry" >/dev/null 2>&1
   ) >/dev/null 2>&1 || exit 1
+  RECOVERY_FAILURE_STAGE="worker_stability"
   worker_pid=""
   stable_worker_checks=0
   previous_worker_pid=""
@@ -1103,23 +1180,32 @@ if [ "$AUTOMATION_WORKER_ENABLED" = "true" ] \
     sleep 1
   done
   [ "$stable_worker_checks" -ge 3 ] || exit 1
+  RECOVERY_FAILURE_STAGE="worker_identity"
   capture_started_process_identity STARTED_WORKER "$worker_pid" || exit 1
   for _ in 1 2 3; do
+    RECOVERY_FAILURE_STAGE="worker_identity"
     started_process_identity_matches "$AUTOMATION_WORKER_NAME" \
       "$STARTED_WORKER_PID" "$STARTED_WORKER_START_TICKS" \
       "$STARTED_WORKER_PROCESS_IDENTITY" "$STARTED_WORKER_CWD_IDENTITY" || exit 1
+    RECOVERY_FAILURE_STAGE="worker_environment"
     verify_process_environment "$worker_pid" "$STARTED_WORKER_START_TICKS" || exit 1
+    RECOVERY_FAILURE_STAGE="worker_flags"
     verify_worker_flags "$worker_pid" || exit 1
     sleep 1
   done
+  RECOVERY_FAILURE_STAGE="worker_environment"
   verify_process_environment "$worker_pid" "$STARTED_WORKER_START_TICKS" || exit 1
+  RECOVERY_FAILURE_STAGE="worker_flags"
   verify_worker_flags "$worker_pid" || exit 1
-  verify_worker_command_line "$worker_pid" || exit 1
+  RECOVERY_FAILURE_STAGE="worker_launch_contract"
+  verify_worker_launch_contract "$worker_pid" || exit 1
 else
+  RECOVERY_FAILURE_STAGE="worker_disabled_absence"
   remove_inactive_process "$AUTOMATION_WORKER_NAME" || exit 1
   [ "$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")" = "absent" ] || exit 1
 fi
 printf '%s\n' 'worker_state_restored'
+RECOVERY_FAILURE_STAGE="runtime"
 
 revalidate_frozen_runtime || exit 1
 verify_process_environment "$web_pid" "$STARTED_WEB_START_TICKS" || exit 1
@@ -1143,7 +1229,7 @@ if [ "$AUTOMATION_WORKER_ENABLED" = "true" ] \
     "$STARTED_WORKER_PROCESS_IDENTITY" "$STARTED_WORKER_CWD_IDENTITY" || exit 1
   verify_process_environment "$STARTED_WORKER_PID" "$STARTED_WORKER_START_TICKS" || exit 1
   verify_worker_flags "$STARTED_WORKER_PID" || exit 1
-  verify_worker_command_line "$STARTED_WORKER_PID" || exit 1
+  verify_worker_launch_contract "$STARTED_WORKER_PID" || exit 1
 else
   [ "$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")" = "absent" ] || exit 1
 fi

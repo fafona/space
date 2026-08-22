@@ -993,11 +993,6 @@ jobs:
             "recovery_complete",
           ];
           const expected = Buffer.from(`${expectedLines.join("\n")}\n`, "utf8");
-          const runtimeFailurePhaseCodes = [
-            "remote_recovery_failed_phase_web_restore",
-            "remote_recovery_failed_phase_worker_restore",
-            "remote_recovery_failed_phase_persist_and_verify",
-          ];
           const failurePrefixes = Array.from(
             { length: expectedLines.length },
             (_, length) => Buffer.from(
@@ -1006,15 +1001,24 @@ jobs:
             ).toString("base64"),
           );
           const cleanupPrefixes = new Set(failurePrefixes);
-          const runtimeFailurePrefixCodes = new Map(
-            runtimeFailurePhaseCodes.map((code, index) => [
-              Buffer.from(
-                `${expectedLines.slice(0, index + 1).join("\n")}\n`,
-                "utf8",
-              ).toString("base64"),
-              code,
-            ]),
-          );
+          const runtimeFailurePrefixCodes = new Map([
+            [failurePrefixes[1], "remote_recovery_failed_phase_web_restore"],
+            [failurePrefixes[3], "remote_recovery_failed_phase_persist_and_verify"],
+          ]);
+          const workerFailurePrefix = failurePrefixes[2];
+          const workerFailureCodes = new Map([
+            ["recovery_failed_runtime_worker_preflight", "remote_recovery_failed_phase_worker_restore_preflight"],
+            ["recovery_failed_runtime_worker_start", "remote_recovery_failed_phase_worker_restore_start"],
+            ["recovery_failed_runtime_worker_stability", "remote_recovery_failed_phase_worker_restore_stability"],
+            ["recovery_failed_runtime_worker_identity", "remote_recovery_failed_phase_worker_restore_identity"],
+            ["recovery_failed_runtime_worker_environment", "remote_recovery_failed_phase_worker_restore_environment"],
+            ["recovery_failed_runtime_worker_flags", "remote_recovery_failed_phase_worker_restore_flags"],
+            ["recovery_failed_runtime_worker_launch_contract", "remote_recovery_failed_phase_worker_restore_launch_contract"],
+            ["recovery_failed_runtime_worker_disabled_absence", "remote_recovery_failed_phase_worker_restore_disabled_absence"],
+          ].map(([remoteCode, publicCode]) => [
+            Buffer.from(`${remoteCode}\n`, "utf8").toString("base64"),
+            publicCode,
+          ]));
           const preRuntimeFailureCodes = new Map([
             ["recovery_failed_pre_runtime_input", "remote_recovery_failed_phase_pre_runtime_input"],
             ["recovery_failed_pre_runtime_repository", "remote_recovery_failed_phase_pre_runtime_repository"],
@@ -1053,8 +1057,12 @@ jobs:
             const runtimeFailureCode = stderr.equals(Buffer.from("recovery_failed\n", "utf8"))
               ? runtimeFailurePrefixCodes.get(stdoutKey)
               : undefined;
+            const workerFailureCode = stdoutKey === workerFailurePrefix
+              ? workerFailureCodes.get(stderrKey)
+              : undefined;
             process.stdout.write(
-              preRuntimeFailureCode ?? runtimeFailureCode ?? "recovery_output_invalid",
+              preRuntimeFailureCode ?? runtimeFailureCode ?? workerFailureCode ??
+                "recovery_output_invalid",
             );
           }
           NODE
@@ -1070,7 +1078,14 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_legacy_environment|\
               remote_recovery_failed_phase_pre_runtime_database_preflight|\
               remote_recovery_failed_phase_web_restore|\
-              remote_recovery_failed_phase_worker_restore|\
+              remote_recovery_failed_phase_worker_restore_preflight|\
+              remote_recovery_failed_phase_worker_restore_start|\
+              remote_recovery_failed_phase_worker_restore_stability|\
+              remote_recovery_failed_phase_worker_restore_identity|\
+              remote_recovery_failed_phase_worker_restore_environment|\
+              remote_recovery_failed_phase_worker_restore_flags|\
+              remote_recovery_failed_phase_worker_restore_launch_contract|\
+              remote_recovery_failed_phase_worker_restore_disabled_absence|\
               remote_recovery_failed_phase_persist_and_verify|\
               recovery_output_invalid)
                 printf '%s\n' "$classification"

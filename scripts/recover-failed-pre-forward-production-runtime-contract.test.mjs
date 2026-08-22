@@ -32,6 +32,17 @@ function sourceBetween(startMarker, endMarker) {
   return sourceBetweenIn(source, startMarker, endMarker);
 }
 
+function resolveBashExecutable() {
+  const candidates = process.platform === "win32"
+    ? ["C:\\Program Files\\Git\\bin\\bash.exe"]
+    : ["bash"];
+  return candidates.find(existsSync) ?? candidates[0];
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
+
 test("recovery is immutable to the one failed pre-forward incident", () => {
   assert.match(
     source,
@@ -357,7 +368,8 @@ test("runtime mutation requires inactive web, a free port, and identity-bound ro
   assert.match(source, /port_is_free/);
   assert.match(source, /wait_for_port_free_bounded/);
   assert.equal(occurrences("verify_stable_local_old_build || exit 1"), 2);
-  assert.match(source, /verify_worker_command_line/);
+  assert.match(source, /verify_worker_launch_contract/);
+  assert.doesNotMatch(source, /verify_worker_command_line/);
   assert.match(source, /"\$STARTED_WEB_START_TICKS"/);
   assert.match(source, /"\$STARTED_WORKER_START_TICKS"/);
   const exitHandler = source.slice(
@@ -374,6 +386,363 @@ test("runtime mutation requires inactive web, a free port, and identity-bound ro
   );
 });
 
+test("worker restore failures are assigned to the exact operation substage", () => {
+  const frozenMarker = "printf '%s\\n' 'frozen_runtime_restored'";
+  const workerMarker = "printf '%s\\n' 'worker_state_restored'";
+  const frozenMarkerIndex = source.indexOf(frozenMarker);
+  const workerMarkerIndex = source.indexOf(workerMarker, frozenMarkerIndex + 1);
+  assert.ok(frozenMarkerIndex >= 0);
+  assert.ok(workerMarkerIndex > frozenMarkerIndex);
+  const workerRestore = source.slice(frozenMarkerIndex, workerMarkerIndex);
+  const enabledStart = workerRestore.indexOf(
+    'if [ "$AUTOMATION_WORKER_ENABLED" = "true" ]',
+  );
+  const disabledStart = workerRestore.indexOf("\nelse\n", enabledStart);
+  assert.ok(enabledStart >= 0);
+  assert.ok(disabledStart > enabledStart);
+  const enabledRestore = workerRestore.slice(0, disabledStart);
+  const disabledRestore = workerRestore.slice(disabledStart);
+
+  const effectiveStageAt = (region, operationIndex) => {
+    const assignmentStart = region.lastIndexOf(
+      'RECOVERY_FAILURE_STAGE="',
+      operationIndex,
+    );
+    assert.ok(assignmentStart >= 0, "operation is missing a failure stage");
+    const valueStart = assignmentStart + 'RECOVERY_FAILURE_STAGE="'.length;
+    const valueEnd = region.indexOf('"', valueStart);
+    assert.ok(valueEnd > valueStart, "failure stage assignment is malformed");
+    return region.slice(valueStart, valueEnd);
+  };
+  const assertEveryOperationUsesStage = (region, operation, expectedStage) => {
+    let found = 0;
+    let operationIndex = region.indexOf(operation);
+    while (operationIndex >= 0) {
+      found += 1;
+      assert.equal(
+        effectiveStageAt(region, operationIndex),
+        expectedStage,
+        `${operation} must run under ${expectedStage}`,
+      );
+      operationIndex = region.indexOf(operation, operationIndex + operation.length);
+    }
+    assert.ok(found > 0, `missing worker restore operation: ${operation}`);
+  };
+
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'remove_inactive_process "$AUTOMATION_WORKER_NAME"',
+    "worker_preflight",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    "WORKER_START_ATTEMPTED=1",
+    "worker_start",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'pm2 start "$tsx_entry"',
+    "worker_start",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'worker_state="$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")"',
+    "worker_stability",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    "capture_started_process_identity STARTED_WORKER",
+    "worker_identity",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'started_process_identity_matches "$AUTOMATION_WORKER_NAME"',
+    "worker_identity",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'verify_process_environment "$worker_pid"',
+    "worker_environment",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'verify_worker_flags "$worker_pid"',
+    "worker_flags",
+  );
+  assertEveryOperationUsesStage(
+    enabledRestore,
+    'verify_worker_launch_contract "$worker_pid"',
+    "worker_launch_contract",
+  );
+  assertEveryOperationUsesStage(
+    disabledRestore,
+    'remove_inactive_process "$AUTOMATION_WORKER_NAME"',
+    "worker_disabled_absence",
+  );
+  assertEveryOperationUsesStage(
+    disabledRestore,
+    'pm2_process_snapshot "$AUTOMATION_WORKER_NAME"',
+    "worker_disabled_absence",
+  );
+
+  const firstStagePositions = [
+    "worker_preflight",
+    "worker_start",
+    "worker_stability",
+    "worker_identity",
+    "worker_environment",
+    "worker_flags",
+    "worker_launch_contract",
+    "worker_disabled_absence",
+  ].map((stage) => {
+    const position = workerRestore.indexOf(`RECOVERY_FAILURE_STAGE="${stage}"`);
+    assert.ok(position >= 0, `missing worker restore stage: ${stage}`);
+    return position;
+  });
+  for (let index = 1; index < firstStagePositions.length; index += 1) {
+    assert.ok(
+      firstStagePositions[index] > firstStagePositions[index - 1],
+      "worker restore substages must first appear in control-flow order",
+    );
+  }
+
+  assert.doesNotMatch(workerRestore, /printf '%s\\n' 'worker_state_restored'/);
+  const recoveryCompleteIndex = source.indexOf(
+    "printf '%s\\n' 'recovery_complete'",
+    workerMarkerIndex + workerMarker.length,
+  );
+  assert.ok(recoveryCompleteIndex > workerMarkerIndex);
+  const markerPositions = [
+    "fence_cleanup_verified",
+    "frozen_runtime_restored",
+    "worker_state_restored",
+    "recovery_complete",
+  ].map((marker) => source.indexOf(`printf '%s\\n' '${marker}'`));
+  assert.ok(markerPositions.every((position) => position >= 0));
+  assert.deepEqual([...markerPositions].sort((left, right) => left - right), markerPositions);
+});
+
+test("worker launch contract replaces proc cmdline checks with strict PM2 metadata", () => {
+  assert.doesNotMatch(source, /\/proc\/[^"]*\/cmdline/);
+  const launchContract = sourceBetween(
+    "verify_worker_launch_contract() {",
+    '\n}\n\nverify_process_environment "$web_pid"',
+  );
+  assert.match(launchContract, /pm2 jlist/);
+  for (const field of [
+    "name",
+    "pid",
+    "pm_id",
+    "status",
+    "pm_exec_path",
+    "pm_cwd",
+    "exec_interpreter",
+    "exec_mode",
+    "args",
+    "node_args",
+  ]) {
+    assert.match(launchContract, new RegExp(`\\b${field}\\b`));
+  }
+  assert.equal(
+    launchContract.split("started_process_identity_matches").length - 1,
+    2,
+    "PM2 metadata must be identity-bound before and after parsing",
+  );
+  assert.match(launchContract, /matches\.length !== 1/);
+  assert.doesNotMatch(launchContract, /process\.stdout\.write/);
+  assert.doesNotMatch(launchContract, /console\.(?:log|error)/);
+});
+
+test("worker launch contract accepts only the exact identity-bound PM2 fixture", () => {
+  const launchContract = `${sourceBetween(
+    "verify_worker_launch_contract() {",
+    '\n}\n\nverify_process_environment "$web_pid"',
+  )}\n}`;
+  const workerName = "merchant-enterprise-automation-worker";
+  const runtimeDirectory = "/srv/faolla/releases/incident-runtime";
+  const workerPid = 731;
+  const canonicalWorker = {
+    name: workerName,
+    pid: workerPid,
+    pm_id: 7,
+    pm2_env: {
+      name: workerName,
+      pm_id: 7,
+      status: "online",
+      pm_exec_path: `${runtimeDirectory}/node_modules/tsx/dist/cli.mjs`,
+      pm_cwd: runtimeDirectory,
+      exec_interpreter: "node",
+      exec_mode: "fork_mode",
+      args: [
+        `${runtimeDirectory}/scripts/run-merchant-enterprise-automation-worker.ts`,
+      ],
+      node_args: [],
+    },
+  };
+  const unrelatedWeb = {
+    name: "faolla-web",
+    pid: 419,
+    pm_id: 2,
+    pm2_env: { name: "faolla-web", pm_id: 2, status: "online" },
+  };
+  const parserStartMarker = "node -e '\n";
+  const parserEndMarker = "\n    ' >/dev/null";
+  const parserStart = launchContract.indexOf(parserStartMarker);
+  const parserEnd = launchContract.indexOf(
+    parserEndMarker,
+    parserStart + parserStartMarker.length,
+  );
+  assert.ok(parserStart >= 0 && parserEnd > parserStart);
+  const parser = launchContract.slice(
+    parserStart + parserStartMarker.length,
+    parserEnd,
+  );
+  const parserEnvironment = {
+    ...process.env,
+    FAOLLA_EXPECTED_WORKER_NAME: workerName,
+    FAOLLA_EXPECTED_WORKER_PID: String(workerPid),
+    FAOLLA_EXPECTED_TSX: canonicalWorker.pm2_env.pm_exec_path,
+    FAOLLA_EXPECTED_WORKER: canonicalWorker.pm2_env.args[0],
+    FAOLLA_EXPECTED_CWD: runtimeDirectory,
+  };
+  const parsed = spawnSync(process.execPath, ["-e", parser], {
+    encoding: "utf8",
+    env: parserEnvironment,
+    input: JSON.stringify([unrelatedWeb, canonicalWorker]),
+  });
+  assert.equal(parsed.status, 0, `${parsed.stdout}\n${parsed.stderr}`);
+  assert.equal(parsed.stdout, "");
+  assert.equal(parsed.stderr, "");
+  const runFixture = (
+    fixture,
+    { identityFailureAt = 0, pm2Status = 0 } = {},
+  ) => spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CONTRACT_IDENTITY_FAILURE_AT: String(identityFailureAt),
+      CONTRACT_PM2_FIXTURE: typeof fixture === "string"
+        ? fixture
+        : JSON.stringify(fixture),
+      CONTRACT_PM2_STATUS: String(pm2Status),
+      MSYS2_ENV_CONV_EXCL: "*",
+      MSYS_NO_PATHCONV: "1",
+    },
+    input: [
+      "set -Eeuo pipefail",
+      launchContract,
+      `PREVIOUS_RUNTIME_DIR=${shellSingleQuote(runtimeDirectory)}`,
+      `AUTOMATION_WORKER_NAME=${shellSingleQuote(workerName)}`,
+      `STARTED_WORKER_PID=${shellSingleQuote(workerPid)}`,
+      'STARTED_WORKER_START_TICKS="987654"',
+      'STARTED_WORKER_PROCESS_IDENTITY="8:15"',
+      'STARTED_WORKER_CWD_IDENTITY="8:21:1700000000"',
+      "identity_calls=0",
+      "started_process_identity_matches() {",
+      "  identity_calls=$((identity_calls + 1))",
+      '  [ "$CONTRACT_IDENTITY_FAILURE_AT" != "$identity_calls" ]',
+      "}",
+      "pm2() {",
+      '  [ "${1:-}" = "jlist" ] || return 97',
+      '  [ "$CONTRACT_PM2_STATUS" = "0" ] || return "$CONTRACT_PM2_STATUS"',
+      "  printf '%s' \"$CONTRACT_PM2_FIXTURE\"",
+      "}",
+      "timeout() {",
+      '  while [ "$#" -gt 0 ]; do',
+      '    case "$1" in',
+      "      --signal=*|--kill-after=*) shift ;;",
+      "      --signal|--kill-after) shift 2 ;;",
+      "      [0-9]*s) shift; break ;;",
+      "      *) break ;;",
+      "    esac",
+      "  done",
+      '  if [ "${1:-}" = "node" ]; then',
+      '    printf \'%s\' "$CONTRACT_PM2_FIXTURE" | env \\',
+      '      FAOLLA_EXPECTED_WORKER_NAME="$FAOLLA_EXPECTED_WORKER_NAME" \\',
+      '      FAOLLA_EXPECTED_WORKER_PID="$FAOLLA_EXPECTED_WORKER_PID" \\',
+      '      FAOLLA_EXPECTED_TSX="$FAOLLA_EXPECTED_TSX" \\',
+      '      FAOLLA_EXPECTED_WORKER="$FAOLLA_EXPECTED_WORKER" \\',
+      '      FAOLLA_EXPECTED_CWD="$FAOLLA_EXPECTED_CWD" "$@"',
+      "  else",
+      '    "$@"',
+      "  fi",
+      "}",
+      'verify_worker_launch_contract "$STARTED_WORKER_PID"',
+      '[ "$identity_calls" -eq 2 ]',
+      "",
+    ].join("\n"),
+  });
+
+  const accepted = runFixture([unrelatedWeb, canonicalWorker]);
+  assert.equal(accepted.status, 0, `${accepted.stdout}\n${accepted.stderr}`);
+  assert.equal(accepted.stdout, "");
+  assert.equal(accepted.stderr, "");
+
+  const rejectedFixtures = [
+    ["invalid JSON", "not-json"],
+    ["non-array JSON", { worker: canonicalWorker }],
+    ["missing worker", [unrelatedWeb]],
+    ["duplicate worker", [canonicalWorker, structuredClone(canonicalWorker)]],
+    ["wrong top-level name", [{ ...canonicalWorker, name: "renamed-worker" }]],
+    ["wrong pid", [{ ...canonicalWorker, pid: workerPid + 1 }]],
+    ["invalid pm id", [{ ...canonicalWorker, pm_id: -1, pm2_env: { ...canonicalWorker.pm2_env, pm_id: -1 } }]],
+    ["pm id mismatch", [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, pm_id: 8 } }]],
+    [
+      "wrong status",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, status: "stopped" } }],
+    ],
+    [
+      "wrong executable",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, pm_exec_path: "/tmp/tsx" } }],
+    ],
+    [
+      "wrong cwd",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, pm_cwd: "/tmp" } }],
+    ],
+    [
+      "wrong interpreter",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, exec_interpreter: "bash" } }],
+    ],
+    [
+      "wrong execution mode",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, exec_mode: "cluster_mode" } }],
+    ],
+    [
+      "missing worker argument",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, args: [] } }],
+    ],
+    [
+      "extra worker argument",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, args: [...canonicalWorker.pm2_env.args, "--extra"] } }],
+    ],
+    [
+      "unexpected node argument",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, node_args: ["--inspect"] } }],
+    ],
+    [
+      "node arguments are not an array",
+      [{ ...canonicalWorker, pm2_env: { ...canonicalWorker.pm2_env, node_args: "" } }],
+    ],
+  ];
+  for (const [label, fixture] of rejectedFixtures) {
+    const rejected = runFixture(fixture);
+    assert.notEqual(rejected.status, 0, label);
+    assert.equal(rejected.stdout, "", `${label} leaked stdout`);
+    assert.equal(rejected.stderr, "", `${label} leaked stderr`);
+  }
+
+  for (const identityFailureAt of [1, 2]) {
+    const rejected = runFixture([canonicalWorker], { identityFailureAt });
+    assert.notEqual(rejected.status, 0, `identity check ${identityFailureAt}`);
+    assert.equal(rejected.stdout, "");
+    assert.equal(rejected.stderr, "");
+  }
+  const pm2Failure = runFixture([canonicalWorker], { pm2Status: 42 });
+  assert.notEqual(pm2Failure.status, 0);
+  assert.equal(pm2Failure.stdout, "");
+  assert.equal(pm2Failure.stderr, "");
+});
+
 test("operator-visible output is a fixed allowlist", () => {
   assert.doesNotMatch(source, /\becho\b/);
   const failureStages = [...source.matchAll(/RECOVERY_FAILURE_STAGE="([a-z_]+)"/g)]
@@ -387,6 +756,18 @@ test("operator-visible output is a fixed allowlist", () => {
     "legacy_environment",
     "database_preflight",
     "runtime",
+    "worker_preflight",
+    "worker_start",
+    "worker_stability",
+    "worker_identity",
+    "worker_identity",
+    "worker_environment",
+    "worker_flags",
+    "worker_environment",
+    "worker_flags",
+    "worker_launch_contract",
+    "worker_disabled_absence",
+    "runtime",
   ]);
   const exitHandler = source.slice(
     source.indexOf("finish_recovery()"),
@@ -397,6 +778,25 @@ test("operator-visible output is a fixed allowlist", () => {
       exitHandler.indexOf('case "$RECOVERY_FAILURE_STAGE" in'),
     "cleanup uncertainty must take precedence over failure phase reporting",
   );
+  for (const stage of [
+    "worker_preflight",
+    "worker_start",
+    "worker_stability",
+    "worker_identity",
+    "worker_environment",
+    "worker_flags",
+    "worker_launch_contract",
+    "worker_disabled_absence",
+  ]) {
+    assert.match(
+      exitHandler,
+      new RegExp(
+        `${stage}\\)\\s+printf '%s\\\\n' ` +
+          `'recovery_failed_runtime_${stage}' >&2`,
+      ),
+      `failure stage ${stage} must emit only its matching fixed code`,
+    );
+  }
   assert.doesNotMatch(exitHandler, /printf[^\n]*\$RECOVERY_FAILURE_STAGE/);
   const literalMarkers = [...source.matchAll(/printf '%s\\n' '([^']+)'/g)]
     .map((match) => match[1]);
@@ -409,6 +809,14 @@ test("operator-visible output is a fixed allowlist", () => {
     "recovery_failed_pre_runtime_legacy_release",
     "recovery_failed_pre_runtime_legacy_environment",
     "recovery_failed_pre_runtime_database_preflight",
+    "recovery_failed_runtime_worker_preflight",
+    "recovery_failed_runtime_worker_start",
+    "recovery_failed_runtime_worker_stability",
+    "recovery_failed_runtime_worker_identity",
+    "recovery_failed_runtime_worker_environment",
+    "recovery_failed_runtime_worker_flags",
+    "recovery_failed_runtime_worker_launch_contract",
+    "recovery_failed_runtime_worker_disabled_absence",
     "recovery_failed",
     "recovery_failed_stage_invalid",
     "fence_cleanup_verified",
