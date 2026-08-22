@@ -753,7 +753,7 @@ function serviceIdentityDockerSpawner({
 }
 
 test("fence SQL derives from the complete checker SQL, raises its timeout, upgrades all three relations before output, and has one final rollback", () => {
-  const sql = buildOrdinaryAccountCutoverReadinessFenceSql("900");
+  const sql = buildOrdinaryAccountCutoverReadinessFenceSql("1320");
   const captureBoundary = " AS report\n\n\\gset fence_";
   const captureIndex = sql.indexOf(captureBoundary);
   const originalWithoutRollback = ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.slice(
@@ -775,7 +775,7 @@ test("fence SQL derives from the complete checker SQL, raises its timeout, upgra
     "LOCK TABLE public.pages IN ACCESS EXCLUSIVE MODE;",
   );
   const lateTimeout = sql.indexOf(
-    "SET LOCAL statement_timeout = '930s';",
+    "SET LOCAL statement_timeout = '1350s';",
   );
   const outputIndex = sql.indexOf("AS fence_result;");
   const savepointIndex = sql.indexOf("SAVEPOINT endpoint_probe_locks;");
@@ -801,10 +801,10 @@ test("fence SQL derives from the complete checker SQL, raises its timeout, upgra
     sql.slice(0, sql.indexOf("pg_sleep")).includes("ROLLBACK;"),
     false,
   );
-  assert.match(sql, /pg_sleep\(900::double precision\)/);
+  assert.match(sql, /pg_sleep\(1320::double precision\)/);
   assert.doesNotMatch(sql, /transaction_timestamp/);
   assert.throws(
-    () => buildOrdinaryAccountCutoverReadinessFenceSql("901"),
+    () => buildOrdinaryAccountCutoverReadinessFenceSql("1321"),
     (error) => error.code === "readiness_fence_max_hold_seconds_invalid",
   );
 });
@@ -4486,11 +4486,11 @@ test("SIGHUP from a disconnected deploy session fails closed and terminates the 
   });
 });
 
-test("a canonical private release request is the only successful path after a 240-second startup budget and preserves the full 900-second marker-ready hold", async () => {
+test("a canonical private release request is the only successful path after a 240-second startup budget and preserves the full 1320-second marker-ready hold", async () => {
   await temporaryDirectory(async (directory) => {
     const value = await fixture(directory);
-    value.input.maximumHoldSeconds = "900";
-    value.input.minimumRemainingTtlSeconds = "1440";
+    value.input.maximumHoldSeconds = "1320";
+    value.input.minimumRemainingTtlSeconds = "1860";
     const child = new FakeChild();
     const scheduled = [];
     let terminationInput = null;
@@ -4568,7 +4568,7 @@ test("a canonical private release request is the only successful path after a 24
     assert.equal(result.markerSha256, sha256Hex(markerBytes));
     assert.equal(terminationInput.backendPid, "4321");
     assert.equal(terminationInput.requireExactOne, true);
-    assert.ok(scheduled.includes(960_000));
+    assert.ok(scheduled.includes(1_380_000));
     assert.ok(scheduled.includes(240_000));
     assert.ok(provisionalPolls >= 1);
     await assertMissing(value.markerPath);

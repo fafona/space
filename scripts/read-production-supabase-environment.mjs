@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -84,7 +85,7 @@ function safeFileIdentity(identity) {
   return true;
 }
 
-function readFrozenBytes(path, afterRead) {
+function readFrozenSnapshot(path, afterRead) {
   let descriptor;
   let directoryDescriptor;
   try {
@@ -154,13 +155,46 @@ function readFrozenBytes(path, afterRead) {
     ) {
       invalid();
     }
-    return bytes;
+    return {
+      bytes,
+      directoryIdentity: directoryAfter,
+      fileIdentity: after,
+    };
   } catch {
     invalid();
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
     if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
   }
+}
+
+function encodeIdentity(identity, fields) {
+  return fields.map((field) => identity[field].toString(10)).join(":");
+}
+
+function parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId) {
+  let source;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    invalid();
+  }
+  if (source.includes("\0") || source.includes("\r")) invalid();
+  const lines = source.split("\n");
+  const buildId = exactAssignment(lines, "FAOLLA_WEB_BUILD_ID");
+  const publicUrl = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_URL");
+  const anonKey = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  if (
+    (expectedBuildId.length === 40
+      ? buildId !== expectedBuildId
+      : !buildId.startsWith(expectedBuildId)) ||
+    !validPublicUrl(publicUrl) ||
+    Buffer.byteLength(anonKey, "utf8") > MAX_ANON_KEY_BYTES ||
+    !ANON_KEY_PATTERN.test(anonKey)
+  ) {
+    invalid();
+  }
+  return { buildId, publicUrl, anonKey };
 }
 
 function exactAssignment(lines, key) {
@@ -211,29 +245,35 @@ export function readFrozenProductionSupabaseEnvironment(
   ) {
     invalid();
   }
-  const bytes = readFrozenBytes(path, dependencies.afterRead);
-  let source;
-  try {
-    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    invalid();
-  }
-  if (source.includes("\0") || source.includes("\r")) invalid();
-  const lines = source.split("\n");
-  const buildId = exactAssignment(lines, "FAOLLA_WEB_BUILD_ID");
-  const publicUrl = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_URL");
-  const anonKey = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  const { bytes } = readFrozenSnapshot(path, dependencies.afterRead);
+  return parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId);
+}
+
+export function readFrozenProductionSupabaseEnvironmentSnapshot(
+  path,
+  expectedBuildId,
+  dependencies = {},
+) {
   if (
-    (expectedBuildId.length === 40
-      ? buildId !== expectedBuildId
-      : !buildId.startsWith(expectedBuildId)) ||
-    !validPublicUrl(publicUrl) ||
-    Buffer.byteLength(anonKey, "utf8") > MAX_ANON_KEY_BYTES ||
-    !ANON_KEY_PATTERN.test(anonKey)
+    typeof path !== "string" ||
+    path.length === 0 ||
+    typeof expectedBuildId !== "string" ||
+    !BUILD_ID_PATTERN.test(expectedBuildId)
   ) {
     invalid();
   }
-  return { buildId, publicUrl, anonKey };
+  const { bytes, directoryIdentity, fileIdentity } =
+    readFrozenSnapshot(path, dependencies.afterRead);
+  parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId);
+  return {
+    directoryIdentity: encodeIdentity(directoryIdentity, [
+      "dev", "ino", "mtimeNs", "ctimeNs", "nlink", "uid", "mode",
+    ]),
+    fileIdentity: encodeIdentity(fileIdentity, [
+      "dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode",
+    ]),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 function encodeForShell(value) {
@@ -262,6 +302,15 @@ if (isMain) {
         readFrozenProductionSupabaseEnvironment(process.argv[3], process.argv[4]);
       if (new URL(publicUrl).href !== new URL(process.argv[5]).href) invalid();
       process.stdout.write(encodeForShell(anonKey));
+    } else if (mode === "snapshot") {
+      if (process.argv.length !== 5 || !BUILD_ID_PATTERN.test(process.argv[4])) invalid();
+      const snapshot = readFrozenProductionSupabaseEnvironmentSnapshot(
+        process.argv[3],
+        process.argv[4],
+      );
+      process.stdout.write(
+        `${snapshot.directoryIdentity}\n${snapshot.fileIdentity}\n${snapshot.sha256}`,
+      );
     } else {
       invalid();
     }

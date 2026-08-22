@@ -906,7 +906,7 @@ test("shared validation recursively binds backup run, canonical artifact, and pr
     "--expected-run-id \"$BACKUP_RUN_ID\"",
     "--expected-run-attempt \"$BACKUP_RUN_ATTEMPT\"",
     "--expected-backup-run-id \"$BACKUP_RUN_ID\"",
-    "--minimum-remaining-seconds 5700",
+    "--minimum-remaining-seconds 6100",
     "--expected-artifact-id \"$primary_artifact_id\"",
     "--expected-artifact-digest \"$primary_artifact_digest\"",
     "--expected-backup-artifact-id \"$primary_artifact_id\"",

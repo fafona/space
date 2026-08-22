@@ -28,7 +28,7 @@ const EPOCH_MILLISECONDS_PATTERN = /^[1-9][0-9]{0,15}$/;
 const PID_PATTERN = /^[1-9][0-9]{0,9}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_PID = 2_147_483_647n;
-const MAX_HOLD_SECONDS = 900;
+const MAX_HOLD_SECONDS = 1320;
 const MAX_TTL_SECONDS = 2 * 60 * 60;
 const MINIMUM_ROLLBACK_MARGIN_SECONDS = 300;
 const DATABASE_TIMEOUT_MARGIN_SECONDS = 30;
@@ -275,7 +275,7 @@ const PSQL_CONTAINER_SCRIPT = [
   ': "${FAOLLA_FENCE_APPLICATION_NAME:?FAOLLA_FENCE_APPLICATION_NAME is required}"',
   'export PGPASSWORD="$POSTGRES_PASSWORD"',
   'export PGAPPNAME="$FAOLLA_FENCE_APPLICATION_NAME"',
-  "export PGOPTIONS='-c lock_timeout=15s -c statement_timeout=960s'",
+  "export PGOPTIONS='-c lock_timeout=15s -c statement_timeout=1320s'",
   "exec psql --host=localhost --username=supabase_admin " +
     '--dbname="$POSTGRES_DB" --no-password --no-psqlrc ' +
     "--set=ON_ERROR_STOP=1 --set=VERBOSITY=verbose " +
