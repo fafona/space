@@ -344,7 +344,7 @@ jobs:
             --expected-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
             --expected-readiness-artifact-id "$READINESS_REPORT_ARTIFACT_ID" \
             --expected-readiness-artifact-digest "$READINESS_REPORT_ARTIFACT_DIGEST" \
-            --minimum-remaining-seconds 6000 \
+            --minimum-remaining-seconds 6100 \
             > "$summary_file"
           report_bytes="$(wc -c < "$report_file" | tr -d '[:space:]')"
           report_sha256="$(sha256sum "$report_file" | awk '{ print $1 }')"

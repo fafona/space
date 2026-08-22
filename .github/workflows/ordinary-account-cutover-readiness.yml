@@ -382,7 +382,7 @@ jobs:
             --expected-run-id "$BACKUP_RUN_ID" \
             --expected-run-attempt "$BACKUP_RUN_ATTEMPT" \
             --expected-backup-run-id "$BACKUP_RUN_ID" \
-            --minimum-remaining-seconds 5700 > "$summary_path"
+            --minimum-remaining-seconds 6100 > "$summary_path"
           primary_artifact_id="$(jq -er '.backupArtifactId | select(type == "string" and test("^[1-9][0-9]*$"))' "$summary_path")"
           primary_artifact_digest="$(jq -er '.backupArtifactDigest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$summary_path")"
           test "$primary_artifact_id" = "$INVENTORY_PRIMARY_ARTIFACT_ID"
@@ -512,7 +512,7 @@ jobs:
             --expected-artifact-digest "$primary_artifact_digest" \
             --expected-backup-artifact-id "$primary_artifact_id" \
             --expected-backup-artifact-digest "$primary_artifact_digest" \
-            --minimum-remaining-seconds 5700 > "$final_summary_path"
+            --minimum-remaining-seconds 6100 > "$final_summary_path"
           cmp --silent "$summary_path" "$final_summary_path"
           rm -f -- \
             "$summary_path" "$final_summary_path" "$primary_artifact_json"

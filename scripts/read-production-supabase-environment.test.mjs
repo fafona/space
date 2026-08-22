@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   readFileSync,
   renameSync,
@@ -14,6 +15,7 @@ import test from "node:test";
 
 import {
   readFrozenProductionSupabaseEnvironment,
+  readFrozenProductionSupabaseEnvironmentSnapshot,
 } from "./read-production-supabase-environment.mjs";
 
 const helperPath = fileURLToPath(
@@ -55,6 +57,13 @@ test("reads an exact previous atomic release Supabase environment without normal
         readFrozenProductionSupabaseEnvironment(path, buildId),
         { buildId, publicUrl, anonKey },
       );
+      const snapshot = readFrozenProductionSupabaseEnvironmentSnapshot(path, buildId);
+      assert.match(snapshot.directoryIdentity, /^(?:[0-9]+:){6}[0-9]+$/);
+      assert.match(snapshot.fileIdentity, /^(?:[0-9]+:){7}[0-9]+$/);
+      assert.equal(
+        snapshot.sha256,
+        createHash("sha256").update(readFileSync(path)).digest("hex"),
+      );
       const buildResult = spawnSync(
         process.execPath,
         [helperPath, "build-id", path, buildId.slice(0, 12)],
@@ -73,6 +82,20 @@ test("reads an exact previous atomic release Supabase environment without normal
       assert.equal(Buffer.from(result.stdout, "base64").toString("utf8"), anonKey);
       assert.equal(result.stdout.includes(publicUrl), false);
       assert.equal(result.stdout.includes(anonKey), false);
+      const snapshotResult = spawnSync(
+        process.execPath,
+        [helperPath, "snapshot", path, buildId],
+        { encoding: "utf8" },
+      );
+      assert.equal(snapshotResult.status, 0, snapshotResult.stderr);
+      assert.equal(snapshotResult.stderr, "");
+      assert.deepEqual(snapshotResult.stdout.split("\n"), [
+        snapshot.directoryIdentity,
+        snapshot.fileIdentity,
+        snapshot.sha256,
+      ]);
+      assert.equal(snapshotResult.stdout.includes(publicUrl), false);
+      assert.equal(snapshotResult.stdout.includes(anonKey), false);
     },
   );
 });

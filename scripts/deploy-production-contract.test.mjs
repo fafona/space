@@ -3,13 +3,16 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   access,
+  link,
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
   unlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +26,9 @@ import {
   PRODUCTION_READINESS_ATTESTATION_KIND,
   sha256Hex,
 } from "./production-release-attestation.mjs";
+import {
+  readFrozenProductionSupabaseEnvironmentSnapshot,
+} from "./read-production-supabase-environment.mjs";
 
 const deployScript = await readFile(
   new URL("./deploy.production.sh", import.meta.url),
@@ -326,6 +332,14 @@ function extractWorkflowHeredocs(tag) {
       .map((line) => line.startsWith("          ") ? line.slice(10) : line)
       .join("\n"),
   );
+}
+
+function extractShellHeredocs(source, tag) {
+  const pattern = new RegExp(
+    `<<'${tag}'\\r?\\n([\\s\\S]*?)\\r?\\n${tag}(?=\\r?\\n|$)`,
+    "g",
+  );
+  return [...source.matchAll(pattern)].map((match) => match[1]);
 }
 
 function resolveBashExecutable() {
@@ -1356,7 +1370,7 @@ test("private deployment output exposes only immutable static assets to nginx be
     'verify_public_static_access_for_nginx "$RELEASE_BUILD_DIR"',
   );
   const moveIndex = deployScript.indexOf('mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"');
-  const fenceIndex = deployScript.lastIndexOf("start_readiness_fence || exit 1");
+  const fenceIndex = deployScript.lastIndexOf("start_readiness_fence 1 || exit 1");
   const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1");
   assert.ok(permissionIndex >= 0 && permissionIndex < nginxPreMoveIndex);
   assert.ok(nginxPreMoveIndex < moveIndex);
@@ -1485,6 +1499,16 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
       { encoding: "utf8", input: source },
     );
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
+  }
+  const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
+  assert.equal(deployNodeSources.length, 13);
+  for (const [index, source] of deployNodeSources.entries()) {
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--check"],
+      { encoding: "utf8", input: source },
+    );
+    assert.equal(result.status, 0, `deploy NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const pythonSources = extractWorkflowHeredocs("PY");
   assert.equal(pythonSources.length, 1);
@@ -1971,7 +1995,7 @@ test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bou
     deployWorkflow,
     /--expected-readiness-artifact-digest "\$READINESS_REPORT_ARTIFACT_DIGEST"/,
   );
-  assert.match(deployWorkflow, /--minimum-remaining-seconds 6000/);
+  assert.match(deployWorkflow, /--minimum-remaining-seconds 6100/);
   assert.match(deployWorkflow, /summary\.backupRunId/);
   assert.match(deployWorkflow, /summary\.backupRunAttempt/);
   assert.match(deployWorkflow, /summary\.backupArtifactId/);
@@ -2095,8 +2119,18 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     deployScript.indexOf('if [ ! -f "$RELEASE_BUILD_DIR/.next/BUILD_ID"'),
   );
   const ordered = [
-    "start_readiness_fence || exit 1",
+    "previous_web_process_identity_matches || exit 1",
+    "previous_runtime_recovery_identity_matches || exit 1",
+    "start_readiness_fence 1 || exit 1",
+    "assert_readiness_fence_before_process_quiescence",
     "PROCESSES_STOPPED=1",
+    'stop_pm2_process_bounded "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" || exit 1',
+    "wait_for_port_release || exit 1",
+    "stop_previous_automation_worker_bounded || exit 1",
+    "wait_for_readiness_fence_database_quiescence || exit 1",
+    'assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1',
+    "FORWARD_MUTATION_STARTED=1",
+    "prepare_shared_runtime || exit 1",
     'switch_current_release "$RELEASE_DIR" || exit 1',
     'wait_for_release_health "$FAOLLA_WEB_BUILD_ID"',
     "verify_booking_persistence || BOOKING_PERSISTENCE_STATUS=$?",
@@ -2114,6 +2148,18 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     previousIndex = index;
   }
   assert.match(sequence, /BOOKING_PERSISTENCE_STATUS" -ne 0[\s\S]+exit 1/);
+  assert.equal(
+    sequence.match(/previous_web_process_identity_matches \|\| exit 1/g)?.length,
+    2,
+  );
+  assert.equal(
+    sequence.match(/previous_runtime_recovery_identity_matches \|\| exit 1/g)?.length,
+    2,
+  );
+  assert.match(
+    sequence,
+    /assert_readiness_fence_before_process_quiescence[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+PROCESSES_STOPPED=1/,
+  );
   assert.match(sequence, /assert_readiness_fence_forward_checkpoint \|\| exit 1/g);
   assert.match(deployScript, /blocked_cancelled[\s\S]+deployment will fail closed/);
   assert.doesNotMatch(
@@ -2125,6 +2171,12 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     /COALESCE\([\s\S]{0,160}pg_catalog\.bool_and\(cancelled_waiters\.cancelled\)/,
   );
   assert.match(deployScript, /pg_catalog\.pg_cancel_backend\(blocked_waiters\.pid\)/);
+  assert.match(deployScript, /WHERE NOT :'fence_allow_waiters'::boolean/);
+  assert.match(
+    deployScript,
+    /:'fence_had_waiters'::boolean[\s\S]{0,120}OR \(SELECT pg_catalog\.count\(\*\) FROM blocked_waiters\) <> 0/,
+  );
+  assert.match(deployScript, /\\if :fence_should_wait_for_cancellation/);
   assert.match(deployScript, /auth_share <> 1[\s\S]+auth_ax <> 0[\s\S]+pages_ax <> 0[\s\S]+registry_ax <> 1/);
   assert.match(deployScript, /trap 'handle_deploy_signal 129' HUP/);
   assert.match(deployScript, /trap 'handle_deploy_signal 143' TERM/);
@@ -2138,7 +2190,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   );
   assert.match(
     deployScript,
-    /ensure_readiness_fence_for_rollback[\s\S]+rollback_release[\s\S]+release_readiness_fence[\s\S]+start_automation_worker_process "\$PREVIOUS_RUNTIME_DIR"/,
+    /ensure_readiness_fence_for_rollback[\s\S]+rollback_release[\s\S]+release_readiness_fence[\s\S]+start_frozen_previous_automation_worker_process/,
   );
   assert.match(
     deployScript,
@@ -2147,8 +2199,40 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   assert.match(deployScript, /readiness_fence_original_process_matches[\s\S]+kill -TERM/);
   assert.match(deployScript, /terminate_readiness_fence_database_session \|\| cleanup_status=1/);
   assert.match(deployScript, /remaining\.remainingCount !== "0"/);
-  assert.match(deployScript, /READINESS_FENCE_MINIMUM_TTL_SECONDS="\$\{[^}]+:-1440\}"/);
-  assert.match(deployScript, /RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS="\$\{[^}]+:-5700\}"/);
+  assert.match(deployScript, /READINESS_FENCE_MAXIMUM_HOLD_SECONDS="\$\{[^}]+:-1320\}"/);
+  assert.match(deployScript, /READINESS_FENCE_MINIMUM_TTL_SECONDS="\$\{[^}]+:-1860\}"/);
+  assert.match(deployScript, /READINESS_FENCE_ROLLBACK_RESERVE_SECONDS="\$\{[^}]+:-780\}"/);
+  assert.match(deployScript, /PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS="\$\{[^}]+:-5\}"/);
+  assert.match(deployScript, /PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS="\$\{[^}]+:-10\}"/);
+  assert.match(deployScript, /RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS="\$\{[^}]+:-6100\}"/);
+  assert.match(
+    deployScript,
+    /AUTOMATION_WORKER_KILL_TIMEOUT_MS[\s\S]{0,500}7 \* READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS[\s\S]{0,180}-gt "\$READINESS_FENCE_ROLLBACK_RESERVE_SECONDS"/,
+  );
+  assert.match(
+    deployScript,
+    /assert_readiness_fence_forward_checkpoint\(\) \{[\s\S]{0,160}READINESS_FENCE_FORWARD_READY/,
+  );
+  assert.match(
+    deployScript,
+    /assert_readiness_fence_before_forward_operation\(\) \{[\s\S]{0,220}READINESS_FENCE_FORWARD_READY/,
+  );
+  assert.match(
+    deployScript,
+    /ensure_readiness_fence_for_rollback[\s\S]+start_readiness_fence 0[\s\S]+discard_failed_readiness_fence/,
+  );
+  assert.match(
+    deployScript,
+    /recover_pre_forward_previous_runtime[\s\S]+ensure_readiness_fence_for_rollback/,
+  );
+  assert.match(
+    deployScript,
+    /the frozen previous release and candidate must target the same database service/,
+  );
+  assert.match(
+    deployScript,
+    /timeout --signal=TERM --kill-after=2s 10s pm2 save/,
+  );
   assert.match(deployScript, /an exact previous atomic release is required before environment mutation/);
   const fenceStartup = extractShellRegion(
     "start_readiness_fence() {",
@@ -2185,6 +2269,107 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     /readiness fence cleanup completed[\s\S]+readiness fence cleanup could not be proven/,
   );
   assert.doesNotMatch(deployScript, /cat\s+[^\n]*READINESS_FENCE_LOG|tail\s+[^\n]*READINESS_FENCE_LOG/);
+});
+
+test("a late frozen-runtime drift fails before any protected process is stopped", async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-pre-stop-identity-"));
+  const callsPath = join(temporaryDirectory, "calls");
+  const transition = extractShellRegion(
+    "previous_web_process_identity_matches || exit 1\nprevious_runtime_recovery_identity_matches || exit 1\nstart_readiness_fence 1 || exit 1",
+    "\nFORWARD_MUTATION_STARTED=1",
+  ).replaceAll("exit 1", "return 1");
+  const script = [
+    "set +e",
+    `CALLS='${toBashPath(callsPath)}'`,
+    "PROCESSES_STOPPED=0",
+    "AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS=20",
+    "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+    "PORT_RELEASE_TOTAL_TIMEOUT_SECONDS=60",
+    "RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS=60",
+    "PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS=5",
+    "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=10",
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+    "APP_NAME=web",
+    "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+    "WEB_IDENTITY_CALLS=0",
+    "RUNTIME_IDENTITY_CALLS=0",
+    "previous_web_process_identity_matches() { WEB_IDENTITY_CALLS=$((WEB_IDENTITY_CALLS + 1)); record web-id; return 0; }",
+    "previous_runtime_recovery_identity_matches() { RUNTIME_IDENTITY_CALLS=$((RUNTIME_IDENTITY_CALLS + 1)); record runtime-id; [ \"$RUNTIME_IDENTITY_CALLS\" -lt 2 ]; }",
+    "start_readiness_fence() { record \"start-fence:$1\"; return 0; }",
+    "assert_readiness_fence_before_process_quiescence() { record \"prequiesce:$1\"; return 0; }",
+    "stop_pm2_process_bounded() { record stop-web; return 0; }",
+    "wait_for_port_release() { record port; return 0; }",
+    "stop_previous_automation_worker_bounded() { record stop-worker; return 0; }",
+    "wait_for_readiness_fence_database_quiescence() { record database-quiet; return 0; }",
+    "assert_readiness_fence_before_forward_operation() { record forward-check; return 0; }",
+    "run_transition() {",
+    transition,
+    "}",
+    "run_transition; status=$?",
+    "printf '%s %s\\n' \"$status\" \"$PROCESSES_STOPPED\"",
+  ].join("\n");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout, "1 0\n");
+    assert.equal(
+      await readFile(callsPath, "utf8"),
+      "web-id\nruntime-id\nstart-fence:1\nprequiesce:255\nweb-id\nruntime-id\n",
+    );
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("a pre-stop failure releases the provisional fence without cancelling waiters or restarting", async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-pre-stop-cleanup-"));
+  const callsPath = join(temporaryDirectory, "calls");
+  const cleanupFunction = extractShellRegion(
+    "cleanup_failed_build() {",
+    "\ntrap cleanup_failed_build EXIT",
+  );
+  const script = [
+    "set +e",
+    cleanupFunction,
+    `CALLS='${toBashPath(callsPath)}'`,
+    `RELEASE_BUILD_DIR='${toBashPath(join(temporaryDirectory, "missing-build"))}'`,
+    `RELEASE_DIR='${toBashPath(join(temporaryDirectory, "missing-release"))}'`,
+    `DEPLOY_ATTESTATION_FILE='${toBashPath(join(temporaryDirectory, "missing-attestation"))}'`,
+    `DEPLOY_RELEASE_BINDING_FILE='${toBashPath(join(temporaryDirectory, "missing-binding"))}'`,
+    "WEB_COMMITTED=0",
+    "PROCESSES_STOPPED=0",
+    "SWITCH_COMPLETED=0",
+    "FORWARD_MUTATION_STARTED=0",
+    "ROLLBACK_COMPLETED=0",
+    "READINESS_FENCE_ACTIVE=1",
+    "READINESS_FENCE_RELEASE_REQUESTED=0",
+    "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+    "release_readiness_fence() { record \"release:$1\"; READINESS_FENCE_ACTIVE=0; return 0; }",
+    "discard_failed_readiness_fence() { record discard; return 0; }",
+    "recover_pre_forward_previous_runtime() { record restart; return 0; }",
+    "ensure_readiness_fence_for_rollback() { record strict; return 0; }",
+    "rollback_release() { record rollback; return 0; }",
+    "safe_remove_release_path() { record remove; return 0; }",
+    "false",
+    "cleanup_failed_build",
+  ].join("\n");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    assert.equal(await readFile(callsPath, "utf8"), "release:1\n");
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test("only a missing Supabase anon key inherits from the URL-bound frozen previous release", () => {
@@ -2245,10 +2430,61 @@ test("previous release identity is independently prefix-bound and rechecked arou
   assert.match(identity, /stat -Lc '%d:%i:%Z' -- "\$PREVIOUS_RUNTIME_DIR"/);
   assert.match(identity, /stat -Lc '%d:%i:%Z' -- "\/proc\/\$PREVIOUS_WEB_PID\/cwd"/);
   assert.match(identity, /PREVIOUS_WEB_CWD_IDENTITY" != "\$PREVIOUS_RUNTIME_IDENTITY"/);
+  assert.match(identity, /readFileSync\(`\/proc\/\$\{pid\}\/environ`\)/);
+  assert.match(identity, /PREVIOUS_WEB_PROCESS_START_TICKS/);
+  assert.match(identity, /SUPABASE_INTERNAL_URL[\s\S]+NEXT_PUBLIC_SUPABASE_URL[\s\S]+NEXT_PUBLIC_SUPABASE_ANON_KEY/);
   assert.ok(
     identity.match(/readlink -f "\$CURRENT_LINK"/g)?.length >= 2,
     "current release link must be checked before and after the frozen build read",
   );
+  const captureIndex = deployScript.indexOf('PREVIOUS_ENVIRONMENT_CAPTURE="$(');
+  const finalExportIndex = deployScript.indexOf('export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"');
+  assert.ok(captureIndex >= 0 && captureIndex < finalExportIndex);
+});
+
+test("rollback process launch receives the frozen previous Supabase environment", () => {
+  const functions = extractShellRegion(
+    "start_frozen_previous_release() {",
+    "\nwait_for_automation_worker_online() {",
+  );
+  const script = [
+    "set +e",
+    functions,
+    "PREVIOUS_RUNTIME_DIR=/frozen/runtime",
+    "PREVIOUS_SUPABASE_INTERNAL_URL=old-internal",
+    "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL=old-public",
+    "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY=old-anon",
+    "export SUPABASE_INTERNAL_URL=new-internal",
+    "export NEXT_PUBLIC_SUPABASE_URL=new-public",
+    "export NEXT_PUBLIC_SUPABASE_ANON_KEY=new-anon",
+    "IDENTITY_OK=1",
+    "previous_runtime_recovery_identity_matches() { [ \"$IDENTITY_OK\" = 1 ]; }",
+    "start_release() {",
+    "  [ \"$1\" = /frozen/runtime ] && [ \"$SUPABASE_INTERNAL_URL\" = old-internal ] && [ \"$NEXT_PUBLIC_SUPABASE_URL\" = old-public ] && [ \"$NEXT_PUBLIC_SUPABASE_ANON_KEY\" = old-anon ] || return 1",
+    "  printf 'web\\n'",
+    "}",
+    "start_automation_worker_process() {",
+    "  [ \"$1\" = /frozen/runtime ] && [ \"$SUPABASE_INTERNAL_URL\" = old-internal ] && [ \"$NEXT_PUBLIC_SUPABASE_URL\" = old-public ] && [ \"$NEXT_PUBLIC_SUPABASE_ANON_KEY\" = old-anon ] || return 1",
+    "  printf 'worker\\n'",
+    "}",
+    "start_frozen_previous_release; web_status=$?",
+    "start_frozen_previous_automation_worker_process; worker_status=$?",
+    "printf '%s %s\\n' \"$web_status\" \"$worker_status\"",
+    "IDENTITY_OK=0",
+    "start_frozen_previous_release >/dev/null; identity_web_status=$?",
+    "start_frozen_previous_automation_worker_process >/dev/null; identity_worker_status=$?",
+    "printf '%s %s\\n' \"$identity_web_status\" \"$identity_worker_status\"",
+    "unset PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "start_frozen_previous_release >/dev/null; missing_status=$?",
+    "printf '%s\\n' \"$missing_status\"",
+  ].join("\n");
+  const result = spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: script,
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(result.stdout, "web\nworker\n0 0\n1 1\n1\n");
 });
 
 test("resolved probe inputs use the current public URL, frozen anon key, and literal internal default", async () => {
@@ -2284,6 +2520,8 @@ test("resolved probe inputs use the current public URL, frozen anon key, and lit
       'NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""',
       'SUPABASE_INTERNAL_URL_B64=""',
       'SUPABASE_INTERNAL_URL="https://ambient.invalid/?secret=must-not-win"',
+      'PREVIOUS_SUPABASE_INTERNAL_URL="http://127.0.0.1:8000"',
+      'PREVIOUS_NEXT_PUBLIC_SUPABASE_URL="$CONTRACT_PUBLIC_URL"',
       'PREVIOUS_RUNTIME_DIR="$CONTRACT_PREVIOUS_RUNTIME"',
       'PREVIOUS_BUILD_ID="$CONTRACT_PREVIOUS_BUILD_ID"',
       'PREVIOUS_WEB_PID="4321"',
@@ -2309,6 +2547,7 @@ test("resolved probe inputs use the current public URL, frozen anon key, and lit
       env: {
         ...process.env,
         CONTRACT_PUBLIC_URL_B64: Buffer.from(currentUrl).toString("base64"),
+        CONTRACT_PUBLIC_URL: currentUrl,
         CONTRACT_PREVIOUS_RUNTIME: toBashPath(previousRuntime),
         CONTRACT_PREVIOUS_BUILD_ID: FIXTURE_TARGET_SHA,
       },
@@ -2398,6 +2637,566 @@ test("fence startup remains fail-fast when invoked from cleanup set +e", async (
   }
 });
 
+test("PM2 state parsing and bounded deletion fail closed and prove the original process exited", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-pm2-state-contract-"),
+  );
+  const functions = extractShellRegion(
+    "pm2_process_snapshot() {",
+    "\nstart_automation_worker_process() {",
+  );
+  const snapshotFixtures = [
+    { name: "absent", json: [], expectedStatus: 0, expectedOutput: "absent" },
+    {
+      name: "inactive",
+      json: [{ pid: 0, pm2_env: { name: "target", status: "stopped" } }],
+      expectedStatus: 0,
+      expectedOutput: "inactive",
+    },
+    {
+      name: "running",
+      json: [{ pid: 4321, pm2_env: { name: "target", status: "online" } }],
+      expectedStatus: 0,
+      expectedOutput: "running:4321",
+    },
+    {
+      name: "wrong name is absent",
+      json: [{ pid: 4321, pm2_env: { name: "other" } }],
+      expectedStatus: 0,
+      expectedOutput: "absent",
+    },
+    {
+      name: "duplicate name",
+      json: [
+        { pid: 4321, pm2_env: { name: "target", status: "online" } },
+        { pid: 4322, pm2_env: { name: "target", status: "online" } },
+      ],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    {
+      name: "nonnumeric pid",
+      json: [{ pid: "4321", pm2_env: { name: "target", status: "online" } }],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    {
+      name: "missing status with a live pid",
+      json: [{ pid: 4321, pm2_env: { name: "target" } }],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    {
+      name: "errored status with a live pid",
+      json: [{ pid: 4321, pm2_env: { name: "target", status: "errored" } }],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    {
+      name: "online status without a live pid",
+      json: [{ pid: 0, pm2_env: { name: "target", status: "online" } }],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    {
+      name: "stopped status with a live pid",
+      json: [{ pid: 4321, pm2_env: { name: "target", status: "stopped" } }],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    {
+      name: "transitional status is never treated as inactive",
+      json: [{ pid: 0, pm2_env: { name: "target", status: "launching" } }],
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+    { name: "malformed JSON", raw: "not-json", expectedStatus: 1, expectedOutput: "" },
+    {
+      name: "producer failure",
+      json: [],
+      producerStatus: 7,
+      expectedStatus: 1,
+      expectedOutput: "",
+    },
+  ];
+
+  try {
+    for (const fixture of snapshotFixtures) {
+      const raw = fixture.raw ?? JSON.stringify(fixture.json);
+      const script = [
+        "set +e",
+        functions,
+        `FIXTURE_B64='${Buffer.from(raw).toString("base64")}'`,
+        `FIXTURE_STATUS='${fixture.producerStatus ?? 0}'`,
+        "timeout() {",
+        "  while [ \"$#\" -gt 0 ]; do",
+        "    case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac",
+        "  done",
+        "  \"$@\"",
+        "}",
+        "pm2() {",
+        "  [ \"$1\" = jlist ] || return 1",
+        "  printf '%s' \"$FIXTURE_B64\" | base64 --decode",
+        "  return \"$FIXTURE_STATUS\"",
+        "}",
+        "pm2_process_snapshot target; status=$?",
+        "printf '\\nSTATUS:%s\\n' \"$status\"",
+      ].join("\n");
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: script,
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${fixture.name}\n${result.stdout}\n${result.stderr}`);
+      const statusMarker = result.stdout.lastIndexOf("\nSTATUS:");
+      assert.ok(statusMarker >= 0, fixture.name);
+      assert.equal(
+        result.stdout.slice(statusMarker + "\nSTATUS:".length).trim(),
+        String(fixture.expectedStatus),
+        fixture.name,
+      );
+      assert.equal(result.stdout.slice(0, statusMarker).trimEnd(), fixture.expectedOutput, fixture.name);
+    }
+
+    const stopFixtures = [
+      { name: "already absent", snapshots: ["absent"], expectedStatus: 0, deleteCalls: 0 },
+      { name: "inactive is deleted", snapshots: ["inactive", "absent"], expectedStatus: 0, deleteCalls: 1 },
+      {
+        name: "running process exits",
+        snapshots: ["running:4321", "absent"],
+        ticks: ["111", "GONE"],
+        expectedStatus: 0,
+        deleteCalls: 1,
+      },
+      {
+        name: "pid reuse is distinguishable",
+        snapshots: ["running:4321", "absent"],
+        ticks: ["111", "222"],
+        expectedStatus: 0,
+        deleteCalls: 1,
+      },
+      {
+        name: "original process identity remains",
+        snapshots: ["running:4321", "absent"],
+        ticks: ["111", "111"],
+        expectedStatus: 1,
+        deleteCalls: 1,
+      },
+      {
+        name: "post-delete PM2 state remains running",
+        snapshots: ["running:4321", "running:4321"],
+        ticks: ["111"],
+        expectedStatus: 1,
+        deleteCalls: 1,
+      },
+      { name: "initial query failure", snapshots: ["ERROR"], expectedStatus: 1, deleteCalls: 0 },
+      {
+        name: "delete failure",
+        snapshots: ["inactive"],
+        deleteStatus: 9,
+        expectedStatus: 1,
+        deleteCalls: 1,
+      },
+      {
+        name: "post-delete query failure",
+        snapshots: ["inactive", "ERROR"],
+        expectedStatus: 1,
+        deleteCalls: 1,
+      },
+    ];
+    for (const [index, fixture] of stopFixtures.entries()) {
+      const snapshotsPath = join(temporaryDirectory, `snapshots-${index}`);
+      const ticksPath = join(temporaryDirectory, `ticks-${index}`);
+      const callsPath = join(temporaryDirectory, `delete-calls-${index}`);
+      await writeFile(snapshotsPath, `${fixture.snapshots.join("\n")}\n`, { mode: 0o600 });
+      await writeFile(ticksPath, `${(fixture.ticks ?? []).join("\n")}\n`, { mode: 0o600 });
+      const script = [
+        "set +e",
+        functions,
+        `SNAPSHOTS='${toBashPath(snapshotsPath)}'`,
+        `TICKS='${toBashPath(ticksPath)}'`,
+        `CALLS='${toBashPath(callsPath)}'`,
+        `DELETE_STATUS='${fixture.deleteStatus ?? 0}'`,
+        "next_fixture_value() {",
+        "  local source=\"$1\"",
+        "  local value",
+        "  value=\"$(head -n 1 \"$source\")\" || return 1",
+        "  tail -n +2 \"$source\" > \"${source}.next\" || return 1",
+        "  mv \"${source}.next\" \"$source\" || return 1",
+        "  printf '%s\\n' \"$value\"",
+        "}",
+        "pm2_process_snapshot() {",
+        "  local value",
+        "  value=\"$(next_fixture_value \"$SNAPSHOTS\")\" || return 1",
+        "  [ \"$value\" != ERROR ] || return 1",
+        "  printf '%s\\n' \"$value\"",
+        "}",
+        "linux_process_start_ticks() {",
+        "  local value",
+        "  value=\"$(next_fixture_value \"$TICKS\")\" || return 1",
+        "  if [ \"$value\" = GONE ]; then return 2; fi",
+        "  [ -n \"$value\" ] || return 1",
+        "  printf '%s\\n' \"$value\"",
+        "}",
+        "timeout() {",
+        "  while [ \"$#\" -gt 0 ]; do",
+        "    case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac",
+        "  done",
+        "  \"$@\"",
+        "}",
+        "pm2() { [ \"$1\" = delete ] || return 1; printf x >> \"$CALLS\"; return \"$DELETE_STATUS\"; }",
+        "SECONDS=0",
+        "stop_pm2_process_bounded target 40; status=$?",
+        "printf '%s\\n' \"$status\"",
+      ].join("\n");
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: script,
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${fixture.name}\n${result.stdout}\n${result.stderr}`);
+      assert.equal(result.stdout.trim(), String(fixture.expectedStatus), fixture.name);
+      let calls = "";
+      try { calls = await readFile(callsPath, "utf8"); } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      assert.equal(calls.length, fixture.deleteCalls, fixture.name);
+    }
+
+    const preservedInactive = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        functions,
+        "AUTOMATION_WORKER_NAME=worker",
+        "AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS=205",
+        "stop_pm2_process_bounded() { printf '%s\\n' \"$3\"; }",
+        "PREVIOUS_AUTOMATION_WORKER_STATE=inactive",
+        "stop_previous_automation_worker_bounded",
+        "PREVIOUS_AUTOMATION_WORKER_STATE=running",
+        "stop_previous_automation_worker_bounded",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(
+      preservedInactive.status,
+      0,
+      `${preservedInactive.stdout}\n${preservedInactive.stderr}`,
+    );
+    assert.equal(preservedInactive.stdout, "0\n1\n");
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("worker online proof requires three stable strict PM2 snapshots", async () => {
+  const waitFunction = extractShellRegion(
+    "wait_for_automation_worker_online() {",
+    "\nwait_for_release_health() {",
+  );
+  assert.match(waitFunction, /pm2_process_snapshot "\$AUTOMATION_WORKER_NAME"/);
+  assert.doesNotMatch(waitFunction, /pm2 pid/);
+
+  const fixtures = [
+    {
+      name: "three stable running snapshots",
+      snapshots: ["running:4321", "running:4321", "running:4321"],
+      expectedStatus: 0,
+      expectedCalls: 3,
+    },
+    {
+      name: "PID drift restarts the stability proof",
+      snapshots: ["running:4321", "running:4322", "running:4322", "running:4322"],
+      expectedStatus: 0,
+      expectedCalls: 4,
+    },
+    {
+      name: "parser failure restarts the stability proof",
+      snapshots: [
+        "running:4321",
+        "running:4321",
+        "ERROR",
+        "running:4321",
+        "running:4321",
+        "running:4321",
+      ],
+      expectedStatus: 0,
+      expectedCalls: 6,
+    },
+    {
+      name: "inactive and transitional snapshots never count",
+      snapshots: [
+        "inactive",
+        "running:4321",
+        "running:4321",
+        "absent",
+        "running:4321",
+        "running:4321",
+        "running:4321",
+      ],
+      expectedStatus: 0,
+      expectedCalls: 7,
+    },
+    {
+      name: "alternating running PIDs exhaust the bounded proof",
+      snapshots: Array.from(
+        { length: 20 },
+        (_, index) => `running:${index % 2 === 0 ? 4321 : 4322}`,
+      ),
+      expectedStatus: 1,
+      expectedCalls: 20,
+    },
+  ];
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-worker-online-proof-contract-"),
+  );
+
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const responsesPath = join(temporaryDirectory, `responses-${index}`);
+      const callsPath = join(temporaryDirectory, `calls-${index}`);
+      await writeFile(responsesPath, `${fixture.snapshots.join("\n")}\n`);
+      const script = [
+        "set +e",
+        waitFunction,
+        `RESPONSES='${toBashPath(responsesPath)}'`,
+        `CALLS='${toBashPath(callsPath)}'`,
+        "AUTOMATION_WORKER_NAME=worker",
+        "next_fixture_value() {",
+        "  local source=\"$1\"",
+        "  local value",
+        "  value=\"$(head -n 1 \"$source\")\" || return 1",
+        "  tail -n +2 \"$source\" > \"${source}.next\" || return 1",
+        "  mv \"${source}.next\" \"$source\" || return 1",
+        "  printf x >> \"$CALLS\"",
+        "  printf '%s\\n' \"$value\"",
+        "}",
+        "pm2_process_snapshot() {",
+        "  local value",
+        "  [ \"$1\" = \"$AUTOMATION_WORKER_NAME\" ] || return 1",
+        "  value=\"$(next_fixture_value \"$RESPONSES\")\" || return 1",
+        "  [ \"$value\" != ERROR ] || return 1",
+        "  printf '%s\\n' \"$value\"",
+        "}",
+        "sleep() { :; }",
+        "wait_for_automation_worker_online; status=$?",
+        "printf '%s\\n' \"$status\"",
+      ].join("\n");
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: script,
+        timeout: 10_000,
+      });
+      assert.equal(
+        result.status,
+        0,
+        `${fixture.name}\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.equal(result.stdout.trim(), String(fixture.expectedStatus), fixture.name);
+      assert.equal((await readFile(callsPath, "utf8")).length, fixture.expectedCalls);
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("the frozen previous web PID, start time, cwd, and PM2 identity are rechecked", () => {
+  const identityFunction = extractShellRegion(
+    "previous_web_process_identity_matches() {",
+    "\nstop_pm2_process_bounded() {",
+  );
+  const fixtures = [
+    { name: "exact identity", expectedStatus: 0 },
+    { name: "PM2 PID drift", snapshot: "running:4322", expectedStatus: 1 },
+    { name: "start time drift", currentTicks: "222", expectedStatus: 1 },
+    { name: "runtime inode drift", runtimeStat: "1:2:4", expectedStatus: 1 },
+    { name: "cwd drift", cwdStat: "1:2:4", expectedStatus: 1 },
+    { name: "process inode drift", processStat: "5:7", expectedStatus: 1 },
+    { name: "current link drift", link: "/release/other", expectedStatus: 1 },
+  ];
+  for (const fixture of fixtures) {
+    const script = [
+      "set +e",
+      identityFunction,
+      "type -t previous_web_process_identity_matches >/dev/null || exit 90",
+      "APP_NAME=web",
+      "PREVIOUS_WEB_PID=4321",
+      "PREVIOUS_WEB_PROCESS_START_TICKS=111",
+      "PREVIOUS_RUNTIME_DIR=/release/frozen",
+      "PREVIOUS_RUNTIME_IDENTITY=1:2:3",
+      "PREVIOUS_WEB_PROCESS_IDENTITY=5:6",
+      "CURRENT_LINK=/release/current",
+      `SNAPSHOT='${fixture.snapshot ?? "running:4321"}'`,
+      `CURRENT_TICKS='${fixture.currentTicks ?? "111"}'`,
+      `RUNTIME_STAT='${fixture.runtimeStat ?? "1:2:3"}'`,
+      `CWD_STAT='${fixture.cwdStat ?? "1:2:3"}'`,
+      `PROCESS_STAT='${fixture.processStat ?? "5:6"}'`,
+      `LINK_TARGET='${fixture.link ?? "/release/frozen"}'`,
+      'pm2_process_snapshot() { printf "%s\\n" "$SNAPSHOT"; }',
+      'linux_process_start_ticks() { printf "%s\\n" "$CURRENT_TICKS"; }',
+      "stat() {",
+      "  local path=\"${@: -1}\"",
+      "  case \"$path\" in",
+      '    "$PREVIOUS_RUNTIME_DIR") printf "%s\\n" "$RUNTIME_STAT" ;;',
+      '    "/proc/$PREVIOUS_WEB_PID/cwd") printf "%s\\n" "$CWD_STAT" ;;',
+      '    "/proc/$PREVIOUS_WEB_PID") printf "%s\\n" "$PROCESS_STAT" ;;',
+      "    *) return 1 ;;",
+      "  esac",
+      "}",
+      'readlink() { printf "%s\\n" "$LINK_TARGET"; }',
+      "previous_web_process_identity_matches; status=$?",
+      "printf '%s\\n' \"$status\"",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${fixture.name}\n${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), String(fixture.expectedStatus), fixture.name);
+  }
+});
+
+test("the frozen previous runtime verifier binds its link and complete environment file", async (t) => {
+  const identityFunction = extractShellRegion(
+    "previous_runtime_recovery_identity_matches() {",
+    "\nstart_release() {",
+  );
+  const buildId = "a".repeat(40);
+  const environment = (build = buildId, flag = "alpha") => Buffer.from(
+    `FAOLLA_WEB_BUILD_ID=${build}\n` +
+      "NEXT_PUBLIC_SUPABASE_URL=https://contract.supabase.co\n" +
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY=contract_anon.key-safe_value\n" +
+      `RECOVERY_FLAG=${flag}\n`,
+  );
+  const fixtures = [
+    { name: "exact frozen runtime", expectedStatus: 0 },
+    {
+      name: "same-length content change with restored mtime",
+      expectedStatus: 1,
+      mutate: async ({ environmentPath }) => {
+        const before = await stat(environmentPath);
+        const changed = environment(buildId, "omega");
+        assert.equal(changed.length, environment().length);
+        await writeFile(environmentPath, changed);
+        await utimes(environmentPath, before.atime, before.mtime);
+      },
+    },
+    {
+      name: "same bytes at a replacement inode",
+      expectedStatus: 1,
+      mutate: async ({ environmentPath, temporaryDirectory }) => {
+        const replacement = join(temporaryDirectory, "replacement.env");
+        await writeFile(replacement, environment(), { mode: 0o600 });
+        await rm(environmentPath);
+        await rename(replacement, environmentPath);
+      },
+    },
+    {
+      name: "hard-linked environment",
+      expectedStatus: 1,
+      mutate: async ({ environmentPath, temporaryDirectory }) => {
+        const original = join(temporaryDirectory, "original.env");
+        await rename(environmentPath, original);
+        await link(original, environmentPath);
+      },
+    },
+    {
+      name: "symbolic environment replacement",
+      expectedStatus: 1,
+      needsFileSymlink: true,
+      mutate: async ({ environmentPath, temporaryDirectory }) => {
+        const original = join(temporaryDirectory, "original.env");
+        await rename(environmentPath, original);
+        await symlink(original, environmentPath, "file");
+      },
+    },
+    {
+      name: "current release link drift",
+      expectedStatus: 1,
+      currentLinkDrift: true,
+    },
+    {
+      name: "build id drift",
+      expectedStatus: 1,
+      mutate: async ({ environmentPath }) => {
+        await writeFile(environmentPath, environment("b".repeat(40)), { mode: 0o600 });
+      },
+    },
+    {
+      name: "snapshot producer timeout",
+      expectedStatus: 1,
+      failTimeout: true,
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, async (subtest) => {
+      const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-frozen-runtime-"));
+      const runtimeDirectory = join(temporaryDirectory, "runtime");
+      const otherRuntimeDirectory = join(temporaryDirectory, "other-runtime");
+      const environmentPath = join(runtimeDirectory, ".env.local");
+      const currentLink = join(temporaryDirectory, "current");
+      try {
+        await mkdir(join(runtimeDirectory, ".next"), { recursive: true });
+        await mkdir(otherRuntimeDirectory, { recursive: true });
+        await writeFile(environmentPath, environment(), { mode: 0o600 });
+        await symlink(
+          runtimeDirectory,
+          currentLink,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+        const snapshot = readFrozenProductionSupabaseEnvironmentSnapshot(
+          environmentPath,
+          buildId,
+        );
+        if (fixture.mutate) {
+          try {
+            await fixture.mutate({ environmentPath, temporaryDirectory });
+          } catch (error) {
+            if (fixture.needsFileSymlink && process.platform === "win32" && error?.code === "EPERM") {
+              subtest.skip("file symlink creation is not permitted on this Windows host");
+              return;
+            }
+            throw error;
+          }
+        }
+        const selectedCurrentLink = fixture.currentLinkDrift
+          ? otherRuntimeDirectory
+          : currentLink;
+        const script = [
+          "set +e",
+          identityFunction,
+          `APP_DIR='${toBashPath(repositoryRoot)}'`,
+          `FROZEN_CURRENT_LINK='${toBashPath(currentLink)}'`,
+          'PREVIOUS_RUNTIME_DIR="$(readlink -f "$FROZEN_CURRENT_LINK")"',
+          `CURRENT_LINK='${toBashPath(selectedCurrentLink)}'`,
+          `PREVIOUS_BUILD_ID='${buildId}'`,
+          "PREVIOUS_RUNTIME_IDENTITY=\"$(stat -Lc '%d:%i:%Z' -- \"$PREVIOUS_RUNTIME_DIR\")\"",
+          `PREVIOUS_ENVIRONMENT_DIRECTORY_IDENTITY='${snapshot.directoryIdentity}'`,
+          `PREVIOUS_ENVIRONMENT_FILE_IDENTITY='${snapshot.fileIdentity}'`,
+          `PREVIOUS_ENVIRONMENT_SHA256='${snapshot.sha256}'`,
+          "PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS=5",
+          ...(fixture.failTimeout ? ["timeout() { return 124; }"] : []),
+          "previous_runtime_recovery_identity_matches; status=$?",
+          "printf '%s\\n' \"$status\"",
+        ].join("\n");
+        const result = spawnSync(resolveBashExecutable(), ["-s"], {
+          encoding: "utf8",
+          input: script,
+          timeout: 10_000,
+        });
+        assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+        assert.equal(result.stdout, `${fixture.expectedStatus}\n`, result.stderr);
+        assert.equal(result.stderr, "");
+        assert.equal(`${result.stdout}${result.stderr}`.includes("contract_anon"), false);
+      } finally {
+        await rm(temporaryDirectory, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("database lock checker accepts only exact held output from a successful producer", async () => {
   const temporaryDirectory = await mkdtemp(
     join(tmpdir(), "faolla-fence-lock-check-contract-"),
@@ -2426,6 +3225,34 @@ test("database lock checker accepts only exact held output from a successful pro
       expectedStatus: 1,
       warning: blockedWarning,
     },
+    {
+      name: "relaxed held",
+      stdout: "held\n",
+      producerStatus: 0,
+      allowWaiters: 1,
+      expectedStatus: 0,
+    },
+    {
+      name: "relaxed waiter is quiescing",
+      stdout: "quiescing\n",
+      producerStatus: 0,
+      allowWaiters: 1,
+      expectedStatus: 2,
+    },
+    {
+      name: "strict mode rejects quiescing output",
+      stdout: "quiescing\n",
+      producerStatus: 0,
+      expectedStatus: 1,
+    },
+    {
+      name: "relaxed mode rejects a strict cancellation result",
+      stdout: "blocked_cancelled\n",
+      producerStatus: 0,
+      allowWaiters: 1,
+      expectedStatus: 1,
+      warning: blockedWarning,
+    },
     { name: "locks not held", stdout: "not_held\n", producerStatus: 0, expectedStatus: 1 },
     { name: "empty stdout", stdout: "", producerStatus: 0, expectedStatus: 1 },
     { name: "leading LF", stdout: "\nheld\n", producerStatus: 0, expectedStatus: 1 },
@@ -2439,6 +3266,30 @@ test("database lock checker accepts only exact held output from a successful pro
     { name: "psql script failure", stdout: "held\n", producerStatus: 3, expectedStatus: 1 },
     { name: "transport failure", stdout: "held\n", producerStatus: 7, expectedStatus: 1 },
     { name: "timeout", stdout: "held\n", producerStatus: 124, expectedStatus: 1 },
+    {
+      name: "invalid waiter mode fails before producer",
+      stdout: "held\n",
+      producerStatus: 0,
+      allowWaiters: 2,
+      expectedStatus: 1,
+      expectedCalls: 0,
+    },
+    {
+      name: "zero query timeout fails before producer",
+      stdout: "held\n",
+      producerStatus: 0,
+      queryTimeout: 0,
+      expectedStatus: 1,
+      expectedCalls: 0,
+    },
+    {
+      name: "oversized query timeout fails before producer",
+      stdout: "held\n",
+      producerStatus: 0,
+      queryTimeout: 16,
+      expectedStatus: 1,
+      expectedCalls: 0,
+    },
   ];
 
   try {
@@ -2458,7 +3309,7 @@ test("database lock checker accepts only exact held output from a successful pro
         "READINESS_FENCE_BACKEND_PID=4321",
         `RELEASE_DATABASE_CONTAINER_ID='${"b".repeat(64)}'`,
         "timeout() {",
-        "  printf x >> \"$CALLS\"",
+        "  printf '%s\\n' \"$*\" > \"$CALLS\"",
         "  if [ -n \"$FIXTURE_STDOUT_B64\" ]; then",
         "    printf '%s' \"$FIXTURE_STDOUT_B64\" | base64 --decode",
         "  fi",
@@ -2467,7 +3318,7 @@ test("database lock checker accepts only exact held output from a successful pro
         "  fi",
         "  return \"$FIXTURE_STATUS\"",
         "}",
-        "if assert_readiness_fence_database_locks; then status=0; else status=$?; fi",
+        `if assert_readiness_fence_database_locks '${fixture.allowWaiters ?? 0}' '${fixture.queryTimeout ?? 15}'; then status=0; else status=$?; fi`,
         "printf '%s\\n' \"$status\"",
         "",
       ].join("\n");
@@ -2487,7 +3338,21 @@ test("database lock checker accepts only exact held output from a successful pro
         fixture.name,
       );
       assert.equal(result.stderr, fixture.stderr ?? "", fixture.name);
-      assert.equal(await readFile(callsPath, "utf8"), "x", fixture.name);
+      if ((fixture.expectedCalls ?? 1) === 0) {
+        await assert.rejects(
+          readFile(callsPath, "utf8"),
+          (error) => error?.code === "ENOENT",
+          fixture.name,
+        );
+      } else {
+        const call = await readFile(callsPath, "utf8");
+        assert.match(
+          call,
+          new RegExp(`FAOLLA_FENCE_ALLOW_WAITERS=${fixture.allowWaiters ?? 0}`),
+          fixture.name,
+        );
+        assert.match(call, new RegExp(`${fixture.queryTimeout ?? 15}s`), fixture.name);
+      }
     }
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -2517,8 +3382,8 @@ test("provisional marker publication retries only the pure marker check", () => 
     "lock_calls=0",
     "readiness_fence_process_identity_matches() { identity_calls=$((identity_calls + 1)); return 0; }",
     "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); [ \"$marker_calls\" -eq 2 ]; }",
-    "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); return 0; }",
-    "accept_readiness_fence_candidate 690; status=$?",
+    "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); [ \"$1\" = 1 ]; }",
+    "accept_readiness_fence_candidate 690 1; status=$?",
     "printf '%s %s %s %s\\n' \"$status\" \"$marker_calls\" \"$lock_calls\" \"$identity_calls\"",
   ].join("\n"));
   assert.equal(provisional.status, 0, `${provisional.stdout}\n${provisional.stderr}`);
@@ -2530,7 +3395,7 @@ test("provisional marker publication retries only the pure marker check", () => 
     "readiness_fence_process_identity_matches() { return 0; }",
     "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); return 1; }",
     "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); return 0; }",
-    "accept_readiness_fence_candidate 690; status=$?",
+    "accept_readiness_fence_candidate 690 1; status=$?",
     "printf '%s %s %s\\n' \"$status\" \"$marker_calls\" \"$lock_calls\"",
   ].join("\n"));
   assert.equal(
@@ -2546,11 +3411,165 @@ test("provisional marker publication retries only the pure marker check", () => 
     "readiness_fence_process_identity_matches() { return 0; }",
     "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); return 0; }",
     "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); return 1; }",
-    "accept_readiness_fence_candidate 690; status=$?",
+    "accept_readiness_fence_candidate 690 1; status=$?",
     "printf '%s %s %s\\n' \"$status\" \"$marker_calls\" \"$lock_calls\"",
   ].join("\n"));
   assert.equal(lockFailure.status, 0, `${lockFailure.stdout}\n${lockFailure.stderr}`);
   assert.equal(lockFailure.stdout.trim(), "3 1 1");
+
+  const quiescing = run([
+    "identity_calls=0",
+    "readiness_fence_process_identity_matches() { identity_calls=$((identity_calls + 1)); return 0; }",
+    "validate_readiness_fence_marker() { return 0; }",
+    "assert_readiness_fence_database_locks() { [ \"$1\" = 1 ] || return 1; return 2; }",
+    "accept_readiness_fence_candidate 690 1; status=$?",
+    "printf '%s %s\\n' \"$status\" \"$identity_calls\"",
+  ].join("\n"));
+  assert.equal(quiescing.status, 0, `${quiescing.stdout}\n${quiescing.stderr}`);
+  assert.equal(quiescing.stdout.trim(), "0 2");
+
+  const strictCannotAcceptQuiescing = run([
+    "readiness_fence_process_identity_matches() { return 0; }",
+    "validate_readiness_fence_marker() { return 0; }",
+    "assert_readiness_fence_database_locks() { return 2; }",
+    "accept_readiness_fence_candidate 690 0; status=$?",
+    "printf '%s\\n' \"$status\"",
+  ].join("\n"));
+  assert.equal(
+    strictCannotAcceptQuiescing.status,
+    0,
+    `${strictCannotAcceptQuiescing.stdout}\n${strictCannotAcceptQuiescing.stderr}`,
+  );
+  assert.equal(strictCannotAcceptQuiescing.stdout.trim(), "3");
+
+  const identityDriftAfterQuiescing = run([
+    "identity_calls=0",
+    "readiness_fence_process_identity_matches() { identity_calls=$((identity_calls + 1)); [ \"$identity_calls\" -eq 1 ]; }",
+    "validate_readiness_fence_marker() { return 0; }",
+    "assert_readiness_fence_database_locks() { return 2; }",
+    "accept_readiness_fence_candidate 690 1; status=$?",
+    "printf '%s %s\\n' \"$status\" \"$identity_calls\"",
+  ].join("\n"));
+  assert.equal(
+    identityDriftAfterQuiescing.status,
+    0,
+    `${identityDriftAfterQuiescing.stdout}\n${identityDriftAfterQuiescing.stderr}`,
+  );
+  assert.equal(identityDriftAfterQuiescing.stdout.trim(), "2 2");
+});
+
+test("database quiescence uses a hard relaxed deadline and requires a final strict proof", () => {
+  const functions = extractShellRegion(
+    "readiness_fence_process_quiescence_checkpoint() {",
+    "\naccept_readiness_fence_candidate() {",
+  );
+  const run = (body) => spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: ["set +e", functions, body, ""].join("\n"),
+    timeout: 10_000,
+  });
+
+  const eventuallyClean = run([
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+    "READINESS_FENCE_FORWARD_READY=0",
+    "SECONDS=0",
+    "checkpoint_calls=0",
+    "strict_calls=0",
+    "readiness_fence_process_quiescence_checkpoint() {",
+    "  checkpoint_calls=$((checkpoint_calls + 1))",
+    "  case \"$checkpoint_calls\" in 1|2) return 2 ;; *) return 0 ;; esac",
+    "}",
+    "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 0; }",
+    "sleep() { SECONDS=$((SECONDS + 1)); }",
+    "wait_for_readiness_fence_database_quiescence; status=$?",
+    "printf '%s %s %s %s\\n' \"$status\" \"$checkpoint_calls\" \"$strict_calls\" \"$READINESS_FENCE_FORWARD_READY\"",
+  ].join("\n"));
+  assert.equal(eventuallyClean.status, 0, `${eventuallyClean.stdout}\n${eventuallyClean.stderr}`);
+  assert.equal(eventuallyClean.stdout.trim(), "0 3 1 1");
+
+  const strictFailure = run([
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+    "READINESS_FENCE_FORWARD_READY=1",
+    "SECONDS=0",
+    "strict_calls=0",
+    "readiness_fence_process_quiescence_checkpoint() { return 0; }",
+    "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 1; }",
+    "wait_for_readiness_fence_database_quiescence; status=$?",
+    "printf '%s %s %s\\n' \"$status\" \"$strict_calls\" \"$READINESS_FENCE_FORWARD_READY\"",
+  ].join("\n"));
+  assert.equal(strictFailure.status, 0, `${strictFailure.stdout}\n${strictFailure.stderr}`);
+  assert.equal(strictFailure.stdout.trim(), "1 1 0");
+
+  const timedOut = run([
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=3",
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+    "READINESS_FENCE_FORWARD_READY=1",
+    "SECONDS=0",
+    "strict_calls=0",
+    "readiness_fence_process_quiescence_checkpoint() { return 2; }",
+    "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 0; }",
+    "sleep() { SECONDS=$((SECONDS + 1)); }",
+    "wait_for_readiness_fence_database_quiescence >/dev/null; status=$?",
+    "printf '%s %s %s\\n' \"$status\" \"$strict_calls\" \"$READINESS_FENCE_FORWARD_READY\"",
+  ].join("\n"));
+  assert.equal(timedOut.status, 0, `${timedOut.stdout}\n${timedOut.stderr}`);
+  assert.equal(timedOut.stdout.trim(), "1 0 0");
+
+  const lateClean = run([
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+    "READINESS_FENCE_FORWARD_READY=1",
+    "SECONDS=0",
+    "strict_calls=0",
+    "readiness_fence_process_quiescence_checkpoint() { SECONDS=\"$3\"; return 0; }",
+    "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 0; }",
+    "wait_for_readiness_fence_database_quiescence; status=$?",
+    "printf '%s %s %s\\n' \"$status\" \"$strict_calls\" \"$READINESS_FENCE_FORWARD_READY\"",
+  ].join("\n"));
+  assert.equal(lateClean.status, 0, `${lateClean.stdout}\n${lateClean.stderr}`);
+  assert.equal(lateClean.stdout.trim(), "1 0 0");
+
+  for (const phase of ["identity", "marker", "database", "post_identity"]) {
+    const deadline = run([
+      "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+      "READINESS_FENCE_ACTIVE=1",
+      "READINESS_FENCE_RELEASED=0",
+      "SECONDS=0",
+      "deadline=$((SECONDS + 5))",
+      "identity_calls=0",
+      "marker_calls=0",
+      "database_calls=0",
+      `PHASE='${phase}'`,
+      "readiness_fence_process_identity_matches() {",
+      "  identity_calls=$((identity_calls + 1))",
+      "  if [ \"$PHASE\" = identity ] || { [ \"$PHASE\" = post_identity ] && [ \"$identity_calls\" -eq 2 ]; }; then SECONDS=\"$deadline\"; fi",
+      "  return 0",
+      "}",
+      "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); if [ \"$PHASE\" = marker ]; then SECONDS=\"$deadline\"; fi; return 0; }",
+      "assert_readiness_fence_database_locks() { database_calls=$((database_calls + 1)); if [ \"$PHASE\" = database ]; then SECONDS=\"$deadline\"; fi; return 0; }",
+      "readiness_fence_process_quiescence_checkpoint 720 5 \"$deadline\"; status=$?",
+      "printf '%s %s %s %s\\n' \"$status\" \"$identity_calls\" \"$marker_calls\" \"$database_calls\"",
+    ].join("\n"));
+    assert.equal(deadline.status, 0, `${phase}\n${deadline.stdout}\n${deadline.stderr}`);
+    assert.match(deadline.stdout, /^1 /, phase);
+  }
+
+  const preStopAcceptsQuiescing = run([
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+    "READINESS_FENCE_OPERATION_MARGIN_SECONDS=10",
+    "readiness_fence_process_quiescence_checkpoint() { return 2; }",
+    "assert_readiness_fence_before_process_quiescence 335; status=$?",
+    "printf '%s\\n' \"$status\"",
+  ].join("\n"));
+  assert.equal(
+    preStopAcceptsQuiescing.status,
+    0,
+    `${preStopAcceptsQuiescing.stdout}\n${preStopAcceptsQuiescing.stderr}`,
+  );
+  assert.equal(preStopAcceptsQuiescing.stdout.trim(), "0");
 });
 
 test("fence failure reporting exposes only a frozen diagnostic and an explicit cleanup outcome", async () => {
@@ -2709,7 +3728,7 @@ test("rollback link failure cannot start or certify the previous runtime under s
     "wait_for_port_release() { return 0; }",
     "restore_legacy_runtime_compatibility_paths() { return 0; }",
     'switch_current_release() { printf "switch\\n" >> "$CALLS"; return 42; }',
-    'start_release() { printf "start\\n" >> "$CALLS"; return 0; }',
+    'start_frozen_previous_release() { printf "start\\n" >> "$CALLS"; return 0; }',
     "wait_for_release_health() { return 0; }",
     rollbackFunction,
     "if rollback_release; then status=0; else status=$?; fi",
@@ -2725,6 +3744,155 @@ test("rollback link failure cannot start or certify the previous runtime under s
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("pre-forward recovery releases provisionally and restores only the frozen previous runtime", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-pre-forward-recovery-contract-"),
+  );
+  const previousRuntime = join(temporaryDirectory, "previous");
+  const currentLink = join(temporaryDirectory, "current");
+  await mkdir(join(previousRuntime, ".next"), { recursive: true });
+  await symlink(previousRuntime, currentLink, process.platform === "win32" ? "junction" : "dir");
+  const recoveryFunction = extractShellRegion(
+    "recover_pre_forward_previous_runtime() {",
+    "\nrollback_release() {",
+  );
+  const fixtures = [
+    {
+      name: "running worker is restored",
+      expectedStatus: 0,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
+        "start-web", "health",
+        "start-worker", "worker-online", "save",
+      ],
+      expectedFlags: "0 1",
+    },
+    {
+      name: "inactive or absent worker stays offline",
+      previousWorkerRunning: 0,
+      expectedStatus: 0,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
+        "start-web", "health", "save",
+      ],
+      expectedFlags: "0 1",
+    },
+    {
+      name: "failed graceful release falls back to verified discard",
+      failAt: "release",
+      expectedStatus: 0,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "discard", "verify",
+        "start-web", "health",
+        "start-worker", "worker-online", "save",
+      ],
+      expectedFlags: "0 1",
+    },
+    {
+      name: "worker stop failure cannot certify recovery",
+      failAt: "stop-worker",
+      expectedStatus: 1,
+      expectedCalls: ["verify", "stop:web", "port", "stop:worker"],
+      expectedFlags: "1 0",
+    },
+    {
+      name: "release-time identity drift cannot restart the previous runtime",
+      failAt: "post-release-identity",
+      expectedStatus: 1,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
+      ],
+      expectedFlags: "1 0",
+    },
+    {
+      name: "web start failure cannot certify recovery",
+      failAt: "start-web",
+      expectedStatus: 1,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify", "start-web",
+      ],
+      expectedFlags: "1 0",
+    },
+    {
+      name: "forward mutation forbids shortcut recovery",
+      forwardMutation: 1,
+      expectedStatus: 1,
+      expectedCalls: [],
+      expectedFlags: "1 0",
+    },
+  ];
+
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const callsPath = join(temporaryDirectory, `recovery-calls-${index}`);
+      const script = [
+        "set +e",
+        recoveryFunction,
+        `PREVIOUS_RUNTIME_DIR='${toBashPath(previousRuntime)}'`,
+        `CURRENT_LINK='${toBashPath(currentLink)}'`,
+        `CALLS='${toBashPath(callsPath)}'`,
+        `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
+        "PREVIOUS_RUNTIME_IDENTITY=\"$(stat -Lc '%d:%i:%Z' -- \"$PREVIOUS_RUNTIME_DIR\")\"",
+        `PREVIOUS_AUTOMATION_WORKER_RUNNING='${fixture.previousWorkerRunning ?? 1}'`,
+        `FORWARD_MUTATION_STARTED='${fixture.forwardMutation ?? 0}'`,
+        "SWITCH_COMPLETED=0",
+        "WEB_COMMITTED=0",
+        "LEGACY_COMPATIBILITY_LINKS_INSTALLED=0",
+        "PROCESSES_STOPPED=1",
+        "ROLLBACK_COMPLETED=0",
+        "READINESS_FENCE_ACTIVE=1",
+        "READINESS_FENCE_RELEASE_REQUESTED=0",
+        "READINESS_FENCE_CLEANUP_VERIFIED=0",
+        "APP_NAME=web",
+        "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+        `FAIL_AT='${fixture.failAt ?? "none"}'`,
+        "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+        "RECOVERY_VERIFY_COUNT=0",
+        "previous_runtime_recovery_identity_matches() { RECOVERY_VERIFY_COUNT=$((RECOVERY_VERIFY_COUNT + 1)); record verify; [ \"$FAIL_AT\" != post-release-identity ] || [ \"$RECOVERY_VERIFY_COUNT\" -lt 3 ]; }",
+        "release_readiness_fence() { record \"release:$1\"; [ \"$FAIL_AT\" != release ] || return 1; READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
+        "discard_failed_readiness_fence() { record discard; [ \"$FAIL_AT\" != discard ] || return 1; READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
+        "assert_readiness_fence_held() { record strict; return 0; }",
+        "stop_pm2_process_bounded() { record stop:web; [ \"$FAIL_AT\" != stop-web ]; }",
+        "wait_for_port_release() { record port; [ \"$FAIL_AT\" != port ]; }",
+        "stop_previous_automation_worker_bounded() { record stop:worker; [ \"$FAIL_AT\" != stop-worker ]; }",
+        "start_frozen_previous_release() { record start-web; [ \"$FAIL_AT\" != start-web ]; }",
+        "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ]; }",
+        "start_frozen_previous_automation_worker_process() { record start-worker; [ \"$FAIL_AT\" != start-worker ]; }",
+        "wait_for_automation_worker_online() { record worker-online; [ \"$FAIL_AT\" != worker-online ]; }",
+        "timeout() {",
+        "  while [ \"$#\" -gt 0 ]; do",
+        "    case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac",
+        "  done",
+        "  \"$@\"",
+        "}",
+        "pm2() { [ \"$1\" = save ] || return 1; record save; [ \"$FAIL_AT\" != save ]; }",
+        "recover_pre_forward_previous_runtime; status=$?",
+        "printf '%s %s %s\\n' \"$status\" \"$PROCESSES_STOPPED\" \"$ROLLBACK_COMPLETED\"",
+      ].join("\n");
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: script,
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${fixture.name}\n${result.stdout}\n${result.stderr}`);
+      const output = result.stdout.trim().split("\n").at(-1);
+      let calls = "";
+      try { calls = await readFile(callsPath, "utf8"); } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      assert.equal(
+        output,
+        `${fixture.expectedStatus} ${fixture.expectedFlags}`,
+        `${fixture.name}\n${calls}`,
+      );
+      assert.deepEqual(calls.trim() ? calls.trim().split("\n") : [], fixture.expectedCalls, fixture.name);
+      assert.doesNotMatch(calls, /^strict$/m, fixture.name);
+    }
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -2936,7 +4104,7 @@ test("enterprise automation worker deployment is graceful and rollback-safe", ()
   assert.match(deployScript, /wait_for_automation_worker_online/);
   assert.match(
     deployScript,
-    /rollback_release\(\)[\s\S]+stop_pm2_process_bounded "\$AUTOMATION_WORKER_NAME"[\s\S]+ROLLBACK_COMPLETED=1[\s\S]+PREVIOUS_AUTOMATION_WORKER_RUNNING[\s\S]+start_automation_worker_process "\$PREVIOUS_RUNTIME_DIR"/,
+    /rollback_release\(\)[\s\S]+stop_previous_automation_worker_bounded[\s\S]+ROLLBACK_COMPLETED=1[\s\S]+PREVIOUS_AUTOMATION_WORKER_RUNNING[\s\S]+start_frozen_previous_automation_worker_process/,
   );
   const workerStartIndex = deployScript.indexOf(
     'start_automation_worker_process "$RELEASE_DIR"',
