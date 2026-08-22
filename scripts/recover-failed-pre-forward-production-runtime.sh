@@ -156,7 +156,7 @@ require_command() {
 }
 
 for required_command in \
-  base64 basename curl date dirname docker find flock git id node pm2 readlink \
+  base64 basename chmod curl date dirname docker find flock git id node pm2 readlink \
   rmdir seq sleep ss stat timeout unlink; do
   require_command "$required_command" || exit 1
 done
@@ -330,23 +330,81 @@ for helper_path in \
   [ "$(git -C "$APP_DIR" hash-object "$APP_DIR/$helper_path" 2>/dev/null || true)" = "$helper_blob" ] || exit 1
 done
 
+normalize_deploy_lock_permissions() {
+  local deploy_lock_device
+  local deploy_lock_inode
+  local deploy_lock_links
+  local deploy_lock_mode
+  local deploy_lock_observed_identity
+  local deploy_lock_post_device
+  local deploy_lock_post_identity
+  local deploy_lock_post_inode
+  local deploy_lock_post_links
+  local deploy_lock_post_mode
+  local deploy_lock_post_raw_mode
+  local deploy_lock_post_uid
+  local deploy_lock_raw_mode
+  local deploy_lock_uid
+
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] || return 1
+  deploy_lock_observed_identity="$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)"
+  [[ "$deploy_lock_observed_identity" =~ ^([0-9]+:){4}[0-9a-fA-F]+:[0-9]+$ ]] \
+    || return 1
+  [ "$deploy_lock_observed_identity" = "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] \
+    || return 1
+  IFS=: read -r deploy_lock_device deploy_lock_inode deploy_lock_links \
+    deploy_lock_uid deploy_lock_raw_mode deploy_lock_mode \
+    <<< "$deploy_lock_observed_identity"
+  (( (16#$deploy_lock_raw_mode & 0170000) == 0100000 )) || return 1
+  [ "$deploy_lock_links" = "1" ] && [ "$deploy_lock_uid" = "$(id -u)" ] \
+    || return 1
+  case "$deploy_lock_mode" in
+    600|644) ;;
+    *) return 1 ;;
+  esac
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] \
+    && [ "$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)" = "$deploy_lock_observed_identity" ] \
+    && [ "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" = "$deploy_lock_observed_identity" ] \
+    || return 1
+  if [ "$deploy_lock_mode" = "644" ]; then
+    chmod 600 -- "/proc/$$/fd/9" >/dev/null 2>&1 || return 1
+  fi
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] || return 1
+  deploy_lock_post_identity="$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)"
+  [[ "$deploy_lock_post_identity" =~ ^([0-9]+:){4}[0-9a-fA-F]+:[0-9]+$ ]] \
+    || return 1
+  [ "$deploy_lock_post_identity" = "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] \
+    || return 1
+  IFS=: read -r deploy_lock_post_device deploy_lock_post_inode deploy_lock_post_links \
+    deploy_lock_post_uid deploy_lock_post_raw_mode deploy_lock_post_mode \
+    <<< "$deploy_lock_post_identity"
+  (( (16#$deploy_lock_post_raw_mode & 0170000) == 0100000 )) || return 1
+  [ "$deploy_lock_post_device" = "$deploy_lock_device" ] \
+    && [ "$deploy_lock_post_inode" = "$deploy_lock_inode" ] \
+    && [ "$deploy_lock_post_links" = "1" ] \
+    && [ "$deploy_lock_post_uid" = "$deploy_lock_uid" ] \
+    && [ "$deploy_lock_post_uid" = "$(id -u)" ] \
+    && [ "$deploy_lock_post_mode" = "600" ] \
+    || return 1
+  DEPLOY_LOCK_IDENTITY="$deploy_lock_post_identity"
+}
+
 RECOVERY_FAILURE_STAGE="deploy_lock"
 
 [ -L "$CURRENT_LINK" ] || exit 1
 [ ! -L "$DEPLOY_LOCK_FILE" ] || exit 1
-if ! { exec 9>"$DEPLOY_LOCK_FILE"; } 2>/dev/null; then exit 1; fi
+if ! { exec 9<>"$DEPLOY_LOCK_FILE"; } 2>/dev/null; then exit 1; fi
 flock -w 1 9 >/dev/null 2>&1 || exit 1
-DEPLOY_LOCK_IDENTITY="$(stat -c '%d:%i:%h:%u:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)"
-[[ "$DEPLOY_LOCK_IDENTITY" =~ ^([0-9]+:){4}[0-9]+$ ]] || exit 1
-[ "$DEPLOY_LOCK_IDENTITY" = "$(stat -Lc '%d:%i:%h:%u:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] || exit 1
-IFS=: read -r _ _ deploy_lock_links deploy_lock_uid deploy_lock_mode <<< "$DEPLOY_LOCK_IDENTITY"
-[ "$deploy_lock_links" = "1" ] && [ "$deploy_lock_uid" = "$(id -u)" ] \
-  && [ "$deploy_lock_mode" = "600" ] || exit 1
+normalize_deploy_lock_permissions || exit 1
 
 revalidate_deploy_lock() {
-  [ ! -L "$DEPLOY_LOCK_FILE" ] \
-    && [ "$(stat -c '%d:%i:%h:%u:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)" = "$DEPLOY_LOCK_IDENTITY" ] \
-    && [ "$(stat -Lc '%d:%i:%h:%u:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" = "$DEPLOY_LOCK_IDENTITY" ]
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] \
+    && [ "$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)" = "$DEPLOY_LOCK_IDENTITY" ] \
+    && [ "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" = "$DEPLOY_LOCK_IDENTITY" ]
 }
 
 trusted_helper_snapshot() {

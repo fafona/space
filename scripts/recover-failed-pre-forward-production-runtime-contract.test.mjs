@@ -9,6 +9,10 @@ const scriptPath = new URL(
   import.meta.url,
 );
 const source = readFileSync(scriptPath, "utf8");
+const deploySource = readFileSync(
+  new URL("./deploy.production.sh", import.meta.url),
+  "utf8",
+);
 const repositoryDirectory = fileURLToPath(new URL("../", import.meta.url));
 const relativeScriptPath = "scripts/recover-failed-pre-forward-production-runtime.sh";
 
@@ -16,12 +20,16 @@ function occurrences(needle) {
   return source.split(needle).length - 1;
 }
 
-function sourceBetween(startMarker, endMarker) {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
+function sourceBetweenIn(input, startMarker, endMarker) {
+  const start = input.indexOf(startMarker);
+  const end = input.indexOf(endMarker, start + startMarker.length);
   assert.ok(start >= 0, `missing source marker: ${startMarker}`);
   assert.ok(end > start, `missing source marker: ${endMarker}`);
-  return source.slice(start, end);
+  return input.slice(start, end);
+}
+
+function sourceBetween(startMarker, endMarker) {
+  return sourceBetweenIn(source, startMarker, endMarker);
 }
 
 test("recovery is immutable to the one failed pre-forward incident", () => {
@@ -107,6 +115,52 @@ test("current release, environment, helper blobs, and deploy lock remain frozen"
   assert.match(source, /DEPLOY_LOCK_IDENTITY/);
   assert.match(source, /\/proc\/\$\$\/fd\/9/);
   assert.match(source, /revalidate_deploy_lock/);
+  const lockNormalization = sourceBetween(
+    "normalize_deploy_lock_permissions() {",
+    '\n\nRECOVERY_FAILURE_STAGE="deploy_lock"',
+  );
+  const deployLockNormalization = sourceBetweenIn(
+    deploySource,
+    "normalize_deploy_lock_permissions() {",
+    "\n\nacquire_deploy_lock() {",
+  );
+  assert.equal(lockNormalization, deployLockNormalization);
+  assert.match(lockNormalization, /\[ -f "\$DEPLOY_LOCK_FILE" \]/);
+  assert.match(lockNormalization, /\[ ! -L "\$DEPLOY_LOCK_FILE" \]/);
+  assert.match(lockNormalization, /\[ -f "\/proc\/\$\$\/fd\/9" \]/);
+  assert.match(lockNormalization, /%d:%i:%h:%u:%f:%a/);
+  assert.match(lockNormalization, /deploy_lock_links" = "1"/);
+  assert.match(lockNormalization, /deploy_lock_uid" = "\$\(id -u\)"/);
+  assert.match(
+    lockNormalization,
+    /600\|644\) ;;[\s\S]+if \[ "\$deploy_lock_mode" = "644" \]; then\n    chmod 600 -- "\/proc\/\$\$\/fd\/9"/,
+  );
+  assert.doesNotMatch(lockNormalization, /chmod[^\n]*\$DEPLOY_LOCK_FILE/);
+  const lockObserved = lockNormalization.indexOf("deploy_lock_observed_identity=");
+  const lockPreMutationRecheck = lockNormalization.indexOf(
+    '= "$deploy_lock_observed_identity" ]',
+    lockObserved,
+  );
+  const lockNormalized = lockNormalization.indexOf('chmod 600 -- "/proc/$$/fd/9"');
+  const lockPostObserved = lockNormalization.indexOf("deploy_lock_post_identity=");
+  const lockFrozen = lockNormalization.indexOf("DEPLOY_LOCK_IDENTITY=");
+  assert.ok(lockObserved >= 0);
+  assert.ok(lockPreMutationRecheck > lockObserved);
+  assert.ok(lockNormalized > lockPreMutationRecheck);
+  assert.ok(lockPostObserved > lockNormalized);
+  assert.ok(lockFrozen > lockPostObserved);
+  const lockAcquisition = sourceBetween(
+    'RECOVERY_FAILURE_STAGE="deploy_lock"',
+    "\n\nrevalidate_deploy_lock()",
+  );
+  assert.match(lockAcquisition, /exec 9<>"\$DEPLOY_LOCK_FILE"/);
+  assert.doesNotMatch(lockAcquisition, /exec 9>(?!<)/);
+  assert.match(lockAcquisition, /flock -w 1 9/);
+  assert.match(lockAcquisition, /normalize_deploy_lock_permissions \|\| exit 1/);
+  assert.ok(
+    lockAcquisition.indexOf("flock -w 1 9") <
+      lockAcquisition.indexOf("normalize_deploy_lock_permissions || exit 1"),
+  );
   const lockValidated = source.indexOf("DEPLOY_LOCK_IDENTITY=");
   const environmentHelperFrozen = source.indexOf(
     'ENV_HELPER_FROZEN_SNAPSHOT="$(trusted_helper_snapshot',

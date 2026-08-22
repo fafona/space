@@ -764,14 +764,80 @@ validate_disk_thresholds() {
   fi
 }
 
+normalize_deploy_lock_permissions() {
+  local deploy_lock_device
+  local deploy_lock_inode
+  local deploy_lock_links
+  local deploy_lock_mode
+  local deploy_lock_observed_identity
+  local deploy_lock_post_device
+  local deploy_lock_post_identity
+  local deploy_lock_post_inode
+  local deploy_lock_post_links
+  local deploy_lock_post_mode
+  local deploy_lock_post_raw_mode
+  local deploy_lock_post_uid
+  local deploy_lock_raw_mode
+  local deploy_lock_uid
+
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] || return 1
+  deploy_lock_observed_identity="$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)"
+  [[ "$deploy_lock_observed_identity" =~ ^([0-9]+:){4}[0-9a-fA-F]+:[0-9]+$ ]] \
+    || return 1
+  [ "$deploy_lock_observed_identity" = "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] \
+    || return 1
+  IFS=: read -r deploy_lock_device deploy_lock_inode deploy_lock_links \
+    deploy_lock_uid deploy_lock_raw_mode deploy_lock_mode \
+    <<< "$deploy_lock_observed_identity"
+  (( (16#$deploy_lock_raw_mode & 0170000) == 0100000 )) || return 1
+  [ "$deploy_lock_links" = "1" ] && [ "$deploy_lock_uid" = "$(id -u)" ] \
+    || return 1
+  case "$deploy_lock_mode" in
+    600|644) ;;
+    *) return 1 ;;
+  esac
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] \
+    && [ "$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)" = "$deploy_lock_observed_identity" ] \
+    && [ "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" = "$deploy_lock_observed_identity" ] \
+    || return 1
+  if [ "$deploy_lock_mode" = "644" ]; then
+    chmod 600 -- "/proc/$$/fd/9" >/dev/null 2>&1 || return 1
+  fi
+  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
+    && [ -f "/proc/$$/fd/9" ] || return 1
+  deploy_lock_post_identity="$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)"
+  [[ "$deploy_lock_post_identity" =~ ^([0-9]+:){4}[0-9a-fA-F]+:[0-9]+$ ]] \
+    || return 1
+  [ "$deploy_lock_post_identity" = "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] \
+    || return 1
+  IFS=: read -r deploy_lock_post_device deploy_lock_post_inode deploy_lock_post_links \
+    deploy_lock_post_uid deploy_lock_post_raw_mode deploy_lock_post_mode \
+    <<< "$deploy_lock_post_identity"
+  (( (16#$deploy_lock_post_raw_mode & 0170000) == 0100000 )) || return 1
+  [ "$deploy_lock_post_device" = "$deploy_lock_device" ] \
+    && [ "$deploy_lock_post_inode" = "$deploy_lock_inode" ] \
+    && [ "$deploy_lock_post_links" = "1" ] \
+    && [ "$deploy_lock_post_uid" = "$deploy_lock_uid" ] \
+    && [ "$deploy_lock_post_uid" = "$(id -u)" ] \
+    && [ "$deploy_lock_post_mode" = "600" ] \
+    || return 1
+  DEPLOY_LOCK_IDENTITY="$deploy_lock_post_identity"
+}
+
 acquire_deploy_lock() {
   if [ -L "$DEPLOY_LOCK_FILE" ]; then
     echo "[deploy] refusing to use a symlink as the deploy lock: $DEPLOY_LOCK_FILE"
     exit 1
   fi
-  exec 9>"$DEPLOY_LOCK_FILE"
+  exec 9<>"$DEPLOY_LOCK_FILE"
   if ! flock -w "$DEPLOY_LOCK_WAIT_SECONDS" 9; then
     echo "[deploy] another deployment still owns the lock: $DEPLOY_LOCK_FILE"
+    exit 1
+  fi
+  if ! normalize_deploy_lock_permissions; then
+    echo "[deploy] deploy lock verification or permission normalization failed"
     exit 1
   fi
   echo "[deploy] acquired exclusive deployment lock"
