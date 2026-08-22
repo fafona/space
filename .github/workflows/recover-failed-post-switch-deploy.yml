@@ -44,9 +44,9 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32602232601"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32605144547"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: 760318e0e8a3996e66892a28fa01ade5de5ecf2a
+      PRIOR_FAILED_RECOVERY_SHA: 9acd73386724df635b67ac0b0939c2d982b1dc18
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
@@ -1010,10 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
             values.READINESS_RUN_ID !== "32596977165" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32602232601" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32605144547" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "760318e0e8a3996e66892a28fa01ade5de5ecf2a" ||
+              "9acd73386724df635b67ac0b0939c2d982b1dc18" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -1100,7 +1100,12 @@ jobs:
             ["recovery_failed_pre_runtime_frozen_inventory", "remote_recovery_failed_phase_pre_runtime_frozen_inventory", 0],
             ["recovery_failed_pre_runtime_candidate_current_link", "remote_recovery_failed_phase_pre_runtime_candidate_current_link", 0],
             ["recovery_failed_pre_runtime_candidate_structure", "remote_recovery_failed_phase_pre_runtime_candidate_structure", 0],
-            ["recovery_failed_pre_runtime_candidate_env_build_binding", "remote_recovery_failed_phase_pre_runtime_candidate_env_build_binding", 0],
+            ["recovery_failed_pre_runtime_candidate_env_helper_identity", "remote_recovery_failed_phase_pre_runtime_candidate_env_helper_identity", 0],
+            ["recovery_failed_pre_runtime_candidate_env_file_identity", "remote_recovery_failed_phase_pre_runtime_candidate_env_file_identity", 0],
+            ["recovery_failed_pre_runtime_candidate_env_encoding", "remote_recovery_failed_phase_pre_runtime_candidate_env_encoding", 0],
+            ["recovery_failed_pre_runtime_candidate_env_server_build_binding", "remote_recovery_failed_phase_pre_runtime_candidate_env_server_build_binding", 0],
+            ["recovery_failed_pre_runtime_candidate_env_public_build_binding", "remote_recovery_failed_phase_pre_runtime_candidate_env_public_build_binding", 0],
+            ["recovery_failed_pre_runtime_candidate_env_snapshot_contract", "remote_recovery_failed_phase_pre_runtime_candidate_env_snapshot_contract", 0],
             ["recovery_failed_pre_runtime_candidate_next_build_identity", "remote_recovery_failed_phase_pre_runtime_candidate_next_build_identity", 0],
             ["recovery_failed_pre_runtime_frozen_structure", "remote_recovery_failed_phase_pre_runtime_frozen_structure", 0],
             ["recovery_failed_pre_runtime_frozen_env_build_binding", "remote_recovery_failed_phase_pre_runtime_frozen_env_build_binding", 0],
@@ -1170,7 +1175,12 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_frozen_inventory|\
               remote_recovery_failed_phase_pre_runtime_candidate_current_link|\
               remote_recovery_failed_phase_pre_runtime_candidate_structure|\
-              remote_recovery_failed_phase_pre_runtime_candidate_env_build_binding|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_helper_identity|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_file_identity|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_encoding|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_server_build_binding|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_public_build_binding|\
+              remote_recovery_failed_phase_pre_runtime_candidate_env_snapshot_contract|\
               remote_recovery_failed_phase_pre_runtime_candidate_next_build_identity|\
               remote_recovery_failed_phase_pre_runtime_frozen_structure|\
               remote_recovery_failed_phase_pre_runtime_frozen_env_build_binding|\
