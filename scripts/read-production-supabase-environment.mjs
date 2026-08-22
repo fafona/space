@@ -6,6 +6,7 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
 } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
@@ -17,6 +18,11 @@ const MAX_ANON_KEY_BYTES = 16 * 1024;
 const BUILD_ID_PATTERN = /^[0-9a-f]{40}$/;
 const ANON_KEY_PATTERN = /^[A-Za-z0-9._~-]+$/;
 const ERROR_CODE = "production_supabase_environment_invalid";
+const PROCESS_ENVIRONMENT_KEYS = [
+  "SUPABASE_INTERNAL_URL",
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+];
 
 function invalid() {
   throw new Error(ERROR_CODE);
@@ -172,7 +178,7 @@ function encodeIdentity(identity, fields) {
   return fields.map((field) => identity[field].toString(10)).join(":");
 }
 
-function parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId) {
+function decodeEnvironmentLines(bytes) {
   let source;
   try {
     source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -180,7 +186,11 @@ function parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId) {
     invalid();
   }
   if (source.includes("\0") || source.includes("\r")) invalid();
-  const lines = source.split("\n");
+  return source.split("\n");
+}
+
+function parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId) {
+  const lines = decodeEnvironmentLines(bytes);
   const buildId = exactAssignment(lines, "FAOLLA_WEB_BUILD_ID");
   const publicUrl = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_URL");
   const anonKey = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_ANON_KEY");
@@ -195,6 +205,24 @@ function parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId) {
     invalid();
   }
   return { buildId, publicUrl, anonKey };
+}
+
+function parseFrozenProductionSupabaseRollbackEnvironment(bytes, expectedBuildId) {
+  const lines = decodeEnvironmentLines(bytes);
+  const buildId = exactAssignment(lines, "FAOLLA_WEB_BUILD_ID");
+  const internalUrl = exactAssignment(lines, "SUPABASE_INTERNAL_URL");
+  const publicUrl = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_URL");
+  const anonKey = exactAssignment(lines, "NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  if (
+    buildId !== expectedBuildId ||
+    !validPublicUrl(internalUrl) ||
+    !validPublicUrl(publicUrl) ||
+    Buffer.byteLength(anonKey, "utf8") > MAX_ANON_KEY_BYTES ||
+    !ANON_KEY_PATTERN.test(anonKey)
+  ) {
+    invalid();
+  }
+  return { buildId, internalUrl, publicUrl, anonKey };
 }
 
 function exactAssignment(lines, key) {
@@ -276,6 +304,137 @@ export function readFrozenProductionSupabaseEnvironmentSnapshot(
   };
 }
 
+export function readFrozenProductionSupabaseRollbackEnvironmentSnapshot(
+  path,
+  expectedBuildId,
+  dependencies = {},
+) {
+  if (
+    typeof path !== "string" ||
+    path.length === 0 ||
+    typeof expectedBuildId !== "string" ||
+    !BUILD_ID_PATTERN.test(expectedBuildId)
+  ) {
+    invalid();
+  }
+  const { bytes, directoryIdentity, fileIdentity } =
+    readFrozenSnapshot(path, dependencies.afterRead);
+  const environment = parseFrozenProductionSupabaseRollbackEnvironment(
+    bytes,
+    expectedBuildId,
+  );
+  return {
+    ...environment,
+    directoryIdentity: encodeIdentity(directoryIdentity, [
+      "dev", "ino", "mtimeNs", "ctimeNs", "nlink", "uid", "mode",
+    ]),
+    fileIdentity: encodeIdentity(fileIdentity, [
+      "dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode",
+    ]),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+export function parseProductionProcessSupabaseEnvironment(bytes) {
+  if (
+    !(bytes instanceof Uint8Array) ||
+    bytes.length === 0 ||
+    bytes.length > MAX_ENVIRONMENT_BYTES
+  ) {
+    invalid();
+  }
+  let source;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    invalid();
+  }
+  const entries = source.split("\0").filter((entry) => entry.length > 0);
+  const values = PROCESS_ENVIRONMENT_KEYS.map((key) => {
+    if (entries.includes(key)) invalid();
+    const prefix = `${key}=`;
+    const matches = entries.filter((entry) => entry.startsWith(prefix));
+    if (matches.length > 1) invalid();
+    if (matches.length === 0) return undefined;
+    const value = matches[0].slice(prefix.length);
+    if (
+      value.length === 0 ||
+      Buffer.byteLength(value, "utf8") > MAX_ANON_KEY_BYTES ||
+      /[\r\n\0]/.test(value)
+    ) {
+      invalid();
+    }
+    return value;
+  });
+  const presentCount = values.filter((value) => value !== undefined).length;
+  if (presentCount === 0) return { status: "absent" };
+  if (presentCount !== PROCESS_ENVIRONMENT_KEYS.length) invalid();
+  const [internalUrl, publicUrl, anonKey] = values;
+  if (
+    !validPublicUrl(internalUrl) ||
+    !validPublicUrl(publicUrl) ||
+    !ANON_KEY_PATTERN.test(anonKey)
+  ) {
+    invalid();
+  }
+  return { status: "present", internalUrl, publicUrl, anonKey };
+}
+
+export function captureStableProductionProcessSupabaseEnvironment(
+  pid,
+  runtimeDirectory,
+  dependencies = {},
+) {
+  if (
+    typeof pid !== "string" ||
+    !/^[1-9][0-9]*$/.test(pid) ||
+    typeof runtimeDirectory !== "string" ||
+    runtimeDirectory.length === 0
+  ) {
+    invalid();
+  }
+  try {
+    const resolveRuntime = dependencies.resolveRuntime ?? realpathSync;
+    const expectedRuntime = resolveRuntime(runtimeDirectory);
+    const readIdentity = dependencies.readIdentity ?? (() => {
+      const rawStat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const close = rawStat.lastIndexOf(")");
+      const fields = close >= 0 ? rawStat.slice(close + 2).trim().split(/\s+/) : [];
+      return {
+        cwd: realpathSync(readlinkSync(`/proc/${pid}/cwd`)),
+        startTicks: fields[19],
+        state: fields[0],
+      };
+    });
+    const readEnvironment = dependencies.readEnvironment ??
+      (() => readFileSync(`/proc/${pid}/environ`));
+    const before = readIdentity();
+    const environmentBytes = readEnvironment();
+    const after = readIdentity();
+    for (const identity of [before, after]) {
+      if (
+        identity?.cwd !== expectedRuntime ||
+        !/^[1-9][0-9]*$/.test(identity?.startTicks ?? "") ||
+        identity?.state === "Z"
+      ) {
+        invalid();
+      }
+    }
+    if (
+      before.cwd !== after.cwd ||
+      before.startTicks !== after.startTicks
+    ) {
+      invalid();
+    }
+    return {
+      startTicks: before.startTicks,
+      ...parseProductionProcessSupabaseEnvironment(environmentBytes),
+    };
+  } catch {
+    invalid();
+  }
+}
+
 function encodeForShell(value) {
   return Buffer.from(value, "utf8").toString("base64");
 }
@@ -311,6 +470,35 @@ if (isMain) {
       process.stdout.write(
         `${snapshot.directoryIdentity}\n${snapshot.fileIdentity}\n${snapshot.sha256}`,
       );
+    } else if (mode === "rollback-snapshot") {
+      if (process.argv.length !== 5 || !BUILD_ID_PATTERN.test(process.argv[4])) invalid();
+      const snapshot = readFrozenProductionSupabaseRollbackEnvironmentSnapshot(
+        process.argv[3],
+        process.argv[4],
+      );
+      process.stdout.write([
+        snapshot.directoryIdentity,
+        snapshot.fileIdentity,
+        snapshot.sha256,
+        encodeForShell(snapshot.internalUrl),
+        encodeForShell(snapshot.publicUrl),
+        encodeForShell(snapshot.anonKey),
+      ].join("\n"));
+    } else if (mode === "process-snapshot") {
+      if (process.argv.length !== 5) invalid();
+      const snapshot = captureStableProductionProcessSupabaseEnvironment(
+        process.argv[3],
+        process.argv[4],
+      );
+      const output = [snapshot.status, snapshot.startTicks];
+      if (snapshot.status === "present") {
+        output.push(
+          encodeForShell(snapshot.internalUrl),
+          encodeForShell(snapshot.publicUrl),
+          encodeForShell(snapshot.anonKey),
+        );
+      }
+      process.stdout.write(output.join("\n"));
     } else {
       invalid();
     }
