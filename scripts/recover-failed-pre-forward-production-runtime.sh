@@ -20,6 +20,7 @@ PM2_SAVE_ATTEMPTED=0
 RECOVERY_COMPLETE=0
 FENCE_CLEANUP_STARTED=0
 FENCE_CLEANUP_VERIFIED=0
+RECOVERY_FAILURE_STAGE="input"
 STARTED_WEB_PID=""
 STARTED_WEB_START_TICKS=""
 STARTED_WEB_PROCESS_IDENTITY=""
@@ -102,10 +103,38 @@ finish_recovery() {
       timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 \
         || cleanup_status=1
     fi
-    if [ "$cleanup_status" -eq 0 ]; then
-      printf '%s\n' 'recovery_failed' >&2
-    else
+    if [ "$cleanup_status" -ne 0 ]; then
       printf '%s\n' 'cleanup_unverified' >&2
+    else
+      case "$RECOVERY_FAILURE_STAGE" in
+        input)
+          printf '%s\n' 'recovery_failed_pre_runtime_input' >&2
+          ;;
+        repository)
+          printf '%s\n' 'recovery_failed_pre_runtime_repository' >&2
+          ;;
+        deploy_lock)
+          printf '%s\n' 'recovery_failed_pre_runtime_deploy_lock' >&2
+          ;;
+        helpers)
+          printf '%s\n' 'recovery_failed_pre_runtime_helpers' >&2
+          ;;
+        legacy_release)
+          printf '%s\n' 'recovery_failed_pre_runtime_legacy_release' >&2
+          ;;
+        legacy_environment)
+          printf '%s\n' 'recovery_failed_pre_runtime_legacy_environment' >&2
+          ;;
+        database_preflight)
+          printf '%s\n' 'recovery_failed_pre_runtime_database_preflight' >&2
+          ;;
+        runtime)
+          printf '%s\n' 'recovery_failed' >&2
+          ;;
+        *)
+          printf '%s\n' 'recovery_failed_stage_invalid' >&2
+          ;;
+      esac
     fi
   fi
   if [ -n "${RECOVERY_PAYLOAD_FILE:-}" ]; then
@@ -263,6 +292,8 @@ RECOVERY_NOW_EPOCH="$(date +%s 2>/dev/null || true)"
 [[ "$RECOVERY_NOW_EPOCH" =~ ^[1-9][0-9]*$ ]] || exit 1
 [ "$RECOVERY_NOW_EPOCH" -ge $((FAILED_RUN_COMPLETED_EPOCH + 1390)) ] || exit 1
 
+RECOVERY_FAILURE_STAGE="repository"
+
 APP_DIR_REAL="$(readlink -f -- "$APP_DIR" 2>/dev/null || true)"
 [ "$APP_DIR_REAL" = "$APP_DIR" ] || exit 1
 [ -d "$APP_DIR/.git" ] || exit 1
@@ -298,6 +329,9 @@ for helper_path in \
   [[ "$helper_blob" =~ ^[0-9a-f]{40,64}$ ]] || exit 1
   [ "$(git -C "$APP_DIR" hash-object "$APP_DIR/$helper_path" 2>/dev/null || true)" = "$helper_blob" ] || exit 1
 done
+
+RECOVERY_FAILURE_STAGE="deploy_lock"
+
 [ -L "$CURRENT_LINK" ] || exit 1
 [ ! -L "$DEPLOY_LOCK_FILE" ] || exit 1
 if ! { exec 9>"$DEPLOY_LOCK_FILE"; } 2>/dev/null; then exit 1; fi
@@ -414,11 +448,15 @@ trusted_helper_matches() {
   [ "$current_snapshot" = "$frozen_snapshot" ]
 }
 
+RECOVERY_FAILURE_STAGE="helpers"
+
 ENV_HELPER_FROZEN_SNAPSHOT="$(trusted_helper_snapshot \
   "$ENV_HELPER" "$ENV_HELPER_RELATIVE")" || exit 1
 FENCE_HELPER_FROZEN_SNAPSHOT="$(trusted_helper_snapshot \
   "$FENCE_HELPER" "$FENCE_HELPER_RELATIVE")" || exit 1
 readonly ENV_HELPER_FROZEN_SNAPSHOT FENCE_HELPER_FROZEN_SNAPSHOT
+
+RECOVERY_FAILURE_STAGE="legacy_release"
 
 capture_trusted_environment_helper_output() {
   local output_name="$1"
@@ -464,6 +502,8 @@ PREVIOUS_RUNTIME_IDENTITY="$(stat -Lc '%d:%i:%Y:%Z:%u:%a' -- "$PREVIOUS_RUNTIME_
 IFS=: read -r _ _ _ _ previous_runtime_uid previous_runtime_mode <<< "$PREVIOUS_RUNTIME_IDENTITY"
 [ "$previous_runtime_uid" = "$(id -u)" ] && [[ "$previous_runtime_mode" =~ ^[0-7]{3,4}$ ]] || exit 1
 [ $((8#$previous_runtime_mode & 8#022)) -eq 0 ] || exit 1
+
+RECOVERY_FAILURE_STAGE="legacy_environment"
 
 ROLLBACK_SNAPSHOT=""
 capture_trusted_environment_helper_output ROLLBACK_SNAPSHOT 5 \
@@ -566,6 +606,8 @@ revalidate_frozen_runtime() {
 revalidate_frozen_runtime || exit 1
 revalidate_deploy_lock || exit 1
 
+RECOVERY_FAILURE_STAGE="database_preflight"
+
 # Prove that no readiness-fence database state remains.  This query is
 # observational only: it contains no cancellation or termination primitive.
 verify_database_fence_clear() {
@@ -644,6 +686,8 @@ SQL
 }
 
 verify_database_fence_clear || exit 1
+
+RECOVERY_FAILURE_STAGE="runtime"
 
 # The failed helper normally removes marker/release request but can leave its
 # canonical failure log and private directory.  Permit exactly that one shape,

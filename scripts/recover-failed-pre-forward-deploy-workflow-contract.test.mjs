@@ -603,7 +603,13 @@ test("SSH uses one pinned alias and keeps the bounded remote result hidden", () 
       "frozen_runtime_restored",
       "worker_state_restored",
       "recovery_complete",
-      "remote_recovery_failed_phase_pre_runtime",
+      "remote_recovery_failed_phase_pre_runtime_input",
+      "remote_recovery_failed_phase_pre_runtime_repository",
+      "remote_recovery_failed_phase_pre_runtime_deploy_lock",
+      "remote_recovery_failed_phase_pre_runtime_helpers",
+      "remote_recovery_failed_phase_pre_runtime_legacy_release",
+      "remote_recovery_failed_phase_pre_runtime_legacy_environment",
+      "remote_recovery_failed_phase_pre_runtime_database_preflight",
       "remote_recovery_failed_phase_web_restore",
       "remote_recovery_failed_phase_worker_restore",
       "remote_recovery_failed_phase_persist_and_verify",
@@ -641,7 +647,7 @@ test("remote recovery result classifier exposes only fixed safe failure phases",
   );
   const classifiers = extractHeredocs(recover.run, "NODE").filter(
     (source) => source.includes("const expectedLines") &&
-      source.includes("failurePrefixCodes"),
+      source.includes("preRuntimeFailureCodes"),
   );
   assert.equal(classifiers.length, 1);
   const classifier = classifiers[0];
@@ -654,8 +660,25 @@ test("remote recovery result classifier exposes only fixed safe failure phases",
     "worker_state_restored",
     "recovery_complete",
   ];
-  const phaseCodes = [
-    "remote_recovery_failed_phase_pre_runtime",
+  const preRuntimeRemoteCodes = [
+    "recovery_failed_pre_runtime_input",
+    "recovery_failed_pre_runtime_repository",
+    "recovery_failed_pre_runtime_deploy_lock",
+    "recovery_failed_pre_runtime_helpers",
+    "recovery_failed_pre_runtime_legacy_release",
+    "recovery_failed_pre_runtime_legacy_environment",
+    "recovery_failed_pre_runtime_database_preflight",
+  ];
+  const preRuntimePublicCodes = [
+    "remote_recovery_failed_phase_pre_runtime_input",
+    "remote_recovery_failed_phase_pre_runtime_repository",
+    "remote_recovery_failed_phase_pre_runtime_deploy_lock",
+    "remote_recovery_failed_phase_pre_runtime_helpers",
+    "remote_recovery_failed_phase_pre_runtime_legacy_release",
+    "remote_recovery_failed_phase_pre_runtime_legacy_environment",
+    "remote_recovery_failed_phase_pre_runtime_database_preflight",
+  ];
+  const runtimePhaseCodes = [
     "remote_recovery_failed_phase_web_restore",
     "remote_recovery_failed_phase_worker_restore",
     "remote_recovery_failed_phase_persist_and_verify",
@@ -686,12 +709,21 @@ test("remote recovery result classifier exposes only fixed safe failure phases",
   try {
     assert.equal(await classify(transcript(4), "", 0), "success");
     for (const status of [1, 124, 255]) {
-      for (let length = 0; length < 4; length += 1) {
+      for (let index = 0; index < preRuntimeRemoteCodes.length; index += 1) {
+        assert.equal(
+          await classify("", preRuntimeRemoteCodes[index] + "\n", status),
+          preRuntimePublicCodes[index],
+          "pre-runtime failure phase " + index + " at status " + status,
+        );
+      }
+      for (let length = 1; length < 4; length += 1) {
         assert.equal(
           await classify(transcript(length), "recovery_failed\n", status),
-          phaseCodes[length],
-          "recovery failure phase " + length + " at status " + status,
+          runtimePhaseCodes[length - 1],
+          "runtime failure phase " + length + " at status " + status,
         );
+      }
+      for (let length = 0; length < 4; length += 1) {
         assert.equal(
           await classify(transcript(length), "cleanup_unverified\n", status),
           "remote_cleanup_unverified",
@@ -700,15 +732,39 @@ test("remote recovery result classifier exposes only fixed safe failure phases",
       }
     }
 
+    for (const remoteCode of preRuntimeRemoteCodes) {
+      assert.equal(
+        await classify("", remoteCode + "\n", 0),
+        "recovery_output_invalid",
+        "successful status cannot carry pre-runtime failure " + remoteCode,
+      );
+      for (let length = 1; length <= 4; length += 1) {
+        assert.equal(
+          await classify(transcript(length), remoteCode + "\n", 1),
+          "recovery_output_invalid",
+          "pre-runtime failure cannot follow marker prefix " + length,
+        );
+      }
+    }
+
     const canary = "PRIVATE_RECOVERY_CANARY";
     const invalidCases = [
       [transcript(4), "recovery_failed\n", 1],
       [transcript(4), "cleanup_unverified\n", 1],
+      ["", "recovery_failed\n", 1],
+      [transcript(1), preRuntimeRemoteCodes[0] + "\n", 1],
+      ["", "recovery_failed_stage_invalid\n", 1],
+      ["", preRuntimeRemoteCodes[0], 1],
+      ["", preRuntimeRemoteCodes[0] + "\r\n", 1],
+      ["", preRuntimeRemoteCodes[0] + "\n\n", 1],
       [transcript(3) + canary, "recovery_failed\n", 1],
       [markers[1] + "\n", "recovery_failed\n", 1],
       [markers[0], "recovery_failed\n", 1],
+      [transcript(1), "recovery_failed", 1],
       [transcript(1), "recovery_failed\n" + canary, 1],
+      ["", preRuntimeRemoteCodes[0] + canary + "\n", 1],
       [transcript(1), "cleanup_unverified\n\n", 1],
+      [transcript(1), "cleanup_unverified", 1],
       [transcript(1), "", 1],
       ["", "", 1],
       [transcript(3), "", 0],

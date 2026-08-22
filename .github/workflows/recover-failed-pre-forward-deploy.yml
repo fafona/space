@@ -993,21 +993,40 @@ jobs:
             "recovery_complete",
           ];
           const expected = Buffer.from(`${expectedLines.join("\n")}\n`, "utf8");
-          const failurePhaseCodes = [
-            "remote_recovery_failed_phase_pre_runtime",
+          const runtimeFailurePhaseCodes = [
             "remote_recovery_failed_phase_web_restore",
             "remote_recovery_failed_phase_worker_restore",
             "remote_recovery_failed_phase_persist_and_verify",
           ];
-          const failurePrefixCodes = new Map(
-            failurePhaseCodes.map((code, length) => [
+          const failurePrefixes = Array.from(
+            { length: expectedLines.length },
+            (_, length) => Buffer.from(
+              length === 0 ? "" : `${expectedLines.slice(0, length).join("\n")}\n`,
+              "utf8",
+            ).toString("base64"),
+          );
+          const cleanupPrefixes = new Set(failurePrefixes);
+          const runtimeFailurePrefixCodes = new Map(
+            runtimeFailurePhaseCodes.map((code, index) => [
               Buffer.from(
-                length === 0 ? "" : `${expectedLines.slice(0, length).join("\n")}\n`,
+                `${expectedLines.slice(0, index + 1).join("\n")}\n`,
                 "utf8",
               ).toString("base64"),
               code,
             ]),
           );
+          const preRuntimeFailureCodes = new Map([
+            ["recovery_failed_pre_runtime_input", "remote_recovery_failed_phase_pre_runtime_input"],
+            ["recovery_failed_pre_runtime_repository", "remote_recovery_failed_phase_pre_runtime_repository"],
+            ["recovery_failed_pre_runtime_deploy_lock", "remote_recovery_failed_phase_pre_runtime_deploy_lock"],
+            ["recovery_failed_pre_runtime_helpers", "remote_recovery_failed_phase_pre_runtime_helpers"],
+            ["recovery_failed_pre_runtime_legacy_release", "remote_recovery_failed_phase_pre_runtime_legacy_release"],
+            ["recovery_failed_pre_runtime_legacy_environment", "remote_recovery_failed_phase_pre_runtime_legacy_environment"],
+            ["recovery_failed_pre_runtime_database_preflight", "remote_recovery_failed_phase_pre_runtime_database_preflight"],
+          ].map(([remoteCode, publicCode]) => [
+            Buffer.from(`${remoteCode}\n`, "utf8").toString("base64"),
+            publicCode,
+          ]));
           if (!Number.isSafeInteger(status) || status < 0 || status > 255) {
             process.stdout.write("recovery_output_invalid");
             process.exit(0);
@@ -1020,22 +1039,36 @@ jobs:
             }
             process.exit(0);
           }
-          const failurePhaseCode = failurePrefixCodes.get(stdout.toString("base64"));
-          if (!failurePhaseCode) {
-            process.stdout.write("recovery_output_invalid");
-          } else if (stderr.equals(Buffer.from("cleanup_unverified\n", "utf8"))) {
+          const stdoutKey = stdout.toString("base64");
+          const stderrKey = stderr.toString("base64");
+          if (
+            cleanupPrefixes.has(stdoutKey) &&
+            stderr.equals(Buffer.from("cleanup_unverified\n", "utf8"))
+          ) {
             process.stdout.write("remote_cleanup_unverified");
-          } else if (stderr.equals(Buffer.from("recovery_failed\n", "utf8"))) {
-            process.stdout.write(failurePhaseCode);
           } else {
-            process.stdout.write("recovery_output_invalid");
+            const preRuntimeFailureCode = stdout.length === 0
+              ? preRuntimeFailureCodes.get(stderrKey)
+              : undefined;
+            const runtimeFailureCode = stderr.equals(Buffer.from("recovery_failed\n", "utf8"))
+              ? runtimeFailurePrefixCodes.get(stdoutKey)
+              : undefined;
+            process.stdout.write(
+              preRuntimeFailureCode ?? runtimeFailureCode ?? "recovery_output_invalid",
+            );
           }
           NODE
           )"
           if [ "$classification" != "success" ]; then
             case "$classification" in
               remote_cleanup_unverified|\
-              remote_recovery_failed_phase_pre_runtime|\
+              remote_recovery_failed_phase_pre_runtime_input|\
+              remote_recovery_failed_phase_pre_runtime_repository|\
+              remote_recovery_failed_phase_pre_runtime_deploy_lock|\
+              remote_recovery_failed_phase_pre_runtime_helpers|\
+              remote_recovery_failed_phase_pre_runtime_legacy_release|\
+              remote_recovery_failed_phase_pre_runtime_legacy_environment|\
+              remote_recovery_failed_phase_pre_runtime_database_preflight|\
               remote_recovery_failed_phase_web_restore|\
               remote_recovery_failed_phase_worker_restore|\
               remote_recovery_failed_phase_persist_and_verify|\

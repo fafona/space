@@ -322,11 +322,41 @@ test("runtime mutation requires inactive web, a free port, and identity-bound ro
 
 test("operator-visible output is a fixed allowlist", () => {
   assert.doesNotMatch(source, /\becho\b/);
+  const failureStages = [...source.matchAll(/RECOVERY_FAILURE_STAGE="([a-z_]+)"/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(failureStages, [
+    "input",
+    "repository",
+    "deploy_lock",
+    "helpers",
+    "legacy_release",
+    "legacy_environment",
+    "database_preflight",
+    "runtime",
+  ]);
+  const exitHandler = source.slice(
+    source.indexOf("finish_recovery()"),
+    source.indexOf("trap finish_recovery EXIT"),
+  );
+  assert.ok(
+    exitHandler.indexOf('if [ "$cleanup_status" -ne 0 ]') <
+      exitHandler.indexOf('case "$RECOVERY_FAILURE_STAGE" in'),
+    "cleanup uncertainty must take precedence over failure phase reporting",
+  );
+  assert.doesNotMatch(exitHandler, /printf[^\n]*\$RECOVERY_FAILURE_STAGE/);
   const literalMarkers = [...source.matchAll(/printf '%s\\n' '([^']+)'/g)]
     .map((match) => match[1]);
   assert.deepEqual(literalMarkers, [
-    "recovery_failed",
     "cleanup_unverified",
+    "recovery_failed_pre_runtime_input",
+    "recovery_failed_pre_runtime_repository",
+    "recovery_failed_pre_runtime_deploy_lock",
+    "recovery_failed_pre_runtime_helpers",
+    "recovery_failed_pre_runtime_legacy_release",
+    "recovery_failed_pre_runtime_legacy_environment",
+    "recovery_failed_pre_runtime_database_preflight",
+    "recovery_failed",
+    "recovery_failed_stage_invalid",
     "fence_cleanup_verified",
     "frozen_runtime_restored",
     "worker_state_restored",
@@ -353,5 +383,5 @@ test("shell parses and an unconfigured invocation fails with only the safe marke
   });
   assert.notEqual(invoked.status, 0);
   assert.equal(invoked.stdout, "");
-  assert.equal(invoked.stderr, "recovery_failed\n");
+  assert.equal(invoked.stderr, "recovery_failed_pre_runtime_input\n");
 });
