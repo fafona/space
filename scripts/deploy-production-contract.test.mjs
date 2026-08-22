@@ -2151,10 +2151,27 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     fenceStartup,
     /reject_failed_readiness_fence/,
   );
-  assert.match(
-    deployScript,
-    /reject_failed_readiness_fence\(\)[\s\S]+report_readiness_fence_failure[\s\S]+discard_failed_readiness_fence/,
+  const rejection = extractShellRegion(
+    "reject_failed_readiness_fence() {",
+    "\nstart_readiness_fence() {",
   );
+  const rejectionOrder = [
+    "quiesce_failed_readiness_fence",
+    "readiness_fence_safe_failure_record",
+    "cleanup_readiness_fence_files",
+    "report_readiness_fence_failure",
+  ];
+  let rejectionIndex = -1;
+  for (const needle of rejectionOrder) {
+    const index = rejection.indexOf(needle);
+    assert.ok(index > rejectionIndex, `out-of-order fence rejection step: ${needle}`);
+    rejectionIndex = index;
+  }
+  assert.doesNotMatch(rejection, /discard_failed_readiness_fence/);
+  assert.match(fenceStartup, /readiness_fence_database_locks_invalid/);
+  assert.match(fenceStartup, /readiness_fence_marker_invalid/);
+  assert.match(fenceStartup, /readiness_fence_process_identity_invalid/);
+  assert.match(fenceStartup, /readiness_fence_startup_timeout/);
   assert.match(
     deployScript,
     /readiness fence cleanup completed[\s\S]+readiness fence cleanup could not be proven/,
@@ -2373,6 +2390,65 @@ test("fence startup remains fail-fast when invoked from cleanup set +e", async (
   }
 });
 
+test("provisional marker publication retries only the pure marker check", () => {
+  const candidateFunction = extractShellRegion(
+    "accept_readiness_fence_candidate() {",
+    "\ncleanup_readiness_fence_files() {",
+  );
+  const run = (body) => spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: [
+      "set +e",
+      candidateFunction,
+      "sleep() { :; }",
+      body,
+      "",
+    ].join("\n"),
+    timeout: 10_000,
+  });
+
+  const provisional = run([
+    "identity_calls=0",
+    "marker_calls=0",
+    "lock_calls=0",
+    "readiness_fence_process_identity_matches() { identity_calls=$((identity_calls + 1)); return 0; }",
+    "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); [ \"$marker_calls\" -eq 2 ]; }",
+    "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); return 0; }",
+    "accept_readiness_fence_candidate 690; status=$?",
+    "printf '%s %s %s %s\\n' \"$status\" \"$marker_calls\" \"$lock_calls\" \"$identity_calls\"",
+  ].join("\n"));
+  assert.equal(provisional.status, 0, `${provisional.stdout}\n${provisional.stderr}`);
+  assert.equal(provisional.stdout.trim(), "0 2 1 3");
+
+  const permanentlyInvalid = run([
+    "marker_calls=0",
+    "lock_calls=0",
+    "readiness_fence_process_identity_matches() { return 0; }",
+    "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); return 1; }",
+    "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); return 0; }",
+    "accept_readiness_fence_candidate 690; status=$?",
+    "printf '%s %s %s\\n' \"$status\" \"$marker_calls\" \"$lock_calls\"",
+  ].join("\n"));
+  assert.equal(
+    permanentlyInvalid.status,
+    0,
+    `${permanentlyInvalid.stdout}\n${permanentlyInvalid.stderr}`,
+  );
+  assert.equal(permanentlyInvalid.stdout.trim(), "4 3 0");
+
+  const lockFailure = run([
+    "marker_calls=0",
+    "lock_calls=0",
+    "readiness_fence_process_identity_matches() { return 0; }",
+    "validate_readiness_fence_marker() { marker_calls=$((marker_calls + 1)); return 0; }",
+    "assert_readiness_fence_database_locks() { lock_calls=$((lock_calls + 1)); return 1; }",
+    "accept_readiness_fence_candidate 690; status=$?",
+    "printf '%s %s %s\\n' \"$status\" \"$marker_calls\" \"$lock_calls\"",
+  ].join("\n"));
+  assert.equal(lockFailure.status, 0, `${lockFailure.stdout}\n${lockFailure.stderr}`);
+  assert.equal(lockFailure.stdout.trim(), "3 1 1");
+});
+
 test("fence failure reporting exposes only a frozen diagnostic and an explicit cleanup outcome", async () => {
   const temporaryDirectory = await mkdtemp(
     join(tmpdir(), "faolla-fence-diagnostic-contract-"),
@@ -2391,6 +2467,20 @@ test("fence failure reporting exposes only a frozen diagnostic and an explicit c
     ok: false,
     sqlstate: "P0001",
     sqlstateStatus: "exact",
+  };
+  const interruptedRecord = {
+    addressEvidence: null,
+    childExitCode: null,
+    childResult: "not_observed",
+    childSignal: null,
+    error: "readiness_fence_interrupted",
+    ok: false,
+    sqlstate: null,
+    sqlstateStatus: "absent",
+  };
+  const markerFailureRecord = {
+    ...interruptedRecord,
+    error: "readiness_fence_marker_invalid",
   };
   const run = (script) => spawnSync(resolveBashExecutable(), ["-s"], {
     encoding: "utf8",
@@ -2428,15 +2518,48 @@ test("fence failure reporting exposes only a frozen diagnostic and an explicit c
     );
     assert.doesNotMatch(`${hostile.stdout}\n${hostile.stderr}`, /do-not-log|::error::|private-value/);
 
-    for (const [discardStatus, expectedMarker] of [
-      [0, "readiness fence cleanup completed"],
-      [1, "readiness_fence_cleanup_unverified"],
+    const eventsPath = join(temporaryDirectory, "events.log");
+    const frozenAfterQuiesceScript = [
+      "set +e",
+      `RELEASE_DIR='${toBashPath(repositoryRoot)}'`,
+      `READINESS_FENCE_LOG='${toBashPath(logPath)}'`,
+      `EVENTS='${toBashPath(eventsPath)}'`,
+      functions,
+      "eval \"$(declare -f readiness_fence_safe_failure_record | sed '1s/readiness_fence_safe_failure_record/original_readiness_fence_safe_failure_record/')\"",
+      "readiness_fence_safe_failure_record() { printf 'freeze\\n' >> \"$EVENTS\"; original_readiness_fence_safe_failure_record \"$@\"; }",
+      `quiesce_failed_readiness_fence() { printf 'quiesce\\n' >> "$EVENTS"; printf '%s\\n' '${JSON.stringify(interruptedRecord)}' > "$READINESS_FENCE_LOG"; chmod 600 "$READINESS_FENCE_LOG"; return 0; }`,
+      "cleanup_readiness_fence_files() { printf 'cleanup\\n' >> \"$EVENTS\"; rm -f -- \"$READINESS_FENCE_LOG\"; }",
+      "if reject_failed_readiness_fence readiness_fence_marker_invalid; then status=0; else status=$?; fi",
+      '[ "$status" -eq 1 ]',
+      '[ ! -e "$READINESS_FENCE_LOG" ]',
+      "",
+    ].join("\n");
+    const frozenAfterQuiesce = run(frozenAfterQuiesceScript);
+    assert.equal(
+      frozenAfterQuiesce.status,
+      0,
+      `${frozenAfterQuiesce.stdout}\n${frozenAfterQuiesce.stderr}`,
+    );
+    assert.equal(
+      frozenAfterQuiesce.stdout.trim(),
+      [
+        `[deploy] readiness fence helper failure ${JSON.stringify(markerFailureRecord)}`,
+        "[deploy] readiness fence cleanup completed",
+      ].join("\n"),
+    );
+    assert.equal(await readFile(eventsPath, "utf8"), "quiesce\nfreeze\ncleanup\n");
+
+    for (const [quiesceStatus, cleanupStatus, expectedMarker] of [
+      [0, 0, "readiness fence cleanup completed"],
+      [1, 0, "readiness_fence_cleanup_unverified"],
+      [0, 1, "readiness_fence_cleanup_unverified"],
     ]) {
       const cleanupScript = [
         "set +e",
         functions,
         "readiness_fence_safe_failure_record() { return 1; }",
-        `discard_failed_readiness_fence() { return ${discardStatus}; }`,
+        `quiesce_failed_readiness_fence() { return ${quiesceStatus}; }`,
+        `cleanup_readiness_fence_files() { return ${cleanupStatus}; }`,
         "if reject_failed_readiness_fence; then status=0; else status=$?; fi",
         '[ "$status" -eq 1 ]',
         "",
@@ -2508,23 +2631,27 @@ test("PID reuse never signals an unrelated process while database cleanup still 
     join(tmpdir(), "faolla-fence-pid-reuse-contract-"),
   );
   const callsPath = join(temporaryDirectory, "calls");
-  const discardFunction = extractShellRegion(
-    "discard_failed_readiness_fence() {",
+  const fenceCleanupFunctions = extractShellRegion(
+    "quiesce_failed_readiness_fence() {",
     "\nensure_readiness_fence_for_rollback() {",
   );
   const script = [
-    "set +e",
+    "set -euo pipefail",
     `CALLS='${toBashPath(callsPath)}'`,
     "READINESS_FENCE_PID=4242",
     "READINESS_FENCE_ACTIVE=1",
     "readiness_fence_original_process_matches() { return 1; }",
     'terminate_readiness_fence_database_session() { printf "database-zero\\n" >> "$CALLS"; return 0; }',
-    "cleanup_readiness_fence_files() { return 0; }",
+    'cleanup_readiness_fence_files() { printf "cleanup-files\\n" >> "$CALLS"; return 0; }',
     'kill() { printf "signal:%s\\n" "$*" >> "$CALLS"; return 0; }',
-    discardFunction,
-    "discard_failed_readiness_fence",
+    'wait() { printf "wait:%s\\n" "$*" >> "$CALLS"; return 0; }',
+    fenceCleanupFunctions,
+    "if discard_failed_readiness_fence; then status=0; else status=$?; fi",
+    '[ "$status" -eq 0 ]',
     '[ "$READINESS_FENCE_ACTIVE" = 0 ]',
-    'grep -Fxq database-zero "$CALLS"',
+    '[ "$(grep -Fxc database-zero "$CALLS")" -eq 1 ]',
+    '[ "$(grep -Fxc cleanup-files "$CALLS")" -eq 1 ]',
+    '[ "$(grep -Fxc wait:4242 "$CALLS")" -eq 1 ]',
     '! grep -q "^signal:" "$CALLS"',
     "",
   ].join("\n");

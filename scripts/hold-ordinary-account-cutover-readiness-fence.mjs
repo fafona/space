@@ -40,7 +40,21 @@ const MAX_FAILURE_LOG_BYTES = 512;
 const MAX_CHILD_STDERR_BYTES = 64 * 1024;
 const ENDPOINT_PROBE_TIMEOUT_MS = 15_000;
 const ENDPOINT_PROBE_POLL_MS = 50;
+const POST_CANCEL_QUIET_WINDOW_MS = 500;
+const POST_CANCEL_QUIET_POLL_COUNT = Math.ceil(
+  POST_CANCEL_QUIET_WINDOW_MS / ENDPOINT_PROBE_POLL_MS,
+);
 const EXTERNAL_OPERATION_TIMEOUT_MS = 10_000;
+const RELEASE_REQUEST_POLL_MS = 50;
+const RELEASE_REQUEST_PROVISIONAL_POLL_LIMIT = Math.ceil(
+  EXTERNAL_OPERATION_TIMEOUT_MS / RELEASE_REQUEST_POLL_MS,
+);
+const RELEASE_REQUEST_PROVISIONAL_CAPABILITY = Symbol(
+  "readiness_fence_release_request_provisional_capability",
+);
+const RELEASE_REQUEST_PROVISIONAL = Symbol(
+  "readiness_fence_release_request_provisional",
+);
 const QUERY_CANCEL_RESPONSE_TIMEOUT_MS = 5_000;
 const COMPOSE_PEER_INSPECT_MAX_CONCURRENCY = 8;
 
@@ -170,6 +184,7 @@ const PUBLIC_FAILURE_CODES = new Set([
   "readiness_fence_cli_command_invalid",
   "readiness_fence_container_id_invalid",
   "readiness_fence_container_id_mismatch",
+  "readiness_fence_database_locks_invalid",
   "readiness_fence_database_identity_mismatch",
   "readiness_fence_ended_before_release",
   "readiness_fence_hold_locks_invalid",
@@ -214,6 +229,7 @@ const PUBLIC_FAILURE_CODES = new Set([
   "readiness_fence_probe_waiter_count_invalid",
   "readiness_fence_probe_waiter_missing",
   "readiness_fence_probe_waiter_residual",
+  "readiness_fence_process_identity_invalid",
   "readiness_fence_release_request_binding_mismatch",
   "readiness_fence_release_request_changed",
   "readiness_fence_release_request_cleanup_failed",
@@ -236,7 +252,7 @@ const PUBLIC_FAILURE_CODES = new Set([
   "readiness_fence_unexpected_error",
   ...WAITER_VALIDATION_FAILURE_CODES,
 ]);
-if (PUBLIC_FAILURE_CODES.size !== 323 || PUBLIC_FAILURE_CODES.size > 512) {
+if (PUBLIC_FAILURE_CODES.size !== 325 || PUBLIC_FAILURE_CODES.size > 512) {
   throw new Error("invalid public failure registry");
 }
 const ENDPOINT_PROBE_TOTAL_TIMEOUT_MS = 90_000;
@@ -3019,6 +3035,16 @@ function waiterValidationFailureCode(
   return context.code;
 }
 
+function assertNoWaiterBlockedByFence(observation, fenceBackendPid) {
+  if (
+    observation.waiters.some((waiter) =>
+      waiter.blockingPids.includes(fenceBackendPid),
+    )
+  ) {
+    fail("readiness_fence_probe_waiter_residual");
+  }
+}
+
 async function validateCandidateWaiter(candidate, expected, stage, probe) {
   const invalid = (
     predicate,
@@ -3150,6 +3176,12 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     dependencies.randomProbeHex ??
     ((byteLength) => randomBytes(byteLength).toString("hex"));
   const deadline = dependencies.deadline ?? withWallClockDeadline;
+  const externalSignal = dependencies.signal;
+  const assertProbeNotCancelled = () => {
+    if (externalSignal?.aborted) {
+      fail("readiness_fence_probe_cancelled");
+    }
+  };
   const rawObserveWaiters =
     dependencies.observeWaiters ??
     (() =>
@@ -3172,25 +3204,53 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     dependencies.poll ??
     (() =>
       new Promise((resolve) => setTimeout(resolve, ENDPOINT_PROBE_POLL_MS)));
-  const observeWaiters = () =>
-    dependencies.observeWaiters
+  const observeWaiters = async () => {
+    assertProbeNotCancelled();
+    const result = await (dependencies.observeWaiters
       ? deadline(
           rawObserveWaiters(),
           EXTERNAL_OPERATION_TIMEOUT_MS,
           "readiness_fence_probe_observer_timeout",
         )
-      : rawObserveWaiters();
-  const cancelWaiter = (waiter) =>
-    dependencies.cancelWaiter
+      : rawObserveWaiters());
+    assertProbeNotCancelled();
+    return result;
+  };
+  const cancelWaiter = async (waiter) => {
+    assertProbeNotCancelled();
+    const result = await (dependencies.cancelWaiter
       ? deadline(
           rawCancelWaiter(waiter),
           EXTERNAL_OPERATION_TIMEOUT_MS,
           "readiness_fence_probe_waiter_cancel_timeout",
         )
-      : rawCancelWaiter(waiter);
-  const poll = () =>
-    deadline(
+      : rawCancelWaiter(waiter));
+    assertProbeNotCancelled();
+    return result;
+  };
+  const poll = async () => {
+    assertProbeNotCancelled();
+    const result = await deadline(
       rawPoll(),
+      EXTERNAL_OPERATION_TIMEOUT_MS,
+      "readiness_fence_probe_poll_timeout",
+    );
+    assertProbeNotCancelled();
+    return result;
+  };
+  const waitForPostCancelQuietWindow = () =>
+    deadline(
+      (async () => {
+        for (
+          let quietPoll = 0;
+          quietPoll < POST_CANCEL_QUIET_POLL_COUNT;
+          quietPoll += 1
+        ) {
+          assertProbeNotCancelled();
+          await rawPoll();
+          assertProbeNotCancelled();
+        }
+      })(),
       EXTERNAL_OPERATION_TIMEOUT_MS,
       "readiness_fence_probe_poll_timeout",
     );
@@ -3305,15 +3365,19 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     ENDPOINT_PROBE_TIMEOUT_MS / ENDPOINT_PROBE_POLL_MS,
   );
   const evidence = [];
+  let nextProbeBaseline = null;
 
   for (const specification of probeRequestSpecifications(
     environment,
     randomHex,
   )) {
-    const before = parseWaiterObservation(await observeWaiters());
+    const before =
+      nextProbeBaseline ?? parseWaiterObservation(await observeWaiters());
+    nextProbeBaseline = null;
     if (before.databaseOid !== source.databaseOid) {
       fail("readiness_fence_probe_database_mismatch");
     }
+    assertNoWaiterBlockedByFence(before, source.fenceBackendPid);
     const previousPids = new Set(before.waiters.map((waiter) => waiter.pid));
     const serviceIdentity = validatedServiceIdentities.get(
       specification.service,
@@ -3333,11 +3397,8 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
     const preexistingApplicationName =
       frozenApplicationNames.size === 1 ? [...frozenApplicationNames][0] : null;
     const abortController = new AbortController();
-    const externalSignal = dependencies.signal;
     const abortFromExternalSignal = () => abortController.abort();
-    if (externalSignal?.aborted) {
-      fail("readiness_fence_probe_cancelled");
-    }
+    assertProbeNotCancelled();
     externalSignal?.addEventListener("abort", abortFromExternalSignal, {
       once: true,
     });
@@ -3439,6 +3500,19 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
           (waiter) => !previousPids.has(waiter.pid),
         );
         if (newWaiters.length === 0) {
+          assertNoWaiterBlockedByFence(observation, source.fenceBackendPid);
+          await waitForPostCancelQuietWindow();
+          const quietObservation = parseWaiterObservation(
+            await observeWaiters(),
+          );
+          if (quietObservation.databaseOid !== source.databaseOid) {
+            fail("readiness_fence_probe_database_mismatch");
+          }
+          assertNoWaiterBlockedByFence(
+            quietObservation,
+            source.fenceBackendPid,
+          );
+          nextProbeBaseline = quietObservation;
           disappeared = true;
           break;
         }
@@ -3491,6 +3565,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
         abortFromExternalSignal,
       );
     }
+    assertProbeNotCancelled();
     evidence.push({
       probe: specification.probe,
       baseEndpointSha256: specification.baseEndpointSha256,
@@ -3513,6 +3588,13 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
       blockingPids: accepted.blockingPids,
     });
   }
+  await poll();
+  const finalObservation = parseWaiterObservation(await observeWaiters());
+  if (finalObservation.databaseOid !== source.databaseOid) {
+    fail("readiness_fence_probe_database_mismatch");
+  }
+  assertNoWaiterBlockedByFence(finalObservation, source.fenceBackendPid);
+  assertProbeNotCancelled();
   return evidence;
 }
 
@@ -3714,6 +3796,7 @@ export async function writeAtomicReadinessFenceMarker(
   );
   let handle;
   let linked = false;
+  let temporaryUnlinked = false;
   try {
     handle = await operations.open(temporaryPath, "wx", 0o600);
     await handle.writeFile(bytes);
@@ -3722,8 +3805,14 @@ export async function writeAtomicReadinessFenceMarker(
     handle = null;
     await operations.link(temporaryPath, markerPath);
     linked = true;
+    await operations.unlink(temporaryPath);
+    temporaryUnlinked = true;
     const identity = await operations.lstat(markerPath);
-    if (!identity.isFile() || identity.isSymbolicLink()) {
+    if (
+      !identity.isFile() ||
+      identity.isSymbolicLink() ||
+      identity.nlink !== 1
+    ) {
       fail("readiness_fence_marker_invalid");
     }
     return { dev: String(identity.dev), ino: String(identity.ino) };
@@ -3734,7 +3823,9 @@ export async function writeAtomicReadinessFenceMarker(
     if (error?.code === "EEXIST") fail("readiness_fence_marker_exists");
     fail("readiness_fence_marker_write_failed");
   } finally {
-    await operations.unlink(temporaryPath).catch(() => {});
+    if (!temporaryUnlinked) {
+      await operations.unlink(temporaryPath).catch(() => {});
+    }
   }
 }
 
@@ -3754,20 +3845,46 @@ export async function readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
   options = {},
 ) {
   const operations = options.fileOperations ?? { lstat, open };
+  const allowProvisionalPublication =
+    options.provisionalCapability === RELEASE_REQUEST_PROVISIONAL_CAPABILITY;
+  const expectedProvisionalIdentity = allowProvisionalPublication
+    ? (options.provisionalIdentity ?? null)
+    : null;
   let handle;
   let bytes;
   let identity;
+  let provisionalPublicationIdentity = null;
+  let pathObserved = false;
   try {
     const before = await operations.lstat(releaseRequestPath, { bigint: true });
+    pathObserved = true;
     if (
       before.isSymbolicLink() ||
       !before.isFile() ||
-      before.nlink !== 1n ||
+      (before.nlink !== 1n &&
+        (!allowProvisionalPublication || before.nlink !== 2n)) ||
       before.size <= 0n ||
       before.size > BigInt(MAX_RELEASE_REQUEST_BYTES) ||
       (process.platform !== "win32" && (before.mode & 0o077n) !== 0n)
     ) {
       fail("readiness_fence_release_request_file_invalid");
+    }
+    const publicationIdentity = {
+      dev: before.dev,
+      ino: before.ino,
+      size: before.size,
+      mtimeNs: before.mtimeNs,
+      mode: before.mode,
+    };
+    if (
+      expectedProvisionalIdentity !== null &&
+      (publicationIdentity.dev !== expectedProvisionalIdentity.dev ||
+        publicationIdentity.ino !== expectedProvisionalIdentity.ino ||
+        publicationIdentity.size !== expectedProvisionalIdentity.size ||
+        publicationIdentity.mtimeNs !== expectedProvisionalIdentity.mtimeNs ||
+        publicationIdentity.mode !== expectedProvisionalIdentity.mode)
+    ) {
+      fail("readiness_fence_release_request_changed");
     }
     handle = await operations.open(releaseRequestPath, "r");
     const opened = await handle.stat({ bigint: true });
@@ -3776,7 +3893,8 @@ export async function readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
       opened.dev !== before.dev ||
       opened.ino !== before.ino ||
       opened.size !== before.size ||
-      opened.nlink !== 1n
+      opened.mtimeNs !== before.mtimeNs ||
+      opened.mode !== before.mode
     ) {
       fail("readiness_fence_release_request_changed");
     }
@@ -3795,15 +3913,33 @@ export async function readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
       current.ino !== opened.ino ||
       after.size !== BigInt(bytes.length) ||
       current.size !== after.size ||
+      after.size !== opened.size ||
       after.mtimeNs !== opened.mtimeNs ||
       current.mtimeNs !== after.mtimeNs ||
-      after.nlink !== 1n ||
-      current.nlink !== 1n
+      after.mode !== opened.mode ||
+      current.mode !== after.mode
     ) {
       fail("readiness_fence_release_request_changed");
     }
+    const linkCounts = [before.nlink, opened.nlink, after.nlink, current.nlink];
+    if (
+      linkCounts.some((count) => count !== 1n && count !== 2n) ||
+      linkCounts.some(
+        (count, index) => index > 0 && count > linkCounts[index - 1],
+      ) ||
+      (!allowProvisionalPublication &&
+        linkCounts.some((count) => count !== 1n))
+    ) {
+      fail("readiness_fence_release_request_changed");
+    }
+    if (current.nlink === 2n) {
+      provisionalPublicationIdentity = publicationIdentity;
+    }
   } catch (error) {
-    if (error?.code === "ENOENT") return null;
+    if (error?.code === "ENOENT") {
+      if (!pathObserved && expectedProvisionalIdentity === null) return null;
+      fail("readiness_fence_release_request_changed");
+    }
     if (error instanceof OrdinaryAccountCutoverReadinessFenceError) throw error;
     fail("readiness_fence_release_request_file_invalid");
   } finally {
@@ -3843,7 +3979,15 @@ export async function readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
   ) {
     fail("readiness_fence_release_request_binding_mismatch");
   }
-  return { bytes, source, identity };
+  return provisionalPublicationIdentity === null
+    ? { bytes, source, identity }
+    : {
+        bytes,
+        source,
+        identity,
+        publicationState: RELEASE_REQUEST_PROVISIONAL,
+        provisionalIdentity: provisionalPublicationIdentity,
+      };
 }
 
 async function waitForAuthorizedReleaseRequest(
@@ -3854,14 +3998,30 @@ async function waitForAuthorizedReleaseRequest(
 ) {
   const poll =
     dependencies.releaseRequestPoll ??
-    (() => new Promise((resolve) => setTimeout(resolve, 50)));
+    (() =>
+      new Promise((resolve) => setTimeout(resolve, RELEASE_REQUEST_POLL_MS)));
+  let provisionalIdentity = null;
+  let provisionalPollCount = 0;
   while (!signal.aborted) {
     const request =
       await readAuthorizedOrdinaryAccountCutoverFenceReleaseRequest(
         releaseRequestPath,
         expected,
-        { fileOperations: dependencies.releaseRequestFileOperations },
+        {
+          fileOperations: dependencies.releaseRequestFileOperations,
+          provisionalCapability: RELEASE_REQUEST_PROVISIONAL_CAPABILITY,
+          provisionalIdentity,
+        },
       );
+    if (request?.publicationState === RELEASE_REQUEST_PROVISIONAL) {
+      provisionalIdentity ??= request.provisionalIdentity;
+      provisionalPollCount += 1;
+      if (provisionalPollCount > RELEASE_REQUEST_PROVISIONAL_POLL_LIMIT) {
+        fail("readiness_fence_release_request_file_invalid");
+      }
+      await poll();
+      continue;
+    }
     if (request !== null) return request;
     await poll();
   }
@@ -3872,7 +4032,7 @@ async function removeReadinessFenceMarker(markerPath, identity) {
   let current;
   try {
     current = await lstat(markerPath);
-  } catch (error) {
+  } catch {
     fail("readiness_fence_marker_cleanup_failed");
   }
   if (
