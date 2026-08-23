@@ -44,9 +44,9 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32615785237"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32627378516"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: f1e565d39fbadf4429a1ed9d91b327528c37f6f8
+      PRIOR_FAILED_RECOVERY_SHA: 870e79ac1b5fd036bfd08b895284bc6a754a102a
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: 58c26e178faeb3eee0172a2e0aa487084f6910e4
@@ -437,7 +437,7 @@ jobs:
           if (
             failedRecoveryCompleted <= failedRecoveryStarted ||
             failedRecoveryCompleted - failedRecoveryStarted > 1_800 ||
-            failedRecoveryCompleted >= startedEpoch
+            failedRecoveryStarted <= completedEpoch
           ) fail("prior_failed_recovery_time_window_invalid");
 
           if (
@@ -1010,10 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "58c26e178faeb3eee0172a2e0aa487084f6910e4" ||
             values.READINESS_RUN_ID !== "32625773494" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32615785237" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32627378516" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "f1e565d39fbadf4429a1ed9d91b327528c37f6f8" ||
+              "870e79ac1b5fd036bfd08b895284bc6a754a102a" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);

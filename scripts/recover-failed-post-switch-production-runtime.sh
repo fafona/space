@@ -10,9 +10,9 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32625801433"
 readonly EXPECTED_INCIDENT_SHA="58c26e178faeb3eee0172a2e0aa487084f6910e4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32625773494"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32615785237"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32627378516"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="f1e565d39fbadf4429a1ed9d91b327528c37f6f8"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="870e79ac1b5fd036bfd08b895284bc6a754a102a"
 readonly EXPECTED_CANDIDATE_BUILD_ID="58c26e178faeb3eee0172a2e0aa487084f6910e4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
 readonly EXPECTED_OLD_PACKAGE_BLOB="4aa8c7a442b6bc8926e74322503f91b28359fd3e"
@@ -33,6 +33,7 @@ WORKER_START_ATTEMPTED=0
 PM2_SAVE_ATTEMPTED=0
 PM2_STATE_MUTATED=0
 RECOVERY_COMPLETE=0
+RECOVERY_SIGNAL_PENDING=0
 FENCE_CLEANUP_STARTED=0
 FENCE_CLEANUP_VERIFIED=0
 RECOVERY_FAILURE_STAGE="input"
@@ -52,10 +53,13 @@ STARTED_WORKER_START_TICKS=""
 STARTED_WORKER_PROCESS_IDENTITY=""
 STARTED_WORKER_CWD_IDENTITY=""
 SWITCH_TEMP_LINK=""
+SWITCH_TEMP_LINK_IDENTITY=""
+SWITCH_TEMP_LINK_OBJECT_IDENTITY=""
 CURRENT_LINK_IDENTITY=""
 FROZEN_CURRENT_LINK_IDENTITY=""
 COMPENSATION_TEMP_LINK=""
 COMPENSATION_TEMP_LINK_IDENTITY=""
+COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=""
 CANDIDATE_WEB_PM2_SNAPSHOT=""
 CANDIDATE_WEB_PID=""
 CANDIDATE_WEB_START_TICKS=""
@@ -106,6 +110,113 @@ trusted_symlink_identity() {
   [ "$link_uid" = "$(id -u)" ] && [ "$link_count" = "1" ] \
     && (( (16#$link_raw_mode & 0170000) == 0120000 )) || return 1
   printf '%s' "$identity"
+}
+
+symlink_object_identity_from_full() {
+  local identity="$1"
+  local device
+  local inode
+  local size
+  local link_uid
+  local link_raw_mode
+  local link_count
+  [[ "$identity" =~ ^([0-9]+:){6}[0-9a-fA-F]+:[0-9]+$ ]] || return 1
+  IFS=: read -r device inode size _ _ link_uid link_raw_mode link_count \
+    <<< "$identity"
+  [ "$link_uid" = "$(id -u)" ] && [ "$link_count" = "1" ] \
+    && (( (16#$link_raw_mode & 0170000) == 0120000 )) || return 1
+  printf '%s:%s:%s:%s:%s:%s' \
+    "$device" "$inode" "$size" "$link_uid" "$link_raw_mode" "$link_count"
+}
+
+trusted_symlink_object_identity() {
+  local identity
+  identity="$(trusted_symlink_identity "$1")" || return 1
+  symlink_object_identity_from_full "$identity"
+}
+
+trusted_directory_object_identity() {
+  local path="$1"
+  local identity
+  local directory_uid
+  local directory_raw_mode
+  local directory_links
+  local directory_mode
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  identity="$(stat -c '%d:%i:%u:%f:%h:%a' -- "$path" 2>/dev/null || true)"
+  [[ "$identity" =~ ^([0-9]+:){3}[0-9a-fA-F]+:[0-9]+:[0-7]{3,4}$ ]] \
+    || return 1
+  IFS=: read -r _ _ directory_uid directory_raw_mode directory_links \
+    directory_mode <<< "$identity"
+  (( (16#$directory_raw_mode & 0170000) == 0040000 )) || return 1
+  [ "$directory_uid" = "$(id -u)" ] \
+    && [ "$directory_links" -ge 1 ] \
+    && [ $((8#$directory_mode & 8#022)) -eq 0 ] \
+    || return 1
+  printf '%s' "$identity"
+}
+
+capture_trusted_temp_symlink_snapshot() {
+  local path="$1"
+  local expected_target="$2"
+  local full_variable="$3"
+  local object_variable="$4"
+  local first_full_identity
+  local first_object_identity
+  local second_full_identity
+  local second_object_identity
+  if [ "$path" = "$EXPECTED_SWITCH_TEMP_LINK" ]; then
+    [ "$expected_target" = "$FROZEN_RUNTIME_DIR" ] \
+      && [ "$full_variable" = "SWITCH_TEMP_LINK_IDENTITY" ] \
+      && [ "$object_variable" = "SWITCH_TEMP_LINK_OBJECT_IDENTITY" ] \
+      || return 1
+  elif [ "$path" = "$EXPECTED_COMPENSATION_TEMP_LINK" ]; then
+    [ "$expected_target" = "$CANDIDATE_RUNTIME_DIR" ] \
+      && [ "$full_variable" = "COMPENSATION_TEMP_LINK_IDENTITY" ] \
+      && [ "$object_variable" = "COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ] \
+      || return 1
+  else
+    return 1
+  fi
+  revalidate_current_link_parent \
+    && [ -L "$path" ] \
+    && [ "$(readlink -- "$path" 2>/dev/null || true)" = "$expected_target" ] \
+    && [ "$(readlink -f -- "$path" 2>/dev/null || true)" = "$expected_target" ] \
+    || return 1
+  first_full_identity="$(trusted_symlink_identity "$path")" || return 1
+  first_object_identity="$(symlink_object_identity_from_full \
+    "$first_full_identity")" || return 1
+  revalidate_current_link_parent \
+    && [ "$(readlink -- "$path" 2>/dev/null || true)" = "$expected_target" ] \
+    && [ "$(readlink -f -- "$path" 2>/dev/null || true)" = "$expected_target" ] \
+    || return 1
+  second_full_identity="$(trusted_symlink_identity "$path")" || return 1
+  second_object_identity="$(symlink_object_identity_from_full \
+    "$second_full_identity")" || return 1
+  [ "$second_full_identity" = "$first_full_identity" ] \
+    && [ "$second_object_identity" = "$first_object_identity" ] \
+    && revalidate_current_link_parent \
+    && [ "$(readlink -- "$path" 2>/dev/null || true)" = "$expected_target" ] \
+    && [ "$(readlink -f -- "$path" 2>/dev/null || true)" = "$expected_target" ] \
+    || return 1
+  printf -v "$full_variable" '%s' "$second_full_identity"
+  printf -v "$object_variable" '%s' "$second_object_identity"
+}
+
+revalidate_current_link_parent() {
+  [ -n "${CURRENT_LINK_PARENT_DIR:-}" ] \
+    && [ -n "${CURRENT_LINK_PARENT_IDENTITY:-}" ] \
+    && [ "$(readlink -f -- "$CURRENT_LINK_PARENT_DIR" 2>/dev/null || true)" = \
+      "$CURRENT_LINK_PARENT_DIR" ] \
+    && [ "$(trusted_directory_object_identity \
+      "$CURRENT_LINK_PARENT_DIR" 2>/dev/null || true)" = \
+      "$CURRENT_LINK_PARENT_IDENTITY" ] \
+    && [ "$(dirname -- "${CURRENT_LINK:-invalid}")" = \
+      "$CURRENT_LINK_PARENT_DIR" ] \
+    && [ "$(dirname -- "${EXPECTED_SWITCH_TEMP_LINK:-invalid}")" = \
+      "$CURRENT_LINK_PARENT_DIR" ] \
+    && [ "$(dirname -- "${EXPECTED_COMPENSATION_TEMP_LINK:-invalid}")" = \
+      "$CURRENT_LINK_PARENT_DIR" ]
 }
 
 cleanup_started_process() {
@@ -161,6 +272,7 @@ finish_recovery() {
   local cleanup_status=0
   local cleanup_reason=""
   local failure_stage="${RECOVERY_FAILURE_STAGE:-invalid}"
+  local candidate_restore_failed=0
   record_cleanup_failure() {
     local reason="$1"
     case "$reason" in
@@ -174,32 +286,28 @@ finish_recovery() {
   trap - EXIT
   trap '' HUP INT TERM
   if [ -n "${SWITCH_TEMP_LINK:-}" ] && [ -L "$SWITCH_TEMP_LINK" ] \
-    && [ -n "${FROZEN_CURRENT_LINK_IDENTITY:-}" ] \
+    && revalidate_current_link_parent \
+    && [ -n "${SWITCH_TEMP_LINK_IDENTITY:-}" ] \
+    && [ -n "${SWITCH_TEMP_LINK_OBJECT_IDENTITY:-}" ] \
     && [ "$(trusted_symlink_identity "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
-      "$FROZEN_CURRENT_LINK_IDENTITY" ] \
+      "$SWITCH_TEMP_LINK_IDENTITY" ] \
+    && [ "$(trusted_symlink_object_identity \
+      "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+      "$SWITCH_TEMP_LINK_OBJECT_IDENTITY" ] \
     && [ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
       "${FROZEN_RUNTIME_DIR:-invalid}" ] \
     && [ "$(readlink -f -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
       "${FROZEN_RUNTIME_DIR:-invalid}" ]; then
-    unlink -- "$SWITCH_TEMP_LINK" >/dev/null 2>&1 \
-      || record_cleanup_failure switch_temp
+    if unlink -- "$SWITCH_TEMP_LINK" >/dev/null 2>&1 \
+      && revalidate_current_link_parent \
+      && [ ! -e "$SWITCH_TEMP_LINK" ] && [ ! -L "$SWITCH_TEMP_LINK" ]; then
+      :
+    else
+      record_cleanup_failure switch_temp
+    fi
   elif [ -n "${SWITCH_TEMP_LINK:-}" ] \
     && { [ -e "$SWITCH_TEMP_LINK" ] || [ -L "$SWITCH_TEMP_LINK" ]; }; then
     record_cleanup_failure switch_temp
-  fi
-  if [ -n "${COMPENSATION_TEMP_LINK:-}" ] && [ -L "$COMPENSATION_TEMP_LINK" ] \
-    && [ -n "${COMPENSATION_TEMP_LINK_IDENTITY:-}" ] \
-    && [ "$(trusted_symlink_identity "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
-      "$COMPENSATION_TEMP_LINK_IDENTITY" ] \
-    && [ "$(readlink -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
-      "${CANDIDATE_RUNTIME_DIR:-invalid}" ] \
-    && [ "$(readlink -f -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
-      "${CANDIDATE_RUNTIME_DIR:-invalid}" ]; then
-    unlink -- "$COMPENSATION_TEMP_LINK" >/dev/null 2>&1 \
-      || record_cleanup_failure compensation_temp
-  elif [ -n "${COMPENSATION_TEMP_LINK:-}" ] \
-    && { [ -e "$COMPENSATION_TEMP_LINK" ] || [ -L "$COMPENSATION_TEMP_LINK" ]; }; then
-    record_cleanup_failure compensation_temp
   fi
   if [ "$status" -ne 0 ] && [ "$RECOVERY_COMPLETE" -ne 1 ]; then
     if [ "$FENCE_CLEANUP_STARTED" -eq 1 ] \
@@ -222,8 +330,38 @@ finish_recovery() {
       && [ "$CURRENT_SWITCH_ARMED" -eq 1 ] \
       && [ "$cleanup_status" -eq 0 ]; then
       restore_candidate_before_web_commit \
-        || record_cleanup_failure candidate_restore
+        || candidate_restore_failed=1
     fi
+    if [ -n "${COMPENSATION_TEMP_LINK:-}" ] && [ -L "$COMPENSATION_TEMP_LINK" ] \
+      && revalidate_current_link_parent \
+      && [ -n "${COMPENSATION_TEMP_LINK_IDENTITY:-}" ] \
+      && [ -n "${COMPENSATION_TEMP_LINK_OBJECT_IDENTITY:-}" ] \
+      && [ "$(trusted_symlink_identity "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
+        "$COMPENSATION_TEMP_LINK_IDENTITY" ] \
+      && [ "$(trusted_symlink_object_identity \
+        "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
+        "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ] \
+      && [ "$(readlink -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
+        "${CANDIDATE_RUNTIME_DIR:-invalid}" ] \
+      && [ "$(readlink -f -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
+        "${CANDIDATE_RUNTIME_DIR:-invalid}" ]; then
+      if unlink -- "$COMPENSATION_TEMP_LINK" >/dev/null 2>&1 \
+        && revalidate_current_link_parent \
+        && [ ! -e "$COMPENSATION_TEMP_LINK" ] \
+        && [ ! -L "$COMPENSATION_TEMP_LINK" ]; then
+        COMPENSATION_TEMP_LINK=""
+        COMPENSATION_TEMP_LINK_IDENTITY=""
+        COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=""
+      else
+        record_cleanup_failure compensation_temp
+      fi
+    elif [ -n "${COMPENSATION_TEMP_LINK:-}" ] \
+      && { [ -e "$COMPENSATION_TEMP_LINK" ] \
+        || [ -L "$COMPENSATION_TEMP_LINK" ]; }; then
+      record_cleanup_failure compensation_temp
+    fi
+    [ "$candidate_restore_failed" -eq 0 ] \
+      || record_cleanup_failure candidate_restore
     if [ "$FROZEN_WEB_COMMITTED" -ne 1 ] \
       && { [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 1 ] \
         || [ "$FROZEN_RESUME_PREFLIGHT_VERIFIED" -eq 1 ]; } \
@@ -441,6 +579,9 @@ handle_recovery_signal() {
   trap '' HUP INT TERM
   exit 1
 }
+defer_recovery_signal() {
+  RECOVERY_SIGNAL_PENDING=1
+}
 trap handle_recovery_signal HUP INT TERM
 
 require_command() {
@@ -612,6 +753,14 @@ readonly PACKAGE_RELATIVE="package.json"
 readonly WORKER_RELATIVE="scripts/run-merchant-enterprise-automation-worker.ts"
 readonly INCIDENT_ENV_HELPER="$APP_DIR/$ENV_HELPER_RELATIVE"
 readonly INCIDENT_FENCE_HELPER="$APP_DIR/$FENCE_HELPER_RELATIVE"
+
+CURRENT_LINK_PARENT_DIR="$(dirname -- "$CURRENT_LINK")"
+[ "$(readlink -f -- "$CURRENT_LINK_PARENT_DIR" 2>/dev/null || true)" = \
+  "$CURRENT_LINK_PARENT_DIR" ] || exit 1
+CURRENT_LINK_PARENT_IDENTITY="$(trusted_directory_object_identity \
+  "$CURRENT_LINK_PARENT_DIR")" || exit 1
+readonly CURRENT_LINK_PARENT_DIR CURRENT_LINK_PARENT_IDENTITY
+revalidate_current_link_parent || exit 1
 
 [ -d "$RELEASES_DIR" ] && [ ! -L "$RELEASES_DIR" ] || exit 1
 [ -d "$SHARED_RUNTIME_DIR" ] && [ ! -L "$SHARED_RUNTIME_DIR" ] || exit 1
@@ -1513,7 +1662,8 @@ readonly INITIAL_CURRENT_STATE INITIAL_CURRENT_RAW_TARGET \
   INITIAL_CURRENT_RESOLVED_TARGET INITIAL_CURRENT_LINK_IDENTITY
 
 revalidate_initial_current_target() {
-  [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+  revalidate_current_link_parent \
+    && [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
     "$INITIAL_CURRENT_RAW_TARGET" ] \
     && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = \
       "$INITIAL_CURRENT_RESOLVED_TARGET" ]
@@ -1539,7 +1689,8 @@ revalidate_initial_current_compatibility() {
 }
 
 revalidate_initial_current_temporary_links() {
-  [ ! -e "$EXPECTED_SWITCH_TEMP_LINK" ] \
+  revalidate_current_link_parent \
+    && [ ! -e "$EXPECTED_SWITCH_TEMP_LINK" ] \
     && [ ! -L "$EXPECTED_SWITCH_TEMP_LINK" ] \
     && [ ! -e "$EXPECTED_COMPENSATION_TEMP_LINK" ] \
     && [ ! -L "$EXPECTED_COMPENSATION_TEMP_LINK" ]
@@ -1882,7 +2033,8 @@ revalidate_incident_runtimes() {
     expected_current="$FROZEN_RUNTIME_DIR"
     expected_identity="$FROZEN_CURRENT_LINK_IDENTITY"
   fi
-  [ -n "$expected_identity" ] \
+  revalidate_current_link_parent \
+    && [ -n "$expected_identity" ] \
     && [ -L "$CURRENT_LINK" ] \
     && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$expected_current" ] \
     && [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$expected_current" ] \
@@ -1897,31 +2049,93 @@ current_link_is_exact() {
   local expected_target="$1"
   [ "$expected_target" = "$CANDIDATE_RUNTIME_DIR" ] \
     || [ "$expected_target" = "$FROZEN_RUNTIME_DIR" ] || return 1
-  [ -L "$CURRENT_LINK" ] \
+  revalidate_current_link_parent \
+    && [ -L "$CURRENT_LINK" ] \
     && [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$expected_target" ] \
     && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$expected_target" ] \
     || return 1
   trusted_symlink_identity "$CURRENT_LINK" >/dev/null
 }
 
+capture_relocated_symlink_identity() {
+  local source_path="$1"
+  local destination_path="$2"
+  local expected_target="$3"
+  local expected_object_identity="$4"
+  local first_full_identity
+  local first_object_identity
+  local second_full_identity
+  local second_object_identity
+  [ "$source_path" = "$EXPECTED_SWITCH_TEMP_LINK" ] \
+    || [ "$source_path" = "$EXPECTED_COMPENSATION_TEMP_LINK" ] || return 1
+  [ "$destination_path" = "$CURRENT_LINK" ] || return 1
+  [ "$expected_target" = "$CANDIDATE_RUNTIME_DIR" ] \
+    || [ "$expected_target" = "$FROZEN_RUNTIME_DIR" ] || return 1
+  [ -n "$expected_object_identity" ] || return 1
+  revalidate_current_link_parent \
+    && [ ! -e "$source_path" ] && [ ! -L "$source_path" ] \
+    && [ -L "$destination_path" ] \
+    && [ "$(readlink -- "$destination_path" 2>/dev/null || true)" = \
+      "$expected_target" ] \
+    && [ "$(readlink -f -- "$destination_path" 2>/dev/null || true)" = \
+      "$expected_target" ] || return 1
+  first_full_identity="$(trusted_symlink_identity "$destination_path")" \
+    || return 1
+  first_object_identity="$(symlink_object_identity_from_full \
+    "$first_full_identity")" || return 1
+  [ "$first_object_identity" = "$expected_object_identity" ] || return 1
+  revalidate_current_link_parent \
+    && [ ! -e "$source_path" ] && [ ! -L "$source_path" ] \
+    && [ "$(readlink -- "$destination_path" 2>/dev/null || true)" = \
+      "$expected_target" ] \
+    && [ "$(readlink -f -- "$destination_path" 2>/dev/null || true)" = \
+      "$expected_target" ] || return 1
+  second_full_identity="$(trusted_symlink_identity "$destination_path")" \
+    || return 1
+  second_object_identity="$(symlink_object_identity_from_full \
+    "$second_full_identity")" || return 1
+  [ "$second_full_identity" = "$first_full_identity" ] \
+    && [ "$second_object_identity" = "$expected_object_identity" ] \
+    && revalidate_current_link_parent \
+    && [ ! -e "$source_path" ] && [ ! -L "$source_path" ] \
+    && [ "$(readlink -- "$destination_path" 2>/dev/null || true)" = \
+      "$expected_target" ] \
+    && [ "$(readlink -f -- "$destination_path" 2>/dev/null || true)" = \
+      "$expected_target" ] || return 1
+  printf '%s' "$second_full_identity"
+}
+
 cleanup_compensation_pending() {
-  [ -n "$COMPENSATION_TEMP_LINK" ] \
+  revalidate_current_link_parent \
+    && [ -n "$COMPENSATION_TEMP_LINK" ] \
     && [ -n "$COMPENSATION_TEMP_LINK_IDENTITY" ] \
+    && [ -n "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ] \
     && [ "$(trusted_symlink_identity "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
       "$COMPENSATION_TEMP_LINK_IDENTITY" ] \
+    && [ "$(trusted_symlink_object_identity \
+      "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
+      "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ] \
     && [ "$(readlink -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
       "$CANDIDATE_RUNTIME_DIR" ] \
     && [ "$(readlink -f -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
       "$CANDIDATE_RUNTIME_DIR" ] || return 1
   unlink -- "$COMPENSATION_TEMP_LINK" >/dev/null 2>&1 || return 1
-  [ ! -e "$COMPENSATION_TEMP_LINK" ] && [ ! -L "$COMPENSATION_TEMP_LINK" ] \
+  revalidate_current_link_parent \
+    && [ ! -e "$COMPENSATION_TEMP_LINK" ] \
+    && [ ! -L "$COMPENSATION_TEMP_LINK" ] \
     || return 1
   COMPENSATION_TEMP_LINK=""
+  COMPENSATION_TEMP_LINK_IDENTITY=""
+  COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=""
 }
 
 restore_candidate_before_web_commit() {
   local observed_current="unknown"
+  local observed_identity=""
+  local relocated_identity=""
+  local compensation_link_status=0
   [ "$FROZEN_WEB_COMMITTED" -eq 0 ] || return 1
+  revalidate_current_link_parent || return 1
   revalidate_deploy_lock || return 1
   port_is_free || return 1
   revalidate_incident_release_pair || return 1
@@ -1930,9 +2144,21 @@ restore_candidate_before_web_commit() {
       "$CURRENT_LINK_IDENTITY" ] || return 1
     observed_current="candidate"
   elif current_link_is_exact "$FROZEN_RUNTIME_DIR"; then
-    [ -n "$FROZEN_CURRENT_LINK_IDENTITY" ] \
-      && [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
-        "$FROZEN_CURRENT_LINK_IDENTITY" ] || return 1
+    observed_identity="$(trusted_symlink_identity "$CURRENT_LINK")" || return 1
+    if [ -n "$FROZEN_CURRENT_LINK_IDENTITY" ]; then
+      [ "$observed_identity" = "$FROZEN_CURRENT_LINK_IDENTITY" ] || return 1
+    else
+      [ -n "$SWITCH_TEMP_LINK_OBJECT_IDENTITY" ] || return 1
+      relocated_identity="$(capture_relocated_symlink_identity \
+        "$EXPECTED_SWITCH_TEMP_LINK" "$CURRENT_LINK" \
+        "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK_OBJECT_IDENTITY")" \
+        || return 1
+      FROZEN_CURRENT_LINK_IDENTITY="$relocated_identity"
+      CURRENT_SWITCH_COMPLETED=1
+      SWITCH_TEMP_LINK=""
+      SWITCH_TEMP_LINK_IDENTITY=""
+      SWITCH_TEMP_LINK_OBJECT_IDENTITY=""
+    fi
     observed_current="frozen"
   else
     return 1
@@ -1944,13 +2170,30 @@ restore_candidate_before_web_commit() {
       ;;
     frozen)
       COMPENSATION_TEMP_LINK="$EXPECTED_COMPENSATION_TEMP_LINK"
-      [ ! -e "$COMPENSATION_TEMP_LINK" ] && [ ! -L "$COMPENSATION_TEMP_LINK" ] \
+      revalidate_current_link_parent \
+        && [ ! -e "$COMPENSATION_TEMP_LINK" ] \
+        && [ ! -L "$COMPENSATION_TEMP_LINK" ] \
         || return 1
       ln -s -- "$CANDIDATE_RUNTIME_DIR" "$COMPENSATION_TEMP_LINK" \
-        >/dev/null 2>&1 || return 1
-      COMPENSATION_TEMP_LINK_IDENTITY="$(trusted_symlink_identity \
-        "$COMPENSATION_TEMP_LINK")" || return 1
-      if [ "$(readlink -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" != \
+        >/dev/null 2>&1 || compensation_link_status=$?
+      if ! capture_trusted_temp_symlink_snapshot \
+        "$COMPENSATION_TEMP_LINK" "$CANDIDATE_RUNTIME_DIR" \
+        COMPENSATION_TEMP_LINK_IDENTITY \
+        COMPENSATION_TEMP_LINK_OBJECT_IDENTITY; then
+        if capture_trusted_temp_symlink_snapshot \
+          "$COMPENSATION_TEMP_LINK" "$CANDIDATE_RUNTIME_DIR" \
+          COMPENSATION_TEMP_LINK_IDENTITY \
+          COMPENSATION_TEMP_LINK_OBJECT_IDENTITY; then
+          cleanup_compensation_pending || true
+        fi
+        return 1
+      fi
+      if [ "$compensation_link_status" -ne 0 ]; then
+        cleanup_compensation_pending || true
+        return 1
+      fi
+      if ! revalidate_current_link_parent \
+        || [ "$(readlink -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" != \
           "$CANDIDATE_RUNTIME_DIR" ] \
         || [ "$(readlink -f -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" != \
           "$CANDIDATE_RUNTIME_DIR" ]; then
@@ -1965,28 +2208,41 @@ restore_candidate_before_web_commit() {
         && port_is_free \
         && [ "$(trusted_symlink_identity "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
           "$COMPENSATION_TEMP_LINK_IDENTITY" ] \
+        && [ "$(trusted_symlink_object_identity \
+          "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
+          "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ] \
         && [ "$(readlink -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
           "$CANDIDATE_RUNTIME_DIR" ] \
         && [ "$(readlink -f -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
           "$CANDIDATE_RUNTIME_DIR" ] \
         || { cleanup_compensation_pending || true; return 1; }
-      if ! mv -T -- "$COMPENSATION_TEMP_LINK" "$CURRENT_LINK" \
+      if mv -T -- "$COMPENSATION_TEMP_LINK" "$CURRENT_LINK" \
         >/dev/null 2>&1; then
-        if [ -e "$COMPENSATION_TEMP_LINK" ] || [ -L "$COMPENSATION_TEMP_LINK" ]; then
-          cleanup_compensation_pending || true
-        fi
-        return 1
+        :
       fi
-      COMPENSATION_TEMP_LINK=""
-      [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
-        "$COMPENSATION_TEMP_LINK_IDENTITY" ] || return 1
-      CURRENT_LINK_IDENTITY="$COMPENSATION_TEMP_LINK_IDENTITY"
+      relocated_identity="$(capture_relocated_symlink_identity \
+        "$EXPECTED_COMPENSATION_TEMP_LINK" "$CURRENT_LINK" \
+        "$CANDIDATE_RUNTIME_DIR" "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY")" \
+        || {
+          if [ -e "$COMPENSATION_TEMP_LINK" ] \
+            || [ -L "$COMPENSATION_TEMP_LINK" ]; then
+            cleanup_compensation_pending || true
+          fi
+          return 1
+        }
+      CURRENT_LINK_IDENTITY="$relocated_identity"
       CURRENT_SWITCH_COMPLETED=0
       CURRENT_SWITCH_ARMED=0
+      COMPENSATION_TEMP_LINK=""
+      COMPENSATION_TEMP_LINK_IDENTITY=""
+      COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=""
       ;;
     *) return 1 ;;
   esac
   current_link_is_exact "$CANDIDATE_RUNTIME_DIR" \
+    && [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$CURRENT_LINK_IDENTITY" ] \
+    && revalidate_current_link_parent \
     && revalidate_incident_release_pair \
     && revalidate_deploy_lock \
     && port_is_free
@@ -2560,6 +2816,7 @@ printf '%s\n' 'candidate_processes_stopped'
 case "$INITIAL_CURRENT_STATE" in
   candidate)
     RECOVERY_FAILURE_STAGE="current_switch"
+    revalidate_current_link_parent || exit 1
     revalidate_incident_runtimes || exit 1
     revalidate_deploy_lock || exit 1
     verify_database_fence_clear || exit 1
@@ -2569,13 +2826,25 @@ case "$INITIAL_CURRENT_STATE" in
       "$CANDIDATE_RUNTIME_DIR" ] || exit 1
     revalidate_incident_release_pair || exit 1
     SWITCH_TEMP_LINK="$EXPECTED_SWITCH_TEMP_LINK"
-    [ ! -e "$SWITCH_TEMP_LINK" ] && [ ! -L "$SWITCH_TEMP_LINK" ] || exit 1
-    ln -s -- "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK" >/dev/null 2>&1 || exit 1
-    [ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
-      "$FROZEN_RUNTIME_DIR" ] || exit 1
-    FROZEN_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$SWITCH_TEMP_LINK")" \
+    revalidate_current_link_parent \
+      && [ ! -e "$SWITCH_TEMP_LINK" ] && [ ! -L "$SWITCH_TEMP_LINK" ] \
       || exit 1
+    trap defer_recovery_signal HUP INT TERM
+    switch_link_status=0
+    ln -s -- "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK" \
+      >/dev/null 2>&1 || switch_link_status=$?
+    if ! capture_trusted_temp_symlink_snapshot \
+      "$SWITCH_TEMP_LINK" "$FROZEN_RUNTIME_DIR" \
+      SWITCH_TEMP_LINK_IDENTITY SWITCH_TEMP_LINK_OBJECT_IDENTITY; then
+      capture_trusted_temp_symlink_snapshot \
+        "$SWITCH_TEMP_LINK" "$FROZEN_RUNTIME_DIR" \
+        SWITCH_TEMP_LINK_IDENTITY SWITCH_TEMP_LINK_OBJECT_IDENTITY || true
+      exit 1
+    fi
+    [ "$switch_link_status" -eq 0 ] || exit 1
     CURRENT_SWITCH_ARMED=1
+    trap handle_recovery_signal HUP INT TERM
+    [ "$RECOVERY_SIGNAL_PENDING" -eq 0 ] || exit 1
     revalidate_incident_release_pair || exit 1
     revalidate_deploy_lock || exit 1
     [ "$(candidate_pm2_state web)" = "absent" ] || exit 1
@@ -2590,12 +2859,22 @@ case "$INITIAL_CURRENT_STATE" in
     [ "$(readlink -f -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
       "$FROZEN_RUNTIME_DIR" ] || exit 1
     [ "$(trusted_symlink_identity "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
-      "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
-    mv -T -- "$SWITCH_TEMP_LINK" "$CURRENT_LINK" >/dev/null 2>&1 || exit 1
-    SWITCH_TEMP_LINK=""
+      "$SWITCH_TEMP_LINK_IDENTITY" ] \
+      && [ "$(trusted_symlink_object_identity \
+        "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+        "$SWITCH_TEMP_LINK_OBJECT_IDENTITY" ] \
+      && revalidate_current_link_parent || exit 1
+    if mv -T -- "$SWITCH_TEMP_LINK" "$CURRENT_LINK" >/dev/null 2>&1; then
+      :
+    fi
+    relocated_switch_identity="$(capture_relocated_symlink_identity \
+      "$EXPECTED_SWITCH_TEMP_LINK" "$CURRENT_LINK" \
+      "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK_OBJECT_IDENTITY")" || exit 1
+    FROZEN_CURRENT_LINK_IDENTITY="$relocated_switch_identity"
     CURRENT_SWITCH_COMPLETED=1
-    [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
-      "$FROZEN_RUNTIME_DIR" ] || exit 1
+    SWITCH_TEMP_LINK=""
+    SWITCH_TEMP_LINK_IDENTITY=""
+    SWITCH_TEMP_LINK_OBJECT_IDENTITY=""
     [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
       "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
     revalidate_incident_runtimes || exit 1

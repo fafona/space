@@ -42,9 +42,9 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32625801433"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32625773494"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32615785237"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32627378516"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="f1e565d39fbadf4429a1ed9d91b327528c37f6f8"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="870e79ac1b5fd036bfd08b895284bc6a754a102a"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433"/);
@@ -1088,8 +1088,11 @@ test("candidate current switch is atomic while frozen current resume is read-onl
   assert.match(change, /trusted_symlink_identity "\$CURRENT_LINK".*CURRENT_LINK_IDENTITY/s);
   assert.match(change, /readlink -- "\$CURRENT_LINK".*CANDIDATE_RUNTIME_DIR/s);
   assert.match(change, /ln -s -- "\$FROZEN_RUNTIME_DIR" "\$SWITCH_TEMP_LINK"/);
-  assert.match(change, /FROZEN_CURRENT_LINK_IDENTITY="\$\(trusted_symlink_identity "\$SWITCH_TEMP_LINK"\)"/);
-  assert.ok(change.indexOf("FROZEN_CURRENT_LINK_IDENTITY=") < change.indexOf("CURRENT_SWITCH_ARMED=1"));
+  assert.match(change, /ln -s -- "\$FROZEN_RUNTIME_DIR" "\$SWITCH_TEMP_LINK"[\s\S]*\|\| switch_link_status=\$\?/);
+  assert.match(change, /capture_trusted_temp_symlink_snapshot[\s\S]*SWITCH_TEMP_LINK_IDENTITY SWITCH_TEMP_LINK_OBJECT_IDENTITY/);
+  assert.ok(change.indexOf("capture_trusted_temp_symlink_snapshot") < change.indexOf("CURRENT_SWITCH_ARMED=1"));
+  assert.ok(change.indexOf("capture_trusted_temp_symlink_snapshot") < change.indexOf('"$switch_link_status" -eq 0'));
+  assert.match(change, /trap defer_recovery_signal HUP INT TERM[\s\S]*trap handle_recovery_signal HUP INT TERM/);
   assert.ok(change.indexOf("CURRENT_SWITCH_ARMED=1") < change.indexOf("mv -T"));
   const preMove = change.slice(
     change.indexOf("CURRENT_SWITCH_ARMED=1"),
@@ -1104,12 +1107,19 @@ test("candidate current switch is atomic while frozen current resume is read-onl
     "verify_database_fence_clear",
     "current_link_is_exact",
     "CURRENT_LINK_IDENTITY",
-    "FROZEN_CURRENT_LINK_IDENTITY",
+    "SWITCH_TEMP_LINK_IDENTITY",
+    "SWITCH_TEMP_LINK_OBJECT_IDENTITY",
   ]) assert.ok(preMove.includes(required), `pre-mv revalidation missing ${required}`);
   assert.match(preMove, /readlink -- "\$SWITCH_TEMP_LINK"/);
   assert.match(preMove, /readlink -f -- "\$SWITCH_TEMP_LINK"/);
   assert.match(change, /mv -T -- "\$SWITCH_TEMP_LINK" "\$CURRENT_LINK"/);
+  assert.match(change, /capture_relocated_symlink_identity[\s\S]*SWITCH_TEMP_LINK_OBJECT_IDENTITY/);
+  assert.ok(change.indexOf("mv -T") < change.indexOf("capture_relocated_symlink_identity"));
+  assert.ok(change.indexOf("capture_relocated_symlink_identity") < change.indexOf("FROZEN_CURRENT_LINK_IDENTITY="));
+  assert.ok(change.indexOf("FROZEN_CURRENT_LINK_IDENTITY=") < change.indexOf("CURRENT_SWITCH_COMPLETED=1"));
+  assert.ok(change.indexOf("CURRENT_SWITCH_COMPLETED=1") < change.indexOf('SWITCH_TEMP_LINK=""'));
   assert.match(change, /CURRENT_SWITCH_COMPLETED=1/);
+  assert.doesNotMatch(change, /trusted_symlink_identity "\$CURRENT_LINK"[^\n]*=\s*\\?\s*\n?\s*"\$SWITCH_TEMP_LINK_IDENTITY"/);
   assert.match(change, /revalidate_incident_release_pair/);
   assert.match(resume, /CURRENT_SWITCH_COMPLETED" -eq 1/);
   assert.match(resume, /CURRENT_SWITCH_ARMED" -eq 0/);
@@ -1139,6 +1149,207 @@ test("candidate current switch is atomic while frozen current resume is read-onl
   assert.doesNotMatch(source, /unlink\s+[^\n]*CANDIDATE_RUNTIME_DIR/);
 });
 
+test("relocated symlink identity ignores rename timestamps but rejects replacement objects", {
+  skip: process.platform === "win32",
+}, () => {
+  assert.ok(bash, "bash unavailable");
+  const identityHelpers = between("trusted_symlink_identity()", "cleanup_started_process()");
+  const relocationHelper = between(
+    "capture_relocated_symlink_identity()",
+    "cleanup_compensation_pending()",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "faolla-symlink-relocation-"));
+  try {
+    const harness = `
+set -Eeuo pipefail
+${identityHelpers}
+${relocationHelper}
+root="$1"
+mkdir "$root/candidate" "$root/frozen"
+CURRENT_LINK_PARENT_DIR="$root"
+CURRENT_LINK="$root/current"
+EXPECTED_SWITCH_TEMP_LINK="$root/current.switch"
+EXPECTED_COMPENSATION_TEMP_LINK="$root/current.compensate"
+CANDIDATE_RUNTIME_DIR="$root/candidate"
+FROZEN_RUNTIME_DIR="$root/frozen"
+CURRENT_LINK_PARENT_IDENTITY="$(trusted_directory_object_identity "$root")"
+ln -s -- "$CANDIDATE_RUNTIME_DIR" "$CURRENT_LINK"
+ln -s -- "$FROZEN_RUNTIME_DIR" "$EXPECTED_SWITCH_TEMP_LINK"
+before_full="$(trusted_symlink_identity "$EXPECTED_SWITCH_TEMP_LINK")"
+before_object="$(symlink_object_identity_from_full "$before_full")"
+IFS=: read -r _ _ _ _ before_ctime _ _ _ <<< "$before_full"
+sleep 1.1
+mv -T -- "$EXPECTED_SWITCH_TEMP_LINK" "$CURRENT_LINK"
+after_full="$(trusted_symlink_identity "$CURRENT_LINK")"
+after_object="$(symlink_object_identity_from_full "$after_full")"
+IFS=: read -r _ _ _ _ after_ctime _ _ _ <<< "$after_full"
+[ "$before_full" != "$after_full" ]
+[ "$after_ctime" -gt "$before_ctime" ]
+[ "$before_object" = "$after_object" ]
+captured="$(capture_relocated_symlink_identity \
+  "$EXPECTED_SWITCH_TEMP_LINK" "$CURRENT_LINK" \
+  "$FROZEN_RUNTIME_DIR" "$before_object")"
+[ "$captured" = "$after_full" ]
+ln -s -- "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_COMPENSATION_TEMP_LINK"
+compensation_full="$(trusted_symlink_identity "$EXPECTED_COMPENSATION_TEMP_LINK")"
+compensation_object="$(symlink_object_identity_from_full "$compensation_full")"
+mv -T -- "$EXPECTED_COMPENSATION_TEMP_LINK" "$CURRENT_LINK"
+ln -s -- "$CANDIDATE_RUNTIME_DIR" "$root/substitute"
+mv -T -- "$root/substitute" "$CURRENT_LINK"
+if capture_relocated_symlink_identity \
+  "$EXPECTED_COMPENSATION_TEMP_LINK" "$CURRENT_LINK" \
+  "$CANDIDATE_RUNTIME_DIR" "$compensation_object" >/dev/null 2>&1; then
+  exit 40
+fi
+printf '%s' verified
+`;
+    const result = spawnSync(bash, ["-c", harness, "bash", directory], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "verified");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("signal-window fallback refreshes frozen identity and performs a real compensation rename", {
+  skip: process.platform === "win32",
+}, () => {
+  assert.ok(bash, "bash unavailable");
+  const identityHelpers = between("trusted_symlink_identity()", "cleanup_started_process()");
+  const stateHelpers = between(
+    "current_link_is_exact()",
+    'RECOVERY_FAILURE_STAGE="initial_current_target"',
+  );
+  const directory = mkdtempSync(join(tmpdir(), "faolla-signal-compensation-"));
+  try {
+    const harness = `
+set -Eeuo pipefail
+${identityHelpers}
+${stateHelpers}
+root="$1"
+mkdir -p "$root/success/candidate" "$root/success/frozen" \
+  "$root/attack/candidate" "$root/attack/frozen" \
+  "$root/mvfail/candidate" "$root/mvfail/frozen" \
+  "$root/lnstatus/candidate" "$root/lnstatus/frozen"
+revalidate_deploy_lock() { return 0; }
+port_is_free() { return 0; }
+revalidate_incident_release_pair() { return 0; }
+configure_case() {
+  CURRENT_LINK_PARENT_DIR="$1"
+  CURRENT_LINK="$1/current"
+  EXPECTED_SWITCH_TEMP_LINK="$1/current.switch"
+  EXPECTED_COMPENSATION_TEMP_LINK="$1/current.compensate"
+  CANDIDATE_RUNTIME_DIR="$1/candidate"
+  FROZEN_RUNTIME_DIR="$1/frozen"
+  CURRENT_LINK_PARENT_IDENTITY="$(trusted_directory_object_identity "$1")"
+  FROZEN_WEB_COMMITTED=0
+  CURRENT_SWITCH_COMPLETED=0
+  CURRENT_SWITCH_ARMED=1
+  FROZEN_CURRENT_LINK_IDENTITY=''
+  SWITCH_TEMP_LINK="$EXPECTED_SWITCH_TEMP_LINK"
+  SWITCH_TEMP_LINK_IDENTITY=''
+  SWITCH_TEMP_LINK_OBJECT_IDENTITY=''
+  COMPENSATION_TEMP_LINK=''
+  COMPENSATION_TEMP_LINK_IDENTITY=''
+  COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=''
+}
+configure_case "$root/success"
+ln -s -- "$CANDIDATE_RUNTIME_DIR" "$CURRENT_LINK"
+CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")"
+ln -s -- "$FROZEN_RUNTIME_DIR" "$EXPECTED_SWITCH_TEMP_LINK"
+SWITCH_TEMP_LINK_IDENTITY="$(trusted_symlink_identity "$EXPECTED_SWITCH_TEMP_LINK")"
+SWITCH_TEMP_LINK_OBJECT_IDENTITY="$(symlink_object_identity_from_full \
+  "$SWITCH_TEMP_LINK_IDENTITY")"
+sleep 1.1
+command mv -T -- "$EXPECTED_SWITCH_TEMP_LINK" "$CURRENT_LINK"
+mv() {
+  if [ "$3" = "$EXPECTED_COMPENSATION_TEMP_LINK" ]; then
+    trusted_symlink_identity "$3" > "$root/compensation-before"
+    sleep 1.1
+  fi
+  command mv "$@"
+  return 17
+}
+restore_candidate_before_web_commit
+compensation_before="$(< "$root/compensation-before")"
+[ "$(readlink -- "$CURRENT_LINK")" = "$CANDIDATE_RUNTIME_DIR" ]
+[ "$CURRENT_LINK_IDENTITY" = "$(trusted_symlink_identity "$CURRENT_LINK")" ]
+[ "$CURRENT_LINK_IDENTITY" != "$compensation_before" ]
+[ -n "$FROZEN_CURRENT_LINK_IDENTITY" ]
+[ "$CURRENT_SWITCH_COMPLETED" -eq 0 ]
+[ "$CURRENT_SWITCH_ARMED" -eq 0 ]
+[ -z "$SWITCH_TEMP_LINK" ]
+[ -z "$SWITCH_TEMP_LINK_IDENTITY" ]
+[ -z "$SWITCH_TEMP_LINK_OBJECT_IDENTITY" ]
+[ -z "$COMPENSATION_TEMP_LINK" ]
+[ -z "$COMPENSATION_TEMP_LINK_IDENTITY" ]
+[ -z "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ]
+unset -f mv
+configure_case "$root/attack"
+ln -s -- "$CANDIDATE_RUNTIME_DIR" "$CURRENT_LINK"
+CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")"
+ln -s -- "$FROZEN_RUNTIME_DIR" "$EXPECTED_SWITCH_TEMP_LINK"
+SWITCH_TEMP_LINK_IDENTITY="$(trusted_symlink_identity "$EXPECTED_SWITCH_TEMP_LINK")"
+SWITCH_TEMP_LINK_OBJECT_IDENTITY="$(symlink_object_identity_from_full \
+  "$SWITCH_TEMP_LINK_IDENTITY")"
+command mv -T -- "$EXPECTED_SWITCH_TEMP_LINK" "$CURRENT_LINK"
+ln -s -- "$FROZEN_RUNTIME_DIR" "$root/attack/substitute"
+command mv -T -- "$root/attack/substitute" "$CURRENT_LINK"
+if restore_candidate_before_web_commit; then exit 41; fi
+[ "$CURRENT_SWITCH_COMPLETED" -eq 0 ]
+[ "$CURRENT_SWITCH_ARMED" -eq 1 ]
+[ -z "$FROZEN_CURRENT_LINK_IDENTITY" ]
+[ ! -e "$EXPECTED_COMPENSATION_TEMP_LINK" ] \
+  && [ ! -L "$EXPECTED_COMPENSATION_TEMP_LINK" ]
+configure_case "$root/mvfail"
+command ln -s -- "$FROZEN_RUNTIME_DIR" "$CURRENT_LINK"
+CURRENT_LINK_IDENTITY=unused
+FROZEN_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")"
+CURRENT_SWITCH_COMPLETED=1
+mv() { return 17; }
+if restore_candidate_before_web_commit; then exit 42; fi
+[ "$(readlink -- "$CURRENT_LINK")" = "$FROZEN_RUNTIME_DIR" ]
+[ "$FROZEN_CURRENT_LINK_IDENTITY" = \
+  "$(trusted_symlink_identity "$CURRENT_LINK")" ]
+[ "$CURRENT_SWITCH_COMPLETED" -eq 1 ]
+[ "$CURRENT_SWITCH_ARMED" -eq 1 ]
+[ ! -e "$EXPECTED_COMPENSATION_TEMP_LINK" ] \
+  && [ ! -L "$EXPECTED_COMPENSATION_TEMP_LINK" ]
+[ -z "$COMPENSATION_TEMP_LINK" ]
+[ -z "$COMPENSATION_TEMP_LINK_IDENTITY" ]
+[ -z "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ]
+unset -f mv
+configure_case "$root/lnstatus"
+command ln -s -- "$FROZEN_RUNTIME_DIR" "$CURRENT_LINK"
+CURRENT_LINK_IDENTITY=unused
+FROZEN_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")"
+CURRENT_SWITCH_COMPLETED=1
+ln() { command ln "$@"; return 17; }
+mv() { : > "$root/unexpected-mv"; return 0; }
+if restore_candidate_before_web_commit; then exit 43; fi
+[ "$(readlink -- "$CURRENT_LINK")" = "$FROZEN_RUNTIME_DIR" ]
+[ "$CURRENT_SWITCH_COMPLETED" -eq 1 ]
+[ "$CURRENT_SWITCH_ARMED" -eq 1 ]
+[ ! -e "$EXPECTED_COMPENSATION_TEMP_LINK" ] \
+  && [ ! -L "$EXPECTED_COMPENSATION_TEMP_LINK" ]
+[ -z "$COMPENSATION_TEMP_LINK" ]
+[ -z "$COMPENSATION_TEMP_LINK_IDENTITY" ]
+[ -z "$COMPENSATION_TEMP_LINK_OBJECT_IDENTITY" ]
+[ ! -e "$root/unexpected-mv" ]
+printf '%s' verified
+`;
+    const result = spawnSync(bash, ["-c", harness, "bash", directory], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "verified");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("pre-commit failure compensates only exact frozen current and covers the mv flag window", () => {
   const finish = between("finish_recovery()", "require_command()");
   const compensate = between(
@@ -1149,14 +1360,43 @@ test("pre-commit failure compensates only exact frozen current and covers the mv
   assert.doesNotMatch(finish, /CURRENT_SWITCH_COMPLETED.*restore_candidate_before_web_commit/s);
   assert.match(finish, /trap '' HUP INT TERM/);
   assert.match(source, /trap handle_recovery_signal HUP INT TERM/);
+  assert.match(finish, /SWITCH_TEMP_LINK_IDENTITY[\s\S]*SWITCH_TEMP_LINK_OBJECT_IDENTITY[\s\S]*FROZEN_RUNTIME_DIR[\s\S]*unlink -- "\$SWITCH_TEMP_LINK"/);
+  assert.match(finish, /COMPENSATION_TEMP_LINK_IDENTITY[\s\S]*COMPENSATION_TEMP_LINK_OBJECT_IDENTITY[\s\S]*CANDIDATE_RUNTIME_DIR[\s\S]*unlink -- "\$COMPENSATION_TEMP_LINK"/);
+  assert.match(finish, /revalidate_current_link_parent/);
   assert.match(compensate, /trusted_symlink_identity "\$CURRENT_LINK".*CURRENT_LINK_IDENTITY/s);
   assert.match(compensate, /trusted_symlink_identity "\$CURRENT_LINK".*FROZEN_CURRENT_LINK_IDENTITY/s);
   assert.match(compensate, /revalidate_incident_release_pair[\s\S]*revalidate_deploy_lock[\s\S]*port_is_free[\s\S]*mv -T -- "\$COMPENSATION_TEMP_LINK"/);
-  assert.match(compensate, /COMPENSATION_TEMP_LINK_IDENTITY="\$\(trusted_symlink_identity/);
+  assert.match(compensate, /capture_trusted_temp_symlink_snapshot[\s\S]*COMPENSATION_TEMP_LINK_IDENTITY[\s\S]*COMPENSATION_TEMP_LINK_OBJECT_IDENTITY/);
+  assert.match(compensate, /ln -s -- "\$CANDIDATE_RUNTIME_DIR" "\$COMPENSATION_TEMP_LINK"[\s\S]*\|\| compensation_link_status=\$\?/);
+  assert.ok(compensate.indexOf("capture_trusted_temp_symlink_snapshot") < compensate.indexOf('"$compensation_link_status" -ne 0'));
   assert.match(compensate, /mv -T -- "\$COMPENSATION_TEMP_LINK" "\$CURRENT_LINK"/);
+  assert.match(compensate, /capture_relocated_symlink_identity[\s\S]*COMPENSATION_TEMP_LINK_OBJECT_IDENTITY/);
+  const compensationCapture = compensate.lastIndexOf("capture_relocated_symlink_identity");
+  const candidateIdentityCommit = compensate.lastIndexOf('CURRENT_LINK_IDENTITY="$relocated_identity"');
+  const compensationFlagsCommit = compensate.lastIndexOf("CURRENT_SWITCH_COMPLETED=0");
+  assert.ok(compensate.indexOf("mv -T") < compensationCapture);
+  assert.ok(compensationCapture < candidateIdentityCommit);
+  assert.ok(candidateIdentityCommit < compensationFlagsCommit);
+  assert.doesNotMatch(compensate, /CURRENT_LINK_IDENTITY="\$COMPENSATION_TEMP_LINK_IDENTITY"/);
+  assert.match(compensate, /SWITCH_TEMP_LINK_OBJECT_IDENTITY[\s\S]*capture_relocated_symlink_identity[\s\S]*FROZEN_CURRENT_LINK_IDENTITY="\$relocated_identity"/);
   assert.match(compensate, /ln -s -- "\$CANDIDATE_RUNTIME_DIR" "\$COMPENSATION_TEMP_LINK" \\\n+        >\/dev\/null 2>&1/);
   assert.match(compensate, /mv -T -- "\$COMPENSATION_TEMP_LINK" "\$CURRENT_LINK" \\\n+        >\/dev\/null 2>&1/);
   assert.match(source, /trusted_symlink_identity\(\)[\s\S]*%d:%i:%s:%Y:%Z:%u:%f:%h/);
+  assert.match(
+    source,
+    /printf '%s:%s:%s:%s:%s:%s' \\\n+    "\$device" "\$inode" "\$size" "\$link_uid" "\$link_raw_mode" "\$link_count"/,
+  );
+  assert.match(source, /trusted_symlink_object_identity\(\)[\s\S]*symlink_object_identity_from_full/);
+  assert.doesNotMatch(between("symlink_object_identity_from_full()", "trusted_symlink_object_identity()"), /%Y|%Z/);
+  assert.match(source, /trusted_directory_object_identity\(\)[\s\S]*8#022/);
+  const relocation = between(
+    "capture_relocated_symlink_identity()",
+    "cleanup_compensation_pending()",
+  );
+  assert.match(relocation, /! -e "\$source_path"[\s\S]*! -L "\$source_path"/);
+  assert.match(relocation, /first_object_identity.*expected_object_identity/s);
+  assert.match(relocation, /second_full_identity.*first_full_identity/s);
+  assert.match(relocation, /revalidate_current_link_parent/);
   assert.match(source, /link_uid.*id -u[\s\S]*link_count.*"1"[\s\S]*0120000/);
   assert.match(source, /verify_precommit_safe_state[\s\S]*inactive:inactive\|inactive:absent/);
   assert.match(
@@ -1180,11 +1420,21 @@ EXPECTED_INCIDENT_DEPLOY_RUN_ID=32625801433
 EXPECTED_COMPENSATION_TEMP_LINK=/current.compensate-32625801433
 COMPENSATION_TEMP_LINK=''
 COMPENSATION_TEMP_LINK_IDENTITY=''
+COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=''
 revalidate_deploy_lock() { return 0; }
+revalidate_current_link_parent() { return 0; }
 port_is_free() { return 0; }
 revalidate_incident_release_pair() { return 0; }
 current_link_is_exact() { [ "$1" = /frozen ]; }
 trusted_symlink_identity() { if [ "$1" = /current ]; then printf frozen-identity; else printf pending-identity; fi; }
+symlink_object_identity_from_full() { printf pending-object; }
+trusted_symlink_object_identity() { printf pending-object; }
+capture_trusted_temp_symlink_snapshot() {
+  ${failure === "ln" ? "return 1" : ":"}
+  printf -v "$3" pending-identity
+  printf -v "$4" pending-object
+}
+capture_relocated_symlink_identity() { return 1; }
 readlink() { case "$*" in *current) printf /frozen;; *) printf /candidate;; esac; }
 ln() { ${failure === "ln" ? "printf leak-from-ln >&2; return 1" : "return 0"}; }
 mv() { ${failure === "mv" ? "printf leak-from-mv >&2; return 1" : "return 0"}; }
