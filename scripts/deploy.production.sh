@@ -491,6 +491,9 @@ RELEASE_SMOKE_TIMEOUT_MS="${RELEASE_SMOKE_TIMEOUT_MS:-12000}"
 RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS="${RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS:-180}"
 BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS="${BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS:-60}"
 BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS="${BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS:-60}"
+BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS="${BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS:-45}"
+BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS="${BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS:-20}"
+BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS="${BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS:-5}"
 RELEASE_PROCESS_START_TIMEOUT_SECONDS="${RELEASE_PROCESS_START_TIMEOUT_SECONDS:-30}"
 GIT_FETCH_ATTEMPTS="${GIT_FETCH_ATTEMPTS:-4}"
 GIT_FETCH_DELAY_SECONDS="${GIT_FETCH_DELAY_SECONDS:-8}"
@@ -604,6 +607,9 @@ validate_disk_thresholds() {
     RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS \
     BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS \
     BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS \
+    BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS \
+    BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS \
+    BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS \
     RELEASE_PROCESS_START_TIMEOUT_SECONDS \
     GIT_FETCH_ATTEMPTS \
     GIT_FETCH_DELAY_SECONDS \
@@ -709,7 +715,10 @@ validate_disk_thresholds() {
     || [ "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" -lt 30 ] \
     || [ "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" -gt 60 ] \
     || [ "$BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" -ne 60 ] \
-    || [ $((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + 6 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + (AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS + READINESS_FENCE_OPERATION_MARGIN_SECONDS)) -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ] \
+    || [ "$BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS" -ne 45 ] \
+    || [ "$BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS" -ne 20 ] \
+    || [ "$BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS" -ne 5 ] \
+    || [ $((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS + 6 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + (AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS + READINESS_FENCE_OPERATION_MARGIN_SECONDS)) -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ] \
     || [ $(((AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + 2 * RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + RELEASE_PROCESS_START_TIMEOUT_SECONDS + HEALTHCHECK_ATTEMPTS * 5 + 7 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + READINESS_FENCE_RELEASE_WAIT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + 20)) -gt "$READINESS_FENCE_ROLLBACK_RESERVE_SECONDS" ] \
     || [ "$RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS" -lt $((NPM_CI_TIMEOUT_SECONDS + BUILD_TIMEOUT_SECONDS + READINESS_FENCE_MINIMUM_TTL_SECONDS + 600)) ]; then
     echo "[deploy] release evidence TTL does not cover install, build, fence, and rollback budgets"
@@ -1959,16 +1968,36 @@ previous_runtime_recovery_identity_matches() {
 start_release() {
   local runtime_dir="$1"
   local automation_worker_enabled
+  local node_entry
+  local runtime_root
+  local next_entry
   if [ -z "$runtime_dir" ] || [ ! -f "$runtime_dir/package.json" ] || [ ! -d "$runtime_dir/.next" ]; then
     return 1
   fi
+  runtime_root="$(readlink -f -- "$runtime_dir" 2>/dev/null || true)"
+  next_entry="$runtime_dir/node_modules/next/dist/bin/next"
+  node_entry="$(command -v node 2>/dev/null || true)"
+  if [ -z "$runtime_root" ] \
+    || [ "$runtime_root" != "$runtime_dir" ] \
+    || [ -z "$node_entry" ] \
+    || [ ! -f "$next_entry" ] \
+    || [ -L "$next_entry" ]; then
+    return 1
+  fi
+  next_entry="$(readlink -f -- "$next_entry" 2>/dev/null || true)"
+  case "$next_entry" in
+    "$runtime_root"/node_modules/next/dist/bin/next) ;;
+    *) return 1 ;;
+  esac
+  [ -f "$next_entry" ] && [ ! -L "$next_entry" ] || return 1
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
   (
-    cd "$runtime_dir" || exit 1
+    cd "$runtime_root" || exit 1
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
       PORT="$APP_PORT" timeout --signal=TERM --kill-after=5s \
         "${RELEASE_PROCESS_START_TIMEOUT_SECONDS}s" \
-        pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
+        pm2 start "$next_entry" --name "$APP_NAME" \
+          --interpreter "$node_entry" --cwd "$runtime_root" -- start -p "$APP_PORT"
   )
 }
 
@@ -2401,28 +2430,37 @@ verify_supabase_health() {
 verify_booking_persistence() {
   local query_budget_seconds="${1:-$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS}"
   local absolute_deadline_seconds="${2:-}"
+  local expected_directory_identity="${3:-${CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY:-}}"
+  local expected_environment_identity="${4:-${CANDIDATE_ENVIRONMENT_FILE_IDENTITY:-}}"
+  local expected_environment_sha256="${5:-${CANDIDATE_ENVIRONMENT_SHA256:-}}"
   local supervisor_timeout_seconds
   if ! [[ "$query_budget_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$query_budget_seconds" -gt "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" ] \
-    || ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]]; then
-    return 1
+    || ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "$expected_directory_identity" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+    || ! [[ "$expected_environment_identity" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "$expected_environment_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    return 4
   fi
   supervisor_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
-    "$absolute_deadline_seconds" "$query_budget_seconds" 5)" || return 1
-  if [ "$supervisor_timeout_seconds" -le 1 ]; then return 1; fi
+    "$absolute_deadline_seconds" "$query_budget_seconds" \
+    "$BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS")" || return 4
+  if [ "$supervisor_timeout_seconds" \
+    -le "$BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS" ]; then return 4; fi
   (
-    cd "$RELEASE_DIR" || exit 1
-    BOOKING_PERSISTENCE_CHECK_ATTEMPTS="${BOOKING_PERSISTENCE_CHECK_ATTEMPTS:-3}" \
-      BOOKING_PERSISTENCE_CHECK_DELAY_MS="${BOOKING_PERSISTENCE_CHECK_DELAY_MS:-2000}" \
-      BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS="${BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS:-10000}" \
+    cd "$RELEASE_DIR" || exit 4
+    BOOKING_PERSISTENCE_CHECK_ATTEMPTS=1 \
+      BOOKING_PERSISTENCE_CHECK_DELAY_MS=1 \
+      BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS=10000 \
       timeout --signal=TERM --kill-after=5s \
         "${supervisor_timeout_seconds}s" \
         node --input-type=module - \
           "$RELEASE_DIR" \
-          "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" \
-          "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" \
-          "$CANDIDATE_ENVIRONMENT_SHA256" \
-          "$supervisor_timeout_seconds" 2>/dev/null <<'NODE'
+          "$expected_directory_identity" \
+          "$expected_environment_identity" \
+          "$expected_environment_sha256" \
+          "$supervisor_timeout_seconds" \
+          "$BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS" 2>/dev/null <<'NODE'
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -2441,10 +2479,14 @@ const expectedDirectoryIdentity = process.argv[3] ?? "";
 const expectedEnvironmentIdentity = process.argv[4] ?? "";
 const expectedEnvironmentSha256 = process.argv[5] ?? "";
 const supervisorTimeoutSeconds = Number(process.argv[6]);
+const postProofReserveSeconds = Number(process.argv[7]);
 let directoryDescriptor;
 let verificationDescriptor;
 let childEnvironmentDescriptor;
-const fail = () => process.exit(1);
+class BookingPersistenceIntegrityError extends Error {}
+class BookingPersistenceInvocationError extends Error {}
+const failIntegrity = () => { throw new BookingPersistenceIntegrityError(); };
+const failInvocation = () => { throw new BookingPersistenceInvocationError(); };
 const directoryFields = ["dev", "ino", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"];
 const fileFields = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"];
 const encodeIdentity = (identity, fields) =>
@@ -2474,12 +2516,12 @@ const verifyEnvironment = (identity) =>
   encodeIdentity(identity, fileFields) === expectedEnvironmentIdentity;
 const readDescriptorBytes = (descriptor, identity) => {
   const size = Number(identity.size);
-  if (!Number.isSafeInteger(size) || size <= 0 || size > 1024 * 1024) fail();
+  if (!Number.isSafeInteger(size) || size <= 0 || size > 1024 * 1024) failIntegrity();
   const bytes = Buffer.allocUnsafe(size);
   let offset = 0;
   while (offset < size) {
     const count = readSync(descriptor, bytes, offset, size - offset, offset);
-    if (!Number.isSafeInteger(count) || count <= 0) fail();
+    if (!Number.isSafeInteger(count) || count <= 0) failIntegrity();
     offset += count;
   }
   return bytes;
@@ -2487,83 +2529,104 @@ const readDescriptorBytes = (descriptor, identity) => {
 try {
   if (!/^[0-9a-f]{64}$/.test(expectedEnvironmentSha256) ||
       !Number.isSafeInteger(supervisorTimeoutSeconds) ||
-      supervisorTimeoutSeconds <= 1 ||
+      !Number.isSafeInteger(postProofReserveSeconds) ||
+      postProofReserveSeconds < 2 ||
+      supervisorTimeoutSeconds <= postProofReserveSeconds ||
       process.platform !== "linux" ||
       !Number.isInteger(constants.O_DIRECTORY) ||
       !Number.isInteger(constants.O_NOFOLLOW) ||
       !Number.isInteger(constants.O_NONBLOCK) ||
-      realpathSync(releaseDirectory) !== resolve(releaseDirectory)) fail();
+      realpathSync(releaseDirectory) !== resolve(releaseDirectory)) failIntegrity();
   const directoryBefore = lstatSync(releaseDirectory, { bigint: true });
-  if (!verifyDirectory(directoryBefore)) fail();
+  if (!verifyDirectory(directoryBefore)) failIntegrity();
   directoryDescriptor = openSync(
     releaseDirectory,
     constants.O_RDONLY | constants.O_DIRECTORY |
       constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
-  if (!verifyDirectory(fstatSync(directoryDescriptor, { bigint: true }))) fail();
+  if (!verifyDirectory(fstatSync(directoryDescriptor, { bigint: true }))) failIntegrity();
   const descriptorDirectoryPath = `/proc/self/fd/${directoryDescriptor}`;
   const environmentPath = `${releaseDirectory}/.env.local`;
   const descriptorEnvironmentPath = `${descriptorDirectoryPath}/.env.local`;
-  if (!verifyEnvironment(lstatSync(environmentPath, { bigint: true }))) fail();
+  if (!verifyEnvironment(lstatSync(environmentPath, { bigint: true }))) failIntegrity();
   verificationDescriptor = openSync(
     descriptorEnvironmentPath,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
   const verificationIdentity = fstatSync(verificationDescriptor, { bigint: true });
-  if (!verifyEnvironment(verificationIdentity)) fail();
+  if (!verifyEnvironment(verificationIdentity)) failIntegrity();
   const environmentBytes = readDescriptorBytes(
     verificationDescriptor,
     verificationIdentity,
   );
   if (createHash("sha256").update(environmentBytes).digest("hex") !==
-      expectedEnvironmentSha256) fail();
+      expectedEnvironmentSha256) failIntegrity();
   childEnvironmentDescriptor = openSync(
     descriptorEnvironmentPath,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
-  if (!verifyEnvironment(fstatSync(childEnvironmentDescriptor, { bigint: true }))) fail();
-  const childTimeoutMilliseconds = (supervisorTimeoutSeconds - 1) * 1000;
-  const child = spawnSync(
-    process.execPath,
-    [
-      "--preserve-symlinks-main",
-      "--env-file=/proc/self/fd/3",
-      "/proc/self/fd/4/scripts/check-booking-persistence.mjs",
-    ],
-    {
-      cwd: descriptorDirectoryPath,
-      env: {
-        BOOKING_PERSISTENCE_CHECK_ATTEMPTS:
-          process.env.BOOKING_PERSISTENCE_CHECK_ATTEMPTS ?? "",
-        BOOKING_PERSISTENCE_CHECK_DELAY_MS:
-          process.env.BOOKING_PERSISTENCE_CHECK_DELAY_MS ?? "",
-        BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS:
-          process.env.BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS ?? "",
+  if (!verifyEnvironment(fstatSync(childEnvironmentDescriptor, { bigint: true }))) failIntegrity();
+  const childTimeoutMilliseconds =
+    (supervisorTimeoutSeconds - postProofReserveSeconds) * 1000;
+  let child;
+  try {
+    child = spawnSync(
+      process.execPath,
+      [
+        "--preserve-symlinks-main",
+        "--env-file=/proc/self/fd/3",
+        "/proc/self/fd/4/scripts/check-booking-persistence.mjs",
+      ],
+      {
+        cwd: descriptorDirectoryPath,
+        env: {
+          BOOKING_PERSISTENCE_CHECK_ATTEMPTS:
+            process.env.BOOKING_PERSISTENCE_CHECK_ATTEMPTS ?? "",
+          BOOKING_PERSISTENCE_CHECK_DELAY_MS:
+            process.env.BOOKING_PERSISTENCE_CHECK_DELAY_MS ?? "",
+          BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS:
+            process.env.BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS ?? "",
+        },
+        stdio: ["ignore", "ignore", "ignore", childEnvironmentDescriptor, directoryDescriptor],
+        timeout: childTimeoutMilliseconds,
+        killSignal: "SIGKILL",
       },
-      stdio: ["ignore", "ignore", "ignore", childEnvironmentDescriptor, directoryDescriptor],
-      timeout: childTimeoutMilliseconds,
-      killSignal: "SIGKILL",
-    },
-  );
-  if (![0, 1, 2].includes(child.status)) fail();
+    );
+  } catch {
+    failInvocation();
+  }
+  let childStatus;
+  if (child.error?.code === "ETIMEDOUT") {
+    childStatus = 2;
+  } else if (child.error || child.signal !== null || child.status === null ||
+      ![0, 1, 2].includes(child.status)) {
+    failInvocation();
+  } else {
+    childStatus = child.status;
+  }
   if (!verifyDirectory(fstatSync(directoryDescriptor, { bigint: true })) ||
       !verifyDirectory(lstatSync(releaseDirectory, { bigint: true })) ||
       realpathSync(releaseDirectory) !== resolve(releaseDirectory) ||
       !verifyEnvironment(fstatSync(verificationDescriptor, { bigint: true })) ||
       !verifyEnvironment(fstatSync(childEnvironmentDescriptor, { bigint: true })) ||
       !verifyEnvironment(lstatSync(environmentPath, { bigint: true })) ||
-      createHash("sha256").update(readDescriptorBytes(
+       createHash("sha256").update(readDescriptorBytes(
         verificationDescriptor,
         fstatSync(verificationDescriptor, { bigint: true }),
-      )).digest("hex") !==
-        expectedEnvironmentSha256) fail();
-  process.exitCode = child.status;
-} catch {
-  fail();
+       )).digest("hex") !==
+         expectedEnvironmentSha256) failIntegrity();
+  process.exitCode = childStatus;
+} catch (error) {
+  process.exitCode = error instanceof BookingPersistenceInvocationError ? 3 : 4;
 } finally {
-  if (childEnvironmentDescriptor !== undefined) closeSync(childEnvironmentDescriptor);
-  if (verificationDescriptor !== undefined) closeSync(verificationDescriptor);
-  if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+  for (const descriptor of [
+    childEnvironmentDescriptor,
+    verificationDescriptor,
+    directoryDescriptor,
+  ]) {
+    if (descriptor === undefined) continue;
+    try { closeSync(descriptor); } catch { process.exitCode = 4; }
+  }
 }
 NODE
   )
@@ -2667,6 +2730,143 @@ try {
   if (descriptor !== undefined) closeSync(descriptor);
 }
 NODE
+}
+
+assert_booking_persistence_preflight_state() {
+  local absolute_deadline_seconds="$1"
+  local build_id_snapshot
+  local -a build_id_snapshot_parts=()
+  local environment_snapshot
+  local -a environment_snapshot_parts=()
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || [ "${WEB_COMMITTED:-0}" != "0" ] \
+    || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
+    || [ "${PROCESSES_STOPPED:-0}" != "0" ] \
+    || [ "${FORWARD_MUTATION_STARTED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
+    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_RELEASE_REQUESTED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_FORWARD_READY:-0}" != "0" ] \
+    || [ "${LEGACY_COMPATIBILITY_LINKS_INSTALLED:-0}" != "0" ] \
+    || [ -L "$RELEASE_DIR" ] \
+    || [ "$(readlink -f -- "$RELEASE_DIR" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" \
+      != "${BOOKING_PREFLIGHT_RUNTIME_IDENTITY:-}" ]; then
+    return 1
+  fi
+  environment_snapshot="$(read_candidate_environment_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" || return 1
+  mapfile -t environment_snapshot_parts <<< "$environment_snapshot"
+  build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" || return 1
+  mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
+  [ "${#environment_snapshot_parts[@]}" -eq 6 ] \
+    && [ "${environment_snapshot_parts[0]}" = "$BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY" ] \
+    && [ "${environment_snapshot_parts[1]}" = "$BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY" ] \
+    && [ "${environment_snapshot_parts[2]}" = "$BOOKING_PREFLIGHT_ENVIRONMENT_SHA256" ] \
+    && [ "${environment_snapshot_parts[3]}" = "$BOOKING_PREFLIGHT_SUPABASE_INTERNAL_URL_B64" ] \
+    && [ "${environment_snapshot_parts[4]}" = "$BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
+    && [ "${environment_snapshot_parts[5]}" = "$BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    && [ "${#build_id_snapshot_parts[@]}" -eq 2 ] \
+    && [ "${build_id_snapshot_parts[0]}" = "$BOOKING_PREFLIGHT_BUILD_FILE_IDENTITY" ] \
+    && [ "${build_id_snapshot_parts[1]}" = "$BOOKING_PREFLIGHT_BUILD_FILE_SHA256" ] \
+    && [ "$SECONDS" -lt "$absolute_deadline_seconds" ]
+}
+
+capture_booking_persistence_preflight_identity() {
+  local absolute_deadline_seconds="$1"
+  local build_id_snapshot
+  local -a build_id_snapshot_parts=()
+  local environment_snapshot
+  local -a environment_snapshot_parts=()
+  local runtime_identity
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
+    || [ "${PROCESSES_STOPPED:-0}" != "0" ] \
+    || [ "${FORWARD_MUTATION_STARTED:-0}" != "0" ] \
+    || [ -L "$RELEASE_DIR" ] \
+    || [ "$(readlink -f -- "$RELEASE_DIR" 2>/dev/null || true)" != "$RELEASE_DIR" ]; then
+    return 1
+  fi
+  runtime_identity="$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)"
+  environment_snapshot="$(read_candidate_environment_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" || return 1
+  mapfile -t environment_snapshot_parts <<< "$environment_snapshot"
+  build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" || return 1
+  mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
+  if ! [[ "$runtime_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || [ "${#environment_snapshot_parts[@]}" -ne 6 ] \
+    || ! [[ "${environment_snapshot_parts[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+    || ! [[ "${environment_snapshot_parts[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "${environment_snapshot_parts[2]}" =~ ^[0-9a-f]{64}$ ]] \
+    || ! [[ "${environment_snapshot_parts[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${environment_snapshot_parts[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${environment_snapshot_parts[5]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
+    || ! [[ "${build_id_snapshot_parts[0]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "${build_id_snapshot_parts[1]}" =~ ^[0-9a-f]{64}$ ]]; then
+    return 1
+  fi
+  BOOKING_PREFLIGHT_RUNTIME_IDENTITY="$runtime_identity"
+  BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY="${environment_snapshot_parts[0]}"
+  BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY="${environment_snapshot_parts[1]}"
+  BOOKING_PREFLIGHT_ENVIRONMENT_SHA256="${environment_snapshot_parts[2]}"
+  BOOKING_PREFLIGHT_SUPABASE_INTERNAL_URL_B64="${environment_snapshot_parts[3]}"
+  BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_URL_B64="${environment_snapshot_parts[4]}"
+  BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${environment_snapshot_parts[5]}"
+  BOOKING_PREFLIGHT_BUILD_FILE_IDENTITY="${build_id_snapshot_parts[0]}"
+  BOOKING_PREFLIGHT_BUILD_FILE_SHA256="${build_id_snapshot_parts[1]}"
+  assert_booking_persistence_preflight_state "$absolute_deadline_seconds"
+}
+
+run_booking_persistence_preflight() {
+  local protected_quiescence_budget_seconds="$1"
+  local absolute_deadline_seconds="$((
+    SECONDS + BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS
+  ))"
+  local persistence_status=4
+  local remaining_seconds
+  if [[ "$protected_quiescence_budget_seconds" =~ ^[1-9][0-9]*$ ]] \
+    && assert_readiness_fence_before_process_quiescence "$((
+      BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS +
+      protected_quiescence_budget_seconds
+    ))" \
+    && previous_web_process_identity_matches \
+    && previous_runtime_recovery_identity_matches \
+    && capture_booking_persistence_preflight_identity \
+      "$absolute_deadline_seconds"; then
+    remaining_seconds=$((absolute_deadline_seconds - SECONDS))
+    if [ "$remaining_seconds" -gt 0 ]; then
+      if verify_booking_persistence \
+        "$remaining_seconds" "$absolute_deadline_seconds" \
+        "$BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY" \
+        "$BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY" \
+        "$BOOKING_PREFLIGHT_ENVIRONMENT_SHA256" >/dev/null 2>&1; then
+        persistence_status=0
+      else
+        persistence_status=$?
+      fi
+    fi
+    if ! assert_booking_persistence_preflight_state \
+        "$absolute_deadline_seconds" \
+      || ! previous_web_process_identity_matches \
+      || ! previous_runtime_recovery_identity_matches \
+      || ! assert_readiness_fence_before_process_quiescence \
+        "$protected_quiescence_budget_seconds"; then
+      persistence_status=4
+    fi
+  fi
+  case "$persistence_status" in
+    0) return 0 ;;
+    1) echo "[deploy] deploy_preflight_booking_persistence_hard_failed" ;;
+    2) echo "[deploy] deploy_preflight_booking_persistence_transient_failed" ;;
+    4) echo "[deploy] deploy_preflight_booking_persistence_integrity_failed" ;;
+    *) echo "[deploy] deploy_preflight_booking_persistence_invocation_failed" ;;
+  esac
+  return 1
 }
 
 read_candidate_process_environment_snapshot_for_booking_retry() {
@@ -2933,13 +3133,13 @@ verify_booking_persistence_with_bounded_retry() {
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ $((absolute_deadline_seconds - SECONDS)) \
       -gt "$BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" ]; then
-    echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+    echo "[deploy] deploy_forward_booking_persistence_state_failed"
     return 1
   fi
   while [ "$attempt" -lt "$maximum_attempts" ]; do
     attempt=$((attempt + 1))
     if ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
-      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      echo "[deploy] deploy_forward_booking_persistence_state_failed"
       return 1
     fi
     remaining_seconds=$((absolute_deadline_seconds - SECONDS))
@@ -2949,12 +3149,19 @@ verify_booking_persistence_with_bounded_retry() {
       || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
       || ! assert_candidate_web_health "$absolute_deadline_seconds" \
       || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
-      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      echo "[deploy] deploy_forward_booking_persistence_state_failed"
       return 1
     fi
     remaining_seconds=$((absolute_deadline_seconds - SECONDS))
-    if [ "$remaining_seconds" -le 0 ]; then
-      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+    if [ "$remaining_seconds" -le $((
+      BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS +
+      BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS
+    )) ]; then
+      if [ "$attempt" -gt 1 ]; then
+        echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+      else
+        echo "[deploy] deploy_forward_booking_persistence_state_failed"
+      fi
       return 1
     fi
     if [ "$remaining_seconds" -gt "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" ]; then
@@ -2966,28 +3173,35 @@ verify_booking_persistence_with_bounded_retry() {
     else
       persistence_status=$?
     fi
-    if [ "$persistence_status" -eq 2 ] \
-      && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
-      echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
-      return 1
-    fi
     if ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
       || ! assert_readiness_fence_forward_checkpoint \
         "$absolute_deadline_seconds" \
       || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
       || ! assert_candidate_web_health "$absolute_deadline_seconds" \
       || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
-      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      if [ "$persistence_status" -eq 2 ] \
+        && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+        echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+      else
+        echo "[deploy] deploy_forward_booking_persistence_state_failed"
+      fi
       return 1
     fi
     case "$persistence_status" in
       0) return 0 ;;
+      1)
+        echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+        return 1
+        ;;
       2)
         if [ "$attempt" -ge "$maximum_attempts" ]; then
           echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
           return 1
         fi
-        if [ $((absolute_deadline_seconds - SECONDS)) -le 1 ]; then
+        if [ $((absolute_deadline_seconds - SECONDS)) -le $((
+          BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS +
+          BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS + 1
+        )) ]; then
           echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
           return 1
         fi
@@ -2998,8 +3212,16 @@ verify_booking_persistence_with_bounded_retry() {
           return 1
         fi
         ;;
+      3)
+        echo "[deploy] deploy_forward_booking_persistence_invocation_failed"
+        return 1
+        ;;
+      4)
+        echo "[deploy] deploy_forward_booking_persistence_integrity_failed"
+        return 1
+        ;;
       *)
-        echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+        echo "[deploy] deploy_forward_booking_persistence_invocation_failed"
         return 1
         ;;
     esac
@@ -4528,6 +4750,15 @@ CANDIDATE_WEB_PROCESS_START_TICKS=""
 CANDIDATE_WEB_PROCESS_IDENTITY=""
 CANDIDATE_WEB_CWD_IDENTITY=""
 BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS=""
+BOOKING_PREFLIGHT_RUNTIME_IDENTITY=""
+BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY=""
+BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY=""
+BOOKING_PREFLIGHT_ENVIRONMENT_SHA256=""
+BOOKING_PREFLIGHT_SUPABASE_INTERNAL_URL_B64=""
+BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_URL_B64=""
+BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""
+BOOKING_PREFLIGHT_BUILD_FILE_IDENTITY=""
+BOOKING_PREFLIGHT_BUILD_FILE_SHA256=""
 READINESS_FENCE_FORWARD_READY=0
 READINESS_FENCE_ACTIVE=0
 READINESS_FENCE_RELEASED=0
@@ -5113,7 +5344,7 @@ echo "[deploy] acquiring ordinary-account cutover readiness fence"
 previous_web_process_identity_matches || exit 1
 previous_runtime_recovery_identity_matches || exit 1
 start_readiness_fence 1 || exit 1
-assert_readiness_fence_before_process_quiescence "$((
+PROTECTED_QUIESCENCE_BUDGET_SECONDS="$((
   AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS +
   WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS +
   PORT_RELEASE_TOTAL_TIMEOUT_SECONDS +
@@ -5121,7 +5352,9 @@ assert_readiness_fence_before_process_quiescence "$((
   PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS +
   PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
   4 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS
-))" || exit 1
+))"
+run_booking_persistence_preflight \
+  "$PROTECTED_QUIESCENCE_BUDGET_SECONDS" || exit 1
 previous_web_process_identity_matches || exit 1
 previous_runtime_recovery_identity_matches || exit 1
 
@@ -5139,7 +5372,7 @@ switch_current_release "$RELEASE_DIR" || exit 1
 SWITCH_COMPLETED=1
 if ! capture_candidate_current_identity_for_booking_retry \
   "$((SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))"; then
-  echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+  echo "[deploy] deploy_forward_booking_persistence_state_failed"
   exit 1
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
@@ -5163,7 +5396,7 @@ BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((
 ))"
 if ! capture_candidate_web_identity_for_booking_retry \
   "$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"; then
-  echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+  echo "[deploy] deploy_forward_booking_persistence_state_failed"
   exit 1
 fi
 verify_booking_persistence_with_bounded_retry \

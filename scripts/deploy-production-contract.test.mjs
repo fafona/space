@@ -58,8 +58,15 @@ const DEPLOY_ENVELOPE_MAGIC = "FAOLLA_DEPLOY_ENVELOPE_V2";
 const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
   "[deploy] deploy_failed_readiness_fence_nonretryable",
   "[deploy] deploy_forward_booking_persistence_hard_failed",
+  "[deploy] deploy_forward_booking_persistence_integrity_failed",
+  "[deploy] deploy_forward_booking_persistence_invocation_failed",
+  "[deploy] deploy_forward_booking_persistence_state_failed",
   "[deploy] deploy_forward_booking_persistence_transient_exhausted",
   "[deploy] deploy_forward_booking_persistence_transient_retry",
+  "[deploy] deploy_preflight_booking_persistence_hard_failed",
+  "[deploy] deploy_preflight_booking_persistence_integrity_failed",
+  "[deploy] deploy_preflight_booking_persistence_invocation_failed",
+  "[deploy] deploy_preflight_booking_persistence_transient_failed",
   "[deploy] deploy_rollback_failed_compatibility_restore",
   "[deploy] deploy_rollback_failed_current_restore",
   "[deploy] deploy_rollback_failed_evidence",
@@ -1177,9 +1184,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 23-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 23);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 23);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 30-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 30);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 30);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1187,15 +1194,15 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 23-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 23);
-  assert.equal(new Set(workflowLines).size, 23);
+  assert.equal(workflowLines.length, 30);
+  assert.equal(new Set(workflowLines).size, 30);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 23);
+  assert.equal(uniqueScriptEchoLines.length, 30);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),
@@ -2623,7 +2630,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     "previous_web_process_identity_matches || exit 1",
     "previous_runtime_recovery_identity_matches || exit 1",
     "start_readiness_fence 1 || exit 1",
-    "assert_readiness_fence_before_process_quiescence",
+    "run_booking_persistence_preflight",
     "PROCESSES_STOPPED=1",
     'stop_pm2_process_bounded "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" || exit 1',
     "wait_for_port_release || exit 1",
@@ -2661,7 +2668,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   );
   assert.match(
     sequence,
-    /assert_readiness_fence_before_process_quiescence[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+PROCESSES_STOPPED=1/,
+    /run_booking_persistence_preflight[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+PROCESSES_STOPPED=1/,
   );
   assert.match(sequence, /assert_readiness_fence_forward_checkpoint \|\| exit 1/g);
   assert.match(deployScript, /blocked_cancelled[\s\S]{0,180}return 2/);
@@ -2800,7 +2807,7 @@ test("a late frozen-runtime drift fails before any protected process is stopped"
     "previous_web_process_identity_matches() { WEB_IDENTITY_CALLS=$((WEB_IDENTITY_CALLS + 1)); record web-id; return 0; }",
     "previous_runtime_recovery_identity_matches() { RUNTIME_IDENTITY_CALLS=$((RUNTIME_IDENTITY_CALLS + 1)); record runtime-id; [ \"$RUNTIME_IDENTITY_CALLS\" -lt 2 ]; }",
     "start_readiness_fence() { record \"start-fence:$1\"; return 0; }",
-    "assert_readiness_fence_before_process_quiescence() { record \"prequiesce:$1\"; return 0; }",
+    "run_booking_persistence_preflight() { record \"preflight:$1\"; return 0; }",
     "stop_pm2_process_bounded() { record stop-web; return 0; }",
     "wait_for_port_release() { record port; return 0; }",
     "stop_previous_automation_worker_bounded() { record stop-worker; return 0; }",
@@ -2822,7 +2829,7 @@ test("a late frozen-runtime drift fails before any protected process is stopped"
     assert.equal(result.stdout, "1 0\n");
     assert.equal(
       await readFile(callsPath, "utf8"),
-      "web-id\nruntime-id\nstart-fence:1\nprequiesce:255\nweb-id\nruntime-id\n",
+      "web-id\nruntime-id\nstart-fence:1\npreflight:255\nweb-id\nruntime-id\n",
     );
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -3404,6 +3411,68 @@ test("fence startup remains fail-fast when invoked from cleanup set +e", async (
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("PM2 owns the validated Next CLI process instead of an npm wrapper", async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-direct-next-pm2-"));
+  const runtimeDirectory = join(temporaryDirectory, "release");
+  const nextEntry = join(runtimeDirectory, "node_modules", "next", "dist", "bin", "next");
+  const startFunction = extractShellFunction("start_release");
+  assert.doesNotMatch(startFunction, /pm2 start npm/);
+  assert.match(startFunction, /\[ ! -f "\$next_entry" \]/);
+  assert.match(startFunction, /\[ -L "\$next_entry" \]/);
+  assert.match(
+    startFunction,
+    /readlink -f -- "\$next_entry"[\s\S]+"\$runtime_root"\/node_modules\/next\/dist\/bin\/next/,
+  );
+  assert.match(
+    startFunction,
+    /pm2 start "\$next_entry" --name "\$APP_NAME"[\s\S]+--interpreter "\$node_entry" --cwd "\$runtime_root" -- start -p "\$APP_PORT"/,
+  );
+
+  try {
+    await mkdir(join(runtimeDirectory, ".next"), { recursive: true });
+    await mkdir(join(runtimeDirectory, "node_modules", "next", "dist", "bin"), {
+      recursive: true,
+    });
+    await writeFile(join(runtimeDirectory, "package.json"), "{}\n");
+    await writeFile(nextEntry, "#!/usr/bin/env node\n");
+    const runtimePath = toBashPath(runtimeDirectory);
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set -euo pipefail",
+        startFunction,
+        `RUNTIME='${runtimePath}'`,
+        "APP_NAME=contract-web",
+        "APP_PORT=3210",
+        "RELEASE_PROCESS_START_TIMEOUT_SECONDS=30",
+        "read_runtime_automation_worker_enabled() { printf '%s\\n' false; }",
+        "timeout() {",
+        "  while [ \"$#\" -gt 0 ]; do",
+        "    case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac",
+        "  done",
+        "  \"$@\"",
+        "}",
+        "pm2() { printf '%s\\n' \"$*\"; }",
+        "start_release \"$RUNTIME\"",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "");
+    assert.match(
+      result.stdout.trim(),
+      /^start \/.*\/node_modules\/next\/dist\/bin\/next --name contract-web --interpreter /,
+    );
+    assert.match(
+      result.stdout.trim(),
+      / --cwd \/.*\/release -- start -p 3210$/,
+    );
+    assert.doesNotMatch(result.stdout, /\bnpm\b/);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -4434,6 +4503,115 @@ test("deadline-derived command windows reserve termination time and fail at the 
   ]);
 });
 
+test("booking preflight is single-query, pre-mutation, classified, and rollback-free", async () => {
+  const preflightFunction = extractShellFunction("run_booking_persistence_preflight");
+  const transition = deployScript.slice(deployScript.indexOf("start_readiness_fence 1 || exit 1"));
+  const preflightIndex = transition.indexOf("run_booking_persistence_preflight");
+  const stoppedIndex = transition.indexOf("PROCESSES_STOPPED=1");
+  const stopWebIndex = transition.indexOf('stop_pm2_process_bounded "$APP_NAME"');
+  const mutationIndex = transition.indexOf("FORWARD_MUTATION_STARTED=1");
+  const switchIndex = transition.indexOf('switch_current_release "$RELEASE_DIR"');
+  assert.ok(
+    preflightIndex >= 0 && preflightIndex < stoppedIndex && stoppedIndex < stopWebIndex &&
+      stopWebIndex < mutationIndex && mutationIndex < switchIndex,
+  );
+  assert.doesNotMatch(
+    preflightFunction,
+    /\b(?:rollback_release|stop_pm2_process_bounded|switch_current_release|prepare_shared_runtime|pm2)\b/,
+  );
+  assert.match(
+    preflightFunction,
+    /verify_booking_persistence[\s\S]{0,240}"\$BOOKING_PREFLIGHT_ENVIRONMENT_SHA256"/,
+  );
+
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-booking-preflight-"));
+  const run = async (checkerStatus) => {
+    const callsPath = join(temporaryDirectory, `calls-${checkerStatus}`);
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        preflightFunction,
+        `CALLS='${toBashPath(callsPath)}'`,
+        `CHECKER_STATUS='${checkerStatus}'`,
+        "BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS=45",
+        "unset SECONDS; SECONDS=0",
+        "WEB_COMMITTED=0",
+        "SWITCH_COMPLETED=0",
+        "PROCESSES_STOPPED=0",
+        "FORWARD_MUTATION_STARTED=0",
+        "READINESS_FENCE_ACTIVE=1",
+        "READINESS_FENCE_RELEASED=0",
+        "READINESS_FENCE_RELEASE_REQUESTED=0",
+        "READINESS_FENCE_FORWARD_READY=0",
+        "LEGACY_COMPATIBILITY_LINKS_INSTALLED=0",
+        "BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY=1:2:3:4:5:6:7",
+        "BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY=1:2:3:4:5:6:7:8",
+        `BOOKING_PREFLIGHT_ENVIRONMENT_SHA256='${"a".repeat(64)}'`,
+        "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+        "assert_readiness_fence_before_process_quiescence() { record \"fence:$1\"; return 0; }",
+        "previous_web_process_identity_matches() { record web; return 0; }",
+        "previous_runtime_recovery_identity_matches() { record runtime; return 0; }",
+        "capture_booking_persistence_preflight_identity() { record \"capture:$1\"; return 0; }",
+        "assert_booking_persistence_preflight_state() { record \"state:$1\"; return 0; }",
+        "verify_booking_persistence() {",
+        "  record \"check:$1:$2:$3:$4:$5\"",
+        "  return \"$CHECKER_STATUS\"",
+        "}",
+        "run_booking_persistence_preflight 255; status=$?",
+        "printf '__result__ %s %s %s %s\\n' \"$status\" \"$PROCESSES_STOPPED\" \"$FORWARD_MUTATION_STARTED\" \"$SWITCH_COMPLETED\"",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const lines = result.stdout.trim().split("\n");
+    const summary = lines.pop()?.match(/^__result__ (\d+) (\d+) (\d+) (\d+)$/);
+    assert.ok(summary, result.stdout);
+    return {
+      codes: lines,
+      status: Number(summary[1]),
+      mutationFlags: summary.slice(2).map(Number),
+      calls: (await readFile(callsPath, "utf8")).trim().split("\n"),
+    };
+  };
+
+  try {
+    const expectedCalls = [
+      "fence:300",
+      "web",
+      "runtime",
+      "capture:45",
+      `check:45:45:1:2:3:4:5:6:7:1:2:3:4:5:6:7:8:${"a".repeat(64)}`,
+      "state:45",
+      "web",
+      "runtime",
+      "fence:255",
+    ];
+    const scenarios = [
+      [0, [], 0],
+      [1, ["[deploy] deploy_preflight_booking_persistence_hard_failed"], 1],
+      [2, ["[deploy] deploy_preflight_booking_persistence_transient_failed"], 1],
+      [3, ["[deploy] deploy_preflight_booking_persistence_invocation_failed"], 1],
+      [4, ["[deploy] deploy_preflight_booking_persistence_integrity_failed"], 1],
+      [124, ["[deploy] deploy_preflight_booking_persistence_invocation_failed"], 1],
+    ];
+    for (const [checkerStatus, codes, status] of scenarios) {
+      const actual = await run(checkerStatus);
+      assert.deepEqual(actual, {
+        codes,
+        status,
+        mutationFlags: [0, 0, 0],
+        calls: expectedCalls,
+      });
+      if (checkerStatus === 2) {
+        assert.equal(actual.codes.some((code) => code.includes("hard")), false);
+      }
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("booking persistence retries only status two across fully revalidated read-only rounds", async () => {
   const environmentSnapshot = extractShellFunction(
     "read_candidate_environment_snapshot_for_booking_retry",
@@ -4504,6 +4682,14 @@ test("booking persistence retries only status two across fully revalidated read-
   assert.match(
     deployScript,
     /BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" -ne 60/,
+  );
+  assert.match(
+    deployScript,
+    /BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS="\$\{BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS:-20\}"/,
+  );
+  assert.match(
+    deployScript,
+    /BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS="\$\{BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS:-5\}"/,
   );
   assert.doesNotMatch(deployScript, /BOOKING_PERSISTENCE_STATUS/);
   assert.doesNotMatch(
@@ -4614,15 +4800,20 @@ test("booking persistence retries only status two across fully revalidated read-
     /timeout --signal=KILL "\$\{command_timeout_seconds\}s" bash -c/,
   );
   assert.match(healthFunction, /"\$\{#response\}" -le 4096/);
-  assert.match(checkerFunction, /cd "\$RELEASE_DIR" \|\| exit 1/);
+  assert.match(checkerFunction, /cd "\$RELEASE_DIR" \|\| exit 4/);
   assert.equal(
     deployScript.match(/^\s*cd "\$RELEASE_DIR" \|\| exit 1$/gm)?.length,
-    5,
+    4,
   );
   assert.doesNotMatch(deployScript, /^\s*cd "\$RELEASE_DIR"\s*$/gm);
   assert.match(
     checkerFunction,
-    /deadline_bounded_command_timeout_seconds[\s\S]{0,120}"\$absolute_deadline_seconds" "\$query_budget_seconds" 5/,
+    /deadline_bounded_command_timeout_seconds[\s\S]{0,160}"\$absolute_deadline_seconds" "\$query_budget_seconds"[\s\S]{0,80}"\$BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS"/,
+  );
+  assert.match(checkerFunction, /BOOKING_PERSISTENCE_CHECK_ATTEMPTS=1/);
+  assert.doesNotMatch(
+    checkerFunction,
+    /BOOKING_PERSISTENCE_CHECK_ATTEMPTS="\$\{BOOKING_PERSISTENCE_CHECK_ATTEMPTS/,
   );
   const checkerNodeSources = extractShellHeredocs(checkerFunction, "NODE");
   assert.equal(checkerNodeSources.length, 1);
@@ -4654,6 +4845,18 @@ test("booking persistence retries only status two across fully revalidated read-
   assert.match(
     checkerSupervisor,
     /stdio: \["ignore", "ignore", "ignore", childEnvironmentDescriptor, directoryDescriptor\]/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /childTimeoutMilliseconds =[\s\S]{0,120}supervisorTimeoutSeconds - postProofReserveSeconds/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /child\.error\?\.code === "ETIMEDOUT"[\s\S]{0,80}childStatus = 2/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /BookingPersistenceInvocationError[\s\S]+process\.exitCode = error instanceof BookingPersistenceInvocationError \? 3 : 4/,
   );
   assert.match(
     checkerSupervisor,
@@ -4744,7 +4947,7 @@ test("booking persistence retries only status two across fully revalidated read-
   });
   assert.equal(failedDirectoryChange.status, 0, failedDirectoryChange.stderr);
   assert.equal(failedDirectoryChange.stderr, "");
-  assert.equal(failedDirectoryChange.stdout, "1 0\n");
+  assert.equal(failedDirectoryChange.stdout, "4 0\n");
 
   const frozenEnvironmentDirectoryIdentity = "1:2:3:4:5:6:7";
   const frozenEnvironmentFileIdentity = "1:2:3:4:5:6:7:8";
@@ -4879,6 +5082,7 @@ test("booking persistence retries only status two across fully revalidated read-
     statuses,
     absoluteDeadline = 60,
     elapsedPerCheck = 0,
+    postProofElapsedSeconds = 0,
     exhaustAt = 0,
     sleepToDeadline = false,
     name,
@@ -4895,14 +5099,20 @@ test("booking persistence retries only status two across fully revalidated read-
         `CALLS='${toBashPath(callsPath)}'`,
         "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
         "BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS=60",
+        "BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS=20",
+        "BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS=5",
         "unset SECONDS; SECONDS=0",
         `ABSOLUTE_DEADLINE_SECONDS='${absoluteDeadline}'`,
         "checker_calls=0",
+        "checker_returned=0",
+        "post_proof_elapsed_applied=0",
         "call_index=0",
         `EXHAUST_AT='${exhaustAt}'`,
         `SLEEP_TO_DEADLINE='${sleepToDeadline ? 1 : 0}'`,
         "record() { call_index=$((call_index + 1)); printf '%s\\n' \"$1\" >> \"$CALLS\"; if [ \"$EXHAUST_AT\" -eq \"$call_index\" ]; then SECONDS=\"$ABSOLUTE_DEADLINE_SECONDS\"; fi; }",
-        "assert_booking_persistence_retry_state() { record \"state:$1\"; [ \"$1\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ] && [ \"$SECONDS\" -lt \"$1\" ]; }",
+        `POST_PROOF_ELAPSED_SECONDS='${postProofElapsedSeconds}'`,
+        "advance_post_proof_clock() { if [ \"$checker_returned\" = 1 ] && [ \"$post_proof_elapsed_applied\" = 0 ]; then SECONDS=$((SECONDS + POST_PROOF_ELAPSED_SECONDS)); post_proof_elapsed_applied=1; fi; }",
+        "assert_booking_persistence_retry_state() { advance_post_proof_clock; record \"state:$1\"; [ \"$1\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ] && [ \"$SECONDS\" -lt \"$1\" ]; }",
         "assert_readiness_fence_before_forward_operation() {",
         "  local entry_seconds=\"$SECONDS\"",
         "  record \"fence-before:$1:$2\"",
@@ -4921,6 +5131,8 @@ test("booking persistence retries only status two across fully revalidated read-
         "  [ \"$1\" -eq $((ABSOLUTE_DEADLINE_SECONDS - entry_seconds)) ] || return 97",
         "  [ \"$1\" -gt 0 ] && [ \"$1\" -le 60 ] || return 96",
         `  SECONDS=$((SECONDS + ${elapsedPerCheck}))`,
+        "  checker_returned=1",
+        "  post_proof_elapsed_applied=0",
         "  case \"$checker_calls\" in",
         statusCases,
         "    *) return 99 ;;",
@@ -4974,14 +5186,20 @@ test("booking persistence retries only status two across fully revalidated read-
       elapsed: 1,
       calls: [...oneRound(60), "sleep:60", ...oneRound(59, 59)],
     });
-    for (const nonretryableStatus of [1, 3, 124, 255]) {
+    for (const [nonretryableStatus, diagnostic] of [
+      [1, "[deploy] deploy_forward_booking_persistence_hard_failed"],
+      [3, "[deploy] deploy_forward_booking_persistence_invocation_failed"],
+      [4, "[deploy] deploy_forward_booking_persistence_integrity_failed"],
+      [124, "[deploy] deploy_forward_booking_persistence_invocation_failed"],
+      [255, "[deploy] deploy_forward_booking_persistence_invocation_failed"],
+    ]) {
       assert.deepEqual(
         await run({
           statuses: [nonretryableStatus],
           name: `hard-${nonretryableStatus}`,
         }),
         {
-          codes: ["[deploy] deploy_forward_booking_persistence_hard_failed"],
+          codes: [diagnostic],
           status: 1,
           checkerCalls: 1,
           elapsed: 0,
@@ -4998,7 +5216,7 @@ test("booking persistence retries only status two across fully revalidated read-
           name: `invalid-absolute-deadline-${invalidDeadline}`,
         }),
         {
-          codes: ["[deploy] deploy_forward_booking_persistence_hard_failed"],
+          codes: ["[deploy] deploy_forward_booking_persistence_state_failed"],
           status: 1,
           checkerCalls: 0,
           elapsed: 0,
@@ -5024,6 +5242,20 @@ test("booking persistence retries only status two across fully revalidated read-
       1,
     );
 
+    const reservedPostProof = await run({
+      statuses: [2],
+      elapsedPerCheck: 40,
+      postProofElapsedSeconds: 19,
+      name: "transient-keeps-post-proof-reserve",
+    });
+    assert.deepEqual(reservedPostProof, {
+      codes: ["[deploy] deploy_forward_booking_persistence_transient_exhausted"],
+      status: 1,
+      checkerCalls: 1,
+      elapsed: 59,
+      calls: oneRound(60),
+    });
+
     const firstRound = oneRound(60);
     for (let exhaustAt = 1; exhaustAt <= firstRound.length; exhaustAt += 1) {
       const boundaryName = `absolute-deadline-boundary-${exhaustAt}`;
@@ -5037,7 +5269,7 @@ test("booking persistence retries only status two across fully revalidated read-
       assert.equal(exhausted.elapsed, 60, boundaryName);
       assert.deepEqual(
         exhausted.codes,
-        ["[deploy] deploy_forward_booking_persistence_hard_failed"],
+        ["[deploy] deploy_forward_booking_persistence_state_failed"],
         boundaryName,
       );
       assert.deepEqual(
@@ -5059,6 +5291,76 @@ test("booking persistence retries only status two across fully revalidated read-
     assert.deepEqual(sleepExhausted.codes, [
       "[deploy] deploy_forward_booking_persistence_transient_retry",
       "[deploy] deploy_forward_booking_persistence_transient_exhausted",
+    ]);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("post-switch transient exhaustion remains transient and enters recoverable rollback", async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-booking-rollback-"));
+  const callsPath = join(temporaryDirectory, "calls");
+  const result = spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: [
+      "set +e",
+      extractShellFunction("verify_booking_persistence_with_bounded_retry"),
+      extractShellRegion("cleanup_failed_build() {", "\ntrap cleanup_failed_build EXIT"),
+      `CALLS='${toBashPath(callsPath)}'`,
+      `RELEASE_BUILD_DIR='${toBashPath(join(temporaryDirectory, "missing-build"))}'`,
+      `RELEASE_DIR='${toBashPath(join(temporaryDirectory, "missing-release"))}'`,
+      `DEPLOY_ATTESTATION_FILE='${toBashPath(join(temporaryDirectory, "missing-attestation"))}'`,
+      `DEPLOY_RELEASE_BINDING_FILE='${toBashPath(join(temporaryDirectory, "missing-binding"))}'`,
+      "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
+      "BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS=60",
+      "BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS=20",
+      "BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS=5",
+      "WEB_COMMITTED=0",
+      "PROCESSES_STOPPED=1",
+      "SWITCH_COMPLETED=1",
+      "FORWARD_MUTATION_STARTED=1",
+      "ROLLBACK_COMPLETED=0",
+      "READINESS_FENCE_ACTIVE=1",
+      "READINESS_FENCE_RELEASE_REQUESTED=0",
+      "READINESS_FENCE_CLEANUP_VERIFIED=1",
+      "PREVIOUS_AUTOMATION_WORKER_RUNNING=0",
+      "ROLLBACK_FAILURE_CODE=",
+      "unset SECONDS; SECONDS=0",
+      "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+      "assert_booking_persistence_retry_state() { return 0; }",
+      "assert_readiness_fence_before_forward_operation() { return 0; }",
+      "assert_candidate_web_health() { return 0; }",
+      "assert_readiness_fence_forward_checkpoint() { return 0; }",
+      "verify_booking_persistence() { return 2; }",
+      "sleep() { SECONDS=$((SECONDS + 1)); }",
+      "ensure_readiness_fence_for_rollback() { record ensure-fence; return 0; }",
+      "rollback_release() { record rollback; ROLLBACK_COMPLETED=1; return 0; }",
+      "release_readiness_fence() { record release-fence; READINESS_FENCE_ACTIVE=0; return 0; }",
+      "discard_failed_readiness_fence() { record discard-fence; return 0; }",
+      "start_frozen_previous_automation_worker_process() { record worker; return 0; }",
+      "wait_for_automation_worker_online() { return 0; }",
+      "safe_remove_release_path() { record remove-release; return 0; }",
+      "stop_pm2_process_bounded() { record stop; return 0; }",
+      "timeout() { record pm2-save; return 0; }",
+      "verify_booking_persistence_with_bounded_retry 60; retry_status=$?",
+      "[ \"$retry_status\" -eq 1 ] || exit 90",
+      "false",
+      "cleanup_failed_build",
+    ].join("\n"),
+    timeout: 10_000,
+  });
+  try {
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(result.stdout.trim().split("\n"), [
+      "[deploy] deploy_forward_booking_persistence_transient_retry",
+      "[deploy] deploy_forward_booking_persistence_transient_exhausted",
+    ]);
+    assert.deepEqual((await readFile(callsPath, "utf8")).trim().split("\n"), [
+      "ensure-fence",
+      "rollback",
+      "release-fence",
+      "pm2-save",
     ]);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -5117,6 +5419,65 @@ test(
       assert.equal(afterRestore.stderr, "");
     } finally {
       await environmentHandle?.close();
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "booking FD supervisor preserves its own ETIMEDOUT as transient status two",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "faolla-booking-fd-timeout-"),
+    );
+    const environmentPath = join(temporaryDirectory, ".env.local");
+    const checkerDirectory = join(temporaryDirectory, "scripts");
+    const environmentBytes = Buffer.from("BOOKING_TIMEOUT_FIXTURE=1\n");
+    try {
+      await mkdir(checkerDirectory, { recursive: true });
+      await writeFile(environmentPath, environmentBytes, { mode: 0o600 });
+      await writeFile(
+        join(checkerDirectory, "check-booking-persistence.mjs"),
+        "await new Promise((resolve) => setTimeout(resolve, 5000));\n",
+      );
+      const directoryStat = await stat(temporaryDirectory, { bigint: true });
+      const environmentStat = await stat(environmentPath, { bigint: true });
+      const encode = (value, fields) => fields
+        .map((field) => value[field].toString(10))
+        .join(":");
+      const directoryIdentity = encode(directoryStat, [
+        "dev", "ino", "mtimeNs", "ctimeNs", "nlink", "uid", "mode",
+      ]);
+      const environmentIdentity = encode(environmentStat, [
+        "dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode",
+      ]);
+      const environmentSha256 = createHash("sha256")
+        .update(environmentBytes)
+        .digest("hex");
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: [
+          "set +e",
+          extractShellFunction("verify_booking_persistence"),
+          `RELEASE_DIR='${toBashPath(temporaryDirectory)}'`,
+          "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
+          "BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS=20",
+          "BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS=2",
+          `CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY='${directoryIdentity}'`,
+          `CANDIDATE_ENVIRONMENT_FILE_IDENTITY='${environmentIdentity}'`,
+          `CANDIDATE_ENVIRONMENT_SHA256='${environmentSha256}'`,
+          "deadline_bounded_command_timeout_seconds() { [ \"$3\" = 20 ] || return 1; printf '%s\\n' 3; }",
+          "unset SECONDS; SECONDS=0",
+          "verify_booking_persistence 60 100 >/dev/null 2>&1; status=$?",
+          "printf '%s\\n' \"$status\"",
+        ].join("\n"),
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(result.stdout, "2\n");
+      assert.equal(result.stderr, "");
+    } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
     }
   },

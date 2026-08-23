@@ -8,6 +8,7 @@ import {
 const DEFAULT_ATTEMPTS = 30;
 const DEFAULT_DELAY_MS = 1_000;
 const DEFAULT_QUERY_TIMEOUT_MS = 10_000;
+const TRANSIENT_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function normalizePositiveInteger(value, fallback) {
   const numeric = Number.parseInt(String(value ?? ""), 10);
@@ -15,6 +16,10 @@ function normalizePositiveInteger(value, fallback) {
 }
 
 export function isTransientBookingPersistenceError(error) {
+  const status = Number(error?.status ?? error?.cause?.status);
+  if (Number.isInteger(status) && status > 0) {
+    return TRANSIENT_HTTP_STATUSES.has(status);
+  }
   const message = (
     error instanceof Error ? error.message : String(error ?? "")
   ).toLowerCase();
@@ -36,6 +41,21 @@ export function isTransientBookingPersistenceError(error) {
     /gateway timeout/,
     /service unavailable/,
   ].some((pattern) => pattern.test(message));
+}
+
+function createBookingPersistenceQueryError(error, status) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error?.message === "string" && error.message
+        ? error.message
+        : "unknown_error";
+  const queryError = new Error(`booking_persistence_query_failed:${message}`);
+  const numericStatus = Number(status);
+  if (Number.isInteger(numericStatus) && numericStatus > 0) {
+    queryError.status = numericStatus;
+  }
+  return queryError;
 }
 
 export { summarizeBookingPersistenceRows };
@@ -65,6 +85,7 @@ export async function waitForBookingPersistence(
     }
 
     let result;
+    let queryError = null;
     try {
       result = await Promise.race([
         query,
@@ -77,14 +98,29 @@ export async function waitForBookingPersistence(
         }),
       ]);
     } catch (error) {
-      lastQueryError = error instanceof Error ? error.message : "unknown_error";
-      result = null;
+      queryError = createBookingPersistenceQueryError(error, error?.status);
     } finally {
       clearTimeout(timeout);
     }
 
-    if (result?.error) {
-      lastQueryError = result.error.message || "unknown_error";
+    if (!queryError && result) {
+      const resultStatus = Number(result.status);
+      if (
+        result.error ||
+        (Number.isInteger(resultStatus) && resultStatus >= 400)
+      ) {
+        queryError = createBookingPersistenceQueryError(
+          result.error ?? { message: `http_status_${resultStatus}` },
+          resultStatus,
+        );
+      }
+    }
+
+    if (queryError) {
+      if (!isTransientBookingPersistenceError(queryError)) {
+        throw queryError;
+      }
+      lastQueryError = queryError;
     } else if (result) {
       lastQueryError = null;
       summary = summarizeBookingPersistenceRows(result.data);
@@ -94,6 +130,12 @@ export async function waitForBookingPersistence(
           attemptsUsed: attempt,
         };
       }
+      const incomplete = summary.stores
+        .filter((store) => !store.valid)
+        .map((store) => store.slug);
+      throw new Error(`booking_persistence_incomplete:${incomplete.join(",")}`);
+    } else {
+      throw new Error("booking_persistence_query_failed:unknown_response");
     }
 
     if (attempt < attempts) {
@@ -102,19 +144,20 @@ export async function waitForBookingPersistence(
   }
 
   if (lastQueryError) {
-    throw new Error(`booking_persistence_query_failed:${lastQueryError}`);
+    throw lastQueryError;
   }
-  const incomplete = summary.stores.filter((store) => !store.valid).map((store) => store.slug);
-  throw new Error(`booking_persistence_incomplete:${incomplete.join(",")}`);
+  throw new Error("booking_persistence_query_failed:unknown_response");
 }
 
 async function main() {
-  const supabaseUrl = String(
-    process.env.SUPABASE_INTERNAL_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+  const primarySupabaseUrl = String(process.env.SUPABASE_INTERNAL_URL ?? "").trim();
+  const fallbackSupabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+  const supabaseUrl = primarySupabaseUrl || fallbackSupabaseUrl;
+  const primaryServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  const fallbackServiceRoleKey = String(
+    process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY ?? "",
   ).trim();
-  const serviceRoleKey = String(
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY ?? "",
-  ).trim();
+  const serviceRoleKey = primaryServiceRoleKey || fallbackServiceRoleKey;
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error("booking_persistence_env_missing");
   }

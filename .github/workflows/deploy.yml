@@ -1008,8 +1008,15 @@ jobs:
             for deploy_diagnostic_code in \
               '[deploy] deploy_failed_readiness_fence_nonretryable' \
               '[deploy] deploy_forward_booking_persistence_hard_failed' \
+              '[deploy] deploy_forward_booking_persistence_integrity_failed' \
+              '[deploy] deploy_forward_booking_persistence_invocation_failed' \
+              '[deploy] deploy_forward_booking_persistence_state_failed' \
               '[deploy] deploy_forward_booking_persistence_transient_exhausted' \
               '[deploy] deploy_forward_booking_persistence_transient_retry' \
+              '[deploy] deploy_preflight_booking_persistence_hard_failed' \
+              '[deploy] deploy_preflight_booking_persistence_integrity_failed' \
+              '[deploy] deploy_preflight_booking_persistence_invocation_failed' \
+              '[deploy] deploy_preflight_booking_persistence_transient_failed' \
               '[deploy] deploy_rollback_failed_compatibility_restore' \
               '[deploy] deploy_rollback_failed_current_restore' \
               '[deploy] deploy_rollback_failed_evidence' \
