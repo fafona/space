@@ -188,7 +188,7 @@ async function createLinuxHarness() {
     scenarioIndex += 1;
     const scenario = join(root, `scenario-${scenarioIndex}`);
     const captures = join(scenario, "captures");
-    await Promise.all([mkdir(scenario), mkdir(captures)]);
+    await mkdir(captures, { recursive: true });
     const stdoutFixture = join(scenario, "ssh.stdout");
     const stderrFixture = join(scenario, "ssh.stderr");
     const ulimitFile = join(scenario, "ssh.ulimit");
