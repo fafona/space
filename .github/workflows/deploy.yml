@@ -1007,12 +1007,20 @@ jobs:
             local deploy_diagnostic_code
             for deploy_diagnostic_code in \
               '[deploy] deploy_failed_readiness_fence_nonretryable' \
+              '[deploy] deploy_forward_quiescence_failed' \
               '[deploy] deploy_forward_booking_persistence_hard_failed' \
               '[deploy] deploy_forward_booking_persistence_integrity_failed' \
               '[deploy] deploy_forward_booking_persistence_invocation_failed' \
               '[deploy] deploy_forward_booking_persistence_state_failed' \
               '[deploy] deploy_forward_booking_persistence_transient_exhausted' \
               '[deploy] deploy_forward_booking_persistence_transient_retry' \
+              '[deploy] deploy_pre_forward_restore_fence_release_failed' \
+              '[deploy] deploy_pre_forward_restore_pm2_save_failed_web_preserved' \
+              '[deploy] deploy_pre_forward_restore_post_verify_failed_web_preserved' \
+              '[deploy] deploy_pre_forward_restore_preflight_failed' \
+              '[deploy] deploy_pre_forward_restore_unknown_failed' \
+              '[deploy] deploy_pre_forward_restore_web_failed' \
+              '[deploy] deploy_pre_forward_restore_worker_failed_web_preserved' \
               '[deploy] deploy_preflight_booking_persistence_hard_failed' \
               '[deploy] deploy_preflight_booking_persistence_integrity_failed' \
               '[deploy] deploy_preflight_booking_persistence_invocation_failed' \
