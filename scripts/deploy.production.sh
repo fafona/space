@@ -490,6 +490,7 @@ RELEASE_SMOKE_DELAY_MS="${RELEASE_SMOKE_DELAY_MS:-1000}"
 RELEASE_SMOKE_TIMEOUT_MS="${RELEASE_SMOKE_TIMEOUT_MS:-12000}"
 RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS="${RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS:-180}"
 BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS="${BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS:-60}"
+BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS="${BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS:-60}"
 RELEASE_PROCESS_START_TIMEOUT_SECONDS="${RELEASE_PROCESS_START_TIMEOUT_SECONDS:-30}"
 GIT_FETCH_ATTEMPTS="${GIT_FETCH_ATTEMPTS:-4}"
 GIT_FETCH_DELAY_SECONDS="${GIT_FETCH_DELAY_SECONDS:-8}"
@@ -602,6 +603,7 @@ validate_disk_thresholds() {
     RELEASE_SMOKE_TIMEOUT_MS \
     RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS \
     BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS \
+    BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS \
     RELEASE_PROCESS_START_TIMEOUT_SECONDS \
     GIT_FETCH_ATTEMPTS \
     GIT_FETCH_DELAY_SECONDS \
@@ -706,6 +708,7 @@ validate_disk_thresholds() {
     || [ "$RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS" -gt 180 ] \
     || [ "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" -lt 30 ] \
     || [ "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" -gt 60 ] \
+    || [ "$BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" -ne 60 ] \
     || [ $((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + 6 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + (AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS + READINESS_FENCE_OPERATION_MARGIN_SECONDS)) -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ] \
     || [ $(((AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + 2 * RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + RELEASE_PROCESS_START_TIMEOUT_SECONDS + HEALTHCHECK_ATTEMPTS * 5 + 7 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + READINESS_FENCE_RELEASE_WAIT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + 20)) -gt "$READINESS_FENCE_ROLLBACK_RESERVE_SECONDS" ] \
     || [ "$RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS" -lt $((NPM_CI_TIMEOUT_SECONDS + BUILD_TIMEOUT_SECONDS + READINESS_FENCE_MINIMUM_TTL_SECONDS + 600)) ]; then
@@ -1200,10 +1203,44 @@ if ! PREVIOUS_BUILD_ID="$(
   exit 1
 fi
 
+deadline_bounded_command_timeout_seconds() {
+  local absolute_deadline_seconds="$1"
+  local maximum_command_seconds="$2"
+  local kill_after_seconds="${3:-0}"
+  local remaining_seconds
+  local command_seconds
+  local launch_guard_seconds=1
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "$maximum_command_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "$kill_after_seconds" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+  remaining_seconds=$((absolute_deadline_seconds - SECONDS))
+  if [ "$remaining_seconds" -le $((
+    kill_after_seconds + launch_guard_seconds
+  )) ]; then
+    return 1
+  fi
+  command_seconds=$((
+    remaining_seconds - kill_after_seconds - launch_guard_seconds
+  ))
+  if [ "$command_seconds" -gt "$maximum_command_seconds" ]; then
+    command_seconds="$maximum_command_seconds"
+  fi
+  [ "$command_seconds" -ge 1 ] || return 1
+  printf '%s\n' "$command_seconds"
+}
+
 linux_process_start_ticks() {
   local process_pid="$1"
+  local absolute_deadline_seconds="${2:-}"
+  local command_timeout_seconds=2
   if ! [[ "$process_pid" =~ ^[1-9][0-9]*$ ]]; then return 1; fi
-  timeout --signal=TERM --kill-after=1s 2s \
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 2 1)" || return 1
+  fi
+  timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
     node --input-type=module - "$process_pid" <<'NODE'
 import { readFileSync } from "node:fs";
 
@@ -1927,7 +1964,7 @@ start_release() {
   fi
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
   (
-    cd "$runtime_dir"
+    cd "$runtime_dir" || exit 1
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
       PORT="$APP_PORT" timeout --signal=TERM --kill-after=5s \
         "${RELEASE_PROCESS_START_TIMEOUT_SECONDS}s" \
@@ -1937,15 +1974,27 @@ start_release() {
 
 pm2_process_snapshot() {
   local process_name="$1"
+  local absolute_deadline_seconds="${2:-}"
+  local jlist_timeout_seconds=5
+  local parse_timeout_seconds=2
   local process_list
   local process_state
-  if ! process_list="$(PM2_SILENT=true timeout --signal=TERM --kill-after=2s 5s \
+  if [ -n "$absolute_deadline_seconds" ]; then
+    jlist_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 5 2)" || return 1
+  fi
+  if ! process_list="$(PM2_SILENT=true timeout --signal=TERM --kill-after=2s \
+    "${jlist_timeout_seconds}s" \
     pm2 jlist 2>/dev/null)"; then
     return 1
   fi
+  if [ -n "$absolute_deadline_seconds" ]; then
+    parse_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 2 1)" || return 1
+  fi
   if ! process_state="$(
     FAOLLA_PM2_PROCESS_NAME="$process_name" \
-      timeout --signal=TERM --kill-after=1s 2s node -e '
+      timeout --signal=TERM --kill-after=1s "${parse_timeout_seconds}s" node -e '
       const fs = require("node:fs");
       const name = process.env.FAOLLA_PM2_PROCESS_NAME;
       let list;
@@ -2103,7 +2152,7 @@ start_automation_worker_process() {
     return 1
   fi
   (
-    cd "$runtime_dir"
+    cd "$runtime_dir" || exit 1
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
       MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="$invitation_worker_enabled" \
       timeout --signal=TERM --kill-after=5s 30s \
@@ -2192,7 +2241,7 @@ wait_for_release_health() {
 
 run_local_release_smoke() {
   (
-    cd "$RELEASE_DIR"
+    cd "$RELEASE_DIR" || exit 1
     FAOLLA_LOCAL_SMOKE_NETWORK_ORIGIN="$RELEASE_SMOKE_ORIGIN" \
     FAOLLA_LOCAL_SMOKE_PATHS="$RELEASE_SMOKE_PATHS" \
     FAOLLA_LOCAL_SMOKE_EXPECTED_BUILD="$FAOLLA_WEB_BUILD_ID" \
@@ -2350,14 +2399,173 @@ verify_supabase_health() {
 }
 
 verify_booking_persistence() {
+  local query_budget_seconds="${1:-$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS}"
+  local absolute_deadline_seconds="${2:-}"
+  local supervisor_timeout_seconds
+  if ! [[ "$query_budget_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$query_budget_seconds" -gt "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" ] \
+    || ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]]; then
+    return 1
+  fi
+  supervisor_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+    "$absolute_deadline_seconds" "$query_budget_seconds" 5)" || return 1
+  if [ "$supervisor_timeout_seconds" -le 1 ]; then return 1; fi
   (
-    cd "$RELEASE_DIR"
+    cd "$RELEASE_DIR" || exit 1
     BOOKING_PERSISTENCE_CHECK_ATTEMPTS="${BOOKING_PERSISTENCE_CHECK_ATTEMPTS:-3}" \
       BOOKING_PERSISTENCE_CHECK_DELAY_MS="${BOOKING_PERSISTENCE_CHECK_DELAY_MS:-2000}" \
       BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS="${BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS:-10000}" \
       timeout --signal=TERM --kill-after=5s \
-        "${BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS}s" \
-        node --env-file=.env.local scripts/check-booking-persistence.mjs
+        "${supervisor_timeout_seconds}s" \
+        node --input-type=module - \
+          "$RELEASE_DIR" \
+          "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" \
+          "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" \
+          "$CANDIDATE_ENVIRONMENT_SHA256" \
+          "$supervisor_timeout_seconds" 2>/dev/null <<'NODE'
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
+import { resolve } from "node:path";
+
+const releaseDirectory = process.argv[2] ?? "";
+const expectedDirectoryIdentity = process.argv[3] ?? "";
+const expectedEnvironmentIdentity = process.argv[4] ?? "";
+const expectedEnvironmentSha256 = process.argv[5] ?? "";
+const supervisorTimeoutSeconds = Number(process.argv[6]);
+let directoryDescriptor;
+let verificationDescriptor;
+let childEnvironmentDescriptor;
+const fail = () => process.exit(1);
+const directoryFields = ["dev", "ino", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"];
+const fileFields = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"];
+const encodeIdentity = (identity, fields) =>
+  fields.map((field) => identity[field].toString(10)).join(":");
+const safeDirectory = (identity) => {
+  if (!identity.isDirectory() || identity.isSymbolicLink() || identity.nlink < 1n) return false;
+  if (process.platform !== "win32" &&
+      (typeof process.getuid !== "function" ||
+       identity.uid !== BigInt(process.getuid()) ||
+       (identity.mode & 0o022n) !== 0n)) return false;
+  return true;
+};
+const safeEnvironment = (identity) => {
+  if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1n ||
+      identity.size <= 0n || identity.size > 1024n * 1024n) return false;
+  if (process.platform !== "win32" &&
+      (typeof process.getuid !== "function" ||
+       identity.uid !== BigInt(process.getuid()) ||
+       (identity.mode & 0o777n) !== 0o600n)) return false;
+  return true;
+};
+const verifyDirectory = (identity) =>
+  safeDirectory(identity) &&
+  encodeIdentity(identity, directoryFields) === expectedDirectoryIdentity;
+const verifyEnvironment = (identity) =>
+  safeEnvironment(identity) &&
+  encodeIdentity(identity, fileFields) === expectedEnvironmentIdentity;
+const readDescriptorBytes = (descriptor, identity) => {
+  const size = Number(identity.size);
+  if (!Number.isSafeInteger(size) || size <= 0 || size > 1024 * 1024) fail();
+  const bytes = Buffer.allocUnsafe(size);
+  let offset = 0;
+  while (offset < size) {
+    const count = readSync(descriptor, bytes, offset, size - offset, offset);
+    if (!Number.isSafeInteger(count) || count <= 0) fail();
+    offset += count;
+  }
+  return bytes;
+};
+try {
+  if (!/^[0-9a-f]{64}$/.test(expectedEnvironmentSha256) ||
+      !Number.isSafeInteger(supervisorTimeoutSeconds) ||
+      supervisorTimeoutSeconds <= 1 ||
+      process.platform !== "linux" ||
+      !Number.isInteger(constants.O_DIRECTORY) ||
+      !Number.isInteger(constants.O_NOFOLLOW) ||
+      !Number.isInteger(constants.O_NONBLOCK) ||
+      realpathSync(releaseDirectory) !== resolve(releaseDirectory)) fail();
+  const directoryBefore = lstatSync(releaseDirectory, { bigint: true });
+  if (!verifyDirectory(directoryBefore)) fail();
+  directoryDescriptor = openSync(
+    releaseDirectory,
+    constants.O_RDONLY | constants.O_DIRECTORY |
+      constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  if (!verifyDirectory(fstatSync(directoryDescriptor, { bigint: true }))) fail();
+  const descriptorDirectoryPath = `/proc/self/fd/${directoryDescriptor}`;
+  const environmentPath = `${releaseDirectory}/.env.local`;
+  const descriptorEnvironmentPath = `${descriptorDirectoryPath}/.env.local`;
+  if (!verifyEnvironment(lstatSync(environmentPath, { bigint: true }))) fail();
+  verificationDescriptor = openSync(
+    descriptorEnvironmentPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  const verificationIdentity = fstatSync(verificationDescriptor, { bigint: true });
+  if (!verifyEnvironment(verificationIdentity)) fail();
+  const environmentBytes = readDescriptorBytes(
+    verificationDescriptor,
+    verificationIdentity,
+  );
+  if (createHash("sha256").update(environmentBytes).digest("hex") !==
+      expectedEnvironmentSha256) fail();
+  childEnvironmentDescriptor = openSync(
+    descriptorEnvironmentPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  if (!verifyEnvironment(fstatSync(childEnvironmentDescriptor, { bigint: true }))) fail();
+  const childTimeoutMilliseconds = (supervisorTimeoutSeconds - 1) * 1000;
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--preserve-symlinks-main",
+      "--env-file=/proc/self/fd/3",
+      "/proc/self/fd/4/scripts/check-booking-persistence.mjs",
+    ],
+    {
+      cwd: descriptorDirectoryPath,
+      env: {
+        BOOKING_PERSISTENCE_CHECK_ATTEMPTS:
+          process.env.BOOKING_PERSISTENCE_CHECK_ATTEMPTS ?? "",
+        BOOKING_PERSISTENCE_CHECK_DELAY_MS:
+          process.env.BOOKING_PERSISTENCE_CHECK_DELAY_MS ?? "",
+        BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS:
+          process.env.BOOKING_PERSISTENCE_QUERY_TIMEOUT_MS ?? "",
+      },
+      stdio: ["ignore", "ignore", "ignore", childEnvironmentDescriptor, directoryDescriptor],
+      timeout: childTimeoutMilliseconds,
+      killSignal: "SIGKILL",
+    },
+  );
+  if (![0, 1, 2].includes(child.status)) fail();
+  if (!verifyDirectory(fstatSync(directoryDescriptor, { bigint: true })) ||
+      !verifyDirectory(lstatSync(releaseDirectory, { bigint: true })) ||
+      realpathSync(releaseDirectory) !== resolve(releaseDirectory) ||
+      !verifyEnvironment(fstatSync(verificationDescriptor, { bigint: true })) ||
+      !verifyEnvironment(fstatSync(childEnvironmentDescriptor, { bigint: true })) ||
+      !verifyEnvironment(lstatSync(environmentPath, { bigint: true })) ||
+      createHash("sha256").update(readDescriptorBytes(
+        verificationDescriptor,
+        fstatSync(verificationDescriptor, { bigint: true }),
+      )).digest("hex") !==
+        expectedEnvironmentSha256) fail();
+  process.exitCode = child.status;
+} catch {
+  fail();
+} finally {
+  if (childEnvironmentDescriptor !== undefined) closeSync(childEnvironmentDescriptor);
+  if (verificationDescriptor !== undefined) closeSync(verificationDescriptor);
+  if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+}
+NODE
   )
 }
 
@@ -2376,10 +2584,437 @@ switch_current_release() {
     ' bash "$release_dir" "$CURRENT_LINK"
 }
 
+read_candidate_environment_snapshot_for_booking_retry() {
+  local absolute_deadline_seconds="${1:-}"
+  local command_timeout_seconds="$PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS"
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" \
+      "$PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS" 1)" || return 1
+  fi
+  timeout --signal=TERM --kill-after=1s \
+    "${command_timeout_seconds}s" \
+    node "$APP_DIR/scripts/read-production-supabase-environment.mjs" rollback-snapshot \
+      "$RELEASE_DIR/.env.local" "$FAOLLA_WEB_BUILD_ID" 2>/dev/null
+}
+
+read_candidate_build_id_snapshot_for_booking_retry() {
+  local absolute_deadline_seconds="${1:-}"
+  local command_timeout_seconds=5
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 5 1)" || return 1
+  fi
+  timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
+    node --input-type=module - \
+      "$RELEASE_DIR/.next/BUILD_ID" "$FAOLLA_WEB_BUILD_ID" 2>/dev/null <<'NODE'
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { resolve } from "node:path";
+
+const filePath = process.argv[2] ?? "";
+const expectedBuildId = process.argv[3] ?? "";
+let descriptor;
+const fail = () => process.exit(1);
+const sameIdentity = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs && left.nlink === right.nlink &&
+  left.uid === right.uid && left.mode === right.mode;
+const safeIdentity = (identity) => {
+  if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1n ||
+      identity.size < 40n || identity.size > 41n) return false;
+  if (process.platform !== "win32") {
+    if (typeof process.getuid !== "function" ||
+        identity.uid !== BigInt(process.getuid()) ||
+        (identity.mode & 0o022n) !== 0n) return false;
+  }
+  return true;
+};
+try {
+  if (!/^[0-9a-f]{40}$/.test(expectedBuildId) ||
+      realpathSync(filePath) !== resolve(filePath)) fail();
+  const before = lstatSync(filePath, { bigint: true });
+  if (!safeIdentity(before)) fail();
+  descriptor = openSync(
+    filePath,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+  );
+  const opened = fstatSync(descriptor, { bigint: true });
+  if (!safeIdentity(opened) || !sameIdentity(before, opened)) fail();
+  const bytes = readFileSync(descriptor);
+  const after = fstatSync(descriptor, { bigint: true });
+  const current = lstatSync(filePath, { bigint: true });
+  if (!safeIdentity(after) || !safeIdentity(current) ||
+      !sameIdentity(opened, after) || !sameIdentity(after, current) ||
+      realpathSync(filePath) !== resolve(filePath)) fail();
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (text !== expectedBuildId && text !== `${expectedBuildId}\n`) fail();
+  const identity = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"]
+    .map((field) => after[field].toString(10)).join(":");
+  process.stdout.write(`${identity}\n${createHash("sha256").update(bytes).digest("hex")}`);
+} catch {
+  fail();
+} finally {
+  if (descriptor !== undefined) closeSync(descriptor);
+}
+NODE
+}
+
+read_candidate_process_environment_snapshot_for_booking_retry() {
+  local absolute_deadline_seconds="$1"
+  local command_timeout_seconds
+  command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+    "$absolute_deadline_seconds" \
+    "$PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS" 1)" || return 1
+  timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
+    node "$APP_DIR/scripts/read-production-supabase-environment.mjs" \
+      process-snapshot "$CANDIDATE_WEB_PID" "$RELEASE_DIR" 2>/dev/null
+}
+
+capture_candidate_current_identity_for_booking_retry() {
+  local absolute_deadline_seconds="${1:-$((SECONDS + 15))}"
+  local current_link_identity
+  local environment_snapshot
+  local -a environment_snapshot_parts=()
+  local build_id_snapshot
+  local -a build_id_snapshot_parts=()
+  local runtime_identity
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || [ "${SWITCH_COMPLETED:-0}" != "1" ] \
+    || [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ -e "${CURRENT_LINK}.pending" ] \
+    || [ -L "${CURRENT_LINK}.pending" ]; then
+    return 1
+  fi
+  current_link_identity="$(stat -c '%d:%i:%Z' -- "$CURRENT_LINK" 2>/dev/null || true)"
+  runtime_identity="$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)"
+  if ! [[ "$current_link_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || ! [[ "$runtime_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]]; then
+    return 1
+  fi
+  environment_snapshot="$(read_candidate_environment_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" \
+    || return 1
+  mapfile -t environment_snapshot_parts <<< "$environment_snapshot"
+  build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" \
+    || return 1
+  mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
+  if [ "${#environment_snapshot_parts[@]}" -ne 6 ] \
+    || ! [[ "${environment_snapshot_parts[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+    || ! [[ "${environment_snapshot_parts[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "${environment_snapshot_parts[2]}" =~ ^[0-9a-f]{64}$ ]] \
+    || ! [[ "${environment_snapshot_parts[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${environment_snapshot_parts[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${environment_snapshot_parts[5]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
+    || ! [[ "${build_id_snapshot_parts[0]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "${build_id_snapshot_parts[1]}" =~ ^[0-9a-f]{64}$ ]]; then
+    return 1
+  fi
+  if [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(stat -c '%d:%i:%Z' -- "$CURRENT_LINK" 2>/dev/null || true)" != "$current_link_identity" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$runtime_identity" ] \
+    || [ -e "${CURRENT_LINK}.pending" ] \
+    || [ -L "${CURRENT_LINK}.pending" ] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
+  CANDIDATE_CURRENT_LINK_IDENTITY="$current_link_identity"
+  CANDIDATE_RUNTIME_IDENTITY="$runtime_identity"
+  CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY="${environment_snapshot_parts[0]}"
+  CANDIDATE_ENVIRONMENT_FILE_IDENTITY="${environment_snapshot_parts[1]}"
+  CANDIDATE_ENVIRONMENT_SHA256="${environment_snapshot_parts[2]}"
+  CANDIDATE_SUPABASE_INTERNAL_URL_B64="${environment_snapshot_parts[3]}"
+  CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64="${environment_snapshot_parts[4]}"
+  CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${environment_snapshot_parts[5]}"
+  CANDIDATE_BUILD_FILE_IDENTITY="${build_id_snapshot_parts[0]}"
+  CANDIDATE_BUILD_FILE_SHA256="${build_id_snapshot_parts[1]}"
+}
+
+capture_candidate_web_identity_for_booking_retry() {
+  local absolute_deadline_seconds="$1"
+  local cwd_identity
+  local process_identity
+  local process_pid
+  local process_snapshot
+  local process_start_ticks
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || ! process_snapshot="$(pm2_process_snapshot \
+      "$APP_NAME" "$absolute_deadline_seconds")" \
+    || ! [[ "$process_snapshot" =~ ^running:([1-9][0-9]*)$ ]]; then
+    return 1
+  fi
+  process_pid="${process_snapshot#running:}"
+  process_start_ticks="$(linux_process_start_ticks \
+    "$process_pid" "$absolute_deadline_seconds")" || return 1
+  process_identity="$(stat -Lc '%d:%i' -- "/proc/$process_pid" 2>/dev/null || true)"
+  cwd_identity="$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)"
+  if ! [[ "$process_identity" =~ ^[0-9]+:[0-9]+$ ]] \
+    || ! [[ "$cwd_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
+  CANDIDATE_WEB_PID="$process_pid"
+  CANDIDATE_WEB_PROCESS_START_TICKS="$process_start_ticks"
+  CANDIDATE_WEB_PROCESS_IDENTITY="$process_identity"
+  CANDIDATE_WEB_CWD_IDENTITY="$cwd_identity"
+  assert_booking_persistence_retry_state "$absolute_deadline_seconds"
+}
+
+assert_booking_persistence_retry_state() {
+  local absolute_deadline_seconds="$1"
+  local build_id_snapshot
+  local -a build_id_snapshot_parts=()
+  local environment_snapshot
+  local -a environment_snapshot_parts=()
+  local process_environment_snapshot
+  local -a process_environment_snapshot_parts=()
+  local process_snapshot
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || [ "${WEB_COMMITTED:-0}" != "0" ] \
+    || [ "${SWITCH_COMPLETED:-0}" != "1" ] \
+    || [ "${PROCESSES_STOPPED:-0}" != "1" ] \
+    || [ "${FORWARD_MUTATION_STARTED:-0}" != "1" ] \
+    || [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
+    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_RELEASE_REQUESTED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_FORWARD_READY:-0}" != "1" ] \
+    || [ "${LEGACY_COMPATIBILITY_LINKS_INSTALLED:-0}" != "0" ] \
+    || ! [[ "${CANDIDATE_CURRENT_LINK_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_RUNTIME_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY:-}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_ENVIRONMENT_FILE_IDENTITY:-}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_ENVIRONMENT_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+    || ! [[ "${CANDIDATE_SUPABASE_INTERNAL_URL_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${CANDIDATE_BUILD_FILE_IDENTITY:-}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_BUILD_FILE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+    || ! [[ "${CANDIDATE_WEB_PID:-}" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "${CANDIDATE_WEB_PROCESS_START_TICKS:-}" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "${CANDIDATE_WEB_PROCESS_IDENTITY:-}" =~ ^[0-9]+:[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_WEB_CWD_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(stat -c '%d:%i:%Z' -- "$CURRENT_LINK" 2>/dev/null || true)" != "$CANDIDATE_CURRENT_LINK_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$CANDIDATE_RUNTIME_IDENTITY" ] \
+    || [ -e "${CURRENT_LINK}.pending" ] \
+    || [ -L "${CURRENT_LINK}.pending" ]; then
+    return 1
+  fi
+  if ! process_snapshot="$(pm2_process_snapshot \
+      "$AUTOMATION_WORKER_NAME" "$absolute_deadline_seconds")" \
+    || [ "$process_snapshot" != "absent" ] \
+    || ! process_snapshot="$(pm2_process_snapshot \
+      "$APP_NAME" "$absolute_deadline_seconds")" \
+    || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ] \
+    || [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
+      "$absolute_deadline_seconds" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
+    || [ "$(stat -Lc '%d:%i' -- "/proc/$CANDIDATE_WEB_PID" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$CANDIDATE_WEB_CWD_IDENTITY" ] \
+    || [ "$CANDIDATE_WEB_CWD_IDENTITY" != "$CANDIDATE_RUNTIME_IDENTITY" ] \
+    || [ "$(readlink -f -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
+  environment_snapshot="$(read_candidate_environment_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" \
+    || return 1
+  mapfile -t environment_snapshot_parts <<< "$environment_snapshot"
+  build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
+    "$absolute_deadline_seconds")" \
+    || return 1
+  mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
+  if [ "${#environment_snapshot_parts[@]}" -ne 6 ] \
+    || [ "${environment_snapshot_parts[0]}" != "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" ] \
+    || [ "${environment_snapshot_parts[1]}" != "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" ] \
+    || [ "${environment_snapshot_parts[2]}" != "$CANDIDATE_ENVIRONMENT_SHA256" ] \
+    || [ "${environment_snapshot_parts[3]}" != "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" ] \
+    || [ "${environment_snapshot_parts[4]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
+    || [ "${environment_snapshot_parts[5]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
+    || [ "${build_id_snapshot_parts[0]}" != "$CANDIDATE_BUILD_FILE_IDENTITY" ] \
+    || [ "${build_id_snapshot_parts[1]}" != "$CANDIDATE_BUILD_FILE_SHA256" ]; then
+    return 1
+  fi
+  process_environment_snapshot="$(
+    read_candidate_process_environment_snapshot_for_booking_retry \
+      "$absolute_deadline_seconds"
+  )" || return 1
+  mapfile -t process_environment_snapshot_parts <<< "$process_environment_snapshot"
+  if [ "${#process_environment_snapshot_parts[@]}" -ne 5 ] \
+    || [ "${process_environment_snapshot_parts[0]}" != "present" ] \
+    || [ "${process_environment_snapshot_parts[1]}" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
+    || [ "${process_environment_snapshot_parts[2]}" != "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" ] \
+    || [ "${process_environment_snapshot_parts[3]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
+    || [ "${process_environment_snapshot_parts[4]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
+  if [ "${WEB_COMMITTED:-0}" != "0" ] \
+    || [ "${SWITCH_COMPLETED:-0}" != "1" ] \
+    || [ "${PROCESSES_STOPPED:-0}" != "1" ] \
+    || [ "${FORWARD_MUTATION_STARTED:-0}" != "1" ] \
+    || [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
+    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_RELEASE_REQUESTED:-0}" != "0" ] \
+    || [ "${READINESS_FENCE_FORWARD_READY:-0}" != "1" ] \
+    || [ "${LEGACY_COMPATIBILITY_LINKS_INSTALLED:-0}" != "0" ] \
+    || [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$(stat -c '%d:%i:%Z' -- "$CURRENT_LINK" 2>/dev/null || true)" != "$CANDIDATE_CURRENT_LINK_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$CANDIDATE_RUNTIME_IDENTITY" ] \
+    || [ -e "${CURRENT_LINK}.pending" ] \
+    || [ -L "${CURRENT_LINK}.pending" ]; then
+    return 1
+  fi
+  if ! process_snapshot="$(pm2_process_snapshot \
+      "$AUTOMATION_WORKER_NAME" "$absolute_deadline_seconds")" \
+    || [ "$process_snapshot" != "absent" ] \
+    || ! process_snapshot="$(pm2_process_snapshot \
+      "$APP_NAME" "$absolute_deadline_seconds")" \
+    || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ] \
+    || [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
+      "$absolute_deadline_seconds" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
+    || [ "$(stat -Lc '%d:%i' -- "/proc/$CANDIDATE_WEB_PID" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$CANDIDATE_WEB_CWD_IDENTITY" ] \
+    || [ "$(readlink -f -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
+  return 0
+}
+
+assert_candidate_web_health() {
+  local absolute_deadline_seconds="$1"
+  local command_timeout_seconds
+  command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+    "$absolute_deadline_seconds" 4 0)" || return 1
+  FAOLLA_CANDIDATE_HEALTH_PORT="$APP_PORT" \
+  FAOLLA_CANDIDATE_HEALTH_BUILD_ID="$FAOLLA_WEB_BUILD_ID" \
+  FAOLLA_CANDIDATE_HEALTH_TIMEOUT_SECONDS="$command_timeout_seconds" \
+    timeout --signal=KILL "${command_timeout_seconds}s" bash -c '
+      set -euo pipefail
+      response="$(curl -fsS \
+        --max-time "$FAOLLA_CANDIDATE_HEALTH_TIMEOUT_SECONDS" \
+        "http://127.0.0.1:${FAOLLA_CANDIDATE_HEALTH_PORT}/api/app-web-version" \
+        2>/dev/null)"
+      [ -n "$response" ] && [ "${#response}" -le 4096 ]
+      printf "%s" "$response" \
+        | grep -Fq "\"buildId\":\"$FAOLLA_CANDIDATE_HEALTH_BUILD_ID\""
+    '
+}
+
+verify_booking_persistence_with_bounded_retry() {
+  local absolute_deadline_seconds="${1:-$((
+    SECONDS + BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS
+  ))}"
+  local attempt=0
+  local maximum_attempts=2
+  local persistence_status
+  local remaining_seconds
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || [ $((absolute_deadline_seconds - SECONDS)) \
+      -gt "$BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" ]; then
+    echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+    return 1
+  fi
+  while [ "$attempt" -lt "$maximum_attempts" ]; do
+    attempt=$((attempt + 1))
+    if ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
+      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      return 1
+    fi
+    remaining_seconds=$((absolute_deadline_seconds - SECONDS))
+    if [ "$remaining_seconds" -le 0 ] \
+      || ! assert_readiness_fence_before_forward_operation \
+        "$remaining_seconds" "$absolute_deadline_seconds" \
+      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
+      || ! assert_candidate_web_health "$absolute_deadline_seconds" \
+      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
+      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      return 1
+    fi
+    remaining_seconds=$((absolute_deadline_seconds - SECONDS))
+    if [ "$remaining_seconds" -le 0 ]; then
+      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      return 1
+    fi
+    if [ "$remaining_seconds" -gt "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" ]; then
+      remaining_seconds="$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS"
+    fi
+    if verify_booking_persistence \
+      "$remaining_seconds" "$absolute_deadline_seconds" >/dev/null 2>&1; then
+      persistence_status=0
+    else
+      persistence_status=$?
+    fi
+    if [ "$persistence_status" -eq 2 ] \
+      && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+      echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+      return 1
+    fi
+    if ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
+      || ! assert_readiness_fence_forward_checkpoint \
+        "$absolute_deadline_seconds" \
+      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
+      || ! assert_candidate_web_health "$absolute_deadline_seconds" \
+      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
+      echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+      return 1
+    fi
+    case "$persistence_status" in
+      0) return 0 ;;
+      2)
+        if [ "$attempt" -ge "$maximum_attempts" ]; then
+          echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+          return 1
+        fi
+        if [ $((absolute_deadline_seconds - SECONDS)) -le 1 ]; then
+          echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+          return 1
+        fi
+        echo "[deploy] deploy_forward_booking_persistence_transient_retry"
+        sleep 1
+        if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+          echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+          return 1
+        fi
+        ;;
+      *)
+        echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+        return 1
+        ;;
+    esac
+  done
+  echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
+  return 1
+}
+
 validate_readiness_fence_marker() {
+  local absolute_deadline_seconds="${2:-}"
   local candidate_application_name=""
   local candidate_backend_pid=""
   local candidate_marker_sha256=""
+  local candidate_validation_complete=""
+  local command_timeout_seconds=5
   local marker_key
   local marker_value
   local marker_value_count=0
@@ -2391,6 +3026,10 @@ validate_readiness_fence_marker() {
     || ! [[ "$minimum_hold_remaining_seconds" =~ ^[0-9]+$ ]] \
     || [ "$minimum_hold_remaining_seconds" -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ]; then
     return 1
+  fi
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 5 1)" || return 1
   fi
   while IFS= read -r -d '' marker_key \
     && IFS= read -r -d '' marker_value; do
@@ -2410,10 +3049,15 @@ validate_readiness_fence_marker() {
         candidate_marker_sha256="$marker_value"
         marker_value_count=$((marker_value_count + 1))
         ;;
+      READINESS_FENCE_VALIDATION_COMPLETE)
+        [ -z "$candidate_validation_complete" ] || return 1
+        candidate_validation_complete="$marker_value"
+        marker_value_count=$((marker_value_count + 1))
+        ;;
       *) return 1 ;;
     esac
   done < <(
-    FAOLLA_EXPECTED_HOLDER_PID="$READINESS_FENCE_PID" \
+    if FAOLLA_EXPECTED_HOLDER_PID="$READINESS_FENCE_PID" \
     FAOLLA_EXPECTED_TARGET_SHA="$EXPECTED_DEPLOY_SHA" \
     FAOLLA_EXPECTED_READINESS_RUN_ID="$RELEASE_READINESS_RUN_ID" \
     FAOLLA_EXPECTED_READINESS_RUN_ATTEMPT="$RELEASE_READINESS_RUN_ATTEMPT" \
@@ -2429,7 +3073,7 @@ validate_readiness_fence_marker() {
     FAOLLA_EXPECTED_MINIMUM_HOLD_REMAINING_SECONDS="$minimum_hold_remaining_seconds" \
     FAOLLA_SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL" \
     FAOLLA_NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL" \
-    timeout --signal=TERM --kill-after=1s 5s \
+    timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
       node --input-type=module - \
       "$READINESS_FENCE_MARKER" "$READINESS_FENCE_RELEASE_REQUEST" <<'NODE'
 import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
@@ -2591,11 +3235,19 @@ for (const [key, value] of [
   ["READINESS_FENCE_MARKER_SHA256", markerSha256],
 ]) process.stdout.write(`${key}\0${value}\0`);
 NODE
+    then
+      printf 'READINESS_FENCE_VALIDATION_COMPLETE\0complete\0'
+    fi
   )
-  if [ "$marker_value_count" -ne 3 ] \
+  if [ "$marker_value_count" -ne 4 ] \
     || ! [[ "$candidate_backend_pid" =~ ^[1-9][0-9]*$ ]] \
     || ! [[ "$candidate_application_name" =~ ^faolla_readiness_fence_${READINESS_FENCE_PID}_[0-9a-f]{24}$ ]] \
-    || ! [[ "$candidate_marker_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    || ! [[ "$candidate_marker_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || [ "$candidate_validation_complete" != "complete" ]; then
+    return 1
+  fi
+  if [ -n "$absolute_deadline_seconds" ] \
+    && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
     return 1
   fi
   READINESS_FENCE_BACKEND_PID="$candidate_backend_pid"
@@ -2606,7 +3258,10 @@ NODE
 assert_readiness_fence_database_locks() {
   local allow_waiters="${1:-0}"
   local query_timeout_seconds="${2:-$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}"
+  local absolute_deadline_seconds="${3:-}"
+  local command_timeout_seconds
   local lock_state
+  local statement_timeout_milliseconds
   case "$allow_waiters" in
     0|1) ;;
     *) return 1 ;;
@@ -2615,13 +3270,21 @@ assert_readiness_fence_database_locks() {
     || [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
     return 1
   fi
+  command_timeout_seconds="$query_timeout_seconds"
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" "$query_timeout_seconds" 5)" || return 1
+  fi
+  statement_timeout_milliseconds=$((command_timeout_seconds * 1000 - 1))
+  if [ "$statement_timeout_milliseconds" -le 0 ]; then return 1; fi
   if ! lock_state="$(
     timeout --signal=TERM --kill-after=5s \
-      "${query_timeout_seconds}s" \
+      "${command_timeout_seconds}s" \
     docker exec --interactive \
       --env "FAOLLA_FENCE_APPLICATION_NAME=$READINESS_FENCE_APPLICATION_NAME" \
       --env "FAOLLA_FENCE_BACKEND_PID=$READINESS_FENCE_BACKEND_PID" \
       --env "FAOLLA_FENCE_ALLOW_WAITERS=$allow_waiters" \
+      --env "FAOLLA_FENCE_STATEMENT_TIMEOUT_MILLISECONDS=$statement_timeout_milliseconds" \
       "$RELEASE_DATABASE_CONTAINER_ID" sh -c '
         set -eu
         : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
@@ -2629,7 +3292,11 @@ assert_readiness_fence_database_locks() {
         : "${FAOLLA_FENCE_APPLICATION_NAME:?FAOLLA_FENCE_APPLICATION_NAME is required}"
         : "${FAOLLA_FENCE_BACKEND_PID:?FAOLLA_FENCE_BACKEND_PID is required}"
         case "$FAOLLA_FENCE_ALLOW_WAITERS" in 0|1) ;; *) exit 1 ;; esac
+        case "$FAOLLA_FENCE_STATEMENT_TIMEOUT_MILLISECONDS" in
+          ""|*[!0-9]*|0) exit 1 ;;
+        esac
         export PGPASSWORD="$POSTGRES_PASSWORD"
+        export PGOPTIONS="-c statement_timeout=${FAOLLA_FENCE_STATEMENT_TIMEOUT_MILLISECONDS}ms -c lock_timeout=${FAOLLA_FENCE_STATEMENT_TIMEOUT_MILLISECONDS}ms"
         exec psql --host=localhost --username=supabase_admin --dbname="$POSTGRES_DB" \
           --no-password --no-psqlrc --set=ON_ERROR_STOP=1 --set=VERBOSITY=terse \
           --set=fence_application_name="$FAOLLA_FENCE_APPLICATION_NAME" \
@@ -2771,6 +3438,10 @@ SQL
   )"; then
     return 1
   fi
+  if [ -n "$absolute_deadline_seconds" ] \
+    && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
   case "$lock_state" in
     held) return 0 ;;
     quiescing)
@@ -2779,7 +3450,6 @@ SQL
       ;;
     blocked_cancelled)
       if [ "$allow_waiters" = "0" ]; then
-        echo "[deploy] readiness fence cancelled a newly queued database waiter; retrying protected quiescence"
         return 2
       fi
       return 1
@@ -2789,7 +3459,13 @@ SQL
 }
 
 readiness_fence_process_identity_sha256() {
-  timeout --signal=TERM --kill-after=1s 2s \
+  local absolute_deadline_seconds="${1:-}"
+  local command_timeout_seconds=2
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 2 1)" || return 1
+  fi
+  timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
     node --input-type=module - "$READINESS_FENCE_PID" "$RELEASE_DIR" <<'NODE'
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -2834,7 +3510,13 @@ NODE
 }
 
 readiness_fence_process_start_ticks() {
-  timeout --signal=TERM --kill-after=1s 2s \
+  local absolute_deadline_seconds="${1:-}"
+  local command_timeout_seconds=2
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 2 1)" || return 1
+  fi
+  timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
     node --input-type=module - "$READINESS_FENCE_PID" "$RELEASE_DIR" <<'NODE'
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
@@ -2862,18 +3544,22 @@ NODE
 }
 
 readiness_fence_original_process_matches() {
+  local absolute_deadline_seconds="${1:-}"
   local current_start_ticks
   if [ -z "${READINESS_FENCE_PROCESS_START_TICKS:-}" ] \
-    || ! current_start_ticks="$(readiness_fence_process_start_ticks)"; then
+    || ! current_start_ticks="$(readiness_fence_process_start_ticks \
+      "$absolute_deadline_seconds")"; then
     return 1
   fi
   [ "$current_start_ticks" = "$READINESS_FENCE_PROCESS_START_TICKS" ]
 }
 
 readiness_fence_process_identity_matches() {
+  local absolute_deadline_seconds="${1:-}"
   local current_identity
   if [ -z "${READINESS_FENCE_PROCESS_IDENTITY_SHA256:-}" ] \
-    || ! current_identity="$(readiness_fence_process_identity_sha256)"; then
+    || ! current_identity="$(readiness_fence_process_identity_sha256 \
+      "$absolute_deadline_seconds")"; then
     return 1
   fi
   [ "$current_identity" = "$READINESS_FENCE_PROCESS_IDENTITY_SHA256" ]
@@ -2882,6 +3568,7 @@ readiness_fence_process_identity_matches() {
 assert_readiness_fence_held() {
   local minimum_hold_remaining_seconds="${1:-0}"
   local query_timeout_seconds="${2:-$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}"
+  local outer_deadline_seconds="${3:-}"
   local deadline
   local database_status
   if ! [[ "$query_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
@@ -2889,15 +3576,26 @@ assert_readiness_fence_held() {
     return 1
   fi
   deadline=$((SECONDS + query_timeout_seconds))
+  if [ -n "$outer_deadline_seconds" ]; then
+    if ! [[ "$outer_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+      || [ "$SECONDS" -ge "$outer_deadline_seconds" ]; then
+      return 1
+    fi
+    if [ "$outer_deadline_seconds" -lt "$deadline" ]; then
+      deadline="$outer_deadline_seconds"
+    fi
+  fi
   if [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
     || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
-    || ! readiness_fence_process_identity_matches \
-    || ! validate_readiness_fence_marker "$minimum_hold_remaining_seconds" \
-    || [ "$SECONDS" -ge "$deadline" ]; then
+    || ! readiness_fence_process_identity_matches "$deadline" \
+    || ! validate_readiness_fence_marker \
+      "$minimum_hold_remaining_seconds" "$deadline"; then
     return 1
   fi
   query_timeout_seconds=$((deadline - SECONDS))
-  if assert_readiness_fence_database_locks 0 "$query_timeout_seconds"; then
+  if [ "$query_timeout_seconds" -le 0 ]; then return 1; fi
+  if assert_readiness_fence_database_locks \
+    0 "$query_timeout_seconds" "$deadline"; then
     database_status=0
   else
     database_status=$?
@@ -2906,38 +3604,104 @@ assert_readiness_fence_held() {
     0|2) ;;
     *) return 1 ;;
   esac
-  if [ "$SECONDS" -ge "$deadline" ] \
-    || ! readiness_fence_process_identity_matches \
+  if ! readiness_fence_process_identity_matches "$deadline" \
     || [ "$SECONDS" -ge "$deadline" ]; then
     return 1
   fi
   return "$database_status"
+}
+
+assert_readiness_fence_held_with_bounded_retry() {
+  local minimum_hold_remaining_seconds="${1:-0}"
+  local total_timeout_seconds="${2:-$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}"
+  local outer_deadline_seconds="${3:-}"
+  local maximum_attempts=3
+  local attempt=0
+  local checkpoint_status
+  local deadline
+  local remaining_seconds
+  if ! [[ "$minimum_hold_remaining_seconds" =~ ^[0-9]+$ ]] \
+    || ! [[ "$total_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$total_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
+    echo "[deploy] deploy_failed_readiness_fence_nonretryable"
+    return 1
+  fi
+  deadline=$((SECONDS + total_timeout_seconds))
+  if [ -n "$outer_deadline_seconds" ]; then
+    if ! [[ "$outer_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+      || [ "$SECONDS" -ge "$outer_deadline_seconds" ]; then
+      echo "[deploy] deploy_failed_readiness_fence_nonretryable"
+      return 1
+    fi
+    if [ "$outer_deadline_seconds" -lt "$deadline" ]; then
+      deadline="$outer_deadline_seconds"
+    fi
+  fi
+  while [ "$attempt" -lt "$maximum_attempts" ] \
+    && [ "$SECONDS" -lt "$deadline" ]; do
+    attempt=$((attempt + 1))
+    remaining_seconds=$((deadline - SECONDS))
+    if assert_readiness_fence_held \
+      "$minimum_hold_remaining_seconds" "$remaining_seconds" "$deadline"; then
+      return 0
+    else
+      checkpoint_status=$?
+    fi
+    case "$checkpoint_status" in
+      2)
+        if [ "$attempt" -ge "$maximum_attempts" ] \
+          || [ $((deadline - SECONDS)) -le 1 ]; then
+          echo "[deploy] readiness_fence_waiter_retry_exhausted"
+          return 1
+        fi
+        echo "[deploy] readiness_fence_waiter_cancelled_retry"
+        sleep 1
+        ;;
+      *)
+        echo "[deploy] deploy_failed_readiness_fence_nonretryable"
+        return 1
+        ;;
+    esac
+  done
+  echo "[deploy] readiness_fence_waiter_retry_exhausted"
+  return 1
 }
 
 readiness_fence_process_quiescence_checkpoint() {
   local minimum_hold_remaining_seconds="${1:-0}"
   local query_timeout_seconds="${2:-$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}"
   local absolute_deadline_seconds="${3:-}"
+  local local_deadline_seconds
   local database_status
-  if [ -n "$absolute_deadline_seconds" ] \
-    && { ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
-      || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; }; then
+  if ! [[ "$query_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
     return 1
   fi
-  if [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
-    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
-    || ! readiness_fence_process_identity_matches \
-    || ! validate_readiness_fence_marker "$minimum_hold_remaining_seconds"; then
-    return 1
-  fi
+  local_deadline_seconds=$((SECONDS + query_timeout_seconds))
   if [ -n "$absolute_deadline_seconds" ]; then
-    if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then return 1; fi
-    query_timeout_seconds=$((absolute_deadline_seconds - SECONDS))
-    if [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
-      query_timeout_seconds="$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS"
+    if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+      || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+      return 1
+    fi
+    if [ "$absolute_deadline_seconds" -lt "$local_deadline_seconds" ]; then
+      local_deadline_seconds="$absolute_deadline_seconds"
     fi
   fi
-  if assert_readiness_fence_database_locks 1 "$query_timeout_seconds"; then
+  absolute_deadline_seconds="$local_deadline_seconds"
+  if [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
+    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
+    || ! readiness_fence_process_identity_matches "$absolute_deadline_seconds" \
+    || ! validate_readiness_fence_marker \
+      "$minimum_hold_remaining_seconds" "$absolute_deadline_seconds"; then
+    return 1
+  fi
+  if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then return 1; fi
+  query_timeout_seconds=$((absolute_deadline_seconds - SECONDS))
+  if [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
+    query_timeout_seconds="$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS"
+  fi
+  if assert_readiness_fence_database_locks \
+    1 "$query_timeout_seconds" "$absolute_deadline_seconds"; then
     database_status=0
   else
     database_status=$?
@@ -2946,36 +3710,39 @@ readiness_fence_process_quiescence_checkpoint() {
     0|2) ;;
     *) return 1 ;;
   esac
-  if [ -n "$absolute_deadline_seconds" ] \
-    && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+  if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
     return 1
   fi
-  if ! readiness_fence_process_identity_matches; then return 1; fi
-  if [ -n "$absolute_deadline_seconds" ] \
-    && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+  if ! readiness_fence_process_identity_matches \
+    "$absolute_deadline_seconds"; then return 1; fi
+  if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
     return 1
   fi
   return "$database_status"
 }
 
 assert_readiness_fence_forward_checkpoint() {
+  local absolute_deadline_seconds="${1:-}"
   [ "${READINESS_FENCE_FORWARD_READY:-0}" = "1" ] || return 1
-  assert_readiness_fence_held "$((
+  assert_readiness_fence_held_with_bounded_retry "$((
     READINESS_FENCE_ROLLBACK_RESERVE_SECONDS +
     READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS
-  ))"
+  ))" "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" \
+    "$absolute_deadline_seconds"
 }
 
 assert_readiness_fence_before_forward_operation() {
   local operation_timeout_seconds="$1"
+  local absolute_deadline_seconds="${2:-}"
   if ! [[ "$operation_timeout_seconds" =~ ^[0-9]+$ ]]; then return 1; fi
   [ "${READINESS_FENCE_FORWARD_READY:-0}" = "1" ] || return 1
-  assert_readiness_fence_held "$((
+  assert_readiness_fence_held_with_bounded_retry "$((
     READINESS_FENCE_ROLLBACK_RESERVE_SECONDS +
     READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS +
     operation_timeout_seconds +
     READINESS_FENCE_OPERATION_MARGIN_SECONDS
-  ))"
+  ))" "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" \
+    "$absolute_deadline_seconds"
 }
 
 assert_readiness_fence_before_process_quiescence() {
@@ -3015,7 +3782,7 @@ wait_for_readiness_fence_database_quiescence() {
       if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
       remaining_seconds=$((deadline - SECONDS))
       if assert_readiness_fence_held \
-        "$minimum_hold_remaining_seconds" "$remaining_seconds"; then
+        "$minimum_hold_remaining_seconds" "$remaining_seconds" "$deadline"; then
         if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
         READINESS_FENCE_FORWARD_READY=1
         return 0
@@ -3258,7 +4025,7 @@ start_readiness_fence() {
   READINESS_FENCE_BACKEND_PID=""
   READINESS_FENCE_APPLICATION_NAME=""
   (
-    cd "$RELEASE_DIR"
+    cd "$RELEASE_DIR" || exit 1
     export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"
     export NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL"
     export NEXT_PUBLIC_SUPABASE_ANON_KEY="$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"
@@ -3382,13 +4149,13 @@ release_readiness_fence() {
         return 1
         ;;
     esac
-  elif ! assert_readiness_fence_held; then
+  elif ! assert_readiness_fence_held_with_bounded_retry; then
     echo "[deploy] refusing to release an unverified readiness fence"
     return 1
   fi
   READINESS_FENCE_RELEASE_REQUESTED=1
   if ! (
-    cd "$RELEASE_DIR"
+    cd "$RELEASE_DIR" || exit 1
     FAOLLA_READINESS_FENCE_RELEASE_TOKEN="$READINESS_FENCE_RELEASE_TOKEN" \
       timeout --signal=TERM --kill-after=1s 5s \
         node --input-type=module - \
@@ -3428,7 +4195,7 @@ NODE
     return 1
   fi
   if ! (
-    cd "$RELEASE_DIR"
+    cd "$RELEASE_DIR" || exit 1
     timeout --signal=TERM --kill-after=1s 5s \
       node --input-type=module - \
       "$READINESS_FENCE_LOG" "$READINESS_FENCE_BACKEND_PID" "$READINESS_FENCE_MARKER_SHA256" <<'NODE'
@@ -3662,20 +4429,41 @@ discard_failed_readiness_fence() {
   return "$cleanup_status"
 }
 
+assert_readiness_fence_held_for_rollback() {
+  local minimum_hold_remaining_seconds="${1:-0}"
+  assert_readiness_fence_held_with_bounded_retry \
+    "$minimum_hold_remaining_seconds" \
+    "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS"
+}
+
 ensure_readiness_fence_for_rollback() {
-  local attempt
+  local minimum_hold_remaining_seconds="$((
+    READINESS_FENCE_ROLLBACK_RESERVE_SECONDS +
+    2 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS
+  ))"
+  ROLLBACK_FAILURE_CODE=""
   if [ "${READINESS_FENCE_ACTIVE:-0}" = "1" ] \
     && [ "${READINESS_FENCE_RELEASE_REQUESTED:-0}" = "0" ]; then
-    for attempt in $(seq 1 3); do
-      if assert_readiness_fence_held "$((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + 2 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))"; then return 0; fi
-      sleep 1
-    done
+    if assert_readiness_fence_held_for_rollback \
+      "$minimum_hold_remaining_seconds"; then
+      return 0
+    fi
   fi
-  echo "[deploy] readiness fence exited unexpectedly; revalidating and reacquiring before rollback"
-  discard_failed_readiness_fence || return 1
-  start_readiness_fence 0 || return 1
-  if ! assert_readiness_fence_held "$((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + 2 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))"; then
-    discard_failed_readiness_fence || return 1
+  if ! discard_failed_readiness_fence >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_cleanup"
+    return 1
+  fi
+  if ! start_readiness_fence 0 >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_reacquire"
+    return 1
+  fi
+  if ! assert_readiness_fence_held_for_rollback \
+    "$minimum_hold_remaining_seconds"; then
+    if ! discard_failed_readiness_fence >/dev/null 2>&1; then
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_cleanup"
+    else
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_reacquire"
+    fi
     return 1
   fi
 }
@@ -3723,7 +4511,23 @@ PROCESSES_STOPPED=0
 DEPLOY_HEALTHY=0
 WEB_COMMITTED=0
 ROLLBACK_COMPLETED=0
+ROLLBACK_FAILURE_CODE=""
 FORWARD_MUTATION_STARTED=0
+CANDIDATE_CURRENT_LINK_IDENTITY=""
+CANDIDATE_RUNTIME_IDENTITY=""
+CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY=""
+CANDIDATE_ENVIRONMENT_FILE_IDENTITY=""
+CANDIDATE_ENVIRONMENT_SHA256=""
+CANDIDATE_SUPABASE_INTERNAL_URL_B64=""
+CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64=""
+CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""
+CANDIDATE_BUILD_FILE_IDENTITY=""
+CANDIDATE_BUILD_FILE_SHA256=""
+CANDIDATE_WEB_PID=""
+CANDIDATE_WEB_PROCESS_START_TICKS=""
+CANDIDATE_WEB_PROCESS_IDENTITY=""
+CANDIDATE_WEB_CWD_IDENTITY=""
+BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS=""
 READINESS_FENCE_FORWARD_READY=0
 READINESS_FENCE_ACTIVE=0
 READINESS_FENCE_RELEASED=0
@@ -3957,6 +4761,7 @@ recover_pre_forward_previous_runtime() {
 }
 
 rollback_release() {
+  ROLLBACK_FAILURE_CODE=""
   if { [ "$SWITCH_COMPLETED" != "1" ] && [ "$PROCESSES_STOPPED" != "1" ]; } \
     || [ "$WEB_COMMITTED" = "1" ]; then
     return 0
@@ -3964,32 +4769,74 @@ rollback_release() {
   if [ -z "$PREVIOUS_RUNTIME_DIR" ] \
     || [ ! -d "$PREVIOUS_RUNTIME_DIR/.next" ] \
     || ! [[ "$PREVIOUS_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "[deploy] previous runtime evidence is unavailable for rollback"
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_evidence"
     return 1
   fi
-  assert_readiness_fence_held "$((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))" || return 1
-  echo "[deploy] new release failed verification; restoring previous runtime while the readiness fence is held"
-  stop_previous_automation_worker_bounded || return 1
-  stop_pm2_process_bounded "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" || return 1
-  wait_for_port_release || return 1
-  assert_readiness_fence_held || return 1
-  restore_legacy_runtime_compatibility_paths || return 1
-  assert_readiness_fence_held || return 1
-  if [ -n "$PREVIOUS_LINK_TARGET" ] && [ -d "$PREVIOUS_LINK_TARGET/.next" ]; then
-    switch_current_release "$PREVIOUS_LINK_TARGET" || return 1
-  else
-    rm -f -- "$CURRENT_LINK" || return 1
+  if ! assert_readiness_fence_held_for_rollback \
+    "$((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))"; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_checkpoint"
+    return 1
   fi
-  assert_readiness_fence_held || return 1
-  start_frozen_previous_release >/dev/null 2>&1 || return 1
-  wait_for_release_health "$PREVIOUS_BUILD_ID" || return 1
-  assert_readiness_fence_held || return 1
+  echo "[deploy] new release failed verification; restoring previous runtime while the readiness fence is held"
+  if ! stop_previous_automation_worker_bounded >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_worker_quiesce"
+    return 1
+  fi
+  if ! stop_pm2_process_bounded \
+    "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_web_quiesce"
+    return 1
+  fi
+  if ! wait_for_port_release >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_port_quiesce"
+    return 1
+  fi
+  if ! assert_readiness_fence_held_for_rollback; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_checkpoint"
+    return 1
+  fi
+  if ! restore_legacy_runtime_compatibility_paths >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_compatibility_restore"
+    return 1
+  fi
+  if ! assert_readiness_fence_held_for_rollback; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_checkpoint"
+    return 1
+  fi
+  if [ -n "$PREVIOUS_LINK_TARGET" ] && [ -d "$PREVIOUS_LINK_TARGET/.next" ]; then
+    if ! switch_current_release "$PREVIOUS_LINK_TARGET" >/dev/null 2>&1; then
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_current_restore"
+      return 1
+    fi
+  else
+    if ! rm -f -- "$CURRENT_LINK" >/dev/null 2>&1; then
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_current_restore"
+      return 1
+    fi
+  fi
+  if ! assert_readiness_fence_held_for_rollback; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_checkpoint"
+    return 1
+  fi
+  if ! start_frozen_previous_release >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_previous_web_start"
+    return 1
+  fi
+  if ! wait_for_release_health "$PREVIOUS_BUILD_ID" >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_previous_web_health"
+    return 1
+  fi
+  if ! assert_readiness_fence_held_for_rollback; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_checkpoint"
+    return 1
+  fi
   ROLLBACK_COMPLETED=1
 }
 
 cleanup_failed_build() {
   local original_status=$?
   local cleanup_status=0
+  local rollback_primary_code=""
   trap - EXIT
   trap '' HUP TERM INT
   set +e
@@ -4024,35 +4871,79 @@ cleanup_failed_build() {
     fi
   elif [ "$SWITCH_COMPLETED" = "1" ] || [ "$PROCESSES_STOPPED" = "1" ]; then
     if ! ensure_readiness_fence_for_rollback; then
-      echo "[deploy] unable to reacquire a readiness fence; refusing an uncertified rollback"
+      rollback_primary_code="${ROLLBACK_FAILURE_CODE:-}"
+      case "$rollback_primary_code" in
+        deploy_rollback_failed_fence_cleanup)
+          echo "[deploy] deploy_rollback_failed_fence_cleanup"
+          ;;
+        deploy_rollback_failed_fence_reacquire)
+          echo "[deploy] deploy_rollback_failed_fence_reacquire"
+          ;;
+        *) echo "[deploy] deploy_rollback_failed_unknown" ;;
+      esac
       if [ "${READINESS_FENCE_ACTIVE:-0}" = "1" ] \
-        && ! discard_failed_readiness_fence; then
-        echo "[deploy] failed to prove the rejected rollback fence session was removed"
+        && ! discard_failed_readiness_fence >/dev/null 2>&1; then
+        if [ "$rollback_primary_code" != "deploy_rollback_failed_fence_cleanup" ]; then
+          echo "[deploy] deploy_rollback_failed_fence_cleanup"
+        fi
       fi
       cleanup_status=1
     elif ! rollback_release; then
-      echo "[deploy] rollback failed while the readiness fence was held"
+      case "${ROLLBACK_FAILURE_CODE:-}" in
+        deploy_rollback_failed_evidence)
+          echo "[deploy] deploy_rollback_failed_evidence"
+          ;;
+        deploy_rollback_failed_fence_checkpoint)
+          echo "[deploy] deploy_rollback_failed_fence_checkpoint"
+          ;;
+        deploy_rollback_failed_worker_quiesce)
+          echo "[deploy] deploy_rollback_failed_worker_quiesce"
+          ;;
+        deploy_rollback_failed_web_quiesce)
+          echo "[deploy] deploy_rollback_failed_web_quiesce"
+          ;;
+        deploy_rollback_failed_port_quiesce)
+          echo "[deploy] deploy_rollback_failed_port_quiesce"
+          ;;
+        deploy_rollback_failed_compatibility_restore)
+          echo "[deploy] deploy_rollback_failed_compatibility_restore"
+          ;;
+        deploy_rollback_failed_current_restore)
+          echo "[deploy] deploy_rollback_failed_current_restore"
+          ;;
+        deploy_rollback_failed_previous_web_start)
+          echo "[deploy] deploy_rollback_failed_previous_web_start"
+          ;;
+        deploy_rollback_failed_previous_web_health)
+          echo "[deploy] deploy_rollback_failed_previous_web_health"
+          ;;
+        *) echo "[deploy] deploy_rollback_failed_unknown" ;;
+      esac
+      echo "[deploy] deploy_rollback_failed_runtime_restore"
       if [ "${READINESS_FENCE_ACTIVE:-0}" = "1" ] \
-        && ! discard_failed_readiness_fence; then
-        echo "[deploy] failed to prove the rejected rollback fence session was removed"
+        && ! discard_failed_readiness_fence >/dev/null 2>&1; then
+        echo "[deploy] deploy_rollback_failed_fence_cleanup"
       fi
       cleanup_status=1
-    elif ! release_readiness_fence; then
-      echo "[deploy] rollback restored the previous web process, but fence release failed"
-      if ! discard_failed_readiness_fence; then
-        echo "[deploy] failed to prove the rejected rollback fence session was removed"
+    elif ! release_readiness_fence >/dev/null 2>&1; then
+      echo "[deploy] deploy_rollback_failed_fence_release"
+      if ! discard_failed_readiness_fence >/dev/null 2>&1; then
+        echo "[deploy] deploy_rollback_failed_fence_cleanup"
       fi
       cleanup_status=1
     elif [ "$PREVIOUS_AUTOMATION_WORKER_RUNNING" = "1" ]; then
       if ! start_frozen_previous_automation_worker_process >/dev/null 2>&1 \
-        || ! wait_for_automation_worker_online; then
-        echo "[deploy] previous worker failed to restart after the rollback fence was released"
+        || ! wait_for_automation_worker_online >/dev/null 2>&1; then
+        echo "[deploy] deploy_rollback_failed_worker_restart"
         cleanup_status=1
       fi
     fi
     if [ "$ROLLBACK_COMPLETED" = "1" ]; then
-      timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 \
-        || cleanup_status=1
+      if ! timeout --signal=TERM --kill-after=2s 10s \
+        pm2 save >/dev/null 2>&1; then
+        echo "[deploy] deploy_rollback_failed_pm2_save"
+        cleanup_status=1
+      fi
     fi
   elif [ "$READINESS_FENCE_ACTIVE" = "1" ]; then
     if [ "$READINESS_FENCE_RELEASE_REQUESTED" = "0" ] \
@@ -4067,7 +4958,12 @@ cleanup_failed_build() {
   if [ "$WEB_COMMITTED" != "1" ] \
     && { [ "$SWITCH_COMPLETED" != "1" ] || [ "$ROLLBACK_COMPLETED" = "1" ]; } \
     && [ -d "$RELEASE_DIR" ]; then
-    safe_remove_release_path "$RELEASE_DIR" || cleanup_status=1
+    if ! safe_remove_release_path "$RELEASE_DIR" >/dev/null 2>&1; then
+      if [ "$ROLLBACK_COMPLETED" = "1" ]; then
+        echo "[deploy] deploy_rollback_failed_release_cleanup"
+      fi
+      cleanup_status=1
+    fi
   fi
   rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE"
   if [ "$original_status" -eq 0 ]; then original_status=1; fi
@@ -4241,6 +5137,11 @@ assert_readiness_fence_forward_checkpoint || exit 1
 assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1
 switch_current_release "$RELEASE_DIR" || exit 1
 SWITCH_COMPLETED=1
+if ! capture_candidate_current_identity_for_booking_retry \
+  "$((SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))"; then
+  echo "[deploy] deploy_forward_booking_persistence_hard_failed"
+  exit 1
+fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
 assert_readiness_fence_before_forward_operation "$RELEASE_PROCESS_START_TIMEOUT_SECONDS" || exit 1
@@ -4257,14 +5158,16 @@ if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
-BOOKING_PERSISTENCE_STATUS=0
-assert_readiness_fence_before_forward_operation "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" || exit 1
-verify_booking_persistence || BOOKING_PERSISTENCE_STATUS=$?
-if [ "$BOOKING_PERSISTENCE_STATUS" -ne 0 ]; then
-  echo "[deploy] booking persistence check failed with status $BOOKING_PERSISTENCE_STATUS"
+BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((
+  SECONDS + BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS
+))"
+if ! capture_candidate_web_identity_for_booking_retry \
+  "$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"; then
+  echo "[deploy] deploy_forward_booking_persistence_hard_failed"
   exit 1
 fi
-assert_readiness_fence_forward_checkpoint || exit 1
+verify_booking_persistence_with_bounded_retry \
+  "$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS" || exit 1
 
 assert_readiness_fence_before_forward_operation "$RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS" || exit 1
 if ! run_local_release_smoke; then
