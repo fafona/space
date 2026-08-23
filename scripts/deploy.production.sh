@@ -4690,8 +4690,6 @@ assert_readiness_fence_before_process_quiescence() {
 }
 
 wait_for_readiness_fence_database_quiescence() {
-  local checkpoint_status
-  local strict_status
   local deadline=$((SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))
   local minimum_hold_remaining_seconds="$((
     READINESS_FENCE_ROLLBACK_RESERVE_SECONDS +
@@ -4699,31 +4697,15 @@ wait_for_readiness_fence_database_quiescence() {
   ))"
   local remaining_seconds
   READINESS_FENCE_FORWARD_READY=0
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    remaining_seconds=$((deadline - SECONDS))
-    if readiness_fence_process_quiescence_checkpoint \
-      "$minimum_hold_remaining_seconds" "$remaining_seconds" "$deadline"; then
-      if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
-      remaining_seconds=$((deadline - SECONDS))
-      if assert_readiness_fence_held \
-        "$minimum_hold_remaining_seconds" "$remaining_seconds" "$deadline"; then
-        if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
-        READINESS_FENCE_FORWARD_READY=1
-        return 0
-      else
-        strict_status=$?
-      fi
-      if [ "$strict_status" -ne 2 ]; then return 1; fi
-      checkpoint_status=2
-    else
-      checkpoint_status=$?
-    fi
-    if [ "$checkpoint_status" -ne 2 ]; then return 1; fi
-    if [ $((deadline - SECONDS)) -le 1 ]; then break; fi
-    sleep 1
-  done
-  echo "[deploy] readiness fence database waiters did not quiesce before the protected deadline"
-  return 1
+  remaining_seconds=$((deadline - SECONDS))
+  if [ "$remaining_seconds" -le 0 ] \
+    || ! assert_readiness_fence_held_with_bounded_retry \
+      "$minimum_hold_remaining_seconds" "$remaining_seconds" "$deadline" \
+    || [ "$SECONDS" -ge "$deadline" ]; then
+    echo "[deploy] deploy_forward_quiescence_failed"
+    return 1
+  fi
+  READINESS_FENCE_FORWARD_READY=1
 }
 
 accept_readiness_fence_candidate() {
@@ -5483,6 +5465,9 @@ LEGACY_COMPATIBILITY_LINKS_INSTALLED=0
 PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED=0
 PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED=0
 PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED=0
+PRE_FORWARD_RECOVERY_WEB_COMMITTED=0
+PRE_FORWARD_RECOVERY_WORKER_COMMITTED=0
+PRE_FORWARD_RECOVERY_FAILURE_PHASE="not_started"
 PRE_FORWARD_RECOVERY_WEB_PID=""
 PRE_FORWARD_RECOVERY_WEB_START_TICKS=""
 PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY=""
@@ -5589,7 +5574,8 @@ cleanup_pre_forward_recovery_started_process() {
 
 cleanup_pre_forward_previous_runtime_attempts() {
   local cleanup_status=0
-  if [ "$PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED" = "1" ]; then
+  if [ "$PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED" = "1" ] \
+    && [ "$PRE_FORWARD_RECOVERY_WORKER_COMMITTED" != "1" ]; then
     cleanup_pre_forward_recovery_started_process "$AUTOMATION_WORKER_NAME" \
       "$PRE_FORWARD_RECOVERY_WORKER_PID" \
       "$PRE_FORWARD_RECOVERY_WORKER_START_TICKS" \
@@ -5597,17 +5583,13 @@ cleanup_pre_forward_previous_runtime_attempts() {
       "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" 0 \
       || cleanup_status=1
   fi
-  if [ "$PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED" = "1" ]; then
+  if [ "$PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED" = "1" ] \
+    && [ "$PRE_FORWARD_RECOVERY_WEB_COMMITTED" != "1" ]; then
     cleanup_pre_forward_recovery_started_process "$APP_NAME" \
       "$PRE_FORWARD_RECOVERY_WEB_PID" \
       "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
       "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
       "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" 1 \
-      || cleanup_status=1
-  fi
-  if [ "$PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED" = "1" ] \
-    && [ "$cleanup_status" -eq 0 ]; then
-    timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 \
       || cleanup_status=1
   fi
   return "$cleanup_status"
@@ -5616,6 +5598,7 @@ cleanup_pre_forward_previous_runtime_attempts() {
 recover_pre_forward_previous_runtime() {
   local web_start_status=0
   local worker_start_status=0
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="preflight"
   if [ "${FORWARD_MUTATION_STARTED:-0}" != "0" ] \
     || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
     || [ "${WEB_COMMITTED:-0}" != "0" ] \
@@ -5635,6 +5618,7 @@ recover_pre_forward_previous_runtime() {
   fi
   stop_previous_automation_worker_bounded || return 1
   previous_runtime_recovery_identity_matches || return 1
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="fence_release"
   if [ "${READINESS_FENCE_ACTIVE:-0}" = "1" ]; then
     if [ "${READINESS_FENCE_RELEASE_REQUESTED:-0}" = "0" ] \
       && release_readiness_fence 1; then
@@ -5645,6 +5629,7 @@ recover_pre_forward_previous_runtime() {
   fi
   if [ "${READINESS_FENCE_CLEANUP_VERIFIED:-0}" != "1" ]; then return 1; fi
   previous_runtime_recovery_identity_matches || return 1
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="web"
   PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED=1
   start_frozen_previous_release >/dev/null 2>&1 || web_start_status=$?
   capture_pre_forward_recovery_process_identity \
@@ -5659,7 +5644,10 @@ recover_pre_forward_previous_runtime() {
     "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
     "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
     "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
+  previous_runtime_recovery_identity_matches || return 1
+  PRE_FORWARD_RECOVERY_WEB_COMMITTED=1
   if [ "$PREVIOUS_AUTOMATION_WORKER_RUNNING" = "1" ]; then
+    PRE_FORWARD_RECOVERY_FAILURE_PHASE="worker"
     PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED=1
     start_frozen_previous_automation_worker_process >/dev/null 2>&1 \
       || worker_start_status=$?
@@ -5678,13 +5666,24 @@ recover_pre_forward_previous_runtime() {
       "$PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY" \
       "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" || return 1
   fi
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="post_verify"
   previous_runtime_recovery_identity_matches || return 1
   pre_forward_recovery_process_identity_matches "$APP_NAME" \
     "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
     "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
     "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
+  if [ "$PREVIOUS_AUTOMATION_WORKER_RUNNING" = "1" ]; then
+    pre_forward_recovery_process_identity_matches "$AUTOMATION_WORKER_NAME" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PID" \
+      "$PRE_FORWARD_RECOVERY_WORKER_START_TICKS" \
+      "$PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY" \
+      "$PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY" || return 1
+    PRE_FORWARD_RECOVERY_WORKER_COMMITTED=1
+  fi
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="pm2_save"
   PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED=1
   timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 || return 1
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="post_verify"
   previous_runtime_recovery_identity_matches || return 1
   pre_forward_recovery_process_identity_matches "$APP_NAME" \
     "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
@@ -5699,6 +5698,7 @@ recover_pre_forward_previous_runtime() {
   fi
   PROCESSES_STOPPED=0
   ROLLBACK_COMPLETED=1
+  PRE_FORWARD_RECOVERY_FAILURE_PHASE="complete"
   echo "[deploy] restored the frozen previous runtime before any forward mutation"
 }
 
@@ -5830,6 +5830,29 @@ cleanup_failed_build() {
     && [ "$FORWARD_MUTATION_STARTED" = "0" ]; then
     if ! recover_pre_forward_previous_runtime; then
       echo "[deploy] deploy_stage_pre_forward_restore_failed"
+      case "${PRE_FORWARD_RECOVERY_FAILURE_PHASE:-}" in
+        preflight)
+          echo "[deploy] deploy_pre_forward_restore_preflight_failed"
+          ;;
+        fence_release)
+          echo "[deploy] deploy_pre_forward_restore_fence_release_failed"
+          ;;
+        web)
+          echo "[deploy] deploy_pre_forward_restore_web_failed"
+          ;;
+        worker)
+          echo "[deploy] deploy_pre_forward_restore_worker_failed_web_preserved"
+          ;;
+        pm2_save)
+          echo "[deploy] deploy_pre_forward_restore_pm2_save_failed_web_preserved"
+          ;;
+        post_verify)
+          echo "[deploy] deploy_pre_forward_restore_post_verify_failed_web_preserved"
+          ;;
+        *)
+          echo "[deploy] deploy_pre_forward_restore_unknown_failed"
+          ;;
+      esac
       echo "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence"
       if ! cleanup_pre_forward_previous_runtime_attempts; then
         echo "[deploy] pre-forward runtime recovery cleanup could not be proven: cleanup_unverified"
