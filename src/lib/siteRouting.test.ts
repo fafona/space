@@ -39,6 +39,11 @@ test("extractMerchantPrefixFromHost still resolves prefix when configured base d
   assert.equal(extractMerchantPrefixFromHost("demo.faolla.com", "www.fafona.com"), "demo");
 });
 
+test("launch stays reserved for the canonical app bootstrap", () => {
+  assert.equal(extractMerchantPrefixFromHost("launch.faolla.com", "www.faolla.com"), "");
+  assert.equal(buildMerchantFrontendHref("10000000", "launch", "www.faolla.com"), "/site/10000000");
+});
+
 test("buildMerchantFrontendHref never turns internal storage slugs into subdomains", () => {
   const previousWindow = globalThis.window;
   Object.assign(globalThis, {

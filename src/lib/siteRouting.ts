@@ -9,7 +9,7 @@ export function buildSiteHref(siteId: string) {
   return `/site/${encodeURIComponent(siteId)}`;
 }
 
-const RESERVED_PLATFORM_SUBDOMAINS = new Set(["www", "main", "portal", "console", "public", "admin"]);
+const RESERVED_PLATFORM_SUBDOMAINS = new Set(["www", "main", "portal", "console", "public", "admin", "launch"]);
 
 function normalizeDomainPrefix(value: string | null | undefined) {
   return String(value ?? "")
@@ -18,6 +18,10 @@ function normalizeDomainPrefix(value: string | null | undefined) {
     .replace(/^\/+|\/+$/g, "")
     .replace(/\s+/g, "-")
     .replace(/[^a-z0-9_-]/g, "");
+}
+
+export function isReservedPlatformSubdomain(value: string | null | undefined) {
+  return RESERVED_PLATFORM_SUBDOMAINS.has(normalizeDomainPrefix(value));
 }
 
 function isReservedInternalPrefix(value: string | null | undefined) {
@@ -91,7 +95,7 @@ function deriveRootHostFromCurrentHost(currentHost?: string | null) {
 
 export function buildMerchantDomain(baseDomain: string | null | undefined, domainPrefix?: string | null, protocol?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
-  if (!prefix || isReservedInternalPrefix(prefix) || RESERVED_PLATFORM_SUBDOMAINS.has(prefix)) return "";
+  if (!prefix || isReservedInternalPrefix(prefix) || isReservedPlatformSubdomain(prefix)) return "";
   const rootHost = resolveMerchantRootHost(baseDomain);
   if (!rootHost) return "";
   const { hostname, port } = splitHostAndPort(rootHost);
@@ -116,7 +120,7 @@ export function extractMerchantPrefixFromHost(currentHost: string | null | undef
     if (!rootHostname || hostname === rootHostname) continue;
     if (!hostname.endsWith(`.${rootHostname}`)) continue;
     const prefix = hostname.slice(0, -(rootHostname.length + 1)).trim().toLowerCase();
-    if (!prefix || prefix.includes(".") || RESERVED_PLATFORM_SUBDOMAINS.has(prefix)) continue;
+    if (!prefix || prefix.includes(".") || isReservedPlatformSubdomain(prefix)) continue;
     return normalizeDomainPrefix(prefix);
   }
 
@@ -125,7 +129,7 @@ export function extractMerchantPrefixFromHost(currentHost: string | null | undef
 
 export function buildMerchantFrontendHref(siteId: string, domainPrefix?: string | null, baseDomain?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
-  if (prefix && !isReservedInternalPrefix(prefix)) {
+  if (prefix && !isReservedInternalPrefix(prefix) && !isReservedPlatformSubdomain(prefix)) {
     const resolvedBase = resolveRuntimePortalBaseDomain(baseDomain ?? process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
     const subdomainHref = buildMerchantDomain(resolvedBase, prefix);
     if (subdomainHref) return subdomainHref;

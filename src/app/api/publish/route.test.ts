@@ -47,6 +47,53 @@ test("allows external-url payloads", () => {
   assert.equal(getInlinePublishPayloadViolation(blocks), null);
 });
 
+test("publish rejects launch as a reserved merchant domain prefix", async () => {
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const previousNextServiceRole = process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  delete process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY;
+
+  try {
+    const response = await POST(
+      new Request("http://localhost/api/publish", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost",
+        },
+        body: JSON.stringify({
+          requestId: "merchant-reserved-launch-slug",
+          payload: {
+            blocks: [{ id: "block-1", type: "common", props: { heading: "ok" } }],
+            updated_at: "2026-08-24T12:00:00.000Z",
+          },
+          merchantIds: ["10000001"],
+          merchantSlug: "launch",
+          isPlatformEditor: false,
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "reserved_merchant_slug",
+      message: "该商户域名前缀为平台保留地址，请更换后再发布",
+      requestId: "merchant-reserved-launch-slug",
+    });
+  } finally {
+    if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    if (previousServiceRole === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRole;
+    if (previousNextServiceRole === undefined) delete process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY = previousNextServiceRole;
+  }
+});
+
 test("publish rejects merchant requests without an authorized session", async () => {
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const previousServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;

@@ -1,4 +1,5 @@
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { isReservedPlatformSubdomain } from "@/lib/siteRouting";
 
 export type MerchantProfileBindingPayload = {
   merchantId: string;
@@ -96,6 +97,9 @@ export function getMerchantProfileDomainPrefixError(value: string | null | undef
   }
   if (/^\d{8}$/.test(normalized)) {
     return "前缀不能使用 8 位纯数字（该格式保留给后台地址）";
+  }
+  if (isReservedPlatformSubdomain(normalized)) {
+    return "该前缀为平台保留地址，请更换";
   }
   return "";
 }
