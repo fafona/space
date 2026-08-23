@@ -10,12 +10,13 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"
 readonly EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32602232601"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32605144547"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="760318e0e8a3996e66892a28fa01ade5de5ecf2a"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="9acd73386724df635b67ac0b0939c2d982b1dc18"
 readonly EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
 readonly EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"
+readonly CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE="candidate_env_snapshot_contract"
 
 RECOVERY_PAYLOAD_FILE="${FAOLLA_RECOVERY_PAYLOAD_FILE:-}"
 WEB_START_ATTEMPTED=0
@@ -230,8 +231,23 @@ finish_recovery() {
         candidate_structure)
           printf '%s\n' 'recovery_failed_pre_runtime_candidate_structure' >&2
           ;;
-        candidate_env_build_binding)
-          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_build_binding' >&2
+        candidate_env_helper_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_helper_identity' >&2
+          ;;
+        candidate_env_file_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_file_identity' >&2
+          ;;
+        candidate_env_encoding)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_encoding' >&2
+          ;;
+        candidate_env_server_build_binding)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_server_build_binding' >&2
+          ;;
+        candidate_env_public_build_binding)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_public_build_binding' >&2
+          ;;
+        candidate_env_snapshot_contract)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_snapshot_contract' >&2
           ;;
         candidate_next_build_identity)
           printf '%s\n' 'recovery_failed_pre_runtime_candidate_next_build_identity' >&2
@@ -835,6 +851,169 @@ release_structure_identity() {
     "$identity" "$next_identity" "$modules_identity" "$runtime_link_identity"
 }
 
+candidate_environment_build_binding_result() {
+  local runtime_dir="$1"
+  local expected_build="$2"
+  local result
+  result="$(FAOLLA_EXPECTED_BUILD_ID="$expected_build" \
+    timeout --signal=TERM --kill-after=1s 5s node --input-type=module - \
+      "$runtime_dir/.env.local" "$runtime_dir" 2>/dev/null <<'NODE'
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { dirname } from "node:path";
+
+const TOKENS = new Set([
+  "candidate_env_file_identity",
+  "candidate_env_encoding",
+  "candidate_env_server_build_binding",
+  "candidate_env_public_build_binding",
+  "candidate_env_snapshot_contract",
+]);
+let failureToken = "candidate_env_snapshot_contract";
+let descriptor;
+let emitted = false;
+const reject = () => {
+  throw new Error("candidate_environment_rejected");
+};
+const emit = (value) => {
+  if (emitted) process.exit(1);
+  process.stdout.write(value);
+  emitted = true;
+};
+const sameFile = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs && left.nlink === right.nlink &&
+  left.uid === right.uid && left.mode === right.mode;
+const sameDirectory = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs &&
+  left.nlink === right.nlink && left.uid === right.uid && left.mode === right.mode;
+const directoryIdentity = (value) => [
+  value.dev, value.ino, value.mtimeNs, value.ctimeNs,
+  value.nlink, value.uid, value.mode,
+].map(String).join(":");
+const fileIdentity = (value) => [
+  value.dev, value.ino, value.size, value.mtimeNs,
+  value.ctimeNs, value.nlink, value.uid, value.mode,
+].map(String).join(":");
+const safeDirectory = (value) =>
+  !value.isSymbolicLink() && value.isDirectory() && value.nlink >= 1n &&
+  typeof process.getuid === "function" && value.uid === BigInt(process.getuid()) &&
+  (value.mode & 0o022n) === 0n;
+const safeFile = (value) =>
+  !value.isSymbolicLink() && value.isFile() && value.nlink === 1n &&
+  value.size > 0n && value.size <= 1024n * 1024n &&
+  typeof process.getuid === "function" && value.uid === BigInt(process.getuid()) &&
+  (value.mode & 0o777n) === 0o600n;
+const exactAssignmentMatches = (lines, key, expected) => {
+  const prefix = `${key}=`;
+  const values = lines.filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length));
+  return values.length === 1 && values[0].length > 0 && values[0] === expected;
+};
+
+try {
+  const path = process.argv[2];
+  const runtime = process.argv[3];
+  const expected = process.env.FAOLLA_EXPECTED_BUILD_ID ?? "";
+  if (
+    !/^[0-9a-f]{40}$/.test(expected) ||
+    typeof path !== "string" || typeof runtime !== "string" ||
+    path !== `${runtime}/.env.local` || dirname(path) !== runtime ||
+    !Number.isInteger(constants.O_NOFOLLOW) || typeof process.getuid !== "function"
+  ) reject();
+
+  failureToken = "candidate_env_file_identity";
+  if (realpathSync(runtime) !== runtime) reject();
+  const directoryBefore = lstatSync(runtime, { bigint: true });
+  const before = lstatSync(path, { bigint: true });
+  if (!safeDirectory(directoryBefore) || !safeFile(before)) reject();
+  descriptor = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  const opened = fstatSync(descriptor, { bigint: true });
+  if (!safeFile(opened) || !sameFile(before, opened)) reject();
+  const bytes = readFileSync(descriptor);
+  const after = fstatSync(descriptor, { bigint: true });
+  const current = lstatSync(path, { bigint: true });
+  const directoryAfter = lstatSync(runtime, { bigint: true });
+  if (
+    BigInt(bytes.length) !== opened.size || !sameFile(opened, after) ||
+    !safeFile(current) || !sameFile(opened, current) ||
+    !safeDirectory(directoryAfter) || !sameDirectory(directoryBefore, directoryAfter)
+  ) reject();
+
+  failureToken = "candidate_env_encoding";
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (source.includes("\0")) reject();
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\r" && source[index + 1] !== "\n") reject();
+  }
+  const lines = source.split("\n").map((line) =>
+    line.endsWith("\r") ? line.slice(0, -1) : line
+  );
+  if (lines.some((line) => line.includes("\r"))) reject();
+
+  failureToken = "candidate_env_server_build_binding";
+  if (!exactAssignmentMatches(lines, "FAOLLA_WEB_BUILD_ID", expected)) reject();
+  failureToken = "candidate_env_public_build_binding";
+  if (!exactAssignmentMatches(lines, "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID", expected)) reject();
+
+  failureToken = "candidate_env_snapshot_contract";
+  emit([
+    "candidate_env_snapshot_ok",
+    directoryIdentity(directoryBefore),
+    fileIdentity(opened),
+    createHash("sha256").update(bytes).digest("hex"),
+  ].join("\n"));
+} catch {
+  if (!TOKENS.has(failureToken)) failureToken = "candidate_env_snapshot_contract";
+  if (!emitted) emit(failureToken);
+} finally {
+  if (descriptor !== undefined) {
+    try {
+      closeSync(descriptor);
+    } catch {
+      process.exitCode = 1;
+    }
+  }
+}
+NODE
+  )" || return 1
+  case "$result" in
+    candidate_env_snapshot_ok$'\n'*) ;;
+    candidate_env_file_identity|candidate_env_encoding|\
+    candidate_env_server_build_binding|candidate_env_public_build_binding|\
+    candidate_env_snapshot_contract) ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$result"
+}
+
+candidate_environment_build_binding_snapshot() {
+  local runtime_dir="$1"
+  local expected_build="$2"
+  local result
+  local -a parts=()
+  result="$(candidate_environment_build_binding_result \
+    "$runtime_dir" "$expected_build")" || return 1
+  mapfile -t parts <<< "$result"
+  [ "${#parts[@]}" -eq 4 ] \
+    && [ "${parts[0]}" = "candidate_env_snapshot_ok" ] \
+    && [[ "${parts[1]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
+    && [[ "${parts[2]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
+    && [[ "${parts[3]}" =~ ^[0-9a-f]{64}$ ]] \
+    || return 1
+  printf '%s\n%s\n%s' "${parts[1]}" "${parts[2]}" "${parts[3]}"
+}
+
 environment_build_binding_snapshot() {
   local runtime_dir="$1"
   local expected_build="$2"
@@ -1036,23 +1215,88 @@ CANDIDATE_RUNTIME_IDENTITY="$(release_structure_identity \
   "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || exit 1
 
 readonly CANDIDATE_ENV_HELPER="$CANDIDATE_RUNTIME_DIR/$ENV_HELPER_RELATIVE"
-RECOVERY_FAILURE_STAGE="candidate_env_build_binding"
+RECOVERY_FAILURE_STAGE="candidate_env_helper_identity"
 CANDIDATE_ENV_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
   "$CANDIDATE_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
   "$EXPECTED_CANDIDATE_BUILD_ID" "$CANDIDATE_RUNTIME_DIR")" || exit 1
-CANDIDATE_ENVIRONMENT_SNAPSHOT="$(environment_build_binding_snapshot \
-  "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || exit 1
+RECOVERY_FAILURE_STAGE="candidate_env_file_identity"
+CANDIDATE_ENVIRONMENT_RESULT_STATUS=0
+CANDIDATE_ENVIRONMENT_RESULT="$(candidate_environment_build_binding_result \
+  "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" \
+  || CANDIDATE_ENVIRONMENT_RESULT_STATUS=$?
+mapfile -t CANDIDATE_ENVIRONMENT_RESULT_PARTS <<< "$CANDIDATE_ENVIRONMENT_RESULT"
+if [ "$CANDIDATE_ENVIRONMENT_RESULT_STATUS" -ne 0 ]; then
+  CANDIDATE_ENVIRONMENT_RESULT_PARTS=(candidate_env_snapshot_contract)
+fi
+case "${CANDIDATE_ENVIRONMENT_RESULT_PARTS[0]:-}" in
+  candidate_env_snapshot_ok)
+    if [ "${#CANDIDATE_ENVIRONMENT_RESULT_PARTS[@]}" -ne 4 ]; then
+      RECOVERY_FAILURE_STAGE="$CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE"
+      exit 1
+    fi
+    CANDIDATE_ENVIRONMENT_SNAPSHOT="$(printf '%s\n%s\n%s' \
+      "${CANDIDATE_ENVIRONMENT_RESULT_PARTS[1]}" \
+      "${CANDIDATE_ENVIRONMENT_RESULT_PARTS[2]}" \
+      "${CANDIDATE_ENVIRONMENT_RESULT_PARTS[3]}")"
+    ;;
+  candidate_env_file_identity)
+    [ "${#CANDIDATE_ENVIRONMENT_RESULT_PARTS[@]}" -eq 1 ] || \
+      RECOVERY_FAILURE_STAGE="$CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE"
+    [ "$RECOVERY_FAILURE_STAGE" = "candidate_env_snapshot_contract" ] || \
+      RECOVERY_FAILURE_STAGE="candidate_env_file_identity"
+    exit 1
+    ;;
+  candidate_env_encoding)
+    [ "${#CANDIDATE_ENVIRONMENT_RESULT_PARTS[@]}" -eq 1 ] || \
+      RECOVERY_FAILURE_STAGE="$CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE"
+    [ "$RECOVERY_FAILURE_STAGE" = "candidate_env_snapshot_contract" ] || \
+      RECOVERY_FAILURE_STAGE="candidate_env_encoding"
+    exit 1
+    ;;
+  candidate_env_server_build_binding)
+    [ "${#CANDIDATE_ENVIRONMENT_RESULT_PARTS[@]}" -eq 1 ] || \
+      RECOVERY_FAILURE_STAGE="$CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE"
+    [ "$RECOVERY_FAILURE_STAGE" = "candidate_env_snapshot_contract" ] || \
+      RECOVERY_FAILURE_STAGE="candidate_env_server_build_binding"
+    exit 1
+    ;;
+  candidate_env_public_build_binding)
+    [ "${#CANDIDATE_ENVIRONMENT_RESULT_PARTS[@]}" -eq 1 ] || \
+      RECOVERY_FAILURE_STAGE="$CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE"
+    [ "$RECOVERY_FAILURE_STAGE" = "candidate_env_snapshot_contract" ] || \
+      RECOVERY_FAILURE_STAGE="candidate_env_public_build_binding"
+    exit 1
+    ;;
+  *)
+    RECOVERY_FAILURE_STAGE="candidate_env_snapshot_contract"
+    exit 1
+    ;;
+esac
 mapfile -t CANDIDATE_ENVIRONMENT_PARTS <<< "$CANDIDATE_ENVIRONMENT_SNAPSHOT"
-[ "${#CANDIDATE_ENVIRONMENT_PARTS[@]}" -eq 3 ] || exit 1
+[ "${#CANDIDATE_ENVIRONMENT_PARTS[@]}" -eq 3 ] || {
+  RECOVERY_FAILURE_STAGE="candidate_env_snapshot_contract"
+  exit 1
+}
 CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY="${CANDIDATE_ENVIRONMENT_PARTS[0]}"
 CANDIDATE_ENVIRONMENT_FILE_IDENTITY="${CANDIDATE_ENVIRONMENT_PARTS[1]}"
 CANDIDATE_ENVIRONMENT_SHA256="${CANDIDATE_ENVIRONMENT_PARTS[2]}"
 [[ "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" =~ ^([0-9]+:){6}[0-9]+$ ]] \
-  || exit 1
+  || {
+    RECOVERY_FAILURE_STAGE="candidate_env_snapshot_contract"
+    exit 1
+  }
 [[ "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" =~ ^([0-9]+:){7}[0-9]+$ ]] \
-  || exit 1
-[[ "$CANDIDATE_ENVIRONMENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
-unset CANDIDATE_ENVIRONMENT_SNAPSHOT CANDIDATE_ENVIRONMENT_PARTS
+  || {
+    RECOVERY_FAILURE_STAGE="candidate_env_snapshot_contract"
+    exit 1
+  }
+[[ "$CANDIDATE_ENVIRONMENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  RECOVERY_FAILURE_STAGE="candidate_env_snapshot_contract"
+  exit 1
+}
+unset CANDIDATE_ENVIRONMENT_RESULT CANDIDATE_ENVIRONMENT_RESULT_PARTS \
+  CANDIDATE_ENVIRONMENT_RESULT_STATUS CANDIDATE_ENVIRONMENT_SNAPSHOT \
+  CANDIDATE_ENVIRONMENT_PARTS
 readonly CANDIDATE_ENV_HELPER_SNAPSHOT \
   CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY \
   CANDIDATE_ENVIRONMENT_FILE_IDENTITY CANDIDATE_ENVIRONMENT_SHA256
@@ -1208,7 +1452,7 @@ revalidate_incident_release_pair() {
     "$EXPECTED_CANDIDATE_BUILD_ID" "$CANDIDATE_RUNTIME_DIR" \
     "$CANDIDATE_ENV_HELPER_SNAPSHOT" || return 1
   candidate_snapshot=""
-  candidate_snapshot="$(environment_build_binding_snapshot \
+  candidate_snapshot="$(candidate_environment_build_binding_snapshot \
     "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || return 1
   mapfile -t candidate_parts <<< "$candidate_snapshot"
   [ "${#candidate_parts[@]}" -eq 3 ] \

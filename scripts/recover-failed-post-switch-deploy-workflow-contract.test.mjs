@@ -49,6 +49,14 @@ assert.equal(jobs.length, 1);
 const [job] = jobs;
 const runs = runBlocks(job);
 const allRuns = runs.join("\n");
+const candidateEnvStages = [
+  "candidate_env_helper_identity",
+  "candidate_env_file_identity",
+  "candidate_env_encoding",
+  "candidate_env_server_build_binding",
+  "candidate_env_public_build_binding",
+  "candidate_env_snapshot_contract",
+];
 
 test("workflow, shell, and embedded Node parse", () => {
   assert.equal(parsed.name, "Recover Failed Post-Switch Production Runtime");
@@ -107,7 +115,7 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
-    "32602232601", "760318e0e8a3996e66892a28fa01ade5de5ecf2a",
+    "32605144547", "9acd73386724df635b67ac0b0939c2d982b1dc18",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
@@ -115,9 +123,24 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   assert.match(allRuns, /readiness\.conclusion !== "success"/);
   assert.match(allRuns, /failedRecovery\.conclusion !== "failure"/);
   assert.match(allRuns, /failedRecovery\.run_attempt !== 1/);
-  assert.match(allRuns, /\[10, "Recover Frozen Production Runtime", "failure"\]/);
-  assert.match(allRuns, /\[11, "Verify Public Frozen Runtime Recovery", "skipped"\]/);
-  assert.match(allRuns, /\[5, "Validate Incident Deploy Readiness And Failed Recovery Boundary", "success"\]/);
+  const expectedFailedRecoverySteps = [
+    [1, "Set up job", "success"],
+    [2, "Validate Unique Manual Recovery Chain", "success"],
+    [3, "Checkout Exact Recovery Source", "success"],
+    [4, "Verify Exact Current Main Checkout", "success"],
+    [5, "Validate Incident Deploy Readiness And Failed Recovery Boundary", "success"],
+    [6, "Resolve Exact Readiness Artifact Inventory", "success"],
+    [7, "Verify Canonical Historical Readiness Evidence", "success"],
+    [8, "Setup Pinned SSH Recovery Alias", "success"],
+    [9, "Revalidate Main And CI Immediately Before Recovery", "success"],
+    [10, "Recover Frozen Production Runtime", "failure"],
+    [11, "Verify Public Frozen Runtime Recovery", "skipped"],
+    [22, "Post Checkout Exact Recovery Source", "success"],
+    [23, "Complete job", "success"],
+  ];
+  for (const [number, name, conclusion] of expectedFailedRecoverySteps) {
+    assert.ok(allRuns.includes(`[${number}, "${name}", "${conclusion}"]`));
+  }
   assert.match(allRuns, /failedRecoveryStarted <= completedEpoch/);
 });
 
@@ -168,7 +191,8 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
   for (const phase of [
     "pre_runtime_candidate_inventory", "pre_runtime_frozen_inventory",
     "pre_runtime_candidate_current_link", "pre_runtime_candidate_structure",
-    "pre_runtime_candidate_env_build_binding", "pre_runtime_candidate_next_build_identity",
+    ...candidateEnvStages.map((stage) => `pre_runtime_${stage}`),
+    "pre_runtime_candidate_next_build_identity",
     "pre_runtime_frozen_structure", "pre_runtime_frozen_env_build_binding",
     "pre_runtime_frozen_next_build_identity",
     "candidate_process_preflight", "candidate_stop", "current_switch",
@@ -176,6 +200,11 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
     "web_restore_environment", "web_restore_launch_contract", "local_smoke",
     "worker_restore_start", "worker_restore_launch_contract", "persist_and_verify",
   ]) assert.ok(allRuns.includes(`remote_recovery_failed_phase_${phase}`), phase);
+  const obsoleteCandidateEnvCode = [
+    "remote_recovery_failed_phase_pre_runtime_candidate_env",
+    "build_binding",
+  ].join("_");
+  assert.ok(!allRuns.includes(obsoleteCandidateEnvCode));
   assert.match(allRuns, /stdout\.equals\(expected\)/);
   assert.match(allRuns, /allowedPrefixes\.has\(stdoutKey\)/);
   assert.match(allRuns, /stderr\.equals\(Buffer\.from\("cleanup_unverified\\n"/);
@@ -198,7 +227,29 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const mappings = [...classifier.matchAll(
     /\["(recovery_failed_(?:pre_)?runtime_[a-z_]+)", "(remote_recovery_failed_phase_[a-z_]+)", ([0-6])\]/g,
   )].map((match) => ({ remote: match[1], public: match[2], prefix: Number(match[3]) }));
-  assert.equal(mappings.length, 34);
+  assert.equal(mappings.length, 39);
+  assert.equal(new Set(mappings.map(({ remote }) => remote)).size, mappings.length);
+  assert.equal(new Set(mappings.map(({ public: publicCode }) => publicCode)).size, mappings.length);
+  const candidateEnvMappings = candidateEnvStages.map((stage) => ({
+    remote: `recovery_failed_pre_runtime_${stage}`,
+    public: `remote_recovery_failed_phase_pre_runtime_${stage}`,
+    prefix: 0,
+  }));
+  for (const expected of candidateEnvMappings) {
+    assert.deepEqual(mappings.find(({ remote }) => remote === expected.remote), expected);
+  }
+  const allowlistCase = allRuns.match(
+    /case "\$classification" in([\s\S]*?)\n\s+recovery_output_invalid\)/,
+  )?.[1];
+  assert.ok(allowlistCase, "public classifier allowlist missing");
+  const allowlistCodes = allowlistCase.match(
+    /remote_(?:cleanup_unverified|recovery_failed_phase_[a-z_]+)/g,
+  ) ?? [];
+  assert.equal(allowlistCodes.length, mappings.length + 1);
+  assert.deepEqual(
+    new Set(allowlistCodes),
+    new Set(["remote_cleanup_unverified", ...mappings.map(({ public: publicCode }) => publicCode)]),
+  );
   const markers = [
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
     "current_switched_to_frozen_release", "frozen_web_restored",
@@ -208,26 +259,45 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const stdoutPath = join(directory, "stdout");
   const stderrPath = join(directory, "stderr");
   try {
+    const classify = (stdout, stderr) => {
+      writeFileSync(stdoutPath, stdout, { mode: 0o600 });
+      writeFileSync(stderrPath, stderr, { mode: 0o600 });
+      const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "-", stdoutPath, stderrPath, "1"],
+        { input: classifier, encoding: "utf8" },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout;
+    };
     for (const mapping of mappings) {
-      writeFileSync(stderrPath, `${mapping.remote}\n`, { mode: 0o600 });
       for (let prefix = 0; prefix < markers.length; prefix += 1) {
-        writeFileSync(
-          stdoutPath,
-          prefix === 0 ? "" : `${markers.slice(0, prefix).join("\n")}\n`,
-          { mode: 0o600 },
-        );
-        const result = spawnSync(
-          process.execPath,
-          ["--input-type=module", "-", stdoutPath, stderrPath, "1"],
-          { input: classifier, encoding: "utf8" },
-        );
-        assert.equal(result.status, 0, result.stderr);
+        const stdout = prefix === 0 ? "" : `${markers.slice(0, prefix).join("\n")}\n`;
         assert.equal(
-          result.stdout,
+          classify(stdout, `${mapping.remote}\n`),
           prefix === mapping.prefix ? mapping.public : "recovery_output_invalid",
           `${mapping.remote} with prefix ${prefix}`,
         );
       }
+    }
+    for (const mapping of candidateEnvMappings) {
+      for (const injectedStderr of [
+        mapping.remote,
+        `${mapping.remote}\r\n`,
+        `${mapping.remote}\n${mapping.remote}\n`,
+        `${mapping.public}\n`,
+      ]) {
+        assert.equal(
+          classify("", injectedStderr),
+          "recovery_output_invalid",
+          `${mapping.remote} accepted injected stderr`,
+        );
+      }
+      assert.equal(
+        classify("injected\n", `${mapping.remote}\n`),
+        "recovery_output_invalid",
+        `${mapping.remote} accepted injected stdout`,
+      );
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });

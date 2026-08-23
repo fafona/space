@@ -40,8 +40,8 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32602232601"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="760318e0e8a3996e66892a28fa01ade5de5ecf2a"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32605144547"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="9acd73386724df635b67ac0b0939c2d982b1dc18"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
@@ -92,7 +92,12 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
     "frozen_inventory",
     "candidate_current_link",
     "candidate_structure",
-    "candidate_env_build_binding",
+    "candidate_env_helper_identity",
+    "candidate_env_file_identity",
+    "candidate_env_encoding",
+    "candidate_env_server_build_binding",
+    "candidate_env_public_build_binding",
+    "candidate_env_snapshot_contract",
     "candidate_next_build_identity",
     "frozen_structure",
     "frozen_env_build_binding",
@@ -101,6 +106,7 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   const positions = stages.map((stage) => source.indexOf(`RECOVERY_FAILURE_STAGE="${stage}"`));
   assert.ok(positions.every((position) => position >= 0), "split release stages missing");
   assert.deepEqual([...positions].sort((left, right) => left - right), positions);
+  assert.doesNotMatch(source, /candidate_env_build_binding/);
 
   const firstProtectedMutation = source.indexOf("FENCE_CLEANUP_STARTED=1");
   assert.ok(firstProtectedMutation > positions.at(-1));
@@ -127,10 +133,10 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   );
   const candidateStructure = between(
     'RECOVERY_FAILURE_STAGE="candidate_structure"',
-    'RECOVERY_FAILURE_STAGE="candidate_env_build_binding"',
+    'RECOVERY_FAILURE_STAGE="candidate_env_helper_identity"',
   );
   const candidateEnvironment = between(
-    'RECOVERY_FAILURE_STAGE="candidate_env_build_binding"',
+    'RECOVERY_FAILURE_STAGE="candidate_env_helper_identity"',
     'RECOVERY_FAILURE_STAGE="candidate_next_build_identity"',
   );
   const candidateNextBuild = between(
@@ -154,8 +160,9 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   assert.match(candidateCurrentLink, /readlink -- "\$CURRENT_LINK"/);
   assert.match(candidateStructure, /release_structure_identity/);
   assert.match(candidateNextBuild, /next_build_identity/);
-  assert.match(candidateEnvironment, /environment_build_binding_snapshot/);
+  assert.match(candidateEnvironment, /candidate_environment_build_binding_result/);
   assert.match(candidateEnvironment, /EXPECTED_CANDIDATE_BUILD_ID/);
+  assert.match(candidateEnvironment, /trusted_helper_snapshot/);
   assert.match(frozenStructure, /release_structure_identity/);
   assert.match(frozenNextBuild, /next_build_identity/);
   assert.match(frozenEnvironment, /\.env\.local/);
@@ -205,6 +212,7 @@ test("opaque Next BUILD_ID is snapshotted while the Git build is bound by the ex
   assert.ok(environmentValidator, "dual environment build binding validator missing");
   assert.match(environmentValidator, /exactAssignment\(lines, "FAOLLA_WEB_BUILD_ID"\) !== expected/);
   assert.match(environmentValidator, /exactAssignment\(lines, "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID"\) !== expected/);
+  assert.match(environmentValidator, /source\.includes\("\\0"\) \|\| source\.includes\("\\r"\)/);
   const releaseCode = between("next_build_identity()", 'RECOVERY_FAILURE_STAGE="frozen_environment"');
   const validator = nodeHeredocs(releaseCode).find((code) =>
     code.includes("lstatSync(path") && code.includes("readFileSync(descriptor)"));
@@ -338,6 +346,181 @@ test("opaque Next BUILD_ID is snapshotted while the Git build is bound by the ex
   }
 });
 
+test("candidate environment accepts LF and only well-formed CRLF with fixed fail-closed tokens", () => {
+  const candidateCode = between(
+    "candidate_environment_build_binding_result()",
+    "candidate_environment_build_binding_snapshot()",
+  );
+  const validator = nodeHeredocs(candidateCode)[0];
+  assert.ok(validator, "candidate environment validator missing");
+  assert.match(candidateCode, /2>\/dev\/null/);
+  assert.match(validator, /source\[index\] === "\\r" && source\[index \+ 1\] !== "\\n"/);
+  assert.match(validator, /line\.endsWith\("\\r"\) \? line\.slice\(0, -1\) : line/);
+  assert.match(validator, /exactAssignmentMatches\(lines, "FAOLLA_WEB_BUILD_ID", expected\)/);
+  assert.match(validator, /exactAssignmentMatches\(lines, "NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID", expected\)/);
+  assert.match(validator, /createHash\("sha256"\)\.update\(bytes\)/);
+  assert.match(validator, /directoryIdentity\(directoryBefore\)/);
+  assert.match(validator, /fileIdentity\(opened\)/);
+  assert.match(validator, /sameFile\(opened, after\)/);
+  assert.match(validator, /sameFile\(opened, current\)/);
+  assert.match(validator, /sameDirectory\(directoryBefore, directoryAfter\)/);
+  assert.doesNotMatch(validator, /console\.(?:error|log)/);
+
+  if (process.platform === "win32") return;
+
+  const expectedBuild = "a".repeat(40);
+  const otherBuild = "b".repeat(40);
+  const directory = mkdtempSync(join(tmpdir(), "faolla-candidate-env-"));
+  const environmentPath = join(directory, ".env.local");
+  const hardlinkPath = join(directory, "environment-hardlink");
+  const symlinkTarget = join(directory, "environment-target");
+  const validLines = [
+    `FAOLLA_WEB_BUILD_ID=${expectedBuild}`,
+    `NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${expectedBuild}`,
+    "NEXT_PUBLIC_SUPABASE_URL=https://example.invalid",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY=fixture-token",
+  ];
+  const validLf = `${validLines.join("\n")}\n`;
+  const runValidator = (code = validator) => spawnSync(
+    process.execPath,
+    ["--input-type=module", "-", environmentPath, directory],
+    {
+      input: code,
+      encoding: "utf8",
+      env: { ...process.env, FAOLLA_EXPECTED_BUILD_ID: expectedBuild },
+    },
+  );
+  const writeEnvironment = (value, mode = 0o600) => {
+    rmSync(environmentPath, { force: true });
+    writeFileSync(environmentPath, value, { mode });
+    chmodSync(environmentPath, mode);
+  };
+  const expectAccepted = (value, label) => {
+    writeEnvironment(value);
+    const result = runValidator();
+    assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+    assert.equal(result.stderr, "", label);
+    const parts = result.stdout.split("\n");
+    assert.equal(parts.length, 4, label);
+    assert.equal(parts[0], "candidate_env_snapshot_ok", label);
+    assert.match(parts[1], /^([0-9]+:){6}[0-9]+$/, label);
+    assert.match(parts[2], /^([0-9]+:){7}[0-9]+$/, label);
+    assert.match(parts[3], /^[0-9a-f]{64}$/, label);
+  };
+  const expectRejected = (value, token, label) => {
+    writeEnvironment(value);
+    const result = runValidator();
+    assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+    assert.equal(result.stdout, token, label);
+    assert.equal(result.stderr, "", label);
+  };
+
+  try {
+    chmodSync(directory, 0o700);
+    expectAccepted(validLf, "LF");
+    expectAccepted(`${validLines.join("\r\n")}\r\n`, "CRLF");
+    expectAccepted(
+      `${validLines[0]}\r\n${validLines[1]}\n${validLines[2]}\r\n${validLines[3]}\n`,
+      "mixed LF and CRLF",
+    );
+
+    expectRejected(`${validLf}\r`, "candidate_env_encoding", "bare CR");
+    expectRejected(`COMMENT=left\rright\n${validLf}`, "candidate_env_encoding", "embedded CR");
+    expectRejected(`COMMENT=double\r\r\n${validLf}`, "candidate_env_encoding", "double CR");
+    expectRejected(Buffer.from(`${validLf}\0suffix`), "candidate_env_encoding", "NUL");
+    expectRejected(
+      Buffer.concat([Buffer.from(validLf), Buffer.from([0xff])]),
+      "candidate_env_encoding",
+      "invalid UTF-8",
+    );
+
+    const withoutServer = validLines.filter((line) =>
+      !line.startsWith("FAOLLA_WEB_BUILD_ID=")
+    ).join("\n") + "\n";
+    expectRejected(
+      withoutServer,
+      "candidate_env_server_build_binding",
+      "missing server build",
+    );
+    expectRejected(
+      `${validLf}FAOLLA_WEB_BUILD_ID=${expectedBuild}\n`,
+      "candidate_env_server_build_binding",
+      "duplicate server build",
+    );
+    expectRejected(
+      validLf.replace(`FAOLLA_WEB_BUILD_ID=${expectedBuild}`, `FAOLLA_WEB_BUILD_ID=${otherBuild}`),
+      "candidate_env_server_build_binding",
+      "wrong server build",
+    );
+
+    const withoutPublic = validLines.filter((line) =>
+      !line.startsWith("NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=")
+    ).join("\n") + "\n";
+    expectRejected(
+      withoutPublic,
+      "candidate_env_public_build_binding",
+      "missing public build",
+    );
+    expectRejected(
+      `${validLf}NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${expectedBuild}\n`,
+      "candidate_env_public_build_binding",
+      "duplicate public build",
+    );
+    expectRejected(
+      validLf.replace(
+        `NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${expectedBuild}`,
+        `NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID=${otherBuild}`,
+      ),
+      "candidate_env_public_build_binding",
+      "wrong public build",
+    );
+
+    writeEnvironment(validLf, 0o640);
+    let result = runValidator();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "candidate_env_file_identity");
+
+    writeEnvironment(validLf);
+    linkSync(environmentPath, hardlinkPath);
+    result = runValidator();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "candidate_env_file_identity");
+    rmSync(hardlinkPath);
+
+    rmSync(environmentPath);
+    writeFileSync(symlinkTarget, validLf, { mode: 0o600 });
+    chmodSync(symlinkTarget, 0o600);
+    symlinkSync(symlinkTarget, environmentPath, "file");
+    result = runValidator();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "candidate_env_file_identity");
+    rmSync(environmentPath);
+    rmSync(symlinkTarget);
+
+    writeEnvironment(validLf);
+    chmodSync(directory, 0o770);
+    result = runValidator();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "candidate_env_file_identity");
+    chmodSync(directory, 0o700);
+
+    writeEnvironment(validLf);
+    const toctouValidator = validator
+      .replace("  closeSync,", "  appendFileSync,\n  closeSync,")
+      .replace(
+        "  const bytes = readFileSync(descriptor);",
+        "  const bytes = readFileSync(descriptor);\n  appendFileSync(path, \"TOCTOU=1\\n\");",
+      );
+    assert.notEqual(toctouValidator, validator, "TOCTOU harness injection failed");
+    result = runValidator(toctouValidator);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "candidate_env_file_identity");
+  } finally {
+    chmodSync(directory, 0o700);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("release inventory failures have exact fixed codes and cannot enter production cleanup", () => {
   assert.ok(bash, "bash unavailable");
   const finish = between("finish_recovery()", "trap finish_recovery EXIT");
@@ -347,7 +530,12 @@ test("release inventory failures have exact fixed codes and cannot enter product
     ["candidate_current_link", "recovery_failed_pre_runtime_candidate_current_link"],
     ["candidate_structure", "recovery_failed_pre_runtime_candidate_structure"],
     ["candidate_next_build_identity", "recovery_failed_pre_runtime_candidate_next_build_identity"],
-    ["candidate_env_build_binding", "recovery_failed_pre_runtime_candidate_env_build_binding"],
+    ["candidate_env_helper_identity", "recovery_failed_pre_runtime_candidate_env_helper_identity"],
+    ["candidate_env_file_identity", "recovery_failed_pre_runtime_candidate_env_file_identity"],
+    ["candidate_env_encoding", "recovery_failed_pre_runtime_candidate_env_encoding"],
+    ["candidate_env_server_build_binding", "recovery_failed_pre_runtime_candidate_env_server_build_binding"],
+    ["candidate_env_public_build_binding", "recovery_failed_pre_runtime_candidate_env_public_build_binding"],
+    ["candidate_env_snapshot_contract", "recovery_failed_pre_runtime_candidate_env_snapshot_contract"],
     ["frozen_structure", "recovery_failed_pre_runtime_frozen_structure"],
     ["frozen_next_build_identity", "recovery_failed_pre_runtime_frozen_next_build_identity"],
     ["frozen_env_build_binding", "recovery_failed_pre_runtime_frozen_env_build_binding"],
@@ -376,7 +564,7 @@ ${finish}
 false
 finish_recovery
 `;
-    const result = spawnSync(bash, ["-c", harness], { encoding: "utf8" });
+    const result = spawnSync(bash, ["-s"], { input: harness, encoding: "utf8" });
     assert.notEqual(result.status, 0, stage);
     assert.equal(result.stdout, "", stage);
     assert.equal(result.stderr, `${code}\n`, stage);
@@ -484,7 +672,11 @@ test("current switch is exact, atomic, and never removes candidate files", () =>
   assert.match(releasePair, /find_unique_release "\$\{EXPECTED_OLD_BUILD_ID:0:12\}"/);
   assert.match(releasePair, /next_build_identity "\$CANDIDATE_RUNTIME_DIR"/);
   assert.match(releasePair, /next_build_identity "\$FROZEN_RUNTIME_DIR"/);
-  const structure = between("trusted_directory_identity()", "environment_build_binding_snapshot()");
+  assert.match(releasePair, /candidate_environment_build_binding_snapshot/);
+  assert.match(releasePair, /candidate_parts\[0\].*CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY/s);
+  assert.match(releasePair, /candidate_parts\[1\].*CANDIDATE_ENVIRONMENT_FILE_IDENTITY/s);
+  assert.match(releasePair, /candidate_parts\[2\].*CANDIDATE_ENVIRONMENT_SHA256/s);
+  const structure = between("trusted_directory_identity()", "candidate_environment_build_binding_result()");
   assert.match(structure, /trusted_directory_identity "\$runtime_dir"/);
   assert.match(structure, /trusted_directory_identity "\$runtime_dir\/\.next"/);
   assert.match(structure, /trusted_directory_identity "\$runtime_dir\/node_modules"/);
