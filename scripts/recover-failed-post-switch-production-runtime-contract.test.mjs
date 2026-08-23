@@ -42,9 +42,9 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32613111789"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32615785237"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="02db02135d2a376d624985831f5f0180cf813a29"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="f1e565d39fbadf4429a1ed9d91b327528c37f6f8"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
@@ -77,14 +77,14 @@ test("canonical payload is exact-keyed and binds every incident boundary", () =>
   assert.match(source, /APP_NAME" =~ \^\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\{0,127\}\$/);
 });
 
-test("deploy lock is held, identity-frozen, and normalized without replacement", () => {
-  const lock = between("normalize_deploy_lock_permissions()", "trusted_helper_snapshot()");
-  assert.match(lock, /exec 9<>"\$DEPLOY_LOCK_FILE"/);
+test("deploy lock is held read-only and requires the frozen 0600 identity", () => {
+  const lock = between("verify_deploy_lock_permissions()", "frozen_tracked_file_contract()");
+  assert.match(lock, /exec 9<"\$DEPLOY_LOCK_FILE"/);
   assert.match(lock, /flock -w 1 9/);
   assert.match(lock, /%d:%i:%h:%u:%f:%a/);
   assert.match(lock, /\/proc\/\$\$\/fd\/9/);
-  assert.match(lock, /600\|644/);
-  assert.match(lock, /chmod 600 -- "\/proc\/\$\$\/fd\/9"/);
+  assert.match(lock, /\[ "\$deploy_lock_mode" = "600" \]/);
+  assert.doesNotMatch(lock, /644|chmod/);
   assert.doesNotMatch(lock, /rm\s/);
   assert.doesNotMatch(lock, /mv\s/);
 });
@@ -94,7 +94,10 @@ test("candidate and frozen inventory and identity have distinct pre-business-mut
     "incident_env_helper_identity",
     "candidate_inventory",
     "frozen_inventory",
-    "candidate_current_link",
+    "initial_current_target",
+    "initial_current_identity",
+    "initial_current_compatibility",
+    "initial_current_temporary_links",
     "candidate_structure",
     "candidate_env_file_identity",
     "candidate_env_encoding",
@@ -132,10 +135,22 @@ test("candidate and frozen inventory and identity have distinct pre-business-mut
   );
   const frozenInventory = between(
     'RECOVERY_FAILURE_STAGE="frozen_inventory"',
-    'RECOVERY_FAILURE_STAGE="candidate_current_link"',
+    'RECOVERY_FAILURE_STAGE="initial_current_target"',
   );
-  const candidateCurrentLink = between(
-    'RECOVERY_FAILURE_STAGE="candidate_current_link"',
+  const initialCurrentTarget = between(
+    'RECOVERY_FAILURE_STAGE="initial_current_target"',
+    'RECOVERY_FAILURE_STAGE="initial_current_identity"',
+  );
+  const initialCurrentIdentity = between(
+    'RECOVERY_FAILURE_STAGE="initial_current_identity"',
+    'RECOVERY_FAILURE_STAGE="initial_current_compatibility"',
+  );
+  const initialCurrentCompatibility = between(
+    'RECOVERY_FAILURE_STAGE="initial_current_compatibility"',
+    'RECOVERY_FAILURE_STAGE="initial_current_temporary_links"',
+  );
+  const initialCurrentTemporaryLinks = between(
+    'RECOVERY_FAILURE_STAGE="initial_current_temporary_links"',
     'RECOVERY_FAILURE_STAGE="candidate_structure"',
   );
   const candidateStructure = between(
@@ -180,7 +195,16 @@ test("candidate and frozen inventory and identity have distinct pre-business-mut
   );
   assert.match(candidateInventory, /CANDIDATE_RUNTIME_DIR/);
   assert.match(frozenInventory, /FROZEN_RUNTIME_DIR/);
-  assert.match(candidateCurrentLink, /readlink -- "\$CURRENT_LINK"/);
+  assert.match(initialCurrentTarget, /readlink -- "\$CURRENT_LINK"/);
+  assert.match(initialCurrentTarget, /CANDIDATE_RUNTIME_DIR/);
+  assert.match(initialCurrentTarget, /FROZEN_RUNTIME_DIR/);
+  assert.match(initialCurrentIdentity, /trusted_symlink_identity "\$CURRENT_LINK"/);
+  assert.match(initialCurrentCompatibility, /revalidate_initial_current_compatibility/);
+  assert.match(initialCurrentTemporaryLinks, /revalidate_initial_current_temporary_links/);
+  assert.match(source, /EXPECTED_SWITCH_TEMP_LINK=.*\.recover-/);
+  assert.match(source, /EXPECTED_COMPENSATION_TEMP_LINK=.*\.compensate-/);
+  assert.doesNotMatch(initialCurrentTemporaryLinks, /SWITCH_TEMP_LINK=/);
+  assert.doesNotMatch(initialCurrentTemporaryLinks, /COMPENSATION_TEMP_LINK=/);
   assert.match(candidateStructure, /release_structure_identity/);
   assert.match(candidateNextBuild, /next_build_identity/);
   assert.match(candidateEnvironment, /candidate_environment_build_binding_result/);
@@ -293,6 +317,7 @@ test("frozen executable inputs are offline-pinned and hardened without an old se
   assert.match(hardener, /before\.uid !== BigInt\(process\.getuid\(\)\)/);
   assert.match(hardener, /before\.gid !== BigInt\(process\.getgid\(\)\)/);
   assert.match(hardener, /\[0o664n, 0o600n\]/);
+  assert.match(hardener, /requireAlreadyHardened === "true"[\s\S]*permissions !== 0o600n/);
   assert.doesNotMatch(hardener, /0o644n|0o666n/);
   assert.match(hardener, /fchmodSync\(descriptor, 0o600\)/);
   assert.match(hardener, /readSync\(descriptor, bytes, offset, size - offset, offset\)/);
@@ -313,6 +338,7 @@ test("frozen executable inputs are offline-pinned and hardened without an old se
   );
   assert.match(scriptsHardener, /constants\.O_DIRECTORY/);
   assert.match(scriptsHardener, /\[0o775n, 0o700n\]/);
+  assert.match(scriptsHardener, /requireAlreadyHardened === "true"[\s\S]*permissions !== 0o700n/);
   assert.match(scriptsHardener, /fchmodSync\(descriptor, 0o700\)/);
   assert.equal(
     (source.match(/fchmodSync\(descriptor, /g) ?? []).length,
@@ -399,6 +425,7 @@ test("frozen permission hardeners are fd-bound, fail closed, and idempotent", {
         FAOLLA_EXPECTED_BLOB: blob,
         FAOLLA_EXPECTED_SHA256: sha256,
         FAOLLA_EXPECTED_BYTES: String(bytes.length),
+        FAOLLA_REQUIRE_ALREADY_HARDENED: "false",
         ...overrides,
       },
     },
@@ -415,6 +442,22 @@ test("frozen permission hardeners are fd-bound, fail closed, and idempotent", {
     assert.equal(mode(validPath), 0o600);
     assert.equal(runFileHardener(validPath).status, 0, "already-hardened file rejected");
     assert.equal(mode(validPath), 0o600);
+
+    const frozenResumeWritablePath = join(directory, "frozen-resume-writable");
+    writeFixture(frozenResumeWritablePath);
+    assert.notEqual(
+      runFileHardener(frozenResumeWritablePath, { FAOLLA_REQUIRE_ALREADY_HARDENED: "true" }).status,
+      0,
+      "frozen resume accepted and mutated a 0664 file",
+    );
+    assert.equal(mode(frozenResumeWritablePath), 0o664);
+    const frozenResumeHardenedPath = join(directory, "frozen-resume-hardened");
+    writeFixture(frozenResumeHardenedPath, 0o600);
+    assert.equal(
+      runFileHardener(frozenResumeHardenedPath, { FAOLLA_REQUIRE_ALREADY_HARDENED: "true" }).status,
+      0,
+      "frozen resume rejected an exact 0600 file",
+    );
 
     for (const [label, overrides] of [
       ["wrong blob", { FAOLLA_EXPECTED_BLOB: "0".repeat(40) }],
@@ -463,18 +506,31 @@ test("frozen permission hardeners are fd-bound, fail closed, and idempotent", {
     const scriptsPath = join(directory, "scripts");
     mkdirSync(scriptsPath, { mode: 0o775 });
     chmodSync(scriptsPath, 0o775);
-    const runDirectoryHardener = () => spawnSync(
+    const runDirectoryHardener = (requireAlreadyHardened = "false") => spawnSync(
       process.execPath,
       ["--input-type=module", "-"],
       {
         input: directoryHardener,
         encoding: "utf8",
-        env: { ...process.env, FAOLLA_FROZEN_SCRIPTS_PATH: scriptsPath },
+        env: {
+          ...process.env,
+          FAOLLA_FROZEN_SCRIPTS_PATH: scriptsPath,
+          FAOLLA_REQUIRE_ALREADY_HARDENED: requireAlreadyHardened,
+        },
       },
     );
     assert.equal(runDirectoryHardener().status, 0, "valid scripts directory rejected");
     assert.equal(mode(scriptsPath), 0o700);
     assert.equal(runDirectoryHardener().status, 0, "hardened scripts directory rejected");
+    chmodSync(scriptsPath, 0o775);
+    assert.notEqual(
+      runDirectoryHardener("true").status,
+      0,
+      "frozen resume accepted and mutated a 0775 scripts directory",
+    );
+    assert.equal(mode(scriptsPath), 0o775);
+    chmodSync(scriptsPath, 0o700);
+    assert.equal(runDirectoryHardener("true").status, 0, "frozen resume rejected 0700 scripts");
     chmodSync(scriptsPath, 0o755);
     assert.notEqual(runDirectoryHardener().status, 0, "unexpected 0755 directory accepted");
     assert.equal(mode(scriptsPath), 0o755);
@@ -518,6 +574,17 @@ test("candidate source is never executed or trusted while safe runtime anchors a
   assert.match(revalidation, /FROZEN_SMOKE_HELPER_SNAPSHOT/);
   assert.match(revalidation, /FROZEN_PACKAGE_SNAPSHOT/);
   assert.match(revalidation, /FROZEN_WORKER_SNAPSHOT/);
+  const currentRevalidation = between(
+    "revalidate_incident_runtimes()",
+    "current_link_is_exact()",
+  );
+  assert.match(currentRevalidation, /CURRENT_SWITCH_COMPLETED/);
+  assert.match(source, /CURRENT_LINK_IDENTITY=""/);
+  assert.match(source, /FROZEN_CURRENT_LINK_IDENTITY=""/);
+  assert.match(currentRevalidation, /expected_identity="\$CURRENT_LINK_IDENTITY"/);
+  assert.match(currentRevalidation, /expected_identity="\$FROZEN_CURRENT_LINK_IDENTITY"/);
+  assert.match(currentRevalidation, /trusted_symlink_identity "\$CURRENT_LINK"/);
+  assert.match(currentRevalidation, /revalidate_initial_current_temporary_links/);
   const structure = between("release_structure_identity()", "candidate_environment_build_binding_result()");
   assert.match(
     structure,
@@ -852,7 +919,10 @@ test("release inventory failures have exact fixed codes and cannot enter product
     ["incident_env_helper_identity", "recovery_failed_pre_runtime_incident_env_helper_identity"],
     ["candidate_inventory", "recovery_failed_pre_runtime_candidate_inventory"],
     ["frozen_inventory", "recovery_failed_pre_runtime_frozen_inventory"],
-    ["candidate_current_link", "recovery_failed_pre_runtime_candidate_current_link"],
+    ["initial_current_target", "recovery_failed_pre_runtime_initial_current_target"],
+    ["initial_current_identity", "recovery_failed_pre_runtime_initial_current_identity"],
+    ["initial_current_compatibility", "recovery_failed_pre_runtime_initial_current_compatibility"],
+    ["initial_current_temporary_links", "recovery_failed_pre_runtime_initial_current_temporary_links"],
     ["candidate_structure", "recovery_failed_pre_runtime_candidate_structure"],
     ["candidate_next_build_identity", "recovery_failed_pre_runtime_candidate_next_build_identity"],
     ["candidate_env_file_identity", "recovery_failed_pre_runtime_candidate_env_file_identity"],
@@ -880,6 +950,7 @@ WEB_START_ATTEMPTED=0
 FROZEN_WEB_COMMITTED=0
 CURRENT_SWITCH_ARMED=0
 CANDIDATE_PREFLIGHT_VERIFIED=0
+FROZEN_RESUME_PREFLIGHT_VERIFIED=0
 PM2_STATE_MUTATED=0
 SWITCH_TEMP_LINK=''
 COMPENSATION_TEMP_LINK=''
@@ -921,6 +992,10 @@ test("database preflight proves identity and zero holders or waiters without mut
 test("stale fence cleanup is canonical, time-bound, non-recursive, and starts at unlink", () => {
   const cleanup = between("RECOVERY_FAILURE_STAGE=\"fence_cleanup\"", "pm2_process_snapshot()");
   assert.match(cleanup, /\[ "\$\{#fence_entries\[@\]\}" -le 1 \]/);
+  assert.match(
+    cleanup,
+    /\[ "\$INITIAL_CURRENT_STATE" = "candidate" \][\s\S]*\[ "\$\{#fence_entries\[@\]\}" -eq 0 \]/,
+  );
   assert.match(cleanup, /\[ "\$\{#stale_children\[@\]\}" -eq 1 \]/);
   assert.match(cleanup, /stale_log_size.*-le 512/);
   assert.match(cleanup, /FAILED_RUN_STARTED_EPOCH/);
@@ -961,7 +1036,7 @@ test("stale fence cleanup is canonical, time-bound, non-recursive, and starts at
   assert.doesNotMatch(cleanup, /rm\s+-[A-Za-z]*[rR]/);
 });
 
-test("pre-switch PM2 accepts only absent or exact inactive candidate entries", () => {
+test("pre-switch PM2 keeps candidate compatibility but frozen resume requires absence", () => {
   const candidate = between("candidate_pm2_state()", "RECOVERY_FAILURE_STAGE=\"current_switch\"");
   assert.match(candidate, /entry\.name === name \|\| entry\.pm2_env\?\.name === name/);
   assert.match(candidate, /entry\.name !== name[\s\S]*entry\.pm2_env\.name !== name/);
@@ -977,10 +1052,39 @@ test("pre-switch PM2 accepts only absent or exact inactive candidate entries", (
   assert.doesNotMatch(candidate, /\brunning:/);
   assert.doesNotMatch(candidate, /\bkill\s/);
   assert.doesNotMatch(candidate, /pm2 (?:stop|restart)/);
+  const preflight = between(
+    'RECOVERY_FAILURE_STAGE="candidate_process_preflight"',
+    'RECOVERY_FAILURE_STAGE="candidate_stop"',
+  );
+  assert.match(preflight, /case "\$INITIAL_CURRENT_STATE" in/);
+  assert.match(preflight, /candidate\)[\s\S]*candidate_pm2_state web[\s\S]*inactive:inactive/);
+  assert.match(
+    preflight,
+    /frozen\)[\s\S]*pm2_process_snapshot "\$APP_NAME"[\s\S]*pm2_process_snapshot[\s\S]*AUTOMATION_WORKER_NAME[\s\S]*"absent:absent"/,
+  );
+  assert.match(preflight, /FROZEN_RESUME_PREFLIGHT_VERIFIED=1/);
+  assert.match(
+    preflight,
+    /if \[ "\$INITIAL_CURRENT_STATE" = "candidate" \]; then\s+CANDIDATE_PREFLIGHT_VERIFIED=1\s+else\s+FROZEN_RESUME_PREFLIGHT_VERIFIED=1/,
+  );
+  const stop = between(
+    'RECOVERY_FAILURE_STAGE="candidate_stop"',
+    'RECOVERY_FAILURE_STAGE="current_switch"',
+  );
+  const frozenStop = stop.slice(stop.indexOf("else"));
+  assert.match(frozenStop, /pm2_process_snapshot "\$APP_NAME"/);
+  assert.doesNotMatch(frozenStop, /remove_exact_inactive_candidate_process|pm2 delete/);
 });
 
-test("current switch is exact, atomic, and never removes candidate files", () => {
-  const change = between("RECOVERY_FAILURE_STAGE=\"current_switch\"", "RECOVERY_FAILURE_STAGE=\"web_start\"");
+test("candidate current switch is atomic while frozen current resume is read-only", () => {
+  const change = between(
+    'RECOVERY_FAILURE_STAGE="current_switch"',
+    'RECOVERY_FAILURE_STAGE="current_resume"',
+  );
+  const resume = between(
+    'RECOVERY_FAILURE_STAGE="current_resume"',
+    "printf '%s\\n' 'current_frozen_release_verified'",
+  );
   assert.match(change, /trusted_symlink_identity "\$CURRENT_LINK".*CURRENT_LINK_IDENTITY/s);
   assert.match(change, /readlink -- "\$CURRENT_LINK".*CANDIDATE_RUNTIME_DIR/s);
   assert.match(change, /ln -s -- "\$FROZEN_RUNTIME_DIR" "\$SWITCH_TEMP_LINK"/);
@@ -1007,6 +1111,14 @@ test("current switch is exact, atomic, and never removes candidate files", () =>
   assert.match(change, /mv -T -- "\$SWITCH_TEMP_LINK" "\$CURRENT_LINK"/);
   assert.match(change, /CURRENT_SWITCH_COMPLETED=1/);
   assert.match(change, /revalidate_incident_release_pair/);
+  assert.match(resume, /CURRENT_SWITCH_COMPLETED" -eq 1/);
+  assert.match(resume, /CURRENT_SWITCH_ARMED" -eq 0/);
+  assert.match(resume, /FROZEN_RESUME_PREFLIGHT_VERIFIED" -eq 1/);
+  assert.match(resume, /revalidate_incident_runtimes/);
+  assert.match(resume, /verify_frozen_resume_permissions/);
+  assert.match(resume, /pm2_process_snapshot "\$APP_NAME"/);
+  assert.match(resume, /verify_database_fence_clear/);
+  assert.doesNotMatch(resume, /\bln\s+-s\b|\bmv\s+-T\b|SWITCH_TEMP_LINK=|COMPENSATION_TEMP_LINK=/);
   const releasePair = between("revalidate_incident_release_pair()", "revalidate_incident_runtimes()");
   assert.match(releasePair, /release_structure_identity "\$CANDIDATE_RUNTIME_DIR" "\$EXPECTED_CANDIDATE_BUILD_ID"/);
   assert.match(releasePair, /release_structure_identity "\$FROZEN_RUNTIME_DIR" "\$EXPECTED_OLD_BUILD_ID"/);
@@ -1029,7 +1141,10 @@ test("current switch is exact, atomic, and never removes candidate files", () =>
 
 test("pre-commit failure compensates only exact frozen current and covers the mv flag window", () => {
   const finish = between("finish_recovery()", "require_command()");
-  const compensate = between("restore_candidate_before_web_commit()", "revalidate_incident_runtimes || exit 1");
+  const compensate = between(
+    "restore_candidate_before_web_commit()",
+    'RECOVERY_FAILURE_STAGE="initial_current_target"',
+  );
   assert.match(finish, /CURRENT_SWITCH_ARMED.*restore_candidate_before_web_commit/s);
   assert.doesNotMatch(finish, /CURRENT_SWITCH_COMPLETED.*restore_candidate_before_web_commit/s);
   assert.match(finish, /trap '' HUP INT TERM/);
@@ -1044,6 +1159,11 @@ test("pre-commit failure compensates only exact frozen current and covers the mv
   assert.match(source, /trusted_symlink_identity\(\)[\s\S]*%d:%i:%s:%Y:%Z:%u:%f:%h/);
   assert.match(source, /link_uid.*id -u[\s\S]*link_count.*"1"[\s\S]*0120000/);
   assert.match(source, /verify_precommit_safe_state[\s\S]*inactive:inactive\|inactive:absent/);
+  assert.match(
+    source,
+    /verify_precommit_safe_state\(\)[\s\S]*frozen\)[\s\S]*CURRENT_SWITCH_COMPLETED[\s\S]*CURRENT_SWITCH_ARMED[\s\S]*pm2_process_snapshot "\$APP_NAME"/,
+  );
+  assert.match(finish, /FROZEN_RESUME_PREFLIGHT_VERIFIED/);
   assert.ok(bash, "bash unavailable");
   for (const failure of ["ln", "mv"]) {
     const harness = `
@@ -1057,6 +1177,7 @@ FROZEN_RUNTIME_DIR=/frozen
 CURRENT_LINK_IDENTITY=original
 FROZEN_CURRENT_LINK_IDENTITY=frozen-identity
 EXPECTED_INCIDENT_DEPLOY_RUN_ID=32597015446
+EXPECTED_COMPENSATION_TEMP_LINK=/current.compensate-32597015446
 COMPENSATION_TEMP_LINK=''
 COMPENSATION_TEMP_LINK_IDENTITY=''
 revalidate_deploy_lock() { return 0; }
@@ -1220,7 +1341,7 @@ test("operator-visible markers are fixed and dangerous broad mutations are absen
   const allowed = new Set([
     "recovery_failed_stage_invalid", "cleanup_failed_reason_invalid",
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
-    "current_switched_to_frozen_release", "frozen_web_restored",
+    "current_frozen_release_verified", "frozen_web_restored",
     "worker_state_restored", "recovery_complete",
     ...[...source.matchAll(/'((?:recovery_failed_(?:pre_)?runtime)[a-z0-9_]*)'/g)].map((match) => match[1]),
     ...[...source.matchAll(/'(cleanup_failed_reason_[a-z0-9_]+)'/g)].map((match) => match[1]),

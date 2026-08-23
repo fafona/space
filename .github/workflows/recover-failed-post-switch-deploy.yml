@@ -44,9 +44,9 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32613111789"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32615785237"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: 02db02135d2a376d624985831f5f0180cf813a29
+      PRIOR_FAILED_RECOVERY_SHA: f1e565d39fbadf4429a1ed9d91b327528c37f6f8
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
@@ -1010,10 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
             values.READINESS_RUN_ID !== "32596977165" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32613111789" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32615785237" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "02db02135d2a376d624985831f5f0180cf813a29" ||
+              "f1e565d39fbadf4429a1ed9d91b327528c37f6f8" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -1077,7 +1077,7 @@ jobs:
             "fence_cleanup_verified",
             "candidate_state_verified",
             "candidate_processes_stopped",
-            "current_switched_to_frozen_release",
+            "current_frozen_release_verified",
             "frozen_web_restored",
             "worker_state_restored",
             "recovery_complete",
@@ -1110,7 +1110,10 @@ jobs:
             ["recovery_failed_pre_runtime_helpers", "remote_recovery_failed_phase_pre_runtime_helpers", 0],
             ["recovery_failed_pre_runtime_candidate_inventory", "remote_recovery_failed_phase_pre_runtime_candidate_inventory", 0],
             ["recovery_failed_pre_runtime_frozen_inventory", "remote_recovery_failed_phase_pre_runtime_frozen_inventory", 0],
-            ["recovery_failed_pre_runtime_candidate_current_link", "remote_recovery_failed_phase_pre_runtime_candidate_current_link", 0],
+            ["recovery_failed_pre_runtime_initial_current_target", "remote_recovery_failed_phase_pre_runtime_initial_current_target", 0],
+            ["recovery_failed_pre_runtime_initial_current_identity", "remote_recovery_failed_phase_pre_runtime_initial_current_identity", 0],
+            ["recovery_failed_pre_runtime_initial_current_compatibility", "remote_recovery_failed_phase_pre_runtime_initial_current_compatibility", 0],
+            ["recovery_failed_pre_runtime_initial_current_temporary_links", "remote_recovery_failed_phase_pre_runtime_initial_current_temporary_links", 0],
             ["recovery_failed_pre_runtime_candidate_structure", "remote_recovery_failed_phase_pre_runtime_candidate_structure", 0],
             ["recovery_failed_pre_runtime_incident_env_helper_identity", "remote_recovery_failed_phase_pre_runtime_incident_env_helper_identity", 0],
             ["recovery_failed_pre_runtime_candidate_env_file_identity", "remote_recovery_failed_phase_pre_runtime_candidate_env_file_identity", 0],
@@ -1136,6 +1139,7 @@ jobs:
             ["recovery_failed_runtime_candidate_process_preflight", "remote_recovery_failed_phase_candidate_process_preflight", 1],
             ["recovery_failed_runtime_candidate_stop", "remote_recovery_failed_phase_candidate_stop", 2],
             ["recovery_failed_runtime_current_switch", "remote_recovery_failed_phase_current_switch", 3],
+            ["recovery_failed_runtime_current_resume", "remote_recovery_failed_phase_current_resume", 3],
             ["recovery_failed_runtime_web_start", "remote_recovery_failed_phase_web_restore_start", 4],
             ["recovery_failed_runtime_web_stability", "remote_recovery_failed_phase_web_restore_stability", 4],
             ["recovery_failed_runtime_web_identity", "remote_recovery_failed_phase_web_restore_identity", 4],
@@ -1201,7 +1205,10 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_helpers|\
               remote_recovery_failed_phase_pre_runtime_candidate_inventory|\
               remote_recovery_failed_phase_pre_runtime_frozen_inventory|\
-              remote_recovery_failed_phase_pre_runtime_candidate_current_link|\
+              remote_recovery_failed_phase_pre_runtime_initial_current_target|\
+              remote_recovery_failed_phase_pre_runtime_initial_current_identity|\
+              remote_recovery_failed_phase_pre_runtime_initial_current_compatibility|\
+              remote_recovery_failed_phase_pre_runtime_initial_current_temporary_links|\
               remote_recovery_failed_phase_pre_runtime_candidate_structure|\
               remote_recovery_failed_phase_pre_runtime_incident_env_helper_identity|\
               remote_recovery_failed_phase_pre_runtime_candidate_env_file_identity|\
@@ -1227,6 +1234,7 @@ jobs:
               remote_recovery_failed_phase_candidate_process_preflight|\
               remote_recovery_failed_phase_candidate_stop|\
               remote_recovery_failed_phase_current_switch|\
+              remote_recovery_failed_phase_current_resume|\
               remote_recovery_failed_phase_web_restore_start|\
               remote_recovery_failed_phase_web_restore_stability|\
               remote_recovery_failed_phase_web_restore_identity|\
@@ -1278,7 +1286,7 @@ jobs:
           printf '%s\n' 'fence_cleanup_verified'
           printf '%s\n' 'candidate_state_verified'
           printf '%s\n' 'candidate_processes_stopped'
-          printf '%s\n' 'current_switched_to_frozen_release'
+          printf '%s\n' 'current_frozen_release_verified'
           printf '%s\n' 'frozen_web_restored'
           printf '%s\n' 'worker_state_restored'
           printf '%s\n' 'recovery_complete'
