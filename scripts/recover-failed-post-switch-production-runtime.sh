@@ -10,9 +10,9 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"
 readonly EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32605144547"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32607312790"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="9acd73386724df635b67ac0b0939c2d982b1dc18"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="1d3f1a2989c7b72f3e53267e7b7a76bffa6c6a54"
 readonly EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
 readonly EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"
@@ -57,7 +57,8 @@ CANDIDATE_WORKER_PROCESS_IDENTITY=""
 CANDIDATE_WORKER_CWD_IDENTITY=""
 CANDIDATE_NEXT_BUILD_SNAPSHOT=""
 FROZEN_NEXT_BUILD_SNAPSHOT=""
-CANDIDATE_ENV_HELPER_SNAPSHOT=""
+INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT=""
+CANDIDATE_PACKAGE_SNAPSHOT=""
 CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY=""
 CANDIDATE_ENVIRONMENT_FILE_IDENTITY=""
 CANDIDATE_ENVIRONMENT_SHA256=""
@@ -231,8 +232,11 @@ finish_recovery() {
         candidate_structure)
           printf '%s\n' 'recovery_failed_pre_runtime_candidate_structure' >&2
           ;;
-        candidate_env_helper_identity)
-          printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_helper_identity' >&2
+        incident_env_helper_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_incident_env_helper_identity' >&2
+          ;;
+        candidate_source_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_candidate_source_identity' >&2
           ;;
         candidate_env_file_identity)
           printf '%s\n' 'recovery_failed_pre_runtime_candidate_env_file_identity' >&2
@@ -514,6 +518,7 @@ readonly FENCE_HELPER_RELATIVE="scripts/hold-ordinary-account-cutover-readiness-
 readonly SMOKE_HELPER_RELATIVE="scripts/check-production-smoke.mjs"
 readonly PACKAGE_RELATIVE="package.json"
 readonly WORKER_RELATIVE="scripts/run-merchant-enterprise-automation-worker.ts"
+readonly INCIDENT_ENV_HELPER="$APP_DIR/$ENV_HELPER_RELATIVE"
 readonly INCIDENT_FENCE_HELPER="$APP_DIR/$FENCE_HELPER_RELATIVE"
 
 [ -d "$RELEASES_DIR" ] && [ ! -L "$RELEASES_DIR" ] || exit 1
@@ -731,6 +736,12 @@ INCIDENT_FENCE_HELPER_FROZEN_SNAPSHOT="$(trusted_helper_snapshot \
   "$EXPECTED_INCIDENT_SHA" "$APP_DIR")" || exit 1
 readonly INCIDENT_FENCE_HELPER_FROZEN_SNAPSHOT
 
+RECOVERY_FAILURE_STAGE="incident_env_helper_identity"
+INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT="$(trusted_helper_snapshot \
+  "$INCIDENT_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
+  "$EXPECTED_INCIDENT_SHA" "$APP_DIR")" || exit 1
+readonly INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT
+
 RECOVERY_FAILURE_STAGE="candidate_inventory"
 
 capture_trusted_release_environment_helper_output() {
@@ -769,8 +780,8 @@ capture_trusted_environment_helper_output() {
   shift 2
   capture_trusted_release_environment_helper_output \
     "$output_name" "$timeout_seconds" \
-    "$CANDIDATE_ENV_HELPER" "$EXPECTED_CANDIDATE_BUILD_ID" \
-    "$CANDIDATE_RUNTIME_DIR" "$CANDIDATE_ENV_HELPER_SNAPSHOT" "$@"
+    "$INCIDENT_ENV_HELPER" "$EXPECTED_INCIDENT_SHA" \
+    "$APP_DIR" "$INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT" "$@"
 }
 
 RELEASES_REAL="$(readlink -f -- "$RELEASES_DIR" 2>/dev/null || true)"
@@ -1214,10 +1225,10 @@ git -C "$APP_DIR" cat-file -e "$EXPECTED_CANDIDATE_BUILD_ID^{commit}" >/dev/null
 CANDIDATE_RUNTIME_IDENTITY="$(release_structure_identity \
   "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || exit 1
 
-readonly CANDIDATE_ENV_HELPER="$CANDIDATE_RUNTIME_DIR/$ENV_HELPER_RELATIVE"
-RECOVERY_FAILURE_STAGE="candidate_env_helper_identity"
-CANDIDATE_ENV_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
-  "$CANDIDATE_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
+readonly CANDIDATE_PACKAGE_FILE="$CANDIDATE_RUNTIME_DIR/$PACKAGE_RELATIVE"
+RECOVERY_FAILURE_STAGE="candidate_source_identity"
+CANDIDATE_PACKAGE_SNAPSHOT="$(trusted_helper_snapshot \
+  "$CANDIDATE_PACKAGE_FILE" "$PACKAGE_RELATIVE" \
   "$EXPECTED_CANDIDATE_BUILD_ID" "$CANDIDATE_RUNTIME_DIR")" || exit 1
 RECOVERY_FAILURE_STAGE="candidate_env_file_identity"
 CANDIDATE_ENVIRONMENT_RESULT_STATUS=0
@@ -1297,7 +1308,7 @@ CANDIDATE_ENVIRONMENT_SHA256="${CANDIDATE_ENVIRONMENT_PARTS[2]}"
 unset CANDIDATE_ENVIRONMENT_RESULT CANDIDATE_ENVIRONMENT_RESULT_PARTS \
   CANDIDATE_ENVIRONMENT_RESULT_STATUS CANDIDATE_ENVIRONMENT_SNAPSHOT \
   CANDIDATE_ENVIRONMENT_PARTS
-readonly CANDIDATE_ENV_HELPER_SNAPSHOT \
+readonly CANDIDATE_PACKAGE_SNAPSHOT \
   CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY \
   CANDIDATE_ENVIRONMENT_FILE_IDENTITY CANDIDATE_ENVIRONMENT_SHA256
 
@@ -1448,9 +1459,9 @@ revalidate_incident_release_pair() {
   [ "$(release_structure_identity "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" = \
     "$FROZEN_RUNTIME_IDENTITY" ] || return 1
   trusted_helper_matches \
-    "$CANDIDATE_ENV_HELPER" "$ENV_HELPER_RELATIVE" \
+    "$CANDIDATE_PACKAGE_FILE" "$PACKAGE_RELATIVE" \
     "$EXPECTED_CANDIDATE_BUILD_ID" "$CANDIDATE_RUNTIME_DIR" \
-    "$CANDIDATE_ENV_HELPER_SNAPSHOT" || return 1
+    "$CANDIDATE_PACKAGE_SNAPSHOT" || return 1
   candidate_snapshot=""
   candidate_snapshot="$(candidate_environment_build_binding_snapshot \
     "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || return 1
