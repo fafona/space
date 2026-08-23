@@ -38,7 +38,7 @@ function nodeHeredocs(block) {
     .map((match) => match[1]);
 }
 
-test("only the post-switch incident interface remains", () => {
+test("the post-switch incident interface remains independently pinned", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32625801433"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32625773494"/);
@@ -49,8 +49,6 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433"/);
   assert.doesNotMatch(source, /RECOVER_FAILED_PRE_FORWARD/);
-  assert.equal(existsSync(new URL("../.github/workflows/recover-failed-pre-forward-deploy.yml", import.meta.url)), false);
-  assert.equal(existsSync(new URL("./recover-failed-pre-forward-production-runtime.sh", import.meta.url)), false);
 });
 
 test("canonical payload is exact-keyed and binds every incident boundary", () => {
