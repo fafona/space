@@ -15,6 +15,7 @@ const workflowPath = join(repositoryRoot, ".github", "workflows", "recover-faile
 const runtimePath = join(repositoryRoot, "scripts", "recover-failed-post-switch-production-runtime.sh");
 const workflow = await readFile(workflowPath, "utf8");
 const runtime = await readFile(runtimePath, "utf8");
+const expectedRecoveryScriptMaxBytes = 262_144;
 
 function loadYaml() {
   const require = createRequire(import.meta.url);
@@ -140,19 +141,20 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
       sha: job.env.PRIOR_FAILED_RECOVERY_SHA,
     },
     {
-      runId: "32627378516",
+      runId: "32630861830",
       runAttempt: "1",
-      sha: "870e79ac1b5fd036bfd08b895284bc6a754a102a",
+      sha: "fe1be992a48204e8f2426615762273f14331ab83",
     },
   );
   for (const value of [
     "32625801433", "58c26e178faeb3eee0172a2e0aa487084f6910e4", "32625773494",
-    "32627378516", "870e79ac1b5fd036bfd08b895284bc6a754a102a",
+    "32630861830", "fe1be992a48204e8f2426615762273f14331ab83",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   for (const obsolete of [
     "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
     "32615785237", "f1e565d39fbadf4429a1ed9d91b327528c37f6f8",
+    "32627378516", "870e79ac1b5fd036bfd08b895284bc6a754a102a",
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
   ]) {
     assert.ok(!workflow.includes(obsolete));
@@ -183,11 +185,11 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   }
   assert.match(allRuns, /failedRecoveryStarted <= completedEpoch/);
   assert.doesNotMatch(allRuns, /failedRecoveryCompleted >= startedEpoch/);
-  assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ID !== "32627378516"/);
+  assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ID !== "32630861830"/);
   assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1"/);
   assert.match(
     allRuns,
-    /values\.PRIOR_FAILED_RECOVERY_SHA !==\s+"870e79ac1b5fd036bfd08b895284bc6a754a102a"/,
+    /values\.PRIOR_FAILED_RECOVERY_SHA !==\s+"fe1be992a48204e8f2426615762273f14331ab83"/,
   );
   const timeGate = allRuns.match(
     /if \(\s*(failedRecoveryCompleted <= failedRecoveryStarted \|\|[\s\S]*?failedRecoveryStarted <= completedEpoch)\s*\) fail\("prior_failed_recovery_time_window_invalid"\)/,
@@ -209,6 +211,7 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   assert.equal(rejectsBoundary(1_999, 2_100, 2_000), true);
   assert.equal(rejectsBoundary(2_001, 2_001, 2_000), true);
   assert.equal(rejectsBoundary(2_001, 3_802, 2_000), true);
+  assert.equal(rejectsBoundary(1_787_477_010, 1_787_477_067, 1_787_470_436), false);
 });
 
 test("payload has nineteen exact keys including prior recovery and database identity", () => {
@@ -222,6 +225,62 @@ test("payload has nineteen exact keys including prior recovery and database iden
   assert.match(allRuns, /writeFileSync[\s\S]*O_EXCL/);
   assert.match(allRuns, /payloadBytes\.length > 65_536/);
   assert.match(allRuns, /\^\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\{0,127\}\$/);
+});
+
+test("local and remote recovery envelopes share one bounded script budget", () => {
+  const runtimeBytes = Buffer.byteLength(runtime, "utf8");
+  assert.equal(job.env.RECOVERY_SCRIPT_MAX_BYTES, String(expectedRecoveryScriptMaxBytes));
+  assert.ok(runtimeBytes > 0);
+  assert.ok(runtimeBytes <= expectedRecoveryScriptMaxBytes);
+  assert.ok(expectedRecoveryScriptMaxBytes <= 262_144);
+  assert.match(allRuns, /test "\$expected_payload_bytes" -le 65536/);
+  assert.match(allRuns, /ulimit -f 16/);
+  assert.doesNotMatch(allRuns, /131072/);
+
+  const remoteCaps = [...allRuns.matchAll(
+    /test "\$expected_script_bytes" -le ([1-9][0-9]*)/g,
+  )].map((match) => Number(match[1]));
+  assert.deepEqual(remoteCaps, [expectedRecoveryScriptMaxBytes]);
+
+  const validator = allRuns.match(
+    /validate_recovery_script_size\(\) \{[\s\S]*?\n\s*\}/,
+  )?.[0];
+  assert.ok(validator, "local script-size validator missing");
+  assert.equal(
+    (validator.match(/recovery_failed_pre_transport_script_size/g) ?? []).length,
+    1,
+  );
+  const invocation = allRuns.match(
+    /if ! validate_recovery_script_size \\\n\s*"\$scriptBytes" "\$RECOVERY_SCRIPT_MAX_BYTES"; then\n\s*exit 1\n\s*fi/,
+  )?.[0];
+  assert.ok(invocation, "local script-size gate missing");
+  assert.ok(allRuns.indexOf(invocation) < allRuns.indexOf('} > "$RECOVERY_ENVELOPE_PATH"'));
+  assert.ok(allRuns.indexOf(invocation) < allRuns.indexOf("ssh -T -F"));
+  assert.ok(!allRuns.includes("remote_recovery_failed_phase_pre_transport_script_size"));
+
+  const exercise = (scriptBytes) => spawnSync(
+    bashPath(),
+    [
+      "-c",
+      `${validator}\nif ! validate_recovery_script_size "$1" "$2"; then exit 1; fi\nprintf '%s\\n' transport_called`,
+      "recovery-size-test",
+      String(scriptBytes),
+      String(expectedRecoveryScriptMaxBytes),
+    ],
+    { encoding: "utf8" },
+  );
+  for (const size of [runtimeBytes, 138_146, expectedRecoveryScriptMaxBytes]) {
+    const result = exercise(size);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "transport_called\n");
+    assert.equal(result.stderr, "");
+  }
+  for (const size of [expectedRecoveryScriptMaxBytes + 1, 0, "not-a-number"]) {
+    const result = exercise(size);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "recovery_failed_pre_transport_script_size\n");
+    assert.equal(result.stderr, "");
+  }
 });
 
 test("readiness evidence remains canonical, historical, and database-bound", () => {
@@ -527,6 +586,46 @@ node -e "process.exit(0)"
   const command = `export NODE_OPTIONS='--faolla-invalid-preload'; export NODE_PATH='/faolla-invalid'; export npm_config_node_options='--faolla-invalid'; export NPM_CONFIG_NODE_OPTIONS='--faolla-invalid'; export BASH_ENV='/faolla-missing-bash-env'; export ENV='/faolla-missing-env'; ${remote}`;
   const result = spawnSync(bashPath(), ["-c", command], { input: envelope, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("remote envelope accepts the observed size and cap but rejects cap plus one", () => {
+  const remote = allRuns.match(/REMOTE_RECOVERY_COMMAND='([^'\r\n]+)'/)?.[1];
+  assert.ok(remote, "remote recovery command missing");
+  const payload = Buffer.from("{}\n", "utf8");
+  const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+  const makeScript = (size) => {
+    const prefix = Buffer.from("#!/usr/bin/env bash\nexit 0\n", "utf8");
+    assert.ok(size >= prefix.length);
+    return Buffer.concat([prefix, Buffer.alloc(size - prefix.length, 0x23)]);
+  };
+  const makeEnvelope = (script) => Buffer.concat([
+    Buffer.from(
+      `FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1\n${payload.length}\n${sha256(payload)}\n${script.length}\n${sha256(script)}\n`,
+      "utf8",
+    ),
+    payload,
+    script,
+  ]);
+  for (const size of [138_146, expectedRecoveryScriptMaxBytes]) {
+    const result = spawnSync(
+      bashPath(),
+      ["-c", remote],
+      { input: makeEnvelope(makeScript(size)), encoding: "utf8", maxBuffer: 1_048_576 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+  }
+
+  const oversizedScript = makeScript(expectedRecoveryScriptMaxBytes + 1);
+  const rejected = spawnSync(
+    bashPath(),
+    ["-c", remote],
+    { input: makeEnvelope(oversizedScript), encoding: "utf8", maxBuffer: 1_048_576 },
+  );
+  assert.notEqual(rejected.status, 0);
+  assert.equal(rejected.stdout, "");
+  assert.equal(rejected.stderr, "");
 });
 
 test("public verification covers all four routes and the frozen build", () => {
