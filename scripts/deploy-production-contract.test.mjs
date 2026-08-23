@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import {
   access,
   chmod,
   link,
   mkdir,
   mkdtemp,
+  open as openFile,
   readFile,
+  readdir,
   rename,
   rm,
   stat,
@@ -52,6 +55,31 @@ const envCheckUrl = new URL("./check-env.mjs", import.meta.url);
 const envCheckScript = await readFile(envCheckUrl, "utf8");
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const DEPLOY_ENVELOPE_MAGIC = "FAOLLA_DEPLOY_ENVELOPE_V2";
+const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
+  "[deploy] deploy_failed_readiness_fence_nonretryable",
+  "[deploy] deploy_forward_booking_persistence_hard_failed",
+  "[deploy] deploy_forward_booking_persistence_transient_exhausted",
+  "[deploy] deploy_forward_booking_persistence_transient_retry",
+  "[deploy] deploy_rollback_failed_compatibility_restore",
+  "[deploy] deploy_rollback_failed_current_restore",
+  "[deploy] deploy_rollback_failed_evidence",
+  "[deploy] deploy_rollback_failed_fence_checkpoint",
+  "[deploy] deploy_rollback_failed_fence_cleanup",
+  "[deploy] deploy_rollback_failed_fence_reacquire",
+  "[deploy] deploy_rollback_failed_fence_release",
+  "[deploy] deploy_rollback_failed_pm2_save",
+  "[deploy] deploy_rollback_failed_port_quiesce",
+  "[deploy] deploy_rollback_failed_previous_web_health",
+  "[deploy] deploy_rollback_failed_previous_web_start",
+  "[deploy] deploy_rollback_failed_release_cleanup",
+  "[deploy] deploy_rollback_failed_runtime_restore",
+  "[deploy] deploy_rollback_failed_unknown",
+  "[deploy] deploy_rollback_failed_web_quiesce",
+  "[deploy] deploy_rollback_failed_worker_quiesce",
+  "[deploy] deploy_rollback_failed_worker_restart",
+  "[deploy] readiness_fence_waiter_cancelled_retry",
+  "[deploy] readiness_fence_waiter_retry_exhausted",
+]);
 const DEPLOY_PAYLOAD_KEYS = [
   "APP_DIR",
   "APP_NAME",
@@ -424,11 +452,28 @@ function extractShellRegion(start, end) {
   return deployScript.slice(startIndex, endIndex);
 }
 
+function extractShellFunction(name) {
+  const marker = `${name}() {`;
+  const startIndex = deployScript.indexOf(marker);
+  assert.ok(startIndex >= 0, `missing shell function ${name}`);
+  const remainder = deployScript.slice(startIndex + marker.length);
+  const nextFunction = remainder.match(/\n[a-z][a-z0-9_]*\(\) \{/);
+  assert.ok(nextFunction?.index !== undefined, `unterminated shell function ${name}`);
+  return deployScript.slice(
+    startIndex,
+    startIndex + marker.length + nextFunction.index,
+  );
+}
+
 async function runDeployTransportScenario({
   statuses,
   expectedStatus,
   expectedSshCalls = 1,
   evidenceEnvironment = {},
+  sshMode = "small-failure-output",
+  expectedOutput,
+  expectCompleteFrame = true,
+  verifyCaptureBounds = false,
 }) {
   const captureDirectory = await mkdtemp(
     join(tmpdir(), "faolla-deploy-transport-contract-"),
@@ -500,20 +545,66 @@ async function runDeployTransportScenario({
     { mode: 0o600 },
   );
   const transport = extractDeployTransport();
+  const captureSizesPath = join(captureDirectory, "capture-sizes");
   const fakeSsh = String.raw`
+grep() {
+  local capture_path
+  local capture_size
+  if [ "$FAKE_RECORD_CAPTURE_SIZES" = "1" ]; then
+    for capture_path in "$@"; do
+      case "$capture_path" in
+        */deploy-output.*/stdout.log|*/deploy-output.*/stderr.log)
+          capture_size="$(wc -c < "$capture_path")"
+          printf '%s %s\n' "$capture_path" "$capture_size" >> "$FAKE_CAPTURE_SIZES"
+          ;;
+      esac
+    done
+  fi
+  command grep "$@"
+}
 ssh() {
   fake_index="$(wc -l < "$FAKE_SSH_CALLS")"
   fake_index=$((fake_index + 1))
   printf '%s\n' "$fake_index" >> "$FAKE_SSH_CALLS"
   printf '%s\0' "$@" > "$FAKE_SSH_CAPTURE_DIR/argv-$fake_index"
   env > "$FAKE_SSH_CAPTURE_DIR/env-$fake_index"
-  cat > "$FAKE_SSH_CAPTURE_DIR/stdin-$fake_index"
+  if [ "$FAKE_SSH_MODE" = "partial-frame" ]; then
+    head -c 1 > "$FAKE_SSH_CAPTURE_DIR/stdin-$fake_index" || true
+  else
+    cat > "$FAKE_SSH_CAPTURE_DIR/stdin-$fake_index"
+  fi
   IFS=',' read -r -a fake_statuses <<< "$FAKE_SSH_STATUSES"
   fake_status_index=$((fake_index - 1))
   if [ "$fake_status_index" -ge "${"$"}{#fake_statuses[@]}" ]; then
     fake_status_index=$((${"$"}{#fake_statuses[@]} - 1))
   fi
   fake_status="${"$"}{fake_statuses[$fake_status_index]}"
+  case "$FAKE_SSH_MODE" in
+    partial-frame) return 0 ;;
+    large-failure-output)
+      head -c 1100000 /dev/zero | tr '\0' x
+      printf '%s\n' \
+        'prefix_[deploy] deploy_rollback_failed_evidence' \
+        '[deploy] deploy_rollback_failed_evidence_suffix' \
+        '[deploy] deploy_rollback_failed_evidenc' \
+        'RAW_STDOUT_SENTINEL_path=/contract/private_pid=98765' \
+        '[deploy] deploy_rollback_failed_evidence'
+      head -c 1100000 /dev/zero | tr '\0' y >&2
+      printf '%s\n' \
+        'prefix_[deploy] readiness_fence_waiter_retry_exhausted' \
+        '[deploy] readiness_fence_waiter_retry_exhausted_suffix' \
+        '[deploy] readiness_fence_waiter_retry_exhauste' \
+        'RAW_STDERR_SENTINEL_path=/contract/private_pid=98765' \
+        '[deploy] readiness_fence_waiter_retry_exhausted' >&2
+      ;;
+    small-failure-output)
+      if [ "$fake_status" != "0" ]; then
+        printf '%s\n' '[deploy] deploy_rollback_failed_evidence'
+        printf '%s\n' 'unsafe_remote_stdout_path=/contract/private pid=98765'
+        printf '%s\n' 'unsafe_remote_stderr_path=/contract/private pid=98765' >&2
+      fi
+      ;;
+  esac
   if [ "$fake_status" = "255" ]; then
     printf completed > "$FAKE_REMOTE_COMPLETION_MARKER"
   fi
@@ -533,9 +624,13 @@ sleep() { :; }
       FAKE_SSH_CALLS: toBashPath(callsPath),
       FAKE_SSH_CAPTURE_DIR: toBashPath(captureDirectory),
       FAKE_SSH_STATUSES: statuses.join(","),
+      FAKE_SSH_MODE: sshMode,
+      FAKE_CAPTURE_SIZES: toBashPath(captureSizesPath),
+      FAKE_RECORD_CAPTURE_SIZES: verifyCaptureBounds ? "1" : "0",
       FAKE_REMOTE_COMPLETION_MARKER: toBashPath(
         join(captureDirectory, "remote-completed-before-status-loss"),
       ),
+      RUNNER_TEMP: toBashPath(captureDirectory),
       SSH_USER: "deployer",
       SSH_HOST: "production.invalid",
       SSH_PORT: "22",
@@ -612,9 +707,29 @@ sleep() { :; }
   });
 
   try {
-    assert.equal(result.status, expectedStatus, result.stderr);
-    assert.equal(result.stdout, "");
+    if (expectedStatus === "nonzero") {
+      assert.notEqual(result.status, 0, result.stderr);
+    } else {
+      assert.equal(result.status, expectedStatus, result.stderr);
+    }
+    const resolvedExpectedOutput = expectedOutput ?? (
+      expectedSshCalls === 1 && expectedStatus !== 0
+        ? [
+            "[deploy] deploy_rollback_failed_evidence",
+            "[deploy] deploy_transport_or_remote_execution_failed",
+            "",
+          ].join("\n")
+        : ""
+    );
+    assert.equal(result.stdout, resolvedExpectedOutput);
     assert.equal(result.stderr, "");
+    assert.doesNotMatch(result.stdout, /unsafe_remote_|RAW_STD(?:OUT|ERR)_SENTINEL/);
+    assert.doesNotMatch(result.stderr, /unsafe_remote_|RAW_STD(?:OUT|ERR)_SENTINEL/);
+    assert.deepEqual(
+      (await readdir(captureDirectory)).filter((entry) =>
+        entry.startsWith("deploy-output.")),
+      [],
+    );
     const callsText = (await readFile(callsPath, "utf8")).trim();
     const calls = callsText === "" ? [] : callsText.split(/\r?\n/);
     assert.equal(calls.length, expectedSshCalls);
@@ -638,6 +753,10 @@ sleep() { :; }
         join(captureDirectory, `env-${index}`),
         "utf8",
       );
+      if (!expectCompleteFrame) {
+        assert.ok(framedInput.length <= 1);
+        continue;
+      }
       const firstNewline = framedInput.indexOf(0x0a);
       const secondNewline = framedInput.indexOf(0x0a, firstNewline + 1);
       const thirdNewline = framedInput.indexOf(0x0a, secondNewline + 1);
@@ -826,6 +945,29 @@ sleep() { :; }
         assert.equal(await pathExists(truncatedMarker), false);
       }
     }
+    if (verifyCaptureBounds) {
+      const captureSizes = (await readFile(captureSizesPath, "utf8"))
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => {
+          const match = line.match(/\/(stdout|stderr)\.log (\d+)$/);
+          assert.ok(match, line);
+          return { channel: match[1], size: Number(match[2]) };
+        });
+      assert.ok(captureSizes.length >= 46);
+      for (const { size } of captureSizes) {
+        assert.ok(size >= 0 && size <= 1_048_576, String(size));
+      }
+      for (const channel of ["stdout", "stderr"]) {
+        assert.equal(
+          Math.max(...captureSizes
+            .filter((entry) => entry.channel === channel)
+            .map((entry) => entry.size)),
+          1_048_576,
+          channel,
+        );
+      }
+    }
   } finally {
     await rm(captureDirectory, { recursive: true, force: true });
   }
@@ -980,6 +1122,29 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   await t.test("non-255 SSH failure is returned without retry", async () => {
     await runDeployTransportScenario({ statuses: [37], expectedStatus: 37 });
   });
+  await t.test("bounded capture drains large dual-channel output and emits only exact safe tail lines", async () => {
+    await runDeployTransportScenario({
+      statuses: [37],
+      expectedStatus: 37,
+      sshMode: "large-failure-output",
+      expectedOutput: [
+        "[deploy] deploy_rollback_failed_evidence",
+        "[deploy] readiness_fence_waiter_retry_exhausted",
+        "[deploy] deploy_transport_or_remote_execution_failed",
+        "",
+      ].join("\n"),
+      verifyCaptureBounds: true,
+    });
+  });
+  await t.test("a successful SSH that closes stdin early preserves frame SIGPIPE without replay", async () => {
+    await runDeployTransportScenario({
+      statuses: [0],
+      expectedStatus: "nonzero",
+      sshMode: "partial-frame",
+      expectCompleteFrame: false,
+      expectedOutput: "[deploy] deploy_transport_or_remote_execution_failed\n",
+    });
+  });
   await t.test("attestation byte substitution fails before SSH", async () => {
     await runDeployTransportScenario({
       statuses: [0],
@@ -1010,6 +1175,31 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
       },
     });
   });
+});
+
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 23-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 23);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 23);
+  const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
+  const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
+  assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
+  const allowlistRegion = deployWorkflow.slice(allowlistStart, allowlistEnd);
+  const workflowLines = [...allowlistRegion.matchAll(
+    /'(\[deploy\] [a-z0-9_]+)'/g,
+  )].map((match) => match[1]);
+  assert.equal(workflowLines.length, 23);
+  assert.equal(new Set(workflowLines).size, 23);
+  assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
+
+  const scriptEchoLines = [...deployScript.matchAll(
+    /\becho "(\[deploy\] [a-z0-9_]+)"/g,
+  )].map((match) => match[1]);
+  const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
+  assert.equal(uniqueScriptEchoLines.length, 23);
+  assert.deepEqual(
+    uniqueScriptEchoLines,
+    [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),
+  );
 });
 
 test("remote deploy consumes one exact payload file and erases it before validation", async () => {
@@ -1812,7 +2002,7 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
-  assert.equal(deployNodeSources.length, 12);
+  assert.equal(deployNodeSources.length, 14);
   for (const [index, source] of deployNodeSources.entries()) {
     const result = spawnSync(
       process.execPath,
@@ -2443,8 +2633,10 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     "FORWARD_MUTATION_STARTED=1",
     "prepare_shared_runtime || exit 1",
     'switch_current_release "$RELEASE_DIR" || exit 1',
+    "capture_candidate_current_identity_for_booking_retry",
     'wait_for_release_health "$FAOLLA_WEB_BUILD_ID"',
-    "verify_booking_persistence || BOOKING_PERSISTENCE_STATUS=$?",
+    "capture_candidate_web_identity_for_booking_retry",
+    "verify_booking_persistence_with_bounded_retry",
     "run_local_release_smoke",
     "install_runtime_compatibility_links || exit 1",
     "verify_nginx_release_static_access || exit 1",
@@ -2458,7 +2650,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     assert.ok(index > previousIndex, `out-of-order lifecycle step: ${needle}`);
     previousIndex = index;
   }
-  assert.match(sequence, /BOOKING_PERSISTENCE_STATUS" -ne 0[\s\S]+exit 1/);
+  assert.doesNotMatch(sequence, /BOOKING_PERSISTENCE_STATUS/);
   assert.equal(
     sequence.match(/previous_web_process_identity_matches \|\| exit 1/g)?.length,
     2,
@@ -2472,7 +2664,8 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     /assert_readiness_fence_before_process_quiescence[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+PROCESSES_STOPPED=1/,
   );
   assert.match(sequence, /assert_readiness_fence_forward_checkpoint \|\| exit 1/g);
-  assert.match(deployScript, /blocked_cancelled[\s\S]+retrying protected quiescence/);
+  assert.match(deployScript, /blocked_cancelled[\s\S]{0,180}return 2/);
+  assert.doesNotMatch(deployScript, /retrying protected quiescence/);
   assert.doesNotMatch(
     deployScript,
     /pg_catalog\.(?:coalesce|greatest|least|nullif)\s*\(/i,
@@ -2505,7 +2698,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   );
   assert.match(
     deployScript,
-    /rollback restored the previous web process, but fence release failed[\s\S]+discard_failed_readiness_fence/,
+    /deploy_rollback_failed_fence_release[\s\S]+discard_failed_readiness_fence/,
   );
   assert.match(deployScript, /readiness_fence_original_process_matches[\s\S]+kill -TERM/);
   assert.match(deployScript, /terminate_readiness_fence_database_session \|\| cleanup_status=1/);
@@ -3424,7 +3617,7 @@ test("PM2 state parsing and bounded deletion fail closed and prove the original 
         "  \"$@\"",
         "}",
         "pm2() { [ \"$1\" = delete ] || return 1; printf x >> \"$CALLS\"; return \"$DELETE_STATUS\"; }",
-        "SECONDS=0",
+        "unset SECONDS; SECONDS=0",
         "stop_pm2_process_bounded target 40; status=$?",
         "printf '%s\\n' \"$status\"",
       ].join("\n");
@@ -3784,8 +3977,16 @@ test("database lock checker accepts only exact held output from a successful pro
     "assert_readiness_fence_database_locks() {",
     "\nreadiness_fence_process_identity_sha256() {",
   );
-  const blockedWarning =
-    "[deploy] readiness fence cancelled a newly queued database waiter; retrying protected quiescence\n";
+  assert.match(lockFunction, /local absolute_deadline_seconds="\$\{3:-\}"/);
+  assert.match(lockFunction, /deadline_bounded_command_timeout_seconds/);
+  assert.match(
+    lockFunction,
+    /statement_timeout_milliseconds=\$\(\(command_timeout_seconds \* 1000 - 1\)\)/,
+  );
+  assert.match(
+    lockFunction,
+    /statement_timeout=\$\{FAOLLA_FENCE_STATEMENT_TIMEOUT_MILLISECONDS\}ms -c lock_timeout=\$\{FAOLLA_FENCE_STATEMENT_TIMEOUT_MILLISECONDS\}ms/,
+  );
   const fixtures = [
     { name: "standard psql LF", stdout: "held\n", producerStatus: 0, expectedStatus: 0 },
     { name: "no trailing LF", stdout: "held", producerStatus: 0, expectedStatus: 0 },
@@ -3802,7 +4003,6 @@ test("database lock checker accepts only exact held output from a successful pro
       stdout: "blocked_cancelled\n",
       producerStatus: 0,
       expectedStatus: 2,
-      warning: blockedWarning,
     },
     {
       name: "relaxed held",
@@ -3938,6 +4138,23 @@ test("database lock checker accepts only exact held output from a successful pro
 });
 
 test("provisional marker publication retries only the pure marker check", () => {
+  const markerValidator = extractShellFunction("validate_readiness_fence_marker");
+  assert.equal(
+    markerValidator.match(/READINESS_FENCE_(?:BACKEND_PID|APPLICATION_NAME|MARKER_SHA256|VALIDATION_COMPLETE)\)/g)?.length,
+    4,
+  );
+  assert.match(markerValidator, /marker_value_count" -ne 4/);
+  assert.match(
+    markerValidator,
+    /NODE\n    then\n      printf 'READINESS_FENCE_VALIDATION_COMPLETE\\0complete\\0'/,
+  );
+  const markerProducerSources = extractShellHeredocs(markerValidator, "NODE");
+  assert.equal(markerProducerSources.length, 1);
+  assert.doesNotMatch(markerProducerSources[0], /READINESS_FENCE_VALIDATION_COMPLETE/);
+  assert.equal(
+    markerProducerSources[0].match(/\["READINESS_FENCE_(?:BACKEND_PID|APPLICATION_NAME|MARKER_SHA256)"/g)?.length,
+    3,
+  );
   const candidateFunction = extractShellRegion(
     "accept_readiness_fence_candidate() {",
     "\ncleanup_readiness_fence_files() {",
@@ -4036,6 +4253,875 @@ test("provisional marker publication retries only the pure marker check", () => 
   assert.equal(identityDriftAfterQuiescing.stdout.trim(), "2 2");
 });
 
+test("strict fence proof retries only status two within one bounded deadline", () => {
+  const retryFunctions = extractShellRegion(
+    "assert_readiness_fence_held_with_bounded_retry() {",
+    "\nreadiness_fence_process_quiescence_checkpoint() {",
+  );
+  assert.doesNotMatch(
+    retryFunctions,
+    /\b(?:rollback_release|stop_pm2_process_bounded|switch_current_release|start_frozen_previous_release|pm2|ln|mv|rm)\b/,
+  );
+
+  const run = ({
+    statuses,
+    sleepSeconds = 1,
+    totalTimeout = 15,
+    outerDeadline,
+    includeArguments = false,
+  }) => {
+    const cases = statuses
+      .map((status, index) => `    ${index + 1}) return ${status} ;;`)
+      .join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        retryFunctions,
+        "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+        "unset SECONDS; SECONDS=0",
+        "strict_calls=0",
+        "strict_arguments=",
+        "sleep_calls=0",
+        "assert_readiness_fence_held() {",
+        "  strict_calls=$((strict_calls + 1))",
+        "  strict_arguments=\"${strict_arguments:+$strict_arguments;}$1,$2,$3\"",
+        "  case \"$strict_calls\" in",
+        cases,
+        "    *) return 99 ;;",
+        "  esac",
+        "}",
+        `SLEEP_SECONDS='${sleepSeconds}'`,
+        "sleep() { sleep_calls=$((sleep_calls + 1)); SECONDS=$((SECONDS + SLEEP_SECONDS)); }",
+        outerDeadline === undefined
+          ? `if assert_readiness_fence_held_with_bounded_retry 900 '${totalTimeout}'; then status=0; else status=$?; fi`
+          : `if assert_readiness_fence_held_with_bounded_retry 900 '${totalTimeout}' '${outerDeadline}'; then status=0; else status=$?; fi`,
+        "printf '__result__ %s %s %s %s %s\\n' \"$status\" \"$strict_calls\" \"$sleep_calls\" \"$SECONDS\" \"$strict_arguments\"",
+        "",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "");
+    const lines = result.stdout.trim().split("\n");
+    const summary = lines.pop()?.match(/^__result__ (\d+) (\d+) (\d+) (\d+) ?(.*)$/);
+    assert.ok(summary, result.stdout);
+    const outcome = {
+      codes: lines,
+      status: Number(summary[1]),
+      strictCalls: Number(summary[2]),
+      sleepCalls: Number(summary[3]),
+      elapsed: Number(summary[4]),
+    };
+    if (includeArguments) {
+      outcome.strictArguments = summary[5] === "" ? [] : summary[5].split(";");
+    }
+    return outcome;
+  };
+
+  assert.deepEqual(run({ statuses: [0] }), {
+    codes: [],
+    status: 0,
+    strictCalls: 1,
+    sleepCalls: 0,
+    elapsed: 0,
+  });
+  assert.deepEqual(run({ statuses: [2, 0] }), {
+    codes: ["[deploy] readiness_fence_waiter_cancelled_retry"],
+    status: 0,
+    strictCalls: 2,
+    sleepCalls: 1,
+    elapsed: 1,
+  });
+  for (const nonretryableStatus of [1, 3, 124, 255]) {
+    assert.deepEqual(
+      run({ statuses: [nonretryableStatus] }),
+      {
+        codes: ["[deploy] deploy_failed_readiness_fence_nonretryable"],
+        status: 1,
+        strictCalls: 1,
+        sleepCalls: 0,
+        elapsed: 0,
+      },
+      `nonretryable status ${nonretryableStatus}`,
+    );
+  }
+  assert.deepEqual(run({ statuses: [2, 2, 2] }), {
+    codes: [
+      "[deploy] readiness_fence_waiter_cancelled_retry",
+      "[deploy] readiness_fence_waiter_cancelled_retry",
+      "[deploy] readiness_fence_waiter_retry_exhausted",
+    ],
+    status: 1,
+    strictCalls: 3,
+    sleepCalls: 2,
+    elapsed: 2,
+  });
+
+  const deadline = run({ statuses: [2, 0], sleepSeconds: 15 });
+  assert.equal(deadline.status, 1);
+  assert.ok(deadline.strictCalls <= 2);
+  assert.ok(deadline.elapsed <= 15);
+  assert.equal(deadline.codes.at(-1), "[deploy] readiness_fence_waiter_retry_exhausted");
+
+  assert.deepEqual(run({
+    statuses: [2, 0],
+    outerDeadline: 7,
+    includeArguments: true,
+  }), {
+    codes: ["[deploy] readiness_fence_waiter_cancelled_retry"],
+    status: 0,
+    strictCalls: 2,
+    sleepCalls: 1,
+    elapsed: 1,
+    strictArguments: ["900,7,7", "900,6,7"],
+  });
+  const outerDeadlineExhausted = run({
+    statuses: [2, 0],
+    sleepSeconds: 7,
+    outerDeadline: 7,
+    includeArguments: true,
+  });
+  assert.equal(outerDeadlineExhausted.status, 1);
+  assert.equal(outerDeadlineExhausted.strictCalls, 1);
+  assert.equal(outerDeadlineExhausted.elapsed, 7);
+  assert.deepEqual(outerDeadlineExhausted.strictArguments, ["900,7,7"]);
+  assert.equal(
+    outerDeadlineExhausted.codes.at(-1),
+    "[deploy] readiness_fence_waiter_retry_exhausted",
+  );
+});
+
+test("deadline-derived command windows reserve termination time and fail at the boundary", () => {
+  const deadlineHelper = extractShellFunction(
+    "deadline_bounded_command_timeout_seconds",
+  );
+  const result = spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: [
+      "set -euo pipefail",
+      deadlineHelper,
+      "probe() { if value=\"$(deadline_bounded_command_timeout_seconds \"$@\")\"; then printf 'ok:%s\\n' \"$value\"; else printf 'fail\\n'; fi; }",
+      "unset SECONDS",
+      "SECONDS=10",
+      "probe 70 60 5",
+      "SECONDS=10",
+      "probe 70 4 0",
+      "SECONDS=10",
+      "probe 17 20 5",
+      "SECONDS=10",
+      "probe 16 20 5",
+      "SECONDS=10",
+      "probe 15 20 5",
+      "SECONDS=10",
+      "probe 10 20 0",
+      "SECONDS=10",
+      "probe invalid 20 1",
+      "",
+    ].join("\n"),
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(result.stdout.trim().split("\n"), [
+    "ok:54",
+    "ok:4",
+    "ok:1",
+    "fail",
+    "fail",
+    "fail",
+    "fail",
+  ]);
+});
+
+test("booking persistence retries only status two across fully revalidated read-only rounds", async () => {
+  const environmentSnapshot = extractShellFunction(
+    "read_candidate_environment_snapshot_for_booking_retry",
+  );
+  const buildIdSnapshot = extractShellFunction(
+    "read_candidate_build_id_snapshot_for_booking_retry",
+  );
+  const processEnvironmentSnapshot = extractShellFunction(
+    "read_candidate_process_environment_snapshot_for_booking_retry",
+  );
+  const currentCapture = extractShellFunction(
+    "capture_candidate_current_identity_for_booking_retry",
+  );
+  const webCapture = extractShellFunction(
+    "capture_candidate_web_identity_for_booking_retry",
+  );
+  const retryState = extractShellFunction("assert_booking_persistence_retry_state");
+  const retryFunction = extractShellFunction(
+    "verify_booking_persistence_with_bounded_retry",
+  );
+  const healthFunction = extractShellFunction("assert_candidate_web_health");
+  const checkerFunction = extractShellFunction("verify_booking_persistence");
+  const forbiddenMutations =
+    /\b(?:ln|mv|rm|pm2|migrate|migration|release_readiness_fence|switch_current_release|start_release|install_runtime_compatibility_links|stop_pm2_process_bounded)\b/;
+  const retryReadOnlyCallGraph = [
+    retryFunction,
+    retryState,
+    environmentSnapshot,
+    buildIdSnapshot,
+    processEnvironmentSnapshot,
+    healthFunction,
+    checkerFunction,
+  ].join("\n");
+  assert.doesNotMatch(retryReadOnlyCallGraph, forbiddenMutations);
+  assert.match(retryFunction, /local maximum_attempts=2/);
+  assert.match(
+    retryFunction,
+    /assert_readiness_fence_before_forward_operation[\s\S]{0,120}"\$remaining_seconds" "\$absolute_deadline_seconds"/,
+  );
+  assert.match(
+    retryFunction,
+    /local absolute_deadline_seconds="\$\{1:-\$\(\([\s\S]{0,100}BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS[\s\S]{0,40}\)\)\}"/,
+  );
+  assert.match(
+    retryFunction,
+    /remaining_seconds=\$\(\(absolute_deadline_seconds - SECONDS\)\)/,
+  );
+  assert.match(
+    retryFunction,
+    /verify_booking_persistence[\s\S]{0,80}"\$remaining_seconds" "\$absolute_deadline_seconds"/,
+  );
+  assert.match(
+    retryFunction,
+    /assert_readiness_fence_forward_checkpoint[\s\S]{0,80}"\$absolute_deadline_seconds"/,
+  );
+  assert.equal(
+    retryFunction.match(/assert_booking_persistence_retry_state "\$absolute_deadline_seconds"/g)?.length,
+    6,
+  );
+  assert.equal(
+    retryFunction.match(/assert_candidate_web_health "\$absolute_deadline_seconds"/g)?.length,
+    2,
+  );
+  assert.match(
+    deployScript,
+    /BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS="\$\{BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS:-60\}"/,
+  );
+  assert.match(
+    deployScript,
+    /BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" -ne 60/,
+  );
+  assert.doesNotMatch(deployScript, /BOOKING_PERSISTENCE_STATUS/);
+  assert.doesNotMatch(
+    deployScript,
+    /booking persistence[^\n]*(?:continuing|failed with status)/i,
+  );
+
+  for (const [name, value] of [
+    ["WEB_COMMITTED", "0"],
+    ["SWITCH_COMPLETED", "1"],
+    ["PROCESSES_STOPPED", "1"],
+    ["FORWARD_MUTATION_STARTED", "1"],
+    ["READINESS_FENCE_ACTIVE", "1"],
+    ["READINESS_FENCE_RELEASED", "0"],
+    ["READINESS_FENCE_RELEASE_REQUESTED", "0"],
+    ["READINESS_FENCE_FORWARD_READY", "1"],
+    ["LEGACY_COMPATIBILITY_LINKS_INSTALLED", "0"],
+  ]) {
+    assert.match(
+      retryState,
+      new RegExp(`\\$\\{${name}:-0\\}\\" != \\"${value}\\"`),
+      name,
+    );
+  }
+  assert.match(retryState, /readlink -- "\$CURRENT_LINK"[\s\S]{0,120}"\$RELEASE_DIR"/);
+  assert.match(retryState, /readlink -f -- "\$CURRENT_LINK"[\s\S]{0,120}"\$RELEASE_DIR"/);
+  assert.match(retryState, /-e "\$\{CURRENT_LINK\}\.pending"/);
+  assert.match(retryState, /-L "\$\{CURRENT_LINK\}\.pending"/);
+  assert.match(
+    retryState,
+    /pm2_process_snapshot[\s\S]{0,120}"\$AUTOMATION_WORKER_NAME" "\$absolute_deadline_seconds"[\s\S]{0,120}"\$process_snapshot" != "absent"/,
+  );
+  for (const identity of [
+    "CANDIDATE_CURRENT_LINK_IDENTITY",
+    "CANDIDATE_RUNTIME_IDENTITY",
+    "CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY",
+    "CANDIDATE_ENVIRONMENT_FILE_IDENTITY",
+    "CANDIDATE_ENVIRONMENT_SHA256",
+    "CANDIDATE_SUPABASE_INTERNAL_URL_B64",
+    "CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64",
+    "CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+    "CANDIDATE_BUILD_FILE_IDENTITY",
+    "CANDIDATE_BUILD_FILE_SHA256",
+    "CANDIDATE_WEB_PID",
+    "CANDIDATE_WEB_PROCESS_START_TICKS",
+    "CANDIDATE_WEB_PROCESS_IDENTITY",
+    "CANDIDATE_WEB_CWD_IDENTITY",
+  ]) {
+    assert.match(retryState, new RegExp(identity), identity);
+  }
+  assert.match(currentCapture, /stat -c '%d:%i:%Z' -- "\$CURRENT_LINK"/);
+  assert.match(currentCapture, /stat -Lc '%d:%i:%Z' -- "\$RELEASE_DIR"/);
+  assert.match(
+    currentCapture,
+    /read_candidate_environment_snapshot_for_booking_retry/,
+  );
+  assert.match(currentCapture, /read_candidate_build_id_snapshot_for_booking_retry/);
+  for (const frozenSnapshot of [
+    "CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY",
+    "CANDIDATE_ENVIRONMENT_FILE_IDENTITY",
+    "CANDIDATE_ENVIRONMENT_SHA256",
+    "CANDIDATE_SUPABASE_INTERNAL_URL_B64",
+    "CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64",
+    "CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+    "CANDIDATE_BUILD_FILE_IDENTITY",
+    "CANDIDATE_BUILD_FILE_SHA256",
+  ]) {
+    assert.match(currentCapture, new RegExp(`${frozenSnapshot}=`), frozenSnapshot);
+    assert.match(retryState, new RegExp(`\\$${frozenSnapshot}`), frozenSnapshot);
+  }
+  assert.match(
+    environmentSnapshot,
+    /read-production-supabase-environment\.mjs" rollback-snapshot[\s\S]{0,120}"\$RELEASE_DIR\/\.env\.local" "\$FAOLLA_WEB_BUILD_ID"/,
+  );
+  assert.match(
+    processEnvironmentSnapshot,
+    /process-snapshot "\$CANDIDATE_WEB_PID" "\$RELEASE_DIR"/,
+  );
+  assert.match(
+    processEnvironmentSnapshot,
+    /deadline_bounded_command_timeout_seconds[\s\S]{0,120}"\$absolute_deadline_seconds"/,
+  );
+  for (const boundedSnapshot of [environmentSnapshot, buildIdSnapshot]) {
+    assert.match(boundedSnapshot, /deadline_bounded_command_timeout_seconds/);
+    assert.match(boundedSnapshot, /"\$absolute_deadline_seconds"/);
+  }
+  assert.match(buildIdSnapshot, /"\$RELEASE_DIR\/\.next\/BUILD_ID" "\$FAOLLA_WEB_BUILD_ID"/);
+  assert.match(buildIdSnapshot, /O_NOFOLLOW/);
+  assert.match(buildIdSnapshot, /lstatSync/);
+  assert.match(buildIdSnapshot, /fstatSync/);
+  assert.match(buildIdSnapshot, /identity\.nlink !== 1n/);
+  assert.match(buildIdSnapshot, /createHash\("sha256"\)/);
+  assert.match(buildIdSnapshot, /text !== expectedBuildId/);
+  assert.match(
+    webCapture,
+    /linux_process_start_ticks[\s\S]{0,100}"\$process_pid" "\$absolute_deadline_seconds"/,
+  );
+  assert.match(webCapture, /\/proc\/\$process_pid\/cwd/);
+  assert.match(webCapture, /assert_booking_persistence_retry_state/);
+  assert.match(
+    webCapture,
+    /pm2_process_snapshot[\s\S]{0,100}"\$APP_NAME" "\$absolute_deadline_seconds"/,
+  );
+  assert.match(healthFunction, /deadline_bounded_command_timeout_seconds/);
+  assert.match(healthFunction, /"\$absolute_deadline_seconds" 4 0/);
+  assert.match(
+    healthFunction,
+    /timeout --signal=KILL "\$\{command_timeout_seconds\}s" bash -c/,
+  );
+  assert.match(healthFunction, /"\$\{#response\}" -le 4096/);
+  assert.match(checkerFunction, /cd "\$RELEASE_DIR" \|\| exit 1/);
+  assert.equal(
+    deployScript.match(/^\s*cd "\$RELEASE_DIR" \|\| exit 1$/gm)?.length,
+    5,
+  );
+  assert.doesNotMatch(deployScript, /^\s*cd "\$RELEASE_DIR"\s*$/gm);
+  assert.match(
+    checkerFunction,
+    /deadline_bounded_command_timeout_seconds[\s\S]{0,120}"\$absolute_deadline_seconds" "\$query_budget_seconds" 5/,
+  );
+  const checkerNodeSources = extractShellHeredocs(checkerFunction, "NODE");
+  assert.equal(checkerNodeSources.length, 1);
+  const checkerSupervisor = checkerNodeSources[0];
+  assert.match(checkerSupervisor, /process\.platform !== "linux"/);
+  for (const requiredFlag of ["O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"]) {
+    assert.match(
+      checkerSupervisor,
+      new RegExp(`!Number\\.isInteger\\(constants\\.${requiredFlag}\\)`),
+      requiredFlag,
+    );
+  }
+  assert.doesNotMatch(
+    checkerSupervisor,
+    /constants\.(?:O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK) \?\? 0/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /constants\.O_RDONLY \| constants\.O_DIRECTORY[\s\S]{0,100}constants\.O_NOFOLLOW \| constants\.O_NONBLOCK/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /constants\.O_RDONLY \| constants\.O_NOFOLLOW \| constants\.O_NONBLOCK/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /"--env-file=\/proc\/self\/fd\/3"[\s\S]{0,100}"\/proc\/self\/fd\/4\/scripts\/check-booking-persistence\.mjs"/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /stdio: \["ignore", "ignore", "ignore", childEnvironmentDescriptor, directoryDescriptor\]/,
+  );
+  assert.match(
+    checkerSupervisor,
+    /readSync\(descriptor, bytes, offset, size - offset, offset\)/,
+  );
+  assert.match(checkerSupervisor, /const readDescriptorBytes = \(descriptor, identity\) =>/);
+  assert.equal(
+    checkerSupervisor.match(/readDescriptorBytes\(/g)?.length,
+    2,
+  );
+
+  const transition = extractShellRegion(
+    'assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1\nswitch_current_release "$RELEASE_DIR" || exit 1',
+    '\nassert_readiness_fence_before_forward_operation "$RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS" || exit 1',
+  );
+  const ordered = [
+    'switch_current_release "$RELEASE_DIR"',
+    "SWITCH_COMPLETED=1",
+    "capture_candidate_current_identity_for_booking_retry",
+    "assert_readiness_fence_forward_checkpoint",
+    'start_release "$RELEASE_DIR"',
+    "assert_readiness_fence_forward_checkpoint",
+    'wait_for_release_health "$FAOLLA_WEB_BUILD_ID"',
+    "assert_readiness_fence_forward_checkpoint",
+    "capture_candidate_web_identity_for_booking_retry",
+    "verify_booking_persistence_with_bounded_retry",
+  ];
+  let orderedIndex = -1;
+  for (const needle of ordered) {
+    const index = transition.indexOf(needle, orderedIndex + 1);
+    assert.ok(index > orderedIndex, `out-of-order booking retry boundary: ${needle}`);
+    orderedIndex = index;
+  }
+  assert.equal(
+    transition.match(/switch_current_release "\$RELEASE_DIR"/g)?.length,
+    1,
+  );
+  assert.equal(transition.match(/start_release "\$RELEASE_DIR"/g)?.length, 1);
+  const bookingDeadlineIndex = transition.indexOf(
+    'BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((',
+  );
+  const webCaptureIndex = transition.indexOf(
+    "capture_candidate_web_identity_for_booking_retry",
+    bookingDeadlineIndex,
+  );
+  const boundedRetryIndex = transition.indexOf(
+    "verify_booking_persistence_with_bounded_retry",
+    webCaptureIndex,
+  );
+  assert.ok(
+    bookingDeadlineIndex >= 0 &&
+      bookingDeadlineIndex < webCaptureIndex &&
+      webCaptureIndex < boundedRetryIndex,
+  );
+  const bookingDeadlineRegion = transition.slice(
+    bookingDeadlineIndex,
+    boundedRetryIndex + "verify_booking_persistence_with_bounded_retry".length + 100,
+  );
+  assert.match(
+    bookingDeadlineRegion,
+    /capture_candidate_web_identity_for_booking_retry[\s\S]{0,100}"\$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"/,
+  );
+  assert.match(
+    bookingDeadlineRegion,
+    /verify_booking_persistence_with_bounded_retry[\s\S]{0,100}"\$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"/,
+  );
+
+  const failedDirectoryChange = spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: [
+      "set -euo pipefail",
+      checkerFunction,
+      "unset SECONDS; SECONDS=0",
+      "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
+      "RELEASE_DIR=/contract/definitely-missing-release",
+      "CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY=1:2:3:4:5:6:7",
+      "CANDIDATE_ENVIRONMENT_FILE_IDENTITY=1:2:3:4:5:6:7:8",
+      `CANDIDATE_ENVIRONMENT_SHA256='${"a".repeat(64)}'`,
+      "checker_process_calls=0",
+      "deadline_bounded_command_timeout_seconds() { printf '%s\\n' 10; }",
+      "timeout() { checker_process_calls=$((checker_process_calls + 1)); return 0; }",
+      "node() { checker_process_calls=$((checker_process_calls + 1)); return 0; }",
+      "if verify_booking_persistence 20 30 2>/dev/null; then status=0; else status=$?; fi",
+      "printf '%s %s\\n' \"$status\" \"$checker_process_calls\"",
+      "",
+    ].join("\n"),
+    timeout: 10_000,
+  });
+  assert.equal(failedDirectoryChange.status, 0, failedDirectoryChange.stderr);
+  assert.equal(failedDirectoryChange.stderr, "");
+  assert.equal(failedDirectoryChange.stdout, "1 0\n");
+
+  const frozenEnvironmentDirectoryIdentity = "1:2:3:4:5:6:7";
+  const frozenEnvironmentFileIdentity = "1:2:3:4:5:6:7:8";
+  const frozenEnvironmentSha256 = "a".repeat(64);
+  const frozenInternalUrlBase64 = Buffer.from("http://internal.test").toString("base64");
+  const frozenPublicUrlBase64 = Buffer.from("https://public.test").toString("base64");
+  const frozenAnonKeyBase64 = Buffer.from("anon-contract-key").toString("base64");
+  const frozenBuildFileIdentity = "8:7:6:5:4:3:2:1";
+  const frozenBuildFileSha256 = "b".repeat(64);
+  const runFrozenState = (overrides = {}) => {
+    const values = {
+      environmentDirectoryIdentity: frozenEnvironmentDirectoryIdentity,
+      environmentFileIdentity: frozenEnvironmentFileIdentity,
+      environmentSha256: frozenEnvironmentSha256,
+      environmentInternalUrlBase64: frozenInternalUrlBase64,
+      environmentPublicUrlBase64: frozenPublicUrlBase64,
+      environmentAnonKeyBase64: frozenAnonKeyBase64,
+      buildFileIdentity: frozenBuildFileIdentity,
+      buildFileSha256: frozenBuildFileSha256,
+      processStatus: "present",
+      processStartTicks: "456",
+      processInternalUrlBase64: frozenInternalUrlBase64,
+      processPublicUrlBase64: frozenPublicUrlBase64,
+      processAnonKeyBase64: frozenAnonKeyBase64,
+      ...overrides,
+    };
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        retryState,
+        "WEB_COMMITTED=0",
+        "SWITCH_COMPLETED=1",
+        "PROCESSES_STOPPED=1",
+        "FORWARD_MUTATION_STARTED=1",
+        "READINESS_FENCE_ACTIVE=1",
+        "READINESS_FENCE_RELEASED=0",
+        "READINESS_FENCE_RELEASE_REQUESTED=0",
+        "READINESS_FENCE_FORWARD_READY=1",
+        "LEGACY_COMPATIBILITY_LINKS_INSTALLED=0",
+        "unset SECONDS; SECONDS=0",
+        "CURRENT_LINK=/contract/current",
+        "RELEASE_DIR=/contract/release",
+        "APP_NAME=contract-web",
+        "AUTOMATION_WORKER_NAME=contract-worker",
+        "CANDIDATE_CURRENT_LINK_IDENTITY=10:20:30",
+        "CANDIDATE_RUNTIME_IDENTITY=40:50:60",
+        `CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY='${frozenEnvironmentDirectoryIdentity}'`,
+        `CANDIDATE_ENVIRONMENT_FILE_IDENTITY='${frozenEnvironmentFileIdentity}'`,
+        `CANDIDATE_ENVIRONMENT_SHA256='${frozenEnvironmentSha256}'`,
+        `CANDIDATE_SUPABASE_INTERNAL_URL_B64='${frozenInternalUrlBase64}'`,
+        `CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64='${frozenPublicUrlBase64}'`,
+        `CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='${frozenAnonKeyBase64}'`,
+        `CANDIDATE_BUILD_FILE_IDENTITY='${frozenBuildFileIdentity}'`,
+        `CANDIDATE_BUILD_FILE_SHA256='${frozenBuildFileSha256}'`,
+        "CANDIDATE_WEB_PID=123",
+        "CANDIDATE_WEB_PROCESS_START_TICKS=456",
+        "CANDIDATE_WEB_PROCESS_IDENTITY=70:80",
+        "CANDIDATE_WEB_CWD_IDENTITY=40:50:60",
+        "readlink() { printf '%s\\n' \"$RELEASE_DIR\"; }",
+        "stat() {",
+        "  case \"${@: -1}\" in",
+        "    \"$CURRENT_LINK\") printf '%s\\n' \"$CANDIDATE_CURRENT_LINK_IDENTITY\" ;;",
+        "    \"$RELEASE_DIR\"|\"/proc/$CANDIDATE_WEB_PID/cwd\") printf '%s\\n' \"$CANDIDATE_RUNTIME_IDENTITY\" ;;",
+        "    \"/proc/$CANDIDATE_WEB_PID\") printf '%s\\n' \"$CANDIDATE_WEB_PROCESS_IDENTITY\" ;;",
+        "    *) return 1 ;;",
+        "  esac",
+        "}",
+        "pm2_process_snapshot() {",
+        "  [ \"$2\" = 60 ] || return 1",
+        "  if [ \"$1\" = \"$AUTOMATION_WORKER_NAME\" ]; then printf '%s\\n' absent; else printf 'running:%s\\n' \"$CANDIDATE_WEB_PID\"; fi",
+        "}",
+        "linux_process_start_ticks() { [ \"$2\" = 60 ] || return 1; printf '%s\\n' \"$CANDIDATE_WEB_PROCESS_START_TICKS\"; }",
+        "read_candidate_environment_snapshot_for_booking_retry() {",
+        "  [ \"$1\" = 60 ] || return 1",
+        `  printf '%s\\n' '${values.environmentDirectoryIdentity}' '${values.environmentFileIdentity}' '${values.environmentSha256}' '${values.environmentInternalUrlBase64}' '${values.environmentPublicUrlBase64}' '${values.environmentAnonKeyBase64}'`,
+        "}",
+        "read_candidate_build_id_snapshot_for_booking_retry() {",
+        "  [ \"$1\" = 60 ] || return 1",
+        `  printf '%s\\n' '${values.buildFileIdentity}' '${values.buildFileSha256}'`,
+        "}",
+        "read_candidate_process_environment_snapshot_for_booking_retry() {",
+        "  [ \"$1\" = 60 ] || return 1",
+        `  printf '%s\\n' '${values.processStatus}' '${values.processStartTicks}' '${values.processInternalUrlBase64}' '${values.processPublicUrlBase64}' '${values.processAnonKeyBase64}'`,
+        "}",
+        "assert_booking_persistence_retry_state 60",
+        "printf '__state__ %s\\n' \"$?\"",
+        "",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    return Number(result.stdout.trim().match(/^__state__ (\d+)$/)?.[1]);
+  };
+  assert.equal(runFrozenState(), 0);
+  for (const drift of [
+    { environmentDirectoryIdentity: "9:2:3:4:5:6:7" },
+    { environmentFileIdentity: "9:2:3:4:5:6:7:8" },
+    { environmentSha256: "c".repeat(64) },
+    { environmentInternalUrlBase64: Buffer.from("http://drift.test").toString("base64") },
+    { environmentPublicUrlBase64: Buffer.from("https://drift.test").toString("base64") },
+    { environmentAnonKeyBase64: Buffer.from("drift-anon").toString("base64") },
+    { buildFileIdentity: "9:7:6:5:4:3:2:1" },
+    { buildFileSha256: "d".repeat(64) },
+    { processStatus: "absent" },
+    { processStartTicks: "457" },
+    { processInternalUrlBase64: Buffer.from("http://process-drift.test").toString("base64") },
+    { processPublicUrlBase64: Buffer.from("https://process-drift.test").toString("base64") },
+    { processAnonKeyBase64: Buffer.from("process-drift-anon").toString("base64") },
+  ]) {
+    assert.equal(runFrozenState(drift), 1, JSON.stringify(drift));
+  }
+
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-booking-retry-contract-"),
+  );
+  const oneRound = (checkerBudget, fenceBudget = 60, deadline = 60) => [
+    `state:${deadline}`,
+    `fence-before:${fenceBudget}:${deadline}`,
+    `state:${deadline}`,
+    `health:${deadline}`,
+    `state:${deadline}`,
+    `check:${checkerBudget}:${deadline}`,
+    `state:${deadline}`,
+    `fence-checkpoint:${deadline}`,
+    `state:${deadline}`,
+    `health:${deadline}`,
+    `state:${deadline}`,
+  ];
+  const run = async ({
+    statuses,
+    absoluteDeadline = 60,
+    elapsedPerCheck = 0,
+    exhaustAt = 0,
+    sleepToDeadline = false,
+    name,
+  }) => {
+    const callsPath = join(temporaryDirectory, `${name}.calls`);
+    const statusCases = statuses
+      .map((status, index) => `    ${index + 1}) return ${status} ;;`)
+      .join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        retryFunction,
+        `CALLS='${toBashPath(callsPath)}'`,
+        "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
+        "BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS=60",
+        "unset SECONDS; SECONDS=0",
+        `ABSOLUTE_DEADLINE_SECONDS='${absoluteDeadline}'`,
+        "checker_calls=0",
+        "call_index=0",
+        `EXHAUST_AT='${exhaustAt}'`,
+        `SLEEP_TO_DEADLINE='${sleepToDeadline ? 1 : 0}'`,
+        "record() { call_index=$((call_index + 1)); printf '%s\\n' \"$1\" >> \"$CALLS\"; if [ \"$EXHAUST_AT\" -eq \"$call_index\" ]; then SECONDS=\"$ABSOLUTE_DEADLINE_SECONDS\"; fi; }",
+        "assert_booking_persistence_retry_state() { record \"state:$1\"; [ \"$1\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ] && [ \"$SECONDS\" -lt \"$1\" ]; }",
+        "assert_readiness_fence_before_forward_operation() {",
+        "  local entry_seconds=\"$SECONDS\"",
+        "  record \"fence-before:$1:$2\"",
+        "  [ \"$2\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ]",
+        "  [ \"$1\" -eq $((ABSOLUTE_DEADLINE_SECONDS - entry_seconds)) ]",
+        "  [ \"$1\" -gt 0 ] && [ \"$1\" -le 60 ]",
+        "  [ \"$SECONDS\" -lt \"$2\" ]",
+        "}",
+        "assert_candidate_web_health() { record \"health:$1\"; [ \"$1\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ] && [ \"$SECONDS\" -lt \"$1\" ]; }",
+        "assert_readiness_fence_forward_checkpoint() { record \"fence-checkpoint:$1\"; [ \"$1\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ] && [ \"$SECONDS\" -lt \"$1\" ]; }",
+        "verify_booking_persistence() {",
+        "  local entry_seconds=\"$SECONDS\"",
+        "  checker_calls=$((checker_calls + 1))",
+        "  record \"check:$1:$2\"",
+        "  [ \"$2\" = \"$ABSOLUTE_DEADLINE_SECONDS\" ] || return 98",
+        "  [ \"$1\" -eq $((ABSOLUTE_DEADLINE_SECONDS - entry_seconds)) ] || return 97",
+        "  [ \"$1\" -gt 0 ] && [ \"$1\" -le 60 ] || return 96",
+        `  SECONDS=$((SECONDS + ${elapsedPerCheck}))`,
+        "  case \"$checker_calls\" in",
+        statusCases,
+        "    *) return 99 ;;",
+        "  esac",
+        "}",
+        "sleep() { record \"sleep:$ABSOLUTE_DEADLINE_SECONDS\"; if [ \"$SLEEP_TO_DEADLINE\" = 1 ]; then SECONDS=\"$ABSOLUTE_DEADLINE_SECONDS\"; else SECONDS=$((SECONDS + 1)); fi; }",
+        "if verify_booking_persistence_with_bounded_retry \"$ABSOLUTE_DEADLINE_SECONDS\"; then status=0; else status=$?; fi",
+        "printf '__result__ %s %s %s\\n' \"$status\" \"$checker_calls\" \"$SECONDS\"",
+        "",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${name}\n${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "", name);
+    const lines = result.stdout.trim().split("\n");
+    const summary = lines.pop()?.match(/^__result__ (\d+) (\d+) (\d+)$/);
+    assert.ok(summary, `${name}\n${result.stdout}`);
+    return {
+      codes: lines,
+      status: Number(summary[1]),
+      checkerCalls: Number(summary[2]),
+      elapsed: Number(summary[3]),
+      calls: await pathExists(callsPath)
+        ? (await readFile(callsPath, "utf8")).trim().split("\n")
+        : [],
+    };
+  };
+
+  try {
+    assert.deepEqual(await run({ statuses: [0], name: "success" }), {
+      codes: [],
+      status: 0,
+      checkerCalls: 1,
+      elapsed: 0,
+      calls: oneRound(60),
+    });
+    assert.deepEqual(await run({ statuses: [2, 0], name: "transient" }), {
+      codes: ["[deploy] deploy_forward_booking_persistence_transient_retry"],
+      status: 0,
+      checkerCalls: 2,
+      elapsed: 1,
+      calls: [...oneRound(60), "sleep:60", ...oneRound(59, 59)],
+    });
+    assert.deepEqual(await run({ statuses: [2, 2], name: "exhausted" }), {
+      codes: [
+        "[deploy] deploy_forward_booking_persistence_transient_retry",
+        "[deploy] deploy_forward_booking_persistence_transient_exhausted",
+      ],
+      status: 1,
+      checkerCalls: 2,
+      elapsed: 1,
+      calls: [...oneRound(60), "sleep:60", ...oneRound(59, 59)],
+    });
+    for (const nonretryableStatus of [1, 3, 124, 255]) {
+      assert.deepEqual(
+        await run({
+          statuses: [nonretryableStatus],
+          name: `hard-${nonretryableStatus}`,
+        }),
+        {
+          codes: ["[deploy] deploy_forward_booking_persistence_hard_failed"],
+          status: 1,
+          checkerCalls: 1,
+          elapsed: 0,
+          calls: oneRound(60),
+        },
+        `nonretryable booking status ${nonretryableStatus}`,
+      );
+    }
+    for (const invalidDeadline of [0, 61]) {
+      assert.deepEqual(
+        await run({
+          statuses: [0],
+          absoluteDeadline: invalidDeadline,
+          name: `invalid-absolute-deadline-${invalidDeadline}`,
+        }),
+        {
+          codes: ["[deploy] deploy_forward_booking_persistence_hard_failed"],
+          status: 1,
+          checkerCalls: 0,
+          elapsed: 0,
+          calls: [],
+        },
+      );
+    }
+
+    const deadlineExhausted = await run({
+      statuses: [2, 0],
+      elapsedPerCheck: 60,
+      name: "deadline-exhausted",
+    });
+    assert.equal(deadlineExhausted.status, 1);
+    assert.equal(deadlineExhausted.checkerCalls, 1);
+    assert.ok(deadlineExhausted.elapsed <= 60);
+    assert.equal(
+      deadlineExhausted.codes.at(-1),
+      "[deploy] deploy_forward_booking_persistence_transient_exhausted",
+    );
+    assert.equal(
+      deadlineExhausted.calls.filter((call) => call.startsWith("check:")).length,
+      1,
+    );
+
+    const firstRound = oneRound(60);
+    for (let exhaustAt = 1; exhaustAt <= firstRound.length; exhaustAt += 1) {
+      const boundaryName = `absolute-deadline-boundary-${exhaustAt}`;
+      const exhausted = await run({
+        statuses: [0],
+        exhaustAt,
+        name: boundaryName,
+      });
+      assert.equal(exhausted.status, 1, boundaryName);
+      assert.equal(exhausted.checkerCalls, exhaustAt >= 6 ? 1 : 0, boundaryName);
+      assert.equal(exhausted.elapsed, 60, boundaryName);
+      assert.deepEqual(
+        exhausted.codes,
+        ["[deploy] deploy_forward_booking_persistence_hard_failed"],
+        boundaryName,
+      );
+      assert.deepEqual(
+        exhausted.calls,
+        firstRound.slice(0, exhaustAt + (exhaustAt === 6 ? 1 : 0)),
+        boundaryName,
+      );
+    }
+
+    const sleepExhausted = await run({
+      statuses: [2, 0],
+      sleepToDeadline: true,
+      name: "sleep-consumes-shared-deadline",
+    });
+    assert.equal(sleepExhausted.status, 1);
+    assert.equal(sleepExhausted.checkerCalls, 1);
+    assert.equal(sleepExhausted.elapsed, 60);
+    assert.deepEqual(sleepExhausted.calls, [...oneRound(60), "sleep:60"]);
+    assert.deepEqual(sleepExhausted.codes, [
+      "[deploy] deploy_forward_booking_persistence_transient_retry",
+      "[deploy] deploy_forward_booking_persistence_transient_exhausted",
+    ]);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test(
+  "booking checker env fd keeps the frozen inode across pathname swap and restore",
+  { skip: process.platform !== "linux" },
+  async () => {
+    assert.ok(Number.isInteger(fsConstants.O_NOFOLLOW));
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "faolla-booking-env-fd-contract-"),
+    );
+    const environmentPath = join(temporaryDirectory, ".env.local");
+    const frozenPath = join(temporaryDirectory, ".env.frozen");
+    const hostilePath = join(temporaryDirectory, ".env.hostile");
+    let environmentHandle;
+    try {
+      await writeFile(environmentPath, "FROZEN_BOOKING_ENV=original\n", {
+        mode: 0o600,
+      });
+      await writeFile(hostilePath, "FROZEN_BOOKING_ENV=hostile\n", {
+        mode: 0o600,
+      });
+      environmentHandle = await openFile(
+        environmentPath,
+        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+      );
+      await rename(environmentPath, frozenPath);
+      await rename(hostilePath, environmentPath);
+      const readFrozenDescriptor = () => spawnSync(
+        process.execPath,
+        [
+          "--env-file=/proc/self/fd/3",
+          "--input-type=module",
+          "--eval",
+          'process.stdout.write(process.env.FROZEN_BOOKING_ENV ?? "missing")',
+        ],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe", environmentHandle.fd],
+          timeout: 10_000,
+        },
+      );
+      const whileSwapped = readFrozenDescriptor();
+      assert.equal(whileSwapped.status, 0, whileSwapped.stderr);
+      assert.equal(whileSwapped.stdout, "original");
+      assert.equal(whileSwapped.stderr, "");
+
+      await rename(environmentPath, hostilePath);
+      await rename(frozenPath, environmentPath);
+      const afterRestore = readFrozenDescriptor();
+      assert.equal(afterRestore.status, 0, afterRestore.stderr);
+      assert.equal(afterRestore.stdout, "original");
+      assert.equal(afterRestore.stderr, "");
+    } finally {
+      await environmentHandle?.close();
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("database quiescence uses a hard relaxed deadline and requires a final strict proof", () => {
   const strictFunction = extractShellRegion(
     "assert_readiness_fence_held() {",
@@ -4055,7 +5141,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=0",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "checkpoint_calls=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() {",
@@ -4074,7 +5160,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=0",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "checkpoint_calls=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() { checkpoint_calls=$((checkpoint_calls + 1)); return 0; }",
@@ -4094,7 +5180,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=3",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=1",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "checkpoint_calls=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() { checkpoint_calls=$((checkpoint_calls + 1)); return 0; }",
@@ -4114,7 +5200,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
     "READINESS_FENCE_ACTIVE=1",
     "READINESS_FENCE_RELEASED=0",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "identity_calls=0",
     "readiness_fence_process_identity_matches() { identity_calls=$((identity_calls + 1)); return 0; }",
     "validate_readiness_fence_marker() { return 0; }",
@@ -4133,7 +5219,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=1",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() { return 0; }",
     "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 1; }",
@@ -4147,7 +5233,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=3",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=1",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() { return 2; }",
     "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 0; }",
@@ -4162,7 +5248,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=1",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() { SECONDS=\"$3\"; return 0; }",
     "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); return 0; }",
@@ -4176,7 +5262,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=5",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_FORWARD_READY=1",
-    "SECONDS=0",
+    "unset SECONDS; SECONDS=0",
     "strict_calls=0",
     "readiness_fence_process_quiescence_checkpoint() { return 0; }",
     "assert_readiness_fence_held() { strict_calls=$((strict_calls + 1)); SECONDS=5; return 0; }",
@@ -4191,7 +5277,7 @@ test("database quiescence uses a hard relaxed deadline and requires a final stri
       "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
       "READINESS_FENCE_ACTIVE=1",
       "READINESS_FENCE_RELEASED=0",
-      "SECONDS=0",
+      "unset SECONDS; SECONDS=0",
       "deadline=$((SECONDS + 5))",
       "identity_calls=0",
       "marker_calls=0",
@@ -4346,6 +5432,396 @@ test("fence failure reporting exposes only a frozen diagnostic and an explicit c
       assert.equal(cleanup.status, 0, `${cleanup.stdout}\n${cleanup.stderr}`);
       assert.match(cleanup.stdout, new RegExp(expectedMarker));
     }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("rollback cleanup exposes a complete fixed-code map independent of failure values", async () => {
+  const rollbackCodes = [
+    "deploy_rollback_failed_evidence",
+    "deploy_rollback_failed_fence_checkpoint",
+    "deploy_rollback_failed_worker_quiesce",
+    "deploy_rollback_failed_web_quiesce",
+    "deploy_rollback_failed_port_quiesce",
+    "deploy_rollback_failed_compatibility_restore",
+    "deploy_rollback_failed_current_restore",
+    "deploy_rollback_failed_previous_web_start",
+    "deploy_rollback_failed_previous_web_health",
+    "deploy_rollback_failed_fence_reacquire",
+    "deploy_rollback_failed_runtime_restore",
+    "deploy_rollback_failed_fence_release",
+    "deploy_rollback_failed_worker_restart",
+    "deploy_rollback_failed_pm2_save",
+    "deploy_rollback_failed_fence_cleanup",
+    "deploy_rollback_failed_release_cleanup",
+    "deploy_rollback_failed_unknown",
+  ];
+  const exposedCodes = [...new Set(
+    [...deployScript.matchAll(/\[deploy\] (deploy_rollback_failed_[a-z0-9_]+)/g)]
+      .map((match) => match[1]),
+  )].sort();
+  assert.deepEqual(exposedCodes, [...rollbackCodes].sort());
+
+  const cleanupFunction = extractShellRegion(
+    "cleanup_failed_build() {",
+    "\ntrap cleanup_failed_build EXIT",
+  );
+  assert.doesNotMatch(
+    cleanupFunction,
+    /deploy_rollback_failed_[a-z_]+[^\n]*\$(?:\?|\{|[A-Za-z_])/,
+  );
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-rollback-fixed-codes-"),
+  );
+  const runtimeRestoreCodes = [
+    "deploy_rollback_failed_evidence",
+    "deploy_rollback_failed_fence_checkpoint",
+    "deploy_rollback_failed_worker_quiesce",
+    "deploy_rollback_failed_web_quiesce",
+    "deploy_rollback_failed_port_quiesce",
+    "deploy_rollback_failed_compatibility_restore",
+    "deploy_rollback_failed_current_restore",
+    "deploy_rollback_failed_previous_web_start",
+    "deploy_rollback_failed_previous_web_health",
+  ];
+  const fixtures = [
+    {
+      name: "fence reacquire",
+      failAt: "ensure",
+      codes: ["deploy_rollback_failed_fence_reacquire"],
+      calls: ["ensure", "discard"],
+    },
+    ...runtimeRestoreCodes.map((rollbackCode) => ({
+      name: `runtime restore ${rollbackCode}`,
+      failAt: "rollback",
+      rollbackCode,
+      codes: [rollbackCode, "deploy_rollback_failed_runtime_restore"],
+      calls: ["ensure", "rollback", "discard"],
+    })),
+    {
+      name: "unknown runtime restore substage",
+      failAt: "rollback",
+      rollbackCode: "hostile_dynamic_value_987654321",
+      codes: [
+        "deploy_rollback_failed_unknown",
+        "deploy_rollback_failed_runtime_restore",
+      ],
+      calls: ["ensure", "rollback", "discard"],
+    },
+    {
+      name: "fence release",
+      failAt: "release",
+      codes: ["deploy_rollback_failed_fence_release"],
+      calls: ["ensure", "rollback", "release", "discard", "pm2-save"],
+    },
+    {
+      name: "worker start",
+      failAt: "worker-start",
+      previousWorkerRunning: 1,
+      codes: ["deploy_rollback_failed_worker_restart"],
+      calls: ["ensure", "rollback", "release", "worker-start", "pm2-save"],
+    },
+    {
+      name: "worker online",
+      failAt: "worker-online",
+      previousWorkerRunning: 1,
+      codes: ["deploy_rollback_failed_worker_restart"],
+      calls: [
+        "ensure", "rollback", "release", "worker-start", "worker-online", "pm2-save",
+      ],
+    },
+    {
+      name: "pm2 save",
+      failAt: "pm2-save",
+      codes: ["deploy_rollback_failed_pm2_save"],
+      calls: ["ensure", "rollback", "release", "pm2-save"],
+    },
+    {
+      name: "fence cleanup primary is not duplicated",
+      failAt: "ensure+discard",
+      ensureCode: "deploy_rollback_failed_fence_cleanup",
+      codes: ["deploy_rollback_failed_fence_cleanup"],
+      calls: ["ensure", "discard"],
+    },
+    {
+      name: "fence reacquire primary retains one cleanup secondary",
+      failAt: "ensure+discard",
+      ensureCode: "deploy_rollback_failed_fence_reacquire",
+      codes: [
+        "deploy_rollback_failed_fence_reacquire",
+        "deploy_rollback_failed_fence_cleanup",
+      ],
+      calls: ["ensure", "discard"],
+    },
+    {
+      name: "unknown primary retains one cleanup secondary",
+      failAt: "ensure+discard",
+      ensureCode: "hostile_dynamic_value_987654321",
+      codes: [
+        "deploy_rollback_failed_unknown",
+        "deploy_rollback_failed_fence_cleanup",
+      ],
+      calls: ["ensure", "discard"],
+    },
+    {
+      name: "release cleanup",
+      failAt: "release-cleanup",
+      releaseExists: true,
+      codes: ["deploy_rollback_failed_release_cleanup"],
+      calls: ["ensure", "rollback", "release", "pm2-save", "remove-release"],
+    },
+  ];
+
+  try {
+    for (const [fixtureIndex, fixture] of fixtures.entries()) {
+      for (const failureStatus of [1, 2, 17, 255]) {
+        const caseDirectory = join(temporaryDirectory, `${fixtureIndex}-${failureStatus}`);
+        const releaseDirectory = join(caseDirectory, "release");
+        const callsPath = join(caseDirectory, "calls");
+        await mkdir(caseDirectory, { recursive: true });
+        if (fixture.releaseExists) await mkdir(releaseDirectory);
+        const script = [
+          "set +e",
+          cleanupFunction,
+          `CALLS='${toBashPath(callsPath)}'`,
+          `RELEASE_BUILD_DIR='${toBashPath(join(caseDirectory, "missing-build"))}'`,
+          `RELEASE_DIR='${toBashPath(releaseDirectory)}'`,
+          `DEPLOY_ATTESTATION_FILE='${toBashPath(join(caseDirectory, "missing-attestation"))}'`,
+          `DEPLOY_RELEASE_BINDING_FILE='${toBashPath(join(caseDirectory, "missing-binding"))}'`,
+          `FAIL_AT='${fixture.failAt}'`,
+          `FAILURE_STATUS='${failureStatus}'`,
+          `ROLLBACK_STUB_CODE='${fixture.rollbackCode ?? ""}'`,
+          `ENSURE_STUB_CODE='${fixture.ensureCode ?? "deploy_rollback_failed_fence_reacquire"}'`,
+          "WEB_COMMITTED=0",
+          "PROCESSES_STOPPED=1",
+          "SWITCH_COMPLETED=1",
+          "FORWARD_MUTATION_STARTED=1",
+          "ROLLBACK_COMPLETED=0",
+          "READINESS_FENCE_ACTIVE=1",
+          "READINESS_FENCE_RELEASE_REQUESTED=0",
+          "READINESS_FENCE_CLEANUP_VERIFIED=0",
+          `PREVIOUS_AUTOMATION_WORKER_RUNNING='${fixture.previousWorkerRunning ?? 0}'`,
+          "AUTOMATION_WORKER_NAME=worker",
+          "AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS=205",
+          "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+          "fails_at() { [[ \"+$FAIL_AT+\" == *\"+$1+\"* ]]; }",
+          "ensure_readiness_fence_for_rollback() { record ensure; if fails_at ensure; then ROLLBACK_FAILURE_CODE=\"$ENSURE_STUB_CODE\"; return \"$FAILURE_STATUS\"; fi; return 0; }",
+          "rollback_release() { record rollback; if fails_at rollback; then ROLLBACK_FAILURE_CODE=\"$ROLLBACK_STUB_CODE\"; return \"$FAILURE_STATUS\"; fi; ROLLBACK_COMPLETED=1; return 0; }",
+          "release_readiness_fence() { record release; fails_at release && return \"$FAILURE_STATUS\"; READINESS_FENCE_ACTIVE=0; return 0; }",
+          "discard_failed_readiness_fence() { record discard; fails_at discard && return \"$FAILURE_STATUS\"; READINESS_FENCE_ACTIVE=0; return 0; }",
+          "start_frozen_previous_automation_worker_process() { record worker-start; fails_at worker-start && return \"$FAILURE_STATUS\"; return 0; }",
+          "wait_for_automation_worker_online() { record worker-online; fails_at worker-online && return \"$FAILURE_STATUS\"; return 0; }",
+          "timeout() { while [ \"$#\" -gt 0 ]; do case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac; done; \"$@\"; }",
+          "pm2() { [ \"$1\" = save ] || return 99; record pm2-save; fails_at pm2-save && return \"$FAILURE_STATUS\"; return 0; }",
+          "safe_remove_release_path() { record remove-release; fails_at release-cleanup && return \"$FAILURE_STATUS\"; return 0; }",
+          "false",
+          "cleanup_failed_build",
+          "",
+        ].join("\n");
+        const result = spawnSync(resolveBashExecutable(), ["-s"], {
+          encoding: "utf8",
+          input: script,
+          timeout: 10_000,
+        });
+        assert.equal(result.status, 1, `${fixture.name}/${failureStatus}\n${result.stderr}`);
+        assert.equal(result.stderr, "", `${fixture.name}/${failureStatus}`);
+        assert.deepEqual(
+          result.stdout.trim().split("\n").filter(Boolean),
+          fixture.codes.map((code) => `[deploy] ${code}`),
+          `${fixture.name}/${failureStatus}`,
+        );
+        assert.deepEqual(
+          (await readFile(callsPath, "utf8")).trim().split("\n"),
+          fixture.calls,
+          `${fixture.name}/${failureStatus}`,
+        );
+      }
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("rollback primitive failures have fixed substages and never replay prior mutations", async () => {
+  const retryFunctions = extractShellRegion(
+    "assert_readiness_fence_held_with_bounded_retry() {",
+    "\nreadiness_fence_process_quiescence_checkpoint() {",
+  );
+  const rollbackFenceFunctions = extractShellRegion(
+    "assert_readiness_fence_held_for_rollback() {",
+    "\ncleanup_old_releases() {",
+  );
+  const rollbackFunction = extractShellRegion(
+    "rollback_release() {",
+    "\ncleanup_failed_build() {",
+  );
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-rollback-substage-codes-"),
+  );
+  const previousRuntime = join(temporaryDirectory, "previous");
+  const currentLink = join(temporaryDirectory, "current");
+  await mkdir(join(previousRuntime, ".next"), { recursive: true });
+  const successCalls = [
+    "fence:1",
+    "stop-worker",
+    "stop-web",
+    "port",
+    "fence:2",
+    "compat",
+    "fence:3",
+    "switch",
+    "fence:4",
+    "start-web",
+    "health",
+    "fence:5",
+  ];
+  const fixtures = [
+    { failAt: "fence:1", code: "deploy_rollback_failed_fence_checkpoint" },
+    { failAt: "stop-worker", code: "deploy_rollback_failed_worker_quiesce" },
+    { failAt: "stop-web", code: "deploy_rollback_failed_web_quiesce" },
+    { failAt: "port", code: "deploy_rollback_failed_port_quiesce" },
+    { failAt: "fence:2", code: "deploy_rollback_failed_fence_checkpoint" },
+    { failAt: "compat", code: "deploy_rollback_failed_compatibility_restore" },
+    { failAt: "fence:3", code: "deploy_rollback_failed_fence_checkpoint" },
+    { failAt: "switch", code: "deploy_rollback_failed_current_restore" },
+    { failAt: "fence:4", code: "deploy_rollback_failed_fence_checkpoint" },
+    { failAt: "start-web", code: "deploy_rollback_failed_previous_web_start" },
+    { failAt: "health", code: "deploy_rollback_failed_previous_web_health" },
+    { failAt: "fence:5", code: "deploy_rollback_failed_fence_checkpoint" },
+  ];
+
+  const baseScript = (callsPath) => [
+    "set +e",
+    rollbackFunction,
+    `PREVIOUS_RUNTIME_DIR='${toBashPath(previousRuntime)}'`,
+    `PREVIOUS_LINK_TARGET='${toBashPath(previousRuntime)}'`,
+    `CURRENT_LINK='${toBashPath(currentLink)}'`,
+    `CALLS='${toBashPath(callsPath)}'`,
+    `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
+    "SWITCH_COMPLETED=1",
+    "PROCESSES_STOPPED=1",
+    "WEB_COMMITTED=0",
+    "ROLLBACK_COMPLETED=0",
+    "ROLLBACK_FAILURE_CODE=",
+    "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+    "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+    "APP_NAME=web",
+    "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+    "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+    "FENCE_CALLS=0",
+    "assert_readiness_fence_held_for_rollback() { FENCE_CALLS=$((FENCE_CALLS + 1)); record \"fence:$FENCE_CALLS\"; [ \"$FAIL_AT\" != \"fence:$FENCE_CALLS\" ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "stop_previous_automation_worker_bounded() { record stop-worker; [ \"$FAIL_AT\" != stop-worker ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "stop_pm2_process_bounded() { record stop-web; [ \"$FAIL_AT\" != stop-web ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "wait_for_port_release() { record port; [ \"$FAIL_AT\" != port ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "restore_legacy_runtime_compatibility_paths() { record compat; [ \"$FAIL_AT\" != compat ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "switch_current_release() { record switch; [ \"$FAIL_AT\" != switch ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "start_frozen_previous_release() { record start-web; [ \"$FAIL_AT\" != start-web ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ] || return \"$FAILURE_STATUS\"; return 0; }",
+  ];
+
+  try {
+    for (const [fixtureIndex, fixture] of fixtures.entries()) {
+      for (const failureStatus of [1, 2, 17, 255]) {
+        const callsPath = join(temporaryDirectory, `calls-${fixtureIndex}-${failureStatus}`);
+        const result = spawnSync(resolveBashExecutable(), ["-s"], {
+          encoding: "utf8",
+          input: [
+            ...baseScript(callsPath),
+            `FAIL_AT='${fixture.failAt}'`,
+            `FAILURE_STATUS='${failureStatus}'`,
+            "if rollback_release >/dev/null; then status=0; else status=$?; fi",
+            "printf '%s %s %s\\n' \"$status\" \"$ROLLBACK_COMPLETED\" \"$ROLLBACK_FAILURE_CODE\"",
+            "",
+          ].join("\n"),
+          timeout: 10_000,
+        });
+        assert.equal(result.status, 0, `${fixture.failAt}/${failureStatus}\n${result.stderr}`);
+        assert.equal(result.stderr, "", `${fixture.failAt}/${failureStatus}`);
+        assert.equal(
+          result.stdout,
+          `1 0 ${fixture.code}\n`,
+          `${fixture.failAt}/${failureStatus}`,
+        );
+        const failureIndex = successCalls.indexOf(fixture.failAt);
+        assert.deepEqual(
+          (await readFile(callsPath, "utf8")).trim().split("\n"),
+          successCalls.slice(0, failureIndex + 1),
+          `${fixture.failAt}/${failureStatus}`,
+        );
+      }
+    }
+
+    const missingEvidenceCalls = join(temporaryDirectory, "missing-evidence-calls");
+    const missingEvidence = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        ...baseScript(missingEvidenceCalls),
+        "PREVIOUS_RUNTIME_DIR=/definitely/missing",
+        "FAIL_AT=none",
+        "FAILURE_STATUS=255",
+        "if rollback_release >/dev/null; then status=0; else status=$?; fi",
+        "printf '%s %s %s\\n' \"$status\" \"$ROLLBACK_COMPLETED\" \"$ROLLBACK_FAILURE_CODE\"",
+        "",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(missingEvidence.status, 0, missingEvidence.stderr);
+    assert.equal(
+      missingEvidence.stdout,
+      "1 0 deploy_rollback_failed_evidence\n",
+    );
+    await assert.rejects(
+      readFile(missingEvidenceCalls, "utf8"),
+      (error) => error?.code === "ENOENT",
+    );
+
+    const retryCallsPath = join(temporaryDirectory, "retry-calls");
+    const retriedProofs = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        retryFunctions,
+        rollbackFenceFunctions,
+        rollbackFunction,
+        `PREVIOUS_RUNTIME_DIR='${toBashPath(previousRuntime)}'`,
+        `PREVIOUS_LINK_TARGET='${toBashPath(previousRuntime)}'`,
+        `CURRENT_LINK='${toBashPath(currentLink)}'`,
+        `CALLS='${toBashPath(retryCallsPath)}'`,
+        `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
+        "SWITCH_COMPLETED=1",
+        "PROCESSES_STOPPED=1",
+        "WEB_COMMITTED=0",
+        "ROLLBACK_COMPLETED=0",
+        "ROLLBACK_FAILURE_CODE=",
+        "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+        "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+        "APP_NAME=web",
+        "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+        "unset SECONDS; SECONDS=0",
+        "STRICT_CALLS=0",
+        "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+        "assert_readiness_fence_held() { STRICT_CALLS=$((STRICT_CALLS + 1)); if [ $((STRICT_CALLS % 2)) -eq 1 ]; then return 2; fi; return 0; }",
+        "sleep() { SECONDS=$((SECONDS + 1)); }",
+        "stop_previous_automation_worker_bounded() { record stop-worker; return 0; }",
+        "stop_pm2_process_bounded() { record stop-web; return 0; }",
+        "wait_for_port_release() { record port; return 0; }",
+        "restore_legacy_runtime_compatibility_paths() { record compat; return 0; }",
+        "switch_current_release() { record switch; return 0; }",
+        "start_frozen_previous_release() { record start-web; return 0; }",
+        "wait_for_release_health() { record health; return 0; }",
+        "if rollback_release >/dev/null; then status=0; else status=$?; fi",
+        "printf '%s %s %s %s\\n' \"$status\" \"$ROLLBACK_COMPLETED\" \"$STRICT_CALLS\" \"$ROLLBACK_FAILURE_CODE\"",
+        "",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(retriedProofs.status, 0, retriedProofs.stderr);
+    assert.equal(retriedProofs.stdout, "0 1 10 \n");
+    assert.deepEqual(
+      (await readFile(retryCallsPath, "utf8")).trim().split("\n"),
+      successCalls.filter((call) => !call.startsWith("fence:")),
+    );
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

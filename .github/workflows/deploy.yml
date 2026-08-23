@@ -965,7 +965,97 @@ jobs:
           [[ "$DEPLOY_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
           DEPLOY_ENVELOPE_MAGIC="FAOLLA_DEPLOY_ENVELOPE_V2"
           REMOTE_DEPLOY_COMMAND='set -eu; umask 077; deploy_transport_dir="$(mktemp -d)"; trap "rm -rf -- \"$deploy_transport_dir\"" EXIT; IFS= read -r deploy_envelope_magic; test "$deploy_envelope_magic" = "FAOLLA_DEPLOY_ENVELOPE_V2"; IFS= read -r deploy_payload_b64; IFS= read -r expected_deploy_bytes; IFS= read -r expected_deploy_sha256; case "$expected_deploy_bytes" in ""|0|*[!0-9]*) exit 1;; esac; test "${#expected_deploy_sha256}" -eq 64; case "$expected_deploy_sha256" in *[!0-9a-f]*) exit 1;; esac; printf "%s" "$deploy_payload_b64" | base64 -d > "$deploy_transport_dir/payload.json"; chmod 600 "$deploy_transport_dir/payload.json"; cat > "$deploy_transport_dir/deploy.sh"; actual_deploy_bytes="$(wc -c < "$deploy_transport_dir/deploy.sh" | tr -d "[:space:]")"; actual_deploy_sha256="$(sha256sum "$deploy_transport_dir/deploy.sh")"; actual_deploy_sha256="${actual_deploy_sha256%% *}"; test "$actual_deploy_bytes" = "$expected_deploy_bytes"; test "$actual_deploy_sha256" = "$expected_deploy_sha256"; chmod 700 "$deploy_transport_dir/deploy.sh"; FAOLLA_DEPLOY_PAYLOAD_FILE="$deploy_transport_dir/payload.json" bash "$deploy_transport_dir/deploy.sh"'
+          DEPLOY_CAPTURE_MAX_BYTES=1048576
+          test -n "${RUNNER_TEMP:-}"
+          deploy_capture_dir="$(mktemp -d "${RUNNER_TEMP%/}/deploy-output.XXXXXX")"
+          deploy_stdout_file="$deploy_capture_dir/stdout.log"
+          deploy_stderr_file="$deploy_capture_dir/stderr.log"
+          deploy_stdout_fifo="$deploy_capture_dir/stdout.fifo"
+          deploy_stderr_fifo="$deploy_capture_dir/stderr.fifo"
+          deploy_stdout_capture_pid=""
+          deploy_stderr_capture_pid=""
+          cleanup_deploy_capture() {
+            local deploy_capture_pid
+            local saved_stdout_capture_pid="$deploy_stdout_capture_pid"
+            local saved_stderr_capture_pid="$deploy_stderr_capture_pid"
+            deploy_stdout_capture_pid=""
+            deploy_stderr_capture_pid=""
+            set +e
+            for deploy_capture_pid in \
+              "$saved_stdout_capture_pid" \
+              "$saved_stderr_capture_pid"; do
+              if [[ "$deploy_capture_pid" =~ ^[1-9][0-9]*$ ]] \
+                && kill -0 "$deploy_capture_pid" >/dev/null 2>&1; then
+                kill "$deploy_capture_pid" >/dev/null 2>&1
+                wait "$deploy_capture_pid" >/dev/null 2>&1
+              fi
+            done
+            rm -f -- \
+              "$deploy_stdout_file" \
+              "$deploy_stderr_file" \
+              "$deploy_stdout_fifo" \
+              "$deploy_stderr_fifo"
+            rmdir -- "$deploy_capture_dir" >/dev/null 2>&1 || true
+          }
+          handle_deploy_capture_signal() {
+            local deploy_signal_status="$1"
+            trap - EXIT HUP INT TERM
+            cleanup_deploy_capture
+            exit "$deploy_signal_status"
+          }
+          emit_safe_deploy_diagnostics() {
+            local deploy_diagnostic_code
+            for deploy_diagnostic_code in \
+              '[deploy] deploy_failed_readiness_fence_nonretryable' \
+              '[deploy] deploy_forward_booking_persistence_hard_failed' \
+              '[deploy] deploy_forward_booking_persistence_transient_exhausted' \
+              '[deploy] deploy_forward_booking_persistence_transient_retry' \
+              '[deploy] deploy_rollback_failed_compatibility_restore' \
+              '[deploy] deploy_rollback_failed_current_restore' \
+              '[deploy] deploy_rollback_failed_evidence' \
+              '[deploy] deploy_rollback_failed_fence_checkpoint' \
+              '[deploy] deploy_rollback_failed_fence_cleanup' \
+              '[deploy] deploy_rollback_failed_fence_reacquire' \
+              '[deploy] deploy_rollback_failed_fence_release' \
+              '[deploy] deploy_rollback_failed_pm2_save' \
+              '[deploy] deploy_rollback_failed_port_quiesce' \
+              '[deploy] deploy_rollback_failed_previous_web_health' \
+              '[deploy] deploy_rollback_failed_previous_web_start' \
+              '[deploy] deploy_rollback_failed_release_cleanup' \
+              '[deploy] deploy_rollback_failed_runtime_restore' \
+              '[deploy] deploy_rollback_failed_unknown' \
+              '[deploy] deploy_rollback_failed_web_quiesce' \
+              '[deploy] deploy_rollback_failed_worker_quiesce' \
+              '[deploy] deploy_rollback_failed_worker_restart' \
+              '[deploy] readiness_fence_waiter_cancelled_retry' \
+              '[deploy] readiness_fence_waiter_retry_exhausted'; do
+              if grep -aFqx -- "$deploy_diagnostic_code" \
+                "$deploy_stdout_file" "$deploy_stderr_file" >/dev/null 2>&1; then
+                printf '%s\n' "$deploy_diagnostic_code"
+              fi
+            done
+          }
+          trap cleanup_deploy_capture EXIT
+          trap 'handle_deploy_capture_signal 129' HUP
+          trap 'handle_deploy_capture_signal 130' INT
+          trap 'handle_deploy_capture_signal 143' TERM
+          chmod 700 "$deploy_capture_dir"
+          umask 077
+          : > "$deploy_stdout_file"
+          : > "$deploy_stderr_file"
+          mkfifo "$deploy_stdout_fifo" "$deploy_stderr_fifo"
+          chmod 600 \
+            "$deploy_stdout_file" \
+            "$deploy_stderr_file" \
+            "$deploy_stdout_fifo" \
+            "$deploy_stderr_fifo"
           set +e
+          tail -c "$DEPLOY_CAPTURE_MAX_BYTES" \
+            < "$deploy_stdout_fifo" > "$deploy_stdout_file" 2>/dev/null &
+          deploy_stdout_capture_pid=$!
+          tail -c "$DEPLOY_CAPTURE_MAX_BYTES" \
+            < "$deploy_stderr_fifo" > "$deploy_stderr_file" 2>/dev/null &
+          deploy_stderr_capture_pid=$!
           (
             set -e
             printf '%s\n' "$DEPLOY_ENVELOPE_MAGIC"
@@ -973,18 +1063,43 @@ jobs:
             printf '%s\n' "$DEPLOY_SCRIPT_BYTES"
             printf '%s\n' "$DEPLOY_SCRIPT_SHA256"
             cat scripts/deploy.production.sh
-          ) | ssh -T -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+          ) 2>/dev/null | ssh -T -o ConnectTimeout=20 -o ConnectionAttempts=1 \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$REMOTE_DEPLOY_COMMAND"
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$REMOTE_DEPLOY_COMMAND" \
+            > "$deploy_stdout_fifo" 2> "$deploy_stderr_fifo"
           transport_status=("${PIPESTATUS[@]}")
           frame_status="${transport_status[0]:-1}"
           ssh_status="${transport_status[1]:-1}"
+          wait "$deploy_stdout_capture_pid"
+          stdout_capture_status=$?
+          deploy_stdout_capture_pid=""
+          wait "$deploy_stderr_capture_pid"
+          stderr_capture_status=$?
+          deploy_stderr_capture_pid=""
           set -e
+          if [ "$ssh_status" != "0" ] || [ "$frame_status" != "0" ]; then
+            emit_safe_deploy_diagnostics
+          fi
+          if [ "$stdout_capture_status" != "0" ] \
+            || [ "$stderr_capture_status" != "0" ]; then
+            echo "[deploy] deploy_output_capture_failed"
+            if [ "$ssh_status" != "0" ]; then
+              echo "[deploy] deploy_transport_or_remote_execution_failed"
+              exit "$ssh_status"
+            fi
+            if [ "$frame_status" != "0" ]; then
+              echo "[deploy] deploy_transport_or_remote_execution_failed"
+              exit "$frame_status"
+            fi
+            exit 1
+          fi
           if [ "$ssh_status" != "0" ]; then
+            echo "[deploy] deploy_transport_or_remote_execution_failed"
             exit "$ssh_status"
           fi
           if [ "$frame_status" != "0" ]; then
+            echo "[deploy] deploy_transport_or_remote_execution_failed"
             exit "$frame_status"
           fi
 
