@@ -10,11 +10,20 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"
 readonly EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32608963024"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32610622354"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="b081cd35e8fd7abe573566eb7d62eaa6a21749b3"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="8092ecdc914d4890f75c50f89067cd249c494bd3"
 readonly EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
+readonly EXPECTED_OLD_PACKAGE_BLOB="4aa8c7a442b6bc8926e74322503f91b28359fd3e"
+readonly EXPECTED_OLD_PACKAGE_SHA256="ecbbce22ad2cb0ce4d616726b8d024f454a2aeef48270eee241bb25553740b31"
+readonly EXPECTED_OLD_PACKAGE_BYTES="21229"
+readonly EXPECTED_OLD_SMOKE_HELPER_BLOB="c3e8ac359279879970530c40ee446ea25bc4ac9c"
+readonly EXPECTED_OLD_SMOKE_HELPER_SHA256="cf25612c2a9051bc3cb36516b23955f0fb32c39579fbc8f38377c23344b36da3"
+readonly EXPECTED_OLD_SMOKE_HELPER_BYTES="12565"
+readonly EXPECTED_OLD_WORKER_BLOB="e575042993f18c2ed24f876afdb6de567db8bce0"
+readonly EXPECTED_OLD_WORKER_SHA256="99596c2bfe070a8f9c6fa01b9bfbd310de6a0ba296ab9289db2cd911b013fa74"
+readonly EXPECTED_OLD_WORKER_BYTES="28125"
 readonly EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"
 readonly CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE="candidate_env_snapshot_contract"
 
@@ -252,8 +261,20 @@ finish_recovery() {
         candidate_next_build_identity)
           printf '%s\n' 'recovery_failed_pre_runtime_candidate_next_build_identity' >&2
           ;;
-        frozen_structure)
-          printf '%s\n' 'recovery_failed_pre_runtime_frozen_structure' >&2
+        frozen_release_structure)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_release_structure' >&2
+          ;;
+        frozen_scripts_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_scripts_identity' >&2
+          ;;
+        frozen_smoke_helper_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_smoke_helper_identity' >&2
+          ;;
+        frozen_package_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_package_identity' >&2
+          ;;
+        frozen_worker_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_frozen_worker_identity' >&2
           ;;
         frozen_env_build_binding)
           printf '%s\n' 'recovery_failed_pre_runtime_frozen_env_build_binding' >&2
@@ -612,11 +633,228 @@ revalidate_deploy_lock() {
     && [ "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" = "$DEPLOY_LOCK_IDENTITY" ]
 }
 
+frozen_tracked_file_contract() {
+  local helper_relative="$1"
+  case "$helper_relative" in
+    "$SMOKE_HELPER_RELATIVE")
+      printf '%s\n%s\n%s' \
+        "$EXPECTED_OLD_SMOKE_HELPER_BLOB" \
+        "$EXPECTED_OLD_SMOKE_HELPER_SHA256" \
+        "$EXPECTED_OLD_SMOKE_HELPER_BYTES"
+      ;;
+    "$PACKAGE_RELATIVE")
+      printf '%s\n%s\n%s' \
+        "$EXPECTED_OLD_PACKAGE_BLOB" \
+        "$EXPECTED_OLD_PACKAGE_SHA256" \
+        "$EXPECTED_OLD_PACKAGE_BYTES"
+      ;;
+    "$WORKER_RELATIVE")
+      printf '%s\n%s\n%s' \
+        "$EXPECTED_OLD_WORKER_BLOB" \
+        "$EXPECTED_OLD_WORKER_SHA256" \
+        "$EXPECTED_OLD_WORKER_BYTES"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+harden_frozen_scripts_directory() {
+  local scripts_path="$FROZEN_RUNTIME_DIR/scripts"
+  [ "$(dirname -- "$scripts_path")" = "$FROZEN_RUNTIME_DIR" ] || return 1
+  [ "$(readlink -f -- "$scripts_path" 2>/dev/null || true)" = "$scripts_path" ] \
+    || return 1
+  revalidate_deploy_lock || return 1
+  if ! FAOLLA_FROZEN_SCRIPTS_PATH="$scripts_path" \
+    timeout --signal=TERM --kill-after=1s 5s node --input-type=module <<'NODE'
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+} from "node:fs";
+
+const fail = () => process.exit(1);
+const sameIdentity = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs && left.nlink === right.nlink &&
+  left.uid === right.uid && left.gid === right.gid && left.mode === right.mode;
+const sameStableIdentity = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.nlink === right.nlink && left.uid === right.uid && left.gid === right.gid;
+let descriptor;
+try {
+  const path = process.env.FAOLLA_FROZEN_SCRIPTS_PATH ?? "";
+  if (
+    !path.endsWith("/scripts") || typeof process.getuid !== "function" ||
+    typeof process.getgid !== "function" ||
+    !Number.isInteger(constants.O_NOFOLLOW) || !Number.isInteger(constants.O_DIRECTORY)
+  ) fail();
+  const before = lstatSync(path, { bigint: true });
+  const permissions = before.mode & 0o7777n;
+  if (
+    before.isSymbolicLink() || !before.isDirectory() || before.nlink < 1n ||
+    before.uid !== BigInt(process.getuid()) ||
+    before.gid !== BigInt(process.getgid()) ||
+    ![0o775n, 0o700n].includes(permissions)
+  ) fail();
+  descriptor = openSync(
+    path,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  const opened = fstatSync(descriptor, { bigint: true });
+  if (!opened.isDirectory() || !sameIdentity(before, opened)) fail();
+  if (permissions === 0o775n) fchmodSync(descriptor, 0o700);
+  const hardened = fstatSync(descriptor, { bigint: true });
+  const current = lstatSync(path, { bigint: true });
+  if (
+    !hardened.isDirectory() || current.isSymbolicLink() || !current.isDirectory() ||
+    !sameStableIdentity(before, hardened) || !sameIdentity(hardened, current) ||
+    (hardened.mode & 0o7777n) !== 0o700n || hardened.ctimeNs < before.ctimeNs
+  ) fail();
+} catch {
+  fail();
+} finally {
+  if (descriptor !== undefined) closeSync(descriptor);
+}
+NODE
+  then
+    return 1
+  fi
+  revalidate_deploy_lock
+}
+
+harden_frozen_tracked_file() {
+  local helper_path="$1"
+  local helper_relative="$2"
+  local contract
+  local -a contract_parts=()
+  [ "$helper_path" = "$FROZEN_RUNTIME_DIR/$helper_relative" ] || return 1
+  case "$helper_relative" in
+    "$SMOKE_HELPER_RELATIVE"|"$PACKAGE_RELATIVE"|"$WORKER_RELATIVE") ;;
+    *) return 1 ;;
+  esac
+  contract="$(frozen_tracked_file_contract "$helper_relative")" || return 1
+  mapfile -t contract_parts <<< "$contract"
+  [ "${#contract_parts[@]}" -eq 3 ] \
+    && [[ "${contract_parts[0]}" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "${contract_parts[1]}" =~ ^[0-9a-f]{64}$ ]] \
+    && [[ "${contract_parts[2]}" =~ ^[1-9][0-9]*$ ]] \
+    || return 1
+  revalidate_deploy_lock || return 1
+  if ! FAOLLA_FROZEN_TRACKED_PATH="$helper_path" \
+    FAOLLA_EXPECTED_BLOB="${contract_parts[0]}" \
+    FAOLLA_EXPECTED_SHA256="${contract_parts[1]}" \
+    FAOLLA_EXPECTED_BYTES="${contract_parts[2]}" \
+    timeout --signal=TERM --kill-after=1s 5s node --input-type=module <<'NODE'
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+} from "node:fs";
+
+const fail = () => process.exit(1);
+const sameIdentity = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs && left.nlink === right.nlink &&
+  left.uid === right.uid && left.gid === right.gid && left.mode === right.mode;
+const sameStableIdentity = (left, right) =>
+  left.dev === right.dev && left.ino === right.ino &&
+  left.size === right.size && left.mtimeNs === right.mtimeNs &&
+  left.nlink === right.nlink && left.uid === right.uid && left.gid === right.gid;
+const readExact = (descriptor, size) => {
+  const bytes = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const count = readSync(descriptor, bytes, offset, size - offset, offset);
+    if (count <= 0) fail();
+    offset += count;
+  }
+  const extra = Buffer.alloc(1);
+  if (readSync(descriptor, extra, 0, 1, size) !== 0) fail();
+  return bytes;
+};
+const verifyBytes = (bytes, expectedBlob, expectedSha256) => {
+  const blob = createHash("sha1")
+    .update(Buffer.from(`blob ${bytes.length}\0`, "utf8"))
+    .update(bytes)
+    .digest("hex");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (blob !== expectedBlob || sha256 !== expectedSha256) fail();
+};
+let descriptor;
+try {
+  const path = process.env.FAOLLA_FROZEN_TRACKED_PATH ?? "";
+  const expectedBlob = process.env.FAOLLA_EXPECTED_BLOB ?? "";
+  const expectedSha256 = process.env.FAOLLA_EXPECTED_SHA256 ?? "";
+  const expectedBytes = process.env.FAOLLA_EXPECTED_BYTES ?? "";
+  if (
+    !/^[0-9a-f]{40}$/.test(expectedBlob) ||
+    !/^[0-9a-f]{64}$/.test(expectedSha256) ||
+    !/^[1-9][0-9]*$/.test(expectedBytes) ||
+    typeof process.getuid !== "function" || typeof process.getgid !== "function" ||
+    !Number.isInteger(constants.O_NOFOLLOW)
+  ) fail();
+  const size = Number(expectedBytes);
+  if (!Number.isSafeInteger(size) || size <= 0 || size > 1024 * 1024) fail();
+  const before = lstatSync(path, { bigint: true });
+  const permissions = before.mode & 0o7777n;
+  if (
+    before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n ||
+    before.uid !== BigInt(process.getuid()) ||
+    before.gid !== BigInt(process.getgid()) || before.size !== BigInt(size) ||
+    ![0o664n, 0o600n].includes(permissions)
+  ) fail();
+  descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const opened = fstatSync(descriptor, { bigint: true });
+  if (!opened.isFile() || !sameIdentity(before, opened)) fail();
+  const bytesBefore = readExact(descriptor, size);
+  verifyBytes(bytesBefore, expectedBlob, expectedSha256);
+  const afterRead = fstatSync(descriptor, { bigint: true });
+  const currentBefore = lstatSync(path, { bigint: true });
+  if (!sameIdentity(before, afterRead) || !sameIdentity(afterRead, currentBefore)) fail();
+  if (permissions === 0o664n) fchmodSync(descriptor, 0o600);
+  const hardened = fstatSync(descriptor, { bigint: true });
+  const current = lstatSync(path, { bigint: true });
+  if (
+    !hardened.isFile() || current.isSymbolicLink() || !current.isFile() ||
+    !sameStableIdentity(before, hardened) || !sameIdentity(hardened, current) ||
+    (hardened.mode & 0o7777n) !== 0o600n || hardened.ctimeNs < before.ctimeNs
+  ) fail();
+  const bytesAfter = readExact(descriptor, size);
+  if (!bytesAfter.equals(bytesBefore)) fail();
+  verifyBytes(bytesAfter, expectedBlob, expectedSha256);
+  const finalOpened = fstatSync(descriptor, { bigint: true });
+  const finalCurrent = lstatSync(path, { bigint: true });
+  if (!sameIdentity(hardened, finalOpened) || !sameIdentity(finalOpened, finalCurrent)) fail();
+} catch {
+  fail();
+} finally {
+  if (descriptor !== undefined) closeSync(descriptor);
+}
+NODE
+  then
+    return 1
+  fi
+  revalidate_deploy_lock
+}
+
 trusted_helper_snapshot() {
   local helper_path="$1"
   local helper_relative="$2"
   local expected_commit="$3"
   local expected_root="$4"
+  local contract
+  local -a contract_parts=()
   local expected_blob
   local snapshot
   case "$helper_relative" in
@@ -639,9 +877,14 @@ trusted_helper_snapshot() {
       || return 1
     git -C "$APP_DIR" diff --cached --quiet -- "$helper_relative" >/dev/null 2>&1 \
       || return 1
+    expected_blob="$(git -C "$APP_DIR" rev-parse \
+      "$expected_commit:$helper_relative" 2>/dev/null || true)"
+  else
+    contract="$(frozen_tracked_file_contract "$helper_relative")" || return 1
+    mapfile -t contract_parts <<< "$contract"
+    [ "${#contract_parts[@]}" -eq 3 ] || return 1
+    expected_blob="${contract_parts[0]}"
   fi
-  expected_blob="$(git -C "$APP_DIR" rev-parse \
-    "$expected_commit:$helper_relative" 2>/dev/null || true)"
   [[ "$expected_blob" =~ ^[0-9a-f]{40,64}$ ]] || return 1
   snapshot="$(FAOLLA_EXPECTED_HELPER_BLOB="$expected_blob" \
     timeout --signal=TERM --kill-after=1s 5s node --input-type=module - \
@@ -1306,10 +1549,7 @@ CANDIDATE_NEXT_BUILD_SNAPSHOT="$(next_build_identity "$CANDIDATE_RUNTIME_DIR")" 
   || exit 1
 readonly CANDIDATE_NEXT_BUILD_SNAPSHOT
 
-RECOVERY_FAILURE_STAGE="frozen_structure"
-git -C "$APP_DIR" cat-file -e "$EXPECTED_OLD_BUILD_ID^{commit}" >/dev/null 2>&1 || exit 1
-[ "$(git -C "$APP_DIR" rev-parse "$EXPECTED_OLD_BUILD_ID^{commit}" 2>/dev/null || true)" = \
-  "$EXPECTED_OLD_BUILD_ID" ] || exit 1
+RECOVERY_FAILURE_STAGE="frozen_release_structure"
 FROZEN_RUNTIME_IDENTITY="$(release_structure_identity \
   "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" || exit 1
 [ "$(stat -Lc '%d:%i' -- "$CANDIDATE_RUNTIME_DIR" 2>/dev/null || true)" != \
@@ -1317,12 +1557,28 @@ FROZEN_RUNTIME_IDENTITY="$(release_structure_identity \
 readonly FROZEN_SMOKE_HELPER="$FROZEN_RUNTIME_DIR/$SMOKE_HELPER_RELATIVE"
 readonly FROZEN_PACKAGE_FILE="$FROZEN_RUNTIME_DIR/$PACKAGE_RELATIVE"
 readonly FROZEN_WORKER_FILE="$FROZEN_RUNTIME_DIR/$WORKER_RELATIVE"
+
+RECOVERY_FAILURE_STAGE="frozen_scripts_identity"
+harden_frozen_scripts_directory || exit 1
+FROZEN_SCRIPTS_IDENTITY="$(trusted_directory_identity \
+  "$FROZEN_RUNTIME_DIR/scripts")" || exit 1
+readonly FROZEN_SCRIPTS_IDENTITY
+
+RECOVERY_FAILURE_STAGE="frozen_smoke_helper_identity"
+harden_frozen_tracked_file "$FROZEN_SMOKE_HELPER" "$SMOKE_HELPER_RELATIVE" \
+  || exit 1
 FROZEN_SMOKE_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_SMOKE_HELPER" "$SMOKE_HELPER_RELATIVE" \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
+
+RECOVERY_FAILURE_STAGE="frozen_package_identity"
+harden_frozen_tracked_file "$FROZEN_PACKAGE_FILE" "$PACKAGE_RELATIVE" || exit 1
 FROZEN_PACKAGE_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_PACKAGE_FILE" "$PACKAGE_RELATIVE" \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
+
+RECOVERY_FAILURE_STAGE="frozen_worker_identity"
+harden_frozen_tracked_file "$FROZEN_WORKER_FILE" "$WORKER_RELATIVE" || exit 1
 FROZEN_WORKER_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_WORKER_FILE" "$WORKER_RELATIVE" \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
@@ -1447,6 +1703,8 @@ revalidate_incident_release_pair() {
     "$CANDIDATE_RUNTIME_IDENTITY" ] || return 1
   [ "$(release_structure_identity "$FROZEN_RUNTIME_DIR" "$EXPECTED_OLD_BUILD_ID")" = \
     "$FROZEN_RUNTIME_IDENTITY" ] || return 1
+  [ "$(trusted_directory_identity "$FROZEN_RUNTIME_DIR/scripts")" = \
+    "$FROZEN_SCRIPTS_IDENTITY" ] || return 1
   candidate_snapshot=""
   candidate_snapshot="$(candidate_environment_build_binding_snapshot \
     "$CANDIDATE_RUNTIME_DIR" "$EXPECTED_CANDIDATE_BUILD_ID")" || return 1
@@ -1456,6 +1714,10 @@ revalidate_incident_release_pair() {
     && [ "${candidate_parts[1]}" = "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" ] \
     && [ "${candidate_parts[2]}" = "$CANDIDATE_ENVIRONMENT_SHA256" ] \
     || return 1
+  trusted_helper_matches \
+    "$FROZEN_SMOKE_HELPER" "$SMOKE_HELPER_RELATIVE" \
+    "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR" \
+    "$FROZEN_SMOKE_HELPER_SNAPSHOT" || return 1
   trusted_helper_matches \
     "$FROZEN_PACKAGE_FILE" "$PACKAGE_RELATIVE" \
     "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR" \

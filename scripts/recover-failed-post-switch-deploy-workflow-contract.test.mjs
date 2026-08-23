@@ -58,6 +58,10 @@ const candidateEnvStages = [
 ];
 const preRuntimeTrustedIdentityStages = [
   "incident_env_helper_identity",
+  "frozen_scripts_identity",
+  "frozen_smoke_helper_identity",
+  "frozen_package_identity",
+  "frozen_worker_identity",
 ];
 const removedPreRuntimeIdentityStages = [
   "candidate_source_identity",
@@ -121,7 +125,7 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
-    "32608963024", "b081cd35e8fd7abe573566eb7d62eaa6a21749b3",
+    "32610622354", "8092ecdc914d4890f75c50f89067cd249c494bd3",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
@@ -200,7 +204,7 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
     ...preRuntimeTrustedIdentityStages.map((stage) => `pre_runtime_${stage}`),
     ...candidateEnvStages.map((stage) => `pre_runtime_${stage}`),
     "pre_runtime_candidate_next_build_identity",
-    "pre_runtime_frozen_structure", "pre_runtime_frozen_env_build_binding",
+    "pre_runtime_frozen_release_structure", "pre_runtime_frozen_env_build_binding",
     "pre_runtime_frozen_next_build_identity",
     "candidate_process_preflight", "candidate_stop", "current_switch",
     "web_restore_start", "web_restore_stability", "web_restore_identity",
@@ -238,7 +242,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const mappings = [...classifier.matchAll(
     /\["(recovery_failed_(?:pre_)?runtime_[a-z_]+)", "(remote_recovery_failed_phase_[a-z_]+)", ([0-6])\]/g,
   )].map((match) => ({ remote: match[1], public: match[2], prefix: Number(match[3]) }));
-  assert.equal(mappings.length, 39);
+  assert.equal(mappings.length, 43);
   assert.equal(new Set(mappings.map(({ remote }) => remote)).size, mappings.length);
   assert.equal(new Set(mappings.map(({ public: publicCode }) => publicCode)).size, mappings.length);
   const candidateEnvMappings = candidateEnvStages.map((stage) => ({

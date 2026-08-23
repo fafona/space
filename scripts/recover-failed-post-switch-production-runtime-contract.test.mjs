@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -7,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -40,9 +42,9 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32608963024"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32610622354"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="b081cd35e8fd7abe573566eb7d62eaa6a21749b3"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="8092ecdc914d4890f75c50f89067cd249c494bd3"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
@@ -87,7 +89,7 @@ test("deploy lock is held, identity-frozen, and normalized without replacement",
   assert.doesNotMatch(lock, /mv\s/);
 });
 
-test("candidate and frozen inventory and identity have distinct pre-mutation stages", () => {
+test("candidate and frozen inventory and identity have distinct pre-business-mutation stages", () => {
   const stages = [
     "incident_env_helper_identity",
     "candidate_inventory",
@@ -100,7 +102,11 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
     "candidate_env_public_build_binding",
     "candidate_env_snapshot_contract",
     "candidate_next_build_identity",
-    "frozen_structure",
+    "frozen_release_structure",
+    "frozen_scripts_identity",
+    "frozen_smoke_helper_identity",
+    "frozen_package_identity",
+    "frozen_worker_identity",
     "frozen_env_build_binding",
     "frozen_next_build_identity",
   ];
@@ -109,8 +115,8 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   assert.deepEqual([...positions].sort((left, right) => left - right), positions);
   assert.doesNotMatch(source, /candidate_env_build_binding/);
 
-  const firstProtectedMutation = source.indexOf("FENCE_CLEANUP_STARTED=1");
-  assert.ok(firstProtectedMutation > positions.at(-1));
+  const firstProtectedBusinessMutation = source.indexOf("FENCE_CLEANUP_STARTED=1");
+  assert.ok(firstProtectedBusinessMutation > positions.at(-1));
   const releasePreflight = source.slice(
     positions[0],
     source.indexOf('RECOVERY_FAILURE_STAGE="frozen_environment"', positions[0]),
@@ -142,10 +148,26 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   );
   const candidateNextBuild = between(
     'RECOVERY_FAILURE_STAGE="candidate_next_build_identity"',
-    'RECOVERY_FAILURE_STAGE="frozen_structure"',
+    'RECOVERY_FAILURE_STAGE="frozen_release_structure"',
   );
   const frozenStructure = between(
-    'RECOVERY_FAILURE_STAGE="frozen_structure"',
+    'RECOVERY_FAILURE_STAGE="frozen_release_structure"',
+    'RECOVERY_FAILURE_STAGE="frozen_scripts_identity"',
+  );
+  const frozenScripts = between(
+    'RECOVERY_FAILURE_STAGE="frozen_scripts_identity"',
+    'RECOVERY_FAILURE_STAGE="frozen_smoke_helper_identity"',
+  );
+  const frozenSmoke = between(
+    'RECOVERY_FAILURE_STAGE="frozen_smoke_helper_identity"',
+    'RECOVERY_FAILURE_STAGE="frozen_package_identity"',
+  );
+  const frozenPackage = between(
+    'RECOVERY_FAILURE_STAGE="frozen_package_identity"',
+    'RECOVERY_FAILURE_STAGE="frozen_worker_identity"',
+  );
+  const frozenWorker = between(
+    'RECOVERY_FAILURE_STAGE="frozen_worker_identity"',
     'RECOVERY_FAILURE_STAGE="frozen_env_build_binding"',
   );
   const frozenEnvironment = between(
@@ -165,6 +187,14 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   assert.match(candidateEnvironment, /EXPECTED_CANDIDATE_BUILD_ID/);
   assert.doesNotMatch(candidateEnvironment, /trusted_helper_snapshot/);
   assert.match(frozenStructure, /release_structure_identity/);
+  assert.match(frozenScripts, /harden_frozen_scripts_directory/);
+  assert.match(frozenScripts, /trusted_directory_identity/);
+  assert.match(frozenSmoke, /harden_frozen_tracked_file/);
+  assert.match(frozenSmoke, /FROZEN_SMOKE_HELPER_SNAPSHOT/);
+  assert.match(frozenPackage, /harden_frozen_tracked_file/);
+  assert.match(frozenPackage, /FROZEN_PACKAGE_SNAPSHOT/);
+  assert.match(frozenWorker, /harden_frozen_tracked_file/);
+  assert.match(frozenWorker, /FROZEN_WORKER_SNAPSHOT/);
   assert.match(frozenNextBuild, /next_build_identity/);
   assert.match(frozenEnvironment, /\.env\.local/);
   assert.match(frozenEnvironment, /EXPECTED_OLD_BUILD_ID/);
@@ -183,7 +213,7 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   assert.match(source, /FROZEN_PACKAGE_SNAPSHOT/);
   assert.match(source, /FROZEN_WORKER_SNAPSHOT/);
   assert.match(source, /"\$expected_commit:\$helper_relative"/);
-  assert.match(source, /git -C "\$APP_DIR" cat-file -e "\$EXPECTED_OLD_BUILD_ID\^\{commit\}"/);
+  assert.doesNotMatch(source, /git[^\n]*EXPECTED_OLD_BUILD_ID/);
 });
 
 test("the incident-pinned environment reader supports the historical frozen tree", () => {
@@ -229,13 +259,237 @@ test("the incident-pinned environment reader supports the historical frozen tree
   assert.match(source, /rollback-snapshot "\$FROZEN_RUNTIME_DIR\/\.env\.local" "\$EXPECTED_OLD_BUILD_ID"/);
 });
 
+test("frozen executable inputs are offline-pinned and hardened without an old server Git object", () => {
+  const contracts = [
+    {
+      path: "package.json",
+      blob: "4aa8c7a442b6bc8926e74322503f91b28359fd3e",
+      sha256: "ecbbce22ad2cb0ce4d616726b8d024f454a2aeef48270eee241bb25553740b31",
+      bytes: 21229,
+    },
+    {
+      path: "scripts/check-production-smoke.mjs",
+      blob: "c3e8ac359279879970530c40ee446ea25bc4ac9c",
+      sha256: "cf25612c2a9051bc3cb36516b23955f0fb32c39579fbc8f38377c23344b36da3",
+      bytes: 12565,
+    },
+    {
+      path: "scripts/run-merchant-enterprise-automation-worker.ts",
+      blob: "e575042993f18c2ed24f876afdb6de567db8bce0",
+      sha256: "99596c2bfe070a8f9c6fa01b9bfbd310de6a0ba296ab9289db2cd911b013fa74",
+      bytes: 28125,
+    },
+  ];
+  for (const contract of contracts) {
+    assert.ok(source.includes(contract.blob), `${contract.path} blob missing`);
+    assert.ok(source.includes(contract.sha256), `${contract.path} sha256 missing`);
+    assert.ok(source.includes(`"${contract.bytes}"`), `${contract.path} byte size missing`);
+  }
+  assert.doesNotMatch(source, /git[^\n]*EXPECTED_OLD_BUILD_ID/);
+
+  const hardener = between("harden_frozen_tracked_file()", "trusted_helper_snapshot()");
+  assert.match(hardener, /constants\.O_NOFOLLOW/);
+  assert.match(hardener, /before\.nlink !== 1n/);
+  assert.match(hardener, /before\.uid !== BigInt\(process\.getuid\(\)\)/);
+  assert.match(hardener, /before\.gid !== BigInt\(process\.getgid\(\)\)/);
+  assert.match(hardener, /\[0o664n, 0o600n\]/);
+  assert.doesNotMatch(hardener, /0o644n|0o666n/);
+  assert.match(hardener, /fchmodSync\(descriptor, 0o600\)/);
+  assert.match(hardener, /readSync\(descriptor, bytes, offset, size - offset, offset\)/);
+  assert.match(hardener, /readSync\(descriptor, extra, 0, 1, size\)/);
+  assert.match(hardener, /createHash\("sha1"\)/);
+  assert.match(hardener, /createHash\("sha256"\)/);
+  assert.ok(
+    hardener.indexOf("verifyBytes(bytesBefore") < hardener.indexOf("fchmodSync(descriptor"),
+    "content is not verified before permission mutation",
+  );
+  assert.ok(
+    hardener.indexOf("const bytesAfter") > hardener.indexOf("fchmodSync(descriptor"),
+    "content is not reread after permission mutation",
+  );
+  const scriptsHardener = between(
+    "harden_frozen_scripts_directory()",
+    "harden_frozen_tracked_file()",
+  );
+  assert.match(scriptsHardener, /constants\.O_DIRECTORY/);
+  assert.match(scriptsHardener, /\[0o775n, 0o700n\]/);
+  assert.match(scriptsHardener, /fchmodSync\(descriptor, 0o700\)/);
+  assert.equal(
+    (source.match(/fchmodSync\(descriptor, /g) ?? []).length,
+    2,
+    "only the frozen scripts directory and frozen tracked file may be hardened",
+  );
+  assert.equal(
+    (source.match(/harden_frozen_scripts_directory \|\| exit 1/g) ?? []).length,
+    1,
+    "directory hardener must run exactly once",
+  );
+  assert.equal(
+    (source.match(/harden_frozen_tracked_file "\$FROZEN_/g) ?? []).length,
+    3,
+    "tracked-file hardener must run exactly once for each frozen executable input",
+  );
+
+  const oldBuild = "2a121454a18a16ae30e356977ca82b24a310e8e5";
+  const probe = spawnSync("git", ["cat-file", "-e", `${oldBuild}^{commit}`], {
+    cwd: repositoryRoot,
+    stdio: "ignore",
+  });
+  if (probe.status === 0) {
+    for (const contract of contracts) {
+      const content = spawnSync("git", ["show", `${oldBuild}:${contract.path}`], {
+        cwd: repositoryRoot,
+        encoding: null,
+      });
+      const blob = spawnSync("git", ["rev-parse", `${oldBuild}:${contract.path}`], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      });
+      assert.equal(content.status, 0, contract.path);
+      assert.equal(blob.status, 0, contract.path);
+      assert.equal(content.stdout.length, contract.bytes, `${contract.path} size`);
+      assert.equal(createHash("sha256").update(content.stdout).digest("hex"), contract.sha256);
+      assert.equal(blob.stdout.trim(), contract.blob);
+    }
+  }
+});
+
+test("frozen permission hardener programs are unambiguous heredocs", () => {
+  assert.equal(
+    nodeHeredocs(
+      between("harden_frozen_tracked_file()", "trusted_helper_snapshot()"),
+    ).length,
+    1,
+  );
+  assert.equal(
+    nodeHeredocs(
+      between("harden_frozen_scripts_directory()", "harden_frozen_tracked_file()"),
+    ).length,
+    1,
+  );
+});
+
+test("frozen permission hardeners are fd-bound, fail closed, and idempotent", {
+  skip: process.platform === "win32",
+}, () => {
+  const fileHardener = nodeHeredocs(
+    between("harden_frozen_tracked_file()", "trusted_helper_snapshot()"),
+  )[0];
+  const directoryHardener = nodeHeredocs(
+    between("harden_frozen_scripts_directory()", "harden_frozen_tracked_file()"),
+  )[0];
+  assert.ok(fileHardener, "file hardener missing");
+  assert.ok(directoryHardener, "directory hardener missing");
+  const directory = mkdtempSync(join(tmpdir(), "faolla-frozen-hardening-"));
+  const bytes = Buffer.from("exact frozen fixture\n", "utf8");
+  const blob = createHash("sha1")
+    .update(Buffer.from(`blob ${bytes.length}\0`, "utf8"))
+    .update(bytes)
+    .digest("hex");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const runFileHardener = (path, overrides = {}, program = fileHardener) => spawnSync(
+    process.execPath,
+    ["--input-type=module", "-"],
+    {
+      input: program,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FAOLLA_FROZEN_TRACKED_PATH: path,
+        FAOLLA_EXPECTED_BLOB: blob,
+        FAOLLA_EXPECTED_SHA256: sha256,
+        FAOLLA_EXPECTED_BYTES: String(bytes.length),
+        ...overrides,
+      },
+    },
+  );
+  const mode = (path) => statSync(path).mode & 0o777;
+  const writeFixture = (path, permissions = 0o664) => {
+    writeFileSync(path, bytes);
+    chmodSync(path, permissions);
+  };
+  try {
+    const validPath = join(directory, "valid");
+    writeFixture(validPath);
+    assert.equal(runFileHardener(validPath).status, 0, "valid 0664 file rejected");
+    assert.equal(mode(validPath), 0o600);
+    assert.equal(runFileHardener(validPath).status, 0, "already-hardened file rejected");
+    assert.equal(mode(validPath), 0o600);
+
+    for (const [label, overrides] of [
+      ["wrong blob", { FAOLLA_EXPECTED_BLOB: "0".repeat(40) }],
+      ["wrong sha256", { FAOLLA_EXPECTED_SHA256: "0".repeat(64) }],
+      ["wrong size", { FAOLLA_EXPECTED_BYTES: String(bytes.length + 1) }],
+    ]) {
+      const path = join(directory, label.replaceAll(" ", "-"));
+      writeFixture(path);
+      assert.notEqual(runFileHardener(path, overrides).status, 0, `${label} accepted`);
+      assert.equal(mode(path), 0o664, `${label} changed permissions`);
+    }
+
+    for (const permissions of [0o644, 0o666]) {
+      const path = join(directory, `mode-${permissions.toString(8)}`);
+      writeFixture(path, permissions);
+      assert.notEqual(runFileHardener(path).status, 0, `mode ${permissions.toString(8)} accepted`);
+      assert.equal(mode(path), permissions);
+    }
+
+    const targetPath = join(directory, "symlink-target");
+    const symlinkPath = join(directory, "symlink");
+    writeFixture(targetPath);
+    symlinkSync(targetPath, symlinkPath, "file");
+    assert.notEqual(runFileHardener(symlinkPath).status, 0, "symlink accepted");
+    assert.equal(mode(targetPath), 0o664);
+
+    const hardlinkPath = join(directory, "hardlink-source");
+    const hardlinkAlias = join(directory, "hardlink-alias");
+    writeFixture(hardlinkPath);
+    linkSync(hardlinkPath, hardlinkAlias);
+    assert.notEqual(runFileHardener(hardlinkPath).status, 0, "hardlink accepted");
+    assert.equal(mode(hardlinkPath), 0o664);
+
+    const toctouPath = join(directory, "toctou");
+    writeFixture(toctouPath);
+    const toctouHardener = fileHardener
+      .replace("  closeSync,", "  appendFileSync,\n  closeSync,")
+      .replace(
+        "  const afterRead = fstatSync(descriptor, { bigint: true });",
+        "  appendFileSync(path, Buffer.from(\"x\"));\n  const afterRead = fstatSync(descriptor, { bigint: true });",
+      );
+    assert.notEqual(toctouHardener, fileHardener, "TOCTOU injection failed");
+    assert.notEqual(runFileHardener(toctouPath, {}, toctouHardener).status, 0);
+    assert.equal(mode(toctouPath), 0o664, "TOCTOU failure changed permissions");
+
+    const scriptsPath = join(directory, "scripts");
+    mkdirSync(scriptsPath, { mode: 0o775 });
+    chmodSync(scriptsPath, 0o775);
+    const runDirectoryHardener = () => spawnSync(
+      process.execPath,
+      ["--input-type=module", "-"],
+      {
+        input: directoryHardener,
+        encoding: "utf8",
+        env: { ...process.env, FAOLLA_FROZEN_SCRIPTS_PATH: scriptsPath },
+      },
+    );
+    assert.equal(runDirectoryHardener().status, 0, "valid scripts directory rejected");
+    assert.equal(mode(scriptsPath), 0o700);
+    assert.equal(runDirectoryHardener().status, 0, "hardened scripts directory rejected");
+    chmodSync(scriptsPath, 0o755);
+    assert.notEqual(runDirectoryHardener().status, 0, "unexpected 0755 directory accepted");
+    assert.equal(mode(scriptsPath), 0o755);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("candidate source is never executed or trusted while safe runtime anchors are revalidated", () => {
   assert.doesNotMatch(source, /CANDIDATE_PACKAGE_(?:FILE|SNAPSHOT)|candidate_source_identity/);
   const trustedSnapshot = between("trusted_helper_snapshot()", "trusted_helper_matches()");
   assert.doesNotMatch(trustedSnapshot, /EXPECTED_CANDIDATE_BUILD_ID/);
   const candidatePreflight = between(
     'RECOVERY_FAILURE_STAGE="candidate_structure"',
-    'RECOVERY_FAILURE_STAGE="frozen_structure"',
+    'RECOVERY_FAILURE_STAGE="frozen_release_structure"',
   );
   assert.doesNotMatch(candidatePreflight, /trusted_helper_(?:snapshot|matches)/);
   assert.doesNotMatch(
@@ -260,6 +514,10 @@ test("candidate source is never executed or trusted while safe runtime anchors a
   assert.match(revalidation, /CANDIDATE_ENVIRONMENT_FILE_IDENTITY/);
   assert.match(revalidation, /CANDIDATE_ENVIRONMENT_SHA256/);
   assert.match(revalidation, /next_build_identity "\$CANDIDATE_RUNTIME_DIR"/);
+  assert.match(revalidation, /FROZEN_SCRIPTS_IDENTITY/);
+  assert.match(revalidation, /FROZEN_SMOKE_HELPER_SNAPSHOT/);
+  assert.match(revalidation, /FROZEN_PACKAGE_SNAPSHOT/);
+  assert.match(revalidation, /FROZEN_WORKER_SNAPSHOT/);
   const structure = between("release_structure_identity()", "candidate_environment_build_binding_result()");
   assert.match(
     structure,
@@ -602,7 +860,11 @@ test("release inventory failures have exact fixed codes and cannot enter product
     ["candidate_env_server_build_binding", "recovery_failed_pre_runtime_candidate_env_server_build_binding"],
     ["candidate_env_public_build_binding", "recovery_failed_pre_runtime_candidate_env_public_build_binding"],
     ["candidate_env_snapshot_contract", "recovery_failed_pre_runtime_candidate_env_snapshot_contract"],
-    ["frozen_structure", "recovery_failed_pre_runtime_frozen_structure"],
+    ["frozen_release_structure", "recovery_failed_pre_runtime_frozen_release_structure"],
+    ["frozen_scripts_identity", "recovery_failed_pre_runtime_frozen_scripts_identity"],
+    ["frozen_smoke_helper_identity", "recovery_failed_pre_runtime_frozen_smoke_helper_identity"],
+    ["frozen_package_identity", "recovery_failed_pre_runtime_frozen_package_identity"],
+    ["frozen_worker_identity", "recovery_failed_pre_runtime_frozen_worker_identity"],
     ["frozen_next_build_identity", "recovery_failed_pre_runtime_frozen_next_build_identity"],
     ["frozen_env_build_binding", "recovery_failed_pre_runtime_frozen_env_build_binding"],
   ]);
