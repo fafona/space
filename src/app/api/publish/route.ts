@@ -12,6 +12,7 @@ import { getMerchantPublishPermissionViolation } from "@/lib/merchantPermissionG
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
 import { clearPublishedSiteDataCache } from "@/lib/publishedSiteData";
+import { isReservedPlatformSubdomain } from "@/lib/siteRouting";
 import {
   loadStoredPlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
@@ -723,6 +724,17 @@ export async function POST(request: Request) {
     const isPlatformEditor = body.isPlatformEditor === true;
     const merchantIds = normalizeMerchantIds(body.merchantIds, isPlatformEditor);
     const merchantSlug = isPlatformEditor ? "home" : normalizeDomainPrefix(body.merchantSlug);
+    if (!isPlatformEditor && isReservedPlatformSubdomain(merchantSlug)) {
+      const status = 400;
+      const responseBody = {
+        ok: false,
+        code: "reserved_merchant_slug",
+        message: "该商户域名前缀为平台保留地址，请更换后再发布",
+        requestId,
+      };
+      resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+      return makeCachedResponse(status, responseBody);
+    }
     if (!isPlatformEditor && merchantIds.length === 0) {
       const status = 400;
       const responseBody = {

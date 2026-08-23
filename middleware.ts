@@ -24,7 +24,7 @@ import {
   resolveCanonicalSuperAdminOrigin,
 } from "@/lib/canonicalSuperAdminRequest";
 
-const RESERVED_SUBDOMAIN_PREFIXES = new Set(["www", "main", "portal", "console", "public", "admin"]);
+const RESERVED_SUBDOMAIN_PREFIXES = new Set(["www", "main", "portal", "console", "public", "admin", "launch"]);
 const RESERVED_PATH_SEGMENTS = new Set([
   "admin",
   "api",
@@ -33,6 +33,7 @@ const RESERVED_PATH_SEGMENTS = new Set([
   "connect",
   "icon.svg",
   "industry",
+  "launch",
   "me",
   "login",
   "portal",
@@ -476,6 +477,14 @@ function redirectToOrigin(request: NextRequest, origin: string, pathname = reque
   return NextResponse.redirect(target, HTTPS_REDIRECT_STATUS);
 }
 
+function isCanonicalLaunchHost(request: NextRequest) {
+  const portalHostname = resolveCanonicalPortalHostname();
+  const rootHostname = portalHostname.startsWith("www.") ? portalHostname.slice(4) : portalHostname;
+  if (!rootHostname) return false;
+  const requestHostname = normalizeRequestHostname(readRequestPublicHost(request.headers, request.nextUrl));
+  return requestHostname === `launch.${rootHostname}`;
+}
+
 function resolvePublicContentOrigin() {
   const portalHostname = resolveCanonicalPortalHostname();
   const rootHostname = portalHostname.startsWith("www.") ? portalHostname.slice(4) : portalHostname;
@@ -639,6 +648,18 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isConsoleHost = isCanonicalSuperAdminRequest(request);
   const isPortalHost = isCanonicalPortalRequest(request);
+
+  if (!isPortalHost && pathname === "/" && isCanonicalLaunchHost(request)) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return wrongOriginResponse(request, "portal_origin_required");
+    }
+    const response = withSecurityHeaders(
+      withNoStore(redirectToOrigin(request, resolveCanonicalPortalOrigin(), "/launch")),
+      request,
+    );
+    response.headers.set("Clear-Site-Data", '"cache", "storage"');
+    return response;
+  }
 
   if (isConsoleHost) {
     if (pathname === "/") {

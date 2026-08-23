@@ -98,6 +98,40 @@ test("middleware redirects bad OAuth state before homepage render", async () => 
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 });
 
+test("middleware canonicalizes the launch host before browser session recovery", async () => {
+  const request = new NextRequest("https://launch.faolla.com/?appShell=faolla&nativeStart=1");
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 308);
+  assert.equal(
+    response.headers.get("location"),
+    "https://faolla.com/launch?appShell=faolla&nativeStart=1",
+  );
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+  assert.equal(response.headers.get("clear-site-data"), '"cache", "storage"');
+});
+
+test("middleware never replays unsafe launch-host requests across origins", async () => {
+  const response = await middleware(
+    new NextRequest("https://launch.faolla.com/", { method: "POST", body: "state=private" }),
+  );
+
+  assert.equal(response.status, 421);
+  assert.equal(response.headers.get("location"), null);
+  assert.equal(response.headers.get("clear-site-data"), null);
+  assert.deepEqual(await response.json(), { error: "portal_origin_required" });
+});
+
+test("middleware keeps an unauthenticated launch page on the canonical portal", async () => {
+  const response = await middleware(new NextRequest("https://faolla.com/launch?appShell=faolla"));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("location"), null);
+  assert.equal(response.headers.get("x-middleware-next"), "1");
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+});
+
 test("middleware redirects authenticated personal launch requests before page render", async () => {
   const request = new NextRequest("https://faolla.com/launch?appShell=faolla", {
     headers: {

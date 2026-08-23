@@ -79,6 +79,7 @@ test("merchant profile field validators enforce new byte limits", () => {
     getMerchantProfileDomainPrefixError("abcdefghijklmn"),
     "前缀最多 12 字节（仅支持字母和数字）",
   );
+  assert.equal(getMerchantProfileDomainPrefixError("launch"), "该前缀为平台保留地址，请更换");
 });
 
 test("merchant profile prefix input normalization keeps alnum only and clips at 12 bytes", () => {
