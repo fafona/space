@@ -42,9 +42,9 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32610622354"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32613111789"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="8092ecdc914d4890f75c50f89067cd249c494bd3"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="02db02135d2a376d624985831f5f0180cf813a29"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
@@ -942,8 +942,22 @@ test("stale fence cleanup is canonical, time-bound, non-recursive, and starts at
   assert.ok(preMutation.lastIndexOf("trusted_helper_matches") > preMutation.lastIndexOf("revalidate_deploy_lock"));
   assert.ok(preMutation.lastIndexOf("stale_log_identity") > preMutation.lastIndexOf("trusted_helper_matches"));
   assert.ok(preMutation.lastIndexOf("stale_dir_identity") > preMutation.lastIndexOf("trusted_helper_matches"));
-  assert.match(cleanup, /FENCE_CLEANUP_STARTED=1\s+FENCE_CLEANUP_VERIFIED=0\s+unlink -- "\$stale_log"/);
-  assert.match(cleanup, /rmdir -- "\$stale_dir"/);
+  assert.match(
+    cleanup,
+    /FENCE_CLEANUP_STARTED=1\s+FENCE_CLEANUP_VERIFIED=0\s+RECOVERY_FAILURE_STAGE="fence_unlink"\s+unlink -- "\$stale_log"/,
+  );
+  assert.match(
+    cleanup,
+    /RECOVERY_FAILURE_STAGE="fence_rmdir"\s+rmdir -- "\$stale_dir"/,
+  );
+  assert.match(
+    cleanup,
+    /RECOVERY_FAILURE_STAGE="fence_post_inventory"\s+mapfile -d '' -t post_cleanup_fence_entries/,
+  );
+  assert.match(
+    cleanup,
+    /RECOVERY_FAILURE_STAGE="fence_post_database"\s+verify_database_fence_clear/,
+  );
   assert.doesNotMatch(cleanup, /rm\s+-[A-Za-z]*[rR]/);
 });
 
@@ -1194,22 +1208,34 @@ test("healthy frozen web is committed before worker/save and retained on later f
 
 test("all assigned stages have a fixed failure-code case", () => {
   const assigned = new Set([...source.matchAll(/RECOVERY_FAILURE_STAGE="([a-z_]+)"/g)].map((match) => match[1]));
-  const finish = between("case \"$RECOVERY_FAILURE_STAGE\" in", "if [ -n \"${RECOVERY_PAYLOAD_FILE:-}\" ]");
+  const finish = between("case \"$failure_stage\" in", "if [ -n \"${RECOVERY_PAYLOAD_FILE:-}\" ]");
   const cases = new Set([...finish.matchAll(/^\s{8}([a-z_]+)\)$/gm)].map((match) => match[1]));
   assert.deepEqual([...assigned].filter((stage) => !cases.has(stage)), []);
+  assert.match(source, /local failure_stage="\$\{RECOVERY_FAILURE_STAGE:-invalid\}"/);
   assert.doesNotMatch(source, /RECOVERY_FAILURE_STAGE="runtime"/);
 });
 
 test("operator-visible markers are fixed and dangerous broad mutations are absent", () => {
   const literalMarkers = [...source.matchAll(/printf '%s\\n' '([a-z0-9_]+)'/g)].map((match) => match[1]);
   const allowed = new Set([
-    "cleanup_unverified", "recovery_failed_stage_invalid",
+    "recovery_failed_stage_invalid", "cleanup_failed_reason_invalid",
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
     "current_switched_to_frozen_release", "frozen_web_restored",
     "worker_state_restored", "recovery_complete",
     ...[...source.matchAll(/'((?:recovery_failed_(?:pre_)?runtime)[a-z0-9_]*)'/g)].map((match) => match[1]),
+    ...[...source.matchAll(/'(cleanup_failed_reason_[a-z0-9_]+)'/g)].map((match) => match[1]),
   ]);
   assert.deepEqual(literalMarkers.filter((value) => !allowed.has(value)), []);
+  assert.doesNotMatch(source, /cleanup_unverified/);
+  const finish = between("finish_recovery()", "require_command()");
+  for (const reason of [
+    "switch_temp", "compensation_temp", "fence_incomplete", "worker_cleanup",
+    "web_cleanup", "candidate_restore", "precommit_verify", "pm2_save",
+  ]) {
+    assert.match(finish, new RegExp(`record_cleanup_failure ${reason}`));
+    assert.match(finish, new RegExp(`cleanup_failed_reason_${reason}`));
+  }
+  assert.match(finish, /if \[ -z "\$cleanup_reason" \]; then cleanup_reason="\$reason"; fi/);
   assert.doesNotMatch(source, /\brm\s+-[A-Za-z]*[rR]/);
   assert.doesNotMatch(source, /\bgit\s+(?:reset|clean|checkout|switch|merge|rebase)\b/);
   assert.doesNotMatch(source, /\b(?:npm|pnpm|yarn)\s+(?:install|ci|run build)\b/);

@@ -10,9 +10,9 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"
 readonly EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32610622354"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32613111789"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="8092ecdc914d4890f75c50f89067cd249c494bd3"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="02db02135d2a376d624985831f5f0180cf813a29"
 readonly EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
 readonly EXPECTED_OLD_PACKAGE_BLOB="4aa8c7a442b6bc8926e74322503f91b28359fd3e"
@@ -153,6 +153,18 @@ cleanup_started_process() {
 finish_recovery() {
   local status=$?
   local cleanup_status=0
+  local cleanup_reason=""
+  local failure_stage="${RECOVERY_FAILURE_STAGE:-invalid}"
+  record_cleanup_failure() {
+    local reason="$1"
+    case "$reason" in
+      switch_temp|compensation_temp|fence_incomplete|worker_cleanup|web_cleanup|\
+      candidate_restore|precommit_verify|pm2_save) ;;
+      *) reason="invalid" ;;
+    esac
+    if [ -z "$cleanup_reason" ]; then cleanup_reason="$reason"; fi
+    cleanup_status=1
+  }
   trap - EXIT
   trap '' HUP INT TERM
   if [ -n "${SWITCH_TEMP_LINK:-}" ] && [ -L "$SWITCH_TEMP_LINK" ] \
@@ -163,10 +175,11 @@ finish_recovery() {
       "${FROZEN_RUNTIME_DIR:-invalid}" ] \
     && [ "$(readlink -f -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
       "${FROZEN_RUNTIME_DIR:-invalid}" ]; then
-    unlink -- "$SWITCH_TEMP_LINK" >/dev/null 2>&1 || cleanup_status=1
+    unlink -- "$SWITCH_TEMP_LINK" >/dev/null 2>&1 \
+      || record_cleanup_failure switch_temp
   elif [ -n "${SWITCH_TEMP_LINK:-}" ] \
     && { [ -e "$SWITCH_TEMP_LINK" ] || [ -L "$SWITCH_TEMP_LINK" ]; }; then
-    cleanup_status=1
+    record_cleanup_failure switch_temp
   fi
   if [ -n "${COMPENSATION_TEMP_LINK:-}" ] && [ -L "$COMPENSATION_TEMP_LINK" ] \
     && [ -n "${COMPENSATION_TEMP_LINK_IDENTITY:-}" ] \
@@ -176,46 +189,45 @@ finish_recovery() {
       "${CANDIDATE_RUNTIME_DIR:-invalid}" ] \
     && [ "$(readlink -f -- "$COMPENSATION_TEMP_LINK" 2>/dev/null || true)" = \
       "${CANDIDATE_RUNTIME_DIR:-invalid}" ]; then
-    unlink -- "$COMPENSATION_TEMP_LINK" >/dev/null 2>&1 || cleanup_status=1
+    unlink -- "$COMPENSATION_TEMP_LINK" >/dev/null 2>&1 \
+      || record_cleanup_failure compensation_temp
   elif [ -n "${COMPENSATION_TEMP_LINK:-}" ] \
     && { [ -e "$COMPENSATION_TEMP_LINK" ] || [ -L "$COMPENSATION_TEMP_LINK" ]; }; then
-    cleanup_status=1
+    record_cleanup_failure compensation_temp
   fi
   if [ "$status" -ne 0 ] && [ "$RECOVERY_COMPLETE" -ne 1 ]; then
     if [ "$FENCE_CLEANUP_STARTED" -eq 1 ] \
       && [ "$FENCE_CLEANUP_VERIFIED" -ne 1 ]; then
-      cleanup_status=1
+      record_cleanup_failure fence_incomplete
     fi
     if [ "$WORKER_START_ATTEMPTED" -eq 1 ]; then
       cleanup_started_process worker "${AUTOMATION_WORKER_NAME:-invalid}" \
         "$STARTED_WORKER_PID" "$STARTED_WORKER_START_TICKS" \
         "$STARTED_WORKER_PROCESS_IDENTITY" "$STARTED_WORKER_CWD_IDENTITY" 0 \
-        || cleanup_status=1
+        || record_cleanup_failure worker_cleanup
     fi
     if [ "$WEB_START_ATTEMPTED" -eq 1 ] && [ "$FROZEN_WEB_COMMITTED" -ne 1 ]; then
       cleanup_started_process web "${APP_NAME:-invalid}" \
         "$STARTED_WEB_PID" "$STARTED_WEB_START_TICKS" \
         "$STARTED_WEB_PROCESS_IDENTITY" "$STARTED_WEB_CWD_IDENTITY" 1 \
-        || cleanup_status=1
+        || record_cleanup_failure web_cleanup
     fi
     if [ "$FROZEN_WEB_COMMITTED" -ne 1 ] \
       && [ "$CURRENT_SWITCH_ARMED" -eq 1 ] \
       && [ "$cleanup_status" -eq 0 ]; then
-      restore_candidate_before_web_commit || cleanup_status=1
+      restore_candidate_before_web_commit \
+        || record_cleanup_failure candidate_restore
     fi
     if [ "$FROZEN_WEB_COMMITTED" -ne 1 ] \
       && [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 1 ] \
       && [ "$cleanup_status" -eq 0 ]; then
-      verify_precommit_safe_state || cleanup_status=1
+      verify_precommit_safe_state || record_cleanup_failure precommit_verify
     fi
     if [ "$PM2_STATE_MUTATED" -eq 1 ] && [ "$cleanup_status" -eq 0 ]; then
       timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 \
-        || cleanup_status=1
+        || record_cleanup_failure pm2_save
     fi
-    if [ "$cleanup_status" -ne 0 ]; then
-      printf '%s\n' 'cleanup_unverified' >&2
-    else
-      case "$RECOVERY_FAILURE_STAGE" in
+    case "$failure_stage" in
         input)
           printf '%s\n' 'recovery_failed_pre_runtime_input' >&2
           ;;
@@ -291,6 +303,18 @@ finish_recovery() {
         fence_cleanup)
           printf '%s\n' 'recovery_failed_runtime_fence_cleanup' >&2
           ;;
+        fence_unlink)
+          printf '%s\n' 'recovery_failed_runtime_fence_unlink' >&2
+          ;;
+        fence_rmdir)
+          printf '%s\n' 'recovery_failed_runtime_fence_rmdir' >&2
+          ;;
+        fence_post_inventory)
+          printf '%s\n' 'recovery_failed_runtime_fence_post_inventory' >&2
+          ;;
+        fence_post_database)
+          printf '%s\n' 'recovery_failed_runtime_fence_post_database' >&2
+          ;;
         candidate_process_preflight)
           printf '%s\n' 'recovery_failed_runtime_candidate_process_preflight' >&2
           ;;
@@ -347,6 +371,36 @@ finish_recovery() {
           ;;
         *)
           printf '%s\n' 'recovery_failed_stage_invalid' >&2
+          ;;
+    esac
+    if [ "$cleanup_status" -ne 0 ]; then
+      case "$cleanup_reason" in
+        switch_temp)
+          printf '%s\n' 'cleanup_failed_reason_switch_temp' >&2
+          ;;
+        compensation_temp)
+          printf '%s\n' 'cleanup_failed_reason_compensation_temp' >&2
+          ;;
+        fence_incomplete)
+          printf '%s\n' 'cleanup_failed_reason_fence_incomplete' >&2
+          ;;
+        worker_cleanup)
+          printf '%s\n' 'cleanup_failed_reason_worker_cleanup' >&2
+          ;;
+        web_cleanup)
+          printf '%s\n' 'cleanup_failed_reason_web_cleanup' >&2
+          ;;
+        candidate_restore)
+          printf '%s\n' 'cleanup_failed_reason_candidate_restore' >&2
+          ;;
+        precommit_verify)
+          printf '%s\n' 'cleanup_failed_reason_precommit_verify' >&2
+          ;;
+        pm2_save)
+          printf '%s\n' 'cleanup_failed_reason_pm2_save' >&2
+          ;;
+        *)
+          printf '%s\n' 'cleanup_failed_reason_invalid' >&2
           ;;
       esac
     fi
@@ -2024,9 +2078,12 @@ NODE
   [ "$(stat -c '%d:%i:%Y:%Z:%u:%a' -- "$stale_dir" 2>/dev/null || true)" = "$stale_dir_identity" ] || exit 1
   FENCE_CLEANUP_STARTED=1
   FENCE_CLEANUP_VERIFIED=0
+  RECOVERY_FAILURE_STAGE="fence_unlink"
   unlink -- "$stale_log" >/dev/null 2>&1 || exit 1
+  RECOVERY_FAILURE_STAGE="fence_rmdir"
   rmdir -- "$stale_dir" >/dev/null 2>&1 || exit 1
 fi
+RECOVERY_FAILURE_STAGE="fence_post_inventory"
 mapfile -d '' -t post_cleanup_fence_entries < <(
   if find "$SHARED_RUNTIME_DIR" -mindepth 1 -maxdepth 1 \
     -name '.readiness-fence.*' -print0 2>/dev/null; then
@@ -2037,6 +2094,7 @@ mapfile -d '' -t post_cleanup_fence_entries < <(
   && [ "${post_cleanup_fence_entries[-1]}" = "__faolla_post_cleanup_inventory_complete__" ] || exit 1
 unset 'post_cleanup_fence_entries[-1]'
 [ "${#post_cleanup_fence_entries[@]}" -eq 0 ] || exit 1
+RECOVERY_FAILURE_STAGE="fence_post_database"
 verify_database_fence_clear || exit 1
 FENCE_CLEANUP_VERIFIED=1
 printf '%s\n' 'fence_cleanup_verified'
