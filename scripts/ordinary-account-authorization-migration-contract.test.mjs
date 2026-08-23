@@ -34,19 +34,20 @@ function readSourceTree(directory) {
       const target = path.join(directory, entry.name);
       if (entry.isDirectory()) return [readSourceTree(target)];
       if (!entry.isFile() || !/\.(?:ts|tsx)$/.test(entry.name)) return [];
+      if (/\.(?:test|spec)\.(?:ts|tsx)$/.test(entry.name)) return [];
       return [fs.readFileSync(target, "utf8")];
     })
     .join("\n");
 }
 
 function readFunction(source, name) {
-  const expression = new RegExp(
-    `create or replace function\\s+public\\.${name}\\([\\s\\S]+?\\r?\\n\\$\\$;`,
-    "i",
-  );
-  const match = source.match(expression);
-  assert.ok(match, `missing function ${name}`);
-  return match[0];
+  const normalizedSource = source.replace(/\r\n?/g, "\n");
+  const marker = `create or replace function\n  public.${name}(`;
+  const start = normalizedSource.toLowerCase().indexOf(marker);
+  assert.notEqual(start, -1, `missing function ${name}`);
+  const end = normalizedSource.indexOf("\n$$;", start);
+  assert.notEqual(end, -1, `unterminated function ${name}`);
+  return normalizedSource.slice(start, end + 4);
 }
 
 test("personal bindings are canonical one-to-one safe text without an eight-digit restriction", () => {
@@ -305,13 +306,61 @@ test("stage one is additive and does not mutate current identities or policies",
   assert.doesNotMatch(source, /faolla_is_merchant_owner/i);
 });
 
-test("stage one has no application route consumer", () => {
+test("application cutover consumes stage one only through centralized server principals", () => {
   const applicationSource = readSourceTree(
     path.join(process.cwd(), "src", "app"),
   );
+  const runtimeSource = readSourceTree(path.join(process.cwd(), "src"));
   assert.doesNotMatch(
     applicationSource,
-    /ordinaryAccountAuthorization|faolla_resolve_ordinary_account_authorization_v1|faolla_get_ordinary_account_authorization_readiness_v1/,
+    /faolla_(?:resolve|bootstrap|create|bind)_ordinary_account_authorization_v1|faolla_get_ordinary_account_(?:authorization|authoritative_cutover)_readiness_v1/,
+  );
+
+  const serverMerchantSession = fs.readFileSync(
+    path.join(process.cwd(), "src/lib/serverMerchantSession.ts"),
+    "utf8",
+  );
+  const personalSession = fs.readFileSync(
+    path.join(process.cwd(), "src/lib/personalAccountSession.server.ts"),
+    "utf8",
+  );
+  const platformIdentity = fs.readFileSync(
+    path.join(process.cwd(), "src/lib/platformAccountIdentity.ts"),
+    "utf8",
+  );
+  const ordinaryPrincipal = fs.readFileSync(
+    path.join(process.cwd(), "src/lib/ordinaryAccountPrincipal.server.ts"),
+    "utf8",
+  );
+  assert.match(
+    serverMerchantSession,
+    /resolveOrdinaryAccountPlatformIdentity\(adminSupabase, user/,
+  );
+  assert.match(personalSession, /loadActiveOrdinaryAccountAuthorization\(/);
+  assert.match(platformIdentity, /resolveOrdinaryAccountPlatformIdentity\(/);
+  assert.match(
+    platformIdentity,
+    /bootstrapActiveOrdinaryAccountAuthorization\(/,
+  );
+  assert.match(
+    ordinaryPrincipal,
+    /faolla_bootstrap_ordinary_account_authorization_v1/,
+  );
+  assert.match(
+    ordinaryPrincipal,
+    /faolla_create_ordinary_account_authorization_v1/,
+  );
+  assert.doesNotMatch(
+    ordinaryPrincipal,
+    /faolla_bind_ordinary_account_authorization_v1/,
+  );
+  assert.doesNotMatch(
+    runtimeSource,
+    /\.from\(\s*["']merchants["']\s*\)[\s\S]{0,300}?\.insert\(/,
+  );
+  assert.doesNotMatch(
+    runtimeSource,
+    /faolla_bind_ordinary_account_authorization_v1/,
   );
 });
 

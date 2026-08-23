@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import {
   buildPollSnapshot,
   buildPollRoundOverviews,
@@ -21,7 +20,10 @@ import {
 } from "@/lib/merchantPolls";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { getMerchantMembershipsSnapshot } from "@/lib/merchantMemberships.server";
-import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
+import {
+  isFrontendPersonalSessionProofError,
+  resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
+} from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
 import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
@@ -378,9 +380,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const personalSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
-    const frontendProof = personalSession ? null : verifyFrontendAuthProof(body?.frontendAuthProof);
-    const personalProof = frontendProof?.accountType === "personal" ? frontendProof : null;
+    const personalSession =
+      await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+        request,
+        body?.frontendAuthProof,
+      );
     const personalProfile = personalSession
       ? readPersonalCustomerProfileFromSession({
           authenticated: true,
@@ -390,9 +394,9 @@ export async function POST(request: Request) {
         })
       : null;
     const registeredIdentity = {
-      accountId: personalSession?.accountId || personalProof?.accountId || "",
-      userId: personalSession?.userId || personalProof?.userId || "",
-      email: (personalSession?.email || personalProof?.email || "").trim().toLowerCase(),
+      accountId: personalSession?.accountId || "",
+      userId: personalSession?.userId || "",
+      email: (personalSession?.email || "").trim().toLowerCase(),
     };
     const isRegistered = Boolean(registeredIdentity.accountId || registeredIdentity.userId);
     let isMerchantMember = false;
@@ -414,9 +418,8 @@ export async function POST(request: Request) {
     const anonymous = config.allowAnonymous && requestedAnonymous;
     const fallbackMemberName =
       personalProfile?.name ||
-      (personalSession?.email || personalProof?.email || "").split("@")[0] ||
+      (personalSession?.email || "").split("@")[0] ||
       personalSession?.accountId ||
-      personalProof?.accountId ||
       "";
     const participantName = anonymous ? "" : trimText(body?.participantName, 120) || trimText(fallbackMemberName, 120);
     if (!anonymous && !participantName) {
@@ -475,6 +478,9 @@ export async function POST(request: Request) {
     }
     return noStoreJson({ ok: true, ballot, summary }, { status: 201 });
   } catch (error) {
+    if (isFrontendPersonalSessionProofError(error)) {
+      return noStoreJson({ error: error.code }, { status: error.status });
+    }
     return noStoreJson(
       {
         error: isPollStoreUnavailable(error) ? "poll_store_unavailable" : "poll_submit_failed",

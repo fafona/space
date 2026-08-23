@@ -69,7 +69,6 @@ async function resolvePersonalBookingForCalendar(request: Request, bookingId: st
     {
       accountId: session.accountId,
       userId: session.userId,
-      email: session.email,
     },
     { includeAutomationState: true },
   );

@@ -29,6 +29,43 @@ import {
   toPublicMerchantCouponRecord,
   updateMerchantCoupon,
 } from "@/lib/merchantCoupons";
+import { matchesMerchantCouponClaimExpectedIdentity } from "@/lib/merchantCoupons.server";
+
+test("coupon redemption identity ignores email and requires exact stored canonical ids", () => {
+  const claim = {
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "shared@example.com",
+  };
+  assert.equal(
+    matchesMerchantCouponClaimExpectedIdentity(claim, {
+      accountId: "50010105",
+      userId: "11111111-1111-4111-8111-111111111111",
+    }),
+    true,
+  );
+  assert.equal(
+    matchesMerchantCouponClaimExpectedIdentity(claim, {
+      accountId: "50010105",
+      userId: "22222222-2222-4222-8222-222222222222",
+    }),
+    false,
+  );
+  assert.equal(
+    matchesMerchantCouponClaimExpectedIdentity(
+      { accountId: "", userId: "", email: "shared@example.com" },
+      { accountId: "50010105", userId: "11111111-1111-4111-8111-111111111111" },
+    ),
+    false,
+  );
+  assert.equal(
+    matchesMerchantCouponClaimExpectedIdentity(
+      { accountId: "", userId: "", email: "shared@example.com" },
+      {},
+    ),
+    false,
+  );
+});
 
 test("buildMerchantCouponCode creates unique uppercase codes", () => {
   assert.equal(buildMerchantCouponCode("summer sale", ["SUMMERSALE"]), "SUMMERSALE2");
@@ -354,12 +391,24 @@ test("member-only and old-user coupon eligibility uses active identity and coupo
     { status: "active", accountId: "10000002", userId: "user-active", email: "member@example.com" },
   ];
   assert.equal(
-    hasActiveMerchantMembershipForCouponClaim(memberships, { accountId: "10000002" }),
+    hasActiveMerchantMembershipForCouponClaim(memberships, {
+      accountId: "10000002",
+      userId: "user-active",
+    }),
     true,
   );
   assert.equal(
-    hasActiveMerchantMembershipForCouponClaim(memberships, { email: "MEMBER@example.com" }),
-    true,
+    hasActiveMerchantMembershipForCouponClaim(memberships, {
+      email: "MEMBER@example.com",
+    }),
+    false,
+  );
+  assert.equal(
+    hasActiveMerchantMembershipForCouponClaim(memberships, {
+      accountId: "10000002",
+      userId: "user-other",
+    }),
+    false,
   );
   assert.equal(
     hasActiveMerchantMembershipForCouponClaim(memberships, { accountId: "10000001" }),

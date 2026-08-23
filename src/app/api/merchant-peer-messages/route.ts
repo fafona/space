@@ -9,6 +9,12 @@ import {
   upsertMerchantPeerMessage,
 } from "@/lib/merchantPeerInbox";
 import {
+  buildPeerWriteDecoration,
+  buildPersonalPeerDecoration,
+  loadCompletePersonalPeerBindingDirectory,
+  redactPersonalPeerIdentityData,
+} from "@/lib/merchantPeerPrivacy";
+import {
   loadStoredMerchantPeerInbox,
   saveMerchantPeerInbox,
   type MerchantPeerInboxStoreClient,
@@ -35,10 +41,9 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import {
-  readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeHintFromMetadata,
   readPlatformUsernameFromMetadata,
 } from "@/lib/platformAccounts";
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 import {
   loadStoredPlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
@@ -101,6 +106,45 @@ type PersonalPeerDirectory = {
   profilesById: Map<string, PersonalPeerProfile>;
   recordsById: Map<string, ResolvedPeerRecord>;
   recordsByEmail: Map<string, ResolvedPeerRecord[]>;
+  authUserIdsByAccountId: Map<string, string>;
+  knownPersonalAccountIds: Set<string>;
+};
+
+type PersonalBindingRow = {
+  auth_user_id?: unknown;
+  personal_account_id?: unknown;
+  status?: unknown;
+};
+
+type PersonalBindingListResult = {
+  data: PersonalBindingRow[] | null;
+  error: unknown;
+  count: number | null;
+};
+
+type PersonalBindingListQuery = PromiseLike<PersonalBindingListResult> & {
+  select: (
+    columns: string,
+    options: { count: "exact" },
+  ) => PersonalBindingListQuery;
+  eq: (column: string, value: unknown) => PersonalBindingListQuery;
+  order: (
+    column: string,
+    options: { ascending: boolean },
+  ) => PersonalBindingListQuery;
+  range: (from: number, to: number) => PersonalBindingListQuery;
+};
+
+type PersonalPeerDirectoryClient = PlatformIdentitySupabaseClient & {
+  from: (table: string) => PersonalBindingListQuery;
+  auth: PlatformIdentitySupabaseClient["auth"] & {
+    admin: PlatformIdentitySupabaseClient["auth"]["admin"] & {
+      getUserById: (userId: string) => Promise<{
+        data: { user: MerchantAuthUserSummary | null } | null;
+        error: unknown;
+      }>;
+    };
+  };
 };
 
 let personalPeerDirectoryCache:
@@ -164,6 +208,10 @@ function normalizeEmail(value: unknown) {
 function normalizeMerchantId(value: unknown) {
   const normalized = trimText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
+function normalizePeerAccountId(value: unknown) {
+  return typeof value === "string" && /^\d{8}$/.test(value) ? value : "";
 }
 
 function normalizeIsoString(value: unknown) {
@@ -243,9 +291,11 @@ function readPersonalPeerProfile(user: MerchantAuthUserSummary): PersonalPeerPro
     displayName: read("displayName", "display_name", "username", "name"),
     avatarUrl: normalizeStoragePublicUrl(read("avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl")),
     signature: read("signature", "bio"),
-    phone: read("phone", "contact_phone", "contactPhone"),
-    email: read("email", "contact_email", "contactEmail") || normalizeEmail(user.email),
-    contactCard: read("contactCard", "contact_card", "businessCardUrl", "business_card_url"),
+    // Sensitive contact fields require an explicit visibility/relationship
+    // policy. Until that exists, directory lookup never discloses them.
+    phone: "",
+    email: "",
+    contactCard: "",
   };
 }
 
@@ -253,13 +303,25 @@ async function loadPersonalPeerProfiles(
   supabase: PlatformIdentitySupabaseClient | null,
   accountIds: string[],
 ) {
-  const targetIds = new Set(accountIds.map((accountId) => normalizeMerchantId(accountId)).filter(Boolean));
+  const targetIds = new Set(accountIds.map((accountId) => normalizePeerAccountId(accountId)).filter(Boolean));
   const profileMap = new Map<string, PersonalPeerProfile>();
   if (!supabase || targetIds.size === 0) return profileMap;
   const directory = await loadPersonalPeerDirectory(supabase);
   targetIds.forEach((accountId) => {
     const profile = directory.profilesById.get(accountId);
-    if (profile) profileMap.set(accountId, profile);
+    if (profile) {
+      profileMap.set(accountId, profile);
+    } else if (directory.knownPersonalAccountIds.has(accountId)) {
+      profileMap.set(accountId, {
+        accountType: "personal",
+        displayName: "",
+        avatarUrl: "",
+        signature: "",
+        phone: "",
+        email: "",
+        contactCard: "",
+      });
+    }
   });
   return profileMap;
 }
@@ -322,7 +384,9 @@ async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerS
     hintedMerchantEmail: normalizeEmail(hint?.merchantEmail),
     hintedMerchantName: trimText(hint?.merchantName),
   });
-  if (merchantSession) return merchantSession;
+  if (merchantSession) {
+    return { ...merchantSession, accountType: "merchant" as const };
+  }
 
   const authSupabase = createServerSupabaseAuthClient();
   const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
@@ -345,12 +409,11 @@ async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerS
 
   const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
   if (identity.accountType !== "personal" || !identity.accountId) return null;
-
-  return {
-    merchantId: identity.accountId,
-    merchantEmail: normalizeEmail(user.email),
-    merchantName: trimText(hint?.merchantName) || readPlatformUsernameFromMetadata(user) || normalizeEmail(user.email),
-  };
+  return buildPersonalPeerDecoration({
+    accountId: identity.accountId,
+    publicName: readPlatformUsernameFromMetadata(user),
+    privateEmail: user.email,
+  });
 }
 
 function readResolvedMerchantEmail(record: Record<string, unknown> | null | undefined) {
@@ -374,9 +437,12 @@ function toResolvedMerchantRecord(record: Record<string, unknown> | null | undef
   } satisfies ResolvedPeerRecord;
 }
 
-function toResolvedPersonalRecord(user: MerchantAuthUserSummary | null | undefined) {
-  const accountId = readPlatformAccountIdFromMetadata(user);
-  if (!accountId || readPlatformAccountTypeHintFromMetadata(user, "") !== "personal") return null;
+function toResolvedPersonalRecord(
+  user: MerchantAuthUserSummary | null | undefined,
+  authoritativeAccountId: string,
+) {
+  const accountId = normalizePeerAccountId(authoritativeAccountId);
+  if (!accountId) return null;
   const profile = readPersonalPeerProfile(
     user ?? {
       id: "",
@@ -385,12 +451,12 @@ function toResolvedPersonalRecord(user: MerchantAuthUserSummary | null | undefin
       app_metadata: null,
     },
   );
-  return {
-    merchantId: accountId,
-    merchantName: profile.displayName || readPlatformUsernameFromMetadata(user) || normalizeEmail(user?.email) || accountId,
-    merchantEmail: profile.email || normalizeEmail(user?.email),
-    accountType: "personal",
-  } satisfies ResolvedPeerRecord;
+  return buildPersonalPeerDecoration({
+    accountId,
+    publicName:
+      profile.displayName || readPlatformUsernameFromMetadata(user),
+    privateEmail: user?.email,
+  }) satisfies ResolvedPeerRecord;
 }
 
 async function loadPersonalPeerDirectory(
@@ -403,48 +469,92 @@ async function loadPersonalPeerDirectory(
   if (personalPeerDirectoryLoad) return personalPeerDirectoryLoad;
 
   const task = (async () => {
+    const directoryClient = supabase as PersonalPeerDirectoryClient;
     const directory: PersonalPeerDirectory = {
       profilesById: new Map(),
       recordsById: new Map(),
       recordsByEmail: new Map(),
+      authUserIdsByAccountId: new Map(),
+      knownPersonalAccountIds: new Set(),
     };
-    let page = 1;
-    let completed = false;
-    while (true) {
-      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
-        data: null,
-        error: new Error("list_users_failed"),
-      }));
-      if (error) break;
-      const users = data?.users ?? [];
-      for (const user of users) {
-        const summary = toAuthUserSummary(user);
-        if (readPlatformAccountTypeHintFromMetadata(summary, "") !== "personal") continue;
-        const record = toResolvedPersonalRecord(summary);
-        if (!record) continue;
-        const profile = readPersonalPeerProfile(summary);
+    const completeBindings = await loadCompletePersonalPeerBindingDirectory(
+      (from, to) =>
+        Promise.resolve(
+          directoryClient
+            .from("faolla_personal_accounts")
+            .select("auth_user_id,personal_account_id,status", {
+              count: "exact",
+            })
+            .order("personal_account_id", { ascending: true })
+            .range(from, to),
+        ),
+    );
+    completeBindings.forEach((binding) => {
+      directory.knownPersonalAccountIds.add(binding.accountId);
+    });
+    const activeBindings = completeBindings.filter(
+      (binding) => binding.status === "active",
+    );
+    // Canonical rows are candidates only. Revalidate each exact UUID through
+    // the resolver before adding it to a public peer directory.
+    for (let offset = 0; offset < activeBindings.length; offset += 16) {
+      const entries = await Promise.all(
+        activeBindings.slice(offset, offset + 16).map(async (binding) => {
+          const authResult = await directoryClient.auth.admin
+            .getUserById(binding.authUserId)
+            .catch(() => null);
+          const user = authResult && !authResult.error
+            ? authResult.data?.user ?? null
+            : null;
+          if (!user || trimText(user.id) !== binding.authUserId) return null;
+          const summary = toAuthUserSummary({
+            ...user,
+            id: binding.authUserId,
+          });
+          const identity = await resolvePlatformAccountIdentityForUser(
+            supabase,
+            summary,
+          ).catch(() => null);
+          if (
+            !identity ||
+            identity.accountType !== "personal" ||
+            identity.accountId !== binding.accountId
+          ) return null;
+          const record = toResolvedPersonalRecord(
+            summary,
+            identity.accountId,
+          );
+          if (!record) return null;
+          return {
+            summary,
+            record,
+            profile: readPersonalPeerProfile(summary),
+          };
+        }),
+      );
+      entries.forEach((entry) => {
+        if (!entry) return;
+        const { summary, record, profile } = entry;
         directory.profilesById.set(record.merchantId, profile);
         directory.recordsById.set(record.merchantId, record);
-        const emails = new Set([normalizeEmail(summary.email), normalizeEmail(profile.email)].filter(Boolean));
+        directory.authUserIdsByAccountId.set(record.merchantId, summary.id);
+        const emails = new Set(
+          [normalizeEmail(summary.email), normalizeEmail(profile.email)].filter(
+            Boolean,
+          ),
+        );
         emails.forEach((email) => {
           const current = directory.recordsByEmail.get(email) ?? [];
           if (!current.some((item) => item.merchantId === record.merchantId)) {
             directory.recordsByEmail.set(email, [...current, record]);
           }
         });
-      }
-      if (users.length < 200) {
-        completed = true;
-        break;
-      }
-      page += 1;
+      });
     }
-    if (completed) {
-      personalPeerDirectoryCache = {
-        expiresAt: Date.now() + PERSONAL_PEER_DIRECTORY_CACHE_TTL_MS,
-        value: directory,
-      };
-    }
+    personalPeerDirectoryCache = {
+      expiresAt: Date.now() + PERSONAL_PEER_DIRECTORY_CACHE_TTL_MS,
+      value: directory,
+    };
     return directory;
   })();
   personalPeerDirectoryLoad = task;
@@ -508,13 +618,34 @@ async function resolvePersonalById(
   supabase: PlatformIdentitySupabaseClient | null,
   accountId: string,
 ) {
-  const normalizedAccountId = normalizeMerchantId(accountId);
+  const normalizedAccountId = normalizeCanonicalPersonalAccountId(accountId);
   if (!supabase || !normalizedAccountId) return null;
-  const directory = await loadPersonalPeerDirectory(supabase);
-  const cachedRecord = directory.recordsById.get(normalizedAccountId) ?? null;
-  if (cachedRecord) return cachedRecord;
-  const refreshedDirectory = await loadPersonalPeerDirectory(supabase, { forceRefresh: true });
-  return refreshedDirectory.recordsById.get(normalizedAccountId) ?? null;
+  let directory = await loadPersonalPeerDirectory(supabase);
+  if (!directory.recordsById.has(normalizedAccountId)) {
+    directory = await loadPersonalPeerDirectory(supabase, { forceRefresh: true });
+  }
+  const authUserId =
+    directory.authUserIdsByAccountId.get(normalizedAccountId) ?? "";
+  if (!authUserId) return null;
+  const directoryClient = supabase as PersonalPeerDirectoryClient;
+  const authResult = await directoryClient.auth.admin
+    .getUserById(authUserId)
+    .catch(() => null);
+  const user = authResult && !authResult.error
+    ? authResult.data?.user ?? null
+    : null;
+  if (!user || trimText(user.id) !== authUserId) return null;
+  const summary = toAuthUserSummary({ ...user, id: authUserId });
+  const identity = await resolvePlatformAccountIdentityForUser(
+    supabase,
+    summary,
+  ).catch(() => null);
+  if (
+    !identity ||
+    identity.accountType !== "personal" ||
+    identity.accountId !== normalizedAccountId
+  ) return null;
+  return toResolvedPersonalRecord(summary, identity.accountId);
 }
 
 async function resolvePersonalByEmail(
@@ -531,10 +662,14 @@ async function resolvePersonalByEmail(
     const refreshedDirectory = await loadPersonalPeerDirectory(supabase, { forceRefresh: true });
     resolved = refreshedDirectory.recordsByEmail.get(normalizedEmail) ?? [];
   }
-  return {
-    record: resolved[0] ?? null,
-    ambiguous: resolved.length > 1,
-  };
+  const fresh = (
+    await Promise.all(
+      resolved.map((record) =>
+        resolvePersonalById(supabase, record.merchantId),
+      ),
+    )
+  ).filter((record) => record !== null);
+  return { record: fresh[0] ?? null, ambiguous: fresh.length > 1 };
 }
 
 async function resolveMerchantByExactQuery(
@@ -572,12 +707,20 @@ async function resolvePeerById(
   supabase: ReturnType<typeof createServerSupabaseServiceClient> | null,
   accountId: string,
 ) {
-  const normalizedAccountId = normalizeMerchantId(accountId);
-  if (!supabase || !normalizedAccountId) return null;
+  const normalizedAccountId = normalizePeerAccountId(accountId);
+  if (!supabase || !normalizedAccountId) {
+    return { record: null, ambiguous: false };
+  }
   const identitySupabase = supabase as unknown as PlatformIdentitySupabaseClient | null;
 
-  const merchantRecord = await resolveMerchantById(supabase, normalizedAccountId);
-  return merchantRecord ?? (await resolvePersonalById(identitySupabase, normalizedAccountId));
+  const [merchantRecord, personalRecord] = await Promise.all([
+    resolveMerchantById(supabase, normalizedAccountId),
+    resolvePersonalById(identitySupabase, normalizedAccountId),
+  ]);
+  if (merchantRecord && personalRecord) {
+    return { record: null, ambiguous: true };
+  }
+  return { record: merchantRecord ?? personalRecord, ambiguous: false };
 }
 
 async function resolvePeerContact(
@@ -588,7 +731,7 @@ async function resolvePeerContact(
     preferredAccountType?: unknown;
   },
 ) {
-  const accountId = normalizeMerchantId(input.accountId);
+  const accountId = normalizePeerAccountId(input.accountId);
   const email = normalizeEmail(input.email);
   const preferredAccountType =
     input.preferredAccountType === "personal"
@@ -599,23 +742,17 @@ async function resolvePeerContact(
   const identitySupabase = supabase as unknown as PlatformIdentitySupabaseClient | null;
 
   if (accountId) {
-    if (preferredAccountType === "personal") {
-      const personalRecord = await resolvePersonalById(identitySupabase, accountId);
-      const merchantRecord = personalRecord ? null : await resolveMerchantById(supabase, accountId);
-      return {
-        record: personalRecord ?? merchantRecord,
-        error: null,
-      };
+    const resolved = await resolvePeerById(supabase, accountId);
+    if (resolved.ambiguous) {
+      return { record: null, error: "search_ambiguous" as const };
     }
-    if (preferredAccountType === "merchant") {
-      const merchantRecord = await resolveMerchantById(supabase, accountId);
-      const personalRecord = merchantRecord ? null : await resolvePersonalById(identitySupabase, accountId);
-      return {
-        record: merchantRecord ?? personalRecord,
-        error: null,
-      };
+    if (
+      preferredAccountType &&
+      resolved.record?.accountType !== preferredAccountType
+    ) {
+      return { record: null, error: null };
     }
-    return { record: await resolvePeerById(supabase, accountId), error: null };
+    return { record: resolved.record, error: null };
   }
 
   if (!email || !email.includes("@")) {
@@ -652,17 +789,43 @@ async function buildInboxResponse(
   readStatePayload?: MerchantSupportReadStatePayload | null,
   options?: { threadMessageLimit?: number },
 ) {
-  const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
-  const contactMerchantIds = contacts.map((contact) => contact.merchantId);
+  const initialContacts = listMerchantPeerContactsForMerchant(payload, merchantId);
+  const contactMerchantIds = initialContacts.map((contact) => contact.merchantId);
   const [personalProfiles, merchantProfiles] = await Promise.all([
-    loadPersonalPeerProfiles(supabase ?? null, contactMerchantIds),
+    loadPersonalPeerProfiles(supabase ?? null, [merchantId, ...contactMerchantIds]),
     loadMerchantPeerProfiles(supabase ?? null, contactMerchantIds),
   ]);
+  const personalAccountIds = new Set(personalProfiles.keys());
+  const responsePayload = redactPersonalPeerIdentityData(
+    payload,
+    personalAccountIds,
+  );
+  const contacts = listMerchantPeerContactsForMerchant(
+    responsePayload,
+    merchantId,
+  );
   const enrichedContacts = contacts.map((contact) => {
     const personalProfile = personalProfiles.get(contact.merchantId);
     const merchantProfile = merchantProfiles.get(contact.merchantId);
     const peerProfile = personalProfile ?? merchantProfile ?? null;
     if (!peerProfile) return contact;
+    if (personalProfile) {
+      const personalDecoration = buildPersonalPeerDecoration({
+        accountId: contact.merchantId,
+        publicName: personalProfile.displayName,
+      });
+      return {
+        ...contact,
+        accountType: "personal" as const,
+        merchantName: personalDecoration.merchantName,
+        merchantEmail: "",
+        avatarImageUrl: personalProfile.avatarUrl,
+        chatAvatarImageUrl: personalProfile.avatarUrl,
+        signature: personalProfile.signature,
+        contactPhone: "",
+        contactCard: "",
+      };
+    }
     return {
       ...contact,
       accountType: peerProfile.accountType,
@@ -690,7 +853,7 @@ async function buildInboxResponse(
     };
   });
   const threadMessageLimit = Math.max(1, options?.threadMessageLimit ?? MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT);
-  const threads = listMerchantPeerThreadsForMerchant(payload, merchantId).map((thread) => ({
+  const threads = listMerchantPeerThreadsForMerchant(responsePayload, merchantId).map((thread) => ({
     ...thread,
     messages: thread.messages.slice(-threadMessageLimit),
   }));
@@ -719,11 +882,34 @@ export async function GET(request: Request) {
     loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
   ]);
   const url = new URL(request.url);
-  const contactMerchantId = normalizeMerchantId(url.searchParams.get("contactMerchantId"));
+  const contactMerchantId = normalizePeerAccountId(url.searchParams.get("contactMerchantId"));
+  let inboxResponse: Awaited<ReturnType<typeof buildInboxResponse>>;
+  try {
+    inboxResponse = await buildInboxResponse(
+      payload,
+      session.merchantId,
+      supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+      readStatePayload,
+      contactMerchantId
+        ? { threadMessageLimit: Number.MAX_SAFE_INTEGER }
+        : undefined,
+    );
+  } catch {
+    return noStoreJson(
+      { error: "personal_peer_directory_unavailable" },
+      { status: 503 },
+    );
+  }
   if (contactMerchantId) {
     const offset = normalizeNonNegativeInteger(url.searchParams.get("offset"));
     const limit = normalizePositiveInteger(url.searchParams.get("limit"), MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT, 200);
-    const fullThread = findMerchantPeerThreadForMerchants(payload, session.merchantId, contactMerchantId);
+    const fullThread = inboxResponse.threads.find(
+      (thread) =>
+        thread.threadKey ===
+        [session.merchantId, contactMerchantId]
+          .sort((left, right) => left.localeCompare(right, "en"))
+          .join("::"),
+    ) ?? null;
     const windowResult = readMerchantPeerThreadWindow(fullThread, offset, limit);
     return noStoreJson({
       ok: true,
@@ -739,12 +925,7 @@ export async function GET(request: Request) {
     });
   }
   return noStoreJson({
-    ...(await buildInboxResponse(
-      payload,
-      session.merchantId,
-      supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
-      readStatePayload,
-    )),
+    ...inboxResponse,
     currentMerchantId: session.merchantId,
     currentMerchantEmail: session.merchantEmail,
   });
@@ -785,7 +966,7 @@ export async function POST(request: Request) {
   const action = trimText(body?.action);
 
   if (action === "mark_read") {
-    const contactMerchantId = normalizeMerchantId(body?.contactMerchantId);
+    const contactMerchantId = normalizePeerAccountId(body?.contactMerchantId);
     const requestedLastReadAt = normalizeIsoString(body?.lastReadAt);
     if (!contactMerchantId || !requestedLastReadAt || contactMerchantId === session.merchantId) {
       return noStoreJson({ error: "merchant_read_state_invalid" }, { status: 400 });
@@ -922,12 +1103,22 @@ export async function POST(request: Request) {
       loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
       loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
     ]);
-    const nextPayload = upsertMerchantPeerContact(payload, {
+    const contactDecoration = buildPeerWriteDecoration(
+      resolved.record,
+      body?.contactName,
+      body?.contactEmail,
+    );
+    let nextPayload = upsertMerchantPeerContact(payload, {
       ownerMerchantId: session.merchantId,
       contactMerchantId: resolved.record.merchantId,
-      contactName: trimText(body?.contactName) || resolved.record.merchantName,
-      contactEmail: normalizeEmail(body?.contactEmail) || resolved.record.merchantEmail,
+      contactName: contactDecoration.merchantName,
+      contactEmail: contactDecoration.merchantEmail,
     });
+    if (resolved.record.accountType === "personal") {
+      nextPayload = redactPersonalPeerIdentityData(nextPayload, [
+        resolved.record.merchantId,
+      ]);
+    }
     const saveResult = await saveMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient, nextPayload);
     if (saveResult.error) {
       return noStoreJson(
@@ -950,7 +1141,7 @@ export async function POST(request: Request) {
 
   if (action === "send") {
     const text = normalizeSupportText(body?.text);
-    const recipientMerchantId = normalizeMerchantId(body?.recipientMerchantId);
+    const recipientMerchantId = normalizePeerAccountId(body?.recipientMerchantId);
     if (!recipientMerchantId || !text) {
       return noStoreJson({ error: "merchant_message_invalid" }, { status: 400 });
     }
@@ -958,7 +1149,7 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "cannot_chat_with_self", message: "不能给自己发送消息。" }, { status: 400 });
     }
 
-    const [recipient, senderRecord, payload, readStatePayload] = await Promise.all([
+    const [recipientResolution, senderResolution, payload, readStatePayload] = await Promise.all([
       resolvePeerById(
         supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
         recipientMerchantId,
@@ -970,29 +1161,54 @@ export async function POST(request: Request) {
       loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
       loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
     ]);
+    if (recipientResolution.ambiguous) {
+      return noStoreJson(
+        { error: "peer_identity_conflict" },
+        { status: 409 },
+      );
+    }
+    const recipient = recipientResolution.record;
     if (!recipient) {
       return noStoreJson({ error: "merchant_not_found", message: "目标商户不存在。" }, { status: 404 });
     }
-    const sender =
-      senderRecord ??
-      ({
-        merchantId: session.merchantId,
-        merchantName: trimText(body?.merchantName) || session.merchantName || session.merchantId,
-        merchantEmail: normalizeEmail(body?.merchantEmail) || session.merchantEmail,
-        accountType: "merchant",
-      } satisfies ResolvedPeerRecord);
-    const nextPayload = upsertMerchantPeerMessage(payload, {
+    if (
+      senderResolution.ambiguous ||
+      !senderResolution.record ||
+      senderResolution.record.accountType !== session.accountType
+    ) {
+      return noStoreJson(
+        { error: "peer_sender_identity_conflict" },
+        { status: 409 },
+      );
+    }
+    const sender = senderResolution.record;
+    const senderDecoration = buildPeerWriteDecoration(
+      sender,
+      body?.merchantName,
+      body?.merchantEmail,
+    );
+    const recipientDecoration = buildPeerWriteDecoration(recipient);
+    let nextPayload = upsertMerchantPeerMessage(payload, {
       senderMerchantId: sender.merchantId,
-      senderMerchantName: trimText(body?.merchantName) || sender.merchantName,
-      senderMerchantEmail: normalizeEmail(body?.merchantEmail) || sender.merchantEmail,
+      senderMerchantName: senderDecoration.merchantName,
+      senderMerchantEmail: senderDecoration.merchantEmail,
       recipientMerchantId: recipient.merchantId,
-      recipientMerchantName: recipient.merchantName,
-      recipientMerchantEmail: recipient.merchantEmail,
+      recipientMerchantName: recipientDecoration.merchantName,
+      recipientMerchantEmail: recipientDecoration.merchantEmail,
       message: createMerchantPeerMessage({
         senderMerchantId: sender.merchantId,
         text,
       }),
     });
+    const personalParticipantIds = [sender, recipient]
+      .filter((record) => record.accountType === "personal")
+      .map((record) => record.merchantId);
+    if (personalParticipantIds.length > 0) {
+      nextPayload = redactPersonalPeerIdentityData(
+        nextPayload,
+        personalParticipantIds,
+      );
+    }
     const saveResult = await saveMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient, nextPayload);
     if (saveResult.error) {
       return noStoreJson(

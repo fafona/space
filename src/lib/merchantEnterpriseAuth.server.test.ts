@@ -5,12 +5,14 @@ import test from "node:test";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import {
   MerchantEnterpriseAccessError,
+  hasAuthoritativeMerchantEnterpriseOwnership,
   readMerchantEnterpriseRequestAccessTokens,
   requireMerchantEnterpriseAllBoardAccess,
   requireMerchantEnterpriseBoardAccess,
   requireMerchantEnterpriseEntitlement,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
+import type { OrdinaryAccountAuthorizationStoreClient } from "@/lib/ordinaryAccountAuthorization.server";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import {
   createEnterpriseBrowserAuthStorageAdapter,
@@ -105,6 +107,118 @@ test("enterprise entitlement uses only the injected authoritative current snapsh
   );
 });
 
+test("enterprise ownership trusts only the authoritative ordinary resolver", async () => {
+  const authUserId = "11111111-1111-4111-8111-111111111111";
+  const client = (result: { data: unknown; error: unknown }) => ({
+    async rpc() { return result; },
+  }) satisfies OrdinaryAccountAuthorizationStoreClient;
+
+  assert.equal(
+    await hasAuthoritativeMerchantEnterpriseOwnership(
+      client({
+        data: {
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "merchant",
+          merchantIds: ["10000000", "10000001"],
+          personalAccountId: null,
+        },
+        error: null,
+      }),
+      authUserId,
+      "10000001",
+    ),
+    true,
+  );
+  assert.equal(
+    await hasAuthoritativeMerchantEnterpriseOwnership(
+      client({
+        data: {
+          schemaVersion: 1,
+          status: "resolved",
+          accountType: "merchant",
+          merchantIds: ["10000000"],
+          personalAccountId: null,
+        },
+        error: null,
+      }),
+      authUserId,
+      "10000001",
+    ),
+    false,
+  );
+  assert.equal(
+    await hasAuthoritativeMerchantEnterpriseOwnership(
+      client({
+        data: null,
+        error: { message: "ordinary_account_staff_identity_forbidden" },
+      }),
+      authUserId,
+      "10000001",
+    ),
+    false,
+  );
+
+  for (const result of [
+    {
+      data: {
+        schemaVersion: 1,
+        status: "unbound",
+        accountType: null,
+        merchantIds: [],
+        personalAccountId: null,
+      },
+      error: null,
+    },
+    {
+      data: {
+        schemaVersion: 1,
+        status: "disabled",
+        accountType: "personal",
+        merchantIds: [],
+        personalAccountId: "50010105",
+      },
+      error: null,
+    },
+    {
+      data: null,
+      error: { message: "ordinary_account_merchant_binding_conflict" },
+    },
+  ]) {
+    await assert.rejects(
+      () =>
+        hasAuthoritativeMerchantEnterpriseOwnership(
+          client(result),
+          authUserId,
+          "10000001",
+        ),
+      (error: unknown) =>
+        error instanceof MerchantEnterpriseAccessError &&
+        error.code === "merchant_access_denied" &&
+        error.status === 403,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      hasAuthoritativeMerchantEnterpriseOwnership(
+        client({
+          data: null,
+          error: {
+            code: "PGRST202",
+            message: "faolla_resolve_ordinary_account_authorization_v1 missing",
+          },
+        }),
+        authUserId,
+        "10000001",
+      ),
+    (error: unknown) =>
+      error instanceof MerchantEnterpriseAccessError &&
+      error.code === "enterprise_auth_unavailable" &&
+      error.status === 503,
+  );
+});
+
 test("enterprise actor resolution is read-only and gates before membership lookup", () => {
   const source = readFileSync(
     join(process.cwd(), "src/lib/merchantEnterpriseAuth.server.ts"),
@@ -119,6 +233,8 @@ test("enterprise actor resolution is read-only and gates before membership looku
 
   assert.ok(gateIndex >= 0);
   assert.ok(employeeLookupIndex > gateIndex);
+  assert.doesNotMatch(source, /strictOwnerFilter|\.or\(ownerFilter\)/);
+  assert.match(source, /hasAuthoritativeMerchantEnterpriseOwnership/);
   assert.equal(source.includes(".update({"), false);
   assert.match(source, /\.eq\("status", "active"\)/);
   assert.match(

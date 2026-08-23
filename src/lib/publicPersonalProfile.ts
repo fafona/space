@@ -1,9 +1,7 @@
-import {
-  normalizePlatformAccountNumericId,
-  readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeFromMetadata,
-} from "@/lib/platformAccounts";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
+import type { OrdinaryAccountAuthorizationStoreClient } from "@/lib/ordinaryAccountAuthorization.server";
+import { loadActiveOrdinaryAccountAuthorization } from "@/lib/ordinaryAccountPrincipal.server";
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 type AuthUserRecord = {
@@ -13,17 +11,29 @@ type AuthUserRecord = {
   app_metadata?: Record<string, unknown> | null;
 };
 
-type AdminListUsersResult = {
-  data: { users: AuthUserRecord[] } | null;
-  error: Error | null;
+type PersonalBindingQueryResult = {
+  data: { auth_user_id?: unknown; personal_account_id?: unknown; status?: unknown } | null;
+  error: unknown;
 };
 
-export type PersonalPublicProfileSupabaseClient = {
+type PersonalBindingQuery = {
+  select: (columns: string) => PersonalBindingQuery;
+  eq: (column: string, value: unknown) => PersonalBindingQuery;
+  limit: (count: number) => PersonalBindingQuery;
+  maybeSingle: () => Promise<PersonalBindingQueryResult>;
+};
+
+export type PersonalPublicProfileSupabaseClient =
+  OrdinaryAccountAuthorizationStoreClient & {
   auth: {
     admin: {
-      listUsers: (params: { page: number; perPage: number }) => Promise<AdminListUsersResult>;
+      getUserById: (userId: string) => Promise<{
+        data: { user: AuthUserRecord | null } | null;
+        error: unknown;
+      }>;
     };
   };
+  from: (table: string) => PersonalBindingQuery;
 };
 
 export type PublicPersonalProfile = {
@@ -46,6 +56,20 @@ function readMetadataString(metadata: Record<string, unknown> | null | undefined
   return "";
 }
 
+function readMetadataRecord(
+  metadata: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+) {
+  if (!metadata || typeof metadata !== "object") return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
 function readPublicPersonalProfile(user: MerchantAuthUserSummary | null | undefined, accountId: string) {
   const userMetadata = user?.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : null;
   const appMetadata = user?.app_metadata && typeof user.app_metadata === "object" ? user.app_metadata : null;
@@ -53,6 +77,15 @@ function readPublicPersonalProfile(user: MerchantAuthUserSummary | null | undefi
     userMetadata?.personal_profile && typeof userMetadata.personal_profile === "object"
       ? (userMetadata.personal_profile as Record<string, unknown>)
       : null;
+  const publicVisibility =
+    readMetadataRecord(profile, "publicVisibility", "public_visibility") ??
+    readMetadataRecord(
+      userMetadata,
+      "personalProfilePublicVisibility",
+      "personal_profile_public_visibility",
+    );
+  const isExplicitlyPublic = (field: "country" | "province" | "city") =>
+    publicVisibility?.[field] === true;
   const displayName =
     readMetadataString(profile, "displayName", "display_name", "username", "name") ||
     readMetadataString(userMetadata, "displayName", "display_name", "username", "name") ||
@@ -67,11 +100,19 @@ function readPublicPersonalProfile(user: MerchantAuthUserSummary | null | undefi
     ),
     signature:
       readMetadataString(profile, "signature", "bio") || readMetadataString(userMetadata, "signature", "bio"),
-    country: readMetadataString(profile, "country") || readMetadataString(userMetadata, "country"),
+    country: isExplicitlyPublic("country")
+      ? readMetadataString(profile, "country") || readMetadataString(userMetadata, "country")
+      : "",
     province:
-      readMetadataString(profile, "province", "state") || readMetadataString(userMetadata, "province", "state"),
-    city: readMetadataString(profile, "city") || readMetadataString(userMetadata, "city"),
-    address: readMetadataString(profile, "address", "contactAddress") || readMetadataString(userMetadata, "address", "contactAddress"),
+      isExplicitlyPublic("province")
+        ? readMetadataString(profile, "province", "state") || readMetadataString(userMetadata, "province", "state")
+        : "",
+    city: isExplicitlyPublic("city")
+      ? readMetadataString(profile, "city") || readMetadataString(userMetadata, "city")
+      : "",
+    // Street-level addresses are deliberately outside the public allowlist.
+    // Legacy records have no visibility contract and remain private.
+    address: "",
   } satisfies PublicPersonalProfile;
 }
 
@@ -79,40 +120,46 @@ export async function loadPublicPersonalProfileByAccountId(
   supabase: PersonalPublicProfileSupabaseClient | null,
   accountId: string,
 ): Promise<PublicPersonalProfile | null> {
-  const normalizedAccountId = normalizePlatformAccountNumericId(accountId);
+  const normalizedAccountId = normalizeCanonicalPersonalAccountId(accountId);
   if (!supabase || !normalizedAccountId) return null;
 
-  let page = 1;
-  while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) return null;
-    const users = data?.users ?? [];
-    const matched = users.find((user) => {
-      const summary = {
-        id: user.id,
-        email: user.email ?? null,
-        user_metadata: user.user_metadata ?? null,
-        app_metadata: user.app_metadata ?? null,
-      } satisfies MerchantAuthUserSummary;
-      return (
-        readPlatformAccountTypeFromMetadata(summary, "") === "personal" &&
-        readPlatformAccountIdFromMetadata(summary) === normalizedAccountId
-      );
-    });
-    if (matched) {
-      return readPublicPersonalProfile(
-        {
-          id: matched.id,
-          email: matched.email ?? null,
-          user_metadata: matched.user_metadata ?? null,
-          app_metadata: matched.app_metadata ?? null,
-        },
-        normalizedAccountId,
-      );
-    }
-    if (users.length < 200) break;
-    page += 1;
-  }
+  const binding = await supabase
+    .from("faolla_personal_accounts")
+    .select("auth_user_id,personal_account_id,status")
+    .eq("personal_account_id", normalizedAccountId)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle()
+    .catch(() => null);
+  const authUserId =
+    binding && !binding.error && typeof binding.data?.auth_user_id === "string"
+      ? binding.data.auth_user_id.trim()
+      : "";
+  if (!authUserId) return null;
 
-  return null;
+  const authUserResult = await supabase.auth.admin
+    .getUserById(authUserId)
+    .catch(() => null);
+  const user = authUserResult && !authUserResult.error
+    ? authUserResult.data?.user ?? null
+    : null;
+  if (!user || user.id !== authUserId) return null;
+  const summary = {
+    id: user.id,
+    email: user.email ?? null,
+    user_metadata: user.user_metadata ?? null,
+    app_metadata: user.app_metadata ?? null,
+  } satisfies MerchantAuthUserSummary;
+  const authorization = await loadActiveOrdinaryAccountAuthorization(
+    supabase,
+    summary,
+  ).catch(() => null);
+  if (
+    !authorization ||
+    authorization.accountType !== "personal" ||
+    authorization.personalAccountId !== normalizedAccountId
+  ) {
+    return null;
+  }
+  return readPublicPersonalProfile(summary, normalizedAccountId);
 }

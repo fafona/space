@@ -1,10 +1,13 @@
-import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import {
+  createServerSupabaseAuthClient,
+  createServerSupabaseServiceClient,
+} from "@/lib/superAdminServer";
 import {
   readMerchantAuthCookie,
   readMerchantAuthMerchantIdCookie,
   readMerchantRequestAccessTokens,
 } from "@/lib/merchantAuthSession";
-import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
+import { resolveOrdinaryAccountPlatformIdentity } from "@/lib/ordinaryAccountPrincipal.server";
 
 type AuthUserSummary = {
   id?: string | null;
@@ -13,32 +16,10 @@ type AuthUserSummary = {
   app_metadata?: Record<string, unknown> | null;
 };
 
-type CachedMerchantSession = {
-  authUserId: string;
-  merchantId: string;
-  merchantEmail: string;
-  merchantName: string;
-};
-
 type MerchantSessionHintInput = {
   hintedMerchantId?: string | null;
   hintedMerchantEmail?: string | null;
   hintedMerchantName?: string | null;
-};
-
-type MerchantAuthorizationRecord = {
-  id?: unknown;
-  user_id?: unknown;
-  auth_user_id?: unknown;
-  owner_user_id?: unknown;
-  owner_id?: unknown;
-  auth_id?: unknown;
-  created_by?: unknown;
-  created_by_user_id?: unknown;
-  email?: unknown;
-  owner_email?: unknown;
-  contact_email?: unknown;
-  user_email?: unknown;
 };
 
 export type ResolvedMerchantSession = {
@@ -47,21 +28,30 @@ export type ResolvedMerchantSession = {
   merchantName: string;
 };
 
-const MERCHANT_SESSION_CACHE_TTL_MS = 20_000;
-const MERCHANT_SESSION_LOOKUP_TIMEOUT_MS = 3_500;
-const MERCHANT_SESSION_HINT_LOOKUP_TIMEOUT_MS = 2_000;
-const MERCHANT_AUTHORIZATION_SELECT =
-  "id,user_id,auth_user_id,owner_user_id,owner_id,auth_id,created_by,created_by_user_id,email,owner_email,contact_email,user_email";
-const merchantSessionCache = new Map<string, { expiresAt: number; session: CachedMerchantSession }>();
-const merchantSessionInflight = new Map<string, Promise<ResolvedMerchantSession | null>>();
+export type ResolvedMerchantPrincipal = ResolvedMerchantSession & {
+  merchantIds: string[];
+};
 
-async function withTimeout<T>(task: PromiseLike<T>, timeoutMs: number, fallback: T): Promise<T> {
+const MERCHANT_SESSION_LOOKUP_TIMEOUT_MS = 4_500;
+const merchantSessionInflight = new Map<
+  string,
+  Promise<ResolvedMerchantPrincipal | null>
+>();
+
+async function withTimeout<T>(
+  task: PromiseLike<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     return await Promise.race([
       Promise.resolve(task),
       new Promise<T>((resolve) => {
-        timeoutId = setTimeout(() => resolve(fallback), Math.max(500, timeoutMs));
+        timeoutId = setTimeout(
+          () => resolve(fallback),
+          Math.max(500, timeoutMs),
+        );
       }),
     ]);
   } finally {
@@ -81,345 +71,116 @@ function normalizeEmail(...values: Array<string | null | undefined>) {
   return "";
 }
 
-function normalizeMerchantId(value: unknown) {
-  const normalized = trimText(value);
-  return /^\d{8}$/.test(normalized) ? normalized : "";
-}
-
-function readMetadataString(metadata: Record<string, unknown> | null | undefined, ...keys: string[]) {
-  if (!metadata || typeof metadata !== "object") return "";
-  for (const key of keys) {
-    const value = metadata[key];
-    if (typeof value !== "string") continue;
-    const normalized = value.trim();
-    if (normalized) return normalized;
-  }
-  return "";
-}
-
-function readMerchantIdFromMetadata(user: AuthUserSummary | null) {
-  const candidate =
-    readMetadataString(user?.user_metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId") ||
-    readMetadataString(user?.app_metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
-  return /^\d{8}$/.test(candidate) ? candidate : "";
-}
-
-function buildCacheKey(accessToken: string, hintedMerchantId: string) {
-  if (!accessToken) return "";
-  return `${accessToken}::${hintedMerchantId || "default"}`;
-}
-
-function readCachedSession(accessToken: string, hintedMerchantId: string) {
-  const cacheKey = buildCacheKey(accessToken, hintedMerchantId);
-  if (!cacheKey) return null;
-  const cached = merchantSessionCache.get(cacheKey) ?? null;
-  if (!cached) return null;
-  if (cached.expiresAt <= Date.now()) {
-    merchantSessionCache.delete(cacheKey);
-    return null;
-  }
-  return cached.session;
-}
-
-function writeCachedSession(
-  accessToken: string,
-  hintedMerchantId: string,
-  session: CachedMerchantSession,
+function readMerchantSessionHints(
+  request: Request,
+  hintInput?: MerchantSessionHintInput,
 ) {
-  const cacheKey = buildCacheKey(accessToken, hintedMerchantId);
-  if (!cacheKey) return;
-  merchantSessionCache.set(cacheKey, {
-    expiresAt: Date.now() + MERCHANT_SESSION_CACHE_TTL_MS,
-    session,
-  });
-}
-
-export function merchantAuthorizationRecordMatchesUser(
-  record: MerchantAuthorizationRecord | null | undefined,
-  user: AuthUserSummary | null | undefined,
-) {
-  if (!record || !user) return false;
-
-  const userId = trimText(user.id);
-  if (
-    userId &&
-    [
-      record.user_id,
-      record.auth_user_id,
-      record.owner_user_id,
-      record.owner_id,
-      record.auth_id,
-      record.created_by,
-      record.created_by_user_id,
-    ].some((value) => trimText(value) === userId)
-  ) {
-    return true;
-  }
-
-  const userEmail = normalizeEmail(user.email);
-  return Boolean(
-    userEmail &&
-      [record.email, record.owner_email, record.contact_email, record.user_email].some(
-        (value) => normalizeEmail(trimText(value)) === userEmail,
-      ),
-  );
-}
-
-async function resolveAuthorizedHintedMerchantId(
-  user: AuthUserSummary | null,
-  hintedMerchantId: string,
-) {
-  if (!user || !hintedMerchantId) return "";
-
-  const supabase = createServerSupabaseServiceClient();
-  if (!supabase) return "";
-
-  const result = await withTimeout(
-    supabase
-      .from("merchants")
-      .select(MERCHANT_AUTHORIZATION_SELECT)
-      .eq("id", hintedMerchantId)
-      .limit(1)
-      .maybeSingle(),
-    MERCHANT_SESSION_HINT_LOOKUP_TIMEOUT_MS,
-    { data: null, error: null, count: null, status: 504, statusText: "Gateway Timeout" },
-  );
-  if (result.error || !result.data) return "";
-
-  const record = result.data as MerchantAuthorizationRecord;
-  if (normalizeMerchantId(record.id) !== hintedMerchantId) return "";
-  return merchantAuthorizationRecordMatchesUser(record, user) ? hintedMerchantId : "";
-}
-
-async function resolveMerchantIdForUser(user: AuthUserSummary | null) {
-  if (!user) return "";
-  const fromMetadata = readMerchantIdFromMetadata(user);
-  if (fromMetadata) return fromMetadata;
-
-  const supabase = createServerSupabaseServiceClient();
-  if (!supabase) return "";
-
-  const candidates: string[] = [];
-  const push = (value: unknown) => {
-    const normalized = normalizeMerchantId(value);
-    if (!normalized || candidates.includes(normalized)) return;
-    candidates.push(normalized);
-  };
-
-  const userId = trimText(user.id);
-  const email = normalizeEmail(user.email);
-  const lookupTasks: Array<PromiseLike<{ data?: unknown; error?: { message?: string } | null }>> = [];
-
-  if (userId) {
-    [
-      "user_id",
-      "auth_user_id",
-      "owner_user_id",
-      "owner_id",
-      "auth_id",
-      "created_by",
-      "created_by_user_id",
-    ].forEach((column) => {
-      lookupTasks.push(supabase.from("merchants").select("id").eq(column, userId).limit(1).maybeSingle());
-    });
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookupTasks.push(supabase.from("merchants").select("id").eq(column, email).limit(1).maybeSingle());
-    });
-  }
-
-  const settled = await withTimeout(
-    Promise.allSettled(lookupTasks),
-    MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
-    [] as PromiseSettledResult<{ data?: unknown; error?: { message?: string } | null }>[],
-  );
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled" || result.value.error) return;
-    const record = (result.value.data ?? null) as { id?: unknown } | null;
-    push(record?.id);
-  });
-
-  return candidates[0] ?? "";
-}
-
-async function listAuthorizedMerchantIdsForUser(user: AuthUserSummary | null) {
-  if (!user) return [];
-
-  const merchantIds: string[] = [];
-  const push = (value: unknown) => {
-    const normalized = normalizeMerchantId(value);
-    if (!normalized || merchantIds.includes(normalized)) return;
-    merchantIds.push(normalized);
-  };
-
-  push(readMerchantIdFromMetadata(user));
-
-  const supabase = createServerSupabaseServiceClient();
-  if (!supabase) return merchantIds;
-
-  const userId = trimText(user.id);
-  const email = normalizeEmail(user.email);
-  const lookupTasks: Array<PromiseLike<{ data?: unknown; error?: { message?: string } | null }>> = [];
-
-  if (userId) {
-    [
-      "user_id",
-      "auth_user_id",
-      "owner_user_id",
-      "owner_id",
-      "auth_id",
-      "created_by",
-      "created_by_user_id",
-    ].forEach((column) => {
-      lookupTasks.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
-    });
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookupTasks.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
-    });
-  }
-
-  const settled = await withTimeout(
-    Promise.allSettled(lookupTasks),
-    MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
-    [] as PromiseSettledResult<{ data?: unknown; error?: { message?: string } | null }>[],
-  );
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled" || result.value.error) return;
-    const rows = Array.isArray(result.value.data) ? result.value.data : [];
-    rows.forEach((row) => {
-      push((row as { id?: unknown } | null)?.id);
-    });
-  });
-
-  return merchantIds;
-}
-
-function readMerchantSessionHints(request: Request, hintInput?: MerchantSessionHintInput) {
   const requestUrl = new URL(request.url);
   const hintedSiteId =
     trimText(hintInput?.hintedMerchantId) ||
     trimText(request.headers.get("x-merchant-site-id")) ||
     trimText(requestUrl.searchParams.get("siteId")) ||
     readMerchantAuthMerchantIdCookie(request);
-  const hintedEmail =
-    normalizeEmail(hintInput?.hintedMerchantEmail) ||
-    normalizeEmail(request.headers.get("x-merchant-email")) ||
-    normalizeEmail(requestUrl.searchParams.get("merchantEmail"));
+  // Email hints remain accepted for call-site compatibility but are never
+  // copied into the authenticated principal because 035 binds account ids,
+  // not mutable email aliases.
+  void hintInput?.hintedMerchantEmail;
   const hintedName =
     trimText(hintInput?.hintedMerchantName) ||
     trimText(request.headers.get("x-merchant-name")) ||
     trimText(requestUrl.searchParams.get("merchantName"));
 
   return {
-    hintedMerchantId: normalizeMerchantId(hintedSiteId),
-    hintedEmail,
+    hintedMerchantId: hintedSiteId.slice(0, 64),
     hintedName,
   };
+}
+
+function buildInflightKey(accessTokens: string[], hintedMerchantId: string) {
+  return `${accessTokens.join("|")}::${hintedMerchantId || "default"}`;
+}
+
+export async function resolveMerchantPrincipalFromRequest(
+  request: Request,
+  hintInput?: MerchantSessionHintInput,
+): Promise<ResolvedMerchantPrincipal | null> {
+  const { hintedMerchantId, hintedName } =
+    readMerchantSessionHints(request, hintInput);
+  const accessTokens = [
+    ...readMerchantRequestAccessTokens(request),
+    readMerchantAuthCookie(request),
+  ]
+    .map(trimText)
+    .filter(
+      (value, index, values) => Boolean(value) && values.indexOf(value) === index,
+    );
+  if (accessTokens.length === 0) return null;
+
+  const inflightKey = buildInflightKey(accessTokens, hintedMerchantId);
+  const existingTask = merchantSessionInflight.get(inflightKey);
+  if (existingTask) return existingTask;
+
+  const task = (async () => {
+    const authSupabase = createServerSupabaseAuthClient();
+    const adminSupabase = createServerSupabaseServiceClient();
+    if (!authSupabase || !adminSupabase) return null;
+
+    let user: AuthUserSummary | null = null;
+    for (const accessToken of accessTokens) {
+      const result = await withTimeout(
+        authSupabase.auth
+          .getUser(accessToken)
+          .catch(() => ({ data: null, error: true })),
+        MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+        { data: null, error: true },
+      );
+      if (!result.error && result.data?.user) {
+        user = result.data.user as AuthUserSummary;
+        break;
+      }
+    }
+    if (!user) return null;
+
+    const identity = await withTimeout(
+      resolveOrdinaryAccountPlatformIdentity(adminSupabase, user, {
+        preferredMerchantId: hintedMerchantId,
+        strictPreferredMerchantId: Boolean(hintedMerchantId),
+      }).catch(() => null),
+      MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
+      null,
+    );
+    if (!identity || identity.accountType !== "merchant") return null;
+
+    return {
+      merchantId: identity.merchantId,
+      merchantIds: [...identity.merchantIds],
+      merchantEmail: normalizeEmail(user.email),
+      merchantName: hintedName,
+    };
+  })();
+
+  merchantSessionInflight.set(inflightKey, task);
+  try {
+    return await task;
+  } finally {
+    if (merchantSessionInflight.get(inflightKey) === task) {
+      merchantSessionInflight.delete(inflightKey);
+    }
+  }
 }
 
 export async function resolveMerchantSessionFromRequest(
   request: Request,
   hintInput?: MerchantSessionHintInput,
 ): Promise<ResolvedMerchantSession | null> {
-  const { hintedMerchantId, hintedEmail, hintedName } = readMerchantSessionHints(request, hintInput);
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  const accessToken = accessTokens[0] ?? readMerchantAuthCookie(request);
-
-  const cached = readCachedSession(accessToken, hintedMerchantId);
-  if (cached) {
-    const legacyIdentityAllowed = await withTimeout(
-      assertLegacyMerchantIdentityAllowed(
-        createServerSupabaseServiceClient(),
-        { id: cached.authUserId },
-      )
-        .then(() => true)
-        .catch(() => false),
-      MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
-      false,
-    );
-    if (!legacyIdentityAllowed) return null;
-    return {
-      merchantId: cached.merchantId,
-      merchantEmail: cached.merchantEmail || hintedEmail,
-      merchantName: hintedName || cached.merchantName,
-    };
-  }
-
-  const cacheKey = buildCacheKey(accessToken, hintedMerchantId);
-  const existingTask = cacheKey ? merchantSessionInflight.get(cacheKey) : null;
-  if (existingTask) return existingTask;
-
-  const task = (async () => {
-    const authSupabase = createServerSupabaseAuthClient();
-    let user: AuthUserSummary | null = null;
-    let validatedAccessToken = accessToken;
-
-    if (authSupabase) {
-      const candidates = [...accessTokens, accessToken].map((value) => trimText(value)).filter(Boolean);
-      for (const candidateAccessToken of candidates) {
-        const { data, error } = await withTimeout(
-          authSupabase.auth.getUser(candidateAccessToken).catch(() => ({ data: null, error: true })),
-          MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
-          { data: null, error: true },
-        );
-        if (!error && data?.user) {
-          validatedAccessToken = candidateAccessToken;
-          user = data.user as AuthUserSummary;
-          break;
-        }
-      }
-    }
-
-    if (!user) {
-      return null;
-    }
-
-    const legacyIdentityAllowed = await withTimeout(
-      assertLegacyMerchantIdentityAllowed(createServerSupabaseServiceClient(), user)
-        .then(() => true)
-        .catch(() => false),
-      MERCHANT_SESSION_LOOKUP_TIMEOUT_MS,
-      false,
-    );
-    if (!legacyIdentityAllowed) return null;
-
-    const authorizedHintedMerchantId = await resolveAuthorizedHintedMerchantId(user, hintedMerchantId);
-    let merchantId = authorizedHintedMerchantId;
-    if (!merchantId) {
-      const authorizedMerchantIds = await listAuthorizedMerchantIdsForUser(user);
-      merchantId =
-        (hintedMerchantId && authorizedMerchantIds.includes(hintedMerchantId) ? hintedMerchantId : "") ||
-        authorizedMerchantIds[0] ||
-        (await resolveMerchantIdForUser(user)) ||
-        normalizeMerchantId(user.email);
-    }
-    if (!merchantId) return null;
-
-    const resolved = {
-      authUserId: trimText(user.id),
-      merchantId,
-      merchantEmail: normalizeEmail(user.email, hintedEmail),
-      merchantName: hintedName,
-    } satisfies CachedMerchantSession;
-    writeCachedSession(validatedAccessToken, hintedMerchantId, resolved);
-    return {
-      merchantId: resolved.merchantId,
-      merchantEmail: resolved.merchantEmail,
-      merchantName: resolved.merchantName,
-    };
-  })();
-
-  if (cacheKey) merchantSessionInflight.set(cacheKey, task);
-  try {
-    return await task;
-  } finally {
-    if (cacheKey && merchantSessionInflight.get(cacheKey) === task) {
-      merchantSessionInflight.delete(cacheKey);
-    }
-  }
+  const principal = await resolveMerchantPrincipalFromRequest(
+    request,
+    hintInput,
+  );
+  if (!principal) return null;
+  return {
+    merchantId: principal.merchantId,
+    merchantEmail: principal.merchantEmail,
+    merchantName: principal.merchantName,
+  };
 }

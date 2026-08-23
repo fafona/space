@@ -117,19 +117,43 @@ test("merchant-only poll access matches an active membership in the publishing m
     { siteId: "10000000", status: "left", accountId: "account-3", userId: "user-3", email: "left@example.com" },
   ];
   assert.equal(
-    hasActivePollMerchantMembership("10000000", memberships, { accountId: "account-1", userId: "", email: "" }),
+    hasActivePollMerchantMembership("10000000", memberships, {
+      accountId: "account-1",
+      userId: "user-1",
+      email: "member@example.com",
+    }),
     true,
   );
   assert.equal(
-    hasActivePollMerchantMembership("10000000", memberships, { accountId: "", userId: "", email: "MEMBER@example.com" }),
-    true,
-  );
-  assert.equal(
-    hasActivePollMerchantMembership("10000000", memberships, { accountId: "account-2", userId: "user-2", email: "" }),
+    hasActivePollMerchantMembership("10000000", memberships, {
+      accountId: "",
+      userId: "",
+      email: "MEMBER@example.com",
+    }),
     false,
   );
   assert.equal(
-    hasActivePollMerchantMembership("10000000", memberships, { accountId: "account-3", userId: "user-3", email: "" }),
+    hasActivePollMerchantMembership("10000000", memberships, {
+      accountId: "account-2",
+      userId: "user-2",
+      email: "member@example.com",
+    }),
+    false,
+  );
+  assert.equal(
+    hasActivePollMerchantMembership("10000000", memberships, {
+      accountId: "account-3",
+      userId: "user-3",
+      email: "left@example.com",
+    }),
+    false,
+  );
+  assert.equal(
+    hasActivePollMerchantMembership("10000000", memberships, {
+      accountId: "account-1",
+      userId: "user-other",
+      email: "member@example.com",
+    }),
     false,
   );
 });

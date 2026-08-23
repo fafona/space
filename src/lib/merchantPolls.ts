@@ -1,4 +1,5 @@
 import type { Block, PollAudience, PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 
 export const POLL_MAX_QUESTIONS = 30;
 export const POLL_MAX_OPTIONS = 36;
@@ -517,13 +518,13 @@ export function hasActivePollMerchantMembership(
   identity: { accountId: string; userId: string; email: string },
 ) {
   const normalizedSiteId = trimText(siteId, 64);
-  const normalizedEmail = trimText(identity.email, 320).toLowerCase();
-  if (!normalizedSiteId || (!identity.accountId && !identity.userId && !normalizedEmail)) return false;
+  if (!normalizedSiteId || (!identity.accountId && !identity.userId)) return false;
   return memberships.some((membership) => {
     if (membership.siteId !== normalizedSiteId || membership.status !== "active") return false;
-    if (identity.accountId && membership.accountId === identity.accountId) return true;
-    if (identity.userId && membership.userId === identity.userId) return true;
-    return Boolean(normalizedEmail && membership.email.toLowerCase() === normalizedEmail);
+    return matchesExactPersonalIdentity(
+      { accountId: membership.accountId, userId: membership.userId },
+      identity,
+    );
   });
 }
 

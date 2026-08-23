@@ -3,6 +3,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import type { MerchantConfigHistoryEntry } from "@/data/platformControlStore";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import {
+  createActiveOrdinaryAccountAuthorization,
+  isOrdinaryAccountPrincipalError,
+  normalizeExplicitOrdinaryAccountId,
+  OrdinaryAccountPrincipalError,
+  resolveOrdinaryAccountPlatformIdentity,
+} from "@/lib/ordinaryAccountPrincipal.server";
+import {
+  loadOrdinaryAccountAuthorization,
+  type OrdinaryAccountAuthorization,
+} from "@/lib/ordinaryAccountAuthorization.server";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import {
   buildPersonalAccountServiceMetadataPatch,
@@ -13,9 +24,6 @@ import {
 } from "@/lib/personalAccountServiceConfig";
 import {
   buildPlatformAccountMetadataPatch,
-  readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeHintFromMetadata,
-  readPlatformAccountTypeFromMetadata,
   readPlatformUsernameFromMetadata,
   type PlatformAccountType,
 } from "@/lib/platformAccounts";
@@ -34,7 +42,6 @@ const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
 const ACCOUNT_DELETE_VERIFICATION_EMAIL = "caimin6669@qq.com";
 const AUTH_USERS_LOAD_TIMEOUT_MS = 5_000;
 const MERCHANT_ROWS_LOAD_TIMEOUT_MS = 8_000;
-const SUPPORT_MERCHANT_ROWS_LOAD_TIMEOUT_MS = 4_000;
 const SNAPSHOT_LOAD_TIMEOUT_MS = 6_000;
 const PUBLISHED_SITE_INFO_TIMEOUT_MS = 4_000;
 const PAGE_EVENTS_TIMEOUT_MS = 2_500;
@@ -46,8 +53,6 @@ type MerchantRow = {
   owner_email?: string | null;
   contact_email?: string | null;
   user_email?: string | null;
-  user_id?: string | null;
-  auth_user_id?: string | null;
   created_at?: string | null;
 };
 
@@ -135,6 +140,16 @@ type MerchantRowsLoadResult = {
   errorMessage: string;
 };
 
+type AuthoritativeAccountRecord = {
+  user: AuthUserSummary;
+  authorization: OrdinaryAccountAuthorization;
+};
+
+type AuthoritativeAccountsLoadResult = {
+  records: AuthoritativeAccountRecord[];
+  errorCount: number;
+};
+
 function normalizeEmail(...values: Array<string | null | undefined>) {
   for (const value of values) {
     const normalized = String(value ?? "").trim().toLowerCase();
@@ -155,94 +170,48 @@ function normalizeLoginEmail(value: string | null | undefined) {
   return normalized;
 }
 
-function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
-  if (!metadata || typeof metadata !== "object") return "";
-  for (const key of keys) {
-    const value = metadata[key];
-    if (typeof value !== "string") continue;
-    const normalized = value.trim();
-    if (normalized) return normalized;
-  }
-  return "";
-}
-
-function readAccountMetadata(user?: AuthUserSummary | null) {
+function readAccountDecoration(user?: AuthUserSummary | null) {
   const userMetadata = user?.user_metadata ?? null;
   const appMetadata = user?.app_metadata ?? null;
-  const accountId = readPlatformAccountIdFromMetadata(user);
-  const accountType = readPlatformAccountTypeHintFromMetadata(user, "") || "merchant";
   const username = readPlatformUsernameFromMetadata(user);
-  const loginId =
-    readMetadataString(
-      userMetadata,
-      "login_id",
-      "loginId",
-      "account_id",
-      "accountId",
-      "personal_id",
-      "personalId",
-      "merchant_id",
-      "merchantId",
-      "merchantID",
-    ) ||
-    readMetadataString(
-      appMetadata,
-      "login_id",
-      "loginId",
-      "account_id",
-      "accountId",
-      "personal_id",
-      "personalId",
-      "merchant_id",
-      "merchantId",
-      "merchantID",
-    );
-  const merchantId =
-    readMetadataString(userMetadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId") ||
-    readMetadataString(appMetadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
   const manualCreated =
     userMetadata?.manual_user === true ||
     userMetadata?.manualUser === true ||
     appMetadata?.manual_user === true ||
     appMetadata?.manualUser === true;
-  const personalServiceConfig =
-    accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user ?? null) : null;
+  const personalServiceConfig = readPersonalAccountServiceConfigFromMetadata(
+    user ?? null,
+  );
 
   return {
-    accountType,
-    accountId,
     username,
-    usernameKey: normalizeAccountValue(username),
-    loginId: loginId || accountId,
-    merchantId: accountType === "merchant" ? merchantId || accountId : "",
     manualCreated,
     personalServiceConfig,
     personalServicePaused: personalServiceConfig?.servicePaused === true,
   };
 }
 
-function isUnclaimedAccountDeleteVerificationUser(user: AuthUserSummary, targetEmail: string) {
-  const email = normalizeEmail(user.email);
-  if (!email || email !== normalizeEmail(ACCOUNT_DELETE_VERIFICATION_EMAIL) || email !== normalizeEmail(targetEmail)) {
-    return false;
-  }
-  const metadata = readAccountMetadata(user);
-  const explicitAccountType =
-    readPlatformAccountTypeFromMetadata(user, "") ||
-    readMetadataString(user.user_metadata ?? null, "account_type", "accountType") ||
-    readMetadataString(user.app_metadata ?? null, "account_type", "accountType");
+function isImmutableManualAccountCandidate(
+  user: AuthUserSummary,
+  accountType: PlatformAccountType,
+  accountId: string,
+  authEmail: string,
+) {
+  const appMetadata = user.app_metadata;
+  if (!appMetadata || typeof appMetadata !== "object") return false;
+  const typedId =
+    accountType === "merchant"
+      ? appMetadata.merchant_id
+      : appMetadata.personal_id;
   return (
-    !explicitAccountType &&
-    !metadata.accountId &&
-    !metadata.loginId &&
-    !metadata.merchantId &&
-    !metadata.usernameKey &&
-    !metadata.manualCreated
+    appMetadata.manual_user === true &&
+    appMetadata.account_type === accountType &&
+    appMetadata.accountType === accountType &&
+    appMetadata.account_id === accountId &&
+    appMetadata.accountId === accountId &&
+    typedId === accountId &&
+    normalizeEmail(user.email) === authEmail
   );
-}
-
-function buildManualUserEmail(accountType: PlatformAccountType, accountId: string) {
-  return `${accountType === "personal" ? "personal" : "merchant"}-${accountId}@manual.merchant-space.invalid`;
 }
 
 async function sendAccountDeleteVerificationCode() {
@@ -278,21 +247,6 @@ async function sendAccountDeleteVerificationCode() {
     verificationEmail: ACCOUNT_DELETE_VERIFICATION_EMAIL,
     maskedEmail: maskEmailAddress(ACCOUNT_DELETE_VERIFICATION_EMAIL),
   });
-}
-
-async function verifyAccountDeleteCode(code: string) {
-  const normalizedCode = String(code ?? "").trim().replace(/\s+/g, "");
-  if (!normalizedCode || normalizedCode.length < 4) {
-    return "请输入邮件验证码";
-  }
-  const supabase = createServerSupabaseAuthClient();
-  if (!supabase) return "删除验证码服务暂不可用";
-  const { error } = await supabase.auth.verifyOtp({
-    email: ACCOUNT_DELETE_VERIFICATION_EMAIL,
-    token: normalizedCode,
-    type: "email",
-  });
-  return error ? error.message || "验证码无效或已过期" : "";
 }
 
 function isNumericMerchantId(value: string | null | undefined) {
@@ -412,7 +366,7 @@ async function listMerchantRows(supabase: SupabaseClient) {
   const { data, error } = await runSupabaseQueryWithRetry(() =>
     supabase
       .from("merchants")
-      .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+      .select("id,name,email,owner_email,contact_email,user_email,created_at")
       .order("created_at", { ascending: false })
       .limit(500),
   );
@@ -563,17 +517,6 @@ function buildMerchantVisitsByMerchantId(rows: unknown[], nowMs: number) {
   return map;
 }
 
-function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined, candidate: MerchantAccountItem) {
-  if (!current) return candidate;
-  const currentNumeric = isNumericMerchantId(current.merchantId);
-  const candidateNumeric = isNumericMerchantId(candidate.merchantId);
-  if (candidateNumeric && !currentNumeric) return candidate;
-  if (currentNumeric && !candidateNumeric) return current;
-  const currentTs = new Date(current.createdAt ?? 0).getTime();
-  const candidateTs = new Date(candidate.createdAt ?? 0).getTime();
-  return candidateTs > currentTs ? candidate : current;
-}
-
 function unauthorizedJson() {
   return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 }
@@ -619,107 +562,24 @@ function writeMerchantAccountsCache(scope: MerchantAccountsScope, items: Merchan
   });
 }
 
-function buildSupportScopeItems(merchants: MerchantRow[]) {
-  return sortByCreatedAtDesc(
-    merchants.map((merchant) => {
-      const merchantId = String(merchant.id ?? "").trim();
-      const email = normalizeEmail(
-        merchant.user_email,
-        merchant.email,
-        merchant.owner_email,
-        merchant.contact_email,
-      );
-      const merchantName = String(merchant.name ?? "").trim() || merchantId;
-      const authUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim() || null;
-      const manualEmail = merchantId ? buildManualUserEmail("merchant", merchantId) : "";
-      return {
-        accountType: "merchant",
-        accountId: merchantId,
-        merchantId,
-        merchantName,
-        email,
-        username: merchantName,
-        loginId: merchantId,
-        createdAt: merchant.created_at ?? null,
-        authUserId,
-        emailConfirmed: email === manualEmail ? true : false,
-        emailConfirmedAt: null,
-        lastSignInAt: null,
-        manualCreated: email === manualEmail,
-        hasPublishedSite: false,
-        siteSlug: "",
-        siteUpdatedAt: null,
-        publishedBytes: 0,
-        publishedBytesKnown: false,
-        visits: { today: 0, day7: 0, day30: 0, total: 0 },
-        visitsKnown: false,
-        profileSnapshot: null,
-        profileConfigHistory: [],
-        personalServiceConfig: null,
-        personalServicePaused: false,
-      } satisfies MerchantAccountItem;
-    }),
-  );
-}
-
-function buildSnapshotMerchantAccountItems(
-  sites: MerchantListPublishedSite[],
-  configHistoryByMerchantId: Record<string, MerchantConfigHistoryEntry[]> = {},
-) {
-  const items: MerchantAccountItem[] = [];
-  sites.forEach((site) => {
-    const merchantId = String(site.id ?? "").trim();
-    if (!merchantId) return;
-    const merchantName =
-      String(site.merchantName ?? "").trim() ||
-      String(site.name ?? "").trim() ||
-      merchantId;
-    const siteSlug = String(site.domainPrefix ?? site.domainSuffix ?? site.domain ?? "").trim();
-    items.push({
-      accountType: "merchant",
-      accountId: merchantId,
-      merchantId,
-      merchantName,
-      email: normalizeEmail(site.contactEmail),
-      username: merchantName,
-      loginId: merchantId,
-      createdAt: site.createdAt ?? null,
-      authUserId: null,
-      emailConfirmed: false,
-      emailConfirmedAt: null,
-      lastSignInAt: null,
-      manualCreated: false,
-      hasPublishedSite: false,
-      siteSlug,
-      siteUpdatedAt: null,
-      publishedBytes: 0,
-      publishedBytesKnown: false,
-      visits: { today: 0, day7: 0, day30: 0, total: 0 },
-      visitsKnown: false,
-      profileSnapshot: site,
-      profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
-      personalServiceConfig: null,
-      personalServicePaused: false,
-    });
-  });
-  return sortByCreatedAtDesc(items);
-}
-
-function buildPersonalAccountItemFromAuthUser(user: AuthUserSummary): MerchantAccountItem {
-  const metadata = readAccountMetadata(user);
+function buildPersonalAccountItemFromAuthUser(
+  user: AuthUserSummary,
+  authoritativeAccountId: string,
+): MerchantAccountItem {
+  const metadata = readAccountDecoration(user);
   const personalServiceConfig = normalizePersonalAccountServiceConfig(
     metadata.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig(),
   );
   const email = normalizeEmail(user.email);
-  const username = metadata.username || email || metadata.accountId || "个人用户";
+  const username = metadata.username || email || authoritativeAccountId || "个人用户";
   return {
     accountType: "personal",
-    accountId: metadata.accountId,
+    accountId: authoritativeAccountId,
     merchantId: "",
     merchantName: "",
     email,
     username,
-    loginId: metadata.loginId || metadata.accountId,
+    loginId: authoritativeAccountId,
     createdAt: user.created_at ?? null,
     authUserId: String(user.id ?? "").trim() || null,
     emailConfirmed: Boolean(user.email_confirmed_at),
@@ -761,19 +621,6 @@ export async function GET(request: Request) {
   }
 
   try {
-    if (scope === "support") {
-      const merchantRowsResult = await listMerchantRowsBestEffort(supabase, SUPPORT_MERCHANT_ROWS_LOAD_TIMEOUT_MS);
-      const items = merchantRowsResult.errorMessage ? [] : buildSupportScopeItems(merchantRowsResult.rows);
-      if (!merchantRowsResult.errorMessage) {
-        writeMerchantAccountsCache(scope, items);
-      }
-      return NextResponse.json({
-        items,
-        merchantRowsUnavailable: Boolean(merchantRowsResult.errorMessage),
-        merchantRowsError: merchantRowsResult.errorMessage,
-      });
-    }
-
     const [
       merchantRowsResult,
       authUsersResult,
@@ -785,142 +632,109 @@ export async function GET(request: Request) {
     ]);
 
     const authUsers = authUsersResult.users;
+    const authoritativeAccounts = authUsersResult.errorMessage
+      ? { records: [], errorCount: 0 }
+      : await loadAuthoritativeAccountsBestEffort(supabase, authUsers);
 
-    const authById = new Map(authUsers.map((user) => [user.id, user] as const));
-    const authByEmail = new Map(
-      authUsers
-        .map((user) => [normalizeEmail(user.email), user] as const)
-        .filter(([email]) => Boolean(email)),
-    );
+    const authoritativeUserByMerchantId = new Map<string, AuthUserSummary>();
+    const conflictingMerchantIds = new Set<string>();
+    for (const { user, authorization } of authoritativeAccounts.records) {
+      if (
+        authorization.status !== "resolved" ||
+        authorization.accountType !== "merchant"
+      ) {
+        continue;
+      }
+      for (const merchantId of authorization.merchantIds) {
+        const current = authoritativeUserByMerchantId.get(merchantId);
+        if (current && current.id !== user.id) {
+          conflictingMerchantIds.add(merchantId);
+          authoritativeUserByMerchantId.delete(merchantId);
+          continue;
+        }
+        if (!conflictingMerchantIds.has(merchantId)) {
+          authoritativeUserByMerchantId.set(merchantId, user);
+        }
+      }
+    }
 
     const shouldUseSnapshotMerchantFallback =
       Boolean(merchantRowsResult.errorMessage) ||
       (merchantRowsResult.rows.length === 0 && snapshotByMerchantId.size > 0);
-
-    const merchantItems: MerchantAccountItem[] = shouldUseSnapshotMerchantFallback
-      ? buildSnapshotMerchantAccountItems([...snapshotByMerchantId.values()], configHistoryByMerchantId)
-      : merchantRowsResult.rows.map((merchant) => {
-          const email = normalizeEmail(
-            merchant.user_email,
-            merchant.email,
-            merchant.owner_email,
-            merchant.contact_email,
-          );
-          const fallbackAuthUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim();
-          const authUser =
-            authById.get(String(merchant.auth_user_id ?? "").trim()) ??
-            authById.get(String(merchant.user_id ?? "").trim()) ??
-            authByEmail.get(email) ??
-            null;
-          const metadata = readAccountMetadata(authUser);
-          const merchantId = String(merchant.id ?? "").trim();
-          const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
-          const merchantName = String(merchant.name ?? "").trim() || String(snapshotSite?.merchantName ?? "").trim();
-
-          return {
-            accountType: "merchant",
-            accountId: merchantId,
-            merchantId,
-            merchantName,
-            email,
-            username: metadata.username || merchantName,
-            loginId: metadata.loginId || metadata.merchantId || merchantId,
-            createdAt: merchant.created_at ?? authUser?.created_at ?? null,
-            authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
-            emailConfirmed: Boolean(authUser?.email_confirmed_at),
-            emailConfirmedAt: authUser?.email_confirmed_at ?? null,
-            lastSignInAt: authUser?.last_sign_in_at ?? null,
-            manualCreated: metadata.manualCreated,
-            hasPublishedSite: false,
-            siteSlug: String(snapshotSite?.domainPrefix ?? snapshotSite?.domainSuffix ?? "").trim(),
-            siteUpdatedAt: null,
-            publishedBytes: 0,
-            publishedBytesKnown: false,
-            visits: { today: 0, day7: 0, day30: 0, total: 0 },
-            visitsKnown: false,
-            profileSnapshot: snapshotSite,
-            profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
-            personalServiceConfig: null,
-            personalServicePaused: false,
-          };
-        });
-
-    const linkedAuthKeys = new Set(
-      merchantItems.flatMap((item) => {
-        const keys: string[] = [];
-        if (item.authUserId) keys.push(`id:${item.authUserId}`);
-        if (item.email) keys.push(`email:${item.email}`);
-        return keys;
-      }),
+    const merchantRowsById = new Map(
+      merchantRowsResult.rows.map((row) => [String(row.id ?? "").trim(), row] as const),
     );
+    const merchantIdsForItems = new Set<string>(
+      shouldUseSnapshotMerchantFallback
+        ? [...snapshotByMerchantId.keys()]
+        : merchantRowsResult.rows.map((row) => String(row.id ?? "").trim()),
+    );
+    authoritativeUserByMerchantId.forEach((_user, merchantId) => {
+      merchantIdsForItems.add(merchantId);
+    });
 
-    const authOnlyItems: MerchantAccountItem[] = authUsers
-      .filter((user) => {
-        const email = normalizeEmail(user.email);
-        return !linkedAuthKeys.has(`id:${user.id}`) && (!email || !linkedAuthKeys.has(`email:${email}`));
-      })
-      .map((user) => {
-        const metadata = readAccountMetadata(user);
-        const merchantId = metadata.accountType === "merchant" ? metadata.merchantId : "";
+    const merchantItems: MerchantAccountItem[] = [...merchantIdsForItems]
+      .filter((merchantId) => isMerchantNumericId(merchantId))
+      .map((merchantId) => {
+        const merchant = merchantRowsById.get(merchantId) ?? null;
+        const authUser = authoritativeUserByMerchantId.get(merchantId) ?? null;
+        const metadata = readAccountDecoration(authUser);
+        const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
+        const merchantName =
+          String(merchant?.name ?? "").trim() ||
+          String(snapshotSite?.merchantName ?? "").trim() ||
+          merchantId;
+        const email = normalizeEmail(
+          authUser?.email,
+          merchant?.user_email,
+          merchant?.email,
+          merchant?.owner_email,
+          merchant?.contact_email,
+        );
         return {
-          accountType: metadata.accountType,
-          accountId: metadata.accountId,
+          accountType: "merchant",
+          accountId: merchantId,
           merchantId,
-          merchantName:
-            metadata.accountType === "merchant"
-              ? String((snapshotByMerchantId.get(merchantId)?.merchantName ?? "")).trim()
-              : "",
-          email: normalizeEmail(user.email),
-          username: metadata.username,
-          loginId: metadata.loginId || metadata.accountId,
-          createdAt: user.created_at ?? null,
-          authUserId: user.id,
-          emailConfirmed: Boolean(user.email_confirmed_at),
-          emailConfirmedAt: user.email_confirmed_at ?? null,
-          lastSignInAt: user.last_sign_in_at ?? null,
+          merchantName,
+          email,
+          username: metadata.username || merchantName,
+          loginId: merchantId,
+          createdAt: merchant?.created_at ?? authUser?.created_at ?? null,
+          authUserId: authUser?.id ?? null,
+          emailConfirmed: Boolean(authUser?.email_confirmed_at),
+          emailConfirmedAt: authUser?.email_confirmed_at ?? null,
+          lastSignInAt: authUser?.last_sign_in_at ?? null,
           manualCreated: metadata.manualCreated,
           hasPublishedSite: false,
-          siteSlug:
-            metadata.accountType === "merchant"
-              ? String(snapshotByMerchantId.get(merchantId)?.domainPrefix ?? snapshotByMerchantId.get(merchantId)?.domainSuffix ?? "").trim()
-              : "",
+          siteSlug: String(snapshotSite?.domainPrefix ?? snapshotSite?.domainSuffix ?? "").trim(),
           siteUpdatedAt: null,
           publishedBytes: 0,
           publishedBytesKnown: false,
           visits: { today: 0, day7: 0, day30: 0, total: 0 },
           visitsKnown: false,
-          profileSnapshot: metadata.accountType === "merchant" ? snapshotByMerchantId.get(merchantId) ?? null : null,
-          profileConfigHistory: metadata.accountType === "merchant" ? configHistoryByMerchantId[merchantId] ?? [] : [],
-          personalServiceConfig: metadata.personalServiceConfig,
-          personalServicePaused: metadata.personalServicePaused,
+          profileSnapshot: snapshotSite,
+          profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
+          personalServiceConfig: null,
+          personalServicePaused: false,
         };
       });
 
-    const dedupedByEmail = new Map<string, MerchantAccountItem>();
-    for (const item of [...merchantItems, ...authOnlyItems]) {
-      const key = item.email || item.authUserId || `${item.merchantId}:${item.createdAt ?? ""}`;
-      dedupedByEmail.set(key, choosePreferredMerchantAccount(dedupedByEmail.get(key), item));
-    }
-
-    const normalizedItems: MerchantAccountItem[] = [...dedupedByEmail.values()].map((item) => ({
-      ...item,
-      accountType: item.accountType === "personal" ? "personal" : "merchant",
-      accountId: item.accountId || (isNumericMerchantId(item.merchantId) ? item.merchantId : ""),
-      merchantId: item.accountType === "merchant" && isNumericMerchantId(item.merchantId) ? item.merchantId : "",
-      profileSnapshot:
-        item.accountType === "merchant" && isNumericMerchantId(item.merchantId)
-          ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null
-          : null,
-      profileConfigHistory:
-        item.accountType === "merchant" && isNumericMerchantId(item.merchantId)
-          ? configHistoryByMerchantId[item.merchantId] ?? item.profileConfigHistory ?? []
+    const personalItems = authoritativeAccounts.records.flatMap(
+      ({ user, authorization }) =>
+        authorization.accountType === "personal" &&
+        (authorization.status === "resolved" || authorization.status === "disabled")
+          ? [
+              buildPersonalAccountItemFromAuthUser(
+                user,
+                authorization.personalAccountId,
+              ),
+            ]
           : [],
-      personalServiceConfig:
-        item.accountType === "personal"
-          ? normalizePersonalAccountServiceConfig(item.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig())
-          : null,
-      personalServicePaused: item.accountType === "personal" ? item.personalServicePaused === true : false,
-    }));
+    );
+    const normalizedItems: MerchantAccountItem[] = [
+      ...merchantItems,
+      ...personalItems,
+    ];
     const merchantIds = [
       ...new Set(
         normalizedItems
@@ -990,7 +804,11 @@ export async function GET(request: Request) {
       }),
     );
 
-    if (!authUsersResult.errorMessage && (!merchantRowsResult.errorMessage || shouldUseSnapshotMerchantFallback)) {
+    if (
+      !authUsersResult.errorMessage &&
+      authoritativeAccounts.errorCount === 0 &&
+      (!merchantRowsResult.errorMessage || shouldUseSnapshotMerchantFallback)
+    ) {
       writeMerchantAccountsCache(scope, items);
     }
     return NextResponse.json({
@@ -1000,6 +818,7 @@ export async function GET(request: Request) {
       merchantRowsError: merchantRowsResult.errorMessage,
       authUsersUnavailable: Boolean(authUsersResult.errorMessage),
       authUsersError: authUsersResult.errorMessage,
+      authorizationResolverErrorCount: authoritativeAccounts.errorCount,
     });
   } catch (error) {
     const cachedFallback = readMerchantAccountsCache(scope);
@@ -1049,12 +868,16 @@ export async function POST(request: Request) {
     }
 
     const accountType: PlatformAccountType = payload?.accountType === "personal" ? "personal" : "merchant";
-    const accountId =
+    const rawAccountId =
       typeof payload?.accountId === "string"
-        ? payload.accountId.trim()
+        ? payload.accountId
         : typeof payload?.merchantId === "string"
-          ? payload.merchantId.trim()
+          ? payload.merchantId
           : "";
+    const accountId = normalizeExplicitOrdinaryAccountId(
+      accountType,
+      rawAccountId,
+    );
     const merchantId = accountType === "merchant" ? accountId : "";
     const loginAccount =
       typeof payload?.loginAccount === "string"
@@ -1063,7 +886,10 @@ export async function POST(request: Request) {
           ? payload.username.trim()
           : "";
     const password = typeof payload?.password === "string" ? payload.password : "";
-    if (!accountId) {
+    if (
+      !accountId ||
+      (accountType === "personal" && /\s/u.test(accountId))
+    ) {
       return badRequestJson("invalid_account_id", accountType === "personal" ? "请输入个人 ID" : "请输入商户 ID");
     }
     if (accountType === "merchant" && !isMerchantNumericId(accountId)) {
@@ -1084,56 +910,139 @@ export async function POST(request: Request) {
     const authEmail = loginEmail;
     const merchantDisplayName = accountType === "merchant" ? accountId : "";
 
-    const merchantEmailLookups =
-      accountType === "merchant"
-        ? ["email", "owner_email", "contact_email", "user_email"].map((column) =>
-            runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq(column, loginEmail).limit(1).maybeSingle()),
-          )
-        : [];
     const [existingMerchantById, authUsersResult] = await Promise.all([
-      accountType === "merchant"
-        ? runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle())
-        : Promise.resolve({ data: null, error: null }),
+      runSupabaseQueryWithRetry(() =>
+        supabase
+          .from("merchants")
+          .select("id")
+          .eq("id", accountId)
+          .limit(1)
+          .maybeSingle(),
+      ),
       listAuthUsersBestEffort(supabase),
     ]);
-    const existingMerchantByEmailResults = await Promise.all(merchantEmailLookups);
+    if (authUsersResult.errorMessage) {
+      return NextResponse.json(
+        { error: "ordinary_account_authorization_lookup_failed" },
+        { status: 503 },
+      );
+    }
 
     if (existingMerchantById.error) throw existingMerchantById.error;
-    for (const lookup of existingMerchantByEmailResults) {
-      if (lookup.error) throw lookup.error;
-    }
-
-    if (accountType === "merchant" && existingMerchantById.data?.id) {
-      return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
-    }
-    if (existingMerchantByEmailResults.some((lookup) => lookup.data?.id)) {
-      return conflictJson("login_account_exists", "账号已存在，请更换后重试");
-    }
-    const authUsers = authUsersResult.users;
-    const unclaimedVerificationUser = authUsers.find((user) => isUnclaimedAccountDeleteVerificationUser(user, authEmail)) ?? null;
-    if (unclaimedVerificationUser) {
-      const { error: deleteUnclaimedUserError } = await supabase.auth.admin.deleteUser(unclaimedVerificationUser.id);
-      if (deleteUnclaimedUserError) throw deleteUnclaimedUserError;
-    }
-    const activeAuthUsers = unclaimedVerificationUser
-      ? authUsers.filter((user) => user.id !== unclaimedVerificationUser.id)
-      : authUsers;
-
-    const duplicateIdUser = activeAuthUsers.find((user) => {
-      const metadata = readAccountMetadata(user);
-      return (
-        metadata.loginId === accountId ||
-        metadata.accountId === accountId ||
-        metadata.merchantId === accountId
+    const resumableAuthUserCandidate =
+      authUsersResult.users.find((user) =>
+        isImmutableManualAccountCandidate(
+          user,
+          accountType,
+          accountId,
+          authEmail,
+        ),
+      ) ?? null;
+    const authoritativeAccounts = await loadAuthoritativeAccountsBestEffort(
+      supabase,
+      authUsersResult.users,
+    );
+    if (authoritativeAccounts.errorCount > 0) {
+      return NextResponse.json(
+        { error: "ordinary_account_authorization_lookup_failed" },
+        { status: 503 },
       );
-    });
-    if (duplicateIdUser) {
-      return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
     }
+    const authoritativeTargetRecords = authoritativeAccounts.records.filter(
+      ({ authorization }) =>
+        authorization.accountType === "merchant"
+          ? authorization.status === "resolved" &&
+            authorization.merchantIds.includes(accountId)
+          : authorization.accountType === "personal" &&
+            authorization.personalAccountId === accountId,
+    );
+    if (authoritativeTargetRecords.length > 1) {
+      return conflictJson(
+        "ordinary_account_identifier_collision",
+        "The account ID has conflicting authoritative bindings.",
+      );
+    }
+    const authoritativeTargetRecord = authoritativeTargetRecords[0] ?? null;
+    const resumableAuthorization = resumableAuthUserCandidate
+      ? authoritativeAccounts.records.find(
+          ({ user }) => user.id === resumableAuthUserCandidate.id,
+        )?.authorization ?? null
+      : null;
+    if (
+      authoritativeTargetRecord &&
+      (authoritativeTargetRecord.authorization.accountType !== accountType ||
+        authoritativeTargetRecord.user.id !== resumableAuthUserCandidate?.id)
+    ) {
+      if (
+        resumableAuthUserCandidate &&
+        resumableAuthorization?.status === "unbound"
+      ) {
+        let cleanupError: unknown = null;
+        try {
+          const cleanupResult = await supabase.auth.admin.deleteUser(
+            resumableAuthUserCandidate.id,
+          );
+          cleanupError = cleanupResult.error;
+        } catch (error) {
+          cleanupError = error;
+        }
+        if (cleanupError) {
+          return NextResponse.json(
+            { error: "ordinary_account_orphan_cleanup_unconfirmed" },
+            { status: 503 },
+          );
+        }
+      }
+      return conflictJson(
+        "ordinary_account_id_exists",
+        "The account ID already has an authoritative Auth binding.",
+      );
+    }
+
+    const isExactResumableExistingMerchant = Boolean(
+      existingMerchantById.data?.id &&
+        accountType === "merchant" &&
+        resumableAuthUserCandidate &&
+        authoritativeTargetRecord?.authorization.accountType === "merchant" &&
+        authoritativeTargetRecord.user.id === resumableAuthUserCandidate.id,
+    );
+    if (existingMerchantById.data?.id && !isExactResumableExistingMerchant) {
+      // A bare merchant row is not an authorization binding. If a prior
+      // create attempt left an immutable, explicitly-unbound Auth record, it
+      // is safe to remove that orphan before returning the deterministic
+      // collision. Never reuse or bind the pre-existing row from metadata.
+      if (
+        resumableAuthUserCandidate &&
+        resumableAuthorization?.status === "unbound"
+      ) {
+        let cleanupError: unknown = null;
+        try {
+          const cleanupResult = await supabase.auth.admin.deleteUser(
+            resumableAuthUserCandidate.id,
+          );
+          cleanupError = cleanupResult.error;
+        } catch (error) {
+          cleanupError = error;
+        }
+        if (cleanupError) {
+          return NextResponse.json(
+            { error: "ordinary_account_orphan_cleanup_unconfirmed" },
+            { status: 503 },
+          );
+        }
+      }
+      return conflictJson("ordinary_account_id_exists", "ID 已存在，请更换后重试");
+    }
+    const activeAuthUsers = authUsersResult.users;
+    const resumableAuthUser = resumableAuthUserCandidate
+      ? activeAuthUsers.find(
+          (user) => user.id === resumableAuthUserCandidate.id,
+        ) ?? null
+      : null;
 
     const duplicateLoginAccountUser = activeAuthUsers.find((user) => {
-      const metadata = readAccountMetadata(user);
-      return metadata.usernameKey === authEmail || normalizeEmail(user.email) === authEmail;
+      if (user.id === resumableAuthUser?.id) return false;
+      return normalizeEmail(user.email) === authEmail;
     });
     if (duplicateLoginAccountUser) {
       return conflictJson("login_account_exists", "账号已存在，请更换后重试");
@@ -1163,51 +1072,114 @@ export async function POST(request: Request) {
           )
         : metadataPatchBase;
 
-    const { data: createdUserData, error: createUserError } = await supabase.auth.admin.createUser({
-      email: authEmail,
-      password,
-      email_confirm: true,
-      user_metadata: metadataPatch.user_metadata,
-      app_metadata: metadataPatch.app_metadata,
-    });
+    let authUser = resumableAuthUser;
+    let createdAuthUserThisRequest = false;
+    if (!authUser) {
+      const { data: createdUserData, error: createUserError } =
+        await supabase.auth.admin.createUser({
+          email: authEmail,
+          password,
+          email_confirm: true,
+          user_metadata: metadataPatch.user_metadata,
+          app_metadata: metadataPatch.app_metadata,
+        });
 
-    if (createUserError || !createdUserData.user) {
-      if (createUserError && isDuplicateKeyError(createUserError)) {
-        return conflictJson("login_account_exists", "账号已存在，请更换后重试");
+      if (createUserError || !createdUserData.user) {
+        if (createUserError && isDuplicateKeyError(createUserError)) {
+          return conflictJson("login_account_exists", "账号已存在，请更换后重试");
+        }
+        throw createUserError ?? new Error("auth_user_create_failed");
       }
-      throw createUserError ?? new Error("auth_user_create_failed");
+      authUser = createdUserData.user as AuthUserSummary;
+      createdAuthUserThisRequest = true;
     }
 
-    const authUser = createdUserData.user;
     const authUserId = String(authUser.id ?? "").trim();
-    if (accountType === "merchant") {
-      const { error: merchantInsertError } = await runSupabaseQueryWithRetry(() =>
-        supabase.from("merchants").insert({
-          id: merchantId,
-          name: merchantDisplayName,
-          email: authEmail,
-          owner_email: authEmail,
-          contact_email: authEmail,
-          user_email: authEmail,
-          user_id: authUserId,
-          auth_user_id: authUserId,
-          owner_user_id: authUserId,
-          owner_id: authUserId,
-          auth_id: authUserId,
-          created_by: authUserId,
-          created_by_user_id: authUserId,
-        }),
+    try {
+      await createActiveOrdinaryAccountAuthorization(
+        supabase,
+        authUser,
+        accountType,
+        accountId,
       );
+    } catch (bindingError) {
+      if (!createdAuthUserThisRequest) throw bindingError;
 
-      if (merchantInsertError) {
-        await supabase.auth.admin.deleteUser(authUserId).catch(() => {
-          // Ignore cleanup failure and surface the original insert error below.
-        });
-        if (isDuplicateKeyError(merchantInsertError)) {
-          return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
-        }
-        throw merchantInsertError;
+      let postFailureAuthorization: OrdinaryAccountAuthorization;
+      try {
+        postFailureAuthorization = await loadOrdinaryAccountAuthorization(
+          supabase,
+          authUserId,
+        );
+      } catch {
+        // The binding outcome is unknown. Keep the immutable resumable Auth
+        // record and never guess that it is safe to delete.
+        throw new OrdinaryAccountPrincipalError(
+          "ordinary_account_principal_unavailable",
+          503,
+        );
       }
+      const exactBindingCommitted =
+        postFailureAuthorization.status === "resolved" &&
+        postFailureAuthorization.accountType === accountType &&
+        (postFailureAuthorization.accountType === "merchant"
+          ? postFailureAuthorization.merchantIds.includes(accountId)
+          : postFailureAuthorization.personalAccountId === accountId);
+      if (exactBindingCommitted) {
+        // The create-only RPC committed and only its response was lost.
+      } else {
+        const deterministicConflict =
+          isOrdinaryAccountPrincipalError(bindingError) &&
+          [
+            "ordinary_account_binding_conflict",
+            "ordinary_account_personal_binding_conflict",
+            "ordinary_account_principal_type_conflict",
+            "ordinary_account_personal_disabled",
+            "ordinary_account_system_site_forbidden",
+            "invalid_ordinary_personal_id",
+            "merchant_staff_identity_forbidden",
+          ].includes(bindingError.code);
+        if (
+          deterministicConflict &&
+          postFailureAuthorization.status === "unbound"
+        ) {
+          let cleanupError: unknown = null;
+          try {
+            const cleanupResult = await supabase.auth.admin.deleteUser(
+              authUserId,
+            );
+            cleanupError = cleanupResult.error;
+          } catch (error) {
+            cleanupError = error;
+          }
+          if (cleanupError) {
+            throw new OrdinaryAccountPrincipalError(
+              "ordinary_account_principal_unavailable",
+              503,
+            );
+          }
+          throw bindingError;
+        }
+        // Unknown or non-empty resolver state is deliberately retained for a
+        // safe same-request retry; deleting here could orphan a committed bind.
+        throw new OrdinaryAccountPrincipalError(
+          "ordinary_account_principal_unavailable",
+          503,
+        );
+      }
+    }
+
+    if (accountType === "merchant") {
+      // The create-only RPC owns identity creation. Update display data only
+      // after the resolver has confirmed the exact requested merchant binding.
+      const { error: merchantNameUpdateError } = await runSupabaseQueryWithRetry(
+        () =>
+          supabase
+            .from("merchants")
+            .update({ name: merchantDisplayName })
+            .eq("id", merchantId),
+      );
+      if (merchantNameUpdateError) throw merchantNameUpdateError;
     }
 
     const item: MerchantAccountItem = {
@@ -1233,13 +1205,27 @@ export async function POST(request: Request) {
       visitsKnown: false,
       profileSnapshot: null,
       profileConfigHistory: [],
-      personalServiceConfig: accountType === "personal" ? personalServiceConfig : null,
+      personalServiceConfig:
+        accountType === "personal"
+          ? normalizePersonalAccountServiceConfig(
+              readPersonalAccountServiceConfigFromMetadata(authUser),
+            )
+          : null,
       personalServicePaused: false,
     };
 
     merchantAccountsCache.clear();
-    return NextResponse.json({ item }, { status: 201 });
+    return NextResponse.json(
+      { item, resumed: Boolean(resumableAuthUser) },
+      { status: resumableAuthUser ? 200 : 201 },
+    );
   } catch (error) {
+    if (isOrdinaryAccountPrincipalError(error)) {
+      return NextResponse.json(
+        { error: error.code },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       {
         error: "merchant_account_create_failed",
@@ -1271,7 +1257,10 @@ export async function PATCH(request: Request) {
       servicePaused?: unknown;
       config?: unknown;
     } | null;
-    const accountId = typeof payload?.accountId === "string" ? payload.accountId.trim() : "";
+    const hasAccountId = typeof payload?.accountId === "string";
+    const accountId = hasAccountId
+      ? normalizeExplicitOrdinaryAccountId("personal", payload?.accountId)
+      : "";
     const authUserId = typeof payload?.authUserId === "string" ? payload.authUserId.trim() : "";
     const servicePaused =
       typeof payload?.servicePaused === "boolean"
@@ -1284,6 +1273,9 @@ export async function PATCH(request: Request) {
         ? (payload.config as Partial<PersonalAccountServiceConfig>)
         : null;
 
+    if (hasAccountId && !accountId) {
+      return badRequestJson("invalid_personal_account", "个人账号 ID 无效");
+    }
     if (!accountId && !authUserId) {
       return badRequestJson("invalid_personal_account", "请选择要操作的个人账号");
     }
@@ -1292,16 +1284,48 @@ export async function PATCH(request: Request) {
     }
 
     const authUsers = await listAuthUsers(supabase);
-    const targetUser = authUsers.find((user) => {
-      const metadata = readAccountMetadata(user);
-      if (metadata.accountType !== "personal") return false;
-      if (authUserId && String(user.id ?? "").trim() === authUserId) return true;
-      if (accountId && metadata.accountId === accountId) return true;
-      return false;
-    });
+    const authoritativeAccounts = await loadAuthoritativeAccountsBestEffort(
+      supabase,
+      authUsers,
+    );
+    let targetUser = authUserId
+      ? authUsers.find((user) => String(user.id ?? "").trim() === authUserId) ??
+        null
+      : null;
+    if (!targetUser && accountId) {
+      const candidates = authoritativeAccounts.records.filter(
+        ({ authorization }) =>
+          authorization.accountType === "personal" &&
+          authorization.personalAccountId === accountId,
+      );
+      if (candidates.length > 1) {
+        return conflictJson(
+          "personal_account_authorization_conflict",
+          "The canonical personal account has multiple Auth bindings.",
+        );
+      }
+      targetUser = candidates[0]?.user ?? null;
+    }
 
     if (!targetUser) {
+      if (authoritativeAccounts.errorCount > 0) {
+        throw new Error("ordinary_account_authorization_lookup_failed");
+      }
       return notFoundJson("personal_account_not_found", "未找到对应的个人账号");
+    }
+
+    const authoritativeIdentity = await resolveOrdinaryAccountPlatformIdentity(
+      supabase,
+      targetUser,
+    );
+    if (
+      authoritativeIdentity.accountType !== "personal" ||
+      (accountId && authoritativeIdentity.accountId !== accountId)
+    ) {
+      return notFoundJson(
+        "personal_account_not_found",
+        "未找到对应的个人账号",
+      );
     }
 
     const currentConfig = normalizePersonalAccountServiceConfig(
@@ -1333,9 +1357,18 @@ export async function PATCH(request: Request) {
 
     merchantAccountsCache.clear();
     return NextResponse.json({
-      item: buildPersonalAccountItemFromAuthUser(updatedUser),
+      item: buildPersonalAccountItemFromAuthUser(
+        updatedUser,
+        authoritativeIdentity.accountId,
+      ),
     });
   } catch (error) {
+    if (isOrdinaryAccountPrincipalError(error)) {
+      return NextResponse.json(
+        { error: error.code },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       {
         error: "personal_account_update_failed",
@@ -1355,85 +1388,52 @@ export async function DELETE(request: Request) {
     return unauthorizedJson();
   }
 
-  const supabase = createServerSupabaseClient();
-  if (!supabase) {
-    return envMissingJson();
-  }
+  // No retirement RPC exists in this release. Keeping this endpoint as a
+  // response-only failure avoids orphaning a canonical personal binding or
+  // deleting an Auth UUID that still owns another merchant.
+  return NextResponse.json(
+    {
+      error: "ordinary_account_safe_retirement_required",
+      message:
+        "This account must be safely retired through the authoritative binding service before it can be deleted.",
+    },
+    { status: 503 },
+  );
+}
 
-  try {
-    const payload = (await request.json().catch(() => null)) as {
-      accountType?: unknown;
-      accountId?: unknown;
-      authUserId?: unknown;
-      code?: unknown;
-    } | null;
-    const accountType: PlatformAccountType = payload?.accountType === "personal" ? "personal" : "merchant";
-    const accountId = typeof payload?.accountId === "string" ? payload.accountId.trim() : "";
-    const authUserId = typeof payload?.authUserId === "string" ? payload.authUserId.trim() : "";
-    const code = typeof payload?.code === "string" ? payload.code : "";
+async function loadAuthoritativeAccountsBestEffort(
+  supabase: SupabaseClient,
+  users: AuthUserSummary[],
+): Promise<AuthoritativeAccountsLoadResult> {
+  const records: AuthoritativeAccountRecord[] = [];
+  let errorCount = 0;
+  let nextIndex = 0;
+  const workerCount = Math.min(24, Math.max(1, users.length));
 
-    if (!accountId && !authUserId) {
-      return badRequestJson("invalid_account", "请选择要删除的账号");
-    }
-    if (accountType === "merchant" && accountId && !isMerchantNumericId(accountId)) {
-      return badRequestJson("invalid_account_id", "商户 ID 必须是 8 位数字");
-    }
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < users.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const user = users[index];
+        try {
+          const authorization = await loadOrdinaryAccountAuthorization(
+            supabase,
+            user.id,
+          );
+          records.push({ user, authorization });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message === "ordinary_account_staff_identity_forbidden"
+          ) {
+            continue;
+          }
+          errorCount += 1;
+        }
+      }
+    }),
+  );
 
-    const codeError = await verifyAccountDeleteCode(code);
-    if (codeError) {
-      return NextResponse.json(
-        {
-          error: "invalid_delete_verification_code",
-          message: codeError,
-        },
-        { status: 401 },
-      );
-    }
-
-    const authUsers = await listAuthUsers(supabase);
-    const targetUser = authUsers.find((user) => {
-      const metadata = readAccountMetadata(user);
-      if (authUserId && String(user.id ?? "").trim() === authUserId) return true;
-      if (!accountId) return false;
-      if (metadata.accountType !== accountType) return false;
-      if (metadata.accountId === accountId) return true;
-      if (accountType === "merchant" && metadata.merchantId === accountId) return true;
-      return false;
-    }) ?? null;
-    const resolvedAuthUserId = String(targetUser?.id ?? authUserId ?? "").trim();
-
-    if (!targetUser && accountType === "personal") {
-      return notFoundJson("account_not_found", "未找到要删除的个人账号");
-    }
-
-    if (resolvedAuthUserId) {
-      const { error: deleteUserError } = await supabase.auth.admin.deleteUser(resolvedAuthUserId);
-      if (deleteUserError) throw deleteUserError;
-    }
-
-    if (accountType === "merchant" && accountId) {
-      const { error: deleteMerchantError } = await runSupabaseQueryWithRetry(() =>
-        supabase.from("merchants").delete().eq("id", accountId),
-      );
-      if (deleteMerchantError) throw deleteMerchantError;
-    }
-
-    merchantAccountsCache.clear();
-    return NextResponse.json({
-      ok: true,
-      deleted: {
-        accountType,
-        accountId,
-        authUserId: resolvedAuthUserId || null,
-      },
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: "merchant_account_delete_failed",
-        message: readErrorMessage(error) || "unknown_error",
-      },
-      { status: isTransientSupabaseError(error) ? 503 : 500 },
-    );
-  }
+  return { records, errorCount };
 }

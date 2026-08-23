@@ -30,13 +30,17 @@ import {
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
 import {
-  resolvePersonalAccountSessionFromFrontendAuthProofPayload,
+  matchesExactPersonalIdentity,
+  normalizeCanonicalPersonalAccountId,
+} from "@/lib/personalAccountId";
+import {
+  isFrontendPersonalSessionProofError,
   resolvePersonalAccountSessionFromRequest,
+  resolvePersonalAccountSessionFromRequestOrFrontendAuthProof,
 } from "@/lib/personalAccountSession.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -46,46 +50,48 @@ function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-function normalizeEmail(value: unknown) {
-  return trimText(value, 320).toLowerCase();
-}
+type IdentityMappedItem<T> = {
+  identity: { accountId?: unknown; userId?: unknown };
+  item: T;
+};
 
-function buildMemberIdentityKeys(input: { accountId?: unknown; userId?: unknown; email?: unknown }) {
+function buildMemberIdentityKeys(input: { accountId?: unknown; userId?: unknown }) {
   const keys: string[] = [];
-  const accountId = trimText(input.accountId, 128);
+  const accountId = normalizeCanonicalPersonalAccountId(input.accountId);
   const userId = trimText(input.userId, 128);
-  const email = normalizeEmail(input.email);
   if (accountId) keys.push(`account:${accountId}`);
   if (userId) keys.push(`user:${userId}`);
-  if (email) keys.push(`email:${email}`);
   return keys;
 }
 
 function appendIdentityMappedItem<T>(
-  map: Map<string, T[]>,
-  keys: string[],
+  map: Map<string, IdentityMappedItem<T>[]>,
+  identity: { accountId?: unknown; userId?: unknown },
   item: T,
 ) {
-  const uniqueKeys = [...new Set(keys)];
+  const mappedItem = { identity, item };
+  const uniqueKeys = [...new Set(buildMemberIdentityKeys(identity))];
   uniqueKeys.forEach((key) => {
     const current = map.get(key);
     if (current) {
-      current.push(item);
+      current.push(mappedItem);
       return;
     }
-    map.set(key, [item]);
+    map.set(key, [mappedItem]);
   });
 }
 
 function readIdentityMappedItems<T>(
-  map: Map<string, T[]>,
-  membership: Pick<MerchantMembershipListItem, "accountId" | "userId" | "email">,
+  map: Map<string, IdentityMappedItem<T>[]>,
+  membership: Pick<MerchantMembershipListItem, "accountId" | "userId">,
   getItemKey: (item: T) => string,
 ) {
   const items: T[] = [];
   const seen = new Set<string>();
   buildMemberIdentityKeys(membership).forEach((key) => {
-    (map.get(key) ?? []).forEach((item) => {
+    (map.get(key) ?? []).forEach((entry) => {
+      if (!matchesExactPersonalIdentity(entry.identity, membership)) return;
+      const item = entry.item;
       const itemKey = getItemKey(item);
       if (seen.has(itemKey)) return;
       seen.add(itemKey);
@@ -125,17 +131,16 @@ function getClaimStatus(coupon: MerchantCouponRecord, claimEvent: MerchantCoupon
 }
 
 function buildMemberOrdersByIdentity(orders: MerchantOrderRecord[]) {
-  const map = new Map<string, MerchantOrderRecord[]>();
+  const map = new Map<string, IdentityMappedItem<MerchantOrderRecord>[]>();
   orders
     .filter((order) => order.status !== "cancelled")
     .forEach((order) => {
       appendIdentityMappedItem(
         map,
-        buildMemberIdentityKeys({
+        {
           accountId: order.customerAccountId,
           userId: order.customerUserId,
-          email: order.customerLoginEmail || order.customer.email,
-        }),
+        },
         order,
       );
     });
@@ -143,7 +148,10 @@ function buildMemberOrdersByIdentity(orders: MerchantOrderRecord[]) {
 }
 
 function buildCouponHistoryByIdentity(coupons: MerchantCouponRecord[], nowMs: number) {
-  const map = new Map<string, MerchantMemberCouponHistoryItem[]>();
+  const map = new Map<
+    string,
+    IdentityMappedItem<MerchantMemberCouponHistoryItem>[]
+  >();
   coupons.forEach((coupon) => {
     coupon.claimEvents.forEach((claimEvent) => {
       const redeemedAt = getCouponRedeemAt(coupon, claimEvent);
@@ -174,11 +182,10 @@ function buildCouponHistoryByIdentity(coupons: MerchantCouponRecord[], nowMs: nu
       } satisfies MerchantMemberCouponHistoryItem;
       appendIdentityMappedItem(
         map,
-        buildMemberIdentityKeys({
+        {
           accountId: claimEvent.accountId,
           userId: claimEvent.userId,
-          email: claimEvent.email,
-        }),
+        },
         item,
       );
     });
@@ -429,10 +436,11 @@ export async function POST(request: Request) {
       profile?: unknown;
       frontendAuthProof?: unknown;
     } | null;
-    const directSession = await resolvePersonalAccountSessionFromRequest(request);
     const session =
-      directSession ??
-      (await resolvePersonalAccountSessionFromFrontendAuthProofPayload(verifyFrontendAuthProof(body?.frontendAuthProof)));
+      await resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+        request,
+        body?.frontendAuthProof,
+      );
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
@@ -447,6 +455,9 @@ export async function POST(request: Request) {
       membership: toPersonalMembershipCard(membership),
     });
   } catch (error) {
+    if (isFrontendPersonalSessionProofError(error)) {
+      return NextResponse.json({ error: error.code }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "unknown_error";
     return NextResponse.json(
       {

@@ -26,6 +26,7 @@ import {
   buildMutationOperationMarker,
   hasMutationOperationMarker,
 } from "@/lib/mutationOperationId";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 
 const merchantCouponMutationTails = new Map<string, Promise<void>>();
 
@@ -79,11 +80,20 @@ export type MerchantCouponRedeemRequest = {
   note?: string;
   expectedAccountId?: string;
   expectedUserId?: string;
-  expectedEmail?: string;
   operationId?: unknown;
   operationScope?: unknown;
   allowedDiscountTypes?: readonly MerchantCouponDiscountType[];
 };
+
+export function matchesMerchantCouponClaimExpectedIdentity(
+  claimEvent: Pick<MerchantCouponClaimEvent, "accountId" | "userId" | "email">,
+  expected: { accountId?: unknown; userId?: unknown },
+) {
+  return matchesExactPersonalIdentity(
+    { accountId: claimEvent.accountId, userId: claimEvent.userId },
+    expected,
+  );
+}
 
 export async function getMerchantCouponsSnapshot(siteId: string) {
   const supabase = requireCouponsStoreClient();
@@ -280,7 +290,6 @@ export async function redeemMerchantCouponRecords(input: {
       note: trimText(redemption.note),
       expectedAccountId: trimText(redemption.expectedAccountId),
       expectedUserId: trimText(redemption.expectedUserId),
-      expectedEmail: trimText(redemption.expectedEmail).toLowerCase(),
       allowedDiscountTypes: redemption.allowedDiscountTypes,
       operationMarker: buildMutationOperationMarker(trimText(redemption.operationScope, 80) || "coupon-redeem", redemption.operationId),
     }))
@@ -325,12 +334,14 @@ export async function redeemMerchantCouponRecords(input: {
         throw new Error("coupon_already_redeemed");
       }
       const hasExpectedIdentity = Boolean(
-        redemption.expectedAccountId || redemption.expectedUserId || redemption.expectedEmail,
+        redemption.expectedAccountId || redemption.expectedUserId,
       );
-      const identityMatches = Boolean(
-        (redemption.expectedAccountId && claimEvent.accountId === redemption.expectedAccountId) ||
-          (redemption.expectedUserId && claimEvent.userId === redemption.expectedUserId) ||
-          (redemption.expectedEmail && claimEvent.email.toLowerCase() === redemption.expectedEmail),
+      const identityMatches = matchesMerchantCouponClaimExpectedIdentity(
+        claimEvent,
+        {
+          accountId: redemption.expectedAccountId,
+          userId: redemption.expectedUserId,
+        },
       );
       if (hasExpectedIdentity && !identityMatches) throw new Error("coupon_claim_member_mismatch");
       const previousCoupon = coupons[index];

@@ -1,45 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
-import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
-import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 import { loadStoredMerchantDraft, saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { resolveMerchantPrincipalFromRequest } from "@/lib/serverMerchantSession";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type LoosePostgrestError = { message?: string } | null;
-type LoosePostgrestResponse = {
-  data?: unknown;
-  error: LoosePostgrestError;
-};
-type LooseQueryBuilder = PromiseLike<LoosePostgrestResponse> & {
-  select: (columns: string) => LooseQueryBuilder;
-  eq: (column: string, value: unknown) => LooseQueryBuilder;
-  limit: (value: number) => LooseQueryBuilder;
-  maybeSingle: () => Promise<LoosePostgrestResponse>;
-};
-type LooseSupabaseClient = MerchantDraftStoreClient & {
-  auth: {
-    getUser: (token: string) => Promise<{
-      data: {
-        user: {
-          id?: string;
-          email?: string | null;
-          user_metadata?: Record<string, unknown> | null;
-          app_metadata?: Record<string, unknown> | null;
-        } | null;
-      };
-      error: { message?: string } | null;
-    }>;
-  };
-};
-
-type MerchantRow = {
-  id?: string | null;
-};
+type LooseSupabaseClient = MerchantDraftStoreClient;
 
 type MerchantDraftBody = {
   siteId?: unknown;
@@ -55,108 +25,18 @@ function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizeEmail(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
-}
-
-function readMetadataMerchantIds(user: {
-  user_metadata?: Record<string, unknown> | null;
-  app_metadata?: Record<string, unknown> | null;
-} | null) {
-  const merchantIds: string[] = [];
-  const metadata = {
-    ...(user?.user_metadata ?? {}),
-    ...(user?.app_metadata ?? {}),
-  } as Record<string, unknown>;
-  const push = (value: unknown) => {
-    if (typeof value !== "string") return;
-    const trimmed = value.trim();
-    if (!trimmed || merchantIds.includes(trimmed)) return;
-    merchantIds.push(trimmed);
-  };
-  push(metadata.merchant_id);
-  push(metadata.merchantId);
-  push(metadata.merchantID);
-  push(metadata.site_id);
-  push(metadata.siteId);
-  push(metadata.shop_id);
-  push(metadata.shopId);
-  return merchantIds;
-}
-
-async function getAuthorizedMerchantIds(
-  supabase: LooseSupabaseClient,
-  userId: string,
-  email: string,
-) {
-  const lookups: LooseQueryBuilder[] = [];
-
-  if (userId) {
-    ["user_id", "auth_user_id", "owner_user_id", "owner_id", "auth_id", "created_by", "created_by_user_id"].forEach(
-      (column) => {
-        lookups.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
-      },
-    );
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookups.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
-    });
-  }
-
-  const settled = await Promise.allSettled(lookups);
-  const merchantIds: string[] = [];
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled") return;
-    if (result.value.error) return;
-    ((result.value.data ?? []) as MerchantRow[]).forEach((row) => {
-      const merchantId = String(row.id ?? "").trim();
-      if (!merchantId || merchantIds.includes(merchantId)) return;
-      merchantIds.push(merchantId);
-    });
-  });
-  return merchantIds;
-}
-
 async function isAuthorizedForMerchant(
   request: Request,
-  supabase: LooseSupabaseClient,
+  _supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
   if (await isSuperAdminRequestAuthorized(request)) {
     return true;
   }
-
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  for (const accessToken of accessTokens) {
-    const authResult = await supabase.auth.getUser(accessToken);
-    if (authResult.error || !authResult.data.user) continue;
-    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
-      supabase,
-      authResult.data.user,
-    ).then(
-      () => true,
-      () => false,
-    );
-    if (!legacyIdentityAllowed) continue;
-
-    const metadataMerchantIds = readMetadataMerchantIds(authResult.data.user);
-    if (metadataMerchantIds.includes(merchantId)) {
-      return true;
-    }
-
-    const authorizedMerchantIds = await getAuthorizedMerchantIds(
-      supabase,
-      String(authResult.data.user.id ?? "").trim(),
-      normalizeEmail(authResult.data.user.email),
-    );
-    if (authorizedMerchantIds.includes(merchantId)) {
-      return true;
-    }
-  }
-
-  return false;
+  const principal = await resolveMerchantPrincipalFromRequest(request, {
+    hintedMerchantId: merchantId,
+  });
+  return principal?.merchantIds.includes(merchantId) === true;
 }
 
 function createServerSupabaseClient() {

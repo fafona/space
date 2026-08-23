@@ -24,7 +24,7 @@ function createMembership(updatedAt: string, nickname: string) {
     siteName: "Test merchant",
     memberNo: "10000000000001",
     serial: 1,
-    accountId: "account-1",
+    accountId: "50010105",
     nickname,
     joinedAt: "2026-07-01T00:00:00.000Z",
     updatedAt,

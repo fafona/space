@@ -1,12 +1,15 @@
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
+
 const RESOLVER_RPC = "faolla_resolve_ordinary_account_authorization_v1";
 const READINESS_RPC =
   "faolla_get_ordinary_account_authorization_readiness_v1";
+const AUTHORITATIVE_CUTOVER_READINESS_RPC =
+  "faolla_get_ordinary_account_authoritative_cutover_readiness_v1";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MERCHANT_ID_PATTERN = /^\d{8}$/;
 const UTC_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 
 export type OrdinaryAccountAuthorizationStoreClient = {
   // Supabase RPC results remain untrusted until the strict normalizers below.
@@ -82,6 +85,34 @@ export type OrdinaryAccountAuthorizationReadiness = {
   };
 };
 
+export type OrdinaryAccountAuthoritativeCutoverReadiness = {
+  schemaVersion: 1;
+  asOf: string;
+  readyForCutover: boolean;
+  merchant: {
+    recordCount: number;
+    authoritativeBindingCount: number;
+    invalidBindingCount: number;
+  };
+  personal: {
+    canonicalBindingCount: number;
+    canonicalOrphanCount: number;
+    invalidCanonicalCount: number;
+    duplicateAuthUserCount: number;
+    duplicatePersonalAccountIdCount: number;
+  };
+  security: {
+    crossAccountTypeOverlapCount: number;
+    accountIdentifierCollisionCount: number;
+    staffRegistryOverlapCount: number;
+    systemSitePrincipalOverlapCount: number;
+  };
+  invariants: {
+    schemaReady: boolean;
+    aclReady: boolean;
+  };
+};
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -128,17 +159,9 @@ function normalizeNonnegativeInteger(value: unknown) {
 }
 
 function normalizePersonalAccountId(value: unknown) {
-  if (
-    typeof value !== "string" ||
-    value !== value.trim() ||
-    Array.from(value).length < 1 ||
-    Array.from(value).length > 128 ||
-    new TextEncoder().encode(value).byteLength > 512 ||
-    CONTROL_CHARACTER_PATTERN.test(value)
-  ) {
-    invalidResponse();
-  }
-  return value;
+  const normalized = normalizeCanonicalPersonalAccountId(value);
+  if (!normalized) invalidResponse();
+  return normalized;
 }
 
 function normalizeMerchantIds(value: unknown) {
@@ -437,6 +460,136 @@ export function normalizeOrdinaryAccountAuthorizationReadiness(
   };
 }
 
+export function normalizeOrdinaryAccountAuthoritativeCutoverReadiness(
+  value: unknown,
+): OrdinaryAccountAuthoritativeCutoverReadiness {
+  const source = exactRecord(value, [
+    "schemaVersion",
+    "asOf",
+    "readyForCutover",
+    "merchant",
+    "personal",
+    "security",
+    "invariants",
+  ]);
+  if (
+    source.schemaVersion !== 1 ||
+    typeof source.asOf !== "string" ||
+    !UTC_TIMESTAMP_PATTERN.test(source.asOf) ||
+    Number.isNaN(Date.parse(source.asOf)) ||
+    typeof source.readyForCutover !== "boolean"
+  ) {
+    invalidResponse();
+  }
+
+  const merchantSource = exactRecord(source.merchant, [
+    "recordCount",
+    "authoritativeBindingCount",
+    "invalidBindingCount",
+  ]);
+  const merchant = {
+    recordCount: normalizeNonnegativeInteger(merchantSource.recordCount),
+    authoritativeBindingCount: normalizeNonnegativeInteger(
+      merchantSource.authoritativeBindingCount,
+    ),
+    invalidBindingCount: normalizeNonnegativeInteger(
+      merchantSource.invalidBindingCount,
+    ),
+  };
+
+  const personalSource = exactRecord(source.personal, [
+    "canonicalBindingCount",
+    "canonicalOrphanCount",
+    "invalidCanonicalCount",
+    "duplicateAuthUserCount",
+    "duplicatePersonalAccountIdCount",
+  ]);
+  const personal = {
+    canonicalBindingCount: normalizeNonnegativeInteger(
+      personalSource.canonicalBindingCount,
+    ),
+    canonicalOrphanCount: normalizeNonnegativeInteger(
+      personalSource.canonicalOrphanCount,
+    ),
+    invalidCanonicalCount: normalizeNonnegativeInteger(
+      personalSource.invalidCanonicalCount,
+    ),
+    duplicateAuthUserCount: normalizeNonnegativeInteger(
+      personalSource.duplicateAuthUserCount,
+    ),
+    duplicatePersonalAccountIdCount: normalizeNonnegativeInteger(
+      personalSource.duplicatePersonalAccountIdCount,
+    ),
+  };
+
+  const securitySource = exactRecord(source.security, [
+    "crossAccountTypeOverlapCount",
+    "accountIdentifierCollisionCount",
+    "staffRegistryOverlapCount",
+    "systemSitePrincipalOverlapCount",
+  ]);
+  const security = {
+    crossAccountTypeOverlapCount: normalizeNonnegativeInteger(
+      securitySource.crossAccountTypeOverlapCount,
+    ),
+    accountIdentifierCollisionCount: normalizeNonnegativeInteger(
+      securitySource.accountIdentifierCollisionCount,
+    ),
+    staffRegistryOverlapCount: normalizeNonnegativeInteger(
+      securitySource.staffRegistryOverlapCount,
+    ),
+    systemSitePrincipalOverlapCount: normalizeNonnegativeInteger(
+      securitySource.systemSitePrincipalOverlapCount,
+    ),
+  };
+
+  const invariantsSource = exactRecord(source.invariants, [
+    "schemaReady",
+    "aclReady",
+  ]);
+  if (
+    typeof invariantsSource.schemaReady !== "boolean" ||
+    typeof invariantsSource.aclReady !== "boolean" ||
+    merchant.authoritativeBindingCount > merchant.recordCount ||
+    merchant.invalidBindingCount > merchant.recordCount ||
+    personal.canonicalOrphanCount > personal.canonicalBindingCount ||
+    personal.invalidCanonicalCount > personal.canonicalBindingCount ||
+    personal.duplicateAuthUserCount > personal.canonicalBindingCount ||
+    personal.duplicatePersonalAccountIdCount > personal.canonicalBindingCount
+  ) {
+    invalidResponse();
+  }
+  const invariants = {
+    schemaReady: invariantsSource.schemaReady,
+    aclReady: invariantsSource.aclReady,
+  };
+  const expectedReadyForCutover =
+    merchant.invalidBindingCount === 0 &&
+    personal.canonicalOrphanCount === 0 &&
+    personal.invalidCanonicalCount === 0 &&
+    personal.duplicateAuthUserCount === 0 &&
+    personal.duplicatePersonalAccountIdCount === 0 &&
+    security.crossAccountTypeOverlapCount === 0 &&
+    security.accountIdentifierCollisionCount === 0 &&
+    security.staffRegistryOverlapCount === 0 &&
+    security.systemSitePrincipalOverlapCount === 0 &&
+    invariants.schemaReady &&
+    invariants.aclReady;
+  if (source.readyForCutover !== expectedReadyForCutover) {
+    invalidResponse();
+  }
+
+  return {
+    schemaVersion: 1,
+    asOf: source.asOf,
+    readyForCutover: source.readyForCutover,
+    merchant,
+    personal,
+    security,
+    invariants,
+  };
+}
+
 function normalizeAuthUserId(value: unknown) {
   if (
     typeof value !== "string" ||
@@ -452,7 +605,9 @@ function throwStoreError(error: unknown): never {
   const message = errorText(error);
   if (
     (message.includes("42883") || message.includes("pgrst202")) &&
-    (message.includes(RESOLVER_RPC) || message.includes(READINESS_RPC))
+    (message.includes(RESOLVER_RPC) ||
+      message.includes(READINESS_RPC) ||
+      message.includes(AUTHORITATIVE_CUTOVER_READINESS_RPC))
   ) {
     throw new Error("ordinary_account_authorization_schema_unavailable");
   }
@@ -460,8 +615,12 @@ function throwStoreError(error: unknown): never {
     "invalid_ordinary_account_authorization_query",
     "ordinary_account_auth_user_not_found",
     "ordinary_account_staff_identity_forbidden",
+    "merchant_enterprise_staff_identity_conflict",
     "ordinary_account_merchant_binding_conflict",
+    "ordinary_account_personal_binding_conflict",
     "ordinary_account_principal_type_conflict",
+    "ordinary_account_system_site_forbidden",
+    "invalid_ordinary_personal_id",
   ].find((code) => message.includes(code));
   if (knownCode) throw new Error(knownCode);
   throw new Error("ordinary_account_authorization_read_failed");
@@ -507,4 +666,15 @@ export async function loadOrdinaryAccountAuthorizationReadiness(
     Promise.resolve().then(() => client.rpc(READINESS_RPC, {})),
     normalizeOrdinaryAccountAuthorizationReadiness,
   )) as OrdinaryAccountAuthorizationReadiness;
+}
+
+export async function loadOrdinaryAccountAuthoritativeCutoverReadiness(
+  client: OrdinaryAccountAuthorizationStoreClient,
+): Promise<OrdinaryAccountAuthoritativeCutoverReadiness> {
+  return (await readRpcEnvelope(
+    Promise.resolve().then(() =>
+      client.rpc(AUTHORITATIVE_CUTOVER_READINESS_RPC, {}),
+    ),
+    normalizeOrdinaryAccountAuthoritativeCutoverReadiness,
+  )) as OrdinaryAccountAuthoritativeCutoverReadiness;
 }

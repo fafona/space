@@ -5,6 +5,9 @@ import { normalizeMerchantMembershipRecord } from "@/lib/merchantMemberships";
 import { createEmptyMerchantMembershipSettings } from "@/lib/merchantMembershipSettings";
 import {
   awardOrderPointsToMembership,
+  findActiveMembershipIndex,
+  findMembershipIndexForPersonalSession,
+  findMembershipIndexForOrder,
   revokeOrderPointsFromMembership,
 } from "@/lib/merchantMemberships.server";
 
@@ -15,7 +18,9 @@ function buildFixture() {
     siteName: "Merchant",
     memberNo: "10000000000001",
     serial: 1,
-    accountId: "account-1",
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "shared@example.com",
     status: "active",
     joinedAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-07-18T00:00:00.000Z",
@@ -30,12 +35,84 @@ function buildFixture() {
   settings.growthRules.spendAmountGrowth = 1;
   const order = createMerchantOrder({
     siteId: "10000000",
-    customerAccountId: "account-1",
+    customerAccountId: "50010105",
+    customerUserId: "11111111-1111-4111-8111-111111111111",
+    customerLoginEmail: "shared@example.com",
     items: [{ productId: "product-a", name: "Product", quantity: 1, unitPrice: 100 }],
   });
   order.status = "completed";
   return { membership, settings, order };
 }
+
+test("membership lookup and order attribution never use matching email over canonical ids", () => {
+  const { membership, order } = buildFixture();
+  const session = {
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "shared@example.com",
+  };
+  assert.equal(
+    findActiveMembershipIndex([membership], { session: session as never }),
+    0,
+  );
+  assert.equal(findMembershipIndexForOrder([membership], order), 0);
+
+  const mismatchedOrder = {
+    ...order,
+    customerUserId: "22222222-2222-4222-8222-222222222222",
+  };
+  assert.equal(findMembershipIndexForOrder([membership], mismatchedOrder), -1);
+  assert.equal(
+    findMembershipIndexForOrder(
+      [membership],
+      {
+        ...order,
+        customerAccountId: "",
+        customerUserId: "",
+        customerLoginEmail: "shared@example.com",
+      },
+    ),
+    -1,
+  );
+  assert.equal(
+    findActiveMembershipIndex([membership], {
+      session: {
+        ...session,
+        userId: "22222222-2222-4222-8222-222222222222",
+      } as never,
+    }),
+    -1,
+  );
+});
+
+test("join and leave membership lookup require every stored canonical id", () => {
+  const { membership } = buildFixture();
+  const exact = {
+    ...membership,
+    id: "membership-exact",
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "shared@example.com",
+  };
+  const mismatchedAccount = {
+    ...exact,
+    id: "membership-mismatched",
+    accountId: "50010106",
+  };
+  const emailOnly = {
+    ...exact,
+    id: "membership-email-only",
+    accountId: "",
+    userId: "",
+  };
+  const session = {
+    accountId: "50010105",
+    userId: "11111111-1111-4111-8111-111111111111",
+  };
+
+  assert.equal(findMembershipIndexForPersonalSession([mismatchedAccount, emailOnly, exact], session), 2);
+  assert.equal(findMembershipIndexForPersonalSession([mismatchedAccount, emailOnly], session), -1);
+});
 
 test("order point award, reversal and re-completion stay idempotent", () => {
   const { membership, settings, order } = buildFixture();

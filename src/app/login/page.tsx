@@ -57,6 +57,7 @@ import {
   supabase,
 } from "@/lib/supabase";
 import { type PlatformAccountType } from "@/lib/platformAccounts";
+import { normalizeCanonicalPersonalAccountId } from "@/lib/personalAccountId";
 
 type LoginAuthUser = {
   id?: string;
@@ -361,8 +362,7 @@ function normalizePlatformAccountType(value: unknown): PlatformAccountType | "" 
 }
 
 function normalizePlatformAccountId(value: unknown) {
-  const normalized = typeof value === "string" ? value.trim() : "";
-  return /^\d{8}$/.test(normalized) ? normalized : "";
+  return normalizeCanonicalPersonalAccountId(value);
 }
 
 function readAndroidKeyboardInset() {
@@ -1689,35 +1689,44 @@ function LoginPageInner() {
 
     setPendingAction("signup");
     try {
-      const response = await withTimeout(
-        fetch("/api/auth/merchant-signup", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          cache: "no-store",
-          body: JSON.stringify({
-            email: account.trim(),
-            password,
-            accountType,
+      type SignupResponsePayload = {
+        ok?: unknown;
+        error?: unknown;
+        message?: unknown;
+        needsConfirmation?: unknown;
+        accountType?: unknown;
+        accountId?: unknown;
+        merchantId?: unknown;
+        merchantIds?: unknown;
+        codeSent?: unknown;
+        maskedEmail?: unknown;
+        user?: LoginAuthUser | null;
+      } | null;
+      const submitSignup = async () => {
+        const response = await withTimeout(
+          fetch("/api/auth/merchant-signup", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            cache: "no-store",
+            body: JSON.stringify({
+              email: account.trim(),
+              password,
+              accountType,
+            }),
           }),
-        }),
-      );
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            ok?: unknown;
-            error?: unknown;
-            message?: unknown;
-            needsConfirmation?: unknown;
-            accountType?: unknown;
-            accountId?: unknown;
-            merchantId?: unknown;
-            merchantIds?: unknown;
-            codeSent?: unknown;
-            maskedEmail?: unknown;
-            user?: LoginAuthUser | null;
-          }
-        | null;
+        );
+        const payload = (await response.json().catch(() => null)) as SignupResponsePayload;
+        return { response, payload };
+      };
+      let { response, payload } = await submitSignup();
+      if (
+        response.status === 409 &&
+        payload?.error === "ordinary_signup_intent_reissued"
+      ) {
+        ({ response, payload } = await submitSignup());
+      }
       if (!response.ok) {
         const message = typeof payload?.message === "string" ? payload.message : typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
         const errorCode = typeof payload?.error === "string" ? payload.error : "";

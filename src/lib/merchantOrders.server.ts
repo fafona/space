@@ -22,6 +22,7 @@ import {
   saveStoredMerchantOrders,
 } from "@/lib/merchantOrdersStore";
 import { mirrorMerchantOrderTransitions } from "@/lib/merchantOrderDualWrite.server";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 import {
   loadMerchantOrderV1,
   loadMerchantOrdersV1,
@@ -105,7 +106,6 @@ export async function listMerchantOrdersWindow(
 export async function listPersonalMerchantOrders(input: {
   accountId?: string | null;
   userId?: string | null;
-  email?: string | null;
 }) {
   const supabase = requireOrdersStoreClient();
   return listStoredMerchantOrdersByCustomer(supabase, input);
@@ -124,12 +124,26 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
     if (clientRequestId) {
       const existingRequest = existingOrders.find((order) => order.clientRequestId === clientRequestId);
       if (existingRequest) {
-        const sameOwner =
-          (input.customerAccountId && existingRequest.customerAccountId === trimText(input.customerAccountId)) ||
-          (input.customerUserId && existingRequest.customerUserId === trimText(input.customerUserId)) ||
-          (input.customerLoginEmail &&
-            existingRequest.customerLoginEmail === trimText(input.customerLoginEmail).toLowerCase()) ||
-          (input.customerGuestHash && existingRequest.customerGuestHash === trimText(input.customerGuestHash));
+        const hasCanonicalOwner = Boolean(
+          trimText(existingRequest.customerAccountId) ||
+            trimText(existingRequest.customerUserId),
+        );
+        const sameOwner = hasCanonicalOwner
+          ? matchesExactPersonalIdentity(
+              {
+                accountId: existingRequest.customerAccountId,
+                userId: existingRequest.customerUserId,
+              },
+              {
+                accountId: input.customerAccountId,
+                userId: input.customerUserId,
+              },
+            )
+          : Boolean(
+              input.customerGuestHash &&
+                existingRequest.customerGuestHash ===
+                  trimText(input.customerGuestHash),
+            );
         if (!sameOwner) throw new Error("order_request_conflict");
         await mirrorMerchantOrderTransitions(supabase, [{ next: existingRequest }]);
         return existingRequest;
@@ -174,14 +188,14 @@ function trimText(value: unknown) {
 
 function matchesPersonalOrderCustomer(
   order: MerchantOrderRecord,
-  input: { accountId: string; userId: string; email: string },
+  input: { accountId: string; userId: string },
 ) {
-  if (input.accountId && trimText(order.customerAccountId) === input.accountId) return true;
-  if (input.userId && trimText(order.customerUserId) === input.userId) return true;
-  if (!input.email) return false;
-  return (
-    trimText(order.customerLoginEmail).toLowerCase() === input.email ||
-    trimText(order.customer.email).toLowerCase() === input.email
+  return matchesExactPersonalIdentity(
+    {
+      accountId: order.customerAccountId,
+      userId: order.customerUserId,
+    },
+    input,
   );
 }
 
@@ -190,7 +204,6 @@ export async function cancelPersonalMerchantOrder(input: {
   orderId: string;
   accountId?: string | null;
   userId?: string | null;
-  email?: string | null;
 }) {
   const supabase = requireOrdersStoreClient();
   const siteId = trimText(input.siteId);
@@ -198,9 +211,8 @@ export async function cancelPersonalMerchantOrder(input: {
   const lookup = {
     accountId: trimText(input.accountId),
     userId: trimText(input.userId),
-    email: trimText(input.email).toLowerCase(),
   };
-  if (!siteId || !orderId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
+  if (!siteId || !orderId || (!lookup.accountId && !lookup.userId)) {
     throw new Error("order_not_found");
   }
   return withMerchantOrderMutationLock(siteId, async () => {
@@ -246,7 +258,7 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
   const accountId = trimText(input.accountId);
   const userId = trimText(input.userId);
   const email = trimText(input.email).toLowerCase();
-  if (!guestHash || (!accountId && !userId && !email)) return [];
+  if (!guestHash || (!accountId && !userId)) return [];
 
   const siteMap = new Map<string, Set<string>>();
   for (const record of Array.isArray(input.records) ? input.records : []) {
@@ -267,13 +279,21 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
       const nextOrders = orders.map((order) => {
         if (!orderIds.has(order.id)) return order;
         if (trimText(order.customerGuestHash) !== guestHash) return order;
-        const existingOwner =
-          trimText(order.customerAccountId) || trimText(order.customerUserId) || trimText(order.customerLoginEmail).toLowerCase();
-        const ownedByCurrent =
-          (accountId && trimText(order.customerAccountId) === accountId) ||
-          (userId && trimText(order.customerUserId) === userId) ||
-          (email && trimText(order.customerLoginEmail).toLowerCase() === email);
-        if (existingOwner && !ownedByCurrent) return order;
+        const hasCanonicalOwner = Boolean(
+          trimText(order.customerAccountId) || trimText(order.customerUserId),
+        );
+        if (
+          hasCanonicalOwner &&
+          !matchesExactPersonalIdentity(
+            {
+              accountId: order.customerAccountId,
+              userId: order.customerUserId,
+            },
+            { accountId, userId },
+          )
+        ) {
+          return order;
+        }
         const next: MerchantOrderRecord = {
           ...order,
           customerAccountId: accountId || order.customerAccountId,

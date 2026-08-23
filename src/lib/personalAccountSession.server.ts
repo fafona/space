@@ -6,11 +6,13 @@ import {
 } from "@/lib/personalAccountServiceConfig";
 import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import {
-  resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
+import { loadActiveOrdinaryAccountAuthorization } from "@/lib/ordinaryAccountPrincipal.server";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
-import type { FrontendAuthProofPayload } from "@/lib/frontendAuthProof.server";
+import {
+  type FrontendAuthProofPayload,
+} from "@/lib/frontendAuthProof.server";
 
 export type PersonalAccountSession = {
   adminSupabase: PlatformIdentitySupabaseClient;
@@ -22,6 +24,22 @@ export type PersonalAccountSession = {
   servicePaused: boolean;
   permissionConfig: ReturnType<typeof buildPersonalAccountPermissionConfig>;
 };
+
+export class FrontendPersonalSessionProofError extends Error {
+  readonly code = "frontend_personal_session_proof_rejected";
+  readonly status = 401;
+
+  constructor() {
+    super("frontend_personal_session_proof_rejected");
+    this.name = "FrontendPersonalSessionProofError";
+  }
+}
+
+export function isFrontendPersonalSessionProofError(
+  error: unknown,
+): error is FrontendPersonalSessionProofError {
+  return error instanceof FrontendPersonalSessionProofError;
+}
 
 type AdminGetUserByIdResult = {
   data?: { user?: MerchantAuthUserSummary | null } | null;
@@ -44,10 +62,11 @@ async function loadFreshAuthUser(
   adminSupabase: PlatformIdentitySupabaseClient,
   userId: string,
 ): Promise<MerchantAuthUserSummary | null> {
-  const getUserById = (adminSupabase as PersonalAccountServiceSupabaseClient).auth.admin.getUserById;
+  const admin = (adminSupabase as PersonalAccountServiceSupabaseClient).auth.admin;
+  const getUserById = admin.getUserById;
   if (typeof getUserById === "function") {
     try {
-      const { data, error } = await getUserById(userId);
+      const { data, error } = await admin.getUserById!(userId);
       if (!error && data?.user) return data.user;
     } catch {
       // Fall through to paged lookup below.
@@ -91,9 +110,12 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
   if (!user || !userId) return null;
   user = (await loadFreshAuthUser(adminSupabase, userId)) ?? user;
 
-  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
-  const accountId = trimText(identity.accountId, 128) || userId;
-  if (identity.accountType !== "personal") return null;
+  const authorization = await loadActiveOrdinaryAccountAuthorization(
+    adminSupabase,
+    user,
+  ).catch(() => null);
+  if (!authorization || authorization.accountType !== "personal") return null;
+  const accountId = authorization.personalAccountId;
   const serviceConfig = readPersonalAccountServiceConfigFromMetadata(user);
 
   return {
@@ -111,33 +133,24 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
 export async function resolvePersonalAccountSessionFromFrontendAuthProofPayload(
   payload: FrontendAuthProofPayload | null | undefined,
 ): Promise<PersonalAccountSession | null> {
-  if (!payload || payload.accountType !== "personal") return null;
-  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
-  if (!adminSupabase) return null;
+  void payload;
+  return null;
+}
 
-  const userId = trimText(payload.userId, 128);
-  if (!userId) return null;
-  const user = await loadFreshAuthUser(adminSupabase, userId);
-  if (!user) return null;
-
-  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user, {
-    preferredAccountType: "personal",
-    preferredAccountId: payload.accountId,
-  });
-  const accountId = trimText(identity.accountId, 128) || userId;
-  if (identity.accountType !== "personal") return null;
-  const proofAccountId = trimText(payload.accountId, 128);
-  if (proofAccountId && accountId && proofAccountId !== accountId) return null;
-
-  const serviceConfig = readPersonalAccountServiceConfigFromMetadata(user);
-  return {
-    adminSupabase,
-    user,
-    accountId,
-    userId,
-    email: trimText(user.email, 320).toLowerCase() || trimText(payload.email, 320).toLowerCase(),
-    serviceConfig,
-    servicePaused: serviceConfig.servicePaused,
-    permissionConfig: buildPersonalAccountPermissionConfig(serviceConfig),
-  };
+/**
+ * Legacy frontend proofs are rejected even when a direct cookie session is
+ * present. Cross-origin proof authority stays disabled until a separate
+ * audience/site-bound, one-time exchange is deployed.
+ */
+export async function resolvePersonalAccountSessionFromRequestOrFrontendAuthProof(
+  request: Request,
+  frontendAuthProof: unknown,
+  requestSessionResolver: (
+    request: Request,
+  ) => Promise<PersonalAccountSession | null> = resolvePersonalAccountSessionFromRequest,
+): Promise<PersonalAccountSession | null> {
+  if (frontendAuthProof !== undefined) {
+    throw new FrontendPersonalSessionProofError();
+  }
+  return requestSessionResolver(request);
 }

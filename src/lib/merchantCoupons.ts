@@ -1,4 +1,5 @@
 import { hasMutationOperationMarker } from "@/lib/mutationOperationId";
+import { matchesExactPersonalIdentity } from "@/lib/personalAccountId";
 
 export const MERCHANT_COUPON_DISCOUNT_TYPES = [
   "amount_off",
@@ -893,15 +894,11 @@ export function hasActiveMerchantMembershipForCouponClaim(
   }>,
   identity: { accountId?: unknown; userId?: unknown; email?: unknown },
 ) {
-  const accountId = trimText(identity.accountId);
-  const userId = trimText(identity.userId);
-  const email = trimText(identity.email).toLowerCase();
   return memberships.some((membership) => {
     if (membership.status !== "active") return false;
-    return Boolean(
-      (accountId && trimText(membership.accountId) === accountId) ||
-        (userId && trimText(membership.userId) === userId) ||
-        (email && trimText(membership.email).toLowerCase() === email),
+    return matchesExactPersonalIdentity(
+      { accountId: membership.accountId, userId: membership.userId },
+      identity,
     );
   });
 }

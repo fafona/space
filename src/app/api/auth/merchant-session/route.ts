@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   type MerchantAuthUserSummary,
-  listMerchantIdsForUser,
 } from "@/lib/merchantAuthIdentity";
 import {
   clearMerchantAuthCookies,
-  readMerchantAuthCookie,
-  readMerchantAuthRefreshCookie,
+  clearMerchantAuthMerchantIdCookie,
+  readMerchantAuthMerchantIdCookie,
   readMerchantRequestAccessTokens,
   readMerchantRequestRefreshTokens,
   setMerchantAuthCookies,
@@ -16,19 +15,12 @@ import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
-import {
-  readPlatformAccountIdFromMetadata,
-  readPlatformAccountTypeHintFromMetadata,
-  type PlatformAccountType,
-} from "@/lib/platformAccounts";
+import { type PlatformAccountType } from "@/lib/platformAccounts";
 import {
   readPersonalAccountServiceConfigFromMetadata,
   type PersonalAccountServiceConfig,
 } from "@/lib/personalAccountServiceConfig";
-import {
-  assertLegacyMerchantIdentityAllowed,
-  isMerchantStaffPrincipalError,
-} from "@/lib/merchantStaffPrincipal.server";
+import { isOrdinaryAccountPrincipalError } from "@/lib/ordinaryAccountPrincipal.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +67,6 @@ type AuthenticatedMerchantSessionPayload = {
   merchantIds: string[];
   personalServiceConfig: PersonalAccountServiceConfig | null;
   personalServicePaused: boolean;
-  frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
 
@@ -85,22 +76,14 @@ type PublicMerchantSessionPayload = {
   accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
-  accessToken?: string;
-  refreshToken?: string | null;
-  expiresIn?: number | null;
-  tokenType?: string;
   personalServiceConfig: PersonalAccountServiceConfig | null;
   personalServicePaused: boolean;
-  frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
 
-const MERCHANT_SESSION_CACHE_TTL_MS = 20_000;
 const MERCHANT_SESSION_AUTH_TIMEOUT_MS = 4500;
 const MERCHANT_SESSION_TOKEN_TIMEOUT_MS = 6000;
 const MERCHANT_SESSION_IDENTITY_TIMEOUT_MS = 4500;
-const MERCHANT_SESSION_LINKED_IDS_TIMEOUT_MS = 1500;
-const merchantSessionCache = new Map<string, { expiresAt: number; payload: AuthenticatedMerchantSessionPayload }>();
 const merchantSessionInflight = new Map<string, Promise<AuthenticatedMerchantSessionPayload | null>>();
 
 type MerchantSessionGetUserResult = Awaited<
@@ -134,13 +117,6 @@ function normalizeSessionPreferredAccountType(value: unknown): PlatformAccountTy
   if (value === "personal") return "personal";
   if (value === "merchant") return "merchant";
   return null;
-}
-
-function readExistingSessionAccountType(user: MerchantAuthUserSummary | null): PlatformAccountType | "" {
-  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
-  if (metadataAccountType) return metadataAccountType;
-  const accountId = readPlatformAccountIdFromMetadata(user);
-  return accountId ? "merchant" : "";
 }
 
 async function withFallbackTimeout<T>(task: PromiseLike<T>, timeoutMs: number, fallback: T): Promise<T> {
@@ -196,80 +172,56 @@ async function readMerchantSessionUser(
   }
 }
 
-function buildMerchantPlatformIdentity(merchantIds: string[]): MerchantSessionPlatformIdentity {
-  const normalizedMerchantIds = Array.from(
-    new Set(merchantIds.map((value) => String(value ?? "").trim()).filter(Boolean)),
-  );
-  const merchantId = normalizedMerchantIds[0] ?? "";
-  return {
-    accountType: "merchant",
-    accountId: merchantId || null,
-    merchantId: merchantId || null,
-    merchantIds: normalizedMerchantIds,
-  };
-}
-
-function buildMetadataOnlyPlatformIdentity(
-  user: MerchantAuthUserSummary | null,
-  preferredAccountType?: PlatformAccountType | null,
-): MerchantSessionPlatformIdentity {
-  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
-  const metadataAccountId = readPlatformAccountIdFromMetadata(user);
-  const accountType = metadataAccountType || preferredAccountType || "merchant";
-
-  if (accountType === "personal") {
-    const personalAccountId = metadataAccountType === "personal" ? metadataAccountId : "";
-    return {
-      accountType: "personal",
-      accountId: personalAccountId || null,
-      merchantId: null,
-      merchantIds: [],
-    };
-  }
-
-  const merchantId = metadataAccountType === "personal" ? "" : metadataAccountId;
-  return buildMerchantPlatformIdentity(merchantId ? [merchantId] : []);
-}
-
 async function resolveMerchantSessionPlatformIdentity(
   supabase: PlatformIdentitySupabaseClient | null,
   user: MerchantAuthUserSummary | null,
-  options: { preferredAccountType?: PlatformAccountType | null; preferredEmail?: string | null } = {},
+  options: {
+    preferredAccountType?: PlatformAccountType | null;
+    preferredEmail?: string | null;
+    preferredMerchantId?: string | null;
+    strictPreferredMerchantId?: boolean;
+  } = {},
+) : Promise<MerchantSessionPlatformIdentity> {
+  const identity = await withFallbackTimeout(
+    resolvePlatformAccountIdentityForUser(supabase, user, options),
+    MERCHANT_SESSION_IDENTITY_TIMEOUT_MS,
+    null,
+  );
+  if (!identity) throw new Error("ordinary_account_identity_timeout");
+  return identity;
+}
+
+function readGetPreferredMerchantId(request: Request) {
+  const queryValue = new URL(request.url).searchParams.get("merchantId");
+  if (queryValue !== null) {
+    return { value: queryValue.trim().slice(0, 64), strict: true };
+  }
+  return { value: readMerchantAuthMerchantIdCookie(request), strict: false };
+}
+
+function readPostPreferredMerchantId(
+  request: Request,
+  payload: Record<string, unknown> | null,
 ) {
-  const metadataAccountType = readPlatformAccountTypeHintFromMetadata(user, "");
-  const metadataAccountId = readPlatformAccountIdFromMetadata(user);
-  const email = String(options.preferredEmail ?? user?.email ?? "").trim().toLowerCase();
-
-  if (metadataAccountId) {
-    const metadataIdentity = buildMetadataOnlyPlatformIdentity(user, options.preferredAccountType);
-    if (metadataIdentity.accountType !== "merchant") return metadataIdentity;
-    const linkedMerchantIds = await withFallbackTimeout(
-      listMerchantIdsForUser(supabase, user).catch(() => [] as string[]),
-      MERCHANT_SESSION_LINKED_IDS_TIMEOUT_MS,
-      [] as string[],
-    );
-    return buildMerchantPlatformIdentity([metadataIdentity.merchantId, ...linkedMerchantIds].filter(Boolean) as string[]);
-  }
-
-  const matchedMerchantIds = await withFallbackTimeout(
-    listMerchantIdsForUser(supabase, user).catch(() => [] as string[]),
-    MERCHANT_SESSION_IDENTITY_TIMEOUT_MS,
-    [] as string[],
+  const hasPreferred = Boolean(
+    payload &&
+      (Object.prototype.hasOwnProperty.call(payload, "preferredMerchantId") ||
+        Object.prototype.hasOwnProperty.call(payload, "merchantId")),
   );
-  if (matchedMerchantIds.length > 0) {
-    return buildMerchantPlatformIdentity(matchedMerchantIds);
+  if (!hasPreferred) {
+    return { value: readMerchantAuthMerchantIdCookie(request), strict: false };
   }
-
-  const fallbackPreferredAccountType = options.preferredAccountType ?? (metadataAccountType || null);
-  const fallback = buildMetadataOnlyPlatformIdentity(user, fallbackPreferredAccountType);
-  return withFallbackTimeout(
-    resolvePlatformAccountIdentityForUser(supabase, user, {
-      preferredAccountType: fallbackPreferredAccountType,
-      preferredEmail: email,
-    }).catch(() => fallback),
-    MERCHANT_SESSION_IDENTITY_TIMEOUT_MS,
-    fallback,
-  );
+  const value = Object.prototype.hasOwnProperty.call(
+    payload,
+    "preferredMerchantId",
+  )
+    ? payload?.preferredMerchantId
+    : payload?.merchantId;
+  if (value === null) return { value: "", strict: true };
+  if (typeof value !== "string") {
+    return { value: "__invalid_merchant_selection__", strict: true };
+  }
+  return { value: value.trim().slice(0, 64), strict: true };
 }
 
 function isTransientMerchantSessionError(error: unknown) {
@@ -424,62 +376,38 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
-function readMerchantSessionCache(accessToken: string, refreshToken: string) {
-  const keys = [refreshToken, accessToken].map((value) => String(value ?? "").trim()).filter(Boolean);
-  for (const key of keys) {
-    const cached = merchantSessionCache.get(key) ?? null;
-    if (!cached) continue;
-    if (cached.expiresAt <= Date.now()) {
-      merchantSessionCache.delete(key);
-      continue;
+function buildMerchantSessionInflightKey(
+  accessTokens: string[],
+  refreshTokens: string[],
+  preferredMerchantId: string,
+  strictPreferredMerchantId: boolean,
+) {
+  if (accessTokens.length === 0 && refreshTokens.length === 0) return "";
+  return JSON.stringify({
+    accessTokens,
+    refreshTokens,
+    preferredMerchantId: preferredMerchantId || null,
+    strictPreferredMerchantId,
+  });
+}
+
+async function refreshMerchantSessionWithVerifiedUser(
+  supabase: Parameters<typeof readMerchantSessionUser>[0],
+  refreshToken: string,
+) {
+  const refreshed = await refreshMerchantSession(refreshToken);
+  if (refreshed.status !== "ok") return { status: refreshed.status } as const;
+  let user = refreshed.user;
+  if (!user) {
+    const checked = await readMerchantSessionUser(supabase, refreshed.accessToken);
+    if (!checked.error && checked.data.user) {
+      user = checked.data.user as MerchantAuthUserSummary;
+    } else if (checked.error && isTransientMerchantSessionError(checked.error)) {
+      return { status: "unavailable" } as const;
     }
-    return cached.payload;
   }
-  return null;
-}
-
-function readMerchantSessionCacheFromCandidates(accessTokens: string[], refreshTokens: string[]) {
-  for (const refreshToken of refreshTokens) {
-    const cached = readMerchantSessionCache("", refreshToken);
-    if (cached) return cached;
-  }
-  for (const accessToken of accessTokens) {
-    const cached = readMerchantSessionCache(accessToken, "");
-    if (cached) return cached;
-  }
-  return null;
-}
-
-function writeMerchantSessionCache(payload: AuthenticatedMerchantSessionPayload) {
-  const keys = [payload.refreshToken, payload.accessToken].map((value) => String(value ?? "").trim()).filter(Boolean);
-  if (keys.length === 0) return;
-  const entry = {
-    expiresAt: Date.now() + MERCHANT_SESSION_CACHE_TTL_MS,
-    payload,
-  };
-  keys.forEach((key) => {
-    merchantSessionCache.set(key, entry);
-  });
-}
-
-function clearMerchantSessionCache(accessToken: string, refreshToken: string) {
-  [refreshToken, accessToken]
-    .map((value) => String(value ?? "").trim())
-    .filter(Boolean)
-    .forEach((key) => {
-      merchantSessionCache.delete(key);
-      merchantSessionInflight.delete(key);
-    });
-}
-
-function clearMerchantSessionCacheFromCandidates(accessTokens: string[], refreshTokens: string[]) {
-  const attempted = new Set<string>();
-  [...refreshTokens, ...accessTokens].forEach((token) => {
-    const normalized = String(token ?? "").trim();
-    if (!normalized || attempted.has(normalized)) return;
-    attempted.add(normalized);
-    clearMerchantSessionCache(normalized, "");
-  });
+  if (!user) return { status: "invalid" } as const;
+  return { status: "ok", refreshed, user } as const;
 }
 
 function toPublicMerchantSessionPayload(
@@ -495,6 +423,7 @@ function toPublicMerchantSessionPayload(
     personalServicePaused: payload.personalServicePaused,
     // Cross-subdomain proof issuance is disabled until a site-scoped,
     // one-time exchange with bounded audience and replay protection exists.
+    // Same-origin callers continue to use the HttpOnly session cookie.
     user: payload.user,
   };
 }
@@ -515,23 +444,22 @@ export async function GET(request: Request) {
   try {
     const cookieAccessTokens = readMerchantRequestAccessTokens(request);
     const cookieRefreshTokens = readMerchantRequestRefreshTokens(request);
-    const cookieAccessToken = cookieAccessTokens[0] ?? readMerchantAuthCookie(request);
-    const cookieRefreshToken = cookieRefreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
     const adminSupabase = createServiceRoleSupabaseClient();
-    const cached = readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
-    if (cached) {
-      await assertLegacyMerchantIdentityAllowed(adminSupabase, cached.user);
-      return respondWithMerchantSession(request, cached);
-    }
-
+    const preferredSelection = readGetPreferredMerchantId(request);
+    const preferredMerchantId = preferredSelection.value;
     const supabase = createServerSupabaseClient();
     if (!supabase) {
       return noStoreJson({ error: "merchant_session_env_missing" }, { status: 503 });
     }
 
-    const cacheKey = [cookieRefreshToken, cookieAccessToken].map((value) => String(value ?? "").trim()).find(Boolean) ?? "";
-    if (cacheKey) {
-      const inFlight = merchantSessionInflight.get(cacheKey);
+    const inflightKey = buildMerchantSessionInflightKey(
+      cookieAccessTokens,
+      cookieRefreshTokens,
+      preferredMerchantId,
+      preferredSelection.strict,
+    );
+    if (inflightKey) {
+      const inFlight = merchantSessionInflight.get(inflightKey);
       if (inFlight) {
         const payload = await inFlight;
         if (payload) return respondWithMerchantSession(request, payload);
@@ -539,8 +467,8 @@ export async function GET(request: Request) {
     }
 
     const task = (async () => {
-      let accessToken = cookieAccessToken;
-      let refreshToken = cookieRefreshToken;
+      let accessToken = "";
+      let refreshToken = "";
       let user: MerchantAuthUserSummary | null = null;
       let expiresIn: number | null = null;
       let tokenType = "bearer";
@@ -555,6 +483,42 @@ export async function GET(request: Request) {
         }
         if (error && isTransientMerchantSessionError(error)) {
           authUnavailable = true;
+        }
+      }
+
+      if (user && cookieRefreshTokens.length > 0) {
+        const accessUserId = String(user.id ?? "").trim();
+        for (const candidateRefreshToken of cookieRefreshTokens) {
+          const refreshed = await refreshMerchantSession(candidateRefreshToken);
+          if (refreshed.status === "unavailable") {
+            authUnavailable = true;
+            continue;
+          }
+          if (refreshed.status !== "ok") continue;
+          let refreshedUser = refreshed.user;
+          if (!refreshedUser) {
+            const checked = await readMerchantSessionUser(
+              supabase,
+              refreshed.accessToken,
+            );
+            if (!checked.error && checked.data.user) {
+              refreshedUser = checked.data.user as MerchantAuthUserSummary;
+            } else if (checked.error && isTransientMerchantSessionError(checked.error)) {
+              authUnavailable = true;
+            }
+          }
+          if (
+            !refreshedUser ||
+            String(refreshedUser.id ?? "").trim() !== accessUserId
+          ) {
+            continue;
+          }
+          accessToken = refreshed.accessToken;
+          refreshToken = refreshed.refreshToken;
+          expiresIn = refreshed.expiresIn;
+          tokenType = refreshed.tokenType;
+          user = refreshedUser;
+          break;
         }
       }
 
@@ -586,12 +550,18 @@ export async function GET(request: Request) {
         if (authUnavailable) {
           throw new Error("merchant_session_transient_unavailable");
         }
-        clearMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
         return null;
       }
 
-      await assertLegacyMerchantIdentityAllowed(adminSupabase, user);
-      const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user);
+      const platformIdentity = await resolveMerchantSessionPlatformIdentity(
+        adminSupabase,
+        user,
+        {
+          preferredMerchantId,
+          strictPreferredMerchantId:
+            preferredSelection.strict && Boolean(preferredMerchantId),
+        },
+      );
       const personalServiceConfig =
         platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 
@@ -609,12 +579,11 @@ export async function GET(request: Request) {
         personalServicePaused: personalServiceConfig?.servicePaused === true,
         user,
       } satisfies AuthenticatedMerchantSessionPayload;
-      writeMerchantSessionCache(payload);
       return payload;
     })();
 
-    if (cacheKey) {
-      merchantSessionInflight.set(cacheKey, task);
+    if (inflightKey) {
+      merchantSessionInflight.set(inflightKey, task);
     }
     try {
       const payload = await task;
@@ -625,17 +594,23 @@ export async function GET(request: Request) {
       }
       return respondWithMerchantSession(request, payload);
     } finally {
-      if (cacheKey && merchantSessionInflight.get(cacheKey) === task) {
-        merchantSessionInflight.delete(cacheKey);
+      if (inflightKey && merchantSessionInflight.get(inflightKey) === task) {
+        merchantSessionInflight.delete(inflightKey);
       }
     }
   } catch (error) {
-    if (isMerchantStaffPrincipalError(error)) {
+    if (isOrdinaryAccountPrincipalError(error)) {
       const response = noStoreJson(
         { authenticated: false, error: error.code },
         { status: error.status },
       );
-      if (error.status === 403) clearMerchantAuthCookies(response, request);
+      if (error.status === 403) {
+        if (error.code === "ordinary_account_merchant_selection_forbidden") {
+          clearMerchantAuthMerchantIdCookie(response, request);
+        } else {
+          clearMerchantAuthCookies(response, request);
+        }
+      }
       return response;
     }
     return noStoreJson({ authenticated: false, error: "merchant_session_unavailable" }, { status: 503 });
@@ -662,6 +637,8 @@ export async function POST(request: Request) {
             authCode?: unknown;
             codeVerifier?: unknown;
             preferredAccountType?: unknown;
+            preferredMerchantId?: unknown;
+            merchantId?: unknown;
             authProvider?: unknown;
           }
       | null;
@@ -702,34 +679,81 @@ export async function POST(request: Request) {
       return response;
     }
 
+    const refreshTokenCandidates = [
+      refreshToken,
+      ...readMerchantRequestRefreshTokens(request),
+    ].filter(
+      (value, index, values): value is string =>
+        Boolean(value) && values.indexOf(value) === index,
+    );
+
     let verifiedAccessToken = accessToken;
-    let verifiedRefreshToken = refreshToken;
+    let verifiedRefreshToken = "";
     let verifiedExpiresIn = expiresIn;
     let user: MerchantAuthUserSummary | null = null;
+    let sessionRefreshed = false;
 
     const { data, error } = await readMerchantSessionUser(supabase, accessToken);
     if (!error && data.user) {
       user = data.user as MerchantAuthUserSummary;
     } else if (error && isTransientMerchantSessionError(error)) {
       return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
-    } else if (refreshToken) {
-      const refreshed = await refreshMerchantSession(refreshToken);
-      if (refreshed.status === "unavailable") {
-        return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
-      }
-      if (refreshed.status === "ok") {
-        verifiedAccessToken = refreshed.accessToken;
-        verifiedRefreshToken = refreshed.refreshToken;
-        verifiedExpiresIn = refreshed.expiresIn ?? expiresIn;
-        user = refreshed.user;
-        if (!user) {
-          const retried = await readMerchantSessionUser(supabase, verifiedAccessToken);
-          if (!retried.error && retried.data.user) {
-            user = retried.data.user as MerchantAuthUserSummary;
-          } else if (retried.error && isTransientMerchantSessionError(retried.error)) {
-            return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
-          }
+    } else if (refreshTokenCandidates.length > 0) {
+      let refreshUnavailable = false;
+      for (const candidateRefreshToken of refreshTokenCandidates) {
+        const candidate = await refreshMerchantSessionWithVerifiedUser(
+          supabase,
+          candidateRefreshToken,
+        );
+        if (candidate.status === "unavailable") {
+          refreshUnavailable = true;
+          continue;
         }
+        if (candidate.status !== "ok") continue;
+        sessionRefreshed = true;
+        verifiedAccessToken = candidate.refreshed.accessToken;
+        verifiedRefreshToken = candidate.refreshed.refreshToken;
+        verifiedExpiresIn = candidate.refreshed.expiresIn ?? expiresIn;
+        user = candidate.user;
+        break;
+      }
+      if (!user && refreshUnavailable) {
+        return noStoreJson(
+          { ok: false, error: "merchant_session_sync_unavailable" },
+          { status: 503 },
+        );
+      }
+    }
+
+    if (user && refreshTokenCandidates.length > 0 && !sessionRefreshed) {
+      const accessUserId = String(user.id ?? "").trim();
+      let refreshUnavailable = false;
+      for (const candidateRefreshToken of refreshTokenCandidates) {
+        const candidate = await refreshMerchantSessionWithVerifiedUser(
+          supabase,
+          candidateRefreshToken,
+        );
+        if (candidate.status === "unavailable") {
+          refreshUnavailable = true;
+          continue;
+        }
+        if (
+          candidate.status !== "ok" ||
+          String(candidate.user.id ?? "").trim() !== accessUserId
+        ) {
+          continue;
+        }
+        verifiedAccessToken = candidate.refreshed.accessToken;
+        verifiedRefreshToken = candidate.refreshed.refreshToken;
+        verifiedExpiresIn = candidate.refreshed.expiresIn ?? expiresIn;
+        user = candidate.user;
+        break;
+      }
+      if (!verifiedRefreshToken && refreshUnavailable) {
+        return noStoreJson(
+          { ok: false, error: "merchant_session_sync_unavailable" },
+          { status: 503 },
+        );
       }
     }
 
@@ -739,17 +763,22 @@ export async function POST(request: Request) {
       return response;
     }
 
-    await assertLegacyMerchantIdentityAllowed(adminSupabase, user);
     const requestedPreferredAccountType = normalizeSessionPreferredAccountType(payload?.preferredAccountType);
+    const requestedPreferredSelection = readPostPreferredMerchantId(
+      request,
+      payload as Record<string, unknown> | null,
+    );
     const platformIdentity = await resolveMerchantSessionPlatformIdentity(adminSupabase, user, {
       preferredAccountType: requestedPreferredAccountType,
       preferredEmail: user.email,
+      preferredMerchantId: requestedPreferredSelection.value,
+      strictPreferredMerchantId:
+        requestedPreferredSelection.strict &&
+        Boolean(requestedPreferredSelection.value),
     });
-    const existingAccountType = readExistingSessionAccountType(user);
     const entrySwitched = Boolean(
       requestedPreferredAccountType &&
-        platformIdentity.accountType !== requestedPreferredAccountType &&
-        (existingAccountType || platformIdentity.accountId || platformIdentity.merchantId),
+        platformIdentity.accountType !== requestedPreferredAccountType,
     );
     const personalServiceConfig =
       platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
@@ -784,16 +813,21 @@ export async function POST(request: Request) {
       maxAgeSeconds: verifiedExpiresIn,
       merchantId: platformIdentity.merchantId,
       accountType: platformIdentity.accountType,
-      preserveRefreshToken: !verifiedRefreshToken,
     }, request);
     return response;
   } catch (error) {
-    if (isMerchantStaffPrincipalError(error)) {
+    if (isOrdinaryAccountPrincipalError(error)) {
       const response = noStoreJson(
         { ok: false, error: error.code },
         { status: error.status },
       );
-      if (error.status === 403) clearMerchantAuthCookies(response, request);
+      if (error.status === 403) {
+        if (error.code === "ordinary_account_merchant_selection_forbidden") {
+          clearMerchantAuthMerchantIdCookie(response, request);
+        } else {
+          clearMerchantAuthCookies(response, request);
+        }
+      }
       return response;
     }
     return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });

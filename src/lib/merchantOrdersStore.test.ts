@@ -219,6 +219,63 @@ test("order store propagates unexpected read failures instead of reporting empty
   );
 });
 
+test("personal order reads require all stored canonical ids and ignore matching email", async () => {
+  const matching = createMerchantOrder(
+    {
+      siteId: "10000000",
+      customerAccountId: "50010105",
+      customerUserId: "user-canonical",
+      customerLoginEmail: "shared@example.com",
+      customer: { name: "Canonical", email: "shared@example.com" },
+      items: [{ productId: "a", name: "A", quantity: 1, unitPriceText: "1" }],
+    },
+    { id: "order-canonical" },
+  );
+  const mismatchedUser = createMerchantOrder(
+    {
+      siteId: "10000000",
+      customerAccountId: "50010105",
+      customerUserId: "user-other",
+      customerLoginEmail: "shared@example.com",
+      customer: { name: "Mismatch", email: "shared@example.com" },
+      items: [{ productId: "b", name: "B", quantity: 1, unitPriceText: "1" }],
+    },
+    { id: "order-mismatched-user" },
+  );
+  const emailOnly = createMerchantOrder(
+    {
+      siteId: "10000000",
+      customerLoginEmail: "shared@example.com",
+      customer: { name: "Legacy", email: "shared@example.com" },
+      items: [{ productId: "c", name: "C", quantity: 1, unitPriceText: "1" }],
+    },
+    { id: "order-email-only" },
+  );
+  const client = createReadClient({
+    data: [
+      {
+        id: "orders-page",
+        slug: "__merchant_orders__:10000000:chunk:0",
+        blocks: [matching, mismatchedUser, emailOnly],
+        updated_at: "2026-08-20T10:00:00.000Z",
+      },
+    ],
+    error: null,
+  });
+
+  const orders = await listStoredMerchantOrdersByCustomer(client, {
+    accountId: "50010105",
+    userId: "user-canonical",
+  });
+  assert.deepEqual(orders.map((order) => order.id), ["order-canonical"]);
+  assert.deepEqual(
+    await listStoredMerchantOrdersByCustomer(client, {
+      accountId: "50010105",
+    }),
+    [],
+  );
+});
+
 test("order store still treats a known legacy schema without slug as empty", async () => {
   const client = createReadClient({ data: null, error: { message: "column pages.slug does not exist" } });
   assert.equal(await loadStoredMerchantOrders(client, "10000000"), null);

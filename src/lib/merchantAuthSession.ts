@@ -247,6 +247,20 @@ export function clearMerchantAuthCookie(response: NextResponse, request?: Reques
   clearMerchantAuthCookies(response, request);
 }
 
+export function clearMerchantAuthMerchantIdCookie(
+  response: NextResponse,
+  request?: Request,
+) {
+  response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: "/",
+    maxAge: 0,
+  });
+  expireLegacyMerchantAuthCookies(response, request);
+}
+
 export function clearMerchantAuthCookies(response: NextResponse, request?: Request) {
   response.cookies.set(MERCHANT_AUTH_COOKIE, "", {
     httpOnly: true,

@@ -1,9 +1,15 @@
 import type { MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
+import {
+  isCanonicalPersonalAccountId,
+  normalizeCanonicalPersonalAccountId,
+  PERSONAL_ACCOUNT_ID_MAX,
+  PERSONAL_ACCOUNT_ID_MIN,
+} from "@/lib/personalAccountId";
+
+export { PERSONAL_ACCOUNT_ID_MAX, PERSONAL_ACCOUNT_ID_MIN };
 
 export type PlatformAccountType = "merchant" | "personal";
 
-export const PERSONAL_ACCOUNT_ID_MIN = 50_010_105;
-export const PERSONAL_ACCOUNT_ID_MAX = 59_999_999;
 export const PLATFORM_ACCOUNT_ID_REGEX = /^\d{8}$/;
 
 type AuthMetadata = Record<string, unknown> | null | undefined;
@@ -33,14 +39,11 @@ export function normalizePlatformAccountNumericId(value: unknown) {
 }
 
 export function normalizePlatformAccountId(value: unknown) {
-  return trimText(value).replace(/\s+/g, "");
+  return normalizeCanonicalPersonalAccountId(value);
 }
 
 export function isPersonalAccountNumericId(value: unknown) {
-  const normalized = normalizePlatformAccountNumericId(value);
-  if (!normalized) return false;
-  const numericValue = Number(normalized);
-  return numericValue >= PERSONAL_ACCOUNT_ID_MIN && numericValue <= PERSONAL_ACCOUNT_ID_MAX;
+  return isCanonicalPersonalAccountId(value);
 }
 
 export function normalizePlatformAccountType(

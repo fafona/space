@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
-import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
-import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 import { getMerchantBusinessCardPermissionViolation } from "@/lib/merchantPermissionGuards";
 import { normalizeMerchantBusinessCards, resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
 import { listMerchantPeerContactsForMerchant } from "@/lib/merchantPeerInbox";
@@ -20,7 +18,7 @@ import {
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { resolveMerchantPrincipalFromRequest } from "@/lib/serverMerchantSession";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
@@ -59,10 +57,6 @@ function readEnv(name: string) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeEmail(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
 }
 
 function normalizeMerchantId(value: unknown) {
@@ -185,90 +179,26 @@ async function hasPeerMerchantAccess(
   );
 }
 
-async function getAuthorizedMerchantIds(
-  supabase: LooseSupabaseClient,
-  userId: string,
-  email: string,
-) {
-  const lookups: LooseQueryBuilder[] = [];
-
-  if (userId) {
-    ["user_id", "auth_user_id", "owner_user_id", "owner_id", "auth_id", "created_by", "created_by_user_id"].forEach(
-      (column) => {
-        lookups.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
-      },
-    );
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookups.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
-    });
-  }
-
-  const settled = await Promise.allSettled(lookups);
-  const merchantIds: string[] = [];
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled" || result.value.error) return;
-    ((result.value.data ?? []) as MerchantRow[]).forEach((row) => {
-      const merchantId = normalizeMerchantId(row.id);
-      if (!merchantId || merchantIds.includes(merchantId)) return;
-      merchantIds.push(merchantId);
-    });
-  });
-  return merchantIds;
-}
-
 async function isAuthorizedForMerchant(
   request: Request,
   supabase: LooseSupabaseClient,
   merchantId: string,
+  options: { allowPeerRead?: boolean } = {},
 ) {
   if (await isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 
-  const authorizedMerchantIdSet = new Set<string>();
-
-  const resolvedSession = await resolveMerchantSessionFromRequest(request);
-  if (resolvedSession?.merchantId) {
-    authorizedMerchantIdSet.add(resolvedSession.merchantId);
-    if (resolvedSession.merchantId === merchantId) {
-      return true;
-    }
-  }
-
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  for (const accessToken of accessTokens) {
-    const authResult = await supabase.auth.getUser(accessToken);
-    if (authResult.error || !authResult.data.user) continue;
-    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
-      supabase,
-      authResult.data.user,
-    ).then(
-      () => true,
-      () => false,
-    );
-    if (!legacyIdentityAllowed) continue;
-
-    const authorizedMerchantIds = await getAuthorizedMerchantIds(
-      supabase,
-      String(authResult.data.user.id ?? "").trim(),
-      normalizeEmail(authResult.data.user.email),
-    );
-    authorizedMerchantIds.forEach((authorizedMerchantId) => {
-      authorizedMerchantIdSet.add(authorizedMerchantId);
-    });
-    if (authorizedMerchantIds.includes(merchantId)) {
-      return true;
-    }
-  }
-
-  if (authorizedMerchantIdSet.size === 0) {
-    return false;
-  }
-
-  return hasPeerMerchantAccess(supabase, authorizedMerchantIdSet, merchantId);
+  const principal = await resolveMerchantPrincipalFromRequest(
+    request,
+    options.allowPeerRead === true
+      ? undefined
+      : { hintedMerchantId: merchantId },
+  );
+  if (!principal) return false;
+  if (principal.merchantIds.includes(merchantId)) return true;
+  if (options.allowPeerRead !== true) return false;
+  return hasPeerMerchantAccess(supabase, principal.merchantIds, merchantId);
 }
 
 async function resolveMerchantName(supabase: LooseSupabaseClient, merchantId: string) {
@@ -303,7 +233,12 @@ export async function GET(request: Request) {
       },
     }) as unknown as LooseSupabaseClient;
 
-    const authorized = await isAuthorizedForMerchant(request, supabase, merchantId);
+    const authorized = await isAuthorizedForMerchant(
+      request,
+      supabase,
+      merchantId,
+      { allowPeerRead: true },
+    );
     if (!authorized) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }

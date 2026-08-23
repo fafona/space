@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantContactVisibility, MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
-import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
-import { assertLegacyMerchantIdentityAllowed } from "@/lib/merchantStaffPrincipal.server";
 import {
   getMerchantProfileContactNameError,
   validateMerchantProfileBindingPayload,
@@ -21,7 +19,7 @@ import {
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { resolveMerchantPrincipalFromRequest } from "@/lib/serverMerchantSession";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
@@ -47,10 +45,6 @@ type LooseSupabaseClient = {
       error: { message?: string } | null;
     }>;
   };
-};
-
-type MerchantRow = {
-  id?: string | null;
 };
 
 type PageSlugRow = {
@@ -86,10 +80,6 @@ type DomainBindingBody = {
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
-}
-
-function normalizeEmail(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
 }
 
 function normalizeText(value: unknown) {
@@ -155,79 +145,19 @@ function isMissingUpdatedAtColumn(message: string) {
   );
 }
 
-async function getAuthorizedMerchantIds(
-  supabase: LooseSupabaseClient,
-  userId: string,
-  email: string,
-) {
-  const lookups: LooseQueryBuilder[] = [];
-
-  if (userId) {
-    ["user_id", "auth_user_id", "owner_user_id", "owner_id", "auth_id", "created_by", "created_by_user_id"].forEach(
-      (column) => {
-        lookups.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
-      },
-    );
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookups.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
-    });
-  }
-
-  const settled = await Promise.allSettled(lookups);
-  const merchantIds: string[] = [];
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled") return;
-    if (result.value.error) return;
-    ((result.value.data ?? []) as MerchantRow[]).forEach((row) => {
-      const merchantId = String(row.id ?? "").trim();
-      if (!merchantId || merchantIds.includes(merchantId)) return;
-      merchantIds.push(merchantId);
-    });
-  });
-  return merchantIds;
-}
-
 async function isAuthorizedForMerchant(
   request: Request,
-  supabase: LooseSupabaseClient,
+  _supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
   if (await isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 
-  const resolvedSession = await resolveMerchantSessionFromRequest(request);
-  if (resolvedSession?.merchantId === merchantId) {
-    return true;
-  }
-
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  for (const accessToken of accessTokens) {
-    const authResult = await supabase.auth.getUser(accessToken);
-    if (authResult.error || !authResult.data.user) continue;
-    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
-      supabase,
-      authResult.data.user,
-    ).then(
-      () => true,
-      () => false,
-    );
-    if (!legacyIdentityAllowed) continue;
-
-    const authorizedMerchantIds = await getAuthorizedMerchantIds(
-      supabase,
-      String(authResult.data.user.id ?? "").trim(),
-      normalizeEmail(authResult.data.user.email),
-    );
-    if (authorizedMerchantIds.includes(merchantId)) {
-      return true;
-    }
-  }
-
-  return false;
+  const principal = await resolveMerchantPrincipalFromRequest(request, {
+    hintedMerchantId: merchantId,
+  });
+  return principal?.merchantIds.includes(merchantId) === true;
 }
 
 async function updateMerchantSlug(
