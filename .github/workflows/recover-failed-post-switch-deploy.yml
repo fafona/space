@@ -44,9 +44,9 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32610622354"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32613111789"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: 8092ecdc914d4890f75c50f89067cd249c494bd3
+      PRIOR_FAILED_RECOVERY_SHA: 02db02135d2a376d624985831f5f0180cf813a29
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
@@ -1010,10 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
             values.READINESS_RUN_ID !== "32596977165" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32610622354" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32613111789" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "8092ecdc914d4890f75c50f89067cd249c494bd3" ||
+              "02db02135d2a376d624985831f5f0180cf813a29" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -1090,7 +1090,19 @@ jobs:
               "utf8",
             ).toString("base64"),
           );
-          const allowedPrefixes = new Set(failurePrefixes);
+          const cleanupFailureReasons = new Map([
+            ["cleanup_failed_reason_switch_temp", "remote_cleanup_failed_reason_switch_temp"],
+            ["cleanup_failed_reason_compensation_temp", "remote_cleanup_failed_reason_compensation_temp"],
+            ["cleanup_failed_reason_fence_incomplete", "remote_cleanup_failed_reason_fence_incomplete"],
+            ["cleanup_failed_reason_worker_cleanup", "remote_cleanup_failed_reason_worker_cleanup"],
+            ["cleanup_failed_reason_web_cleanup", "remote_cleanup_failed_reason_web_cleanup"],
+            ["cleanup_failed_reason_candidate_restore", "remote_cleanup_failed_reason_candidate_restore"],
+            ["cleanup_failed_reason_precommit_verify", "remote_cleanup_failed_reason_precommit_verify"],
+            ["cleanup_failed_reason_pm2_save", "remote_cleanup_failed_reason_pm2_save"],
+          ].map(([remoteCode, publicCode]) => [
+            Buffer.from(`${remoteCode}\n`, "utf8").toString("base64"),
+            publicCode,
+          ]));
           const failureCodes = new Map([
             ["recovery_failed_pre_runtime_input", "remote_recovery_failed_phase_pre_runtime_input", 0],
             ["recovery_failed_pre_runtime_repository", "remote_recovery_failed_phase_pre_runtime_repository", 0],
@@ -1117,6 +1129,10 @@ jobs:
             ["recovery_failed_pre_runtime_frozen_environment", "remote_recovery_failed_phase_pre_runtime_frozen_environment", 0],
             ["recovery_failed_pre_runtime_database_preflight", "remote_recovery_failed_phase_pre_runtime_database_preflight", 0],
             ["recovery_failed_runtime_fence_cleanup", "remote_recovery_failed_phase_fence_cleanup", 0],
+            ["recovery_failed_runtime_fence_unlink", "remote_recovery_failed_phase_fence_unlink", 0],
+            ["recovery_failed_runtime_fence_rmdir", "remote_recovery_failed_phase_fence_rmdir", 0],
+            ["recovery_failed_runtime_fence_post_inventory", "remote_recovery_failed_phase_fence_post_inventory", 0],
+            ["recovery_failed_runtime_fence_post_database", "remote_recovery_failed_phase_fence_post_database", 0],
             ["recovery_failed_runtime_candidate_process_preflight", "remote_recovery_failed_phase_candidate_process_preflight", 1],
             ["recovery_failed_runtime_candidate_stop", "remote_recovery_failed_phase_candidate_stop", 2],
             ["recovery_failed_runtime_current_switch", "remote_recovery_failed_phase_current_switch", 3],
@@ -1153,11 +1169,19 @@ jobs:
           }
           const stdoutKey = stdout.toString("base64");
           const stderrKey = stderr.toString("base64");
-          if (
-            allowedPrefixes.has(stdoutKey) &&
-            stderr.equals(Buffer.from("cleanup_unverified\n", "utf8"))
-          ) {
-            process.stdout.write("remote_cleanup_unverified");
+          const firstNewline = stderr.indexOf(0x0a);
+          if (firstNewline > 0 && firstNewline < stderr.length - 1) {
+            const failure = failureCodes.get(
+              stderr.subarray(0, firstNewline + 1).toString("base64"),
+            );
+            const cleanupReason = cleanupFailureReasons.get(
+              stderr.subarray(firstNewline + 1).toString("base64"),
+            );
+            process.stdout.write(
+              failure?.stdoutKey === stdoutKey && cleanupReason
+                ? `${failure.publicCode}\n${cleanupReason}`
+                : "recovery_output_invalid",
+            );
           } else {
             const failure = failureCodes.get(stderrKey);
             process.stdout.write(
@@ -1169,8 +1193,8 @@ jobs:
           NODE
           )" || classification="recovery_output_invalid"
           if [ "$classification" != "success" ]; then
-            case "$classification" in
-              remote_cleanup_unverified|\
+            is_allowed_remote_failure_phase() {
+              case "$1" in
               remote_recovery_failed_phase_pre_runtime_input|\
               remote_recovery_failed_phase_pre_runtime_repository|\
               remote_recovery_failed_phase_pre_runtime_deploy_lock|\
@@ -1196,6 +1220,10 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_frozen_environment|\
               remote_recovery_failed_phase_pre_runtime_database_preflight|\
               remote_recovery_failed_phase_fence_cleanup|\
+              remote_recovery_failed_phase_fence_unlink|\
+              remote_recovery_failed_phase_fence_rmdir|\
+              remote_recovery_failed_phase_fence_post_inventory|\
+              remote_recovery_failed_phase_fence_post_database|\
               remote_recovery_failed_phase_candidate_process_preflight|\
               remote_recovery_failed_phase_candidate_stop|\
               remote_recovery_failed_phase_current_switch|\
@@ -1213,12 +1241,38 @@ jobs:
               remote_recovery_failed_phase_worker_restore_flags|\
               remote_recovery_failed_phase_worker_restore_launch_contract|\
               remote_recovery_failed_phase_worker_restore_disabled_absence|\
-              remote_recovery_failed_phase_persist_and_verify|\
-              recovery_output_invalid)
-                printf '%s\n' "$classification"
-                ;;
-              *) printf '%s\n' 'recovery_output_invalid' ;;
-            esac
+              remote_recovery_failed_phase_persist_and_verify) return 0 ;;
+                *) return 1 ;;
+              esac
+            }
+            is_allowed_remote_cleanup_reason() {
+              case "$1" in
+                remote_cleanup_failed_reason_switch_temp|\
+                remote_cleanup_failed_reason_compensation_temp|\
+                remote_cleanup_failed_reason_fence_incomplete|\
+                remote_cleanup_failed_reason_worker_cleanup|\
+                remote_cleanup_failed_reason_web_cleanup|\
+                remote_cleanup_failed_reason_candidate_restore|\
+                remote_cleanup_failed_reason_precommit_verify|\
+                remote_cleanup_failed_reason_pm2_save) return 0 ;;
+                *) return 1 ;;
+              esac
+            }
+            mapfile -t classification_parts <<< "$classification"
+            if [ "${#classification_parts[@]}" -eq 1 ] \
+              && [ "${classification_parts[0]}" = "recovery_output_invalid" ]; then
+              printf '%s\n' 'recovery_output_invalid'
+            elif [ "${#classification_parts[@]}" -eq 1 ] \
+              && is_allowed_remote_failure_phase "${classification_parts[0]}"; then
+              printf '%s\n' "${classification_parts[0]}"
+            elif [ "${#classification_parts[@]}" -eq 2 ] \
+              && is_allowed_remote_failure_phase "${classification_parts[0]}" \
+              && is_allowed_remote_cleanup_reason "${classification_parts[1]}"; then
+              printf '%s\n%s\n' \
+                "${classification_parts[0]}" "${classification_parts[1]}"
+            else
+              printf '%s\n' 'recovery_output_invalid'
+            fi
             exit 1
           fi
           printf '%s\n' 'fence_cleanup_verified'

@@ -67,6 +67,16 @@ const removedPreRuntimeIdentityStages = [
   "candidate_source_identity",
   "candidate_env_helper_identity",
 ];
+const cleanupFailureReasons = [
+  ["cleanup_failed_reason_switch_temp", "remote_cleanup_failed_reason_switch_temp"],
+  ["cleanup_failed_reason_compensation_temp", "remote_cleanup_failed_reason_compensation_temp"],
+  ["cleanup_failed_reason_fence_incomplete", "remote_cleanup_failed_reason_fence_incomplete"],
+  ["cleanup_failed_reason_worker_cleanup", "remote_cleanup_failed_reason_worker_cleanup"],
+  ["cleanup_failed_reason_web_cleanup", "remote_cleanup_failed_reason_web_cleanup"],
+  ["cleanup_failed_reason_candidate_restore", "remote_cleanup_failed_reason_candidate_restore"],
+  ["cleanup_failed_reason_precommit_verify", "remote_cleanup_failed_reason_precommit_verify"],
+  ["cleanup_failed_reason_pm2_save", "remote_cleanup_failed_reason_pm2_save"],
+];
 
 test("workflow, shell, and embedded Node parse", () => {
   assert.equal(parsed.name, "Recover Failed Post-Switch Production Runtime");
@@ -125,7 +135,7 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
-    "32610622354", "8092ecdc914d4890f75c50f89067cd249c494bd3",
+    "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
@@ -206,6 +216,8 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
     "pre_runtime_candidate_next_build_identity",
     "pre_runtime_frozen_release_structure", "pre_runtime_frozen_env_build_binding",
     "pre_runtime_frozen_next_build_identity",
+    "fence_cleanup", "fence_unlink", "fence_rmdir",
+    "fence_post_inventory", "fence_post_database",
     "candidate_process_preflight", "candidate_stop", "current_switch",
     "web_restore_start", "web_restore_stability", "web_restore_identity",
     "web_restore_environment", "web_restore_launch_contract", "local_smoke",
@@ -221,8 +233,10 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
     assert.ok(!runtime.includes(stage), `runtime still emits removed stage ${stage}`);
   }
   assert.match(allRuns, /stdout\.equals\(expected\)/);
-  assert.match(allRuns, /allowedPrefixes\.has\(stdoutKey\)/);
-  assert.match(allRuns, /stderr\.equals\(Buffer\.from\("cleanup_unverified\\n"/);
+  assert.match(allRuns, /const cleanupFailureReasons = new Map/);
+  assert.match(allRuns, /const firstNewline = stderr\.indexOf\(0x0a\)/);
+  assert.doesNotMatch(allRuns, /cleanup_unverified/);
+  assert.doesNotMatch(runtime, /cleanup_unverified/);
   assert.match(allRuns, /recovery_output_invalid/);
   const runtimeCodes = new Set(
     [...runtime.matchAll(/'((?:recovery_failed_(?:pre_)?runtime)_[a-z_]+)'/g)]
@@ -233,6 +247,17 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
       .map((match) => match[1]),
   );
   assert.deepEqual(classifiedCodes, runtimeCodes);
+  const runtimeCleanupReasons = new Set(
+    [...runtime.matchAll(/'(cleanup_failed_reason_[a-z0-9_]+)'/g)]
+      .map((match) => match[1])
+      .filter((code) => code !== "cleanup_failed_reason_invalid"),
+  );
+  const classifiedCleanupReasons = new Set(
+    [...allRuns.matchAll(/\["(cleanup_failed_reason_[a-z0-9_]+)", "remote_cleanup_failed_reason_[a-z0-9_]+"\]/g)]
+      .map((match) => match[1]),
+  );
+  assert.equal(classifiedCleanupReasons.size, 8);
+  assert.deepEqual(classifiedCleanupReasons, runtimeCleanupReasons);
 });
 
 test("every remote phase accepts only its uniquely bound stdout prefix", () => {
@@ -242,7 +267,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const mappings = [...classifier.matchAll(
     /\["(recovery_failed_(?:pre_)?runtime_[a-z_]+)", "(remote_recovery_failed_phase_[a-z_]+)", ([0-6])\]/g,
   )].map((match) => ({ remote: match[1], public: match[2], prefix: Number(match[3]) }));
-  assert.equal(mappings.length, 43);
+  assert.equal(mappings.length, 47);
   assert.equal(new Set(mappings.map(({ remote }) => remote)).size, mappings.length);
   assert.equal(new Set(mappings.map(({ public: publicCode }) => publicCode)).size, mappings.length);
   const candidateEnvMappings = candidateEnvStages.map((stage) => ({
@@ -261,17 +286,29 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   for (const expected of sourceIdentityMappings) {
     assert.deepEqual(mappings.find(({ remote }) => remote === expected.remote), expected);
   }
-  const allowlistCase = allRuns.match(
-    /case "\$classification" in([\s\S]*?)\n\s+recovery_output_invalid\)/,
+  const phaseAllowlist = allRuns.match(
+    /is_allowed_remote_failure_phase\(\) \{[\s\S]*?case "\$1" in([\s\S]*?)\n\s+\*\) return 1/,
   )?.[1];
-  assert.ok(allowlistCase, "public classifier allowlist missing");
-  const allowlistCodes = allowlistCase.match(
-    /remote_(?:cleanup_unverified|recovery_failed_phase_[a-z_]+)/g,
+  assert.ok(phaseAllowlist, "public phase allowlist missing");
+  const allowlistCodes = phaseAllowlist.match(
+    /remote_recovery_failed_phase_[a-z_]+/g,
   ) ?? [];
-  assert.equal(allowlistCodes.length, mappings.length + 1);
+  assert.equal(allowlistCodes.length, mappings.length);
   assert.deepEqual(
     new Set(allowlistCodes),
-    new Set(["remote_cleanup_unverified", ...mappings.map(({ public: publicCode }) => publicCode)]),
+    new Set(mappings.map(({ public: publicCode }) => publicCode)),
+  );
+  const cleanupAllowlist = allRuns.match(
+    /is_allowed_remote_cleanup_reason\(\) \{[\s\S]*?case "\$1" in([\s\S]*?)\n\s+\*\) return 1/,
+  )?.[1];
+  assert.ok(cleanupAllowlist, "public cleanup-reason allowlist missing");
+  const cleanupAllowlistCodes = cleanupAllowlist.match(
+    /remote_cleanup_failed_reason_[a-z0-9_]+/g,
+  ) ?? [];
+  assert.equal(cleanupAllowlistCodes.length, cleanupFailureReasons.length);
+  assert.deepEqual(
+    new Set(cleanupAllowlistCodes),
+    new Set(cleanupFailureReasons.map(([, publicCode]) => publicCode)),
   );
   const markers = [
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
@@ -282,12 +319,12 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const stdoutPath = join(directory, "stdout");
   const stderrPath = join(directory, "stderr");
   try {
-    const classify = (stdout, stderr) => {
+    const classify = (stdout, stderr, status = 1) => {
       writeFileSync(stdoutPath, stdout, { mode: 0o600 });
       writeFileSync(stderrPath, stderr, { mode: 0o600 });
       const result = spawnSync(
         process.execPath,
-        ["--input-type=module", "-", stdoutPath, stderrPath, "1"],
+        ["--input-type=module", "-", stdoutPath, stderrPath, String(status)],
         { input: classifier, encoding: "utf8" },
       );
       assert.equal(result.status, 0, result.stderr);
@@ -303,6 +340,59 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
         );
       }
     }
+    for (const mapping of mappings) {
+      const stdout = mapping.prefix === 0
+        ? ""
+        : `${markers.slice(0, mapping.prefix).join("\n")}\n`;
+      for (const [remoteReason, publicReason] of cleanupFailureReasons) {
+        assert.equal(
+          classify(stdout, `${mapping.remote}\n${remoteReason}\n`),
+          `${mapping.public}\n${publicReason}`,
+          `${mapping.remote} lost cleanup reason ${remoteReason}`,
+        );
+      }
+      for (let prefix = 0; prefix < markers.length; prefix += 1) {
+        if (prefix === mapping.prefix) continue;
+        const wrongStdout = prefix === 0
+          ? ""
+          : `${markers.slice(0, prefix).join("\n")}\n`;
+        assert.equal(
+          classify(
+            wrongStdout,
+            `${mapping.remote}\n${cleanupFailureReasons[0][0]}\n`,
+          ),
+          "recovery_output_invalid",
+          `${mapping.remote} accepted cleanup with prefix ${prefix}`,
+        );
+      }
+    }
+    const representative = mappings[0];
+    const fullStdout = `${markers.join("\n")}\n`;
+    for (const malformedStderr of [
+      "cleanup_unverified\n",
+      `${representative.remote}\n${cleanupFailureReasons[0][0]}`,
+      `${representative.remote}\r\n${cleanupFailureReasons[0][0]}\r\n`,
+      `${representative.remote}\n${cleanupFailureReasons[0][0]}\nextra\n`,
+      `${representative.remote}\n${cleanupFailureReasons[0][0]}\n${cleanupFailureReasons[0][0]}\n`,
+      `${representative.remote}\n${cleanupFailureReasons[0][1]}\n`,
+    ]) {
+      assert.equal(classify("", malformedStderr), "recovery_output_invalid");
+    }
+    assert.equal(
+      classify(
+        fullStdout,
+        `${representative.remote}\n${cleanupFailureReasons[0][0]}\n`,
+      ),
+      "recovery_output_invalid",
+    );
+    assert.equal(
+      classify(
+        "",
+        `${representative.remote}\n${cleanupFailureReasons[0][0]}\n`,
+        0,
+      ),
+      "recovery_output_invalid",
+    );
     for (const mapping of [...sourceIdentityMappings, ...candidateEnvMappings]) {
       for (const injectedStderr of [
         mapping.remote,
