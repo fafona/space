@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -84,6 +84,17 @@ const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
   "[deploy] deploy_rollback_failed_web_quiesce",
   "[deploy] deploy_rollback_failed_worker_quiesce",
   "[deploy] deploy_rollback_failed_worker_restart",
+  "[deploy] deploy_stage_candidate_health_failed",
+  "[deploy] deploy_stage_candidate_start_failed",
+  "[deploy] deploy_stage_candidate_verification_failed",
+  "[deploy] deploy_stage_forward_switch_failed",
+  "[deploy] deploy_stage_post_commit_finalize_failed",
+  "[deploy] deploy_stage_pre_forward_restore_failed",
+  "[deploy] deploy_stage_previous_web_quiesce_failed",
+  "[deploy] deploy_stage_previous_worker_quiesce_failed",
+  "[deploy] deploy_stage_protected_preflight_failed",
+  "[deploy] deploy_stage_release_build_failed",
+  "[deploy] deploy_stage_release_finalize_failed",
   "[deploy] readiness_fence_waiter_cancelled_retry",
   "[deploy] readiness_fence_waiter_retry_exhausted",
 ]);
@@ -1184,9 +1195,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 30-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 30);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 30);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 41-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 41);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 41);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1194,19 +1205,69 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 30-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 30);
-  assert.equal(new Set(workflowLines).size, 30);
+  assert.equal(workflowLines.length, 41);
+  assert.equal(new Set(workflowLines).size, 41);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 30);
+  assert.equal(uniqueScriptEchoLines.length, 41);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),
   );
+});
+
+test("the deploy failure stage latch emits only its exact fixed primary code", async () => {
+  const cleanupFunction = extractShellRegion(
+    "cleanup_failed_build() {",
+    "\ntrap cleanup_failed_build EXIT",
+  );
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-deploy-stage-latch-"),
+  );
+  const primaryStageLines = DEPLOY_SAFE_DIAGNOSTIC_LINES.filter(
+    (line) => line.startsWith("[deploy] deploy_stage_") &&
+      line !== "[deploy] deploy_stage_pre_forward_restore_failed",
+  );
+  assert.equal(primaryStageLines.length, 10);
+  try {
+    for (const expectedLine of [...primaryStageLines, ""]) {
+      const code = expectedLine === ""
+        ? "attacker_controlled_stage"
+        : expectedLine.slice("[deploy] ".length);
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: [
+          "set +e",
+          cleanupFunction,
+          `RELEASE_BUILD_DIR='${toBashPath(join(temporaryDirectory, "missing-build"))}'`,
+          `RELEASE_DIR='${toBashPath(join(temporaryDirectory, "missing-release"))}'`,
+          `DEPLOY_ATTESTATION_FILE='${toBashPath(join(temporaryDirectory, "missing-attestation"))}'`,
+          `DEPLOY_RELEASE_BINDING_FILE='${toBashPath(join(temporaryDirectory, "missing-binding"))}'`,
+          `DEPLOY_PRIMARY_FAILURE_CODE='${code}'`,
+          "WEB_COMMITTED=0",
+          "PROCESSES_STOPPED=0",
+          "SWITCH_COMPLETED=0",
+          "FORWARD_MUTATION_STARTED=0",
+          "ROLLBACK_COMPLETED=0",
+          "READINESS_FENCE_ACTIVE=0",
+          "READINESS_FENCE_RELEASE_REQUESTED=0",
+          "safe_remove_release_path() { return 0; }",
+          "false",
+          "cleanup_failed_build",
+        ].join("\n"),
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 1, `${code}\n${result.stdout}\n${result.stderr}`);
+      assert.equal(result.stdout, expectedLine === "" ? "" : `${expectedLine}\n`);
+      assert.equal(result.stderr, "");
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test("remote deploy consumes one exact payload file and erases it before validation", async () => {
@@ -2009,7 +2070,7 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
-  assert.equal(deployNodeSources.length, 14);
+  assert.equal(deployNodeSources.length, 15);
   for (const [index, source] of deployNodeSources.entries()) {
     const result = spawnSync(
       process.execPath,
@@ -2631,9 +2692,10 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     "previous_runtime_recovery_identity_matches || exit 1",
     "start_readiness_fence 1 || exit 1",
     "run_booking_persistence_preflight",
+    'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"',
+    "capture_previous_web_listener_handoff_identity || exit 1",
     "PROCESSES_STOPPED=1",
-    'stop_pm2_process_bounded "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" || exit 1',
-    "wait_for_port_release || exit 1",
+    'stop_frozen_previous_web_bounded "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS"',
     "stop_previous_automation_worker_bounded || exit 1",
     "wait_for_readiness_fence_database_quiescence || exit 1",
     'assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1',
@@ -2668,8 +2730,13 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   );
   assert.match(
     sequence,
-    /run_booking_persistence_preflight[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+PROCESSES_STOPPED=1/,
+    /run_booking_persistence_preflight[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"\s+capture_previous_web_listener_handoff_identity \|\| exit 1\s+PROCESSES_STOPPED=1\s+stop_frozen_previous_web_bounded/,
   );
+  const previousWebQuiesce = sequence.slice(
+    sequence.indexOf('DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"'),
+    sequence.indexOf('DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_worker_quiesce_failed"'),
+  );
+  assert.doesNotMatch(previousWebQuiesce, /stop_pm2_process_bounded|wait_for_port_release/);
   assert.match(sequence, /assert_readiness_fence_forward_checkpoint \|\| exit 1/g);
   assert.match(deployScript, /blocked_cancelled[\s\S]{0,180}return 2/);
   assert.doesNotMatch(deployScript, /retrying protected quiescence/);
@@ -2927,7 +2994,8 @@ test("a failed pre-forward runtime restore still proves fence cleanup independen
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     assert.equal(
       result.stdout,
-      "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence\n" +
+      "[deploy] deploy_stage_pre_forward_restore_failed\n" +
+        "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence\n" +
         "[deploy] readiness fence cleanup completed\n",
     );
     assert.equal(result.stderr, "");
@@ -2977,7 +3045,8 @@ test("unverified pre-forward PM2 cleanup is surfaced without persisting unknown 
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     assert.equal(
       result.stdout,
-      "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence\n" +
+      "[deploy] deploy_stage_pre_forward_restore_failed\n" +
+        "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence\n" +
         "[deploy] pre-forward runtime recovery cleanup could not be proven: cleanup_unverified\n" +
         "[deploy] readiness fence cleanup completed\n",
     );
@@ -4507,12 +4576,14 @@ test("booking preflight is single-query, pre-mutation, classified, and rollback-
   const preflightFunction = extractShellFunction("run_booking_persistence_preflight");
   const transition = deployScript.slice(deployScript.indexOf("start_readiness_fence 1 || exit 1"));
   const preflightIndex = transition.indexOf("run_booking_persistence_preflight");
+  const freezeWebIndex = transition.indexOf("capture_previous_web_listener_handoff_identity");
   const stoppedIndex = transition.indexOf("PROCESSES_STOPPED=1");
-  const stopWebIndex = transition.indexOf('stop_pm2_process_bounded "$APP_NAME"');
+  const stopWebIndex = transition.indexOf("stop_frozen_previous_web_bounded");
   const mutationIndex = transition.indexOf("FORWARD_MUTATION_STARTED=1");
   const switchIndex = transition.indexOf('switch_current_release "$RELEASE_DIR"');
   assert.ok(
-    preflightIndex >= 0 && preflightIndex < stoppedIndex && stoppedIndex < stopWebIndex &&
+    preflightIndex >= 0 && preflightIndex < freezeWebIndex &&
+      freezeWebIndex < stoppedIndex && stoppedIndex < stopWebIndex &&
       stopWebIndex < mutationIndex && mutationIndex < switchIndex,
   );
   assert.doesNotMatch(
@@ -4606,6 +4677,58 @@ test("booking preflight is single-query, pre-mutation, classified, and rollback-
       if (checkerStatus === 2) {
         assert.equal(actual.codes.some((code) => code.includes("hard")), false);
       }
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("candidate Next BUILD_ID proof accepts an opaque value without binding it to the Git SHA", async () => {
+  const buildIdSnapshot = extractShellFunction(
+    "read_candidate_build_id_snapshot_for_booking_retry",
+  );
+  const nodeSources = extractShellHeredocs(buildIdSnapshot, "NODE");
+  assert.equal(nodeSources.length, 1);
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-opaque-next-build-id-"),
+  );
+  const runSnapshot = (path) => spawnSync(
+    process.execPath,
+    ["--input-type=module", "-", path],
+    { encoding: "utf8", input: nodeSources[0] },
+  );
+  try {
+    const opaqueBuildId = "opaque.next-build_ID~2026-08-23";
+    assert.notEqual(opaqueBuildId, FIXTURE_TARGET_SHA);
+    const buildPath = join(temporaryDirectory, "BUILD_ID");
+    const bytes = Buffer.from(`${opaqueBuildId}\n`);
+    await writeFile(buildPath, bytes, { mode: 0o600 });
+    await chmod(buildPath, 0o600);
+    const accepted = runSnapshot(buildPath);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(accepted.stderr, "");
+    const acceptedLines = accepted.stdout.split("\n");
+    assert.equal(acceptedLines.length, 2);
+    assert.match(acceptedLines[0], /^([0-9]+:){7}[0-9]+$/);
+    assert.equal(
+      acceptedLines[1],
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+
+    for (const [name, invalidBytes] of [
+      ["empty", Buffer.alloc(0)],
+      ["embedded whitespace", Buffer.from("opaque build\n")],
+      ["multiple lines", Buffer.from("opaque\nsecond\n")],
+      ["too long", Buffer.from("x".repeat(129))],
+      ["invalid UTF-8", Buffer.from([0xff])],
+    ]) {
+      const invalidPath = join(temporaryDirectory, `BUILD_ID-${name.replaceAll(" ", "-")}`);
+      await writeFile(invalidPath, invalidBytes, { mode: 0o600 });
+      await chmod(invalidPath, 0o600);
+      const rejected = runSnapshot(invalidPath);
+      assert.notEqual(rejected.status, 0, name);
+      assert.equal(rejected.stdout, "", name);
+      assert.equal(rejected.stderr, "", name);
     }
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -4776,13 +4899,15 @@ test("booking persistence retries only status two across fully revalidated read-
     assert.match(boundedSnapshot, /deadline_bounded_command_timeout_seconds/);
     assert.match(boundedSnapshot, /"\$absolute_deadline_seconds"/);
   }
-  assert.match(buildIdSnapshot, /"\$RELEASE_DIR\/\.next\/BUILD_ID" "\$FAOLLA_WEB_BUILD_ID"/);
+  assert.match(buildIdSnapshot, /"\$RELEASE_DIR\/\.next\/BUILD_ID"/);
+  assert.doesNotMatch(buildIdSnapshot, /FAOLLA_WEB_BUILD_ID|expectedBuildId/);
   assert.match(buildIdSnapshot, /O_NOFOLLOW/);
   assert.match(buildIdSnapshot, /lstatSync/);
   assert.match(buildIdSnapshot, /fstatSync/);
   assert.match(buildIdSnapshot, /identity\.nlink !== 1n/);
   assert.match(buildIdSnapshot, /createHash\("sha256"\)/);
-  assert.match(buildIdSnapshot, /text !== expectedBuildId/);
+  assert.match(buildIdSnapshot, /\^\[A-Za-z0-9\._~-\]\{1,128\}\$/);
+  assert.match(buildIdSnapshot, /text\.endsWith\("\\n"\)/);
   assert.match(
     webCapture,
     /linux_process_start_ticks[\s\S]{0,100}"\$process_pid" "\$absolute_deadline_seconds"/,
@@ -6343,6 +6468,7 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
         "PRE_FORWARD_RECOVERY_WEB_START_ATTEMPTED=0",
         "PRE_FORWARD_RECOVERY_WORKER_START_ATTEMPTED=0",
         "PRE_FORWARD_RECOVERY_PM2_SAVE_ATTEMPTED=0",
+        "PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0",
         "APP_NAME=web",
         "AUTOMATION_WORKER_NAME=worker",
         "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
@@ -6353,7 +6479,11 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
         "release_readiness_fence() { record \"release:$1\"; [ \"$FAIL_AT\" != release ] || return 1; READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
         "discard_failed_readiness_fence() { record discard; [ \"$FAIL_AT\" != discard ] || return 1; READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
         "assert_readiness_fence_held() { record strict; return 0; }",
-        "stop_pm2_process_bounded() { record stop:web; [ \"$FAIL_AT\" != stop-web ]; }",
+        "stop_frozen_previous_web_bounded() {",
+        "  record stop:web; [ \"$FAIL_AT\" != stop-web ] || return 1",
+        "  record port; [ \"$FAIL_AT\" != port ] || return 1",
+        "  PREVIOUS_WEB_FROZEN_STOP_COMPLETED=1",
+        "}",
         "wait_for_port_release() { record port; [ \"$FAIL_AT\" != port ]; }",
         "stop_previous_automation_worker_bounded() { record stop:worker; [ \"$FAIL_AT\" != stop-worker ]; }",
         "start_frozen_previous_release() { record start-web; [ \"$FAIL_AT\" != start-web ]; }",
@@ -6554,6 +6684,7 @@ test("partial pre-forward PM2 recovery is identity-cleaned and persistence-compe
         "PRE_FORWARD_RECOVERY_WORKER_START_TICKS=",
         "PRE_FORWARD_RECOVERY_WORKER_PROCESS_IDENTITY=",
         "PRE_FORWARD_RECOVERY_WORKER_CWD_IDENTITY=",
+        "PREVIOUS_WEB_FROZEN_STOP_COMPLETED=1",
         "APP_NAME=web",
         "AUTOMATION_WORKER_NAME=worker",
         "WEB_STATE=absent",
@@ -6854,3 +6985,552 @@ test("enterprise automation worker deployment is graceful and rollback-safe", ()
   assert.ok(workerStartIndex >= 0);
   assert.ok(workerStartIndex < saveIndex);
 });
+
+test("legacy-to-direct handoff freezes strict PM2, ancestry, process, and socket identities", () => {
+  const operation = extractShellFunction("previous_web_listener_handoff_operation");
+  const capture = extractShellFunction("capture_previous_web_listener_handoff_identity");
+  const stop = extractShellFunction("stop_frozen_previous_web_bounded");
+  const main = deployScript.slice(
+    deployScript.indexOf('DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"'),
+    deployScript.indexOf('DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_worker_quiesce_failed"'),
+  );
+
+  assert.match(operation, /spawnSync\(\s*"ss",\s*\["-H", "-ltnpe"/);
+  assert.ok(operation.includes("line.matchAll(/\\bino:([1-9][0-9]*)\\b/g)"));
+  assert.match(operation, /\/proc\/\$\{entry\.pid\}\/fd\/\$\{entry\.descriptor\}/);
+  assert.match(operation, /socket:\[\$\{entry\.inode\}\]/);
+  assert.match(operation, /captureChainToWrapper/);
+  assert.match(operation, /captureChainToInit/);
+  for (const field of [
+    "startTicks",
+    "processIdentity",
+    "processCtimeNs",
+    "cwdIdentity",
+    "executableIdentity",
+    "commandLineDigest",
+  ]) {
+    assert.match(operation, new RegExp(`"${field}"`));
+  }
+  assert.match(operation, /entry\.pm_id !== environment\.pm_id/);
+  assert.doesNotMatch(operation, /result\.stderr !== ""/);
+  assert.match(operation, /environment\.exec_mode !== "fork_mode"/);
+  assert.match(operation, /JSON\.stringify\(environment\.node_args\) !== "\[\]"/);
+  assert.match(
+    operation,
+    /JSON\.stringify\(\["start", "-p", String\(port\)\]\)/,
+  );
+  assert.match(
+    operation,
+    /JSON\.stringify\(\["start", "--", "-p", String\(port\)\]\)/,
+  );
+  assert.match(operation, /pmExecPath !== npmPath/);
+  assert.match(operation, /pmExecPath !== expectedNextEntry/);
+  assert.match(operation, /entry\.name === appName \|\| entry\.pm_id === proof\.pm2\.pmId/);
+  assert.match(operation, /encoded\.length > 64 \* 1024/);
+  assert.match(operation, /const first = capturePostDeleteState\(proof\)/);
+  assert.match(operation, /const second = capturePostDeleteState\(proof\)/);
+  assert.match(operation, /JSON\.stringify\(first\) !== JSON\.stringify\(second\)/);
+  assert.match(operation, /process\.kill\(proof\.listenerPid/);
+  assert.match(operation, /originalWrapperState\(proof\) === "pending"/);
+  assert.match(operation, /process\.stdout\.write\("wrapper-pending"\)/);
+  assert.ok(
+    operation.indexOf("capturePostDeleteState(proof)") <
+      operation.indexOf("process.kill(proof.listenerPid"),
+  );
+  assert.match(
+    operation,
+    /currentStart\.startTicks !== proof\.chain\[0\]\.startTicks[\s\S]+socket\.state !== "absent"/,
+  );
+
+  assert.match(capture, /absolute_deadline_seconds=\$\(\(/);
+  assert.equal(
+    capture.match(/previous_web_listener_handoff_operation \\\n\s+capture "\$absolute_deadline_seconds"/g)?.length,
+    2,
+  );
+  assert.match(capture, /"\$\{#first_proof\}" -gt 65536/);
+  assert.match(capture, /"\$second_proof" = "\$first_proof"/);
+
+  assert.match(stop, /pm2 delete "\$frozen_pm_id"/);
+  assert.doesNotMatch(stop, /pm2 delete "\$APP_NAME"/);
+  assert.match(stop, /PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=\$\(\(/);
+  assert.match(stop, /pm2-absent "\$process_deadline_seconds"/);
+  assert.match(stop, /PREVIOUS_WEB_PM2_DELETE_COMPLETED=1/);
+  assert.match(stop, /quiesce_frozen_previous_web_listener_bounded/);
+  assert.ok(
+    stop.indexOf('[ "$current_proof" = "$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64" ]') <
+      stop.indexOf('pm2 delete "$frozen_pm_id"'),
+  );
+
+  const freezeIndex = main.indexOf("capture_previous_web_listener_handoff_identity");
+  const stoppedIndex = main.indexOf("PROCESSES_STOPPED=1");
+  const stopIndex = main.indexOf("stop_frozen_previous_web_bounded");
+  assert.ok(freezeIndex >= 0 && freezeIndex < stoppedIndex && stoppedIndex < stopIndex);
+  assert.doesNotMatch(main, /stop_pm2_process_bounded|wait_for_port_release/);
+  assert.match(
+    deployScript,
+    /start_frozen_previous_release\(\)[\s\S]+start_release "\$PREVIOUS_RUNTIME_DIR"/,
+  );
+});
+
+test("frozen listener state machine escalates only an unchanged exact process", async () => {
+  const quiesce = extractShellFunction("quiesce_frozen_previous_web_listener_bounded");
+  const directory = await mkdtemp(join(tmpdir(), "faolla-legacy-listener-state-"));
+  const killResponses = [
+    "inspect|matched|0",
+    "TERM|signalled|0",
+    ...Array.from({ length: 10 }, () => "inspect|matched|0"),
+    "KILL|signalled|0",
+    "inspect|gone|0",
+    "inspect|gone|0",
+  ];
+  const fixtures = [
+    {
+      name: "already gone is proven twice",
+      responses: ["inspect|gone|0", "inspect|gone|0"],
+      expectedStatus: 0,
+      expectedCalls: ["inspect", "inspect"],
+    },
+    {
+      name: "exact legacy wrapper is allowed to exit before listener handling",
+      responses: [
+        "inspect|wrapper-pending|0",
+        "inspect|wrapper-pending|0",
+        "inspect|gone|0",
+        "inspect|gone|0",
+      ],
+      expectedStatus: 0,
+      expectedCalls: ["inspect", "inspect", "inspect", "inspect"],
+    },
+    {
+      name: "legacy wrapper that outlives the deadline is never signalled",
+      responses: Array.from({ length: 60 }, () => "inspect|wrapper-pending|0"),
+      expectedStatus: 1,
+      expectedCalls: Array.from({ length: 60 }, () => "inspect"),
+    },
+    {
+      name: "TERM exits the exact listener",
+      responses: [
+        "inspect|matched|0",
+        "TERM|signalled|0",
+        "inspect|gone|0",
+        "inspect|gone|0",
+      ],
+      expectedStatus: 0,
+      expectedCalls: ["inspect", "TERM", "inspect", "inspect"],
+    },
+    {
+      name: "TERM timeout escalates to exact KILL",
+      responses: killResponses,
+      expectedStatus: 0,
+      expectedCalls: killResponses.map((line) => line.split("|")[0]),
+    },
+    {
+      name: "new port owner fails before any signal",
+      responses: ["inspect|-|1"],
+      expectedStatus: 1,
+      expectedCalls: ["inspect"],
+    },
+    {
+      name: "post-TERM identity drift prevents KILL",
+      responses: [
+        "inspect|matched|0",
+        "TERM|signalled|0",
+        "inspect|-|1",
+      ],
+      expectedStatus: 1,
+      expectedCalls: ["inspect", "TERM", "inspect"],
+    },
+  ];
+
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const responses = join(directory, `responses-${index}`);
+      const calls = join(directory, `calls-${index}`);
+      await writeFile(responses, `${fixture.responses.join("\n")}\n`, { mode: 0o600 });
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: [
+          "set +e",
+          quiesce,
+          `RESPONSES='${toBashPath(responses)}'`,
+          `CALLS='${toBashPath(calls)}'`,
+          "PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=proof",
+          "previous_web_listener_handoff_operation() {",
+          "  local expected_operation output status",
+          "  IFS='|' read -r expected_operation output status < \"$RESPONSES\" || return 98",
+          "  tail -n +2 \"$RESPONSES\" > \"${RESPONSES}.next\" || return 98",
+          "  mv \"${RESPONSES}.next\" \"$RESPONSES\" || return 98",
+          "  printf '%s\\n' \"$1\" >> \"$CALLS\"",
+          "  [ \"$expected_operation\" = \"$1\" ] || return 97",
+          "  [ \"$output\" = - ] || printf '%s' \"$output\"",
+          "  return \"$status\"",
+          "}",
+          "sleep() { SECONDS=$((SECONDS + $1)); }",
+          "unset SECONDS; SECONDS=0",
+          "quiesce_frozen_previous_web_listener_bounded 60; status=$?",
+          "printf 'RESULT:%s:%s\\n' \"$status\" \"$SECONDS\"",
+        ].join("\n"),
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${fixture.name}\n${result.stdout}\n${result.stderr}`);
+      assert.equal(
+        result.stdout.trim().split("\n").at(-1)?.split(":")[1],
+        String(fixture.expectedStatus),
+        fixture.name,
+      );
+      assert.deepEqual(
+        (await readFile(calls, "utf8")).trim().split("\n"),
+        fixture.expectedCalls,
+        fixture.name,
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("PM2 delete partial mutation is resumed without deleting twice", async () => {
+  const stop = extractShellFunction("stop_frozen_previous_web_bounded");
+  const directory = await mkdtemp(join(tmpdir(), "faolla-pm2-delete-resume-"));
+  const calls = join(directory, "calls");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        stop,
+        `CALLS='${toBashPath(calls)}'`,
+        "APP_NAME=web",
+        "PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=frozen-proof",
+        "PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0",
+        "PREVIOUS_WEB_PM2_DELETE_COMPLETED=0",
+        "PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0",
+        "previous_web_process_identity_matches() { printf 'identity\\n' >> \"$CALLS\"; }",
+        "previous_web_listener_handoff_operation() {",
+        "  printf 'operation:%s\\n' \"$1\" >> \"$CALLS\"",
+        "  case \"$1\" in",
+        "    capture) printf frozen-proof ;;",
+        "    pm-id) printf 7 ;;",
+        "    pm2-absent) printf absent ;;",
+        "    *) return 1 ;;",
+        "  esac",
+        "}",
+        "deadline_bounded_command_timeout_seconds() { printf 5; }",
+        "timeout() {",
+        "  while [ \"$#\" -gt 0 ]; do",
+        "    case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac",
+        "  done",
+        "  \"$@\"",
+        "}",
+        "pm2() { printf 'delete:%s:%s\\n' \"$1\" \"$2\" >> \"$CALLS\"; return 124; }",
+        "quiesce_frozen_previous_web_listener_bounded() {",
+        "  printf 'quiesce:%s\\n' \"$QUIESCE_STATUS\" >> \"$CALLS\"",
+        "  return \"$QUIESCE_STATUS\"",
+        "}",
+        "unset SECONDS; SECONDS=0",
+        "QUIESCE_STATUS=1",
+        "stop_frozen_previous_web_bounded 40 60; first=$?",
+        "QUIESCE_STATUS=0",
+        "stop_frozen_previous_web_bounded 40 60; second=$?",
+        "printf 'RESULT:%s:%s:%s:%s:%s\\n' \"$first\" \"$second\" \"$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS\" \"$PREVIOUS_WEB_PM2_DELETE_COMPLETED\" \"$PREVIOUS_WEB_FROZEN_STOP_COMPLETED\"",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), "RESULT:1:0:1:1:1");
+    const recorded = (await readFile(calls, "utf8")).trim().split("\n");
+    assert.equal(recorded.filter((line) => line === "delete:delete:7").length, 1);
+    assert.equal(recorded.filter((line) => line === "identity").length, 1);
+    assert.deepEqual(
+      recorded.filter((line) => line.startsWith("operation:")),
+      [
+        "operation:capture",
+        "operation:pm-id",
+        "operation:pm2-absent",
+        "operation:pm2-absent",
+        "operation:pm2-absent",
+      ],
+    );
+    assert.deepEqual(
+      recorded.filter((line) => line.startsWith("quiesce:")),
+      ["quiesce:1", "quiesce:0"],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test(
+  "Linux legacy listener handoff rejects frozen drift and PM2 replacement before signalling",
+  { skip: process.platform !== "linux" },
+  async (t) => {
+    for (const [command, args] of [["ss", ["-V"]], ["timeout", ["--version"]]]) {
+      const probe = spawnSync(command, args, { stdio: "ignore" });
+      if (probe.status !== 0) {
+        t.skip(`${command} is required for the Linux handoff integration contract`);
+        return;
+      }
+    }
+
+    const operation = extractShellFunction("previous_web_listener_handoff_operation");
+    const directory = await mkdtemp(join(tmpdir(), "faolla-legacy-handoff-linux-"));
+    const runtime = join(directory, "runtime");
+    const binaryDirectory = join(directory, "bin");
+    const fakePm2List = join(directory, "pm2-list.json");
+    const readyPath = join(directory, "listener-ready.json");
+    const signalPath = join(directory, "listener-signals");
+    const listenerPath = join(directory, "listener.mjs");
+    const wrapperPath = join(directory, "wrapper.mjs");
+    const fakePm2Path = join(binaryDirectory, "pm2");
+    const fakeNpmPath = join(binaryDirectory, "npm");
+    let wrapper;
+    let listenerPid = 0;
+
+    const waitUntil = async (predicate, description, timeoutMs = 7_500) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const result = await predicate();
+          if (result) return result;
+        } catch {
+          // A concurrently written fixture or /proc entry may be temporarily unreadable.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`timed out waiting for ${description}`);
+    };
+    const processIsAlive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const readParentPid = async (pid) => {
+      const source = await readFile(`/proc/${pid}/stat`, "utf8");
+      const close = source.lastIndexOf(")");
+      const fields = source.slice(close + 2).trim().split(/\s+/);
+      return Number(fields[1]);
+    };
+    const readStartTicks = async (pid) => {
+      const source = await readFile(`/proc/${pid}/stat`, "utf8");
+      const close = source.lastIndexOf(")");
+      const fields = source.slice(close + 2).trim().split(/\s+/);
+      return fields[19];
+    };
+
+    try {
+      await mkdir(runtime, { recursive: true });
+      await mkdir(binaryDirectory, { recursive: true });
+      await writeFile(
+        listenerPath,
+        [
+          'import { appendFileSync, writeFileSync } from "node:fs";',
+          'import { createServer } from "node:net";',
+          "const [readyPath, signalPath] = process.argv.slice(2);",
+          "const server = createServer(() => {});",
+          'server.listen(0, "127.0.0.1", () => {',
+          "  const address = server.address();",
+          "  writeFileSync(readyPath, JSON.stringify({ pid: process.pid, port: address.port }), { mode: 0o600 });",
+          "});",
+          'process.on("SIGTERM", () => {',
+          '  appendFileSync(signalPath, "TERM\\n", { mode: 0o600 });',
+          "  server.close(() => process.exit(0));",
+          "  setTimeout(() => process.exit(0), 1_000).unref();",
+          "});",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+      await writeFile(
+        wrapperPath,
+        [
+          'import { spawn } from "node:child_process";',
+          "const [listenerPath, readyPath, signalPath] = process.argv.slice(2);",
+          "const child = spawn(process.execPath, [listenerPath, readyPath, signalPath], {",
+          "  cwd: process.cwd(),",
+          '  stdio: "ignore",',
+          "});",
+          "if (!child.pid) process.exit(2);",
+          "setInterval(() => {}, 1_000);",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+      await writeFile(
+        fakePm2Path,
+        [
+          "#!/bin/sh",
+          'if [ "$#" -eq 1 ] && [ "$1" = jlist ]; then',
+          '  printf "%s\\n" "${FAKE_PM2_WARNING:-}" >&2',
+          '  exec cat -- "$FAKE_PM2_LIST"',
+          "fi",
+          "exit 1",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      await writeFile(fakeNpmPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      await chmod(fakePm2Path, 0o700);
+      await chmod(fakeNpmPath, 0o700);
+
+      wrapper = spawn(
+        process.execPath,
+        [wrapperPath, listenerPath, readyPath, signalPath],
+        { cwd: runtime, stdio: ["ignore", "ignore", "pipe"] },
+      );
+      let wrapperStderr = "";
+      wrapper.stderr.on("data", (chunk) => {
+        wrapperStderr += String(chunk);
+      });
+      const ready = await waitUntil(async () => {
+        const value = JSON.parse(await readFile(readyPath, "utf8"));
+        return Number.isSafeInteger(value.pid) && Number.isSafeInteger(value.port)
+          ? value
+          : false;
+      }, `listener readiness; wrapper stderr=${wrapperStderr}`);
+      listenerPid = ready.pid;
+      assert.equal(await readParentPid(listenerPid), wrapper.pid);
+
+      const now = Date.now();
+      const frozenEntry = {
+        pid: wrapper.pid,
+        name: "web",
+        pm_id: 7,
+        pm2_env: {
+          name: "web",
+          pm_id: 7,
+          status: "online",
+          exec_mode: "fork_mode",
+          pm_uptime: now - 1_000,
+          created_at: now - 2_000,
+          restart_time: 0,
+          node_args: [],
+          pm_cwd: runtime,
+          pm_exec_path: fakeNpmPath,
+          exec_interpreter: process.execPath,
+          args: ["start", "--", "-p", String(ready.port)],
+        },
+      };
+      await writeFile(fakePm2List, JSON.stringify([frozenEntry]), { mode: 0o600 });
+      const wrapperStartTicks = await readStartTicks(wrapper.pid);
+      const wrapperStat = await stat(`/proc/${wrapper.pid}`);
+      const operationEnvironment = {
+        ...process.env,
+        PATH: `${binaryDirectory}:${process.env.PATH ?? ""}`,
+        FAKE_PM2_LIST: fakePm2List,
+        FAKE_PM2_WARNING: "harmless-pm2-version-warning",
+        CONTRACT_WRAPPER_PID: String(wrapper.pid),
+        CONTRACT_PORT: String(ready.port),
+        CONTRACT_RUNTIME: runtime,
+        CONTRACT_WRAPPER_START_TICKS: wrapperStartTicks,
+        CONTRACT_WRAPPER_PROCESS_IDENTITY: `${wrapperStat.dev}:${wrapperStat.ino}`,
+        CONTRACT_APP_NAME: "web",
+      };
+      const runOperation = (handoffOperation, proof = "") =>
+        spawnSync(resolveBashExecutable(), ["-s"], {
+          encoding: "utf8",
+          env: {
+            ...operationEnvironment,
+            CONTRACT_OPERATION: handoffOperation,
+            CONTRACT_PROOF: proof,
+          },
+          input: [
+            "set -Eeuo pipefail",
+            operation,
+            "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=5",
+            'PREVIOUS_WEB_PID="$CONTRACT_WRAPPER_PID"',
+            'APP_PORT="$CONTRACT_PORT"',
+            'PREVIOUS_RUNTIME_DIR="$CONTRACT_RUNTIME"',
+            'PREVIOUS_WEB_PROCESS_START_TICKS="$CONTRACT_WRAPPER_START_TICKS"',
+            'PREVIOUS_WEB_PROCESS_IDENTITY="$CONTRACT_WRAPPER_PROCESS_IDENTITY"',
+            'APP_NAME="$CONTRACT_APP_NAME"',
+            'PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$CONTRACT_PROOF"',
+            'previous_web_listener_handoff_operation "$CONTRACT_OPERATION"',
+          ].join("\n"),
+          timeout: 10_000,
+        });
+
+      const captured = runOperation("capture");
+      assert.equal(captured.status, 0, `${captured.stdout}\n${captured.stderr}`);
+      assert.equal(captured.stderr, "");
+      assert.match(captured.stdout, /^[A-Za-z0-9+/]+={0,2}$/);
+      const frozenProof = JSON.parse(
+        Buffer.from(captured.stdout, "base64").toString("utf8"),
+      );
+      assert.equal(frozenProof.mode, "legacy");
+      assert.equal(frozenProof.wrapperPid, wrapper.pid);
+      assert.equal(frozenProof.listenerPid, listenerPid);
+      assert.equal(frozenProof.pm2.pmId, 7);
+
+      await writeFile(fakePm2List, "[]", { mode: 0o600 });
+      const pm2AbsentWhileWrapperLives = runOperation("pm2-absent", captured.stdout);
+      assert.equal(
+        pm2AbsentWhileWrapperLives.status,
+        0,
+        `${pm2AbsentWhileWrapperLives.stdout}\n${pm2AbsentWhileWrapperLives.stderr}`,
+      );
+      assert.equal(pm2AbsentWhileWrapperLives.stdout, "absent");
+      assert.equal(pm2AbsentWhileWrapperLives.stderr, "");
+      const wrapperPending = runOperation("inspect", captured.stdout);
+      assert.equal(wrapperPending.status, 0, wrapperPending.stderr);
+      assert.equal(wrapperPending.stdout, "wrapper-pending");
+      assert.equal(wrapperPending.stderr, "");
+      assert.equal(processIsAlive(wrapper.pid), true);
+      assert.equal(processIsAlive(listenerPid), true);
+      assert.equal(await pathExists(signalPath), false);
+
+      const wrapperExit = new Promise((resolve) => wrapper.once("exit", resolve));
+      wrapper.kill("SIGKILL");
+      await wrapperExit;
+      await waitUntil(
+        async () => (await readParentPid(listenerPid)) === 1,
+        "listener reparenting to init",
+      );
+
+      const driftedProof = structuredClone(frozenProof);
+      driftedProof.chain[0].startTicks = String(
+        BigInt(driftedProof.chain[0].startTicks) + 1n,
+      );
+      const driftedProofB64 = Buffer.from(JSON.stringify(driftedProof)).toString("base64");
+      const rejectedDrift = runOperation("TERM", driftedProofB64);
+      assert.equal(rejectedDrift.status, 1, rejectedDrift.stderr);
+      assert.equal(rejectedDrift.stdout, "");
+      assert.equal(rejectedDrift.stderr, "");
+      assert.equal(processIsAlive(listenerPid), true);
+      assert.equal(await pathExists(signalPath), false);
+
+      await writeFile(
+        fakePm2List,
+        JSON.stringify([{ name: "web", pm_id: 91, pm2_env: { name: "web", pm_id: 91 } }]),
+        { mode: 0o600 },
+      );
+      const rejectedReplacement = runOperation("TERM", captured.stdout);
+      assert.equal(rejectedReplacement.status, 1, rejectedReplacement.stderr);
+      assert.equal(rejectedReplacement.stdout, "");
+      assert.equal(rejectedReplacement.stderr, "");
+      assert.equal(processIsAlive(listenerPid), true);
+      assert.equal(await pathExists(signalPath), false);
+
+      await writeFile(fakePm2List, "[]", { mode: 0o600 });
+      const exactTerm = runOperation("TERM", captured.stdout);
+      assert.equal(exactTerm.status, 0, `${exactTerm.stdout}\n${exactTerm.stderr}`);
+      assert.equal(exactTerm.stdout, "signalled");
+      assert.equal(exactTerm.stderr, "");
+      await waitUntil(() => !processIsAlive(listenerPid), "exact listener termination");
+      assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
+      const gone = runOperation("inspect", captured.stdout);
+      assert.equal(gone.status, 0, `${gone.stdout}\n${gone.stderr}`);
+      assert.equal(gone.stdout, "gone");
+      assert.equal(gone.stderr, "");
+    } finally {
+      if (wrapper?.pid && processIsAlive(wrapper.pid)) wrapper.kill("SIGKILL");
+      if (listenerPid > 0 && processIsAlive(listenerPid)) {
+        try {
+          process.kill(listenerPid, "SIGKILL");
+        } catch {
+          // The listener exited between the exact liveness check and cleanup signal.
+        }
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

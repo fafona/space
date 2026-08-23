@@ -1034,6 +1034,17 @@ jobs:
               '[deploy] deploy_rollback_failed_web_quiesce' \
               '[deploy] deploy_rollback_failed_worker_quiesce' \
               '[deploy] deploy_rollback_failed_worker_restart' \
+              '[deploy] deploy_stage_candidate_health_failed' \
+              '[deploy] deploy_stage_candidate_start_failed' \
+              '[deploy] deploy_stage_candidate_verification_failed' \
+              '[deploy] deploy_stage_forward_switch_failed' \
+              '[deploy] deploy_stage_post_commit_finalize_failed' \
+              '[deploy] deploy_stage_pre_forward_restore_failed' \
+              '[deploy] deploy_stage_previous_web_quiesce_failed' \
+              '[deploy] deploy_stage_previous_worker_quiesce_failed' \
+              '[deploy] deploy_stage_protected_preflight_failed' \
+              '[deploy] deploy_stage_release_build_failed' \
+              '[deploy] deploy_stage_release_finalize_failed' \
               '[deploy] readiness_fence_waiter_cancelled_retry' \
               '[deploy] readiness_fence_waiter_retry_exhausted'; do
               if grep -aFqx -- "$deploy_diagnostic_code" \
