@@ -133,13 +133,26 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 });
 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
+  assert.deepEqual(
+    {
+      runId: job.env.PRIOR_FAILED_RECOVERY_RUN_ID,
+      runAttempt: job.env.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT,
+      sha: job.env.PRIOR_FAILED_RECOVERY_SHA,
+    },
+    {
+      runId: "32627378516",
+      runAttempt: "1",
+      sha: "870e79ac1b5fd036bfd08b895284bc6a754a102a",
+    },
+  );
   for (const value of [
     "32625801433", "58c26e178faeb3eee0172a2e0aa487084f6910e4", "32625773494",
-    "32615785237", "f1e565d39fbadf4429a1ed9d91b327528c37f6f8",
+    "32627378516", "870e79ac1b5fd036bfd08b895284bc6a754a102a",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   for (const obsolete of [
     "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
+    "32615785237", "f1e565d39fbadf4429a1ed9d91b327528c37f6f8",
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
   ]) {
     assert.ok(!workflow.includes(obsolete));
@@ -168,7 +181,34 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   for (const [number, name, conclusion] of expectedFailedRecoverySteps) {
     assert.ok(allRuns.includes(`[${number}, "${name}", "${conclusion}"]`));
   }
-  assert.match(allRuns, /failedRecoveryCompleted >= startedEpoch/);
+  assert.match(allRuns, /failedRecoveryStarted <= completedEpoch/);
+  assert.doesNotMatch(allRuns, /failedRecoveryCompleted >= startedEpoch/);
+  assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ID !== "32627378516"/);
+  assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1"/);
+  assert.match(
+    allRuns,
+    /values\.PRIOR_FAILED_RECOVERY_SHA !==\s+"870e79ac1b5fd036bfd08b895284bc6a754a102a"/,
+  );
+  const timeGate = allRuns.match(
+    /if \(\s*(failedRecoveryCompleted <= failedRecoveryStarted \|\|[\s\S]*?failedRecoveryStarted <= completedEpoch)\s*\) fail\("prior_failed_recovery_time_window_invalid"\)/,
+  );
+  assert.ok(timeGate, "prior recovery temporal gate missing");
+  assert.equal(
+    timeGate[1].replace(/\s+/g, " ").trim(),
+    "failedRecoveryCompleted <= failedRecoveryStarted || "
+      + "failedRecoveryCompleted - failedRecoveryStarted > 1_800 || "
+      + "failedRecoveryStarted <= completedEpoch",
+  );
+  const rejectsBoundary = (failedRecoveryStarted, failedRecoveryCompleted, completedEpoch) => (
+    failedRecoveryCompleted <= failedRecoveryStarted
+    || failedRecoveryCompleted - failedRecoveryStarted > 1_800
+    || failedRecoveryStarted <= completedEpoch
+  );
+  assert.equal(rejectsBoundary(2_001, 2_100, 2_000), false);
+  assert.equal(rejectsBoundary(2_000, 2_100, 2_000), true);
+  assert.equal(rejectsBoundary(1_999, 2_100, 2_000), true);
+  assert.equal(rejectsBoundary(2_001, 2_001, 2_000), true);
+  assert.equal(rejectsBoundary(2_001, 3_802, 2_000), true);
 });
 
 test("payload has nineteen exact keys including prior recovery and database identity", () => {
