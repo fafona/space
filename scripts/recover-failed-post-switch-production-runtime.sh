@@ -10,9 +10,9 @@ readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"
 readonly EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32613111789"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32615785237"
 readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="02db02135d2a376d624985831f5f0180cf813a29"
+readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="f1e565d39fbadf4429a1ed9d91b327528c37f6f8"
 readonly EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"
 readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
 readonly EXPECTED_OLD_PACKAGE_BLOB="4aa8c7a442b6bc8926e74322503f91b28359fd3e"
@@ -41,6 +41,7 @@ CURRENT_SWITCH_ARMED=0
 CANDIDATE_WEB_STOPPED=0
 CANDIDATE_WORKER_STOPPED=0
 CANDIDATE_PREFLIGHT_VERIFIED=0
+FROZEN_RESUME_PREFLIGHT_VERIFIED=0
 FROZEN_WEB_COMMITTED=0
 STARTED_WEB_PID=""
 STARTED_WEB_START_TICKS=""
@@ -51,6 +52,7 @@ STARTED_WORKER_START_TICKS=""
 STARTED_WORKER_PROCESS_IDENTITY=""
 STARTED_WORKER_CWD_IDENTITY=""
 SWITCH_TEMP_LINK=""
+CURRENT_LINK_IDENTITY=""
 FROZEN_CURRENT_LINK_IDENTITY=""
 COMPENSATION_TEMP_LINK=""
 COMPENSATION_TEMP_LINK_IDENTITY=""
@@ -70,6 +72,10 @@ INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT=""
 CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY=""
 CANDIDATE_ENVIRONMENT_FILE_IDENTITY=""
 CANDIDATE_ENVIRONMENT_SHA256=""
+INITIAL_CURRENT_STATE=""
+INITIAL_CURRENT_RAW_TARGET=""
+INITIAL_CURRENT_RESOLVED_TARGET=""
+INITIAL_CURRENT_LINK_IDENTITY=""
 
 port_is_free() {
   local state
@@ -219,7 +225,8 @@ finish_recovery() {
         || record_cleanup_failure candidate_restore
     fi
     if [ "$FROZEN_WEB_COMMITTED" -ne 1 ] \
-      && [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 1 ] \
+      && { [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 1 ] \
+        || [ "$FROZEN_RESUME_PREFLIGHT_VERIFIED" -eq 1 ]; } \
       && [ "$cleanup_status" -eq 0 ]; then
       verify_precommit_safe_state || record_cleanup_failure precommit_verify
     fi
@@ -246,8 +253,17 @@ finish_recovery() {
         frozen_inventory)
           printf '%s\n' 'recovery_failed_pre_runtime_frozen_inventory' >&2
           ;;
-        candidate_current_link)
-          printf '%s\n' 'recovery_failed_pre_runtime_candidate_current_link' >&2
+        initial_current_target)
+          printf '%s\n' 'recovery_failed_pre_runtime_initial_current_target' >&2
+          ;;
+        initial_current_identity)
+          printf '%s\n' 'recovery_failed_pre_runtime_initial_current_identity' >&2
+          ;;
+        initial_current_compatibility)
+          printf '%s\n' 'recovery_failed_pre_runtime_initial_current_compatibility' >&2
+          ;;
+        initial_current_temporary_links)
+          printf '%s\n' 'recovery_failed_pre_runtime_initial_current_temporary_links' >&2
           ;;
         candidate_structure)
           printf '%s\n' 'recovery_failed_pre_runtime_candidate_structure' >&2
@@ -323,6 +339,9 @@ finish_recovery() {
           ;;
         current_switch)
           printf '%s\n' 'recovery_failed_runtime_current_switch' >&2
+          ;;
+        current_resume)
+          printf '%s\n' 'recovery_failed_runtime_current_resume' >&2
           ;;
         web_start)
           printf '%s\n' 'recovery_failed_runtime_web_start' >&2
@@ -429,7 +448,7 @@ require_command() {
 }
 
 for required_command in \
-  base64 basename chmod curl date dirname docker find flock git id ln mv node pm2 readlink \
+  base64 basename curl date dirname docker find flock git id ln mv node pm2 readlink \
   rmdir seq sleep ss stat timeout unlink; do
   require_command "$required_command" || exit 1
 done
@@ -584,6 +603,8 @@ readonly CURRENT_LINK="${APP_DIR}.current"
 readonly SHARED_RUNTIME_DIR="${APP_DIR}.shared/.runtime"
 readonly DEPLOY_LOCK_FILE="${APP_DIR}.deploy.lock"
 readonly AUTOMATION_WORKER_NAME="${APP_NAME}-enterprise-automation-worker"
+readonly EXPECTED_SWITCH_TEMP_LINK="${CURRENT_LINK}.recover-${EXPECTED_INCIDENT_DEPLOY_RUN_ID}"
+readonly EXPECTED_COMPENSATION_TEMP_LINK="${CURRENT_LINK}.compensate-${EXPECTED_INCIDENT_DEPLOY_RUN_ID}"
 readonly ENV_HELPER_RELATIVE="scripts/read-production-supabase-environment.mjs"
 readonly FENCE_HELPER_RELATIVE="scripts/hold-ordinary-account-cutover-readiness-fence.mjs"
 readonly SMOKE_HELPER_RELATIVE="scripts/check-production-smoke.mjs"
@@ -610,19 +631,10 @@ for helper_path in "$FENCE_HELPER_RELATIVE"; do
   [ "$(git -C "$APP_DIR" hash-object "$APP_DIR/$helper_path" 2>/dev/null || true)" = "$helper_blob" ] || exit 1
 done
 
-normalize_deploy_lock_permissions() {
-  local deploy_lock_device
-  local deploy_lock_inode
+verify_deploy_lock_permissions() {
   local deploy_lock_links
   local deploy_lock_mode
   local deploy_lock_observed_identity
-  local deploy_lock_post_device
-  local deploy_lock_post_identity
-  local deploy_lock_post_inode
-  local deploy_lock_post_links
-  local deploy_lock_post_mode
-  local deploy_lock_post_raw_mode
-  local deploy_lock_post_uid
   local deploy_lock_raw_mode
   local deploy_lock_uid
 
@@ -633,52 +645,27 @@ normalize_deploy_lock_permissions() {
     || return 1
   [ "$deploy_lock_observed_identity" = "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] \
     || return 1
-  IFS=: read -r deploy_lock_device deploy_lock_inode deploy_lock_links \
+  IFS=: read -r _ _ deploy_lock_links \
     deploy_lock_uid deploy_lock_raw_mode deploy_lock_mode \
     <<< "$deploy_lock_observed_identity"
   (( (16#$deploy_lock_raw_mode & 0170000) == 0100000 )) || return 1
   [ "$deploy_lock_links" = "1" ] && [ "$deploy_lock_uid" = "$(id -u)" ] \
     || return 1
-  case "$deploy_lock_mode" in
-    600|644) ;;
-    *) return 1 ;;
-  esac
+  [ "$deploy_lock_mode" = "600" ] || return 1
   [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
     && [ -f "/proc/$$/fd/9" ] \
     && [ "$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)" = "$deploy_lock_observed_identity" ] \
     && [ "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" = "$deploy_lock_observed_identity" ] \
     || return 1
-  if [ "$deploy_lock_mode" = "644" ]; then
-    chmod 600 -- "/proc/$$/fd/9" >/dev/null 2>&1 || return 1
-  fi
-  [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
-    && [ -f "/proc/$$/fd/9" ] || return 1
-  deploy_lock_post_identity="$(stat -c '%d:%i:%h:%u:%f:%a' -- "$DEPLOY_LOCK_FILE" 2>/dev/null || true)"
-  [[ "$deploy_lock_post_identity" =~ ^([0-9]+:){4}[0-9a-fA-F]+:[0-9]+$ ]] \
-    || return 1
-  [ "$deploy_lock_post_identity" = "$(stat -Lc '%d:%i:%h:%u:%f:%a' -- "/proc/$$/fd/9" 2>/dev/null || true)" ] \
-    || return 1
-  IFS=: read -r deploy_lock_post_device deploy_lock_post_inode deploy_lock_post_links \
-    deploy_lock_post_uid deploy_lock_post_raw_mode deploy_lock_post_mode \
-    <<< "$deploy_lock_post_identity"
-  (( (16#$deploy_lock_post_raw_mode & 0170000) == 0100000 )) || return 1
-  [ "$deploy_lock_post_device" = "$deploy_lock_device" ] \
-    && [ "$deploy_lock_post_inode" = "$deploy_lock_inode" ] \
-    && [ "$deploy_lock_post_links" = "1" ] \
-    && [ "$deploy_lock_post_uid" = "$deploy_lock_uid" ] \
-    && [ "$deploy_lock_post_uid" = "$(id -u)" ] \
-    && [ "$deploy_lock_post_mode" = "600" ] \
-    || return 1
-  DEPLOY_LOCK_IDENTITY="$deploy_lock_post_identity"
+  DEPLOY_LOCK_IDENTITY="$deploy_lock_observed_identity"
 }
 
 RECOVERY_FAILURE_STAGE="deploy_lock"
 
-[ -L "$CURRENT_LINK" ] || exit 1
 [ ! -L "$DEPLOY_LOCK_FILE" ] || exit 1
-if ! { exec 9<>"$DEPLOY_LOCK_FILE"; } 2>/dev/null; then exit 1; fi
+if ! { exec 9<"$DEPLOY_LOCK_FILE"; } 2>/dev/null; then exit 1; fi
 flock -w 1 9 >/dev/null 2>&1 || exit 1
-normalize_deploy_lock_permissions || exit 1
+verify_deploy_lock_permissions || exit 1
 
 revalidate_deploy_lock() {
   [ -f "$DEPLOY_LOCK_FILE" ] && [ ! -L "$DEPLOY_LOCK_FILE" ] \
@@ -719,6 +706,7 @@ harden_frozen_scripts_directory() {
     || return 1
   revalidate_deploy_lock || return 1
   if ! FAOLLA_FROZEN_SCRIPTS_PATH="$scripts_path" \
+    FAOLLA_REQUIRE_ALREADY_HARDENED="$([ "$INITIAL_CURRENT_STATE" = "frozen" ] && printf true || printf false)" \
     timeout --signal=TERM --kill-after=1s 5s node --input-type=module <<'NODE'
 import {
   closeSync,
@@ -742,9 +730,11 @@ const sameStableIdentity = (left, right) =>
 let descriptor;
 try {
   const path = process.env.FAOLLA_FROZEN_SCRIPTS_PATH ?? "";
+  const requireAlreadyHardened = process.env.FAOLLA_REQUIRE_ALREADY_HARDENED;
   if (
     !path.endsWith("/scripts") || typeof process.getuid !== "function" ||
     typeof process.getgid !== "function" ||
+    !["true", "false"].includes(requireAlreadyHardened) ||
     !Number.isInteger(constants.O_NOFOLLOW) || !Number.isInteger(constants.O_DIRECTORY)
   ) fail();
   const before = lstatSync(path, { bigint: true });
@@ -753,7 +743,9 @@ try {
     before.isSymbolicLink() || !before.isDirectory() || before.nlink < 1n ||
     before.uid !== BigInt(process.getuid()) ||
     before.gid !== BigInt(process.getgid()) ||
-    ![0o775n, 0o700n].includes(permissions)
+    (requireAlreadyHardened === "true"
+      ? permissions !== 0o700n
+      : ![0o775n, 0o700n].includes(permissions))
   ) fail();
   descriptor = openSync(
     path,
@@ -800,6 +792,7 @@ harden_frozen_tracked_file() {
     || return 1
   revalidate_deploy_lock || return 1
   if ! FAOLLA_FROZEN_TRACKED_PATH="$helper_path" \
+    FAOLLA_REQUIRE_ALREADY_HARDENED="$([ "$INITIAL_CURRENT_STATE" = "frozen" ] && printf true || printf false)" \
     FAOLLA_EXPECTED_BLOB="${contract_parts[0]}" \
     FAOLLA_EXPECTED_SHA256="${contract_parts[1]}" \
     FAOLLA_EXPECTED_BYTES="${contract_parts[2]}" \
@@ -851,11 +844,13 @@ try {
   const expectedBlob = process.env.FAOLLA_EXPECTED_BLOB ?? "";
   const expectedSha256 = process.env.FAOLLA_EXPECTED_SHA256 ?? "";
   const expectedBytes = process.env.FAOLLA_EXPECTED_BYTES ?? "";
+  const requireAlreadyHardened = process.env.FAOLLA_REQUIRE_ALREADY_HARDENED;
   if (
     !/^[0-9a-f]{40}$/.test(expectedBlob) ||
     !/^[0-9a-f]{64}$/.test(expectedSha256) ||
     !/^[1-9][0-9]*$/.test(expectedBytes) ||
     typeof process.getuid !== "function" || typeof process.getgid !== "function" ||
+    !["true", "false"].includes(requireAlreadyHardened) ||
     !Number.isInteger(constants.O_NOFOLLOW)
   ) fail();
   const size = Number(expectedBytes);
@@ -866,7 +861,9 @@ try {
     before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n ||
     before.uid !== BigInt(process.getuid()) ||
     before.gid !== BigInt(process.getgid()) || before.size !== BigInt(size) ||
-    ![0o664n, 0o600n].includes(permissions)
+    (requireAlreadyHardened === "true"
+      ? permissions !== 0o600n
+      : ![0o664n, 0o600n].includes(permissions))
   ) fail();
   descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   const opened = fstatSync(descriptor, { bigint: true });
@@ -1493,21 +1490,74 @@ RECOVERY_FAILURE_STAGE="frozen_inventory"
 FROZEN_RUNTIME_DIR="$(find_unique_release "${EXPECTED_OLD_BUILD_ID:0:12}")" || exit 1
 [ "$CANDIDATE_RUNTIME_DIR" != "$FROZEN_RUNTIME_DIR" ] || exit 1
 
-RECOVERY_FAILURE_STAGE="candidate_current_link"
-[ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_DIR" ] \
-  || exit 1
-[ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_DIR" ] \
-  || exit 1
-CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")" || exit 1
-[ -L "$APP_DIR/.next" ] && [ "$(readlink -- "$APP_DIR/.next")" = "$CURRENT_LINK/.next" ] \
-  || exit 1
-[ -L "$APP_DIR/node_modules" ] \
-  && [ "$(readlink -- "$APP_DIR/node_modules")" = "$CURRENT_LINK/node_modules" ] \
-  || exit 1
-[ ! -e "$APP_DIR/.next.pre-atomic-deploy" ] && [ ! -L "$APP_DIR/.next.pre-atomic-deploy" ] \
-  || exit 1
-[ ! -e "$APP_DIR/node_modules.pre-atomic-deploy" ] \
-  && [ ! -L "$APP_DIR/node_modules.pre-atomic-deploy" ] || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_target"
+INITIAL_CURRENT_RAW_TARGET="$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)"
+INITIAL_CURRENT_RESOLVED_TARGET="$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)"
+if [ "$INITIAL_CURRENT_RAW_TARGET" = "$CANDIDATE_RUNTIME_DIR" ] \
+  && [ "$INITIAL_CURRENT_RESOLVED_TARGET" = "$CANDIDATE_RUNTIME_DIR" ]; then
+  INITIAL_CURRENT_STATE="candidate"
+elif [ "$INITIAL_CURRENT_RAW_TARGET" = "$FROZEN_RUNTIME_DIR" ] \
+  && [ "$INITIAL_CURRENT_RESOLVED_TARGET" = "$FROZEN_RUNTIME_DIR" ]; then
+  INITIAL_CURRENT_STATE="frozen"
+else
+  exit 1
+fi
+
+RECOVERY_FAILURE_STAGE="initial_current_identity"
+INITIAL_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$CURRENT_LINK")" || exit 1
+[ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+  "$INITIAL_CURRENT_RAW_TARGET" ] \
+  && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+    "$INITIAL_CURRENT_RESOLVED_TARGET" ] || exit 1
+readonly INITIAL_CURRENT_STATE INITIAL_CURRENT_RAW_TARGET \
+  INITIAL_CURRENT_RESOLVED_TARGET INITIAL_CURRENT_LINK_IDENTITY
+
+revalidate_initial_current_target() {
+  [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+    "$INITIAL_CURRENT_RAW_TARGET" ] \
+    && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$INITIAL_CURRENT_RESOLVED_TARGET" ]
+}
+
+revalidate_initial_current_identity() {
+  [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+    "$INITIAL_CURRENT_LINK_IDENTITY" ] \
+    && revalidate_initial_current_target
+}
+
+revalidate_initial_current_compatibility() {
+  [ -L "$APP_DIR/.next" ] \
+    && [ "$(readlink -- "$APP_DIR/.next" 2>/dev/null || true)" = \
+      "$CURRENT_LINK/.next" ] \
+    && [ -L "$APP_DIR/node_modules" ] \
+    && [ "$(readlink -- "$APP_DIR/node_modules" 2>/dev/null || true)" = \
+      "$CURRENT_LINK/node_modules" ] \
+    && [ ! -e "$APP_DIR/.next.pre-atomic-deploy" ] \
+    && [ ! -L "$APP_DIR/.next.pre-atomic-deploy" ] \
+    && [ ! -e "$APP_DIR/node_modules.pre-atomic-deploy" ] \
+    && [ ! -L "$APP_DIR/node_modules.pre-atomic-deploy" ]
+}
+
+revalidate_initial_current_temporary_links() {
+  [ ! -e "$EXPECTED_SWITCH_TEMP_LINK" ] \
+    && [ ! -L "$EXPECTED_SWITCH_TEMP_LINK" ] \
+    && [ ! -e "$EXPECTED_COMPENSATION_TEMP_LINK" ] \
+    && [ ! -L "$EXPECTED_COMPENSATION_TEMP_LINK" ]
+}
+
+revalidate_initial_current_observation() {
+  revalidate_initial_current_target \
+    && revalidate_initial_current_identity \
+    && revalidate_initial_current_compatibility \
+    && revalidate_initial_current_temporary_links
+}
+
+RECOVERY_FAILURE_STAGE="initial_current_compatibility"
+revalidate_initial_current_compatibility || exit 1
+
+RECOVERY_FAILURE_STAGE="initial_current_temporary_links"
+revalidate_initial_current_temporary_links || exit 1
+revalidate_initial_current_observation || exit 1
 
 RECOVERY_FAILURE_STAGE="candidate_structure"
 git -C "$APP_DIR" cat-file -e "$EXPECTED_CANDIDATE_BUILD_ID^{commit}" >/dev/null 2>&1 \
@@ -1612,13 +1662,40 @@ readonly FROZEN_SMOKE_HELPER="$FROZEN_RUNTIME_DIR/$SMOKE_HELPER_RELATIVE"
 readonly FROZEN_PACKAGE_FILE="$FROZEN_RUNTIME_DIR/$PACKAGE_RELATIVE"
 readonly FROZEN_WORKER_FILE="$FROZEN_RUNTIME_DIR/$WORKER_RELATIVE"
 
+verify_frozen_resume_path_permissions() {
+  local path="$1"
+  local kind="$2"
+  local expected_mode="$3"
+  local expected_owner="$(id -u):$(id -g)"
+  [ "$INITIAL_CURRENT_STATE" = "frozen" ] || return 0
+  case "$kind:$expected_mode" in
+    directory:700) [ -d "$path" ] ;;
+    file:600) [ -f "$path" ] ;;
+    *) return 1 ;;
+  esac
+  [ ! -L "$path" ] \
+    && [ "$(stat -c '%u:%g:%a' -- "$path" 2>/dev/null || true)" = \
+      "$expected_owner:$expected_mode" ]
+}
+
+verify_frozen_resume_permissions() {
+  verify_frozen_resume_path_permissions \
+    "$FROZEN_RUNTIME_DIR/scripts" directory 700 \
+    && verify_frozen_resume_path_permissions "$FROZEN_SMOKE_HELPER" file 600 \
+    && verify_frozen_resume_path_permissions "$FROZEN_PACKAGE_FILE" file 600 \
+    && verify_frozen_resume_path_permissions "$FROZEN_WORKER_FILE" file 600
+}
+
 RECOVERY_FAILURE_STAGE="frozen_scripts_identity"
+verify_frozen_resume_path_permissions \
+  "$FROZEN_RUNTIME_DIR/scripts" directory 700 || exit 1
 harden_frozen_scripts_directory || exit 1
 FROZEN_SCRIPTS_IDENTITY="$(trusted_directory_identity \
   "$FROZEN_RUNTIME_DIR/scripts")" || exit 1
 readonly FROZEN_SCRIPTS_IDENTITY
 
 RECOVERY_FAILURE_STAGE="frozen_smoke_helper_identity"
+verify_frozen_resume_path_permissions "$FROZEN_SMOKE_HELPER" file 600 || exit 1
 harden_frozen_tracked_file "$FROZEN_SMOKE_HELPER" "$SMOKE_HELPER_RELATIVE" \
   || exit 1
 FROZEN_SMOKE_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
@@ -1626,12 +1703,14 @@ FROZEN_SMOKE_HELPER_SNAPSHOT="$(trusted_helper_snapshot \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
 
 RECOVERY_FAILURE_STAGE="frozen_package_identity"
+verify_frozen_resume_path_permissions "$FROZEN_PACKAGE_FILE" file 600 || exit 1
 harden_frozen_tracked_file "$FROZEN_PACKAGE_FILE" "$PACKAGE_RELATIVE" || exit 1
 FROZEN_PACKAGE_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_PACKAGE_FILE" "$PACKAGE_RELATIVE" \
   "$EXPECTED_OLD_BUILD_ID" "$FROZEN_RUNTIME_DIR")" || exit 1
 
 RECOVERY_FAILURE_STAGE="frozen_worker_identity"
+verify_frozen_resume_path_permissions "$FROZEN_WORKER_FILE" file 600 || exit 1
 harden_frozen_tracked_file "$FROZEN_WORKER_FILE" "$WORKER_RELATIVE" || exit 1
 FROZEN_WORKER_SNAPSHOT="$(trusted_helper_snapshot \
   "$FROZEN_WORKER_FILE" "$WORKER_RELATIVE" \
@@ -1798,14 +1877,20 @@ revalidate_incident_release_pair() {
 
 revalidate_incident_runtimes() {
   local expected_current="$CANDIDATE_RUNTIME_DIR"
+  local expected_identity="$CURRENT_LINK_IDENTITY"
   if [ "$CURRENT_SWITCH_COMPLETED" -eq 1 ]; then
     expected_current="$FROZEN_RUNTIME_DIR"
+    expected_identity="$FROZEN_CURRENT_LINK_IDENTITY"
   fi
-  [ -L "$CURRENT_LINK" ] \
+  [ -n "$expected_identity" ] \
+    && [ -L "$CURRENT_LINK" ] \
     && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$expected_current" ] \
     && [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$expected_current" ] \
+    && [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$expected_identity" ] \
     || return 1
-  revalidate_incident_release_pair
+  revalidate_incident_release_pair \
+    && revalidate_initial_current_temporary_links
 }
 
 current_link_is_exact() {
@@ -1858,7 +1943,7 @@ restore_candidate_before_web_commit() {
       CURRENT_SWITCH_ARMED=0
       ;;
     frozen)
-      COMPENSATION_TEMP_LINK="${CURRENT_LINK}.compensate-${EXPECTED_INCIDENT_DEPLOY_RUN_ID}"
+      COMPENSATION_TEMP_LINK="$EXPECTED_COMPENSATION_TEMP_LINK"
       [ ! -e "$COMPENSATION_TEMP_LINK" ] && [ ! -L "$COMPENSATION_TEMP_LINK" ] \
         || return 1
       ln -s -- "$CANDIDATE_RUNTIME_DIR" "$COMPENSATION_TEMP_LINK" \
@@ -1907,7 +1992,15 @@ restore_candidate_before_web_commit() {
     && port_is_free
 }
 
-revalidate_incident_runtimes || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_target"
+revalidate_initial_current_target || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_identity"
+revalidate_initial_current_identity || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_compatibility"
+revalidate_initial_current_compatibility || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_temporary_links"
+revalidate_initial_current_temporary_links || exit 1
+revalidate_incident_release_pair || exit 1
 revalidate_deploy_lock || exit 1
 
 RECOVERY_FAILURE_STAGE="database_preflight"
@@ -1990,6 +2083,32 @@ SQL
 }
 
 verify_database_fence_clear || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_target"
+revalidate_initial_current_target || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_identity"
+revalidate_initial_current_identity || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_compatibility"
+revalidate_initial_current_compatibility || exit 1
+RECOVERY_FAILURE_STAGE="initial_current_temporary_links"
+revalidate_initial_current_temporary_links || exit 1
+revalidate_incident_release_pair || exit 1
+revalidate_deploy_lock || exit 1
+RECOVERY_FAILURE_STAGE="database_preflight"
+verify_database_fence_clear || exit 1
+case "$INITIAL_CURRENT_STATE" in
+  candidate)
+    CURRENT_LINK_IDENTITY="$INITIAL_CURRENT_LINK_IDENTITY"
+    CURRENT_SWITCH_COMPLETED=0
+    CURRENT_SWITCH_ARMED=0
+    ;;
+  frozen)
+    FROZEN_CURRENT_LINK_IDENTITY="$INITIAL_CURRENT_LINK_IDENTITY"
+    CURRENT_SWITCH_COMPLETED=1
+    CURRENT_SWITCH_ARMED=0
+    ;;
+  *) exit 1 ;;
+esac
+revalidate_incident_runtimes || exit 1
 
 RECOVERY_FAILURE_STAGE="fence_cleanup"
 
@@ -2006,7 +2125,10 @@ mapfile -d '' -t fence_entries < <(
   && [ "${fence_entries[-1]}" = "__faolla_fence_inventory_complete__" ] || exit 1
 unset 'fence_entries[-1]'
 [ "${#fence_entries[@]}" -le 1 ] || exit 1
+[ "$INITIAL_CURRENT_STATE" = "candidate" ] \
+  || [ "${#fence_entries[@]}" -eq 0 ] || exit 1
 if [ "${#fence_entries[@]}" -eq 1 ]; then
+  [ "$INITIAL_CURRENT_STATE" = "candidate" ] || exit 1
   stale_dir="${fence_entries[0]}"
   [ "$(dirname -- "$stale_dir")" = "$SHARED_RUNTIME_DIR" ] || exit 1
   [[ "$(basename -- "$stale_dir")" =~ ^\.readiness-fence\.[A-Za-z0-9]{6}$ ]] || exit 1
@@ -2333,94 +2455,178 @@ verify_precommit_safe_state() {
   local web_state
   local worker_state
   [ "$FROZEN_WEB_COMMITTED" -eq 0 ] || return 1
-  current_link_is_exact "$CANDIDATE_RUNTIME_DIR" \
-    && [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
-      "$CURRENT_LINK_IDENTITY" ] \
-    && revalidate_incident_release_pair \
-    && revalidate_deploy_lock \
-    && port_is_free || return 1
-  web_state="$(candidate_pm2_state web)" || return 1
-  worker_state="$(candidate_pm2_state worker)" || return 1
-  case "$CANDIDATE_WEB_PM2_SNAPSHOT:$web_state" in
-    absent:absent|inactive:inactive|inactive:absent) ;;
+  case "$INITIAL_CURRENT_STATE" in
+    candidate)
+      [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 1 ] \
+        && [ "$FROZEN_RESUME_PREFLIGHT_VERIFIED" -eq 0 ] \
+        && current_link_is_exact "$CANDIDATE_RUNTIME_DIR" \
+        && [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+          "$CURRENT_LINK_IDENTITY" ] \
+        && revalidate_incident_release_pair \
+        && revalidate_deploy_lock \
+        && verify_database_fence_clear \
+        && port_is_free || return 1
+      web_state="$(candidate_pm2_state web)" || return 1
+      worker_state="$(candidate_pm2_state worker)" || return 1
+      case "$CANDIDATE_WEB_PM2_SNAPSHOT:$web_state" in
+        absent:absent|inactive:inactive|inactive:absent) ;;
+        *) return 1 ;;
+      esac
+      case "$CANDIDATE_WORKER_PM2_SNAPSHOT:$worker_state" in
+        absent:absent|inactive:inactive|inactive:absent) ;;
+        *) return 1 ;;
+      esac
+      ;;
+    frozen)
+      [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 0 ] \
+        && [ "$FROZEN_RESUME_PREFLIGHT_VERIFIED" -eq 1 ] \
+        && [ "$CURRENT_SWITCH_COMPLETED" -eq 1 ] \
+        && [ "$CURRENT_SWITCH_ARMED" -eq 0 ] \
+        && revalidate_incident_runtimes \
+        && verify_frozen_resume_permissions \
+        && revalidate_deploy_lock \
+        && verify_database_fence_clear \
+        && port_is_free || return 1
+      web_state="$(pm2_process_snapshot "$APP_NAME")" || return 1
+      worker_state="$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")" || return 1
+      [ "$CANDIDATE_WEB_PM2_SNAPSHOT:$web_state" = "absent:absent" ] \
+        && [ "$CANDIDATE_WORKER_PM2_SNAPSHOT:$worker_state" = "absent:absent" ] \
+        || return 1
+      ;;
     *) return 1 ;;
   esac
-  case "$CANDIDATE_WORKER_PM2_SNAPSHOT:$worker_state" in
-    absent:absent|inactive:inactive|inactive:absent) ;;
-    *) return 1 ;;
-  esac
-  port_is_free
+  port_is_free && revalidate_incident_runtimes \
+    && revalidate_deploy_lock && verify_database_fence_clear
 }
 
 RECOVERY_FAILURE_STAGE="candidate_process_preflight"
 revalidate_incident_runtimes || exit 1
 revalidate_deploy_lock || exit 1
 verify_database_fence_clear || exit 1
-CANDIDATE_WEB_PM2_SNAPSHOT="$(candidate_pm2_state web)" || exit 1
-CANDIDATE_WORKER_PM2_SNAPSHOT="$(candidate_pm2_state worker)" || exit 1
-case "$CANDIDATE_WEB_PM2_SNAPSHOT:$CANDIDATE_WORKER_PM2_SNAPSHOT" in
-  absent:absent|absent:inactive|inactive:absent|inactive:inactive) ;;
+case "$INITIAL_CURRENT_STATE" in
+  candidate)
+    CANDIDATE_WEB_PM2_SNAPSHOT="$(candidate_pm2_state web)" || exit 1
+    CANDIDATE_WORKER_PM2_SNAPSHOT="$(candidate_pm2_state worker)" || exit 1
+    case "$CANDIDATE_WEB_PM2_SNAPSHOT:$CANDIDATE_WORKER_PM2_SNAPSHOT" in
+      absent:absent|absent:inactive|inactive:absent|inactive:inactive) ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  frozen)
+    [ "$CURRENT_SWITCH_COMPLETED" -eq 1 ] \
+      && [ "$CURRENT_SWITCH_ARMED" -eq 0 ] \
+      && verify_frozen_resume_permissions || exit 1
+    CANDIDATE_WEB_PM2_SNAPSHOT="$(pm2_process_snapshot "$APP_NAME")" || exit 1
+    CANDIDATE_WORKER_PM2_SNAPSHOT="$(pm2_process_snapshot \
+      "$AUTOMATION_WORKER_NAME")" || exit 1
+    [ "$CANDIDATE_WEB_PM2_SNAPSHOT:$CANDIDATE_WORKER_PM2_SNAPSHOT" = \
+      "absent:absent" ] || exit 1
+    ;;
   *) exit 1 ;;
 esac
 port_state="$(timeout --signal=TERM --kill-after=1s 3s ss -H -ltn \
   "( sport = :$APP_PORT )" 2>/dev/null)" || exit 1
 [ -z "$port_state" ] || exit 1
-CANDIDATE_PREFLIGHT_VERIFIED=1
+if [ "$INITIAL_CURRENT_STATE" = "candidate" ]; then
+  CANDIDATE_PREFLIGHT_VERIFIED=1
+else
+  FROZEN_RESUME_PREFLIGHT_VERIFIED=1
+fi
+revalidate_incident_runtimes || exit 1
+revalidate_deploy_lock || exit 1
+verify_database_fence_clear || exit 1
 printf '%s\n' 'candidate_state_verified'
 
 RECOVERY_FAILURE_STAGE="candidate_stop"
-remove_exact_inactive_candidate_process worker || exit 1
-CANDIDATE_WORKER_STOPPED=1
-remove_exact_inactive_candidate_process web || exit 1
-CANDIDATE_WEB_STOPPED=1
-[ "$(candidate_pm2_state web)" = "absent" ] || exit 1
-[ "$(candidate_pm2_state worker)" = "absent" ] || exit 1
+if [ "$INITIAL_CURRENT_STATE" = "candidate" ]; then
+  remove_exact_inactive_candidate_process worker || exit 1
+  CANDIDATE_WORKER_STOPPED=1
+  remove_exact_inactive_candidate_process web || exit 1
+  CANDIDATE_WEB_STOPPED=1
+  [ "$(candidate_pm2_state web)" = "absent" ] || exit 1
+  [ "$(candidate_pm2_state worker)" = "absent" ] || exit 1
+else
+  [ "$INITIAL_CURRENT_STATE" = "frozen" ] \
+    && [ "$(pm2_process_snapshot "$APP_NAME")" = "absent" ] \
+    && [ "$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")" = "absent" ] \
+    || exit 1
+fi
 port_is_free || exit 1
 revalidate_incident_runtimes || exit 1
 revalidate_deploy_lock || exit 1
 verify_database_fence_clear || exit 1
 printf '%s\n' 'candidate_processes_stopped'
 
-RECOVERY_FAILURE_STAGE="current_switch"
-[ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
-  "$CURRENT_LINK_IDENTITY" ] || exit 1
-[ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$CANDIDATE_RUNTIME_DIR" ] \
-  || exit 1
-revalidate_incident_release_pair || exit 1
-SWITCH_TEMP_LINK="${CURRENT_LINK}.recover-${EXPECTED_INCIDENT_DEPLOY_RUN_ID}"
-[ ! -e "$SWITCH_TEMP_LINK" ] && [ ! -L "$SWITCH_TEMP_LINK" ] || exit 1
-ln -s -- "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK" >/dev/null 2>&1 || exit 1
-[ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = "$FROZEN_RUNTIME_DIR" ] \
-  || exit 1
-FROZEN_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$SWITCH_TEMP_LINK")" \
-  || exit 1
-CURRENT_SWITCH_ARMED=1
-revalidate_incident_release_pair || exit 1
-revalidate_deploy_lock || exit 1
-[ "$(candidate_pm2_state web)" = "absent" ] || exit 1
-[ "$(candidate_pm2_state worker)" = "absent" ] || exit 1
-port_is_free || exit 1
-verify_database_fence_clear || exit 1
-current_link_is_exact "$CANDIDATE_RUNTIME_DIR" || exit 1
-[ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
-  "$CURRENT_LINK_IDENTITY" ] || exit 1
-[ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
-  "$FROZEN_RUNTIME_DIR" ] || exit 1
-[ "$(readlink -f -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
-  "$FROZEN_RUNTIME_DIR" ] || exit 1
-[ "$(trusted_symlink_identity "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
-  "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
-mv -T -- "$SWITCH_TEMP_LINK" "$CURRENT_LINK" >/dev/null 2>&1 || exit 1
-SWITCH_TEMP_LINK=""
-CURRENT_SWITCH_COMPLETED=1
-[ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = "$FROZEN_RUNTIME_DIR" ] \
-  || exit 1
-[ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
-  "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
-revalidate_incident_runtimes || exit 1
-revalidate_deploy_lock || exit 1
-verify_database_fence_clear || exit 1
-printf '%s\n' 'current_switched_to_frozen_release'
+case "$INITIAL_CURRENT_STATE" in
+  candidate)
+    RECOVERY_FAILURE_STAGE="current_switch"
+    revalidate_incident_runtimes || exit 1
+    revalidate_deploy_lock || exit 1
+    verify_database_fence_clear || exit 1
+    [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$CURRENT_LINK_IDENTITY" ] || exit 1
+    [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$CANDIDATE_RUNTIME_DIR" ] || exit 1
+    revalidate_incident_release_pair || exit 1
+    SWITCH_TEMP_LINK="$EXPECTED_SWITCH_TEMP_LINK"
+    [ ! -e "$SWITCH_TEMP_LINK" ] && [ ! -L "$SWITCH_TEMP_LINK" ] || exit 1
+    ln -s -- "$FROZEN_RUNTIME_DIR" "$SWITCH_TEMP_LINK" >/dev/null 2>&1 || exit 1
+    [ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+      "$FROZEN_RUNTIME_DIR" ] || exit 1
+    FROZEN_CURRENT_LINK_IDENTITY="$(trusted_symlink_identity "$SWITCH_TEMP_LINK")" \
+      || exit 1
+    CURRENT_SWITCH_ARMED=1
+    revalidate_incident_release_pair || exit 1
+    revalidate_deploy_lock || exit 1
+    [ "$(candidate_pm2_state web)" = "absent" ] || exit 1
+    [ "$(candidate_pm2_state worker)" = "absent" ] || exit 1
+    port_is_free || exit 1
+    verify_database_fence_clear || exit 1
+    current_link_is_exact "$CANDIDATE_RUNTIME_DIR" || exit 1
+    [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$CURRENT_LINK_IDENTITY" ] || exit 1
+    [ "$(readlink -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+      "$FROZEN_RUNTIME_DIR" ] || exit 1
+    [ "$(readlink -f -- "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+      "$FROZEN_RUNTIME_DIR" ] || exit 1
+    [ "$(trusted_symlink_identity "$SWITCH_TEMP_LINK" 2>/dev/null || true)" = \
+      "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
+    mv -T -- "$SWITCH_TEMP_LINK" "$CURRENT_LINK" >/dev/null 2>&1 || exit 1
+    SWITCH_TEMP_LINK=""
+    CURRENT_SWITCH_COMPLETED=1
+    [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$FROZEN_RUNTIME_DIR" ] || exit 1
+    [ "$(trusted_symlink_identity "$CURRENT_LINK" 2>/dev/null || true)" = \
+      "$FROZEN_CURRENT_LINK_IDENTITY" ] || exit 1
+    revalidate_incident_runtimes || exit 1
+    revalidate_deploy_lock || exit 1
+    verify_database_fence_clear || exit 1
+    ;;
+  frozen)
+    RECOVERY_FAILURE_STAGE="current_resume"
+    [ "$CURRENT_SWITCH_COMPLETED" -eq 1 ] \
+      && [ "$CURRENT_SWITCH_ARMED" -eq 0 ] \
+      && [ "$CANDIDATE_PREFLIGHT_VERIFIED" -eq 0 ] \
+      && [ "$FROZEN_RESUME_PREFLIGHT_VERIFIED" -eq 1 ] \
+      || exit 1
+    revalidate_incident_runtimes || exit 1
+    verify_frozen_resume_permissions || exit 1
+    revalidate_deploy_lock || exit 1
+    [ "$(pm2_process_snapshot "$APP_NAME")" = "absent" ] || exit 1
+    [ "$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")" = "absent" ] || exit 1
+    port_is_free || exit 1
+    verify_database_fence_clear || exit 1
+    revalidate_incident_runtimes || exit 1
+    verify_frozen_resume_permissions || exit 1
+    revalidate_deploy_lock || exit 1
+    [ "$(pm2_process_snapshot "$APP_NAME")" = "absent" ] || exit 1
+    [ "$(pm2_process_snapshot "$AUTOMATION_WORKER_NAME")" = "absent" ] || exit 1
+    port_is_free || exit 1
+    verify_database_fence_clear || exit 1
+    ;;
+  *) exit 1 ;;
+esac
+printf '%s\n' 'current_frozen_release_verified'
 
 RECOVERY_FAILURE_STAGE="web_start"
 WEB_START_ATTEMPTED=1

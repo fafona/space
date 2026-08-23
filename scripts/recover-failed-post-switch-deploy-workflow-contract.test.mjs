@@ -135,9 +135,15 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
-    "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
+    "32615785237", "f1e565d39fbadf4429a1ed9d91b327528c37f6f8",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
+  for (const obsolete of [
+    "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
+  ]) {
+    assert.ok(!workflow.includes(obsolete));
+    assert.ok(!runtime.includes(obsolete));
+  }
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
   assert.match(allRuns, /\[9, "Deploy To Server", "failure"\]/);
   assert.match(allRuns, /readiness\.conclusion !== "success"/);
@@ -204,13 +210,18 @@ test("SSH is pinned and all raw remote output stays hidden", () => {
 test("remote classifier exposes only the fixed post-switch phase allowlist", () => {
   const markers = [
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
-    "current_switched_to_frozen_release", "frozen_web_restored",
+    "current_frozen_release_verified", "frozen_web_restored",
     "worker_state_restored", "recovery_complete",
   ];
-  for (const marker of markers) assert.ok(allRuns.includes(`"${marker}"`));
+  for (const marker of markers) {
+    assert.ok(allRuns.includes(`"${marker}"`));
+    assert.ok(runtime.includes(`'${marker}'`));
+  }
   for (const phase of [
     "pre_runtime_candidate_inventory", "pre_runtime_frozen_inventory",
-    "pre_runtime_candidate_current_link", "pre_runtime_candidate_structure",
+    "pre_runtime_initial_current_target", "pre_runtime_initial_current_identity",
+    "pre_runtime_initial_current_compatibility", "pre_runtime_initial_current_temporary_links",
+    "pre_runtime_candidate_structure",
     ...preRuntimeTrustedIdentityStages.map((stage) => `pre_runtime_${stage}`),
     ...candidateEnvStages.map((stage) => `pre_runtime_${stage}`),
     "pre_runtime_candidate_next_build_identity",
@@ -218,7 +229,7 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
     "pre_runtime_frozen_next_build_identity",
     "fence_cleanup", "fence_unlink", "fence_rmdir",
     "fence_post_inventory", "fence_post_database",
-    "candidate_process_preflight", "candidate_stop", "current_switch",
+    "candidate_process_preflight", "candidate_stop", "current_switch", "current_resume",
     "web_restore_start", "web_restore_stability", "web_restore_identity",
     "web_restore_environment", "web_restore_launch_contract", "local_smoke",
     "worker_restore_start", "worker_restore_launch_contract", "persist_and_verify",
@@ -237,6 +248,10 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
   assert.match(allRuns, /const firstNewline = stderr\.indexOf\(0x0a\)/);
   assert.doesNotMatch(allRuns, /cleanup_unverified/);
   assert.doesNotMatch(runtime, /cleanup_unverified/);
+  assert.ok(!allRuns.includes("pre_runtime_candidate_current_link"));
+  assert.ok(!runtime.includes("candidate_current_link"));
+  assert.ok(!allRuns.includes("current_switched_to_frozen_release"));
+  assert.ok(!runtime.includes("current_switched_to_frozen_release"));
   assert.match(allRuns, /recovery_output_invalid/);
   const runtimeCodes = new Set(
     [...runtime.matchAll(/'((?:recovery_failed_(?:pre_)?runtime)_[a-z_]+)'/g)]
@@ -267,7 +282,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const mappings = [...classifier.matchAll(
     /\["(recovery_failed_(?:pre_)?runtime_[a-z_]+)", "(remote_recovery_failed_phase_[a-z_]+)", ([0-6])\]/g,
   )].map((match) => ({ remote: match[1], public: match[2], prefix: Number(match[3]) }));
-  assert.equal(mappings.length, 47);
+  assert.equal(mappings.length, 51);
   assert.equal(new Set(mappings.map(({ remote }) => remote)).size, mappings.length);
   assert.equal(new Set(mappings.map(({ public: publicCode }) => publicCode)).size, mappings.length);
   const candidateEnvMappings = candidateEnvStages.map((stage) => ({
@@ -284,6 +299,31 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
     prefix: 0,
   }));
   for (const expected of sourceIdentityMappings) {
+    assert.deepEqual(mappings.find(({ remote }) => remote === expected.remote), expected);
+  }
+  const currentStateMappings = [
+    "initial_current_target",
+    "initial_current_identity",
+    "initial_current_compatibility",
+    "initial_current_temporary_links",
+  ].map((stage) => ({
+    remote: `recovery_failed_pre_runtime_${stage}`,
+    public: `remote_recovery_failed_phase_pre_runtime_${stage}`,
+    prefix: 0,
+  }));
+  currentStateMappings.push(
+    {
+      remote: "recovery_failed_runtime_current_switch",
+      public: "remote_recovery_failed_phase_current_switch",
+      prefix: 3,
+    },
+    {
+      remote: "recovery_failed_runtime_current_resume",
+      public: "remote_recovery_failed_phase_current_resume",
+      prefix: 3,
+    },
+  );
+  for (const expected of currentStateMappings) {
     assert.deepEqual(mappings.find(({ remote }) => remote === expected.remote), expected);
   }
   const phaseAllowlist = allRuns.match(
@@ -312,7 +352,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   );
   const markers = [
     "fence_cleanup_verified", "candidate_state_verified", "candidate_processes_stopped",
-    "current_switched_to_frozen_release", "frozen_web_restored",
+    "current_frozen_release_verified", "frozen_web_restored",
     "worker_state_restored", "recovery_complete",
   ];
   const directory = mkdtempSync(join(tmpdir(), "faolla-classifier-"));
