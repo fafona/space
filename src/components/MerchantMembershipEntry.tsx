@@ -8,6 +8,7 @@ import {
   type PersonalMembershipCard,
 } from "@/lib/merchantMemberships";
 import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
+import { buildPersonalLoginHref } from "@/lib/personalLoginNavigation";
 
 type MerchantMembershipEntryProps = {
   siteId: string;
@@ -55,26 +56,6 @@ const EMPTY_MEMBER_PROFILE: MerchantMembershipProfileDraft = {
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
-}
-
-function buildPersonalLoginHref() {
-  if (typeof window === "undefined") return "/login?accountType=personal";
-  const loginFrom = window.location.href;
-  return `/login?accountType=personal&loginFrom=${encodeURIComponent(loginFrom)}`;
-}
-
-function redirectToPersonalLogin() {
-  if (typeof window === "undefined") return;
-  const href = buildPersonalLoginHref();
-  try {
-    if (window.top && window.top !== window) {
-      window.top.location.assign(href);
-      return;
-    }
-  } catch {
-    // Cross-origin frames fall back to navigating the current frame.
-  }
-  window.location.assign(href);
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -254,6 +235,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   const [profileDraft, setProfileDraft] = useState<MerchantMembershipProfileDraft>(EMPTY_MEMBER_PROFILE);
   const [birthdayFullBackup, setBirthdayFullBackup] = useState("");
   const [frontendAuthProof, setFrontendAuthProof] = useState("");
+  const [personalLoginHref, setPersonalLoginHref] = useState(() => buildPersonalLoginHref(""));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -267,6 +249,10 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
     if (membership?.status === "left") return "重新加入";
     return "加入";
   }, [busy, membership?.status]);
+
+  useEffect(() => {
+    setPersonalLoginHref(buildPersonalLoginHref(window.location.href));
+  }, []);
 
   const applyAuthPayload = useCallback(
     (payload: MerchantCookieSessionPayload | null | undefined) => {
@@ -348,23 +334,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
   }
 
   async function openJoinDialog() {
-    if (!joinable || busy || active) return;
-    if (authenticated !== true) {
-      setMessage("正在确认登录状态...");
-      const latestAuthPayload = await resolveDeferredFrontendAuthPayload(6200).catch(() => null);
-      if (applyAuthPayload(latestAuthPayload)) {
-        const profile = readProfileFromAuthPayload(latestAuthPayload);
-        setMessage("");
-        setProfileDraft(profile);
-        setBirthdayFullBackup(profile.birthdayMonthDayOnly ? "" : normalizeFullDate(profile.birthday));
-        setDialogOpen(true);
-        return;
-      }
-      setResolved(true);
-      setAuthenticated(false);
-      redirectToPersonalLogin();
-      return;
-    }
+    if (!joinable || busy || active || authenticated !== true) return;
     setMessage("");
     setProfileDraft(personalProfile);
     setBirthdayFullBackup(personalProfile.birthdayMonthDayOnly ? "" : normalizeFullDate(personalProfile.birthday));
@@ -436,34 +406,43 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
 
   if (!joinable) return null;
 
+  const entryClassName = `inline-flex items-center justify-center overflow-hidden rounded-full border text-sm font-semibold shadow-[0_12px_30px_rgba(15,23,42,0.12)] backdrop-blur transition disabled:cursor-default ${
+    active
+      ? "h-12 w-12 border-white/80 bg-white/95 p-1 text-slate-900"
+      : "border-slate-200/80 bg-white/90 px-4 py-2 text-slate-900 hover:bg-white"
+  }`;
+  const showGuestLoginLink = authenticated !== true;
+
   return (
     <div className={className}>
-      <button
-        type="button"
-        className={`inline-flex items-center justify-center overflow-hidden rounded-full border text-sm font-semibold shadow-[0_12px_30px_rgba(15,23,42,0.12)] backdrop-blur transition disabled:cursor-default ${
-          active
-            ? "h-12 w-12 border-white/80 bg-white/95 p-1 text-slate-900"
-            : "border-slate-200/80 bg-white/90 px-4 py-2 text-slate-900 hover:bg-white"
-        }`}
-        aria-label={active ? "会员头像" : buttonLabel}
-        aria-busy={!resolved || busy}
-        title={active ? "已是会员" : undefined}
-        onClick={() => {
-          void openJoinDialog();
-        }}
-        disabled={busy || active}
-      >
-        {active ? (
-          <span
-            className="flex h-full w-full items-center justify-center rounded-full bg-slate-950 bg-cover bg-center text-sm font-semibold text-white"
-            style={memberAvatarUrl ? { backgroundImage: `url(\"${escapeCssUrl(memberAvatarUrl)}\")` } : undefined}
-          >
-            {memberAvatarUrl ? <span className="sr-only">{memberAvatarInitial}</span> : memberAvatarInitial}
-          </span>
-        ) : (
-          buttonLabel
-        )}
-      </button>
+      {showGuestLoginLink ? (
+        <a href={personalLoginHref} target="_top" className={entryClassName} aria-label={buttonLabel}>
+          {buttonLabel}
+        </a>
+      ) : (
+        <button
+          type="button"
+          className={entryClassName}
+          aria-label={active ? "会员头像" : buttonLabel}
+          aria-busy={!resolved || busy}
+          title={active ? "已是会员" : undefined}
+          onClick={() => {
+            void openJoinDialog();
+          }}
+          disabled={busy || active}
+        >
+          {active ? (
+            <span
+              className="flex h-full w-full items-center justify-center rounded-full bg-slate-950 bg-cover bg-center text-sm font-semibold text-white"
+              style={memberAvatarUrl ? { backgroundImage: `url(\"${escapeCssUrl(memberAvatarUrl)}\")` } : undefined}
+            >
+              {memberAvatarUrl ? <span className="sr-only">{memberAvatarInitial}</span> : memberAvatarInitial}
+            </span>
+          ) : (
+            buttonLabel
+          )}
+        </button>
+      )}
       {message && !active ? (
         <div className="mt-2 max-w-[220px] rounded-xl bg-slate-950/85 px-3 py-2 text-xs font-medium text-white shadow-lg">
           {message}
