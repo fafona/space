@@ -1,0 +1,183 @@
+name: Production Runtime Supervision Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_diagnostic_sha:
+        description: Exact main SHA containing the diagnostic probe
+        required: true
+        type: string
+      expected_runtime_build_id:
+        description: Exact 40-character build currently expected in production
+        required: true
+        type: string
+      confirmation:
+        description: Type CHECK_PRODUCTION_RUNTIME_SUPERVISION
+        required: true
+        type: string
+
+concurrency:
+  group: production-runtime-supervision-diagnostic
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Validate Diagnostic Request
+        env:
+          EXPECTED_DIAGNOSTIC_SHA: ${{ inputs.expected_diagnostic_sha }}
+          EXPECTED_RUNTIME_BUILD_ID: ${{ inputs.expected_runtime_build_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = "fafona/space" ]
+          [ "$GITHUB_REF" = "refs/heads/main" ]
+          [ "$GITHUB_RUN_ATTEMPT" = "1" ]
+          [ "$CONFIRMATION" = "CHECK_PRODUCTION_RUNTIME_SUPERVISION" ]
+          [[ "$EXPECTED_DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_RUNTIME_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]
+          [ "$EXPECTED_DIAGNOSTIC_SHA" = "$GITHUB_SHA" ]
+
+      - name: Checkout Exact Diagnostic Revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_diagnostic_sha }}
+          persist-credentials: false
+
+      - name: Verify Diagnostic Revision
+        env:
+          EXPECTED_DIAGNOSTIC_SHA: ${{ inputs.expected_diagnostic_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_DIAGNOSTIC_SHA" ]
+          test -f scripts/check-production-runtime-supervision.mjs
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          if ! [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] \
+            || [ "${SSH_PORT:-22}" -lt 1 ] \
+            || [ "${SSH_PORT:-22}" -gt 65535 ]; then
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          known_hosts_lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != "22" ]; then
+            known_hosts_lookup="[$SSH_HOST]:${SSH_PORT}"
+          fi
+          ssh-keygen -F "$known_hosts_lookup" -f ~/.ssh/known_hosts >/dev/null
+
+      - name: Check Runtime Supervision
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          EXPECTED_RUNTIME_BUILD_ID: ${{ inputs.expected_runtime_build_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          test -n "$SSH_USER"
+          if ! [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] \
+            || [[ "/$APP_DIR/" == *"/../"* ]] \
+            || [[ "$APP_DIR" == */ ]] \
+            || [[ "$APP_DIR" == *//* ]] \
+            || ! [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]] \
+            || ! [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] \
+            || [ "$APP_PORT" -lt 1 ] \
+            || [ "$APP_PORT" -gt 65535 ]; then
+            echo "[runtime-supervision] runtime_supervision_state_unreadable"
+            exit 23
+          fi
+          printf -v remote_app_dir '%q' "$APP_DIR"
+          printf -v remote_app_name '%q' "$APP_NAME"
+          printf -v remote_app_port '%q' "$APP_PORT"
+          printf -v remote_build_id '%q' "$EXPECTED_RUNTIME_BUILD_ID"
+          remote_main="$(git ls-remote --exit-code origin refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }')"
+          [ "$remote_main" = "$GITHUB_SHA" ]
+          remote_command="NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node --input-type=module - $remote_app_dir $remote_app_name $remote_app_port $remote_build_id"
+          capture_dir="$(mktemp -d)"
+          stdout_file="$capture_dir/stdout"
+          stderr_file="$capture_dir/stderr"
+          expected_file="$capture_dir/expected"
+          cleanup() {
+            rm -f -- "$stdout_file" "$stderr_file" "$expected_file"
+            rmdir -- "$capture_dir" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          trap 'exit 1' HUP INT TERM
+          : > "$stdout_file"
+          : > "$stderr_file"
+          : > "$expected_file"
+          chmod 600 "$stdout_file" "$stderr_file" "$expected_file"
+          set +e
+          (
+            ulimit -f 8
+            timeout --signal=TERM --kill-after=5s 30s \
+              ssh -T -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+                -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+                < scripts/check-production-runtime-supervision.mjs
+          ) > "$stdout_file" 2> "$stderr_file"
+          diagnostic_status=$?
+          set -e
+          if [ -s "$stderr_file" ]; then
+            echo "[runtime-supervision] runtime_supervision_result_unverified"
+            exit 1
+          fi
+          case "$diagnostic_status" in
+            0)
+              expected_lines=(
+                "[runtime-supervision] runtime_supervision_direct_next_owned"
+                "[runtime-supervision] runtime_supervision_legacy_npm_wrapper_owned"
+              )
+              ;;
+            20) expected_lines=("[runtime-supervision] runtime_supervision_runtime_listener_reparented_to_init") ;;
+            21) expected_lines=("[runtime-supervision] runtime_supervision_listener_absent") ;;
+            22) expected_lines=("[runtime-supervision] runtime_supervision_identity_mismatch") ;;
+            23) expected_lines=("[runtime-supervision] runtime_supervision_state_unreadable") ;;
+            *) expected_lines=() ;;
+          esac
+          matched_line=""
+          matched_count=0
+          for expected_line in "${expected_lines[@]}"; do
+            printf '%s\n' "$expected_line" > "$expected_file"
+            if cmp -s -- "$stdout_file" "$expected_file"; then
+              matched_line="$expected_line"
+              matched_count=$((matched_count + 1))
+            fi
+          done
+          if [ "$matched_count" -ne 1 ]; then
+            echo "[runtime-supervision] runtime_supervision_result_unverified"
+            exit 1
+          fi
+          printf '%s\n' "$matched_line"
+          [ "$diagnostic_status" -eq 0 ] || exit "$diagnostic_status"
