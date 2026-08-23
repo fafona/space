@@ -30,6 +30,7 @@ jobs:
       RECOVERY_SOURCE_SHA: ${{ inputs.recovery_source_sha }}
       RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
       EXPECTED_CONFIRMATION: RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433
+      RECOVERY_SCRIPT_MAX_BYTES: "262144"
       RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       RECOVERY_WORKFLOW_FILE: recover-failed-post-switch-deploy.yml
@@ -44,9 +45,9 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32627378516"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32630861830"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: 870e79ac1b5fd036bfd08b895284bc6a754a102a
+      PRIOR_FAILED_RECOVERY_SHA: fe1be992a48204e8f2426615762273f14331ab83
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: 58c26e178faeb3eee0172a2e0aa487084f6910e4
@@ -1010,10 +1011,10 @@ jobs:
             values.INCIDENT_SHA !== "58c26e178faeb3eee0172a2e0aa487084f6910e4" ||
             values.READINESS_RUN_ID !== "32625773494" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32627378516" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32630861830" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "870e79ac1b5fd036bfd08b895284bc6a754a102a" ||
+              "fe1be992a48204e8f2426615762273f14331ab83" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -1029,16 +1030,30 @@ jobs:
             { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode: 0o600 },
           );
           NODE
+          validate_recovery_script_size() {
+            case "$1:$2" in
+              *[!0-9:]*|0:*|*:0) ;;
+              *)
+                if [ "$1" -le "$2" ]; then
+                  return 0
+                fi
+                ;;
+            esac
+            printf '%s\n' 'recovery_failed_pre_transport_script_size'
+            return 1
+          }
           payloadBytes="$(wc -c < "$payload_path" | tr -d '[:space:]')"
-          payloadSha256="$(sha256sum "$payload_path" | awk '{print $1}')"
           scriptBytes="$(wc -c < scripts/recover-failed-post-switch-production-runtime.sh | tr -d '[:space:]')"
+          if ! validate_recovery_script_size \
+            "$scriptBytes" "$RECOVERY_SCRIPT_MAX_BYTES"; then
+            exit 1
+          fi
+          payloadSha256="$(sha256sum "$payload_path" | awk '{print $1}')"
           scriptSha256="$(sha256sum scripts/recover-failed-post-switch-production-runtime.sh | awk '{print $1}')"
           [[ "$payloadBytes" =~ ^[1-9][0-9]*$ ]]
           [[ "$payloadSha256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$scriptBytes" =~ ^[1-9][0-9]*$ ]]
           [[ "$scriptSha256" =~ ^[0-9a-f]{64}$ ]]
           [ "$payloadBytes" -le 65536 ]
-          [ "$scriptBytes" -le 131072 ]
           test "$(git hash-object scripts/recover-failed-post-switch-production-runtime.sh)" = \
             "$(git rev-parse "$RECOVERY_SOURCE_SHA:scripts/recover-failed-post-switch-production-runtime.sh")"
           {
@@ -1053,7 +1068,7 @@ jobs:
           chmod 600 "$RECOVERY_ENVELOPE_PATH"
           rm -f -- "$payload_path"
 
-          REMOTE_RECOVERY_COMMAND='set -eu; umask 077; recovery_transport_dir="$(mktemp -d)"; recovery_payload="$recovery_transport_dir/payload.json"; recovery_script="$recovery_transport_dir/recovery.sh"; cleanup_recovery_transport() { rm -f -- "$recovery_payload" "$recovery_script"; rmdir -- "$recovery_transport_dir"; }; trap cleanup_recovery_transport EXIT; IFS= read -r recovery_magic; test "$recovery_magic" = "FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1"; IFS= read -r expected_payload_bytes; IFS= read -r expected_payload_sha256; IFS= read -r expected_script_bytes; IFS= read -r expected_script_sha256; case "$expected_payload_bytes:$expected_script_bytes" in *[!0-9:]*|0:*|*:0) exit 1;; esac; test "$expected_payload_bytes" -le 65536; test "$expected_script_bytes" -le 131072; case "$expected_payload_sha256:$expected_script_sha256" in *[!0-9a-f:]*) exit 1;; esac; case "$expected_payload_sha256:$expected_script_sha256" in ????????????????????????????????????????????????????????????????:????????????????????????????????????????????????????????????????) :;; *) exit 1;; esac; dd bs=1 count="$expected_payload_bytes" of="$recovery_payload" status=none; dd bs=1 count="$expected_script_bytes" of="$recovery_script" status=none; test "$(dd bs=1 count=1 status=none | wc -c | tr -d "[:space:]")" = "0"; test "$(wc -c < "$recovery_payload" | tr -d "[:space:]")" = "$expected_payload_bytes"; test "$(sha256sum "$recovery_payload" | awk "{print \$1}")" = "$expected_payload_sha256"; test "$(wc -c < "$recovery_script" | tr -d "[:space:]")" = "$expected_script_bytes"; test "$(sha256sum "$recovery_script" | awk "{print \$1}")" = "$expected_script_sha256"; chmod 600 "$recovery_payload"; chmod 700 "$recovery_script"; env -u NODE_OPTIONS -u NODE_PATH -u npm_config_node_options -u NPM_CONFIG_NODE_OPTIONS -u BASH_ENV -u ENV FAOLLA_RECOVERY_PAYLOAD_FILE="$recovery_payload" bash --noprofile --norc "$recovery_script"'
+          REMOTE_RECOVERY_COMMAND='set -eu; umask 077; recovery_transport_dir="$(mktemp -d)"; recovery_payload="$recovery_transport_dir/payload.json"; recovery_script="$recovery_transport_dir/recovery.sh"; cleanup_recovery_transport() { rm -f -- "$recovery_payload" "$recovery_script"; rmdir -- "$recovery_transport_dir"; }; trap cleanup_recovery_transport EXIT; IFS= read -r recovery_magic; test "$recovery_magic" = "FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1"; IFS= read -r expected_payload_bytes; IFS= read -r expected_payload_sha256; IFS= read -r expected_script_bytes; IFS= read -r expected_script_sha256; case "$expected_payload_bytes:$expected_script_bytes" in *[!0-9:]*|0:*|*:0) exit 1;; esac; test "$expected_payload_bytes" -le 65536; test "$expected_script_bytes" -le 262144; case "$expected_payload_sha256:$expected_script_sha256" in *[!0-9a-f:]*) exit 1;; esac; case "$expected_payload_sha256:$expected_script_sha256" in ????????????????????????????????????????????????????????????????:????????????????????????????????????????????????????????????????) :;; *) exit 1;; esac; dd bs=1 count="$expected_payload_bytes" of="$recovery_payload" status=none; dd bs=1 count="$expected_script_bytes" of="$recovery_script" status=none; test "$(dd bs=1 count=1 status=none | wc -c | tr -d "[:space:]")" = "0"; test "$(wc -c < "$recovery_payload" | tr -d "[:space:]")" = "$expected_payload_bytes"; test "$(sha256sum "$recovery_payload" | awk "{print \$1}")" = "$expected_payload_sha256"; test "$(wc -c < "$recovery_script" | tr -d "[:space:]")" = "$expected_script_bytes"; test "$(sha256sum "$recovery_script" | awk "{print \$1}")" = "$expected_script_sha256"; chmod 600 "$recovery_payload"; chmod 700 "$recovery_script"; env -u NODE_OPTIONS -u NODE_PATH -u npm_config_node_options -u NPM_CONFIG_NODE_OPTIONS -u BASH_ENV -u ENV FAOLLA_RECOVERY_PAYLOAD_FILE="$recovery_payload" bash --noprofile --norc "$recovery_script"'
           export REMOTE_RECOVERY_COMMAND
           set +e
           (
