@@ -50,12 +50,15 @@ const [job] = jobs;
 const runs = runBlocks(job);
 const allRuns = runs.join("\n");
 const candidateEnvStages = [
-  "candidate_env_helper_identity",
   "candidate_env_file_identity",
   "candidate_env_encoding",
   "candidate_env_server_build_binding",
   "candidate_env_public_build_binding",
   "candidate_env_snapshot_contract",
+];
+const preRuntimeSourceIdentityStages = [
+  "incident_env_helper_identity",
+  "candidate_source_identity",
 ];
 
 test("workflow, shell, and embedded Node parse", () => {
@@ -115,7 +118,7 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
     "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
-    "32605144547", "9acd73386724df635b67ac0b0939c2d982b1dc18",
+    "32607312790", "1d3f1a2989c7b72f3e53267e7b7a76bffa6c6a54",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
@@ -191,6 +194,7 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
   for (const phase of [
     "pre_runtime_candidate_inventory", "pre_runtime_frozen_inventory",
     "pre_runtime_candidate_current_link", "pre_runtime_candidate_structure",
+    ...preRuntimeSourceIdentityStages.map((stage) => `pre_runtime_${stage}`),
     ...candidateEnvStages.map((stage) => `pre_runtime_${stage}`),
     "pre_runtime_candidate_next_build_identity",
     "pre_runtime_frozen_structure", "pre_runtime_frozen_env_build_binding",
@@ -205,6 +209,7 @@ test("remote classifier exposes only the fixed post-switch phase allowlist", () 
     "build_binding",
   ].join("_");
   assert.ok(!allRuns.includes(obsoleteCandidateEnvCode));
+  assert.ok(!allRuns.includes("candidate_env_helper_identity"));
   assert.match(allRuns, /stdout\.equals\(expected\)/);
   assert.match(allRuns, /allowedPrefixes\.has\(stdoutKey\)/);
   assert.match(allRuns, /stderr\.equals\(Buffer\.from\("cleanup_unverified\\n"/);
@@ -227,7 +232,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
   const mappings = [...classifier.matchAll(
     /\["(recovery_failed_(?:pre_)?runtime_[a-z_]+)", "(remote_recovery_failed_phase_[a-z_]+)", ([0-6])\]/g,
   )].map((match) => ({ remote: match[1], public: match[2], prefix: Number(match[3]) }));
-  assert.equal(mappings.length, 39);
+  assert.equal(mappings.length, 40);
   assert.equal(new Set(mappings.map(({ remote }) => remote)).size, mappings.length);
   assert.equal(new Set(mappings.map(({ public: publicCode }) => publicCode)).size, mappings.length);
   const candidateEnvMappings = candidateEnvStages.map((stage) => ({
@@ -236,6 +241,14 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
     prefix: 0,
   }));
   for (const expected of candidateEnvMappings) {
+    assert.deepEqual(mappings.find(({ remote }) => remote === expected.remote), expected);
+  }
+  const sourceIdentityMappings = preRuntimeSourceIdentityStages.map((stage) => ({
+    remote: `recovery_failed_pre_runtime_${stage}`,
+    public: `remote_recovery_failed_phase_pre_runtime_${stage}`,
+    prefix: 0,
+  }));
+  for (const expected of sourceIdentityMappings) {
     assert.deepEqual(mappings.find(({ remote }) => remote === expected.remote), expected);
   }
   const allowlistCase = allRuns.match(
@@ -280,7 +293,7 @@ test("every remote phase accepts only its uniquely bound stdout prefix", () => {
         );
       }
     }
-    for (const mapping of candidateEnvMappings) {
+    for (const mapping of [...sourceIdentityMappings, ...candidateEnvMappings]) {
       for (const injectedStderr of [
         mapping.remote,
         `${mapping.remote}\r\n`,
