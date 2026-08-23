@@ -29,18 +29,18 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       RECOVERY_SOURCE_SHA: ${{ inputs.recovery_source_sha }}
       RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
-      EXPECTED_CONFIRMATION: RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446
+      EXPECTED_CONFIRMATION: RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433
       RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       RECOVERY_WORKFLOW_FILE: recover-failed-post-switch-deploy.yml
       CI_WORKFLOW_NAME: CI
       CI_WORKFLOW_PATH: .github/workflows/ci.yml
-      INCIDENT_DEPLOY_RUN_ID: "32597015446"
+      INCIDENT_DEPLOY_RUN_ID: "32625801433"
       INCIDENT_DEPLOY_RUN_ATTEMPT: "1"
       INCIDENT_DEPLOY_WORKFLOW_NAME: Deploy Production
       INCIDENT_DEPLOY_WORKFLOW_PATH: .github/workflows/deploy.yml
-      INCIDENT_SHA: a628380757ccb5989702e42cb2868b2a48333be4
-      READINESS_RUN_ID: "32596977165"
+      INCIDENT_SHA: 58c26e178faeb3eee0172a2e0aa487084f6910e4
+      READINESS_RUN_ID: "32625773494"
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
@@ -49,7 +49,7 @@ jobs:
       PRIOR_FAILED_RECOVERY_SHA: f1e565d39fbadf4429a1ed9d91b327528c37f6f8
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
-      INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
+      INCIDENT_CANDIDATE_BUILD_ID: 58c26e178faeb3eee0172a2e0aa487084f6910e4
       INCIDENT_OLD_BUILD_ID: 2a121454a18a16ae30e356977ca82b24a310e8e5
       SSH_ALIAS: faolla-incident-recovery
 
@@ -435,9 +435,9 @@ jobs:
             "prior_failed_recovery_completed_at_invalid",
           );
           if (
-            failedRecoveryStarted <= completedEpoch ||
             failedRecoveryCompleted <= failedRecoveryStarted ||
-            failedRecoveryCompleted - failedRecoveryStarted > 1_800
+            failedRecoveryCompleted - failedRecoveryStarted > 1_800 ||
+            failedRecoveryCompleted >= startedEpoch
           ) fail("prior_failed_recovery_time_window_invalid");
 
           if (
@@ -996,7 +996,7 @@ jobs:
           const keys = Object.keys(values).sort();
           if (
             keys.length !== 19 ||
-            values.CONFIRMATION !== "RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446" ||
+            values.CONFIRMATION !== "RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433" ||
             !/^\/[A-Za-z0-9._/-]{1,1023}$/.test(values.APP_DIR) ||
             !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(values.APP_NAME) ||
             !/^[1-9][0-9]{0,4}$/.test(values.APP_PORT) || Number(values.APP_PORT) > 65535 ||
@@ -1006,9 +1006,9 @@ jobs:
             !/^[1-9][0-9]*$/.test(values.DATABASE_OID) ||
             !/^[1-9][0-9]{9,19}$/.test(values.DATABASE_SYSTEM_ID) ||
             values.DATABASE_PRIMARY !== "true" ||
-            values.INCIDENT_DEPLOY_RUN_ID !== "32597015446" ||
-            values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
-            values.READINESS_RUN_ID !== "32596977165" ||
+            values.INCIDENT_DEPLOY_RUN_ID !== "32625801433" ||
+            values.INCIDENT_SHA !== "58c26e178faeb3eee0172a2e0aa487084f6910e4" ||
+            values.READINESS_RUN_ID !== "32625773494" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32615785237" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||

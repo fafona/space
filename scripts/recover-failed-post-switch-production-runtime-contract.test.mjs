@@ -39,15 +39,15 @@ function nodeHeredocs(block) {
 }
 
 test("only the post-switch incident interface remains", () => {
-  assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
-  assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
-  assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
+  assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32625801433"/);
+  assert.match(source, /EXPECTED_INCIDENT_SHA="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
+  assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32625773494"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32615785237"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
   assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="f1e565d39fbadf4429a1ed9d91b327528c37f6f8"/);
-  assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
+  assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
-  assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
+  assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433"/);
   assert.doesNotMatch(source, /RECOVER_FAILED_PRE_FORWARD/);
   assert.equal(existsSync(new URL("../.github/workflows/recover-failed-pre-forward-deploy.yml", import.meta.url)), false);
   assert.equal(existsSync(new URL("./recover-failed-pre-forward-production-runtime.sh", import.meta.url)), false);
@@ -1176,8 +1176,8 @@ CANDIDATE_RUNTIME_DIR=/candidate
 FROZEN_RUNTIME_DIR=/frozen
 CURRENT_LINK_IDENTITY=original
 FROZEN_CURRENT_LINK_IDENTITY=frozen-identity
-EXPECTED_INCIDENT_DEPLOY_RUN_ID=32597015446
-EXPECTED_COMPENSATION_TEMP_LINK=/current.compensate-32597015446
+EXPECTED_INCIDENT_DEPLOY_RUN_ID=32625801433
+EXPECTED_COMPENSATION_TEMP_LINK=/current.compensate-32625801433
 COMPENSATION_TEMP_LINK=''
 COMPENSATION_TEMP_LINK_IDENTITY=''
 revalidate_deploy_lock() { return 0; }

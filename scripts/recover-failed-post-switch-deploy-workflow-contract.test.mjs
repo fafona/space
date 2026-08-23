@@ -112,7 +112,7 @@ test("manual entry is current-main-only, unique, attempt-one, and serialized", (
 });
 
 test("only the new machine interface is dispatchable", () => {
-  assert.match(workflow, /RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446/);
+  assert.match(workflow, /RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433/);
   assert.match(workflow, /recover-failed-post-switch-deploy\.yml/);
   assert.match(workflow, /recover-failed-post-switch-production-runtime\.sh/);
   assert.match(workflow, /FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1/);
@@ -134,12 +134,13 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
 
 test("incident, readiness, and failed prior recovery metadata are exact", () => {
   for (const value of [
-    "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
+    "32625801433", "58c26e178faeb3eee0172a2e0aa487084f6910e4", "32625773494",
     "32615785237", "f1e565d39fbadf4429a1ed9d91b327528c37f6f8",
     "2a121454a18a16ae30e356977ca82b24a310e8e5",
   ]) assert.ok(workflow.includes(value));
   for (const obsolete of [
     "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
+    "32597015446", "a628380757ccb5989702e42cb2868b2a48333be4", "32596977165",
   ]) {
     assert.ok(!workflow.includes(obsolete));
     assert.ok(!runtime.includes(obsolete));
@@ -167,7 +168,7 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   for (const [number, name, conclusion] of expectedFailedRecoverySteps) {
     assert.ok(allRuns.includes(`[${number}, "${name}", "${conclusion}"]`));
   }
-  assert.match(allRuns, /failedRecoveryStarted <= completedEpoch/);
+  assert.match(allRuns, /failedRecoveryCompleted >= startedEpoch/);
 });
 
 test("payload has nineteen exact keys including prior recovery and database identity", () => {
