@@ -40,8 +40,9 @@ test("only the post-switch incident interface remains", () => {
   assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32597015446"/);
   assert.match(source, /EXPECTED_INCIDENT_SHA="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32596977165"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32607312790"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="1d3f1a2989c7b72f3e53267e7b7a76bffa6c6a54"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32608963024"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
+  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="b081cd35e8fd7abe573566eb7d62eaa6a21749b3"/);
   assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="a628380757ccb5989702e42cb2868b2a48333be4"/);
   assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
   assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32597015446"/);
@@ -93,7 +94,6 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
     "frozen_inventory",
     "candidate_current_link",
     "candidate_structure",
-    "candidate_source_identity",
     "candidate_env_file_identity",
     "candidate_env_encoding",
     "candidate_env_server_build_binding",
@@ -134,10 +134,6 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   );
   const candidateStructure = between(
     'RECOVERY_FAILURE_STAGE="candidate_structure"',
-    'RECOVERY_FAILURE_STAGE="candidate_source_identity"',
-  );
-  const candidateSource = between(
-    'RECOVERY_FAILURE_STAGE="candidate_source_identity"',
     'RECOVERY_FAILURE_STAGE="candidate_env_file_identity"',
   );
   const candidateEnvironment = between(
@@ -164,10 +160,6 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
   assert.match(frozenInventory, /FROZEN_RUNTIME_DIR/);
   assert.match(candidateCurrentLink, /readlink -- "\$CURRENT_LINK"/);
   assert.match(candidateStructure, /release_structure_identity/);
-  assert.match(candidateSource, /CANDIDATE_PACKAGE_FILE/);
-  assert.match(candidateSource, /trusted_helper_snapshot/);
-  assert.match(candidateSource, /"\$CANDIDATE_PACKAGE_FILE" "\$PACKAGE_RELATIVE"/);
-  assert.match(candidateSource, /"\$EXPECTED_CANDIDATE_BUILD_ID" "\$CANDIDATE_RUNTIME_DIR"/);
   assert.match(candidateNextBuild, /next_build_identity/);
   assert.match(candidateEnvironment, /candidate_environment_build_binding_result/);
   assert.match(candidateEnvironment, /EXPECTED_CANDIDATE_BUILD_ID/);
@@ -184,7 +176,7 @@ test("candidate and frozen inventory and identity have distinct pre-mutation sta
     /capture_trusted_environment_helper_output\(\)[\s\S]*"\$INCIDENT_ENV_HELPER" "\$EXPECTED_INCIDENT_SHA"[\s\S]*"\$APP_DIR" "\$INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT"/,
   );
   assert.doesNotMatch(source, /CANDIDATE_ENV_HELPER|candidate_env_helper_identity/);
-  assert.match(source, /trusted_helper_matches[\s\S]*"\$CANDIDATE_PACKAGE_FILE" "\$PACKAGE_RELATIVE"[\s\S]*"\$CANDIDATE_PACKAGE_SNAPSHOT"/);
+  assert.doesNotMatch(source, /CANDIDATE_PACKAGE_(?:FILE|SNAPSHOT)|candidate_source_identity/);
   assert.match(source, /FROZEN_SMOKE_HELPER=.*FROZEN_RUNTIME_DIR/);
   assert.match(source, /FROZEN_PACKAGE_FILE=.*FROZEN_RUNTIME_DIR/);
   assert.match(source, /FROZEN_WORKER_FILE=.*FROZEN_RUNTIME_DIR/);
@@ -237,17 +229,42 @@ test("the incident-pinned environment reader supports the historical frozen tree
   assert.match(source, /rollback-snapshot "\$FROZEN_RUNTIME_DIR\/\.env\.local" "\$EXPECTED_OLD_BUILD_ID"/);
 });
 
-test("candidate source identity is data-only and revalidated at every runtime boundary", () => {
-  assert.doesNotMatch(source, /node "\$CANDIDATE_PACKAGE_FILE"/);
+test("candidate source is never executed or trusted while safe runtime anchors are revalidated", () => {
+  assert.doesNotMatch(source, /CANDIDATE_PACKAGE_(?:FILE|SNAPSHOT)|candidate_source_identity/);
+  const trustedSnapshot = between("trusted_helper_snapshot()", "trusted_helper_matches()");
+  assert.doesNotMatch(trustedSnapshot, /EXPECTED_CANDIDATE_BUILD_ID/);
+  const candidatePreflight = between(
+    'RECOVERY_FAILURE_STAGE="candidate_structure"',
+    'RECOVERY_FAILURE_STAGE="frozen_structure"',
+  );
+  assert.doesNotMatch(candidatePreflight, /trusted_helper_(?:snapshot|matches)/);
+  assert.doesNotMatch(
+    candidatePreflight,
+    /\b(?:node|npm|bash|tsx)\b[^\n]*\$CANDIDATE_RUNTIME_DIR/,
+  );
   const revalidation = between(
     "revalidate_incident_release_pair()",
     "revalidate_incident_runtimes()",
   );
-  assert.match(
+  assert.doesNotMatch(
     revalidation,
-    /trusted_helper_matches[\s\S]*"\$CANDIDATE_PACKAGE_FILE" "\$PACKAGE_RELATIVE"[\s\S]*"\$EXPECTED_CANDIDATE_BUILD_ID" "\$CANDIDATE_RUNTIME_DIR"[\s\S]*"\$CANDIDATE_PACKAGE_SNAPSHOT"/,
+    /trusted_helper_matches[\t ]*\\\r?\n[\t ]*"\$CANDIDATE/,
   );
   assert.doesNotMatch(revalidation, /CANDIDATE_ENV_HELPER/);
+  assert.match(
+    revalidation,
+    /release_structure_identity "\$CANDIDATE_RUNTIME_DIR" "\$EXPECTED_CANDIDATE_BUILD_ID"/,
+  );
+  assert.match(revalidation, /candidate_environment_build_binding_snapshot/);
+  assert.match(revalidation, /CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY/);
+  assert.match(revalidation, /CANDIDATE_ENVIRONMENT_FILE_IDENTITY/);
+  assert.match(revalidation, /CANDIDATE_ENVIRONMENT_SHA256/);
+  assert.match(revalidation, /next_build_identity "\$CANDIDATE_RUNTIME_DIR"/);
+  const structure = between("release_structure_identity()", "candidate_environment_build_binding_result()");
+  assert.match(
+    structure,
+    /\[ -f "\$runtime_dir\/package\.json" \] && \[ ! -L "\$runtime_dir\/package\.json" \]/,
+  );
   assert.ok(
     [...source.matchAll(/revalidate_incident_runtimes/g)].length >= 8,
     "shared release revalidation is not present at all protected mutation boundaries",
@@ -580,7 +597,6 @@ test("release inventory failures have exact fixed codes and cannot enter product
     ["candidate_current_link", "recovery_failed_pre_runtime_candidate_current_link"],
     ["candidate_structure", "recovery_failed_pre_runtime_candidate_structure"],
     ["candidate_next_build_identity", "recovery_failed_pre_runtime_candidate_next_build_identity"],
-    ["candidate_source_identity", "recovery_failed_pre_runtime_candidate_source_identity"],
     ["candidate_env_file_identity", "recovery_failed_pre_runtime_candidate_env_file_identity"],
     ["candidate_env_encoding", "recovery_failed_pre_runtime_candidate_env_encoding"],
     ["candidate_env_server_build_binding", "recovery_failed_pre_runtime_candidate_env_server_build_binding"],

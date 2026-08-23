@@ -44,9 +44,9 @@ jobs:
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32607312790"
+      PRIOR_FAILED_RECOVERY_RUN_ID: "32608963024"
       PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: 1d3f1a2989c7b72f3e53267e7b7a76bffa6c6a54
+      PRIOR_FAILED_RECOVERY_SHA: b081cd35e8fd7abe573566eb7d62eaa6a21749b3
       PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       INCIDENT_CANDIDATE_BUILD_ID: a628380757ccb5989702e42cb2868b2a48333be4
@@ -1010,10 +1010,10 @@ jobs:
             values.INCIDENT_SHA !== "a628380757ccb5989702e42cb2868b2a48333be4" ||
             values.READINESS_RUN_ID !== "32596977165" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32607312790" ||
+            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32608963024" ||
             values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
             values.PRIOR_FAILED_RECOVERY_SHA !==
-              "1d3f1a2989c7b72f3e53267e7b7a76bffa6c6a54" ||
+              "b081cd35e8fd7abe573566eb7d62eaa6a21749b3" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
@@ -1101,7 +1101,6 @@ jobs:
             ["recovery_failed_pre_runtime_candidate_current_link", "remote_recovery_failed_phase_pre_runtime_candidate_current_link", 0],
             ["recovery_failed_pre_runtime_candidate_structure", "remote_recovery_failed_phase_pre_runtime_candidate_structure", 0],
             ["recovery_failed_pre_runtime_incident_env_helper_identity", "remote_recovery_failed_phase_pre_runtime_incident_env_helper_identity", 0],
-            ["recovery_failed_pre_runtime_candidate_source_identity", "remote_recovery_failed_phase_pre_runtime_candidate_source_identity", 0],
             ["recovery_failed_pre_runtime_candidate_env_file_identity", "remote_recovery_failed_phase_pre_runtime_candidate_env_file_identity", 0],
             ["recovery_failed_pre_runtime_candidate_env_encoding", "remote_recovery_failed_phase_pre_runtime_candidate_env_encoding", 0],
             ["recovery_failed_pre_runtime_candidate_env_server_build_binding", "remote_recovery_failed_phase_pre_runtime_candidate_env_server_build_binding", 0],
@@ -1177,7 +1176,6 @@ jobs:
               remote_recovery_failed_phase_pre_runtime_candidate_current_link|\
               remote_recovery_failed_phase_pre_runtime_candidate_structure|\
               remote_recovery_failed_phase_pre_runtime_incident_env_helper_identity|\
-              remote_recovery_failed_phase_pre_runtime_candidate_source_identity|\
               remote_recovery_failed_phase_pre_runtime_candidate_env_file_identity|\
               remote_recovery_failed_phase_pre_runtime_candidate_env_encoding|\
               remote_recovery_failed_phase_pre_runtime_candidate_env_server_build_binding|\
