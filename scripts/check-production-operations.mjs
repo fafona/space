@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   BOOKING_PERSISTENCE_MERCHANT_ID,
-  summarizeBookingPersistenceMetadataRows,
+  summarizeBookingPersistenceRows,
 } from "./booking-persistence-contract.mjs";
 import { runProductionSmoke } from "./check-production-smoke.mjs";
 
@@ -264,7 +264,7 @@ async function checkLegacyPages(options) {
 
 async function checkBookingPersistence(options) {
   const params = new URLSearchParams({
-    select: "slug,updated_at",
+    select: "slug,blocks,updated_at",
     merchant_id: `eq.${BOOKING_PERSISTENCE_MERCHANT_ID}`,
   });
   const result = await requestOperationsJson({
@@ -277,19 +277,24 @@ async function checkBookingPersistence(options) {
     attempts: options.requestAttempts,
     timeoutMs: options.timeoutMs,
   });
-  const summary = summarizeBookingPersistenceMetadataRows(result.body);
+  const summary = summarizeBookingPersistenceRows(result.body);
+  const stores = summary.stores.map((store) => ({
+    slug: store.slug,
+    entryCount: store.entryCount,
+    updatedAt: store.updatedAt,
+  }));
   if (!summary.complete) {
     return {
       name: "booking_persistence",
       status: "critical",
       error: "required_store_missing",
-      stores: summary.stores,
+      stores,
     };
   }
   return {
     name: "booking_persistence",
     status: "healthy",
-    stores: summary.stores,
+    stores,
   };
 }
 

@@ -147,6 +147,40 @@ test("production operations monitor fails when a required legacy store is malfor
   );
 });
 
+test("production operations monitor rejects present booking stores with malformed blocks without reporting their contents", async () => {
+  const privateBlockMarker = "private-booking-block-content";
+  const router = createFetchRouter({
+    bookingRows: VALID_BOOKING_ROWS.map((row) => ({
+      ...row,
+      blocks: { version: 1, malformed: privateBlockMarker },
+    })),
+  });
+  const report = await runProductionOperationsCheck(
+    monitorOptions(router.fetchImpl),
+  );
+  const bookingCheck = report.checks.find(
+    (check) => check.name === "booking_persistence",
+  );
+  const bookingRequest = router.requests.find((url) =>
+    url.includes("merchant_id=eq.__faolla_booking_persistence__"),
+  );
+  const serialized = JSON.stringify(report);
+
+  assert.equal(report.status, "critical");
+  assert.equal(bookingCheck?.status, "critical");
+  assert.equal(bookingCheck?.error, "required_store_missing");
+  assert.equal(
+    new URL(bookingRequest).searchParams.get("select"),
+    "slug,blocks,updated_at",
+  );
+  assert.deepEqual(
+    bookingCheck?.stores.map((store) => Object.keys(store)),
+    VALID_BOOKING_ROWS.map(() => ["slug", "entryCount", "updatedAt"]),
+  );
+  assert.equal(serialized.includes("blocks"), false);
+  assert.equal(serialized.includes(privateBlockMarker), false);
+});
+
 test("production operations monitor evaluates outbox health after every migration is ready", async () => {
   const migrationRows = discoverRequiredMigrationVersions().map((version) => ({
     version,
