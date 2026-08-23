@@ -2082,13 +2082,16 @@ pm2_process_state() {
 }
 
 previous_web_process_identity_matches() {
+  local absolute_deadline_seconds="${1:-}"
   local current_start_ticks
   local process_snapshot
   if ! [[ "${PREVIOUS_WEB_PID:-}" =~ ^[1-9][0-9]*$ ]] \
     || ! [[ "${PREVIOUS_WEB_PROCESS_START_TICKS:-}" =~ ^[1-9][0-9]*$ ]] \
-    || ! process_snapshot="$(pm2_process_snapshot "$APP_NAME")" \
+    || ! process_snapshot="$(pm2_process_snapshot \
+      "$APP_NAME" "$absolute_deadline_seconds")" \
     || [ "$process_snapshot" != "running:$PREVIOUS_WEB_PID" ] \
-    || ! current_start_ticks="$(linux_process_start_ticks "$PREVIOUS_WEB_PID")" \
+    || ! current_start_ticks="$(linux_process_start_ticks \
+      "$PREVIOUS_WEB_PID" "$absolute_deadline_seconds")" \
     || [ "$current_start_ticks" != "$PREVIOUS_WEB_PROCESS_START_TICKS" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
@@ -2096,6 +2099,705 @@ previous_web_process_identity_matches() {
     || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
     return 1
   fi
+}
+
+previous_web_listener_handoff_operation() {
+  local operation="$1"
+  local absolute_deadline_seconds="${2:-}"
+  local command_timeout_seconds="$PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS"
+  case "$operation" in
+    capture|inspect|TERM|KILL|pm-id|pm2-absent) ;;
+    *) return 1 ;;
+  esac
+  if [ -n "$absolute_deadline_seconds" ]; then
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 5 1)" || return 1
+  fi
+  FAOLLA_FROZEN_WEB_LISTENER_PROOF_B64="${PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64:-}" \
+  NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' \
+    timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
+      node --input-type=module - \
+        "$operation" "$PREVIOUS_WEB_PID" "$APP_PORT" \
+        "$PREVIOUS_RUNTIME_DIR" "$PREVIOUS_WEB_PROCESS_START_TICKS" \
+        "$PREVIOUS_WEB_PROCESS_IDENTITY" "$APP_NAME" <<'NODE'
+import { createHash } from "node:crypto";
+import {
+  accessSync,
+  constants,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { basename } from "node:path";
+
+const [operation, rawWrapperPid, rawPort, rawRuntime, expectedStartTicks,
+  expectedProcessIdentity, appName] = process.argv.slice(2);
+const wrapperPid = Number(rawWrapperPid);
+const port = Number(rawPort);
+let runtime;
+const invariantKeys = [
+  "pid",
+  "startTicks",
+  "processIdentity",
+  "processCtimeNs",
+  "uid",
+  "cwd",
+  "cwdIdentity",
+  "executable",
+  "executableIdentity",
+  "commandLineDigest",
+];
+
+function fail() {
+  process.exit(1);
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function parseProcStat(source) {
+  const close = source.lastIndexOf(")");
+  const fields = close >= 0 ? source.slice(close + 2).trim().split(/\s+/) : [];
+  const state = fields[0];
+  const parentPid = Number(fields[1]);
+  const startTicks = fields[19];
+  if (
+    !/^[A-Za-z]$/.test(state ?? "") ||
+    !Number.isSafeInteger(parentPid) || parentPid < 0 ||
+    !/^[1-9][0-9]*$/.test(startTicks ?? "")
+  ) {
+    throw new Error("invalid_proc_stat");
+  }
+  return { state, parentPid, startTicks };
+}
+
+function followedIdentity(path) {
+  const value = statSync(path, { bigint: true });
+  return `${value.dev}:${value.ino}:${value.ctimeNs}`;
+}
+
+function captureFactOnce(pid) {
+  const procPath = `/proc/${pid}`;
+  const parsed = parseProcStat(readFileSync(`${procPath}/stat`, "utf8"));
+  const processStat = statSync(procPath, { bigint: true });
+  const cwd = realpathSync(`${procPath}/cwd`);
+  const executable = realpathSync(`${procPath}/exe`);
+  const commandLine = readFileSync(`${procPath}/cmdline`);
+  if (
+    parsed.state === "Z" || !processStat.isDirectory() || commandLine.length < 2 ||
+    commandLine.length > 64 * 1024 || commandLine.at(-1) !== 0
+  ) {
+    throw new Error("invalid_process_identity");
+  }
+  return {
+    pid,
+    parentPid: parsed.parentPid,
+    startTicks: parsed.startTicks,
+    processIdentity: `${processStat.dev}:${processStat.ino}`,
+    processCtimeNs: String(processStat.ctimeNs),
+    uid: Number(processStat.uid),
+    cwd,
+    cwdIdentity: followedIdentity(`${procPath}/cwd`),
+    executable,
+    executableIdentity: followedIdentity(`${procPath}/exe`),
+    commandLineDigest: sha256(commandLine),
+  };
+}
+
+function captureFact(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error("invalid_pid");
+  }
+  const first = captureFactOnce(pid);
+  const second = captureFactOnce(pid);
+  if (JSON.stringify(first) !== JSON.stringify(second)) {
+    throw new Error("process_identity_drift");
+  }
+  return second;
+}
+
+function capturePortIdentity() {
+  const result = spawnSync(
+    "ss",
+    ["-H", "-ltnpe", `( sport = :${port} )`],
+    {
+      encoding: "buffer",
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 2_000,
+      maxBuffer: 64 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (
+    result.status !== 0 || result.error || result.signal ||
+    !Buffer.isBuffer(result.stdout) || !Buffer.isBuffer(result.stderr) ||
+    result.stderr.length !== 0
+  ) {
+    throw new Error("socket_capture_failed");
+  }
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(result.stdout);
+  if (source.includes("\0") || source.includes("\r")) {
+    throw new Error("socket_capture_invalid");
+  }
+  const lines = source.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return { state: "absent" };
+  const entries = [];
+  for (const line of lines) {
+    const pids = [...line.matchAll(/\bpid=([1-9][0-9]*)\b/g)]
+      .map((match) => Number(match[1]));
+    const descriptors = [...line.matchAll(/\bfd=([0-9]+)\b/g)]
+      .map((match) => Number(match[1]));
+    const inodes = [...line.matchAll(/\bino:([1-9][0-9]*)\b/g)]
+      .map((match) => match[1]);
+    if (
+      new Set(pids).size !== 1 || new Set(descriptors).size !== 1 ||
+      new Set(inodes).size !== 1
+    ) {
+      throw new Error("socket_owner_ambiguous");
+    }
+    entries.push({
+      pid: pids[0],
+      descriptor: descriptors[0],
+      inode: inodes[0],
+    });
+  }
+  for (const entry of entries) {
+    const descriptorPath = `/proc/${entry.pid}/fd/${entry.descriptor}`;
+    const expectedTarget = `socket:[${entry.inode}]`;
+    if (
+      readlinkSync(descriptorPath) !== expectedTarget ||
+      readlinkSync(descriptorPath) !== expectedTarget
+    ) {
+      throw new Error("socket_descriptor_mismatch");
+    }
+  }
+  const listenerPids = new Set(entries.map((entry) => entry.pid));
+  if (listenerPids.size !== 1) {
+    throw new Error("socket_owner_ambiguous");
+  }
+  entries.sort((left, right) =>
+    left.inode.localeCompare(right.inode) || left.descriptor - right.descriptor
+  );
+  return {
+    state: "single",
+    listenerPid: entries[0].pid,
+    entries,
+    identity: sha256(Buffer.from(JSON.stringify(entries))),
+  };
+}
+
+function captureChainToWrapper(listenerPid) {
+  const chain = [];
+  const seen = new Set();
+  let pid = listenerPid;
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (seen.has(pid)) throw new Error("process_cycle");
+    seen.add(pid);
+    const fact = captureFact(pid);
+    chain.push(fact);
+    if (pid === wrapperPid) return chain;
+    if (fact.parentPid <= 1) throw new Error("wrapper_not_ancestor");
+    pid = fact.parentPid;
+  }
+  throw new Error("process_chain_too_deep");
+}
+
+function captureChainToInit(listenerPid) {
+  const chain = [];
+  const seen = new Set();
+  let pid = listenerPid;
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (seen.has(pid)) throw new Error("process_cycle");
+    seen.add(pid);
+    const fact = captureFact(pid);
+    chain.push(fact);
+    if (fact.parentPid === 1) return chain;
+    if (fact.parentPid <= 0) throw new Error("invalid_reparented_chain");
+    pid = fact.parentPid;
+  }
+  throw new Error("process_chain_too_deep");
+}
+
+function sameInvariant(left, right) {
+  return invariantKeys.every((key) => left?.[key] === right?.[key]);
+}
+
+function readPm2List() {
+  const result = spawnSync("pm2", ["jlist"], {
+    encoding: "utf8",
+    env: { ...process.env, PM2_SILENT: "true" },
+    timeout: 2_000,
+    maxBuffer: 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (
+    result.status !== 0 || result.error || result.signal ||
+    typeof result.stdout !== "string"
+  ) {
+    throw new Error("pm2_capture_failed");
+  }
+  const list = JSON.parse(result.stdout);
+  if (!Array.isArray(list)) throw new Error("pm2_capture_invalid");
+  return list;
+}
+
+function canonicalMetadataPath(value) {
+  if (typeof value !== "string" || value.length === 0) return "";
+  try {
+    return realpathSync(value);
+  } catch {
+    return "";
+  }
+}
+
+function resolveExecutable(name) {
+  for (const directory of String(process.env.PATH ?? "").split(":")) {
+    if (!directory) continue;
+    const candidate = `${directory}/${name}`;
+    try {
+      accessSync(candidate, constants.X_OK);
+      return realpathSync(candidate);
+    } catch {
+      // Continue through the fixed deployment PATH without exposing candidates.
+    }
+  }
+  throw new Error("executable_unavailable");
+}
+
+function capturePm2Identity(expectedMode) {
+  const matches = readPm2List().filter((entry) =>
+    entry !== null && typeof entry === "object" &&
+    entry.pm2_env !== null && typeof entry.pm2_env === "object" &&
+    !Array.isArray(entry.pm2_env) &&
+    (entry.name === appName || entry.pm2_env.name === appName)
+  );
+  if (matches.length !== 1) throw new Error("pm2_identity_ambiguous");
+  const entry = matches[0];
+  const environment = entry.pm2_env;
+  if (
+    !Number.isSafeInteger(entry.pid) || entry.pid !== wrapperPid ||
+    entry.name !== appName ||
+    !Number.isSafeInteger(entry.pm_id) || entry.pm_id !== environment.pm_id ||
+    !Number.isSafeInteger(environment.pm_id) || environment.pm_id < 0 ||
+    environment.status !== "online" || environment.name !== appName ||
+    environment.exec_mode !== "fork_mode" ||
+    !Number.isSafeInteger(environment.pm_uptime) || environment.pm_uptime <= 0 ||
+    !Number.isSafeInteger(environment.created_at) || environment.created_at <= 0 ||
+    !Number.isSafeInteger(environment.restart_time) || environment.restart_time < 0 ||
+    JSON.stringify(environment.node_args) !== "[]"
+  ) {
+    throw new Error("pm2_identity_invalid");
+  }
+  const pmCwd = canonicalMetadataPath(environment.pm_cwd);
+  const pmExecPath = canonicalMetadataPath(environment.pm_exec_path);
+  const nodePath = realpathSync(process.execPath);
+  const interpreter = environment.exec_interpreter === "node"
+    ? nodePath
+    : canonicalMetadataPath(environment.exec_interpreter);
+  const expectedNextEntry = canonicalMetadataPath(
+    `${runtime}/node_modules/next/dist/bin/next`,
+  );
+  if (pmCwd !== runtime || !pmExecPath || interpreter !== nodePath) {
+    throw new Error("pm2_runtime_mismatch");
+  }
+  if (expectedMode === "direct") {
+    if (
+      !expectedNextEntry || pmExecPath !== expectedNextEntry ||
+      JSON.stringify(environment.args) !==
+        JSON.stringify(["start", "-p", String(port)])
+    ) {
+      throw new Error("pm2_direct_entry_mismatch");
+    }
+  } else {
+    const npmPath = resolveExecutable("npm");
+    if (
+      pmExecPath !== npmPath || !new Set(["npm", "npm-cli.js"])
+        .has(basename(pmExecPath)) ||
+      JSON.stringify(environment.args) !==
+        JSON.stringify(["start", "--", "-p", String(port)])
+    ) {
+      throw new Error("pm2_legacy_entry_mismatch");
+    }
+  }
+  const identity = {
+    pmId: environment.pm_id,
+    pid: entry.pid,
+    name: environment.name,
+    status: environment.status,
+    pmUptime: environment.pm_uptime,
+    createdAt: environment.created_at,
+    restartTime: environment.restart_time,
+    execMode: environment.exec_mode,
+    pmCwd,
+    pmExecPath,
+    execInterpreter: interpreter,
+    args: environment.args,
+    nodeArgs: environment.node_args,
+  };
+  return { ...identity, digest: sha256(Buffer.from(JSON.stringify(identity))) };
+}
+
+function assertPm2Absent(proof) {
+  const entries = readPm2List();
+  if (entries.some((entry) => {
+    if (entry === null || typeof entry !== "object") return false;
+    const environment = entry.pm2_env;
+    return entry.name === appName || entry.pm_id === proof.pm2.pmId ||
+      (environment !== null && typeof environment === "object" &&
+        !Array.isArray(environment) &&
+        (environment.name === appName || environment.pm_id === proof.pm2.pmId));
+  })) {
+    throw new Error("pm2_replacement_present");
+  }
+}
+
+function captureFrozenProof() {
+  const socket = capturePortIdentity();
+  if (socket.state !== "single") throw new Error("listener_not_unique");
+  const chain = captureChainToWrapper(socket.listenerPid);
+  const wrapper = chain.at(-1);
+  if (
+    wrapper.pid !== wrapperPid || wrapper.startTicks !== expectedStartTicks ||
+    wrapper.processIdentity !== expectedProcessIdentity ||
+    wrapper.cwd !== runtime || chain[0].cwd !== runtime ||
+    chain.some((fact) => fact.uid !== wrapper.uid)
+  ) {
+    throw new Error("frozen_wrapper_mismatch");
+  }
+  const mode = socket.listenerPid === wrapperPid ? "direct" : "legacy";
+  const pm2 = capturePm2Identity(mode);
+  return {
+    schemaVersion: 1,
+    mode,
+    port,
+    runtime,
+    wrapperPid,
+    listenerPid: socket.listenerPid,
+    socketEntries: socket.entries,
+    socketIdentity: socket.identity,
+    chain,
+    pm2,
+  };
+}
+
+function decodeFrozenProof() {
+  const encoded = process.env.FAOLLA_FROZEN_WEB_LISTENER_PROOF_B64 ?? "";
+  if (
+    encoded.length < 16 || encoded.length > 64 * 1024 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    throw new Error("frozen_proof_invalid");
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.toString("base64") !== encoded) throw new Error("frozen_proof_invalid");
+  const proof = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  const { digest: frozenPm2Digest, ...frozenPm2Identity } = proof?.pm2 ?? {};
+  if (
+    proof?.schemaVersion !== 1 ||
+    !["direct", "legacy"].includes(proof.mode) ||
+    proof.port !== port || proof.runtime !== runtime ||
+    proof.wrapperPid !== wrapperPid ||
+    !Number.isSafeInteger(proof.listenerPid) || proof.listenerPid <= 0 ||
+    !Array.isArray(proof.socketEntries) || proof.socketEntries.length < 1 ||
+    !/^[0-9a-f]{64}$/.test(proof.socketIdentity ?? "") ||
+    sha256(Buffer.from(JSON.stringify(proof.socketEntries))) !== proof.socketIdentity ||
+    !Array.isArray(proof.chain) || proof.chain.length < 1 ||
+    proof.chain[0]?.pid !== proof.listenerPid ||
+    proof.chain.at(-1)?.pid !== proof.wrapperPid ||
+    !Number.isSafeInteger(proof.pm2?.pmId) || proof.pm2.pmId < 0 ||
+    proof.pm2.pid !== proof.wrapperPid || proof.pm2.name !== appName ||
+    proof.pm2.status !== "online" ||
+    !/^[0-9a-f]{64}$/.test(frozenPm2Digest ?? "") ||
+    sha256(Buffer.from(JSON.stringify(frozenPm2Identity))) !== frozenPm2Digest
+  ) {
+    throw new Error("frozen_proof_invalid");
+  }
+  return proof;
+}
+
+function readOriginalWrapperProcState(proof) {
+  let parsed;
+  try {
+    parsed = parseProcStat(
+      readFileSync(`/proc/${proof.wrapperPid}/stat`, "utf8"),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") return "gone";
+    throw error;
+  }
+  if (parsed.startTicks !== proof.chain.at(-1).startTicks) return "gone";
+  return parsed.state === "Z" ? "zombie" : "live";
+}
+
+function originalWrapperState(proof) {
+  const initialState = readOriginalWrapperProcState(proof);
+  if (initialState === "gone") return "gone";
+  if (initialState === "zombie") return "pending";
+  try {
+    const current = captureFact(proof.wrapperPid);
+    if (current.startTicks !== proof.chain.at(-1).startTicks) return "gone";
+    if (!sameInvariant(current, proof.chain.at(-1))) {
+      throw new Error("post_delete_wrapper_mismatch");
+    }
+  } catch (error) {
+    if (error?.code === "ENOENT") return "gone";
+    const latestState = readOriginalWrapperProcState(proof);
+    if (latestState === "gone") return "gone";
+    if (latestState === "zombie") return "pending";
+    throw error;
+  }
+  return "pending";
+}
+
+function capturePostDeleteState(proof) {
+  assertPm2Absent(proof);
+  if (proof.mode === "legacy" && originalWrapperState(proof) === "pending") {
+    return { state: "wrapper-pending" };
+  }
+  const socket = capturePortIdentity();
+  if (socket.state !== "absent" && (
+    socket.state !== "single" || socket.listenerPid !== proof.listenerPid ||
+    socket.identity !== proof.socketIdentity ||
+    JSON.stringify(socket.entries) !== JSON.stringify(proof.socketEntries)
+  )) {
+    throw new Error("post_delete_owner_mismatch");
+  }
+  let currentStart;
+  try {
+    currentStart = parseProcStat(
+      readFileSync(`/proc/${proof.listenerPid}/stat`, "utf8"),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT" && socket.state === "absent") {
+      return { state: "gone" };
+    }
+    throw error;
+  }
+  if (currentStart.startTicks !== proof.chain[0].startTicks) {
+    if (socket.state !== "absent") {
+      throw new Error("post_delete_pid_reuse_on_port");
+    }
+    return { state: "gone" };
+  }
+  const currentChain = captureChainToInit(proof.listenerPid);
+  if (
+    currentChain.length > proof.chain.length ||
+    currentChain.some((fact, index) => !sameInvariant(fact, proof.chain[index]))
+  ) {
+    throw new Error("post_delete_ancestry_mismatch");
+  }
+  return {
+    state: "matched",
+    portBound: socket.state === "single",
+    chain: currentChain,
+  };
+}
+
+try {
+  if (
+    !["capture", "inspect", "TERM", "KILL", "pm-id", "pm2-absent"]
+      .includes(operation) ||
+    !Number.isSafeInteger(wrapperPid) || wrapperPid <= 0 ||
+    !Number.isSafeInteger(port) || port < 1 || port > 65535 ||
+    !/^[1-9][0-9]*$/.test(expectedStartTicks ?? "") ||
+    !/^[0-9]+:[0-9]+$/.test(expectedProcessIdentity ?? "")
+  ) {
+    fail();
+  }
+  runtime = realpathSync(rawRuntime);
+  if (runtime !== rawRuntime) fail();
+  if (operation === "capture") {
+    const proof = captureFrozenProof();
+    process.stdout.write(Buffer.from(JSON.stringify(proof)).toString("base64"));
+  } else {
+    const proof = decodeFrozenProof();
+    if (operation === "pm-id") {
+      process.stdout.write(String(proof.pm2.pmId));
+    } else if (operation === "pm2-absent") {
+      assertPm2Absent(proof);
+      process.stdout.write("absent");
+    } else {
+      const first = capturePostDeleteState(proof);
+      if (first.state === "gone") {
+        process.stdout.write("gone");
+      } else if (first.state === "wrapper-pending") {
+        if (operation !== "inspect") {
+          throw new Error("post_delete_wrapper_pending");
+        }
+        const second = capturePostDeleteState(proof);
+        if (!["wrapper-pending", "matched", "gone"].includes(second.state)) {
+          throw new Error("post_delete_identity_drift");
+        }
+        process.stdout.write("wrapper-pending");
+      } else {
+        const second = capturePostDeleteState(proof);
+        if (second.state === "gone") {
+          process.stdout.write("gone");
+        } else if (
+          second.state !== "matched" ||
+          JSON.stringify(first) !== JSON.stringify(second)
+        ) {
+          throw new Error("post_delete_identity_drift");
+        } else if (operation === "inspect") {
+          process.stdout.write("matched");
+        } else {
+          process.kill(proof.listenerPid, operation === "TERM" ? "SIGTERM" : "SIGKILL");
+          process.stdout.write("signalled");
+        }
+      }
+    }
+  }
+} catch {
+  fail();
+}
+NODE
+}
+
+capture_previous_web_listener_handoff_identity() {
+  local absolute_deadline_seconds=$((
+    SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS
+  ))
+  local first_proof=""
+  local second_proof=""
+  PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=""
+  PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0
+  PREVIOUS_WEB_PM2_DELETE_COMPLETED=0
+  PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0
+  previous_web_process_identity_matches "$absolute_deadline_seconds" || return 1
+  first_proof="$(previous_web_listener_handoff_operation \
+    capture "$absolute_deadline_seconds")" || return 1
+  if [ -z "$first_proof" ] || [ "${#first_proof}" -gt 65536 ] \
+    || ! [[ "$first_proof" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+    return 1
+  fi
+  previous_web_process_identity_matches "$absolute_deadline_seconds" || return 1
+  second_proof="$(previous_web_listener_handoff_operation \
+    capture "$absolute_deadline_seconds")" || return 1
+  [ "$second_proof" = "$first_proof" ] \
+    && [ "$SECONDS" -lt "$absolute_deadline_seconds" ] || return 1
+  PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$first_proof"
+}
+
+quiesce_frozen_previous_web_listener_bounded() {
+  local absolute_deadline_seconds="$1"
+  local action_result=""
+  local stable_absent_checks=0
+  local term_sent=0
+  local kill_sent=0
+  local term_deadline_seconds=0
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ -z "${PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64:-}" ]; then
+    return 1
+  fi
+  while [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; do
+    action_result="$(previous_web_listener_handoff_operation \
+      inspect "$absolute_deadline_seconds")" || return 1
+    case "$action_result" in
+      wrapper-pending)
+        stable_absent_checks=0
+        ;;
+      gone)
+        stable_absent_checks=$((stable_absent_checks + 1))
+        if [ "$stable_absent_checks" -ge 2 ]; then return 0; fi
+        ;;
+      matched)
+        stable_absent_checks=0
+        if [ "$term_sent" = "0" ]; then
+          action_result="$(previous_web_listener_handoff_operation \
+            TERM "$absolute_deadline_seconds")" || return 1
+          case "$action_result" in
+            gone) stable_absent_checks=1 ;;
+            signalled)
+              term_sent=1
+              term_deadline_seconds=$((SECONDS + 10))
+              if [ "$term_deadline_seconds" -ge "$absolute_deadline_seconds" ]; then
+                term_deadline_seconds=$((absolute_deadline_seconds - 1))
+              fi
+              ;;
+            *) return 1 ;;
+          esac
+        elif [ "$kill_sent" = "0" ] \
+          && [ "$SECONDS" -ge "$term_deadline_seconds" ]; then
+          action_result="$(previous_web_listener_handoff_operation \
+            KILL "$absolute_deadline_seconds")" || return 1
+          case "$action_result" in
+            gone) stable_absent_checks=1 ;;
+            signalled) kill_sent=1 ;;
+            *) return 1 ;;
+          esac
+        fi
+        ;;
+      *) return 1 ;;
+    esac
+    if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then break; fi
+    sleep 1
+  done
+  return 1
+}
+
+stop_frozen_previous_web_bounded() {
+  local process_timeout_seconds="$1"
+  local port_timeout_seconds="$2"
+  local process_deadline_seconds
+  local port_deadline_seconds
+  local delete_timeout_seconds
+  local current_proof=""
+  local frozen_pm_id=""
+  local pm2_absent_state=""
+  if ! [[ "$process_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "$port_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ -z "${PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64:-}" ] \
+    || [ "${PREVIOUS_WEB_FROZEN_STOP_COMPLETED:-0}" != "0" ]; then
+    return 1
+  fi
+  process_deadline_seconds=$((SECONDS + process_timeout_seconds))
+  case "${PREVIOUS_WEB_PM2_DELETE_COMPLETED:-0}" in 0|1) ;; *) return 1 ;; esac
+  [[ "${PREVIOUS_WEB_PM2_DELETE_ATTEMPTS:-}" =~ ^[0-2]$ ]] || return 1
+  while [ "$PREVIOUS_WEB_PM2_DELETE_COMPLETED" = "0" ]; do
+    if [ "$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS" -eq 0 ]; then
+      previous_web_process_identity_matches "$process_deadline_seconds" || return 1
+      current_proof="$(previous_web_listener_handoff_operation \
+        capture "$process_deadline_seconds")" || return 1
+      [ "$current_proof" = "$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64" ] || return 1
+    else
+      if pm2_absent_state="$(previous_web_listener_handoff_operation \
+        pm2-absent "$process_deadline_seconds")" \
+        && [ "$pm2_absent_state" = "absent" ]; then
+        PREVIOUS_WEB_PM2_DELETE_COMPLETED=1
+        break
+      fi
+      current_proof="$(previous_web_listener_handoff_operation \
+        capture "$process_deadline_seconds")" || return 1
+      [ "$current_proof" = "$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64" ] || return 1
+      [ "$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS" -lt 2 ] || return 1
+    fi
+    frozen_pm_id="$(previous_web_listener_handoff_operation \
+      pm-id "$process_deadline_seconds")" || return 1
+    [[ "$frozen_pm_id" =~ ^[0-9]+$ ]] || return 1
+    delete_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$process_deadline_seconds" 10 3)" || return 1
+    PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=$((
+      PREVIOUS_WEB_PM2_DELETE_ATTEMPTS + 1
+    ))
+    if timeout --signal=TERM --kill-after=3s "${delete_timeout_seconds}s" \
+      pm2 delete "$frozen_pm_id" >/dev/null 2>&1; then
+      :
+    else
+      :
+    fi
+  done
+  pm2_absent_state="$(previous_web_listener_handoff_operation \
+    pm2-absent "$process_deadline_seconds")" || return 1
+  [ "$pm2_absent_state" = "absent" ] || return 1
+  if [ "$SECONDS" -ge "$process_deadline_seconds" ]; then
+    return 1
+  fi
+  port_deadline_seconds=$((SECONDS + port_timeout_seconds))
+  quiesce_frozen_previous_web_listener_bounded "$port_deadline_seconds" || return 1
+  PREVIOUS_WEB_FROZEN_STOP_COMPLETED=1
 }
 
 stop_pm2_process_bounded() {
@@ -2670,7 +3372,7 @@ read_candidate_build_id_snapshot_for_booking_retry() {
   fi
   timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
     node --input-type=module - \
-      "$RELEASE_DIR/.next/BUILD_ID" "$FAOLLA_WEB_BUILD_ID" 2>/dev/null <<'NODE'
+      "$RELEASE_DIR/.next/BUILD_ID" 2>/dev/null <<'NODE'
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -2684,7 +3386,6 @@ import {
 import { resolve } from "node:path";
 
 const filePath = process.argv[2] ?? "";
-const expectedBuildId = process.argv[3] ?? "";
 let descriptor;
 const fail = () => process.exit(1);
 const sameIdentity = (left, right) =>
@@ -2694,7 +3395,7 @@ const sameIdentity = (left, right) =>
   left.uid === right.uid && left.mode === right.mode;
 const safeIdentity = (identity) => {
   if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1n ||
-      identity.size < 40n || identity.size > 41n) return false;
+      identity.size < 1n || identity.size > 129n) return false;
   if (process.platform !== "win32") {
     if (typeof process.getuid !== "function" ||
         identity.uid !== BigInt(process.getuid()) ||
@@ -2703,8 +3404,7 @@ const safeIdentity = (identity) => {
   return true;
 };
 try {
-  if (!/^[0-9a-f]{40}$/.test(expectedBuildId) ||
-      realpathSync(filePath) !== resolve(filePath)) fail();
+  if (realpathSync(filePath) !== resolve(filePath)) fail();
   const before = lstatSync(filePath, { bigint: true });
   if (!safeIdentity(before)) fail();
   descriptor = openSync(
@@ -2720,7 +3420,9 @@ try {
       !sameIdentity(opened, after) || !sameIdentity(after, current) ||
       realpathSync(filePath) !== resolve(filePath)) fail();
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  if (text !== expectedBuildId && text !== `${expectedBuildId}\n`) fail();
+  const opaqueBuildId = text.endsWith("\n") ? text.slice(0, -1) : text;
+  if ((text !== opaqueBuildId && text !== `${opaqueBuildId}\n`) ||
+      !/^[A-Za-z0-9._~-]{1,128}$/.test(opaqueBuildId)) fail();
   const identity = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"]
     .map((field) => after[field].toString(10)).join(":");
   process.stdout.write(`${identity}\n${createHash("sha256").update(bytes).digest("hex")}`);
@@ -4735,6 +5437,7 @@ WEB_COMMITTED=0
 ROLLBACK_COMPLETED=0
 ROLLBACK_FAILURE_CODE=""
 FORWARD_MUTATION_STARTED=0
+DEPLOY_PRIMARY_FAILURE_CODE=""
 CANDIDATE_CURRENT_LINK_IDENTITY=""
 CANDIDATE_RUNTIME_IDENTITY=""
 CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY=""
@@ -4749,6 +5452,10 @@ CANDIDATE_WEB_PID=""
 CANDIDATE_WEB_PROCESS_START_TICKS=""
 CANDIDATE_WEB_PROCESS_IDENTITY=""
 CANDIDATE_WEB_CWD_IDENTITY=""
+PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=""
+PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0
+PREVIOUS_WEB_PM2_DELETE_COMPLETED=0
+PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0
 BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS=""
 BOOKING_PREFLIGHT_RUNTIME_IDENTITY=""
 BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY=""
@@ -4920,8 +5627,12 @@ recover_pre_forward_previous_runtime() {
     return 1
   fi
   previous_runtime_recovery_identity_matches || return 1
-  stop_pm2_process_bounded "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" || return 1
-  wait_for_port_release || return 1
+  if [ "${PREVIOUS_WEB_FROZEN_STOP_COMPLETED:-0}" != "1" ]; then
+    stop_frozen_previous_web_bounded "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" \
+      "$PORT_RELEASE_TOTAL_TIMEOUT_SECONDS" || return 1
+  else
+    wait_for_port_release || return 1
+  fi
   stop_previous_automation_worker_bounded || return 1
   previous_runtime_recovery_identity_matches || return 1
   if [ "${READINESS_FENCE_ACTIVE:-0}" = "1" ]; then
@@ -5071,6 +5782,40 @@ cleanup_failed_build() {
   trap - EXIT
   trap '' HUP TERM INT
   set +e
+  if [ "$original_status" -ne 0 ]; then
+    case "${DEPLOY_PRIMARY_FAILURE_CODE:-}" in
+      deploy_stage_release_build_failed)
+        echo "[deploy] deploy_stage_release_build_failed"
+        ;;
+      deploy_stage_release_finalize_failed)
+        echo "[deploy] deploy_stage_release_finalize_failed"
+        ;;
+      deploy_stage_protected_preflight_failed)
+        echo "[deploy] deploy_stage_protected_preflight_failed"
+        ;;
+      deploy_stage_previous_web_quiesce_failed)
+        echo "[deploy] deploy_stage_previous_web_quiesce_failed"
+        ;;
+      deploy_stage_previous_worker_quiesce_failed)
+        echo "[deploy] deploy_stage_previous_worker_quiesce_failed"
+        ;;
+      deploy_stage_forward_switch_failed)
+        echo "[deploy] deploy_stage_forward_switch_failed"
+        ;;
+      deploy_stage_candidate_start_failed)
+        echo "[deploy] deploy_stage_candidate_start_failed"
+        ;;
+      deploy_stage_candidate_health_failed)
+        echo "[deploy] deploy_stage_candidate_health_failed"
+        ;;
+      deploy_stage_candidate_verification_failed)
+        echo "[deploy] deploy_stage_candidate_verification_failed"
+        ;;
+      deploy_stage_post_commit_finalize_failed)
+        echo "[deploy] deploy_stage_post_commit_finalize_failed"
+        ;;
+    esac
+  fi
   if [ -d "$RELEASE_BUILD_DIR" ]; then
     safe_remove_release_path "$RELEASE_BUILD_DIR"
   fi
@@ -5084,6 +5829,7 @@ cleanup_failed_build() {
     && [ "$SWITCH_COMPLETED" = "0" ] \
     && [ "$FORWARD_MUTATION_STARTED" = "0" ]; then
     if ! recover_pre_forward_previous_runtime; then
+      echo "[deploy] deploy_stage_pre_forward_restore_failed"
       echo "[deploy] failed to restore the frozen previous runtime after pre-forward quiescence"
       if ! cleanup_pre_forward_previous_runtime_attempts; then
         echo "[deploy] pre-forward runtime recovery cleanup could not be proven: cleanup_unverified"
@@ -5214,6 +5960,7 @@ trap cleanup_failed_build EXIT
 trap 'handle_deploy_signal 129' HUP
 trap 'handle_deploy_signal 143' TERM
 trap 'handle_deploy_signal 130' INT
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_release_build_failed"
 safe_remove_release_path "$RELEASE_BUILD_DIR"
 mkdir -p "$RELEASE_BUILD_DIR"
 
@@ -5311,6 +6058,7 @@ else
   exit "$build_status"
 fi
 
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_release_finalize_failed"
 if [ ! -f "$RELEASE_BUILD_DIR/.next/BUILD_ID" ]; then
   echo "[deploy] isolated build did not produce .next/BUILD_ID"
   exit 1
@@ -5334,6 +6082,7 @@ report_disk_status
 ensure_disk_headroom
 prepare_legacy_static_bridge
 
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_protected_preflight_failed"
 if [ -z "$PREVIOUS_RUNTIME_DIR" ] \
   || [ ! -d "$PREVIOUS_RUNTIME_DIR/.next" ] \
   || ! [[ "$PREVIOUS_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]; then
@@ -5358,10 +6107,14 @@ run_booking_persistence_preflight \
 previous_web_process_identity_matches || exit 1
 previous_runtime_recovery_identity_matches || exit 1
 
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"
+capture_previous_web_listener_handoff_identity || exit 1
 PROCESSES_STOPPED=1
-stop_pm2_process_bounded "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" || exit 1
-wait_for_port_release || exit 1
+stop_frozen_previous_web_bounded "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" \
+  "$PORT_RELEASE_TOTAL_TIMEOUT_SECONDS" || exit 1
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_worker_quiesce_failed"
 stop_previous_automation_worker_bounded || exit 1
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_forward_switch_failed"
 wait_for_readiness_fence_database_quiescence || exit 1
 assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1
 FORWARD_MUTATION_STARTED=1
@@ -5377,6 +6130,7 @@ if ! capture_candidate_current_identity_for_booking_retry \
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"
 assert_readiness_fence_before_forward_operation "$RELEASE_PROCESS_START_TIMEOUT_SECONDS" || exit 1
 if ! start_release "$RELEASE_DIR"; then
   echo "[deploy] failed to start isolated release"
@@ -5384,6 +6138,7 @@ if ! start_release "$RELEASE_DIR"; then
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_health_failed"
 assert_readiness_fence_before_forward_operation "$((HEALTHCHECK_ATTEMPTS * 5))" || exit 1
 if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   echo "[deploy] release health check failed"
@@ -5391,6 +6146,7 @@ if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
 BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((
   SECONDS + BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS
 ))"
@@ -5419,6 +6175,7 @@ echo "[deploy] releasing ordinary-account cutover readiness fence after all web 
 release_readiness_fence || exit 1
 WEB_COMMITTED=1
 DEPLOY_HEALTHY=1
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_post_commit_finalize_failed"
 finalize_legacy_runtime_compatibility_paths || exit 1
 rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE" || exit 1
 
