@@ -1150,6 +1150,7 @@ test("desktop and mobile order managers expose enterprise tasks only in details 
       propsStart: /type\s+MerchantOrderManagerDialogProps\s*=\s*\{/,
       detailStart: /const\s+detailDialog\s*=\s*detailOrder/,
       detailEnd: /const\s+content\s*=/,
+      taskGuard: "canOpenOwnerEnterpriseTask",
     },
     {
       label: "mobile order manager",
@@ -1157,6 +1158,7 @@ test("desktop and mobile order managers expose enterprise tasks only in details 
       propsStart: /type\s+MerchantOrderMobilePanelProps\s*=\s*\{/,
       detailStart: /const\s+detailOverlay\s*=\s*detailOrder/,
       detailEnd: /const\s+workbenchDialog\s*=/,
+      taskGuard: "onOpenEnterpriseTask",
     },
   ];
 
@@ -1179,7 +1181,10 @@ test("desktop and mobile order managers expose enterprise tasks only in details 
       variant.detailEnd,
       `${variant.label} detail action area`,
     );
-    assert.match(detailSource, /\{onOpenEnterpriseTask\s*\?\s*\(/);
+    assert.match(
+      detailSource,
+      new RegExp(`\\{${variant.taskGuard}\\s*\\?\\s*\\(`),
+    );
     assert.match(detailSource, /openDetailEnterpriseTask\(detailOrder\)/);
     assert.match(detailSource, /创建\/查看企业任务/);
 
@@ -1196,7 +1201,9 @@ test("desktop and mobile order managers expose enterprise tasks only in details 
     );
     assert.match(
       outsideDetailSource,
-      /onOpenEnterpriseTask=\{onOpenEnterpriseTask\s*\?\s*openWorkbenchEnterpriseTask\s*:\s*undefined\}/,
+      new RegExp(
+        `onOpenEnterpriseTask=\\{${variant.taskGuard}\\s*\\?\\s*openWorkbenchEnterpriseTask\\s*:\\s*undefined\\}`,
+      ),
       `${variant.label} must pass only the guarded workbench callback`,
     );
     assert.equal(
@@ -1205,6 +1212,12 @@ test("desktop and mobile order managers expose enterprise tasks only in details 
       `${variant.label} must render one detail-only enterprise-task entry`,
     );
   }
+
+  assert.match(
+    desktopOrderManagerSource,
+    /const\s+canOpenOwnerEnterpriseTask\s*=\s*!employeeMode\s*&&\s*Boolean\(onOpenEnterpriseTask\)/,
+    "the employee order surface must never inherit the owner enterprise-task callback",
+  );
 
   assert.match(orderWorkbenchSource, /onOpenEnterpriseTask\?\s*:\s*\(orderId:\s*string\)/);
   assert.match(orderWorkbenchSource, /runOrderIntent\(group\.orderId,\s*"task",\s*onOpenEnterpriseTask\)/);
@@ -1610,7 +1623,7 @@ test("desktop and mobile order managers consume exact source-order intents once 
       intentStart:
         /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\s*\|\|\s*!sourceOrderIntent\s*\|\|\s*sourceOrderIntent\.siteId\s*!==\s*siteId\)\s*return/,
       intentEnd:
-        /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\s*\|\|\s*!siteId\)\s*return/,
+        /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\s*\|\|\s*!siteId(?:\s*\|\|\s*!canViewOrders)?\)/,
     },
     {
       label: "mobile order manager",

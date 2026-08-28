@@ -1,0 +1,7 @@
+{
+  "schema": "faolla.merchant-staff-business-rbac-compatibility",
+  "version": 1,
+  "permissionCount": 39,
+  "permissionKeysSha256": "bf35ba5e297d8a9dc0f164cd02063758ed245fd4d66ccfd71e45929c884c09a2",
+  "permissionContractSha256": "4d82b7912ff8acfd21550cc9d6884bb5bd75189aaef89fd7a4b0acd89ea3c2e5"
+}

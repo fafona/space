@@ -140,10 +140,71 @@ function validateLegacyPersonalRecovery(env, now = Date.now()) {
   return [];
 }
 
+function validateMerchantStaffBusinessRbac(env) {
+  const mode = (env.MERCHANT_STAFF_BUSINESS_RBAC_MODE || "off")
+    .toString()
+    .trim()
+    .toLowerCase();
+  if (mode !== "off" && mode !== "enforce") {
+    return ["MERCHANT_STAFF_BUSINESS_RBAC_MODE must be off or enforce."];
+  }
+  const rawSiteIds = (env.MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS || "")
+    .toString()
+    .trim();
+  const siteIds = rawSiteIds
+    ? rawSiteIds.split(",").map((entry) => entry.trim())
+    : [];
+  if (
+    siteIds.length > 50 ||
+    siteIds.some((siteId) => !/^\d{8}$/.test(siteId)) ||
+    new Set(siteIds).size !== siteIds.length
+  ) {
+    return [
+      "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS must contain at most 50 unique eight-digit merchant IDs.",
+    ];
+  }
+  if (mode === "enforce" && siteIds.length === 0) {
+    return [
+      "MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce requires an exact merchant allowlist.",
+    ];
+  }
+  const canonicalPortalOrigin = (
+    env.FAOLLA_CANONICAL_PORTAL_ORIGIN || ""
+  )
+    .toString()
+    .trim();
+  if (mode === "enforce") {
+    let canonicalUrl = null;
+    try {
+      canonicalUrl = canonicalPortalOrigin
+        ? new URL(canonicalPortalOrigin)
+        : null;
+    } catch {
+      canonicalUrl = null;
+    }
+    const hostname = canonicalUrl?.hostname.toLowerCase() || "";
+    if (
+      !canonicalUrl ||
+      canonicalUrl.protocol !== "https:" ||
+      canonicalUrl.origin !== canonicalPortalOrigin ||
+      canonicalUrl.pathname !== "/" ||
+      canonicalUrl.search ||
+      canonicalUrl.hash ||
+      (hostname !== "faolla.com" && !hostname.endsWith(".faolla.com"))
+    ) {
+      return [
+        "MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce requires FAOLLA_CANONICAL_PORTAL_ORIGIN as the exact Faolla HTTPS origin (for example https://launch.faolla.com).",
+      ];
+    }
+  }
+  return [];
+}
+
 const invalidMessages = [];
 const supabaseUrlIssue = validateSupabaseUrl(mergedEnv.NEXT_PUBLIC_SUPABASE_URL);
 if (supabaseUrlIssue) invalidMessages.push(supabaseUrlIssue);
 invalidMessages.push(...validateLegacyPersonalRecovery(mergedEnv));
+invalidMessages.push(...validateMerchantStaffBusinessRbac(mergedEnv));
 
 if (missingKeys.length === 0 && invalidMessages.length === 0) {
   console.log("[env-check] OK");

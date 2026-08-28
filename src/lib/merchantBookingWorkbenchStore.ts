@@ -142,15 +142,35 @@ export async function saveMerchantBookingWorkbenchSettings(
   siteId: string,
   settings: MerchantBookingWorkbenchSettings,
 ) {
+  return updateMerchantBookingWorkbenchSettings(siteId, {
+    update: () => settings,
+  });
+}
+
+export async function updateMerchantBookingWorkbenchSettings(
+  siteId: string,
+  input: {
+    assertAuthorizationCurrent?: () => Promise<void>;
+    update: (
+      current: MerchantBookingWorkbenchSettings,
+    ) => MerchantBookingWorkbenchSettings;
+  },
+) {
   const normalizedSiteId = trimText(siteId);
   if (!normalizedSiteId) {
     throw new Error("invalid_site_id");
   }
-  const normalizedSettings = normalizeMerchantBookingWorkbenchSettings(settings);
-  await withBookingWorkbenchStoreLock(async () => {
+  return withBookingWorkbenchStoreLock(async () => {
+    await input.assertAuthorizationCurrent?.();
     const store = await readBookingWorkbenchStore();
+    const current =
+      store.settingsBySiteId[normalizedSiteId] ??
+      createDefaultMerchantBookingWorkbenchSettings();
+    const normalizedSettings = normalizeMerchantBookingWorkbenchSettings(
+      input.update(current),
+    );
     store.settingsBySiteId[normalizedSiteId] = normalizedSettings;
     await writeBookingWorkbenchStore(store);
+    return normalizedSettings;
   });
-  return normalizedSettings;
 }

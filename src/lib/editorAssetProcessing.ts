@@ -8,6 +8,7 @@ import {
   runWithMerchantOperationContext,
   type MerchantOperationContext,
 } from "@/lib/merchantOperationContext";
+import type { MerchantBusinessApiClient } from "@/lib/merchantBusinessApiClient";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 const MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH = 6_000_000;
@@ -37,6 +38,13 @@ export type UploadedAssetMetadata = {
   objectPath?: string;
   thumbnailObjectPath?: string;
   posterObjectPath?: string;
+};
+
+export type EditorAssetBusinessPurpose = "order-catalog" | "redemption-catalog";
+
+export type EditorAssetUploadRequestOptions = {
+  apiClient?: MerchantBusinessApiClient;
+  businessPurpose?: EditorAssetBusinessPurpose;
 };
 
 export type PublishUploadCompressionPreset = "high" | "balanced" | "compact";
@@ -483,22 +491,28 @@ export async function uploadSourceUrlViaServerApiWithMetadata(
   folder = "merchant-assets",
   usage = "product-image",
   operation?: MerchantOperationContext,
+  requestOptions?: EditorAssetUploadRequestOptions,
 ): Promise<UploadedAssetMetadata | null> {
   try {
     const response = await runWithMerchantOperationContext(operation, () =>
-      fetch("/api/assets/upload", {
+      requestAssetUploadApi({
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
-        credentials: "same-origin",
         body: JSON.stringify({
           sourceUrl,
           merchantHint,
           folder,
           usage,
+          ...(requestOptions?.businessPurpose
+            ? {
+                siteId: merchantHint,
+                businessPurpose: requestOptions.businessPurpose,
+              }
+            : {}),
         }),
-      }),
+      }, requestOptions),
     );
     if (!response.ok) return null;
     const payload = (await response.json().catch(() => null)) as {
@@ -542,6 +556,7 @@ export async function uploadImageDataUrlToSupabaseWithMetadata(
   merchantHint = "public",
   usage = "generic-image",
   operation?: MerchantOperationContext,
+  requestOptions?: EditorAssetUploadRequestOptions,
 ): Promise<UploadedAssetMetadata | null> {
   return uploadDataUrlViaServerApiWithMetadata(
     dataUrl,
@@ -549,6 +564,7 @@ export async function uploadImageDataUrlToSupabaseWithMetadata(
     "merchant-assets",
     usage,
     operation,
+    requestOptions,
   );
 }
 
@@ -574,23 +590,29 @@ async function uploadDataUrlViaServerApiWithMetadata(
   folder: string,
   usage: string,
   operation?: MerchantOperationContext,
+  requestOptions?: EditorAssetUploadRequestOptions,
 ): Promise<UploadedAssetMetadata | null> {
   if (!/^data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) return null;
   try {
     const response = await runWithMerchantOperationContext(operation, () =>
-      fetch("/api/assets/upload", {
+      requestAssetUploadApi({
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
-        credentials: "same-origin",
         body: JSON.stringify({
           dataUrl,
           merchantHint,
           folder,
           usage,
+          ...(requestOptions?.businessPurpose
+            ? {
+                siteId: merchantHint,
+                businessPurpose: requestOptions.businessPurpose,
+              }
+            : {}),
         }),
-      }),
+      }, requestOptions),
     );
     if (!response.ok) return null;
     const payload = (await response.json().catch(() => null)) as {
@@ -615,6 +637,24 @@ async function uploadDataUrlViaServerApiWithMetadata(
   } catch {
     return null;
   }
+}
+
+function requestAssetUploadApi(
+  init: RequestInit,
+  requestOptions?: EditorAssetUploadRequestOptions,
+) {
+  if (requestOptions?.businessPurpose && !requestOptions.apiClient) {
+    return Promise.reject(
+      new Error("business_asset_upload_api_client_required"),
+    );
+  }
+  if (requestOptions?.apiClient) {
+    return requestOptions.apiClient("/api/assets/upload", init);
+  }
+  return fetch("/api/assets/upload", {
+    ...init,
+    credentials: "same-origin",
+  });
 }
 
 function optionalMetadataFields(payload: {

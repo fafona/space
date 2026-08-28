@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
@@ -74,6 +74,20 @@ import {
   readMerchantAdminDataCache,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import { MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY } from "@/lib/merchantBusinessApiClient";
+import {
+  MERCHANT_BOOKING_NO_PERMISSIONS,
+  MERCHANT_BOOKING_OWNER_CACHE_POLICY,
+  canOpenMerchantBookingWorkbench,
+  createMerchantBookingApiRequest,
+  hasMerchantBookingFrontendPermission,
+  isMerchantBookingEmployeeFrontend,
+  type MerchantBookingFrontendPermissions,
+} from "@/lib/merchantBookingFrontendAccess";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
@@ -89,6 +103,9 @@ type MerchantBookingManagerDialogProps = {
   bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   allowBookingEmailPrefill?: boolean;
   allowCustomerAutoEmail?: boolean;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: MerchantBookingFrontendPermissions;
   workbenchOpen?: boolean;
   hideWorkbenchButton?: boolean;
   onWorkbenchOpenChange?: (open: boolean) => void;
@@ -129,6 +146,29 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
     email: record.email,
     phone: record.phone,
     note: record.note,
+  };
+}
+
+function redactBookingCustomerDataForFrontend(
+  record: MerchantBookingRecord,
+): MerchantBookingRecord {
+  return {
+    ...record,
+    customerName: record.customerName ? "客户" : "",
+    email: "",
+    phone: "",
+    note: "",
+    customerAccountId: "",
+    customerUserId: "",
+    customerLoginEmail: "",
+    customerGuestHash: "",
+    customerEmailLogs: [],
+    timeline: record.timeline?.map((entry) => ({
+      ...entry,
+      subject: undefined,
+      senderName: undefined,
+      note: undefined,
+    })),
   };
 }
 
@@ -496,6 +536,9 @@ function AppointmentSummaryField({
   );
 }
 
+const requestOwnerBookingApi: MerchantBusinessApiClient = (path, init) =>
+  fetchWithAdminPerformance(path, init);
+
 export default function MerchantBookingManagerDialog({
   open,
   mode = "dialog",
@@ -510,6 +553,9 @@ export default function MerchantBookingManagerDialog({
   bookingRulesSnapshot = null,
   allowBookingEmailPrefill = false,
   allowCustomerAutoEmail = false,
+  apiClient,
+  cachePolicy,
+  permissions,
   workbenchOpen: controlledWorkbenchOpen,
   hideWorkbenchButton = false,
   onWorkbenchOpenChange,
@@ -519,6 +565,52 @@ export default function MerchantBookingManagerDialog({
 }: MerchantBookingManagerDialogProps) {
   const { locale } = useI18n();
   const isInline = mode === "inline";
+  const employeeMode = isMerchantBookingEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectiveCachePolicy = employeeMode
+    ? MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY
+    : cachePolicy ?? MERCHANT_BOOKING_OWNER_CACHE_POLICY;
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_BOOKING_NO_PERMISSIONS
+      : permissions;
+  const requestBookingApi = useMemo(
+    () =>
+      createMerchantBookingApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: requestOwnerBookingApi,
+      }),
+    [apiClient, employeeMode],
+  );
+  const canViewBookings = hasMerchantBookingFrontendPermission(
+    effectivePermissions,
+    "bookings.view",
+  );
+  const canViewCustomerData = hasMerchantBookingFrontendPermission(
+    effectivePermissions,
+    "bookings.customer_data.view",
+  );
+  const canUpdateBookings =
+    canViewCustomerData &&
+    hasMerchantBookingFrontendPermission(effectivePermissions, "bookings.update");
+  const canManageBookingStatus = hasMerchantBookingFrontendPermission(
+    effectivePermissions,
+    "bookings.status.manage",
+  );
+  const canSendBookingEmail =
+    canViewCustomerData &&
+    hasMerchantBookingFrontendPermission(effectivePermissions, "bookings.email.send");
+  const canExportBookings = hasMerchantBookingFrontendPermission(
+    effectivePermissions,
+    "bookings.export",
+  );
+  const canUseBatchSelection = canManageBookingStatus || canExportBookings;
+  const canOpenWorkbench = canOpenMerchantBookingWorkbench(effectivePermissions);
+  const permissionFingerprint = effectivePermissions?.join("\u0001") ?? "owner";
   const resolvedShowCloseButton = showCloseButton ?? !isInline;
   const defaultCustomerEmailLocale = useMemo(
     () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
@@ -527,7 +619,11 @@ export default function MerchantBookingManagerDialog({
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
   const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
   const [todayDateValue, setTodayDateValue] = useState("");
-  const [records, setRecords] = useState<MerchantBookingRecord[]>(() => readCachedBookingRecords(siteId));
+  const [records, setRecords] = useState<MerchantBookingRecord[]>(() =>
+    canViewBookings && effectiveCachePolicy.allowPersistentRead
+      ? readCachedBookingRecords(siteId)
+      : [],
+  );
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -543,7 +639,9 @@ export default function MerchantBookingManagerDialog({
     setSortMode,
     historyVisibility,
     setHistoryVisibility,
-  } = useMerchantBookingManagerPreferences(siteId);
+  } = useMerchantBookingManagerPreferences(siteId, {
+    cachePolicy: effectiveCachePolicy,
+  });
   const deferredQuery = useDeferredValue(query);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
@@ -555,6 +653,7 @@ export default function MerchantBookingManagerDialog({
   );
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
+  const securityGenerationRef = useRef(0);
   const isWorkbenchOpenControlled = controlledWorkbenchOpen !== undefined;
   const workbenchOpen = controlledWorkbenchOpen ?? internalWorkbenchOpen;
   const setWorkbenchOpen = useCallback(
@@ -586,6 +685,32 @@ export default function MerchantBookingManagerDialog({
   }, [open, setWorkbenchOpen]);
 
   useEffect(() => {
+    securityGenerationRef.current += 1;
+    if (employeeMode || !canViewBookings) {
+      setRecords([]);
+      setDrafts({});
+      setDetailBookingId(null);
+      setSelectedBookingIds([]);
+      setSelectionMode(false);
+      setHasMoreRemoteRecords(false);
+      setLoadingMoreRecords(false);
+    }
+    setCustomerEmailLocale(defaultCustomerEmailLocale);
+    setCustomerEmailLocaleLoaded(false);
+    setWorkbenchSettings(normalizeMerchantBookingWorkbenchSettings(null));
+  }, [apiClient, canViewBookings, defaultCustomerEmailLocale, employeeMode, permissionFingerprint]);
+
+  useEffect(() => {
+    if (!canOpenWorkbench) setWorkbenchOpen(false);
+  }, [canOpenWorkbench, setWorkbenchOpen]);
+
+  useEffect(() => {
+    if (canUseBatchSelection) return;
+    setSelectionMode(false);
+    setSelectedBookingIds([]);
+  }, [canUseBatchSelection]);
+
+  useEffect(() => {
     if (!error) return;
     showGlobalToast(error, { tone: "error" });
     const timer = window.setTimeout(() => setError(""), 3000);
@@ -607,10 +732,11 @@ export default function MerchantBookingManagerDialog({
   }, []);
 
   const loadWorkbenchCustomerEmailLocale = useCallback(async () => {
-    if (!siteId) return defaultCustomerEmailLocale;
+    if (!siteId || !canSendBookingEmail) return defaultCustomerEmailLocale;
     if (customerEmailLocaleLoaded) return customerEmailLocale;
+    const generation = securityGenerationRef.current;
     try {
-      const response = await fetchWithAdminPerformance(
+      const response = await requestBookingApi(
         `/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`,
         {
           cache: "no-store",
@@ -621,6 +747,9 @@ export default function MerchantBookingManagerDialog({
         | null;
       if (!response.ok || !json?.ok) {
         throw new Error("load_workbench_locale_failed");
+      }
+      if (securityGenerationRef.current !== generation) {
+        return defaultCustomerEmailLocale;
       }
       const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
       setWorkbenchSettings(normalized);
@@ -637,16 +766,28 @@ export default function MerchantBookingManagerDialog({
   }, [
     customerEmailLocale,
     customerEmailLocaleLoaded,
+    canSendBookingEmail,
     defaultCustomerEmailLocale,
+    requestBookingApi,
     siteCountryCode,
     siteId,
   ]);
 
   useEffect(() => {
-    if (!open || !siteId) return;
+    if (!open || !siteId || !canViewBookings) {
+      setRecords([]);
+      setDrafts({});
+      setHasMoreRemoteRecords(false);
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const generation = securityGenerationRef.current;
     let cancelled = false;
     const load = async () => {
-      const cachedRecords = readCachedBookingRecords(siteId);
+      const cachedRecords = effectiveCachePolicy.allowPersistentRead
+        ? readCachedBookingRecords(siteId)
+        : [];
       if (cachedRecords.length > 0) {
         setRecords(cachedRecords);
         setDrafts(Object.fromEntries(cachedRecords.map((record) => [record.id, createDraft(record)])));
@@ -659,11 +800,11 @@ export default function MerchantBookingManagerDialog({
       }
       setError("");
       try {
-        const response = await fetchWithAdminPerformance(
+        const response = await requestBookingApi(
           `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
           {
             cache: "no-store",
-            credentials: "same-origin",
+            signal: controller.signal,
           },
         );
         const json = (await response.json().catch(() => null)) as
@@ -672,37 +813,56 @@ export default function MerchantBookingManagerDialog({
         if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
           throw new Error(json?.message || loadFailedText);
         }
-        if (!cancelled) {
-          writeCachedBookingRecords(siteId, json.bookings);
+        if (!cancelled && securityGenerationRef.current === generation) {
+          if (effectiveCachePolicy.allowPersistentWrite) {
+            writeCachedBookingRecords(siteId, json.bookings);
+          }
           setRecords(json.bookings);
           setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
           setHasMoreRemoteRecords(Boolean(json.hasMore));
         }
       } catch (loadError) {
-        if (!cancelled) {
-          setError(cachedRecords.length > 0 ? "" : loadError instanceof Error ? loadError.message : loadFailedText);
+        if (!cancelled && securityGenerationRef.current === generation) {
+          const keepStaleRecords =
+            effectiveCachePolicy.allowStaleOnError && cachedRecords.length > 0;
+          if (!keepStaleRecords) {
+            setRecords([]);
+            setDrafts({});
+          }
+          setError(keepStaleRecords ? "" : loadError instanceof Error ? loadError.message : loadFailedText);
           setHasMoreRemoteRecords(false);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && securityGenerationRef.current === generation) setLoading(false);
       }
     };
     void load();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [loadFailedText, onRecordsChange, open, siteId]);
+  }, [
+    canViewBookings,
+    effectiveCachePolicy.allowPersistentRead,
+    effectiveCachePolicy.allowPersistentWrite,
+    effectiveCachePolicy.allowStaleOnError,
+    loadFailedText,
+    onRecordsChange,
+    open,
+    requestBookingApi,
+    siteId,
+  ]);
 
   const loadMoreBookings = useCallback(async () => {
-    if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    if (!siteId || !canViewBookings || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    const generation = securityGenerationRef.current;
     setLoadingMoreRecords(true);
     setError("");
     try {
-      const response = await fetchWithAdminPerformance(
+      const response = await requestBookingApi(
         `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
         {
           cache: "no-store",
-          credentials: "same-origin",
         },
       );
       const json = (await response.json().catch(() => null)) as
@@ -711,6 +871,7 @@ export default function MerchantBookingManagerDialog({
       if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
         throw new Error(json?.message || loadFailedText);
       }
+      if (securityGenerationRef.current !== generation) return;
       const nextBookings = json.bookings;
       setHasMoreRemoteRecords(Boolean(json.hasMore));
       setRecords((currentRecords) => {
@@ -719,16 +880,32 @@ export default function MerchantBookingManagerDialog({
           ...currentRecords,
           ...nextBookings.filter((record) => !existingIds.has(record.id)),
         ];
-        writeCachedBookingRecords(siteId, mergedRecords);
+        if (effectiveCachePolicy.allowPersistentWrite) {
+          writeCachedBookingRecords(siteId, mergedRecords);
+        }
         setDrafts(Object.fromEntries(mergedRecords.map((record) => [record.id, createDraft(record)])));
         return mergedRecords;
       });
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : loadFailedText);
+      if (securityGenerationRef.current === generation) {
+        setError(loadError instanceof Error ? loadError.message : loadFailedText);
+      }
     } finally {
-      setLoadingMoreRecords(false);
+      if (securityGenerationRef.current === generation) {
+        setLoadingMoreRecords(false);
+      }
     }
-  }, [hasMoreRemoteRecords, loadFailedText, loading, loadingMoreRecords, records.length, siteId]);
+  }, [
+    canViewBookings,
+    effectiveCachePolicy.allowPersistentWrite,
+    hasMoreRemoteRecords,
+    loadFailedText,
+    loading,
+    loadingMoreRecords,
+    records.length,
+    requestBookingApi,
+    siteId,
+  ]);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -757,15 +934,23 @@ export default function MerchantBookingManagerDialog({
     setRenderLimit(MERCHANT_BOOKING_RENDER_LIMIT);
   }, [deferredQuery, filter, historyVisibility, selectedStatuses, sortMode]);
 
+  const frontendRecords = useMemo(
+    () =>
+      canViewCustomerData
+        ? records
+        : records.map(redactBookingCustomerDataForFrontend),
+    [canViewCustomerData, records],
+  );
+
   const historyFilteredRecords = useMemo(
-    () => filterMerchantBookingRecordsByHistory(records, historyVisibility),
-    [historyVisibility, records],
+    () => filterMerchantBookingRecordsByHistory(frontendRecords, historyVisibility),
+    [frontendRecords, historyVisibility],
   );
 
   const bookingSearchTextById = useMemo(
     () =>
       new Map(
-        records.map((record) => [
+        frontendRecords.map((record) => [
           record.id,
           [
             record.id,
@@ -781,7 +966,7 @@ export default function MerchantBookingManagerDialog({
             .toLowerCase(),
         ]),
       ),
-    [records],
+    [frontendRecords],
   );
 
   const counts = useMemo(() => createStatusCounts(historyFilteredRecords), [historyFilteredRecords]);
@@ -816,8 +1001,8 @@ export default function MerchantBookingManagerDialog({
     [filter, historyFilteredRecords, selectedStatuses],
   );
   useEffect(() => {
-    onRecordsChange?.(attentionScopedRecords);
-  }, [attentionScopedRecords, onRecordsChange]);
+    onRecordsChange?.(canViewBookings ? attentionScopedRecords : []);
+  }, [attentionScopedRecords, canViewBookings, onRecordsChange]);
 
   const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
@@ -829,28 +1014,28 @@ export default function MerchantBookingManagerDialog({
   const selectableStoreOptions = useMemo(
     () =>
       normalizeBookingOptionList(
-        [...storeOptions, ...records.map((record) => record.store)],
+        [...storeOptions, ...frontendRecords.map((record) => record.store)],
         buildDefaultBookingStoreOptions(siteName),
       ),
-    [records, siteName, storeOptions],
+    [frontendRecords, siteName, storeOptions],
   );
 
   const selectableItemOptions = useMemo(
     () =>
       normalizeBookingOptionList(
-        [...itemOptions, ...records.map((record) => record.item)],
+        [...itemOptions, ...frontendRecords.map((record) => record.item)],
         buildDefaultBookingItemOptions(),
       ),
-    [itemOptions, records],
+    [frontendRecords, itemOptions],
   );
 
   const selectableTitleOptions = useMemo(
     () =>
       normalizeBookingOptionList(
-        [...titleOptions, ...records.map((record) => record.title)],
+        [...titleOptions, ...frontendRecords.map((record) => record.title)],
         buildDefaultBookingTitleOptions(),
       ),
-    [records, titleOptions],
+    [frontendRecords, titleOptions],
   );
 
   const patchBooking = async (
@@ -861,18 +1046,31 @@ export default function MerchantBookingManagerDialog({
     },
     busyLabel: string,
   ) => {
+    if (payload.status && !canManageBookingStatus) {
+      setError("当前账号没有处理预约状态的权限。");
+      return null;
+    }
+    if (payload.updates && !canUpdateBookings) {
+      setError("当前账号没有编辑预约的权限。");
+      return null;
+    }
+    const generation = securityGenerationRef.current;
     setBusyKey(`${busyLabel}:${bookingId}`);
     setError("");
     try {
       const currentRecord = records.find((item) => item.id === bookingId) ?? null;
-      const response = await fetchWithAdminPerformance("/api/bookings", {
+      const response = await requestBookingApi("/api/bookings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           siteId,
           bookingId,
-          bookingBlockId: currentRecord?.bookingBlockId,
-          bookingViewport: currentRecord?.bookingViewport,
+          ...(payload.updates
+            ? {
+                bookingBlockId: currentRecord?.bookingBlockId,
+                bookingViewport: currentRecord?.bookingViewport,
+              }
+            : {}),
           ...payload,
         }),
       });
@@ -882,6 +1080,7 @@ export default function MerchantBookingManagerDialog({
       if (!response.ok || !json?.ok || !json.booking) {
         throw new Error(json?.message || updateFailedText);
       }
+      if (securityGenerationRef.current !== generation) return null;
       const nextBooking = json.booking;
       setRecords((current) => current.map((item) => (item.id === nextBooking.id ? nextBooking : item)));
       setDrafts((current) => ({
@@ -898,11 +1097,12 @@ export default function MerchantBookingManagerDialog({
   };
 
   const runBatchStatusUpdate = async (status: MerchantBookingStatus, busyLabel: string) => {
-    if (selectedBookingIds.length === 0) return;
+    if (!canManageBookingStatus || selectedBookingIds.length === 0) return;
+    const generation = securityGenerationRef.current;
     setBusyKey(`batch:${busyLabel}`);
     setError("");
     try {
-      const response = await fetchWithAdminPerformance("/api/bookings", {
+      const response = await requestBookingApi("/api/bookings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -917,6 +1117,7 @@ export default function MerchantBookingManagerDialog({
       if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
         throw new Error(json?.message || updateFailedText);
       }
+      if (securityGenerationRef.current !== generation) return;
       const updatedById = new Map(json.bookings.map((item) => [item.id, item]));
       setRecords((current) => current.map((item) => updatedById.get(item.id) ?? item));
       setDrafts((current) => {
@@ -936,14 +1137,16 @@ export default function MerchantBookingManagerDialog({
   };
 
   const markBookingTouched = async (bookingId: string) => {
+    if (!canViewBookings) return null;
     const currentRecord = records.find((item) => item.id === bookingId);
     if (!currentRecord || !isMerchantBookingPendingMerchantTouch(currentRecord)) return currentRecord ?? null;
+    const generation = securityGenerationRef.current;
     const touchedAt = new Date().toISOString();
     setRecords((current) =>
       current.map((item) => (item.id === bookingId ? { ...item, merchantTouchedAt: touchedAt } : item)),
     );
     try {
-      const response = await fetchWithAdminPerformance("/api/bookings", {
+      const response = await requestBookingApi("/api/bookings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -958,6 +1161,7 @@ export default function MerchantBookingManagerDialog({
       if (!response.ok || !json?.ok || !json.booking) {
         throw new Error("mark_touched_failed");
       }
+      if (securityGenerationRef.current !== generation) return null;
       setRecords((current) => current.map((item) => (item.id === bookingId ? json.booking! : item)));
       return json.booking;
     } catch {
@@ -1042,7 +1246,7 @@ export default function MerchantBookingManagerDialog({
     setDetailBookingId(null);
   };
 
-  const detailRecord = detailBookingId ? records.find((item) => item.id === detailBookingId) ?? null : null;
+  const detailRecord = detailBookingId ? frontendRecords.find((item) => item.id === detailBookingId) ?? null : null;
   const detailDraft = detailRecord ? drafts[detailRecord.id] ?? createDraft(detailRecord) : null;
   const detailCustomerEmailLogs = useMemo(
     () =>
@@ -1073,7 +1277,7 @@ export default function MerchantBookingManagerDialog({
   const detailItemLabel = resolveBookingRuleFieldLabel(detailRuleEntry, "item", locale);
 
   const saveDetailDialog = async () => {
-    if (!detailRecord || !detailDraft) return;
+    if (!detailRecord || !detailDraft || !canUpdateBookings) return;
     const nextBooking = await patchBooking(
       detailRecord.id,
       {
@@ -1096,6 +1300,7 @@ export default function MerchantBookingManagerDialog({
   };
 
   const renderStatusActions = (record: MerchantBookingRecord) => {
+    if (!canManageBookingStatus) return null;
     if (record.status === "cancelled" || record.status === "no_show") {
       return (
         <button
@@ -1187,6 +1392,24 @@ export default function MerchantBookingManagerDialog({
 
   if (!open) return null;
 
+  if (!canViewBookings) {
+    const denied = (
+      <div className="flex min-h-[18rem] w-full flex-col items-center justify-center gap-4 rounded-2xl border border-slate-200 bg-white px-6 text-center text-sm text-slate-600">
+        <span>当前账号没有查看预约的权限。</span>
+        <button type="button" className="rounded-xl border border-slate-200 px-4 py-2" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+    );
+    return isInline
+      ? denied
+      : overlay(
+          <div className="fixed inset-0 z-[2147482900] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-xl">{denied}</div>
+          </div>,
+        );
+  }
+
   const detailDialog =
     detailRecord && detailDraft
       ? overlay(
@@ -1223,7 +1446,7 @@ export default function MerchantBookingManagerDialog({
 
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
                 <div className="grid gap-3 md:grid-cols-2">
-                  {detailCustomerEmailLogs.length > 0 ? (
+                  {canViewCustomerData && detailCustomerEmailLogs.length > 0 ? (
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 md:col-span-2">
                       <div className="text-sm font-semibold text-slate-900">{getCustomerEmailLogHeading(locale)}</div>
                       <div className="mt-3 space-y-2">
@@ -1269,6 +1492,7 @@ export default function MerchantBookingManagerDialog({
                     <select
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.store}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "store", event.target.value)}
                     >
                       {selectableStoreOptions.map((option) => (
@@ -1284,6 +1508,7 @@ export default function MerchantBookingManagerDialog({
                     <select
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.item}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "item", event.target.value)}
                     >
                       {selectableItemOptions.map((option) => (
@@ -1299,6 +1524,7 @@ export default function MerchantBookingManagerDialog({
                     <BookingDateTimeInput
                       dateValue={detailDraft.appointmentDateInput}
                       timeValue={detailDraft.appointmentTimeInput}
+                      disabled={!canUpdateBookings}
                       dateInputClassName="min-w-[180px] flex-1 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
                       timeInputClassName="w-[116px] shrink-0 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
                       onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
@@ -1312,6 +1538,7 @@ export default function MerchantBookingManagerDialog({
                         <BookingQuickTimeRangePicker
                           ranges={detailAvailableTimeRanges}
                           selectedTime={detailDraft.appointmentTimeInput}
+                          disabled={!canUpdateBookings}
                           onSelect={(nextTime) => handleDraftChange(detailRecord.id, "appointmentTimeInput", nextTime)}
                         />
                       </div>
@@ -1323,6 +1550,7 @@ export default function MerchantBookingManagerDialog({
                     <select
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.title}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "title", event.target.value)}
                     >
                       {selectableTitleOptions.map((option) => (
@@ -1333,47 +1561,60 @@ export default function MerchantBookingManagerDialog({
                     </select>
                   </label>
 
+                  {canViewCustomerData ? (
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">{getMerchantBookingFieldText("customerName", locale)}</span>
                     <input
                       type="text"
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.customerName}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "customerName", event.target.value)}
                     />
                   </label>
+                  ) : null}
 
+                  {canViewCustomerData ? (
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">{getMerchantBookingFieldText("email", locale)}</span>
                     <input
                       type="email"
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.email}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "email", event.target.value)}
                     />
                   </label>
+                  ) : null}
 
+                  {canViewCustomerData ? (
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">{getMerchantBookingFieldText("phone", locale)}</span>
                     <input
                       type="text"
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.phone}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "phone", event.target.value)}
                     />
                   </label>
+                  ) : null}
 
+                  {canViewCustomerData ? (
                   <label className="space-y-1 text-sm text-slate-700 md:col-span-2">
                     <span className="text-xs text-slate-500">{getMerchantBookingFieldText("note", locale)}</span>
                     <textarea
                       className="min-h-[120px] w-full rounded border px-3 py-2"
                       value={detailDraft.note}
+                      disabled={!canUpdateBookings}
                       onChange={(event) => handleDraftChange(detailRecord.id, "note", event.target.value)}
                     />
                   </label>
+                  ) : null}
                 </div>
               </div>
 
+              {canUpdateBookings ? (
               <div className="flex justify-end border-t px-5 py-4">
                 <button
                   type="button"
@@ -1388,11 +1629,12 @@ export default function MerchantBookingManagerDialog({
                     : getMerchantBookingActionText("save", locale)}
                 </button>
               </div>
+              ) : null}
             </div>
           </div>,
         )
       : null;
-  const workbenchDialog = (
+  const workbenchDialog = canOpenWorkbench ? (
     <BookingWorkbenchDialog
       open={workbenchOpen}
       mode={isInline && hideWorkbenchButton ? "inline" : "dialog"}
@@ -1400,11 +1642,14 @@ export default function MerchantBookingManagerDialog({
       siteId={siteId}
       siteName={siteName}
       siteCountryCode={siteCountryCode}
-      records={records}
+      records={frontendRecords}
       storeOptions={storeOptions}
       itemOptions={itemOptions}
       bookingRulesSnapshot={bookingRulesSnapshot}
       allowCustomerAutoEmail={allowCustomerAutoEmail}
+      apiClient={apiClient}
+      cachePolicy={effectiveCachePolicy}
+      permissions={effectivePermissions}
       onSettingsSaved={(settings) => {
         setWorkbenchSettings(settings);
         setCustomerEmailLocale(
@@ -1414,9 +1659,9 @@ export default function MerchantBookingManagerDialog({
       }}
       onClose={() => setWorkbenchOpen(false)}
     />
-  );
+  ) : null;
 
-  if (isInline && hideWorkbenchButton && workbenchOpen) return workbenchDialog;
+  if (isInline && hideWorkbenchButton && workbenchOpen && workbenchDialog) return workbenchDialog;
 
   const content = (
     <div
@@ -1446,7 +1691,7 @@ export default function MerchantBookingManagerDialog({
           <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2.5">
               <div className="text-[26px] font-bold leading-8 text-slate-950">{getMerchantBookingFieldText("managementTitle", locale)}</div>
-              {!hideWorkbenchButton ? (
+              {!hideWorkbenchButton && canOpenWorkbench ? (
                 <button
                   type="button"
                   className={workbenchButtonClassName}
@@ -1505,6 +1750,7 @@ export default function MerchantBookingManagerDialog({
                   </svg>
                 </div>
               </label>
+              {canUseBatchSelection ? (
               <button
                 type="button"
                 className={compactBatchButtonClassName}
@@ -1512,6 +1758,7 @@ export default function MerchantBookingManagerDialog({
               >
                 {locale.startsWith("es") ? "Lote" : "批量"}
               </button>
+              ) : null}
             </div>
           </div>
           {resolvedShowCloseButton ? (
@@ -1641,6 +1888,7 @@ export default function MerchantBookingManagerDialog({
                 </span>
                 {selectedBookingIds.length > 0 ? (
                   <>
+                    {canManageBookingStatus ? (
                     <button
                       type="button"
                       className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700"
@@ -1649,6 +1897,8 @@ export default function MerchantBookingManagerDialog({
                     >
                       {locale.startsWith("es") ? "Confirmar" : "批量确认"}
                     </button>
+                    ) : null}
+                    {canManageBookingStatus ? (
                     <button
                       type="button"
                       className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
@@ -1657,6 +1907,8 @@ export default function MerchantBookingManagerDialog({
                     >
                       {locale.startsWith("es") ? "Completar" : "批量完成"}
                     </button>
+                    ) : null}
+                    {canManageBookingStatus ? (
                     <button
                       type="button"
                       className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
@@ -1665,6 +1917,8 @@ export default function MerchantBookingManagerDialog({
                     >
                       {locale.startsWith("es") ? "No show" : "批量未到店"}
                     </button>
+                    ) : null}
+                    {canManageBookingStatus ? (
                     <button
                       type="button"
                       className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
@@ -1673,6 +1927,8 @@ export default function MerchantBookingManagerDialog({
                     >
                       {locale.startsWith("es") ? "Cancelar" : "批量取消"}
                     </button>
+                    ) : null}
+                    {canExportBookings ? (
                     <button
                       type="button"
                       className="rounded-full border border-emerald-950 bg-emerald-950 px-3 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(6,78,59,0.22)] hover:bg-emerald-900"
@@ -1680,6 +1936,7 @@ export default function MerchantBookingManagerDialog({
                     >
                       CSV
                     </button>
+                    ) : null}
                   </>
                 ) : null}
               </>
@@ -1699,7 +1956,10 @@ export default function MerchantBookingManagerDialog({
                 const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
                 const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                 const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
-                const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
+                const canOpenConversation =
+                  canViewCustomerData &&
+                  Boolean(onOpenConversation) &&
+                  Boolean(record.customerAccountId || record.customerLoginEmail);
                 const storeColorStyle = getMerchantBookingStoreColorStyle(workbenchSettings, record.store);
                 const itemColorStyle = getMerchantBookingItemColorStyle(workbenchSettings, record.item);
                 const recordRuleEntry = resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
@@ -1763,6 +2023,7 @@ export default function MerchantBookingManagerDialog({
                           </div>
                         </div>
 
+                        {canViewCustomerData ? (
                         <div className="grid min-w-[580px] grid-cols-[5.75rem_2rem_minmax(12rem,1fr)_2rem_9rem_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700">
                           <span
                             className={`inline-flex h-8 w-[5.75rem] items-center justify-center rounded-full bg-white px-2 text-xs font-semibold text-slate-600 shadow-sm ${record.customerAccountId ? "" : "invisible"}`}
@@ -1791,7 +2052,7 @@ export default function MerchantBookingManagerDialog({
                             <span className="h-8 w-8" aria-hidden="true" />
                           )}
                           <span className="min-w-0 truncate text-right">{record.email || "-"}</span>
-                          {record.email ? (
+                          {record.email && canSendBookingEmail ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
                               href={buildMerchantBookingMailtoHref(record, customerEmailLocale, allowBookingEmailPrefill)}
@@ -1834,6 +2095,7 @@ export default function MerchantBookingManagerDialog({
                             <span className="h-8 w-8" aria-hidden="true" />
                           )}
                         </div>
+                        ) : null}
                       </div>
 
                       <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
@@ -1863,7 +2125,7 @@ export default function MerchantBookingManagerDialog({
                         labelOverride={itemLabel}
                       />
                       <div className="flex items-end justify-end gap-2 xl:col-start-5">
-                        {record.customerEmailLogs?.length ? (
+                        {canViewCustomerData && record.customerEmailLogs?.length ? (
                           <span
                             className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700"
                             title={getCustomerEmailBadgeText(record.customerEmailLogs.length, locale)}
@@ -1885,7 +2147,7 @@ export default function MerchantBookingManagerDialog({
                         </button>
                       </div>
                     </div>
-                    {record.note ? (
+                    {canViewCustomerData && record.note ? (
                       <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                         <div className="whitespace-pre-wrap break-words text-sm text-slate-700">{record.note}</div>
                       </div>

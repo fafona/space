@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse as FrameworkNextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,6 +6,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
+import {
+  authorizeMerchantBusinessRequest,
+  reauthorizeMerchantBusinessMutation,
+  toMerchantBusinessAccessResponse,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { buildPersonalAccountPermissionConfig, readPersonalAccountServiceConfigFromMetadata } from "@/lib/personalAccountServiceConfig";
@@ -29,14 +36,117 @@ export const runtime = "nodejs";
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio", "merchant-files"]);
 const BUSINESS_CARD_INTRO_VIDEO_SOURCE_LIMIT_BYTES = 80 * 1024 * 1024;
+const PRIVATE_RESPONSE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+  "X-Content-Type-Options": "nosniff",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Referrer-Policy": "no-referrer",
+} as const;
+
+export function withAssetUploadPrivateResponseHeaders<T extends FrameworkNextResponse>(
+  response: T,
+) {
+  for (const [name, value] of Object.entries(PRIVATE_RESPONSE_HEADERS)) {
+    response.headers.set(name, value);
+  }
+  return response;
+}
+
+export function assetUploadJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(PRIVATE_RESPONSE_HEADERS)) {
+    headers.set(name, value);
+  }
+  return FrameworkNextResponse.json(body, { ...init, headers });
+}
+
+// Keep every route-local early return on the same private response contract.
+const NextResponse = { json: assetUploadJson } as const;
+
+type AssetUploadSuccessBodyInput = {
+  bucket: string;
+  url: string;
+  objectPath?: string;
+  thumbnailUrl?: string;
+  thumbnailObjectPath?: string;
+  posterUrl?: string;
+  posterObjectPath?: string;
+};
+
+export function buildAssetUploadSuccessBody(
+  input: AssetUploadSuccessBodyInput,
+  employeeBusinessRequest: boolean,
+) {
+  if (employeeBusinessRequest) {
+    return {
+      ok: true,
+      url: input.url,
+      ...(input.thumbnailUrl ? { thumbnailUrl: input.thumbnailUrl } : {}),
+      ...(input.posterUrl ? { posterUrl: input.posterUrl } : {}),
+    };
+  }
+  return {
+    ok: true,
+    bucket: input.bucket,
+    ...(input.objectPath ? { objectPath: input.objectPath } : {}),
+    url: input.url,
+    ...(input.posterUrl
+      ? { posterUrl: input.posterUrl, posterObjectPath: input.posterObjectPath }
+      : {}),
+    ...(input.thumbnailUrl
+      ? {
+          thumbnailUrl: input.thumbnailUrl,
+          thumbnailObjectPath: input.thumbnailObjectPath,
+        }
+      : {}),
+  };
+}
+
+export function buildAssetUploadFailureMessage(
+  uploadErrors: readonly string[],
+  fallback: string,
+  employeeBusinessRequest: boolean,
+) {
+  return employeeBusinessRequest
+    ? fallback
+    : uploadErrors.join(" | ") || fallback;
+}
+
+type AssetUploadCleanupStorage = {
+  from(bucket: string): {
+    remove(objectPaths: string[]): PromiseLike<unknown>;
+  };
+};
+
+export async function cleanupEmployeeBusinessAssetUploadObjects(
+  storage: AssetUploadCleanupStorage,
+  bucket: string,
+  objectPaths: readonly string[],
+  employeeBusinessRequest: boolean,
+) {
+  if (!employeeBusinessRequest) return;
+  const uniquePaths = [...new Set(objectPaths.filter(Boolean))];
+  if (uniquePaths.length === 0) return;
+  // This is compensating cleanup through the service storage client. It must
+  // remain available after the employee authorization has been revoked.
+  await Promise.resolve(storage.from(bucket).remove(uniquePaths)).catch(
+    () => undefined,
+  );
+}
 
 type AssetUploadRequestBody = {
   dataUrl?: string;
   sourceUrl?: string;
+  siteId?: string;
   merchantHint?: string;
   folder?: string;
   usage?: unknown;
+  businessPurpose?: unknown;
 };
+
+export type AssetUploadBusinessPurpose = "order-catalog" | "redemption-catalog";
 
 type AssetUsage =
   | "common-block-image"
@@ -60,8 +170,13 @@ type ActorContext =
       ok: true;
       effectiveMerchantHint: string;
       permissionConfig: ReturnType<typeof createDefaultMerchantPermissionConfig>;
+      businessAuthorization?: {
+        actor: MerchantBusinessActor;
+        requiredPermission: MerchantStaffBusinessPermission;
+        purpose: AssetUploadBusinessPurpose;
+      };
     }
-  | { ok: false };
+  | { ok: false; status?: number; code?: string };
 
 function parseDataUrlMeta(dataUrl: string) {
   const matched = dataUrl.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,/i);
@@ -690,9 +805,129 @@ export async function resolveAssetUploadActorContext(
   };
 }
 
+export type AssetUploadBusinessAuthorizationDependencies = {
+  authorizeBusinessRequest: typeof authorizeMerchantBusinessRequest;
+  reauthorizeBusinessMutation: typeof reauthorizeMerchantBusinessMutation;
+  resolveLegacyActor: typeof resolveAssetUploadActorContext;
+};
+
+const DEFAULT_BUSINESS_AUTHORIZATION_DEPENDENCIES: AssetUploadBusinessAuthorizationDependencies = {
+  authorizeBusinessRequest: authorizeMerchantBusinessRequest,
+  reauthorizeBusinessMutation: reauthorizeMerchantBusinessMutation,
+  resolveLegacyActor: resolveAssetUploadActorContext,
+};
+
+const ASSET_UPLOAD_BUSINESS_PERMISSIONS: Record<
+  AssetUploadBusinessPurpose,
+  MerchantStaffBusinessPermission
+> = {
+  "order-catalog": "orders.catalog.manage",
+  "redemption-catalog": "redemptions.catalog.manage",
+};
+
+function normalizeAssetUploadBusinessPurpose(value: unknown): AssetUploadBusinessPurpose | null {
+  const purpose = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return purpose === "order-catalog" || purpose === "redemption-catalog"
+    ? purpose
+    : null;
+}
+
+export async function resolveAssetUploadRequestActorContext(
+  request: Request,
+  supabase: PlatformMerchantSnapshotStoreClient,
+  input: {
+    merchantHint: string;
+    rawMerchantHint: string;
+    siteId: string;
+    folder: string;
+    usage: unknown;
+    businessPurpose: unknown;
+    businessPurposeProvided: boolean;
+  },
+  dependencyOverrides: Partial<AssetUploadBusinessAuthorizationDependencies> = {},
+): Promise<ActorContext> {
+  const dependencies = {
+    ...DEFAULT_BUSINESS_AUTHORIZATION_DEPENDENCIES,
+    ...dependencyOverrides,
+  };
+  const explicitBusinessToken = request.headers.has("x-merchant-access-token");
+  const businessRequest = explicitBusinessToken || input.businessPurposeProvided;
+  if (!businessRequest) {
+    return dependencies.resolveLegacyActor(request, supabase, input.merchantHint);
+  }
+
+  const purpose = normalizeAssetUploadBusinessPurpose(input.businessPurpose);
+  if (!purpose) {
+    return { ok: false, status: 400, code: "invalid_business_purpose" };
+  }
+  const siteId = input.siteId.trim();
+  const rawMerchantHint = input.rawMerchantHint.trim();
+  if (
+    !isMerchantNumericId(siteId) ||
+    (rawMerchantHint.length > 0 && rawMerchantHint !== siteId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_business_site_id" };
+  }
+  if (
+    input.folder !== "merchant-assets" ||
+    String(input.usage ?? "").trim().toLowerCase() !== "product-image"
+  ) {
+    return { ok: false, status: 400, code: "invalid_business_asset_scope" };
+  }
+
+  const requiredPermission = ASSET_UPLOAD_BUSINESS_PERMISSIONS[purpose];
+  try {
+    const actor = await dependencies.authorizeBusinessRequest(request, {
+      siteId,
+      requiredPermission,
+    });
+    return {
+      ok: true,
+      effectiveMerchantHint: siteId,
+      permissionConfig: createDefaultMerchantPermissionConfig(),
+      businessAuthorization: { actor, requiredPermission, purpose },
+    };
+  } catch (error) {
+    const access = toMerchantBusinessAccessResponse(error);
+    return {
+      ok: false,
+      status: access.status,
+      code: String(access.body.error ?? "business_authorization_failed"),
+    };
+  }
+}
+
+export async function reauthorizeAssetUploadStorageWrite(
+  request: Request,
+  actor: Extract<ActorContext, { ok: true }>,
+  dependencyOverrides: Partial<AssetUploadBusinessAuthorizationDependencies> = {},
+) {
+  if (!actor.businessAuthorization) return { ok: true as const };
+  const dependencies = {
+    ...DEFAULT_BUSINESS_AUTHORIZATION_DEPENDENCIES,
+    ...dependencyOverrides,
+  };
+  try {
+    await dependencies.reauthorizeBusinessMutation(request, {
+      actor: actor.businessAuthorization.actor,
+      requiredPermissions: [actor.businessAuthorization.requiredPermission],
+    });
+    return { ok: true as const };
+  } catch (error) {
+    const access = toMerchantBusinessAccessResponse(error);
+    return {
+      ok: false as const,
+      status: access.status,
+      code: String(access.body.error ?? "business_authorization_failed"),
+    };
+  }
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
-    return getTrustedMutationRequestErrorResponse();
+    return withAssetUploadPrivateResponseHeaders(
+      getTrustedMutationRequestErrorResponse(),
+    );
   }
 
   const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
@@ -716,7 +951,11 @@ export async function POST(request: Request) {
   let meta: { mime: string; extension: string } | null = null;
   let folder = "";
   let merchantHint = "public";
+  let rawMerchantHint = "";
+  let businessSiteId = "";
   let usageInput: unknown = undefined;
+  let businessPurposeInput: unknown = undefined;
+  let businessPurposeProvided = false;
   let sourceAssetUrl = "";
   const contentType = request.headers.get("content-type") ?? "";
 
@@ -749,8 +988,12 @@ export async function POST(request: Request) {
     originalBlob = filePart;
     meta = parseBlobUploadMeta(filePart, fileName);
     folder = String(formData.get("folder") ?? "").trim();
-    merchantHint = sanitizeMerchantHint(String(formData.get("merchantHint") ?? "public"));
+    rawMerchantHint = String(formData.get("merchantHint") ?? "").trim();
+    merchantHint = sanitizeMerchantHint(rawMerchantHint || "public");
+    businessSiteId = String(formData.get("siteId") ?? "").trim();
     usageInput = formData.get("usage");
+    businessPurposeProvided = formData.has("businessPurpose");
+    businessPurposeInput = formData.get("businessPurpose");
   } else {
     try {
       body = (await request.json()) as AssetUploadRequestBody;
@@ -773,8 +1016,12 @@ export async function POST(request: Request) {
       sourceAssetUrl = String(body.sourceUrl ?? "").trim();
     }
     folder = String(body.folder ?? "").trim();
-    merchantHint = sanitizeMerchantHint(String(body.merchantHint ?? "public"));
+    rawMerchantHint = String(body.merchantHint ?? "").trim();
+    merchantHint = sanitizeMerchantHint(rawMerchantHint || "public");
+    businessSiteId = String(body.siteId ?? "").trim();
     usageInput = body.usage;
+    businessPurposeProvided = Object.prototype.hasOwnProperty.call(body, "businessPurpose");
+    businessPurposeInput = body.businessPurpose;
   }
 
   if ((!originalBlob && !sourceAssetUrl) || !FOLDER_CANDIDATES.has(folder)) {
@@ -818,21 +1065,30 @@ export async function POST(request: Request) {
     },
   });
 
-  const actor = await resolveAssetUploadActorContext(
+  const actor = await resolveAssetUploadRequestActorContext(
     request,
     supabase as unknown as PlatformMerchantSnapshotStoreClient,
-    merchantHint,
+    {
+      merchantHint,
+      rawMerchantHint,
+      siteId: businessSiteId,
+      folder,
+      usage: usageInput,
+      businessPurpose: businessPurposeInput,
+      businessPurposeProvided,
+    },
   );
   if (!actor.ok) {
     return NextResponse.json(
       {
         ok: false,
-        code: "unauthorized",
+        code: actor.code ?? "unauthorized",
         message: "Unauthorized asset upload request.",
       },
-      { status: 401 },
+      { status: actor.status ?? 401 },
     );
   }
+  const employeeBusinessRequest = Boolean(actor.businessAuthorization);
 
   if (!meta && sourceAssetUrl) {
     try {
@@ -1050,6 +1306,18 @@ export async function POST(request: Request) {
   const yyyy = `${now.getFullYear()}`;
   const mm = `${now.getMonth() + 1}`.padStart(2, "0");
   const uploadErrors: string[] = [];
+  const authorizeStorageWrite = async () => {
+    const authorization = await reauthorizeAssetUploadStorageWrite(request, actor);
+    if (authorization.ok) return null;
+    return NextResponse.json(
+      {
+        ok: false,
+        code: authorization.code,
+        message: "Asset upload authorization is no longer current.",
+      },
+      { status: authorization.status },
+    );
+  };
 
   if (sourceAssetUrl) {
     if (!imageThumbnailBlob) {
@@ -1066,6 +1334,8 @@ export async function POST(request: Request) {
     for (const bucket of BUCKET_CANDIDATES) {
       const objectBasePath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const thumbnailObjectPath = `${objectBasePath}-thumb.webp`;
+      const authorizationError = await authorizeStorageWrite();
+      if (authorizationError) return authorizationError;
       const uploadedThumbnail = await supabase.storage.from(bucket).upload(thumbnailObjectPath, imageThumbnailBlob, {
         contentType: "image/webp",
         upsert: false,
@@ -1078,22 +1348,31 @@ export async function POST(request: Request) {
       const thumbnailPublicUrl = thumbnailData?.publicUrl ? normalizeStoragePublicUrl(thumbnailData.publicUrl) : "";
       if (!thumbnailPublicUrl) {
         uploadErrors.push(`${bucket}: failed to resolve thumbnail public url`);
+        await cleanupEmployeeBusinessAssetUploadObjects(
+          supabase.storage,
+          bucket,
+          [thumbnailObjectPath],
+          employeeBusinessRequest,
+        );
         continue;
       }
-      return NextResponse.json({
-        ok: true,
+      return NextResponse.json(buildAssetUploadSuccessBody({
         bucket,
         url: sourceAssetUrl,
         thumbnailUrl: thumbnailPublicUrl,
         thumbnailObjectPath,
-      });
+      }, employeeBusinessRequest));
     }
 
     return NextResponse.json(
       {
         ok: false,
         code: "thumbnail_upload_failed",
-        message: uploadErrors.join(" | ") || "Thumbnail upload failed.",
+        message: buildAssetUploadFailureMessage(
+          uploadErrors,
+          "Thumbnail upload failed.",
+          employeeBusinessRequest,
+        ),
       },
       { status: 409 },
     );
@@ -1102,6 +1381,8 @@ export async function POST(request: Request) {
   for (const bucket of BUCKET_CANDIDATES) {
     const objectBasePath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const objectPath = `${objectBasePath}.${uploadExtension}`;
+    const authorizationError = await authorizeStorageWrite();
+    if (authorizationError) return authorizationError;
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, uploadBlob, {
       contentType: uploadMime,
       upsert: false,
@@ -1110,10 +1391,18 @@ export async function POST(request: Request) {
       uploadErrors.push(`${bucket}: ${uploaded.error.message}`);
       continue;
     }
+    const writtenObjectPaths = [objectPath];
     let posterObjectPath = "";
     let posterPublicUrl = "";
     if (introVideoPosterBlob) {
       posterObjectPath = `${objectBasePath}-poster.jpg`;
+      const posterAuthorizationError = await authorizeStorageWrite();
+      if (posterAuthorizationError) {
+        // This is compensating cleanup for a base object written while the
+        // authorization was still current. It must run even after revocation.
+        await supabase.storage.from(bucket).remove([objectPath]).catch(() => undefined);
+        return posterAuthorizationError;
+      }
       const uploadedPoster = await supabase.storage.from(bucket).upload(posterObjectPath, introVideoPosterBlob, {
         contentType: "image/jpeg",
         upsert: false,
@@ -1123,6 +1412,7 @@ export async function POST(request: Request) {
         uploadErrors.push(`${bucket}: poster ${uploadedPoster.error.message}`);
         continue;
       }
+      writtenObjectPaths.push(posterObjectPath);
       const { data: posterData } = supabase.storage.from(bucket).getPublicUrl(posterObjectPath);
       posterPublicUrl = posterData?.publicUrl ? normalizeStoragePublicUrl(posterData.publicUrl) : "";
       if (!posterPublicUrl) {
@@ -1135,41 +1425,79 @@ export async function POST(request: Request) {
     let thumbnailPublicUrl = "";
     if (imageThumbnailBlob) {
       thumbnailObjectPath = `${objectBasePath}-thumb.webp`;
+      const thumbnailAuthorizationError = await authorizeStorageWrite();
+      if (thumbnailAuthorizationError) {
+        await supabase.storage
+          .from(bucket)
+          .remove([objectPath, posterObjectPath].filter(Boolean))
+          .catch(() => undefined);
+        return thumbnailAuthorizationError;
+      }
       const uploadedThumbnail = await supabase.storage.from(bucket).upload(thumbnailObjectPath, imageThumbnailBlob, {
         contentType: "image/webp",
         upsert: false,
       });
       if (uploadedThumbnail.error) {
         console.warn("[asset-upload] image thumbnail upload failed", `${bucket}: ${uploadedThumbnail.error.message}`);
+        if (employeeBusinessRequest) {
+          await cleanupEmployeeBusinessAssetUploadObjects(
+            supabase.storage,
+            bucket,
+            writtenObjectPaths,
+            true,
+          );
+          uploadErrors.push(`${bucket}: thumbnail ${uploadedThumbnail.error.message}`);
+          continue;
+        }
         thumbnailObjectPath = "";
       } else {
+        writtenObjectPaths.push(thumbnailObjectPath);
         const { data: thumbnailData } = supabase.storage.from(bucket).getPublicUrl(thumbnailObjectPath);
         thumbnailPublicUrl = thumbnailData?.publicUrl ? normalizeStoragePublicUrl(thumbnailData.publicUrl) : "";
         if (!thumbnailPublicUrl) {
           console.warn("[asset-upload] image thumbnail public url unavailable", `${bucket}: ${thumbnailObjectPath}`);
+          if (employeeBusinessRequest) {
+            await cleanupEmployeeBusinessAssetUploadObjects(
+              supabase.storage,
+              bucket,
+              writtenObjectPaths,
+              true,
+            );
+            uploadErrors.push(`${bucket}: failed to resolve thumbnail public url`);
+            continue;
+          }
           thumbnailObjectPath = "";
         }
       }
     }
     const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
     if (data?.publicUrl) {
-      return NextResponse.json({
-        ok: true,
+      return NextResponse.json(buildAssetUploadSuccessBody({
         bucket,
         objectPath,
         url: normalizeStoragePublicUrl(data.publicUrl),
         ...(posterPublicUrl ? { posterUrl: posterPublicUrl, posterObjectPath } : {}),
         ...(thumbnailPublicUrl ? { thumbnailUrl: thumbnailPublicUrl, thumbnailObjectPath } : {}),
-      });
+      }, employeeBusinessRequest));
     }
     uploadErrors.push(`${bucket}: failed to resolve public url`);
+    await cleanupEmployeeBusinessAssetUploadObjects(
+      supabase.storage,
+      bucket,
+      writtenObjectPaths,
+      employeeBusinessRequest,
+    );
   }
 
   return NextResponse.json(
     {
       ok: false,
       code: "asset_upload_failed",
-      message: uploadErrors.join(" | ") || "Asset upload failed.",
+      message: buildAssetUploadFailureMessage(
+        uploadErrors,
+        "Asset upload failed.",
+        employeeBusinessRequest,
+      ),
     },
     { status: 409 },
   );

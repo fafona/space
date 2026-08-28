@@ -36,6 +36,16 @@ import {
 } from "@/lib/merchantCatalog";
 import type { ProductItemInput } from "@/lib/productBlock";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import {
+  createMerchantOrderApiRequest,
+  hasMerchantOrderFrontendPermission,
+  isMerchantOrderEmployeeFrontend,
+} from "@/lib/merchantOrderFrontendAccess";
 
 export type MerchantCatalogLeaveState = "clean" | "draft" | "busy" | "uploaded_uncommitted";
 
@@ -45,6 +55,9 @@ export type MerchantCatalogManagerPanelProps = {
   catalogTarget?: MerchantCatalogTarget | null;
   onChanged?: () => void | Promise<void>;
   onLeaveStateChange?: (state: MerchantCatalogLeaveState) => void;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
 };
 
 type CatalogApiPayload = {
@@ -992,13 +1005,42 @@ function LoadingSkeleton({ darkMode }: { darkMode: boolean }) {
   );
 }
 
+const requestOwnerCatalogApi: MerchantBusinessApiClient = (path, init) =>
+  fetch(path, init);
+
 export default function MerchantCatalogManagerPanel({
   siteId,
   darkMode = false,
   catalogTarget = null,
   onChanged,
   onLeaveStateChange,
+  apiClient,
+  cachePolicy,
+  permissions,
 }: MerchantCatalogManagerPanelProps) {
+  const employeeCatalogMode = isMerchantOrderEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const canViewCatalog = hasMerchantOrderFrontendPermission(
+    permissions,
+    "orders.catalog.view",
+  );
+  const canManageCatalog = hasMerchantOrderFrontendPermission(
+    permissions,
+    "orders.catalog.manage",
+  );
+  const employeeCatalogBlocked = employeeCatalogMode && !canViewCatalog;
+  const requestCatalogApi = useMemo(
+    () =>
+      createMerchantOrderApiRequest({
+        apiClient,
+        employeeMode: employeeCatalogMode,
+        ownerFetch: requestOwnerCatalogApi,
+      }),
+    [apiClient, employeeCatalogMode],
+  );
   const categoryListId = useId();
   const productImportPreviewTitleId = useId();
   const productImageImportPreviewTitleId = useId();
@@ -1156,6 +1198,7 @@ export default function MerchantCatalogManagerPanel({
   );
 
   const leaveState = useMemo<MerchantCatalogLeaveState>(() => {
+    if (!canManageCatalog) return "clean";
     if (Boolean(actingKey) || bootstrapPreviewing || productImportReading || productImageImportUploading || productImageUploading) return "busy";
     if (productImageUpload || (productImageImportDraft?.uploadedEntries.length ?? 0) > 0) {
       return "uploaded_uncommitted";
@@ -1180,6 +1223,7 @@ export default function MerchantCatalogManagerPanel({
     bootstrapPreview,
     bootstrapPreviewing,
     bootstrapResolutionDraft,
+    canManageCatalog,
     catalog,
     categoryDraft,
     collectionDraft,
@@ -1233,6 +1277,11 @@ export default function MerchantCatalogManagerPanel({
 
   const loadCatalog = useCallback(async (signal?: AbortSignal) => {
     const normalizedSiteId = siteId.trim();
+    if (employeeCatalogBlocked) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     if (activeSiteIdRef.current !== normalizedSiteId) return;
     clearBootstrapResolutionState();
     const siteVersion = activeSiteVersionRef.current;
@@ -1257,7 +1306,7 @@ export default function MerchantCatalogManagerPanel({
     setRefreshing(hasCatalogState);
     try {
       const query = new URLSearchParams({ siteId: normalizedSiteId });
-      const response = await fetch(`/api/orders/catalog?${query.toString()}`, {
+      const response = await requestCatalogApi(`/api/orders/catalog?${query.toString()}`, {
         method: "GET",
         cache: "no-store",
         signal,
@@ -1298,7 +1347,7 @@ export default function MerchantCatalogManagerPanel({
         setRefreshing(false);
       }
     }
-  }, [clearBootstrapResolutionState, siteId]);
+  }, [clearBootstrapResolutionState, employeeCatalogBlocked, requestCatalogApi, siteId]);
 
   useEffect(() => {
     catalogRef.current = null;
@@ -1381,6 +1430,7 @@ export default function MerchantCatalogManagerPanel({
 
   const runMutation = useCallback(
     async (key: string, mutation: CatalogMutation, successMessage: string, baseRevision?: number) => {
+      if (!canManageCatalog) return false;
       if (actingKeyRef.current || productImageUploadingRef.current) return false;
       const uncommittedProductImage = productImageUploadRef.current;
       if (
@@ -1404,7 +1454,7 @@ export default function MerchantCatalogManagerPanel({
       setRevisionConflict("");
       setNotice("");
       try {
-        const response = await fetch("/api/orders/catalog", {
+        const response = await requestCatalogApi("/api/orders/catalog", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -1482,7 +1532,16 @@ export default function MerchantCatalogManagerPanel({
         }
       }
     },
-    [clearBootstrapPreview, clearBootstrapResolutionState, clearProductImportDraft, loadCatalog, onChanged, siteId],
+    [
+      clearBootstrapPreview,
+      clearBootstrapResolutionState,
+      clearProductImportDraft,
+      canManageCatalog,
+      loadCatalog,
+      onChanged,
+      requestCatalogApi,
+      siteId,
+    ],
   );
 
   const readProductImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1821,6 +1880,10 @@ export default function MerchantCatalogManagerPanel({
                 operationModule: "订单工作台 > 商品目录",
                 operationAction: "批量上传商品图片",
                 operationSummary: `在订单工作台按商品编码上传图片 ${row.fileName}`,
+              },
+              {
+                apiClient: requestCatalogApi,
+                businessPurpose: "order-catalog",
               },
             );
             if (!uploaded?.url) throw new Error("图片上传失败，请稍后重试。");
@@ -2178,6 +2241,10 @@ export default function MerchantCatalogManagerPanel({
           operationAction: "上传单商品图片",
           operationSummary: `在订单工作台上传商品图片 ${file.name}`,
         },
+        {
+          apiClient: requestCatalogApi,
+          businessPurpose: "order-catalog",
+        },
       );
       if (!uploaded?.url) throw new Error("图片上传失败，请稍后重试。");
       if (!uploadIdentityIsActive()) return;
@@ -2393,7 +2460,7 @@ export default function MerchantCatalogManagerPanel({
       activeSiteVersionRef.current === previewSiteVersion &&
       bootstrapFingerprintRef.current === sourceFingerprint;
     try {
-      const response = await fetch("/api/orders/catalog", {
+      const response = await requestCatalogApi("/api/orders/catalog", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -2542,6 +2609,90 @@ export default function MerchantCatalogManagerPanel({
   const inputClassName = darkMode
     ? "border-slate-600 bg-slate-950 text-slate-100 placeholder:text-slate-600 focus:border-sky-400 focus:ring-sky-400/20"
     : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-sky-500/15";
+
+  if (employeeCatalogBlocked) {
+    return (
+      <div
+        className={`rounded-2xl border border-dashed px-5 py-10 text-center text-sm ${
+          darkMode
+            ? "border-slate-700 bg-slate-900/80 text-slate-300"
+            : "border-slate-200 bg-slate-50 text-slate-600"
+        }`}
+        data-employee-catalog="blocked"
+      >
+        当前员工角色没有查看商品目录的权限。
+      </div>
+    );
+  }
+
+  if (employeeCatalogMode && canViewCatalog && !canManageCatalog) {
+    return (
+      <div
+        className={`space-y-4 ${shellClassName}`}
+        aria-busy={loading || refreshing}
+        data-employee-catalog="read-only"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold sm:text-lg">商品目录</h3>
+            <p className={`mt-1 text-xs leading-5 sm:text-sm ${mutedTextClassName}`}>
+              当前角色为只读权限，可查看商品、价格和可售状态。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={requestCatalogRefresh}
+            disabled={loading || refreshing}
+            className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${secondaryButtonClassName}`}
+          >
+            <RefreshIcon spinning={refreshing} />
+            {refreshing ? "同步中" : "刷新目录"}
+          </button>
+        </div>
+
+        {error ? (
+          <div role="alert" className={`rounded-2xl border px-4 py-3 text-sm ${surfaceClassName}`}>
+            {error}
+          </div>
+        ) : null}
+        {loading && !catalog ? <LoadingSkeleton darkMode={darkMode} /> : null}
+        {!loading && !catalog && !error ? (
+          <div className={`rounded-2xl border px-5 py-8 text-center text-sm ${surfaceClassName}`}>
+            当前商户尚未建立经营目录；建立目录需要“管理商品经营目录”权限。
+          </div>
+        ) : null}
+        {catalog ? (
+          <div className="space-y-3">
+            <div className={`rounded-2xl border px-4 py-3 text-xs ${surfaceClassName}`}>
+              共 {catalog.products.length} 个商品 · 修订版 {catalog.revision}
+            </div>
+            {catalog.products.map((product) => (
+              <article
+                key={product.id}
+                className={`rounded-2xl border px-4 py-3 ${surfaceClassName}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold">{product.name || product.id}</div>
+                    <div className={`mt-1 text-xs ${mutedTextClassName}`}>
+                      {product.code || product.id}
+                      {product.description ? ` · ${product.description}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getAvailabilityClass(product.availability, darkMode)}`}>
+                      {getAvailabilityLabel(product.availability)}
+                    </span>
+                    <strong>{catalog.pricePrefix}{product.price}</strong>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className={`space-y-5 ${shellClassName}`} aria-busy={loading || refreshing}>

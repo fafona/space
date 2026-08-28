@@ -9,11 +9,31 @@ import {
   formatMerchantOrderAmount,
   isMerchantOrderNewForMerchant,
   isMerchantOrderPendingMerchantTouch,
+  merchantOrderTransitionChangesCompletedState,
   normalizeMerchantOrderLineItems,
   normalizeMerchantOrderRecord,
   parseMerchantOrderPriceValue,
   updateMerchantOrderItems,
 } from "@/lib/merchantOrders";
+
+test("completed-state transition detection covers entry and exit", () => {
+  assert.equal(
+    merchantOrderTransitionChangesCompletedState("pending", "confirmed"),
+    false,
+  );
+  assert.equal(
+    merchantOrderTransitionChangesCompletedState("confirmed", "completed"),
+    true,
+  );
+  assert.equal(
+    merchantOrderTransitionChangesCompletedState("completed", "confirmed"),
+    true,
+  );
+  assert.equal(
+    merchantOrderTransitionChangesCompletedState("completed", "completed"),
+    false,
+  );
+});
 
 test("assertMerchantOrderExpectedUpdatedAt accepts the current version and rejects stale versions", () => {
   const record = { updatedAt: "2026-08-17T12:00:00.000Z" };

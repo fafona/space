@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   isMerchantEnterpriseSchemaMissingError,
+  isMerchantEnterpriseVersion,
   MAX_MERCHANT_TASK_CHECKLIST_ITEMS,
   MAX_MERCHANT_TASK_CHECKLIST_TEXT_LENGTH,
   MAX_MERCHANT_TASK_ASSIGNEES,
@@ -16,7 +17,6 @@ import {
   normalizeMerchantEnterpriseAuditTimestamp,
   normalizeMerchantEnterpriseEmployee,
   normalizeMerchantEnterpriseNotification,
-  normalizeMerchantEnterprisePermissions,
   normalizeMerchantEnterpriseRole,
   normalizeMerchantEnterpriseWorkflow,
   parseMerchantEnterpriseWorkflowStepsStrict,
@@ -1681,7 +1681,7 @@ export async function createMerchantEnterpriseRole(
     siteId: string;
     name: string;
     description?: string;
-    permissions?: unknown;
+    permissions: MerchantEnterprisePermission[];
     accessScope: MerchantEnterpriseBoardAccessScope;
     allowedBoardIds: string[];
     actorType: "owner" | "employee";
@@ -1695,12 +1695,12 @@ export async function createMerchantEnterpriseRole(
   if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
     throw new Error("invalid_role_actor");
   }
-  const result = await client.rpc("faolla_create_merchant_enterprise_role_v2", {
+  const result = await client.rpc("faolla_create_merchant_enterprise_role_v3", {
     p_input: {
       merchant_id: siteId,
       name,
       description: normalizeText(input.description, 1000),
-      permissions: normalizeMerchantEnterprisePermissions(input.permissions),
+      permissions: input.permissions,
       access_scope: input.accessScope,
       allowed_board_ids: input.accessScope === "all" ? [] : input.allowedBoardIds,
       actor_type: input.actorType,
@@ -1719,7 +1719,7 @@ export async function updateMerchantEnterpriseRole(
     version: number;
     name?: string;
     description?: string;
-    permissions?: unknown;
+    permissions?: MerchantEnterprisePermission[];
     accessScope?: MerchantEnterpriseBoardAccessScope;
     allowedBoardIds?: string[];
     status?: "active" | "archived";
@@ -1730,11 +1730,14 @@ export async function updateMerchantEnterpriseRole(
   const siteId = normalizeText(input.siteId, 80);
   const roleId = normalizeText(input.roleId, 80);
   const actorId = normalizeText(input.actorId, 120);
+  if (!isMerchantEnterpriseVersion(input.version)) {
+    throw new Error("invalid_role_version");
+  }
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = normalizeText(input.name, 80);
   if (input.description !== undefined) patch.description = normalizeText(input.description, 1000);
   if (input.permissions !== undefined) {
-    patch.permissions = normalizeMerchantEnterprisePermissions(input.permissions);
+    patch.permissions = input.permissions;
   }
   if (input.accessScope !== undefined) {
     patch.access_scope = input.accessScope;
@@ -1746,11 +1749,11 @@ export async function updateMerchantEnterpriseRole(
   if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
     throw new Error("invalid_role_actor");
   }
-  const result = await client.rpc("faolla_update_merchant_enterprise_role_v2", {
+  const result = await client.rpc("faolla_update_merchant_enterprise_role_v3", {
     p_input: {
       merchant_id: siteId,
       role_id: roleId,
-      expected_version: Math.max(1, Math.round(Number(input.version) || 1)),
+      expected_version: input.version,
       actor_type: input.actorType,
       actor_id: actorId,
       ...patch,

@@ -17,7 +17,19 @@ import {
 } from "@/lib/merchantOrders.server";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+  reauthorizeMerchantBusinessMutation,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
+import {
+  getMerchantOrderMutationRequiredPermissions,
+  redactMerchantOrderForBusinessActor,
+  redactMerchantOrdersForBusinessActor,
+} from "@/lib/merchantBusinessOrderPermissions";
+import { readUniqueMerchantBusinessSiteId } from "@/lib/merchantBusinessRequest";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
 import { hashPersonalGuestMergeToken } from "@/lib/personalGuestMerge.server";
@@ -44,7 +56,7 @@ import { loadMerchantCatalog } from "@/lib/merchantCatalogStore";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const PRIVATE_ORDER_GET_RESPONSE_HEADERS = {
+const PRIVATE_ORDER_RESPONSE_HEADERS = {
   "Cache-Control": "private, no-store",
   Pragma: "no-cache",
   "X-Content-Type-Options": "nosniff",
@@ -53,7 +65,15 @@ const PRIVATE_ORDER_GET_RESPONSE_HEADERS = {
 } as const;
 
 export type MerchantOrdersGetRouteDependencies = {
-  resolveAdminSession: (request: Request, siteId: string) => Promise<{ merchantId: string } | null>;
+  resolveAdminSession: (
+    request: Request,
+    siteId: string,
+    requiredPermissions: readonly MerchantStaffBusinessPermission[],
+  ) => Promise<{
+    merchantId: string;
+    actor?: MerchantBusinessActor;
+    assertAuthorizationCurrent?: () => Promise<void>;
+  } | null>;
   isManagementEnabled: (siteId: string) => Promise<boolean>;
   getOrder: typeof getMerchantOrderBySite;
   listOrders: typeof listMerchantOrders;
@@ -81,12 +101,36 @@ export type MerchantOrderPatchRouteDependencies = {
   updateOrdersBatch: typeof updateMerchantOrdersBatchBySite;
 };
 
-async function resolveOrderAdminSession(request: Request, siteId: string) {
-  const session = await resolveMerchantSessionFromRequest(request, {
-    hintedMerchantId: siteId,
+async function resolveOrderAdminSession(
+  request: Request,
+  siteId: string,
+  requiredPermissions: readonly MerchantStaffBusinessPermission[],
+) {
+  const firstPermission = requiredPermissions[0];
+  if (!firstPermission) {
+    throw new MerchantBusinessAccessError("invalid_business_permission", 500);
+  }
+  const actor = await authorizeMerchantBusinessRequest(request, {
+    siteId,
+    requiredPermission: firstPermission,
   });
-  if (!session || session.merchantId !== siteId) return null;
-  return session;
+  if (
+    requiredPermissions.some(
+      (permission) => !actor.businessPermissions.includes(permission),
+    )
+  ) {
+    throw new MerchantBusinessAccessError("permission_denied", 403);
+  }
+  return {
+    merchantId: actor.siteId,
+    actor,
+    assertAuthorizationCurrent: async () => {
+      await reauthorizeMerchantBusinessMutation(request, {
+        actor,
+        requiredPermissions,
+      });
+    },
+  };
 }
 
 async function isOrderManagementEnabled(siteId: string) {
@@ -222,11 +266,18 @@ function isFreshQuoteCatalogChange(error: unknown) {
   );
 }
 
-function privateOrderGetJson(body: unknown, status = 200) {
+function privateOrderJson(body: unknown, status = 200) {
   return NextResponse.json(body, {
     status,
-    headers: PRIVATE_ORDER_GET_RESPONSE_HEADERS,
+    headers: PRIVATE_ORDER_RESPONSE_HEADERS,
   });
+}
+
+function applyPrivateOrderHeaders(response: Response) {
+  Object.entries(PRIVATE_ORDER_RESPONSE_HEADERS).forEach(([name, value]) => {
+    response.headers.set(name, value);
+  });
+  return response;
 }
 
 export async function handleMerchantOrdersGet(
@@ -237,9 +288,12 @@ export async function handleMerchantOrdersGet(
   try {
     const { searchParams } = new URL(request.url);
     if (searchParams.get("scope")?.trim() === "personal") {
+      if (request.headers.has("x-merchant-access-token")) {
+        return privateOrderJson({ error: "business_scope_required" }, 403);
+      }
       const session = await dependencies.resolvePersonalSession(request);
       if (!session) {
-        return privateOrderGetJson({ error: "unauthorized" }, 401);
+        return privateOrderJson({ error: "unauthorized" }, 401);
       }
       const orders = await dependencies.listPersonalOrders({
         accountId: session.accountId,
@@ -247,45 +301,65 @@ export async function handleMerchantOrdersGet(
         email: session.email,
       });
       const merchantContacts = await dependencies.buildPersonalContacts(orders.map((order) => order.siteId));
-      return privateOrderGetJson({ ok: true, orders, merchantContacts });
+      return privateOrderJson({ ok: true, orders, merchantContacts });
     }
 
-    const siteId = searchParams.get("siteId")?.trim() ?? "";
-    if (!isMerchantNumericId(siteId)) {
-      return privateOrderGetJson({ error: "invalid_site_id" }, 400);
+    const siteId = readUniqueMerchantBusinessSiteId(request.url);
+    if (!siteId) {
+      return privateOrderJson({ error: "invalid_site_id" }, 400);
     }
-    const session = await dependencies.resolveAdminSession(request, siteId);
+    const session = await dependencies.resolveAdminSession(request, siteId, [
+      "orders.view",
+    ]);
     if (!session) {
-      return privateOrderGetJson({ error: "unauthorized" }, 401);
+      return privateOrderJson({ error: "unauthorized" }, 401);
     }
     if (!(await dependencies.isManagementEnabled(siteId))) {
-      return privateOrderGetJson({ error: "order_management_disabled" }, 403);
+      return privateOrderJson({ error: "order_management_disabled" }, 403);
     }
     const orderId = searchParams.get("orderId")?.trim() ?? "";
     if (orderId) {
       const order = await dependencies.getOrder(siteId, orderId);
       if (!order) {
-        return privateOrderGetJson({ error: "order_not_found" }, 404);
+        return privateOrderJson({ error: "order_not_found" }, 404);
       }
-      return privateOrderGetJson({ ok: true, order });
+      return privateOrderJson({
+        ok: true,
+        order: session.actor
+          ? redactMerchantOrderForBusinessActor(order, session.actor)
+          : order,
+      });
     }
     if (searchParams.has("offset") || searchParams.has("limit")) {
       const windowedOrders = await dependencies.listOrdersWindow(siteId, {
         offset: normalizeOrderListOffset(searchParams.get("offset")),
         limit: normalizeOrderListLimit(searchParams.get("limit")),
       });
-      return privateOrderGetJson({
+      return privateOrderJson({
         ok: true,
-        orders: windowedOrders?.orders ?? [],
+        orders: session.actor
+          ? redactMerchantOrdersForBusinessActor(
+              windowedOrders?.orders ?? [],
+              session.actor,
+            )
+          : windowedOrders?.orders ?? [],
         offset: windowedOrders?.offset ?? 0,
         limit: windowedOrders?.limit ?? normalizeOrderListLimit(searchParams.get("limit")),
         hasMore: Boolean(windowedOrders?.hasMore),
       });
     }
     const orders = await dependencies.listOrders(siteId);
-    return privateOrderGetJson({ ok: true, orders });
+    return privateOrderJson({
+      ok: true,
+      orders: session.actor
+        ? redactMerchantOrdersForBusinessActor(orders, session.actor)
+        : orders,
+    });
   } catch (error) {
-    return privateOrderGetJson(
+    if (error instanceof MerchantBusinessAccessError) {
+      return privateOrderJson({ error: error.code }, error.status);
+    }
+    return privateOrderJson(
       {
         error: "order_list_failed",
         message: getMerchantOrderErrorMessage(error),
@@ -304,8 +378,11 @@ export async function handleMerchantOrderPost(
   dependencyOverrides: Partial<MerchantOrderPostRouteDependencies> = {},
 ) {
   const dependencies = { ...DEFAULT_POST_DEPENDENCIES, ...dependencyOverrides };
+  if (request.headers.has("x-merchant-access-token")) {
+    return privateOrderJson({ error: "business_scope_required" }, 403);
+  }
   if (!isTrustedSameOriginMutationRequest(request)) {
-    return getTrustedMutationRequestErrorResponse();
+    return applyPrivateOrderHeaders(getTrustedMutationRequestErrorResponse());
   }
   try {
     const body = (await request.json()) as Partial<MerchantOrderCreateInput> & {
@@ -316,7 +393,7 @@ export async function handleMerchantOrderPost(
     };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
-      return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+      return privateOrderJson({ error: "invalid_site_id" }, 400);
     }
     const catalogViewport =
       body.catalogViewport === "mobile" || body.catalogViewport === "desktop"
@@ -330,13 +407,13 @@ export async function handleMerchantOrderPost(
       dependencies.loadPublishedSite(siteId, { fresh: true }),
     ]);
     if (!snapshotSite?.permissionConfig?.allowProductBlock || !snapshotSite.permissionConfig.allowOrderManagement) {
-      return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
+      return privateOrderJson({ error: "order_management_disabled" }, 403);
     }
     const blockId = String(body.blockId ?? "").trim();
     if (!publishedSite?.blocks?.length) {
-      return NextResponse.json(
+      return privateOrderJson(
         { error: "order_catalog_unavailable", message: getMerchantOrderErrorMessage("order_catalog_unavailable") },
-        { status: 503 },
+        503,
       );
     }
     const operatingCollection = operatingCatalog
@@ -501,14 +578,14 @@ export async function handleMerchantOrderPost(
 
     await dependencies.notifyOrderCreated(siteId, order);
 
-    return NextResponse.json({ ok: true, order });
+    return privateOrderJson({ ok: true, order });
   } catch (error) {
-    return NextResponse.json(
+    return privateOrderJson(
       {
         error: "order_create_failed",
         message: getMerchantOrderErrorMessage(error),
       },
-      { status: getOrderApiErrorStatus(error) },
+      getOrderApiErrorStatus(error),
     );
   }
 }
@@ -522,7 +599,7 @@ export async function handleMerchantOrderPatch(
   dependencyOverrides: Partial<MerchantOrderPatchRouteDependencies> = {},
 ) {
   if (!isTrustedSameOriginMutationRequest(request)) {
-    return getTrustedMutationRequestErrorResponse();
+    return applyPrivateOrderHeaders(getTrustedMutationRequestErrorResponse());
   }
   const dependencies = { ...DEFAULT_PATCH_DEPENDENCIES, ...dependencyOverrides };
   try {
@@ -542,11 +619,14 @@ export async function handleMerchantOrderPatch(
     );
 
     if (String(body?.scope ?? "").trim() === "personal" && body?.action === "cancel") {
+      if (request.headers.has("x-merchant-access-token")) {
+        return privateOrderJson({ error: "business_scope_required" }, 403);
+      }
       if (!isMerchantNumericId(siteId)) {
-        return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+        return privateOrderJson({ error: "invalid_site_id" }, 400);
       }
       const session = await dependencies.resolvePersonalSession(request);
-      if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      if (!session) return privateOrderJson({ error: "unauthorized" }, 401);
       const order = await dependencies.cancelPersonalOrder({
         siteId,
         orderId: String(body?.orderId ?? "").trim(),
@@ -554,37 +634,63 @@ export async function handleMerchantOrderPatch(
         userId: session.userId,
         email: session.email,
       });
-      return NextResponse.json({ ok: true, order });
+      return privateOrderJson({ ok: true, order });
     }
 
     if (!isMerchantNumericId(siteId)) {
-      return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+      return privateOrderJson({ error: "invalid_site_id" }, 400);
     }
-    const session = await dependencies.resolveAdminSession(request, siteId);
+    const requiredPermissions = getMerchantOrderMutationRequiredPermissions({
+      action: body?.action,
+      status: body?.status,
+      items: body?.items,
+    });
+    if (!requiredPermissions) {
+      return privateOrderJson(
+        { error: "invalid_order_action" },
+        400,
+      );
+    }
+    const session = await dependencies.resolveAdminSession(
+      request,
+      siteId,
+      requiredPermissions,
+    );
     if (!session) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      return privateOrderJson({ error: "unauthorized" }, 401);
     }
     if (!(await dependencies.isManagementEnabled(siteId))) {
-      return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
+      return privateOrderJson({ error: "order_management_disabled" }, 403);
     }
+    const allowCompletedTransition =
+      !session.actor ||
+      session.actor.type === "owner" ||
+      session.actor.businessPermissions.includes("orders.complete");
     const items = Array.isArray(body?.items) ? body.items : null;
     const action = normalizeOrderAction(body?.action);
     const status = normalizeOrderStatus(body?.status);
     const orderIds = Array.isArray(body?.orderIds) ? body.orderIds.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
     if (orderIds.length > 0) {
       if (items || hasExpectedUpdatedAt || (!status && !action) || action === "print" || action === "touch") {
-        return NextResponse.json({ error: "invalid_order_action" }, { status: 400 });
+        return privateOrderJson({ error: "invalid_order_action" }, 400);
       }
       const orders = await dependencies.updateOrdersBatch({
         siteId,
         orderIds,
         action: status ? undefined : action ?? undefined,
         status: status ?? undefined,
+        allowCompletedTransition,
+        assertAuthorizationCurrent: session.assertAuthorizationCurrent,
       });
-      return NextResponse.json({ ok: true, orders });
+      return privateOrderJson({
+        ok: true,
+        orders: session.actor
+          ? redactMerchantOrdersForBusinessActor(orders, session.actor)
+          : orders,
+      });
     }
     if (!items && !action && !status) {
-      return NextResponse.json({ error: "invalid_order_action" }, { status: 400 });
+      return privateOrderJson({ error: "invalid_order_action" }, 400);
     }
     const order = await dependencies.updateOrder({
       siteId,
@@ -593,16 +699,29 @@ export async function handleMerchantOrderPatch(
       status: status ?? undefined,
       items: items ?? undefined,
       ...(hasExpectedUpdatedAt ? { expectedUpdatedAt: body?.expectedUpdatedAt } : {}),
+      allowCompletedTransition,
+      assertAuthorizationCurrent: session.assertAuthorizationCurrent,
     });
-    return NextResponse.json({ ok: true, order });
+    return privateOrderJson({
+      ok: true,
+      order: session.actor
+        ? redactMerchantOrderForBusinessActor(order, session.actor)
+        : order,
+    });
   } catch (error) {
+    if (error instanceof MerchantBusinessAccessError) {
+      return privateOrderJson({ error: error.code }, error.status);
+    }
     const code = error instanceof Error ? error.message : trimText(error);
-    return NextResponse.json(
+    if (code === "permission_denied") {
+      return privateOrderJson({ error: code }, 403);
+    }
+    return privateOrderJson(
       {
         error: code === "order_update_conflict" ? code : "order_update_failed",
         message: getMerchantOrderErrorMessage(error),
       },
-      { status: getOrderApiErrorStatus(error) },
+      getOrderApiErrorStatus(error),
     );
   }
 }

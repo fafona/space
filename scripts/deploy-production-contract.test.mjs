@@ -121,6 +121,9 @@ const DEPLOY_PAYLOAD_KEYS = [
   "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64",
   "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64",
   "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS",
+  "MERCHANT_STAFF_BUSINESS_RBAC_MODE",
+  "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS",
+  "FAOLLA_CANONICAL_PORTAL_ORIGIN",
   "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED",
   "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE",
   "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED",
@@ -461,6 +464,9 @@ function earlyDeployValues(appDirectory, overrides = {}) {
     APP_PORT: "3000",
     APP_BRANCH: "main",
     EXPECTED_DEPLOY_SHA: FIXTURE_TARGET_SHA,
+    MERCHANT_STAFF_BUSINESS_RBAC_MODE: "off",
+    MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
+    FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
     MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
     MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
@@ -538,6 +544,9 @@ async function runDeployTransportScenario({
     GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64: emptyBase64,
     GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64: emptyBase64,
     GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS: "",
+    MERCHANT_STAFF_BUSINESS_RBAC_MODE: "off",
+    MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
+    FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
     MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
     MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
@@ -704,6 +713,9 @@ sleep() { :; }
       GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64: emptyBase64,
       GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64: emptyBase64,
       GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS: "",
+      MERCHANT_STAFF_BUSINESS_RBAC_MODE: "off",
+      MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
+      FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
       MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
       MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
       MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
@@ -1325,6 +1337,9 @@ test("remote deploy consumes one exact payload file and erases it before validat
     APP_PORT: "3000",
     APP_BRANCH: "main",
     EXPECTED_DEPLOY_SHA: "a".repeat(40),
+    MERCHANT_STAFF_BUSINESS_RBAC_MODE: "off",
+    MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
+    FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
     SUPER_ADMIN_PASSWORD: hostileSecret,
   });
   await writeFile(
@@ -1487,6 +1502,9 @@ test("a moving main ref fails before production config or caches are mutated", a
     APP_PORT: "3000",
     APP_BRANCH: "main",
     EXPECTED_DEPLOY_SHA: "a".repeat(40),
+    MERCHANT_STAFF_BUSINESS_RBAC_MODE: "off",
+    MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
+    FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: "false",
     MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE: "legacy",
     MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: "false",
@@ -2108,7 +2126,7 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
-  assert.equal(deployNodeSources.length, 15);
+  assert.equal(deployNodeSources.length, 16);
   for (const [index, source] of deployNodeSources.entries()) {
     const result = spawnSync(
       process.execPath,
@@ -2658,8 +2676,8 @@ test("nested backup evidence is re-fetched and exact-five validated immediately 
   assert.match(deployWorkflow, /readinessValidUntil\.milliseconds - Date\.now\(\) < 6_000_000/);
 });
 
-test("verified readiness bytes and artifact references ride inside the V2 payload without changing 35 deploy values", () => {
-  assert.equal(DEPLOY_PAYLOAD_KEYS.length, 35);
+test("verified readiness bytes and artifact references ride inside the V2 payload with the exact deploy values", () => {
+  assert.equal(DEPLOY_PAYLOAD_KEYS.length, 38);
   assert.match(deployWorkflow, /releaseAttestation = \{/);
   for (const field of [
     "repository",
@@ -3199,6 +3217,7 @@ test("missing process environment compatibility is exact-build-only and reconcil
   const presentValues = ["old-internal", "old-public", "old-anon"];
   const presentFrame = [
     "present",
+    "absent",
     "4242",
     ...presentValues.map((value) => Buffer.from(value).toString("base64")),
   ];
@@ -3206,43 +3225,50 @@ test("missing process environment compatibility is exact-build-only and reconcil
     {
       name: "known legacy build with all values absent",
       build: legacyBuild,
-      frame: ["absent", "4242"],
+      frame: ["absent", "absent", "4242"],
       expectedStatus: 0,
     },
     {
       name: "modern build with all values absent",
       build: "b".repeat(40),
-      frame: ["absent", "4242"],
+      frame: ["absent", "absent", "4242"],
       expectedStatus: 1,
     },
     {
       name: "unknown old build with all values absent",
       build: "c".repeat(40),
-      frame: ["absent", "4242"],
+      frame: ["absent", "absent", "4242"],
       expectedStatus: 1,
     },
     {
       name: "malformed absent frame",
       build: legacyBuild,
-      frame: ["absent", "4242", "unexpected"],
+      frame: ["absent", "absent", "4242", "unexpected"],
       expectedStatus: 1,
     },
     {
       name: "absent frame with invalid start ticks",
       build: legacyBuild,
-      frame: ["absent", "0"],
+      frame: ["absent", "absent", "0"],
       expectedStatus: 1,
     },
     {
       name: "present frame with invalid base64",
       build: "b".repeat(40),
-      frame: ["present", "4242", "not_base64", presentFrame[3], presentFrame[4]],
+      frame: [
+        "present",
+        "absent",
+        "4242",
+        "not_base64",
+        presentFrame[4],
+        presentFrame[5],
+      ],
       expectedStatus: 1,
     },
     {
       name: "present frame with missing field",
       build: "b".repeat(40),
-      frame: presentFrame.slice(0, 4),
+      frame: presentFrame.slice(0, 5),
       expectedStatus: 1,
     },
     {
@@ -3304,6 +3330,9 @@ test("missing process environment compatibility is exact-build-only and reconcil
     const script = [
       "set -euo pipefail",
       "PREVIOUS_PROCESS_ENVIRONMENT_STATUS=present",
+      "PREVIOUS_PROCESS_STAFF_ROLLOUT_STATUS=absent",
+      "PREVIOUS_STAFF_ROLLOUT_STATUS=legacy-off",
+      "MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
       `PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64='${encoded[0]}'`,
       `PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64='${encoded[1]}'`,
       `PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='${encoded[2]}'`,
@@ -3342,17 +3371,24 @@ test("rollback process launch receives the frozen previous Supabase environment"
     "PREVIOUS_SUPABASE_INTERNAL_URL=old-internal",
     "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL=old-public",
     "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY=old-anon",
+    "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+    "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+    "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+    "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
     "export SUPABASE_INTERNAL_URL=new-internal",
     "export NEXT_PUBLIC_SUPABASE_URL=new-public",
     "export NEXT_PUBLIC_SUPABASE_ANON_KEY=new-anon",
+    "export MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce",
+    "export MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=99999999",
+    "export FAOLLA_CANONICAL_PORTAL_ORIGIN=https://evil.example",
     "IDENTITY_OK=1",
     "previous_runtime_recovery_identity_matches() { [ \"$IDENTITY_OK\" = 1 ]; }",
     "start_release() {",
-    "  [ \"$1\" = /frozen/runtime ] && [ \"$SUPABASE_INTERNAL_URL\" = old-internal ] && [ \"$NEXT_PUBLIC_SUPABASE_URL\" = old-public ] && [ \"$NEXT_PUBLIC_SUPABASE_ANON_KEY\" = old-anon ] || return 1",
+    "  [ \"$1\" = /frozen/runtime ] && [ \"$2\" = off ] && [ -z \"$3\" ] && [ \"$4\" = https://launch.faolla.com ] && [ \"$5\" = 0 ] && [ \"$SUPABASE_INTERNAL_URL\" = old-internal ] && [ \"$NEXT_PUBLIC_SUPABASE_URL\" = old-public ] && [ \"$NEXT_PUBLIC_SUPABASE_ANON_KEY\" = old-anon ] || return 1",
     "  printf 'web\\n'",
     "}",
     "start_automation_worker_process() {",
-    "  [ \"$1\" = /frozen/runtime ] && [ \"$SUPABASE_INTERNAL_URL\" = old-internal ] && [ \"$NEXT_PUBLIC_SUPABASE_URL\" = old-public ] && [ \"$NEXT_PUBLIC_SUPABASE_ANON_KEY\" = old-anon ] || return 1",
+    "  [ \"$1\" = /frozen/runtime ] && [ \"$2\" = off ] && [ -z \"$3\" ] && [ \"$4\" = https://launch.faolla.com ] && [ \"$5\" = 0 ] && [ \"$SUPABASE_INTERNAL_URL\" = old-internal ] && [ \"$NEXT_PUBLIC_SUPABASE_URL\" = old-public ] && [ \"$NEXT_PUBLIC_SUPABASE_ANON_KEY\" = old-anon ] || return 1",
     "  printf 'worker\\n'",
     "}",
     "start_frozen_previous_release; web_status=$?",
@@ -3529,6 +3565,9 @@ test("PM2 owns the validated Next CLI process instead of an npm wrapper", async 
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-direct-next-pm2-"));
   const runtimeDirectory = join(temporaryDirectory, "release");
   const nextEntry = join(runtimeDirectory, "node_modules", "next", "dist", "bin", "next");
+  const rolloutValidation = extractShellFunction(
+    "staff_business_rollout_values_valid",
+  );
   const startFunction = extractShellFunction("start_release");
   assert.doesNotMatch(startFunction, /pm2 start npm/);
   assert.match(startFunction, /\[ ! -f "\$next_entry" \]/);
@@ -3554,6 +3593,7 @@ test("PM2 owns the validated Next CLI process instead of an npm wrapper", async 
       encoding: "utf8",
       input: [
         "set -euo pipefail",
+        rolloutValidation,
         startFunction,
         `RUNTIME='${runtimePath}'`,
         "APP_NAME=contract-web",
@@ -3567,7 +3607,7 @@ test("PM2 owns the validated Next CLI process instead of an npm wrapper", async 
         "  \"$@\"",
         "}",
         "pm2() { printf '%s\\n' \"$*\"; }",
-        "start_release \"$RUNTIME\"",
+        "start_release \"$RUNTIME\" off '' https://launch.faolla.com",
       ].join("\n"),
       timeout: 10_000,
     });
@@ -3584,6 +3624,163 @@ test("PM2 owns the validated Next CLI process instead of an npm wrapper", async 
     assert.doesNotMatch(result.stdout, /\bnpm\b/);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("candidate and rollback starts override inherited and stale PM2 staff rollout values", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-staff-rollout-pm2-environment-"),
+  );
+  const runtimeDirectory = join(temporaryDirectory, "release");
+  const nextEntry = join(
+    runtimeDirectory,
+    "node_modules",
+    "next",
+    "dist",
+    "bin",
+    "next",
+  );
+  const capturePath = join(temporaryDirectory, "pm2-environment.tsv");
+  const rolloutValidation = extractShellFunction(
+    "staff_business_rollout_values_valid",
+  );
+  const startFunction = extractShellFunction("start_release");
+  const previousStartFunction = extractShellFunction(
+    "start_frozen_previous_release",
+  );
+  try {
+    await mkdir(join(runtimeDirectory, ".next"), { recursive: true });
+    await mkdir(join(runtimeDirectory, "node_modules", "next", "dist", "bin"), {
+      recursive: true,
+    });
+    await writeFile(join(runtimeDirectory, "package.json"), "{}\n");
+    await writeFile(nextEntry, "#!/usr/bin/env node\n");
+    const script = [
+      "set -euo pipefail",
+      rolloutValidation,
+      startFunction,
+      previousStartFunction,
+      `RUNTIME='${toBashPath(runtimeDirectory)}'`,
+      `CAPTURE='${toBashPath(capturePath)}'`,
+      "APP_NAME=contract-web",
+      "APP_PORT=3210",
+      "RELEASE_PROCESS_START_TIMEOUT_SECONDS=30",
+      "PREVIOUS_RUNTIME_DIR=$RUNTIME",
+      "PREVIOUS_SUPABASE_INTERNAL_URL=old-internal",
+      "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL=old-public",
+      "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY=old-anon",
+      "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+      "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+      "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+      "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
+      "export MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce",
+      "export MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=99999999",
+      "export FAOLLA_CANONICAL_PORTAL_ORIGIN=https://evil.example",
+      "previous_runtime_recovery_identity_matches() { return 0; }",
+      "read_runtime_automation_worker_enabled() { printf '%s\\n' false; }",
+      "timeout() {",
+      "  while [ \"$#\" -gt 0 ]; do",
+      "    case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac",
+      "  done",
+      "  \"$@\"",
+      "}",
+      "pm2() {",
+      "  if [ -z \"${MERCHANT_STAFF_BUSINESS_RBAC_MODE+x}\" ]; then MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce; fi",
+      "  if [ -z \"${MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS+x}\" ]; then MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=88888888; fi",
+      "  if [ -z \"${FAOLLA_CANONICAL_PORTAL_ORIGIN+x}\" ]; then FAOLLA_CANONICAL_PORTAL_ORIGIN=https://stale.example; fi",
+      "  if [ -n \"${MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS+x}\" ]; then site_state=set:${MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS}; else site_state=unset; fi",
+      "  printf '%s\\t%s\\t%s\\t%s\\n' \"$MERCHANT_STAFF_BUSINESS_RBAC_MODE\" \"$site_state\" \"$FAOLLA_CANONICAL_PORTAL_ORIGIN\" \"$*\" >> \"$CAPTURE\"",
+      "}",
+      "start_frozen_previous_release",
+      "start_release \"$RUNTIME\" enforce 10000001,10000002 https://launch.faolla.com",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "");
+    const records = (await readFile(capturePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => line.split("\t").slice(0, 3));
+    assert.deepEqual(records, [
+      ["off", "set:", "https://launch.faolla.com"],
+      ["enforce", "set:10000001,10000002", "https://launch.faolla.com"],
+    ]);
+    assert.doesNotMatch(await readFile(capturePath, "utf8"), /evil|88888888|99999999|stale/);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("candidate rollout environment is proven before and after HTTP health", async () => {
+  const startIndex = deployScript.indexOf(
+    'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"',
+    deployScript.indexOf('if ! start_release "$RELEASE_DIR"'),
+  );
+  const endMarker =
+    'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"\n' +
+    'BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((';
+  const endIndex = deployScript.indexOf(endMarker, startIndex + 1);
+  assert.ok(startIndex >= 0 && endIndex > startIndex);
+  const candidateGate = deployScript
+    .slice(startIndex, endIndex)
+    .replaceAll("exit 1", "return 1");
+  const fixtures = [
+    {
+      name: "exact environment remains stable",
+      failAt: "none",
+      status: 0,
+      calls: ["rollout:1", "checkpoint", "fence-before", "health", "rollout:2", "checkpoint"],
+    },
+    {
+      name: "pre-health drift stops before HTTP",
+      failAt: "rollout:1",
+      status: 1,
+      calls: ["rollout:1"],
+    },
+    {
+      name: "post-health drift is rejected",
+      failAt: "rollout:2",
+      status: 1,
+      calls: ["rollout:1", "checkpoint", "fence-before", "health", "rollout:2"],
+    },
+  ];
+  for (const fixture of fixtures) {
+    const script = [
+      "set +e",
+      "candidate_gate() {",
+      candidateGate,
+      "}",
+      "CALLS=",
+      `FAIL_AT='${fixture.failAt}'`,
+      "APP_NAME=web",
+      "RELEASE_DIR=/release",
+      "CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce",
+      "CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=10000001",
+      "CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+      "FAOLLA_WEB_BUILD_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "HEALTHCHECK_ATTEMPTS=20",
+      "record() { if [ -n \"$CALLS\" ]; then CALLS=\"$CALLS,$1\"; else CALLS=\"$1\"; fi; }",
+      "ROLLOUT_CALLS=0",
+      "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ]; }",
+      "assert_readiness_fence_forward_checkpoint() { record checkpoint; return 0; }",
+      "assert_readiness_fence_before_forward_operation() { record fence-before; return 0; }",
+      "wait_for_release_health() { record health; return 0; }",
+      "candidate_gate >/dev/null 2>&1; status=$?",
+      "printf '%s\\n%s\\n' \"$status\" \"$CALLS\"",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${fixture.name}\n${result.stderr}`);
+    const [status, calls] = result.stdout.trimEnd().split("\n");
+    assert.equal(Number(status), fixture.status, fixture.name);
+    assert.deepEqual(calls ? calls.split(",") : [], fixture.calls, fixture.name);
   }
 });
 
@@ -3836,6 +4033,115 @@ test("PM2 state parsing and bounded deletion fail closed and prove the original 
     assert.equal(preservedInactive.stdout, "0\n1\n");
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("PM2 rollout metadata and the live process must independently match", () => {
+  const metadataFunction = extractShellFunction("pm2_rollout_environment_pid");
+  const rolloutValidation = extractShellFunction(
+    "staff_business_rollout_values_valid",
+  );
+  const verifierFunction = extractShellFunction(
+    "running_release_rollout_environment_matches",
+  );
+  const exactEntry = {
+    pid: 4321,
+    pm2_env: {
+      name: "web",
+      status: "online",
+      MERCHANT_STAFF_BUSINESS_RBAC_MODE: "off",
+      MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
+      FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
+    },
+  };
+  for (const fixture of [
+    { name: "exact metadata", json: [exactEntry], status: 0, output: "4321" },
+    {
+      name: "stale metadata mode",
+      json: [{ ...exactEntry, pm2_env: { ...exactEntry.pm2_env, MERCHANT_STAFF_BUSINESS_RBAC_MODE: "enforce" } }],
+      status: 1,
+      output: "",
+    },
+    {
+      name: "missing explicit empty allowlist",
+      json: [{
+        ...exactEntry,
+        pm2_env: Object.fromEntries(
+          Object.entries(exactEntry.pm2_env).filter(
+            ([key]) => key !== "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS",
+          ),
+        ),
+      }],
+      status: 1,
+      output: "",
+    },
+    { name: "duplicate app", json: [exactEntry, exactEntry], status: 1, output: "" },
+  ]) {
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        metadataFunction,
+        `PM2_JSON='${JSON.stringify(fixture.json)}'`,
+        "timeout() { while [ \"$#\" -gt 0 ]; do case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac; done; \"$@\"; }",
+        "pm2() { [ \"$1\" = jlist ] || return 1; printf '%s\\n' \"$PM2_JSON\"; }",
+        "output=$(pm2_rollout_environment_pid web off '' https://launch.faolla.com); status=$?",
+        "printf '%s\\n%s' \"$status\" \"$output\"",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    const [status, output = ""] = result.stdout.split("\n");
+    assert.equal(Number(status), fixture.status, fixture.name);
+    assert.equal(output, fixture.output, fixture.name);
+  }
+
+  const modeBase64 = Buffer.from("off").toString("base64");
+  const originBase64 = Buffer.from("https://launch.faolla.com").toString("base64");
+  const exactFrame = [
+    "present",
+    "present",
+    "4242",
+    Buffer.from("internal").toString("base64"),
+    Buffer.from("public").toString("base64"),
+    Buffer.from("anon").toString("base64"),
+    modeBase64,
+    "-",
+    originBase64,
+  ];
+  for (const fixture of [
+    { name: "metadata and process exact", status: 0 },
+    { name: "process rollout drift", processMode: Buffer.from("enforce").toString("base64"), status: 1 },
+    { name: "metadata PID drift", metadataPid: "9999", status: 1 },
+    { name: "restart after process read", restart: true, status: 1 },
+    { name: "start ticks drift", tickDrift: true, status: 1 },
+  ]) {
+    const frame = [...exactFrame];
+    if (fixture.processMode) frame[6] = fixture.processMode;
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        rolloutValidation,
+        verifierFunction,
+        "APP_DIR=/trusted",
+        `PROCESS_FRAME='${frame.join("|")}'`,
+        `METADATA_PID='${fixture.metadataPid ?? "4321"}'`,
+        `RESTART='${fixture.restart ? 1 : 0}'`,
+        `TICK_DRIFT='${fixture.tickDrift ? 1 : 0}'`,
+        "SNAPSHOT_COUNT_FILE=$(mktemp)",
+        "TICK_COUNT_FILE=$(mktemp)",
+        "trap 'rm -f -- \"$SNAPSHOT_COUNT_FILE\" \"$TICK_COUNT_FILE\"' EXIT",
+        "pm2_process_snapshot() { printf x >> \"$SNAPSHOT_COUNT_FILE\"; count=$(wc -c < \"$SNAPSHOT_COUNT_FILE\"); if [ \"$RESTART\" = 1 ] && [ \"$count\" -gt 1 ]; then printf '%s\\n' running:9999; else printf '%s\\n' running:4321; fi; }",
+        "linux_process_start_ticks() { printf x >> \"$TICK_COUNT_FILE\"; count=$(wc -c < \"$TICK_COUNT_FILE\"); if [ \"$TICK_DRIFT\" = 1 ] && [ \"$count\" -gt 1 ]; then printf '%s\\n' 4243; else printf '%s\\n' 4242; fi; }",
+        "pm2_rollout_environment_pid() { printf '%s\\n' \"$METADATA_PID\"; }",
+        "timeout() { while [ \"$#\" -gt 0 ]; do case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac; done; \"$@\"; }",
+        "node() { printf '%s\\n' \"${PROCESS_FRAME//|/$'\\n'}\"; }",
+        `running_release_rollout_environment_matches web /release off '' https://launch.faolla.com '' 0 '${exactFrame[3]}' '${exactFrame[4]}' '${exactFrame[5]}' >/dev/null 2>&1; status=$?`,
+        "printf '%s\\n' \"$status\"",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(Number(result.stdout.trim()), fixture.status, fixture.name);
   }
 });
 
@@ -4894,6 +5200,10 @@ test("booking persistence retries only status two across fully revalidated read-
     "CANDIDATE_SUPABASE_INTERNAL_URL_B64",
     "CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64",
     "CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+    "CANDIDATE_STAFF_ROLLOUT_STATUS",
+    "CANDIDATE_STAFF_MODE_B64",
+    "CANDIDATE_STAFF_SITE_IDS_B64",
+    "CANDIDATE_PORTAL_ORIGIN_B64",
     "CANDIDATE_BUILD_FILE_IDENTITY",
     "CANDIDATE_BUILD_FILE_SHA256",
     "CANDIDATE_WEB_PID",
@@ -4917,6 +5227,10 @@ test("booking persistence retries only status two across fully revalidated read-
     "CANDIDATE_SUPABASE_INTERNAL_URL_B64",
     "CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64",
     "CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
+    "CANDIDATE_STAFF_ROLLOUT_STATUS",
+    "CANDIDATE_STAFF_MODE_B64",
+    "CANDIDATE_STAFF_SITE_IDS_B64",
+    "CANDIDATE_PORTAL_ORIGIN_B64",
     "CANDIDATE_BUILD_FILE_IDENTITY",
     "CANDIDATE_BUILD_FILE_SHA256",
   ]) {
@@ -5044,7 +5358,10 @@ test("booking persistence retries only status two across fully revalidated read-
     "assert_readiness_fence_forward_checkpoint",
     'start_release "$RELEASE_DIR"',
     "assert_readiness_fence_forward_checkpoint",
+    "running_release_rollout_environment_matches",
+    "assert_readiness_fence_forward_checkpoint",
     'wait_for_release_health "$FAOLLA_WEB_BUILD_ID"',
+    "running_release_rollout_environment_matches",
     "assert_readiness_fence_forward_checkpoint",
     "capture_candidate_web_identity_for_booking_retry",
     "verify_booking_persistence_with_bounded_retry",
@@ -5120,6 +5437,11 @@ test("booking persistence retries only status two across fully revalidated read-
   const frozenInternalUrlBase64 = Buffer.from("http://internal.test").toString("base64");
   const frozenPublicUrlBase64 = Buffer.from("https://public.test").toString("base64");
   const frozenAnonKeyBase64 = Buffer.from("anon-contract-key").toString("base64");
+  const frozenStaffModeBase64 = Buffer.from("off").toString("base64");
+  const frozenStaffSiteIdsBase64 = "-";
+  const frozenPortalOriginBase64 = Buffer.from(
+    "https://launch.faolla.com",
+  ).toString("base64");
   const frozenBuildFileIdentity = "8:7:6:5:4:3:2:1";
   const frozenBuildFileSha256 = "b".repeat(64);
   const runFrozenState = (overrides = {}) => {
@@ -5130,13 +5452,21 @@ test("booking persistence retries only status two across fully revalidated read-
       environmentInternalUrlBase64: frozenInternalUrlBase64,
       environmentPublicUrlBase64: frozenPublicUrlBase64,
       environmentAnonKeyBase64: frozenAnonKeyBase64,
+      environmentRolloutStatus: "explicit",
+      environmentStaffModeBase64: frozenStaffModeBase64,
+      environmentStaffSiteIdsBase64: frozenStaffSiteIdsBase64,
+      environmentPortalOriginBase64: frozenPortalOriginBase64,
       buildFileIdentity: frozenBuildFileIdentity,
       buildFileSha256: frozenBuildFileSha256,
       processStatus: "present",
+      processRolloutStatus: "present",
       processStartTicks: "456",
       processInternalUrlBase64: frozenInternalUrlBase64,
       processPublicUrlBase64: frozenPublicUrlBase64,
       processAnonKeyBase64: frozenAnonKeyBase64,
+      processStaffModeBase64: frozenStaffModeBase64,
+      processStaffSiteIdsBase64: frozenStaffSiteIdsBase64,
+      processPortalOriginBase64: frozenPortalOriginBase64,
       ...overrides,
     };
     const result = spawnSync(resolveBashExecutable(), ["-s"], {
@@ -5166,6 +5496,10 @@ test("booking persistence retries only status two across fully revalidated read-
         `CANDIDATE_SUPABASE_INTERNAL_URL_B64='${frozenInternalUrlBase64}'`,
         `CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64='${frozenPublicUrlBase64}'`,
         `CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64='${frozenAnonKeyBase64}'`,
+        "CANDIDATE_STAFF_ROLLOUT_STATUS=explicit",
+        `CANDIDATE_STAFF_MODE_B64='${frozenStaffModeBase64}'`,
+        `CANDIDATE_STAFF_SITE_IDS_B64='${frozenStaffSiteIdsBase64}'`,
+        `CANDIDATE_PORTAL_ORIGIN_B64='${frozenPortalOriginBase64}'`,
         `CANDIDATE_BUILD_FILE_IDENTITY='${frozenBuildFileIdentity}'`,
         `CANDIDATE_BUILD_FILE_SHA256='${frozenBuildFileSha256}'`,
         "CANDIDATE_WEB_PID=123",
@@ -5188,7 +5522,7 @@ test("booking persistence retries only status two across fully revalidated read-
         "linux_process_start_ticks() { [ \"$2\" = 60 ] || return 1; printf '%s\\n' \"$CANDIDATE_WEB_PROCESS_START_TICKS\"; }",
         "read_candidate_environment_snapshot_for_booking_retry() {",
         "  [ \"$1\" = 60 ] || return 1",
-        `  printf '%s\\n' '${values.environmentDirectoryIdentity}' '${values.environmentFileIdentity}' '${values.environmentSha256}' '${values.environmentInternalUrlBase64}' '${values.environmentPublicUrlBase64}' '${values.environmentAnonKeyBase64}'`,
+        `  printf '%s\\n' '${values.environmentDirectoryIdentity}' '${values.environmentFileIdentity}' '${values.environmentSha256}' '${values.environmentInternalUrlBase64}' '${values.environmentPublicUrlBase64}' '${values.environmentAnonKeyBase64}' '${values.environmentRolloutStatus}' '${values.environmentStaffModeBase64}' '${values.environmentStaffSiteIdsBase64}' '${values.environmentPortalOriginBase64}'`,
         "}",
         "read_candidate_build_id_snapshot_for_booking_retry() {",
         "  [ \"$1\" = 60 ] || return 1",
@@ -5196,7 +5530,7 @@ test("booking persistence retries only status two across fully revalidated read-
         "}",
         "read_candidate_process_environment_snapshot_for_booking_retry() {",
         "  [ \"$1\" = 60 ] || return 1",
-        `  printf '%s\\n' '${values.processStatus}' '${values.processStartTicks}' '${values.processInternalUrlBase64}' '${values.processPublicUrlBase64}' '${values.processAnonKeyBase64}'`,
+        `  printf '%s\\n' '${values.processStatus}' '${values.processRolloutStatus}' '${values.processStartTicks}' '${values.processInternalUrlBase64}' '${values.processPublicUrlBase64}' '${values.processAnonKeyBase64}' '${values.processStaffModeBase64}' '${values.processStaffSiteIdsBase64}' '${values.processPortalOriginBase64}'`,
         "}",
         "assert_booking_persistence_retry_state 60",
         "printf '__state__ %s\\n' \"$?\"",
@@ -5216,13 +5550,21 @@ test("booking persistence retries only status two across fully revalidated read-
     { environmentInternalUrlBase64: Buffer.from("http://drift.test").toString("base64") },
     { environmentPublicUrlBase64: Buffer.from("https://drift.test").toString("base64") },
     { environmentAnonKeyBase64: Buffer.from("drift-anon").toString("base64") },
+    { environmentRolloutStatus: "legacy-off" },
+    { environmentStaffModeBase64: Buffer.from("enforce").toString("base64") },
+    { environmentStaffSiteIdsBase64: Buffer.from("10000001").toString("base64") },
+    { environmentPortalOriginBase64: Buffer.from("https://evil.example").toString("base64") },
     { buildFileIdentity: "9:7:6:5:4:3:2:1" },
     { buildFileSha256: "d".repeat(64) },
     { processStatus: "absent" },
+    { processRolloutStatus: "absent" },
     { processStartTicks: "457" },
     { processInternalUrlBase64: Buffer.from("http://process-drift.test").toString("base64") },
     { processPublicUrlBase64: Buffer.from("https://process-drift.test").toString("base64") },
     { processAnonKeyBase64: Buffer.from("process-drift-anon").toString("base64") },
+    { processStaffModeBase64: Buffer.from("enforce").toString("base64") },
+    { processStaffSiteIdsBase64: Buffer.from("10000001").toString("base64") },
+    { processPortalOriginBase64: Buffer.from("https://evil.example").toString("base64") },
   ]) {
     assert.equal(runFrozenState(drift), 1, JSON.stringify(drift));
   }
@@ -6153,7 +6495,9 @@ test("rollback primitive failures have fixed substages and never replay prior mu
     "switch",
     "fence:4",
     "start-web",
+    "rollout:1",
     "health",
+    "rollout:2",
     "fence:5",
   ];
   const fixtures = [
@@ -6167,7 +6511,9 @@ test("rollback primitive failures have fixed substages and never replay prior mu
     { failAt: "switch", code: "deploy_rollback_failed_current_restore" },
     { failAt: "fence:4", code: "deploy_rollback_failed_fence_checkpoint" },
     { failAt: "start-web", code: "deploy_rollback_failed_previous_web_start" },
+    { failAt: "rollout:1", code: "deploy_rollback_failed_previous_web_health" },
     { failAt: "health", code: "deploy_rollback_failed_previous_web_health" },
+    { failAt: "rollout:2", code: "deploy_rollback_failed_previous_web_health" },
     { failAt: "fence:5", code: "deploy_rollback_failed_fence_checkpoint" },
   ];
 
@@ -6197,6 +6543,8 @@ test("rollback primitive failures have fixed substages and never replay prior mu
     "restore_legacy_runtime_compatibility_paths() { record compat; [ \"$FAIL_AT\" != compat ] || return \"$FAILURE_STATUS\"; return 0; }",
     "switch_current_release() { record switch; [ \"$FAIL_AT\" != switch ] || return \"$FAILURE_STATUS\"; return 0; }",
     "start_frozen_previous_release() { record start-web; [ \"$FAIL_AT\" != start-web ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "ROLLOUT_CALLS=0",
+    "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ] || return \"$FAILURE_STATUS\"; return 0; }",
     "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ] || return \"$FAILURE_STATUS\"; return 0; }",
   ];
 
@@ -6289,6 +6637,8 @@ test("rollback primitive failures have fixed substages and never replay prior mu
         "restore_legacy_runtime_compatibility_paths() { record compat; return 0; }",
         "switch_current_release() { record switch; return 0; }",
         "start_frozen_previous_release() { record start-web; return 0; }",
+        "ROLLOUT_CALLS=0",
+        "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; return 0; }",
         "wait_for_release_health() { record health; return 0; }",
         "if rollback_release >/dev/null; then status=0; else status=$?; fi",
         "printf '%s %s %s %s\\n' \"$status\" \"$ROLLBACK_COMPLETED\" \"$STRICT_CALLS\" \"$ROLLBACK_FAILURE_CODE\"",
@@ -6378,8 +6728,8 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
       expectedStatus: 0,
       expectedCalls: [
         "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
-        "start-web", "health", "verify",
-        "start-worker", "worker-online", "verify", "save", "verify",
+        "start-web", "rollout:1", "health", "rollout:2", "verify",
+        "start-worker", "worker-online", "verify", "save", "verify", "rollout:3",
       ],
       expectedFlags: "0 1 1 1 complete",
     },
@@ -6389,7 +6739,7 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
       expectedStatus: 0,
       expectedCalls: [
         "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
-        "start-web", "health", "verify", "verify", "save", "verify",
+        "start-web", "rollout:1", "health", "rollout:2", "verify", "verify", "save", "verify", "rollout:3",
       ],
       expectedFlags: "0 1 1 0 complete",
     },
@@ -6399,8 +6749,8 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
       expectedStatus: 0,
       expectedCalls: [
         "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "discard", "verify",
-        "start-web", "health", "verify",
-        "start-worker", "worker-online", "verify", "save", "verify",
+        "start-web", "rollout:1", "health", "rollout:2", "verify",
+        "start-worker", "worker-online", "verify", "save", "verify", "rollout:3",
       ],
       expectedFlags: "0 1 1 1 complete",
     },
@@ -6426,6 +6776,26 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
       expectedStatus: 1,
       expectedCalls: [
         "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify", "start-web",
+      ],
+      expectedFlags: "1 0 0 0 web",
+    },
+    {
+      name: "pre-health rollout drift cannot certify recovery",
+      failAt: "rollout:1",
+      expectedStatus: 1,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
+        "start-web", "rollout:1",
+      ],
+      expectedFlags: "1 0 0 0 web",
+    },
+    {
+      name: "post-health rollout drift cannot certify recovery",
+      failAt: "rollout:2",
+      expectedStatus: 1,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
+        "start-web", "rollout:1", "health", "rollout:2",
       ],
       expectedFlags: "1 0 0 0 web",
     },
@@ -6492,6 +6862,8 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
         "  printf -v \"${prefix}_CWD_IDENTITY\" %s 1:2:3",
         "}",
         "pre_forward_recovery_process_identity_matches() { return 0; }",
+        "ROLLOUT_CALLS=0",
+        "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ]; }",
         "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ]; }",
         "start_frozen_previous_automation_worker_process() { record start-worker; [ \"$FAIL_AT\" != start-worker ]; }",
         "wait_for_automation_worker_online() { record worker-online; [ \"$FAIL_AT\" != worker-online ]; }",
@@ -6716,6 +7088,7 @@ test("pre-forward recovery preserves committed runtime and cleans only uncommitt
         "release_readiness_fence() { READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
         "discard_failed_readiness_fence() { READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
         "start_frozen_previous_release() { WEB_STATE=running:101; record start:web; [[ \"$FAIL_AT\" != *start-web-created* ]]; }",
+        "running_release_rollout_environment_matches() { return 0; }",
         "wait_for_release_health() { record health; [[ \"$FAIL_AT\" != *health* ]]; }",
         "start_frozen_previous_automation_worker_process() { WORKER_STATE=running:202; record start:worker; [ \"$FAIL_AT\" != start-worker-created ]; }",
         "wait_for_automation_worker_online() { record worker-online; [ \"$FAIL_AT\" != worker-online ]; }",

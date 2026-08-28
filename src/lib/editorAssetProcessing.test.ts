@@ -256,6 +256,114 @@ test("image upload preserves its API contract and normalizes metadata", { concur
   }
 });
 
+test("business catalog uploads use only the injected client and declare their exact scope", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  let globalFetchCalls = 0;
+  let capturedPath = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async () => {
+    globalFetchCalls += 1;
+    throw new Error("global fetch must not run for an injected employee upload");
+  }) as typeof fetch;
+
+  try {
+    const result = await uploadImageDataUrlToSupabaseWithMetadata(
+      "data:image/png;base64,AA==",
+      "12345678",
+      "product-image",
+      undefined,
+      {
+        businessPurpose: "order-catalog",
+        apiClient: async (path, init) => {
+          capturedPath = path;
+          capturedInit = init;
+          return Response.json({ url: "https://cdn.example.com/product.webp" });
+        },
+      },
+    );
+
+    assert.equal(globalFetchCalls, 0);
+    assert.equal(capturedPath, "/api/assets/upload");
+    assert.equal(capturedInit?.credentials, undefined);
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), {
+      dataUrl: "data:image/png;base64,AA==",
+      merchantHint: "12345678",
+      siteId: "12345678",
+      folder: "merchant-assets",
+      usage: "product-image",
+      businessPurpose: "order-catalog",
+    });
+    assert.equal(result?.url, "https://cdn.example.com/product.webp");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("redemption catalog uploads declare their exact scope on the injected client", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  let globalFetchCalls = 0;
+  let capturedPath = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async () => {
+    globalFetchCalls += 1;
+    throw new Error("global fetch must not run for an injected employee upload");
+  }) as typeof fetch;
+
+  try {
+    const result = await uploadImageDataUrlToSupabaseWithMetadata(
+      "data:image/png;base64,AA==",
+      "12345678",
+      "product-image",
+      undefined,
+      {
+        businessPurpose: "redemption-catalog",
+        apiClient: async (path, init) => {
+          capturedPath = path;
+          capturedInit = init;
+          return Response.json({ url: "https://cdn.example.com/redemption.webp" });
+        },
+      },
+    );
+
+    assert.equal(globalFetchCalls, 0);
+    assert.equal(capturedPath, "/api/assets/upload");
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), {
+      dataUrl: "data:image/png;base64,AA==",
+      merchantHint: "12345678",
+      siteId: "12345678",
+      folder: "merchant-assets",
+      usage: "product-image",
+      businessPurpose: "redemption-catalog",
+    });
+    assert.equal(result?.url, "https://cdn.example.com/redemption.webp");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("scoped business uploads fail closed without an injected client", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  let globalFetchCalls = 0;
+  globalThis.fetch = (async () => {
+    globalFetchCalls += 1;
+    return Response.json({ url: "https://cdn.example.com/unsafe.webp" });
+  }) as typeof fetch;
+
+  try {
+    const result = await uploadImageDataUrlToSupabaseWithMetadata(
+      "data:image/png;base64,AA==",
+      "12345678",
+      "product-image",
+      undefined,
+      { businessPurpose: "redemption-catalog" },
+    );
+    assert.equal(result, null);
+    assert.equal(globalFetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("source upload accepts a thumbnail-only response", { concurrency: false }, async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () =>

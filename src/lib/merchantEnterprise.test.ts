@@ -40,6 +40,7 @@ import {
   type MerchantTask,
   type MerchantTaskColumn,
 } from "@/lib/merchantEnterprise";
+import { MERCHANT_STAFF_BUSINESS_PERMISSIONS } from "@/lib/merchantStaffBusiness";
 
 test("enterprise permission normalization removes unknown and duplicate permissions", () => {
   assert.deepEqual(
@@ -51,6 +52,31 @@ test("enterprise permission normalization removes unknown and duplicate permissi
     ]),
     ["tasks.view", "employees.manage"],
   );
+});
+
+test("staff business permissions are recognized but default off for every system role", () => {
+  for (const permission of MERCHANT_STAFF_BUSINESS_PERMISSIONS) {
+    assert.ok(MERCHANT_ENTERPRISE_PERMISSIONS.includes(permission));
+    for (const role of DEFAULT_MERCHANT_ENTERPRISE_ROLES) {
+      assert.equal(role.permissions.includes(permission), false);
+    }
+  }
+});
+
+test("persisted roles fail closed instead of silently deleting unknown permissions", () => {
+  const role = {
+    id: "11111111-1111-4111-8111-111111111111",
+    merchant_id: "10000000",
+    name: "员工",
+    permissions: ["enterprise.view", "future.unknown"],
+    access_scope: "all",
+    status: "active",
+    is_system: false,
+    version: 1,
+    created_at: "2026-08-28T00:00:00.000Z",
+    updated_at: "2026-08-28T00:00:00.000Z",
+  };
+  assert.equal(normalizeMerchantEnterpriseRole(role), null);
 });
 
 test("owner has every enterprise permission while employees use their assigned permissions", () => {

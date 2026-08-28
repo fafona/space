@@ -21,6 +21,20 @@ import {
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessApiRequestInit,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import { MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY } from "@/lib/merchantBusinessApiClient";
+import {
+  MERCHANT_MEMBERSHIP_NO_PERMISSIONS,
+  MERCHANT_MEMBERSHIP_OWNER_CACHE_POLICY,
+  createMerchantMembershipApiRequest,
+  hasMerchantMembershipFrontendPermission,
+  isMerchantMembershipEmployeeFrontend,
+} from "@/lib/merchantMembershipFrontendAccess";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   quoteMerchantMemberRechargeCancellation,
@@ -54,6 +68,9 @@ type MerchantPointRedemptionCashierProps = {
   siteName?: string;
   className?: string;
   view?: "cashier" | "records" | "rechargeRecords";
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
 };
 
 type MembershipsPayload = {
@@ -214,21 +231,24 @@ async function fetchPointRedemptionJson(
   }
 }
 
-async function fetchLatestCashierPrintSettings(siteId: string) {
+async function fetchLatestCashierPrintSettings(
+  siteId: string,
+  requestApi: MerchantBusinessApiClient,
+) {
   const params = new URLSearchParams({
     siteId,
     scope: "redemption-cashier",
     t: Date.now().toString(),
   });
-  const response = await fetchPointRedemptionJson(
+  const response = await requestApi(
     `/api/membership-settings?${params.toString()}`,
     {
       method: "GET",
       cache: "no-store",
       credentials: "same-origin",
       headers: { accept: "application/json" },
+      timeoutMs: 3500,
     },
-    3500,
   );
   const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
   if (!response.ok || payload?.ok !== true || !payload.settings?.printSettings) return null;
@@ -548,7 +568,9 @@ function recordRedemptionReceiptPrintOutcome(
   siteId: string,
   receipt: MerchantRedemptionReceiptData,
   outcome: RedemptionReceiptPrintOutcome,
+  persistOperationLog = true,
 ) {
+  if (!persistOperationLog) return;
   try {
     const bridgeStatus = outcome.bridgeResult?.status;
     const bridgeResult = outcome.bridgeResult?.result;
@@ -746,7 +768,70 @@ export default function MerchantPointRedemptionCashier({
   siteName = "",
   className = "",
   view = "cashier",
+  apiClient,
+  cachePolicy,
+  permissions,
 }: MerchantPointRedemptionCashierProps) {
+  const employeeMode = isMerchantMembershipEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectiveCachePolicy = employeeMode
+    ? MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY
+    : cachePolicy ?? MERCHANT_MEMBERSHIP_OWNER_CACHE_POLICY;
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_MEMBERSHIP_NO_PERMISSIONS
+      : permissions;
+  const requestRedemptionApi = useMemo(
+    () =>
+      createMerchantMembershipApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: (path, init: MerchantBusinessApiRequestInit = {}) => {
+          const { timeoutMs, ...requestInit } = init;
+          return fetchPointRedemptionJson(path, requestInit, timeoutMs);
+        },
+      }),
+    [apiClient, employeeMode],
+  );
+  const canViewRedemptions = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.view",
+  );
+  const canViewCustomerData = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.customer_data.view",
+  );
+  const canCheckoutRedemptions = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.checkout",
+  );
+  const canRecharge = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.recharge",
+  );
+  const canCancelRecharge = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.recharge.cancel",
+  );
+  const canAdjustMemberAccount = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.account.adjust",
+  );
+  const canPrint = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.print",
+  );
+  const canLoadMemberInsights = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.insights.view",
+  );
+  const canSearchMemberDirectory = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.view",
+  );
   const { locale, setLocale, t } = useI18n();
   const normalizedSiteId = siteId.trim();
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
@@ -851,6 +936,10 @@ export default function MerchantPointRedemptionCashier({
   const cashierPrintSettings = settings?.printSettings ?? null;
 
   const checkCashierPrintBridge = useCallback(async (options?: { force?: boolean }) => {
+    if (!canPrint) {
+      setPrintBridgeStatus("disabled");
+      return;
+    }
     const printSettings = cashierPrintSettings as MerchantReceiptPrintSettings | null;
     const checkKey = buildCashierPrintBridgeCheckKey(printSettings);
     const now = Date.now();
@@ -896,9 +985,10 @@ export default function MerchantPointRedemptionCashier({
           ? "update_available"
           : "online",
     );
-  }, [cashierPrintSettings]);
+  }, [canPrint, cashierPrintSettings]);
 
   const handlePrintBridgeBadgeClick = useCallback(async () => {
+    if (!canPrint) return;
     if (printBridgeStatus === "checking" || printBridgeStatus === "updating" || printBridgeUpdating) return;
     const printSettings = cashierPrintSettings as MerchantReceiptPrintSettings | null;
     if (!printSettings?.enabled || !printSettings.autoPrintRedemptionReceipt || !printSettings.silentPrintEnabled) {
@@ -968,7 +1058,7 @@ export default function MerchantPointRedemptionCashier({
         setPrintBridgeUpdating(false);
       }
     }
-  }, [cashierPrintSettings, checkCashierPrintBridge, printBridgeStatus, printBridgeUpdating]);
+  }, [canPrint, cashierPrintSettings, checkCashierPrintBridge, printBridgeStatus, printBridgeUpdating]);
 
   const enabledCategories = useMemo(
     () => (settings?.redemptionCategories ?? []).filter((category) => category.enabled),
@@ -1036,7 +1126,11 @@ export default function MerchantPointRedemptionCashier({
     [activeMemberById, selectedMemberId],
   );
 
-  const selectedInsight = selectedMember?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const selectedInsight = selectedMember?.insight ?? {
+    ...EMPTY_MEMBER_INSIGHT,
+    pointBalance: selectedMember?.pointBalance ?? 0,
+    balanceAmount: selectedMember?.balanceAmount ?? 0,
+  };
   const selectedMemberInsightLoading = selectedMember ? memberInsightLoadingIds.has(selectedMember.id) : false;
   const selectedAvailableCouponClaims = useMemo(
     () =>
@@ -1248,7 +1342,8 @@ export default function MerchantPointRedemptionCashier({
   const totalPoints = Math.max(0, grossPoints - couponPointDiscountTotal);
   const totalQuantity = cartRows.reduce((sum, row) => sum + row.quantity, 0);
   const hasRedeemableCartEffect = cartRows.some((row) => row.subtotalPoints > 0 || (row.couponSettlementCode && row.couponPointDiscount <= 0));
-  const canCheckout =
+  const canSubmitCheckout =
+    canCheckoutRedemptions &&
     Boolean(selectedMember) &&
     cartRows.length > 0 &&
     hasRedeemableCartEffect &&
@@ -1380,6 +1475,12 @@ export default function MerchantPointRedemptionCashier({
 
   useEffect(() => {
     const keyword = deferredMemberKeyword.trim();
+    if (!canViewRedemptions) {
+      setRemoteMemberSearchKeyword("");
+      setRemoteMemberSearchResults([]);
+      setMemberSearchLoading(false);
+      return;
+    }
     const normalizedKeyword = keyword.toLowerCase();
     const requestId = ++memberSearchRequestIdRef.current;
     if (!keyword || !/^\d{8}$/.test(normalizedSiteId)) {
@@ -1391,7 +1492,9 @@ export default function MerchantPointRedemptionCashier({
       return;
     }
     const cacheKey = `${normalizedSiteId}:${normalizedKeyword}`;
-    const cachedSearchResults = memberSearchCacheRef.current.get(cacheKey);
+    const cachedSearchResults = !employeeMode
+      ? memberSearchCacheRef.current.get(cacheKey)
+      : undefined;
     if (cachedSearchResults) {
       setRemoteMemberSearchKeyword(normalizedKeyword);
       setRemoteMemberSearchResults(cachedSearchResults);
@@ -1422,6 +1525,14 @@ export default function MerchantPointRedemptionCashier({
       setMemberSearchFailedKeyword("");
       return;
     }
+    if (employeeMode && !canSearchMemberDirectory) {
+      setRemoteMemberSearchKeyword("");
+      setRemoteMemberSearchResults([]);
+      setMemberSearchLoading(false);
+      setMemberSearchSkippedKeyword(normalizedKeyword);
+      setMemberSearchFailedKeyword("");
+      return;
+    }
     setMemberSearchLoading(true);
     setMemberSearchSkippedKeyword("");
     setMemberSearchFailedKeyword("");
@@ -1434,12 +1545,13 @@ export default function MerchantPointRedemptionCashier({
         includeInsights: "0",
         lean: "1",
       });
-      void fetchPointRedemptionJson(`/api/memberships?${params.toString()}`, {
+      void requestRedemptionApi(`/api/memberships?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
         headers: { accept: "application/json" },
-      }, MEMBER_SEARCH_REQUEST_TIMEOUT_MS)
+        timeoutMs: MEMBER_SEARCH_REQUEST_TIMEOUT_MS,
+      })
         .then(async (response) => {
           const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
           if (memberSearchRequestIdRef.current !== requestId) return;
@@ -1451,7 +1563,7 @@ export default function MerchantPointRedemptionCashier({
               : [];
           setRemoteMemberSearchKeyword(normalizedKeyword);
           setRemoteMemberSearchResults(nextMemberships);
-          memberSearchCacheRef.current.set(cacheKey, nextMemberships);
+          if (!employeeMode) memberSearchCacheRef.current.set(cacheKey, nextMemberships);
           setMemberships((current) => mergeMemberLists(current, nextMemberships));
         })
         .catch(() => {
@@ -1465,9 +1577,23 @@ export default function MerchantPointRedemptionCashier({
         });
     }, 220);
     return () => window.clearTimeout(timeoutId);
-  }, [deferredMemberKeyword, normalizedSiteId]);
+  }, [
+    canViewRedemptions,
+    canSearchMemberDirectory,
+    deferredMemberKeyword,
+    employeeMode,
+    normalizedSiteId,
+    requestRedemptionApi,
+  ]);
 
   const loadData = useCallback(async (force = false, options: { silent?: boolean } = {}) => {
+    if (!canViewRedemptions) {
+      setMemberships([]);
+      setSettings(null);
+      setCoupons([]);
+      setError("");
+      return;
+    }
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
       return;
@@ -1486,10 +1612,10 @@ export default function MerchantPointRedemptionCashier({
     );
     const couponsCacheKey = makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId, "cashier-catalog");
     const requestId = ++cashierLoadRequestIdRef.current;
-    const cachedMemberships = force
+    const cachedMemberships = force || !effectiveCachePolicy.allowPersistentRead
       ? null
       : readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem[]>(membersCacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
-    const cachedSettings = force
+    const cachedSettings = force || !effectiveCachePolicy.allowPersistentRead
       ? null
       : readLatestMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(
           [
@@ -1500,7 +1626,7 @@ export default function MerchantPointRedemptionCashier({
           ],
           MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
         );
-    const cachedCouponsSnapshot = force
+    const cachedCouponsSnapshot = force || !effectiveCachePolicy.allowPersistentRead
       ? null
       : readLatestMerchantAdminDataCacheSnapshot<MerchantCouponRecord[]>(
           [
@@ -1562,12 +1688,12 @@ export default function MerchantPointRedemptionCashier({
         limit: "300",
         mode: view,
       });
-      if (cachedMemberships?.version) params.set("knownMembershipVersion", cachedMemberships.version);
-      if (cachedSettings?.version && cachedSettingsHasEnabledItems) {
+      if (!employeeMode && cachedMemberships?.version) params.set("knownMembershipVersion", cachedMemberships.version);
+      if (!employeeMode && cachedSettings?.version && cachedSettingsHasEnabledItems) {
         params.set("knownSettingsVersion", cachedSettings.version);
       }
-      if (cachedCoupons?.version) params.set("knownCouponVersion", cachedCoupons.version);
-      const response = await fetchPointRedemptionJson(`/api/merchant-admin/redemption-cashier?${params.toString()}`, {
+      if (!employeeMode && cachedCoupons?.version) params.set("knownCouponVersion", cachedCoupons.version);
+      const response = await requestRedemptionApi(`/api/merchant-admin/redemption-cashier?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -1610,15 +1736,17 @@ export default function MerchantPointRedemptionCashier({
             ? payload.coupons
             : [];
       if (cashierLoadRequestIdRef.current !== requestId) return;
-      writeMerchantAdminDataCache(membersCacheKey, mergedMemberships, {
-        version: membershipVersion ?? cachedMemberships?.version ?? null,
-      });
-      writeMerchantAdminDataCache(settingsCacheKey, nextSettings, {
-        version: settingsVersion ?? cachedSettings?.version ?? null,
-      });
-      writeMerchantAdminDataCache(couponsCacheKey, nextCoupons, {
-        version: couponVersion ?? cachedCoupons?.version ?? null,
-      });
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        writeMerchantAdminDataCache(membersCacheKey, mergedMemberships, {
+          version: membershipVersion ?? cachedMemberships?.version ?? null,
+        });
+        writeMerchantAdminDataCache(settingsCacheKey, nextSettings, {
+          version: settingsVersion ?? cachedSettings?.version ?? null,
+        });
+        writeMerchantAdminDataCache(couponsCacheKey, nextCoupons, {
+          version: couponVersion ?? cachedCoupons?.version ?? null,
+        });
+      }
       applyLoadedData(mergedMemberships, nextSettings, nextCoupons);
     };
     if (cachedMemberships || cachedSettings || cachedCoupons) {
@@ -1645,7 +1773,15 @@ export default function MerchantPointRedemptionCashier({
     } finally {
       if (!options.silent && cashierLoadRequestIdRef.current === requestId) setLoading(false);
     }
-  }, [normalizedSiteId, view]);
+  }, [
+    canViewRedemptions,
+    effectiveCachePolicy.allowPersistentRead,
+    effectiveCachePolicy.allowPersistentWrite,
+    employeeMode,
+    normalizedSiteId,
+    requestRedemptionApi,
+    view,
+  ]);
 
   useEffect(() => {
     cashierResumeRefreshAtRef.current = Date.now();
@@ -1669,16 +1805,19 @@ export default function MerchantPointRedemptionCashier({
   }, [loadData]);
 
   const ensureMembershipInsight = useCallback(async (membershipId: string) => {
+    if (!canLoadMemberInsights) return;
     const normalizedMembershipId = trimText(membershipId, 160);
     if (!/^\d{8}$/.test(normalizedSiteId) || !normalizedMembershipId) return;
     const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
     if (!currentMembership || currentMembership.insight) return;
     if (memberInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, normalizedMembershipId);
-    const cachedMembership = readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem>(
-      cacheKey,
-      MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
-    );
+    const cachedMembership = effectiveCachePolicy.allowPersistentRead
+      ? readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem>(
+          cacheKey,
+          MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+        )
+      : null;
     if (cachedMembership) {
       setMemberships((current) =>
         current.map((membership) =>
@@ -1696,7 +1835,7 @@ export default function MerchantPointRedemptionCashier({
         limit: "1",
         includeInsights: "1",
       });
-      const response = await fetchPointRedemptionJson(`/api/memberships?${params.toString()}`, {
+      const response = await requestRedemptionApi(`/api/memberships?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -1707,7 +1846,9 @@ export default function MerchantPointRedemptionCashier({
       const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
       const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
       if (!response.ok || payload?.ok !== true || !detailedMembership) return;
-      writeMerchantAdminDataCache(cacheKey, detailedMembership);
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        writeMerchantAdminDataCache(cacheKey, detailedMembership);
+      }
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === detailedMembership.id ? { ...membership, ...detailedMembership } : membership,
@@ -1723,10 +1864,19 @@ export default function MerchantPointRedemptionCashier({
         return next;
       });
     }
-  }, [normalizedSiteId]);
+  }, [
+    canLoadMemberInsights,
+    effectiveCachePolicy.allowPersistentRead,
+    effectiveCachePolicy.allowPersistentWrite,
+    normalizedSiteId,
+    requestRedemptionApi,
+  ]);
 
   useEffect(() => {
-    if (!normalizedSiteId || typeof window === "undefined") return;
+    if (employeeMode || !normalizedSiteId || typeof window === "undefined") {
+      setHeldSales([]);
+      return;
+    }
     const raw = window.localStorage.getItem(storageKey(normalizedSiteId));
     if (!raw) return;
     try {
@@ -1735,15 +1885,18 @@ export default function MerchantPointRedemptionCashier({
     } catch {
       setHeldSales([]);
     }
-  }, [normalizedSiteId]);
+  }, [employeeMode, normalizedSiteId]);
 
   useEffect(() => {
-    if (!normalizedSiteId || typeof window === "undefined") return;
+    if (employeeMode || !normalizedSiteId || typeof window === "undefined") return;
     window.localStorage.setItem(storageKey(normalizedSiteId), JSON.stringify(heldSales.slice(0, 20)));
-  }, [heldSales, normalizedSiteId]);
+  }, [employeeMode, heldSales, normalizedSiteId]);
 
   useEffect(() => {
-    if (!normalizedSiteId || typeof window === "undefined") return;
+    if (employeeMode || !normalizedSiteId || typeof window === "undefined") {
+      setAllCategoryExcludedIds(new Set());
+      return;
+    }
     const validIds = new Set(enabledCategories.map((category) => category.id));
     const raw = window.localStorage.getItem(allCategoryFilterStorageKey(normalizedSiteId));
     if (!raw) {
@@ -1759,7 +1912,7 @@ export default function MerchantPointRedemptionCashier({
     } catch {
       setAllCategoryExcludedIds(new Set());
     }
-  }, [enabledCategories, normalizedSiteId]);
+  }, [employeeMode, enabledCategories, normalizedSiteId]);
 
   useEffect(() => {
     if (!selectedMemberId) return;
@@ -1869,7 +2022,7 @@ export default function MerchantPointRedemptionCashier({
       next.add(id);
     }
     setAllCategoryExcludedIds(next);
-    if (typeof window !== "undefined") {
+    if (!employeeMode && typeof window !== "undefined") {
       window.localStorage.setItem(allCategoryFilterStorageKey(normalizedSiteId), JSON.stringify(Array.from(next)));
     }
   }
@@ -1944,12 +2097,14 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function openSelectedMemberCouponWallet() {
+    if (!canCheckoutRedemptions || !canLoadMemberInsights) return;
     if (!selectedMember) return;
     setCouponWalletOpen(true);
     void ensureMembershipInsight(selectedMember.id);
   }
 
   function addToCart(item: MerchantMemberRedemptionItem) {
+    if (!canCheckoutRedemptions) return;
     setError("");
     setNotice("");
     if (item.pointsCost === null) {
@@ -1975,6 +2130,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function addCouponClaimToCart(coupon: MemberCouponClaim) {
+    if (!canCheckoutRedemptions || !canLoadMemberInsights) return;
     setError("");
     setNotice("");
     if (!selectedMember) {
@@ -2043,6 +2199,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function openRechargeDialog() {
+    if (!canRecharge) return;
     setError("");
     setNotice("");
     if (!selectedMember) {
@@ -2055,7 +2212,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   async function submitRechargePlan() {
-    if (rechargeSubmittingRef.current) return;
+    if (!canRecharge || rechargeSubmittingRef.current) return;
     if (!selectedMember) {
       setError("请先选择会员。");
       setRechargeDialogOpen(false);
@@ -2082,7 +2239,7 @@ export default function MerchantPointRedemptionCashier({
     setError("");
     setNotice("");
     try {
-      const response = await fetchWithAdminPerformance("/api/memberships", {
+      const response = await requestRedemptionApi("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", accept: "application/json" },
@@ -2107,13 +2264,15 @@ export default function MerchantPointRedemptionCashier({
       );
       selectedMemberIdRef.current = updatedMembership.id;
       setSelectedMemberId(updatedMembership.id);
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
-      );
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
-      );
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
+        );
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
+        );
+      }
       setRechargeDialogOpen(false);
       rechargeMutationRef.current = { fingerprint: "", operationId: "" };
       setNotice(`充值完成，余额增加 €${formatMoney(plan.rechargeAmount + plan.giftAmount)}，积分增加 ${formatPoints(plan.giftPoints)}。`);
@@ -2131,6 +2290,7 @@ export default function MerchantPointRedemptionCashier({
     memberNo: string;
     transactionId: string;
   }) {
+    if (!canCancelRecharge) return null;
     setRechargeCancellationQuoteLoading(true);
     try {
       const params = new URLSearchParams({
@@ -2141,15 +2301,15 @@ export default function MerchantPointRedemptionCashier({
         transactionId: record.transactionId,
         t: Date.now().toString(),
       });
-      const response = await fetchPointRedemptionJson(
+      const response = await requestRedemptionApi(
         `/api/memberships?${params.toString()}`,
         {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
           headers: { accept: "application/json" },
+          timeoutMs: RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS,
         },
-        RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS,
       );
       const payload = (await response.json().catch(() => null)) as RechargeCancellationQuotePayload | null;
       if (!response.ok || payload?.ok !== true || !payload.quote) {
@@ -2173,6 +2333,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function openRechargeCancellation(recordId: string) {
+    if (!canCancelRecharge) return;
     const record = transactionRecords.find((item) => item.id === recordId && item.type === "recharge");
     if (!record || record.status === "cancelled") return;
     if (!record.cancellationQuote) {
@@ -2205,29 +2366,32 @@ export default function MerchantPointRedemptionCashier({
   }
 
   async function readLatestMembershipForRechargeCancellation(membershipId: string) {
+    if (!canCancelRecharge && !canAdjustMemberAccount) return null;
     const params = new URLSearchParams({
       siteId: normalizedSiteId,
-      membershipId,
-      limit: "1",
-      includeInsights: "0",
+      mode: "rechargeRecords",
+      limit: "300",
       t: Date.now().toString(),
     });
-    const response = await fetchPointRedemptionJson(
-      `/api/memberships?${params.toString()}`,
+    const response = await requestRedemptionApi(
+      `/api/merchant-admin/redemption-cashier?${params.toString()}`,
       {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
         headers: { accept: "application/json" },
+        timeoutMs: RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS,
       },
-      RECHARGE_CANCELLATION_VERIFY_TIMEOUT_MS,
     );
-    const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
-    const membership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
+    const payload = (await response.json().catch(() => null)) as RedemptionCashierPayload | null;
+    const membership = Array.isArray(payload?.memberships)
+      ? payload.memberships.find((entry) => entry.id === membershipId) ?? null
+      : null;
     return response.ok && payload?.ok === true && membership ? membership : null;
   }
 
   async function submitRechargeCancellation() {
+    if (!canCancelRecharge) return;
     const record = cancelRechargeRecord;
     if (!record || record.status === "cancelled") {
       setError("这笔充值已经撤销或记录已更新，请刷新后重试。");
@@ -2253,7 +2417,7 @@ export default function MerchantPointRedemptionCashier({
         const response = await runWithMerchantOperationContext(
           { skipOperationLog: true },
           () =>
-            fetchPointRedemptionJson(
+            requestRedemptionApi(
               "/api/memberships",
               {
                 method: "PATCH",
@@ -2269,8 +2433,8 @@ export default function MerchantPointRedemptionCashier({
                   operationId,
                   note: cancelRechargeNote,
                 }),
+                timeoutMs: RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
               },
-              RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
             ),
         );
         const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
@@ -2297,14 +2461,16 @@ export default function MerchantPointRedemptionCashier({
           isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership,
         ),
       );
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, record.membershipId),
-      );
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
-      );
-      recordMerchantOperationLog({
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, record.membershipId),
+        );
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
+        );
+      }
+      if (!employeeMode) recordMerchantOperationLog({
         siteId: normalizedSiteId,
         module: "积分兑换 > 充值记录",
         action: "撤销充值",
@@ -2322,7 +2488,7 @@ export default function MerchantPointRedemptionCashier({
       void loadData(true, { silent: true });
     } catch (cancelError) {
       const message = cancelError instanceof Error ? cancelError.message : "撤销充值失败，请稍后重试。";
-      recordMerchantOperationLog({
+      if (!employeeMode) recordMerchantOperationLog({
         siteId: normalizedSiteId,
         module: "积分兑换 > 充值记录",
         action: "撤销充值",
@@ -2342,6 +2508,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   async function submitManualRechargeAdjustment() {
+    if (!canAdjustMemberAccount) return;
     const record = cancelRechargeRecord;
     const quote = rechargeCancellationQuote;
     if (!record || !quote || quote.alreadyCancelled) {
@@ -2384,7 +2551,7 @@ export default function MerchantPointRedemptionCashier({
         const response = await runWithMerchantOperationContext(
           { skipOperationLog: true },
           () =>
-            fetchPointRedemptionJson(
+            requestRedemptionApi(
               "/api/memberships",
               {
                 method: "PATCH",
@@ -2403,8 +2570,8 @@ export default function MerchantPointRedemptionCashier({
                   operationId,
                   confirmationTransactionId: manualRechargeAdjustmentConfirmation,
                 }),
+                timeoutMs: RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
               },
-              RECHARGE_CANCELLATION_REQUEST_TIMEOUT_MS,
             ),
         );
         const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
@@ -2432,11 +2599,13 @@ export default function MerchantPointRedemptionCashier({
           isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership,
         ),
       );
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, record.membershipId),
-      );
-      recordMerchantOperationLog({
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, record.membershipId),
+        );
+      }
+      if (!employeeMode) recordMerchantOperationLog({
         siteId: normalizedSiteId,
         module: "积分兑换 > 充值记录",
         action: "人工冲正充值",
@@ -2463,7 +2632,7 @@ export default function MerchantPointRedemptionCashier({
       void loadData(true, { silent: true });
     } catch (adjustmentError) {
       const message = adjustmentError instanceof Error ? adjustmentError.message : "人工冲正失败，请稍后重试。";
-      recordMerchantOperationLog({
+      if (!employeeMode) recordMerchantOperationLog({
         siteId: normalizedSiteId,
         module: "积分兑换 > 充值记录",
         action: "人工冲正充值",
@@ -2481,6 +2650,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function submitQuickRedeemItem() {
+    if (!canCheckoutRedemptions) return;
     const points = parsePositiveInteger(quickRedeemPoints);
     const name = trimText(quickRedeemName, 120) || "临时项目";
     if (points <= 0) {
@@ -2516,7 +2686,11 @@ export default function MerchantPointRedemptionCashier({
       setError("当前没有可挂起的兑换。");
       return;
     }
-    const memberName = selectedMember ? getMemberDisplayName(selectedMember) : "散客";
+    const memberName = selectedMember
+      ? canViewCustomerData
+        ? getMemberDisplayName(selectedMember)
+        : selectedMember.memberNo
+      : "散客";
     const sale: HeldSale = {
       id: `held-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       title: `${memberName} / ${totalQuantity} 项 / ${totalPoints} 积分`,
@@ -2560,6 +2734,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   async function submitCheckout() {
+    if (!canCheckoutRedemptions) return;
     if (checkoutSubmittingRef.current) return;
     setError("");
     setNotice("");
@@ -2633,7 +2808,7 @@ export default function MerchantPointRedemptionCashier({
     }));
     setSaving(true);
     try {
-      const response = await fetchWithAdminPerformance("/api/memberships", {
+      const response = await requestRedemptionApi("/api/memberships", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", accept: "application/json" },
@@ -2656,7 +2831,7 @@ export default function MerchantPointRedemptionCashier({
         receiptNo: operationId.slice(-12).toUpperCase(),
         siteId: normalizedSiteId,
         siteName: trimText(siteName, 120) || normalizedSiteId,
-        memberName: getMemberDisplayName(updatedMembership),
+        memberName: canViewCustomerData ? getMemberDisplayName(updatedMembership) : "会员",
         memberNo: updatedMembership.memberNo,
         beforePointBalance: receiptBeforePointBalance,
         afterPointBalance: updatedMembership.pointBalance,
@@ -2670,7 +2845,9 @@ export default function MerchantPointRedemptionCashier({
       };
       let latestPrintSettings = settings?.printSettings as MerchantReceiptPrintSettings | undefined;
       try {
-        const latestSettings = await fetchLatestCashierPrintSettings(normalizedSiteId);
+        const latestSettings = canPrint
+          ? await fetchLatestCashierPrintSettings(normalizedSiteId, requestRedemptionApi)
+          : null;
         if (latestSettings?.printSettings) {
           latestPrintSettings = latestSettings.printSettings as MerchantReceiptPrintSettings;
           setSettings(latestSettings);
@@ -2683,15 +2860,17 @@ export default function MerchantPointRedemptionCashier({
       );
       selectedMemberIdRef.current = updatedMembership.id;
       setSelectedMemberId(updatedMembership.id);
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
-      );
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
-      );
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-coupons", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
+        );
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
+        );
+      }
       setCart([]);
       setNote("");
       checkoutMutationRef.current = { fingerprint: "", operationId: "" };
@@ -2705,9 +2884,9 @@ export default function MerchantPointRedemptionCashier({
           ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
           : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
       );
-      void printRedemptionReceipt(latestPrintSettings, receiptData)
+      if (canPrint) void printRedemptionReceipt(latestPrintSettings, receiptData)
         .then((printOutcome) => {
-          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome);
+          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome, !employeeMode);
           const nextPrintBridgeStatus = resolveCashierPrintBridgeStatusFromOutcome(printOutcome);
           if (nextPrintBridgeStatus) {
             setPrintBridgeStatus((current) =>
@@ -2730,7 +2909,7 @@ export default function MerchantPointRedemptionCashier({
             method: "local_bridge",
             message: printError instanceof Error ? printError.message : "receipt_print_failed",
           };
-          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome);
+          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome, !employeeMode);
           setPrintBridgeStatus("error");
           setPrintBridgeCheckedAt(Date.now());
           setError("兑换已完成，但小票打印失败，请检查本机打印助手和打印机连接。");
@@ -2751,6 +2930,7 @@ export default function MerchantPointRedemptionCashier({
   useEffect(() => {
     cashierShortcutActionsRef.current = {
       blocked: () =>
+        !canViewRedemptions ||
         view !== "cashier" ||
         saving ||
         rechargeDialogOpen ||
@@ -2762,11 +2942,13 @@ export default function MerchantPointRedemptionCashier({
         heldOpen ||
         Boolean(selectedRecordId),
       openQuickRedeem: () => {
+        if (!canCheckoutRedemptions) return;
         setError("");
         setNotice("");
         setQuickRedeemDialogOpen(true);
       },
       openRecharge: () => {
+        if (!canRecharge) return;
         setError("");
         setNotice("");
         if (!selectedMember) {
@@ -2778,11 +2960,15 @@ export default function MerchantPointRedemptionCashier({
         setRechargeDialogOpen(true);
       },
       openCheckout: () => {
-        if (canCheckout) void submitCheckoutRef.current();
+        if (!canCheckoutRedemptions) return;
+        if (canSubmitCheckout) void submitCheckoutRef.current();
       },
     };
   }, [
-    canCheckout,
+    canCheckoutRedemptions,
+    canRecharge,
+    canSubmitCheckout,
+    canViewRedemptions,
     categoryMenuOpen,
     couponWalletOpen,
     enabledRechargePlans,
@@ -2861,7 +3047,7 @@ export default function MerchantPointRedemptionCashier({
   }, [view]);
 
   const printBridgeBadge =
-    view === "cashier" && printBridgeStatus !== "online" ? (
+    canPrint && view === "cashier" && printBridgeStatus !== "online" ? (
       <button
         type="button"
         className={`print-bridge-badge ${printBridgeStatus}`}
@@ -2873,6 +3059,16 @@ export default function MerchantPointRedemptionCashier({
         <span>{getCashierPrintBridgeStatusLabel(printBridgeStatus, printBridgeVersion)}</span>
       </button>
     ) : null;
+
+  if (!canViewRedemptions) {
+    return (
+      <section className={className}>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+          当前员工角色没有查看积分兑换的权限。
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className={`merchant-pos-cashier ${className}`}>
@@ -5198,7 +5394,7 @@ export default function MerchantPointRedemptionCashier({
                     <span>{(normalizedRecordsPage - 1) * recordsPageSize + index + 1}</span>
                     <strong>{record.id.split(":").pop()}</strong>
                     <span>
-                      {record.memberName} / {record.memberNo}
+                      {canViewCustomerData ? record.memberName : "会员"} / {record.memberNo}
                     </span>
                     <span className="record-amount">
                       {view === "rechargeRecords" ? `€${formatMoney(record.balanceAmount)}` : "-"}
@@ -5225,7 +5421,7 @@ export default function MerchantPointRedemptionCashier({
                       <button type="button" className="pos-button" onClick={() => setSelectedRecordId(record.id)}>
                         查看
                       </button>
-                      {view === "rechargeRecords" ? (
+                      {view === "rechargeRecords" && canCancelRecharge ? (
                         <button
                           type="button"
                           className="pos-button danger"
@@ -5283,7 +5479,7 @@ export default function MerchantPointRedemptionCashier({
                     <strong>{selectedRecord.at ? formatDateTime(new Date(selectedRecord.at)) : "-"}</strong>
                     <span>会员</span>
                     <strong>
-                      {selectedRecord.memberName} / {selectedRecord.memberNo}
+                      {canViewCustomerData ? selectedRecord.memberName : "会员"} / {selectedRecord.memberNo}
                     </strong>
                     <span>类型</span>
                     <strong>{transactionRecordTypeLabel}</strong>
@@ -5487,7 +5683,8 @@ export default function MerchantPointRedemptionCashier({
                   {!rechargeCancellationQuoteLoading &&
                   rechargeCancellationQuote &&
                   !rechargeCancellationQuote.canCancel &&
-                  !manualRechargeAdjustmentOpen ? (
+                  !manualRechargeAdjustmentOpen &&
+                  canAdjustMemberAccount ? (
                     <button
                       type="button"
                       className="pos-button danger"
@@ -5516,7 +5713,7 @@ export default function MerchantPointRedemptionCashier({
                         : "人工冲正当前可用部分"}
                     </button>
                   ) : null}
-                  {manualRechargeAdjustmentOpen && rechargeCancellationQuote ? (
+                  {canAdjustMemberAccount && manualRechargeAdjustmentOpen && rechargeCancellationQuote ? (
                     <div className="recharge-manual-panel">
                       <h4>人工冲正</h4>
                       <p>
@@ -5580,7 +5777,7 @@ export default function MerchantPointRedemptionCashier({
                   >
                     返回
                   </button>
-                  {manualRechargeAdjustmentOpen ? (
+                  {canAdjustMemberAccount && manualRechargeAdjustmentOpen ? (
                     <>
                       <button
                         type="button"
@@ -5603,7 +5800,7 @@ export default function MerchantPointRedemptionCashier({
                         {cancellingRecharge ? "冲正中..." : "确认人工冲正"}
                       </button>
                     </>
-                  ) : (
+                  ) : canCancelRecharge ? (
                     <button
                       type="button"
                       className="pos-button danger"
@@ -5616,7 +5813,7 @@ export default function MerchantPointRedemptionCashier({
                     >
                       {cancellingRecharge ? "撤销中..." : "确认完整撤销"}
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </section>
             </div>
@@ -5636,7 +5833,7 @@ export default function MerchantPointRedemptionCashier({
                     onClick={openSelectedMemberCouponWallet}
                     title="查看会员卡券"
                   >
-                    {getMemberDisplayName(selectedMember)}
+                    {canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员"}
                   </button>
                   <span>卡号: {selectedMember.memberNo}</span>
                   <span>积分: {formatPoints(selectedInsight.pointBalance)}</span>
@@ -5665,7 +5862,7 @@ export default function MerchantPointRedemptionCashier({
                   onKeyDown={(event) => {
                     if (event.key === "Enter") lookupMember();
                   }}
-                  placeholder="会员姓名 / 手机 / 卡号 / 邮箱"
+                  placeholder={canViewCustomerData ? "会员姓名 / 手机 / 卡号 / 邮箱" : "会员卡号"}
                 />
                 {memberPickerOpen && filteredMembers.length ? (
                   <div className="member-suggestions">
@@ -5677,8 +5874,8 @@ export default function MerchantPointRedemptionCashier({
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => selectMember(membership)}
                       >
-                        <strong>{getMemberDisplayName(membership)}</strong>
-                        <span>{membership.phone || "-"}</span>
+                        <strong>{canViewCustomerData ? getMemberDisplayName(membership) : "会员"}</strong>
+                        {canViewCustomerData ? <span>{membership.phone || "-"}</span> : null}
                         <span>{membership.memberNo}</span>
                       </button>
                     ))}
@@ -5708,14 +5905,14 @@ export default function MerchantPointRedemptionCashier({
                 ) : null}
               </div>
               <div className="member-action-buttons">
-                <button type="button" className="el-button el-button--primary" onClick={openRechargeDialog}>
+                {canRecharge ? <button type="button" className="el-button el-button--primary" onClick={openRechargeDialog}>
                   <IconDoorOpen />
                   充值
-                </button>
-                <button type="button" className="el-button el-button--default" onClick={() => setQuickRedeemDialogOpen(true)}>
+                </button> : null}
+                {canCheckoutRedemptions ? <button type="button" className="el-button el-button--default" onClick={() => setQuickRedeemDialogOpen(true)}>
                   <IconWallet />
                   快捷兑换
-                </button>
+                </button> : null}
               </div>
             </div>
           </div>
@@ -5835,7 +6032,7 @@ export default function MerchantPointRedemptionCashier({
                   <strong>-{formatPoints(couponPointDiscountTotal)}</strong>
                 </div>
               ) : null}
-              <button type="button" className="checkout-button" disabled={!canCheckout} onClick={() => void submitCheckoutRef.current()}>
+              <button type="button" className="checkout-button" disabled={!canSubmitCheckout} onClick={() => void submitCheckoutRef.current()}>
                 {saving ? "结算中" : "结算"}
               </button>
             </div>
@@ -6042,7 +6239,7 @@ export default function MerchantPointRedemptionCashier({
                 const outOfStock = item.stock !== null && inCartQuantity >= item.stock;
                 const itemImageUrl = normalizePublicAssetUrl(item.imageUrl || "");
                 const pointsUnavailable = item.pointsCost === null;
-                const itemDisabled = outOfStock || pointsUnavailable;
+                const itemDisabled = !canCheckoutRedemptions || outOfStock || pointsUnavailable;
 
                 if (viewMode === "text") {
                   return (
@@ -6106,7 +6303,7 @@ export default function MerchantPointRedemptionCashier({
             )}
           </div>
         </section>
-        {couponWalletOpen && selectedMember ? (
+        {canCheckoutRedemptions && canLoadMemberInsights && couponWalletOpen && selectedMember ? (
           <div className="modal-backdrop" role="presentation" onMouseDown={() => setCouponWalletOpen(false)}>
             <div
               className="pos-modal member-coupon-modal"
@@ -6119,7 +6316,7 @@ export default function MerchantPointRedemptionCashier({
                 <div>
                   <h3>会员卡券</h3>
                   <div className="member-coupon-modal-member">
-                    {getMemberDisplayName(selectedMember)} / {selectedMember.memberNo}
+                    {canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员"} / {selectedMember.memberNo}
                   </div>
                 </div>
                 <button type="button" className="link-button" onClick={() => setCouponWalletOpen(false)}>
@@ -6210,7 +6407,7 @@ export default function MerchantPointRedemptionCashier({
             </div>
           </div>
         ) : null}
-        {rechargeDialogOpen ? (
+        {canRecharge && rechargeDialogOpen ? (
           <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && setRechargeDialogOpen(false)}>
             <div className="pos-modal" role="dialog" aria-modal="true" aria-label="充值方案" onMouseDown={(event) => event.stopPropagation()}>
               <div className="pos-modal-header">
@@ -6257,7 +6454,7 @@ export default function MerchantPointRedemptionCashier({
             </div>
           </div>
         ) : null}
-        {quickRedeemDialogOpen ? (
+        {canCheckoutRedemptions && quickRedeemDialogOpen ? (
           <div className="modal-backdrop" role="presentation" onMouseDown={() => setQuickRedeemDialogOpen(false)}>
             <div className="pos-modal" role="dialog" aria-modal="true" aria-label="快捷兑换" onMouseDown={(event) => event.stopPropagation()}>
               <div className="pos-modal-header">
@@ -6312,7 +6509,7 @@ export default function MerchantPointRedemptionCashier({
             </div>
           </div>
         ) : null}
-        {checkoutConfirmOpen ? (
+        {canCheckoutRedemptions && checkoutConfirmOpen ? (
           <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && setCheckoutConfirmOpen(false)}>
             <div className="pos-modal" role="dialog" aria-modal="true" aria-label="确认结算" onMouseDown={(event) => event.stopPropagation()}>
               <div className="pos-modal-header">
@@ -6322,7 +6519,12 @@ export default function MerchantPointRedemptionCashier({
                 </button>
               </div>
               <div className="pos-modal-body">
-                <div>会员：{selectedMember ? `${getMemberDisplayName(selectedMember)} / ${selectedMember.memberNo}` : "-"}</div>
+                <div>
+                  会员：
+                  {selectedMember
+                    ? `${canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员"} / ${selectedMember.memberNo}`
+                    : "-"}
+                </div>
                 <div>项目：{totalQuantity}</div>
                 {couponPointDiscountTotal > 0 ? <div>积分券抵扣：-{formatPoints(couponPointDiscountTotal)}</div> : null}
                 <div>扣减积分：{formatPoints(totalPoints)}</div>

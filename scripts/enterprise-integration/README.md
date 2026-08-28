@@ -7,8 +7,8 @@ load `.env` files, Supabase credentials, backups, or production data.
 Coverage includes:
 
 - `supabase-init.sql`, the shared order/booking/coupon and reliable-outbox
-  prerequisites, and enterprise migrations 001-026 plus audit-security and
-  staged ordinary-account/runtime-hardening migrations 032-039 in filename
+  prerequisites, and enterprise migrations 001-026 plus the staged identity,
+  runtime, merchant-ACL, and staff-business migrations 032-041 in filename
   order; the runner
   completes all Stage-2A acceptance fixtures before applying and testing the
   independently deployable 037 system-site isolation migration;
@@ -82,6 +82,13 @@ Coverage includes:
   The catalog-writer timeout probe runs with `lc_messages=C` so its standard
   PostgreSQL `lock_timeout` text is deterministic; released-lock active or
   prepared XIDs are checked separately by the stable migration error;
+- the 040 hosted merchant ACL prestate, exact 21-entry target, and no-op target
+  replay without weakening its dedicated forward-repair semantics;
+- the 041 TypeScript/SQL business permission dependency contract, unchanged
+  default roles, service-only and strict-actor v3 RPCs, owner-authorized
+  business role mutation, fail-closed direct/v2 writes, employee business-role
+  create/rename/archive denial, and collaboration-only employee role
+  compatibility;
 - the production ordinary-account cutover readiness query itself, including
   its fixed migration mutex, ordered five-relation `SHARE` lock followed by the
   twenty-catalog gate, cluster-wide active/prepared-XID rejection, then the

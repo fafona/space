@@ -22,8 +22,23 @@ import {
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
+import { uploadImageDataUrlToSupabaseWithMetadata } from "@/lib/editorAssetProcessing";
 import { uploadDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import { MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY } from "@/lib/merchantBusinessApiClient";
+import {
+  MERCHANT_MEMBERSHIP_NO_PERMISSIONS,
+  MERCHANT_MEMBERSHIP_OWNER_CACHE_POLICY,
+  canOpenMerchantMembershipSettingsView,
+  createMerchantMembershipApiRequest,
+  getMerchantMembershipSettingsFrontendScope,
+  isMerchantMembershipEmployeeFrontend,
+} from "@/lib/merchantMembershipFrontendAccess";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import {
   CATEGORY_ICON_OPTIONS,
   CategoryIconGlyph,
@@ -35,6 +50,9 @@ type MerchantMembershipSettingsPanelProps = {
   siteId: string;
   view: Exclude<MerchantMemberSettingsView, "list">;
   className?: string;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
 };
 
 type MembershipSettingsPayload = {
@@ -328,7 +346,40 @@ export default function MerchantMembershipSettingsPanel({
   siteId,
   view,
   className = "",
+  apiClient,
+  cachePolicy,
+  permissions,
 }: MerchantMembershipSettingsPanelProps) {
+  const employeeMode = isMerchantMembershipEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectiveCachePolicy = employeeMode
+    ? MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY
+    : cachePolicy ?? MERCHANT_MEMBERSHIP_OWNER_CACHE_POLICY;
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_MEMBERSHIP_NO_PERMISSIONS
+      : permissions;
+  const canManageSettings = canOpenMerchantMembershipSettingsView(
+    effectivePermissions,
+    view,
+  );
+  const canUploadRedemptionCatalogImage =
+    !employeeMode ||
+    (Boolean(apiClient) &&
+      effectivePermissions?.includes("redemptions.catalog.manage") === true);
+  const employeeScope = getMerchantMembershipSettingsFrontendScope(view);
+  const requestSettingsApi = useMemo(
+    () =>
+      createMerchantMembershipApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: (path, init) => fetch(path, init),
+      }),
+    [apiClient, employeeMode],
+  );
   const normalizedSiteId = siteId.trim();
   const [settings, setSettings] = useState<MerchantMembershipSettings>(() =>
     createEmptyMerchantMembershipSettings(normalizedSiteId),
@@ -433,6 +484,11 @@ export default function MerchantMembershipSettingsPanel({
   }
 
   async function loadSettings(force = false) {
+    if (!canManageSettings) {
+      setSettings(createEmptyMerchantMembershipSettings(normalizedSiteId));
+      setError("");
+      return;
+    }
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setSettings(createEmptyMerchantMembershipSettings(normalizedSiteId));
       setError("当前商户资料还没准备好，请稍后重试。");
@@ -441,13 +497,14 @@ export default function MerchantMembershipSettingsPanel({
     const cacheKey = settingsCacheKey();
     const requestId = ++settingsLoadRequestIdRef.current;
     let loadedSettingsVersion: string | null = null;
-    const cachedSettings = force
+    const cachedSettings = force || !effectiveCachePolicy.allowPersistentRead
       ? null
       : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const loadSettingsFromServer = async () => {
       const params = new URLSearchParams({ siteId: normalizedSiteId });
-      if (cachedSettings?.version) params.set("knownVersion", cachedSettings.version);
-      const response = await fetch(`/api/membership-settings?${params.toString()}`, {
+      if (employeeMode) params.set("scope", employeeScope);
+      else if (cachedSettings?.version) params.set("knownVersion", cachedSettings.version);
+      const response = await requestSettingsApi(`/api/membership-settings?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -464,6 +521,22 @@ export default function MerchantMembershipSettingsPanel({
       }
       return normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
     };
+    if (!effectiveCachePolicy.allowPersistentRead) {
+      setLoading(true);
+      setError("");
+      setNotice("");
+      try {
+        const nextSettings = await loadSettingsFromServer();
+        if (settingsLoadRequestIdRef.current === requestId) setSettings(nextSettings);
+      } catch (fetchError) {
+        if (settingsLoadRequestIdRef.current === requestId) {
+          setError(fetchError instanceof Error ? fetchError.message : `${viewLoadLabel}加载失败，请稍后重试`);
+        }
+      } finally {
+        if (settingsLoadRequestIdRef.current === requestId) setLoading(false);
+      }
+      return;
+    }
     if (cachedSettings) {
       setSettings(cachedSettings.data);
       setError("");
@@ -501,7 +574,7 @@ export default function MerchantMembershipSettingsPanel({
   }
 
   async function saveSettings(nextSettings: MerchantMembershipSettings = activeSettings, successNotice = "已保存") {
-    if (saving) return false;
+    if (saving || !canManageSettings) return false;
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setError("当前商户资料还没准备好，请稍后重试。");
       return false;
@@ -519,10 +592,10 @@ export default function MerchantMembershipSettingsPanel({
       normalized.pointsRules.holidayNames = [];
       let response: Response | null = null;
       let lastNetworkError: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < (employeeMode ? 1 : 2); attempt += 1) {
         try {
           response = await runWithMerchantOperationContext(buildSettingsOperationContext(), () =>
-            fetch("/api/membership-settings", {
+            requestSettingsApi("/api/membership-settings", {
               method: "PUT",
               cache: "no-store",
               credentials: "same-origin",
@@ -534,6 +607,7 @@ export default function MerchantMembershipSettingsPanel({
                 siteId: normalizedSiteId,
                 settings: normalized,
                 view,
+                ...(employeeMode ? { scope: employeeScope } : {}),
                 expectedUpdatedAt: normalized.updatedAt,
               }),
             }),
@@ -553,8 +627,10 @@ export default function MerchantMembershipSettingsPanel({
       }
       const savedSettings = normalizeMerchantMembershipSettings(normalizedSiteId, payload.settings);
       setSettings(savedSettings);
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
-      writeMerchantAdminDataCache(settingsCacheKey(), savedSettings, { version: savedSettings.updatedAt });
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+        writeMerchantAdminDataCache(settingsCacheKey(), savedSettings, { version: savedSettings.updatedAt });
+      }
       setNotice(successNotice);
       return true;
     } catch (saveError) {
@@ -884,6 +960,10 @@ export default function MerchantMembershipSettingsPanel({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file || itemImageUploading) return;
+    if (!canUploadRedemptionCatalogImage) {
+      setError("当前角色没有上传兑换项目图片的权限。");
+      return;
+    }
     if (!file.type.toLowerCase().startsWith("image/")) {
       setError("仅支持上传图片文件");
       return;
@@ -896,16 +976,30 @@ export default function MerchantMembershipSettingsPanel({
         setItemImagePreviewUrl(localPreviewUrl);
       }
       const uploadDataUrl = await compressRedemptionItemImageDataUrl(file, localPreviewUrl);
-      const uploadedUrl = await uploadDataUrlToPublicStorage(uploadDataUrl, {
-        merchantHint: normalizedSiteId || "membership",
-        folder: "merchant-assets",
-        usage: "generic-image",
-        operation: {
-          operationModule: "积分兑换 > 项目管理",
-          operationAction: "上传项目图片",
-          operationSummary: `在积分兑换 > 项目管理上传项目图片：${itemDialog?.draft.name.trim() || itemDialog?.draft.code.trim() || "未命名项目"}`,
-        },
-      });
+      const uploadOperation = {
+        operationModule: "积分兑换 > 项目管理",
+        operationAction: "上传项目图片",
+        operationSummary: `在积分兑换 > 项目管理上传项目图片：${itemDialog?.draft.name.trim() || itemDialog?.draft.code.trim() || "未命名项目"}`,
+      };
+      const uploadedUrl = employeeMode
+        ? (
+            await uploadImageDataUrlToSupabaseWithMetadata(
+              uploadDataUrl,
+              normalizedSiteId,
+              "product-image",
+              uploadOperation,
+              {
+                apiClient,
+                businessPurpose: "redemption-catalog",
+              },
+            )
+          )?.url ?? null
+        : await uploadDataUrlToPublicStorage(uploadDataUrl, {
+            merchantHint: normalizedSiteId || "membership",
+            folder: "merchant-assets",
+            usage: "generic-image",
+            operation: uploadOperation,
+          });
       if (uploadedUrl) {
         patchItemDraft({ imageUrl: normalizePublicAssetUrl(uploadedUrl) });
       } else {
@@ -1316,7 +1410,13 @@ export default function MerchantMembershipSettingsPanel({
                     title={itemDialog.draft.name}
                     uploading={itemImageUploading}
                   />
-                  <input type="file" accept="image/*" className="sr-only" disabled={itemImageUploading} onChange={handleItemImageUpload} />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={itemImageUploading || !canUploadRedemptionCatalogImage}
+                    onChange={handleItemImageUpload}
+                  />
                 </label>
                 <div className="grid gap-2 md:grid-cols-2">
                   <Field label="编号">
@@ -2098,6 +2198,16 @@ export default function MerchantMembershipSettingsPanel({
   );
 
   const showHeaderSaveButton = view !== "redemptionCategories" && view !== "redemptionItems";
+
+  if (!canManageSettings) {
+    return (
+      <section className={`space-y-4 py-6 ${className}`}>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+          当前员工角色没有管理此配置分区的权限。
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className={`space-y-4 py-6 ${className}`}>

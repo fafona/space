@@ -1,19 +1,37 @@
 import { NextResponse } from "next/server";
+import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+} from "@/lib/merchantBusinessActor.server";
+import { readUniqueMerchantBusinessSiteId } from "@/lib/merchantBusinessRequest";
 import { getMerchantCouponsSnapshot } from "@/lib/merchantCoupons.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { redactMerchantMembershipForCashier } from "@/lib/merchantMembershipBusinessPermissions";
 import {
   buildRedemptionCashierSettings,
   getMerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings.server";
 import { getMerchantMembershipsSnapshot } from "@/lib/merchantMemberships.server";
 import { buildRedemptionCashierMembershipList } from "@/lib/merchantRedemptionCashier";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function applyPrivateResponseHeaders(response: Response) {
+  response.headers.set("cache-control", "private, no-store");
+  response.headers.set("pragma", "no-cache");
+  response.headers.set("x-content-type-options", "nosniff");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
+  response.headers.set("referrer-policy", "no-referrer");
+  return response;
+}
+
+function privateJson(body: unknown, init?: ResponseInit) {
+  return applyPrivateResponseHeaders(NextResponse.json(body, init));
 }
 
 function normalizeLimit(value: unknown) {
@@ -25,15 +43,18 @@ function normalizeLimit(value: unknown) {
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const siteId = trimText(url.searchParams.get("siteId"), 64);
+    const siteId = readUniqueMerchantBusinessSiteId(url);
     if (!isMerchantNumericId(siteId)) {
-      return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+      return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
 
-    const session = await resolveMerchantSessionFromRequest(request, { hintedMerchantId: siteId });
-    if (!session || session.merchantId !== siteId) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
+    const actor = await authorizeMerchantBusinessRequest(request, {
+      siteId,
+      requiredPermission: "redemptions.view",
+    });
+    const canViewCustomerData =
+      actor.type === "owner" ||
+      actor.businessPermissions.includes("redemptions.customer_data.view");
 
     const limit = normalizeLimit(url.searchParams.get("limit"));
     const knownMembershipVersion = trimText(url.searchParams.get("knownMembershipVersion"), 128);
@@ -47,21 +68,30 @@ export async function GET(request: Request) {
     const membershipVersion = membershipsSnapshot.updatedAt;
     const settingsVersion = settings.updatedAt ?? null;
     const couponVersion = couponsSnapshot.updatedAt;
-    const membershipsNotModified = Boolean(knownMembershipVersion && membershipVersion && knownMembershipVersion === membershipVersion);
+    // A restricted employee must receive a freshly redacted payload instead
+    // of reusing a full owner/customer-data cache entry in the same browser.
+    const membershipsNotModified = Boolean(
+      canViewCustomerData &&
+      knownMembershipVersion &&
+      membershipVersion &&
+      knownMembershipVersion === membershipVersion,
+    );
     const settingsNotModified = Boolean(knownSettingsVersion && settingsVersion && knownSettingsVersion === settingsVersion);
     const couponsNotModified = Boolean(knownCouponVersion && couponVersion && knownCouponVersion === couponVersion);
     const mode = trimText(url.searchParams.get("mode"), 32);
-    const memberships = buildRedemptionCashierMembershipList(membershipsSnapshot.memberships, {
-      mode,
-      limit,
-    });
+    const memberships = buildRedemptionCashierMembershipList(
+      membershipsSnapshot.memberships,
+      { mode, limit },
+    ).map((membership) =>
+      redactMerchantMembershipForCashier(membership, canViewCustomerData),
+    );
     const couponCatalog = couponsSnapshot.coupons.map((coupon) => ({
       ...coupon,
       claimEvents: [],
       redeemEvents: [],
     }));
 
-    return NextResponse.json({
+    return privateJson({
       ok: true,
       memberships: membershipsNotModified ? undefined : memberships,
       membershipsNotModified,
@@ -75,7 +105,10 @@ export async function GET(request: Request) {
       limit,
     });
   } catch (error) {
-    return NextResponse.json(
+    if (error instanceof MerchantBusinessAccessError) {
+      return privateJson({ error: error.code }, { status: error.status });
+    }
+    return privateJson(
       {
         error: "redemption_cashier_load_failed",
         message: error instanceof Error ? error.message : "unknown_error",

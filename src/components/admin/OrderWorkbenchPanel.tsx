@@ -39,6 +39,20 @@ import type {
   MerchantOrderWorkbenchTodo,
 } from "@/lib/merchantOrderWorkbench";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import {
+  canOpenMerchantOrderWorkbenchView,
+  canRunMerchantOrderAction,
+  createMerchantOrderApiRequest,
+  hasMerchantOrderFrontendPermission,
+  isMerchantOrderEmployeeFrontend,
+  resolveMerchantOrderWorkbenchView,
+  MERCHANT_ORDER_NO_PERMISSIONS,
+} from "@/lib/merchantOrderFrontendAccess";
 
 export type OrderWorkbenchView = "overview" | "orders" | "analysis" | "catalog" | "export";
 
@@ -110,6 +124,9 @@ export type OrderWorkbenchPanelProps = {
   onStatusFilter: (status: MerchantOrderStatus) => void;
   onChanged?: () => void | Promise<void>;
   registerLeaveGuard?: (guard: (() => boolean) | null) => void;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
 };
 
 type WorkbenchApiPayload = {
@@ -528,14 +545,18 @@ function getAvailableOrderActions(status: MerchantOrderStatus): WorkbenchOrderAc
   return ["restore"];
 }
 
-function getOrderSearchText(order: MerchantOrderRecord) {
+function getOrderSearchText(order: MerchantOrderRecord, includeCustomerData: boolean) {
   return [
     order.id,
-    order.customer.name,
-    order.customer.phone,
-    order.customer.email,
-    order.customer.note,
-    order.customerLoginEmail,
+    ...(includeCustomerData
+      ? [
+          order.customer.name,
+          order.customer.phone,
+          order.customer.email,
+          order.customer.note,
+          order.customerLoginEmail,
+        ]
+      : []),
     ...order.items.flatMap((item) => [item.name, item.code, item.tag, item.description]),
   ]
     .join("\n")
@@ -548,9 +569,14 @@ function mergeOrderWindows(current: MerchantOrderRecord[], nextWindow: MerchantO
   return [...byId.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 }
 
-async function fetchExactMerchantOrder(siteId: string, orderId: string, signal?: AbortSignal) {
+async function fetchExactMerchantOrder(
+  requestApi: MerchantBusinessApiClient,
+  siteId: string,
+  orderId: string,
+  signal?: AbortSignal,
+) {
   const query = new URLSearchParams({ siteId, orderId });
-  const response = await fetch(`/api/orders?${query.toString()}`, {
+  const response = await requestApi(`/api/orders?${query.toString()}`, {
     method: "GET",
     cache: "no-store",
     credentials: "same-origin",
@@ -570,6 +596,9 @@ async function fetchExactMerchantOrder(siteId: string, orderId: string, signal?:
   }
   return order;
 }
+
+const requestOwnerWorkbenchApi: MerchantBusinessApiClient = (path, init) =>
+  fetch(path, init);
 
 function isMerchantOrderWorkbenchDashboard(value: unknown): value is MerchantOrderWorkbenchDashboard {
   if (!value || typeof value !== "object") return false;
@@ -925,7 +954,17 @@ function OrderExportDateField({
   );
 }
 
-function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: boolean }) {
+function OrderExportPanel({
+  siteId,
+  darkMode,
+  requestApi,
+  canExportCustomerData,
+}: {
+  siteId: string;
+  darkMode: boolean;
+  requestApi: MerchantBusinessApiClient;
+  canExportCustomerData: boolean;
+}) {
   const [range, setRange] = useState(getDefaultOrderExportRange);
   const [statuses, setStatuses] = useState<MerchantOrderStatus[]>(() =>
     ORDER_EXPORT_STATUSES.map((item) => item.value),
@@ -958,6 +997,10 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
     setPendingShare(null);
     setSharing(false);
   }, [siteId]);
+
+  useEffect(() => {
+    if (!canExportCustomerData) setIncludeCustomerData(false);
+  }, [canExportCustomerData]);
 
   useEffect(
     () => () => {
@@ -1023,6 +1066,7 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
       }
     }
     if (
+      canExportCustomerData &&
       includeCustomerData &&
       !window.confirm(
         "导出文件将包含客户姓名、电话、联系邮箱和客户备注。请仅在业务确有需要时保存，并按隐私要求妥善保管。确定继续吗？",
@@ -1041,7 +1085,7 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
     setPendingShare(null);
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-      const response = await fetch("/api/orders/export", {
+      const response = await requestApi("/api/orders/export", {
         method: "POST",
         cache: "no-store",
         credentials: "same-origin",
@@ -1052,7 +1096,7 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
           createdFrom: start.toISOString(),
           createdToExclusive: endExclusive.toISOString(),
           statuses,
-          includeCustomerData,
+          includeCustomerData: canExportCustomerData && includeCustomerData,
           timezone,
         }),
       });
@@ -1253,6 +1297,7 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
             </div>
           </fieldset>
 
+          {canExportCustomerData ? (
           <fieldset disabled={exportBusy}>
             <legend className="text-sm font-bold">客户资料</legend>
             <label
@@ -1283,6 +1328,7 @@ function OrderExportPanel({ siteId, darkMode }: { siteId: string; darkMode: bool
               </span>
             </label>
           </fieldset>
+          ) : null}
 
           {error ? (
             <div
@@ -1389,6 +1435,7 @@ function OrderListView({
   onLoadMore,
   onOpenOrder,
   onOpenFullList,
+  canViewCustomerData,
 }: {
   records: MerchantOrderRecord[];
   visibleRecords: MerchantOrderRecord[];
@@ -1408,6 +1455,7 @@ function OrderListView({
   onLoadMore: () => void;
   onOpenOrder: (orderId: string) => void;
   onOpenFullList: (() => void) | null;
+  canViewCustomerData: boolean;
 }) {
   const surfaceClassName = darkMode
     ? "border-slate-700/80 bg-slate-900/80"
@@ -1527,16 +1575,16 @@ function OrderListView({
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getStatusBadgeClass(order.status, darkMode)}`}>
                       {getStatusLabel(order.status)}
                     </span>
-                    {order.customer.note ? (
+                    {canViewCustomerData && order.customer.note ? (
                       <span className={darkMode ? "text-xs font-semibold text-violet-200" : "text-xs font-semibold text-violet-700"}>有客户备注</span>
                     ) : null}
                   </span>
                   <span className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs ${mutedTextClassName}`}>
-                    <span>客户：{order.customer.name || "未填写姓名"}</span>
+                    <span>客户：{canViewCustomerData ? order.customer.name || "未填写姓名" : "无权查看"}</span>
                     <span>下单：{formatDateTime(order.createdAt)}</span>
                     <span>{order.items.length} 项 · 共 {order.totalQuantity} 件</span>
                   </span>
-                  {order.customer.note ? (
+                  {canViewCustomerData && order.customer.note ? (
                     <span className={`mt-2 block line-clamp-2 whitespace-pre-wrap text-xs leading-5 ${darkMode ? "text-violet-200" : "text-violet-800"}`}>
                       {order.customer.note}
                     </span>
@@ -1602,6 +1650,9 @@ function OrderDetailDrawer({
   onContact,
   onOpenTask,
   onOpenFullOrder,
+  canViewCustomerData,
+  canPrint,
+  canRunAction,
 }: {
   orderId: string;
   order: MerchantOrderRecord | null;
@@ -1619,6 +1670,9 @@ function OrderDetailDrawer({
   onContact?: (orderId: string) => void;
   onOpenTask?: (orderId: string) => void;
   onOpenFullOrder: (orderId: string) => void;
+  canViewCustomerData: boolean;
+  canPrint: boolean;
+  canRunAction: (action: WorkbenchOrderAction) => boolean;
 }) {
   const drawerTitleId = useId();
   const drawerRef = useRef<HTMLElement | null>(null);
@@ -1704,19 +1758,21 @@ function OrderDetailDrawer({
               <section className={`rounded-2xl border p-4 sm:p-5 ${cardClassName}`} aria-labelledby={`${drawerTitleId}-customer`}>
                 <h4 id={`${drawerTitleId}-customer`} className="text-sm font-bold">客户与订单</h4>
                 <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                  <div><dt className={mutedTextClassName}>客户</dt><dd className="mt-1 break-words font-semibold">{order.customer.name || "未填写"}</dd></div>
+                  <div><dt className={mutedTextClassName}>客户</dt><dd className="mt-1 break-words font-semibold">{canViewCustomerData ? order.customer.name || "未填写" : "无权查看"}</dd></div>
                   <div><dt className={mutedTextClassName}>下单时间</dt><dd className="mt-1">{formatDateTime(order.createdAt)}</dd></div>
-                  <div><dt className={mutedTextClassName}>电话</dt><dd className="mt-1 break-all">{order.customer.phone || "未填写"}</dd></div>
-                  <div><dt className={mutedTextClassName}>邮箱</dt><dd className="mt-1 break-all">{order.customer.email || order.customerLoginEmail || "未填写"}</dd></div>
+                  <div><dt className={mutedTextClassName}>电话</dt><dd className="mt-1 break-all">{canViewCustomerData ? order.customer.phone || "未填写" : "无权查看"}</dd></div>
+                  <div><dt className={mutedTextClassName}>邮箱</dt><dd className="mt-1 break-all">{canViewCustomerData ? order.customer.email || order.customerLoginEmail || "未填写" : "无权查看"}</dd></div>
                   <div><dt className={mutedTextClassName}>最近更新</dt><dd className="mt-1">{formatDateTime(order.updatedAt)}</dd></div>
                   <div><dt className={mutedTextClassName}>账面订单额</dt><dd className="mt-1 font-bold tabular-nums">{formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}</dd></div>
                 </dl>
+                {canViewCustomerData ? (
                 <div className={`mt-4 rounded-xl border px-3 py-3 ${darkMode ? "border-violet-400/20 bg-violet-400/5" : "border-violet-100 bg-violet-50/70"}`}>
                   <p className={`text-xs font-semibold ${darkMode ? "text-violet-200" : "text-violet-800"}`}>客户备注</p>
                   <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-6 ${order.customer.note ? "" : mutedTextClassName}`}>
                     {order.customer.note || "客户未填写备注"}
                   </p>
                 </div>
+                ) : null}
               </section>
 
               <section className={`rounded-2xl border p-4 sm:p-5 ${cardClassName}`} aria-labelledby={`${drawerTitleId}-items`}>
@@ -1753,7 +1809,7 @@ function OrderDetailDrawer({
                 <h4 id={`${drawerTitleId}-actions`} className="text-sm font-bold">订单处置</h4>
                 <p className={`mt-1 text-xs leading-5 ${mutedTextClassName}`}>操作前会重新读取订单；若检测到其他入口已更新，会先刷新详情并要求重新确认。</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {getAvailableOrderActions(order.status).map((action) => {
+                  {getAvailableOrderActions(order.status).filter(canRunAction).map((action) => {
                     const primary = action === "confirm" || action === "complete";
                     const destructive = action === "cancel";
                     return (
@@ -1779,6 +1835,7 @@ function OrderDetailDrawer({
                       </button>
                     );
                   })}
+                  {canPrint ? (
                   <button
                     type="button"
                     onClick={() => onPrint(order)}
@@ -1790,6 +1847,7 @@ function OrderDetailDrawer({
                       ? "正在记录"
                       : getMerchantOrderPrintAttemptText(order.printCount)}
                   </button>
+                  ) : null}
                 </div>
                 <div className={`mt-4 border-t pt-4 ${darkMode ? "border-slate-800" : "border-slate-200"}`}>
                   <div className="flex flex-wrap gap-2">
@@ -1837,9 +1895,60 @@ export default function OrderWorkbenchPanel({
   onStatusFilter,
   onChanged,
   registerLeaveGuard,
+  apiClient,
+  cachePolicy,
+  permissions,
 }: OrderWorkbenchPanelProps) {
   const isOverlay = mode === "overlay";
-  const [activeView, setActiveView] = useState<OrderWorkbenchView>(initialView);
+  const employeeMode = isMerchantOrderEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_ORDER_NO_PERMISSIONS
+      : permissions;
+  const requestApi = useMemo(
+    () =>
+      createMerchantOrderApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: requestOwnerWorkbenchApi,
+      }),
+    [apiClient, employeeMode],
+  );
+  const canViewOrders = hasMerchantOrderFrontendPermission(effectivePermissions, "orders.view");
+  const canViewCustomerData = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.customer_data.view",
+  );
+  const canManageOrderStatus = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.status.manage",
+  );
+  const canCompleteOrders = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.complete",
+  );
+  const canPrintOrders = hasMerchantOrderFrontendPermission(effectivePermissions, "orders.print");
+  const canViewAnalytics = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.analytics.view",
+  );
+  const canExportOrders = hasMerchantOrderFrontendPermission(effectivePermissions, "orders.export");
+  const canExportCustomerData =
+    canExportOrders &&
+    canViewCustomerData &&
+    hasMerchantOrderFrontendPermission(
+      effectivePermissions,
+      "orders.export.customer_data",
+    );
+  const initialAllowedView = resolveMerchantOrderWorkbenchView(initialView, effectivePermissions);
+  const permissionFingerprint = effectivePermissions?.join("\u0001") ?? "owner";
+  const [activeView, setActiveView] = useState<OrderWorkbenchView>(
+    initialAllowedView ?? "orders",
+  );
   const [catalogLeaveState, setCatalogLeaveState] = useState<MerchantCatalogLeaveState>("clean");
   const catalogLeaveStateRef = useRef<MerchantCatalogLeaveState>("clean");
   const [leaveGuardMessage, setLeaveGuardMessage] = useState("");
@@ -1966,12 +2075,16 @@ export default function OrderWorkbenchPanel({
 
   const requestViewChange = useCallback(
     (view: OrderWorkbenchView) => {
+      if (!canOpenMerchantOrderWorkbenchView(effectivePermissions, view)) {
+        setLeaveGuardMessage("当前角色没有打开该订单功能的权限。");
+        return;
+      }
       if (view === activeView) return;
       if (detailOrderId && !closeOrderDetail()) return;
       if (!requestCatalogLeave()) return;
       setActiveView(view);
     },
-    [activeView, closeOrderDetail, detailOrderId, requestCatalogLeave],
+    [activeView, closeOrderDetail, detailOrderId, effectivePermissions, requestCatalogLeave],
   );
 
   const handleCatalogLeaveStateChange = useCallback((state: MerchantCatalogLeaveState) => {
@@ -1999,15 +2112,23 @@ export default function OrderWorkbenchPanel({
 
   useEffect(() => {
     if (initialViewPropRef.current === initialView) return;
-    if (activeView === initialView) {
+    const nextView = resolveMerchantOrderWorkbenchView(initialView, effectivePermissions);
+    if (!nextView) return;
+    if (activeView === nextView) {
       initialViewPropRef.current = initialView;
       return;
     }
     if (detailOrderId && !closeOrderDetail()) return;
     if (!requestCatalogLeave()) return;
     initialViewPropRef.current = initialView;
-    setActiveView(initialView);
-  }, [activeView, catalogLeaveState, closeOrderDetail, detailOrderId, initialView, requestCatalogLeave]);
+    setActiveView(nextView);
+  }, [activeView, catalogLeaveState, closeOrderDetail, detailOrderId, effectivePermissions, initialView, requestCatalogLeave]);
+
+  useEffect(() => {
+    if (canOpenMerchantOrderWorkbenchView(effectivePermissions, activeView)) return;
+    const nextView = resolveMerchantOrderWorkbenchView(activeView, effectivePermissions);
+    if (nextView) setActiveView(nextView);
+  }, [activeView, effectivePermissions]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -2021,6 +2142,32 @@ export default function OrderWorkbenchPanel({
       intentActionSequenceRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    orderListAbortControllerRef.current?.abort();
+    detailAbortControllerRef.current?.abort();
+    orderListAbortControllerRef.current = null;
+    detailAbortControllerRef.current = null;
+    orderListRequestSequenceRef.current += 1;
+    detailRequestSequenceRef.current += 1;
+    orderMutationSequenceRef.current += 1;
+    intentActionSequenceRef.current += 1;
+    orderMutationRef.current = null;
+    intentActionRef.current = null;
+    setOrderMutation(null);
+    setIntentAction(null);
+    setActingOrderId("");
+    if (!canViewOrders) {
+      orderRecordsRef.current = [];
+      setOrderRecords([]);
+      setDetailOrderId("");
+      setDetailOrder(null);
+    }
+    if (!canViewAnalytics) {
+      dashboardRef.current = null;
+      setDashboard(null);
+    }
+  }, [apiClient, canViewAnalytics, canViewOrders, employeeMode, permissionFingerprint]);
 
   useEffect(() => {
     if (!isOverlay && !detailOrderId) return;
@@ -2071,6 +2218,13 @@ export default function OrderWorkbenchPanel({
     const requestSequence = requestSequenceRef.current + 1;
     requestSequenceRef.current = requestSequence;
     const hasCurrentDashboard = dashboardRef.current !== null;
+    if (!canViewAnalytics) {
+      dashboardRef.current = null;
+      setDashboard(null);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     if (!normalizedSiteId) {
       dashboardRef.current = null;
       setDashboard(null);
@@ -2089,7 +2243,7 @@ export default function OrderWorkbenchPanel({
         siteId: normalizedSiteId,
         timezoneOffsetMinutes: String(timezoneOffsetMinutes),
       });
-      const response = await fetch(`/api/orders/workbench?${query.toString()}`, {
+      const response = await requestApi(`/api/orders/workbench?${query.toString()}`, {
         method: "GET",
         cache: "no-store",
         signal,
@@ -2115,7 +2269,7 @@ export default function OrderWorkbenchPanel({
         setRefreshing(false);
       }
     }
-  }, [siteId]);
+  }, [canViewAnalytics, requestApi, siteId]);
 
   useEffect(() => {
     const normalizedSiteId = siteId.trim();
@@ -2127,7 +2281,7 @@ export default function OrderWorkbenchPanel({
       setActionError("");
       setNotice("");
     }
-    if (activeView !== "overview" && activeView !== "analysis") {
+    if (!canViewAnalytics || (activeView !== "overview" && activeView !== "analysis")) {
       setLoading(false);
       setRefreshing(false);
       return;
@@ -2144,7 +2298,7 @@ export default function OrderWorkbenchPanel({
       controller.abort();
       requestSequenceRef.current += 1;
     };
-  }, [activeView, loadDashboard, siteId]);
+  }, [activeView, canViewAnalytics, loadDashboard, siteId]);
 
   const applyUpdatedOrder = useCallback((nextOrder: MerchantOrderRecord) => {
     if (nextOrder.siteId !== orderListSiteIdRef.current) return;
@@ -2160,6 +2314,11 @@ export default function OrderWorkbenchPanel({
   const loadOrderWindow = useCallback(
     async ({ append = false }: { append?: boolean } = {}) => {
       const normalizedSiteId = siteId.trim();
+      if (!canViewOrders) {
+        setOrderRecords([]);
+        setOrderListError("当前角色没有查看订单的权限。");
+        return;
+      }
       if (!normalizedSiteId || orderListSiteIdRef.current !== normalizedSiteId) {
         if (!normalizedSiteId) setOrderListError("缺少商户编号，暂时无法读取订单列表。");
         return;
@@ -2185,7 +2344,7 @@ export default function OrderWorkbenchPanel({
           offset: String(offset),
           limit: String(ORDER_LIST_WINDOW_LIMIT),
         });
-        const response = await fetch(`/api/orders?${query.toString()}`, {
+        const response = await requestApi(`/api/orders?${query.toString()}`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
@@ -2240,7 +2399,7 @@ export default function OrderWorkbenchPanel({
         }
       }
     },
-    [siteId],
+    [canViewOrders, requestApi, siteId],
   );
 
   useEffect(() => {
@@ -2281,17 +2440,18 @@ export default function OrderWorkbenchPanel({
     const normalizedSiteId = siteId.trim();
     if (
       activeView !== "orders" ||
+      !canViewOrders ||
       !normalizedSiteId ||
       orderListHydratedSiteIdRef.current === normalizedSiteId
     ) return;
     void loadOrderWindow();
-  }, [activeView, loadOrderWindow, siteId]);
+  }, [activeView, canViewOrders, loadOrderWindow, siteId]);
 
   const loadOrderDetail = useCallback(
     async (orderId: string) => {
       const normalizedSiteId = siteId.trim();
       const normalizedOrderId = orderId.trim();
-      if (!normalizedSiteId || !normalizedOrderId || orderMutationRef.current) return;
+      if (!canViewOrders || !normalizedSiteId || !normalizedOrderId || orderMutationRef.current) return;
 
       detailAbortControllerRef.current?.abort();
       const controller = new AbortController();
@@ -2308,7 +2468,12 @@ export default function OrderWorkbenchPanel({
       setLeaveGuardMessage("");
 
       try {
-        const nextOrder = await fetchExactMerchantOrder(normalizedSiteId, normalizedOrderId, controller.signal);
+        const nextOrder = await fetchExactMerchantOrder(
+          requestApi,
+          normalizedSiteId,
+          normalizedOrderId,
+          controller.signal,
+        );
         if (
           !mountedRef.current ||
           controller.signal.aborted ||
@@ -2332,16 +2497,16 @@ export default function OrderWorkbenchPanel({
         }
       }
     },
-    [applyUpdatedOrder, siteId],
+    [applyUpdatedOrder, canViewOrders, requestApi, siteId],
   );
 
   const visibleOrderRecords = useMemo(() => {
     const keyword = orderListSearch.trim().toLowerCase();
     return orderRecordsForCurrentSite.filter((order) => {
       if (orderListStatusFilter !== "all" && order.status !== orderListStatusFilter) return false;
-      return !keyword || getOrderSearchText(order).includes(keyword);
+      return !keyword || getOrderSearchText(order, canViewCustomerData).includes(keyword);
     });
-  }, [orderListSearch, orderListStatusFilter, orderRecordsForCurrentSite]);
+  }, [canViewCustomerData, orderListSearch, orderListStatusFilter, orderRecordsForCurrentSite]);
 
   const runOrderAction = useCallback(
     async (
@@ -2349,6 +2514,10 @@ export default function OrderWorkbenchPanel({
       action: WorkbenchOrderAction,
     ) => {
       if (orderMutationRef.current || intentActionRef.current) return;
+      if (!canRunMerchantOrderAction(effectivePermissions, action)) {
+        setActionError("当前角色没有执行此订单操作的权限。");
+        return;
+      }
       const confirmation = getOrderActionConfirmation(action);
       if (confirmation && !window.confirm(confirmation)) return;
       const mutationSiteId = siteId.trim();
@@ -2369,7 +2538,11 @@ export default function OrderWorkbenchPanel({
       setLeaveGuardMessage("");
 
       try {
-        const latestOrder = await fetchExactMerchantOrder(mutationSiteId, target.id);
+        const latestOrder = await fetchExactMerchantOrder(
+          requestApi,
+          mutationSiteId,
+          target.id,
+        );
         if (
           !mountedRef.current ||
           orderMutationSequenceRef.current !== mutationSequence ||
@@ -2384,7 +2557,7 @@ export default function OrderWorkbenchPanel({
           throw new Error("订单已在其他入口更新，详情已刷新。请重新核对后再操作。");
         }
 
-        const response = await fetch("/api/orders", {
+        const response = await requestApi("/api/orders", {
           method: "PATCH",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
@@ -2436,12 +2609,16 @@ export default function OrderWorkbenchPanel({
         }
       }
     },
-    [applyUpdatedOrder, loadDashboard, onChanged, siteId],
+    [applyUpdatedOrder, effectivePermissions, loadDashboard, onChanged, requestApi, siteId],
   );
 
   const printOrder = useCallback(
     async (order: MerchantOrderRecord) => {
       if (orderMutationRef.current || intentActionRef.current) return;
+      if (!canPrintOrders) {
+        setActionError("当前角色没有打印订单的权限。");
+        return;
+      }
       setActionError("");
       setNotice("");
       const mutationSiteId = siteId.trim();
@@ -2464,7 +2641,11 @@ export default function OrderWorkbenchPanel({
       setLeaveGuardMessage("");
       let printStarted = false;
       try {
-        const latestOrder = await fetchExactMerchantOrder(mutationSiteId, order.id);
+        const latestOrder = await fetchExactMerchantOrder(
+          requestApi,
+          mutationSiteId,
+          order.id,
+        );
         if (
           !mountedRef.current ||
           orderMutationSequenceRef.current !== mutationSequence ||
@@ -2483,7 +2664,7 @@ export default function OrderWorkbenchPanel({
         }
         printStarted = true;
 
-        const response = await fetch("/api/orders", {
+        const response = await requestApi("/api/orders", {
           method: "PATCH",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
@@ -2544,7 +2725,7 @@ export default function OrderWorkbenchPanel({
         }
       }
     },
-    [applyUpdatedOrder, loadDashboard, onChanged, siteId],
+    [applyUpdatedOrder, canPrintOrders, loadDashboard, onChanged, requestApi, siteId],
   );
 
   const todoGroups = useMemo(() => {
@@ -2824,7 +3005,9 @@ export default function OrderWorkbenchPanel({
           ["analysis", "经营分析"],
           ["catalog", "商品目录"],
           ["export", "数据导出"],
-        ] as const).map(([view, label]) => {
+        ] as const)
+          .filter(([view]) => canOpenMerchantOrderWorkbenchView(effectivePermissions, view))
+          .map(([view, label]) => {
           const active = activeView === view;
           return (
             <button
@@ -2870,6 +3053,9 @@ export default function OrderWorkbenchPanel({
             catalogTarget={catalogTarget}
             onChanged={onChanged}
             onLeaveStateChange={handleCatalogLeaveStateChange}
+            apiClient={apiClient}
+            cachePolicy={cachePolicy}
+            permissions={effectivePermissions}
           />
         ) : activeView === "orders" ? (
           <OrderListView
@@ -2891,9 +3077,16 @@ export default function OrderWorkbenchPanel({
             onLoadMore={() => void loadOrderWindow({ append: true })}
             onOpenOrder={(orderId) => void loadOrderDetail(orderId)}
             onOpenFullList={orderListStatusFilter === "all" ? null : openFilteredFullOrderList}
+            canViewCustomerData={canViewCustomerData}
           />
         ) : activeView === "export" ? (
-          <OrderExportPanel key={renderedSiteId} siteId={siteId} darkMode={darkMode} />
+          <OrderExportPanel
+            key={renderedSiteId}
+            siteId={siteId}
+            darkMode={darkMode}
+            requestApi={requestApi}
+            canExportCustomerData={canExportCustomerData}
+          />
         ) : (
           <>
         {loading && !dashboardForCurrentSite ? <LoadingSkeleton darkMode={darkMode} /> : null}
@@ -3098,13 +3291,13 @@ export default function OrderWorkbenchPanel({
                                 ))}
                             </div>
                             <div className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs ${subtleTextClassName}`}>
-                              <span>客户：{group.customerName || "未填写姓名"}</span>
+                              <span>客户：{canViewCustomerData ? group.customerName || "未填写姓名" : "无权查看"}</span>
                               <span>下单：{formatDateTime(group.createdAt)}</span>
                               <span className="font-semibold tabular-nums">
                                 金额：{formatMerchantOrderAmount(group.totalAmount, group.pricePrefix)}
                               </span>
                             </div>
-                            {group.note ? (
+                            {canViewCustomerData && group.note ? (
                               <p
                                 className={`mt-3 whitespace-pre-wrap break-words rounded-xl border px-3 py-2 text-sm leading-6 ${
                                   darkMode
@@ -3119,7 +3312,7 @@ export default function OrderWorkbenchPanel({
                           </div>
 
                           <div className="flex shrink-0 flex-wrap gap-2 lg:max-w-[42rem] lg:justify-end">
-                            {group.status === "pending" ? (
+                            {canManageOrderStatus && group.status === "pending" ? (
                               <button
                                 type="button"
                                 onClick={() => void updateOrderStatus(group, "confirmed")}
@@ -3130,7 +3323,7 @@ export default function OrderWorkbenchPanel({
                                 {isActing ? "正在确认" : "确认订单"}
                               </button>
                             ) : null}
-                            {group.status === "confirmed" ? (
+                            {canCompleteOrders && group.status === "confirmed" ? (
                               <button
                                 type="button"
                                 onClick={() => void updateOrderStatus(group, "completed")}
@@ -3141,7 +3334,7 @@ export default function OrderWorkbenchPanel({
                                 {isActing ? "正在结算" : "完成并结算会员权益"}
                               </button>
                             ) : null}
-                            {onContactOrder ? (
+                            {canViewCustomerData && onContactOrder ? (
                               <button
                                 type="button"
                                 onClick={() => void runOrderIntent(group.orderId, "contact", onContactOrder)}
@@ -3156,7 +3349,7 @@ export default function OrderWorkbenchPanel({
                                 {isContacting ? "正在打开" : "联系客户"}
                               </button>
                             ) : null}
-                            {onOpenEnterpriseTask ? (
+                            {!employeeMode && onOpenEnterpriseTask ? (
                               <button
                                 type="button"
                                 onClick={() => void runOrderIntent(group.orderId, "task", onOpenEnterpriseTask)}
@@ -3244,16 +3437,19 @@ export default function OrderWorkbenchPanel({
             }}
             onPrint={(order) => void printOrder(order)}
             onContact={
-              onContactOrder
+              canViewCustomerData && onContactOrder
                 ? (orderId) => void runOrderIntent(orderId, "contact", onContactOrder)
                 : undefined
             }
             onOpenTask={
-              onOpenEnterpriseTask
+              !employeeMode && onOpenEnterpriseTask
                 ? (orderId) => void runOrderIntent(orderId, "task", onOpenEnterpriseTask)
                 : undefined
             }
             onOpenFullOrder={(orderId) => void openFullOrder(orderId)}
+            canViewCustomerData={canViewCustomerData}
+            canPrint={canPrintOrders}
+            canRunAction={(action) => canRunMerchantOrderAction(effectivePermissions, action)}
           />,
           document.body,
         )

@@ -62,6 +62,12 @@ import {
   readLatestMerchantAdminDataCacheSnapshot,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import { isMerchantMembershipEmployeeFrontend } from "@/lib/merchantMembershipFrontendAccess";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 
 type MerchantPrintSettingsPanelProps = {
   siteId: string;
@@ -69,6 +75,9 @@ type MerchantPrintSettingsPanelProps = {
   siteCountryCode?: string;
   siteCountry?: string;
   className?: string;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
 };
 
 type MembershipSettingsPayload = {
@@ -481,7 +490,15 @@ export default function MerchantPrintSettingsPanel({
   siteCountryCode = "",
   siteCountry = "",
   className = "",
+  apiClient,
+  cachePolicy,
+  permissions,
 }: MerchantPrintSettingsPanelProps) {
+  const employeeMode = isMerchantMembershipEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
   const normalizedSiteId = siteId.trim();
   const [settings, setSettings] = useState<MerchantMembershipSettings>(() =>
     createEmptyMerchantMembershipSettings(normalizedSiteId),
@@ -821,6 +838,7 @@ export default function MerchantPrintSettingsPanel({
   }, [downloadPrintHelperInstaller, printHelperManifest, refreshPrintHelperManifest]);
 
   const loadSettings = useCallback(async (force = false) => {
+    if (employeeMode) return;
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       const emptySettings = createEmptyMerchantMembershipSettings(normalizedSiteId);
       setSettings({
@@ -890,10 +908,10 @@ export default function MerchantPrintSettingsPanel({
     } finally {
       if (settingsLoadRequestIdRef.current === requestId) setLoading(false);
     }
-  }, [defaultReceiptLocale, normalizedSiteId]);
+  }, [defaultReceiptLocale, employeeMode, normalizedSiteId]);
 
   async function saveSettings() {
-    if (saving) return;
+    if (saving || employeeMode) return;
     if (logoUploading) {
       setError("Logo 正在上传，请等上传完成后再保存配置。");
       return;
@@ -1187,8 +1205,8 @@ export default function MerchantPrintSettingsPanel({
   }, [loadSettings]);
 
   useEffect(() => {
-    void refreshPrintHelperManifest();
-  }, [refreshPrintHelperManifest]);
+    if (!employeeMode) void refreshPrintHelperManifest();
+  }, [employeeMode, refreshPrintHelperManifest]);
 
   useEffect(() => {
     setLogoPreviewUrl("");
@@ -1203,6 +1221,16 @@ export default function MerchantPrintSettingsPanel({
     }, 3000);
     return () => window.clearTimeout(timer);
   }, [error, notice]);
+
+  if (employeeMode) {
+    return (
+      <section className={`space-y-4 py-6 ${className}`}>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+          打印配置仅限负责人管理。员工可在获得打印权限后使用已发布的配置。
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className={`space-y-4 py-6 ${className}`}>

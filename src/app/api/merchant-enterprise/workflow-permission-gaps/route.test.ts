@@ -312,4 +312,18 @@ test("permission dependency and stale conflicts remain explicit", async () => {
     }),
   );
   assert.equal(stale.status, 409);
+
+  const businessRole = await handleMerchantEnterpriseWorkflowPermissionGapsPost(
+    request("grant-workflows:business-role"),
+    dependencies({
+      async grantPermissions() {
+        throw new Error("business_role_workflow_grant_requires_role_editor");
+      },
+    }),
+  );
+  assert.equal(businessRole.status, 409);
+  assert.deepEqual(await businessRole.json(), {
+    ok: false,
+    error: "business_role_workflow_grant_requires_role_editor",
+  });
 });

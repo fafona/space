@@ -6,6 +6,7 @@ import {
   assertMerchantOrderExpectedUpdatedAt,
   buildMerchantOrderId,
   createMerchantOrder,
+  merchantOrderTransitionChangesCompletedState,
   normalizeMerchantOrderRecords,
   type MerchantOrderAction,
   type MerchantOrderCreateInput,
@@ -314,10 +315,13 @@ export async function updateMerchantOrderBySite(input: {
   status?: MerchantOrderStatus;
   items?: MerchantOrderLineItemInput[];
   expectedUpdatedAt?: unknown;
+  allowCompletedTransition?: boolean;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }) {
   const supabase = requireOrdersStoreClient();
   const siteId = trimText(input.siteId);
   return withMerchantOrderMutationLock(siteId, async () => {
+    await input.assertAuthorizationCurrent?.();
     const stored = await loadStoredMerchantOrders(supabase, siteId);
     const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
     const orderIndex = orders.findIndex((order) => order.id === input.orderId);
@@ -333,6 +337,12 @@ export async function updateMerchantOrderBySite(input: {
     }
     const now = new Date().toISOString();
     const next = applyMerchantOrderUpdate(current, input, now);
+    if (
+      input.allowCompletedTransition === false &&
+      merchantOrderTransitionChangesCompletedState(current.status, next.status)
+    ) {
+      throw new Error("permission_denied");
+    }
     await syncMerchantMembershipPointsForOrderTransitions([{ previous: current, next }]);
     const updatedOrders = [...orders];
     updatedOrders[orderIndex] = next;
@@ -356,6 +366,8 @@ export async function updateMerchantOrdersBatchBySite(input: {
   orderIds: string[];
   action?: MerchantOrderAction;
   status?: MerchantOrderStatus;
+  allowCompletedTransition?: boolean;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }) {
   const supabase = requireOrdersStoreClient();
   const siteId = trimText(input.siteId);
@@ -367,6 +379,7 @@ export async function updateMerchantOrdersBatchBySite(input: {
     throw new Error("invalid_order_update");
   }
   return withMerchantOrderMutationLock(siteId, async () => {
+    await input.assertAuthorizationCurrent?.();
     const stored = await loadStoredMerchantOrders(supabase, siteId);
     const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
     const orderIdSet = new Set(orderIds);
@@ -387,6 +400,17 @@ export async function updateMerchantOrdersBatchBySite(input: {
     });
     if (updatedOrders.length === 0) {
       throw new Error("order_not_found");
+    }
+    if (
+      input.allowCompletedTransition === false &&
+      transitions.some(({ previous, next }) =>
+        merchantOrderTransitionChangesCompletedState(
+          previous.status,
+          next.status,
+        ),
+      )
+    ) {
+      throw new Error("permission_denied");
     }
     await syncMerchantMembershipPointsForOrderTransitions(transitions);
     const saved = await saveStoredMerchantOrders(supabase, {

@@ -17,11 +17,18 @@ import {
   mutateStoredMerchantCatalog,
   type MerchantCatalogStoreClient,
 } from "@/lib/merchantCatalogStore";
+import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+  reauthorizeMerchantBusinessMutation,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { fetchPublishedSiteBlocksFromSupabase } from "@/lib/publishedSiteData";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import type { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +37,13 @@ export const revalidate = 0;
 type CatalogAction = MerchantCatalogMutation["action"] | "bootstrap" | "preview_bootstrap";
 
 export type MerchantCatalogMutationRouteDependencies = {
-  resolveSession: typeof resolveMerchantSessionFromRequest;
+  /** Legacy-only injection seam retained for the pre-RBAC unit tests. */
+  resolveSession?: typeof resolveMerchantSessionFromRequest;
+  resolveBusinessSession: (
+    request: Request,
+    siteId: string,
+    requiredPermission: MerchantStaffBusinessPermission,
+  ) => Promise<MerchantCatalogAuthorizedSession | null>;
   loadSnapshotSite: typeof loadCurrentMerchantSnapshotSiteBySiteId;
   createServiceClient: () => MerchantCatalogStoreClient | null;
   loadCatalog: typeof loadStoredMerchantCatalog;
@@ -39,18 +52,31 @@ export type MerchantCatalogMutationRouteDependencies = {
   verifyProductImageAssets: typeof verifyMerchantCatalogProductImageAssets;
 };
 
+export type MerchantCatalogAuthorizedSession = {
+  merchantId: string;
+  actor?: MerchantBusinessActor;
+  assertAuthorizationCurrent?: () => Promise<void>;
+};
+
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function noStoreJson(body: unknown, init?: ResponseInit) {
-  const response = NextResponse.json(body, init);
-  response.headers.set("cache-control", "no-store");
+function applyPrivateResponseHeaders(response: Response) {
+  response.headers.set("cache-control", "private, no-store");
+  response.headers.set("pragma", "no-cache");
+  response.headers.set("x-content-type-options", "nosniff");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
+  response.headers.set("referrer-policy", "no-referrer");
   return response;
 }
 
+function privateJson(body: unknown, init?: ResponseInit) {
+  return applyPrivateResponseHeaders(NextResponse.json(body, init));
+}
+
 function catalogServiceUnavailableResponse() {
-  return noStoreJson({ error: "merchant_catalog_service_unavailable" }, { status: 503 });
+  return privateJson({ error: "merchant_catalog_service_unavailable" }, { status: 503 });
 }
 
 type MerchantCatalogStorageObjectInfoClient = MerchantCatalogStoreClient & {
@@ -308,7 +334,7 @@ function resolutionErrorResponse(
   resolved: ReturnType<typeof resolveMerchantCatalogBootstrapFromPublishedBlocks>,
 ) {
   const error = resolved.error ?? "merchant_catalog_bootstrap_unresolved_conflict";
-  return noStoreJson(
+  return privateJson(
     {
       error,
       preview: resolved,
@@ -322,19 +348,61 @@ function resolutionErrorResponse(
 async function authorizeCatalogRequest(
   request: Request,
   siteId: string,
-  dependencies: Pick<MerchantCatalogMutationRouteDependencies, "resolveSession" | "loadSnapshotSite">,
+  requiredPermission: MerchantStaffBusinessPermission,
+  dependencies: Pick<
+    MerchantCatalogMutationRouteDependencies,
+    "resolveSession" | "resolveBusinessSession" | "loadSnapshotSite"
+  >,
 ) {
-  const session = await dependencies.resolveSession(request, { hintedMerchantId: siteId });
+  // `resolveSession` is deliberately absent from production dependencies. It
+  // remains an explicit dependency-injection seam so existing isolated route
+  // tests can keep exercising catalog behavior without bootstrapping RBAC.
+  let session: MerchantCatalogAuthorizedSession | null;
+  if (dependencies.resolveSession) {
+    const legacySession = await dependencies.resolveSession(request, {
+      hintedMerchantId: siteId,
+    });
+    session = legacySession
+      ? { merchantId: legacySession.merchantId }
+      : null;
+  } else {
+    session = await dependencies.resolveBusinessSession(
+      request,
+      siteId,
+      requiredPermission,
+    );
+  }
   if (!session || session.merchantId !== siteId) return { error: "unauthorized" as const };
   const site = await dependencies.loadSnapshotSite(siteId);
   if (!site?.permissionConfig?.allowProductBlock || !site.permissionConfig.allowOrderManagement) {
     return { error: "order_management_disabled" as const };
   }
-  return { error: null };
+  return { error: null, session };
+}
+
+async function resolveCatalogBusinessSession(
+  request: Request,
+  siteId: string,
+  requiredPermission: MerchantStaffBusinessPermission,
+): Promise<MerchantCatalogAuthorizedSession> {
+  const actor = await authorizeMerchantBusinessRequest(request, {
+    siteId,
+    requiredPermission,
+  });
+  return {
+    merchantId: actor.siteId,
+    actor,
+    assertAuthorizationCurrent: async () => {
+      await reauthorizeMerchantBusinessMutation(request, {
+        actor,
+        requiredPermissions: [requiredPermission],
+      });
+    },
+  };
 }
 
 const DEFAULT_MUTATION_DEPENDENCIES: MerchantCatalogMutationRouteDependencies = {
-  resolveSession: resolveMerchantSessionFromRequest,
+  resolveBusinessSession: resolveCatalogBusinessSession,
   loadSnapshotSite: loadCurrentMerchantSnapshotSiteBySiteId,
   createServiceClient: () =>
     createServerSupabaseServiceClient() as unknown as MerchantCatalogStoreClient | null,
@@ -343,6 +411,13 @@ const DEFAULT_MUTATION_DEPENDENCIES: MerchantCatalogMutationRouteDependencies = 
   fetchPublishedBlocks: fetchPublishedSiteBlocksFromSupabase,
   verifyProductImageAssets: verifyMerchantCatalogProductImageAssets,
 };
+
+function catalogRequestErrorResponse(error: unknown) {
+  if (error instanceof MerchantBusinessAccessError) {
+    return privateJson({ error: error.code }, { status: error.status });
+  }
+  return catalogServiceUnavailableResponse();
+}
 
 function mutationFromBody(
   action: Exclude<CatalogAction, "bootstrap" | "preview_bootstrap">,
@@ -405,7 +480,7 @@ function mutationErrorResponse(
   catalog: Awaited<ReturnType<typeof loadStoredMerchantCatalog>>,
   details?: { rowIndex?: number; rows?: unknown; summary?: unknown },
 ) {
-  return noStoreJson(
+  return privateJson(
     {
       error,
       catalog,
@@ -425,21 +500,31 @@ export async function handleMerchantCatalogGet(
   const dependencies = { ...DEFAULT_MUTATION_DEPENDENCIES, ...dependencyOverrides };
   const { searchParams } = new URL(request.url);
   const siteId = trimText(searchParams.get("siteId"));
-  if (!isMerchantNumericId(siteId)) return noStoreJson({ error: "invalid_site_id" }, { status: 400 });
+  if (
+    !isMerchantNumericId(siteId) ||
+    searchParams.getAll("siteId").length !== 1
+  ) {
+    return privateJson({ error: "invalid_site_id" }, { status: 400 });
+  }
 
   try {
-    const authorization = await authorizeCatalogRequest(request, siteId, dependencies);
+    const authorization = await authorizeCatalogRequest(
+      request,
+      siteId,
+      "orders.catalog.view",
+      dependencies,
+    );
     if (authorization.error) {
-      return noStoreJson(
+      return privateJson(
         { error: authorization.error },
         { status: authorization.error === "unauthorized" ? 401 : 403 },
       );
     }
     const serviceClient = dependencies.createServiceClient();
-    if (!serviceClient) return noStoreJson({ error: "catalog_storage_unavailable" }, { status: 503 });
+    if (!serviceClient) return privateJson({ error: "catalog_storage_unavailable" }, { status: 503 });
     const supabase = serviceClient;
     const catalog = await dependencies.loadCatalog(supabase, siteId);
-    if (catalog) return noStoreJson({ ok: true, catalog, bootstrap: null });
+    if (catalog) return privateJson({ ok: true, catalog, bootstrap: null });
     const published = await dependencies.fetchPublishedBlocks(siteId, { fresh: true });
     const publishedBlocks = published?.blocks ?? [];
     const bootstrap = bootstrapMerchantCatalogFromPublishedBlocks({
@@ -447,14 +532,14 @@ export async function handleMerchantCatalogGet(
       revision: 1,
       updatedAt: new Date().toISOString(),
     });
-    return noStoreJson({
+    return privateJson({
       ok: true,
       catalog: null,
       bootstrap,
       bootstrapFingerprint: publishedBlocksFingerprint(publishedBlocks),
     });
-  } catch {
-    return catalogServiceUnavailableResponse();
+  } catch (error) {
+    return catalogRequestErrorResponse(error);
   }
 }
 
@@ -467,35 +552,47 @@ export async function handleMerchantCatalogMutation(
   dependencyOverrides: Partial<MerchantCatalogMutationRouteDependencies> = {},
 ) {
   const dependencies = { ...DEFAULT_MUTATION_DEPENDENCIES, ...dependencyOverrides };
-  if (!isTrustedSameOriginMutationRequest(request)) return getTrustedMutationRequestErrorResponse();
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return applyPrivateResponseHeaders(getTrustedMutationRequestErrorResponse());
+  }
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const siteId = trimText(body?.siteId);
-  if (!isMerchantNumericId(siteId)) return noStoreJson({ error: "invalid_site_id" }, { status: 400 });
+  if (!isMerchantNumericId(siteId)) return privateJson({ error: "invalid_site_id" }, { status: 400 });
   const action = normalizeAction(body?.action);
-  if (!action) return noStoreJson({ error: "invalid_merchant_catalog_action" }, { status: 400 });
+  if (!action) return privateJson({ error: "invalid_merchant_catalog_action" }, { status: 400 });
   const expectedRevision = readExpectedRevision(body?.expectedRevision);
   if (expectedRevision === null) {
-    return noStoreJson({ error: "invalid_merchant_catalog_expected_revision" }, { status: 400 });
+    return privateJson({ error: "invalid_merchant_catalog_expected_revision" }, { status: 400 });
   }
 
   try {
-    const authorization = await authorizeCatalogRequest(request, siteId, dependencies);
+    const authorization = await authorizeCatalogRequest(
+      request,
+      siteId,
+      "orders.catalog.manage",
+      dependencies,
+    );
     if (authorization.error) {
-      return noStoreJson(
+      return privateJson(
         { error: authorization.error },
         { status: authorization.error === "unauthorized" ? 401 : 403 },
       );
     }
+    const session = authorization.session;
     const serviceClient = dependencies.createServiceClient();
-    if (!serviceClient) return noStoreJson({ error: "catalog_storage_unavailable" }, { status: 503 });
+    if (!serviceClient) return privateJson({ error: "catalog_storage_unavailable" }, { status: 503 });
     const supabase = serviceClient;
     if (action === "bootstrap" || action === "preview_bootstrap") {
       if (action === "preview_bootstrap" && expectedRevision !== 0) {
-        return noStoreJson({ error: "invalid_merchant_catalog_expected_revision" }, { status: 400 });
+        return privateJson({ error: "invalid_merchant_catalog_expected_revision" }, { status: 400 });
       }
+      // Bootstrap reads and validates fresh published content. Reauthorize
+      // before that work; commits repeat the same exact-principal check after
+      // acquiring the catalog write lock through `beforeMutation` below.
+      await session.assertAuthorizationCurrent?.();
       const published = await dependencies.fetchPublishedBlocks(siteId, { fresh: true });
       if (!published?.blocks) {
-        return noStoreJson({ error: "merchant_catalog_bootstrap_unavailable" }, { status: 409 });
+        return privateJson({ error: "merchant_catalog_bootstrap_unavailable" }, { status: 409 });
       }
       const input = {
         blocks: published.blocks,
@@ -505,7 +602,7 @@ export async function handleMerchantCatalogMutation(
       const bootstrap = bootstrapMerchantCatalogFromPublishedBlocks(input);
       const currentBootstrapFingerprint = publishedBlocksFingerprint(published.blocks);
       if (trimText(body?.sourceFingerprint) !== currentBootstrapFingerprint) {
-        return noStoreJson(
+        return privateJson(
           {
             error: "merchant_catalog_bootstrap_source_changed",
             bootstrap,
@@ -522,9 +619,9 @@ export async function handleMerchantCatalogMutation(
           return resolutionErrorResponse(resolved);
         }
         if (resolved.sourceBlockCount === 0) {
-          return noStoreJson({ error: "merchant_catalog_bootstrap_empty", preview: resolved }, { status: 409 });
+          return privateJson({ error: "merchant_catalog_bootstrap_empty", preview: resolved }, { status: 409 });
         }
-        return noStoreJson({
+        return privateJson({
           ok: true,
           preview: resolved,
           resolutionFingerprint: resolutionFingerprint(resolutionPlan, resolved),
@@ -540,11 +637,11 @@ export async function handleMerchantCatalogMutation(
           return resolutionErrorResponse(resolved);
         }
         if (resolved.sourceBlockCount === 0) {
-          return noStoreJson({ error: "merchant_catalog_bootstrap_empty", bootstrap: resolved }, { status: 409 });
+          return privateJson({ error: "merchant_catalog_bootstrap_empty", bootstrap: resolved }, { status: 409 });
         }
         const currentResolutionFingerprint = resolutionFingerprint(resolutionPlan, resolved);
         if (trimText(body?.resolutionFingerprint) !== currentResolutionFingerprint) {
-          return noStoreJson(
+          return privateJson(
             {
               error: "merchant_catalog_bootstrap_resolution_changed",
               preview: resolved,
@@ -556,32 +653,33 @@ export async function handleMerchantCatalogMutation(
         resolvedBootstrap = resolved;
       }
       if (!resolvedBootstrap.ok || !resolvedBootstrap.catalog) {
-        return noStoreJson(
+        return privateJson(
           { error: "merchant_catalog_bootstrap_conflict", conflicts: bootstrap.conflicts, bootstrap },
           { status: 409 },
         );
       }
       if (resolvedBootstrap.sourceBlockCount === 0) {
-        return noStoreJson({ error: "merchant_catalog_bootstrap_empty", bootstrap: resolvedBootstrap }, { status: 409 });
+        return privateJson({ error: "merchant_catalog_bootstrap_empty", bootstrap: resolvedBootstrap }, { status: 409 });
       }
       const result = await dependencies.mutateCatalog(supabase, {
         siteId,
         expectedRevision,
         source: "orders-catalog-bootstrap",
+        beforeMutation: session.assertAuthorizationCurrent,
         mutate: (current) =>
           current
             ? { ok: false, error: "merchant_catalog_already_initialized" }
             : { ok: true, catalog: resolvedBootstrap.catalog! },
       });
       if (result.error) return mutationErrorResponse(result.error, result.catalog);
-      return noStoreJson({ ok: true, catalog: result.catalog, warning: result.warning ?? null });
+      return privateJson({ ok: true, catalog: result.catalog, warning: result.warning ?? null });
     }
 
     const preparedImageImport = action === "bulk_set_product_images"
       ? prepareMerchantCatalogProductImageImport(body?.items, siteId)
       : null;
     if (preparedImageImport && !preparedImageImport.ok) {
-      return noStoreJson(
+      return privateJson(
         {
           error: preparedImageImport.error,
           ...(preparedImageImport.rowIndex !== undefined ? { rowIndex: preparedImageImport.rowIndex } : {}),
@@ -599,6 +697,7 @@ export async function handleMerchantCatalogMutation(
       siteId,
       expectedRevision,
       source: `orders-catalog-${action}`,
+      beforeMutation: session.assertAuthorizationCurrent,
       mutate: async (current) => {
         if (!current) return { ok: false, error: "merchant_catalog_not_found" };
         if (mutation.action !== "bulk_set_product_images" || !preparedImageImport?.ok) {
@@ -639,7 +738,7 @@ export async function handleMerchantCatalogMutation(
           : undefined,
       );
     }
-    return noStoreJson({
+    return privateJson({
       ok: true,
       catalog: result.catalog,
       warning: result.warning ?? null,
@@ -647,8 +746,8 @@ export async function handleMerchantCatalogMutation(
         ? { rows: imageOutcome.plan.rows, summary: imageOutcome.plan.summary }
         : {}),
     });
-  } catch {
-    return catalogServiceUnavailableResponse();
+  } catch (error) {
+    return catalogRequestErrorResponse(error);
   }
 }
 

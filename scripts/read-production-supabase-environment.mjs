@@ -18,11 +18,18 @@ const MAX_ANON_KEY_BYTES = 16 * 1024;
 const BUILD_ID_PATTERN = /^[0-9a-f]{40}$/;
 const ANON_KEY_PATTERN = /^[A-Za-z0-9._~-]+$/;
 const ERROR_CODE = "production_supabase_environment_invalid";
-const PROCESS_ENVIRONMENT_KEYS = [
+const PROCESS_SUPABASE_ENVIRONMENT_KEYS = [
   "SUPABASE_INTERNAL_URL",
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
 ];
+const PROCESS_STAFF_ROLLOUT_ENVIRONMENT_KEYS = [
+  "MERCHANT_STAFF_BUSINESS_RBAC_MODE",
+  "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS",
+  "FAOLLA_CANONICAL_PORTAL_ORIGIN",
+];
+const STAFF_SITE_IDS_PATTERN = /^[0-9]{8}(?:,[0-9]{8}){0,49}$/;
+const CANONICAL_PORTAL_ORIGIN = "https://launch.faolla.com";
 
 function invalid() {
   throw new Error(ERROR_CODE);
@@ -189,6 +196,92 @@ function decodeEnvironmentLines(bytes) {
   return source.split("\n");
 }
 
+function assignmentReferencePattern(key) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^\\s*(?:export\\s+)?${escapedKey}(?:\\s*=|\\s*:\\s+|\\s*$)`,
+  );
+}
+
+function optionalExactAssignment(lines, key, { allowEmpty = false } = {}) {
+  const prefix = `${key}=`;
+  const values = [];
+  const referencePattern = assignmentReferencePattern(key);
+  for (const line of lines) {
+    if (line.startsWith(prefix)) {
+      values.push(line.slice(prefix.length));
+    } else if (referencePattern.test(line)) {
+      // Dotenv accepts several non-canonical assignment spellings. Reject
+      // those spellings instead of mistaking an effective assignment for an
+      // absent, fail-closed rollout key.
+      invalid();
+    }
+  }
+  if (values.length > 1 || (!allowEmpty && values[0]?.length === 0)) invalid();
+  return values[0];
+}
+
+function validStaffSiteIds(raw) {
+  if (!STAFF_SITE_IDS_PATTERN.test(raw)) return false;
+  const siteIds = raw.split(",");
+  return new Set(siteIds).size === siteIds.length;
+}
+
+function parseFrozenStaffBusinessRolloutEnvironment(lines) {
+  const mode = optionalExactAssignment(
+    lines,
+    "MERCHANT_STAFF_BUSINESS_RBAC_MODE",
+  );
+  const siteIds = optionalExactAssignment(
+    lines,
+    "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS",
+    { allowEmpty: true },
+  );
+  const portalOrigin = optionalExactAssignment(
+    lines,
+    "FAOLLA_CANONICAL_PORTAL_ORIGIN",
+  );
+
+  if (mode === undefined) {
+    if (
+      siteIds !== undefined ||
+      (portalOrigin !== undefined && portalOrigin !== CANONICAL_PORTAL_ORIGIN)
+    ) {
+      invalid();
+    }
+    return {
+      rolloutStatus: "legacy-off",
+      staffBusinessRbacMode: "off",
+      staffBusinessRbacSiteIds: "",
+      // An empty explicit process value reproduces the old release's own
+      // fallback without inheriting a candidate or PM2 daemon value.
+      canonicalPortalOrigin: portalOrigin ?? "",
+    };
+  }
+  if (portalOrigin !== CANONICAL_PORTAL_ORIGIN) invalid();
+  if (mode === "off") {
+    // The persisted canonical off representation omits the allowlist. The
+    // launcher later passes an explicit empty process value to override both
+    // the invoking shell and a stale PM2 daemon environment.
+    if (siteIds !== undefined) invalid();
+    return {
+      rolloutStatus: "explicit",
+      staffBusinessRbacMode: mode,
+      staffBusinessRbacSiteIds: "",
+      canonicalPortalOrigin: portalOrigin,
+    };
+  }
+  if (mode !== "enforce" || siteIds === undefined || !validStaffSiteIds(siteIds)) {
+    invalid();
+  }
+  return {
+    rolloutStatus: "explicit",
+    staffBusinessRbacMode: mode,
+    staffBusinessRbacSiteIds: siteIds,
+    canonicalPortalOrigin: portalOrigin,
+  };
+}
+
 function parseFrozenProductionSupabaseEnvironment(bytes, expectedBuildId) {
   const lines = decodeEnvironmentLines(bytes);
   const buildId = exactAssignment(lines, "FAOLLA_WEB_BUILD_ID");
@@ -222,16 +315,19 @@ function parseFrozenProductionSupabaseRollbackEnvironment(bytes, expectedBuildId
   ) {
     invalid();
   }
-  return { buildId, internalUrl, publicUrl, anonKey };
+  return {
+    buildId,
+    internalUrl,
+    publicUrl,
+    anonKey,
+    ...parseFrozenStaffBusinessRolloutEnvironment(lines),
+  };
 }
 
 function exactAssignment(lines, key) {
-  const prefix = `${key}=`;
-  const values = lines
-    .filter((line) => line.startsWith(prefix))
-    .map((line) => line.slice(prefix.length));
-  if (values.length !== 1 || values[0].length === 0) invalid();
-  return values[0];
+  const value = optionalExactAssignment(lines, key);
+  if (value === undefined) invalid();
+  return value;
 }
 
 function validPublicUrl(raw) {
@@ -350,7 +446,7 @@ export function parseProductionProcessSupabaseEnvironment(bytes) {
     invalid();
   }
   const entries = source.split("\0").filter((entry) => entry.length > 0);
-  const values = PROCESS_ENVIRONMENT_KEYS.map((key) => {
+  const readValues = (keys, emptyAllowedKeys = new Set()) => keys.map((key) => {
     if (entries.includes(key)) invalid();
     const prefix = `${key}=`;
     const matches = entries.filter((entry) => entry.startsWith(prefix));
@@ -358,7 +454,7 @@ export function parseProductionProcessSupabaseEnvironment(bytes) {
     if (matches.length === 0) return undefined;
     const value = matches[0].slice(prefix.length);
     if (
-      value.length === 0 ||
+      (!emptyAllowedKeys.has(key) && value.length === 0) ||
       Buffer.byteLength(value, "utf8") > MAX_ANON_KEY_BYTES ||
       /[\r\n\0]/.test(value)
     ) {
@@ -366,18 +462,63 @@ export function parseProductionProcessSupabaseEnvironment(bytes) {
     }
     return value;
   });
-  const presentCount = values.filter((value) => value !== undefined).length;
-  if (presentCount === 0) return { status: "absent" };
-  if (presentCount !== PROCESS_ENVIRONMENT_KEYS.length) invalid();
-  const [internalUrl, publicUrl, anonKey] = values;
+  const supabaseValues = readValues(PROCESS_SUPABASE_ENVIRONMENT_KEYS);
+  const rolloutValues = readValues(
+    PROCESS_STAFF_ROLLOUT_ENVIRONMENT_KEYS,
+    new Set([
+      "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS",
+      "FAOLLA_CANONICAL_PORTAL_ORIGIN",
+    ]),
+  );
+  const supabasePresentCount = supabaseValues
+    .filter((value) => value !== undefined).length;
+  const rolloutPresentCount = rolloutValues
+    .filter((value) => value !== undefined).length;
   if (
-    !validPublicUrl(internalUrl) ||
-    !validPublicUrl(publicUrl) ||
-    !ANON_KEY_PATTERN.test(anonKey)
+    ![0, PROCESS_SUPABASE_ENVIRONMENT_KEYS.length].includes(supabasePresentCount) ||
+    ![0, PROCESS_STAFF_ROLLOUT_ENVIRONMENT_KEYS.length].includes(
+      rolloutPresentCount,
+    )
   ) {
     invalid();
   }
-  return { status: "present", internalUrl, publicUrl, anonKey };
+
+  const result = {
+    status: supabasePresentCount === 0 ? "absent" : "present",
+    rolloutStatus: rolloutPresentCount === 0 ? "absent" : "present",
+  };
+  if (supabasePresentCount !== 0) {
+    const [internalUrl, publicUrl, anonKey] = supabaseValues;
+    if (
+      !validPublicUrl(internalUrl) ||
+      !validPublicUrl(publicUrl) ||
+      !ANON_KEY_PATTERN.test(anonKey)
+    ) {
+      invalid();
+    }
+    Object.assign(result, { internalUrl, publicUrl, anonKey });
+  }
+  if (rolloutPresentCount !== 0) {
+    const [staffBusinessRbacMode, staffBusinessRbacSiteIds, canonicalPortalOrigin] =
+      rolloutValues;
+    if (
+      (staffBusinessRbacMode === "off" && staffBusinessRbacSiteIds !== "") ||
+      (staffBusinessRbacMode === "off" &&
+        !["", CANONICAL_PORTAL_ORIGIN].includes(canonicalPortalOrigin)) ||
+      (staffBusinessRbacMode === "enforce" &&
+        (!validStaffSiteIds(staffBusinessRbacSiteIds) ||
+          canonicalPortalOrigin !== CANONICAL_PORTAL_ORIGIN)) ||
+      !["off", "enforce"].includes(staffBusinessRbacMode)
+    ) {
+      invalid();
+    }
+    Object.assign(result, {
+      staffBusinessRbacMode,
+      staffBusinessRbacSiteIds,
+      canonicalPortalOrigin,
+    });
+  }
+  return result;
 }
 
 export function captureStableProductionProcessSupabaseEnvironment(
@@ -439,6 +580,54 @@ function encodeForShell(value) {
   return Buffer.from(value, "utf8").toString("base64");
 }
 
+function encodePossiblyEmptyForShell(value) {
+  // Standard base64 never contains "-". Keep every CLI field nonempty so
+  // Bash command substitution cannot erase a trailing legacy empty value.
+  return value.length === 0 ? "-" : encodeForShell(value);
+}
+
+export function formatProductionProcessEnvironmentSnapshotForShell(snapshot) {
+  if (
+    snapshot === null ||
+    typeof snapshot !== "object" ||
+    !["present", "absent"].includes(snapshot.status) ||
+    !["present", "absent"].includes(snapshot.rolloutStatus) ||
+    !/^[1-9][0-9]*$/.test(snapshot.startTicks ?? "")
+  ) {
+    invalid();
+  }
+  const output = [snapshot.status, snapshot.rolloutStatus, snapshot.startTicks];
+  if (snapshot.status === "present") {
+    if (
+      typeof snapshot.internalUrl !== "string" ||
+      typeof snapshot.publicUrl !== "string" ||
+      typeof snapshot.anonKey !== "string"
+    ) {
+      invalid();
+    }
+    output.push(
+      encodeForShell(snapshot.internalUrl),
+      encodeForShell(snapshot.publicUrl),
+      encodeForShell(snapshot.anonKey),
+    );
+  }
+  if (snapshot.rolloutStatus === "present") {
+    if (
+      typeof snapshot.staffBusinessRbacMode !== "string" ||
+      typeof snapshot.staffBusinessRbacSiteIds !== "string" ||
+      typeof snapshot.canonicalPortalOrigin !== "string"
+    ) {
+      invalid();
+    }
+    output.push(
+      encodeForShell(snapshot.staffBusinessRbacMode),
+      encodePossiblyEmptyForShell(snapshot.staffBusinessRbacSiteIds),
+      encodePossiblyEmptyForShell(snapshot.canonicalPortalOrigin),
+    );
+  }
+  return output.join("\n");
+}
+
 const isMain = process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 if (isMain) {
@@ -483,6 +672,10 @@ if (isMain) {
         encodeForShell(snapshot.internalUrl),
         encodeForShell(snapshot.publicUrl),
         encodeForShell(snapshot.anonKey),
+        snapshot.rolloutStatus,
+        encodeForShell(snapshot.staffBusinessRbacMode),
+        encodePossiblyEmptyForShell(snapshot.staffBusinessRbacSiteIds),
+        encodePossiblyEmptyForShell(snapshot.canonicalPortalOrigin),
       ].join("\n"));
     } else if (mode === "process-snapshot") {
       if (process.argv.length !== 5) invalid();
@@ -490,15 +683,9 @@ if (isMain) {
         process.argv[3],
         process.argv[4],
       );
-      const output = [snapshot.status, snapshot.startTicks];
-      if (snapshot.status === "present") {
-        output.push(
-          encodeForShell(snapshot.internalUrl),
-          encodeForShell(snapshot.publicUrl),
-          encodeForShell(snapshot.anonKey),
-        );
-      }
-      process.stdout.write(output.join("\n"));
+      process.stdout.write(
+        formatProductionProcessEnvironmentSnapshotForShell(snapshot),
+      );
     } else {
       invalid();
     }

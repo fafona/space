@@ -7,6 +7,11 @@ import OrderWorkbenchPanel, { type OrderWorkbenchView } from "@/components/admin
 import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
 import { showGlobalToast } from "@/lib/globalToast";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import { MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY } from "@/lib/merchantBusinessApiClient";
 import {
   MERCHANT_ORDER_STATUSES,
   formatMerchantOrderAmount,
@@ -35,6 +40,17 @@ import {
   readMerchantAdminDataCache,
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import {
+  MERCHANT_ORDER_OWNER_CACHE_POLICY,
+  MERCHANT_ORDER_NO_PERMISSIONS,
+  canOpenMerchantOrderWorkbenchView,
+  canRunMerchantOrderAction,
+  canRunMerchantOrderStatusTransition,
+  createMerchantOrderApiRequest,
+  hasMerchantOrderFrontendPermission,
+  isMerchantOrderEmployeeFrontend,
+} from "@/lib/merchantOrderFrontendAccess";
 
 type MerchantOrderManagerDialogProps = {
   open: boolean;
@@ -54,6 +70,9 @@ type MerchantOrderManagerDialogProps = {
   sourceOrderIntent?: MerchantOrderSourceDetailIntent | null;
   onSourceOrderIntentHandled?: (requestId: string) => void;
   registerLeaveGuard?: (guard: (() => boolean) | null) => void;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
   onClose: () => void;
 };
 
@@ -228,6 +247,9 @@ function writeCachedOrderRecords(siteId: string, records: MerchantOrderRecord[])
   writeMerchantAdminDataCache(buildMerchantAdminDataCacheKey("orders", siteId), records);
 }
 
+const requestOwnerOrderApi: MerchantBusinessApiClient = (path, init) =>
+  fetchWithAdminPerformance(path, init);
+
 export default function MerchantOrderManagerDialog({
   open,
   mode = "dialog",
@@ -245,10 +267,62 @@ export default function MerchantOrderManagerDialog({
   sourceOrderIntent = null,
   onSourceOrderIntentHandled,
   registerLeaveGuard,
+  apiClient,
+  cachePolicy,
+  permissions,
   onClose,
 }: MerchantOrderManagerDialogProps) {
   const isInline = mode === "inline";
-  const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
+  const employeeMode = isMerchantOrderEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectiveCachePolicy =
+    employeeMode
+      ? MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY
+      : cachePolicy ?? MERCHANT_ORDER_OWNER_CACHE_POLICY;
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_ORDER_NO_PERMISSIONS
+      : permissions;
+  const requestOrderApi = useMemo(
+    () =>
+      createMerchantOrderApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: requestOwnerOrderApi,
+      }),
+    [apiClient, employeeMode],
+  );
+  const canViewOrders = hasMerchantOrderFrontendPermission(effectivePermissions, "orders.view");
+  const canViewCustomerData = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.customer_data.view",
+  );
+  const canManageOrderStatus = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.status.manage",
+  );
+  const canCompleteOrders = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.complete",
+  );
+  const canUpdateOrderItems = hasMerchantOrderFrontendPermission(
+    effectivePermissions,
+    "orders.items.update",
+  );
+  const canPrintOrders = hasMerchantOrderFrontendPermission(effectivePermissions, "orders.print");
+  const canOpenOwnerEnterpriseTask = !employeeMode && Boolean(onOpenEnterpriseTask);
+  const canOpenWorkbench = (["overview", "orders", "analysis", "catalog", "export"] as const).some(
+    (view) => canOpenMerchantOrderWorkbenchView(effectivePermissions, view),
+  );
+  const permissionFingerprint = effectivePermissions?.join("\u0001") ?? "owner";
+  const [records, setRecords] = useState<MerchantOrderRecord[]>(() =>
+    canViewOrders && effectiveCachePolicy.allowPersistentRead
+      ? readCachedOrderRecords(siteId)
+      : [],
+  );
   const [loading, setLoading] = useState(false);
   const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
   const [hasMoreRemoteRecords, setHasMoreRemoteRecords] = useState(false);
@@ -263,7 +337,7 @@ export default function MerchantOrderManagerDialog({
     setSortMode,
     historyVisibility,
     setHistoryVisibility,
-  } = useMerchantOrderManagerPreferences(siteId);
+  } = useMerchantOrderManagerPreferences(siteId, { cachePolicy: effectiveCachePolicy });
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const managerBusyRef = useRef(false);
@@ -391,6 +465,10 @@ export default function MerchantOrderManagerDialog({
   }, [open, setWorkbenchOpen]);
 
   useEffect(() => {
+    if (!canOpenWorkbench && workbenchOpen) setWorkbenchOpen(false);
+  }, [canOpenWorkbench, setWorkbenchOpen, workbenchOpen]);
+
+  useEffect(() => {
     if (!error) return;
     showGlobalToast(error, { tone: "error" });
     const timer = window.setTimeout(() => setError(""), 3000);
@@ -407,13 +485,31 @@ export default function MerchantOrderManagerDialog({
     };
   }, [siteId]);
 
+  useEffect(() => {
+    activeRequestControllersRef.current.forEach((controller) => controller.abort());
+    activeRequestControllersRef.current.clear();
+    listRequestSequenceRef.current += 1;
+    detailRequestSequenceRef.current += 1;
+    siteRequestIdentityRef.current = {
+      ...siteRequestIdentityRef.current,
+      generation: siteRequestIdentityRef.current.generation + 1,
+    };
+  }, [apiClient, employeeMode, permissionFingerprint]);
+
   const loadOrders = useCallback(async () => {
-    if (!siteId) return;
+    if (!siteId || !canViewOrders) {
+      setRecords([]);
+      setHasMoreRemoteRecords(false);
+      setLoading(false);
+      return;
+    }
     const request = beginSiteRequest(siteId);
     if (!request) return;
     const requestSequence = listRequestSequenceRef.current + 1;
     listRequestSequenceRef.current = requestSequence;
-    const cachedRecords = readCachedOrderRecords(siteId).filter((record) => record.siteId === siteId);
+    const cachedRecords = effectiveCachePolicy.allowPersistentRead
+      ? readCachedOrderRecords(siteId).filter((record) => record.siteId === siteId)
+      : [];
     if (cachedRecords.length > 0) {
       setRecords(cachedRecords);
       onOrdersChange?.(cachedRecords);
@@ -424,7 +520,7 @@ export default function MerchantOrderManagerDialog({
     }
     setError("");
     try {
-      const response = await fetchWithAdminPerformance(
+      const response = await requestOrderApi(
         `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=0&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
         {
           cache: "no-store",
@@ -453,7 +549,9 @@ export default function MerchantOrderManagerDialog({
           : 0;
       nextOrderOffsetRef.current = responseOffset + nextRecords.length;
       setHasMoreRemoteRecords(Boolean(payload?.hasMore));
-      writeCachedOrderRecords(request.siteId, nextRecords);
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        writeCachedOrderRecords(request.siteId, nextRecords);
+      }
       setRecords(nextRecords);
       setExternalDetailOrder((current) =>
         current?.siteId === request.siteId
@@ -468,17 +566,37 @@ export default function MerchantOrderManagerDialog({
         listRequestSequenceRef.current !== requestSequence
       ) return;
       setHasMoreRemoteRecords(false);
-      setError(cachedRecords.length > 0 ? "" : nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
+      const keepStaleRecords =
+        effectiveCachePolicy.allowStaleOnError && cachedRecords.length > 0;
+      if (!keepStaleRecords) setRecords([]);
+      setError(
+        keepStaleRecords
+          ? ""
+          : nextError instanceof Error && nextError.message
+            ? nextError.message
+            : "订单读取失败",
+      );
     } finally {
       finishSiteRequest(request);
       if (isSiteRequestCurrent(request) && listRequestSequenceRef.current === requestSequence) {
         setLoading(false);
       }
     }
-  }, [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, onOrdersChange, siteId]);
+  }, [
+    beginSiteRequest,
+    canViewOrders,
+    effectiveCachePolicy.allowPersistentRead,
+    effectiveCachePolicy.allowPersistentWrite,
+    effectiveCachePolicy.allowStaleOnError,
+    finishSiteRequest,
+    isSiteRequestCurrent,
+    onOrdersChange,
+    requestOrderApi,
+    siteId,
+  ]);
 
   const loadMoreOrders = useCallback(async () => {
-    if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    if (!siteId || !canViewOrders || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
     const request = beginSiteRequest(siteId);
     if (!request) return;
     const requestSequence = listRequestSequenceRef.current + 1;
@@ -487,7 +605,7 @@ export default function MerchantOrderManagerDialog({
     setLoadingMoreRecords(true);
     setError("");
     try {
-      const response = await fetchWithAdminPerformance(
+      const response = await requestOrderApi(
         `/api/orders?siteId=${encodeURIComponent(siteId)}&offset=${requestOffset}&limit=${MERCHANT_ORDER_FETCH_LIMIT}`,
         {
           cache: "no-store",
@@ -526,7 +644,9 @@ export default function MerchantOrderManagerDialog({
         const currentSiteRecords = current.filter((record) => record.siteId === request.siteId);
         const existingIds = new Set(currentSiteRecords.map((record) => record.id));
         const mergedRecords = [...currentSiteRecords, ...nextRecords.filter((record) => !existingIds.has(record.id))];
-        writeCachedOrderRecords(request.siteId, mergedRecords);
+        if (effectiveCachePolicy.allowPersistentWrite) {
+          writeCachedOrderRecords(request.siteId, mergedRecords);
+        }
         onOrdersChange?.(mergedRecords);
         return mergedRecords;
       });
@@ -545,12 +665,15 @@ export default function MerchantOrderManagerDialog({
     }
   }, [
     beginSiteRequest,
+    canViewOrders,
+    effectiveCachePolicy.allowPersistentWrite,
     finishSiteRequest,
     hasMoreRemoteRecords,
     isSiteRequestCurrent,
     loading,
     loadingMoreRecords,
     onOrdersChange,
+    requestOrderApi,
     siteId,
   ]);
 
@@ -570,6 +693,10 @@ export default function MerchantOrderManagerDialog({
     if (!open || !sourceOrderIntent || sourceOrderIntent.siteId !== siteId) return;
     if (handledSourceOrderIntentRef.current === sourceOrderIntent.requestId) return;
     handledSourceOrderIntentRef.current = sourceOrderIntent.requestId;
+    if (employeeMode) {
+      onSourceOrderIntentHandled?.(sourceOrderIntent.requestId);
+      return;
+    }
     const sourceOrder = sourceOrderIntent.order;
     if (
       sourceOrderIntent.orderId !== sourceOrder.id ||
@@ -585,6 +712,7 @@ export default function MerchantOrderManagerDialog({
     onSourceOrderIntentHandled?.(sourceOrderIntent.requestId);
   }, [
     onSourceOrderIntentHandled,
+    employeeMode,
     open,
     setWorkbenchOpen,
     siteId,
@@ -592,9 +720,21 @@ export default function MerchantOrderManagerDialog({
   ]);
 
   useEffect(() => {
-    if (!open || !siteId) return;
+    if (!open || !siteId || !canViewOrders) {
+      if (!canViewOrders) {
+        setRecords([]);
+        setHasMoreRemoteRecords(false);
+        setLoading(false);
+        setDetailOrderId("");
+        setExternalDetailOrder(null);
+        setSelectedOrderIds([]);
+        setSelectionMode(false);
+        setWorkbenchOpen(false);
+      }
+      return;
+    }
     void loadOrders();
-  }, [loadOrders, open, siteId]);
+  }, [canViewOrders, loadOrders, open, setWorkbenchOpen, siteId]);
 
   useEffect(() => {
     onOrdersChange?.(currentSiteRecords);
@@ -605,6 +745,12 @@ export default function MerchantOrderManagerDialog({
       setSelectedOrderIds([]);
     }
   }, [selectedOrderIds.length, selectionMode]);
+
+  useEffect(() => {
+    if (canManageOrderStatus) return;
+    setSelectionMode(false);
+    setSelectedOrderIds([]);
+  }, [canManageOrderStatus]);
 
   useEffect(() => {
     setRenderLimit(MERCHANT_ORDER_RENDER_LIMIT);
@@ -622,17 +768,21 @@ export default function MerchantOrderManagerDialog({
           record.id,
           [
             record.id,
-            record.customer.name,
-            record.customer.phone,
-            record.customer.email,
-            record.customer.note,
+            ...(canViewCustomerData
+              ? [
+                  record.customer.name,
+                  record.customer.phone,
+                  record.customer.email,
+                  record.customer.note,
+                ]
+              : []),
             record.items.map((item) => `${item.name}\n${item.code}\n${item.description}`).join("\n"),
           ]
             .join("\n")
             .toLowerCase(),
         ]),
       ),
-    [currentSiteRecords],
+    [canViewCustomerData, currentSiteRecords],
   );
 
   const counts = useMemo(
@@ -691,10 +841,13 @@ export default function MerchantOrderManagerDialog({
 
   const requestOrderAction = useCallback(
     async (order: MerchantOrderRecord, action: MerchantOrderAction) => {
+      if (!canRunMerchantOrderAction(effectivePermissions, action)) {
+        throw new Error("order_permission_denied");
+      }
       const request = beginSiteRequest(siteId);
       if (!request || order.siteId !== request.siteId) throw createAbortedOrderRequestError();
       try {
-        const response = await fetchWithAdminPerformance("/api/orders", {
+        const response = await requestOrderApi("/api/orders", {
           method: "PATCH",
           keepalive: action === "touch",
           headers: {
@@ -704,7 +857,7 @@ export default function MerchantOrderManagerDialog({
             siteId: request.siteId,
             orderId: order.id,
             action,
-            ...(action === "print" ? { expectedUpdatedAt: order.updatedAt } : {}),
+            ...(action === "touch" ? {} : { expectedUpdatedAt: order.updatedAt }),
           }),
           signal: request.controller.signal,
         });
@@ -725,7 +878,14 @@ export default function MerchantOrderManagerDialog({
         finishSiteRequest(request);
       }
     },
-    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
+    [
+      beginSiteRequest,
+      finishSiteRequest,
+      isSiteRequestCurrent,
+      effectivePermissions,
+      requestOrderApi,
+      siteId,
+    ],
   );
 
   const requestOrderStatusUpdate = useCallback(
@@ -734,10 +894,20 @@ export default function MerchantOrderManagerDialog({
       status: MerchantOrderStatus,
       items?: MerchantOrderLineItemInput[],
     ) => {
+      if (
+        !canRunMerchantOrderStatusTransition(effectivePermissions, order.status, status) ||
+        (items &&
+          !hasMerchantOrderFrontendPermission(effectivePermissions, "orders.items.update"))
+      ) {
+        throw new Error("order_permission_denied");
+      }
+      if (order.status === "completed" || status === "completed") {
+        throw new Error("order_completion_action_required");
+      }
       const request = beginSiteRequest(siteId);
       if (!request || order.siteId !== request.siteId) throw createAbortedOrderRequestError();
       try {
-        const response = await fetchWithAdminPerformance("/api/orders", {
+        const response = await requestOrderApi("/api/orders", {
           method: "PATCH",
           headers: {
             "content-type": "application/json",
@@ -768,15 +938,74 @@ export default function MerchantOrderManagerDialog({
         finishSiteRequest(request);
       }
     },
-    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
+    [
+      beginSiteRequest,
+      finishSiteRequest,
+      isSiteRequestCurrent,
+      effectivePermissions,
+      requestOrderApi,
+      siteId,
+    ],
+  );
+
+  const requestOrderItemsUpdate = useCallback(
+    async (order: MerchantOrderRecord, items: MerchantOrderLineItemInput[]) => {
+      if (!hasMerchantOrderFrontendPermission(effectivePermissions, "orders.items.update")) {
+        throw new Error("order_permission_denied");
+      }
+      const request = beginSiteRequest(siteId);
+      if (!request || order.siteId !== request.siteId) throw createAbortedOrderRequestError();
+      try {
+        const response = await requestOrderApi("/api/orders", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            siteId: request.siteId,
+            orderId: order.id,
+            items,
+            expectedUpdatedAt: order.updatedAt,
+          }),
+          signal: request.controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
+        if (request.controller.signal.aborted || !isSiteRequestCurrent(request)) {
+          throw createAbortedOrderRequestError();
+        }
+        if (!response.ok || !payload?.order) {
+          throw new Error(payload?.message || payload?.error || "订单商品保存失败，请稍后重试。");
+        }
+        if (payload.order.siteId !== request.siteId || payload.order.id !== order.id) {
+          throw new Error("订单商品保存返回了其他商户数据，请刷新后重试。");
+        }
+        return payload.order;
+      } finally {
+        finishSiteRequest(request);
+      }
+    },
+    [
+      beginSiteRequest,
+      finishSiteRequest,
+      isSiteRequestCurrent,
+      effectivePermissions,
+      requestOrderApi,
+      siteId,
+    ],
   );
 
   const requestBatchOrderStatusUpdate = useCallback(
     async (orderIds: string[], status: MerchantOrderStatus) => {
+      if (
+        status === "completed" ||
+        !hasMerchantOrderFrontendPermission(effectivePermissions, "orders.status.manage")
+      ) {
+        throw new Error("order_permission_denied");
+      }
       const request = beginSiteRequest(siteId);
       if (!request) throw createAbortedOrderRequestError();
       try {
-        const response = await fetchWithAdminPerformance("/api/orders", {
+        const response = await requestOrderApi("/api/orders", {
           method: "PATCH",
           headers: {
             "content-type": "application/json",
@@ -806,15 +1035,23 @@ export default function MerchantOrderManagerDialog({
         finishSiteRequest(request);
       }
     },
-    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
+    [
+      beginSiteRequest,
+      finishSiteRequest,
+      isSiteRequestCurrent,
+      effectivePermissions,
+      requestOrderApi,
+      siteId,
+    ],
   );
 
   const requestExactOrder = useCallback(
     async (orderId: string) => {
+      if (!canViewOrders) throw new Error("order_permission_denied");
       const request = beginSiteRequest(siteId);
       if (!request) throw createAbortedOrderRequestError();
       try {
-        const response = await fetchWithAdminPerformance(
+        const response = await requestOrderApi(
           `/api/orders?siteId=${encodeURIComponent(request.siteId)}&orderId=${encodeURIComponent(orderId)}`,
           {
             cache: "no-store",
@@ -839,7 +1076,14 @@ export default function MerchantOrderManagerDialog({
         finishSiteRequest(request);
       }
     },
-    [beginSiteRequest, finishSiteRequest, isSiteRequestCurrent, siteId],
+    [
+      beginSiteRequest,
+      canViewOrders,
+      finishSiteRequest,
+      isSiteRequestCurrent,
+      requestOrderApi,
+      siteId,
+    ],
   );
 
   const buildDetailDraftItemsInput = useCallback(
@@ -996,7 +1240,7 @@ export default function MerchantOrderManagerDialog({
 
   const openListConversation = useCallback(
     async (orderId: string) => {
-      if (!onOpenConversation || managerBusyRef.current) return;
+      if (!canViewCustomerData || !onOpenConversation || managerBusyRef.current) return;
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId) return;
       setBusyKey(`contact:${orderId}`);
@@ -1024,6 +1268,7 @@ export default function MerchantOrderManagerDialog({
     },
     [
       captureSiteRequestContext,
+      canViewCustomerData,
       isSiteRequestCurrent,
       markOrderTouched,
       onOpenConversation,
@@ -1042,6 +1287,10 @@ export default function MerchantOrderManagerDialog({
     ) => {
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
+      if (!canRunMerchantOrderStatusTransition(effectivePermissions, order.status, status)) {
+        setError("当前账号没有执行此订单状态操作的权限。");
+        return;
+      }
       const targetsOpenDetail = detailOrderId === order.id;
       if (targetsOpenDetail && detailDraftConflictRef.current) {
         setError(detailDraftConflictRef.current);
@@ -1062,6 +1311,7 @@ export default function MerchantOrderManagerDialog({
       }
       setBusyKey(`${busyLabel}:${order.id}`);
       setError("");
+      let itemUpdateCompleted = false;
       try {
         const draftItems =
           options.persistDetailDraft &&
@@ -1071,7 +1321,40 @@ export default function MerchantOrderManagerDialog({
           hasDetailQuantityDraftChanges(order)
             ? buildDetailDraftItemsInput(order)
             : undefined;
-        const nextOrder = await requestOrderStatusUpdate(order, status, draftItems);
+        if (
+          draftItems &&
+          !hasMerchantOrderFrontendPermission(effectivePermissions, "orders.items.update")
+        ) {
+          throw new Error("当前账号没有修改订单商品的权限。");
+        }
+        const completionAction =
+          status === "completed"
+            ? "complete"
+            : order.status === "completed"
+              ? "uncomplete"
+              : null;
+        let nextOrder: MerchantOrderRecord;
+        if (completionAction) {
+          const orderWithItems = draftItems
+            ? await requestOrderItemsUpdate(order, draftItems)
+            : order;
+          if (draftItems) {
+            itemUpdateCompleted = true;
+            if (!isSiteRequestCurrent(operation)) return;
+            if (targetsOpenDetail) rebaseDetailQuantityDrafts(orderWithItems);
+            setRecords((current) =>
+              current.map((item) =>
+                item.id === order.id ? orderWithItems : item,
+              ),
+            );
+            setExternalDetailOrder((current) =>
+              current?.id === order.id ? orderWithItems : current,
+            );
+          }
+          nextOrder = await requestOrderAction(orderWithItems, completionAction);
+        } else {
+          nextOrder = await requestOrderStatusUpdate(order, status, draftItems);
+        }
         if (!isSiteRequestCurrent(operation)) return;
         if (targetsOpenDetail && draftItems) rebaseDetailQuantityDrafts(nextOrder);
         setRecords((current) =>
@@ -1086,7 +1369,11 @@ export default function MerchantOrderManagerDialog({
         if (!isSiteRequestCurrent(operation)) return;
         const message =
           nextError instanceof Error && nextError.message ? nextError.message : "订单保存失败，请稍后重试。";
-        setError(`保存失败，修改未生效：${message}`);
+        setError(
+          itemUpdateCompleted
+            ? `商品数量已保存，但订单状态修改失败：${message}`
+            : `保存失败，修改未生效：${message}`,
+        );
       } finally {
         if (isSiteRequestCurrent(operation)) setBusyKey("");
       }
@@ -1096,6 +1383,9 @@ export default function MerchantOrderManagerDialog({
       captureSiteRequestContext,
       hasDetailQuantityDraftChanges,
       isSiteRequestCurrent,
+      effectivePermissions,
+      requestOrderAction,
+      requestOrderItemsUpdate,
       requestOrderStatusUpdate,
       detailOrderId,
       rebaseDetailQuantityDrafts,
@@ -1104,8 +1394,65 @@ export default function MerchantOrderManagerDialog({
     ],
   );
 
+  const saveDetailOrderItems = useCallback(
+    async (order: MerchantOrderRecord) => {
+      if (
+        !canUpdateOrderItems ||
+        order.status === "completed" ||
+        order.status === "cancelled"
+      ) return;
+      if (detailDraftConflictRef.current) {
+        setError(detailDraftConflictRef.current);
+        return;
+      }
+      if (!hasDetailQuantityDraftChanges(order)) return;
+      const operation = captureSiteRequestContext();
+      if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
+      setBusyKey(`items:${order.id}`);
+      setError("");
+      try {
+        const nextOrder = await requestOrderItemsUpdate(
+          order,
+          buildDetailDraftItemsInput(order),
+        );
+        if (!isSiteRequestCurrent(operation)) return;
+        rebaseDetailQuantityDrafts(nextOrder);
+        setRecords((current) =>
+          current.map((item) => (item.id === order.id ? nextOrder : item)),
+        );
+        setExternalDetailOrder((current) =>
+          current?.id === order.id ? nextOrder : current,
+        );
+      } catch (nextError) {
+        if (!isSiteRequestCurrent(operation)) return;
+        setError(
+          nextError instanceof Error && nextError.message
+            ? nextError.message
+            : "订单商品保存失败，请稍后重试。",
+        );
+      } finally {
+        if (isSiteRequestCurrent(operation)) setBusyKey("");
+      }
+    },
+    [
+      buildDetailDraftItemsInput,
+      canUpdateOrderItems,
+      captureSiteRequestContext,
+      hasDetailQuantityDraftChanges,
+      isSiteRequestCurrent,
+      rebaseDetailQuantityDrafts,
+      requestOrderItemsUpdate,
+      setBusyKey,
+      siteId,
+    ],
+  );
+
   const printOrder = useCallback(
     async (order: MerchantOrderRecord) => {
+      if (!canPrintOrders) {
+        setError("当前账号没有打印订单的权限。");
+        return;
+      }
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
       const preparedPrintWindow = prepareMerchantOrderPrintWindow();
@@ -1160,6 +1507,7 @@ export default function MerchantOrderManagerDialog({
       isSiteRequestCurrent,
       requestExactOrder,
       requestOrderAction,
+      canPrintOrders,
       setBusyKey,
       siteId,
     ],
@@ -1167,6 +1515,10 @@ export default function MerchantOrderManagerDialog({
 
   const runBatchOrderStatusUpdate = useCallback(
     async (status: MerchantOrderStatus, busyLabel: string) => {
+      if (!canManageOrderStatus || status === "completed") {
+        setError("当前账号没有批量修改订单状态的权限。");
+        return;
+      }
       if (selectedOrderIds.length === 0) return;
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId) return;
@@ -1192,6 +1544,7 @@ export default function MerchantOrderManagerDialog({
     },
     [
       captureSiteRequestContext,
+      canManageOrderStatus,
       isSiteRequestCurrent,
       requestBatchOrderStatusUpdate,
       selectedOrderIds,
@@ -1422,7 +1775,7 @@ export default function MerchantOrderManagerDialog({
 
   const openDetailEnterpriseTask = useCallback(
     async (order: MerchantOrderRecord) => {
-      if (!onOpenEnterpriseTask) return;
+      if (!canOpenOwnerEnterpriseTask || !onOpenEnterpriseTask) return;
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId || order.siteId !== operation.siteId) return;
       if (!confirmDetailLeave()) return;
@@ -1454,6 +1807,7 @@ export default function MerchantOrderManagerDialog({
     },
     [
       captureSiteRequestContext,
+      canOpenOwnerEnterpriseTask,
       confirmDetailLeave,
       finalizeDetailClose,
       isSiteRequestCurrent,
@@ -1481,7 +1835,7 @@ export default function MerchantOrderManagerDialog({
 
   const contactWorkbenchOrder = useCallback(
     async (orderId: string) => {
-      if (!onOpenConversation) return;
+      if (!canViewCustomerData || !onOpenConversation) return;
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId) return;
       const order = await resolveWorkbenchActionOrder(orderId);
@@ -1501,6 +1855,7 @@ export default function MerchantOrderManagerDialog({
     },
     [
       captureSiteRequestContext,
+      canViewCustomerData,
       handleRegisterWorkbenchLeaveGuard,
       isSiteRequestCurrent,
       markOrderTouched,
@@ -1513,7 +1868,7 @@ export default function MerchantOrderManagerDialog({
 
   const openWorkbenchEnterpriseTask = useCallback(
     async (orderId: string) => {
-      if (!onOpenEnterpriseTask) return;
+      if (!canOpenOwnerEnterpriseTask || !onOpenEnterpriseTask) return;
       const operation = captureSiteRequestContext();
       if (operation.siteId !== siteId) return;
       const order = await resolveWorkbenchActionOrder(orderId);
@@ -1524,6 +1879,7 @@ export default function MerchantOrderManagerDialog({
     },
     [
       captureSiteRequestContext,
+      canOpenOwnerEnterpriseTask,
       handleRegisterWorkbenchLeaveGuard,
       isSiteRequestCurrent,
       onOpenEnterpriseTask,
@@ -1634,7 +1990,7 @@ export default function MerchantOrderManagerDialog({
       const disabled = isBatchBusy || isOrderBusy;
       return (
         <>
-          {record.status === "confirmed" ? (
+          {canManageOrderStatus ? record.status === "confirmed" ? (
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -1661,8 +2017,8 @@ export default function MerchantOrderManagerDialog({
             >
               {isBusy("confirm") ? "处理中" : "确认"}
             </button>
-          )}
-          {record.status === "confirmed" ? (
+          ) : null}
+          {canCompleteOrders ? record.status === "confirmed" ? (
             <button
               type="button"
               className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
@@ -1680,16 +2036,18 @@ export default function MerchantOrderManagerDialog({
             >
               {isBusy("uncomplete") ? "处理中" : "取消完成"}
             </button>
+          ) : null : null}
+          {canPrintOrders ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void printOrder(record)}
+              disabled={disabled}
+            >
+              {isBusy("print") ? "正在发起" : getMerchantOrderPrintAttemptText(record.printCount)}
+            </button>
           ) : null}
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void printOrder(record)}
-            disabled={disabled}
-          >
-            {isBusy("print") ? "正在发起" : getMerchantOrderPrintAttemptText(record.printCount)}
-          </button>
-          {record.status !== "cancelled" ? (
+          {canManageOrderStatus && record.status !== "cancelled" ? (
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -1702,7 +2060,14 @@ export default function MerchantOrderManagerDialog({
         </>
       );
     },
-    [busyKey, patchOrderStatus, printOrder],
+    [
+      busyKey,
+      canCompleteOrders,
+      canManageOrderStatus,
+      canPrintOrders,
+      patchOrderStatus,
+      printOrder,
+    ],
   );
 
   const renderStatusActions = useCallback(
@@ -1713,7 +2078,7 @@ export default function MerchantOrderManagerDialog({
       const disabled = isBatchBusy || isOrderBusy;
       return (
         <>
-          {record.status === "confirmed" ? (
+          {canManageOrderStatus ? record.status === "confirmed" ? (
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -1743,8 +2108,8 @@ export default function MerchantOrderManagerDialog({
             >
               {isBusy("confirm") ? "处理中" : "确认"}
             </button>
-          )}
-          {record.status === "confirmed" ? (
+          ) : null}
+          {canCompleteOrders ? record.status === "confirmed" ? (
             <button
               type="button"
               className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
@@ -1764,8 +2129,8 @@ export default function MerchantOrderManagerDialog({
             >
               {isBusy("uncomplete") ? "处理中" : "取消完成"}
             </button>
-          ) : null}
-          {record.status !== "cancelled" ? (
+          ) : null : null}
+          {canManageOrderStatus && record.status !== "cancelled" ? (
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -1779,11 +2144,11 @@ export default function MerchantOrderManagerDialog({
         </>
       );
     },
-    [busyKey, patchOrderStatus],
+    [busyKey, canCompleteOrders, canManageOrderStatus, patchOrderStatus],
   );
 
   const isSidebarWorkbenchMode = isInline && hideWorkbenchButton;
-  const workbenchDialog = workbenchOpen ? (
+  const workbenchDialog = workbenchOpen && canOpenWorkbench ? (
     <OrderWorkbenchPanel
       siteId={siteId}
       mode={isSidebarWorkbenchMode ? "inline" : "overlay"}
@@ -1791,15 +2156,18 @@ export default function MerchantOrderManagerDialog({
       catalogTarget={workbenchCatalogTarget}
       onClose={() => setWorkbenchOpen(false)}
       onOpenOrder={openWorkbenchOrder}
-      onContactOrder={onOpenConversation ? contactWorkbenchOrder : undefined}
-      onOpenEnterpriseTask={onOpenEnterpriseTask ? openWorkbenchEnterpriseTask : undefined}
+      onContactOrder={canViewCustomerData && onOpenConversation ? contactWorkbenchOrder : undefined}
+      onOpenEnterpriseTask={canOpenOwnerEnterpriseTask ? openWorkbenchEnterpriseTask : undefined}
       onStatusFilter={openWorkbenchStatus}
       onChanged={loadOrders}
       registerLeaveGuard={handleRegisterWorkbenchLeaveGuard}
+      apiClient={apiClient}
+      cachePolicy={effectiveCachePolicy}
+      permissions={effectivePermissions}
     />
   ) : null;
 
-  if (isSidebarWorkbenchMode && workbenchOpen) return workbenchDialog;
+  if (isSidebarWorkbenchMode && workbenchOpen && workbenchDialog) return workbenchDialog;
 
   const detailDialog = detailOrder
     ? overlay(
@@ -1826,7 +2194,7 @@ export default function MerchantOrderManagerDialog({
                     {getStatusText(detailOrder.status)}
                   </span>
                   <div id={detailDialogTitleId} className="truncate text-xl font-semibold text-slate-950">
-                    {detailOrder.customer.name || "未命名客户"}
+                    {canViewCustomerData ? detailOrder.customer.name || "未命名客户" : "客户"}
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
@@ -1836,7 +2204,7 @@ export default function MerchantOrderManagerDialog({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {onOpenEnterpriseTask ? (
+                {canOpenOwnerEnterpriseTask ? (
                   <button
                     type="button"
                     className="rounded border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[13px] font-semibold leading-5 text-cyan-800 hover:bg-cyan-100"
@@ -1860,19 +2228,29 @@ export default function MerchantOrderManagerDialog({
               </div>
             </div>
 
-            {detailHasQuantityDraftChanges || detailDraftConflict ? (
+            {canUpdateOrderItems && (detailHasQuantityDraftChanges || detailDraftConflict) ? (
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-7 py-3 text-sm text-amber-900" role="status">
                 <span>
                   {detailDraftConflict || "商品数量有尚未保存的修改。确认或完成订单时会一并保存。"}
                 </span>
-                <button
-                  type="button"
-                  className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-50"
-                  onClick={discardDetailQuantityDrafts}
-                  disabled={Boolean(busyKey)}
-                >
-                  放弃修改并加载最新
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full border border-amber-400 bg-amber-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    onClick={() => void saveDetailOrderItems(detailOrder)}
+                    disabled={Boolean(busyKey) || Boolean(detailDraftConflict)}
+                  >
+                    {busyKey === `items:${detailOrder.id}` ? "保存中" : "保存商品数量"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-50"
+                    onClick={discardDetailQuantityDrafts}
+                    disabled={Boolean(busyKey)}
+                  >
+                    放弃修改并加载最新
+                  </button>
+                </div>
               </div>
             ) : null}
 
@@ -1892,6 +2270,7 @@ export default function MerchantOrderManagerDialog({
                         const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(quantity);
                         const isDetailActionBusy =
                           busyKey.endsWith(`:${detailOrder.id}`) ||
+                          !canUpdateOrderItems ||
                           detailOrder.status === "completed" ||
                           detailOrder.status === "cancelled";
                         return (
@@ -1959,6 +2338,7 @@ export default function MerchantOrderManagerDialog({
                 </div>
 
                 <div className="space-y-3">
+                  {canViewCustomerData ? (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="text-sm font-semibold text-slate-900">客户信息</div>
                     <div className="mt-3 grid gap-3 text-sm text-slate-600">
@@ -2008,6 +2388,11 @@ export default function MerchantOrderManagerDialog({
                       </div>
                     </div>
                   </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                      当前角色无权查看客户联系方式和备注。
+                    </div>
+                  )}
 
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="flex items-center justify-between text-sm text-slate-500">
@@ -2043,6 +2428,7 @@ export default function MerchantOrderManagerDialog({
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2.5">
                 <div id={managerDialogTitleId} className="text-[26px] font-bold leading-8 text-slate-950">订单管理</div>
+                {canOpenWorkbench ? (
                 <button
                   type="button"
                   className={hideWorkbenchButton ? "hidden" : workbenchButtonClassName}
@@ -2050,6 +2436,7 @@ export default function MerchantOrderManagerDialog({
                 >
                   工作台
                 </button>
+                ) : null}
 
                 <label className={toolbarSelectClassName}>
                   <span className="whitespace-nowrap text-xs font-medium text-slate-500">排序</span>
@@ -2101,6 +2488,7 @@ export default function MerchantOrderManagerDialog({
                   </div>
                 </label>
 
+                {canManageOrderStatus ? (
                 <button
                   type="button"
                   className={compactBatchButtonClassName}
@@ -2108,6 +2496,7 @@ export default function MerchantOrderManagerDialog({
                 >
                   {selectionMode ? "完成批量" : "批量"}
                 </button>
+                ) : null}
               </div>
             </div>
 
@@ -2168,7 +2557,7 @@ export default function MerchantOrderManagerDialog({
               </div>
             </div>
 
-            {selectionMode ? (
+            {canManageOrderStatus && selectionMode ? (
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -2210,15 +2599,21 @@ export default function MerchantOrderManagerDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <div className="space-y-4">
-            {loading ? (
+            {!canViewOrders ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+                当前角色没有查看订单的权限。
+              </div>
+            ) : loading ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
                 正在读取订单...
               </div>
             ) : filteredRecords.length > 0 ? (
               <>
               {renderedRecords.map((record) => {
-                const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
-                const displayName = record.customer.name || "未命名客户";
+                const canOpenConversation = canViewCustomerData && Boolean(record.customerAccountId || record.customerLoginEmail);
+                const displayName = canViewCustomerData
+                  ? record.customer.name || "未命名客户"
+                  : "客户";
                 return (
                   <div
                     key={record.id}
@@ -2267,7 +2662,7 @@ export default function MerchantOrderManagerDialog({
                             <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
                           </div>
                         </div>
-                        {record.customerAccountId || canOpenConversation || record.customer.email || record.customer.phone ? (
+                        {canViewCustomerData && (record.customerAccountId || canOpenConversation || record.customer.email || record.customer.phone) ? (
                           <div className="grid min-w-[580px] grid-cols-[5.75rem_2rem_minmax(12rem,1fr)_2rem_9rem_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700">
                             <span
                               className={`inline-flex h-8 w-[5.75rem] items-center justify-center rounded-full bg-white px-2 text-xs font-semibold text-slate-600 shadow-sm ${record.customerAccountId ? "" : "invisible"}`}

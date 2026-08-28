@@ -89,6 +89,7 @@ import MerchantEnterpriseAuditLog from "@/components/admin/MerchantEnterpriseAud
 import MerchantEnterpriseTodoCenter from "@/components/admin/MerchantEnterpriseTodoCenter";
 import MerchantEnterpriseAutomationManager from "@/components/admin/MerchantEnterpriseAutomationManager";
 import { normalizeMerchantEnterpriseTodoPage } from "@/lib/merchantEnterpriseTodos";
+import { isMerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import MerchantTaskWorkflowBindingCard from "@/components/admin/MerchantTaskWorkflowBindingCard";
 import EnterpriseWorkflowsPanel, {
   type EnterpriseWorkflowApiFetch,
@@ -546,6 +547,12 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "enterprise_management_disabled") return "当前商户尚未开通企业管理。";
   if (code === "permission_denied") return "当前账号没有执行此操作的权限。";
   if (code === "permission_escalation_denied") return "不能授予高于当前账号的权限，也不能修改自己的管理角色。";
+  if (code === "staff_business_access_disabled") {
+    return "当前站点尚未启用员工业务权限；关闭期间只能移除角色中已有的业务权限。";
+  }
+  if (code === "business_permission_strip_requires_separate_update") {
+    return "移除全部员工业务权限时不能同时修改角色资料或看板范围，请分开保存。";
+  }
   if (code === "invalid_role_board_access") return "看板访问范围无效，请重新选择后保存。";
   if (code === "role_board_access_in_use") return "该角色仍有员工负责新范围之外的未完成任务，请先调整负责人或任务。";
   if (code === "employee_board_access_in_use") return "该员工仍有新角色无法访问的未完成任务，请先调整负责人。";
@@ -2931,6 +2938,156 @@ function RoleBoardAccessEditor({
   );
 }
 
+const ROLE_PERMISSION_GROUP_ORDER = [
+  "工作台",
+  "任务",
+  "订单",
+  "员工",
+  "角色",
+  "流程",
+  "审计",
+  "积分兑换",
+  "预约管理",
+  "订单管理",
+  "会话",
+  "会员管理",
+] as const;
+
+function RolePermissionEditor({
+  idPrefix,
+  permissions,
+  grantablePermissions,
+  editable,
+  onChange,
+}: {
+  idPrefix: string;
+  permissions: readonly MerchantEnterprisePermission[];
+  grantablePermissions: readonly MerchantEnterprisePermission[];
+  editable: boolean;
+  onChange: (permissions: MerchantEnterprisePermission[]) => void;
+}) {
+  const selected = new Set(permissions);
+  const grantable = new Set(grantablePermissions);
+  const groups = ROLE_PERMISSION_GROUP_ORDER.map((group) => ({
+    group,
+    permissions: MERCHANT_ENTERPRISE_PERMISSION_CATALOG.filter(
+      (permission) => permission.group === group,
+    ),
+  })).filter((group) => group.permissions.length > 0);
+
+  function toggleGroup(
+    groupPermissions: typeof MERCHANT_ENTERPRISE_PERMISSION_CATALOG,
+    checked: boolean,
+  ) {
+    let next = [...permissions];
+    groupPermissions.forEach((permission) => {
+      if (!grantable.has(permission.key)) return;
+      next = toggleMerchantEnterprisePermissionSelection(
+        next,
+        permission.key,
+        checked,
+      );
+    });
+    onChange(next);
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      {groups.map(({ group, permissions: groupPermissions }) => {
+        const isBusinessGroup = groupPermissions.some((permission) =>
+          isMerchantStaffBusinessPermission(permission.key),
+        );
+        const grantableGroupPermissions = groupPermissions.filter((permission) =>
+          grantable.has(permission.key),
+        );
+        const allSelected =
+          grantableGroupPermissions.length > 0 &&
+          grantableGroupPermissions.every((permission) =>
+            selected.has(permission.key),
+          );
+        return (
+          <fieldset
+            key={`${idPrefix}-${group}`}
+            className={`rounded-2xl border p-3 ${
+              isBusinessGroup
+                ? "border-blue-100 bg-blue-50/35"
+                : "border-slate-200 bg-white"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <legend className="px-1 text-sm font-semibold text-slate-900">
+                {group}
+                {isBusinessGroup ? (
+                  <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                    业务菜单
+                  </span>
+                ) : null}
+              </legend>
+              {grantableGroupPermissions.length > 1 ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 disabled:opacity-45"
+                  disabled={!editable}
+                  onClick={() => toggleGroup(groupPermissions, !allSelected)}
+                >
+                  {allSelected ? "清空本组" : "选择本组"}
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {groupPermissions.map((permission) => {
+                const checked = selected.has(permission.key);
+                const canGrant = grantable.has(permission.key);
+                return (
+                  <label
+                    key={`${idPrefix}-${permission.key}`}
+                    className={`flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 ${
+                      editable && canGrant ? "bg-white" : "bg-slate-50 opacity-65"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={checked}
+                      disabled={!editable || !canGrant}
+                      onChange={(event) =>
+                        onChange(
+                          toggleMerchantEnterprisePermissionSelection(
+                            permissions,
+                            permission.key,
+                            event.target.checked,
+                          ),
+                        )
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-slate-800">
+                        {permission.label}
+                        {permission.risk === "high" ? (
+                          <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold text-rose-700">
+                            高风险
+                          </span>
+                        ) : permission.risk === "sensitive" ? (
+                          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">
+                            敏感
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">
+                        {permission.description}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        );
+      })}
+    </div>
+  );
+}
+
 function RoleEditor({
   role,
   boards,
@@ -3043,40 +3200,13 @@ function RoleEditor({
           setAllowedBoardIds(value.allowedBoardIds);
         }}
       />
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => {
-          const checked = permissions.includes(permission.key);
-          const canGrant = grantablePermissions.includes(permission.key);
-          return (
-            <label
-              key={`${role.id}-${permission.key}`}
-              className={`flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 ${
-                editable && canGrant ? "" : "bg-slate-50 opacity-70"
-              }`}
-            >
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={checked}
-                disabled={!editable || !canGrant}
-                onChange={(event) => {
-                  setPermissions((current) =>
-                    toggleMerchantEnterprisePermissionSelection(
-                      current,
-                      permission.key,
-                      event.target.checked,
-                    ),
-                  );
-                }}
-              />
-              <span>
-                <span className="block text-sm font-medium text-slate-800">{permission.label}</span>
-                <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{permission.description}</span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
+      <RolePermissionEditor
+        idPrefix={`role-${role.id}`}
+        permissions={permissions}
+        grantablePermissions={grantablePermissions}
+        editable={editable}
+        onChange={setPermissions}
+      />
       {editable ? (
         <div className="mt-4 flex flex-wrap justify-between gap-3">
           {!role.isSystem ? (
@@ -5083,7 +5213,9 @@ function MerchantEnterpriseManagerContent({
   const grantablePermissions =
     actor?.type === "owner"
       ? MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => permission.key)
-      : actor?.permissions ?? [];
+      : (actor?.permissions ?? []).filter(
+          (permission) => !isMerchantStaffBusinessPermission(permission),
+        );
   const employeeById = useMemo(
     () => new Map(snapshot.employees.map((employee) => [employee.id, employee] as const)),
     [snapshot.employees],
@@ -7482,7 +7614,9 @@ function MerchantEnterpriseManagerContent({
             {can(actor, "roles.manage") ? (
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-950">新建角色</h2>
-                <p className="mt-1 text-sm text-slate-500">勾选管理权限时会自动补齐所需的查看权限。</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  业务菜单权限默认关闭且仅企业负责人可授予；勾选管理权限时会自动补齐所需的查看权限。
+                </p>
                 <div className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto]">
                   <label className="block text-xs font-medium text-slate-600">
                     角色名称
@@ -7523,40 +7657,13 @@ function MerchantEnterpriseManagerContent({
                     setRoleAllowedBoardIds(value.allowedBoardIds);
                   }}
                 />
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => {
-                    const checked = rolePermissions.includes(permission.key);
-                    const canGrant = grantablePermissions.includes(permission.key);
-                    return (
-                      <label
-                        key={`new-${permission.key}`}
-                        className={`flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 ${
-                          canGrant ? "" : "bg-slate-50 opacity-60"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={checked}
-                          disabled={!canGrant}
-                          onChange={(event) =>
-                            setRolePermissions((current) =>
-                              toggleMerchantEnterprisePermissionSelection(
-                                current,
-                                permission.key,
-                                event.target.checked,
-                              ),
-                            )
-                          }
-                        />
-                        <span>
-                          <span className="block text-sm font-medium text-slate-800">{permission.label}</span>
-                          <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{permission.description}</span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
+                <RolePermissionEditor
+                  idPrefix="new-role"
+                  permissions={rolePermissions}
+                  grantablePermissions={grantablePermissions}
+                  editable={!busy}
+                  onChange={setRolePermissions}
+                />
               </section>
             ) : null}
             <section className="grid gap-4 lg:grid-cols-2">

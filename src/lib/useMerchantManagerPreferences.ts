@@ -26,6 +26,7 @@ import {
 } from "@/lib/merchantOrderManagerPreferences";
 import type { MerchantBookingStatus } from "@/lib/merchantBookings";
 import type { MerchantOrderStatus } from "@/lib/merchantOrders";
+import type { MerchantBusinessCachePolicy } from "@/lib/merchantBusinessApiClient";
 import type {
   MerchantManagerPreferenceKind,
   MerchantManagerPreferencesStoredState,
@@ -221,10 +222,38 @@ function scheduleRemotePreferenceWrite(
   ensurePageHideFlush();
 }
 
+function cancelPendingRemotePreferenceWrite(
+  siteId: string,
+  kind: MerchantManagerPreferenceKind,
+) {
+  const normalizedSiteId = normalizeText(siteId, 64);
+  if (!normalizedSiteId) return;
+  const key = buildPreferenceKey(normalizedSiteId, kind);
+  const entry = pendingRemoteWrites.get(key);
+  if (entry?.timer) clearTimeout(entry.timer);
+  pendingRemoteWrites.delete(key);
+}
+
 type SyncedPreferenceState<T> = {
   siteId: string;
+  persistenceEnabled: boolean;
   value: T;
 };
+
+export type MerchantManagerPreferencesOptions = {
+  cachePolicy?: MerchantBusinessCachePolicy;
+};
+
+export function shouldPersistMerchantManagerPreferences(
+  cachePolicy: MerchantBusinessCachePolicy | undefined,
+) {
+  return (
+    cachePolicy === undefined ||
+    (cachePolicy.mode !== "disabled" &&
+      cachePolicy.allowPersistentRead &&
+      cachePolicy.allowPersistentWrite)
+  );
+}
 
 function useSyncedManagerPreferences<
   T extends MerchantBookingManagerPreferences | MerchantOrderManagerPreferences,
@@ -235,37 +264,80 @@ function useSyncedManagerPreferences<
   saveLocal: (siteId: string, value: T) => void;
   normalize: (value: unknown) => T;
   selectRemote: (response: RemotePreferencesResponse) => T | null;
+  persistenceEnabled?: boolean;
 }): [T, Dispatch<SetStateAction<T>>] {
-  const { siteId, kind, loadLocal, saveLocal, normalize, selectRemote } = input;
+  const {
+    siteId,
+    kind,
+    loadLocal,
+    saveLocal,
+    normalize,
+    selectRemote,
+    persistenceEnabled = true,
+  } = input;
   const normalizedSiteId = normalizeText(siteId, 64);
+  const readInitialValue = useCallback(
+    (targetSiteId: string) =>
+      persistenceEnabled
+        ? normalize(loadLocal(targetSiteId))
+        : normalize({}),
+    [loadLocal, normalize, persistenceEnabled],
+  );
   const [state, setState] = useState<SyncedPreferenceState<T>>(() => ({
     siteId: normalizedSiteId,
-    value: loadLocal(normalizedSiteId),
+    persistenceEnabled,
+    value: persistenceEnabled
+      ? normalize(loadLocal(normalizedSiteId))
+      : normalize({}),
   }));
   const stateRef = useRef(state);
   const remoteReadySiteRef = useRef("");
-  const revisionRef = useRef({ siteId: normalizedSiteId, count: 0 });
+  const revisionRef = useRef({
+    siteId: normalizedSiteId,
+    persistenceEnabled,
+    count: 0,
+  });
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
   useEffect(() => {
-    if (!normalizedSiteId) return;
     let cancelled = false;
     remoteReadySiteRef.current = "";
-    if (revisionRef.current.siteId !== normalizedSiteId) {
-      revisionRef.current = { siteId: normalizedSiteId, count: 0 };
+    if (
+      revisionRef.current.siteId !== normalizedSiteId ||
+      revisionRef.current.persistenceEnabled !== persistenceEnabled
+    ) {
+      revisionRef.current = {
+        siteId: normalizedSiteId,
+        persistenceEnabled,
+        count: 0,
+      };
     }
-    const local = normalize(loadLocal(normalizedSiteId));
+    const local = readInitialValue(normalizedSiteId);
     queueMicrotask(() => {
       if (cancelled) return;
       setState((current) =>
-        current.siteId === normalizedSiteId
+        current.siteId === normalizedSiteId &&
+        current.persistenceEnabled === persistenceEnabled
           ? current
-          : { siteId: normalizedSiteId, value: local },
+          : {
+              siteId: normalizedSiteId,
+              persistenceEnabled,
+              value: local,
+            },
       );
     });
+
+    if (!normalizedSiteId || !persistenceEnabled) {
+      if (!persistenceEnabled) {
+        cancelPendingRemotePreferenceWrite(normalizedSiteId, kind);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void requestRemotePreferences(normalizedSiteId)
       .then((response) => {
@@ -281,22 +353,30 @@ function useSyncedManagerPreferences<
         }
         remoteReadySiteRef.current = normalizedSiteId;
         const current =
-          stateRef.current.siteId === normalizedSiteId
+          stateRef.current.siteId === normalizedSiteId &&
+          stateRef.current.persistenceEnabled
             ? stateRef.current.value
             : local;
         const hasLocalEdits =
           revisionRef.current.siteId === normalizedSiteId &&
+          revisionRef.current.persistenceEnabled &&
           revisionRef.current.count > 0;
         if (isStored && remote && !hasLocalEdits) {
           setState((latest) => {
             if (
               latest.siteId !== normalizedSiteId ||
+              !latest.persistenceEnabled ||
               revisionRef.current.siteId !== normalizedSiteId ||
+              !revisionRef.current.persistenceEnabled ||
               revisionRef.current.count > 0
             ) {
               return latest;
             }
-            return { siteId: normalizedSiteId, value: normalize(remote) };
+            return {
+              siteId: normalizedSiteId,
+              persistenceEnabled: true,
+              value: normalize(remote),
+            };
           });
           return;
         }
@@ -314,10 +394,22 @@ function useSyncedManagerPreferences<
     return () => {
       cancelled = true;
     };
-  }, [kind, loadLocal, normalize, normalizedSiteId, saveLocal, selectRemote]);
+  }, [
+    kind,
+    normalize,
+    normalizedSiteId,
+    persistenceEnabled,
+    readInitialValue,
+    selectRemote,
+  ]);
 
   useEffect(() => {
-    if (!normalizedSiteId || state.siteId !== normalizedSiteId) return;
+    if (
+      !persistenceEnabled ||
+      !normalizedSiteId ||
+      state.siteId !== normalizedSiteId ||
+      !state.persistenceEnabled
+    ) return;
     const normalized = normalize(state.value);
     saveLocal(normalizedSiteId, normalized);
     if (remoteReadySiteRef.current === normalizedSiteId) {
@@ -327,37 +419,47 @@ function useSyncedManagerPreferences<
         normalized,
       );
     }
-  }, [kind, normalize, normalizedSiteId, saveLocal, state]);
+  }, [kind, normalize, normalizedSiteId, persistenceEnabled, saveLocal, state]);
 
   const setValue = useCallback<Dispatch<SetStateAction<T>>>(
     (action) => {
       if (!normalizedSiteId) return;
-      if (revisionRef.current.siteId !== normalizedSiteId) {
-        revisionRef.current = { siteId: normalizedSiteId, count: 0 };
+      if (
+        revisionRef.current.siteId !== normalizedSiteId ||
+        revisionRef.current.persistenceEnabled !== persistenceEnabled
+      ) {
+        revisionRef.current = {
+          siteId: normalizedSiteId,
+          persistenceEnabled,
+          count: 0,
+        };
       }
       revisionRef.current.count += 1;
       setState((current) => {
         const currentValue =
-          current.siteId === normalizedSiteId
+          current.siteId === normalizedSiteId &&
+          current.persistenceEnabled === persistenceEnabled
             ? current.value
-            : normalize(loadLocal(normalizedSiteId));
+            : readInitialValue(normalizedSiteId);
         const nextValue =
           typeof action === "function"
             ? (action as (current: T) => T)(currentValue)
             : action;
         return {
           siteId: normalizedSiteId,
+          persistenceEnabled,
           value: normalize(nextValue),
         };
       });
     },
-    [loadLocal, normalize, normalizedSiteId],
+    [normalize, normalizedSiteId, persistenceEnabled, readInitialValue],
   );
 
   return [
-    state.siteId === normalizedSiteId
+    state.siteId === normalizedSiteId &&
+    state.persistenceEnabled === persistenceEnabled
       ? state.value
-      : normalize(loadLocal(normalizedSiteId)),
+      : readInitialValue(normalizedSiteId),
     setValue,
   ];
 }
@@ -367,7 +469,10 @@ const selectRemoteBooking = (response: RemotePreferencesResponse) =>
 const selectRemoteOrder = (response: RemotePreferencesResponse) =>
   response.preferences.order;
 
-export function useMerchantBookingManagerPreferences(siteId: string) {
+export function useMerchantBookingManagerPreferences(
+  siteId: string,
+  options: MerchantManagerPreferencesOptions = {},
+) {
   const [preferences, setPreferences] = useSyncedManagerPreferences({
     siteId,
     kind: "booking",
@@ -375,6 +480,7 @@ export function useMerchantBookingManagerPreferences(siteId: string) {
     saveLocal: saveMerchantBookingManagerPreferences,
     normalize: normalizeMerchantBookingManagerPreferences,
     selectRemote: selectRemoteBooking,
+    persistenceEnabled: shouldPersistMerchantManagerPreferences(options.cachePolicy),
   });
   const setSelectedStatuses = useCallback<Dispatch<SetStateAction<MerchantBookingStatus[]>>>(
     (action) => {
@@ -417,7 +523,10 @@ export function useMerchantBookingManagerPreferences(siteId: string) {
   };
 }
 
-export function useMerchantOrderManagerPreferences(siteId: string) {
+export function useMerchantOrderManagerPreferences(
+  siteId: string,
+  options: MerchantManagerPreferencesOptions = {},
+) {
   const [preferences, setPreferences] = useSyncedManagerPreferences({
     siteId,
     kind: "order",
@@ -425,6 +534,7 @@ export function useMerchantOrderManagerPreferences(siteId: string) {
     saveLocal: saveMerchantOrderManagerPreferences,
     normalize: normalizeMerchantOrderManagerPreferences,
     selectRemote: selectRemoteOrder,
+    persistenceEnabled: shouldPersistMerchantManagerPreferences(options.cachePolicy),
   });
   const setSelectedStatuses = useCallback<Dispatch<SetStateAction<MerchantOrderStatus[]>>>(
     (action) => {

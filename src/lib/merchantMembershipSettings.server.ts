@@ -27,6 +27,34 @@ function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+const merchantMembershipSettingsMutationTails = new Map<string, Promise<void>>();
+
+export async function withMerchantMembershipSettingsMutationLock<T>(
+  siteId: string,
+  task: () => Promise<T>,
+  beforeMutation?: () => Promise<void>,
+) {
+  const normalizedSiteId = trimText(siteId, 64);
+  if (!normalizedSiteId) throw new Error("invalid_site_id");
+  const previous = merchantMembershipSettingsMutationTails.get(normalizedSiteId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  merchantMembershipSettingsMutationTails.set(normalizedSiteId, tail);
+  await previous.catch(() => undefined);
+  try {
+    await beforeMutation?.();
+    return await task();
+  } finally {
+    release();
+    if (merchantMembershipSettingsMutationTails.get(normalizedSiteId) === tail) {
+      merchantMembershipSettingsMutationTails.delete(normalizedSiteId);
+    }
+  }
+}
+
 function normalizeSettingsView(value: unknown): MerchantMemberSettingsView | "" {
   const text = trimText(value, 64);
   return text === "list" ||
@@ -94,11 +122,13 @@ export function buildRedemptionCashierSettings(settings: MerchantMembershipSetti
   };
 }
 
-export async function updateMerchantMembershipSettings(input: {
+async function updateMerchantMembershipSettingsUnlocked(input: {
   siteId: string;
   settings: unknown;
   view?: unknown;
   expectedUpdatedAt?: unknown;
+  operatorId?: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
@@ -128,10 +158,23 @@ export async function updateMerchantMembershipSettings(input: {
     settings,
     updatedAt: now,
     ...(hasExpectedUpdatedAt ? { expectedUpdatedAt: existing.updatedAt } : {}),
-    view: normalizeSettingsView(input.view) || "membership-settings",
+    view: `${normalizeSettingsView(input.view) || "membership-settings"}${
+      trimText(input.operatorId, 120) ? `:${trimText(input.operatorId, 120)}` : ""
+    }`,
   });
   if (saved.error) throw new Error(saved.error);
   return settings;
+}
+
+export async function updateMerchantMembershipSettings(
+  input: Parameters<typeof updateMerchantMembershipSettingsUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipSettingsMutationLock(
+    siteId,
+    () => updateMerchantMembershipSettingsUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
 }
 
 export async function reserveMerchantMembershipRedemptionStock(input: {
@@ -206,9 +249,11 @@ export async function releaseMerchantMembershipRedemptionStock(input: {
   throw new Error("merchant_membership_settings_conflict");
 }
 
-export async function updateMerchantMembershipPrintSettings(input: {
+async function updateMerchantMembershipPrintSettingsUnlocked(input: {
   siteId: string;
   printSettings: unknown;
+  operatorId?: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
@@ -237,10 +282,21 @@ export async function updateMerchantMembershipPrintSettings(input: {
       settings,
       updatedAt,
       expectedUpdatedAt: current.updatedAt,
-      view: "print-settings",
+      view: `print-settings${trimText(input.operatorId, 120) ? `:${trimText(input.operatorId, 120)}` : ""}`,
     });
     if (!saved.error) return settings;
     if (saved.error !== "merchant_membership_settings_conflict" || attempt >= 2) throw new Error(saved.error);
   }
   throw new Error("merchant_membership_settings_conflict");
+}
+
+export async function updateMerchantMembershipPrintSettings(
+  input: Parameters<typeof updateMerchantMembershipPrintSettingsUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipSettingsMutationLock(
+    siteId,
+    () => updateMerchantMembershipPrintSettingsUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
 }

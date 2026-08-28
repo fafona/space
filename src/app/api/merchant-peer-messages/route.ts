@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+  reauthorizeMerchantBusinessMutation,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
+import {
   createMerchantPeerMessage,
   findMerchantPeerThreadForMerchants,
   listMerchantPeerContactsForMerchant,
   listMerchantPeerThreadsForMerchant,
   upsertMerchantPeerContact,
   upsertMerchantPeerMessage,
+  type MerchantPeerContactSummary,
+  type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
 import {
   loadStoredMerchantPeerInbox,
@@ -30,6 +38,7 @@ import {
   readMerchantAuthCookie,
   readMerchantRequestAccessTokens,
 } from "@/lib/merchantAuthSession";
+import { isMerchantStaffPrincipal } from "@/lib/merchantStaffPrincipal.server";
 import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
@@ -47,6 +56,7 @@ import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } fro
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -93,6 +103,63 @@ type MerchantPeerSessionHintInput = {
   merchantEmail?: unknown;
   merchantName?: unknown;
 } | null;
+
+type MerchantPeerSession = {
+  merchantId: string;
+  merchantEmail: string;
+  merchantName: string;
+  actor?: MerchantBusinessActor;
+  assertAuthorizationCurrent?: () => Promise<void>;
+};
+
+function employeeSafePeerName(value: unknown, accountId: string) {
+  const normalized = trimText(value);
+  return normalized && !normalized.includes("@") ? normalized : accountId;
+}
+
+export function projectMerchantPeerThreadForEmployee(
+  thread: MerchantPeerThread | null,
+) {
+  if (!thread) return null;
+  return {
+    ...thread,
+    merchantAName: employeeSafePeerName(
+      thread.merchantAName,
+      thread.merchantAId,
+    ),
+    merchantAEmail: "",
+    merchantBName: employeeSafePeerName(
+      thread.merchantBName,
+      thread.merchantBId,
+    ),
+    merchantBEmail: "",
+  };
+}
+
+export function projectMerchantPeerContactForEmployee(
+  contact: MerchantPeerContactSummary,
+): MerchantPeerContactSummary {
+  return {
+    merchantId: contact.merchantId,
+    merchantName: employeeSafePeerName(
+      contact.merchantName,
+      contact.merchantId,
+    ),
+    merchantEmail: "",
+    ...(contact.accountType ? { accountType: contact.accountType } : {}),
+    savedAt: contact.savedAt,
+    updatedAt: contact.updatedAt,
+    lastMessage: contact.lastMessage,
+  };
+}
+
+function projectResolvedPeerRecordForEmployee(record: ResolvedPeerRecord) {
+  return {
+    ...record,
+    merchantName: employeeSafePeerName(record.merchantName, record.merchantId),
+    merchantEmail: "",
+  };
+}
 
 const MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT = 80;
 const PERSONAL_PEER_DIRECTORY_CACHE_TTL_MS = 60_000;
@@ -310,22 +377,26 @@ async function loadMerchantPeerProfiles(
   return profileMap;
 }
 
-function noStoreJson(body: unknown, init?: ResponseInit) {
-  const response = NextResponse.json(body, init);
-  response.headers.set("cache-control", "no-store");
+function applyPrivateResponseHeaders(response: Response) {
+  response.headers.set("cache-control", "private, no-store");
+  response.headers.set("pragma", "no-cache");
+  response.headers.set("x-content-type-options", "nosniff");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
+  response.headers.set("referrer-policy", "no-referrer");
   return response;
 }
 
-async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerSessionHintInput) {
-  const merchantSession = await resolveMerchantSessionFromRequest(request, {
-    hintedMerchantId: normalizeMerchantId(hint?.siteId),
-    hintedMerchantEmail: normalizeEmail(hint?.merchantEmail),
-    hintedMerchantName: trimText(hint?.merchantName),
-  });
-  if (merchantSession) return merchantSession;
+function noStoreJson(body: unknown, init?: ResponseInit) {
+  return applyPrivateResponseHeaders(NextResponse.json(body, init));
+}
 
+async function resolvePersonalPeerSession(
+  request: Request,
+  hint?: MerchantPeerSessionHintInput,
+): Promise<MerchantPeerSession | null> {
   const authSupabase = createServerSupabaseAuthClient();
-  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
+  const serviceSupabase = createServerSupabaseServiceClient();
+  const adminSupabase = serviceSupabase as unknown as PlatformIdentitySupabaseClient | null;
   if (!authSupabase) return null;
 
   const accessTokens = readMerchantRequestAccessTokens(request);
@@ -343,6 +414,10 @@ async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerS
   }
   if (!user) return null;
 
+  // A staff principal must never be reinterpreted as a personal account when
+  // business authorization is disabled, revoked, or missing for this site.
+  if (await isMerchantStaffPrincipal(serviceSupabase, user)) return null;
+
   const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
   if (identity.accountType !== "personal" || !identity.accountId) return null;
 
@@ -351,6 +426,109 @@ async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerS
     merchantEmail: normalizeEmail(user.email),
     merchantName: trimText(hint?.merchantName) || readPlatformUsernameFromMetadata(user) || normalizeEmail(user.email),
   };
+}
+
+function isFallbackEligibleBusinessError(error: MerchantBusinessAccessError) {
+  return (
+    error.status < 500 &&
+    error.code !== "portal_origin_required" &&
+    error.code !== "invalid_site_id"
+  );
+}
+
+async function resolveMerchantPeerSession(
+  request: Request,
+  hint: MerchantPeerSessionHintInput | undefined,
+  requiredPermissions: readonly MerchantStaffBusinessPermission[],
+): Promise<MerchantPeerSession | null> {
+  const firstPermission = requiredPermissions[0];
+  if (!firstPermission) {
+    throw new MerchantBusinessAccessError("invalid_business_permission", 500);
+  }
+  const urlSiteId = normalizeMerchantId(
+    new URL(request.url).searchParams.get("siteId"),
+  );
+  let siteId = normalizeMerchantId(hint?.siteId) || urlSiteId;
+  const explicitBusinessToken = request.headers.has("x-merchant-access-token");
+
+  if (!siteId && !explicitBusinessToken) {
+    const legacyOwner = await resolveMerchantSessionFromRequest(request, {
+      hintedMerchantEmail: normalizeEmail(hint?.merchantEmail),
+      hintedMerchantName: trimText(hint?.merchantName),
+    });
+    siteId = normalizeMerchantId(legacyOwner?.merchantId);
+  }
+
+  if (siteId) {
+    try {
+      const actor = await authorizeMerchantBusinessRequest(request, {
+        siteId,
+        requiredPermission: firstPermission,
+      });
+      if (
+        requiredPermissions.some(
+          (permission) => !actor.businessPermissions.includes(permission),
+        )
+      ) {
+        throw new MerchantBusinessAccessError("permission_denied", 403);
+      }
+      return {
+        merchantId: actor.siteId,
+        merchantEmail: actor.type === "owner" ? actor.email : "",
+        merchantName:
+          actor.type === "owner" ? actor.displayName : actor.siteId,
+        actor,
+        assertAuthorizationCurrent: async () => {
+          await reauthorizeMerchantBusinessMutation(request, {
+            actor,
+            requiredPermissions,
+          });
+        },
+      };
+    } catch (error) {
+      if (
+        explicitBusinessToken ||
+        !(error instanceof MerchantBusinessAccessError) ||
+        !isFallbackEligibleBusinessError(error)
+      ) {
+        throw error;
+      }
+    }
+  } else if (explicitBusinessToken) {
+    throw new MerchantBusinessAccessError("invalid_site_id", 400);
+  }
+
+  return resolvePersonalPeerSession(request, hint);
+}
+
+export function getMerchantPeerActionRequiredPermissions(
+  action: string,
+): readonly MerchantStaffBusinessPermission[] {
+  if (action === "lookup") return ["conversations.search"];
+  if (action === "search" || action === "ensure_contact") {
+    return ["conversations.start"];
+  }
+  if (action === "send") return ["conversations.send"];
+  return ["conversations.view"];
+}
+
+export function getMerchantPeerSendRequiredPermissions(
+  actor: MerchantBusinessActor | undefined,
+  hasExistingThread: boolean,
+): readonly MerchantStaffBusinessPermission[] {
+  return actor?.type === "employee" && !hasExistingThread
+    ? ["conversations.send", "conversations.start"]
+    : ["conversations.send"];
+}
+
+function businessAccessResponse(error: unknown) {
+  if (error instanceof MerchantBusinessAccessError) {
+    return noStoreJson({ error: error.code }, { status: error.status });
+  }
+  return noStoreJson(
+    { error: "merchant_peer_authorization_failed" },
+    { status: 503 },
+  );
 }
 
 function readResolvedMerchantEmail(record: Record<string, unknown> | null | undefined) {
@@ -650,7 +828,7 @@ async function buildInboxResponse(
   merchantId: string,
   supabase?: (PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient) | null,
   readStatePayload?: MerchantSupportReadStatePayload | null,
-  options?: { threadMessageLimit?: number },
+  options?: { threadMessageLimit?: number; employeeProjection?: boolean },
 ) {
   const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
   const contactMerchantIds = contacts.map((contact) => contact.merchantId);
@@ -690,21 +868,40 @@ async function buildInboxResponse(
     };
   });
   const threadMessageLimit = Math.max(1, options?.threadMessageLimit ?? MERCHANT_PEER_DEFAULT_THREAD_MESSAGE_LIMIT);
-  const threads = listMerchantPeerThreadsForMerchant(payload, merchantId).map((thread) => ({
-    ...thread,
-    messages: thread.messages.slice(-threadMessageLimit),
-  }));
+  const projectedContacts = options?.employeeProjection
+    ? enrichedContacts.map(projectMerchantPeerContactForEmployee)
+    : enrichedContacts;
+  const threads = listMerchantPeerThreadsForMerchant(payload, merchantId).map(
+    (thread) => {
+      const limitedThread = {
+        ...thread,
+        messages: thread.messages.slice(-threadMessageLimit),
+      };
+      return options?.employeeProjection
+        ? projectMerchantPeerThreadForEmployee(limitedThread)!
+        : limitedThread;
+    },
+  );
   const readState = readStatePayload ? getMerchantSupportReadState(readStatePayload, merchantId) : null;
   return {
     ok: true,
-    contacts: enrichedContacts,
+    contacts: projectedContacts,
     threads,
     ...(readState ? { readState: { peerLastRead: readState.peerLastRead } } : {}),
   };
 }
 
 export async function GET(request: Request) {
-  const session = await resolveMerchantPeerSession(request);
+  let session: MerchantPeerSession | null;
+  try {
+    session = await resolveMerchantPeerSession(
+      request,
+      undefined,
+      ["conversations.view"],
+    );
+  } catch (error) {
+    return businessAccessResponse(error);
+  }
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -727,7 +924,10 @@ export async function GET(request: Request) {
     const windowResult = readMerchantPeerThreadWindow(fullThread, offset, limit);
     return noStoreJson({
       ok: true,
-      thread: windowResult.thread,
+      thread:
+        session.actor?.type === "employee"
+          ? projectMerchantPeerThreadForEmployee(windowResult.thread)
+          : windowResult.thread,
       messagePage: {
         total: windowResult.total,
         offset: windowResult.offset,
@@ -744,6 +944,7 @@ export async function GET(request: Request) {
       session.merchantId,
       supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
       readStatePayload,
+      { employeeProjection: session.actor?.type === "employee" },
     )),
     currentMerchantId: session.merchantId,
     currentMerchantEmail: session.merchantEmail,
@@ -752,7 +953,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
-    return getTrustedMutationRequestErrorResponse();
+    return applyPrivateResponseHeaders(
+      getTrustedMutationRequestErrorResponse(),
+    );
   }
 
   const body = (await request.json().catch(() => null)) as
@@ -772,7 +975,17 @@ export async function POST(request: Request) {
           contactAccountType?: unknown;
         }
       | null;
-  const session = await resolveMerchantPeerSession(request, body);
+  const action = trimText(body?.action);
+  let session: MerchantPeerSession | null;
+  try {
+    session = await resolveMerchantPeerSession(
+      request,
+      body,
+      getMerchantPeerActionRequiredPermissions(action),
+    );
+  } catch (error) {
+    return businessAccessResponse(error);
+  }
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -781,8 +994,6 @@ export async function POST(request: Request) {
   if (!supabase) {
     return noStoreJson({ error: "merchant_peer_inbox_env_missing" }, { status: 503 });
   }
-
-  const action = trimText(body?.action);
 
   if (action === "mark_read") {
     const contactMerchantId = normalizeMerchantId(body?.contactMerchantId);
@@ -811,10 +1022,18 @@ export async function POST(request: Request) {
         [contactMerchantId]: lastReadAt,
       },
     });
-    const saveReadStateResult = await saveMerchantSupportReadState(
-      supabase as unknown as MerchantSupportReadStateStoreClient,
-      nextReadStatePayload,
-    );
+    let saveReadStateResult: Awaited<
+      ReturnType<typeof saveMerchantSupportReadState>
+    >;
+    try {
+      saveReadStateResult = await saveMerchantSupportReadState(
+        supabase as unknown as MerchantSupportReadStateStoreClient,
+        nextReadStatePayload,
+        { beforeMutation: session.assertAuthorizationCurrent },
+      );
+    } catch (error) {
+      return businessAccessResponse(error);
+    }
     if (saveReadStateResult.error) {
       return noStoreJson(
         { error: "merchant_read_state_save_failed", message: saveReadStateResult.error },
@@ -830,6 +1049,57 @@ export async function POST(request: Request) {
       readState: {
         peerLastRead: readState.peerLastRead,
       },
+    });
+  }
+
+  if (action === "lookup") {
+    const resolved = await resolvePeerContact(
+      supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
+      {
+        accountId: /^\d{8}$/.test(trimText(body?.query))
+          ? body?.query
+          : undefined,
+        email: trimText(body?.query).includes("@")
+          ? body?.query
+          : undefined,
+      },
+    );
+    if (resolved.error === "search_requires_exact_id_or_email") {
+      return noStoreJson(
+        {
+          error: "search_requires_exact_id_or_email",
+          message: "请提供完整的 8 位账号 ID 或邮箱。",
+        },
+        { status: 400 },
+      );
+    }
+    if (resolved.error === "search_ambiguous") {
+      return noStoreJson(
+        {
+          error: "search_ambiguous",
+          message: "这个邮箱对应多个账号，请改用 8 位账号 ID。",
+        },
+        { status: 409 },
+      );
+    }
+    if (!resolved.record) {
+      return noStoreJson(
+        { error: "peer_not_found", message: "没有找到匹配的用户。" },
+        { status: 404 },
+      );
+    }
+    if (resolved.record.merchantId === session.merchantId) {
+      return noStoreJson(
+        { error: "cannot_chat_with_self", message: "不能和自己发起会话。" },
+        { status: 400 },
+      );
+    }
+    return noStoreJson({
+      ok: true,
+      contact:
+        session.actor?.type === "employee"
+          ? projectResolvedPeerRecordForEmployee(resolved.record)
+          : resolved.record,
     });
   }
 
@@ -870,7 +1140,16 @@ export async function POST(request: Request) {
       contactName: resolved.record.merchantName,
       contactEmail: resolved.record.merchantEmail,
     });
-    const saveResult = await saveMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient, nextPayload);
+    let saveResult: Awaited<ReturnType<typeof saveMerchantPeerInbox>>;
+    try {
+      saveResult = await saveMerchantPeerInbox(
+        supabase as unknown as MerchantPeerInboxStoreClient,
+        nextPayload,
+        { beforeMutation: session.assertAuthorizationCurrent },
+      );
+    } catch (error) {
+      return businessAccessResponse(error);
+    }
     if (saveResult.error) {
       return noStoreJson(
         { error: "merchant_contact_save_failed", message: saveResult.error },
@@ -885,8 +1164,12 @@ export async function POST(request: Request) {
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
         readStatePayload,
+        { employeeProjection: session.actor?.type === "employee" },
       )),
-      contact: resolved.record,
+      contact:
+        session.actor?.type === "employee"
+          ? projectResolvedPeerRecordForEmployee(resolved.record)
+          : resolved.record,
     });
   }
 
@@ -925,10 +1208,23 @@ export async function POST(request: Request) {
     const nextPayload = upsertMerchantPeerContact(payload, {
       ownerMerchantId: session.merchantId,
       contactMerchantId: resolved.record.merchantId,
-      contactName: trimText(body?.contactName) || resolved.record.merchantName,
-      contactEmail: normalizeEmail(body?.contactEmail) || resolved.record.merchantEmail,
+      contactName: session.actor
+        ? resolved.record.merchantName
+        : trimText(body?.contactName) || resolved.record.merchantName,
+      contactEmail: session.actor
+        ? resolved.record.merchantEmail
+        : normalizeEmail(body?.contactEmail) || resolved.record.merchantEmail,
     });
-    const saveResult = await saveMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient, nextPayload);
+    let saveResult: Awaited<ReturnType<typeof saveMerchantPeerInbox>>;
+    try {
+      saveResult = await saveMerchantPeerInbox(
+        supabase as unknown as MerchantPeerInboxStoreClient,
+        nextPayload,
+        { beforeMutation: session.assertAuthorizationCurrent },
+      );
+    } catch (error) {
+      return businessAccessResponse(error);
+    }
     if (saveResult.error) {
       return noStoreJson(
         { error: "merchant_contact_save_failed", message: saveResult.error },
@@ -943,8 +1239,12 @@ export async function POST(request: Request) {
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
         readStatePayload,
+        { employeeProjection: session.actor?.type === "employee" },
       )),
-      contact: resolved.record,
+      contact:
+        session.actor?.type === "employee"
+          ? projectResolvedPeerRecordForEmployee(resolved.record)
+          : resolved.record,
     });
   }
 
@@ -958,7 +1258,31 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "cannot_chat_with_self", message: "不能给自己发送消息。" }, { status: 400 });
     }
 
-    const [recipient, senderRecord, payload, readStatePayload] = await Promise.all([
+    const payload = await loadStoredMerchantPeerInbox(
+      supabase as unknown as MerchantPeerInboxStoreClient,
+    );
+    const existingThread = findMerchantPeerThreadForMerchants(
+      payload,
+      session.merchantId,
+      recipientMerchantId,
+    );
+    const sendRequiredPermissions = getMerchantPeerSendRequiredPermissions(
+      session.actor,
+      Boolean(existingThread),
+    );
+    if (
+      session.actor &&
+      sendRequiredPermissions.some(
+        (permission) =>
+          !session.actor?.businessPermissions.includes(permission),
+      )
+    ) {
+      return businessAccessResponse(
+        new MerchantBusinessAccessError("permission_denied", 403),
+      );
+    }
+
+    const [recipient, senderRecord, readStatePayload] = await Promise.all([
       resolvePeerById(
         supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
         recipientMerchantId,
@@ -967,7 +1291,6 @@ export async function POST(request: Request) {
         supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
         session.merchantId,
       ),
-      loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient),
       loadStoredMerchantSupportReadState(supabase as unknown as MerchantSupportReadStateStoreClient),
     ]);
     if (!recipient) {
@@ -977,14 +1300,22 @@ export async function POST(request: Request) {
       senderRecord ??
       ({
         merchantId: session.merchantId,
-        merchantName: trimText(body?.merchantName) || session.merchantName || session.merchantId,
-        merchantEmail: normalizeEmail(body?.merchantEmail) || session.merchantEmail,
+        merchantName: session.actor
+          ? session.merchantName || session.merchantId
+          : trimText(body?.merchantName) || session.merchantName || session.merchantId,
+        merchantEmail: session.actor
+          ? session.merchantEmail
+          : normalizeEmail(body?.merchantEmail) || session.merchantEmail,
         accountType: "merchant",
       } satisfies ResolvedPeerRecord);
     const nextPayload = upsertMerchantPeerMessage(payload, {
       senderMerchantId: sender.merchantId,
-      senderMerchantName: trimText(body?.merchantName) || sender.merchantName,
-      senderMerchantEmail: normalizeEmail(body?.merchantEmail) || sender.merchantEmail,
+      senderMerchantName: session.actor
+        ? sender.merchantName
+        : trimText(body?.merchantName) || sender.merchantName,
+      senderMerchantEmail: session.actor
+        ? sender.merchantEmail
+        : normalizeEmail(body?.merchantEmail) || sender.merchantEmail,
       recipientMerchantId: recipient.merchantId,
       recipientMerchantName: recipient.merchantName,
       recipientMerchantEmail: recipient.merchantEmail,
@@ -993,7 +1324,25 @@ export async function POST(request: Request) {
         text,
       }),
     });
-    const saveResult = await saveMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient, nextPayload);
+    let saveResult: Awaited<ReturnType<typeof saveMerchantPeerInbox>>;
+    try {
+      saveResult = await saveMerchantPeerInbox(
+        supabase as unknown as MerchantPeerInboxStoreClient,
+        nextPayload,
+        {
+          beforeMutation: session.actor
+            ? async () => {
+                await reauthorizeMerchantBusinessMutation(request, {
+                  actor: session.actor!,
+                  requiredPermissions: sendRequiredPermissions,
+                });
+              }
+            : session.assertAuthorizationCurrent,
+        },
+      );
+    } catch (error) {
+      return businessAccessResponse(error);
+    }
     if (saveResult.error) {
       return noStoreJson(
         { error: "merchant_message_save_failed", message: saveResult.error },
@@ -1024,8 +1373,22 @@ export async function POST(request: Request) {
         session.merchantId,
         supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
         readStatePayload,
+        { employeeProjection: session.actor?.type === "employee" },
       )),
-      thread: findMerchantPeerThreadForMerchants(persistedPayload, session.merchantId, recipient.merchantId),
+      thread:
+        session.actor?.type === "employee"
+          ? projectMerchantPeerThreadForEmployee(
+              findMerchantPeerThreadForMerchants(
+                persistedPayload,
+                session.merchantId,
+                recipient.merchantId,
+              ),
+            )
+          : findMerchantPeerThreadForMerchants(
+              persistedPayload,
+              session.merchantId,
+              recipient.merchantId,
+            ),
     });
   }
 
