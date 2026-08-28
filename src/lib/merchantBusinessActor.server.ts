@@ -324,7 +324,7 @@ async function resolveMerchantBusinessActorContext(
     throw new MerchantBusinessAccessError("invalid_site_id", 400);
   }
   const dependencies = { ...defaultDependencies(), ...dependencyOverrides };
-  const { user } = await dependencies.resolveAuthUser(request);
+  const { user, explicitToken } = await dependencies.resolveAuthUser(request);
   const authUserId = trimText(user.id, 80);
   if (!authUserId) throw new MerchantBusinessAccessError("unauthorized", 401);
 
@@ -333,6 +333,10 @@ async function resolveMerchantBusinessActorContext(
     staffPrincipal = await dependencies.isStaffPrincipal(user);
   } catch {
     throw new MerchantBusinessAccessError("business_principal_check_failed", 503);
+  }
+
+  if (staffPrincipal && !explicitToken) {
+    throw new MerchantBusinessAccessError("unauthorized", 401);
   }
 
   const site = await dependencies.loadSite(siteId);

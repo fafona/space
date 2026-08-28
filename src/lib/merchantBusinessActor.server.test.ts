@@ -148,6 +148,48 @@ test("employee actor is exact-site, versioned and contains no token", async () =
   assert.equal(JSON.stringify(actor).includes("employee-token"), false);
 });
 
+test("staff principals require an explicit portal token and never authorize from cookies", async () => {
+  let siteChecks = 0;
+  let employeeChecks = 0;
+  let ownerChecks = 0;
+  await assert.rejects(
+    () =>
+      authorizeMerchantBusinessRequest(
+        request({ cookie: `${MERCHANT_AUTH_COOKIE}=staff-cookie-token` }),
+        { siteId: SITE_ID, requiredPermission: "orders.view" },
+        dependencies({
+          resolveAuthUser: async () => ({
+            user: {
+              id: AUTH_USER_ID,
+              email: "employee@example.com",
+              app_metadata: { principal_type: "merchant_staff" },
+            },
+            explicitToken: false,
+          }),
+          loadSite: async () => {
+            siteChecks += 1;
+            throw new Error("staff cookie fallback must stop before site access");
+          },
+          loadEmployeeAuthorization: async () => {
+            employeeChecks += 1;
+            throw new Error("staff cookie fallback must not reach employee authorization");
+          },
+          loadOwnerAuthorization: async () => {
+            ownerChecks += 1;
+            throw new Error("staff principals must not fall back to owner authorization");
+          },
+        }),
+      ),
+    (error: unknown) =>
+      error instanceof MerchantBusinessAccessError &&
+      error.code === "unauthorized" &&
+      error.status === 401,
+  );
+  assert.equal(siteChecks, 0);
+  assert.equal(employeeChecks, 0);
+  assert.equal(ownerChecks, 0);
+});
+
 test("employee access is default-off and requires the exact site allowlist", async () => {
   for (const rolloutConfig of [
     { mode: "off" as const, siteIds: [] as string[], valid: true },

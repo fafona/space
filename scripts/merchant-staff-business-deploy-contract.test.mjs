@@ -166,4 +166,38 @@ test("the rollout contract requires a compatible off release before enforce and 
     deploy,
     /staff business enforce requires a compatible frozen rollback release/,
   );
+  assert.match(
+    deploy,
+    /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"[\s\S]+tar --no-same-owner --no-same-permissions -xf - -C "\$RELEASE_BUILD_DIR"/,
+  );
+  assert.match(
+    deploy,
+    /compatibilityDirectoryIdentity[\s\S]+mode & 0o022[\s\S]+compatibilityMarkerIdentity[\s\S]+nlink !== 1[\s\S]+88b0e93afe8c9e470a19583d1fc803b182fd59f066308fa1390fbbdc0fed1890/,
+  );
+  assert.match(
+    deploy,
+    /deploy_preflight_staff_compatibility_marker_failed/,
+  );
+  assert.match(
+    deploy,
+    /deploy_preflight_staff_rollout_environment_failed/,
+  );
+
+  const supabaseSnapshotValidation = deploy.slice(
+    deploy.indexOf('if ! PREVIOUS_SUPABASE_INTERNAL_URL="$('),
+    deploy.indexOf('if ! PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE="$('),
+  );
+  assert.ok(supabaseSnapshotValidation.length > 0);
+  assert.doesNotMatch(
+    supabaseSnapshotValidation,
+    /deploy_preflight_staff_rollout_environment_failed/,
+  );
+  const staffSnapshotValidation = deploy.slice(
+    deploy.indexOf('if ! PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE="$('),
+    deploy.indexOf("unset PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS"),
+  );
+  assert.match(
+    staffSnapshotValidation,
+    /deploy_preflight_staff_rollout_environment_failed/,
+  );
 });

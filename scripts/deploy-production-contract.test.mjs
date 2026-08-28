@@ -75,6 +75,8 @@ const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
   "[deploy] deploy_preflight_booking_persistence_integrity_failed",
   "[deploy] deploy_preflight_booking_persistence_invocation_failed",
   "[deploy] deploy_preflight_booking_persistence_transient_failed",
+  "[deploy] deploy_preflight_staff_compatibility_marker_failed",
+  "[deploy] deploy_preflight_staff_rollout_environment_failed",
   "[deploy] deploy_rollback_failed_compatibility_restore",
   "[deploy] deploy_rollback_failed_current_restore",
   "[deploy] deploy_rollback_failed_evidence",
@@ -1215,9 +1217,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 49-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 49);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 49);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 51-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 51);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 51);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1225,15 +1227,15 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 49-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 49);
-  assert.equal(new Set(workflowLines).size, 49);
+  assert.equal(workflowLines.length, 51);
+  assert.equal(new Set(workflowLines).size, 51);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 49);
+  assert.equal(uniqueScriptEchoLines.length, 51);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),
@@ -2010,6 +2012,9 @@ test(
       join(tmpdir(), "faolla-release-permissions-contract-"),
     );
     const releaseDirectory = join(temporaryDirectory, ".release.building");
+    const compatibilityMarkerSource = fileURLToPath(
+      new URL("./merchant-staff-business-rbac-compatibility-v1.json", import.meta.url),
+    );
     const permissionFunction = extractShellRegion(
       "normalize_and_verify_release_permissions() {",
       "\nprepare_shared_runtime() {",
@@ -2018,13 +2023,15 @@ test(
       "set -euo pipefail",
       "umask 077",
       'RELEASES_DIR="$1"',
+      'COMPATIBILITY_MARKER_SOURCE="$2"',
       'RELEASE_BUILD_DIR="$RELEASES_DIR/.release.building"',
-      'mkdir -p "$RELEASE_BUILD_DIR/.next/static/chunks" "$RELEASE_BUILD_DIR/.next/server/app" "$RELEASE_BUILD_DIR/node_modules/private"',
+      'mkdir -p "$RELEASE_BUILD_DIR/.next/static/chunks" "$RELEASE_BUILD_DIR/.next/server/app" "$RELEASE_BUILD_DIR/node_modules/private" "$RELEASE_BUILD_DIR/scripts"',
       'printf secret > "$RELEASE_BUILD_DIR/.env.local"',
       'printf public > "$RELEASE_BUILD_DIR/.next/static/chunks/app.js"',
       'printf private > "$RELEASE_BUILD_DIR/.next/server/app/private.js"',
       'printf source > "$RELEASE_BUILD_DIR/package.json"',
       'printf module > "$RELEASE_BUILD_DIR/node_modules/private/index.js"',
+      'cp -- "$COMPATIBILITY_MARKER_SOURCE" "$RELEASE_BUILD_DIR/scripts/merchant-staff-business-rbac-compatibility-v1.json"',
       permissionFunction,
       'normalize_and_verify_release_permissions "$RELEASE_BUILD_DIR"',
       "",
@@ -2032,7 +2039,13 @@ test(
     try {
       const result = spawnSync(
         resolveBashExecutable(),
-        ["-c", fixtureScript, "release-permission-fixture", temporaryDirectory],
+        [
+          "-c",
+          fixtureScript,
+          "release-permission-fixture",
+          temporaryDirectory,
+          compatibilityMarkerSource,
+        ],
         { encoding: "utf8", timeout: 10_000 },
       );
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -2048,6 +2061,36 @@ test(
       assert.equal(await mode(join(releaseDirectory, "package.json")), 0o600);
       assert.equal(await mode(join(releaseDirectory, "node_modules", "private")), 0o700);
       assert.equal(await mode(join(releaseDirectory, "node_modules", "private", "index.js")), 0o600);
+      assert.equal(await mode(join(releaseDirectory, "scripts")), 0o700);
+      const compatibilityMarkerPath = join(
+        releaseDirectory,
+        "scripts",
+        "merchant-staff-business-rbac-compatibility-v1.json",
+      );
+      assert.equal(await mode(compatibilityMarkerPath), 0o600);
+      assert.equal(
+        createHash("sha256").update(await readFile(compatibilityMarkerPath)).digest("hex"),
+        "88b0e93afe8c9e470a19583d1fc803b182fd59f066308fa1390fbbdc0fed1890",
+      );
+
+      await chmod(compatibilityMarkerPath, 0o660);
+      const writableMarkerProbe = spawnSync(
+        resolveBashExecutable(),
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            'RELEASES_DIR="$1"',
+            permissionFunction,
+            'normalize_and_verify_release_permissions "$RELEASES_DIR/.release.building"',
+          ].join("\n"),
+          "release-permission-writable-marker-fixture",
+          temporaryDirectory,
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      assert.notEqual(writableMarkerProbe.status, 0);
+      await chmod(compatibilityMarkerPath, 0o600);
 
       const specialPath = join(
         releaseDirectory,
@@ -2560,9 +2603,48 @@ test("production deployment accepts only a successful exact readiness run for cu
   assert.match(deployScript, /EXPECTED_DEPLOY_SHA must be an exact lowercase 40-hex commit/);
   assert.match(deployScript, /REMOTE_DEPLOY_SHA="\$\(git rev-parse "origin\/\$APP_BRANCH"\)"/);
   assert.match(deployScript, /git reset --hard "\$EXPECTED_DEPLOY_SHA"/);
-  assert.match(deployScript, /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"/);
+  assert.match(
+    deployScript,
+    /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"[\s\S]+tar --no-same-owner --no-same-permissions -xf - -C "\$RELEASE_BUILD_DIR"/,
+  );
   assert.doesNotMatch(deployScript, /git archive --format=tar "origin\/\$APP_BRANCH"/);
 });
+
+test(
+  "candidate extraction strips group-writable archive permissions under the deploy umask",
+  { skip: process.platform === "win32" },
+  () => {
+    const script = String.raw`set -euo pipefail
+legacy="$(mktemp -d)"
+candidate="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$legacy" "$candidate"
+}
+trap cleanup EXIT
+git -c tar.umask=0002 archive --format=tar HEAD \
+  scripts/merchant-staff-business-rbac-compatibility-v1.json \
+  | tar --same-permissions -xf - -C "$legacy"
+umask 077
+git -c tar.umask=0002 archive --format=tar HEAD \
+  scripts/merchant-staff-business-rbac-compatibility-v1.json \
+  | tar --no-same-owner --no-same-permissions -xf - -C "$candidate"
+test "$(stat -c %a "$legacy/scripts")" = 775
+test "$(stat -c %a "$legacy/scripts/merchant-staff-business-rbac-compatibility-v1.json")" = 664
+test "$(stat -c %a "$candidate/scripts")" = 700
+test "$(stat -c %a "$candidate/scripts/merchant-staff-business-rbac-compatibility-v1.json")" = 600
+printf '%s\n' archive_permissions_stripped
+`;
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      cwd: repositoryRoot,
+      input: script,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout, "archive_permissions_stripped\n");
+    assert.equal(result.stderr, "");
+  },
+);
 
 test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bound", () => {
   assert.match(deployWorkflow, /artifacts\.length !== 2/);
