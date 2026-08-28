@@ -3747,6 +3747,8 @@ run_local_release_smoke() {
     FAOLLA_LOCAL_SMOKE_NETWORK_ORIGIN="$RELEASE_SMOKE_ORIGIN" \
     FAOLLA_LOCAL_SMOKE_PATHS="$RELEASE_SMOKE_PATHS" \
     FAOLLA_LOCAL_SMOKE_EXPECTED_BUILD="$FAOLLA_WEB_BUILD_ID" \
+    FAOLLA_LOCAL_SMOKE_CANONICAL_PORTAL_ORIGIN="$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+    FAOLLA_LOCAL_SMOKE_EXPECTED_PORT="$APP_PORT" \
     FAOLLA_LOCAL_SMOKE_ATTEMPTS="$RELEASE_SMOKE_ATTEMPTS" \
     FAOLLA_LOCAL_SMOKE_DELAY_MS="$RELEASE_SMOKE_DELAY_MS" \
     FAOLLA_LOCAL_SMOKE_TIMEOUT_MS="$RELEASE_SMOKE_TIMEOUT_MS" \
@@ -3756,24 +3758,37 @@ run_local_release_smoke() {
 import { runProductionSmoke } from "./scripts/check-production-smoke.mjs";
 
 const publicOrigin = new URL("https://www.faolla.com");
+const canonicalPortalOrigin = new URL(
+  process.env.FAOLLA_LOCAL_SMOKE_CANONICAL_PORTAL_ORIGIN ?? "",
+);
 const networkOrigin = new URL(process.env.FAOLLA_LOCAL_SMOKE_NETWORK_ORIGIN ?? "");
+const expectedNetworkPort = process.env.FAOLLA_LOCAL_SMOKE_EXPECTED_PORT ?? "";
 const configuredSmokePaths = (process.env.FAOLLA_LOCAL_SMOKE_PATHS ?? "")
   .split(/[\n,]/)
   .map((value) => value.trim())
   .filter(Boolean);
-const allowedTenantOrigins = new Set(
-  configuredSmokePaths.flatMap((value) => {
+const allowedLogicalOrigins = new Set([
+  publicOrigin.origin,
+  canonicalPortalOrigin.origin,
+  ...configuredSmokePaths.flatMap((value) => {
     let path;
     try { path = new URL(value, publicOrigin).pathname; } catch { return []; }
     const match = /^\/([0-9]{8})(?:\/|$)/.exec(path);
     return match ? [`https://${match[1]}.faolla.com`] : [];
   }),
-);
+]);
 if (
+  !/^[1-9][0-9]{0,4}$/.test(expectedNetworkPort) ||
+  Number(expectedNetworkPort) > 65535 ||
+  canonicalPortalOrigin.href !== "https://launch.faolla.com/" ||
+  canonicalPortalOrigin.username || canonicalPortalOrigin.password ||
+  canonicalPortalOrigin.pathname !== "/" ||
+  canonicalPortalOrigin.search || canonicalPortalOrigin.hash ||
   networkOrigin.protocol !== "http:" ||
   !["127.0.0.1", "[::1]"].includes(networkOrigin.hostname) ||
   networkOrigin.username || networkOrigin.password ||
-  networkOrigin.pathname !== "/" || networkOrigin.search || networkOrigin.hash
+  networkOrigin.pathname !== "/" || networkOrigin.search || networkOrigin.hash ||
+  Number(networkOrigin.port || "80") !== Number(expectedNetworkPort)
 ) throw new Error("local smoke network origin must be an exact loopback HTTP origin");
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = async (input, init = {}) => {
@@ -3781,12 +3796,24 @@ globalThis.fetch = async (input, init = {}) => {
   for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
     const allowedLogicalOrigin =
       !requested.username && !requested.password &&
-      (requested.origin === publicOrigin.origin ||
-        allowedTenantOrigins.has(requested.origin));
+      allowedLogicalOrigins.has(requested.origin);
     if (!allowedLogicalOrigin) {
       throw new Error("local smoke refused a non-production external request");
     }
-    const networkUrl = new URL(`${requested.pathname}${requested.search}`, networkOrigin);
+    // Assign URL components onto the frozen loopback origin. Resolving a path
+    // beginning with "//" as a relative URL would reinterpret it as a host.
+    const networkUrl = new URL(networkOrigin.href);
+    networkUrl.pathname = requested.pathname;
+    networkUrl.search = requested.search;
+    if (
+      networkUrl.origin !== networkOrigin.origin ||
+      networkUrl.username || networkUrl.password ||
+      networkUrl.protocol !== networkOrigin.protocol ||
+      networkUrl.hostname !== networkOrigin.hostname ||
+      networkUrl.port !== networkOrigin.port
+    ) {
+      throw new Error("local smoke network target escaped its loopback origin");
+    }
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     for (const [key, value] of new Headers(init.headers ?? {})) headers.set(key, value);
     headers.set("host", requested.host);
