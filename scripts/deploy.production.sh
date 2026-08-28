@@ -7108,13 +7108,23 @@ DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_protected_preflight_failed"
 if [ -z "$PREVIOUS_RUNTIME_DIR" ] \
   || [ ! -d "$PREVIOUS_RUNTIME_DIR/.next" ] \
   || ! [[ "$PREVIOUS_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "[deploy] deploy_preflight_previous_release_evidence_unverified"
   echo "[deploy] a previous release with an exact build id is required before protected process mutation"
   exit 1
 fi
 echo "[deploy] acquiring ordinary-account cutover readiness fence"
-previous_web_process_identity_matches || exit 1
-previous_runtime_recovery_identity_matches || exit 1
-start_readiness_fence 1 || exit 1
+if ! previous_web_process_identity_matches; then
+  echo "[deploy] deploy_preflight_previous_web_identity_unverified"
+  exit 1
+fi
+if ! previous_runtime_recovery_identity_matches; then
+  echo "[deploy] deploy_preflight_previous_runtime_identity_unverified"
+  exit 1
+fi
+if ! start_readiness_fence 1; then
+  echo "[deploy] deploy_preflight_readiness_fence_start_unverified"
+  exit 1
+fi
 PROTECTED_QUIESCENCE_BUDGET_SECONDS="$((
   AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS +
   WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS +
@@ -7126,8 +7136,14 @@ PROTECTED_QUIESCENCE_BUDGET_SECONDS="$((
 ))"
 run_booking_persistence_preflight \
   "$PROTECTED_QUIESCENCE_BUDGET_SECONDS" || exit 1
-previous_web_process_identity_matches || exit 1
-previous_runtime_recovery_identity_matches || exit 1
+if ! previous_web_process_identity_matches; then
+  echo "[deploy] deploy_preflight_post_booking_web_identity_unverified"
+  exit 1
+fi
+if ! previous_runtime_recovery_identity_matches; then
+  echo "[deploy] deploy_preflight_post_booking_runtime_identity_unverified"
+  exit 1
+fi
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"
 capture_previous_web_listener_handoff_identity || exit 1

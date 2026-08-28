@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   classifyRuntimeSupervision,
+  classifyRuntimeStartWindow,
+  RUNTIME_START_WINDOW_CODES,
   RUNTIME_SUPERVISION_CODES,
 } from "./check-production-runtime-supervision.mjs";
 
@@ -232,6 +234,95 @@ test("fails closed for missing, multiple, unrelated, or unstable listeners", () 
   }
 });
 
+test("classifies the frozen PM2 owner start time against an incident window", () => {
+  const processClock = {
+    clockTicksPerSecond: "100",
+    observedAfterMilliseconds: "1787934000010",
+    observedBeforeMilliseconds: "1787934000000",
+    referenceEpochMilliseconds: "1787934000000",
+    uptimeQuantumMilliseconds: "10",
+    uptimeMilliseconds: "4000000",
+  };
+  const incidentStartedAt = "1787933286";
+  const incidentEndedAt = "1787933398";
+  const withStartTicks = (startTicks) =>
+    snapshot({
+      listener: {
+        state: "single",
+        pid: 101,
+        chain: [{ ...processFact(101), startTicks }],
+      },
+    });
+  assert.equal(
+    classifyRuntimeStartWindow(
+      withStartTicks("320000"),
+      processClock,
+      incidentStartedAt,
+      incidentEndedAt,
+    ),
+    RUNTIME_START_WINDOW_CODES.before,
+  );
+  assert.equal(
+    classifyRuntimeStartWindow(
+      withStartTicks("333000"),
+      processClock,
+      incidentStartedAt,
+      incidentEndedAt,
+    ),
+    RUNTIME_START_WINDOW_CODES.during,
+  );
+  assert.equal(
+    classifyRuntimeStartWindow(
+      withStartTicks("350000"),
+      processClock,
+      incidentStartedAt,
+      incidentEndedAt,
+    ),
+    RUNTIME_START_WINDOW_CODES.after,
+  );
+  assert.equal(
+    classifyRuntimeStartWindow(
+      withStartTicks("328600"),
+      processClock,
+      incidentStartedAt,
+      incidentEndedAt,
+    ),
+    RUNTIME_START_WINDOW_CODES.ambiguous,
+  );
+});
+
+test("fails closed when incident timing or the frozen owner is invalid", () => {
+  const validClock = {
+    clockTicksPerSecond: "100",
+    observedAfterMilliseconds: "1787934000010",
+    observedBeforeMilliseconds: "1787934000000",
+    referenceEpochMilliseconds: "1787934000000",
+    uptimeQuantumMilliseconds: "10",
+    uptimeMilliseconds: "4000000",
+  };
+  const cases = [
+    [snapshot({ stable: false }), validClock, "1787933286", "1787933398"],
+    [snapshot(), validClock, "1787933398", "1787933286"],
+    [snapshot(), { ...validClock, clockTicksPerSecond: "0" }, "1787933286", "1787933398"],
+    [snapshot(), { ...validClock, uptimeMilliseconds: "1" }, "1787933286", "1787933398"],
+    [snapshot(), { ...validClock, observedAfterMilliseconds: "1787934000300" }, "1787933286", "1787933398"],
+    [snapshot(), { ...validClock, observedBeforeMilliseconds: "1787933999999" }, "1787933286", "1787933398"],
+    [snapshot(), { ...validClock, referenceEpochMilliseconds: "1787933990000" }, "1787933286", "1787933398"],
+    [
+      snapshot({ ownership: { state: "owned", mode: "direct", pid: 999 } }),
+      validClock,
+      "1787933286",
+      "1787933398",
+    ],
+  ];
+  for (const fixture of cases) {
+    assert.equal(
+      classifyRuntimeStartWindow(...fixture),
+      RUNTIME_SUPERVISION_CODES.unreadable,
+    );
+  }
+});
+
 test(
   "the Linux probe accepts a real sibling release with an opaque Next BUILD_ID",
   { skip: process.platform !== "linux", timeout: 20_000 },
@@ -416,6 +507,9 @@ test("the remote probe is read-only and emits only fixed supervision codes", asy
   assert.match(source, /fileIdentity\(after\) !== openedProof\.identity/);
   assert.doesNotMatch(source, /console\.(?:log|error|warn)|process\.stderr/);
   for (const code of Object.values(RUNTIME_SUPERVISION_CODES)) {
+    assert.match(source, new RegExp(`\\b${code}\\b`));
+  }
+  for (const code of Object.values(RUNTIME_START_WINDOW_CODES)) {
     assert.match(source, new RegExp(`\\b${code}\\b`));
   }
 });

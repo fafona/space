@@ -75,6 +75,12 @@ const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
   "[deploy] deploy_preflight_booking_persistence_integrity_failed",
   "[deploy] deploy_preflight_booking_persistence_invocation_failed",
   "[deploy] deploy_preflight_booking_persistence_transient_failed",
+  "[deploy] deploy_preflight_post_booking_runtime_identity_unverified",
+  "[deploy] deploy_preflight_post_booking_web_identity_unverified",
+  "[deploy] deploy_preflight_previous_release_evidence_unverified",
+  "[deploy] deploy_preflight_previous_runtime_identity_unverified",
+  "[deploy] deploy_preflight_previous_web_identity_unverified",
+  "[deploy] deploy_preflight_readiness_fence_start_unverified",
   "[deploy] deploy_preflight_staff_compatibility_marker_failed",
   "[deploy] deploy_preflight_staff_rollout_environment_failed",
   "[deploy] deploy_rollback_failed_compatibility_restore",
@@ -1217,9 +1223,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 51-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 51);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 51);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 57-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 57);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 57);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1227,15 +1233,15 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 51-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 51);
-  assert.equal(new Set(workflowLines).size, 51);
+  assert.equal(workflowLines.length, 57);
+  assert.equal(new Set(workflowLines).size, 57);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 51);
+  assert.equal(uniqueScriptEchoLines.length, 57);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),
@@ -1997,7 +2003,7 @@ test("private deployment output exposes only immutable static assets to nginx be
     'verify_public_static_access_for_nginx "$RELEASE_BUILD_DIR"',
   );
   const moveIndex = deployScript.indexOf('mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"');
-  const fenceIndex = deployScript.lastIndexOf("start_readiness_fence 1 || exit 1");
+  const fenceIndex = deployScript.lastIndexOf("if ! start_readiness_fence 1; then");
   const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1");
   assert.ok(permissionIndex >= 0 && permissionIndex < nginxPreMoveIndex);
   assert.ok(nginxPreMoveIndex < moveIndex);
@@ -2826,10 +2832,12 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
     deployScript.indexOf('if [ ! -f "$RELEASE_BUILD_DIR/.next/BUILD_ID"'),
   );
   const ordered = [
-    "previous_web_process_identity_matches || exit 1",
-    "previous_runtime_recovery_identity_matches || exit 1",
-    "start_readiness_fence 1 || exit 1",
+    "deploy_preflight_previous_web_identity_unverified",
+    "deploy_preflight_previous_runtime_identity_unverified",
+    "deploy_preflight_readiness_fence_start_unverified",
     "run_booking_persistence_preflight",
+    "deploy_preflight_post_booking_web_identity_unverified",
+    "deploy_preflight_post_booking_runtime_identity_unverified",
     'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"',
     "capture_previous_web_listener_handoff_identity || exit 1",
     "PROCESSES_STOPPED=1",
@@ -2859,16 +2867,16 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   }
   assert.doesNotMatch(sequence, /BOOKING_PERSISTENCE_STATUS/);
   assert.equal(
-    sequence.match(/previous_web_process_identity_matches \|\| exit 1/g)?.length,
+    sequence.match(/if ! previous_web_process_identity_matches; then/g)?.length,
     2,
   );
   assert.equal(
-    sequence.match(/previous_runtime_recovery_identity_matches \|\| exit 1/g)?.length,
+    sequence.match(/if ! previous_runtime_recovery_identity_matches; then/g)?.length,
     2,
   );
   assert.match(
     sequence,
-    /run_booking_persistence_preflight[\s\S]+previous_web_process_identity_matches \|\| exit 1\s+previous_runtime_recovery_identity_matches \|\| exit 1\s+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"\s+capture_previous_web_listener_handoff_identity \|\| exit 1\s+PROCESSES_STOPPED=1\s+stop_frozen_previous_web_bounded/,
+    /run_booking_persistence_preflight[\s\S]+if ! previous_web_process_identity_matches; then[\s\S]+deploy_preflight_post_booking_web_identity_unverified[\s\S]+if ! previous_runtime_recovery_identity_matches; then[\s\S]+deploy_preflight_post_booking_runtime_identity_unverified[\s\S]+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"\s+capture_previous_web_listener_handoff_identity \|\| exit 1\s+PROCESSES_STOPPED=1\s+stop_frozen_previous_web_bounded/,
   );
   const previousWebQuiesce = sequence.slice(
     sequence.indexOf('DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"'),
@@ -3301,7 +3309,7 @@ test("a late frozen-runtime drift fails before any protected process is stopped"
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-pre-stop-identity-"));
   const callsPath = join(temporaryDirectory, "calls");
   const transition = extractShellRegion(
-    "previous_web_process_identity_matches || exit 1\nprevious_runtime_recovery_identity_matches || exit 1\nstart_readiness_fence 1 || exit 1",
+    "if ! previous_web_process_identity_matches; then\n  echo \"[deploy] deploy_preflight_previous_web_identity_unverified\"",
     "\nFORWARD_MUTATION_STARTED=1",
   ).replaceAll("exit 1", "return 1");
   const script = [
@@ -3341,7 +3349,10 @@ test("a late frozen-runtime drift fails before any protected process is stopped"
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.equal(result.stdout, "1 0\n");
+    assert.equal(
+      result.stdout,
+      "[deploy] deploy_preflight_post_booking_runtime_identity_unverified\n1 0\n",
+    );
     assert.equal(
       await readFile(callsPath, "utf8"),
       "web-id\nruntime-id\nstart-fence:1\npreflight:255\nweb-id\nruntime-id\n",
@@ -5505,7 +5516,9 @@ test("deadline-derived command windows reserve termination time and fail at the 
 
 test("booking preflight is single-query, pre-mutation, classified, and rollback-free", async () => {
   const preflightFunction = extractShellFunction("run_booking_persistence_preflight");
-  const transition = deployScript.slice(deployScript.indexOf("start_readiness_fence 1 || exit 1"));
+  const transition = deployScript.slice(
+    deployScript.indexOf("if ! start_readiness_fence 1; then"),
+  );
   const preflightIndex = transition.indexOf("run_booking_persistence_preflight");
   const freezeWebIndex = transition.indexOf("capture_previous_web_listener_handoff_identity");
   const stoppedIndex = transition.indexOf("PROCESSES_STOPPED=1");
