@@ -173,6 +173,9 @@ const FAOLLA_APP_SHELL_PREPAINT_SCRIPT = `
       Number.isFinite(window.visualViewport?.width) && window.visualViewport.width > 0
         ? window.visualViewport.width
         : window.innerWidth;
+    if (isExplicitAppShell) {
+      document.documentElement.dataset.faollaRequestedAppShell = "true";
+    }
     if (isExplicitAppShell && !isEmbedded && !isStandalone && !nativeStart && viewportWidth > 768) {
       const url = new URL(window.location.href);
       url.searchParams.delete("appShell");

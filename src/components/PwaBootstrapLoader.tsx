@@ -8,6 +8,11 @@ const PwaBootstrap = dynamic(() => import("@/components/PwaBootstrap"), {
   ssr: false,
 });
 
+const PwaServiceWorkerUpdater = dynamic(() => import("@/components/PwaServiceWorkerUpdater"), {
+  loading: () => null,
+  ssr: false,
+});
+
 function isNativeOrAppShellRuntime() {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   try {
@@ -17,22 +22,32 @@ function isNativeOrAppShellRuntime() {
   } catch {
     // Ignore URL parsing failures.
   }
+  if (document.documentElement.dataset.faollaRequestedAppShell === "true") return true;
+  if (document.documentElement.dataset.faollaAppShell === "true") return true;
   if (document.documentElement.dataset.capacitor === "true") return true;
   const capacitor = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
   return capacitor?.isNativePlatform?.() === true;
 }
 
 export default function PwaBootstrapLoader() {
-  const [enabled, setEnabled] = useState(false);
+  const [mode, setMode] = useState<"pending" | "service-worker-only" | "full">("pending");
 
   useEffect(() => {
-    if (isNativeOrAppShellRuntime()) return;
     let cancelled = false;
     let timeoutId: number | undefined;
     let idleId: number | undefined;
+    if (isNativeOrAppShellRuntime()) {
+      timeoutId = window.setTimeout(() => {
+        if (!cancelled) setMode("service-worker-only");
+      }, 0);
+      return () => {
+        cancelled = true;
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      };
+    }
     const schedule = () => {
       if (cancelled) return;
-      setEnabled(true);
+      setMode("full");
     };
     const win = window as Window & {
       requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
@@ -52,5 +67,7 @@ export default function PwaBootstrapLoader() {
     };
   }, []);
 
-  return enabled ? <PwaBootstrap /> : null;
+  if (mode === "service-worker-only") return <PwaServiceWorkerUpdater />;
+  if (mode === "full") return <PwaBootstrap />;
+  return null;
 }
