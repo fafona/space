@@ -75,6 +75,8 @@ const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
   "[deploy] deploy_preflight_booking_persistence_integrity_failed",
   "[deploy] deploy_preflight_booking_persistence_invocation_failed",
   "[deploy] deploy_preflight_booking_persistence_transient_failed",
+  "[deploy] deploy_preflight_staff_compatibility_marker_failed",
+  "[deploy] deploy_preflight_staff_rollout_environment_failed",
   "[deploy] deploy_rollback_failed_compatibility_restore",
   "[deploy] deploy_rollback_failed_current_restore",
   "[deploy] deploy_rollback_failed_evidence",
@@ -1215,9 +1217,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 49-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 49);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 49);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 51-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 51);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 51);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1225,15 +1227,15 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 49-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 49);
-  assert.equal(new Set(workflowLines).size, 49);
+  assert.equal(workflowLines.length, 51);
+  assert.equal(new Set(workflowLines).size, 51);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 49);
+  assert.equal(uniqueScriptEchoLines.length, 51);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),
@@ -2560,9 +2562,52 @@ test("production deployment accepts only a successful exact readiness run for cu
   assert.match(deployScript, /EXPECTED_DEPLOY_SHA must be an exact lowercase 40-hex commit/);
   assert.match(deployScript, /REMOTE_DEPLOY_SHA="\$\(git rev-parse "origin\/\$APP_BRANCH"\)"/);
   assert.match(deployScript, /git reset --hard "\$EXPECTED_DEPLOY_SHA"/);
-  assert.match(deployScript, /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"/);
+  assert.match(
+    deployScript,
+    /git archive --format=tar "\$EXPECTED_DEPLOY_SHA"[\s\S]+tar --no-same-owner --no-same-permissions -xf - -C "\$RELEASE_BUILD_DIR"/,
+  );
   assert.doesNotMatch(deployScript, /git archive --format=tar "origin\/\$APP_BRANCH"/);
 });
+
+test(
+  "candidate extraction strips group-writable archive permissions under the deploy umask",
+  { skip: process.platform === "win32" },
+  () => {
+    const script = String.raw`set -euo pipefail
+fixture="$(mktemp -d)"
+archive="$(mktemp)"
+legacy="$(mktemp -d)"
+candidate="$(mktemp -d)"
+cleanup() {
+  rm -f -- "$archive"
+  rm -rf -- "$fixture" "$legacy" "$candidate"
+}
+trap cleanup EXIT
+mkdir -m 0775 "$fixture/scripts"
+cp scripts/merchant-staff-business-rbac-compatibility-v1.json \
+  "$fixture/scripts/merchant-staff-business-rbac-compatibility-v1.json"
+chmod 0664 "$fixture/scripts/merchant-staff-business-rbac-compatibility-v1.json"
+tar --format=gnu -cf "$archive" -C "$fixture" scripts
+tar --same-permissions -xf "$archive" -C "$legacy"
+umask 077
+tar --no-same-owner --no-same-permissions -xf "$archive" -C "$candidate"
+test "$(stat -c %a "$legacy/scripts")" = 775
+test "$(stat -c %a "$legacy/scripts/merchant-staff-business-rbac-compatibility-v1.json")" = 664
+test "$(stat -c %a "$candidate/scripts")" = 700
+test "$(stat -c %a "$candidate/scripts/merchant-staff-business-rbac-compatibility-v1.json")" = 600
+printf '%s\n' archive_permissions_stripped
+`;
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      cwd: repositoryRoot,
+      input: script,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout, "archive_permissions_stripped\n");
+    assert.equal(result.stderr, "");
+  },
+);
 
 test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bound", () => {
   assert.match(deployWorkflow, /artifacts\.length !== 2/);

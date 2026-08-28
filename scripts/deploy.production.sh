@@ -1431,6 +1431,7 @@ NODE
     || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
     || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
     || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
+    echo "[deploy] deploy_preflight_staff_compatibility_marker_failed"
     echo "[deploy] staff business enforce requires a compatible frozen rollback release"
     exit 1
   fi
@@ -1685,6 +1686,7 @@ if ! PREVIOUS_SUPABASE_INTERNAL_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPS
     "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
   || { [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" = "enforce" ] \
     && [ "$PREVIOUS_STAFF_ROLLOUT_STATUS" != "explicit" ]; }; then
+  echo "[deploy] deploy_preflight_staff_rollout_environment_failed"
   echo "[deploy] the previous atomic release environment identity is unavailable"
   exit 1
 fi
@@ -1708,6 +1710,7 @@ case "$PREVIOUS_PROCESS_STAFF_ROLLOUT_STATUS" in
       || [ "$PREVIOUS_PROCESS_STAFF_MODE" != "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" ] \
       || [ "$PREVIOUS_PROCESS_STAFF_SITE_IDS" != "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" ] \
       || [ "$PREVIOUS_PROCESS_PORTAL_ORIGIN" != "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" ]; then
+      echo "[deploy] deploy_preflight_staff_rollout_environment_failed"
       echo "[deploy] the previous atomic release process environment is unavailable"
       exit 1
     fi
@@ -1715,11 +1718,13 @@ case "$PREVIOUS_PROCESS_STAFF_ROLLOUT_STATUS" in
   absent)
     if [ "$PREVIOUS_STAFF_ROLLOUT_STATUS" != "legacy-off" ] \
       || [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" != "off" ]; then
+      echo "[deploy] deploy_preflight_staff_rollout_environment_failed"
       echo "[deploy] the previous atomic release process environment is unavailable"
       exit 1
     fi
     ;;
   *)
+    echo "[deploy] deploy_preflight_staff_rollout_environment_failed"
     echo "[deploy] the previous atomic release process environment is unavailable"
     exit 1
     ;;
@@ -2021,17 +2026,23 @@ normalize_and_verify_release_permissions() {
   local static_root="$release_root/.next/static"
   local server_root="$release_root/.next/server"
   local env_file="$release_root/.env.local"
+  local compatibility_directory="$release_root/scripts"
+  local compatibility_marker="$compatibility_directory/merchant-staff-business-rbac-compatibility-v1.json"
   local invalid_path
   if [ -L "$RELEASES_DIR" ] \
     || [ -L "$release_root" ] \
     || [ -L "$release_root/.next" ] \
     || [ -L "$static_root" ] \
     || [ -L "$env_file" ] \
+    || [ -L "$compatibility_directory" ] \
+    || [ -L "$compatibility_marker" ] \
     || [ ! -d "$RELEASES_DIR" ] \
     || [ ! -d "$release_root" ] \
     || [ ! -d "$release_root/.next" ] \
     || [ ! -d "$static_root" ] \
-    || [ ! -f "$env_file" ]; then
+    || [ ! -f "$env_file" ] \
+    || [ ! -d "$compatibility_directory" ] \
+    || [ ! -f "$compatibility_marker" ]; then
     return 1
   fi
   invalid_path="$(find "$static_root" ! -type d ! -type f -print -quit)"
@@ -2048,12 +2059,18 @@ normalize_and_verify_release_permissions() {
   fi
   chmod 600 "$env_file" || return 1
   node --input-type=module - "$release_root" <<'NODE'
-import { lstatSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 
 const releaseRoot = resolve(process.argv[2]);
 const envPath = join(releaseRoot, ".env.local");
 const staticRoot = join(releaseRoot, ".next", "static");
+const compatibilityDirectory = join(releaseRoot, "scripts");
+const compatibilityMarker = join(
+  compatibilityDirectory,
+  "merchant-staff-business-rbac-compatibility-v1.json",
+);
 const exactMode = (path, mode) => {
   const value = lstatSync(path);
   if (value.isSymbolicLink() || (value.mode & 0o777) !== mode) process.exit(1);
@@ -2062,6 +2079,24 @@ const exactMode = (path, mode) => {
 if (!exactMode(releaseRoot, 0o755).isDirectory()) process.exit(1);
 if (!exactMode(join(releaseRoot, ".next"), 0o755).isDirectory()) process.exit(1);
 if (!exactMode(envPath, 0o600).isFile()) process.exit(1);
+const compatibilityDirectoryIdentity = lstatSync(compatibilityDirectory);
+const compatibilityMarkerIdentity = lstatSync(compatibilityMarker);
+if (
+  compatibilityDirectoryIdentity.isSymbolicLink() ||
+  !compatibilityDirectoryIdentity.isDirectory() ||
+  (compatibilityDirectoryIdentity.mode & 0o022) !== 0 ||
+  compatibilityMarkerIdentity.isSymbolicLink() ||
+  !compatibilityMarkerIdentity.isFile() ||
+  compatibilityMarkerIdentity.nlink !== 1 ||
+  (compatibilityMarkerIdentity.mode & 0o022) !== 0 ||
+  typeof process.getuid !== "function" ||
+  compatibilityDirectoryIdentity.uid !== process.getuid() ||
+  compatibilityMarkerIdentity.uid !== process.getuid() ||
+  createHash("sha256").update(readFileSync(compatibilityMarker)).digest("hex") !==
+    "88b0e93afe8c9e470a19583d1fc803b182fd59f066308fa1390fbbdc0fed1890"
+) {
+  process.exit(1);
+}
 const visit = (path) => {
   const value = lstatSync(path);
   if (value.isSymbolicLink()) process.exit(1);
@@ -6946,7 +6981,10 @@ safe_remove_release_path "$RELEASE_BUILD_DIR"
 mkdir -p "$RELEASE_BUILD_DIR"
 
 echo "[deploy] building isolated release: $RELEASE_DIR"
-git archive --format=tar "$EXPECTED_DEPLOY_SHA" | tar -xf - -C "$RELEASE_BUILD_DIR"
+# Git archives carry 0775/0664 modes; a privileged extractor would otherwise
+# preserve group-writable source and invalidate the frozen rollback marker.
+git archive --format=tar "$EXPECTED_DEPLOY_SHA" \
+  | tar --no-same-owner --no-same-permissions -xf - -C "$RELEASE_BUILD_DIR"
 cp -p -- "$APP_DIR/.env.local" "$RELEASE_BUILD_DIR/.env.local"
 
 cd "$RELEASE_BUILD_DIR"

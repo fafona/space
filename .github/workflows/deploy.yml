@@ -1056,6 +1056,8 @@ jobs:
               '[deploy] deploy_preflight_booking_persistence_integrity_failed' \
               '[deploy] deploy_preflight_booking_persistence_invocation_failed' \
               '[deploy] deploy_preflight_booking_persistence_transient_failed' \
+              '[deploy] deploy_preflight_staff_compatibility_marker_failed' \
+              '[deploy] deploy_preflight_staff_rollout_environment_failed' \
               '[deploy] deploy_rollback_failed_compatibility_restore' \
               '[deploy] deploy_rollback_failed_current_restore' \
               '[deploy] deploy_rollback_failed_evidence' \
