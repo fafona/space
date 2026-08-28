@@ -879,6 +879,13 @@ function LoginPageInner() {
   const merchantEntryDescription = normalizedLocale.startsWith("zh")
     ? "用于商户后台、预约订单、生意会话和商户资料管理。"
     : "For merchant admin, bookings, orders, business chats, and profiles.";
+  const employeeEntryLabel = normalizedLocale.startsWith("zh") ? "企业员工入口" : "Enterprise Employee Entry";
+  const employeeEntryDescription = normalizedLocale.startsWith("zh")
+    ? "使用负责人邀请的员工邮箱登录企业工作台。"
+    : "Sign in to the enterprise workspace with the employee email invited by an owner.";
+  const merchantStaffIdentityMessage = normalizedLocale.startsWith("zh")
+    ? "此账号已关联员工身份，不能从个人或商户入口登录。请使用企业员工入口；如果它本应是负责人账号，请改用独立的负责人账号，或联系平台管理员核查身份。员工账号不能直接转换为负责人账号。"
+    : "This account is linked to an employee identity and cannot use the personal or merchant entry. Use the enterprise employee entry. If this should be an owner account, use a separate owner account or contact a platform administrator to verify the identity. Employee accounts cannot be converted directly into owner accounts.";
   const backToEntryLabel = normalizedLocale.startsWith("zh") ? "返回入口选择" : "Back to Entry";
   const switchToSignInLabel = normalizedLocale.startsWith("zh") ? "返回登录" : "Back to Sign In";
   const switchToSignUpLabel = normalizedLocale.startsWith("zh") ? "注册账号" : "Create Account";
@@ -1226,6 +1233,12 @@ function LoginPageInner() {
       if (normalizedLocale.startsWith("ko")) return "시도 횟수가 너무 많습니다. 잠시 후 다시 시도하세요.";
       if (normalizedLocale.startsWith("zh")) return "尝试次数过多，请稍后再试。";
       return "Too many attempts. Please try again later.";
+    }
+    if (/merchant_staff_identity_forbidden/i.test(message)) {
+      return merchantStaffIdentityMessage;
+    }
+    if (/merchant_staff_check_unavailable/i.test(message)) {
+      return t("login.backendUnavailable");
     }
     if (/supabase_unavailable:/i.test(message)) {
       return t("login.backendUnavailable");
@@ -2207,7 +2220,7 @@ function LoginPageInner() {
         }
       : undefined;
   const formViewportClassName = shouldShowEntrySelection
-    ? `mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-hidden overscroll-none ${
+    ? `mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-y-auto overscroll-contain ${
         androidKeyboardOpen ? "justify-start pt-2" : "justify-start pt-8 sm:pt-10 md:justify-center md:pt-0"
       }`
     : `mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-y-auto overscroll-contain ${
@@ -2310,6 +2323,20 @@ function LoginPageInner() {
                         <div>
                           <div className="text-xl font-semibold text-slate-950">商户入口</div>
                           <div className="mt-2 text-sm leading-6 text-slate-500">{merchantEntryDescription}</div>
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="group rounded-[26px] border border-violet-200 bg-violet-50/85 px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-violet-300 hover:bg-violet-50 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
+                      onClick={() => window.location.assign("/enterprise")}
+                      disabled={pendingAction !== null}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <div className="text-xl font-semibold text-slate-950">{employeeEntryLabel}</div>
+                          <div className="mt-2 text-sm leading-6 text-slate-500">{employeeEntryDescription}</div>
                         </div>
                       </div>
                     </button>
@@ -2426,8 +2453,17 @@ function LoginPageInner() {
                 </div>
 
                 {msg ? (
-                  <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 shadow-[0_10px_28px_rgba(15,23,42,0.04)] md:rounded-[22px]">
-                    {msg}
+                  <div className="space-y-3 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 shadow-[0_10px_28px_rgba(15,23,42,0.04)] md:rounded-[22px]">
+                    <div>{msg}</div>
+                    {msg === merchantStaffIdentityMessage ? (
+                      <button
+                        type="button"
+                        className="rounded-full bg-violet-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-600"
+                        onClick={() => window.location.assign("/enterprise")}
+                      >
+                        {employeeEntryLabel}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
 

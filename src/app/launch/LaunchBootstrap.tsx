@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { useI18n } from "@/components/I18nProvider";
 import {
@@ -13,6 +12,8 @@ import { buildBackendAppShellHref } from "@/lib/faollaEntry";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { persistRecentMerchantLaunchState, readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
+
+const LAUNCH_RECOVERY_WATCHDOG_MS = 12_000;
 
 function resolveLaunchCopy(locale: string) {
   const normalized = (locale || "").trim().toLowerCase();
@@ -36,19 +37,22 @@ function resolveLaunchCopy(locale: string) {
 
 export default function LaunchBootstrap() {
   const { locale } = useI18n();
-  const router = useRouter();
   const copy = resolveLaunchCopy(locale);
 
   useEffect(() => {
     let cancelled = false;
+    let navigationCommitted = false;
+    let watchdogId: number | null = null;
     const navigate = (href: string) => {
-      if (cancelled) return;
-      if (/^https?:\/\//i.test(href)) {
-        window.location.replace(href);
-        return;
-      }
-      router.replace(href);
+      if (cancelled || navigationCommitted) return;
+      navigationCommitted = true;
+      window.location.replace(href);
     };
+
+    watchdogId = window.setTimeout(() => {
+      if (cancelled) return;
+      window.location.replace(buildBackendAppShellHref("/login"));
+    }, LAUNCH_RECOVERY_WATCHDOG_MS);
 
     void (async () => {
       try {
@@ -111,8 +115,11 @@ export default function LaunchBootstrap() {
 
     return () => {
       cancelled = true;
+      if (watchdogId !== null) {
+        window.clearTimeout(watchdogId);
+      }
     };
-  }, [router]);
+  }, []);
 
   return <LoadingProgressScreen locale={locale} statusTitle={copy.title} statusDescription={copy.body} />;
 }

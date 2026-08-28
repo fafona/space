@@ -8,7 +8,7 @@ const FAOLLA_SW_BUILD_MARKER = (() => {
     return "";
   }
 })();
-const FAOLLA_SW_VERSION = `faolla-pwa-v20260824-1-${FAOLLA_SW_BUILD_MARKER || "base"}`;
+const FAOLLA_SW_VERSION = `faolla-pwa-v20260828-1-${FAOLLA_SW_BUILD_MARKER || "base"}`;
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -49,14 +49,6 @@ const FAOLLA_SHELL_URLS = [
 function isFaollaMerchantSubdomain(hostname) {
   const normalized = String(hostname || "").trim().toLowerCase();
   return normalized.endsWith(".faolla.com") && normalized !== "www.faolla.com";
-}
-
-function resolveRetiredLaunchOriginTarget(url) {
-  if (String(url?.hostname || "").trim().toLowerCase() !== "launch.faolla.com") return "";
-  const target = new URL(url.toString());
-  target.hostname = "www.faolla.com";
-  if (target.pathname === "/") target.pathname = "/launch";
-  return target.toString();
 }
 
 function resolveShellPrecacheUrls() {
@@ -487,31 +479,6 @@ async function clearRuntimeCaches() {
       return Promise.resolve(false);
     }),
   );
-}
-
-async function clearAllOriginCaches() {
-  const cacheKeys = await caches.keys();
-  await Promise.all(cacheKeys.map((key) => caches.delete(key)));
-}
-
-async function requestLaunchOriginStorageRetirement() {
-  const retirementUrl = new URL("/", self.location.origin);
-  retirementUrl.searchParams.set("retireLaunchOrigin", "1");
-  await fetch(
-    new Request(retirementUrl, {
-      cache: "reload",
-      credentials: "include",
-      redirect: "manual",
-    }),
-  );
-}
-
-async function retireLaunchOriginWorker() {
-  await Promise.allSettled([clearAllOriginCaches(), self.registration.unregister()]);
-  // Run this last: Chromium may terminate this worker as soon as it processes
-  // Clear-Site-Data: "storage". The navigation response has already been handed
-  // to respondWith, so termination cannot strand the redirecting navigation.
-  await requestLaunchOriginStorageRetirement();
 }
 
 async function handleAuthNavigationRequest(event, request, url) {
@@ -1024,12 +991,6 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
 
   if (isNavigationRequest(request, url)) {
-    const retiredLaunchTarget = resolveRetiredLaunchOriginTarget(url);
-    if (retiredLaunchTarget) {
-      event.respondWith(Response.redirect(retiredLaunchTarget, 308));
-      event.waitUntil(retireLaunchOriginWorker());
-      return;
-    }
     if (isFastAppShellLaunchRequest(url)) {
       event.respondWith(handleFastAppShellLaunchRequest(event, request, url));
       return;
