@@ -763,7 +763,7 @@ validate_disk_thresholds() {
     || [ "$BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS" -ne 45 ] \
     || [ "$BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS" -ne 20 ] \
     || [ "$BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS" -ne 5 ] \
-    || [ $((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS + 6 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + (AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS + READINESS_FENCE_OPERATION_MARGIN_SECONDS)) -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ] \
+    || [ $((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS + 6 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + (AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + 2 * PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS + READINESS_FENCE_OPERATION_MARGIN_SECONDS)) -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ] \
     || [ $(((AUTOMATION_WORKER_KILL_TIMEOUT_MS + 999) / 1000 + 25 + WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS + PORT_RELEASE_TOTAL_TIMEOUT_SECONDS + 2 * RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + RELEASE_PROCESS_START_TIMEOUT_SECONDS + HEALTHCHECK_ATTEMPTS * 5 + 7 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + READINESS_FENCE_RELEASE_WAIT_SECONDS + PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + 20)) -gt "$READINESS_FENCE_ROLLBACK_RESERVE_SECONDS" ] \
     || [ "$RELEASE_ATTESTATION_PREFLIGHT_MINIMUM_SECONDS" -lt $((NPM_CI_TIMEOUT_SECONDS + BUILD_TIMEOUT_SECONDS + READINESS_FENCE_MINIMUM_TTL_SECONDS + 600)) ]; then
     echo "[deploy] release evidence TTL does not cover install, build, fence, and rollback budgets"
@@ -2596,9 +2596,14 @@ previous_web_process_identity_matches() {
 previous_web_listener_handoff_operation() {
   local operation="$1"
   local absolute_deadline_seconds="${2:-}"
+  local expected_launch_mode="${3:-${PREVIOUS_WEB_EXPECTED_LAUNCH_MODE:-either}}"
   local command_timeout_seconds="$PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS"
   case "$operation" in
     capture|inspect|TERM|KILL|pm-id|pm2-absent) ;;
+    *) return 1 ;;
+  esac
+  case "$expected_launch_mode" in
+    either|direct|legacy) ;;
     *) return 1 ;;
   esac
   if [ -n "$absolute_deadline_seconds" ]; then
@@ -2611,7 +2616,8 @@ previous_web_listener_handoff_operation() {
       node --input-type=module - \
         "$operation" "$PREVIOUS_WEB_PID" "$APP_PORT" \
         "$PREVIOUS_RUNTIME_DIR" "$PREVIOUS_WEB_PROCESS_START_TICKS" \
-        "$PREVIOUS_WEB_PROCESS_IDENTITY" "$APP_NAME" <<'NODE'
+        "$PREVIOUS_WEB_PROCESS_IDENTITY" "$APP_NAME" \
+        "$expected_launch_mode" <<'NODE'
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -2625,7 +2631,7 @@ import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
 
 const [operation, rawWrapperPid, rawPort, rawRuntime, expectedStartTicks,
-  expectedProcessIdentity, appName] = process.argv.slice(2);
+  expectedProcessIdentity, appName, expectedLaunchMode] = process.argv.slice(2);
 const wrapperPid = Number(rawWrapperPid);
 const port = Number(rawPort);
 let runtime;
@@ -2859,7 +2865,7 @@ function resolveExecutable(name) {
   throw new Error("executable_unavailable");
 }
 
-function capturePm2Identity(expectedMode) {
+function capturePm2Identity() {
   const matches = readPm2List().filter((entry) =>
     entry !== null && typeof entry === "object" &&
     entry.pm2_env !== null && typeof entry.pm2_env === "object" &&
@@ -2895,14 +2901,13 @@ function capturePm2Identity(expectedMode) {
   if (pmCwd !== runtime || !pmExecPath || interpreter !== nodePath) {
     throw new Error("pm2_runtime_mismatch");
   }
-  if (expectedMode === "direct") {
-    if (
-      !expectedNextEntry || pmExecPath !== expectedNextEntry ||
-      JSON.stringify(environment.args) !==
-        JSON.stringify(["start", "-p", String(port)])
-    ) {
-      throw new Error("pm2_direct_entry_mismatch");
-    }
+  let launchMode;
+  if (
+    expectedNextEntry && pmExecPath === expectedNextEntry &&
+    JSON.stringify(environment.args) ===
+      JSON.stringify(["start", "-p", String(port)])
+  ) {
+    launchMode = "direct";
   } else {
     const npmPath = resolveExecutable("npm");
     if (
@@ -2911,10 +2916,15 @@ function capturePm2Identity(expectedMode) {
       JSON.stringify(environment.args) !==
         JSON.stringify(["start", "--", "-p", String(port)])
     ) {
-      throw new Error("pm2_legacy_entry_mismatch");
+      throw new Error("pm2_launch_entry_mismatch");
     }
+    launchMode = "legacy";
+  }
+  if (expectedLaunchMode !== "either" && launchMode !== expectedLaunchMode) {
+    throw new Error("pm2_launch_mode_mismatch");
   }
   const identity = {
+    launchMode,
     pmId: environment.pm_id,
     pid: entry.pid,
     name: environment.name,
@@ -2959,11 +2969,14 @@ function captureFrozenProof() {
   ) {
     throw new Error("frozen_wrapper_mismatch");
   }
-  const mode = socket.listenerPid === wrapperPid ? "direct" : "legacy";
-  const pm2 = capturePm2Identity(mode);
+  const listenerTopology = socket.listenerPid === wrapperPid
+    ? "wrapper"
+    : "descendant";
+  const pm2 = capturePm2Identity();
   return {
-    schemaVersion: 1,
-    mode,
+    schemaVersion: 2,
+    launchMode: pm2.launchMode,
+    listenerTopology,
     port,
     runtime,
     wrapperPid,
@@ -2988,8 +3001,10 @@ function decodeFrozenProof() {
   const proof = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   const { digest: frozenPm2Digest, ...frozenPm2Identity } = proof?.pm2 ?? {};
   if (
-    proof?.schemaVersion !== 1 ||
-    !["direct", "legacy"].includes(proof.mode) ||
+    proof?.schemaVersion !== 2 ||
+    !["direct", "legacy"].includes(proof.launchMode) ||
+    (expectedLaunchMode !== "either" && proof.launchMode !== expectedLaunchMode) ||
+    !["wrapper", "descendant"].includes(proof.listenerTopology) ||
     proof.port !== port || proof.runtime !== runtime ||
     proof.wrapperPid !== wrapperPid ||
     !Number.isSafeInteger(proof.listenerPid) || proof.listenerPid <= 0 ||
@@ -2999,9 +3014,14 @@ function decodeFrozenProof() {
     !Array.isArray(proof.chain) || proof.chain.length < 1 ||
     proof.chain[0]?.pid !== proof.listenerPid ||
     proof.chain.at(-1)?.pid !== proof.wrapperPid ||
+    (proof.listenerTopology === "wrapper" &&
+      (proof.listenerPid !== proof.wrapperPid || proof.chain.length !== 1)) ||
+    (proof.listenerTopology === "descendant" &&
+      (proof.listenerPid === proof.wrapperPid || proof.chain.length < 2)) ||
     !Number.isSafeInteger(proof.pm2?.pmId) || proof.pm2.pmId < 0 ||
     proof.pm2.pid !== proof.wrapperPid || proof.pm2.name !== appName ||
     proof.pm2.status !== "online" ||
+    proof.pm2.launchMode !== proof.launchMode ||
     !/^[0-9a-f]{64}$/.test(frozenPm2Digest ?? "") ||
     sha256(Buffer.from(JSON.stringify(frozenPm2Identity))) !== frozenPm2Digest
   ) {
@@ -3027,7 +3047,7 @@ function readOriginalWrapperProcState(proof) {
 function originalWrapperState(proof) {
   const initialState = readOriginalWrapperProcState(proof);
   if (initialState === "gone") return "gone";
-  if (initialState === "zombie") return "pending";
+  if (initialState === "zombie") return "zombie";
   try {
     const current = captureFact(proof.wrapperPid);
     if (current.startTicks !== proof.chain.at(-1).startTicks) return "gone";
@@ -3038,7 +3058,7 @@ function originalWrapperState(proof) {
     if (error?.code === "ENOENT") return "gone";
     const latestState = readOriginalWrapperProcState(proof);
     if (latestState === "gone") return "gone";
-    if (latestState === "zombie") return "pending";
+    if (latestState === "zombie") return "zombie";
     throw error;
   }
   return "pending";
@@ -3046,7 +3066,11 @@ function originalWrapperState(proof) {
 
 function capturePostDeleteState(proof) {
   assertPm2Absent(proof);
-  if (proof.mode === "legacy" && originalWrapperState(proof) === "pending") {
+  const wrapperState = originalWrapperState(proof);
+  if (
+    proof.listenerTopology === "descendant" &&
+    ["pending", "zombie"].includes(wrapperState)
+  ) {
     return { state: "wrapper-pending" };
   }
   const socket = capturePortIdentity();
@@ -3074,7 +3098,13 @@ function capturePostDeleteState(proof) {
     }
     return { state: "gone" };
   }
-  const currentChain = captureChainToInit(proof.listenerPid);
+  if (currentStart.state === "Z") {
+    if (socket.state === "absent") return { state: "gone" };
+    throw new Error("zombie_listener_still_bound");
+  }
+  const currentChain = proof.listenerTopology === "wrapper" && wrapperState === "pending"
+    ? [captureFact(proof.listenerPid)]
+    : captureChainToInit(proof.listenerPid);
   if (
     currentChain.length > proof.chain.length ||
     currentChain.some((fact, index) => !sameInvariant(fact, proof.chain[index]))
@@ -3092,6 +3122,7 @@ try {
   if (
     !["capture", "inspect", "TERM", "KILL", "pm-id", "pm2-absent"]
       .includes(operation) ||
+    !["either", "direct", "legacy"].includes(expectedLaunchMode) ||
     !Number.isSafeInteger(wrapperPid) || wrapperPid <= 0 ||
     !Number.isSafeInteger(port) || port < 1 || port > 65535 ||
     !/^[1-9][0-9]*$/.test(expectedStartTicks ?? "") ||
@@ -3149,28 +3180,199 @@ NODE
 }
 
 capture_previous_web_listener_handoff_identity() {
-  local absolute_deadline_seconds=$((
+  local expected_launch_mode="${1:-${PREVIOUS_WEB_EXPECTED_LAUNCH_MODE:-either}}"
+  local absolute_deadline_seconds="${2:-$((
     SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS
-  ))
+  ))}"
   local first_proof=""
   local second_proof=""
   PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=""
   PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0
   PREVIOUS_WEB_PM2_DELETE_COMPLETED=0
   PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0
+  case "$expected_launch_mode" in
+    either|direct|legacy) ;;
+    *) return 1 ;;
+  esac
+  if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    return 1
+  fi
   previous_web_process_identity_matches "$absolute_deadline_seconds" || return 1
   first_proof="$(previous_web_listener_handoff_operation \
-    capture "$absolute_deadline_seconds")" || return 1
+    capture "$absolute_deadline_seconds" "$expected_launch_mode")" || return 1
   if [ -z "$first_proof" ] || [ "${#first_proof}" -gt 65536 ] \
     || ! [[ "$first_proof" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
     return 1
   fi
   previous_web_process_identity_matches "$absolute_deadline_seconds" || return 1
   second_proof="$(previous_web_listener_handoff_operation \
-    capture "$absolute_deadline_seconds")" || return 1
+    capture "$absolute_deadline_seconds" "$expected_launch_mode")" || return 1
   [ "$second_proof" = "$first_proof" ] \
     && [ "$SECONDS" -lt "$absolute_deadline_seconds" ] || return 1
   PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$first_proof"
+}
+
+candidate_web_is_provably_absent() {
+  local absolute_deadline_seconds=$((
+    SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS
+  ))
+  local command_timeout_seconds
+  local process_snapshot
+  local socket_state
+  local stable_absent_checks=0
+  local expected_current_identity
+  local expected_current_runtime
+  local current_runtime
+  if [ "${CANDIDATE_WEB_START_ATTEMPTED:-0}" != "0" ] \
+    || [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" != "not-started" ] \
+    || [ "${PROCESSES_STOPPED:-0}" != "1" ] \
+    || [ "${FORWARD_MUTATION_STARTED:-0}" != "1" ]; then
+    return 1
+  fi
+  current_runtime="$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)"
+  case "${SWITCH_COMPLETED:-0}:$current_runtime" in
+    "0:$PREVIOUS_RUNTIME_DIR")
+      expected_current_runtime="$PREVIOUS_RUNTIME_DIR"
+      expected_current_identity="$PREVIOUS_RUNTIME_IDENTITY"
+      ;;
+    "0:$RELEASE_DIR"|"1:$RELEASE_DIR")
+      expected_current_runtime="$RELEASE_DIR"
+      if [[ "${CANDIDATE_RUNTIME_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]]; then
+        expected_current_identity="$CANDIDATE_RUNTIME_IDENTITY"
+      else
+        expected_current_identity="${BOOKING_PREFLIGHT_RUNTIME_IDENTITY:-}"
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  if ! [[ "$expected_current_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$expected_current_runtime" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$expected_current_runtime" 2>/dev/null || true)" != "$expected_current_identity" ]; then
+    return 1
+  fi
+  while [ "$stable_absent_checks" -lt 2 ] \
+    && [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; do
+    if [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$expected_current_runtime" ] \
+      || [ "$(stat -Lc '%d:%i:%Z' -- "$expected_current_runtime" 2>/dev/null || true)" != "$expected_current_identity" ]; then
+      return 1
+    fi
+    process_snapshot="$(pm2_process_snapshot \
+      "$APP_NAME" "$absolute_deadline_seconds")" || return 1
+    [ "$process_snapshot" = "absent" ] || return 1
+    command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+      "$absolute_deadline_seconds" 2 1)" || return 1
+    socket_state="$(timeout --signal=TERM --kill-after=1s \
+      "${command_timeout_seconds}s" \
+      ss -H -ltn "( sport = :$APP_PORT )" 2>&1)" || return 1
+    [ -z "$socket_state" ] || return 1
+    stable_absent_checks=$((stable_absent_checks + 1))
+    if [ "$stable_absent_checks" -lt 2 ]; then sleep 1; fi
+  done
+  [ "$stable_absent_checks" -eq 2 ] \
+    && [ "$SECONDS" -lt "$absolute_deadline_seconds" ] || return 1
+  process_snapshot="$(pm2_process_snapshot \
+    "$APP_NAME" "$absolute_deadline_seconds")" || return 1
+  if [ "$process_snapshot" != "absent" ] \
+    || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$expected_current_runtime" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$expected_current_runtime" 2>/dev/null || true)" != "$expected_current_identity" ]; then
+    return 1
+  fi
+  command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
+    "$absolute_deadline_seconds" 2 1)" || return 1
+  socket_state="$(timeout --signal=TERM --kill-after=1s \
+    "${command_timeout_seconds}s" \
+    ss -H -ltn "( sport = :$APP_PORT )" 2>&1)" || return 1
+  [ -z "$socket_state" ] && [ "$SECONDS" -lt "$absolute_deadline_seconds" ]
+}
+
+capture_candidate_web_listener_handoff_identity() {
+  local absolute_deadline_seconds="${1:-$((
+    SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS
+  ))}"
+  local process_snapshot=""
+  local process_pid
+  local process_start_ticks
+  local process_identity
+  local cwd_identity
+  local PREVIOUS_RUNTIME_DIR="$RELEASE_DIR"
+  local PREVIOUS_RUNTIME_IDENTITY="$CANDIDATE_RUNTIME_IDENTITY"
+  local PREVIOUS_WEB_PID=""
+  local PREVIOUS_WEB_PROCESS_START_TICKS=""
+  local PREVIOUS_WEB_PROCESS_IDENTITY=""
+  local PREVIOUS_WEB_EXPECTED_LAUNCH_MODE="direct"
+  local PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=""
+  local PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0
+  local PREVIOUS_WEB_PM2_DELETE_COMPLETED=0
+  local PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0
+  CANDIDATE_WEB_HANDOFF_STATE="unverified"
+  CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64=""
+  if [ "${CANDIDATE_WEB_START_ATTEMPTED:-0}" != "1" ] \
+    || [ "${SWITCH_COMPLETED:-0}" != "1" ] \
+    || ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || ! [[ "$PREVIOUS_RUNTIME_IDENTITY" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]]; then
+    return 1
+  fi
+  while [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; do
+    if [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
+      || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ]; then
+      return 1
+    fi
+    process_snapshot="$(pm2_process_snapshot \
+      "$APP_NAME" "$absolute_deadline_seconds")" || return 1
+    case "$process_snapshot" in
+      running:[1-9][0-9]*) break ;;
+      absent|inactive) ;;
+      *) return 1 ;;
+    esac
+    if [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; then sleep 1; fi
+  done
+  [[ "$process_snapshot" =~ ^running:([1-9][0-9]*)$ ]] || return 1
+  process_pid="${process_snapshot#running:}"
+  process_start_ticks="$(linux_process_start_ticks \
+    "$process_pid" "$absolute_deadline_seconds")" || return 1
+  process_identity="$(stat -Lc '%d:%i' -- "/proc/$process_pid" 2>/dev/null || true)"
+  cwd_identity="$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)"
+  if ! [[ "$process_start_ticks" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "$process_identity" =~ ^[0-9]+:[0-9]+$ ]] \
+    || [ "$cwd_identity" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ]; then
+    return 1
+  fi
+  PREVIOUS_WEB_PID="$process_pid"
+  PREVIOUS_WEB_PROCESS_START_TICKS="$process_start_ticks"
+  PREVIOUS_WEB_PROCESS_IDENTITY="$process_identity"
+  while [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; do
+    previous_web_process_identity_matches "$absolute_deadline_seconds" || return 1
+    if capture_previous_web_listener_handoff_identity \
+        direct "$absolute_deadline_seconds"; then
+      break
+    fi
+    PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=""
+    previous_web_process_identity_matches "$absolute_deadline_seconds" || return 1
+    if [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; then sleep 1; fi
+  done
+  [ -n "$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64" ] \
+    && [ "$SECONDS" -lt "$absolute_deadline_seconds" ] || return 1
+  CANDIDATE_WEB_PID="$process_pid"
+  CANDIDATE_WEB_PROCESS_START_TICKS="$process_start_ticks"
+  CANDIDATE_WEB_PROCESS_IDENTITY="$process_identity"
+  CANDIDATE_WEB_CWD_IDENTITY="$cwd_identity"
+  CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64="$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64"
+  CANDIDATE_WEB_PM2_DELETE_ATTEMPTS=0
+  CANDIDATE_WEB_PM2_DELETE_COMPLETED=0
+  CANDIDATE_WEB_FROZEN_STOP_COMPLETED=0
+  CANDIDATE_WEB_HANDOFF_STATE="exact"
+}
+
+classify_candidate_web_after_start_attempt() {
+  CANDIDATE_WEB_HANDOFF_STATE="unverified"
+  if capture_candidate_web_listener_handoff_identity; then
+    return 0
+  fi
+  CANDIDATE_WEB_HANDOFF_STATE="unverified"
+  return 1
 }
 
 quiesce_frozen_previous_web_listener_bounded() {
@@ -3250,6 +3452,12 @@ stop_frozen_previous_web_bounded() {
   [[ "${PREVIOUS_WEB_PM2_DELETE_ATTEMPTS:-}" =~ ^[0-2]$ ]] || return 1
   while [ "$PREVIOUS_WEB_PM2_DELETE_COMPLETED" = "0" ]; do
     if [ "$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS" -eq 0 ]; then
+      if pm2_absent_state="$(previous_web_listener_handoff_operation \
+        pm2-absent "$process_deadline_seconds")" \
+        && [ "$pm2_absent_state" = "absent" ]; then
+        PREVIOUS_WEB_PM2_DELETE_COMPLETED=1
+        break
+      fi
       previous_web_process_identity_matches "$process_deadline_seconds" || return 1
       current_proof="$(previous_web_listener_handoff_operation \
         capture "$process_deadline_seconds")" || return 1
@@ -3290,6 +3498,53 @@ stop_frozen_previous_web_bounded() {
   port_deadline_seconds=$((SECONDS + port_timeout_seconds))
   quiesce_frozen_previous_web_listener_bounded "$port_deadline_seconds" || return 1
   PREVIOUS_WEB_FROZEN_STOP_COMPLETED=1
+}
+
+stop_frozen_candidate_web_bounded() {
+  local PREVIOUS_RUNTIME_DIR="$RELEASE_DIR"
+  local PREVIOUS_RUNTIME_IDENTITY="$CANDIDATE_RUNTIME_IDENTITY"
+  local PREVIOUS_WEB_PID="$CANDIDATE_WEB_PID"
+  local PREVIOUS_WEB_PROCESS_START_TICKS="$CANDIDATE_WEB_PROCESS_START_TICKS"
+  local PREVIOUS_WEB_PROCESS_IDENTITY="$CANDIDATE_WEB_PROCESS_IDENTITY"
+  local PREVIOUS_WEB_EXPECTED_LAUNCH_MODE="direct"
+  local PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64"
+  local PREVIOUS_WEB_PM2_DELETE_ATTEMPTS="${CANDIDATE_WEB_PM2_DELETE_ATTEMPTS:-0}"
+  local PREVIOUS_WEB_PM2_DELETE_COMPLETED="${CANDIDATE_WEB_PM2_DELETE_COMPLETED:-0}"
+  local PREVIOUS_WEB_FROZEN_STOP_COMPLETED="${CANDIDATE_WEB_FROZEN_STOP_COMPLETED:-0}"
+  local stop_status=0
+  if [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" = "not-started" ]; then
+    [ "${CANDIDATE_WEB_START_ATTEMPTED:-0}" = "0" ] || return 4
+    candidate_web_is_provably_absent || return 4
+    return 0
+  fi
+  if [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" = "absent" ]; then
+    [ "${CANDIDATE_WEB_FROZEN_STOP_COMPLETED:-0}" = "1" ] \
+      && [ "${CANDIDATE_WEB_PM2_DELETE_COMPLETED:-0}" = "1" ] \
+      && [ -n "$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64" ] \
+      && [ "$(previous_web_listener_handoff_operation pm2-absent 2>/dev/null || true)" = "absent" ] \
+      && [ "$(previous_web_listener_handoff_operation inspect 2>/dev/null || true)" = "gone" ] \
+      && [ "$(previous_web_listener_handoff_operation inspect 2>/dev/null || true)" = "gone" ] \
+      || return 4
+    return 0
+  fi
+  if [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" != "exact" ] \
+    || [ -z "$PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64" ]; then
+    return 4
+  fi
+  stop_frozen_previous_web_bounded \
+    "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" \
+    "$PORT_RELEASE_TOTAL_TIMEOUT_SECONDS" || stop_status=$?
+  CANDIDATE_WEB_PM2_DELETE_ATTEMPTS="$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS"
+  CANDIDATE_WEB_PM2_DELETE_COMPLETED="$PREVIOUS_WEB_PM2_DELETE_COMPLETED"
+  CANDIDATE_WEB_FROZEN_STOP_COMPLETED="$PREVIOUS_WEB_FROZEN_STOP_COMPLETED"
+  if [ "$stop_status" -eq 0 ]; then
+    CANDIDATE_WEB_HANDOFF_STATE="absent"
+    return 0
+  fi
+  if [ "$PREVIOUS_WEB_PM2_DELETE_COMPLETED" = "1" ]; then
+    return 3
+  fi
+  return 2
 }
 
 stop_pm2_process_bounded() {
@@ -4226,6 +4481,12 @@ capture_candidate_web_identity_for_booking_retry() {
   local process_start_ticks
   if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
+    || [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" != "exact" ] \
+    || ! [[ "${CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${CANDIDATE_WEB_PID:-}" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "${CANDIDATE_WEB_PROCESS_START_TICKS:-}" =~ ^[1-9][0-9]*$ ]] \
+    || ! [[ "${CANDIDATE_WEB_PROCESS_IDENTITY:-}" =~ ^[0-9]+:[0-9]+$ ]] \
+    || ! [[ "${CANDIDATE_WEB_CWD_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
     || ! process_snapshot="$(pm2_process_snapshot \
       "$APP_NAME" "$absolute_deadline_seconds")" \
     || ! [[ "$process_snapshot" =~ ^running:([1-9][0-9]*)$ ]]; then
@@ -4238,14 +4499,14 @@ capture_candidate_web_identity_for_booking_retry() {
   cwd_identity="$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)"
   if ! [[ "$process_identity" =~ ^[0-9]+:[0-9]+$ ]] \
     || ! [[ "$cwd_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+    || [ "$process_pid" != "$CANDIDATE_WEB_PID" ] \
+    || [ "$process_start_ticks" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
+    || [ "$process_identity" != "$CANDIDATE_WEB_PROCESS_IDENTITY" ] \
+    || [ "$cwd_identity" != "$CANDIDATE_WEB_CWD_IDENTITY" ] \
     || [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
     return 1
   fi
-  CANDIDATE_WEB_PID="$process_pid"
-  CANDIDATE_WEB_PROCESS_START_TICKS="$process_start_ticks"
-  CANDIDATE_WEB_PROCESS_IDENTITY="$process_identity"
-  CANDIDATE_WEB_CWD_IDENTITY="$cwd_identity"
   assert_booking_persistence_retry_state "$absolute_deadline_seconds"
 }
 
@@ -4353,6 +4614,8 @@ assert_booking_persistence_retry_state() {
     return 1
   fi
   if [ "${WEB_COMMITTED:-0}" != "0" ] \
+    || [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" != "exact" ] \
+    || ! [[ "${CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || [ "${SWITCH_COMPLETED:-0}" != "1" ] \
     || [ "${PROCESSES_STOPPED:-0}" != "1" ] \
     || [ "${FORWARD_MUTATION_STARTED:-0}" != "1" ] \
@@ -5582,7 +5845,7 @@ start_readiness_fence() {
     PORT_RELEASE_TOTAL_TIMEOUT_SECONDS +
     RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS +
     PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS +
-    PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
+    2 * PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
     READINESS_FENCE_OPERATION_MARGIN_SECONDS
   ))"
   startup_deadline=$((SECONDS + READINESS_FENCE_STARTUP_WAIT_SECONDS))
@@ -6024,6 +6287,13 @@ CANDIDATE_WEB_PID=""
 CANDIDATE_WEB_PROCESS_START_TICKS=""
 CANDIDATE_WEB_PROCESS_IDENTITY=""
 CANDIDATE_WEB_CWD_IDENTITY=""
+CANDIDATE_WEB_START_ATTEMPTED=0
+CANDIDATE_WEB_START_STATUS=0
+CANDIDATE_WEB_HANDOFF_STATE="not-started"
+CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64=""
+CANDIDATE_WEB_PM2_DELETE_ATTEMPTS=0
+CANDIDATE_WEB_PM2_DELETE_COMPLETED=0
+CANDIDATE_WEB_FROZEN_STOP_COMPLETED=0
 PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=""
 PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0
 PREVIOUS_WEB_PM2_DELETE_COMPLETED=0
@@ -6327,6 +6597,7 @@ recover_pre_forward_previous_runtime() {
 }
 
 rollback_release() {
+  local candidate_stop_status=0
   ROLLBACK_FAILURE_CODE=""
   if { [ "$SWITCH_COMPLETED" != "1" ] && [ "$PROCESSES_STOPPED" != "1" ]; } \
     || [ "$WEB_COMMITTED" = "1" ]; then
@@ -6348,15 +6619,27 @@ rollback_release() {
     ROLLBACK_FAILURE_CODE="deploy_rollback_failed_worker_quiesce"
     return 1
   fi
-  if ! stop_pm2_process_bounded \
-    "$APP_NAME" "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" >/dev/null 2>&1; then
-    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_web_quiesce"
-    return 1
-  fi
-  if ! wait_for_port_release >/dev/null 2>&1; then
-    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_port_quiesce"
-    return 1
-  fi
+  stop_frozen_candidate_web_bounded >/dev/null 2>&1 \
+    || candidate_stop_status=$?
+  case "$candidate_stop_status" in
+    0) ;;
+    2)
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_web_quiesce"
+      return 1
+      ;;
+    3)
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_port_quiesce"
+      return 1
+      ;;
+    4)
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_evidence"
+      return 1
+      ;;
+    *)
+      ROLLBACK_FAILURE_CODE="deploy_rollback_failed_evidence"
+      return 1
+      ;;
+  esac
   if ! assert_readiness_fence_held_for_rollback; then
     ROLLBACK_FAILURE_CODE="deploy_rollback_failed_fence_checkpoint"
     return 1
@@ -6802,15 +7085,34 @@ fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"
-assert_readiness_fence_before_forward_operation "$RELEASE_PROCESS_START_TIMEOUT_SECONDS" || exit 1
-if ! start_release "$RELEASE_DIR" \
+assert_readiness_fence_before_forward_operation "$((
+  RELEASE_PROCESS_START_TIMEOUT_SECONDS +
+  PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
+  READINESS_FENCE_OPERATION_MARGIN_SECONDS
+))" || exit 1
+CANDIDATE_WEB_START_ATTEMPTED=1
+CANDIDATE_WEB_START_STATUS=0
+start_release "$RELEASE_DIR" \
   "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
   "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
   "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" "" 0 \
   "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" \
   "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" \
-  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" \
+  || CANDIDATE_WEB_START_STATUS=$?
+if [ "$CANDIDATE_WEB_START_STATUS" -eq 0 ]; then
+  DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
+fi
+if ! classify_candidate_web_after_start_attempt; then
+  echo "[deploy] candidate listener handoff evidence could not be frozen"
+  exit 1
+fi
+if [ "$CANDIDATE_WEB_START_STATUS" -ne 0 ]; then
   echo "[deploy] failed to start isolated release"
+  exit 1
+fi
+if [ "$CANDIDATE_WEB_HANDOFF_STATE" != "exact" ]; then
+  echo "[deploy] candidate listener handoff evidence could not be frozen"
   exit 1
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
@@ -6820,7 +7122,8 @@ if ! running_release_rollout_environment_matches \
   "$APP_NAME" "$RELEASE_DIR" \
   "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
   "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
-  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" "" 0 \
+  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+  "$CANDIDATE_WEB_PID" 0 \
   "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" \
   "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" \
   "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
@@ -6840,7 +7143,11 @@ if ! running_release_rollout_environment_matches \
   "$APP_NAME" "$RELEASE_DIR" \
   "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
   "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
-  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN"; then
+  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+  "$CANDIDATE_WEB_PID" 0 \
+  "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" \
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" \
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
   echo "[deploy] release rollout environment verification failed"
   exit 1
 fi

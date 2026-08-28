@@ -3716,10 +3716,10 @@ test("candidate and rollback starts override inherited and stale PM2 staff rollo
 });
 
 test("candidate rollout environment is proven before and after HTTP health", async () => {
-  const startIndex = deployScript.indexOf(
-    'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"',
-    deployScript.indexOf('if ! start_release "$RELEASE_DIR"'),
-  );
+  const startMarker =
+    'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"\n' +
+    'if ! running_release_rollout_environment_matches';
+  const startIndex = deployScript.indexOf(startMarker);
   const endMarker =
     'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"\n' +
     'BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((';
@@ -3747,6 +3747,12 @@ test("candidate rollout environment is proven before and after HTTP health", asy
       status: 1,
       calls: ["rollout:1", "checkpoint", "fence-before", "health", "rollout:2"],
     },
+    {
+      name: "HTTP health failure stops before the second environment proof",
+      failAt: "health",
+      status: 1,
+      calls: ["rollout:1", "checkpoint", "fence-before", "health"],
+    },
   ];
   for (const fixture of fixtures) {
     const script = [
@@ -3761,14 +3767,30 @@ test("candidate rollout environment is proven before and after HTTP health", asy
       "CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce",
       "CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=10000001",
       "CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+      "CANDIDATE_WEB_PID=4321",
+      "CANDIDATE_SUPABASE_INTERNAL_URL_B64=aW50ZXJuYWw=",
+      "CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64=cHVibGlj",
+      "CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=YW5vbg==",
       "FAOLLA_WEB_BUILD_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "HEALTHCHECK_ATTEMPTS=20",
       "record() { if [ -n \"$CALLS\" ]; then CALLS=\"$CALLS,$1\"; else CALLS=\"$1\"; fi; }",
       "ROLLOUT_CALLS=0",
-      "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ]; }",
+      "running_release_rollout_environment_matches() {",
+      "  ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"",
+      "  [ \"$#\" -eq 10 ] || return 91",
+      "  [ \"$1\" = \"$APP_NAME\" ] && [ \"$2\" = \"$RELEASE_DIR\" ] || return 92",
+      "  [ \"$3\" = \"$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] || return 93",
+      "  [ \"$4\" = \"$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 94",
+      "  [ \"$5\" = \"$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] || return 95",
+      "  [ \"$6\" = \"$CANDIDATE_WEB_PID\" ] && [ \"$7\" = 0 ] || return 96",
+      "  [ \"$8\" = \"$CANDIDATE_SUPABASE_INTERNAL_URL_B64\" ] || return 97",
+      "  [ \"$9\" = \"$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64\" ] || return 98",
+      "  [ \"${10}\" = \"$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ] || return 99",
+      "  [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ]",
+      "}",
       "assert_readiness_fence_forward_checkpoint() { record checkpoint; return 0; }",
       "assert_readiness_fence_before_forward_operation() { record fence-before; return 0; }",
-      "wait_for_release_health() { record health; return 0; }",
+      "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ]; }",
       "candidate_gate >/dev/null 2>&1; status=$?",
       "printf '%s\\n%s\\n' \"$status\" \"$CALLS\"",
     ].join("\n");
@@ -3781,6 +3803,177 @@ test("candidate rollout environment is proven before and after HTTP health", asy
     const [status, calls] = result.stdout.trimEnd().split("\n");
     assert.equal(Number(status), fixture.status, fixture.name);
     assert.deepEqual(calls ? calls.split(",") : [], fixture.calls, fixture.name);
+  }
+});
+
+test("every post-start pre-commit gate either rolls back the exact candidate or refuses unverified signals", async () => {
+  const transitionStart = deployScript.indexOf(
+    'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"',
+  );
+  const transitionEnd = deployScript.indexOf("\nDEPLOY_HEALTHY=1", transitionStart);
+  assert.ok(transitionStart >= 0 && transitionEnd > transitionStart);
+  const transition = deployScript
+    .slice(transitionStart, transitionEnd)
+    .replaceAll("exit 1", "return 1");
+  const rollback = extractShellFunction("rollback_release");
+  const directory = await mkdtemp(join(tmpdir(), "faolla-post-start-gates-"));
+  const previousRuntime = join(directory, "previous");
+  const fixtures = [
+    { name: "successful candidate commits", failAt: "none", success: true },
+    { name: "failed start with an exact spawned candidate", failAt: "candidate-start" },
+    { name: "unverified classification refuses all signals", failAt: "candidate-classify", unverified: true },
+    ...[
+      "checkpoint:1",
+      "candidate-rollout:1",
+      "checkpoint:2",
+      "fence-before:2",
+      "candidate-health",
+      "candidate-rollout:2",
+      "checkpoint:3",
+      "booking-capture",
+      "booking-verify",
+      "fence-before:3",
+      "smoke",
+      "checkpoint:4",
+      "fence-before:4",
+      "links",
+      "checkpoint:5",
+      "fence-before:5",
+      "nginx",
+      "checkpoint:6",
+      "release-fence",
+    ].map((failAt) => ({ name: `failure at ${failAt}`, failAt })),
+  ];
+  try {
+    await mkdir(join(previousRuntime, ".next"), { recursive: true });
+    for (const [index, fixture] of fixtures.entries()) {
+      const events = join(directory, `events-${index}`);
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: [
+          "set +e",
+          "candidate_transition() {",
+          transition,
+          "}",
+          rollback,
+          `EVENTS='${toBashPath(events)}'`,
+          `FAIL_AT='${fixture.failAt}'`,
+          `PREVIOUS_RUNTIME_DIR='${toBashPath(previousRuntime)}'`,
+          `PREVIOUS_LINK_TARGET='${toBashPath(previousRuntime)}'`,
+          "CURRENT_LINK=/current",
+          "RELEASE_DIR=/candidate",
+          `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
+          "APP_NAME=web",
+          "SWITCH_COMPLETED=1",
+          "PROCESSES_STOPPED=1",
+          "WEB_COMMITTED=0",
+          "ROLLBACK_COMPLETED=0",
+          "ROLLBACK_FAILURE_CODE=",
+          "CANDIDATE_WEB_START_ATTEMPTED=0",
+          "CANDIDATE_WEB_HANDOFF_STATE=not-started",
+          "CANDIDATE_WEB_PID=",
+          "READINESS_FENCE_ACTIVE=1",
+          "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
+          "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
+          "RELEASE_PROCESS_START_TIMEOUT_SECONDS=45",
+          "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=10",
+          "READINESS_FENCE_OPERATION_MARGIN_SECONDS=10",
+          "HEALTHCHECK_ATTEMPTS=20",
+          "BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS=60",
+          "RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS=180",
+          "RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS=60",
+          "NGINX_RELEASE_GATE_TOTAL_TIMEOUT_SECONDS=180",
+          `FAOLLA_WEB_BUILD_ID='${"b".repeat(40)}'`,
+          "CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE=enforce",
+          "CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=10000001",
+          "CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+          "CANDIDATE_SUPABASE_INTERNAL_URL_B64=aW50ZXJuYWw=",
+          "CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64=cHVibGlj",
+          "CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=YW5vbg==",
+          "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+          "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+          "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+          "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
+          "PREVIOUS_SUPABASE_INTERNAL_URL_B64=b2xkLWludGVybmFs",
+          "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64=b2xkLXB1YmxpYw==",
+          "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=b2xkLWFub24=",
+          "record() { printf '%s\\n' \"$1\" >> \"$EVENTS\"; }",
+          "FENCE_BEFORE_CALLS=0",
+          "CHECKPOINT_CALLS=0",
+          "CANDIDATE_ROLLOUT_CALLS=0",
+          "assert_readiness_fence_before_forward_operation() { FENCE_BEFORE_CALLS=$((FENCE_BEFORE_CALLS + 1)); record \"fence-before:$FENCE_BEFORE_CALLS\"; [ \"$FAIL_AT\" != \"fence-before:$FENCE_BEFORE_CALLS\" ]; }",
+          "assert_readiness_fence_forward_checkpoint() { CHECKPOINT_CALLS=$((CHECKPOINT_CALLS + 1)); record \"checkpoint:$CHECKPOINT_CALLS\"; [ \"$FAIL_AT\" != \"checkpoint:$CHECKPOINT_CALLS\" ]; }",
+          "start_release() { record candidate-start; [ \"$#\" -eq 9 ] || return 91; [ \"$FAIL_AT\" != candidate-start ]; }",
+          "classify_candidate_web_after_start_attempt() {",
+          "  record candidate-classify",
+          "  if [ \"$FAIL_AT\" = candidate-classify ]; then CANDIDATE_WEB_HANDOFF_STATE=unverified; return 1; fi",
+          "  CANDIDATE_WEB_HANDOFF_STATE=exact; CANDIDATE_WEB_PID=4321; CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64=cHJvb2Y=",
+          "}",
+          "running_release_rollout_environment_matches() {",
+          "  [ \"$#\" -eq 10 ] || return 91",
+          "  if [ \"$2\" = \"$RELEASE_DIR\" ]; then",
+          "    CANDIDATE_ROLLOUT_CALLS=$((CANDIDATE_ROLLOUT_CALLS + 1)); record \"candidate-rollout:$CANDIDATE_ROLLOUT_CALLS\"",
+          "    [ \"$1\" = \"$APP_NAME\" ] && [ \"$3\" = \"$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] && [ \"$4\" = \"$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 92",
+          "    [ \"$5\" = \"$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] && [ \"$6\" = \"$CANDIDATE_WEB_PID\" ] && [ \"$7\" = 0 ] || return 93",
+          "    [ \"$8\" = \"$CANDIDATE_SUPABASE_INTERNAL_URL_B64\" ] && [ \"$9\" = \"$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64\" ] && [ \"${10}\" = \"$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ] || return 94",
+          "    [ \"$FAIL_AT\" != \"candidate-rollout:$CANDIDATE_ROLLOUT_CALLS\" ]",
+          "  else",
+          "    record restore-rollout",
+          "    [ \"$2\" = \"$PREVIOUS_RUNTIME_DIR\" ] && [ \"$3\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] && [ \"$4\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 95",
+          "    [ \"$5\" = \"$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] && [ -z \"$6\" ] && [ \"$7\" = \"$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN\" ] || return 96",
+          "    [ \"$8\" = \"$PREVIOUS_SUPABASE_INTERNAL_URL_B64\" ] && [ \"$9\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64\" ] && [ \"${10}\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ]",
+          "  fi",
+          "}",
+          "wait_for_release_health() { if [ \"$1\" = \"$FAOLLA_WEB_BUILD_ID\" ]; then record candidate-health; [ \"$FAIL_AT\" != candidate-health ]; else record restore-health; return 0; fi; }",
+          "capture_candidate_web_identity_for_booking_retry() { record booking-capture; [ \"$FAIL_AT\" != booking-capture ]; }",
+          "verify_booking_persistence_with_bounded_retry() { record booking-verify; [ \"$FAIL_AT\" != booking-verify ]; }",
+          "run_local_release_smoke() { record smoke; [ \"$FAIL_AT\" != smoke ]; }",
+          "install_runtime_compatibility_links() { record links; [ \"$FAIL_AT\" != links ]; }",
+          "verify_nginx_release_static_access() { record nginx; [ \"$FAIL_AT\" != nginx ]; }",
+          "release_readiness_fence() { record release-fence; [ \"$FAIL_AT\" != release-fence ] || return 1; READINESS_FENCE_ACTIVE=0; }",
+          "assert_readiness_fence_held_for_rollback() { record rollback-fence; return 0; }",
+          "stop_previous_automation_worker_bounded() { record rollback-worker-stop; return 0; }",
+          "stop_frozen_candidate_web_bounded() { if [ \"$CANDIDATE_WEB_HANDOFF_STATE\" = exact ]; then record candidate-stop; CANDIDATE_WEB_HANDOFF_STATE=absent; return 0; fi; record candidate-refused; return 4; }",
+          "restore_legacy_runtime_compatibility_paths() { record restore-compat; return 0; }",
+          "switch_current_release() { record restore-switch; return 0; }",
+          "start_frozen_previous_release() { record restore-start; return 0; }",
+          "candidate_transition >/dev/null 2>&1; primary_status=$?",
+          "rollback_status=0",
+          "if [ \"$primary_status\" -ne 0 ]; then rollback_release >/dev/null 2>&1; rollback_status=$?; fi",
+          "printf '%s %s %s %s %s\\n' \"$primary_status\" \"$rollback_status\" \"$WEB_COMMITTED\" \"$ROLLBACK_COMPLETED\" \"${ROLLBACK_FAILURE_CODE:--}\"",
+        ].join("\n"),
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${fixture.name}\n${result.stdout}\n${result.stderr}`);
+      assert.equal(result.stderr, "", fixture.name);
+      const eventList = (await readFile(events, "utf8")).trim().split("\n");
+      if (fixture.success) {
+        assert.equal(result.stdout, "0 0 1 0 -\n", fixture.name);
+        assert.ok(eventList.includes("release-fence"), fixture.name);
+        assert.equal(eventList.some((event) => event.startsWith("rollback-")), false);
+        assert.equal(eventList.includes("candidate-stop"), false);
+      } else if (fixture.unverified) {
+        assert.equal(
+          result.stdout,
+          "1 1 0 0 deploy_rollback_failed_evidence\n",
+          fixture.name,
+        );
+        assert.ok(eventList.includes("candidate-refused"), fixture.name);
+        assert.equal(eventList.includes("candidate-stop"), false, fixture.name);
+        assert.equal(eventList.includes("restore-switch"), false, fixture.name);
+      } else {
+        assert.equal(result.stdout, "1 0 0 1 -\n", fixture.name);
+        const stopIndex = eventList.indexOf("candidate-stop");
+        const restoreIndex = eventList.indexOf("restore-switch");
+        assert.ok(stopIndex >= 0 && restoreIndex > stopIndex, fixture.name);
+        assert.equal(eventList.includes("candidate-refused"), false, fixture.name);
+      }
+      if (fixture.failAt !== "none") {
+        assert.ok(eventList.includes(fixture.failAt), fixture.name);
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -5213,6 +5406,8 @@ test("booking persistence retries only status two across fully revalidated read-
   ]) {
     assert.match(retryState, new RegExp(identity), identity);
   }
+  assert.match(retryState, /CANDIDATE_WEB_HANDOFF_STATE/);
+  assert.match(retryState, /CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64/);
   assert.match(currentCapture, /stat -c '%d:%i:%Z' -- "\$CURRENT_LINK"/);
   assert.match(currentCapture, /stat -Lc '%d:%i:%Z' -- "\$RELEASE_DIR"/);
   assert.match(
@@ -5506,6 +5701,8 @@ test("booking persistence retries only status two across fully revalidated read-
         "CANDIDATE_WEB_PROCESS_START_TICKS=456",
         "CANDIDATE_WEB_PROCESS_IDENTITY=70:80",
         "CANDIDATE_WEB_CWD_IDENTITY=40:50:60",
+        "CANDIDATE_WEB_HANDOFF_STATE=exact",
+        "CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64=cHJvb2Y=",
         "readlink() { printf '%s\\n' \"$RELEASE_DIR\"; }",
         "stat() {",
         "  case \"${@: -1}\" in",
@@ -6505,6 +6702,11 @@ test("rollback primitive failures have fixed substages and never replay prior mu
     { failAt: "stop-worker", code: "deploy_rollback_failed_worker_quiesce" },
     { failAt: "stop-web", code: "deploy_rollback_failed_web_quiesce" },
     { failAt: "port", code: "deploy_rollback_failed_port_quiesce" },
+    {
+      failAt: "candidate-evidence",
+      code: "deploy_rollback_failed_evidence",
+      expectedCalls: ["fence:1", "stop-worker", "candidate-evidence"],
+    },
     { failAt: "fence:2", code: "deploy_rollback_failed_fence_checkpoint" },
     { failAt: "compat", code: "deploy_rollback_failed_compatibility_restore" },
     { failAt: "fence:3", code: "deploy_rollback_failed_fence_checkpoint" },
@@ -6530,21 +6732,45 @@ test("rollback primitive failures have fixed substages and never replay prior mu
     "WEB_COMMITTED=0",
     "ROLLBACK_COMPLETED=0",
     "ROLLBACK_FAILURE_CODE=",
+    "ROLLBACK_FAILURE_CODE=",
     "READINESS_FENCE_ROLLBACK_RESERVE_SECONDS=780",
     "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
     "APP_NAME=web",
     "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+    "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+    "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+    "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+    "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
+    "PREVIOUS_SUPABASE_INTERNAL_URL_B64=aW50ZXJuYWw=",
+    "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64=cHVibGlj",
+    "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=YW5vbg==",
     "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
     "FENCE_CALLS=0",
     "assert_readiness_fence_held_for_rollback() { FENCE_CALLS=$((FENCE_CALLS + 1)); record \"fence:$FENCE_CALLS\"; [ \"$FAIL_AT\" != \"fence:$FENCE_CALLS\" ] || return \"$FAILURE_STATUS\"; return 0; }",
     "stop_previous_automation_worker_bounded() { record stop-worker; [ \"$FAIL_AT\" != stop-worker ] || return \"$FAILURE_STATUS\"; return 0; }",
-    "stop_pm2_process_bounded() { record stop-web; [ \"$FAIL_AT\" != stop-web ] || return \"$FAILURE_STATUS\"; return 0; }",
-    "wait_for_port_release() { record port; [ \"$FAIL_AT\" != port ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "stop_frozen_candidate_web_bounded() {",
+    "  if [ \"$FAIL_AT\" = candidate-evidence ]; then record candidate-evidence; return 4; fi",
+    "  record stop-web; [ \"$FAIL_AT\" != stop-web ] || return 2",
+    "  record port; [ \"$FAIL_AT\" != port ] || return 3",
+    "  return 0",
+    "}",
     "restore_legacy_runtime_compatibility_paths() { record compat; [ \"$FAIL_AT\" != compat ] || return \"$FAILURE_STATUS\"; return 0; }",
     "switch_current_release() { record switch; [ \"$FAIL_AT\" != switch ] || return \"$FAILURE_STATUS\"; return 0; }",
     "start_frozen_previous_release() { record start-web; [ \"$FAIL_AT\" != start-web ] || return \"$FAILURE_STATUS\"; return 0; }",
     "ROLLOUT_CALLS=0",
-    "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ] || return \"$FAILURE_STATUS\"; return 0; }",
+    "running_release_rollout_environment_matches() {",
+    "  ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"",
+    "  [ \"$#\" -eq 10 ] || return 91",
+    "  [ \"$1\" = \"$APP_NAME\" ] && [ \"$2\" = \"$PREVIOUS_RUNTIME_DIR\" ] || return 92",
+    "  [ \"$3\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] || return 93",
+    "  [ \"$4\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 94",
+    "  [ \"$5\" = \"$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] && [ -z \"$6\" ] || return 95",
+    "  [ \"$7\" = \"$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN\" ] || return 96",
+    "  [ \"$8\" = \"$PREVIOUS_SUPABASE_INTERNAL_URL_B64\" ] || return 97",
+    "  [ \"$9\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64\" ] || return 98",
+    "  [ \"${10}\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ] || return 99",
+    "  [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ] || return \"$FAILURE_STATUS\"",
+    "}",
     "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ] || return \"$FAILURE_STATUS\"; return 0; }",
   ];
 
@@ -6574,7 +6800,7 @@ test("rollback primitive failures have fixed substages and never replay prior mu
         const failureIndex = successCalls.indexOf(fixture.failAt);
         assert.deepEqual(
           (await readFile(callsPath, "utf8")).trim().split("\n"),
-          successCalls.slice(0, failureIndex + 1),
+          fixture.expectedCalls ?? successCalls.slice(0, failureIndex + 1),
           `${fixture.failAt}/${failureStatus}`,
         );
       }
@@ -6626,19 +6852,31 @@ test("rollback primitive failures have fixed substages and never replay prior mu
         "READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS=15",
         "APP_NAME=web",
         "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+        "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+        "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+        "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+        "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
+        "PREVIOUS_SUPABASE_INTERNAL_URL_B64=aW50ZXJuYWw=",
+        "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64=cHVibGlj",
+        "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=YW5vbg==",
         "unset SECONDS; SECONDS=0",
         "STRICT_CALLS=0",
         "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
         "assert_readiness_fence_held() { STRICT_CALLS=$((STRICT_CALLS + 1)); if [ $((STRICT_CALLS % 2)) -eq 1 ]; then return 2; fi; return 0; }",
         "sleep() { SECONDS=$((SECONDS + 1)); }",
         "stop_previous_automation_worker_bounded() { record stop-worker; return 0; }",
-        "stop_pm2_process_bounded() { record stop-web; return 0; }",
-        "wait_for_port_release() { record port; return 0; }",
+        "stop_frozen_candidate_web_bounded() { record stop-web; record port; return 0; }",
         "restore_legacy_runtime_compatibility_paths() { record compat; return 0; }",
         "switch_current_release() { record switch; return 0; }",
         "start_frozen_previous_release() { record start-web; return 0; }",
         "ROLLOUT_CALLS=0",
-        "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; return 0; }",
+        "running_release_rollout_environment_matches() {",
+        "  ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"",
+        "  [ \"$#\" -eq 10 ] && [ \"$1\" = \"$APP_NAME\" ] && [ \"$2\" = \"$PREVIOUS_RUNTIME_DIR\" ] || return 91",
+        "  [ \"$3\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] && [ \"$4\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 92",
+        "  [ \"$5\" = \"$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] && [ -z \"$6\" ] && [ \"$7\" = \"$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN\" ] || return 93",
+        "  [ \"$8\" = \"$PREVIOUS_SUPABASE_INTERNAL_URL_B64\" ] && [ \"$9\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64\" ] && [ \"${10}\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ]",
+        "}",
         "wait_for_release_health() { record health; return 0; }",
         "if rollback_release >/dev/null; then status=0; else status=$?; fi",
         "printf '%s %s %s %s\\n' \"$status\" \"$ROLLBACK_COMPLETED\" \"$STRICT_CALLS\" \"$ROLLBACK_FAILURE_CODE\"",
@@ -6684,19 +6922,17 @@ test("rollback link failure cannot start or certify the previous runtime under s
     "AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS=205",
     "APP_NAME=web",
     "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
-    "assert_readiness_fence_held() { return 0; }",
-    "stop_pm2_process_bounded() { return 0; }",
-    "wait_for_port_release() { return 0; }",
-    "restore_legacy_runtime_compatibility_paths() { return 0; }",
-    'switch_current_release() { printf "switch\\n" >> "$CALLS"; return 42; }',
+    "record() { printf '%s\\n' \"$1\" >> \"$CALLS\"; }",
+    "assert_readiness_fence_held_for_rollback() { record fence; return 0; }",
+    "stop_previous_automation_worker_bounded() { record worker; return 0; }",
+    "stop_frozen_candidate_web_bounded() { record candidate; return 0; }",
+    "restore_legacy_runtime_compatibility_paths() { record compat; return 0; }",
+    'switch_current_release() { record switch; return 42; }',
     'start_frozen_previous_release() { printf "start\\n" >> "$CALLS"; return 0; }',
     "wait_for_release_health() { return 0; }",
     rollbackFunction,
-    "if rollback_release; then status=0; else status=$?; fi",
-    '[ "$status" -ne 0 ]',
-    '[ "$ROLLBACK_COMPLETED" = 0 ]',
-    'grep -Fxq switch "$CALLS"',
-    '! grep -Fxq start "$CALLS"',
+    "if rollback_release >/dev/null; then status=0; else status=$?; fi",
+    "printf '%s %s %s\\n' \"$status\" \"$ROLLBACK_COMPLETED\" \"$ROLLBACK_FAILURE_CODE\"",
     "",
   ].join("\n");
   try {
@@ -6705,6 +6941,12 @@ test("rollback link failure cannot start or certify the previous runtime under s
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout, "1 0 deploy_rollback_failed_current_restore\n");
+    assert.deepEqual(
+      (await readFile(callsPath, "utf8")).trim().split("\n"),
+      ["fence", "worker", "candidate", "fence", "compat", "fence", "switch"],
+    );
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -6800,6 +7042,17 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
       expectedFlags: "1 0 0 0 web",
     },
     {
+      name: "post-save rollout drift cannot certify recovery",
+      failAt: "rollout:3",
+      expectedStatus: 1,
+      expectedCalls: [
+        "verify", "stop:web", "port", "stop:worker", "verify", "release:1", "verify",
+        "start-web", "rollout:1", "health", "rollout:2", "verify",
+        "start-worker", "worker-online", "verify", "save", "verify", "rollout:3",
+      ],
+      expectedFlags: "1 0 1 1 post_verify",
+    },
+    {
       name: "forward mutation forbids shortcut recovery",
       forwardMutation: 1,
       expectedStatus: 1,
@@ -6819,6 +7072,13 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
         `CALLS='${toBashPath(callsPath)}'`,
         `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
         "PREVIOUS_RUNTIME_IDENTITY=\"$(stat -Lc '%d:%i:%Z' -- \"$PREVIOUS_RUNTIME_DIR\")\"",
+        "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+        "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+        "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+        "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
+        "PREVIOUS_SUPABASE_INTERNAL_URL_B64=aW50ZXJuYWw=",
+        "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64=cHVibGlj",
+        "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=YW5vbg==",
         `PREVIOUS_AUTOMATION_WORKER_RUNNING='${fixture.previousWorkerRunning ?? 1}'`,
         `FORWARD_MUTATION_STARTED='${fixture.forwardMutation ?? 0}'`,
         "SWITCH_COMPLETED=0",
@@ -6863,7 +7123,15 @@ test("pre-forward recovery releases provisionally and restores only the frozen p
         "}",
         "pre_forward_recovery_process_identity_matches() { return 0; }",
         "ROLLOUT_CALLS=0",
-        "running_release_rollout_environment_matches() { ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"; [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ]; }",
+        "running_release_rollout_environment_matches() {",
+        "  ROLLOUT_CALLS=$((ROLLOUT_CALLS + 1)); record \"rollout:$ROLLOUT_CALLS\"",
+        "  [ \"$#\" -eq 10 ] && [ \"$1\" = \"$APP_NAME\" ] && [ \"$2\" = \"$PREVIOUS_RUNTIME_DIR\" ] || return 91",
+        "  [ \"$3\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] && [ \"$4\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 92",
+        "  [ \"$5\" = \"$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] && [ \"$6\" = \"$PRE_FORWARD_RECOVERY_WEB_PID\" ] || return 93",
+        "  [ \"$7\" = \"$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN\" ] && [ \"$8\" = \"$PREVIOUS_SUPABASE_INTERNAL_URL_B64\" ] || return 94",
+        "  [ \"$9\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64\" ] && [ \"${10}\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ] || return 95",
+        "  [ \"$FAIL_AT\" != \"rollout:$ROLLOUT_CALLS\" ]",
+        "}",
         "wait_for_release_health() { record health; [ \"$FAIL_AT\" != health ]; }",
         "start_frozen_previous_automation_worker_process() { record start-worker; [ \"$FAIL_AT\" != start-worker ]; }",
         "wait_for_automation_worker_online() { record worker-online; [ \"$FAIL_AT\" != worker-online ]; }",
@@ -7042,6 +7310,13 @@ test("pre-forward recovery preserves committed runtime and cleans only uncommitt
         `PREVIOUS_RUNTIME_DIR='${toBashPath(previousRuntime)}'`,
         `PREVIOUS_BUILD_ID='${"a".repeat(40)}'`,
         "PREVIOUS_RUNTIME_IDENTITY=1:2:3",
+        "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=off",
+        "PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=",
+        "PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+        "PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN=0",
+        "PREVIOUS_SUPABASE_INTERNAL_URL_B64=aW50ZXJuYWw=",
+        "PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64=cHVibGlj",
+        "PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=YW5vbg==",
         "PREVIOUS_AUTOMATION_WORKER_RUNNING=1",
         "FORWARD_MUTATION_STARTED=0",
         "SWITCH_COMPLETED=0",
@@ -7088,7 +7363,13 @@ test("pre-forward recovery preserves committed runtime and cleans only uncommitt
         "release_readiness_fence() { READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
         "discard_failed_readiness_fence() { READINESS_FENCE_ACTIVE=0; READINESS_FENCE_CLEANUP_VERIFIED=1; return 0; }",
         "start_frozen_previous_release() { WEB_STATE=running:101; record start:web; [[ \"$FAIL_AT\" != *start-web-created* ]]; }",
-        "running_release_rollout_environment_matches() { return 0; }",
+        "running_release_rollout_environment_matches() {",
+        "  [ \"$#\" -eq 10 ] && [ \"$1\" = \"$APP_NAME\" ] && [ \"$2\" = \"$PREVIOUS_RUNTIME_DIR\" ] || return 91",
+        "  [ \"$3\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE\" ] && [ \"$4\" = \"$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS\" ] || return 92",
+        "  [ \"$5\" = \"$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN\" ] && [ \"$6\" = \"$PRE_FORWARD_RECOVERY_WEB_PID\" ] || return 93",
+        "  [ \"$7\" = \"$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN\" ] && [ \"$8\" = \"$PREVIOUS_SUPABASE_INTERNAL_URL_B64\" ] || return 94",
+        "  [ \"$9\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64\" ] && [ \"${10}\" = \"$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64\" ]",
+        "}",
         "wait_for_release_health() { record health; [[ \"$FAIL_AT\" != *health* ]]; }",
         "start_frozen_previous_automation_worker_process() { WORKER_STATE=running:202; record start:worker; [ \"$FAIL_AT\" != start-worker-created ]; }",
         "wait_for_automation_worker_online() { record worker-online; [ \"$FAIL_AT\" != worker-online ]; }",
@@ -7409,14 +7690,29 @@ test("legacy-to-direct handoff freezes strict PM2, ancestry, process, and socket
     /JSON\.stringify\(\["start", "--", "-p", String\(port\)\]\)/,
   );
   assert.match(operation, /pmExecPath !== npmPath/);
-  assert.match(operation, /pmExecPath !== expectedNextEntry/);
+  assert.match(operation, /expectedNextEntry && pmExecPath === expectedNextEntry/);
+  assert.match(operation, /listenerTopology/);
+  assert.match(operation, /launchMode/);
+  assert.match(operation, /schemaVersion: 2/);
+  assert.doesNotMatch(
+    operation,
+    /socket\.listenerPid === wrapperPid \? "direct" : "legacy"/,
+  );
   assert.match(operation, /entry\.name === appName \|\| entry\.pm_id === proof\.pm2\.pmId/);
   assert.match(operation, /encoded\.length > 64 \* 1024/);
   assert.match(operation, /const first = capturePostDeleteState\(proof\)/);
   assert.match(operation, /const second = capturePostDeleteState\(proof\)/);
   assert.match(operation, /JSON\.stringify\(first\) !== JSON\.stringify\(second\)/);
   assert.match(operation, /process\.kill\(proof\.listenerPid/);
-  assert.match(operation, /originalWrapperState\(proof\) === "pending"/);
+  assert.match(operation, /const wrapperState = originalWrapperState\(proof\)/);
+  assert.match(
+    operation,
+    /proof\.listenerTopology === "descendant"[\s\S]+\["pending", "zombie"\]\.includes\(wrapperState\)/,
+  );
+  assert.match(
+    operation,
+    /proof\.listenerTopology === "wrapper" && wrapperState === "pending"[\s\S]+\? \[captureFact\(proof\.listenerPid\)\]/,
+  );
   assert.match(operation, /process\.stdout\.write\("wrapper-pending"\)/);
   assert.ok(
     operation.indexOf("capturePostDeleteState(proof)") <
@@ -7427,9 +7723,9 @@ test("legacy-to-direct handoff freezes strict PM2, ancestry, process, and socket
     /currentStart\.startTicks !== proof\.chain\[0\]\.startTicks[\s\S]+socket\.state !== "absent"/,
   );
 
-  assert.match(capture, /absolute_deadline_seconds=\$\(\(/);
+  assert.match(capture, /absolute_deadline_seconds="\$\{2:-\$\(\(/);
   assert.equal(
-    capture.match(/previous_web_listener_handoff_operation \\\n\s+capture "\$absolute_deadline_seconds"/g)?.length,
+    capture.match(/previous_web_listener_handoff_operation \\\n\s+capture "\$absolute_deadline_seconds" "\$expected_launch_mode"/g)?.length,
     2,
   );
   assert.match(capture, /"\$\{#first_proof\}" -gt 65536/);
@@ -7455,6 +7751,440 @@ test("legacy-to-direct handoff freezes strict PM2, ancestry, process, and socket
     deployScript,
     /start_frozen_previous_release\(\)[\s\S]+start_release "\$PREVIOUS_RUNTIME_DIR"/,
   );
+});
+
+test("candidate listener identity is frozen before every post-start gate and drives rollback", () => {
+  const capture = extractShellFunction(
+    "capture_candidate_web_listener_handoff_identity",
+  );
+  const classify = extractShellFunction(
+    "classify_candidate_web_after_start_attempt",
+  );
+  const stop = extractShellFunction("stop_frozen_candidate_web_bounded");
+  const rollback = extractShellFunction("rollback_release");
+  const transition = deployScript.slice(
+    deployScript.indexOf(
+      'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"',
+    ),
+    deployScript.indexOf(
+      'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_health_failed"',
+    ),
+  );
+  const ordered = [
+    "assert_readiness_fence_before_forward_operation",
+    "CANDIDATE_WEB_START_ATTEMPTED=1",
+    'start_release "$RELEASE_DIR"',
+    "classify_candidate_web_after_start_attempt",
+    "assert_readiness_fence_forward_checkpoint",
+    "running_release_rollout_environment_matches",
+  ];
+  let previousIndex = -1;
+  for (const needle of ordered) {
+    const index = transition.indexOf(needle);
+    assert.ok(index > previousIndex, `candidate handoff order: ${needle}`);
+    previousIndex = index;
+  }
+  assert.match(
+    transition,
+    /RELEASE_PROCESS_START_TIMEOUT_SECONDS \+\s+PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS \+\s+READINESS_FENCE_OPERATION_MARGIN_SECONDS/,
+  );
+  assert.match(capture, /local PREVIOUS_RUNTIME_DIR="\$RELEASE_DIR"/);
+  assert.match(capture, /local PREVIOUS_RUNTIME_IDENTITY="\$CANDIDATE_RUNTIME_IDENTITY"/);
+  assert.match(capture, /local process_snapshot=""/);
+  assert.match(capture, /capture_previous_web_listener_handoff_identity \\\n\s+direct "\$absolute_deadline_seconds"/);
+  assert.match(capture, /CANDIDATE_WEB_HANDOFF_STATE="exact"/);
+  assert.doesNotMatch(classify, /CANDIDATE_WEB_HANDOFF_STATE="absent"/);
+  assert.match(classify, /CANDIDATE_WEB_HANDOFF_STATE="unverified"/);
+  assert.match(stop, /stop_frozen_previous_web_bounded/);
+  assert.match(stop, /return 2/);
+  assert.match(stop, /return 3/);
+  assert.match(stop, /return 4/);
+  assert.doesNotMatch(
+    stop,
+    /stop_pm2_process_bounded|wait_for_port_release|pkill|killall|fuser|pm2 kill/,
+  );
+  assert.match(rollback, /stop_frozen_candidate_web_bounded/);
+  assert.match(rollback, /deploy_rollback_failed_evidence/);
+  assert.doesNotMatch(
+    rollback,
+    /stop_pm2_process_bounded\s+\\\n\s+"\$APP_NAME"|wait_for_port_release/,
+  );
+  assert.match(
+    deployScript,
+    /minimum_hold_remaining_seconds="\$\(\([\s\S]{0,400}2 \* PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS/,
+  );
+});
+
+test("candidate classification waits for a delayed listener and never downgrades an attempted start to absent", () => {
+  const capture = extractShellFunction(
+    "capture_candidate_web_listener_handoff_identity",
+  );
+  const classify = extractShellFunction(
+    "classify_candidate_web_after_start_attempt",
+  );
+  const delayedListener = spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: [
+      "set +e",
+      capture,
+      classify,
+      "unset SECONDS; SECONDS=0",
+      "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=10",
+      "CANDIDATE_WEB_START_ATTEMPTED=1",
+      "SWITCH_COMPLETED=1",
+      "CURRENT_LINK=/current",
+      "RELEASE_DIR=/release",
+      "CANDIDATE_RUNTIME_IDENTITY=1:2:3",
+      "APP_NAME=web",
+      "CAPTURE_CALLS=0",
+      "pm2_process_snapshot() { printf 'running:4321\\n'; }",
+      "linux_process_start_ticks() { printf '99\\n'; }",
+      "readlink() { printf '/release\\n'; }",
+      "stat() { case \"${@: -1}\" in /proc/4321) printf '4:5\\n' ;; /proc/4321/cwd|/release) printf '1:2:3\\n' ;; *) return 1 ;; esac; }",
+      "previous_web_process_identity_matches() { return 0; }",
+      "capture_previous_web_listener_handoff_identity() {",
+      "  CAPTURE_CALLS=$((CAPTURE_CALLS + 1))",
+      "  [ \"$CAPTURE_CALLS\" -ge 2 ] || return 1",
+      "  PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=cHJvb2Y=",
+      "}",
+      "sleep() { SECONDS=$((SECONDS + 1)); }",
+      "classify_candidate_web_after_start_attempt; status=$?",
+      "printf '%s %s %s %s %s\\n' \"$status\" \"$CANDIDATE_WEB_HANDOFF_STATE\" \"$CANDIDATE_WEB_PID\" \"$CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64\" \"$CAPTURE_CALLS\"",
+    ].join("\n"),
+    timeout: 10_000,
+  });
+  assert.equal(
+    delayedListener.status,
+    0,
+    `${delayedListener.stdout}\n${delayedListener.stderr}`,
+  );
+  assert.equal(delayedListener.stderr, "");
+  assert.equal(delayedListener.stdout, "0 exact 4321 cHJvb2Y= 2\n");
+
+  const noDowngrade = spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8",
+    input: [
+      "set +e",
+      classify,
+      "ABSENCE_CALLS=0",
+      "capture_candidate_web_listener_handoff_identity() { return 1; }",
+      "candidate_web_is_provably_absent() { ABSENCE_CALLS=$((ABSENCE_CALLS + 1)); return 0; }",
+      "classify_candidate_web_after_start_attempt; status=$?",
+      "printf '%s %s %s\\n' \"$status\" \"$CANDIDATE_WEB_HANDOFF_STATE\" \"$ABSENCE_CALLS\"",
+    ].join("\n"),
+    timeout: 10_000,
+  });
+  assert.equal(noDowngrade.status, 0, noDowngrade.stderr);
+  assert.equal(noDowngrade.stderr, "");
+  assert.equal(noDowngrade.stdout, "1 unverified 0\n");
+});
+
+test("not-started candidate absence is stable across PM2, port, and both current-link states", async () => {
+  const absent = extractShellFunction("candidate_web_is_provably_absent");
+  const directory = await mkdtemp(join(tmpdir(), "faolla-candidate-not-started-"));
+  const fixtures = [
+    {
+      name: "before switch",
+      switchCompleted: 0,
+      currentTarget: "/previous",
+      pm2State: "absent",
+      socketState: "",
+      startAttempted: 0,
+      expectedStatus: 0,
+      expectedCalls: ["pm2", "ss", "pm2", "ss", "pm2", "ss"],
+    },
+    {
+      name: "after switch",
+      switchCompleted: 1,
+      currentTarget: "/candidate",
+      pm2State: "absent",
+      socketState: "",
+      startAttempted: 0,
+      expectedStatus: 0,
+      expectedCalls: ["pm2", "ss", "pm2", "ss", "pm2", "ss"],
+    },
+    {
+      name: "atomic switch committed before its command reported failure",
+      switchCompleted: 0,
+      currentTarget: "/candidate",
+      pm2State: "absent",
+      socketState: "",
+      startAttempted: 0,
+      candidateRuntimeIdentity: "",
+      expectedStatus: 0,
+      expectedCalls: ["pm2", "ss", "pm2", "ss", "pm2", "ss"],
+    },
+    {
+      name: "post-switch identity capture failure uses the frozen preflight runtime",
+      switchCompleted: 1,
+      currentTarget: "/candidate",
+      pm2State: "absent",
+      socketState: "",
+      startAttempted: 0,
+      candidateRuntimeIdentity: "",
+      expectedStatus: 0,
+      expectedCalls: ["pm2", "ss", "pm2", "ss", "pm2", "ss"],
+    },
+    {
+      name: "attempted start is ineligible",
+      switchCompleted: 1,
+      currentTarget: "/candidate",
+      pm2State: "absent",
+      socketState: "",
+      startAttempted: 1,
+      expectedStatus: 1,
+      expectedCalls: [],
+    },
+    {
+      name: "inactive PM2 entry is not absent",
+      switchCompleted: 1,
+      currentTarget: "/candidate",
+      pm2State: "inactive",
+      socketState: "",
+      startAttempted: 0,
+      expectedStatus: 1,
+      expectedCalls: ["pm2"],
+    },
+    {
+      name: "bound port is not absent",
+      switchCompleted: 1,
+      currentTarget: "/candidate",
+      pm2State: "absent",
+      socketState: "LISTEN",
+      startAttempted: 0,
+      expectedStatus: 1,
+      expectedCalls: ["pm2", "ss"],
+    },
+    {
+      name: "ss warning on stderr is not an empty-port proof",
+      switchCompleted: 1,
+      currentTarget: "/candidate",
+      pm2State: "absent",
+      socketState: "",
+      socketStderr: "netlink warning",
+      startAttempted: 0,
+      expectedStatus: 1,
+      expectedCalls: ["pm2", "ss"],
+    },
+    {
+      name: "current link drift is rejected before process inspection",
+      switchCompleted: 1,
+      currentTarget: "/drift",
+      pm2State: "absent",
+      socketState: "",
+      startAttempted: 0,
+      expectedStatus: 1,
+      expectedCalls: [],
+    },
+  ];
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const calls = join(directory, `calls-${index}`);
+      const result = spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        input: [
+          "set +e",
+          absent,
+          `CALLS='${toBashPath(calls)}'`,
+          "unset SECONDS; SECONDS=0",
+          "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=10",
+          "CANDIDATE_WEB_HANDOFF_STATE=not-started",
+          `CANDIDATE_WEB_START_ATTEMPTED='${fixture.startAttempted}'`,
+          "PROCESSES_STOPPED=1",
+          "FORWARD_MUTATION_STARTED=1",
+          `SWITCH_COMPLETED='${fixture.switchCompleted}'`,
+          "CURRENT_LINK=/current",
+          "PREVIOUS_RUNTIME_DIR=/previous",
+          "PREVIOUS_RUNTIME_IDENTITY=11:22:33",
+          "RELEASE_DIR=/candidate",
+          `CANDIDATE_RUNTIME_IDENTITY='${fixture.candidateRuntimeIdentity ?? "44:55:66"}'`,
+          "BOOKING_PREFLIGHT_RUNTIME_IDENTITY=44:55:66",
+          "APP_NAME=web",
+          "APP_PORT=3000",
+          `CURRENT_TARGET='${fixture.currentTarget}'`,
+          `PM2_STATE='${fixture.pm2State}'`,
+          `SOCKET_STATE='${fixture.socketState}'`,
+          `SOCKET_STDERR='${fixture.socketStderr ?? ""}'`,
+          "readlink() { printf '%s\\n' \"$CURRENT_TARGET\"; }",
+          "stat() { case \"${@: -1}\" in /previous) printf '11:22:33\\n' ;; /candidate) printf '44:55:66\\n' ;; *) return 1 ;; esac; }",
+          "pm2_process_snapshot() { printf 'pm2\\n' >> \"$CALLS\"; printf '%s\\n' \"$PM2_STATE\"; }",
+          "deadline_bounded_command_timeout_seconds() { printf 2; }",
+          "timeout() { while [ \"$#\" -gt 0 ]; do case \"$1\" in --signal=*|--kill-after=*) shift ;; *s) shift; break ;; *) break ;; esac; done; \"$@\"; }",
+          "ss() { printf 'ss\\n' >> \"$CALLS\"; printf '%s' \"$SOCKET_STATE\"; printf '%s' \"$SOCKET_STDERR\" >&2; }",
+          "sleep() { SECONDS=$((SECONDS + 1)); }",
+          "candidate_web_is_provably_absent; status=$?",
+          "printf '%s\\n' \"$status\"",
+        ].join("\n"),
+        timeout: 10_000,
+      });
+      assert.equal(result.status, 0, `${fixture.name}\n${result.stderr}`);
+      assert.equal(result.stderr, "", fixture.name);
+      assert.equal(Number(result.stdout.trim()), fixture.expectedStatus, fixture.name);
+      let callsMade = [];
+      try {
+        callsMade = (await readFile(calls, "utf8")).trim().split("\n").filter(Boolean);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      assert.deepEqual(callsMade, fixture.expectedCalls, fixture.name);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("candidate rollback maps exact-stop, not-started absence, and unverified states", () => {
+  const stop = extractShellFunction("stop_frozen_candidate_web_bounded");
+  const fixtures = [
+    {
+      name: "exact candidate stops completely",
+      state: "exact",
+      startAttempted: 1,
+      innerStatus: 0,
+      innerDeleteCompleted: 1,
+      innerStopCompleted: 1,
+      expectedStatus: 0,
+      expectedState: "absent",
+      expectedAttempts: 1,
+      expectedDeleteCompleted: 1,
+      expectedStopCompleted: 1,
+    },
+    {
+      name: "exact PM2 deletion failure maps to process phase",
+      state: "exact",
+      startAttempted: 1,
+      innerStatus: 1,
+      innerDeleteCompleted: 0,
+      innerStopCompleted: 0,
+      expectedStatus: 2,
+      expectedState: "exact",
+      expectedAttempts: 1,
+      expectedDeleteCompleted: 0,
+      expectedStopCompleted: 0,
+    },
+    {
+      name: "exact listener quiescence failure maps to port phase",
+      state: "exact",
+      startAttempted: 1,
+      innerStatus: 1,
+      innerDeleteCompleted: 1,
+      innerStopCompleted: 0,
+      expectedStatus: 3,
+      expectedState: "exact",
+      expectedAttempts: 1,
+      expectedDeleteCompleted: 1,
+      expectedStopCompleted: 0,
+    },
+    {
+      name: "exactly stopped candidate is re-proven from its frozen proof",
+      state: "absent",
+      startAttempted: 1,
+      initialDeleteCompleted: 1,
+      initialStopCompleted: 1,
+      innerStatus: 99,
+      innerDeleteCompleted: 0,
+      innerStopCompleted: 0,
+      expectedStatus: 0,
+      expectedState: "absent",
+      expectedAttempts: 0,
+      expectedDeleteCompleted: 1,
+      expectedStopCompleted: 1,
+    },
+    {
+      name: "not-started candidate is proven absent",
+      state: "not-started",
+      startAttempted: 0,
+      absenceStatus: 0,
+      innerStatus: 99,
+      innerDeleteCompleted: 0,
+      innerStopCompleted: 0,
+      expectedStatus: 0,
+      expectedState: "not-started",
+      expectedAttempts: 0,
+      expectedDeleteCompleted: 0,
+      expectedStopCompleted: 0,
+    },
+    {
+      name: "attempted candidate cannot use the not-started absence shortcut",
+      state: "not-started",
+      startAttempted: 1,
+      absenceStatus: 0,
+      innerStatus: 99,
+      innerDeleteCompleted: 0,
+      innerStopCompleted: 0,
+      expectedStatus: 4,
+      expectedState: "not-started",
+      expectedAttempts: 0,
+      expectedDeleteCompleted: 0,
+      expectedStopCompleted: 0,
+    },
+    {
+      name: "unverified candidate is never signalled",
+      state: "unverified",
+      startAttempted: 1,
+      absenceStatus: 0,
+      innerStatus: 99,
+      innerDeleteCompleted: 0,
+      innerStopCompleted: 0,
+      expectedStatus: 4,
+      expectedState: "unverified",
+      expectedAttempts: 0,
+      expectedDeleteCompleted: 0,
+      expectedStopCompleted: 0,
+    },
+  ];
+  for (const fixture of fixtures) {
+    const script = [
+      "set +e",
+      stop,
+      "RELEASE_DIR=/release",
+      "CANDIDATE_RUNTIME_IDENTITY=1:2:3",
+      "CANDIDATE_WEB_PID=4321",
+      "CANDIDATE_WEB_PROCESS_START_TICKS=99",
+      "CANDIDATE_WEB_PROCESS_IDENTITY=1:2",
+      "CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64=cHJvb2Y=",
+      "CANDIDATE_WEB_PM2_DELETE_ATTEMPTS=0",
+      `CANDIDATE_WEB_PM2_DELETE_COMPLETED='${fixture.initialDeleteCompleted ?? 0}'`,
+      `CANDIDATE_WEB_FROZEN_STOP_COMPLETED='${fixture.initialStopCompleted ?? 0}'`,
+      `CANDIDATE_WEB_START_ATTEMPTED='${fixture.startAttempted}'`,
+      `CANDIDATE_WEB_HANDOFF_STATE='${fixture.state}'`,
+      "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
+      "PORT_RELEASE_TOTAL_TIMEOUT_SECONDS=60",
+      `INNER_STATUS='${fixture.innerStatus}'`,
+      `INNER_DELETE_COMPLETED='${fixture.innerDeleteCompleted}'`,
+      `INNER_STOP_COMPLETED='${fixture.innerStopCompleted}'`,
+      `ABSENCE_STATUS='${fixture.absenceStatus ?? 1}'`,
+      "candidate_web_is_provably_absent() { return \"$ABSENCE_STATUS\"; }",
+      "previous_web_listener_handoff_operation() {",
+      "  case \"$1\" in pm2-absent) printf absent ;; inspect) printf gone ;; *) return 1 ;; esac",
+      "}",
+      "stop_frozen_previous_web_bounded() {",
+      "  PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=1",
+      "  PREVIOUS_WEB_PM2_DELETE_COMPLETED=\"$INNER_DELETE_COMPLETED\"",
+      "  PREVIOUS_WEB_FROZEN_STOP_COMPLETED=\"$INNER_STOP_COMPLETED\"",
+      "  return \"$INNER_STATUS\"",
+      "}",
+      "stop_frozen_candidate_web_bounded; status=$?",
+      "printf '%s %s %s %s %s\\n' \"$status\" \"$CANDIDATE_WEB_HANDOFF_STATE\" \"$CANDIDATE_WEB_PM2_DELETE_ATTEMPTS\" \"$CANDIDATE_WEB_PM2_DELETE_COMPLETED\" \"$CANDIDATE_WEB_FROZEN_STOP_COMPLETED\"",
+    ].join("\n");
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: script,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${fixture.name}\n${result.stderr}`);
+    const [status, state, attempts, deleteCompleted, stopCompleted] =
+      result.stdout.trim().split(" ");
+    assert.equal(Number(status), fixture.expectedStatus, fixture.name);
+    assert.equal(state, fixture.expectedState, fixture.name);
+    assert.equal(Number(attempts), fixture.expectedAttempts, fixture.name);
+    assert.equal(
+      Number(deleteCompleted),
+      fixture.expectedDeleteCompleted,
+      fixture.name,
+    );
+    assert.equal(Number(stopCompleted), fixture.expectedStopCompleted, fixture.name);
+  }
 });
 
 test("frozen listener state machine escalates only an unchanged exact process", async () => {
@@ -7574,6 +8304,48 @@ test("frozen listener state machine escalates only an unchanged exact process", 
   }
 });
 
+test("frozen stop accepts exact PM2 natural absence before quiescing only the proven listener", async () => {
+  const stop = extractShellFunction("stop_frozen_previous_web_bounded");
+  const directory = await mkdtemp(join(tmpdir(), "faolla-pm2-natural-absence-"));
+  const calls = join(directory, "calls");
+  try {
+    const result = spawnSync(resolveBashExecutable(), ["-s"], {
+      encoding: "utf8",
+      input: [
+        "set +e",
+        stop,
+        `CALLS='${toBashPath(calls)}'`,
+        "PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64=frozen-proof",
+        "PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0",
+        "PREVIOUS_WEB_PM2_DELETE_COMPLETED=0",
+        "PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0",
+        "previous_web_process_identity_matches() { printf 'forbidden-identity\\n' >> \"$CALLS\"; return 1; }",
+        "previous_web_listener_handoff_operation() {",
+        "  printf 'operation:%s\\n' \"$1\" >> \"$CALLS\"",
+        "  [ \"$1\" = pm2-absent ] || return 1",
+        "  printf absent",
+        "}",
+        "deadline_bounded_command_timeout_seconds() { printf 5; }",
+        "pm2() { printf 'forbidden-delete\\n' >> \"$CALLS\"; return 1; }",
+        "quiesce_frozen_previous_web_listener_bounded() { printf 'quiesce\\n' >> \"$CALLS\"; return 0; }",
+        "unset SECONDS; SECONDS=0",
+        "stop_frozen_previous_web_bounded 40 60; status=$?",
+        "printf 'RESULT:%s:%s:%s:%s\\n' \"$status\" \"$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS\" \"$PREVIOUS_WEB_PM2_DELETE_COMPLETED\" \"$PREVIOUS_WEB_FROZEN_STOP_COMPLETED\"",
+      ].join("\n"),
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout, "RESULT:0:0:1:1\n");
+    assert.deepEqual(
+      (await readFile(calls, "utf8")).trim().split("\n"),
+      ["operation:pm2-absent", "operation:pm2-absent", "quiesce"],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("PM2 delete partial mutation is resumed without deleting twice", async () => {
   const stop = extractShellFunction("stop_frozen_previous_web_bounded");
   const directory = await mkdtemp(join(tmpdir(), "faolla-pm2-delete-resume-"));
@@ -7596,7 +8368,10 @@ test("PM2 delete partial mutation is resumed without deleting twice", async () =
         "  case \"$1\" in",
         "    capture) printf frozen-proof ;;",
         "    pm-id) printf 7 ;;",
-        "    pm2-absent) printf absent ;;",
+        "    pm2-absent)",
+        "      [ \"$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS\" -gt 0 ] || return 1",
+        "      printf absent",
+        "      ;;",
         "    *) return 1 ;;",
         "  esac",
         "}",
@@ -7629,6 +8404,7 @@ test("PM2 delete partial mutation is resumed without deleting twice", async () =
     assert.deepEqual(
       recorded.filter((line) => line.startsWith("operation:")),
       [
+        "operation:pm2-absent",
         "operation:capture",
         "operation:pm-id",
         "operation:pm2-absent",
@@ -7646,7 +8422,7 @@ test("PM2 delete partial mutation is resumed without deleting twice", async () =
 });
 
 test(
-  "Linux legacy listener handoff rejects frozen drift and PM2 replacement before signalling",
+  "Linux listener handoff separates launch mode from descendant topology and rejects frozen drift",
   { skip: process.platform !== "linux" },
   async (t) => {
     for (const [command, args] of [["ss", ["-V"]], ["timeout", ["--version"]]]) {
@@ -7658,6 +8434,10 @@ test(
     }
 
     const operation = extractShellFunction("previous_web_listener_handoff_operation");
+    const quiesce = extractShellFunction(
+      "quiesce_frozen_previous_web_listener_bounded",
+    );
+    const frozenStop = extractShellFunction("stop_frozen_previous_web_bounded");
     const directory = await mkdtemp(join(tmpdir(), "faolla-legacy-handoff-linux-"));
     const runtime = join(directory, "runtime");
     const binaryDirectory = join(directory, "bin");
@@ -7668,6 +8448,14 @@ test(
     const wrapperPath = join(directory, "wrapper.mjs");
     const fakePm2Path = join(binaryDirectory, "pm2");
     const fakeNpmPath = join(binaryDirectory, "npm");
+    const directNextEntryPath = join(
+      runtime,
+      "node_modules",
+      "next",
+      "dist",
+      "bin",
+      "next",
+    );
     let wrapper;
     let listenerPid = 0;
 
@@ -7706,7 +8494,9 @@ test(
     };
 
     try {
-      await mkdir(runtime, { recursive: true });
+      await mkdir(join(runtime, "node_modules", "next", "dist", "bin"), {
+        recursive: true,
+      });
       await mkdir(binaryDirectory, { recursive: true });
       await writeFile(
         listenerPath,
@@ -7754,8 +8544,10 @@ test(
         { mode: 0o700 },
       );
       await writeFile(fakeNpmPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      await writeFile(directNextEntryPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
       await chmod(fakePm2Path, 0o700);
       await chmod(fakeNpmPath, 0o700);
+      await chmod(directNextEntryPath, 0o700);
 
       wrapper = spawn(
         process.execPath,
@@ -7810,13 +8602,14 @@ test(
         CONTRACT_WRAPPER_PROCESS_IDENTITY: `${wrapperStat.dev}:${wrapperStat.ino}`,
         CONTRACT_APP_NAME: "web",
       };
-      const runOperation = (handoffOperation, proof = "") =>
+      const runOperation = (handoffOperation, proof = "", expectedLaunchMode = "either") =>
         spawnSync(resolveBashExecutable(), ["-s"], {
           encoding: "utf8",
           env: {
             ...operationEnvironment,
             CONTRACT_OPERATION: handoffOperation,
             CONTRACT_PROOF: proof,
+            CONTRACT_EXPECTED_LAUNCH_MODE: expectedLaunchMode,
           },
           input: [
             "set -Eeuo pipefail",
@@ -7829,25 +8622,102 @@ test(
             'PREVIOUS_WEB_PROCESS_IDENTITY="$CONTRACT_WRAPPER_PROCESS_IDENTITY"',
             'APP_NAME="$CONTRACT_APP_NAME"',
             'PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$CONTRACT_PROOF"',
-            'previous_web_listener_handoff_operation "$CONTRACT_OPERATION"',
+            'previous_web_listener_handoff_operation "$CONTRACT_OPERATION" "" "$CONTRACT_EXPECTED_LAUNCH_MODE"',
           ].join("\n"),
           timeout: 10_000,
         });
+      const runFrozenStop = (proof) =>
+        spawnSync(resolveBashExecutable(), ["-s"], {
+          encoding: "utf8",
+          env: {
+            ...operationEnvironment,
+            CONTRACT_PROOF: proof,
+          },
+          input: [
+            "set -Eeuo pipefail",
+            operation,
+            quiesce,
+            frozenStop,
+            "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=5",
+            'PREVIOUS_WEB_PID="$CONTRACT_WRAPPER_PID"',
+            'APP_PORT="$CONTRACT_PORT"',
+            'PREVIOUS_RUNTIME_DIR="$CONTRACT_RUNTIME"',
+            'PREVIOUS_WEB_PROCESS_START_TICKS="$CONTRACT_WRAPPER_START_TICKS"',
+            'PREVIOUS_WEB_PROCESS_IDENTITY="$CONTRACT_WRAPPER_PROCESS_IDENTITY"',
+            'APP_NAME="$CONTRACT_APP_NAME"',
+            'PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$CONTRACT_PROOF"',
+            "PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0",
+            "PREVIOUS_WEB_PM2_DELETE_COMPLETED=0",
+            "PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0",
+            "deadline_bounded_command_timeout_seconds() { [ \"$SECONDS\" -lt \"$1\" ] || return 1; printf 2; }",
+            "stop_frozen_previous_web_bounded 5 15",
+            "printf 'RESULT:%s:%s:%s\\n' \"$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS\" \"$PREVIOUS_WEB_PM2_DELETE_COMPLETED\" \"$PREVIOUS_WEB_FROZEN_STOP_COMPLETED\"",
+          ].join("\n"),
+          timeout: 25_000,
+        });
 
-      const captured = runOperation("capture");
+      const directEntry = structuredClone(frozenEntry);
+      directEntry.pm2_env.pm_exec_path = directNextEntryPath;
+      directEntry.pm2_env.args = ["start", "-p", String(ready.port)];
+      await writeFile(fakePm2List, JSON.stringify([directEntry]), { mode: 0o600 });
+      const capturedDirect = runOperation("capture", "", "direct");
+      assert.equal(
+        capturedDirect.status,
+        0,
+        `${capturedDirect.stdout}\n${capturedDirect.stderr}`,
+      );
+      assert.equal(capturedDirect.stderr, "");
+      const directProof = JSON.parse(
+        Buffer.from(capturedDirect.stdout, "base64").toString("utf8"),
+      );
+      assert.equal(directProof.schemaVersion, 2);
+      assert.equal(directProof.launchMode, "direct");
+      assert.equal(directProof.listenerTopology, "descendant");
+      assert.equal(directProof.wrapperPid, wrapper.pid);
+      assert.equal(directProof.listenerPid, listenerPid);
+
+      const rejectedDirectAsLegacy = runOperation("capture", "", "legacy");
+      assert.equal(rejectedDirectAsLegacy.status, 1, rejectedDirectAsLegacy.stderr);
+      assert.equal(rejectedDirectAsLegacy.stdout, "");
+      assert.equal(rejectedDirectAsLegacy.stderr, "");
+      assert.equal(processIsAlive(wrapper.pid), true);
+      assert.equal(processIsAlive(listenerPid), true);
+
+      await writeFile(fakePm2List, JSON.stringify([frozenEntry]), { mode: 0o600 });
+      const captured = runOperation("capture", "", "legacy");
       assert.equal(captured.status, 0, `${captured.stdout}\n${captured.stderr}`);
       assert.equal(captured.stderr, "");
       assert.match(captured.stdout, /^[A-Za-z0-9+/]+={0,2}$/);
       const frozenProof = JSON.parse(
         Buffer.from(captured.stdout, "base64").toString("utf8"),
       );
-      assert.equal(frozenProof.mode, "legacy");
+      assert.equal(frozenProof.schemaVersion, 2);
+      assert.equal(frozenProof.launchMode, "legacy");
+      assert.equal(frozenProof.listenerTopology, "descendant");
       assert.equal(frozenProof.wrapperPid, wrapper.pid);
       assert.equal(frozenProof.listenerPid, listenerPid);
       assert.equal(frozenProof.pm2.pmId, 7);
+      const rejectedLegacyProofAsDirect = runOperation(
+        "inspect",
+        captured.stdout,
+        "direct",
+      );
+      assert.equal(
+        rejectedLegacyProofAsDirect.status,
+        1,
+        rejectedLegacyProofAsDirect.stderr,
+      );
+      assert.equal(rejectedLegacyProofAsDirect.stdout, "");
+      assert.equal(rejectedLegacyProofAsDirect.stderr, "");
+      assert.equal(processIsAlive(wrapper.pid), true);
+      assert.equal(processIsAlive(listenerPid), true);
+      assert.equal(await pathExists(signalPath), false);
 
       await writeFile(fakePm2List, "[]", { mode: 0o600 });
-      const pm2AbsentWhileWrapperLives = runOperation("pm2-absent", captured.stdout);
+      const pm2AbsentWhileWrapperLives = runOperation(
+        "pm2-absent",
+        capturedDirect.stdout,
+      );
       assert.equal(
         pm2AbsentWhileWrapperLives.status,
         0,
@@ -7855,7 +8725,7 @@ test(
       );
       assert.equal(pm2AbsentWhileWrapperLives.stdout, "absent");
       assert.equal(pm2AbsentWhileWrapperLives.stderr, "");
-      const wrapperPending = runOperation("inspect", captured.stdout);
+      const wrapperPending = runOperation("inspect", capturedDirect.stdout);
       assert.equal(wrapperPending.status, 0, wrapperPending.stderr);
       assert.equal(wrapperPending.stdout, "wrapper-pending");
       assert.equal(wrapperPending.stderr, "");
@@ -7871,7 +8741,7 @@ test(
         "listener reparenting to init",
       );
 
-      const driftedProof = structuredClone(frozenProof);
+      const driftedProof = structuredClone(directProof);
       driftedProof.chain[0].startTicks = String(
         BigInt(driftedProof.chain[0].startTicks) + 1n,
       );
@@ -7888,7 +8758,7 @@ test(
         JSON.stringify([{ name: "web", pm_id: 91, pm2_env: { name: "web", pm_id: 91 } }]),
         { mode: 0o600 },
       );
-      const rejectedReplacement = runOperation("TERM", captured.stdout);
+      const rejectedReplacement = runOperation("TERM", capturedDirect.stdout);
       assert.equal(rejectedReplacement.status, 1, rejectedReplacement.stderr);
       assert.equal(rejectedReplacement.stdout, "");
       assert.equal(rejectedReplacement.stderr, "");
@@ -7896,16 +8766,25 @@ test(
       assert.equal(await pathExists(signalPath), false);
 
       await writeFile(fakePm2List, "[]", { mode: 0o600 });
-      const exactTerm = runOperation("TERM", captured.stdout);
-      assert.equal(exactTerm.status, 0, `${exactTerm.stdout}\n${exactTerm.stderr}`);
-      assert.equal(exactTerm.stdout, "signalled");
-      assert.equal(exactTerm.stderr, "");
+      const exactStop = runFrozenStop(capturedDirect.stdout);
+      assert.equal(exactStop.status, 0, `${exactStop.stdout}\n${exactStop.stderr}`);
+      assert.match(exactStop.stdout, /^RESULT:0:1:1(?:\r?\n)?$/);
+      assert.equal(exactStop.stderr, "");
       await waitUntil(() => !processIsAlive(listenerPid), "exact listener termination");
       assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
-      const gone = runOperation("inspect", captured.stdout);
+      const gone = runOperation("inspect", capturedDirect.stdout);
       assert.equal(gone.status, 0, `${gone.stdout}\n${gone.stderr}`);
       assert.equal(gone.stdout, "gone");
       assert.equal(gone.stderr, "");
+      const naturallyGone = runFrozenStop(capturedDirect.stdout);
+      assert.equal(
+        naturallyGone.status,
+        0,
+        `${naturallyGone.stdout}\n${naturallyGone.stderr}`,
+      );
+      assert.match(naturallyGone.stdout, /^RESULT:0:1:1(?:\r?\n)?$/);
+      assert.equal(naturallyGone.stderr, "");
+      assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
     } finally {
       if (wrapper?.pid && processIsAlive(wrapper.pid)) wrapper.kill("SIGKILL");
       if (listenerPid > 0 && processIsAlive(listenerPid)) {
@@ -7913,6 +8792,283 @@ test(
           process.kill(listenerPid, "SIGKILL");
         } catch {
           // The listener exited between the exact liveness check and cleanup signal.
+        }
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "Linux direct wrapper listener is exactly quiesced after PM2 metadata disappears and never signals a replacement owner",
+  { skip: process.platform !== "linux" },
+  async (t) => {
+    for (const [command, args] of [["ss", ["-V"]], ["timeout", ["--version"]]]) {
+      const probe = spawnSync(command, args, { stdio: "ignore" });
+      if (probe.status !== 0) {
+        t.skip(`${command} is required for the Linux wrapper-listener contract`);
+        return;
+      }
+    }
+
+    const operation = extractShellFunction("previous_web_listener_handoff_operation");
+    const quiesce = extractShellFunction(
+      "quiesce_frozen_previous_web_listener_bounded",
+    );
+    const frozenStop = extractShellFunction("stop_frozen_previous_web_bounded");
+    const directory = await mkdtemp(join(tmpdir(), "faolla-wrapper-handoff-linux-"));
+    const runtime = join(directory, "runtime");
+    const binaryDirectory = join(directory, "bin");
+    const fakePm2List = join(directory, "pm2-list.json");
+    const listenerPath = join(directory, "direct-listener.mjs");
+    const readyPath = join(directory, "listener-ready.json");
+    const signalPath = join(directory, "listener-signals");
+    const replacementReadyPath = join(directory, "replacement-ready.json");
+    const replacementSignalPath = join(directory, "replacement-signals");
+    const fakePm2Path = join(binaryDirectory, "pm2");
+    const directNextEntryPath = join(
+      runtime,
+      "node_modules",
+      "next",
+      "dist",
+      "bin",
+      "next",
+    );
+    let listener;
+    let replacement;
+
+    const waitUntil = async (predicate, description, timeoutMs = 20_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const result = await predicate();
+          if (result) return result;
+        } catch {
+          // A fixture file or /proc entry can be briefly unavailable while changing.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`timed out waiting for ${description}`);
+    };
+    const processIsAlive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const readStartTicks = async (pid) => {
+      const source = await readFile(`/proc/${pid}/stat`, "utf8");
+      const close = source.lastIndexOf(")");
+      return source.slice(close + 2).trim().split(/\s+/)[19];
+    };
+    const readReady = (path) => waitUntil(async () => {
+      const value = JSON.parse(await readFile(path, "utf8"));
+      return Number.isSafeInteger(value.pid) && Number.isSafeInteger(value.port)
+        ? value
+        : false;
+    }, `listener readiness at ${path}`);
+
+    try {
+      await mkdir(join(runtime, "node_modules", "next", "dist", "bin"), {
+        recursive: true,
+      });
+      await mkdir(binaryDirectory, { recursive: true });
+      await writeFile(
+        listenerPath,
+        [
+          'import { appendFileSync, writeFileSync } from "node:fs";',
+          'import { createServer } from "node:net";',
+          "const [readyPath, signalPath, rawPort] = process.argv.slice(2);",
+          "const port = Number(rawPort);",
+          "const server = createServer(() => {});",
+          'server.listen(port, "127.0.0.1", () => {',
+          "  const address = server.address();",
+          "  writeFileSync(readyPath, JSON.stringify({ pid: process.pid, port: address.port }), { mode: 0o600 });",
+          "});",
+          'process.on("SIGTERM", () => {',
+          '  appendFileSync(signalPath, "TERM\\n", { mode: 0o600 });',
+          "});",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+      await writeFile(
+        fakePm2Path,
+        [
+          "#!/bin/sh",
+          'if [ "$#" -eq 1 ] && [ "$1" = jlist ]; then',
+          '  exec cat -- "$FAKE_PM2_LIST"',
+          "fi",
+          "exit 1",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      await writeFile(directNextEntryPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      await chmod(fakePm2Path, 0o700);
+      await chmod(directNextEntryPath, 0o700);
+
+      listener = spawn(
+        process.execPath,
+        [listenerPath, readyPath, signalPath, "0"],
+        { cwd: runtime, stdio: "ignore" },
+      );
+      const ready = await readReady(readyPath);
+      assert.equal(ready.pid, listener.pid);
+      const now = Date.now();
+      const frozenEntry = {
+        pid: listener.pid,
+        name: "web",
+        pm_id: 8,
+        pm2_env: {
+          name: "web",
+          pm_id: 8,
+          status: "online",
+          exec_mode: "fork_mode",
+          pm_uptime: now - 1_000,
+          created_at: now - 2_000,
+          restart_time: 0,
+          node_args: [],
+          pm_cwd: runtime,
+          pm_exec_path: directNextEntryPath,
+          exec_interpreter: process.execPath,
+          args: ["start", "-p", String(ready.port)],
+        },
+      };
+      await writeFile(fakePm2List, JSON.stringify([frozenEntry]), { mode: 0o600 });
+      const listenerStat = await stat(`/proc/${listener.pid}`);
+      const operationEnvironment = {
+        ...process.env,
+        PATH: `${binaryDirectory}:${process.env.PATH ?? ""}`,
+        FAKE_PM2_LIST: fakePm2List,
+        CONTRACT_WRAPPER_PID: String(listener.pid),
+        CONTRACT_PORT: String(ready.port),
+        CONTRACT_RUNTIME: runtime,
+        CONTRACT_WRAPPER_START_TICKS: await readStartTicks(listener.pid),
+        CONTRACT_WRAPPER_PROCESS_IDENTITY: `${listenerStat.dev}:${listenerStat.ino}`,
+        CONTRACT_APP_NAME: "web",
+      };
+      const runOperation = (
+        handoffOperation,
+        proof = "",
+        expectedLaunchMode = "either",
+      ) => spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        env: {
+          ...operationEnvironment,
+          CONTRACT_OPERATION: handoffOperation,
+          CONTRACT_PROOF: proof,
+          CONTRACT_EXPECTED_LAUNCH_MODE: expectedLaunchMode,
+        },
+        input: [
+          "set -Eeuo pipefail",
+          operation,
+          "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=5",
+          'PREVIOUS_WEB_PID="$CONTRACT_WRAPPER_PID"',
+          'APP_PORT="$CONTRACT_PORT"',
+          'PREVIOUS_RUNTIME_DIR="$CONTRACT_RUNTIME"',
+          'PREVIOUS_WEB_PROCESS_START_TICKS="$CONTRACT_WRAPPER_START_TICKS"',
+          'PREVIOUS_WEB_PROCESS_IDENTITY="$CONTRACT_WRAPPER_PROCESS_IDENTITY"',
+          'APP_NAME="$CONTRACT_APP_NAME"',
+          'PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$CONTRACT_PROOF"',
+          'previous_web_listener_handoff_operation "$CONTRACT_OPERATION" "" "$CONTRACT_EXPECTED_LAUNCH_MODE"',
+        ].join("\n"),
+        timeout: 10_000,
+      });
+      const runFrozenStop = (proof) =>
+        spawnSync(resolveBashExecutable(), ["-s"], {
+          encoding: "utf8",
+          env: { ...operationEnvironment, CONTRACT_PROOF: proof },
+          input: [
+            "set -Eeuo pipefail",
+            operation,
+            quiesce,
+            frozenStop,
+            "PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=5",
+            'PREVIOUS_WEB_PID="$CONTRACT_WRAPPER_PID"',
+            'APP_PORT="$CONTRACT_PORT"',
+            'PREVIOUS_RUNTIME_DIR="$CONTRACT_RUNTIME"',
+            'PREVIOUS_WEB_PROCESS_START_TICKS="$CONTRACT_WRAPPER_START_TICKS"',
+            'PREVIOUS_WEB_PROCESS_IDENTITY="$CONTRACT_WRAPPER_PROCESS_IDENTITY"',
+            'APP_NAME="$CONTRACT_APP_NAME"',
+            'PREVIOUS_WEB_LISTENER_HANDOFF_PROOF_B64="$CONTRACT_PROOF"',
+            "PREVIOUS_WEB_PM2_DELETE_ATTEMPTS=0",
+            "PREVIOUS_WEB_PM2_DELETE_COMPLETED=0",
+            "PREVIOUS_WEB_FROZEN_STOP_COMPLETED=0",
+            "deadline_bounded_command_timeout_seconds() { [ \"$SECONDS\" -lt \"$1\" ] || return 1; printf 2; }",
+            "stop_frozen_previous_web_bounded 5 18",
+            "printf 'RESULT:%s:%s:%s\\n' \"$PREVIOUS_WEB_PM2_DELETE_ATTEMPTS\" \"$PREVIOUS_WEB_PM2_DELETE_COMPLETED\" \"$PREVIOUS_WEB_FROZEN_STOP_COMPLETED\"",
+          ].join("\n"),
+          timeout: 30_000,
+        });
+
+      const captured = runOperation("capture", "", "direct");
+      assert.equal(captured.status, 0, `${captured.stdout}\n${captured.stderr}`);
+      assert.equal(captured.stderr, "");
+      const proof = JSON.parse(
+        Buffer.from(captured.stdout, "base64").toString("utf8"),
+      );
+      assert.equal(proof.schemaVersion, 2);
+      assert.equal(proof.launchMode, "direct");
+      assert.equal(proof.listenerTopology, "wrapper");
+      assert.equal(proof.wrapperPid, listener.pid);
+      assert.equal(proof.listenerPid, listener.pid);
+      assert.equal(proof.chain.length, 1);
+
+      await writeFile(fakePm2List, "[]", { mode: 0o600 });
+      const inspected = runOperation("inspect", captured.stdout, "direct");
+      assert.equal(inspected.status, 0, inspected.stderr);
+      assert.equal(inspected.stdout, "matched");
+      assert.equal(inspected.stderr, "");
+      const wrongMode = runOperation("TERM", captured.stdout, "legacy");
+      assert.equal(wrongMode.status, 1, wrongMode.stderr);
+      assert.equal(wrongMode.stdout, "");
+      assert.equal(wrongMode.stderr, "");
+      assert.equal(processIsAlive(listener.pid), true);
+      assert.equal(await pathExists(signalPath), false);
+
+      const stopped = runFrozenStop(captured.stdout);
+      assert.equal(stopped.status, 0, `${stopped.stdout}\n${stopped.stderr}`);
+      assert.match(stopped.stdout, /^RESULT:0:1:1(?:\r?\n)?$/);
+      assert.equal(stopped.stderr, "");
+      await waitUntil(() => !processIsAlive(listener.pid), "direct wrapper termination");
+      assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
+      const gone = runOperation("inspect", captured.stdout, "direct");
+      assert.equal(gone.status, 0, `${gone.stdout}\n${gone.stderr}`);
+      assert.equal(gone.stdout, "gone");
+      assert.equal(gone.stderr, "");
+
+      replacement = spawn(
+        process.execPath,
+        [
+          listenerPath,
+          replacementReadyPath,
+          replacementSignalPath,
+          String(ready.port),
+        ],
+        { cwd: runtime, stdio: "ignore" },
+      );
+      const replacementReady = await readReady(replacementReadyPath);
+      assert.equal(replacementReady.pid, replacement.pid);
+      assert.equal(replacementReady.port, ready.port);
+      const rejectedNewOwnerTerm = runOperation("TERM", captured.stdout, "direct");
+      assert.equal(rejectedNewOwnerTerm.status, 1, rejectedNewOwnerTerm.stderr);
+      assert.equal(rejectedNewOwnerTerm.stdout, "");
+      assert.equal(rejectedNewOwnerTerm.stderr, "");
+      const rejectedNewOwnerKill = runOperation("KILL", captured.stdout, "direct");
+      assert.equal(rejectedNewOwnerKill.status, 1, rejectedNewOwnerKill.stderr);
+      assert.equal(rejectedNewOwnerKill.stdout, "");
+      assert.equal(rejectedNewOwnerKill.stderr, "");
+      assert.equal(processIsAlive(replacement.pid), true);
+      assert.equal(await pathExists(replacementSignalPath), false);
+    } finally {
+      for (const child of [listener, replacement]) {
+        if (child?.pid && processIsAlive(child.pid)) {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // The fixture exited between the exact liveness check and cleanup signal.
+          }
         }
       }
       await rm(directory, { recursive: true, force: true });
