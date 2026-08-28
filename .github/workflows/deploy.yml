@@ -1056,6 +1056,12 @@ jobs:
               '[deploy] deploy_preflight_booking_persistence_integrity_failed' \
               '[deploy] deploy_preflight_booking_persistence_invocation_failed' \
               '[deploy] deploy_preflight_booking_persistence_transient_failed' \
+              '[deploy] deploy_preflight_post_booking_runtime_identity_unverified' \
+              '[deploy] deploy_preflight_post_booking_web_identity_unverified' \
+              '[deploy] deploy_preflight_previous_release_evidence_unverified' \
+              '[deploy] deploy_preflight_previous_runtime_identity_unverified' \
+              '[deploy] deploy_preflight_previous_web_identity_unverified' \
+              '[deploy] deploy_preflight_readiness_fence_start_unverified' \
               '[deploy] deploy_preflight_staff_compatibility_marker_failed' \
               '[deploy] deploy_preflight_staff_rollout_environment_failed' \
               '[deploy] deploy_rollback_failed_compatibility_restore' \

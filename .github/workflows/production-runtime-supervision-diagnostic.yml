@@ -11,16 +11,27 @@ on:
         description: Exact 40-character build currently expected in production
         required: true
         type: string
+      incident_deploy_run_id:
+        description: Optional failed Deploy Production run to classify
+        required: false
+        default: ""
+        type: string
+      incident_target_sha:
+        description: Exact target SHA of the optional failed deploy
+        required: false
+        default: ""
+        type: string
       confirmation:
         description: Type CHECK_PRODUCTION_RUNTIME_SUPERVISION
         required: true
         type: string
 
 concurrency:
-  group: production-runtime-supervision-diagnostic
+  group: ${{ inputs.incident_deploy_run_id == '' && 'production-runtime-supervision-diagnostic' || 'production-deploy' }}
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -34,6 +45,8 @@ jobs:
         env:
           EXPECTED_DIAGNOSTIC_SHA: ${{ inputs.expected_diagnostic_sha }}
           EXPECTED_RUNTIME_BUILD_ID: ${{ inputs.expected_runtime_build_id }}
+          INCIDENT_DEPLOY_RUN_ID: ${{ inputs.incident_deploy_run_id }}
+          INCIDENT_TARGET_SHA: ${{ inputs.incident_target_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
         shell: bash
         run: |
@@ -45,6 +58,11 @@ jobs:
           [[ "$EXPECTED_DIAGNOSTIC_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXPECTED_RUNTIME_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]
           [ "$EXPECTED_DIAGNOSTIC_SHA" = "$GITHUB_SHA" ]
+          if [ -n "$INCIDENT_DEPLOY_RUN_ID" ] \
+            || [ -n "$INCIDENT_TARGET_SHA" ]; then
+            [[ "$INCIDENT_DEPLOY_RUN_ID" =~ ^[1-9][0-9]{7,19}$ ]]
+            [[ "$INCIDENT_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          fi
 
       - name: Checkout Exact Diagnostic Revision
         uses: actions/checkout@v4
@@ -61,6 +79,106 @@ jobs:
           [ "$(git rev-parse HEAD)" = "$EXPECTED_DIAGNOSTIC_SHA" ]
           test -f scripts/check-production-runtime-supervision.mjs
           test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Resolve Failed Deploy Window
+        id: incident-window
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INCIDENT_DEPLOY_RUN_ID: ${{ inputs.incident_deploy_run_id }}
+          INCIDENT_TARGET_SHA: ${{ inputs.incident_target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$INCIDENT_DEPLOY_RUN_ID" ]; then
+            printf 'started_at_epoch=\nended_at_epoch=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          incident_run="$RUNNER_TEMP/runtime-supervision-incident-run.json"
+          incident_jobs="$RUNNER_TEMP/runtime-supervision-incident-jobs.json"
+          cleanup() {
+            rm -f -- "$incident_run" "$incident_jobs"
+          }
+          fail_boundary() {
+            echo "[runtime-supervision] runtime_supervision_incident_boundary_unverified"
+            exit 1
+          }
+          trap cleanup EXIT
+          if ! gh api --method GET -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$INCIDENT_DEPLOY_RUN_ID" \
+            > "$incident_run" 2>/dev/null; then
+            fail_boundary
+          fi
+          if ! gh api --method GET -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$INCIDENT_DEPLOY_RUN_ID/attempts/1/jobs" \
+            > "$incident_jobs" 2>/dev/null; then
+            fail_boundary
+          fi
+          if ! node --input-type=module - \
+            "$incident_run" "$incident_jobs" "$GITHUB_OUTPUT" 2>/dev/null <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const fail = () => process.exit(1);
+          const run = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const jobsPage = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const outputPath = process.argv[4];
+          const runId = Number(process.env.INCIDENT_DEPLOY_RUN_ID);
+          if (
+            !Number.isSafeInteger(runId) || runId <= 0 || run?.id !== runId ||
+            run.run_attempt !== 1 || run.name !== "Deploy Production" ||
+            run.path !== ".github/workflows/deploy.yml" ||
+            run.event !== "workflow_run" || run.status !== "completed" ||
+            run.conclusion !== "failure" || run.head_branch !== "main" ||
+            run.head_sha !== process.env.INCIDENT_TARGET_SHA ||
+            run.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) fail();
+          const jobs = jobsPage?.jobs;
+          if (
+            jobsPage?.total_count !== 1 || !Array.isArray(jobs) ||
+            jobs.length !== 1
+          ) fail();
+          const job = jobs[0];
+          if (
+            job?.id === undefined || job.run_id !== runId ||
+            job.name !== "deploy" || job.run_attempt !== 1 ||
+            job.status !== "completed" || job.conclusion !== "failure" ||
+            job.head_sha !== process.env.INCIDENT_TARGET_SHA ||
+            !Array.isArray(job.steps)
+          ) fail();
+          const deploySteps = job.steps.filter(
+            (step) => step?.number === 9 && step.name === "Deploy To Server",
+          );
+          const verifySteps = job.steps.filter(
+            (step) => step?.number === 10 && step.name === "Verify Public Release",
+          );
+          if (
+            deploySteps.length !== 1 || deploySteps[0].status !== "completed" ||
+            deploySteps[0].conclusion !== "failure" ||
+            verifySteps.length !== 1 || verifySteps[0].status !== "completed" ||
+            verifySteps[0].conclusion !== "skipped"
+          ) fail();
+          const startedMilliseconds = Date.parse(deploySteps[0].started_at);
+          const endedMilliseconds = Date.parse(deploySteps[0].completed_at);
+          if (
+            !Number.isFinite(startedMilliseconds) ||
+            !Number.isFinite(endedMilliseconds) ||
+            startedMilliseconds % 1000 !== 0 || endedMilliseconds % 1000 !== 0 ||
+            endedMilliseconds <= startedMilliseconds ||
+            endedMilliseconds - startedMilliseconds > 3_600_000
+          ) fail();
+          appendFileSync(
+            outputPath,
+            `started_at_epoch=${startedMilliseconds / 1000}\n` +
+              `ended_at_epoch=${endedMilliseconds / 1000}\n`,
+            { encoding: "utf8", mode: 0o600 },
+          );
+          NODE
+          then
+            fail_boundary
+          fi
 
       - name: Setup SSH
         env:
@@ -99,6 +217,8 @@ jobs:
           APP_NAME: ${{ secrets.APP_NAME }}
           APP_PORT: ${{ secrets.APP_PORT }}
           EXPECTED_RUNTIME_BUILD_ID: ${{ inputs.expected_runtime_build_id }}
+          INCIDENT_WINDOW_STARTED_AT_EPOCH: ${{ steps.incident-window.outputs.started_at_epoch }}
+          INCIDENT_WINDOW_ENDED_AT_EPOCH: ${{ steps.incident-window.outputs.ended_at_epoch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -120,9 +240,10 @@ jobs:
           printf -v remote_app_name '%q' "$APP_NAME"
           printf -v remote_app_port '%q' "$APP_PORT"
           printf -v remote_build_id '%q' "$EXPECTED_RUNTIME_BUILD_ID"
+          printf -v remote_incident_started_at '%q' "$INCIDENT_WINDOW_STARTED_AT_EPOCH"
+          printf -v remote_incident_ended_at '%q' "$INCIDENT_WINDOW_ENDED_AT_EPOCH"
           remote_main="$(git ls-remote --exit-code origin refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }')"
           [ "$remote_main" = "$GITHUB_SHA" ]
-          remote_command="NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node --input-type=module - $remote_app_dir $remote_app_name $remote_app_port $remote_build_id"
           capture_dir="$(mktemp -d)"
           stdout_file="$capture_dir/stdout"
           stderr_file="$capture_dir/stderr"
@@ -137,6 +258,13 @@ jobs:
           : > "$stderr_file"
           : > "$expected_file"
           chmod 600 "$stdout_file" "$stderr_file" "$expected_file"
+          observation_reference_epoch_milliseconds=""
+          if [ -n "$INCIDENT_WINDOW_STARTED_AT_EPOCH" ]; then
+            observation_reference_epoch_milliseconds="$(date -u +%s%3N)"
+            [[ "$observation_reference_epoch_milliseconds" =~ ^[1-9][0-9]{12}$ ]]
+          fi
+          printf -v remote_observation_reference '%q' "$observation_reference_epoch_milliseconds"
+          remote_command="NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node --input-type=module - $remote_app_dir $remote_app_name $remote_app_port $remote_build_id $remote_incident_started_at $remote_incident_ended_at $remote_observation_reference"
           set +e
           (
             ulimit -f 8
@@ -149,21 +277,62 @@ jobs:
           ) > "$stdout_file" 2> "$stderr_file"
           diagnostic_status=$?
           set -e
+          observation_round_trip_verified=1
+          if [ -n "$INCIDENT_WINDOW_STARTED_AT_EPOCH" ]; then
+            if ! observation_completed_epoch_milliseconds="$(date -u +%s%3N)" \
+              || ! [[ "$observation_completed_epoch_milliseconds" =~ ^[1-9][0-9]{12}$ ]] \
+              || [ "$observation_completed_epoch_milliseconds" -lt "$observation_reference_epoch_milliseconds" ] \
+              || [ $((observation_completed_epoch_milliseconds - observation_reference_epoch_milliseconds)) -gt 5000 ]; then
+              observation_round_trip_verified=0
+            fi
+          fi
           if [ -s "$stderr_file" ]; then
             echo "[runtime-supervision] runtime_supervision_result_unverified"
             exit 1
           fi
           case "$diagnostic_status" in
             0)
-              expected_lines=(
-                "[runtime-supervision] runtime_supervision_direct_next_owned"
-                "[runtime-supervision] runtime_supervision_legacy_npm_wrapper_owned"
-              )
+              if [ -n "$INCIDENT_WINDOW_STARTED_AT_EPOCH" ]; then
+                if [ "$observation_round_trip_verified" -eq 1 ]; then
+                  expected_lines=("[runtime-supervision] runtime_supervision_owner_started_before_incident_window")
+                else
+                  expected_lines=()
+                fi
+              else
+                expected_lines=(
+                  "[runtime-supervision] runtime_supervision_direct_next_owned"
+                  "[runtime-supervision] runtime_supervision_legacy_npm_wrapper_owned"
+                )
+              fi
               ;;
             20) expected_lines=("[runtime-supervision] runtime_supervision_runtime_listener_reparented_to_init") ;;
             21) expected_lines=("[runtime-supervision] runtime_supervision_listener_absent") ;;
             22) expected_lines=("[runtime-supervision] runtime_supervision_identity_mismatch") ;;
             23) expected_lines=("[runtime-supervision] runtime_supervision_state_unreadable") ;;
+            24)
+              if [ -n "$INCIDENT_WINDOW_STARTED_AT_EPOCH" ] \
+                && [ "$observation_round_trip_verified" -eq 1 ]; then
+                expected_lines=("[runtime-supervision] runtime_supervision_owner_started_during_incident_window")
+              else
+                expected_lines=()
+              fi
+              ;;
+            25)
+              if [ -n "$INCIDENT_WINDOW_STARTED_AT_EPOCH" ] \
+                && [ "$observation_round_trip_verified" -eq 1 ]; then
+                expected_lines=("[runtime-supervision] runtime_supervision_owner_started_after_incident_window")
+              else
+                expected_lines=()
+              fi
+              ;;
+            26)
+              if [ -n "$INCIDENT_WINDOW_STARTED_AT_EPOCH" ] \
+                && [ "$observation_round_trip_verified" -eq 1 ]; then
+                expected_lines=("[runtime-supervision] runtime_supervision_owner_start_boundary_ambiguous")
+              else
+                expected_lines=()
+              fi
+              ;;
             *) expected_lines=() ;;
           esac
           matched_line=""

@@ -25,7 +25,15 @@ export const RUNTIME_SUPERVISION_CODES = Object.freeze({
   unreadable: "runtime_supervision_state_unreadable",
 });
 
+export const RUNTIME_START_WINDOW_CODES = Object.freeze({
+  before: "runtime_supervision_owner_started_before_incident_window",
+  during: "runtime_supervision_owner_started_during_incident_window",
+  after: "runtime_supervision_owner_started_after_incident_window",
+  ambiguous: "runtime_supervision_owner_start_boundary_ambiguous",
+});
+
 const BUILD_PATTERN = /^[0-9a-f]{40}$/;
+const EPOCH_SECONDS_PATTERN = /^[1-9][0-9]{9}$/;
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 
@@ -188,6 +196,39 @@ function runCaptured(command, args, timeout = 5_000) {
     throw new Error("capture_failed");
   }
   return result.stdout;
+}
+
+function captureProcessClock(referenceEpochMilliseconds) {
+  const rawClockTicks = runCaptured("getconf", ["CLK_TCK"]).trim();
+  const observedBeforeMilliseconds = Date.now();
+  const rawUptime = readFileSync("/proc/uptime", "utf8");
+  const observedAfterMilliseconds = Date.now();
+  const uptimeMatch = rawUptime.match(
+    /^([0-9]{1,12})\.([0-9]{1,9}) [0-9]{1,12}\.[0-9]{1,9}\n?$/,
+  );
+  if (
+    !uptimeMatch ||
+    !/^[1-9][0-9]{0,5}$/.test(rawClockTicks) ||
+    !/^[1-9][0-9]{12}$/.test(referenceEpochMilliseconds) ||
+    observedAfterMilliseconds < observedBeforeMilliseconds ||
+    observedAfterMilliseconds - observedBeforeMilliseconds > 250 ||
+    observedBeforeMilliseconds < Number(referenceEpochMilliseconds) ||
+    observedBeforeMilliseconds - Number(referenceEpochMilliseconds) > 5_000
+  ) {
+    throw new Error("process_clock_unavailable");
+  }
+  const fractionalDigits = Math.min(uptimeMatch[2].length, 3);
+  const uptimeMilliseconds =
+    BigInt(uptimeMatch[1]) * 1000n +
+    BigInt(`${uptimeMatch[2]}000`.slice(0, 3));
+  return {
+    clockTicksPerSecond: rawClockTicks,
+    observedAfterMilliseconds: observedAfterMilliseconds.toString(10),
+    observedBeforeMilliseconds: observedBeforeMilliseconds.toString(10),
+    referenceEpochMilliseconds,
+    uptimeQuantumMilliseconds: (10 ** (3 - fractionalDigits)).toString(10),
+    uptimeMilliseconds: uptimeMilliseconds.toString(10),
+  };
 }
 
 export function captureRuntimeProof(appDirectory, expectedBuildId) {
@@ -636,21 +677,147 @@ export function classifyRuntimeSupervision(snapshot) {
     : RUNTIME_SUPERVISION_CODES.mismatch;
 }
 
+export function classifyRuntimeStartWindow(
+  snapshot,
+  processClock,
+  incidentStartedAtEpoch,
+  incidentEndedAtEpoch,
+) {
+  if (
+    !isRecord(snapshot) ||
+    snapshot.stable !== true ||
+    !isRecord(snapshot.ownership) ||
+    snapshot.ownership.state !== "owned" ||
+    !Array.isArray(snapshot.listener?.chain) ||
+    !isRecord(processClock) ||
+    !/^[1-9][0-9]{12}$/.test(processClock.observedBeforeMilliseconds ?? "") ||
+    !/^[1-9][0-9]{12}$/.test(processClock.observedAfterMilliseconds ?? "") ||
+    !/^[1-9][0-9]{12}$/.test(processClock.referenceEpochMilliseconds ?? "") ||
+    !/^[1-9][0-9]*$/.test(processClock.uptimeMilliseconds ?? "") ||
+    !/^[1-9][0-9]{0,2}$/.test(processClock.uptimeQuantumMilliseconds ?? "") ||
+    !/^[1-9][0-9]{0,5}$/.test(processClock.clockTicksPerSecond ?? "") ||
+    !EPOCH_SECONDS_PATTERN.test(incidentStartedAtEpoch ?? "") ||
+    !EPOCH_SECONDS_PATTERN.test(incidentEndedAtEpoch ?? "")
+  ) {
+    return RUNTIME_SUPERVISION_CODES.unreadable;
+  }
+  const owner = snapshot.listener.chain.find(
+    (fact) => fact?.pid === snapshot.ownership.pid,
+  );
+  if (!isRecord(owner) || !/^[1-9][0-9]*$/.test(owner.startTicks ?? "")) {
+    return RUNTIME_SUPERVISION_CODES.unreadable;
+  }
+  try {
+    const observedBeforeMilliseconds = BigInt(
+      processClock.observedBeforeMilliseconds,
+    );
+    const observedAfterMilliseconds = BigInt(
+      processClock.observedAfterMilliseconds,
+    );
+    const referenceEpochMilliseconds = BigInt(
+      processClock.referenceEpochMilliseconds,
+    );
+    const uptimeMilliseconds = BigInt(processClock.uptimeMilliseconds);
+    const uptimeQuantumMilliseconds = BigInt(
+      processClock.uptimeQuantumMilliseconds,
+    );
+    if (
+      observedAfterMilliseconds < observedBeforeMilliseconds ||
+      observedAfterMilliseconds - observedBeforeMilliseconds > 250n ||
+      observedBeforeMilliseconds < referenceEpochMilliseconds ||
+      observedBeforeMilliseconds > referenceEpochMilliseconds + 5_000n
+    ) {
+      return RUNTIME_SUPERVISION_CODES.unreadable;
+    }
+    const clockTicksPerSecond = BigInt(processClock.clockTicksPerSecond);
+    const processUptimeMilliseconds =
+      (BigInt(owner.startTicks) * 1000n) /
+      clockTicksPerSecond;
+    if (processUptimeMilliseconds > uptimeMilliseconds) {
+      return RUNTIME_SUPERVISION_CODES.unreadable;
+    }
+    const tickCeilingMilliseconds =
+      (1000n + clockTicksPerSecond - 1n) / clockTicksPerSecond;
+    const processLowerMilliseconds = observedBeforeMilliseconds -
+      uptimeMilliseconds + processUptimeMilliseconds -
+      uptimeQuantumMilliseconds;
+    const processUpperMilliseconds = observedAfterMilliseconds -
+      uptimeMilliseconds + processUptimeMilliseconds +
+      tickCeilingMilliseconds;
+    const incidentStartedMilliseconds = BigInt(incidentStartedAtEpoch) * 1000n;
+    const incidentEndedMilliseconds = BigInt(incidentEndedAtEpoch) * 1000n;
+    const boundaryGuardMilliseconds = 6_000n;
+    if (incidentEndedMilliseconds <= incidentStartedMilliseconds) {
+      return RUNTIME_SUPERVISION_CODES.unreadable;
+    }
+    if (
+      processUpperMilliseconds <
+        incidentStartedMilliseconds - boundaryGuardMilliseconds
+    ) {
+      return RUNTIME_START_WINDOW_CODES.before;
+    }
+    if (
+      processLowerMilliseconds >=
+        incidentStartedMilliseconds + boundaryGuardMilliseconds &&
+      processUpperMilliseconds <=
+        incidentEndedMilliseconds - boundaryGuardMilliseconds
+    ) {
+      return RUNTIME_START_WINDOW_CODES.during;
+    }
+    if (
+      processLowerMilliseconds >
+        incidentEndedMilliseconds + boundaryGuardMilliseconds
+    ) {
+      return RUNTIME_START_WINDOW_CODES.after;
+    }
+    return RUNTIME_START_WINDOW_CODES.ambiguous;
+  } catch {
+    return RUNTIME_SUPERVISION_CODES.unreadable;
+  }
+}
+
 async function main() {
-  const [appDirectory, appName, rawPort, expectedBuildId] = process.argv.slice(2);
+  const [
+    appDirectory,
+    appName,
+    rawPort,
+    expectedBuildId,
+    incidentStartedAtEpoch = "",
+    incidentEndedAtEpoch = "",
+    observationReferenceEpochMilliseconds = "",
+  ] = process.argv.slice(2);
   const port = Number(rawPort);
+  const incidentWindowRequested =
+    incidentStartedAtEpoch !== "" || incidentEndedAtEpoch !== "" ||
+    observationReferenceEpochMilliseconds !== "";
   if (
     !isAbsolute(appDirectory ?? "") ||
     !NAME_PATTERN.test(appName ?? "") ||
     !Number.isSafeInteger(port) ||
     port < 1 ||
     port > 65_535 ||
-    !BUILD_PATTERN.test(expectedBuildId ?? "")
+    !BUILD_PATTERN.test(expectedBuildId ?? "") ||
+    (incidentWindowRequested &&
+      (!EPOCH_SECONDS_PATTERN.test(incidentStartedAtEpoch) ||
+        !EPOCH_SECONDS_PATTERN.test(incidentEndedAtEpoch) ||
+        !/^[1-9][0-9]{12}$/.test(observationReferenceEpochMilliseconds) ||
+        BigInt(incidentEndedAtEpoch) <= BigInt(incidentStartedAtEpoch) ||
+        BigInt(incidentEndedAtEpoch) - BigInt(incidentStartedAtEpoch) > 3600n))
   ) {
     fixedCode(RUNTIME_SUPERVISION_CODES.unreadable, 23);
     return;
   }
   try {
+    let processClock = null;
+    if (incidentWindowRequested) {
+      try {
+        processClock = captureProcessClock(
+          observationReferenceEpochMilliseconds,
+        );
+      } catch {
+        processClock = null;
+      }
+    }
     const firstRuntime = captureRuntimeProof(appDirectory, expectedBuildId);
     const first = await captureSupervisionSnapshot(appName, firstRuntime, port, expectedBuildId);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -658,11 +825,26 @@ async function main() {
     const second = await captureSupervisionSnapshot(appName, secondRuntime, port, expectedBuildId);
     const stable = JSON.stringify(firstRuntime) === JSON.stringify(secondRuntime) &&
       JSON.stringify(first) === JSON.stringify(second);
-    const code = classifyRuntimeSupervision({
+    const stableSnapshot = {
       ...second,
       runtime: secondRuntime.runtime,
       stable,
-    });
+    };
+    let code = classifyRuntimeSupervision(stableSnapshot);
+    if (
+      incidentWindowRequested &&
+      [RUNTIME_SUPERVISION_CODES.direct, RUNTIME_SUPERVISION_CODES.legacy]
+        .includes(code)
+    ) {
+      code = processClock === null
+        ? RUNTIME_SUPERVISION_CODES.unreadable
+        : classifyRuntimeStartWindow(
+          stableSnapshot,
+          processClock,
+          incidentStartedAtEpoch,
+          incidentEndedAtEpoch,
+        );
+    }
     const statusByCode = new Map([
       [RUNTIME_SUPERVISION_CODES.direct, 0],
       [RUNTIME_SUPERVISION_CODES.legacy, 0],
@@ -670,6 +852,10 @@ async function main() {
       [RUNTIME_SUPERVISION_CODES.listenerAbsent, 21],
       [RUNTIME_SUPERVISION_CODES.mismatch, 22],
       [RUNTIME_SUPERVISION_CODES.unreadable, 23],
+      [RUNTIME_START_WINDOW_CODES.before, 0],
+      [RUNTIME_START_WINDOW_CODES.during, 24],
+      [RUNTIME_START_WINDOW_CODES.after, 25],
+      [RUNTIME_START_WINDOW_CODES.ambiguous, 26],
     ]);
     fixedCode(code, statusByCode.get(code) ?? 23);
   } catch {
