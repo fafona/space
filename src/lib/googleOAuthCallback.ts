@@ -10,6 +10,9 @@ export type GoogleOAuthUrlErrorDetails = {
   description: string;
 };
 
+const PRODUCTION_PORTAL_ORIGIN = "https://launch.faolla.com";
+const PRODUCTION_OAUTH_REDIRECT_BRIDGE_ORIGIN = "https://faolla.com";
+
 const GOOGLE_OAUTH_TRANSIENT_SEARCH_PARAMS = [
   "code",
   "state",
@@ -44,6 +47,21 @@ function readGoogleOAuthParam(href: string, ...keys: string[]) {
 function readPositiveNumber(value: string | null) {
   const parsed = Number(value ?? "");
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function resolveGoogleOAuthRedirectOrigin(browserOrigin: string) {
+  try {
+    const origin = new URL(browserOrigin).origin;
+    // Production Auth still allow-lists the public root login callback. That
+    // route immediately canonicalizes to launch.faolla.com while preserving
+    // the OAuth query, so the PKCE verifier remains on the launch origin.
+    if (origin === PRODUCTION_PORTAL_ORIGIN) {
+      return PRODUCTION_OAUTH_REDIRECT_BRIDGE_ORIGIN;
+    }
+    return origin;
+  } catch {
+    return "";
+  }
 }
 
 export function readGoogleOAuthUrlTokens(href: string): GoogleOAuthUrlTokens | null {

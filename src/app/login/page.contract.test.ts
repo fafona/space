@@ -31,3 +31,15 @@ test("staff identities keep the owner-session security boundary and receive acti
   assert.match(source, /msg === merchantStaffIdentityMessage/);
   assert.match(source, /Employee accounts cannot be converted directly into owner accounts/);
 });
+
+test("Google OAuth uses the production allow-listed callback bridge", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const oauthStart = source.indexOf("async function signInWithGoogle");
+  const oauthEnd = source.indexOf("signInWithGoogleRef.current = signInWithGoogle", oauthStart);
+
+  assert.ok(oauthStart >= 0 && oauthEnd > oauthStart, "Google OAuth start flow should remain auditable");
+  const oauthFlow = source.slice(oauthStart, oauthEnd);
+  assert.match(oauthFlow, /resolveGoogleOAuthRedirectOrigin\(window\.location\.origin\)/);
+  assert.match(oauthFlow, /callbackUrl\.searchParams\.set\("oauth", "google"\)/);
+  assert.match(oauthFlow, /redirectTo: callbackUrl\.toString\(\)/);
+});

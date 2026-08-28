@@ -112,6 +112,26 @@ test("middleware canonicalizes the launch host before browser session recovery",
   assert.equal(response.headers.get("clear-site-data"), '"cache", "storage"');
 });
 
+test("middleware preserves the OAuth callback query across the production login bridge", async () => {
+  const previousPortalOrigin = process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
+  process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://launch.faolla.com";
+  try {
+    const callbackPath =
+      "/login?oauth=google&accountType=merchant&redirect=%2F10000000&code=test-code&state=test-state";
+    const response = await middleware(new NextRequest(`https://faolla.com${callbackPath}`));
+
+    assert.equal(response.status, 308);
+    assert.equal(response.headers.get("location"), `https://launch.faolla.com${callbackPath}`);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+  } finally {
+    if (previousPortalOrigin === undefined) {
+      delete process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
+    } else {
+      process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = previousPortalOrigin;
+    }
+  }
+});
+
 test("middleware never replays unsafe launch-host requests across origins", async () => {
   const response = await middleware(
     new NextRequest("https://launch.faolla.com/", { method: "POST", body: "state=private" }),

@@ -701,7 +701,7 @@ export async function middleware(request: NextRequest) {
 
   if (!isPortalHost && /^\/(?:admin|login|launch|me|reset-password)(?:\/|$)/i.test(pathname)) {
     if (request.method === "GET") {
-      return withSecurityHeaders(redirectToOrigin(request, resolveCanonicalPortalOrigin()), request);
+      return withAppShellNoStore(redirectToOrigin(request, resolveCanonicalPortalOrigin()), request);
     }
     return wrongOriginResponse(request, "portal_origin_required");
   }
