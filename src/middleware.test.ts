@@ -199,6 +199,54 @@ test("middleware moves public card and share routes off the authenticated portal
   }
 });
 
+test("middleware keeps enterprise entry paths on the canonical portal as sensitive no-store UI", async () => {
+  for (const path of ["/enterprise", "/enterprise/10000000"]) {
+    const response = await middleware(new NextRequest(`https://faolla.com${path}`));
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("location"), null);
+    assert.equal(response.headers.get("x-middleware-next"), "1");
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+    assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+  }
+});
+
+test("middleware returns enterprise UI paths from tenant origins to the canonical portal", async () => {
+  for (const path of ["/enterprise", "/enterprise/10000000?view=tasks"]) {
+    const response = await middleware(new NextRequest(`https://merchant.faolla.com${path}`));
+
+    assert.equal(response.status, 308);
+    assert.equal(response.headers.get("location"), `https://faolla.com${path}`);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+    assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+  }
+
+  const mutation = await middleware(
+    new NextRequest("https://merchant.faolla.com/enterprise/10000000", {
+      method: "POST",
+      body: "private=state",
+    }),
+  );
+  assert.equal(mutation.status, 421);
+  assert.equal(mutation.headers.get("location"), null);
+  assert.match(mutation.headers.get("cache-control") ?? "", /no-store/);
+  assert.deepEqual(await mutation.json(), { error: "portal_origin_required" });
+});
+
+test("middleware keeps nested enterprise paths inside the canonical sensitive portal boundary", async () => {
+  const path = "/enterprise/10000000/workflows/executions?view=pending";
+  const canonical = await middleware(new NextRequest(`https://faolla.com${path}`));
+  assert.equal(canonical.headers.get("x-middleware-next"), "1");
+  assert.equal(canonical.headers.get("location"), null);
+  assert.match(canonical.headers.get("cache-control") ?? "", /no-store/);
+  assert.match(canonical.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+
+  const tenant = await middleware(new NextRequest(`https://merchant.faolla.com${path}`));
+  assert.equal(tenant.status, 308);
+  assert.equal(tenant.headers.get("location"), `https://faolla.com${path}`);
+});
+
 test("middleware isolates portal auth and super-admin console hosts", async () => {
   const tenantAuth = await middleware(
     new NextRequest("https://merchant.faolla.com/api/auth/merchant-session", {
@@ -347,15 +395,19 @@ test("middleware keeps an authenticated merchant on their backend Faolla section
 });
 
 test("middleware rejects backend Faolla section targets", async () => {
-  const request = new NextRequest("https://faolla.com/10000000?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2Fadmin");
+  for (const target of ["/admin", "/enterprise/10000000"]) {
+    const request = new NextRequest(
+      `https://faolla.com/10000000?section=faolla&faollaUrl=${encodeURIComponent(`https://faolla.com${target}`)}`,
+    );
 
-  const response = await middleware(request);
-  const location = response.headers.get("location") ?? "";
+    const response = await middleware(request);
+    const location = response.headers.get("location") ?? "";
 
-  assert.equal(response.status, 307);
-  assert.match(location, /^https:\/\/faolla\.com\/\?/);
-  assert.doesNotMatch(location, /\/admin/);
-  assert.match(location, /(?:\?|&)appShell=faolla(?:&|$)/);
+    assert.equal(response.status, 307);
+    assert.match(location, /^https:\/\/faolla\.com\/\?/);
+    assert.doesNotMatch(location, new RegExp(target.split("/")[1] ?? "invalid"));
+    assert.match(location, /(?:\?|&)appShell=faolla(?:&|$)/);
+  }
 });
 
 test("middleware redirects unauthenticated mobile public merchant entries to the guest Faolla shell", async () => {

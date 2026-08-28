@@ -31,6 +31,7 @@ const RESERVED_PATH_SEGMENTS = new Set([
   "auth",
   "card",
   "connect",
+  "enterprise",
   "icon.svg",
   "industry",
   "launch",
@@ -292,6 +293,7 @@ function shouldNoStoreAppShellPath(pathname: string) {
     pathname === "/admin" ||
     pathname === "/me" ||
     pathname === "/login" ||
+    /^\/enterprise(?:\/|$)/i.test(pathname) ||
     pathname.startsWith("/super-admin") ||
     pathname.startsWith("/api/super-admin") ||
     SUPER_ADMIN_CONSOLE_SHARED_API_PATHS.has(pathname) ||
@@ -334,7 +336,7 @@ function isTrustedFaollaShellTarget(targetUrl: URL, requestUrl: URL) {
 }
 
 function isBackendOrApiShellPath(pathname: string) {
-  return /^\/(?:\d{8}|admin|api|login|me|super-admin)(?:\/|$)/i.test(pathname);
+  return /^\/(?:\d{8}|admin|api|enterprise|login|me|super-admin)(?:\/|$)/i.test(pathname);
 }
 
 function isAuthenticatedOwnMerchantRequest(request: NextRequest, merchantId: string) {
@@ -416,7 +418,7 @@ function isTrustedPlatformRootAssetPath(pathname: string) {
 }
 
 function isSensitiveUiOrAuthPath(pathname: string) {
-  return /^(?:\/(?:admin|login|launch|me|reset-password|super-admin))(?:\/|$)/i.test(pathname) ||
+  return /^(?:\/(?:admin|enterprise|login|launch|me|reset-password|super-admin))(?:\/|$)/i.test(pathname) ||
     /^\/api\/(?:auth|super-admin)(?:\/|$)/i.test(pathname);
 }
 
@@ -688,6 +690,13 @@ export async function middleware(request: NextRequest) {
 
   if (!isPortalHost && /^\/api\/auth(?:\/|$)/i.test(pathname)) {
     return wrongOriginResponse(request, "portal_origin_required");
+  }
+
+  if (!isPortalHost && /^\/enterprise(?:\/|$)/i.test(pathname)) {
+    if (request.method === "GET") {
+      return withAppShellNoStore(redirectToOrigin(request, resolveCanonicalPortalOrigin()), request);
+    }
+    return withNoStore(wrongOriginResponse(request, "portal_origin_required"));
   }
 
   if (!isPortalHost && /^\/(?:admin|login|launch|me|reset-password)(?:\/|$)/i.test(pathname)) {

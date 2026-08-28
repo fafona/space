@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+  reauthorizeMerchantBusinessMutation,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   MerchantOrderExportError,
@@ -17,8 +23,8 @@ import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
 } from "@/lib/requestMutationGuard";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -31,10 +37,23 @@ export type MerchantOrderExportAuditMetadata = {
   includeCustomerData: boolean;
   orderCount: number;
   byteLength: number;
+  actorType?: MerchantBusinessActor["type"];
+  actorPrincipalKey?: MerchantBusinessActor["principalKey"];
+  authorizationVersion?: MerchantBusinessActor["authorizationVersion"];
+};
+
+type MerchantOrderExportSession = {
+  merchantId: string;
+  actor?: MerchantBusinessActor;
+  assertAuthorizationCurrent?: () => Promise<void>;
 };
 
 export type MerchantOrderExportRouteDependencies = {
-  resolveSession: (request: Request, siteId: string) => Promise<{ merchantId: string } | null>;
+  resolveSession: (
+    request: Request,
+    siteId: string,
+    requiredPermission: MerchantStaffBusinessPermission,
+  ) => Promise<MerchantOrderExportSession | null>;
   isManagementEnabled: (siteId: string) => Promise<boolean>;
   listOrders: typeof listMerchantOrders;
   buildExport: (
@@ -61,12 +80,25 @@ function privateJson(body: unknown, init?: ResponseInit) {
   return applyPrivateResponseHeaders(NextResponse.json(body, init));
 }
 
-async function resolveOrderExportSession(request: Request, siteId: string) {
-  const session = await resolveMerchantSessionFromRequest(request, {
-    hintedMerchantId: siteId,
+async function resolveOrderExportSession(
+  request: Request,
+  siteId: string,
+  requiredPermission: MerchantStaffBusinessPermission,
+) {
+  const actor = await authorizeMerchantBusinessRequest(request, {
+    siteId,
+    requiredPermission,
   });
-  if (!session || session.merchantId !== siteId) return null;
-  return session;
+  return {
+    merchantId: actor.siteId,
+    actor,
+    assertAuthorizationCurrent: async () => {
+      await reauthorizeMerchantBusinessMutation(request, {
+        actor,
+        requiredPermissions: [requiredPermission],
+      });
+    },
+  };
 }
 
 async function isOrderExportManagementEnabled(siteId: string) {
@@ -76,7 +108,7 @@ async function isOrderExportManagementEnabled(siteId: string) {
 
 async function recordOrderExportAudit(metadata: MerchantOrderExportAuditMetadata) {
   const supabase = createServerSupabaseServiceClient();
-  if (!supabase) return;
+  if (!supabase) throw new Error("order_export_audit_unavailable");
   const at = new Date().toISOString();
   const result = await appendStoredMerchantOperationLog(
     supabase as unknown as MerchantOperationLogsStoreClient,
@@ -97,6 +129,13 @@ async function recordOrderExportAudit(metadata: MerchantOrderExportAuditMetadata
         `includeCustomerData=${metadata.includeCustomerData}`,
         `orders=${metadata.orderCount}`,
         `bytes=${metadata.byteLength}`,
+        ...(metadata.actorType ? [`actorType=${metadata.actorType}`] : []),
+        ...(metadata.actorPrincipalKey
+          ? [`actorPrincipalKey=${metadata.actorPrincipalKey}`]
+          : []),
+        ...(metadata.authorizationVersion
+          ? [`authorizationVersion=${metadata.authorizationVersion}`]
+          : []),
       ].join(";"),
     },
   );
@@ -127,6 +166,13 @@ function getExportErrorStatus(error: MerchantOrderExportError) {
   return 400;
 }
 
+function merchantBusinessErrorResponse(error: unknown) {
+  if (error instanceof MerchantBusinessAccessError) {
+    return privateJson({ error: error.code }, { status: error.status });
+  }
+  return privateJson({ error: "order_export_failed" }, { status: 503 });
+}
+
 export async function handleMerchantOrderExportPost(
   request: Request,
   dependencyOverrides: Partial<MerchantOrderExportRouteDependencies> = {},
@@ -151,16 +197,26 @@ export async function handleMerchantOrderExportPost(
   if (!isMerchantNumericId(siteId)) {
     return privateJson({ error: "invalid_site_id" }, { status: 400 });
   }
+  const requiredPermission: MerchantStaffBusinessPermission =
+    body.includeCustomerData === true
+      ? "orders.export.customer_data"
+      : "orders.export";
+  let session: MerchantOrderExportSession;
   try {
-    const session = await dependencies.resolveSession(request, siteId);
-    if (!session || session.merchantId !== siteId) {
+    const resolvedSession = await dependencies.resolveSession(
+      request,
+      siteId,
+      requiredPermission,
+    );
+    if (!resolvedSession || resolvedSession.merchantId !== siteId) {
       return privateJson({ error: "unauthorized" }, { status: 401 });
     }
+    session = resolvedSession;
     if (!(await dependencies.isManagementEnabled(siteId))) {
       return privateJson({ error: "order_management_disabled" }, { status: 403 });
     }
-  } catch {
-    return privateJson({ error: "order_export_failed" }, { status: 503 });
+  } catch (error) {
+    return merchantBusinessErrorResponse(error);
   }
 
   const rawInput: MerchantOrderExportInput = {
@@ -174,6 +230,10 @@ export async function handleMerchantOrderExportPost(
     // Validate before the canonical full-set read. The later build repeats this
     // pure validation so direct callers cannot bypass the export contract.
     const normalizedInput = normalizeMerchantOrderExportInput(rawInput);
+    // Re-check the exact principal, role version, and permission immediately
+    // before the sensitive canonical read so a concurrent revocation cannot
+    // turn a previously authorized request into a stale export.
+    await session.assertAuthorizationCurrent?.();
     const orders = await dependencies.listOrders(siteId);
     const exportResult = dependencies.buildExport(orders, {
       createdFrom: normalizedInput.createdFrom,
@@ -182,8 +242,8 @@ export async function handleMerchantOrderExportPost(
       includeCustomerData: normalizedInput.includeCustomerData,
     });
 
-    await dependencies
-      .recordAudit({
+    try {
+      await dependencies.recordAudit({
         siteId,
         createdFrom: exportResult.input.createdFrom,
         createdToExclusive: exportResult.input.createdToExclusive,
@@ -191,8 +251,20 @@ export async function handleMerchantOrderExportPost(
         includeCustomerData: exportResult.input.includeCustomerData,
         orderCount: exportResult.orderCount,
         byteLength: exportResult.byteLength,
-      })
-      .catch(() => undefined);
+        ...(session.actor
+          ? {
+              actorType: session.actor.type,
+              actorPrincipalKey: session.actor.principalKey,
+              authorizationVersion: session.actor.authorizationVersion,
+            }
+          : {}),
+      });
+    } catch (auditError) {
+      // Full customer-data exports are high-risk disclosures and must never
+      // succeed without a durable audit record. Summary exports retain the
+      // existing best-effort behavior for owner compatibility.
+      if (exportResult.input.includeCustomerData) throw auditError;
+    }
 
     return applyPrivateResponseHeaders(
       new Response(exportResult.csv, {
@@ -208,7 +280,7 @@ export async function handleMerchantOrderExportPost(
     if (error instanceof MerchantOrderExportError) {
       return privateJson({ error: error.code }, { status: getExportErrorStatus(error) });
     }
-    return privateJson({ error: "order_export_failed" }, { status: 503 });
+    return merchantBusinessErrorResponse(error);
   }
 }
 

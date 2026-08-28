@@ -1,4 +1,11 @@
-export const MERCHANT_ENTERPRISE_PERMISSIONS = [
+import {
+  getMerchantStaffBusinessPermissionDependencies,
+  MERCHANT_STAFF_BUSINESS_PERMISSION_CATALOG,
+  MERCHANT_STAFF_BUSINESS_PERMISSIONS,
+  type MerchantStaffBusinessPermissionGroup,
+} from "@/lib/merchantStaffBusiness";
+
+export const MERCHANT_ENTERPRISE_COLLABORATION_PERMISSIONS = [
   "enterprise.view",
   "tasks.view",
   "tasks.create",
@@ -17,6 +24,27 @@ export const MERCHANT_ENTERPRISE_PERMISSIONS = [
   "automations.view",
   "automations.manage",
   "audit.view",
+] as const;
+
+export type MerchantEnterpriseCollaborationPermission =
+  (typeof MERCHANT_ENTERPRISE_COLLABORATION_PERMISSIONS)[number];
+
+const MERCHANT_ENTERPRISE_COLLABORATION_PERMISSION_SET = new Set<string>(
+  MERCHANT_ENTERPRISE_COLLABORATION_PERMISSIONS,
+);
+
+export function isMerchantEnterpriseCollaborationPermission(
+  value: unknown,
+): value is MerchantEnterpriseCollaborationPermission {
+  return (
+    typeof value === "string" &&
+    MERCHANT_ENTERPRISE_COLLABORATION_PERMISSION_SET.has(value)
+  );
+}
+
+export const MERCHANT_ENTERPRISE_PERMISSIONS = [
+  ...MERCHANT_ENTERPRISE_COLLABORATION_PERMISSIONS,
+  ...MERCHANT_STAFF_BUSINESS_PERMISSIONS,
 ] as const;
 
 export const MAX_MERCHANT_TASK_ASSIGNEES = 50;
@@ -38,8 +66,17 @@ export type MerchantEnterprisePermission = (typeof MERCHANT_ENTERPRISE_PERMISSIO
 export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   key: MerchantEnterprisePermission;
   label: string;
-  group: "工作台" | "任务" | "订单" | "员工" | "角色" | "流程" | "审计";
+  group:
+    | "工作台"
+    | "任务"
+    | "订单"
+    | "员工"
+    | "角色"
+    | "流程"
+    | "审计"
+    | MerchantStaffBusinessPermissionGroup;
   description: string;
+  risk?: "standard" | "sensitive" | "high";
 }> = [
   { key: "enterprise.view", label: "进入企业管理", group: "工作台", description: "查看企业管理工作台。" },
   { key: "tasks.view", label: "查看任务", group: "任务", description: "查看有权访问的任务和看板。" },
@@ -59,6 +96,7 @@ export const MERCHANT_ENTERPRISE_PERMISSION_CATALOG: ReadonlyArray<{
   { key: "automations.view", label: "查看流程自动化", group: "流程", description: "查看自动触发规则及其运行结果。" },
   { key: "automations.manage", label: "管理流程自动化", group: "流程", description: "创建、修改、暂停和启用自动触发规则。" },
   { key: "audit.view", label: "查看审计记录", group: "审计", description: "查看企业设置和员工账号的不可变操作记录。" },
+  ...MERCHANT_STAFF_BUSINESS_PERMISSION_CATALOG,
 ];
 
 const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
@@ -91,6 +129,15 @@ const MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES: Readonly<
     "employees.view",
   ],
   "audit.view": ["enterprise.view"],
+  ...Object.fromEntries(
+    MERCHANT_STAFF_BUSINESS_PERMISSIONS.map((permission) => [
+      permission,
+      getMerchantStaffBusinessPermissionDependencies(permission),
+    ]),
+  ) as Record<
+    (typeof MERCHANT_STAFF_BUSINESS_PERMISSIONS)[number],
+    readonly MerchantEnterprisePermission[]
+  >,
 };
 
 export const MERCHANT_ENTERPRISE_ROLE_STATUSES = ["active", "archived"] as const;
@@ -944,12 +991,14 @@ export function normalizeMerchantEnterpriseRole(value: unknown): MerchantEnterpr
           readValue(record, "allowedBoardIds", "allowed_board_ids") ?? record.board_ids,
         )
       : [];
+  const permissions = parseMerchantEnterprisePermissionsStrict(record.permissions);
+  if (!permissions) return null;
   return {
     id,
     siteId,
     name,
     description: normalizeText(record.description, 1000),
-    permissions: normalizeMerchantEnterprisePermissions(record.permissions),
+    permissions,
     accessScope,
     allowedBoardIds,
     status: statusValue === "archived" ? "archived" : "active",

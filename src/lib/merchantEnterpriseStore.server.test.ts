@@ -591,7 +591,7 @@ test("role creation and updates persist board access through atomic RPCs", async
     async rpc(functionName: string, args: Record<string, unknown>) {
       const input = args.p_input as Record<string, unknown>;
       calls.push({ functionName, input });
-      const isCreate = functionName === "faolla_create_merchant_enterprise_role_v2";
+      const isCreate = functionName === "faolla_create_merchant_enterprise_role_v3";
       return {
         data: {
           role: roleRow(isCreate ? 1 : 2, "restricted"),
@@ -626,7 +626,7 @@ test("role creation and updates persist board access through atomic RPCs", async
   assert.equal(updated.version, 2);
   assert.deepEqual(calls, [
     {
-      functionName: "faolla_create_merchant_enterprise_role_v2",
+      functionName: "faolla_create_merchant_enterprise_role_v3",
       input: {
         merchant_id: "10000000",
         name: "Staff",
@@ -639,7 +639,7 @@ test("role creation and updates persist board access through atomic RPCs", async
       },
     },
     {
-      functionName: "faolla_update_merchant_enterprise_role_v2",
+      functionName: "faolla_update_merchant_enterprise_role_v3",
       input: {
         merchant_id: "10000000",
         role_id: created.id,
@@ -683,6 +683,34 @@ test("role RPC lifecycle conflicts keep their public error codes", async () => {
       new RegExp(code),
     );
   }
+});
+
+test("role updates reject invalid optimistic-lock versions before RPC", async () => {
+  let calls = 0;
+  const client = {
+    from() {
+      throw new Error("role mutations must stay transactional");
+    },
+    async rpc() {
+      calls += 1;
+      return { data: null, error: null };
+    },
+  } as unknown as MerchantEnterpriseStoreClient;
+
+  for (const version of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      updateMerchantEnterpriseRole(client, {
+        siteId: "10000000",
+        roleId: "11111111-1111-4111-8111-111111111111",
+        version,
+        description: "Updated",
+        actorType: "owner",
+        actorId: "88888888-8888-4888-8888-888888888888",
+      }),
+      /^Error: invalid_role_version$/,
+    );
+  }
+  assert.equal(calls, 0);
 });
 
 test("task access lookup resolves the board without exposing task contents", async () => {

@@ -86,7 +86,8 @@ function errorResponse(error: unknown) {
   const code = error instanceof Error ? error.message : "";
   if (
     code === "enterprise_version_conflict" ||
-    code === "enterprise_operation_in_progress"
+    code === "enterprise_operation_in_progress" ||
+    code === "business_role_workflow_grant_requires_role_editor"
   ) {
     return response({ ok: false, error: code }, 409);
   }

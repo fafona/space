@@ -334,3 +334,29 @@ test("revision mutations reject operation IDs that would be rewritten or truncat
   );
   assert.equal(calls, 0);
 });
+
+test("business-bearing roles must use the exact-owner role editor for workflow grants", async () => {
+  const rejectingClient: MerchantEnterpriseWorkflowRevisionStoreClient = {
+    async rpc() {
+      return {
+        data: null,
+        error: {
+          code: "P0001",
+          message: "business_role_workflow_grant_requires_role_editor",
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    grantMerchantEnterpriseRoleWorkflowPermissions(rejectingClient, {
+      siteId: "10000000",
+      roleId,
+      version: 3,
+      workflowPermissions: ["workflows.view"],
+      actor: owner,
+      operationId: "grant-workflow:business-role",
+    }),
+    { message: "business_role_workflow_grant_requires_role_editor" },
+  );
+});

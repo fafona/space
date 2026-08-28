@@ -428,6 +428,15 @@ export function applyMerchantOrderStatus(
   return applyMerchantOrderAction(record, record.status === "completed" ? "uncomplete" : "confirm", actedAt);
 }
 
+export function merchantOrderTransitionChangesCompletedState(
+  previousStatus: MerchantOrderStatus,
+  nextStatus: MerchantOrderStatus,
+) {
+  return (
+    (previousStatus === "completed") !== (nextStatus === "completed")
+  );
+}
+
 export function updateMerchantOrderItems(
   record: MerchantOrderRecord,
   itemsInput: MerchantOrderLineItemInput[],

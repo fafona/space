@@ -97,6 +97,63 @@ export type MerchantBookingRecord = MerchantBookingEditableInput &
     timeline?: MerchantBookingTimelineEntry[];
   };
 
+export type MerchantBookingTrustedBusinessProjection = Pick<
+  MerchantBookingRecord,
+  "siteName" | "store" | "item" | "title"
+>;
+
+const MERCHANT_BOOKING_TRUSTED_BUSINESS_PROJECTION = Symbol.for(
+  "faolla.merchant-booking.trusted-business-projection.v1",
+);
+
+/**
+ * Attaches server-verified operational fields without serializing trust
+ * metadata into persistence or HTTP responses. The projection is consumed by
+ * the employee redactor; browser-provided JSON cannot create this symbol.
+ */
+export function attachMerchantBookingTrustedBusinessProjection<
+  T extends MerchantBookingRecord,
+>(record: T, projection: MerchantBookingTrustedBusinessProjection): T {
+  const authoritativeRecord =
+    record.siteName === projection.siteName
+      ? record
+      : ({ ...record, siteName: projection.siteName } as T);
+  const target = Object.isExtensible(authoritativeRecord)
+    ? authoritativeRecord
+    : ({ ...authoritativeRecord } as T);
+  Object.defineProperty(target, MERCHANT_BOOKING_TRUSTED_BUSINESS_PROJECTION, {
+    configurable: true,
+    enumerable: false,
+    writable: false,
+    value: Object.freeze({ ...projection }),
+  });
+  return target;
+}
+
+export function readMerchantBookingTrustedBusinessProjection(
+  record: MerchantBookingRecord,
+): MerchantBookingTrustedBusinessProjection | null {
+  const value = (record as unknown as Record<PropertyKey, unknown>)[
+    MERCHANT_BOOKING_TRUSTED_BUSINESS_PROJECTION
+  ];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const projection = value as Partial<MerchantBookingTrustedBusinessProjection>;
+  if (
+    typeof projection.siteName !== "string" ||
+    typeof projection.store !== "string" ||
+    typeof projection.item !== "string" ||
+    typeof projection.title !== "string"
+  ) {
+    return null;
+  }
+  return {
+    siteName: projection.siteName,
+    store: projection.store,
+    item: projection.item,
+    title: projection.title,
+  };
+}
+
 export type MerchantBookingConfirmationEmailStatus = "sent" | "failed";
 
 export type MerchantBookingStoredRecord = MerchantBookingRecord & {

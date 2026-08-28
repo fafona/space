@@ -179,6 +179,25 @@ and performs no ACL mutation. Migration 040 changes no merchant row, policy,
 function, ownership, or application behavior; the retained service-role DML
 set preserves privileged operational access.
 
+Migration `202608280041_merchant_staff_business_permissions.sql` additively
+extends the enterprise-role permission catalog with the 46 staff business
+permissions used by redemptions, bookings, orders, conversations, and members.
+It replaces the role permission validator and staged `CHECK` with the exact
+combined catalog and dependency graph, then adds service-role-only v3 role
+mutation wrappers. They strictly validate `owner|employee` before setting a
+transaction-local actor marker and delegating to the compatible v2 RPCs. An
+atomic row trigger permits a row containing a business permission only when
+that marker is exactly `owner`; direct DML, v2 business writes, and missing,
+unknown, or employee v3 actors all fail closed. Collaboration-only v2 and v3
+role behavior remains compatible. The migration does not update or backfill
+any role row, change a default system role, or grant a business permission.
+Rollout therefore stays
+default-off: apply and verify the additive database contract first, deploy and
+drain the compatible application fleet, and only then enable the feature and
+make explicit owner-authorized role grants. Application rollback disables that
+rollout while leaving the additive catalog and v2-compatible database surface
+in place.
+
 The separately staged irreversible behavior cutover formerly used version
 `202608190039`. It must be renumbered after this hotfix before publication and
 must never coexist with the hotfix at the same registry version. Apply that
@@ -222,12 +241,16 @@ applies through the newest migration in the deployed revision:
 5. With the production merchant object diagnostic frozen, apply merchant ACL
    hardening 040 as the verified `supabase_admin`; require the exact 21-entry
    target and a no-op replay before rerunning cutover readiness.
-6. Perform the separately supervised legacy personal recovery through the
+6. Back up and apply additive staff business permission migration 041. Verify
+   that no existing/default role changed and both v3 role RPCs are service-only;
+   deploy and drain the compatible application fleet before enabling the
+   feature or making any explicit owner-authorized business permission grant.
+7. Perform the separately supervised legacy personal recovery through the
    observer/create-only path without any direct protected-table read grant.
-7. Perform the remaining controlled canonical backfill, then deploy the
+8. Perform the remaining controlled canonical backfill, then deploy the
    application positive-resolver cutover. Require authoritative readiness to
    be true.
-8. A later PR adds the renumbered behavior-cutover migration and its
+9. A later PR adds the renumbered behavior-cutover migration and its
    acceptance/contract. Deploy, back up, and apply it manually. Never publish
    the behavior cutover before the
    intervening isolation, backfill, and application gates pass.

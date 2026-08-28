@@ -33,6 +33,10 @@ import {
 } from "@/app/api/merchant-enterprise/employees/route";
 import { POST as acceptEmployee } from "@/app/api/merchant-enterprise/employees/accept/route";
 import {
+  canMerchantEnterpriseActorManageRoleBusinessPermissions,
+  canMerchantEnterpriseRoleRetainBusinessPermissions,
+  isMerchantEnterpriseBusinessPermissionStrip,
+  merchantEnterpriseBusinessPermissionStripChangesOtherFields,
   getMerchantEnterpriseRoleMutationActor,
   getMerchantEnterpriseRoleActivationConflict,
   getMerchantEnterpriseRoleArchiveConflict,
@@ -262,6 +266,122 @@ test("employee and role mutation actor payloads preserve owner and employee iden
     actorType: "employee",
     actorId: employee.id,
   });
+
+  assert.equal(
+    canMerchantEnterpriseActorManageRoleBusinessPermissions(
+      owner,
+      [],
+      ["orders.view"],
+    ),
+    true,
+  );
+  assert.equal(
+    canMerchantEnterpriseActorManageRoleBusinessPermissions(
+      employee,
+      [],
+      ["orders.view"],
+    ),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseActorManageRoleBusinessPermissions(
+      employee,
+      ["orders.view"],
+      undefined,
+    ),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseActorManageRoleBusinessPermissions(
+      employee,
+      ["enterprise.view"],
+      ["enterprise.view"],
+    ),
+    true,
+  );
+
+  assert.equal(
+    canMerchantEnterpriseRoleRetainBusinessPermissions(
+      [],
+      ["orders.view"],
+      false,
+    ),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseRoleRetainBusinessPermissions(
+      ["orders.view"],
+      undefined,
+      false,
+    ),
+    false,
+  );
+  assert.equal(
+    canMerchantEnterpriseRoleRetainBusinessPermissions(
+      ["orders.view"],
+      ["enterprise.view"],
+      false,
+    ),
+    true,
+  );
+  assert.equal(
+    canMerchantEnterpriseRoleRetainBusinessPermissions(
+      ["orders.view"],
+      ["orders.view"],
+      true,
+    ),
+    true,
+  );
+
+  assert.equal(
+    isMerchantEnterpriseBusinessPermissionStrip(
+      ["enterprise.view", "orders.view"],
+      ["enterprise.view"],
+    ),
+    true,
+  );
+  assert.equal(
+    isMerchantEnterpriseBusinessPermissionStrip(
+      ["enterprise.view", "orders.view"],
+      ["enterprise.view", "orders.view"],
+    ),
+    false,
+  );
+  const businessRole = {
+    name: "业务员工",
+    description: "限定权限",
+    status: "active" as const,
+    accessScope: "restricted" as const,
+    allowedBoardIds: [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ],
+  };
+  assert.equal(
+    merchantEnterpriseBusinessPermissionStripChangesOtherFields(
+      businessRole,
+      {
+        name: "业务员工",
+        description: "限定权限",
+        status: "active",
+        accessScope: "restricted",
+        allowedBoardIds: [...businessRole.allowedBoardIds].reverse(),
+      },
+      {
+        accessScope: "restricted",
+        allowedBoardIds: [...businessRole.allowedBoardIds].reverse(),
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    merchantEnterpriseBusinessPermissionStripChangesOtherFields(
+      businessRole,
+      { name: "同时改名" },
+      undefined,
+    ),
+    true,
+  );
 });
 
 test("employee lifecycle RPC errors have stable API statuses", () => {

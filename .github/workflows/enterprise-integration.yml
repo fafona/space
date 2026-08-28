@@ -6,6 +6,7 @@ on:
       - "scripts/supabase-init.sql"
       - "scripts/supabase-migrations/**"
       - "scripts/check-ordinary-account-cutover-readiness.mjs"
+      - "scripts/merchant-staff-business-permissions-migration-contract.test.mjs"
       - "scripts/enterprise-integration/**"
       - ".github/workflows/enterprise-integration.yml"
   push:
@@ -15,6 +16,7 @@ on:
       - "scripts/supabase-init.sql"
       - "scripts/supabase-migrations/**"
       - "scripts/check-ordinary-account-cutover-readiness.mjs"
+      - "scripts/merchant-staff-business-permissions-migration-contract.test.mjs"
       - "scripts/enterprise-integration/**"
       - ".github/workflows/enterprise-integration.yml"
   workflow_dispatch:
@@ -61,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          node --test scripts/enterprise-integration-workflow-contract.test.mjs
+          node --test scripts/enterprise-integration-workflow-contract.test.mjs scripts/merchant-staff-business-permissions-migration-contract.test.mjs
           docker cp "${GITHUB_WORKSPACE}/." "${POSTGRES_CONTAINER_ID}:/workspace"
           psql_wrapper_dir="$(mktemp -d)"
           trap 'rm -rf -- "$psql_wrapper_dir"' EXIT

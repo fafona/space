@@ -48,8 +48,39 @@ type MerchantRow = {
   user_email?: string | null;
   user_id?: string | null;
   auth_user_id?: string | null;
+  owner_user_id?: string | null;
+  owner_id?: string | null;
+  auth_id?: string | null;
+  created_by?: string | null;
+  created_by_user_id?: string | null;
   created_at?: string | null;
 };
+
+export function resolveMerchantDeletionOwnerAuthUserId(
+  merchant: MerchantRow | null | undefined,
+) {
+  const ownerIds = [
+    merchant?.user_id,
+    merchant?.auth_user_id,
+    merchant?.owner_user_id,
+    merchant?.owner_id,
+    merchant?.auth_id,
+    merchant?.created_by,
+    merchant?.created_by_user_id,
+  ].map((value) => String(value ?? "").trim().toLowerCase());
+  if (
+    ownerIds.some(
+      (value) =>
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          value,
+        ),
+    ) ||
+    new Set(ownerIds).size !== 1
+  ) {
+    return "";
+  }
+  return ownerIds[0];
+}
 
 type AuthMetadata = Record<string, unknown> | null;
 
@@ -1351,7 +1382,7 @@ export async function DELETE(request: Request) {
     return getTrustedMutationRequestErrorResponse();
   }
 
-  if (!ensureAuthorized(request)) {
+  if (!(await ensureAuthorized(request))) {
     return unauthorizedJson();
   }
 
@@ -1375,7 +1406,7 @@ export async function DELETE(request: Request) {
     if (!accountId && !authUserId) {
       return badRequestJson("invalid_account", "请选择要删除的账号");
     }
-    if (accountType === "merchant" && accountId && !isMerchantNumericId(accountId)) {
+    if (accountType === "merchant" && !isMerchantNumericId(accountId)) {
       return badRequestJson("invalid_account_id", "商户 ID 必须是 8 位数字");
     }
 
@@ -1390,32 +1421,123 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const authUsers = await listAuthUsers(supabase);
-    const targetUser = authUsers.find((user) => {
-      const metadata = readAccountMetadata(user);
-      if (authUserId && String(user.id ?? "").trim() === authUserId) return true;
-      if (!accountId) return false;
-      if (metadata.accountType !== accountType) return false;
-      if (metadata.accountId === accountId) return true;
-      if (accountType === "merchant" && metadata.merchantId === accountId) return true;
-      return false;
-    }) ?? null;
-    const resolvedAuthUserId = String(targetUser?.id ?? authUserId ?? "").trim();
+    let resolvedAuthUserId = "";
+    if (accountType === "merchant") {
+      const { data: merchant, error: merchantError } =
+        await runSupabaseQueryWithRetry(() =>
+          supabase
+            .from("merchants")
+            .select(
+              "id,user_id,auth_user_id,owner_user_id,owner_id,auth_id,created_by,created_by_user_id",
+            )
+            .eq("id", accountId)
+            .maybeSingle(),
+        );
+      if (merchantError) throw merchantError;
+      if (!merchant) {
+        return notFoundJson("account_not_found", "未找到要删除的商户账号");
+      }
+      resolvedAuthUserId = resolveMerchantDeletionOwnerAuthUserId(
+        merchant as MerchantRow,
+      );
+      if (!resolvedAuthUserId) {
+        return NextResponse.json(
+          {
+            error: "merchant_owner_binding_invalid",
+            message: "商户负责人绑定不完整，已拒绝删除",
+          },
+          { status: 409 },
+        );
+      }
+      if (authUserId && authUserId.toLowerCase() !== resolvedAuthUserId) {
+        return badRequestJson(
+          "merchant_owner_mismatch",
+          "商户与负责人账号不匹配",
+        );
+      }
 
-    if (!targetUser && accountType === "personal") {
-      return notFoundJson("account_not_found", "未找到要删除的个人账号");
+      const [employeeDependency, roleDependency] = await Promise.all([
+        runSupabaseQueryWithRetry(() =>
+          supabase
+            .from("merchant_enterprise_employees")
+            .select("id")
+            .eq("merchant_id", accountId)
+            .limit(1),
+        ),
+        runSupabaseQueryWithRetry(() =>
+          supabase
+            .from("merchant_enterprise_roles")
+            .select("id")
+            .eq("merchant_id", accountId)
+            .limit(1),
+        ),
+      ]);
+      if (employeeDependency.error) throw employeeDependency.error;
+      if (roleDependency.error) throw roleDependency.error;
+      if (
+        (employeeDependency.data?.length ?? 0) > 0 ||
+        (roleDependency.data?.length ?? 0) > 0
+      ) {
+        return NextResponse.json(
+          {
+            error: "merchant_enterprise_deprovision_required",
+            message: "请先完成企业员工与角色的安全停用，再删除商户",
+          },
+          { status: 409 },
+        );
+      }
+
+      // Remove the database tenant first. If any unknown dependency rejects
+      // the delete, the owner login remains intact and staff cannot be left
+      // operating an ownerless merchant.
+      const { data: deletedMerchant, error: deleteMerchantError } =
+        await runSupabaseQueryWithRetry(() =>
+          supabase
+            .from("merchants")
+            .delete()
+            .eq("id", accountId)
+            .eq("user_id", resolvedAuthUserId)
+            .eq("auth_user_id", resolvedAuthUserId)
+            .eq("owner_user_id", resolvedAuthUserId)
+            .eq("owner_id", resolvedAuthUserId)
+            .eq("auth_id", resolvedAuthUserId)
+            .eq("created_by", resolvedAuthUserId)
+            .eq("created_by_user_id", resolvedAuthUserId)
+            .select("id")
+            .maybeSingle(),
+        );
+      if (deleteMerchantError) throw deleteMerchantError;
+      if (!deletedMerchant) {
+        return NextResponse.json(
+          {
+            error: "merchant_delete_conflict",
+            message: "商户负责人绑定已变化，请刷新后重试",
+          },
+          { status: 409 },
+        );
+      }
+      merchantAccountsCache.clear();
+    } else {
+      const authUsers = await listAuthUsers(supabase);
+      const targetUser = authUsers.find((user) => {
+        const metadata = readAccountMetadata(user);
+        if (authUserId && String(user.id ?? "").trim() === authUserId) return true;
+        return Boolean(
+          accountId &&
+            metadata.accountType === "personal" &&
+            metadata.accountId === accountId,
+        );
+      }) ?? null;
+      if (!targetUser) {
+        return notFoundJson("account_not_found", "未找到要删除的个人账号");
+      }
+      resolvedAuthUserId = String(targetUser.id ?? "").trim();
     }
 
     if (resolvedAuthUserId) {
-      const { error: deleteUserError } = await supabase.auth.admin.deleteUser(resolvedAuthUserId);
+      const { error: deleteUserError } =
+        await supabase.auth.admin.deleteUser(resolvedAuthUserId);
       if (deleteUserError) throw deleteUserError;
-    }
-
-    if (accountType === "merchant" && accountId) {
-      const { error: deleteMerchantError } = await runSupabaseQueryWithRetry(() =>
-        supabase.from("merchants").delete().eq("id", accountId),
-      );
-      if (deleteMerchantError) throw deleteMerchantError;
     }
 
     merchantAccountsCache.clear();

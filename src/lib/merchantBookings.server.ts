@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import {
+  attachMerchantBookingTrustedBusinessProjection,
   buildMerchantBookingId,
   getMerchantBookingSlotCapacityIssue,
   sanitizeMerchantBookingEditableInput,
@@ -41,7 +42,13 @@ import {
   buildMerchantBookingSelfServiceUrl,
 } from "./merchantBookingSelfService";
 import { buildMerchantBookingReminderPushNotification } from "./merchantPushEvents";
-import { resolveMerchantBookingRuleEntry, type MerchantBookingRuleLocator } from "./merchantBookingRules";
+import {
+  projectMerchantBookingRuleSelection,
+  resolveMerchantBookingRuleEntry,
+  resolveMerchantBookingRuleSelection,
+  type MerchantBookingRuleLocator,
+  type MerchantBookingRuleSnapshotEntry,
+} from "./merchantBookingRules";
 import {
   loadMerchantBookingRulesSnapshot,
   migrateMerchantBookingRulesPersistence,
@@ -89,9 +96,27 @@ const BOOKING_STORE_PATH = path.join(process.cwd(), ".runtime", "merchant-bookin
 const LOCK_KEY = "__merchantBookingsQueue";
 const DEFAULT_BOOKING_WINDOW_LIMIT = 500;
 const MAX_BOOKING_WINDOW_LIMIT = 1000;
+const MERCHANT_BOOKING_SITE_NAME_MAX_BYTES = 320;
+const MERCHANT_BOOKING_SITE_NAME_CONTROL_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeAuthoritativeBookingSiteName(
+  value: unknown,
+  siteId: string,
+) {
+  const normalized = trimText(value);
+  if (
+    !normalized ||
+    MERCHANT_BOOKING_SITE_NAME_CONTROL_PATTERN.test(normalized) ||
+    Buffer.byteLength(normalized, "utf8") > MERCHANT_BOOKING_SITE_NAME_MAX_BYTES
+  ) {
+    return siteId;
+  }
+  return normalized;
 }
 
 function getGlobalLockStore() {
@@ -465,6 +490,7 @@ function createCustomerEmailLogEntry(input: {
 type SiteCustomerEmailRuntime = {
   allowAutoEmail: boolean;
   merchantDisplayName: string;
+  recordSiteName: string;
   senderName: string;
   locale: string;
   publicSiteUrl: string;
@@ -496,6 +522,10 @@ async function loadSiteCustomerEmailRuntime(
     trimText(snapshotSite?.name) ||
     trimText(fallbackMerchantName) ||
     trimText(siteId);
+  const recordSiteName = normalizeAuthoritativeBookingSiteName(
+    trimText(snapshotSite?.merchantName) || trimText(snapshotSite?.name),
+    trimText(siteId),
+  );
   const senderName =
     trimText(settings.customerEmailSenderName) || merchantDisplayName;
   const locale = resolveMerchantBookingCustomerEmailLocale(
@@ -506,6 +536,7 @@ async function loadSiteCustomerEmailRuntime(
   return {
     allowAutoEmail,
     merchantDisplayName,
+    recordSiteName,
     senderName,
     locale,
     publicSiteUrl,
@@ -625,6 +656,7 @@ async function resolveBookingRuleContext(
   locator?: MerchantBookingRuleLocator | null,
 ): Promise<{
   binding: MerchantBookingRuleBinding;
+  rule: MerchantBookingRuleSnapshotEntry;
   availableTimeRanges: string[];
   timeSlotRules: NonNullable<ReturnType<typeof resolveMerchantBookingRuleEntry>>["timeSlotRules"];
   blockedDates: string[];
@@ -643,6 +675,7 @@ async function resolveBookingRuleContext(
     throw new Error("预约规则不可验证，请刷新页面后重试");
   }
   return {
+    rule,
     binding: {
       bookingBlockId: rule.blockId,
       bookingViewport: rule.viewport,
@@ -652,6 +685,67 @@ async function resolveBookingRuleContext(
     blockedDates: rule.blockedDates,
     holidayDates: rule.holidayDates,
   };
+}
+
+function applyAuthoritativeBookingRuleSelection(
+  editable: MerchantBookingEditableInput,
+  rule: MerchantBookingRuleSnapshotEntry,
+  authoritativeSiteName: string,
+  unchanged?: Pick<MerchantBookingRecord, "store" | "item" | "title"> | null,
+) {
+  const selection = resolveMerchantBookingRuleSelection(
+    editable,
+    rule,
+    authoritativeSiteName,
+    unchanged,
+  );
+  if (!selection) throw new Error("booking_selection_invalid");
+  return { ...editable, ...selection };
+}
+
+function attachTrustedBookingBusinessProjection(
+  record: MerchantBookingRecord,
+  rule: MerchantBookingRuleSnapshotEntry | null,
+  authoritativeSiteName: string,
+) {
+  const selection = rule
+    ? projectMerchantBookingRuleSelection(
+        record,
+        rule,
+        authoritativeSiteName,
+      )
+    : { store: "", item: "", title: "" };
+  return attachMerchantBookingTrustedBusinessProjection(record, {
+    siteName: authoritativeSiteName,
+    ...selection,
+  });
+}
+
+async function attachTrustedBookingBusinessProjections(
+  records: MerchantBookingRecord[],
+  siteId: string,
+) {
+  const normalizedSiteId = trimText(siteId);
+  const [snapshot, snapshotSite] = await Promise.all([
+    loadMerchantBookingRulesSnapshot(normalizedSiteId).catch(() => null),
+    loadCurrentMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null),
+  ]);
+  const authoritativeSiteName = normalizeAuthoritativeBookingSiteName(
+    trimText(snapshotSite?.merchantName) || trimText(snapshotSite?.name),
+    normalizedSiteId,
+  );
+  return records.map((record) =>
+    attachTrustedBookingBusinessProjection(
+      record,
+      snapshot
+        ? resolveMerchantBookingRuleEntry(snapshot, {
+            bookingBlockId: record.bookingBlockId,
+            bookingViewport: record.bookingViewport,
+          })
+        : null,
+      authoritativeSiteName,
+    ),
+  );
 }
 
 async function runMerchantBookingAutomationForSite(siteId: string) {
@@ -923,7 +1017,10 @@ export async function listMerchantBookings(
       );
     },
   });
-  return result.records;
+  return attachTrustedBookingBusinessProjections(
+    result.records,
+    normalizedSiteId,
+  );
 }
 
 export async function listMerchantBookingsWindow(
@@ -949,7 +1046,7 @@ export async function listMerchantBookingsWindow(
     total: sortedRecords.length,
     hasMore: offset + windowRecords.length < sortedRecords.length,
   };
-  return readMerchantBookingsWithV1Verification({
+  const result = await readMerchantBookingsWithV1Verification({
     siteId: normalizedSiteId,
     loadLegacy: async () => legacyWindow,
     loadV1: async () => {
@@ -966,6 +1063,13 @@ export async function listMerchantBookingsWindow(
       );
     },
   });
+  return {
+    ...result,
+    records: await attachTrustedBookingBusinessProjections(
+      result.records,
+      normalizedSiteId,
+    ),
+  };
 }
 
 function matchesPersonalBookingCustomer(
@@ -1161,6 +1265,7 @@ export async function updatePersonalMerchantBooking(input: {
       if (current.status !== "active") throw new Error("booking_customer_action_locked");
       let next: MerchantBookingStoredRecord = {
         ...current,
+        siteName: emailRuntime.recordSiteName,
         ...applyStatusMetadata(current, "cancelled", now),
       };
       next = appendStatusTimelineEntry(next, {
@@ -1188,13 +1293,21 @@ export async function updatePersonalMerchantBooking(input: {
     }
 
     const hasEditableUpdates = input.action === "update";
-    const nextEditable = hasEditableUpdates
+    const sanitizedEditable = hasEditableUpdates
       ? sanitizeMerchantBookingEditableInput(input.updates, current)
       : sanitizeMerchantBookingEditableInput(current, current);
     const ruleContext = await resolveBookingRuleContext(current.siteId, {
       bookingBlockId: current.bookingBlockId,
       bookingViewport: current.bookingViewport,
     });
+    const nextEditable = hasEditableUpdates
+      ? applyAuthoritativeBookingRuleSelection(
+          sanitizedEditable,
+          ruleContext.rule,
+          emailRuntime.recordSiteName,
+          current,
+        )
+      : sanitizedEditable;
     const issues = validateMerchantBookingInput(nextEditable, {
       availableTimeRanges: ruleContext.availableTimeRanges,
       blockedDates: ruleContext.blockedDates,
@@ -1228,6 +1341,7 @@ export async function updatePersonalMerchantBooking(input: {
     const nextStatus: MerchantBookingStatus = input.action === "restore" ? "active" : current.status;
     let next: MerchantBookingStoredRecord = {
       ...current,
+      siteName: emailRuntime.recordSiteName,
       ...ruleContext.binding,
       ...nextEditable,
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
@@ -1259,7 +1373,15 @@ export async function updatePersonalMerchantBooking(input: {
     });
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
-    return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
+    return attachTrustedBookingBusinessProjection(
+      withoutMerchantBookingToken(next, {
+        includeAutomationState: true,
+        includeCustomerEmailLogs: true,
+        includeTimeline: true,
+      }),
+      ruleContext.rule,
+      emailRuntime.recordSiteName,
+    );
   });
 }
 
@@ -1300,10 +1422,15 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
   editToken: string;
 }> {
   const siteId = trimText(input.siteId);
-  const editable = sanitizeMerchantBookingEditableInput(input);
+  const sanitizedEditable = sanitizeMerchantBookingEditableInput(input);
   const ruleContext = await resolveBookingRuleContext(siteId, normalizeBookingRuleBinding(input));
   const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
   const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, input.siteName);
+  const editable = applyAuthoritativeBookingRuleSelection(
+    sanitizedEditable,
+    ruleContext.rule,
+    emailRuntime.recordSiteName,
+  );
   const issues = validateMerchantBookingInput(editable, {
     availableTimeRanges: ruleContext.availableTimeRanges,
     blockedDates: ruleContext.blockedDates,
@@ -1355,7 +1482,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
     let record: MerchantBookingStoredRecord = {
       id: nextId,
       siteId,
-      siteName: trimText(input.siteName),
+      siteName: emailRuntime.recordSiteName,
       customerAccountId: trimText(input.customerAccountId),
       customerUserId: trimText(input.customerUserId),
       customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
@@ -1385,8 +1512,13 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
     });
     store.records.unshift(record);
     await writeMerchantBookingStore(store, [record]);
+    const booking = attachTrustedBookingBusinessProjection(
+      withoutMerchantBookingToken(record),
+      ruleContext.rule,
+      emailRuntime.recordSiteName,
+    );
     return {
-      booking: withoutMerchantBookingToken(record),
+      booking,
       editToken: record.editToken,
     };
   });
@@ -1415,6 +1547,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     if (input.action === "cancel") {
       let next: MerchantBookingStoredRecord = {
         ...current,
+        siteName: emailRuntime.recordSiteName,
         ...applyStatusMetadata(current, "cancelled", new Date().toISOString()),
       };
       next = appendStatusTimelineEntry(next, {
@@ -1434,12 +1567,21 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
     }
 
-    const nextEditable = sanitizeMerchantBookingEditableInput(input.updates, current);
+    const sanitizedEditable = sanitizeMerchantBookingEditableInput(
+      input.updates,
+      current,
+    );
     const normalizedBinding = normalizeBookingRuleBinding(input);
     const ruleContext = await resolveBookingRuleContext(current.siteId, {
       bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
       bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
     });
+    const nextEditable = applyAuthoritativeBookingRuleSelection(
+      sanitizedEditable,
+      ruleContext.rule,
+      emailRuntime.recordSiteName,
+      current,
+    );
     const issues = validateMerchantBookingInput(nextEditable, {
       availableTimeRanges: ruleContext.availableTimeRanges,
       blockedDates: ruleContext.blockedDates,
@@ -1477,6 +1619,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     const changedFields = collectEditableFieldChanges(current, nextEditable);
     let next: MerchantBookingStoredRecord = {
       ...current,
+      siteName: emailRuntime.recordSiteName,
       ...ruleContext.binding,
       ...nextEditable,
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
@@ -1512,7 +1655,14 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     });
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
-    return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
+    return attachTrustedBookingBusinessProjection(
+      withoutMerchantBookingToken(next, {
+        includeCustomerEmailLogs: true,
+        includeTimeline: true,
+      }),
+      ruleContext.rule,
+      emailRuntime.recordSiteName,
+    );
   });
 }
 
@@ -1520,6 +1670,7 @@ export async function updateMerchantBookingStatusBySite(input: {
   siteId: string;
   bookingId: string;
   status: MerchantBookingStatus;
+  assertAuthorizationCurrent: () => Promise<void>;
 }): Promise<MerchantBookingRecord> {
   const siteId = trimText(input.siteId);
   const bookingId = trimText(input.bookingId);
@@ -1528,6 +1679,10 @@ export async function updateMerchantBookingStatusBySite(input: {
   }
 
   return withBookingStoreLock(async () => {
+    // Keep this legacy helper fail-closed if it is reused by a business API:
+    // authorization is linearized after queue admission and before any read,
+    // email, or canonical write.
+    await input.assertAuthorizationCurrent();
     const store = await readMerchantBookingStore();
     const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
     if (targetIndex < 0) {
@@ -1544,6 +1699,7 @@ export async function updateMerchantBookingStatusBySite(input: {
     const touchedAt = new Date().toISOString();
     let next: MerchantBookingStoredRecord = {
       ...current,
+      siteName: emailRuntime.recordSiteName,
       ...applyStatusMetadata(current, nextStatus, touchedAt),
     };
     next = stampMerchantBookingTouch(next, touchedAt);
@@ -1572,6 +1728,7 @@ export async function updateMerchantBookingBySite(input: {
   bookingBlockId?: string;
   bookingViewport?: MerchantBookingRuleBinding["bookingViewport"];
   updates?: Partial<MerchantBookingEditableInput>;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantBookingRecord> {
   const siteId = trimText(input.siteId);
   const bookingId = trimText(input.bookingId);
@@ -1579,7 +1736,8 @@ export async function updateMerchantBookingBySite(input: {
     throw new Error("预约记录参数缺失");
   }
 
-  return withBookingStoreLock(async () => {
+  const updated = await withBookingStoreLock(async () => {
+    await input.assertAuthorizationCurrent?.();
     const store = await readMerchantBookingStore();
     const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
     if (targetIndex < 0) {
@@ -1593,7 +1751,7 @@ export async function updateMerchantBookingBySite(input: {
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, current.siteName);
 
     const hasEditableUpdates = Boolean(input.updates);
-    const nextEditable = hasEditableUpdates
+    let nextEditable = hasEditableUpdates
       ? sanitizeMerchantBookingEditableInput(input.updates, current)
       : sanitizeMerchantBookingEditableInput(current, current);
     let nextBinding: MerchantBookingRuleBinding = {
@@ -1607,6 +1765,12 @@ export async function updateMerchantBookingBySite(input: {
         bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
         bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
       });
+      nextEditable = applyAuthoritativeBookingRuleSelection(
+        nextEditable,
+        ruleContext.rule,
+        emailRuntime.recordSiteName,
+        current,
+      );
       const issues = validateMerchantBookingInput(nextEditable, {
         availableTimeRanges: ruleContext.availableTimeRanges,
         blockedDates: ruleContext.blockedDates,
@@ -1647,6 +1811,7 @@ export async function updateMerchantBookingBySite(input: {
     const changedFields = hasEditableUpdates ? collectEditableFieldChanges(current, nextEditable) : [];
     let next: MerchantBookingStoredRecord = {
       ...current,
+      siteName: emailRuntime.recordSiteName,
       ...nextBinding,
       ...nextEditable,
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
@@ -1686,12 +1851,16 @@ export async function updateMerchantBookingBySite(input: {
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
+  return (
+    await attachTrustedBookingBusinessProjections([updated], siteId)
+  )[0] ?? updated;
 }
 
 export async function updateMerchantBookingsBatchBySite(input: {
   siteId: string;
   bookingIds: string[];
   status: MerchantBookingStatus;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }) {
   const siteId = trimText(input.siteId);
   const bookingIds = [...new Set((Array.isArray(input.bookingIds) ? input.bookingIds : []).map((item) => trimText(item)).filter(Boolean))];
@@ -1699,7 +1868,8 @@ export async function updateMerchantBookingsBatchBySite(input: {
     throw new Error("棰勭害璁板綍鍙傛暟缂哄け");
   }
 
-  return withBookingStoreLock(async () => {
+  const updated = await withBookingStoreLock(async () => {
+    await input.assertAuthorizationCurrent?.();
     const store = await readMerchantBookingStore();
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings);
@@ -1714,6 +1884,7 @@ export async function updateMerchantBookingsBatchBySite(input: {
       const touchedAt = new Date().toISOString();
       let next: MerchantBookingStoredRecord = {
         ...current,
+        siteName: emailRuntime.recordSiteName,
         ...applyStatusMetadata(current, input.status, touchedAt),
       };
       next = stampMerchantBookingTouch(next, touchedAt);
@@ -1740,11 +1911,13 @@ export async function updateMerchantBookingsBatchBySite(input: {
     await writeMerchantBookingStore(store, changedRecords);
     return nextRecords;
   });
+  return attachTrustedBookingBusinessProjections(updated, siteId);
 }
 
 export async function sendMerchantBookingManualEmailBySite(input: {
   siteId: string;
   bookingId: string;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantBookingRecord> {
   const siteId = trimText(input.siteId);
   const bookingId = trimText(input.bookingId);
@@ -1752,7 +1925,8 @@ export async function sendMerchantBookingManualEmailBySite(input: {
     throw new Error("预约记录参数缺失");
   }
 
-  return withBookingStoreLock(async () => {
+  const updated = await withBookingStoreLock(async () => {
+    await input.assertAuthorizationCurrent?.();
     const store = await readMerchantBookingStore();
     const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
     if (targetIndex < 0) {
@@ -1765,7 +1939,13 @@ export async function sendMerchantBookingManualEmailBySite(input: {
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, current.siteName);
     const touchedAt = new Date().toISOString();
-    let next: MerchantBookingStoredRecord = stampMerchantBookingTouch(current, touchedAt);
+    let next: MerchantBookingStoredRecord = stampMerchantBookingTouch(
+      {
+        ...current,
+        siteName: emailRuntime.recordSiteName,
+      },
+      touchedAt,
+    );
     const actionLinks = buildCustomerActionLinks(next, emailRuntime.publicSiteUrl);
     const emailResult = await sendMerchantBookingStatusEmail(next, next.status, {
       locale: emailRuntime.locale,
@@ -1832,11 +2012,15 @@ export async function sendMerchantBookingManualEmailBySite(input: {
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
+  return (
+    await attachTrustedBookingBusinessProjections([updated], siteId)
+  )[0] ?? updated;
 }
 
 export async function acknowledgeMerchantBookingBySite(input: {
   siteId: string;
   bookingId: string;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantBookingRecord> {
   const siteId = trimText(input.siteId);
   const bookingId = trimText(input.bookingId);
@@ -1844,7 +2028,8 @@ export async function acknowledgeMerchantBookingBySite(input: {
     throw new Error("预约记录参数缺失");
   }
 
-  return withBookingStoreLock(async () => {
+  const updated = await withBookingStoreLock(async () => {
+    await input.assertAuthorizationCurrent?.();
     const store = await readMerchantBookingStore();
     const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
     if (targetIndex < 0) {
@@ -1854,7 +2039,17 @@ export async function acknowledgeMerchantBookingBySite(input: {
     if (!current) {
       throw new Error("未找到对应预约记录");
     }
-    let next: MerchantBookingStoredRecord = stampMerchantBookingTouch(current);
+    const snapshotSite = await loadCurrentMerchantSnapshotSiteBySiteId(
+      siteId,
+    ).catch(() => null);
+    const authoritativeSiteName = normalizeAuthoritativeBookingSiteName(
+      trimText(snapshotSite?.merchantName) || trimText(snapshotSite?.name),
+      siteId,
+    );
+    let next: MerchantBookingStoredRecord = stampMerchantBookingTouch({
+      ...current,
+      siteName: authoritativeSiteName,
+    });
     if (!current.merchantTouchedAt) {
       next = appendTimelineEntry(
         next,
@@ -1869,4 +2064,7 @@ export async function acknowledgeMerchantBookingBySite(input: {
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
   });
+  return (
+    await attachTrustedBookingBusinessProjections([updated], siteId)
+  )[0] ?? updated;
 }

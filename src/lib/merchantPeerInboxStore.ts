@@ -124,7 +124,9 @@ export async function loadStoredMerchantPeerInbox(
 async function saveMerchantPeerInboxUnlocked(
   supabase: MerchantPeerInboxStoreClient,
   payload: MerchantPeerInboxPayload,
+  options?: { beforeMutation?: () => Promise<void> },
 ): Promise<{ error: string | null; payload: MerchantPeerInboxPayload | null }> {
+  await options?.beforeMutation?.();
   merchantPeerInboxCache = null;
   const beforePayload = await loadStoredMerchantPeerInbox(supabase, { bypassCache: true });
   const normalizedPayload = mergeMerchantPeerInboxPayloads(
@@ -244,10 +246,11 @@ async function saveMerchantPeerInboxUnlocked(
 export function saveMerchantPeerInbox(
   supabase: MerchantPeerInboxStoreClient,
   payload: MerchantPeerInboxPayload,
+  options?: { beforeMutation?: () => Promise<void> },
 ): Promise<{ error: string | null; payload: MerchantPeerInboxPayload | null }> {
   const operation = merchantPeerInboxWriteQueue
     .catch(() => undefined)
-    .then(() => saveMerchantPeerInboxUnlocked(supabase, payload));
+    .then(() => saveMerchantPeerInboxUnlocked(supabase, payload, options));
   merchantPeerInboxWriteQueue = operation.then(
     () => undefined,
     () => undefined,

@@ -125,7 +125,9 @@ export async function loadStoredMerchantSupportReadState(
 async function saveMerchantSupportReadStateUnlocked(
   supabase: MerchantSupportReadStateStoreClient,
   payload: MerchantSupportReadStatePayload,
+  options?: { beforeMutation?: () => Promise<void> },
 ): Promise<{ error: string | null; payload: MerchantSupportReadStatePayload | null }> {
+  await options?.beforeMutation?.();
   merchantSupportReadStateCache = null;
   const beforePayload = await loadStoredMerchantSupportReadState(supabase, { bypassCache: true });
   const normalizedPayload = mergeMerchantSupportReadStatePayloads(
@@ -245,10 +247,11 @@ async function saveMerchantSupportReadStateUnlocked(
 export function saveMerchantSupportReadState(
   supabase: MerchantSupportReadStateStoreClient,
   payload: MerchantSupportReadStatePayload,
+  options?: { beforeMutation?: () => Promise<void> },
 ): Promise<{ error: string | null; payload: MerchantSupportReadStatePayload | null }> {
   const operation = merchantSupportReadStateWriteQueue
     .catch(() => undefined)
-    .then(() => saveMerchantSupportReadStateUnlocked(supabase, payload));
+    .then(() => saveMerchantSupportReadStateUnlocked(supabase, payload, options));
   merchantSupportReadStateWriteQueue = operation.then(
     () => undefined,
     () => undefined,

@@ -29,6 +29,9 @@ DEPLOY_PAYLOAD_KEYS=(
   GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64
   GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64
   GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS
+  MERCHANT_STAFF_BUSINESS_RBAC_MODE
+  MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS
+  FAOLLA_CANONICAL_PORTAL_ORIGIN
   MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED
   MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE
   MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED
@@ -86,6 +89,9 @@ load_deploy_payload() {
       GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64|\
       GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64|\
       GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS|\
+      MERCHANT_STAFF_BUSINESS_RBAC_MODE|\
+      MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS|\
+      FAOLLA_CANONICAL_PORTAL_ORIGIN|\
       MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED|\
       MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE|\
       MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED|\
@@ -165,6 +171,9 @@ const expectedKeys = [
   "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64",
   "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64",
   "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS",
+  "MERCHANT_STAFF_BUSINESS_RBAC_MODE",
+  "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS",
+  "FAOLLA_CANONICAL_PORTAL_ORIGIN",
   "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED",
   "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE",
   "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED",
@@ -464,6 +473,42 @@ cleanup_initial_release_evidence() {
   rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE"
 }
 trap cleanup_initial_release_evidence EXIT
+
+if [ "$FAOLLA_CANONICAL_PORTAL_ORIGIN" != "https://launch.faolla.com" ]; then
+  echo "[deploy] the canonical production portal origin must be https://launch.faolla.com"
+  exit 1
+fi
+case "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" in
+  off)
+    if [ -n "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" ]; then
+      echo "[deploy] the disabled staff business rollout must not carry a site allowlist"
+      exit 1
+    fi
+    ;;
+  enforce)
+    if ! [[ "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" =~ ^[0-9]{8}(,[0-9]{8}){0,49}$ ]]; then
+      echo "[deploy] the enabled staff business rollout requires an exact site allowlist"
+      exit 1
+    fi
+    declare -A merchant_staff_business_site_ids_seen=()
+    IFS=',' read -r -a merchant_staff_business_site_ids \
+      <<< "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS"
+    for merchant_staff_business_site_id in "${merchant_staff_business_site_ids[@]}"; do
+      if [ -n "${merchant_staff_business_site_ids_seen[$merchant_staff_business_site_id]:-}" ]; then
+        echo "[deploy] the staff business rollout site allowlist contains a duplicate"
+        exit 1
+      fi
+      merchant_staff_business_site_ids_seen[$merchant_staff_business_site_id]=1
+    done
+    unset merchant_staff_business_site_id merchant_staff_business_site_ids \
+      merchant_staff_business_site_ids_seen
+    ;;
+  *)
+    echo "[deploy] the staff business rollout mode must be off or enforce"
+    exit 1
+    ;;
+esac
+
 APP_DIR="${APP_DIR:-/var/www/merchant-space}"
 APP_NAME="${APP_NAME:-merchant-space}"
 APP_PORT="${APP_PORT:-3000}"
@@ -1212,6 +1257,188 @@ if ! PREVIOUS_BUILD_ID="$(
   exit 1
 fi
 
+# An enforce release may persist permission keys that older strict parsers do
+# not understand.  Require the frozen rollback target to advertise the exact
+# compatibility contract before any environment mutation.  The first release
+# therefore stays off; a later release can enforce only when rollback is safe.
+if [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" = "enforce" ]; then
+  PREVIOUS_STAFF_BUSINESS_COMPATIBILITY_MARKER="$PREVIOUS_RUNTIME_DIR/scripts/merchant-staff-business-rbac-compatibility-v1.json"
+  if ! PREVIOUS_STAFF_BUSINESS_COMPATIBILITY_GIT_BLOB="$(
+    timeout --signal=TERM --kill-after=1s 5s \
+      git -C "$APP_DIR" rev-parse --verify \
+        "${PREVIOUS_BUILD_ID}:scripts/merchant-staff-business-rbac-compatibility-v1.json" \
+        2>/dev/null
+  )" \
+    || [ "$PREVIOUS_STAFF_BUSINESS_COMPATIBILITY_GIT_BLOB" != "3b4b076c830aee36d2d8d5f8664264f4edae6ac8" ] \
+    || ! PREVIOUS_STAFF_BUSINESS_COMPATIBILITY="$(timeout --signal=TERM --kill-after=1s 5s \
+    node - "$PREVIOUS_STAFF_BUSINESS_COMPATIBILITY_MARKER" <<'NODE'
+const { createHash } = require("node:crypto");
+const {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} = require("node:fs");
+const { basename, dirname, resolve } = require("node:path");
+
+const markerPath = process.argv[2];
+let descriptor;
+let directoryDescriptor;
+
+if (
+  process.platform !== "linux" ||
+  !Number.isInteger(constants.O_DIRECTORY) ||
+  !Number.isInteger(constants.O_NOFOLLOW) ||
+  !Number.isInteger(constants.O_NONBLOCK)
+) {
+  process.exit(1);
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.mode === right.mode;
+}
+
+function sameDirectoryIdentity(left, right) {
+  return left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.mode === right.mode;
+}
+
+function safeDirectory(identity) {
+  return !identity.isSymbolicLink() &&
+    identity.isDirectory() &&
+    identity.nlink >= 1n &&
+    typeof process.getuid === "function" &&
+    identity.uid === BigInt(process.getuid()) &&
+    (identity.mode & 0o022n) === 0n;
+}
+
+function safeMarker(identity) {
+  return !identity.isSymbolicLink() &&
+    identity.isFile() &&
+    identity.nlink === 1n &&
+    identity.size >= 2n &&
+    identity.size <= 512n &&
+    typeof process.getuid === "function" &&
+    identity.uid === BigInt(process.getuid()) &&
+    (identity.mode & 0o022n) === 0n;
+}
+
+try {
+  const resolvedMarkerPath = resolve(markerPath);
+  const directoryPath = dirname(resolvedMarkerPath);
+  if (
+    basename(resolvedMarkerPath) !==
+      "merchant-staff-business-rbac-compatibility-v1.json" ||
+    realpathSync(directoryPath) !== directoryPath ||
+    realpathSync(markerPath) !== resolvedMarkerPath
+  ) {
+    process.exit(1);
+  }
+  const directoryBefore = lstatSync(directoryPath, { bigint: true });
+  if (!safeDirectory(directoryBefore)) process.exit(1);
+  directoryDescriptor = openSync(
+    directoryPath,
+    constants.O_RDONLY |
+      constants.O_DIRECTORY |
+      constants.O_NOFOLLOW |
+      constants.O_NONBLOCK,
+  );
+  const openedDirectory = fstatSync(directoryDescriptor, { bigint: true });
+  if (
+    !safeDirectory(openedDirectory) ||
+    !sameDirectoryIdentity(directoryBefore, openedDirectory)
+  ) {
+    process.exit(1);
+  }
+  const before = lstatSync(markerPath, { bigint: true });
+  if (!safeMarker(before)) process.exit(1);
+  descriptor = openSync(
+    `/proc/self/fd/${directoryDescriptor}/${basename(resolvedMarkerPath)}`,
+    constants.O_RDONLY |
+      constants.O_NOFOLLOW |
+      constants.O_NONBLOCK,
+  );
+  const opened = fstatSync(descriptor, { bigint: true });
+  if (!safeMarker(opened) || !sameFileIdentity(before, opened)) process.exit(1);
+  const bytes = readFileSync(descriptor);
+  const after = fstatSync(descriptor, { bigint: true });
+  const current = lstatSync(markerPath, { bigint: true });
+  const directoryAfter = fstatSync(directoryDescriptor, { bigint: true });
+  const currentDirectory = lstatSync(directoryPath, { bigint: true });
+  if (
+    BigInt(bytes.length) !== opened.size ||
+    !safeMarker(after) ||
+    !safeMarker(current) ||
+    !sameFileIdentity(opened, after) ||
+    !sameFileIdentity(after, current) ||
+    !safeDirectory(directoryAfter) ||
+    !safeDirectory(currentDirectory) ||
+    !sameDirectoryIdentity(openedDirectory, directoryAfter) ||
+    !sameDirectoryIdentity(directoryAfter, currentDirectory) ||
+    realpathSync(directoryPath) !== directoryPath ||
+    realpathSync(markerPath) !== resolvedMarkerPath ||
+    createHash("sha256").update(bytes).digest("hex") !==
+      "88b0e93afe8c9e470a19583d1fc803b182fd59f066308fa1390fbbdc0fed1890"
+  ) {
+    process.exit(1);
+  }
+  const marker = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+  );
+  const keys = Object.keys(marker).sort();
+  if (
+    keys.join(",") !==
+      "permissionContractSha256,permissionCount,permissionKeysSha256,schema,version" ||
+    marker.schema !== "faolla.merchant-staff-business-rbac-compatibility" ||
+    marker.version !== 1 ||
+    marker.permissionCount !== 39 ||
+    marker.permissionKeysSha256 !==
+      "bf35ba5e297d8a9dc0f164cd02063758ed245fd4d66ccfd71e45929c884c09a2" ||
+    marker.permissionContractSha256 !==
+      "4d82b7912ff8acfd21550cc9d6884bb5bd75189aaef89fd7a4b0acd89ea3c2e5"
+  ) {
+    process.exit(1);
+  }
+  process.stdout.write(
+    "v1:39:bf35ba5e297d8a9dc0f164cd02063758ed245fd4d66ccfd71e45929c884c09a2:" +
+      "4d82b7912ff8acfd21550cc9d6884bb5bd75189aaef89fd7a4b0acd89ea3c2e5",
+  );
+} catch {
+  process.exit(1);
+} finally {
+  if (descriptor !== undefined) closeSync(descriptor);
+  if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+}
+NODE
+  )" \
+    || [ "$PREVIOUS_STAFF_BUSINESS_COMPATIBILITY" != "v1:39:bf35ba5e297d8a9dc0f164cd02063758ed245fd4d66ccfd71e45929c884c09a2:4d82b7912ff8acfd21550cc9d6884bb5bd75189aaef89fd7a4b0acd89ea3c2e5" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+    || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
+    || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
+    echo "[deploy] staff business enforce requires a compatible frozen rollback release"
+    exit 1
+  fi
+  unset PREVIOUS_STAFF_BUSINESS_COMPATIBILITY \
+    PREVIOUS_STAFF_BUSINESS_COMPATIBILITY_GIT_BLOB \
+    PREVIOUS_STAFF_BUSINESS_COMPATIBILITY_MARKER
+fi
+
 deadline_bounded_command_timeout_seconds() {
   local absolute_deadline_seconds="$1"
   local maximum_command_seconds="$2"
@@ -1269,9 +1496,61 @@ process.stdout.write(startTicks);
 NODE
 }
 
+staff_business_rollout_values_valid() {
+  local mode="${1:-}"
+  local site_ids="${2:-}"
+  local portal_origin="${3:-}"
+  local allow_legacy_empty_origin="${4:-0}"
+  local site_id
+  local -a parsed_site_ids=()
+  local -A seen_site_ids=()
+  case "$allow_legacy_empty_origin" in 0|1) ;; *) return 1 ;; esac
+  if [ "$portal_origin" != "https://launch.faolla.com" ] \
+    && ! { [ "$allow_legacy_empty_origin" = "1" ] \
+      && [ "$mode" = "off" ] && [ -z "$site_ids" ] \
+      && [ -z "$portal_origin" ]; }; then
+    return 1
+  fi
+  case "$mode" in
+    off)
+      [ -z "$site_ids" ]
+      ;;
+    enforce)
+      if ! [[ "$site_ids" =~ ^[0-9]{8}(,[0-9]{8}){0,49}$ ]]; then
+        return 1
+      fi
+      IFS=',' read -r -a parsed_site_ids <<< "$site_ids"
+      for site_id in "${parsed_site_ids[@]}"; do
+        if [ -n "${seen_site_ids[$site_id]+x}" ]; then return 1; fi
+        seen_site_ids[$site_id]=1
+      done
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+decode_frozen_environment_value() {
+  local encoded="${1:-}"
+  if [ "$encoded" = "-" ]; then
+    return 0
+  fi
+  if ! [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+    return 1
+  fi
+  printf '%s' "$encoded" | base64 -d
+}
+
 PREVIOUS_SUPABASE_INTERNAL_URL=""
 PREVIOUS_NEXT_PUBLIC_SUPABASE_URL=""
 PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+PREVIOUS_SUPABASE_INTERNAL_URL_B64=""
+PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64=""
+PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""
+PREVIOUS_STAFF_ROLLOUT_STATUS=""
+PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN="0"
+PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE=""
+PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=""
+PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN=""
 PREVIOUS_WEB_PROCESS_START_TICKS=""
 PREVIOUS_ENVIRONMENT_DIRECTORY_IDENTITY=""
 PREVIOUS_ENVIRONMENT_FILE_IDENTITY=""
@@ -1289,35 +1568,64 @@ fi
 mapfile -t PREVIOUS_ENVIRONMENT_PARTS <<< "$PREVIOUS_ENVIRONMENT_CAPTURE"
 unset PREVIOUS_ENVIRONMENT_CAPTURE
 PREVIOUS_PROCESS_ENVIRONMENT_STATUS="${PREVIOUS_ENVIRONMENT_PARTS[0]:-}"
+PREVIOUS_PROCESS_STAFF_ROLLOUT_STATUS="${PREVIOUS_ENVIRONMENT_PARTS[1]:-}"
+PREVIOUS_WEB_PROCESS_START_TICKS="${PREVIOUS_ENVIRONMENT_PARTS[2]:-}"
+PREVIOUS_ENVIRONMENT_PART_INDEX=3
+if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -lt 3 ] \
+  || ! [[ "$PREVIOUS_WEB_PROCESS_START_TICKS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[deploy] the previous atomic release process environment is unavailable"
+  exit 1
+fi
 case "$PREVIOUS_PROCESS_ENVIRONMENT_STATUS" in
   present)
-    if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -ne 5 ] \
-      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[1]}" =~ ^[1-9][0-9]*$ ]] \
-      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[2]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
-      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
-      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+    if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -lt $((PREVIOUS_ENVIRONMENT_PART_INDEX + 3)) ] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[$PREVIOUS_ENVIRONMENT_PART_INDEX]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 1))]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 2))]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
       echo "[deploy] the previous atomic release process environment is unavailable"
       exit 1
     fi
-    PREVIOUS_WEB_PROCESS_START_TICKS="${PREVIOUS_ENVIRONMENT_PARTS[1]}"
-    PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64="${PREVIOUS_ENVIRONMENT_PARTS[2]}"
-    PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64="${PREVIOUS_ENVIRONMENT_PARTS[3]}"
-    PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${PREVIOUS_ENVIRONMENT_PARTS[4]}"
+    PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64="${PREVIOUS_ENVIRONMENT_PARTS[$PREVIOUS_ENVIRONMENT_PART_INDEX]}"
+    PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64="${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 1))]}"
+    PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 2))]}"
+    PREVIOUS_ENVIRONMENT_PART_INDEX=$((PREVIOUS_ENVIRONMENT_PART_INDEX + 3))
     ;;
   absent)
-    if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -ne 2 ] \
-      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[1]}" =~ ^[1-9][0-9]*$ ]] \
-      || [ "$PREVIOUS_BUILD_ID" != "$LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID" ]; then
+    if [ "$PREVIOUS_BUILD_ID" != "$LEGACY_MISSING_PROCESS_ENVIRONMENT_BUILD_ID" ]; then
       echo "[deploy] the previous atomic release process environment is unavailable"
       exit 1
     fi
-    PREVIOUS_WEB_PROCESS_START_TICKS="${PREVIOUS_ENVIRONMENT_PARTS[1]}"
     ;;
   *)
     echo "[deploy] the previous atomic release process environment is unavailable"
     exit 1
     ;;
 esac
+case "$PREVIOUS_PROCESS_STAFF_ROLLOUT_STATUS" in
+  present)
+    if [ "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" -lt $((PREVIOUS_ENVIRONMENT_PART_INDEX + 3)) ] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[$PREVIOUS_ENVIRONMENT_PART_INDEX]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 1))]}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]] \
+      || ! [[ "${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 2))]}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]]; then
+      echo "[deploy] the previous atomic release process environment is unavailable"
+      exit 1
+    fi
+    PREVIOUS_PROCESS_STAFF_MODE_B64="${PREVIOUS_ENVIRONMENT_PARTS[$PREVIOUS_ENVIRONMENT_PART_INDEX]}"
+    PREVIOUS_PROCESS_STAFF_SITE_IDS_B64="${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 1))]}"
+    PREVIOUS_PROCESS_PORTAL_ORIGIN_B64="${PREVIOUS_ENVIRONMENT_PARTS[$((PREVIOUS_ENVIRONMENT_PART_INDEX + 2))]}"
+    PREVIOUS_ENVIRONMENT_PART_INDEX=$((PREVIOUS_ENVIRONMENT_PART_INDEX + 3))
+    ;;
+  absent) ;;
+  *)
+    echo "[deploy] the previous atomic release process environment is unavailable"
+    exit 1
+    ;;
+esac
+if [ "$PREVIOUS_ENVIRONMENT_PART_INDEX" -ne "${#PREVIOUS_ENVIRONMENT_PARTS[@]}" ]; then
+  echo "[deploy] the previous atomic release process environment is unavailable"
+  exit 1
+fi
+unset PREVIOUS_ENVIRONMENT_PART_INDEX
 unset PREVIOUS_ENVIRONMENT_PARTS
 PREVIOUS_ENVIRONMENT_SNAPSHOT=""
 PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS=()
@@ -1331,13 +1639,17 @@ if ! PREVIOUS_ENVIRONMENT_SNAPSHOT="$(
 fi
 mapfile -t PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS <<< "$PREVIOUS_ENVIRONMENT_SNAPSHOT"
 unset PREVIOUS_ENVIRONMENT_SNAPSHOT
-if [ "${#PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[@]}" -ne 6 ] \
+if [ "${#PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[@]}" -ne 10 ] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[2]}" =~ ^[0-9a-f]{64}$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
   || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[5]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[6]}" =~ ^(explicit|legacy-off)$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[7]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[8]}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]] \
+  || ! [[ "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[9]}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]] \
   || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
   || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
   || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
@@ -1348,12 +1660,31 @@ fi
 PREVIOUS_ENVIRONMENT_DIRECTORY_IDENTITY="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[0]}"
 PREVIOUS_ENVIRONMENT_FILE_IDENTITY="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[1]}"
 PREVIOUS_ENVIRONMENT_SHA256="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[2]}"
+PREVIOUS_SUPABASE_INTERNAL_URL_B64="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[3]}"
+PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[4]}"
+PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[5]}"
+PREVIOUS_STAFF_ROLLOUT_STATUS="${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[6]}"
+if [ "$PREVIOUS_STAFF_ROLLOUT_STATUS" = "legacy-off" ]; then
+  PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN="1"
+else
+  PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN="0"
+fi
 if ! PREVIOUS_SUPABASE_INTERNAL_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[3]}" | base64 -d)" \
   || ! PREVIOUS_NEXT_PUBLIC_SUPABASE_URL="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[4]}" | base64 -d)" \
   || ! PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(printf '%s' "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[5]}" | base64 -d)" \
+  || ! PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE="$(decode_frozen_environment_value "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[7]}")" \
+  || ! PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS="$(decode_frozen_environment_value "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[8]}")" \
+  || ! PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN="$(decode_frozen_environment_value "${PREVIOUS_ENVIRONMENT_SNAPSHOT_PARTS[9]}")" \
   || [ -z "$PREVIOUS_SUPABASE_INTERNAL_URL" ] \
   || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL" ] \
-  || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+  || [ -z "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY" ] \
+  || ! staff_business_rollout_values_valid \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
+  || { [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" = "enforce" ] \
+    && [ "$PREVIOUS_STAFF_ROLLOUT_STATUS" != "explicit" ]; }; then
   echo "[deploy] the previous atomic release environment identity is unavailable"
   exit 1
 fi
@@ -1369,12 +1700,42 @@ if [ "$PREVIOUS_PROCESS_ENVIRONMENT_STATUS" = "present" ]; then
     exit 1
   fi
 fi
+case "$PREVIOUS_PROCESS_STAFF_ROLLOUT_STATUS" in
+  present)
+    if ! PREVIOUS_PROCESS_STAFF_MODE="$(decode_frozen_environment_value "$PREVIOUS_PROCESS_STAFF_MODE_B64")" \
+      || ! PREVIOUS_PROCESS_STAFF_SITE_IDS="$(decode_frozen_environment_value "$PREVIOUS_PROCESS_STAFF_SITE_IDS_B64")" \
+      || ! PREVIOUS_PROCESS_PORTAL_ORIGIN="$(decode_frozen_environment_value "$PREVIOUS_PROCESS_PORTAL_ORIGIN_B64")" \
+      || [ "$PREVIOUS_PROCESS_STAFF_MODE" != "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" ] \
+      || [ "$PREVIOUS_PROCESS_STAFF_SITE_IDS" != "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" ] \
+      || [ "$PREVIOUS_PROCESS_PORTAL_ORIGIN" != "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" ]; then
+      echo "[deploy] the previous atomic release process environment is unavailable"
+      exit 1
+    fi
+    ;;
+  absent)
+    if [ "$PREVIOUS_STAFF_ROLLOUT_STATUS" != "legacy-off" ] \
+      || [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" != "off" ]; then
+      echo "[deploy] the previous atomic release process environment is unavailable"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "[deploy] the previous atomic release process environment is unavailable"
+    exit 1
+    ;;
+esac
 unset PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL_B64 \
   PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL_B64 \
   PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64 \
   PREVIOUS_PROCESS_SUPABASE_INTERNAL_URL \
   PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_URL \
-  PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY
+  PREVIOUS_PROCESS_NEXT_PUBLIC_SUPABASE_ANON_KEY \
+  PREVIOUS_PROCESS_STAFF_MODE_B64 \
+  PREVIOUS_PROCESS_STAFF_SITE_IDS_B64 \
+  PREVIOUS_PROCESS_PORTAL_ORIGIN_B64 \
+  PREVIOUS_PROCESS_STAFF_MODE \
+  PREVIOUS_PROCESS_STAFF_SITE_IDS \
+  PREVIOUS_PROCESS_PORTAL_ORIGIN
 CURRENT_PREVIOUS_WEB_PID=""
 CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS=""
 if ! CURRENT_PREVIOUS_WEB_PID="$(timeout --signal=TERM --kill-after=1s 2s \
@@ -1502,6 +1863,13 @@ write_env_value "GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET" "$(decode_base64_value "
 write_env_value "GOOGLE_BUSINESS_PROFILE_TOKEN_KEY" "$(decode_base64_value "${GOOGLE_BUSINESS_PROFILE_TOKEN_KEY_B64:-}")"
 write_env_value "GOOGLE_BUSINESS_PROFILE_REDIRECT_URI" "$(decode_base64_value "${GOOGLE_BUSINESS_PROFILE_REDIRECT_URI_B64:-}")"
 write_env_value "GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS" "${GOOGLE_BUSINESS_PROFILE_SYNC_INTERVAL_MS:-}"
+write_env_value "MERCHANT_STAFF_BUSINESS_RBAC_MODE" "$MERCHANT_STAFF_BUSINESS_RBAC_MODE"
+if [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" = "enforce" ]; then
+  write_env_value "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS"
+else
+  remove_env_value "MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS"
+fi
+write_env_value "FAOLLA_CANONICAL_PORTAL_ORIGIN" "$FAOLLA_CANONICAL_PORTAL_ORIGIN"
 write_env_value "MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED"
 write_env_value "MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE" "$MERCHANT_ENTERPRISE_INVITATION_DELIVERY_MODE"
 write_env_value "MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED"
@@ -1967,6 +2335,10 @@ previous_runtime_recovery_identity_matches() {
 
 start_release() {
   local runtime_dir="$1"
+  local staff_business_mode="${2:-}"
+  local staff_business_site_ids="${3:-}"
+  local canonical_portal_origin="${4:-}"
+  local allow_legacy_empty_origin="${5:-0}"
   local automation_worker_enabled
   local node_entry
   local runtime_root
@@ -1990,10 +2362,16 @@ start_release() {
     *) return 1 ;;
   esac
   [ -f "$next_entry" ] && [ ! -L "$next_entry" ] || return 1
+  staff_business_rollout_values_valid \
+    "$staff_business_mode" "$staff_business_site_ids" \
+    "$canonical_portal_origin" "$allow_legacy_empty_origin" || return 1
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
   (
     cd "$runtime_root" || exit 1
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
+      MERCHANT_STAFF_BUSINESS_RBAC_MODE="$staff_business_mode" \
+      MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS="$staff_business_site_ids" \
+      FAOLLA_CANONICAL_PORTAL_ORIGIN="$canonical_portal_origin" \
       PORT="$APP_PORT" timeout --signal=TERM --kill-after=5s \
         "${RELEASE_PROCESS_START_TIMEOUT_SECONDS}s" \
         pm2 start "$next_entry" --name "$APP_NAME" \
@@ -2069,6 +2447,120 @@ pm2_process_snapshot() {
     running:[1-9][0-9]*) printf '%s\n' "$process_state" ;;
     *) return 1 ;;
   esac
+}
+
+pm2_rollout_environment_pid() {
+  local process_name="$1"
+  local expected_mode="$2"
+  local expected_site_ids="$3"
+  local expected_portal_origin="$4"
+  local process_list
+  if ! process_list="$(PM2_SILENT=true timeout --signal=TERM --kill-after=2s 5s \
+      pm2 jlist 2>/dev/null)"; then
+    return 1
+  fi
+  timeout --signal=TERM --kill-after=1s 2s node -e '
+    const fs = require("node:fs");
+    const [name, mode, siteIds, portalOrigin] = process.argv.slice(1);
+    let list;
+    try { list = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(1); }
+    if (!Array.isArray(list) || !name || !mode) process.exit(1);
+    const matches = list.filter((entry) =>
+      entry !== null && typeof entry === "object" &&
+      entry.pm2_env !== null && typeof entry.pm2_env === "object" &&
+      entry.pm2_env.name === name
+    );
+    if (matches.length !== 1) process.exit(1);
+    const entry = matches[0];
+    const environment = entry.pm2_env;
+    if (
+      environment.status !== "online" ||
+      !Number.isSafeInteger(entry.pid) || entry.pid <= 0 ||
+      environment.MERCHANT_STAFF_BUSINESS_RBAC_MODE !== mode ||
+      environment.MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS !== siteIds ||
+      environment.FAOLLA_CANONICAL_PORTAL_ORIGIN !== portalOrigin
+    ) process.exit(1);
+    process.stdout.write(String(entry.pid));
+  ' "$process_name" "$expected_mode" "$expected_site_ids" \
+    "$expected_portal_origin" <<< "$process_list"
+}
+
+running_release_rollout_environment_matches() {
+  local process_name="$1"
+  local runtime_dir="$2"
+  local expected_mode="$3"
+  local expected_site_ids="$4"
+  local expected_portal_origin="$5"
+  local expected_pid="${6:-}"
+  local allow_legacy_empty_origin="${7:-0}"
+  local expected_internal_url_b64="${8:-}"
+  local expected_public_url_b64="${9:-}"
+  local expected_anon_key_b64="${10:-}"
+  local process_snapshot
+  local process_pid
+  local process_start_ticks
+  local metadata_pid
+  local metadata_pid_after
+  local process_snapshot_after
+  local process_start_ticks_after
+  local environment_snapshot
+  local -a environment_parts=()
+  local expected_mode_b64
+  local expected_site_ids_b64
+  local expected_portal_origin_b64
+  staff_business_rollout_values_valid \
+    "$expected_mode" "$expected_site_ids" "$expected_portal_origin" \
+    "$allow_legacy_empty_origin" || return 1
+  if ! [[ "$expected_internal_url_b64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "$expected_public_url_b64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "$expected_anon_key_b64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+    return 1
+  fi
+  process_snapshot="$(pm2_process_snapshot "$process_name")" || return 1
+  case "$process_snapshot" in
+    running:[1-9][0-9]*) process_pid="${process_snapshot#running:}" ;;
+    *) return 1 ;;
+  esac
+  if [ -n "$expected_pid" ] && [ "$process_pid" != "$expected_pid" ]; then
+    return 1
+  fi
+  process_start_ticks="$(linux_process_start_ticks "$process_pid")" || return 1
+  metadata_pid="$(pm2_rollout_environment_pid \
+    "$process_name" "$expected_mode" "$expected_site_ids" \
+    "$expected_portal_origin")" || return 1
+  [ "$metadata_pid" = "$process_pid" ] || return 1
+  environment_snapshot="$(timeout --signal=TERM --kill-after=1s 5s \
+    node "$APP_DIR/scripts/read-production-supabase-environment.mjs" \
+      process-snapshot "$process_pid" "$runtime_dir" 2>/dev/null)" || return 1
+  mapfile -t environment_parts <<< "$environment_snapshot"
+  expected_mode_b64="$(printf '%s' "$expected_mode" | base64 | tr -d '\r\n')" \
+    || return 1
+  expected_site_ids_b64="$(printf '%s' "$expected_site_ids" | base64 | tr -d '\r\n')" \
+    || return 1
+  expected_portal_origin_b64="$(printf '%s' "$expected_portal_origin" | base64 | tr -d '\r\n')" \
+    || return 1
+  if [ -z "$expected_site_ids_b64" ]; then expected_site_ids_b64="-"; fi
+  if [ -z "$expected_portal_origin_b64" ]; then expected_portal_origin_b64="-"; fi
+  if [ "${#environment_parts[@]}" -ne 9 ] \
+    || [ "${environment_parts[0]}" != "present" ] \
+    || [ "${environment_parts[1]}" != "present" ] \
+    || [ "${environment_parts[2]}" != "$process_start_ticks" ] \
+    || [ "${environment_parts[3]}" != "$expected_internal_url_b64" ] \
+    || [ "${environment_parts[4]}" != "$expected_public_url_b64" ] \
+    || [ "${environment_parts[5]}" != "$expected_anon_key_b64" ] \
+    || [ "${environment_parts[6]}" != "$expected_mode_b64" ] \
+    || [ "${environment_parts[7]}" != "$expected_site_ids_b64" ] \
+    || [ "${environment_parts[8]}" != "$expected_portal_origin_b64" ]; then
+    return 1
+  fi
+  metadata_pid_after="$(pm2_rollout_environment_pid \
+    "$process_name" "$expected_mode" "$expected_site_ids" \
+    "$expected_portal_origin")" || return 1
+  process_snapshot_after="$(pm2_process_snapshot "$process_name")" || return 1
+  process_start_ticks_after="$(linux_process_start_ticks "$process_pid")" || return 1
+  [ "$metadata_pid_after" = "$process_pid" ] \
+    && [ "$process_snapshot_after" = "running:$process_pid" ] \
+    && [ "$process_start_ticks_after" = "$process_start_ticks" ]
 }
 
 pm2_process_state() {
@@ -2866,6 +3358,10 @@ stop_previous_automation_worker_bounded() {
 
 start_automation_worker_process() {
   local runtime_dir="$1"
+  local staff_business_mode="${2:-}"
+  local staff_business_site_ids="${3:-}"
+  local canonical_portal_origin="${4:-}"
+  local allow_legacy_empty_origin="${5:-0}"
   local tsx_entry="$runtime_dir/node_modules/tsx/dist/cli.mjs"
   local worker_entry="$runtime_dir/scripts/run-merchant-enterprise-automation-worker.ts"
   local automation_worker_enabled
@@ -2876,6 +3372,9 @@ start_automation_worker_process() {
     || [ ! -f "$worker_entry" ]; then
     return 1
   fi
+  staff_business_rollout_values_valid \
+    "$staff_business_mode" "$staff_business_site_ids" \
+    "$canonical_portal_origin" "$allow_legacy_empty_origin" || return 1
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
   invitation_worker_enabled="$(read_runtime_invitation_worker_enabled "$runtime_dir")"
   if [ "$automation_worker_enabled" != "true" ] \
@@ -2886,6 +3385,9 @@ start_automation_worker_process() {
     cd "$runtime_dir" || exit 1
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
       MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED="$invitation_worker_enabled" \
+      MERCHANT_STAFF_BUSINESS_RBAC_MODE="$staff_business_mode" \
+      MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS="$staff_business_site_ids" \
+      FAOLLA_CANONICAL_PORTAL_ORIGIN="$canonical_portal_origin" \
       timeout --signal=TERM --kill-after=5s 30s \
         pm2 start "$tsx_entry" \
         --name "$AUTOMATION_WORKER_NAME" \
@@ -2902,7 +3404,10 @@ start_automation_worker_process() {
 start_frozen_previous_release() {
   if [ -z "${PREVIOUS_SUPABASE_INTERNAL_URL:-}" ] \
     || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_URL:-}" ] \
-    || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]; then
+    || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ] \
+    || [ -z "${PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE:-}" ] \
+    || { [ -z "${PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN:-}" ] \
+      && [ "${PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN:-0}" != "1" ]; }; then
     return 1
   fi
   previous_runtime_recovery_identity_matches || return 1
@@ -2910,14 +3415,21 @@ start_frozen_previous_release() {
     export SUPABASE_INTERNAL_URL="$PREVIOUS_SUPABASE_INTERNAL_URL"
     export NEXT_PUBLIC_SUPABASE_URL="$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL"
     export NEXT_PUBLIC_SUPABASE_ANON_KEY="$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY"
-    start_release "$PREVIOUS_RUNTIME_DIR"
+    start_release "$PREVIOUS_RUNTIME_DIR" \
+      "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+      "${PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS:-}" \
+      "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+      "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN"
   )
 }
 
 start_frozen_previous_automation_worker_process() {
   if [ -z "${PREVIOUS_SUPABASE_INTERNAL_URL:-}" ] \
     || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_URL:-}" ] \
-    || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]; then
+    || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ] \
+    || [ -z "${PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE:-}" ] \
+    || { [ -z "${PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN:-}" ] \
+      && [ "${PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN:-0}" != "1" ]; }; then
     return 1
   fi
   previous_runtime_recovery_identity_matches || return 1
@@ -2925,7 +3437,11 @@ start_frozen_previous_automation_worker_process() {
     export SUPABASE_INTERNAL_URL="$PREVIOUS_SUPABASE_INTERNAL_URL"
     export NEXT_PUBLIC_SUPABASE_URL="$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL"
     export NEXT_PUBLIC_SUPABASE_ANON_KEY="$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY"
-    start_automation_worker_process "$PREVIOUS_RUNTIME_DIR"
+    start_automation_worker_process "$PREVIOUS_RUNTIME_DIR" \
+      "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+      "${PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS:-}" \
+      "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+      "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN"
   )
 }
 
@@ -3463,13 +3979,17 @@ assert_booking_persistence_preflight_state() {
   build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
     "$absolute_deadline_seconds")" || return 1
   mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
-  [ "${#environment_snapshot_parts[@]}" -eq 6 ] \
+  [ "${#environment_snapshot_parts[@]}" -eq 10 ] \
     && [ "${environment_snapshot_parts[0]}" = "$BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY" ] \
     && [ "${environment_snapshot_parts[1]}" = "$BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY" ] \
     && [ "${environment_snapshot_parts[2]}" = "$BOOKING_PREFLIGHT_ENVIRONMENT_SHA256" ] \
     && [ "${environment_snapshot_parts[3]}" = "$BOOKING_PREFLIGHT_SUPABASE_INTERNAL_URL_B64" ] \
     && [ "${environment_snapshot_parts[4]}" = "$BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
     && [ "${environment_snapshot_parts[5]}" = "$BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    && [ "${environment_snapshot_parts[6]}" = "$BOOKING_PREFLIGHT_STAFF_ROLLOUT_STATUS" ] \
+    && [ "${environment_snapshot_parts[7]}" = "$BOOKING_PREFLIGHT_STAFF_MODE_B64" ] \
+    && [ "${environment_snapshot_parts[8]}" = "$BOOKING_PREFLIGHT_STAFF_SITE_IDS_B64" ] \
+    && [ "${environment_snapshot_parts[9]}" = "$BOOKING_PREFLIGHT_PORTAL_ORIGIN_B64" ] \
     && [ "${#build_id_snapshot_parts[@]}" -eq 2 ] \
     && [ "${build_id_snapshot_parts[0]}" = "$BOOKING_PREFLIGHT_BUILD_FILE_IDENTITY" ] \
     && [ "${build_id_snapshot_parts[1]}" = "$BOOKING_PREFLIGHT_BUILD_FILE_SHA256" ] \
@@ -3483,6 +4003,9 @@ capture_booking_persistence_preflight_identity() {
   local environment_snapshot
   local -a environment_snapshot_parts=()
   local runtime_identity
+  local staff_mode
+  local staff_site_ids
+  local portal_origin
   if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
@@ -3500,16 +4023,33 @@ capture_booking_persistence_preflight_identity() {
     "$absolute_deadline_seconds")" || return 1
   mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
   if ! [[ "$runtime_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
-    || [ "${#environment_snapshot_parts[@]}" -ne 6 ] \
+    || [ "${#environment_snapshot_parts[@]}" -ne 10 ] \
     || ! [[ "${environment_snapshot_parts[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
     || ! [[ "${environment_snapshot_parts[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
     || ! [[ "${environment_snapshot_parts[2]}" =~ ^[0-9a-f]{64}$ ]] \
     || ! [[ "${environment_snapshot_parts[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${environment_snapshot_parts[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${environment_snapshot_parts[5]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || [ "${environment_snapshot_parts[6]}" != "explicit" ] \
+    || ! [[ "${environment_snapshot_parts[7]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${environment_snapshot_parts[8]}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]] \
+    || ! [[ "${environment_snapshot_parts[9]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
     || ! [[ "${build_id_snapshot_parts[0]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
     || ! [[ "${build_id_snapshot_parts[1]}" =~ ^[0-9a-f]{64}$ ]]; then
+    return 1
+  fi
+  staff_mode="$(decode_frozen_environment_value "${environment_snapshot_parts[7]}")" \
+    || return 1
+  staff_site_ids="$(decode_frozen_environment_value "${environment_snapshot_parts[8]}")" \
+    || return 1
+  portal_origin="$(decode_frozen_environment_value "${environment_snapshot_parts[9]}")" \
+    || return 1
+  if ! staff_business_rollout_values_valid \
+      "$staff_mode" "$staff_site_ids" "$portal_origin" \
+    || [ "$staff_mode" != "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" ] \
+    || [ "$staff_site_ids" != "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" ] \
+    || [ "$portal_origin" != "$FAOLLA_CANONICAL_PORTAL_ORIGIN" ]; then
     return 1
   fi
   BOOKING_PREFLIGHT_RUNTIME_IDENTITY="$runtime_identity"
@@ -3519,6 +4059,10 @@ capture_booking_persistence_preflight_identity() {
   BOOKING_PREFLIGHT_SUPABASE_INTERNAL_URL_B64="${environment_snapshot_parts[3]}"
   BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_URL_B64="${environment_snapshot_parts[4]}"
   BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${environment_snapshot_parts[5]}"
+  BOOKING_PREFLIGHT_STAFF_ROLLOUT_STATUS="${environment_snapshot_parts[6]}"
+  BOOKING_PREFLIGHT_STAFF_MODE_B64="${environment_snapshot_parts[7]}"
+  BOOKING_PREFLIGHT_STAFF_SITE_IDS_B64="${environment_snapshot_parts[8]}"
+  BOOKING_PREFLIGHT_PORTAL_ORIGIN_B64="${environment_snapshot_parts[9]}"
   BOOKING_PREFLIGHT_BUILD_FILE_IDENTITY="${build_id_snapshot_parts[0]}"
   BOOKING_PREFLIGHT_BUILD_FILE_SHA256="${build_id_snapshot_parts[1]}"
   assert_booking_persistence_preflight_state "$absolute_deadline_seconds"
@@ -3590,6 +4134,9 @@ capture_candidate_current_identity_for_booking_retry() {
   local build_id_snapshot
   local -a build_id_snapshot_parts=()
   local runtime_identity
+  local staff_mode
+  local staff_site_ids
+  local portal_origin
   if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ "${SWITCH_COMPLETED:-0}" != "1" ] \
@@ -3613,16 +4160,33 @@ capture_candidate_current_identity_for_booking_retry() {
     "$absolute_deadline_seconds")" \
     || return 1
   mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
-  if [ "${#environment_snapshot_parts[@]}" -ne 6 ] \
+  if [ "${#environment_snapshot_parts[@]}" -ne 10 ] \
     || ! [[ "${environment_snapshot_parts[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
     || ! [[ "${environment_snapshot_parts[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
     || ! [[ "${environment_snapshot_parts[2]}" =~ ^[0-9a-f]{64}$ ]] \
     || ! [[ "${environment_snapshot_parts[3]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${environment_snapshot_parts[4]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${environment_snapshot_parts[5]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || [ "${environment_snapshot_parts[6]}" != "explicit" ] \
+    || ! [[ "${environment_snapshot_parts[7]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${environment_snapshot_parts[8]}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]] \
+    || ! [[ "${environment_snapshot_parts[9]}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
     || ! [[ "${build_id_snapshot_parts[0]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
     || ! [[ "${build_id_snapshot_parts[1]}" =~ ^[0-9a-f]{64}$ ]]; then
+    return 1
+  fi
+  staff_mode="$(decode_frozen_environment_value "${environment_snapshot_parts[7]}")" \
+    || return 1
+  staff_site_ids="$(decode_frozen_environment_value "${environment_snapshot_parts[8]}")" \
+    || return 1
+  portal_origin="$(decode_frozen_environment_value "${environment_snapshot_parts[9]}")" \
+    || return 1
+  if ! staff_business_rollout_values_valid \
+      "$staff_mode" "$staff_site_ids" "$portal_origin" \
+    || [ "$staff_mode" != "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" ] \
+    || [ "$staff_site_ids" != "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" ] \
+    || [ "$portal_origin" != "$FAOLLA_CANONICAL_PORTAL_ORIGIN" ]; then
     return 1
   fi
   if [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
@@ -3642,6 +4206,13 @@ capture_candidate_current_identity_for_booking_retry() {
   CANDIDATE_SUPABASE_INTERNAL_URL_B64="${environment_snapshot_parts[3]}"
   CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64="${environment_snapshot_parts[4]}"
   CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="${environment_snapshot_parts[5]}"
+  CANDIDATE_STAFF_ROLLOUT_STATUS="${environment_snapshot_parts[6]}"
+  CANDIDATE_STAFF_MODE_B64="${environment_snapshot_parts[7]}"
+  CANDIDATE_STAFF_SITE_IDS_B64="${environment_snapshot_parts[8]}"
+  CANDIDATE_PORTAL_ORIGIN_B64="${environment_snapshot_parts[9]}"
+  CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE="$staff_mode"
+  CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS="$staff_site_ids"
+  CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN="$portal_origin"
   CANDIDATE_BUILD_FILE_IDENTITY="${build_id_snapshot_parts[0]}"
   CANDIDATE_BUILD_FILE_SHA256="${build_id_snapshot_parts[1]}"
 }
@@ -3706,6 +4277,10 @@ assert_booking_persistence_retry_state() {
     || ! [[ "${CANDIDATE_SUPABASE_INTERNAL_URL_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || [ "${CANDIDATE_STAFF_ROLLOUT_STATUS:-}" != "explicit" ] \
+    || ! [[ "${CANDIDATE_STAFF_MODE_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || ! [[ "${CANDIDATE_STAFF_SITE_IDS_B64:-}" =~ ^(-|[A-Za-z0-9+/]+={0,2})$ ]] \
+    || ! [[ "${CANDIDATE_PORTAL_ORIGIN_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || ! [[ "${CANDIDATE_BUILD_FILE_IDENTITY:-}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
     || ! [[ "${CANDIDATE_BUILD_FILE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
     || ! [[ "${CANDIDATE_WEB_PID:-}" =~ ^[1-9][0-9]*$ ]] \
@@ -3743,13 +4318,17 @@ assert_booking_persistence_retry_state() {
     "$absolute_deadline_seconds")" \
     || return 1
   mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
-  if [ "${#environment_snapshot_parts[@]}" -ne 6 ] \
+  if [ "${#environment_snapshot_parts[@]}" -ne 10 ] \
     || [ "${environment_snapshot_parts[0]}" != "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" ] \
     || [ "${environment_snapshot_parts[1]}" != "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" ] \
     || [ "${environment_snapshot_parts[2]}" != "$CANDIDATE_ENVIRONMENT_SHA256" ] \
     || [ "${environment_snapshot_parts[3]}" != "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" ] \
     || [ "${environment_snapshot_parts[4]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
     || [ "${environment_snapshot_parts[5]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    || [ "${environment_snapshot_parts[6]}" != "$CANDIDATE_STAFF_ROLLOUT_STATUS" ] \
+    || [ "${environment_snapshot_parts[7]}" != "$CANDIDATE_STAFF_MODE_B64" ] \
+    || [ "${environment_snapshot_parts[8]}" != "$CANDIDATE_STAFF_SITE_IDS_B64" ] \
+    || [ "${environment_snapshot_parts[9]}" != "$CANDIDATE_PORTAL_ORIGIN_B64" ] \
     || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
     || [ "${build_id_snapshot_parts[0]}" != "$CANDIDATE_BUILD_FILE_IDENTITY" ] \
     || [ "${build_id_snapshot_parts[1]}" != "$CANDIDATE_BUILD_FILE_SHA256" ]; then
@@ -3760,12 +4339,16 @@ assert_booking_persistence_retry_state() {
       "$absolute_deadline_seconds"
   )" || return 1
   mapfile -t process_environment_snapshot_parts <<< "$process_environment_snapshot"
-  if [ "${#process_environment_snapshot_parts[@]}" -ne 5 ] \
+  if [ "${#process_environment_snapshot_parts[@]}" -ne 9 ] \
     || [ "${process_environment_snapshot_parts[0]}" != "present" ] \
-    || [ "${process_environment_snapshot_parts[1]}" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
-    || [ "${process_environment_snapshot_parts[2]}" != "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" ] \
-    || [ "${process_environment_snapshot_parts[3]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
-    || [ "${process_environment_snapshot_parts[4]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    || [ "${process_environment_snapshot_parts[1]}" != "present" ] \
+    || [ "${process_environment_snapshot_parts[2]}" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
+    || [ "${process_environment_snapshot_parts[3]}" != "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" ] \
+    || [ "${process_environment_snapshot_parts[4]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" ] \
+    || [ "${process_environment_snapshot_parts[5]}" != "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
+    || [ "${process_environment_snapshot_parts[6]}" != "$CANDIDATE_STAFF_MODE_B64" ] \
+    || [ "${process_environment_snapshot_parts[7]}" != "$CANDIDATE_STAFF_SITE_IDS_B64" ] \
+    || [ "${process_environment_snapshot_parts[8]}" != "$CANDIDATE_PORTAL_ORIGIN_B64" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
     return 1
   fi
@@ -5428,6 +6011,13 @@ CANDIDATE_ENVIRONMENT_SHA256=""
 CANDIDATE_SUPABASE_INTERNAL_URL_B64=""
 CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64=""
 CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""
+CANDIDATE_STAFF_ROLLOUT_STATUS=""
+CANDIDATE_STAFF_MODE_B64=""
+CANDIDATE_STAFF_SITE_IDS_B64=""
+CANDIDATE_PORTAL_ORIGIN_B64=""
+CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE=""
+CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS=""
+CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN=""
 CANDIDATE_BUILD_FILE_IDENTITY=""
 CANDIDATE_BUILD_FILE_SHA256=""
 CANDIDATE_WEB_PID=""
@@ -5446,6 +6036,10 @@ BOOKING_PREFLIGHT_ENVIRONMENT_SHA256=""
 BOOKING_PREFLIGHT_SUPABASE_INTERNAL_URL_B64=""
 BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_URL_B64=""
 BOOKING_PREFLIGHT_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""
+BOOKING_PREFLIGHT_STAFF_ROLLOUT_STATUS=""
+BOOKING_PREFLIGHT_STAFF_MODE_B64=""
+BOOKING_PREFLIGHT_STAFF_SITE_IDS_B64=""
+BOOKING_PREFLIGHT_PORTAL_ORIGIN_B64=""
 BOOKING_PREFLIGHT_BUILD_FILE_IDENTITY=""
 BOOKING_PREFLIGHT_BUILD_FILE_SHA256=""
 READINESS_FENCE_FORWARD_READY=0
@@ -5639,7 +6233,27 @@ recover_pre_forward_previous_runtime() {
     "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
     "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
     "$PRE_FORWARD_RECOVERY_WEB_CWD_IDENTITY" || return 1
+  running_release_rollout_environment_matches \
+    "$APP_NAME" "$PREVIOUS_RUNTIME_DIR" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
+    "$PREVIOUS_SUPABASE_INTERNAL_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" || return 1
   wait_for_release_health "$PREVIOUS_BUILD_ID" || return 1
+  running_release_rollout_environment_matches \
+    "$APP_NAME" "$PREVIOUS_RUNTIME_DIR" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
+    "$PREVIOUS_SUPABASE_INTERNAL_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" || return 1
   pre_forward_recovery_process_identity_matches "$APP_NAME" \
     "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
     "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
@@ -5685,6 +6299,16 @@ recover_pre_forward_previous_runtime() {
   timeout --signal=TERM --kill-after=2s 10s pm2 save >/dev/null 2>&1 || return 1
   PRE_FORWARD_RECOVERY_FAILURE_PHASE="post_verify"
   previous_runtime_recovery_identity_matches || return 1
+  running_release_rollout_environment_matches \
+    "$APP_NAME" "$PREVIOUS_RUNTIME_DIR" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+    "$PRE_FORWARD_RECOVERY_WEB_PID" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
+    "$PREVIOUS_SUPABASE_INTERNAL_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" || return 1
   pre_forward_recovery_process_identity_matches "$APP_NAME" \
     "$PRE_FORWARD_RECOVERY_WEB_PID" "$PRE_FORWARD_RECOVERY_WEB_START_TICKS" \
     "$PRE_FORWARD_RECOVERY_WEB_PROCESS_IDENTITY" \
@@ -5764,7 +6388,31 @@ rollback_release() {
     ROLLBACK_FAILURE_CODE="deploy_rollback_failed_previous_web_start"
     return 1
   fi
+  if ! running_release_rollout_environment_matches \
+    "$APP_NAME" "$PREVIOUS_RUNTIME_DIR" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" "" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
+    "$PREVIOUS_SUPABASE_INTERNAL_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_previous_web_health"
+    return 1
+  fi
   if ! wait_for_release_health "$PREVIOUS_BUILD_ID" >/dev/null 2>&1; then
+    ROLLBACK_FAILURE_CODE="deploy_rollback_failed_previous_web_health"
+    return 1
+  fi
+  if ! running_release_rollout_environment_matches \
+    "$APP_NAME" "$PREVIOUS_RUNTIME_DIR" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" "" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" \
+    "$PREVIOUS_SUPABASE_INTERNAL_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64" \
+    "$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
     ROLLBACK_FAILURE_CODE="deploy_rollback_failed_previous_web_health"
     return 1
   fi
@@ -6155,8 +6803,28 @@ assert_readiness_fence_forward_checkpoint || exit 1
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"
 assert_readiness_fence_before_forward_operation "$RELEASE_PROCESS_START_TIMEOUT_SECONDS" || exit 1
-if ! start_release "$RELEASE_DIR"; then
+if ! start_release "$RELEASE_DIR" \
+  "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+  "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" "" 0 \
+  "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" \
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" \
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
   echo "[deploy] failed to start isolated release"
+  exit 1
+fi
+assert_readiness_fence_forward_checkpoint || exit 1
+
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
+if ! running_release_rollout_environment_matches \
+  "$APP_NAME" "$RELEASE_DIR" \
+  "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+  "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN" "" 0 \
+  "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" \
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" \
+  "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"; then
+  echo "[deploy] release rollout environment verification failed"
   exit 1
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
@@ -6165,6 +6833,15 @@ DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_health_failed"
 assert_readiness_fence_before_forward_operation "$((HEALTHCHECK_ATTEMPTS * 5))" || exit 1
 if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   echo "[deploy] release health check failed"
+  exit 1
+fi
+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
+if ! running_release_rollout_environment_matches \
+  "$APP_NAME" "$RELEASE_DIR" \
+  "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+  "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+  "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN"; then
+  echo "[deploy] release rollout environment verification failed"
   exit 1
 fi
 assert_readiness_fence_forward_checkpoint || exit 1
@@ -6208,7 +6885,10 @@ stop_pm2_process_bounded "$AUTOMATION_WORKER_NAME" \
 if [ "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" ] \
   || [ "$MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED" = "true" ]; then
   echo "[deploy] starting enterprise worker supervisor"
-  if ! start_automation_worker_process "$RELEASE_DIR"; then
+  if ! start_automation_worker_process "$RELEASE_DIR" \
+    "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$CANDIDATE_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN"; then
     echo "[deploy] failed to start enterprise worker supervisor"
     exit 1
   fi

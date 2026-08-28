@@ -242,7 +242,7 @@ run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/20260725000
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' -o -name '*_merchant_acl_contract_hardening.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' -o -name '*_merchant_acl_contract_hardening.sql' -o -name '*_merchant_staff_business_permissions.sql' \) \
     -print | sort
 )
 
@@ -250,6 +250,7 @@ isolation_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/2026081
 recovery_observer_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190038_ordinary_account_recovery_observer.sql"
 rpc_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190039_runtime_rpc_execute_acl_hardening.sql"
 merchant_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql"
+staff_business_permissions_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608280041_merchant_staff_business_permissions.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
 expected_registry_count=39
@@ -290,6 +291,14 @@ if [[ -f "${merchant_acl_hardening_migration_path}" ]]; then
   expected_registry_count=43
   merchant_acl_hardening_present=1
 fi
+if [[ -f "${staff_business_permissions_migration_path}" ]]; then
+  if [[ "${merchant_acl_hardening_present}" -ne 1 ]]; then
+    echo 'Staff business permissions 041 require the exact 040 merchant ACL migration' >&2
+    exit 1
+  fi
+  expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
+  expected_registry_count=44
+fi
 if [[ -f "${cutover_migration_path}" ]]; then
   if [[ "${isolation_present}" -eq 1 ]]; then
     echo 'Refusing colliding 202608190037 isolation and cutover migrations' >&2
@@ -301,7 +310,7 @@ if [[ -f "${cutover_migration_path}" ]]; then
 fi
 
 if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
-  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-040), found ${#enterprise_migrations[@]}" >&2
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-041), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -1301,6 +1310,143 @@ for migration in "${enterprise_migrations[@]}"; do
       exit 1
     fi
   elif [[ "$(basename -- "${migration}")" == \
+    "202608280041_merchant_staff_business_permissions.sql" ]]; then
+    echo '[enterprise-integration] normalizing the production 041 owner prestate'
+    run_psql --command \
+      "alter table public.merchant_enterprise_roles owner to supabase_admin; alter function public.faolla_create_merchant_enterprise_role_v1(jsonb) owner to supabase_admin; alter function public.faolla_update_merchant_enterprise_role_v1(jsonb) owner to supabase_admin; alter function public.faolla_create_merchant_enterprise_role_v2(jsonb) owner to supabase_admin; alter function public.faolla_update_merchant_enterprise_role_v2(jsonb) owner to supabase_admin; alter function public.faolla_create_merchant_enterprise_role_v1_preaudit_019(jsonb) owner to supabase_admin; alter function public.faolla_update_merchant_enterprise_role_v1_preaudit_019(jsonb) owner to supabase_admin; alter function public.faolla_create_merchant_enterprise_role_v2_preaudit_019(jsonb) owner to supabase_admin; alter function public.faolla_update_merchant_enterprise_role_v2_preaudit_019(jsonb) owner to supabase_admin; alter function public.faolla_grant_merchant_enterprise_role_workflow_permissions_v1(jsonb) owner to supabase_admin;"
+    staff_business_owner_prestate="$(
+      run_psql --tuples-only --no-align --command \
+        "select (select relowner = to_regrole('supabase_admin') from pg_catalog.pg_class where oid = 'public.merchant_enterprise_roles'::regclass) and (select count(*) = 9 and bool_and(function_metadata.proowner = to_regrole('supabase_admin')) from pg_catalog.pg_proc as function_metadata where function_metadata.oid = any(array['public.faolla_create_merchant_enterprise_role_v1(jsonb)'::regprocedure::oid, 'public.faolla_update_merchant_enterprise_role_v1(jsonb)'::regprocedure::oid, 'public.faolla_create_merchant_enterprise_role_v2(jsonb)'::regprocedure::oid, 'public.faolla_update_merchant_enterprise_role_v2(jsonb)'::regprocedure::oid, 'public.faolla_create_merchant_enterprise_role_v1_preaudit_019(jsonb)'::regprocedure::oid, 'public.faolla_update_merchant_enterprise_role_v1_preaudit_019(jsonb)'::regprocedure::oid, 'public.faolla_create_merchant_enterprise_role_v2_preaudit_019(jsonb)'::regprocedure::oid, 'public.faolla_update_merchant_enterprise_role_v2_preaudit_019(jsonb)'::regprocedure::oid, 'public.faolla_grant_merchant_enterprise_role_workflow_permissions_v1(jsonb)'::regprocedure::oid]));"
+    )"
+    if [[ "${staff_business_owner_prestate}" != 't' ]]; then
+      echo '041 trusted owner prestate normalization failed' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting a preseeded business permission before 041 DDL'
+    staff_business_permissions_constraint_definition="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.pg_get_constraintdef(constraint_metadata.oid, true) from pg_catalog.pg_constraint as constraint_metadata where constraint_metadata.conrelid = 'public.merchant_enterprise_roles'::regclass and constraint_metadata.conname = 'merchant_enterprise_roles_permissions_check' and constraint_metadata.contype = 'c' and constraint_metadata.convalidated;"
+    )"
+    if [[ -z "${staff_business_permissions_constraint_definition}" ]]; then
+      echo '041 preseed fixture could not freeze the exact legacy permission constraint' >&2
+      exit 1
+    fi
+    staff_business_roles_trigger_definition="$(
+      run_psql --tuples-only --no-align --command \
+        "select coalesce(string_agg(trigger_metadata.tgname || ':' || trigger_metadata.tgenabled::text || ':' || pg_catalog.pg_get_triggerdef(trigger_metadata.oid, true), E'\\n' order by trigger_metadata.tgname), '') from pg_catalog.pg_trigger as trigger_metadata where trigger_metadata.tgrelid = 'public.merchant_enterprise_roles'::regclass and not trigger_metadata.tgisinternal;"
+    )"
+    run_psql --command \
+      "begin; alter table public.merchant_enterprise_roles drop constraint merchant_enterprise_roles_permissions_check; alter table public.merchant_enterprise_roles add constraint merchant_enterprise_roles_permissions_check check (true); set local session_replication_role = replica; insert into public.merchant_enterprise_roles(id, merchant_id, name, permissions) values ('f4100000-0000-4000-8000-000000000001'::uuid, '10000001', 'Preseeded business role 041', array['orders.view']::text[]); commit;"
+    staff_business_relaxed_constraint_definition="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.pg_get_constraintdef(constraint_metadata.oid, true) from pg_catalog.pg_constraint as constraint_metadata where constraint_metadata.conrelid = 'public.merchant_enterprise_roles'::regclass and constraint_metadata.conname = 'merchant_enterprise_roles_permissions_check' and constraint_metadata.contype = 'c' and constraint_metadata.convalidated;"
+    )"
+    if [[ "${staff_business_relaxed_constraint_definition}" != 'CHECK (true)' ]]; then
+      echo '041 preseed fixture did not install the exact temporary permission constraint' >&2
+      exit 1
+    fi
+    staff_business_roles_trigger_after_injection="$(
+      run_psql --tuples-only --no-align --command \
+        "select coalesce(string_agg(trigger_metadata.tgname || ':' || trigger_metadata.tgenabled::text || ':' || pg_catalog.pg_get_triggerdef(trigger_metadata.oid, true), E'\\n' order by trigger_metadata.tgname), '') || ':' || (current_setting('session_replication_role') = 'origin')::text from pg_catalog.pg_trigger as trigger_metadata where trigger_metadata.tgrelid = 'public.merchant_enterprise_roles'::regclass and not trigger_metadata.tgisinternal;"
+    )"
+    if [[ "${staff_business_roles_trigger_after_injection}" != "${staff_business_roles_trigger_definition}:true" ]]; then
+      echo '041 preseed fixture changed a role trigger or did not restore origin trigger execution' >&2
+      exit 1
+    fi
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_staff_business_permissions_role_prestate_invalid'
+    staff_business_preseed_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608280041) and to_regprocedure('public.faolla_create_merchant_enterprise_role_v3(jsonb)') is null and permissions = array['orders.view']::text[] from public.merchant_enterprise_roles where id = 'f4100000-0000-4000-8000-000000000001'::uuid;"
+    )"
+    if [[ "${staff_business_preseed_state}" != 't' ]]; then
+      echo '041 preseed rejection mutated the registry, RPCs, or role row' >&2
+      exit 1
+    fi
+    staff_business_constraint_after_rejection="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.pg_get_constraintdef(constraint_metadata.oid, true) from pg_catalog.pg_constraint as constraint_metadata where constraint_metadata.conrelid = 'public.merchant_enterprise_roles'::regclass and constraint_metadata.conname = 'merchant_enterprise_roles_permissions_check' and constraint_metadata.contype = 'c' and constraint_metadata.convalidated;"
+    )"
+    if [[ "${staff_business_constraint_after_rejection}" != "${staff_business_relaxed_constraint_definition}" ]]; then
+      echo '041 preseed rejection changed the temporary permission constraint' >&2
+      exit 1
+    fi
+    staff_business_roles_trigger_after_rejection="$(
+      run_psql --tuples-only --no-align --command \
+        "select coalesce(string_agg(trigger_metadata.tgname || ':' || trigger_metadata.tgenabled::text || ':' || pg_catalog.pg_get_triggerdef(trigger_metadata.oid, true), E'\\n' order by trigger_metadata.tgname), '') || ':' || (current_setting('session_replication_role') = 'origin')::text from pg_catalog.pg_trigger as trigger_metadata where trigger_metadata.tgrelid = 'public.merchant_enterprise_roles'::regclass and not trigger_metadata.tgisinternal;"
+    )"
+    if [[ "${staff_business_roles_trigger_after_rejection}" != "${staff_business_roles_trigger_definition}:true" ]]; then
+      echo '041 preseed rejection changed a role trigger or trigger execution mode' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "delete from public.merchant_enterprise_roles where id = 'f4100000-0000-4000-8000-000000000001'::uuid; alter table public.merchant_enterprise_roles drop constraint merchant_enterprise_roles_permissions_check; alter table public.merchant_enterprise_roles add constraint merchant_enterprise_roles_permissions_check ${staff_business_permissions_constraint_definition};"
+    staff_business_restored_constraint_definition="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.pg_get_constraintdef(constraint_metadata.oid, true) from pg_catalog.pg_constraint as constraint_metadata where constraint_metadata.conrelid = 'public.merchant_enterprise_roles'::regclass and constraint_metadata.conname = 'merchant_enterprise_roles_permissions_check' and constraint_metadata.contype = 'c' and constraint_metadata.convalidated;"
+    )"
+    if [[ "${staff_business_restored_constraint_definition}" != "${staff_business_permissions_constraint_definition}" ]]; then
+      echo '041 preseed fixture did not restore the exact legacy permission constraint' >&2
+      exit 1
+    fi
+
+    echo '[enterprise-integration] rejecting transitive protected-role membership pollution'
+    staff_business_dashboard_prestate="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.to_regrole('dashboard_user') is null;"
+    )"
+    if [[ "${staff_business_dashboard_prestate}" != 't' ]]; then
+      echo '041 recursive membership fixture requires an absent dashboard_user role' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "create role dashboard_user nologin noinherit; create role redteam_staff_business_path_a_041 nologin inherit; create role redteam_staff_business_path_b_041 nologin inherit; grant dashboard_user to redteam_staff_business_path_a_041; grant redteam_staff_business_path_a_041 to redteam_staff_business_path_b_041;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_staff_business_permissions_membership_prerequisite_invalid'
+    staff_business_membership_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608280041) and to_regprocedure('public.faolla_create_merchant_enterprise_role_v3(jsonb)') is null and pg_catalog.pg_has_role('redteam_staff_business_path_b_041', 'dashboard_user', 'MEMBER') and (select count(*) = 2 and bool_and(not (granted_role.rolname in ('anon', 'authenticated', 'service_role', 'supabase_admin', 'authenticator', 'postgres') or member_role.rolname in ('anon', 'authenticated', 'service_role', 'authenticator', 'supabase_storage_admin', 'cli_login_postgres'))) from pg_catalog.pg_auth_members as membership join pg_catalog.pg_roles as granted_role on granted_role.oid = membership.roleid join pg_catalog.pg_roles as member_role on member_role.oid = membership.member where (granted_role.rolname = 'dashboard_user' and member_role.rolname = 'redteam_staff_business_path_a_041') or (granted_role.rolname = 'redteam_staff_business_path_a_041' and member_role.rolname = 'redteam_staff_business_path_b_041'));"
+    )"
+    if [[ "${staff_business_membership_state}" != 't' ]]; then
+      echo '041 membership rejection did not preserve the polluted prestate' >&2
+      exit 1
+    fi
+    run_psql --command \
+      "revoke redteam_staff_business_path_a_041 from redteam_staff_business_path_b_041; revoke dashboard_user from redteam_staff_business_path_a_041; drop role redteam_staff_business_path_b_041; drop role redteam_staff_business_path_a_041; drop role dashboard_user;"
+
+    echo '[enterprise-integration] rejecting authenticated CREATEROLE drift before 041'
+    run_psql --command "alter role authenticated createrole;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_staff_business_permissions_role_attribute_prerequisite_invalid'
+    staff_business_authenticated_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608280041) and to_regprocedure('public.faolla_create_merchant_enterprise_role_v3(jsonb)') is null and (select rolcreaterole from pg_catalog.pg_roles where rolname = 'authenticated');"
+    )"
+    if [[ "${staff_business_authenticated_drift_state}" != 't' ]]; then
+      echo '041 authenticated attribute rejection changed the drift or schema' >&2
+      exit 1
+    fi
+    run_psql --command "alter role authenticated nocreaterole;"
+
+    echo '[enterprise-integration] rejecting authenticator CREATEROLE drift before 041'
+    run_psql --command "alter role authenticator createrole;"
+    expect_sql_file_error_as_role "${migration}" supabase_admin \
+      'merchant_staff_business_permissions_role_attribute_prerequisite_invalid'
+    staff_business_authenticator_drift_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select not exists (select 1 from public.faolla_schema_migrations where version = 202608280041) and to_regprocedure('public.faolla_create_merchant_enterprise_role_v3(jsonb)') is null and (select rolcreaterole from pg_catalog.pg_roles where rolname = 'authenticator');"
+    )"
+    if [[ "${staff_business_authenticator_drift_state}" != 't' ]]; then
+      echo '041 authenticator attribute rejection changed the drift or schema' >&2
+      exit 1
+    fi
+    run_psql --command "alter role authenticator nocreaterole;"
+
+    run_sql_file_as_role "${migration}" supabase_admin
+    run_sql_file_as_role \
+      "${SCRIPT_DIR}/63-staff-business-permissions.sql" supabase_admin
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -1446,7 +1592,7 @@ fi
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040, 202608280041) or version between 202607310001 and 202608040026;"
 )"
 if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
   echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2

@@ -1,4 +1,5 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { matchesMerchantMembershipBusinessId } from "@/lib/merchantMembershipBusinessPermissions";
 import {
   buildMerchantMemberNo,
   buildMerchantMembershipQrValue,
@@ -56,7 +57,11 @@ function requireMembershipsStoreClient() {
 
 const merchantMembershipMutationTails = new Map<string, Promise<void>>();
 
-async function withMerchantMembershipMutationLock<T>(siteId: string, task: () => Promise<T>) {
+export async function withMerchantMembershipMutationLock<T>(
+  siteId: string,
+  task: () => Promise<T>,
+  beforeMutation?: () => Promise<void>,
+) {
   const normalizedSiteId = trimText(siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
   const previous = merchantMembershipMutationTails.get(normalizedSiteId) ?? Promise.resolve();
@@ -68,6 +73,7 @@ async function withMerchantMembershipMutationLock<T>(siteId: string, task: () =>
   merchantMembershipMutationTails.set(normalizedSiteId, tail);
   await previous.catch(() => undefined);
   try {
+    await beforeMutation?.();
     return await task();
   } finally {
     release();
@@ -128,7 +134,9 @@ function findMerchantMembershipIndexByIdentity(
 ) {
   const membershipId = trimText(input.membershipId, 160);
   if (membershipId) {
-    const index = memberships.findIndex((membership) => membership.id === membershipId);
+    const index = memberships.findIndex((membership) =>
+      matchesMerchantMembershipBusinessId(toMerchantMembershipListItem(membership), membershipId),
+    );
     if (index >= 0) return index;
   }
   const memberNo = trimText(input.memberNo, 120);
@@ -613,10 +621,11 @@ export async function listMerchantMemberships(siteId: string): Promise<MerchantM
   return snapshot.memberships;
 }
 
-export async function updateMerchantMembershipAllergens(input: {
+async function updateMerchantMembershipAllergensUnlocked(input: {
   siteId: string;
   membershipId: string;
   allergens: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -626,7 +635,9 @@ export async function updateMerchantMembershipAllergens(input: {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const stored = await loadStoredMerchantMemberships(supabase, siteId);
     const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-    const index = current.findIndex((membership) => membership.id === membershipId);
+    const index = current.findIndex((membership) =>
+      matchesMerchantMembershipBusinessId(toMerchantMembershipListItem(membership), membershipId),
+    );
     if (index < 0) throw new Error("membership_not_found");
     if (current[index]?.status !== "active") throw new Error("membership_not_active");
     const now = new Date().toISOString();
@@ -649,6 +660,17 @@ export async function updateMerchantMembershipAllergens(input: {
   throw new Error("merchant_memberships_conflict");
 }
 
+export async function updateMerchantMembershipAllergens(
+  input: Parameters<typeof updateMerchantMembershipAllergensUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => updateMerchantMembershipAllergensUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
+}
+
 type MerchantMembershipPointRuleAction = "checkin" | "invitation" | "review";
 
 function findActiveMembershipIndex(
@@ -658,7 +680,10 @@ function findActiveMembershipIndex(
   const membershipId = trimText(input.membershipId, 160);
   return memberships.findIndex((membership) => {
     if (membership.status !== "active") return false;
-    if (membershipId && membership.id === membershipId) return true;
+    if (
+      membershipId &&
+      matchesMerchantMembershipBusinessId(toMerchantMembershipListItem(membership), membershipId)
+    ) return true;
     if (!input.session) return false;
     if (membership.accountId && membership.accountId === input.session.accountId) return true;
     if (membership.userId && membership.userId === input.session.userId) return true;
@@ -676,13 +701,14 @@ function normalizeReferenceId(value: unknown, fallback: string) {
   return trimText(value, 160) || fallback;
 }
 
-export async function awardMerchantMembershipRulePoints(input: {
+async function awardMerchantMembershipRulePointsUnlocked(input: {
   siteId: string;
   membershipId?: unknown;
   session?: PersonalAccountSession | null;
   action: MerchantMembershipPointRuleAction;
   referenceId?: unknown;
   operatorId?: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -762,7 +788,18 @@ export async function awardMerchantMembershipRulePoints(input: {
   throw new Error("merchant_memberships_conflict");
 }
 
-export async function applyMerchantMembershipAccountOperation(input: {
+export async function awardMerchantMembershipRulePoints(
+  input: Parameters<typeof awardMerchantMembershipRulePointsUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => awardMerchantMembershipRulePointsUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
+}
+
+async function applyMerchantMembershipAccountOperationUnlocked(input: {
   siteId: string;
   membershipId: string;
   memberNo?: unknown;
@@ -776,6 +813,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
   redemptionQuantity?: unknown;
   operationId?: unknown;
   retryAttempt?: number;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -793,6 +831,7 @@ export async function applyMerchantMembershipAccountOperation(input: {
       note: input.note,
       operatorId: input.operatorId,
       operationId: input.operationId,
+      assertAuthorizationCurrent: input.assertAuthorizationCurrent,
     });
   }
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
@@ -887,13 +926,40 @@ export async function applyMerchantMembershipAccountOperation(input: {
     expectedUpdatedAt: stored?.updatedAt ?? null,
   });
   if (saved.error === "merchant_memberships_conflict" && (input.retryAttempt ?? 0) < 2) {
-    return applyMerchantMembershipAccountOperation({ ...input, retryAttempt: (input.retryAttempt ?? 0) + 1 });
+    return applyMerchantMembershipAccountOperationUnlocked({
+      ...input,
+      retryAttempt: (input.retryAttempt ?? 0) + 1,
+    });
   }
   if (saved.error) throw new Error(saved.error);
   return toMerchantMembershipListItem(nextMembership);
 }
 
-export async function cancelMerchantMembershipRecharge(input: {
+export async function applyMerchantMembershipAccountOperation(
+  input: Parameters<typeof applyMerchantMembershipAccountOperationUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  const redemptionItemId = trimText(input.redemptionItemId, 120);
+  if (input.type !== "recharge" && redemptionItemId) {
+    return applyMerchantMembershipRedemptionCart({
+      siteId,
+      membershipId: input.membershipId,
+      memberNo: input.memberNo,
+      items: [{ redemptionItemId, quantity: input.redemptionQuantity }],
+      note: input.note,
+      operatorId: input.operatorId,
+      operationId: input.operationId,
+      assertAuthorizationCurrent: input.assertAuthorizationCurrent,
+    });
+  }
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => applyMerchantMembershipAccountOperationUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
+}
+
+async function cancelMerchantMembershipRechargeUnlocked(input: {
   siteId: string;
   membershipId: string;
   memberNo?: unknown;
@@ -901,6 +967,7 @@ export async function cancelMerchantMembershipRecharge(input: {
   note?: unknown;
   operatorId?: unknown;
   operationId?: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -948,6 +1015,17 @@ export async function cancelMerchantMembershipRecharge(input: {
   throw new Error("merchant_memberships_conflict");
 }
 
+export async function cancelMerchantMembershipRecharge(
+  input: Parameters<typeof cancelMerchantMembershipRechargeUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => cancelMerchantMembershipRechargeUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
+}
+
 export async function getMerchantMembershipRechargeCancellationQuote(input: {
   siteId: string;
   membershipId: string;
@@ -971,7 +1049,7 @@ export async function getMerchantMembershipRechargeCancellationQuote(input: {
   });
 }
 
-export async function adjustMerchantMembershipRecharge(input: {
+async function adjustMerchantMembershipRechargeUnlocked(input: {
   siteId: string;
   membershipId: string;
   memberNo?: unknown;
@@ -982,6 +1060,7 @@ export async function adjustMerchantMembershipRecharge(input: {
   operatorId?: unknown;
   operationId?: unknown;
   confirmationTransactionId?: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }): Promise<MerchantMembershipListItem> {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -1032,6 +1111,17 @@ export async function adjustMerchantMembershipRecharge(input: {
   throw new Error("merchant_memberships_conflict");
 }
 
+export async function adjustMerchantMembershipRecharge(
+  input: Parameters<typeof adjustMerchantMembershipRechargeUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => adjustMerchantMembershipRechargeUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
+}
+
 type MerchantMembershipRedemptionCartInput = {
   siteId: string;
   membershipId: string;
@@ -1040,6 +1130,7 @@ type MerchantMembershipRedemptionCartInput = {
   note?: unknown;
   operatorId?: unknown;
   operationId?: unknown;
+  assertAuthorizationCurrent?: () => Promise<void>;
 };
 
 async function applyMerchantMembershipRedemptionCartUnlocked(
@@ -1423,8 +1514,10 @@ export async function applyMerchantMembershipRedemptionCart(
 ): Promise<MerchantMembershipListItem> {
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
-  return withMerchantMembershipMutationLock(siteId, () =>
-    applyMerchantMembershipRedemptionCartUnlocked({ ...input, siteId }),
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => applyMerchantMembershipRedemptionCartUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
   );
 }
 
@@ -1590,7 +1683,9 @@ export async function quoteMerchantMembershipPointDeduction(input: {
     loadStoredMerchantMemberships(supabase, siteId),
     getMerchantMembershipSettings(siteId),
   ]);
-  const membership = normalizeMerchantMembershipRecords(stored?.memberships ?? []).find((item) => item.id === membershipId);
+  const membership = normalizeMerchantMembershipRecords(stored?.memberships ?? []).find((item) =>
+    matchesMerchantMembershipBusinessId(toMerchantMembershipListItem(item), membershipId),
+  );
   if (!membership || membership.status !== "active") throw new Error("membership_not_found");
   return calculateMerchantMemberPointDeduction({
     orderAmount: normalizePositiveMoney(input.orderAmount),
@@ -1600,7 +1695,7 @@ export async function quoteMerchantMembershipPointDeduction(input: {
   });
 }
 
-export async function applyMerchantMembershipPointDeduction(input: {
+async function applyMerchantMembershipPointDeductionUnlocked(input: {
   siteId: string;
   membershipId: string;
   orderAmount: unknown;
@@ -1608,6 +1703,7 @@ export async function applyMerchantMembershipPointDeduction(input: {
   orderId?: unknown;
   operationId?: unknown;
   operatorId?: string;
+  assertAuthorizationCurrent?: () => Promise<void>;
 }) {
   const supabase = requireMembershipsStoreClient();
   const siteId = trimText(input.siteId, 64);
@@ -1622,7 +1718,9 @@ export async function applyMerchantMembershipPointDeduction(input: {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const stored = await loadStoredMerchantMemberships(supabase, siteId);
     const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-    const membershipIndex = current.findIndex((item) => item.id === membershipId);
+    const membershipIndex = current.findIndex((item) =>
+      matchesMerchantMembershipBusinessId(toMerchantMembershipListItem(item), membershipId),
+    );
     if (membershipIndex < 0 || current[membershipIndex]?.status !== "active") throw new Error("membership_not_found");
     const currentMembership = current[membershipIndex];
     const existingTransaction = currentMembership.transactions.find((transaction) => transaction.note.includes(marker));
@@ -1685,6 +1783,17 @@ export async function applyMerchantMembershipPointDeduction(input: {
     if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
   }
   throw new Error("merchant_memberships_conflict");
+}
+
+export async function applyMerchantMembershipPointDeduction(
+  input: Parameters<typeof applyMerchantMembershipPointDeductionUnlocked>[0],
+) {
+  const siteId = trimText(input.siteId, 64);
+  return withMerchantMembershipMutationLock(
+    siteId,
+    () => applyMerchantMembershipPointDeductionUnlocked({ ...input, siteId }),
+    input.assertAuthorizationCurrent,
+  );
 }
 
 export async function joinMerchantMembership(input: {

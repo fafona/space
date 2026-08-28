@@ -21,6 +21,19 @@ import {
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import { MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY } from "@/lib/merchantBusinessApiClient";
+import {
+  MERCHANT_MEMBERSHIP_NO_PERMISSIONS,
+  MERCHANT_MEMBERSHIP_OWNER_CACHE_POLICY,
+  createMerchantMembershipApiRequest,
+  hasMerchantMembershipFrontendPermission,
+  isMerchantMembershipEmployeeFrontend,
+} from "@/lib/merchantMembershipFrontendAccess";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import type {
   MerchantMemberLevel,
   MerchantMemberRechargePlan,
   MerchantMemberRedemptionItem,
@@ -32,6 +45,9 @@ type MerchantMemberManagerProps = {
   siteId: string;
   siteName?: string;
   className?: string;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: readonly MerchantStaffBusinessPermission[];
 };
 
 type MembershipsPayload = {
@@ -295,7 +311,72 @@ function ProfileField({
   );
 }
 
-export default function MerchantMemberManager({ siteId, className = "" }: MerchantMemberManagerProps) {
+export default function MerchantMemberManager({
+  siteId,
+  className = "",
+  apiClient,
+  cachePolicy,
+  permissions,
+}: MerchantMemberManagerProps) {
+  const employeeMode = isMerchantMembershipEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectiveCachePolicy = employeeMode
+    ? MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY
+    : cachePolicy ?? MERCHANT_MEMBERSHIP_OWNER_CACHE_POLICY;
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_MEMBERSHIP_NO_PERMISSIONS
+      : permissions;
+  const requestMemberApi = useMemo(
+    () =>
+      createMerchantMembershipApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: (path, init) => fetchMemberJson(path, init),
+      }),
+    [apiClient, employeeMode],
+  );
+  const canViewMembers = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.view",
+  );
+  const canViewCustomerData = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.customer_data.view",
+  );
+  const canViewAccounts = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.account.view",
+  );
+  const canViewInsights = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.insights.view",
+  );
+  const canManageAllergens = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.allergens.manage",
+  );
+  const canRedeem =
+    canViewAccounts &&
+    hasMerchantMembershipFrontendPermission(
+      effectivePermissions,
+      "redemptions.checkout",
+    );
+  const canRecharge = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.recharge",
+  );
+  const canViewRedemptions = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "redemptions.view",
+  );
+  const canManageMemberSettings = hasMerchantMembershipFrontendPermission(
+    effectivePermissions,
+    "members.settings.manage",
+  );
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
   const [selectedMembershipId, setSelectedMembershipId] = useState("");
   const [statusFilter, setStatusFilter] = useState<MemberStatusFilter>("all");
@@ -348,7 +429,11 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const selectedMembership = useMemo(() => {
     return membershipById.get(selectedMembershipId) ?? null;
   }, [membershipById, selectedMembershipId]);
-  const selectedInsight = selectedMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const selectedInsight = selectedMembership?.insight ?? {
+    ...EMPTY_MEMBER_INSIGHT,
+    pointBalance: selectedMembership?.pointBalance ?? 0,
+    balanceAmount: selectedMembership?.balanceAmount ?? 0,
+  };
   const couponWalletMembership = useMemo(() => {
     return membershipById.get(couponWalletMembershipId) ?? null;
   }, [couponWalletMembershipId, membershipById]);
@@ -360,7 +445,11 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   const operationMembership = useMemo(() => {
     return operationDialog ? membershipById.get(operationDialog.membershipId) ?? null : null;
   }, [membershipById, operationDialog]);
-  const operationInsight = operationMembership?.insight ?? EMPTY_MEMBER_INSIGHT;
+  const operationInsight = operationMembership?.insight ?? {
+    ...EMPTY_MEMBER_INSIGHT,
+    pointBalance: operationMembership?.pointBalance ?? 0,
+    balanceAmount: operationMembership?.balanceAmount ?? 0,
+  };
   const enabledRechargePlans = useMemo(
     () => (memberSettings?.rechargePlans ?? []).filter((plan) => plan.enabled),
     [memberSettings],
@@ -397,6 +486,15 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   }, [allergenError, operationError]);
 
   const loadMemberships = useCallback(async (mode: "reset" | "append" = "reset", force = false) => {
+    if (!canViewMembers) {
+      setMemberships([]);
+      setSelectedMembershipId("");
+      setMembershipTotal(0);
+      setMembershipAllTotal(0);
+      setMembershipHasMore(false);
+      setLoadError("");
+      return;
+    }
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setMemberships([]);
       setSelectedMembershipId("");
@@ -426,7 +524,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     );
     const requestId = ++membershipLoadRequestIdRef.current;
     let loadedMembershipsVersion: string | null = null;
-    const cachedPayload = force
+    const cachedPayload = force || !effectiveCachePolicy.allowPersistentRead
       ? null
       : readMerchantAdminDataCacheSnapshot<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const applyMembershipsPayload = (payload: MembershipsPayload) => {
@@ -448,8 +546,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     };
     const loadMembershipsFromServer = async () => {
       const requestParams = new URLSearchParams(params);
-      if (cachedPayload?.version) requestParams.set("knownVersion", cachedPayload.version);
-      const response = await fetchMemberJson(`/api/memberships?${requestParams.toString()}`, {
+      if (!employeeMode && cachedPayload?.version) requestParams.set("knownVersion", cachedPayload.version);
+      const response = await requestMemberApi(`/api/memberships?${requestParams.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -465,6 +563,27 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (payload.notModified === true && cachedPayload) return cachedPayload.data;
       return payload;
     };
+    if (!effectiveCachePolicy.allowPersistentRead) {
+      setLoading(true);
+      setLoadError("");
+      try {
+        const payload = await loadMembershipsFromServer();
+        if (membershipLoadRequestIdRef.current === requestId) {
+          applyMembershipsPayload(payload);
+        }
+      } catch (error) {
+        if (membershipLoadRequestIdRef.current === requestId) {
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : "会员列表加载失败，请稍后重试",
+          );
+        }
+      } finally {
+        if (membershipLoadRequestIdRef.current === requestId) setLoading(false);
+      }
+      return;
+    }
     if (cachedPayload) {
       setLoadError("");
       applyMembershipsPayload(cachedPayload.data);
@@ -498,9 +617,22 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     } finally {
       if (membershipLoadRequestIdRef.current === requestId) setLoading(false);
     }
-  }, [deferredKeyword, normalizedSiteId, statusFilter]);
+  }, [
+    canViewMembers,
+    deferredKeyword,
+    effectiveCachePolicy.allowPersistentRead,
+    employeeMode,
+    normalizedSiteId,
+    requestMemberApi,
+    statusFilter,
+  ]);
 
   const loadMemberSettings = useCallback(async (force = false) => {
+    if (employeeMode && !canViewRedemptions && !canManageMemberSettings) {
+      setMemberSettings(null);
+      setMemberSettingsError("");
+      return;
+    }
     if (!/^\d{8}$/.test(normalizedSiteId)) {
       setMemberSettings(null);
       setMemberSettingsError("");
@@ -509,13 +641,17 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId, "full");
     const requestId = ++memberSettingsLoadRequestIdRef.current;
     let loadedMemberSettingsVersion: string | null = null;
-    const cachedSettings = force
+    const cachedSettings = force || !effectiveCachePolicy.allowPersistentRead
       ? null
       : readMerchantAdminDataCacheSnapshot<MerchantMembershipSettings>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const loadSettingsFromServer = async () => {
       const params = new URLSearchParams({ siteId: normalizedSiteId });
-      if (cachedSettings?.version) params.set("knownVersion", cachedSettings.version);
-      const response = await fetchMemberJson(`/api/membership-settings?${params.toString()}`, {
+      if (employeeMode) {
+        params.set("scope", canViewRedemptions ? "redemption-cashier" : "members");
+      } else if (cachedSettings?.version) {
+        params.set("knownVersion", cachedSettings.version);
+      }
+      const response = await requestMemberApi(`/api/membership-settings?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -534,6 +670,23 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       }
       return payload.settings;
     };
+    if (!effectiveCachePolicy.allowPersistentRead) {
+      setMemberSettingsError("");
+      try {
+        const settings = await loadSettingsFromServer();
+        if (memberSettingsLoadRequestIdRef.current === requestId) {
+          setMemberSettings(settings);
+        }
+      } catch (error) {
+        if (memberSettingsLoadRequestIdRef.current === requestId) {
+          setMemberSettings(null);
+          setMemberSettingsError(
+            error instanceof Error ? error.message : "会员配置加载失败，请稍后重试",
+          );
+        }
+      }
+      return;
+    }
     if (cachedSettings) {
       setMemberSettingsError("");
       setMemberSettings(cachedSettings.data);
@@ -563,19 +716,29 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         setMemberSettingsError(error instanceof Error ? error.message : "会员配置加载失败，充值和兑换将暂时使用手动输入。");
       }
     }
-  }, [normalizedSiteId]);
+  }, [
+    canManageMemberSettings,
+    canViewRedemptions,
+    effectiveCachePolicy.allowPersistentRead,
+    employeeMode,
+    normalizedSiteId,
+    requestMemberApi,
+  ]);
 
   const ensureMembershipInsight = useCallback(async (membershipId: string) => {
+    if (!canViewInsights) return;
     const normalizedMembershipId = trimText(membershipId, 160);
     if (!/^\d{8}$/.test(normalizedSiteId) || !normalizedMembershipId) return;
     const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
     if (!currentMembership || currentMembership.insight) return;
     if (membershipInsightRequestIdsRef.current.has(normalizedMembershipId)) return;
     const cacheKey = makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, normalizedMembershipId);
-    const cachedMembership = readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem>(
-      cacheKey,
-      MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
-    );
+    const cachedMembership = effectiveCachePolicy.allowPersistentRead
+      ? readMerchantAdminDataCacheSnapshot<MerchantMembershipListItem>(
+          cacheKey,
+          MERCHANT_ADMIN_DATA_CACHE_TTL_MS,
+        )
+      : null;
     if (cachedMembership) {
       setMemberships((current) =>
         current.map((membership) =>
@@ -592,7 +755,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         limit: "1",
         includeInsights: "1",
       });
-      const response = await fetchMemberJson(`/api/memberships?${params.toString()}`, {
+      const response = await requestMemberApi(`/api/memberships?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -603,7 +766,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
       const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
       if (!response.ok || payload?.ok !== true || !detailedMembership) return;
-      writeMerchantAdminDataCache(cacheKey, detailedMembership);
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        writeMerchantAdminDataCache(cacheKey, detailedMembership);
+      }
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === detailedMembership.id ? { ...membership, ...detailedMembership } : membership,
@@ -614,7 +779,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     } finally {
       membershipInsightRequestIdsRef.current.delete(normalizedMembershipId);
     }
-  }, [normalizedSiteId]);
+  }, [
+    canViewInsights,
+    effectiveCachePolicy.allowPersistentRead,
+    effectiveCachePolicy.allowPersistentWrite,
+    normalizedSiteId,
+    requestMemberApi,
+  ]);
 
   useEffect(() => {
     void loadMemberships();
@@ -655,7 +826,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   }, [couponWalletMembershipId, ensureMembershipInsight]);
 
   async function toggleMemberAllergen(allergen: string) {
-    if (!selectedMembership || !selectedMembership.profileVisible || allergenSaving) return;
+    if (
+      !canManageAllergens ||
+      !selectedMembership ||
+      !selectedMembership.profileVisible ||
+      allergenSaving
+    ) return;
     const currentAllergens = Array.isArray(selectedMembership.allergens) ? selectedMembership.allergens : [];
     const currentSet = new Set(currentAllergens);
     if (currentSet.has(allergen)) currentSet.delete(allergen);
@@ -670,7 +846,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       ),
     );
     try {
-      const response = await fetchMemberJson("/api/memberships", {
+      const response = await requestMemberApi("/api/memberships", {
         method: "PATCH",
         cache: "no-store",
         credentials: "same-origin",
@@ -689,10 +865,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readPayloadMessage(payload?.message, "过敏信息保存失败，请稍后重试"));
       }
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMembership.id),
-      );
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMembership.id),
+        );
+      }
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === selectedMembership.id
@@ -718,6 +896,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   }
 
   function openMemberOperation(membership: MerchantMembershipListItem, type: MerchantMemberAccountTransactionType) {
+    if ((type === "recharge" && !canRecharge) || (type === "redeem" && !canRedeem)) return;
     if (!membership.profileVisible || membership.status !== "active") return;
     const defaultRechargePlan = type === "recharge" ? enabledRechargePlans[0] ?? null : null;
     const defaultRedemptionItem = type === "redeem" ? enabledRedemptionItems[0] ?? null : null;
@@ -784,7 +963,14 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
   }
 
   async function submitMemberOperation() {
-    if (!operationDialog || !operationMembership || operationSaving || memberOperationSubmittingRef.current) return;
+    if (
+      !operationDialog ||
+      !operationMembership ||
+      operationSaving ||
+      memberOperationSubmittingRef.current ||
+      (operationDialog.type === "recharge" && !canRecharge) ||
+      (operationDialog.type === "redeem" && !canRedeem)
+    ) return;
     const redemptionQuantity = Math.max(1, Number.parseInt(operationRedemptionQuantity, 10) || 1);
     const points =
       operationDialog.type === "recharge" && selectedRechargePlan
@@ -829,7 +1015,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
     setOperationSaving(true);
     setOperationError("");
     try {
-      const response = await fetchMemberJson("/api/memberships", {
+      const response = await requestMemberApi("/api/memberships", {
         method: "PATCH",
         cache: "no-store",
         credentials: "same-origin",
@@ -855,10 +1041,12 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readOperationErrorMessage(payload?.message, "会员账户操作失败，请稍后重试"));
       }
-      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
-      invalidateMerchantAdminDataCachePrefix(
-        makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, operationMembership.id),
-      );
+      if (effectiveCachePolicy.allowPersistentWrite) {
+        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+        invalidateMerchantAdminDataCachePrefix(
+          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, operationMembership.id),
+        );
+      }
       setMemberships((current) =>
         current.map((membership) => {
           if (membership.id !== operationMembership.id || !payload.membership) return membership;
@@ -878,7 +1066,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       setOperationError("");
       memberOperationMutationRef.current = { fingerprint: "", operationId: "" };
       if (operationDialog.type === "redeem" && selectedRedemptionItem && selectedRedemptionItem.stock !== null) {
-        invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+        if (effectiveCachePolicy.allowPersistentWrite) {
+          invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+        }
         void loadMemberSettings(true);
       }
     } catch (error) {
@@ -888,6 +1078,18 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
       setOperationSaving(false);
     }
   }
+
+  if (!canViewMembers) {
+    return (
+      <section className={className}>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+          当前员工角色没有查看会员的权限。
+        </div>
+      </section>
+    );
+  }
+
+  const memberListColumnCount = canViewCustomerData ? 9 : 6;
 
   return (
     <section className={`space-y-4 ${className}`}>
@@ -924,7 +1126,11 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <input
             className="min-w-[260px] flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-400"
-            placeholder="搜索昵称 / 姓名 / 手机 / 邮箱 / 会员卡号 / 地区"
+            placeholder={
+              canViewCustomerData
+                ? "搜索昵称 / 姓名 / 手机 / 邮箱 / 会员卡号 / 地区"
+                : "搜索会员卡号"
+            }
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
           />
@@ -957,9 +1163,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     <th className="px-3 py-2">序号</th>
                     <th className="px-3 py-2">会员</th>
                     <th className="px-3 py-2">会员卡号</th>
-                    <th className="px-3 py-2">个人用户 ID</th>
-                    <th className="px-3 py-2">手机</th>
-                    <th className="px-3 py-2">邮箱</th>
+                    {canViewCustomerData ? (
+                      <>
+                        <th className="px-3 py-2">个人用户 ID</th>
+                        <th className="px-3 py-2">手机</th>
+                        <th className="px-3 py-2">邮箱</th>
+                      </>
+                    ) : null}
                     <th className="px-3 py-2">加入时间</th>
                     <th className="px-3 py-2">状态</th>
                     <th className="px-3 py-2">操作</th>
@@ -968,13 +1178,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                 <tbody>
                   {loading && memberships.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-xs text-slate-500">
+                      <td colSpan={memberListColumnCount} className="px-3 py-8 text-center text-xs text-slate-500">
                         正在加载会员列表...
                       </td>
                     </tr>
                   ) : filteredMemberships.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-xs text-slate-500">
+                      <td colSpan={memberListColumnCount} className="px-3 py-8 text-center text-xs text-slate-500">
                         {keyword.trim() || statusFilter !== "all"
                           ? "没有匹配的会员，请调整搜索或筛选条件。"
                           : "还没有会员。个人用户在商户首页加入后会显示在这里。"}
@@ -1007,9 +1217,13 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                             </div>
                           </td>
                           <td className="px-3 py-2 font-mono text-xs font-semibold text-slate-700">{membership.memberNo}</td>
-                          <td className="px-3 py-2 text-xs">{membership.profileVisible ? membership.accountId || "-" : "-"}</td>
-                          <td className="px-3 py-2 text-xs">{membership.profileVisible ? membership.phone || "-" : "-"}</td>
-                          <td className="px-3 py-2 text-xs">{membership.profileVisible ? membership.email || "-" : "-"}</td>
+                          {canViewCustomerData ? (
+                            <>
+                              <td className="px-3 py-2 text-xs">{membership.profileVisible ? membership.accountId || "-" : "-"}</td>
+                              <td className="px-3 py-2 text-xs">{membership.profileVisible ? membership.phone || "-" : "-"}</td>
+                              <td className="px-3 py-2 text-xs">{membership.profileVisible ? membership.email || "-" : "-"}</td>
+                            </>
+                          ) : null}
                           <td className="px-3 py-2 text-xs text-slate-500">{formatDateTime(membership.joinedAt)}</td>
                           <td className="px-3 py-2">
                             <span className={`rounded border px-2 py-0.5 text-xs ${statusBadgeClass(membership.status)}`}>
@@ -1018,30 +1232,30 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap gap-1.5">
-                              <button
+                              {canRedeem ? <button
                                 type="button"
                                 className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                                 onClick={() => openMemberOperation(membership, "redeem")}
                                 disabled={!membership.profileVisible || membership.status !== "active"}
                               >
                                 兑换
-                              </button>
-                              <button
+                              </button> : null}
+                              {canRecharge ? <button
                                 type="button"
                                 className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                                 onClick={() => openMemberOperation(membership, "recharge")}
                                 disabled={!membership.profileVisible || membership.status !== "active"}
                               >
                                 充值
-                              </button>
-                              <button
+                              </button> : null}
+                              {canViewInsights ? <button
                                 type="button"
                                 className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                                 onClick={() => openMemberCoupons(membership)}
                                 disabled={!membership.profileVisible}
                               >
                                 卡券
-                              </button>
+                              </button> : null}
                               <button
                                 type="button"
                                 className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
@@ -1056,7 +1270,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                     })}
                     {membershipHasMore ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-4 text-center text-xs text-slate-500">
+                        <td colSpan={memberListColumnCount} className="px-3 py-4 text-center text-xs text-slate-500">
                           <div>当前筛选结果 {membershipTotal} 条，已加载 {renderedMemberships.length} 条。</div>
                           <button
                             type="button"
@@ -1141,10 +1355,16 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                       <div>
                         <div className="mb-2 text-sm font-semibold text-slate-900">会员数据</div>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                          <ProfileField label="积分" value={selectedInsight.pointBalance} />
-                          <ProfileField label="余额" value={formatMoney(selectedInsight.balanceAmount)} />
-                          <ProfileField label="等级" value={selectedMembershipLevel?.name || "-"} />
-                          <ProfileField label="成长值" value={formatMoney(selectedMembership.growthValue)} />
+                          {canViewAccounts ? (
+                            <>
+                              <ProfileField label="积分" value={selectedInsight.pointBalance} />
+                              <ProfileField label="余额" value={formatMoney(selectedInsight.balanceAmount)} />
+                              <ProfileField label="等级" value={selectedMembershipLevel?.name || "-"} />
+                              <ProfileField label="成长值" value={formatMoney(selectedMembership.growthValue)} />
+                            </>
+                          ) : null}
+                          {canViewInsights ? (
+                            <>
                           <ProfileField label="累计消费金额" value={formatMoney(selectedInsight.totalSpendAmount)} />
                           <ProfileField label="累计订单数" value={selectedInsight.totalOrderCount} />
                           <ProfileField label="消费频率" value={formatFrequency(selectedInsight.consumptionFrequencyPerMonth)} />
@@ -1157,34 +1377,37 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                             value={selectedInsight.productPreferences.length > 0 ? selectedInsight.productPreferences.join("、") : "-"}
                             className="sm:col-span-2 lg:col-span-3"
                           />
+                            </>
+                          ) : null}
                         </div>
                       </div>
 
+                      {canViewAccounts ? (
                       <div className="rounded-2xl border border-slate-200 bg-white p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="text-sm font-semibold text-slate-900">账户记录</div>
                           <div className="flex gap-2">
-                            <button
+                            {canRedeem ? <button
                               type="button"
                               className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                               onClick={() => openMemberOperation(selectedMembership, "redeem")}
                             >
                               兑换
-                            </button>
-                            <button
+                            </button> : null}
+                            {canRecharge ? <button
                               type="button"
                               className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                               onClick={() => openMemberOperation(selectedMembership, "recharge")}
                             >
                               充值
-                            </button>
-                            <button
+                            </button> : null}
+                            {canViewInsights ? <button
                               type="button"
                               className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                               onClick={() => openMemberCoupons(selectedMembership)}
                             >
                               卡券
-                            </button>
+                            </button> : null}
                           </div>
                         </div>
                         <div className="mt-3 space-y-2">
@@ -1232,7 +1455,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           ) : null}
                         </div>
                       </div>
+                      ) : null}
 
+                      {canViewInsights ? (
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
@@ -1307,7 +1532,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           </div>
                         ) : null}
                       </div>
+                      ) : null}
 
+                      {canManageAllergens ? (
                       <div>
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                           <div className="text-sm font-semibold text-slate-900">过敏信息</div>
@@ -1334,7 +1561,10 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           })}
                         </div>
                       </div>
+                      ) : null}
 
+                      {canViewCustomerData ? (
+                      <>
                       <div>
                         <div className="mb-2 text-sm font-semibold text-slate-900">会员资料</div>
                         <div className="grid gap-2 sm:grid-cols-2">
@@ -1369,6 +1599,8 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
                           <ProfileField label="税务详细地址" value={selectedMembership.taxAddress} />
                         </div>
                       </div>
+                      </>
+                      ) : null}
                     </>
                   ) : (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
@@ -1382,7 +1614,7 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         </div>
       ) : null}
 
-      {couponWalletMembership ? (
+      {canViewInsights && couponWalletMembership ? (
         <div className="fixed inset-0 z-[125]">
           <button
             type="button"
@@ -1498,7 +1730,9 @@ export default function MerchantMemberManager({ siteId, className = "" }: Mercha
         </div>
       ) : null}
 
-      {operationDialog && operationMembership ? (
+      {operationDialog && operationMembership &&
+      ((operationDialog.type === "recharge" && canRecharge) ||
+        (operationDialog.type === "redeem" && canRedeem)) ? (
         <div className="fixed inset-0 z-[130]">
           <button
             type="button"

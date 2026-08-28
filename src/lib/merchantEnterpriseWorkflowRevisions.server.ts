@@ -106,6 +106,7 @@ function throwRpcError(operation: string, error: unknown): never {
     "invalid_workflow_revision_restore",
     "invalid_workflow_permission_gap_query",
     "invalid_workflow_permission_grant",
+    "business_role_workflow_grant_requires_role_editor",
   ]) {
     if (message.includes(code)) throw new Error(code);
   }

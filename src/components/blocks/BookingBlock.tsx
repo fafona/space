@@ -44,6 +44,7 @@ import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
 import { readPersonalGuestMergeToken, upsertPersonalGuestBooking } from "@/lib/personalGuestSession";
+import { buildBookingOptionPresentations } from "./bookingOptionPresentation";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -182,18 +183,48 @@ export default function BookingBlock({
   const searchParams = useSearchParams();
   const storeOptions = useMemo(
     () =>
-      normalizeBookingOptionList(props.bookingStoreOptions, buildDefaultBookingStoreOptions(runtimeSiteName)).map((item) =>
-        localizeSystemDefaultText(item, locale),
+      normalizeBookingOptionList(
+        props.bookingStoreOptions,
+        buildDefaultBookingStoreOptions(runtimeSiteName),
       ),
-    [locale, props.bookingStoreOptions, runtimeSiteName],
+    [props.bookingStoreOptions, runtimeSiteName],
   );
   const itemOptions = useMemo(
-    () => normalizeBookingOptionList(props.bookingItemOptions, buildDefaultBookingItemOptions()).map((item) => localizeSystemDefaultText(item, locale)),
-    [locale, props.bookingItemOptions],
+    () =>
+      normalizeBookingOptionList(
+        props.bookingItemOptions,
+        buildDefaultBookingItemOptions(),
+      ),
+    [props.bookingItemOptions],
   );
   const titleOptions = useMemo(
-    () => normalizeBookingOptionList(props.bookingTitleOptions, buildDefaultBookingTitleOptions()).map((item) => localizeSystemDefaultText(item, locale)),
-    [locale, props.bookingTitleOptions],
+    () =>
+      normalizeBookingOptionList(
+        props.bookingTitleOptions,
+        buildDefaultBookingTitleOptions(),
+      ),
+    [props.bookingTitleOptions],
+  );
+  const storeOptionPresentations = useMemo(
+    () =>
+      buildBookingOptionPresentations(storeOptions, (value) =>
+        localizeSystemDefaultText(value, locale),
+      ),
+    [locale, storeOptions],
+  );
+  const itemOptionPresentations = useMemo(
+    () =>
+      buildBookingOptionPresentations(itemOptions, (value) =>
+        localizeSystemDefaultText(value, locale),
+      ),
+    [itemOptions, locale],
+  );
+  const titleOptionPresentations = useMemo(
+    () =>
+      buildBookingOptionPresentations(titleOptions, (value) =>
+        localizeSystemDefaultText(value, locale),
+      ),
+    [locale, titleOptions],
   );
   const timeSlotRules = useMemo(
     () => normalizeMerchantBookingTimeSlotRules(props.bookingTimeSlotRules, props.bookingAvailableTimeRanges),
@@ -762,12 +793,15 @@ export default function BookingBlock({
                     : undefined
                 }
               >
-                {storeOptions.map((item) => {
-                  const storeColorStyle = getMerchantBookingStoreColorStyle(workbenchSettings, item);
+                {storeOptionPresentations.map((option) => {
+                  const storeColorStyle = getMerchantBookingStoreColorStyle(
+                    workbenchSettings,
+                    option.value,
+                  );
                   return (
                     <option
-                      key={item}
-                      value={item}
+                      key={option.value}
+                      value={option.value}
                       style={
                         storeColorStyle
                           ? {
@@ -777,7 +811,7 @@ export default function BookingBlock({
                           : undefined
                       }
                     >
-                      {item}
+                      {option.label}
                     </option>
                   );
                 })}
@@ -799,12 +833,15 @@ export default function BookingBlock({
                     : undefined
                 }
               >
-                {itemOptions.map((item) => {
-                  const itemColorStyle = getMerchantBookingItemColorStyle(workbenchSettings, item);
+                {itemOptionPresentations.map((option) => {
+                  const itemColorStyle = getMerchantBookingItemColorStyle(
+                    workbenchSettings,
+                    option.value,
+                  );
                   return (
                     <option
-                      key={item}
-                      value={item}
+                      key={option.value}
+                      value={option.value}
                       style={
                         itemColorStyle
                           ? {
@@ -814,7 +851,7 @@ export default function BookingBlock({
                           : undefined
                       }
                     >
-                      {item}
+                      {option.label}
                     </option>
                   );
                 })}
@@ -871,9 +908,9 @@ export default function BookingBlock({
                 disabled={!isLiveBooking}
                 onChange={(event) => handleFieldChange("title", event.target.value)}
               >
-                {titleOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
+                {titleOptionPresentations.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </select>

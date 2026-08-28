@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  attachMerchantBookingTrustedBusinessProjection,
   buildDefaultBookingStoreOptions,
   buildMerchantBookingId,
   formatMerchantBookingIdDate,
@@ -21,6 +22,7 @@ import {
   normalizeMerchantBookingTimeRangeOptions,
   resolveMerchantBookingTimeRangeSelection,
   normalizeMerchantBookingTimeSlotRules,
+  readMerchantBookingTrustedBusinessProjection,
   sanitizeMerchantBookingEditableInput,
   isMerchantBookingTimeAllowed,
   shouldSendMerchantBookingConfirmationEmail,
@@ -599,6 +601,51 @@ test("withoutMerchantBookingToken removes internal email delivery metadata", () 
     createdAt: "2026-03-19T10:00:00.000Z",
     updatedAt: "2026-03-19T10:30:00.000Z",
   });
+});
+
+test("trusted booking business projection is non-enumerable and cannot become wire metadata", () => {
+  const booking = attachMerchantBookingTrustedBusinessProjection(
+    {
+      id: "R10000000202603190001",
+      siteId: "10000000",
+      siteName: "untrusted-site",
+      store: "untrusted-store",
+      item: "untrusted-item",
+      appointmentAt: "2026-03-19T10:30",
+      title: "untrusted-title",
+      customerName: "Felix",
+      email: "test@example.com",
+      phone: "123456",
+      note: "",
+      status: "confirmed",
+      createdAt: "2026-03-19T10:00:00.000Z",
+      updatedAt: "2026-03-19T10:30:00.000Z",
+    },
+    {
+      siteName: "Faolla",
+      store: "Main",
+      item: "Consultation",
+      title: "Mr",
+    },
+  );
+
+  assert.deepEqual(readMerchantBookingTrustedBusinessProjection(booking), {
+    siteName: "Faolla",
+    store: "Main",
+    item: "Consultation",
+    title: "Mr",
+  });
+  assert.equal(booking.siteName, "Faolla");
+  assert.equal(
+    JSON.stringify(booking).includes("trusted-business-projection"),
+    false,
+  );
+  assert.equal(
+    readMerchantBookingTrustedBusinessProjection(
+      JSON.parse(JSON.stringify(booking)),
+    ),
+    null,
+  );
 });
 
 test("withoutMerchantBookingToken can keep automation state for admin surfaces", () => {

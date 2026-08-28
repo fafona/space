@@ -22,6 +22,23 @@ import {
 } from "@/lib/merchantBookingWorkbench";
 import { normalizeMerchantBookingTimeRangeOptions } from "@/lib/merchantBookings";
 import type { MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
+import type {
+  MerchantBusinessApiClient,
+  MerchantBusinessCachePolicy,
+} from "@/lib/merchantBusinessApiClient";
+import {
+  MERCHANT_BOOKING_NO_PERMISSIONS,
+  canManageMerchantBookingWorkbenchSection,
+  canOpenMerchantBookingWorkbench,
+  canOpenMerchantBookingWorkbenchView,
+  createMerchantBookingEmployeeWorkbenchDraft,
+  createMerchantBookingApiRequest,
+  getMerchantBookingWorkbenchSectionFingerprint,
+  hasMerchantBookingFrontendPermission,
+  isMerchantBookingEmployeeFrontend,
+  type MerchantBookingFrontendPermissions,
+  type MerchantBookingWorkbenchMutationSection,
+} from "@/lib/merchantBookingFrontendAccess";
 
 type BookingWorkbenchDialogProps = {
   open: boolean;
@@ -36,6 +53,9 @@ type BookingWorkbenchDialogProps = {
   bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   darkMode?: boolean;
   allowCustomerAutoEmail?: boolean;
+  apiClient?: MerchantBusinessApiClient;
+  cachePolicy?: MerchantBusinessCachePolicy;
+  permissions?: MerchantBookingFrontendPermissions;
   onClose: () => void;
   onSettingsSaved?: (settings: MerchantBookingWorkbenchSettings) => void;
 };
@@ -45,13 +65,14 @@ type WorkbenchSectionView = "home" | WorkbenchMenuKey;
 type SaveWorkbenchOptions = {
   applyServerDraft?: boolean;
   calendarSyncAction?: "keep" | "ensure" | "reset" | "disable";
+  section?: MerchantBookingWorkbenchMutationSection;
   sourceDraft?: MerchantBookingWorkbenchSettings;
   sourceSerialized?: string;
 };
 type MetricTone = "amber" | "sky" | "emerald" | "rose" | "cyan";
 type WorkbenchDashboard = {
-  pushDeviceCount: number;
-  automation: {
+  pushDeviceCount?: number;
+  automation?: {
     started: boolean;
     running: boolean;
     lastStartedAt: string;
@@ -448,6 +469,9 @@ function getMetricValueClass(tone: MetricTone, darkMode: boolean) {
   }
 }
 
+const requestOwnerBookingWorkbenchApi: MerchantBusinessApiClient = (path, init) =>
+  fetch(path, init);
+
 export default function BookingWorkbenchDialog({
   open,
   mode = "dialog",
@@ -461,11 +485,54 @@ export default function BookingWorkbenchDialog({
   bookingRulesSnapshot = null,
   darkMode = false,
   allowCustomerAutoEmail = false,
+  apiClient,
+  cachePolicy,
+  permissions,
   onClose,
   onSettingsSaved,
 }: BookingWorkbenchDialogProps) {
   const { locale } = useI18n();
   const isInline = mode === "inline";
+  const employeeMode = isMerchantBookingEmployeeFrontend({
+    apiClient,
+    cachePolicy,
+    permissions,
+  });
+  const effectivePermissions =
+    employeeMode && permissions === undefined
+      ? MERCHANT_BOOKING_NO_PERMISSIONS
+      : permissions;
+  const requestWorkbenchApi = useMemo(
+    () =>
+      createMerchantBookingApiRequest({
+        apiClient,
+        employeeMode,
+        ownerFetch: requestOwnerBookingWorkbenchApi,
+      }),
+    [apiClient, employeeMode],
+  );
+  const canViewBookings = hasMerchantBookingFrontendPermission(
+    effectivePermissions,
+    "bookings.view",
+  );
+  const canViewAnalytics = hasMerchantBookingFrontendPermission(
+    effectivePermissions,
+    "bookings.analytics.view",
+  );
+  const canManageSettings = canManageMerchantBookingWorkbenchSection(
+    effectivePermissions,
+    "settings",
+  );
+  const canManageAutomation = canManageMerchantBookingWorkbenchSection(
+    effectivePermissions,
+    "automation",
+  );
+  const canManageCalendar = canManageMerchantBookingWorkbenchSection(
+    effectivePermissions,
+    "calendar",
+  );
+  const canOpenWorkbench = canOpenMerchantBookingWorkbench(effectivePermissions);
+  const permissionFingerprint = effectivePermissions?.join("\u0001") ?? "owner";
   const defaultCustomerEmailLocale = useMemo(
     () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
     [siteCountryCode],
@@ -477,6 +544,8 @@ export default function BookingWorkbenchDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [sectionView, setSectionView] = useState<WorkbenchSectionView>("home");
+  const [employeeCalendarSyncEnabled, setEmployeeCalendarSyncEnabled] = useState(false);
+  const [employeeCalendarSyncTokenUpdatedAt, setEmployeeCalendarSyncTokenUpdatedAt] = useState("");
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStateRef = useRef({
     tracking: false,
@@ -488,10 +557,36 @@ export default function BookingWorkbenchDialog({
   const hasLoadedRef = useRef(false);
   const lastFailedDraftRef = useRef("");
   const lastSavedDraftRef = useRef("");
+  const lastFailedSectionDraftRef = useRef({ settings: "", automation: "" });
+  const lastSavedSectionDraftRef = useRef({ settings: "", automation: "" });
+  const securityGenerationRef = useRef(0);
 
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  useEffect(() => {
+    securityGenerationRef.current += 1;
+    hasLoadedRef.current = false;
+    lastFailedDraftRef.current = "";
+    lastSavedDraftRef.current = "";
+    lastFailedSectionDraftRef.current = { settings: "", automation: "" };
+    lastSavedSectionDraftRef.current = { settings: "", automation: "" };
+    const emptyDraft = createDefaultMerchantBookingWorkbenchSettings();
+    draftRef.current = emptyDraft;
+    setDraft(emptyDraft);
+    setDashboard(null);
+    setLoading(false);
+    setSaving(false);
+    setError("");
+    setEmployeeCalendarSyncEnabled(false);
+    setEmployeeCalendarSyncTokenUpdatedAt("");
+    setSectionView("home");
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, [apiClient, employeeMode, permissionFingerprint]);
 
   useEffect(() => {
     if (!open) {
@@ -507,7 +602,12 @@ export default function BookingWorkbenchDialog({
   }, [open]);
 
   useEffect(() => {
-    if (!open || !siteId) return;
+    if (!open || !siteId || !canViewBookings || !canOpenWorkbench) {
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const generation = securityGenerationRef.current;
     let cancelled = false;
     hasLoadedRef.current = false;
     lastFailedDraftRef.current = "";
@@ -519,36 +619,84 @@ export default function BookingWorkbenchDialog({
       setLoading(true);
       setError("");
       try {
-        const response = await fetch(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
+        const response = await requestWorkbenchApi(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
           cache: "no-store",
+          signal: controller.signal,
         });
         const json = (await response.json().catch(() => null)) as
-          | { ok?: boolean; settings?: MerchantBookingWorkbenchSettings; dashboard?: WorkbenchDashboard; error?: string }
+          | {
+              ok?: boolean;
+              settings?: MerchantBookingWorkbenchSettings & {
+                calendarSyncEnabled?: boolean;
+              };
+              dashboard?: WorkbenchDashboard;
+              error?: string;
+            }
           | null;
         if (!response.ok || !json?.ok) {
           throw new Error("工作台设置读取失败");
         }
-        if (!cancelled) {
-          const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+        if (!cancelled && securityGenerationRef.current === generation) {
+          const responseSettings = json.settings ??
+            createDefaultMerchantBookingWorkbenchSettings();
+          const normalized = normalizeMerchantBookingWorkbenchSettings(
+            employeeMode
+              ? createMerchantBookingEmployeeWorkbenchDraft(
+                  responseSettings,
+                  effectivePermissions,
+                )
+              : responseSettings,
+          );
           lastSavedDraftRef.current = JSON.stringify(normalized);
+          lastSavedSectionDraftRef.current = {
+            settings: getMerchantBookingWorkbenchSectionFingerprint(
+              normalized,
+              "settings",
+            ),
+            automation: getMerchantBookingWorkbenchSectionFingerprint(
+              normalized,
+              "automation",
+            ),
+          };
           draftRef.current = normalized;
           hasLoadedRef.current = true;
           setDraft(normalized);
           setDashboard(json.dashboard ?? null);
+          setEmployeeCalendarSyncEnabled(
+            employeeMode && json.settings?.calendarSyncEnabled === true,
+          );
+          setEmployeeCalendarSyncTokenUpdatedAt(
+            employeeMode
+              ? trimText(json.settings?.calendarSyncTokenUpdatedAt)
+              : "",
+          );
         }
       } catch (loadError) {
-        if (!cancelled) {
+        if (!cancelled && securityGenerationRef.current === generation) {
+          if (loadError instanceof DOMException && loadError.name === "AbortError") return;
           setError(loadError instanceof Error ? loadError.message : "工作台设置读取失败");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && securityGenerationRef.current === generation) setLoading(false);
       }
     };
     void load();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [defaultCustomerEmailLocale, open, siteId, siteName]);
+  }, [
+    canOpenWorkbench,
+    canViewBookings,
+    defaultCustomerEmailLocale,
+    effectivePermissions,
+    employeeMode,
+    open,
+    permissionFingerprint,
+    requestWorkbenchApi,
+    siteId,
+    siteName,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -599,7 +747,7 @@ export default function BookingWorkbenchDialog({
       },
       {
         label: locale.startsWith("es") ? "Última ejecución" : "最近执行",
-        value: formatAutomationTimestamp(dashboard?.automation.lastCompletedAt ?? "", locale),
+        value: formatAutomationTimestamp(dashboard?.automation?.lastCompletedAt ?? "", locale),
       },
       {
         label: locale.startsWith("es") ? "Correos 30d" : "30天邮件",
@@ -620,9 +768,12 @@ export default function BookingWorkbenchDialog({
     ],
     [reminderSummary.dueCustomerReminderCount, reminderSummary.dueMerchantReminderCount, reminderSummary.pendingNoShowCount],
   );
+  const calendarSyncEnabled = employeeMode
+    ? employeeCalendarSyncEnabled
+    : Boolean(draft.calendarSyncToken);
   const menuItems = useMemo(
     () =>
-      [
+      ([
         {
           key: "rules",
           label: getMerchantBookingFieldText("workbenchRules", locale),
@@ -631,7 +782,7 @@ export default function BookingWorkbenchDialog({
         {
           key: "reminders",
           label: getMerchantBookingFieldText("workbenchReminders", locale),
-          summary: draft.calendarSyncToken
+          summary: calendarSyncEnabled
             ? `客户 ${getReminderSummaryLabel(draft.customerReminderOffsetsMinutes)}、商家 ${getReminderSummaryLabel(draft.merchantReminderOffsetsMinutes)}，已开启日历同步`
             : `客户 ${getReminderSummaryLabel(draft.customerReminderOffsetsMinutes)}、商家 ${getReminderSummaryLabel(draft.merchantReminderOffsetsMinutes)}，可生成日历同步链接`,
         },
@@ -642,14 +793,26 @@ export default function BookingWorkbenchDialog({
             ? "Estado, proyectos populares, días y horas con más reservas."
             : "查看状态占比、热门项目组合、星期与时段分布。",
         },
-      ] satisfies Array<{ key: WorkbenchMenuKey; label: string; summary: string }>,
+      ] satisfies Array<{ key: WorkbenchMenuKey; label: string; summary: string }>).filter(
+        (item) =>
+          canOpenMerchantBookingWorkbenchView(effectivePermissions, item.key),
+      ),
     [
+      calendarSyncEnabled,
+      effectivePermissions,
       locale,
-      draft.calendarSyncToken,
       draft.customerReminderOffsetsMinutes,
       draft.merchantReminderOffsetsMinutes,
     ],
   );
+  useEffect(() => {
+    if (
+      sectionView !== "home" &&
+      !canOpenMerchantBookingWorkbenchView(effectivePermissions, sectionView)
+    ) {
+      setSectionView("home");
+    }
+  }, [effectivePermissions, permissionFingerprint, sectionView]);
   const appointmentAutoStatusOptions = useMemo(
     () =>
       [
@@ -698,10 +861,11 @@ export default function BookingWorkbenchDialog({
     const normalizedSiteId = trimText(siteId);
     return normalizedSiteName || normalizedSiteId || "FAOLLA bookings";
   }, [siteId, siteName]);
+  const ownerCalendarSyncToken = employeeMode ? "" : draft.calendarSyncToken;
   const calendarSyncUrl = useMemo(() => {
-    if (!draft.calendarSyncToken || typeof window === "undefined") return "";
-    return buildCalendarSyncUrl(window.location.origin, siteId, draft.calendarSyncToken);
-  }, [draft.calendarSyncToken, siteId]);
+    if (!ownerCalendarSyncToken || typeof window === "undefined") return "";
+    return buildCalendarSyncUrl(window.location.origin, siteId, ownerCalendarSyncToken);
+  }, [ownerCalendarSyncToken, siteId]);
 
   const handleBack = useCallback(() => {
     if (sectionView === "home") {
@@ -818,9 +982,25 @@ export default function BookingWorkbenchDialog({
     async ({
       applyServerDraft = false,
       calendarSyncAction = "keep",
+      section,
       sourceDraft = draftRef.current,
       sourceSerialized = JSON.stringify(sourceDraft),
     }: SaveWorkbenchOptions = {}): Promise<MerchantBookingWorkbenchSettings | null> => {
+      if (!section) {
+        setError("工作台保存请求缺少明确分区。");
+        return null;
+      }
+      if (
+        !canViewBookings ||
+        !canManageMerchantBookingWorkbenchSection(
+          effectivePermissions,
+          section,
+        )
+      ) {
+        setError("当前账号没有保存该工作台分区的权限。");
+        return null;
+      }
+      const generation = securityGenerationRef.current;
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
@@ -828,45 +1008,124 @@ export default function BookingWorkbenchDialog({
       setSaving(true);
       setError("");
       lastFailedDraftRef.current = "";
+      const requestSettings = employeeMode
+        ? createMerchantBookingEmployeeWorkbenchDraft(
+            sourceDraft,
+            effectivePermissions,
+          )
+        : sourceDraft;
       try {
-        const response = await fetch("/api/bookings/workbench", {
+        const response = await requestWorkbenchApi("/api/bookings/workbench", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             siteId,
-            settings: sourceDraft,
+            section,
+            settings: requestSettings,
             calendarSyncAction,
           }),
         });
         const json = (await response.json().catch(() => null)) as
-          | { ok?: boolean; settings?: MerchantBookingWorkbenchSettings }
+          | {
+              ok?: boolean;
+              settings?: MerchantBookingWorkbenchSettings & {
+                calendarSyncEnabled?: boolean;
+              };
+            }
           | null;
         if (!response.ok || !json?.ok || !json.settings) {
           throw new Error("工作台设置保存失败");
         }
-        const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
-        lastSavedDraftRef.current = JSON.stringify(normalized);
-        if (applyServerDraft) {
+        if (securityGenerationRef.current !== generation) return null;
+        const normalized = normalizeMerchantBookingWorkbenchSettings(
+          employeeMode
+            ? createMerchantBookingEmployeeWorkbenchDraft(
+                json.settings,
+                effectivePermissions,
+              )
+            : json.settings,
+        );
+        if (employeeMode) {
+          if (section !== "calendar") {
+            lastSavedSectionDraftRef.current[section] =
+              getMerchantBookingWorkbenchSectionFingerprint(
+                normalized,
+                section,
+              );
+            lastFailedSectionDraftRef.current[section] = "";
+          }
+          setEmployeeCalendarSyncEnabled(
+            json.settings.calendarSyncEnabled === true,
+          );
+          setEmployeeCalendarSyncTokenUpdatedAt(
+            trimText(json.settings.calendarSyncTokenUpdatedAt),
+          );
+        } else {
+          lastSavedDraftRef.current = JSON.stringify(normalized);
+          lastSavedSectionDraftRef.current = {
+            settings: getMerchantBookingWorkbenchSectionFingerprint(
+              normalized,
+              "settings",
+            ),
+            automation: getMerchantBookingWorkbenchSectionFingerprint(
+              normalized,
+              "automation",
+            ),
+          };
+        }
+        if (applyServerDraft && !employeeMode) {
           draftRef.current = normalized;
           setDraft(normalized);
         }
         onSettingsSaved?.(normalized);
         return normalized;
       } catch (saveError) {
+        if (securityGenerationRef.current !== generation) return null;
         lastFailedDraftRef.current = sourceSerialized;
+        if (section !== "calendar") {
+          lastFailedSectionDraftRef.current[section] =
+            getMerchantBookingWorkbenchSectionFingerprint(
+              sourceDraft,
+              section,
+            );
+        }
         setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
         return null;
       } finally {
-        setSaving(false);
+        if (securityGenerationRef.current === generation) setSaving(false);
       }
     },
-    [onSettingsSaved, siteId],
+    [
+      canViewBookings,
+      effectivePermissions,
+      employeeMode,
+      onSettingsSaved,
+      requestWorkbenchApi,
+      siteId,
+    ],
   );
 
   useEffect(() => {
     if (!open || !siteId || loading || saving || !hasLoadedRef.current) return;
     const serialized = JSON.stringify(draft);
-    if (serialized === lastSavedDraftRef.current || serialized === lastFailedDraftRef.current) return;
+    const candidateSections = (["settings", "automation"] as const).filter(
+      (section) =>
+        canManageMerchantBookingWorkbenchSection(
+          effectivePermissions,
+          section,
+        ),
+    );
+    const changedSection = candidateSections.find((section) => {
+      const fingerprint = getMerchantBookingWorkbenchSectionFingerprint(
+        draft,
+        section,
+      );
+      return (
+        fingerprint !== lastSavedSectionDraftRef.current[section] &&
+        fingerprint !== lastFailedSectionDraftRef.current[section]
+      );
+    });
+    if (!changedSection) return;
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
     }
@@ -874,6 +1133,7 @@ export default function BookingWorkbenchDialog({
       autosaveTimerRef.current = null;
       void saveWorkbench({
         applyServerDraft: false,
+        section: changedSection,
         sourceDraft: draft,
         sourceSerialized: serialized,
       });
@@ -884,25 +1144,26 @@ export default function BookingWorkbenchDialog({
         autosaveTimerRef.current = null;
       }
     };
-  }, [draft, loading, open, saveWorkbench, saving, siteId]);
+  }, [draft, effectivePermissions, loading, open, saveWorkbench, saving, siteId]);
 
   const ensureCalendarSyncUrl = useCallback(async () => {
-    if (typeof window === "undefined") return "";
+    if (employeeMode || typeof window === "undefined") return "";
     if (calendarSyncUrl) return calendarSyncUrl;
     const saved = await saveWorkbench({
       applyServerDraft: true,
       calendarSyncAction: "ensure",
+      section: "calendar",
     });
     if (!saved?.calendarSyncToken) return "";
     return buildCalendarSyncUrl(window.location.origin, siteId, saved.calendarSyncToken);
-  }, [calendarSyncUrl, saveWorkbench, siteId]);
+  }, [calendarSyncUrl, employeeMode, saveWorkbench, siteId]);
 
   const showCopySuccessNotice = useCallback(() => {
     showGlobalToast("复制成功", { tone: "success" });
   }, []);
 
   const copyCalendarSyncUrl = async () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    if (employeeMode || typeof navigator === "undefined" || !navigator.clipboard) return;
     const syncUrl = await ensureCalendarSyncUrl();
     if (!syncUrl) return;
     try {
@@ -915,7 +1176,7 @@ export default function BookingWorkbenchDialog({
 
   const openCalendarTarget = useCallback(
     async (target: "apple" | "google" | "outlook" | "ics") => {
-      if (typeof window === "undefined") return;
+      if (employeeMode || typeof window === "undefined") return;
       if (target === "ics") {
         window.open(`/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&download=1`, "_blank", "noopener,noreferrer");
         return;
@@ -932,7 +1193,7 @@ export default function BookingWorkbenchDialog({
           : buildOutlookCalendarSubscribeUrl(syncUrl, siteCalendarTitle);
       window.open(targetUrl, "_blank", "noopener,noreferrer");
     },
-    [ensureCalendarSyncUrl, siteCalendarTitle, siteId],
+    [employeeMode, ensureCalendarSyncUrl, siteCalendarTitle, siteId],
   );
 
   const handleTouchStart = ((event) => {
@@ -984,6 +1245,24 @@ export default function BookingWorkbenchDialog({
   }) satisfies TouchEventHandler<HTMLDivElement>;
 
   if (!open) return null;
+
+  if (!canViewBookings || !canOpenWorkbench) {
+    const denied = (
+      <div className={`flex min-h-[18rem] w-full flex-col items-center justify-center gap-4 rounded-3xl border px-6 text-center text-sm ${darkMode ? "border-slate-700 bg-slate-950 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
+        <span>当前账号没有使用预约工作台的权限。</span>
+        <button type="button" className="rounded-xl border border-current/30 px-4 py-2" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+    );
+    return isInline
+      ? denied
+      : overlay(
+          <div className="fixed inset-0 z-[2147483100] flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-xl">{denied}</div>
+          </div>,
+        );
+  }
 
   const shellClassName = darkMode ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900";
   const panelClassName = darkMode
@@ -1161,6 +1440,8 @@ export default function BookingWorkbenchDialog({
             {sectionView === "home" ? (
               <>
                 <div className="space-y-2 md:hidden">
+                  {canViewAnalytics ? (
+                  <>
                   {primaryMetrics.map((item) => (
                     <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${getMetricRowClass(item.tone, darkMode)}`}>
                       <span className="text-sm font-medium">{item.shortLabel}</span>
@@ -1169,7 +1450,11 @@ export default function BookingWorkbenchDialog({
                       </span>
                     </div>
                   ))}
+                  </>
+                  ) : null}
 
+                  {canManageAutomation ? (
+                  <>
                   {autoMetrics.map((item) => (
                     <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${getMetricRowClass(item.tone, darkMode)}`}>
                       <span className="text-sm font-medium">{item.label}</span>
@@ -1178,16 +1463,23 @@ export default function BookingWorkbenchDialog({
                       </span>
                     </div>
                   ))}
+                  </>
+                  ) : null}
                 </div>
 
                 <div className="hidden gap-3 md:grid md:grid-cols-4">
+                  {canViewAnalytics ? (
+                  <>
                   {primaryMetrics.map((item) => (
                     <div key={item.label} className={`rounded-3xl border p-4 ${panelClassName}`}>
                       <div className={`text-xs ${mutedTextClassName}`}>{item.label}</div>
                       <div className="mt-2 text-2xl font-semibold">{item.value}</div>
                     </div>
                   ))}
+                  </>
+                  ) : null}
 
+                  {canManageAutomation ? (
                   <div className={`rounded-3xl border p-4 ${panelClassName}`}>
                     <div className="space-y-2 pt-1">
                       {autoMetrics.map((item) => (
@@ -1200,31 +1492,33 @@ export default function BookingWorkbenchDialog({
                       ))}
                     </div>
                   </div>
+                  ) : null}
                 </div>
 
+                {canManageAutomation ? (
                 <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold">{locale.startsWith("es") ? "Estado automático" : "自动化状态"}</div>
                       <div className={`mt-1 text-sm ${mutedTextClassName}`}>
-                        {dashboard?.automation.running
+                        {dashboard?.automation?.running
                           ? locale.startsWith("es")
                             ? "La automatización está ejecutándose ahora."
                             : "自动任务正在执行。"
-                          : dashboard?.automation.lastErrorMessage
+                          : dashboard?.automation?.lastErrorMessage
                             ? locale.startsWith("es")
-                              ? `Último error: ${dashboard.automation.lastErrorMessage}`
-                              : `最近错误：${dashboard.automation.lastErrorMessage}`
+                              ? `Último error: ${dashboard.automation?.lastErrorMessage}`
+                              : `最近错误：${dashboard.automation?.lastErrorMessage}`
                             : locale.startsWith("es")
                               ? "Revise la última ejecución, el envío de correos y la disponibilidad push."
                               : "查看最近执行、邮件发送和推送设备情况。"}
                       </div>
                     </div>
-                    {dashboard?.automation.lastResult?.processedSiteCount ? (
+                    {dashboard?.automation?.lastResult?.processedSiteCount ? (
                       <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getMetricValueClass("cyan", darkMode)}`}>
                         {locale.startsWith("es")
-                          ? `${dashboard.automation.lastResult.processedSiteCount} sitios`
-                          : `${dashboard.automation.lastResult.processedSiteCount} 个站点`}
+                          ? `${dashboard.automation?.lastResult?.processedSiteCount} sitios`
+                          : `${dashboard.automation?.lastResult?.processedSiteCount} 个站点`}
                       </span>
                     ) : null}
                   </div>
@@ -1237,6 +1531,7 @@ export default function BookingWorkbenchDialog({
                     ))}
                   </div>
                 </section>
+                ) : null}
               </>
             ) : null}
 
@@ -1274,6 +1569,7 @@ export default function BookingWorkbenchDialog({
 
             {!loading && sectionView === "rules" ? (
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+                {canManageSettings ? (
                 <div className="space-y-4">
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("sky")}`}>
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
@@ -1361,8 +1657,10 @@ export default function BookingWorkbenchDialog({
                     </div>
                   </section>
                 </div>
+                ) : null}
 
                 <div className="space-y-4">
+                  {canManageSettings ? (
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("cyan")}`}>
                     <div className="text-base font-semibold">缓冲时间</div>
                     <div className={`mt-1 text-sm ${mutedTextClassName}`}>只有完全相同的项目预约会采用缓冲时间</div>
@@ -1378,7 +1676,9 @@ export default function BookingWorkbenchDialog({
                       </label>
                     </div>
                   </section>
+                  ) : null}
 
+                  {canManageAutomation ? (
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("emerald")}`}>
                     <div className="text-base font-semibold">{locale.startsWith("es") ? "Acción automática" : "自动处理"}</div>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1420,7 +1720,9 @@ export default function BookingWorkbenchDialog({
                       })}
                     </div>
                   </section>
+                  ) : null}
 
+                  {canManageAutomation ? (
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("rose")}`}>
                     <div className="text-base font-semibold">爽约</div>
                     <div className={`mt-1 text-sm ${mutedTextClassName}`}>到预约时间后超过宽限分钟仍未完成或确认，系统会自动标记为未到店。</div>
@@ -1447,7 +1749,9 @@ export default function BookingWorkbenchDialog({
                       </div>
                     </div>
                   </section>
+                  ) : null}
 
+                  {canManageSettings ? (
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("slate")}`}>
                     <div className="text-base font-semibold">{locale.startsWith("es") ? "Vista previa de reglas" : "规则预览"}</div>
                     <div className={`mt-1 text-sm ${mutedTextClassName}`}>
@@ -1509,11 +1813,12 @@ export default function BookingWorkbenchDialog({
                       </div>
                     ) : null}
                   </section>
+                  ) : null}
                 </div>
               </div>
             ) : null}
 
-            {!loading && sectionView === "analysis" ? (
+            {!loading && sectionView === "analysis" && canViewAnalytics ? (
               <div className="space-y-4">
                 <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                   <div className="text-base font-semibold">{locale.startsWith("es") ? "Estado y rendimiento" : "状态与表现"}</div>
@@ -1600,59 +1905,74 @@ export default function BookingWorkbenchDialog({
 
             {!loading && sectionView === "reminders" ? (
               <div className="space-y-4">
+                {canManageCalendar ? (
                 <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                   <div className="text-base font-semibold">日历同步</div>
-                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>可直接添加到 Apple Calendar、Google Calendar、Outlook，也保留 ICS 下载。</div>
+                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>
+                    {employeeMode
+                      ? "员工可查看启用状态、重置或停用同步，但不会读取或显示长期订阅凭证。"
+                      : "可直接添加到 Apple Calendar、Google Calendar、Outlook，也保留 ICS 下载。"}
+                  </div>
                   <div className={`mt-4 rounded-2xl border p-4 ${softPanelClassName}`}>
                     <div className="text-sm">
-                      {draft.calendarSyncToken
-                        ? `已生成同步令牌${draft.calendarSyncTokenUpdatedAt ? `，更新时间 ${draft.calendarSyncTokenUpdatedAt}` : ""}`
-                        : "当前还没有同步令牌"}
+                      {calendarSyncEnabled
+                        ? `日历同步已启用${
+                            (employeeMode
+                              ? employeeCalendarSyncTokenUpdatedAt
+                              : draft.calendarSyncTokenUpdatedAt)
+                              ? `，更新时间 ${employeeMode ? employeeCalendarSyncTokenUpdatedAt : draft.calendarSyncTokenUpdatedAt}`
+                              : ""
+                          }`
+                        : "日历同步尚未启用"}
                     </div>
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                      <button
-                        type="button"
-                        className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
-                        onClick={() => void openCalendarTarget("apple")}
-                        disabled={saving || loading}
-                      >
-                        Apple Calendar
-                      </button>
-                      <button
-                        type="button"
-                        className={`rounded-xl px-4 py-3 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                        onClick={() => void openCalendarTarget("google")}
-                        disabled={saving || loading}
-                      >
-                        Google Calendar
-                      </button>
-                      <button
-                        type="button"
-                        className={`rounded-xl px-4 py-3 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                        onClick={() => void openCalendarTarget("outlook")}
-                        disabled={saving || loading}
-                      >
-                        Outlook
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-                        onClick={() => void openCalendarTarget("ics")}
-                        disabled={saving || loading}
-                      >
-                        下载 ICS
-                      </button>
-                    </div>
+                    {!employeeMode ? (
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        <button
+                          type="button"
+                          className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                          onClick={() => void openCalendarTarget("apple")}
+                          disabled={saving || loading}
+                        >
+                          Apple Calendar
+                        </button>
+                        <button
+                          type="button"
+                          className={`rounded-xl px-4 py-3 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                          onClick={() => void openCalendarTarget("google")}
+                          disabled={saving || loading}
+                        >
+                          Google Calendar
+                        </button>
+                        <button
+                          type="button"
+                          className={`rounded-xl px-4 py-3 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                          onClick={() => void openCalendarTarget("outlook")}
+                          disabled={saving || loading}
+                        >
+                          Outlook
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                          onClick={() => void openCalendarTarget("ics")}
+                          disabled={saving || loading}
+                        >
+                          下载 ICS
+                        </button>
+                      </div>
+                    ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                        onClick={() => void copyCalendarSyncUrl()}
-                        disabled={saving || loading}
-                      >
-                        复制订阅链接
-                      </button>
-                      {draft.calendarSyncToken ? (
+                      {!employeeMode ? (
+                        <button
+                          type="button"
+                          className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                          onClick={() => void copyCalendarSyncUrl()}
+                          disabled={saving || loading}
+                        >
+                          复制订阅链接
+                        </button>
+                      ) : null}
+                      {calendarSyncEnabled || employeeMode ? (
                         <>
                           <button
                             type="button"
@@ -1661,31 +1981,36 @@ export default function BookingWorkbenchDialog({
                               void saveWorkbench({
                                 applyServerDraft: true,
                                 calendarSyncAction: "reset",
+                                section: "calendar",
                               })
                             }
                             disabled={saving}
                           >
-                            重置订阅链接
+                            重置日历同步
                           </button>
+                          {calendarSyncEnabled ? (
                           <button
                             type="button"
                             className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                            onClick={() => void saveWorkbench({ applyServerDraft: true, calendarSyncAction: "disable" })}
+                            onClick={() => void saveWorkbench({ applyServerDraft: true, calendarSyncAction: "disable", section: "calendar" })}
                             disabled={saving}
                           >
                             停用订阅链接
                           </button>
+                          ) : null}
                         </>
                       ) : null}
                     </div>
-                    {calendarSyncUrl ? (
+                    {!employeeMode && calendarSyncUrl ? (
                       <div className={`mt-3 break-all rounded-xl px-3 py-2 text-xs ${darkMode ? "bg-slate-900 text-slate-300" : "bg-white text-slate-500"}`}>
                         {calendarSyncUrl}
                       </div>
                     ) : null}
                   </div>
                 </section>
+                ) : null}
 
+                {canManageAutomation ? (
                 <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                   <div className="text-base font-semibold">提醒设置</div>
                   <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户邮件和商家浏览器提醒分开设置，客户邮件语言以这里选定的语言为准。</div>
@@ -1821,6 +2146,7 @@ export default function BookingWorkbenchDialog({
                     </div>
                   </div>
                 </section>
+                ) : null}
               </div>
             ) : null}
           </div>

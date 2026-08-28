@@ -5,6 +5,7 @@ import {
   type MerchantOrderExportAuditMetadata,
   type MerchantOrderExportRouteDependencies,
 } from "@/app/api/orders/export/route";
+import { MerchantBusinessAccessError } from "@/lib/merchantBusinessActor.server";
 import { MerchantOrderExportError } from "@/lib/merchantOrderExport";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 
@@ -81,20 +82,30 @@ function createDependencies(input: {
   sessionMerchantId?: string | null;
   managementEnabled?: boolean;
   auditError?: Error | null;
+  reauthorizationError?: Error | null;
 } = {}) {
   const calls = {
     sessions: 0,
     management: 0,
     lists: 0,
+    permissions: [] as string[],
+    reauthorizations: 0,
     audits: [] as MerchantOrderExportAuditMetadata[],
   };
   const dependencies: Partial<MerchantOrderExportRouteDependencies> = {
-    async resolveSession(_request, siteId) {
+    async resolveSession(_request, siteId, requiredPermission) {
       calls.sessions += 1;
       assert.equal(siteId, SITE_ID);
+      calls.permissions.push(requiredPermission);
       return input.sessionMerchantId === null
         ? null
-        : { merchantId: input.sessionMerchantId ?? SITE_ID };
+        : {
+            merchantId: input.sessionMerchantId ?? SITE_ID,
+            async assertAuthorizationCurrent() {
+              calls.reauthorizations += 1;
+              if (input.reauthorizationError) throw input.reauthorizationError;
+            },
+          };
     },
     async isManagementEnabled(siteId) {
       calls.management += 1;
@@ -130,7 +141,14 @@ test("order export rejects cross-origin POST before authentication or canonical 
   );
   assert.equal(response.status, 403);
   assert.equal((await response.json()).error, "forbidden_origin");
-  assert.deepEqual(harness.calls, { sessions: 0, management: 0, lists: 0, audits: [] });
+  assert.deepEqual(harness.calls, {
+    sessions: 0,
+    management: 0,
+    lists: 0,
+    permissions: [],
+    reauthorizations: 0,
+    audits: [],
+  });
   assertPrivateHeaders(response);
 });
 
@@ -195,6 +213,7 @@ test("order export validates JSON and the UTC range before loading canonical ord
   assert.equal(rangeHarness.calls.sessions, 1);
   assert.equal(rangeHarness.calls.management, 1);
   assert.equal(rangeHarness.calls.lists, 0);
+  assert.equal(rangeHarness.calls.reauthorizations, 0);
 });
 
 test("order export reads the canonical order set exactly once and returns a safe CSV response", async () => {
@@ -220,6 +239,8 @@ test("order export reads the canonical order set exactly once and returns a safe
   assert.ok(!csv.includes("never-export-account"));
   assert.equal(Number(response.headers.get("content-length")), bytes.byteLength);
   assert.equal(harness.calls.lists, 1);
+  assert.equal(harness.calls.reauthorizations, 1);
+  assert.deepEqual(harness.calls.permissions, ["orders.export"]);
   assert.equal(harness.calls.audits.length, 1);
   assert.deepEqual(harness.calls.audits[0], {
     siteId: SITE_ID,
@@ -245,6 +266,21 @@ test("order export includes customer snapshot columns only after explicit opt-in
   assert.ok(csv.includes("private@example.com"));
   assert.ok(!csv.includes("never-export-login@example.com"));
   assert.equal(harness.calls.audits[0]?.includeCustomerData, true);
+  assert.deepEqual(harness.calls.permissions, ["orders.export.customer_data"]);
+  assert.equal(harness.calls.reauthorizations, 1);
+});
+
+test("order export rechecks authorization before the canonical read", async () => {
+  const harness = createDependencies({
+    reauthorizationError: new MerchantBusinessAccessError("permission_denied", 403),
+  });
+  const response = await handleMerchantOrderExportPost(buildRequest(), harness.dependencies);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "permission_denied" });
+  assert.equal(harness.calls.reauthorizations, 1);
+  assert.equal(harness.calls.lists, 0);
+  assert.equal(harness.calls.audits.length, 0);
+  assertPrivateHeaders(response);
 });
 
 test("order export returns a valid header-only CSV and audits zero matching orders", async () => {
@@ -279,12 +315,25 @@ test("order export returns 413 for pre-response hard limits and does not audit a
   }
 });
 
-test("order export audit failure does not block the generated download", async () => {
+test("summary order export keeps compatibility when audit is unavailable", async () => {
   const harness = createDependencies({ auditError: new Error("audit unavailable") });
   const response = await handleMerchantOrderExportPost(buildRequest(), harness.dependencies);
   assert.equal(response.status, 200);
   assert.equal(harness.calls.audits.length, 1);
   assert.ok((await response.text()).includes("O10000000202608170001"));
+});
+
+test("customer-data order export fails closed when its audit is unavailable", async () => {
+  const harness = createDependencies({ auditError: new Error("audit unavailable") });
+  const response = await handleMerchantOrderExportPost(
+    buildRequest({ ...VALID_BODY, includeCustomerData: true }),
+    harness.dependencies,
+  );
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "order_export_failed" });
+  assert.equal(harness.calls.audits.length, 1);
+  assert.deepEqual(harness.calls.permissions, ["orders.export.customer_data"]);
+  assertPrivateHeaders(response);
 });
 
 test("order export canonical read failure is private and returns 503", async () => {

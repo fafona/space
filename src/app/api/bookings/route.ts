@@ -17,7 +17,19 @@ import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubs
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+  reauthorizeMerchantBusinessMutation,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
+import {
+  getMerchantBookingMutationRequiredPermissions,
+  redactMerchantBookingForBusinessActor,
+  redactMerchantBookingsForBusinessActor,
+} from "@/lib/merchantBusinessBookingPermissions";
+import { readUniqueMerchantBusinessSiteId } from "@/lib/merchantBusinessRequest";
+import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
@@ -41,6 +53,19 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function applyPrivateResponseHeaders(response: Response) {
+  response.headers.set("cache-control", "private, no-store");
+  response.headers.set("pragma", "no-cache");
+  response.headers.set("x-content-type-options", "nosniff");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
+  response.headers.set("referrer-policy", "no-referrer");
+  return response;
+}
+
+function privateJson(body: unknown, init?: ResponseInit) {
+  return applyPrivateResponseHeaders(NextResponse.json(body, init));
+}
+
 function normalizeBookingListOffset(value: string | null) {
   const numeric = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
@@ -52,21 +77,55 @@ function normalizeBookingListLimit(value: string | null) {
   return Math.min(Math.max(numeric, 1), 1000);
 }
 
-async function resolveBookingAdminSession(request: Request, siteId: string) {
-  const session = await resolveMerchantSessionFromRequest(request, {
-    hintedMerchantId: siteId,
+async function resolveBookingAdminSession(
+  request: Request,
+  siteId: string,
+  requiredPermissions: readonly MerchantStaffBusinessPermission[],
+): Promise<{
+  merchantId: string;
+  actor: MerchantBusinessActor;
+  assertAuthorizationCurrent: () => Promise<void>;
+}> {
+  const firstPermission = requiredPermissions[0];
+  if (!firstPermission) {
+    throw new MerchantBusinessAccessError("invalid_business_permission", 500);
+  }
+  const actor = await authorizeMerchantBusinessRequest(request, {
+    siteId,
+    requiredPermission: firstPermission,
   });
-  if (!session || session.merchantId !== siteId) return null;
-  return session;
+  if (
+    requiredPermissions.some(
+      (permission) => !actor.businessPermissions.includes(permission),
+    )
+  ) {
+    throw new MerchantBusinessAccessError("permission_denied", 403);
+  }
+  return {
+    merchantId: actor.siteId,
+    actor,
+    assertAuthorizationCurrent: async () => {
+      await reauthorizeMerchantBusinessMutation(request, {
+        actor,
+        requiredPermissions,
+      });
+    },
+  };
 }
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     if (searchParams.get("scope")?.trim() === "personal") {
+      if (request.headers.has("x-merchant-access-token")) {
+        return privateJson(
+          { error: "business_scope_required" },
+          { status: 403 },
+        );
+      }
       const session = await resolvePersonalAccountSessionFromRequest(request);
       if (!session) {
-        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+        return privateJson({ error: "unauthorized" }, { status: 401 });
       }
       const bookings = await listPersonalMerchantBookings(
         {
@@ -79,16 +138,18 @@ export async function GET(request: Request) {
         },
       );
       const merchantContacts = await buildPersonalMerchantContactMap(bookings.map((booking) => booking.siteId));
-      return NextResponse.json({ ok: true, bookings, merchantContacts });
+      return privateJson({ ok: true, bookings, merchantContacts });
     }
 
-    const siteId = searchParams.get("siteId")?.trim() ?? "";
-    if (!isMerchantNumericId(siteId)) {
-      return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+    const siteId = readUniqueMerchantBusinessSiteId(request.url);
+    if (!siteId) {
+      return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
-    const session = await resolveBookingAdminSession(request, siteId);
+    const session = await resolveBookingAdminSession(request, siteId, [
+      "bookings.view",
+    ]);
     if (!session) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      return privateJson({ error: "unauthorized" }, { status: 401 });
     }
     if (searchParams.has("offset") || searchParams.has("limit")) {
       const windowResult = await listMerchantBookingsWindow(siteId, {
@@ -98,9 +159,12 @@ export async function GET(request: Request) {
         includeCustomerEmailLogs: true,
         includeTimeline: true,
       });
-      return NextResponse.json({
+      return privateJson({
         ok: true,
-        bookings: windowResult.records,
+        bookings: redactMerchantBookingsForBusinessActor(
+          windowResult.records,
+          session.actor,
+        ),
         offset: windowResult.offset,
         limit: windowResult.limit,
         total: windowResult.total,
@@ -112,9 +176,18 @@ export async function GET(request: Request) {
       includeCustomerEmailLogs: true,
       includeTimeline: true,
     });
-    return NextResponse.json({ ok: true, bookings });
+    return privateJson({
+      ok: true,
+      bookings: redactMerchantBookingsForBusinessActor(
+        bookings,
+        session.actor,
+      ),
+    });
   } catch (error) {
-    return NextResponse.json(
+    if (error instanceof MerchantBusinessAccessError) {
+      return privateJson({ error: error.code }, { status: error.status });
+    }
+    return privateJson(
       {
         error: "booking_list_failed",
         message: error instanceof Error ? error.message : "unknown_error",
@@ -125,6 +198,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (request.headers.has("x-merchant-access-token")) {
+    return privateJson(
+      { error: "business_scope_required" },
+      { status: 403 },
+    );
+  }
   try {
     const body = (await request.json()) as Partial<MerchantBookingCreateInput> & {
       frontendAuthProof?: unknown;
@@ -132,7 +211,7 @@ export async function POST(request: Request) {
     };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
-      return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+      return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
     const personalSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
     const frontendProof = personalSession ? null : verifyFrontendAuthProof(body.frontendAuthProof);
@@ -182,9 +261,9 @@ export async function POST(request: Request) {
       });
     }
 
-    return NextResponse.json({ ok: true, ...created });
+    return privateJson({ ok: true, ...created });
   } catch (error) {
-    return NextResponse.json(
+    return privateJson(
       {
         error: "booking_create_failed",
         message: error instanceof Error ? error.message : "unknown_error",
@@ -196,7 +275,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
-    return getTrustedMutationRequestErrorResponse();
+    return applyPrivateResponseHeaders(getTrustedMutationRequestErrorResponse());
   }
   try {
     const body = (await request.json()) as
@@ -215,8 +294,14 @@ export async function PATCH(request: Request) {
       String(body?.scope ?? "").trim() === "personal" &&
       (body?.action === "cancel" || body?.action === "update" || body?.action === "restore")
     ) {
+      if (request.headers.has("x-merchant-access-token")) {
+        return privateJson(
+          { error: "business_scope_required" },
+          { status: 403 },
+        );
+      }
       const session = await resolvePersonalAccountSessionFromRequest(request);
-      if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      if (!session) return privateJson({ error: "unauthorized" }, { status: 401 });
       const booking = await updatePersonalMerchantBooking({
         bookingId: String(body?.bookingId ?? "").trim(),
         action: body.action,
@@ -225,7 +310,7 @@ export async function PATCH(request: Request) {
         email: session.email,
         updates: body.updates,
       });
-      return NextResponse.json({ ok: true, booking });
+      return privateJson({ ok: true, booking });
     }
 
     const maybeSiteId = String(body?.siteId ?? "").trim();
@@ -242,31 +327,71 @@ export async function PATCH(request: Request) {
                 ? "no_show"
               : null;
     if (isMerchantNumericId(maybeSiteId)) {
-      const session = await resolveBookingAdminSession(request, maybeSiteId);
+      const requiredPermissions = getMerchantBookingMutationRequiredPermissions({
+        status: body?.status,
+        updates: body?.updates,
+        bookingBlockId: body?.bookingBlockId,
+        bookingViewport: body?.bookingViewport,
+        sendCustomerEmail: body?.sendCustomerEmail,
+        markTouched: body?.markTouched,
+        bookingIds: body?.bookingIds,
+      });
+      if (!requiredPermissions) {
+        return privateJson(
+          { error: "invalid_booking_action" },
+          { status: 400 },
+        );
+      }
+      const session = await resolveBookingAdminSession(
+        request,
+        maybeSiteId,
+        requiredPermissions,
+      );
       if (!session) {
-        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+        return privateJson({ error: "unauthorized" }, { status: 401 });
       }
       if (body?.sendCustomerEmail === true) {
         const booking = await sendMerchantBookingManualEmailBySite({
           siteId: maybeSiteId,
           bookingId: String(body?.bookingId ?? "").trim(),
+          assertAuthorizationCurrent: session.assertAuthorizationCurrent,
         });
-        return NextResponse.json({ ok: true, booking });
+        return privateJson({
+          ok: true,
+          booking: redactMerchantBookingForBusinessActor(
+            booking,
+            session.actor,
+          ),
+        });
       }
       if (body?.markTouched === true) {
         const booking = await acknowledgeMerchantBookingBySite({
           siteId: maybeSiteId,
           bookingId: String(body?.bookingId ?? "").trim(),
+          assertAuthorizationCurrent: session.assertAuthorizationCurrent,
         });
-        return NextResponse.json({ ok: true, booking });
+        return privateJson({
+          ok: true,
+          booking: redactMerchantBookingForBusinessActor(
+            booking,
+            session.actor,
+          ),
+        });
       }
       if (Array.isArray(body?.bookingIds) && maybeStatus) {
         const bookings = await updateMerchantBookingsBatchBySite({
           siteId: maybeSiteId,
           bookingIds: body.bookingIds.map((item) => String(item ?? "").trim()),
           status: maybeStatus,
+          assertAuthorizationCurrent: session.assertAuthorizationCurrent,
         });
-        return NextResponse.json({ ok: true, bookings });
+        return privateJson({
+          ok: true,
+          bookings: redactMerchantBookingsForBusinessActor(
+            bookings,
+            session.actor,
+          ),
+        });
       }
       const booking = await updateMerchantBookingBySite({
         siteId: maybeSiteId,
@@ -286,8 +411,22 @@ export async function PATCH(request: Request) {
               note: String(body.updates.note ?? ""),
             }
           : undefined,
+        assertAuthorizationCurrent: session.assertAuthorizationCurrent,
       });
-      return NextResponse.json({ ok: true, booking });
+      return privateJson({
+        ok: true,
+        booking: redactMerchantBookingForBusinessActor(
+          booking,
+          session.actor,
+        ),
+      });
+    }
+
+    if (request.headers.has("x-merchant-access-token")) {
+      return privateJson(
+        { error: "business_scope_required" },
+        { status: 403 },
+      );
     }
 
     const action = body?.action === "cancel" ? "cancel" : "update";
@@ -311,9 +450,12 @@ export async function PATCH(request: Request) {
             }
           : undefined,
     });
-    return NextResponse.json({ ok: true, booking });
+    return privateJson({ ok: true, booking });
   } catch (error) {
-    return NextResponse.json(
+    if (error instanceof MerchantBusinessAccessError) {
+      return privateJson({ error: error.code }, { status: error.status });
+    }
+    return privateJson(
       {
         error: "booking_update_failed",
         message: error instanceof Error ? error.message : "unknown_error",

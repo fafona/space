@@ -15,9 +15,16 @@ test("enterprise PostgreSQL acceptance uses the healthy service container client
     2,
     "checker SQL changes must trigger both pull-request and main-push PG15 acceptance",
   );
+  assert.equal(
+    workflow.match(
+      /- "scripts\/merchant-staff-business-permissions-migration-contract\.test\.mjs"/g,
+    )?.length,
+    2,
+    "041 contract changes must trigger both pull-request and main-push PG15 acceptance",
+  );
   assert.match(
     workflow,
-    /node --test scripts\/enterprise-integration-workflow-contract\.test\.mjs/,
+    /node --test scripts\/enterprise-integration-workflow-contract\.test\.mjs scripts\/merchant-staff-business-permissions-migration-contract\.test\.mjs/,
   );
   assert.match(workflow, /set -euo pipefail\n\s+umask 077/);
   assert.match(

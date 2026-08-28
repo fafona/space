@@ -23,6 +23,8 @@ import {
   type MerchantEnterpriseStoreClient,
 } from "@/lib/merchantEnterpriseStore.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { hasMerchantStaffBusinessPermissions } from "@/lib/merchantStaffBusiness";
+import { isMerchantStaffBusinessRolloutEnabled } from "@/lib/merchantStaffBusinessRollout.server";
 import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
@@ -55,6 +57,70 @@ export function getMerchantEnterpriseRoleMutationActor(
     actorType: actor.type,
     actorId: actor.id,
   } as const;
+}
+
+export function canMerchantEnterpriseActorManageRoleBusinessPermissions(
+  actor: Awaited<ReturnType<typeof resolveMerchantEnterpriseActor>>,
+  currentPermissions: readonly string[],
+  nextPermissions: readonly string[] | undefined,
+) {
+  if (actor.type === "owner") return true;
+  return (
+    !hasMerchantStaffBusinessPermissions(currentPermissions) &&
+    !hasMerchantStaffBusinessPermissions(nextPermissions ?? [])
+  );
+}
+
+export function canMerchantEnterpriseRoleRetainBusinessPermissions(
+  currentPermissions: readonly string[],
+  nextPermissions: readonly string[] | undefined,
+  rolloutEnabled: boolean,
+) {
+  return (
+    rolloutEnabled ||
+    !hasMerchantStaffBusinessPermissions(
+      nextPermissions ?? currentPermissions,
+    )
+  );
+}
+
+export function isMerchantEnterpriseBusinessPermissionStrip(
+  currentPermissions: readonly string[],
+  nextPermissions: readonly string[] | undefined,
+) {
+  return (
+    nextPermissions !== undefined &&
+    hasMerchantStaffBusinessPermissions(currentPermissions) &&
+    !hasMerchantStaffBusinessPermissions(nextPermissions)
+  );
+}
+
+function haveSameStringSet(left: readonly string[], right: readonly string[]) {
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return (
+    sortedLeft.length === sortedRight.length &&
+    sortedLeft.every((value, index) => value === sortedRight[index])
+  );
+}
+
+export function merchantEnterpriseBusinessPermissionStripChangesOtherFields(
+  role: Pick<
+    MerchantEnterpriseRole,
+    "name" | "description" | "status" | "accessScope" | "allowedBoardIds"
+  >,
+  body: RoleBody | null,
+  access: MerchantEnterpriseBoardAccess | undefined,
+) {
+  return (
+    (body?.name !== undefined && text(body.name, 80) !== role.name) ||
+    (body?.description !== undefined &&
+      text(body.description, 1000) !== role.description) ||
+    (body?.status !== undefined && body.status !== role.status) ||
+    (access !== undefined &&
+      (access.accessScope !== role.accessScope ||
+        !haveSameStringSet(access.allowedBoardIds, role.allowedBoardIds)))
+  );
 }
 
 export function getMerchantEnterpriseRoleMutationErrorResponse(error: unknown) {
@@ -183,6 +249,30 @@ export async function POST(request: Request) {
       );
     }
     const actor = await authorize(request, siteId);
+    if (
+      !canMerchantEnterpriseActorManageRoleBusinessPermissions(
+        actor,
+        [],
+        permissions,
+      )
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "permission_escalation_denied" },
+        { status: 403 },
+      );
+    }
+    if (
+      !canMerchantEnterpriseRoleRetainBusinessPermissions(
+        [],
+        permissions,
+        isMerchantStaffBusinessRolloutEnabled(siteId),
+      )
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "staff_business_access_disabled" },
+        { status: 403 },
+      );
+    }
     if (!merchantEnterprisePermissionsFitActor(actor, permissions)) {
       return NextResponse.json({ ok: false, error: "permission_escalation_denied" }, { status: 403 });
     }
@@ -256,6 +346,51 @@ export async function PATCH(request: Request) {
     if (!targetRole) {
       return NextResponse.json({ ok: false, error: "role_not_found" }, { status: 404 });
     }
+    const stripsBusinessPermissions =
+      isMerchantEnterpriseBusinessPermissionStrip(
+        targetRole.permissions,
+        permissions ?? undefined,
+      );
+    if (
+      !canMerchantEnterpriseActorManageRoleBusinessPermissions(
+        actor,
+        targetRole.permissions,
+        permissions ?? undefined,
+      )
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "permission_escalation_denied" },
+        { status: 403 },
+      );
+    }
+    if (
+      !canMerchantEnterpriseRoleRetainBusinessPermissions(
+        targetRole.permissions,
+        permissions ?? undefined,
+        isMerchantStaffBusinessRolloutEnabled(siteId),
+      )
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "staff_business_access_disabled" },
+        { status: 403 },
+      );
+    }
+    if (
+      stripsBusinessPermissions &&
+      merchantEnterpriseBusinessPermissionStripChangesOtherFields(
+        targetRole,
+        body,
+        access,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "business_permission_strip_requires_separate_update",
+        },
+        { status: 400 },
+      );
+    }
     if (actor.type === "employee") {
       const changesOwnRole = snapshot.employees.some(
         (employee) => employee.id === actor.id && employee.roleId === targetRole.id,
@@ -301,16 +436,23 @@ export async function PATCH(request: Request) {
       siteId,
       roleId,
       version: body.version,
-      ...(body?.name !== undefined ? { name: text(body.name, 80) } : {}),
-      ...(body?.description !== undefined ? { description: text(body.description, 1000) } : {}),
+      ...(!stripsBusinessPermissions && body?.name !== undefined
+        ? { name: text(body.name, 80) }
+        : {}),
+      ...(!stripsBusinessPermissions && body?.description !== undefined
+        ? { description: text(body.description, 1000) }
+        : {}),
       ...(permissions ? { permissions } : {}),
-      ...(access
+      ...(!stripsBusinessPermissions && access
         ? {
             accessScope: access.accessScope,
             allowedBoardIds: access.allowedBoardIds,
           }
         : {}),
-      ...(body?.status === "active" || body?.status === "archived" ? { status: body.status } : {}),
+      ...(!stripsBusinessPermissions &&
+      (body?.status === "active" || body?.status === "archived")
+        ? { status: body.status }
+        : {}),
       ...getMerchantEnterpriseRoleMutationActor(actor),
     });
     return NextResponse.json({ ok: true, role });

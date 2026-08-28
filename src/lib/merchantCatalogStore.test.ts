@@ -27,6 +27,7 @@ function cloneValue<T>(value: T): T {
 
 function createMemoryClient(initialRows: MemoryRow[] = []) {
   const rows = initialRows.map(cloneValue);
+  const calls = { selects: 0, updates: 0, inserts: 0 };
   let sequence = rows.length;
   const client: MerchantCatalogStoreClient = {
     from: () => {
@@ -71,13 +72,16 @@ function createMemoryClient(initialRows: MemoryRow[] = []) {
             filters.every(([field, value]) => row[field as keyof MemoryRow] === value);
           const execute = () => {
             if (operation === "select") {
+              calls.selects += 1;
               return { data: rows.filter(matches).slice(0, rowLimit).map(cloneValue), error: null };
             }
             if (operation === "update") {
+              calls.updates += 1;
               const updated = rows.filter(matches);
               updated.forEach((row) => Object.assign(row, cloneValue(body)));
               return { data: returnUpdatedRows ? updated.map(cloneValue) : null, error: null };
             }
+            calls.inserts += 1;
             const duplicate = rows.some(
               (row) => row.slug === body.slug && row.merchant_id === body.merchant_id,
             );
@@ -108,7 +112,7 @@ function createMemoryClient(initialRows: MemoryRow[] = []) {
       return builder;
     },
   };
-  return { client, rows };
+  return { client, rows, calls };
 }
 
 function initialCatalog(): MerchantCatalog {
@@ -204,6 +208,39 @@ test("catalog store mutation merges an action and increments revision", async ()
   assert.equal(result.catalog?.revision, 2);
   assert.deepEqual(result.catalog?.products.map((product) => product.id), ["product-a", "product-b", "product-c"]);
   assert.deepEqual(result.catalog?.categories[0]?.productIds, ["product-a", "product-b"]);
+});
+
+test("catalog store denies revoked mutations inside the site lock before canonical reads", async () => {
+  const { client, calls } = createMemoryClient();
+  await saveStoredMerchantCatalog(client, {
+    siteId: "10000000",
+    catalog: initialCatalog(),
+    expectedRevision: 0,
+    updatedAt: "2026-08-17T10:00:00.000Z",
+  });
+  const selectsBeforeRevokedMutation = calls.selects;
+  let mutationEvaluations = 0;
+
+  await assert.rejects(
+    mutateStoredMerchantCatalog(client, {
+      siteId: "10000000",
+      expectedRevision: 1,
+      beforeMutation: async () => {
+        throw new Error("permission_denied");
+      },
+      mutate: (current) => {
+        mutationEvaluations += 1;
+        return applyMerchantCatalogMutation(current, {
+          action: "set_price_prefix",
+          pricePrefix: "$",
+        });
+      },
+    }),
+    /permission_denied/,
+  );
+
+  assert.equal(calls.selects, selectsBeforeRevokedMutation);
+  assert.equal(mutationEvaluations, 0);
 });
 
 test("process lock and expectedRevision allow only one concurrent mutation", async () => {

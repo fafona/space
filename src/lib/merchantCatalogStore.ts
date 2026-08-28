@@ -399,12 +399,17 @@ export async function mutateStoredMerchantCatalog(
     expectedRevision: number;
     source?: string;
     updatedAt?: string;
+    beforeMutation?: () => Promise<void>;
     mutate: (current: MerchantCatalog | null) => MerchantCatalogStoreMutation | Promise<MerchantCatalogStoreMutation>;
   },
 ): Promise<MerchantCatalogStoreResult> {
   const siteId = normalizeText(input.siteId);
   if (!isMerchantNumericId(siteId)) return { error: "invalid_site_id", catalog: null };
   return withCatalogWriteLock(siteId, async () => {
+    // This callback must stay first inside the site-scoped critical section:
+    // callers use it to reject a revoked exact principal/version before any
+    // canonical catalog read, repair, validation, or persistence occurs.
+    await input.beforeMutation?.();
     const current = await loadStoredMerchantCatalog(supabase, siteId);
     const currentRevision = current?.revision ?? 0;
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {

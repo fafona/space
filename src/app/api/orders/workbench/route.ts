@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   buildMerchantOrderWorkbenchDashboard,
   normalizeMerchantOrderWorkbenchTimezoneOffsetMinutes,
@@ -7,33 +6,42 @@ import {
 import { getMerchantOrderErrorMessage } from "@/lib/merchantOrders";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
-import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import {
+  authorizeMerchantBusinessRequest,
+  MerchantBusinessAccessError,
+  type MerchantBusinessActor,
+} from "@/lib/merchantBusinessActor.server";
+import { redactMerchantOrderWorkbenchForBusinessActor } from "@/lib/merchantBusinessOrderPermissions";
+import { readUniqueMerchantBusinessSiteId } from "@/lib/merchantBusinessRequest";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export type MerchantOrderWorkbenchRouteDependencies = {
-  resolveSession: (request: Request, siteId: string) => Promise<{ merchantId: string } | null>;
+  resolveSession: (
+    request: Request,
+    siteId: string,
+  ) => Promise<{ merchantId: string; actor?: MerchantBusinessActor } | null>;
   loadSnapshotSite: typeof loadCurrentMerchantSnapshotSiteBySiteId;
   listOrders: typeof listMerchantOrders;
 };
 
-function trimText(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
 function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
-  response.headers.set("cache-control", "no-store");
+  response.headers.set("cache-control", "private, no-store");
+  response.headers.set("pragma", "no-cache");
+  response.headers.set("x-content-type-options", "nosniff");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
+  response.headers.set("referrer-policy", "no-referrer");
   return response;
 }
 
 async function resolveOrderWorkbenchSession(request: Request, siteId: string) {
-  const session = await resolveMerchantSessionFromRequest(request, {
-    hintedMerchantId: siteId,
+  const actor = await authorizeMerchantBusinessRequest(request, {
+    siteId,
+    requiredPermission: "orders.analytics.view",
   });
-  if (!session || session.merchantId !== siteId) return null;
-  return session;
+  return { merchantId: actor.siteId, actor };
 }
 
 const DEFAULT_DEPENDENCIES: MerchantOrderWorkbenchRouteDependencies = {
@@ -48,17 +56,16 @@ export async function handleMerchantOrderWorkbenchGet(
 ) {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   const { searchParams } = new URL(request.url);
-  const siteId = trimText(searchParams.get("siteId"));
-  if (!isMerchantNumericId(siteId)) {
+  const siteId = readUniqueMerchantBusinessSiteId(request.url);
+  if (!siteId) {
     return noStoreJson({ error: "invalid_site_id" }, { status: 400 });
   }
 
-  const session = await dependencies.resolveSession(request, siteId);
-  if (!session) {
-    return noStoreJson({ error: "unauthorized" }, { status: 401 });
-  }
-
   try {
+    const session = await dependencies.resolveSession(request, siteId);
+    if (!session) {
+      return noStoreJson({ error: "unauthorized" }, { status: 401 });
+    }
     const site = await dependencies.loadSnapshotSite(siteId);
     if (!site?.permissionConfig?.allowProductBlock || !site.permissionConfig.allowOrderManagement) {
       return noStoreJson({ error: "order_management_disabled" }, { status: 403 });
@@ -72,8 +79,19 @@ export async function handleMerchantOrderWorkbenchGet(
         searchParams.get("timezoneOffsetMinutes"),
       ),
     });
-    return noStoreJson({ ok: true, dashboard });
+    return noStoreJson({
+      ok: true,
+      dashboard: session.actor
+        ? redactMerchantOrderWorkbenchForBusinessActor(
+            dashboard,
+            session.actor,
+          )
+        : dashboard,
+    });
   } catch (error) {
+    if (error instanceof MerchantBusinessAccessError) {
+      return noStoreJson({ error: error.code }, { status: error.status });
+    }
     return noStoreJson(
       {
         error: "order_workbench_failed",

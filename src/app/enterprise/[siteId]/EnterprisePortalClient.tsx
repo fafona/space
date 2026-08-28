@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import MerchantEnterpriseManager from "@/components/admin/MerchantEnterpriseManager";
+import MerchantEmployeeWorkspace from "@/components/enterprise/MerchantEmployeeWorkspace";
 import { MerchantEnterpriseAuthGeneration } from "@/lib/merchantEnterpriseAuthGeneration";
 import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
 
@@ -926,11 +926,10 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         </button>
         {message ? <span role="alert" className="text-xs text-slate-600">{message}</span> : null}
       </div>
-      <MerchantEnterpriseManager
+      <MerchantEmployeeWorkspace
         key={`${siteId}:${authContext?.generation ?? 0}`}
         siteId={siteId}
         accessToken={accessToken}
-        standalone
       />
     </main>
   );

@@ -12,8 +12,17 @@ import {
   prepareMerchantCatalogProductImageImport,
   type MerchantCatalog,
 } from "@/lib/merchantCatalog";
+import { MerchantBusinessAccessError } from "@/lib/merchantBusinessActor.server";
 
 const SITE_ID = "10000000";
+
+function assertPrivateResponseHeaders(response: Response) {
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("pragma"), "no-cache");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("cross-origin-resource-policy"), "same-origin");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+}
 
 function catalog(): MerchantCatalog {
   return normalizeMerchantCatalog({
@@ -206,7 +215,7 @@ test("catalog GET and PATCH convert dependency exceptions into a stable no-store
         const payload = (await response.json()) as { error?: string };
 
         assert.equal(response.status, 503);
-        assert.equal(response.headers.get("cache-control"), "no-store");
+        assertPrivateResponseHeaders(response);
         assert.deepEqual(payload, { error: "merchant_catalog_service_unavailable" });
       });
     }
@@ -232,7 +241,7 @@ test("catalog GET and PATCH preserve explicit 401 and 403 authorization semantic
       harness.overrides.resolveSession = async () => null;
       const response = await handler.run(harness.overrides);
       assert.equal(response.status, 401);
-      assert.equal(response.headers.get("cache-control"), "no-store");
+      assertPrivateResponseHeaders(response);
       assert.deepEqual(await response.json(), { error: "unauthorized" });
     });
     await t.test(`${handler.name} disabled`, async () => {
@@ -240,10 +249,83 @@ test("catalog GET and PATCH preserve explicit 401 and 403 authorization semantic
       harness.overrides.loadSnapshotSite = async () => null;
       const response = await handler.run(harness.overrides);
       assert.equal(response.status, 403);
-      assert.equal(response.headers.get("cache-control"), "no-store");
+      assertPrivateResponseHeaders(response);
       assert.deepEqual(await response.json(), { error: "order_management_disabled" });
     });
   }
+});
+
+test("catalog production authorization dependency receives the exact read and manage permissions", async () => {
+  const harness = dependencies();
+  delete harness.overrides.resolveSession;
+  const requiredPermissions: string[] = [];
+  harness.overrides.resolveBusinessSession = async (_request, siteId, requiredPermission) => {
+    assert.equal(siteId, SITE_ID);
+    requiredPermissions.push(requiredPermission);
+    return { merchantId: SITE_ID };
+  };
+  harness.overrides.loadCatalog = async () => catalog();
+
+  const getResponse = await handleMerchantCatalogGet(getRequest(), harness.overrides);
+  const patchResponse = await handleMerchantCatalogMutation(
+    request([{ code: "SKU-STRICT", name: "Strict", price: "1.00" }]),
+    harness.overrides,
+  );
+
+  assert.equal(getResponse.status, 200);
+  assert.equal(patchResponse.status, 200);
+  assert.deepEqual(requiredPermissions, ["orders.catalog.view", "orders.catalog.manage"]);
+  assertPrivateResponseHeaders(getResponse);
+  assertPrivateResponseHeaders(patchResponse);
+});
+
+test("catalog mutation propagates lock-entry fresh reauthorization denial before catalog access", async () => {
+  const harness = dependencies();
+  delete harness.overrides.resolveSession;
+  let canonicalReads = 0;
+  harness.overrides.resolveBusinessSession = async () => ({
+    merchantId: SITE_ID,
+    assertAuthorizationCurrent: async () => {
+      throw new MerchantBusinessAccessError("permission_denied", 403);
+    },
+  });
+  harness.overrides.mutateCatalog = async (_supabase, input) => {
+    await input.beforeMutation?.();
+    canonicalReads += 1;
+    const decision = await input.mutate(catalog());
+    return decision.ok
+      ? { error: null, catalog: decision.catalog }
+      : { error: decision.error, catalog: catalog() };
+  };
+
+  const response = await handleMerchantCatalogMutation(request([]), harness.overrides);
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "permission_denied" });
+  assert.equal(canonicalReads, 0);
+  assertPrivateResponseHeaders(response);
+});
+
+test("catalog origin rejection carries the complete private response policy", async () => {
+  const untrustedRequest = new Request("https://merchant.faolla.test/api/orders/catalog", {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      host: "merchant.faolla.test",
+      origin: "https://attacker.example",
+    },
+    body: JSON.stringify({
+      siteId: SITE_ID,
+      action: "bulk_import_products",
+      expectedRevision: 3,
+      items: [],
+    }),
+  });
+
+  const response = await handleMerchantCatalogMutation(untrustedRequest, {});
+
+  assert.equal(response.status, 403);
+  assertPrivateResponseHeaders(response);
 });
 
 function publishedCatalogBlocks(commonCode = "SKU-COMMON", mobileName = "Mobile name") {
@@ -364,7 +446,7 @@ async function loadBootstrapPreviewState(harness: ReturnType<typeof bootstrapDep
     };
   };
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("cache-control"), "no-store");
+  assertPrivateResponseHeaders(response);
   assert.equal(payload.bootstrap?.ok, false);
   assert.ok(payload.bootstrapFingerprint);
   assert.equal(payload.bootstrap?.resolutionTargets?.length, 1);
@@ -432,7 +514,7 @@ test("preview_bootstrap resolves a plan without performing a catalog write", asy
   );
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("cache-control"), "no-store");
+  assertPrivateResponseHeaders(response);
   assert.equal(payload.ok, true);
   assert.equal(payload.preview?.ok, true);
   assert.ok(payload.preview?.catalog);
