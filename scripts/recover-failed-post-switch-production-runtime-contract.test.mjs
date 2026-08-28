@@ -39,24 +39,24 @@ function nodeHeredocs(block) {
 }
 
 test("the post-switch incident interface remains independently pinned", () => {
-  assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="32625801433"/);
-  assert.match(source, /EXPECTED_INCIDENT_SHA="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
-  assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="32625773494"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32630861830"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"/);
-  assert.match(source, /EXPECTED_PRIOR_FAILED_RECOVERY_SHA="fe1be992a48204e8f2426615762273f14331ab83"/);
-  assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="58c26e178faeb3eee0172a2e0aa487084f6910e4"/);
-  assert.match(source, /EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"/);
-  assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433"/);
+  assert.match(source, /EXPECTED_INCIDENT_DEPLOY_RUN_ID="33141616176"/);
+  assert.match(source, /EXPECTED_INCIDENT_SHA="5867f1d5186e0068df8fb0d5e811e8287bc28ac4"/);
+  assert.match(source, /EXPECTED_INCIDENT_READINESS_RUN_ID="33141577054"/);
+  assert.match(source, /EXPECTED_RUNTIME_DIAGNOSTIC_RUN_ID="33141962030"/);
+  assert.match(source, /EXPECTED_RUNTIME_DIAGNOSTIC_RUN_ATTEMPT="1"/);
+  assert.match(source, /EXPECTED_RUNTIME_DIAGNOSTIC_SHA="5867f1d5186e0068df8fb0d5e811e8287bc28ac4"/);
+  assert.match(source, /EXPECTED_CANDIDATE_BUILD_ID="5867f1d5186e0068df8fb0d5e811e8287bc28ac4"/);
+  assert.match(source, /EXPECTED_OLD_BUILD_ID="c90b02c85c18eb262c120bfd9d435038486f87c6"/);
+  assert.match(source, /EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_33141616176"/);
   assert.doesNotMatch(source, /RECOVER_FAILED_PRE_FORWARD/);
 });
 
 test("canonical payload is exact-keyed and binds every incident boundary", () => {
   assert.match(source, /\[ "\$loaded_count" -eq 19 \]/);
   for (const key of [
-    "PRIOR_FAILED_RECOVERY_RUN_ID",
-    "PRIOR_FAILED_RECOVERY_RUN_ATTEMPT",
-    "PRIOR_FAILED_RECOVERY_SHA",
+    "RUNTIME_DIAGNOSTIC_RUN_ID",
+    "RUNTIME_DIAGNOSTIC_RUN_ATTEMPT",
+    "RUNTIME_DIAGNOSTIC_SHA",
     "INCIDENT_DEPLOY_RUN_ID",
     "INCIDENT_SHA",
     "READINESS_RUN_ID",
@@ -239,7 +239,7 @@ test("candidate and frozen inventory and identity have distinct pre-business-mut
 });
 
 test("the incident-pinned environment reader supports the historical frozen tree", () => {
-  const oldBuild = "2a121454a18a16ae30e356977ca82b24a310e8e5";
+  const oldBuild = "c90b02c85c18eb262c120bfd9d435038486f87c6";
   const probe = spawnSync("git", ["cat-file", "-e", `${oldBuild}^{commit}`], {
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -251,8 +251,8 @@ test("the incident-pinned environment reader supports the historical frozen tree
     });
     assert.equal(tree.status, 0);
     const paths = new Set(tree.stdout.trim().split(/\r?\n/));
-    assert.equal(paths.has("scripts/read-production-supabase-environment.mjs"), false);
-    assert.equal(paths.has("scripts/hold-ordinary-account-cutover-readiness-fence.mjs"), false);
+    assert.equal(paths.has("scripts/read-production-supabase-environment.mjs"), true);
+    assert.equal(paths.has("scripts/hold-ordinary-account-cutover-readiness-fence.mjs"), true);
     assert.equal(paths.has("scripts/check-production-smoke.mjs"), true);
     assert.equal(paths.has("scripts/run-merchant-enterprise-automation-worker.ts"), true);
   }
@@ -279,15 +279,25 @@ test("the incident-pinned environment reader supports the historical frozen tree
   assert.match(wrapper, /"\$APP_DIR" "\$INCIDENT_ENV_HELPER_FROZEN_SNAPSHOT"/);
   assert.doesNotMatch(wrapper, /CANDIDATE/);
   assert.match(source, /rollback-snapshot "\$FROZEN_RUNTIME_DIR\/\.env\.local" "\$EXPECTED_OLD_BUILD_ID"/);
+  assert.match(source, /\[ "\$\{#ROLLBACK_PARTS\[@\]\}" -eq 10 \]/);
+  assert.match(source, /SNAPSHOT_STAFF_ROLLOUT_STATUS.*ROLLBACK_PARTS\[6\]/);
+  assert.match(source, /SNAPSHOT_STAFF_MODE_B64.*ROLLBACK_PARTS\[7\]/);
+  assert.match(source, /SNAPSHOT_STAFF_SITE_IDS_B64.*ROLLBACK_PARTS\[8\]/);
+  assert.match(source, /SNAPSHOT_CANONICAL_PORTAL_ORIGIN_B64.*ROLLBACK_PARTS\[9\]/);
+  assert.match(source, /SNAPSHOT_STAFF_ROLLOUT_STATUS" = "legacy-off"/);
+  assert.match(source, /decode_strict_base64 "\$SNAPSHOT_STAFF_MODE_B64"\)" = "off"/);
+  assert.match(source, /SNAPSHOT_STAFF_SITE_IDS_B64" = "-"/);
+  assert.match(source, /SNAPSHOT_CANONICAL_PORTAL_ORIGIN_B64" = "-"/);
+  assert.match(source, /\[ "\$\{#parts\[@\]\}" -eq 6 \][\s\S]*parts\[1\].*= "absent"/);
 });
 
 test("frozen executable inputs are offline-pinned and hardened without an old server Git object", () => {
   const contracts = [
     {
       path: "package.json",
-      blob: "4aa8c7a442b6bc8926e74322503f91b28359fd3e",
-      sha256: "ecbbce22ad2cb0ce4d616726b8d024f454a2aeef48270eee241bb25553740b31",
-      bytes: 21229,
+      blob: "6e2a4154c743b3028ed58fa7a4f7872c262e594b",
+      sha256: "6f5139c290a4142f9e151802a9b2d7e924ce9c4e3303db7dcdf64c1c16b2f316",
+      bytes: 22374,
     },
     {
       path: "scripts/check-production-smoke.mjs",
@@ -354,7 +364,7 @@ test("frozen executable inputs are offline-pinned and hardened without an old se
     "tracked-file hardener must run exactly once for each frozen executable input",
   );
 
-  const oldBuild = "2a121454a18a16ae30e356977ca82b24a310e8e5";
+  const oldBuild = "c90b02c85c18eb262c120bfd9d435038486f87c6";
   const probe = spawnSync("git", ["cat-file", "-e", `${oldBuild}^{commit}`], {
     cwd: repositoryRoot,
     stdio: "ignore",
@@ -1414,8 +1424,8 @@ CANDIDATE_RUNTIME_DIR=/candidate
 FROZEN_RUNTIME_DIR=/frozen
 CURRENT_LINK_IDENTITY=original
 FROZEN_CURRENT_LINK_IDENTITY=frozen-identity
-EXPECTED_INCIDENT_DEPLOY_RUN_ID=32625801433
-EXPECTED_COMPENSATION_TEMP_LINK=/current.compensate-32625801433
+EXPECTED_INCIDENT_DEPLOY_RUN_ID=33141616176
+EXPECTED_COMPENSATION_TEMP_LINK=/current.compensate-33141616176
 COMPENSATION_TEMP_LINK=''
 COMPENSATION_TEMP_LINK_IDENTITY=''
 COMPENSATION_TEMP_LINK_OBJECT_IDENTITY=''
@@ -1520,8 +1530,7 @@ test("all PM2 parsers reject top-only and env-only related entries", () => {
     const common = {
       FAOLLA_PM2_KIND: "web", FAOLLA_EXPECTED_NAME: "app",
       FAOLLA_EXPECTED_CWD: "/frozen", FAOLLA_EXPECTED_PORT: "3000",
-      FAOLLA_EXPECTED_NPM: "/npm", FAOLLA_EXPECTED_NPM_COMMAND: "/npm",
-      FAOLLA_EXPECTED_NPM_REAL: "/npm", FAOLLA_EXPECTED_NODE_EXEC: "/node",
+      FAOLLA_EXPECTED_NEXT: "/frozen/next", FAOLLA_EXPECTED_NODE_EXEC: "/node",
       FAOLLA_EXPECTED_TSX: "/tsx", FAOLLA_EXPECTED_WORKER: "/worker",
     };
     assert.notEqual(runParser(started, common, fixture).status, 0);
@@ -1530,7 +1539,7 @@ test("all PM2 parsers reject top-only and env-only related entries", () => {
   const candidateEnv = {
     FAOLLA_PM2_KIND: "web", FAOLLA_EXPECTED_NAME: "app",
     FAOLLA_EXPECTED_CWD: "/candidate", FAOLLA_EXPECTED_PORT: "3000",
-    FAOLLA_EXPECTED_NPM_COMMAND: "/npm", FAOLLA_EXPECTED_NPM_REAL: "/npm-real",
+    FAOLLA_EXPECTED_NEXT: "/candidate/next",
     FAOLLA_EXPECTED_NODE_EXEC: "/node-real", FAOLLA_EXPECTED_TSX: "/tsx",
     FAOLLA_EXPECTED_WORKER: "/worker",
   };
@@ -1538,8 +1547,8 @@ test("all PM2 parsers reject top-only and env-only related entries", () => {
     name: "app", pm_id: 1, pid: 0,
     pm2_env: {
       name: "app", pm_id: 1, status: "stopped", pm_cwd: "/candidate",
-      exec_interpreter: interpreter, exec_mode: "fork_mode", pm_exec_path: "/npm",
-      args: ["start", "--", "-p", "3000"], node_args: [],
+      exec_interpreter: interpreter, exec_mode: "fork_mode", pm_exec_path: "/candidate/next",
+      args: ["start", "-p", "3000"], node_args: [],
     },
   }];
   assert.equal(runParser(candidate, candidateEnv, candidateEntry("node")).status, 0);
@@ -1555,7 +1564,15 @@ test("restored PM2 metadata, environment, identity, and four local routes are st
   assert.match(source, /environment\.args\.length !== 1/);
   assert.match(source, /environment\.args\[0\] !== expectedWorker/);
   assert.match(source, /environment\.node_args\.length !== 0/);
-  assert.match(source, /env\.pm_exec_path !== npm/);
+  assert.match(source, /env\.pm_exec_path !== next/);
+  assert.match(source, /CANDIDATE_NEXT_ENTRY="\$CANDIDATE_RUNTIME_DIR\/node_modules\/next\/dist\/bin\/next"/);
+  assert.match(source, /FROZEN_NEXT_ENTRY="\$FROZEN_RUNTIME_DIR\/node_modules\/next\/dist\/bin\/next"/);
+  assert.match(source, /\[ -f "\$next_entry" \] && \[ ! -L "\$next_entry" \]/);
+  assert.match(source, /readlink -f -- "\$next_entry"[\s\S]*"\$next_runtime\/node_modules\/next\/dist\/bin\/next"/);
+  assert.match(source, /pm2 start "\$FROZEN_NEXT_ENTRY"/);
+  assert.match(source, /--interpreter "\$NODE_EXEC_PATH"/);
+  assert.match(source, /-- start -p "\$APP_PORT"/);
+  assert.doesNotMatch(source, /pm2 start "\$NPM_/);
   assert.match(source, /NODE_OPTIONS="" NODE_PATH=""/);
   assert.match(source, /npm_config_node_options="" NPM_CONFIG_NODE_OPTIONS=""/);
   assert.match(source, /"NODE_OPTIONS", "NODE_PATH", "npm_config_node_options", "NPM_CONFIG_NODE_OPTIONS"/);

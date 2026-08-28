@@ -29,29 +29,31 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       RECOVERY_SOURCE_SHA: ${{ inputs.recovery_source_sha }}
       RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
-      EXPECTED_CONFIRMATION: RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433
+      EXPECTED_CONFIRMATION: RECOVER_FAILED_POST_SWITCH_DEPLOY_33141616176
       RECOVERY_SCRIPT_MAX_BYTES: "262144"
       RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
       RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
       RECOVERY_WORKFLOW_FILE: recover-failed-post-switch-deploy.yml
       CI_WORKFLOW_NAME: CI
       CI_WORKFLOW_PATH: .github/workflows/ci.yml
-      INCIDENT_DEPLOY_RUN_ID: "32625801433"
+      INCIDENT_DEPLOY_RUN_ID: "33141616176"
       INCIDENT_DEPLOY_RUN_ATTEMPT: "1"
       INCIDENT_DEPLOY_WORKFLOW_NAME: Deploy Production
       INCIDENT_DEPLOY_WORKFLOW_PATH: .github/workflows/deploy.yml
-      INCIDENT_SHA: 58c26e178faeb3eee0172a2e0aa487084f6910e4
-      READINESS_RUN_ID: "32625773494"
+      INCIDENT_SHA: 5867f1d5186e0068df8fb0d5e811e8287bc28ac4
+      READINESS_RUN_ID: "33141577054"
       READINESS_RUN_ATTEMPT: "1"
       READINESS_WORKFLOW_NAME: Ordinary Account Cutover Readiness
       READINESS_WORKFLOW_PATH: .github/workflows/ordinary-account-cutover-readiness.yml
-      PRIOR_FAILED_RECOVERY_RUN_ID: "32630861830"
-      PRIOR_FAILED_RECOVERY_RUN_ATTEMPT: "1"
-      PRIOR_FAILED_RECOVERY_SHA: fe1be992a48204e8f2426615762273f14331ab83
-      PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime
-      PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: .github/workflows/recover-failed-post-switch-deploy.yml
-      INCIDENT_CANDIDATE_BUILD_ID: 58c26e178faeb3eee0172a2e0aa487084f6910e4
-      INCIDENT_OLD_BUILD_ID: 2a121454a18a16ae30e356977ca82b24a310e8e5
+      BACKUP_RUN_ID: "33135517954"
+      RUNTIME_DIAGNOSTIC_RUN_ID: "33141962030"
+      RUNTIME_DIAGNOSTIC_RUN_ATTEMPT: "1"
+      RUNTIME_DIAGNOSTIC_JOB_ID: "98754555489"
+      RUNTIME_DIAGNOSTIC_SHA: 5867f1d5186e0068df8fb0d5e811e8287bc28ac4
+      RUNTIME_DIAGNOSTIC_WORKFLOW_NAME: Production Runtime Supervision Diagnostic
+      RUNTIME_DIAGNOSTIC_WORKFLOW_PATH: .github/workflows/production-runtime-supervision-diagnostic.yml
+      INCIDENT_CANDIDATE_BUILD_ID: 5867f1d5186e0068df8fb0d5e811e8287bc28ac4
+      INCIDENT_OLD_BUILD_ID: c90b02c85c18eb262c120bfd9d435038486f87c6
       SSH_ALIAS: faolla-incident-recovery
 
     steps:
@@ -224,7 +226,7 @@ jobs:
             "$(git rev-parse "$RECOVERY_SOURCE_SHA:scripts/recover-failed-post-switch-production-runtime.sh")"
           bash -n scripts/recover-failed-post-switch-production-runtime.sh
 
-      - name: Validate Incident Deploy Readiness And Failed Recovery Boundary
+      - name: Validate Incident Deploy Readiness And Runtime Diagnostic Boundary
         id: incident-boundary
         env:
           GH_TOKEN: ${{ github.token }}
@@ -240,8 +242,9 @@ jobs:
           readiness_jobs="$RUNNER_TEMP/incident-readiness-jobs.json"
           readiness_workflow="$RUNNER_TEMP/incident-readiness-workflow.json"
           readiness_runs="$RUNNER_TEMP/incident-readiness-runs.json"
-          failed_recovery_run="$RUNNER_TEMP/prior-failed-recovery-run.json"
-          failed_recovery_jobs="$RUNNER_TEMP/prior-failed-recovery-jobs.json"
+          runtime_diagnostic_run="$RUNNER_TEMP/runtime-diagnostic-run.json"
+          runtime_diagnostic_jobs="$RUNNER_TEMP/runtime-diagnostic-jobs.json"
+          runtime_diagnostic_log="$RUNNER_TEMP/runtime-diagnostic-failed.log"
 
           gh api --method GET -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -274,17 +277,21 @@ jobs:
             > "$readiness_runs"
           gh api --method GET -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$PRIOR_FAILED_RECOVERY_RUN_ID" \
-            > "$failed_recovery_run"
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUNTIME_DIAGNOSTIC_RUN_ID" \
+            > "$runtime_diagnostic_run"
           gh api --method GET -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$PRIOR_FAILED_RECOVERY_RUN_ID/attempts/1/jobs" \
-            > "$failed_recovery_jobs"
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUNTIME_DIAGNOSTIC_RUN_ID/attempts/1/jobs" \
+            > "$runtime_diagnostic_jobs"
+          gh api --method GET -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/jobs/$RUNTIME_DIAGNOSTIC_JOB_ID/logs" \
+            > "$runtime_diagnostic_log"
 
           node --input-type=module - \
             "$deploy_run" "$deploy_jobs" "$deploy_workflow" "$deploy_runs" \
             "$readiness_run" "$readiness_jobs" "$readiness_workflow" \
-            "$readiness_runs" "$failed_recovery_run" "$failed_recovery_jobs" <<'NODE'
+            "$readiness_runs" "$runtime_diagnostic_run" "$runtime_diagnostic_jobs" <<'NODE'
           import { appendFileSync, readFileSync } from "node:fs";
 
           const fail = (code) => {
@@ -299,8 +306,8 @@ jobs:
           const readinessJobsPage = JSON.parse(readFileSync(process.argv[7], "utf8"));
           const readinessWorkflow = JSON.parse(readFileSync(process.argv[8], "utf8"));
           const readinessRunPages = JSON.parse(readFileSync(process.argv[9], "utf8"));
-          const failedRecovery = JSON.parse(readFileSync(process.argv[10], "utf8"));
-          const failedRecoveryJobsPage = JSON.parse(readFileSync(process.argv[11], "utf8"));
+          const runtimeDiagnostic = JSON.parse(readFileSync(process.argv[10], "utf8"));
+          const runtimeDiagnosticJobsPage = JSON.parse(readFileSync(process.argv[11], "utf8"));
           const canonicalTime = (value, code) => {
             if (typeof value !== "string") fail(code);
             const milliseconds = Date.parse(value);
@@ -384,62 +391,59 @@ jobs:
           }
 
           if (
-            failedRecovery?.id !== Number(process.env.PRIOR_FAILED_RECOVERY_RUN_ID) ||
-            failedRecovery.run_attempt !== 1 ||
-            failedRecovery.name !== process.env.PRIOR_FAILED_RECOVERY_WORKFLOW_NAME ||
-            failedRecovery.path !== process.env.PRIOR_FAILED_RECOVERY_WORKFLOW_PATH ||
-            failedRecovery.event !== "workflow_dispatch" ||
-            failedRecovery.status !== "completed" || failedRecovery.conclusion !== "failure" ||
-            failedRecovery.head_branch !== "main" ||
-            failedRecovery.head_sha !== process.env.PRIOR_FAILED_RECOVERY_SHA ||
-            failedRecovery.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
-            failedRecovery.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
-          ) fail("prior_failed_recovery_run_invalid");
-          const failedRecoveryJobs = failedRecoveryJobsPage?.jobs;
-          if (!Array.isArray(failedRecoveryJobs) || failedRecoveryJobs.length !== 1) {
-            fail("prior_failed_recovery_jobs_invalid");
+            runtimeDiagnostic?.id !== Number(process.env.RUNTIME_DIAGNOSTIC_RUN_ID) ||
+            runtimeDiagnostic.run_attempt !== 1 ||
+            runtimeDiagnostic.name !== process.env.RUNTIME_DIAGNOSTIC_WORKFLOW_NAME ||
+            runtimeDiagnostic.path !== process.env.RUNTIME_DIAGNOSTIC_WORKFLOW_PATH ||
+            runtimeDiagnostic.event !== "workflow_dispatch" ||
+            runtimeDiagnostic.status !== "completed" ||
+            runtimeDiagnostic.conclusion !== "failure" ||
+            runtimeDiagnostic.head_branch !== "main" ||
+            runtimeDiagnostic.head_sha !== process.env.RUNTIME_DIAGNOSTIC_SHA ||
+            runtimeDiagnostic.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            runtimeDiagnostic.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) fail("runtime_diagnostic_run_invalid");
+          const runtimeDiagnosticJobs = runtimeDiagnosticJobsPage?.jobs;
+          if (!Array.isArray(runtimeDiagnosticJobs) || runtimeDiagnosticJobs.length !== 1) {
+            fail("runtime_diagnostic_jobs_invalid");
           }
-          const failedRecoveryJob = failedRecoveryJobs[0];
-          const expectedFailedRecoverySteps = [
+          const runtimeDiagnosticJob = runtimeDiagnosticJobs[0];
+          const expectedRuntimeDiagnosticSteps = [
             [1, "Set up job", "success"],
-            [2, "Validate Unique Manual Recovery Chain", "success"],
-            [3, "Checkout Exact Recovery Source", "success"],
-            [4, "Verify Exact Current Main Checkout", "success"],
-            [5, "Validate Incident Deploy Readiness And Failed Recovery Boundary", "success"],
-            [6, "Resolve Exact Readiness Artifact Inventory", "success"],
-            [7, "Verify Canonical Historical Readiness Evidence", "success"],
-            [8, "Setup Pinned SSH Recovery Alias", "success"],
-            [9, "Revalidate Main And CI Immediately Before Recovery", "success"],
-            [10, "Recover Frozen Production Runtime", "failure"],
-            [11, "Verify Public Frozen Runtime Recovery", "skipped"],
-            [22, "Post Checkout Exact Recovery Source", "success"],
-            [23, "Complete job", "success"],
+            [2, "Validate Diagnostic Request", "success"],
+            [3, "Checkout Exact Diagnostic Revision", "success"],
+            [4, "Verify Diagnostic Revision", "success"],
+            [5, "Setup SSH", "success"],
+            [6, "Check Runtime Supervision", "failure"],
+            [12, "Post Checkout Exact Diagnostic Revision", "success"],
+            [13, "Complete job", "success"],
           ];
           if (
-            failedRecoveryJob?.name !== "recover" ||
-            failedRecoveryJob.conclusion !== "failure" ||
-            failedRecoveryJob.run_attempt !== 1 ||
-            !Array.isArray(failedRecoveryJob.steps) ||
-            failedRecoveryJob.steps.length !== expectedFailedRecoverySteps.length ||
-            failedRecoveryJob.steps.some((step, index) =>
-              step.number !== expectedFailedRecoverySteps[index][0] ||
-              step.name !== expectedFailedRecoverySteps[index][1] ||
-              step.conclusion !== expectedFailedRecoverySteps[index][2]
+            runtimeDiagnosticJob?.name !== "diagnostic" ||
+            runtimeDiagnosticJob.conclusion !== "failure" ||
+            runtimeDiagnosticJob.run_attempt !== 1 ||
+            runtimeDiagnosticJob.id !== Number(process.env.RUNTIME_DIAGNOSTIC_JOB_ID) ||
+            !Array.isArray(runtimeDiagnosticJob.steps) ||
+            runtimeDiagnosticJob.steps.length !== expectedRuntimeDiagnosticSteps.length ||
+            runtimeDiagnosticJob.steps.some((step, index) =>
+              step.number !== expectedRuntimeDiagnosticSteps[index][0] ||
+              step.name !== expectedRuntimeDiagnosticSteps[index][1] ||
+              step.conclusion !== expectedRuntimeDiagnosticSteps[index][2]
             )
-          ) fail("prior_failed_recovery_steps_invalid");
-          const failedRecoveryStarted = canonicalTime(
-            failedRecoveryJob.started_at,
-            "prior_failed_recovery_started_at_invalid",
+          ) fail("runtime_diagnostic_steps_invalid");
+          const runtimeDiagnosticStarted = canonicalTime(
+            runtimeDiagnosticJob.started_at,
+            "runtime_diagnostic_started_at_invalid",
           );
-          const failedRecoveryCompleted = canonicalTime(
-            failedRecoveryJob.completed_at,
-            "prior_failed_recovery_completed_at_invalid",
+          const runtimeDiagnosticCompleted = canonicalTime(
+            runtimeDiagnosticJob.completed_at,
+            "runtime_diagnostic_completed_at_invalid",
           );
           if (
-            failedRecoveryCompleted <= failedRecoveryStarted ||
-            failedRecoveryCompleted - failedRecoveryStarted > 1_800 ||
-            failedRecoveryStarted <= completedEpoch
-          ) fail("prior_failed_recovery_time_window_invalid");
+            runtimeDiagnosticCompleted <= runtimeDiagnosticStarted ||
+            runtimeDiagnosticCompleted - runtimeDiagnosticStarted > 300 ||
+            runtimeDiagnosticStarted <= completedEpoch
+          ) fail("runtime_diagnostic_time_window_invalid");
 
           if (
             readiness?.id !== Number(process.env.READINESS_RUN_ID) ||
@@ -519,10 +523,52 @@ jobs:
             `failed_run_started_epoch=${startedEpoch}\nfailed_run_completed_epoch=${completedEpoch}\n`,
           );
           NODE
+          node --input-type=module - "$runtime_diagnostic_log" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const fail = (code) => {
+            process.stderr.write(`${code}\n`);
+            process.exit(1);
+          };
+          const bytes = readFileSync(process.argv[2]);
+          if (bytes.length < 1 || bytes.length > 8 * 1024 * 1024) {
+            fail("runtime_diagnostic_log_invalid");
+          }
+          let source;
+          try {
+            source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          } catch {
+            fail("runtime_diagnostic_log_invalid");
+          }
+          if (source.includes("\0")) fail("runtime_diagnostic_log_invalid");
+          const lines = source.split(/\r?\n/);
+          const timestamp =
+            "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]+Z";
+          const buildLine = new RegExp(
+            `^${timestamp} {3}EXPECTED_RUNTIME_BUILD_ID: `
+              + "5867f1d5186e0068df8fb0d5e811e8287bc28ac4$",
+          );
+          const resultLine = new RegExp(
+            `^${timestamp} \\[runtime-supervision\\] runtime_supervision_listener_absent$`,
+          );
+          const anyResultLine = new RegExp(
+            `^${timestamp} \\[runtime-supervision\\] runtime_supervision_[a-z_]+$`,
+          );
+          const exitLine = new RegExp(
+            `^${timestamp} ##\\[error\\]Process completed with exit code 21\\.$`,
+          );
+          if (
+            lines.filter((line) => buildLine.test(line)).length !== 2 ||
+            lines.filter((line) => resultLine.test(line)).length !== 1 ||
+            lines.filter((line) => anyResultLine.test(line)).length !== 1 ||
+            lines.filter((line) => exitLine.test(line)).length !== 1
+          ) fail("runtime_diagnostic_result_invalid");
+          NODE
           rm -f -- \
             "$deploy_run" "$deploy_jobs" "$deploy_workflow" "$deploy_runs" \
             "$readiness_run" "$readiness_jobs" "$readiness_workflow" \
-            "$readiness_runs" "$failed_recovery_run" "$failed_recovery_jobs"
+            "$readiness_runs" "$runtime_diagnostic_run" "$runtime_diagnostic_jobs" \
+            "$runtime_diagnostic_log"
 
       - name: Resolve Exact Readiness Artifact Inventory
         id: readiness-artifacts
@@ -764,6 +810,7 @@ jobs:
             expectedRunId: process.env.READINESS_RUN_ID,
             expectedRunAttempt: process.env.READINESS_RUN_ATTEMPT,
             expectedReadinessRunId: process.env.READINESS_RUN_ID,
+            expectedBackupRunId: process.env.BACKUP_RUN_ID,
             expectedArtifactId: process.env.REPORT_ARTIFACT_ID,
             expectedArtifactDigest: process.env.REPORT_ARTIFACT_DIGEST,
             expectedReadinessArtifactId: process.env.REPORT_ARTIFACT_ID,
@@ -983,12 +1030,12 @@ jobs:
             DATABASE_SYSTEM_ID: process.env.DATABASE_SYSTEM_ID ?? "",
             FAILED_RUN_COMPLETED_EPOCH: process.env.FAILED_RUN_COMPLETED_EPOCH ?? "",
             FAILED_RUN_STARTED_EPOCH: process.env.FAILED_RUN_STARTED_EPOCH ?? "",
-            PRIOR_FAILED_RECOVERY_RUN_ATTEMPT:
-              process.env.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT ?? "",
-            PRIOR_FAILED_RECOVERY_RUN_ID:
-              process.env.PRIOR_FAILED_RECOVERY_RUN_ID ?? "",
-            PRIOR_FAILED_RECOVERY_SHA:
-              process.env.PRIOR_FAILED_RECOVERY_SHA ?? "",
+            RUNTIME_DIAGNOSTIC_RUN_ATTEMPT:
+              process.env.RUNTIME_DIAGNOSTIC_RUN_ATTEMPT ?? "",
+            RUNTIME_DIAGNOSTIC_RUN_ID:
+              process.env.RUNTIME_DIAGNOSTIC_RUN_ID ?? "",
+            RUNTIME_DIAGNOSTIC_SHA:
+              process.env.RUNTIME_DIAGNOSTIC_SHA ?? "",
             INCIDENT_DEPLOY_RUN_ID: process.env.INCIDENT_DEPLOY_RUN_ID ?? "",
             INCIDENT_SHA: process.env.INCIDENT_SHA ?? "",
             READINESS_RUN_ATTEMPT: process.env.READINESS_RUN_ATTEMPT ?? "",
@@ -997,7 +1044,7 @@ jobs:
           const keys = Object.keys(values).sort();
           if (
             keys.length !== 19 ||
-            values.CONFIRMATION !== "RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433" ||
+            values.CONFIRMATION !== "RECOVER_FAILED_POST_SWITCH_DEPLOY_33141616176" ||
             !/^\/[A-Za-z0-9._/-]{1,1023}$/.test(values.APP_DIR) ||
             !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(values.APP_NAME) ||
             !/^[1-9][0-9]{0,4}$/.test(values.APP_PORT) || Number(values.APP_PORT) > 65535 ||
@@ -1007,14 +1054,14 @@ jobs:
             !/^[1-9][0-9]*$/.test(values.DATABASE_OID) ||
             !/^[1-9][0-9]{9,19}$/.test(values.DATABASE_SYSTEM_ID) ||
             values.DATABASE_PRIMARY !== "true" ||
-            values.INCIDENT_DEPLOY_RUN_ID !== "32625801433" ||
-            values.INCIDENT_SHA !== "58c26e178faeb3eee0172a2e0aa487084f6910e4" ||
-            values.READINESS_RUN_ID !== "32625773494" ||
+            values.INCIDENT_DEPLOY_RUN_ID !== "33141616176" ||
+            values.INCIDENT_SHA !== "5867f1d5186e0068df8fb0d5e811e8287bc28ac4" ||
+            values.READINESS_RUN_ID !== "33141577054" ||
             values.READINESS_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ID !== "32630861830" ||
-            values.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1" ||
-            values.PRIOR_FAILED_RECOVERY_SHA !==
-              "fe1be992a48204e8f2426615762273f14331ab83" ||
+            values.RUNTIME_DIAGNOSTIC_RUN_ID !== "33141962030" ||
+            values.RUNTIME_DIAGNOSTIC_RUN_ATTEMPT !== "1" ||
+            values.RUNTIME_DIAGNOSTIC_SHA !==
+              "5867f1d5186e0068df8fb0d5e811e8287bc28ac4" ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_STARTED_EPOCH) ||
             !/^[1-9][0-9]*$/.test(values.FAILED_RUN_COMPLETED_EPOCH)
           ) process.exit(1);
