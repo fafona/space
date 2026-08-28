@@ -2905,6 +2905,316 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   assert.doesNotMatch(deployScript, /cat\s+[^\n]*READINESS_FENCE_LOG|tail\s+[^\n]*READINESS_FENCE_LOG/);
 });
 
+test("local smoke follows the canonical portal redirect only through loopback", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "faolla-local-smoke-canonical-portal-"),
+  );
+  const readyPath = join(temporaryDirectory, "server-ready.json");
+  const requestLogPath = join(temporaryDirectory, "requests.jsonl");
+  const modePath = join(temporaryDirectory, "redirect-mode");
+  const serverPath = join(temporaryDirectory, "server.mjs");
+  const trapReadyPath = join(temporaryDirectory, "trap-ready.json");
+  const trapRequestLogPath = join(temporaryDirectory, "trap-requests.jsonl");
+  const trapServerPath = join(temporaryDirectory, "trap-server.mjs");
+  const buildId = "a".repeat(40);
+  const smokeFunction = extractShellFunction("run_local_release_smoke");
+  let server;
+  let trapServer;
+  let serverStderr = "";
+  let trapServerStderr = "";
+
+  const waitForServer = async (path, description, readStderr) => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      try {
+        const ready = JSON.parse(await readFile(path, "utf8"));
+        if (Number.isSafeInteger(ready.port) && ready.port > 0) return ready.port;
+      } catch {
+        // The external server may still be creating its atomic readiness file.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`${description} did not become ready: ${readStderr()}`);
+  };
+  const stopServer = async (child) => {
+    if (!child || child.exitCode !== null) return;
+    let exited = new Promise((resolve) => child.once("exit", resolve));
+    child.kill("SIGTERM");
+    await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+    if (child.exitCode !== null) return;
+    exited = new Promise((resolve) => child.once("exit", resolve));
+    child.kill("SIGKILL");
+    await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+  };
+
+  try {
+    await writeFile(modePath, "canonical\n", { mode: 0o600 });
+    await writeFile(trapRequestLogPath, "", { mode: 0o600 });
+    await writeFile(
+      trapServerPath,
+      [
+        'import { appendFileSync, writeFileSync } from "node:fs";',
+        'import { createServer } from "node:http";',
+        "const [readyPath, requestLogPath] = process.argv.slice(2);",
+        "const server = createServer((request, response) => {",
+        "  appendFileSync(requestLogPath, `${request.method} ${request.url}\\n`, { mode: 0o600 });",
+        "  response.statusCode = 204;",
+        "  response.end();",
+        "});",
+        "server.listen(0, '127.0.0.1', () => {",
+        "  const address = server.address();",
+        "  writeFileSync(readyPath, JSON.stringify({ port: address.port }), { mode: 0o600 });",
+        "});",
+        "process.on('SIGTERM', () => {",
+        "  server.close(() => process.exit(0));",
+        "  server.closeAllConnections?.();",
+        "});",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    trapServer = spawn(
+      process.execPath,
+      [trapServerPath, trapReadyPath, trapRequestLogPath],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    trapServer.stderr.on("data", (chunk) => {
+      trapServerStderr += String(chunk);
+    });
+    const trapPort = await waitForServer(
+      trapReadyPath,
+      "local smoke trap server",
+      () => trapServerStderr,
+    );
+    await writeFile(
+      serverPath,
+      [
+        'import { appendFileSync, readFileSync, writeFileSync } from "node:fs";',
+        'import { createServer } from "node:http";',
+        "const [readyPath, requestLogPath, modePath, buildId, trapPort] = process.argv.slice(2);",
+        "const server = createServer((request, response) => {",
+        "  const networkHost = request.headers.host ?? '';",
+        "  const logicalHost = request.headers['x-forwarded-host'] ?? '';",
+        "  const url = new URL(request.url ?? '/', `http://${networkHost || 'invalid'}`);",
+        "  appendFileSync(requestLogPath, JSON.stringify({",
+        "    networkHost,",
+        "    logicalHost,",
+        "    path: (request.url ?? '/').split('?')[0],",
+        "    localAddress: request.socket.localAddress,",
+        "    localPort: request.socket.localPort,",
+        "    remoteAddress: request.socket.remoteAddress,",
+        "  }) + '\\n', { mode: 0o600 });",
+        "  if (url.pathname === '/api/app-web-version') {",
+        "    response.setHeader('content-type', 'application/json');",
+        "    response.end(JSON.stringify({ buildId }));",
+        "    return;",
+        "  }",
+        "  if (url.pathname === '/login' && logicalHost === 'www.faolla.com') {",
+        "    const mode = readFileSync(modePath, 'utf8').trim();",
+        "    response.statusCode = 308;",
+        "    response.setHeader(",
+        "      'location',",
+        "      mode === 'canonical'",
+        "        ? 'https://launch.faolla.com/login'",
+        "        : mode === 'path-escape'",
+        "          ? `https://launch.faolla.com//127.0.0.1:${trapPort}/captured`",
+        "          : 'https://evil.example/login',",
+        "    );",
+        "    response.end();",
+        "    return;",
+        "  }",
+        "  if (url.pathname === '/login' && logicalHost === 'launch.faolla.com') {",
+        "    response.setHeader('content-type', 'text/html; charset=utf-8');",
+        "    response.end('<!doctype html><script src=\"/_next/static/chunks/app.js\"></script>');",
+        "    return;",
+        "  }",
+        "  if (url.pathname === '/_next/static/chunks/app.js') {",
+        "    response.setHeader('content-type', 'text/javascript');",
+        "    response.end('globalThis.__faollaSmoke = true;');",
+        "    return;",
+        "  }",
+        "  if (url.pathname === '/faolla-sw.js') {",
+        "    response.setHeader('content-type', 'text/javascript');",
+        "    response.end('self.addEventListener(\"fetch\", () => {});');",
+        "    return;",
+        "  }",
+        "  response.statusCode = 404;",
+        "  response.end('not found');",
+        "});",
+        "server.listen(0, '127.0.0.1', () => {",
+        "  const address = server.address();",
+        "  writeFileSync(readyPath, JSON.stringify({ port: address.port }), { mode: 0o600 });",
+        "});",
+        "process.on('SIGTERM', () => {",
+        "  server.close(() => process.exit(0));",
+        "  server.closeAllConnections?.();",
+        "});",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    server = spawn(
+      process.execPath,
+      [serverPath, readyPath, requestLogPath, modePath, buildId, String(trapPort)],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    server.stderr.on("data", (chunk) => {
+      serverStderr += String(chunk);
+    });
+    const port = await waitForServer(
+      readyPath,
+      "local smoke origin server",
+      () => serverStderr,
+    );
+    const runSmoke = ({ expectedPort = port } = {}) =>
+      spawnSync(resolveBashExecutable(), ["-s"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CONTRACT_RELEASE_DIR: toBashPath(repositoryRoot),
+          CONTRACT_NETWORK_ORIGIN: `http://127.0.0.1:${port}`,
+          CONTRACT_EXPECTED_PORT: String(expectedPort),
+          CONTRACT_BUILD_ID: buildId,
+          MSYS2_ENV_CONV_EXCL: "FAOLLA_LOCAL_SMOKE_PATHS",
+        },
+        input: [
+          "set -euo pipefail",
+          smokeFunction,
+          'RELEASE_DIR="$CONTRACT_RELEASE_DIR"',
+          'RELEASE_SMOKE_ORIGIN="$CONTRACT_NETWORK_ORIGIN"',
+          'APP_PORT="$CONTRACT_EXPECTED_PORT"',
+          "RELEASE_SMOKE_PATHS=/login",
+          'FAOLLA_WEB_BUILD_ID="$CONTRACT_BUILD_ID"',
+          "CANDIDATE_FAOLLA_CANONICAL_PORTAL_ORIGIN=https://launch.faolla.com",
+          "RELEASE_SMOKE_ATTEMPTS=1",
+          "RELEASE_SMOKE_DELAY_MS=0",
+          "RELEASE_SMOKE_TIMEOUT_MS=3000",
+          "RELEASE_SMOKE_TOTAL_TIMEOUT_SECONDS=20",
+          "run_local_release_smoke",
+        ].join("\n"),
+        timeout: 30_000,
+      });
+
+    const canonical = runSmoke();
+    const canonicalRequestLog = await readFile(requestLogPath, "utf8");
+    assert.equal(
+      canonical.status,
+      0,
+      `${canonical.stdout}\n${canonical.stderr}\n${canonicalRequestLog}`,
+    );
+    const canonicalRequests = canonicalRequestLog
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.ok(
+      canonicalRequests.some(({ logicalHost }) => logicalHost === "www.faolla.com"),
+    );
+    assert.ok(
+      canonicalRequests.some(
+        ({ logicalHost }) => logicalHost === "launch.faolla.com",
+      ),
+    );
+    assert.ok(
+      canonicalRequests.every(
+        ({ localAddress, localPort, remoteAddress }) =>
+          localAddress === "127.0.0.1" && localPort === port &&
+          remoteAddress === "127.0.0.1",
+      ),
+      JSON.stringify(canonicalRequests),
+    );
+
+    await writeFile(modePath, "external\n", { mode: 0o600 });
+    const beforeExternal = canonicalRequests.length;
+    const external = runSmoke();
+    assert.notEqual(external.status, 0, `${external.stdout}\n${external.stderr}`);
+    const allRequests = (await readFile(requestLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const externalRequests = allRequests.slice(beforeExternal);
+    assert.deepEqual(
+      externalRequests.map(({ logicalHost, path }) => ({ logicalHost, path })),
+      [
+        { logicalHost: "www.faolla.com", path: "/api/app-web-version" },
+        { logicalHost: "www.faolla.com", path: "/login" },
+      ],
+    );
+    assert.equal(
+      allRequests.some(({ logicalHost }) => logicalHost === "evil.example"),
+      false,
+    );
+
+    await writeFile(modePath, "path-escape\n", { mode: 0o600 });
+    const beforePathEscape = allRequests.length;
+    const pathEscape = runSmoke();
+    assert.notEqual(
+      pathEscape.status,
+      0,
+      `${pathEscape.stdout}\n${pathEscape.stderr}`,
+    );
+    const requestsAfterPathEscape = (await readFile(requestLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const pathEscapeRequests = requestsAfterPathEscape.slice(beforePathEscape);
+    assert.deepEqual(
+      pathEscapeRequests.map(
+        ({ logicalHost, path, localAddress, localPort }) => ({
+          logicalHost,
+          path,
+          localAddress,
+          localPort,
+        }),
+      ),
+      [
+        {
+          logicalHost: "www.faolla.com",
+          path: "/api/app-web-version",
+          localAddress: "127.0.0.1",
+          localPort: port,
+        },
+        {
+          logicalHost: "www.faolla.com",
+          path: "/login",
+          localAddress: "127.0.0.1",
+          localPort: port,
+        },
+        {
+          logicalHost: "launch.faolla.com",
+          path: `//127.0.0.1:${trapPort}/captured`,
+          localAddress: "127.0.0.1",
+          localPort: port,
+        },
+      ],
+    );
+    assert.equal(await readFile(trapRequestLogPath, "utf8"), "");
+
+    await writeFile(modePath, "canonical\n", { mode: 0o600 });
+    const beforePortMismatch = requestsAfterPathEscape.length;
+    const mismatchedPort = runSmoke({
+      expectedPort: port === 65535 ? port - 1 : port + 1,
+    });
+    assert.notEqual(
+      mismatchedPort.status,
+      0,
+      `${mismatchedPort.stdout}\n${mismatchedPort.stderr}`,
+    );
+    const requestsAfterPortMismatch = (await readFile(requestLogPath, "utf8"))
+      .trim()
+      .split("\n");
+    assert.equal(requestsAfterPortMismatch.length, beforePortMismatch);
+    assert.equal(await readFile(trapRequestLogPath, "utf8"), "");
+  } finally {
+    await stopServer(server);
+    await stopServer(trapServer);
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("a late frozen-runtime drift fails before any protected process is stopped", async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-pre-stop-identity-"));
   const callsPath = join(temporaryDirectory, "calls");
