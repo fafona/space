@@ -210,7 +210,11 @@ test("incident, readiness, and runtime diagnostic metadata are exact", () => {
   assert.equal(rejectsBoundary(1_787_890_182, 1_787_890_192, 1_787_889_874), false);
   assert.match(allRuns, /runtime_supervision_listener_absent/);
   assert.match(allRuns, /Process completed with exit code 21/);
-  assert.match(allRuns, /actions\/jobs\/\$RUNTIME_DIAGNOSTIC_JOB_ID\/logs/);
+  assert.match(
+    allRuns,
+    /gh api --method GET --allow-escape-sequences \\\n\s+-H "Accept: application\/vnd\.github\+json" \\\n\s+-H "X-GitHub-Api-Version: 2022-11-28" \\\n\s+"repos\/\$GITHUB_REPOSITORY\/actions\/jobs\/\$RUNTIME_DIAGNOSTIC_JOB_ID\/logs" \\\n\s+> "\$runtime_diagnostic_log"/,
+  );
+  assert.equal((allRuns.match(/--allow-escape-sequences/g) ?? []).length, 1);
   assert.match(allRuns, /TextDecoder\("utf-8", \{ fatal: true \}\)/);
   assert.match(allRuns, /bytes\.length > 8 \* 1024 \* 1024/);
   assert.match(allRuns, /EXPECTED_RUNTIME_BUILD_ID:/);
