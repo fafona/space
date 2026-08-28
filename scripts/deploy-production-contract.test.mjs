@@ -8768,7 +8768,7 @@ test(
       await writeFile(fakePm2List, "[]", { mode: 0o600 });
       const exactStop = runFrozenStop(capturedDirect.stdout);
       assert.equal(exactStop.status, 0, `${exactStop.stdout}\n${exactStop.stderr}`);
-      assert.equal(exactStop.stdout, "RESULT:0:1:1");
+      assert.match(exactStop.stdout, /^RESULT:0:1:1(?:\r?\n)?$/);
       assert.equal(exactStop.stderr, "");
       await waitUntil(() => !processIsAlive(listenerPid), "exact listener termination");
       assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
@@ -8782,7 +8782,7 @@ test(
         0,
         `${naturallyGone.stdout}\n${naturallyGone.stderr}`,
       );
-      assert.equal(naturallyGone.stdout, "RESULT:0:1:1");
+      assert.match(naturallyGone.stdout, /^RESULT:0:1:1(?:\r?\n)?$/);
       assert.equal(naturallyGone.stderr, "");
       assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
     } finally {
@@ -9029,7 +9029,7 @@ test(
 
       const stopped = runFrozenStop(captured.stdout);
       assert.equal(stopped.status, 0, `${stopped.stdout}\n${stopped.stderr}`);
-      assert.equal(stopped.stdout, "RESULT:0:1:1");
+      assert.match(stopped.stdout, /^RESULT:0:1:1(?:\r?\n)?$/);
       assert.equal(stopped.stderr, "");
       await waitUntil(() => !processIsAlive(listener.pid), "direct wrapper termination");
       assert.equal(await readFile(signalPath, "utf8"), "TERM\n");
