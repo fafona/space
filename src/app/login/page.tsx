@@ -34,6 +34,7 @@ import {
   readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
+import { buildAccountWorkspaceHref } from "@/lib/accountWorkspaceNavigation";
 import {
   buildBackendAppShellHref,
   buildBackendFaollaHref,
@@ -1044,33 +1045,25 @@ function LoginPageInner() {
 
       const directMerchantId = String(session?.merchantId ?? "").trim();
       const resolvedMerchantId = pickPrimaryMerchantId(null, session?.merchantIds ?? []);
-      if (loginFromUrl) {
-        const baseHref = directMerchantId
-          ? buildMerchantBackendHref(directMerchantId)
-          : resolvedMerchantId
-            ? buildMerchantBackendHref(resolvedMerchantId)
-            : "/admin";
-        window.location.href = decorateMerchantHref(buildBackendFaollaHref(baseHref, loginFromUrl));
-        return;
-      }
-
       if (requestedRedirectPath && !requestedRedirectPath.startsWith("/me")) {
         const targetHref = nativeAppRuntime ? buildBackendAppShellHref(requestedRedirectPath) : requestedRedirectPath;
         window.location.href = decorateMerchantHref(targetHref);
         return;
       }
 
-      if (directMerchantId) {
-        const targetHref = buildMerchantBackendHref(directMerchantId);
-        window.location.href = decorateMerchantHref(nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref);
-        return;
-      }
-      if (resolvedMerchantId) {
-        const targetHref = buildMerchantBackendHref(resolvedMerchantId);
-        window.location.href = decorateMerchantHref(nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref);
-        return;
-      }
-      window.location.href = decorateMerchantHref(nativeAppRuntime ? buildBackendAppShellHref("/admin") : "/admin");
+      const targetMerchantId = isMerchantNumericId(directMerchantId)
+        ? directMerchantId
+        : isMerchantNumericId(resolvedMerchantId)
+          ? resolvedMerchantId
+          : "";
+      const targetHref = buildAccountWorkspaceHref({
+        accountType: "merchant",
+        merchantId: targetMerchantId,
+        sourceUrl: loginFromUrl,
+      });
+      window.location.href = decorateMerchantHref(
+        nativeAppRuntime ? buildBackendAppShellHref(targetHref) : targetHref,
+      );
     },
     [loginFromUrl, requestedRedirectPath],
   );

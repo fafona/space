@@ -359,7 +359,13 @@ function buildFaollaSectionRedirectUrl(request: NextRequest) {
   if ((request.nextUrl.searchParams.get(FAOLLA_SECTION_PARAM) ?? "").trim().toLowerCase() !== FAOLLA_SECTION_VALUE) {
     return null;
   }
-  if (isAuthenticatedOwnMerchantRequest(request, merchantId)) return null;
+  if (isAuthenticatedOwnMerchantRequest(request, merchantId)) {
+    const backendUrl = request.nextUrl.clone();
+    backendUrl.searchParams.delete(FAOLLA_SECTION_PARAM);
+    backendUrl.searchParams.delete(FAOLLA_URL_PARAM);
+    backendUrl.searchParams.delete(FAOLLA_INLINE_BUILD_PARAM);
+    return backendUrl;
+  }
 
   const rawTarget = (request.nextUrl.searchParams.get(FAOLLA_URL_PARAM) ?? "").trim() || "/";
   let targetUrl: URL;

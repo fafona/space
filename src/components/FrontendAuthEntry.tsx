@@ -3,10 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
-import { buildBackendFaollaHref } from "@/lib/faollaEntry";
+import { buildAccountWorkspaceHref } from "@/lib/accountWorkspaceNavigation";
 import { readFrontendAuthMerchantIds } from "@/lib/frontendAuthAvatar";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
-import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
 type FrontendAuthEntryProps = {
   className?: string;
@@ -56,12 +55,12 @@ function readPrimaryMerchantId(payload: MerchantCookieSessionPayload | null, mer
 
 function buildWorkspaceHref(payload: MerchantCookieSessionPayload | null, currentUrl: string) {
   if (payload?.authenticated !== true) return "";
-  const sourceUrl = currentUrl || "/";
-  if (payload.accountType === "personal") {
-    return buildBackendFaollaHref("/me", sourceUrl);
-  }
   const primaryMerchantId = readPrimaryMerchantId(payload, readFrontendAuthMerchantIds(payload));
-  return buildBackendFaollaHref(primaryMerchantId ? buildMerchantBackendHref(primaryMerchantId) : "/admin", sourceUrl);
+  return buildAccountWorkspaceHref({
+    accountType: payload.accountType === "personal" ? "personal" : "merchant",
+    merchantId: primaryMerchantId,
+    sourceUrl: currentUrl || "/",
+  });
 }
 
 export default function FrontendAuthEntry({
