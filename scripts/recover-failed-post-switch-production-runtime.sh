@@ -4,27 +4,28 @@ set -Eeuo pipefail
 # Incident-only recovery for the failed post-switch deploy named below.
 umask 077
 unset NODE_OPTIONS NODE_PATH npm_config_node_options NPM_CONFIG_NODE_OPTIONS \
-  BASH_ENV ENV
+  BASH_ENV ENV MERCHANT_STAFF_BUSINESS_RBAC_MODE \
+  MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS FAOLLA_CANONICAL_PORTAL_ORIGIN
 
-readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="32625801433"
-readonly EXPECTED_INCIDENT_SHA="58c26e178faeb3eee0172a2e0aa487084f6910e4"
-readonly EXPECTED_INCIDENT_READINESS_RUN_ID="32625773494"
+readonly EXPECTED_INCIDENT_DEPLOY_RUN_ID="33141616176"
+readonly EXPECTED_INCIDENT_SHA="5867f1d5186e0068df8fb0d5e811e8287bc28ac4"
+readonly EXPECTED_INCIDENT_READINESS_RUN_ID="33141577054"
 readonly EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID="32630861830"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT="1"
-readonly EXPECTED_PRIOR_FAILED_RECOVERY_SHA="fe1be992a48204e8f2426615762273f14331ab83"
-readonly EXPECTED_CANDIDATE_BUILD_ID="58c26e178faeb3eee0172a2e0aa487084f6910e4"
-readonly EXPECTED_OLD_BUILD_ID="2a121454a18a16ae30e356977ca82b24a310e8e5"
-readonly EXPECTED_OLD_PACKAGE_BLOB="4aa8c7a442b6bc8926e74322503f91b28359fd3e"
-readonly EXPECTED_OLD_PACKAGE_SHA256="ecbbce22ad2cb0ce4d616726b8d024f454a2aeef48270eee241bb25553740b31"
-readonly EXPECTED_OLD_PACKAGE_BYTES="21229"
+readonly EXPECTED_RUNTIME_DIAGNOSTIC_RUN_ID="33141962030"
+readonly EXPECTED_RUNTIME_DIAGNOSTIC_RUN_ATTEMPT="1"
+readonly EXPECTED_RUNTIME_DIAGNOSTIC_SHA="5867f1d5186e0068df8fb0d5e811e8287bc28ac4"
+readonly EXPECTED_CANDIDATE_BUILD_ID="5867f1d5186e0068df8fb0d5e811e8287bc28ac4"
+readonly EXPECTED_OLD_BUILD_ID="c90b02c85c18eb262c120bfd9d435038486f87c6"
+readonly EXPECTED_OLD_PACKAGE_BLOB="6e2a4154c743b3028ed58fa7a4f7872c262e594b"
+readonly EXPECTED_OLD_PACKAGE_SHA256="6f5139c290a4142f9e151802a9b2d7e924ce9c4e3303db7dcdf64c1c16b2f316"
+readonly EXPECTED_OLD_PACKAGE_BYTES="22374"
 readonly EXPECTED_OLD_SMOKE_HELPER_BLOB="c3e8ac359279879970530c40ee446ea25bc4ac9c"
 readonly EXPECTED_OLD_SMOKE_HELPER_SHA256="cf25612c2a9051bc3cb36516b23955f0fb32c39579fbc8f38377c23344b36da3"
 readonly EXPECTED_OLD_SMOKE_HELPER_BYTES="12565"
 readonly EXPECTED_OLD_WORKER_BLOB="e575042993f18c2ed24f876afdb6de567db8bce0"
 readonly EXPECTED_OLD_WORKER_SHA256="99596c2bfe070a8f9c6fa01b9bfbd310de6a0ba296ab9289db2cd911b013fa74"
 readonly EXPECTED_OLD_WORKER_BYTES="28125"
-readonly EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433"
+readonly EXPECTED_CONFIRMATION="RECOVER_FAILED_POST_SWITCH_DEPLOY_33141616176"
 readonly CANDIDATE_ENVIRONMENT_SNAPSHOT_CONTRACT_STAGE="candidate_env_snapshot_contract"
 
 RECOVERY_PAYLOAD_FILE="${FAOLLA_RECOVERY_PAYLOAD_FILE:-}"
@@ -608,8 +609,8 @@ while IFS= read -r -d '' payload_key \
     DATABASE_NAME|DATABASE_OID|\
     DATABASE_PRIMARY|DATABASE_SYSTEM_ID|FAILED_RUN_STARTED_EPOCH|\
     FAILED_RUN_COMPLETED_EPOCH|INCIDENT_DEPLOY_RUN_ID|INCIDENT_SHA|\
-    READINESS_RUN_ID|READINESS_RUN_ATTEMPT|PRIOR_FAILED_RECOVERY_RUN_ID|\
-    PRIOR_FAILED_RECOVERY_RUN_ATTEMPT|PRIOR_FAILED_RECOVERY_SHA|CONFIRMATION)
+    READINESS_RUN_ID|READINESS_RUN_ATTEMPT|RUNTIME_DIAGNOSTIC_RUN_ID|\
+    RUNTIME_DIAGNOSTIC_RUN_ATTEMPT|RUNTIME_DIAGNOSTIC_SHA|CONFIRMATION)
       printf -v "$payload_key" '%s' "$payload_value"
       loaded_count=$((loaded_count + 1))
       ;;
@@ -640,9 +641,9 @@ const expectedKeys = [
   "DATABASE_SYSTEM_ID",
   "FAILED_RUN_COMPLETED_EPOCH",
   "FAILED_RUN_STARTED_EPOCH",
-  "PRIOR_FAILED_RECOVERY_RUN_ATTEMPT",
-  "PRIOR_FAILED_RECOVERY_RUN_ID",
-  "PRIOR_FAILED_RECOVERY_SHA",
+  "RUNTIME_DIAGNOSTIC_RUN_ATTEMPT",
+  "RUNTIME_DIAGNOSTIC_RUN_ID",
+  "RUNTIME_DIAGNOSTIC_SHA",
   "INCIDENT_DEPLOY_RUN_ID",
   "INCIDENT_SHA",
   "READINESS_RUN_ATTEMPT",
@@ -706,9 +707,9 @@ RECOVERY_PAYLOAD_FILE=""
 [ "$INCIDENT_SHA" = "$EXPECTED_INCIDENT_SHA" ] || exit 1
 [ "$READINESS_RUN_ID" = "$EXPECTED_INCIDENT_READINESS_RUN_ID" ] || exit 1
 [ "$READINESS_RUN_ATTEMPT" = "$EXPECTED_INCIDENT_READINESS_RUN_ATTEMPT" ] || exit 1
-[ "$PRIOR_FAILED_RECOVERY_RUN_ID" = "$EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ID" ] || exit 1
-[ "$PRIOR_FAILED_RECOVERY_RUN_ATTEMPT" = "$EXPECTED_PRIOR_FAILED_RECOVERY_RUN_ATTEMPT" ] || exit 1
-[ "$PRIOR_FAILED_RECOVERY_SHA" = "$EXPECTED_PRIOR_FAILED_RECOVERY_SHA" ] || exit 1
+[ "$RUNTIME_DIAGNOSTIC_RUN_ID" = "$EXPECTED_RUNTIME_DIAGNOSTIC_RUN_ID" ] || exit 1
+[ "$RUNTIME_DIAGNOSTIC_RUN_ATTEMPT" = "$EXPECTED_RUNTIME_DIAGNOSTIC_RUN_ATTEMPT" ] || exit 1
+[ "$RUNTIME_DIAGNOSTIC_SHA" = "$EXPECTED_RUNTIME_DIAGNOSTIC_SHA" ] || exit 1
 [ "$CONFIRMATION" = "$EXPECTED_CONFIRMATION" ] || exit 1
 [[ "$APP_DIR" == /* ]] || exit 1
 [[ "$APP_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || exit 1
@@ -1876,14 +1877,17 @@ capture_trusted_environment_helper_output ROLLBACK_SNAPSHOT 5 \
   rollback-snapshot "$FROZEN_RUNTIME_DIR/.env.local" "$EXPECTED_OLD_BUILD_ID" \
   || exit 1
 mapfile -t ROLLBACK_PARTS <<< "$ROLLBACK_SNAPSHOT"
-[ "${#ROLLBACK_PARTS[@]}" -eq 6 ] || exit 1
+[ "${#ROLLBACK_PARTS[@]}" -eq 10 ] || exit 1
 ENVIRONMENT_DIRECTORY_IDENTITY="${ROLLBACK_PARTS[0]}"
 ENVIRONMENT_FILE_IDENTITY="${ROLLBACK_PARTS[1]}"
 ENVIRONMENT_SHA256="${ROLLBACK_PARTS[2]}"
 SNAPSHOT_INTERNAL_URL_B64="${ROLLBACK_PARTS[3]}"
 SNAPSHOT_PUBLIC_URL_B64="${ROLLBACK_PARTS[4]}"
 SNAPSHOT_ANON_KEY_B64="${ROLLBACK_PARTS[5]}"
-unset ROLLBACK_SNAPSHOT ROLLBACK_PARTS
+SNAPSHOT_STAFF_ROLLOUT_STATUS="${ROLLBACK_PARTS[6]}"
+SNAPSHOT_STAFF_MODE_B64="${ROLLBACK_PARTS[7]}"
+SNAPSHOT_STAFF_SITE_IDS_B64="${ROLLBACK_PARTS[8]}"
+SNAPSHOT_CANONICAL_PORTAL_ORIGIN_B64="${ROLLBACK_PARTS[9]}"
 [[ "$ENVIRONMENT_DIRECTORY_IDENTITY" =~ ^([0-9]+:){6}[0-9]+$ ]] || exit 1
 [[ "$ENVIRONMENT_FILE_IDENTITY" =~ ^([0-9]+:){7}[0-9]+$ ]] || exit 1
 [[ "$ENVIRONMENT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
@@ -1917,6 +1921,13 @@ decode_strict_base64() {
 FROZEN_SUPABASE_INTERNAL_URL="$(decode_strict_base64 "$SNAPSHOT_INTERNAL_URL_B64")" || exit 1
 FROZEN_NEXT_PUBLIC_SUPABASE_URL="$(decode_strict_base64 "$SNAPSHOT_PUBLIC_URL_B64")" || exit 1
 FROZEN_NEXT_PUBLIC_SUPABASE_ANON_KEY="$(decode_strict_base64 "$SNAPSHOT_ANON_KEY_B64")" || exit 1
+[ "$SNAPSHOT_STAFF_ROLLOUT_STATUS" = "legacy-off" ] \
+  && [ "$(decode_strict_base64 "$SNAPSHOT_STAFF_MODE_B64")" = "off" ] \
+  && [ "$SNAPSHOT_STAFF_SITE_IDS_B64" = "-" ] \
+  && [ "$SNAPSHOT_CANONICAL_PORTAL_ORIGIN_B64" = "-" ] || exit 1
+unset ROLLBACK_SNAPSHOT ROLLBACK_PARTS \
+  SNAPSHOT_STAFF_ROLLOUT_STATUS SNAPSHOT_STAFF_MODE_B64 \
+  SNAPSHOT_STAFF_SITE_IDS_B64 SNAPSHOT_CANONICAL_PORTAL_ORIGIN_B64
 
 WORKER_CONFIGURATION="$(
   timeout --signal=TERM --kill-after=1s 3s node --input-type=module - \
@@ -2553,14 +2564,23 @@ started_process_identity_matches() {
     && [ "$(readlink -f -- "/proc/$pid/cwd" 2>/dev/null || true)" = "$FROZEN_RUNTIME_DIR" ]
 }
 
-NPM_COMMAND_PATH="$(command -v npm 2>/dev/null || true)"
-NPM_REAL_PATH="$(readlink -f -- "$NPM_COMMAND_PATH" 2>/dev/null || true)"
-[[ "$NPM_COMMAND_PATH" == /* ]] && [[ "$NPM_REAL_PATH" == /* ]] \
-  && [ -f "$NPM_REAL_PATH" ] || exit 1
 NODE_EXEC_PATH="$(node -p 'process.execPath' 2>/dev/null || true)"
 NODE_EXEC_PATH="$(readlink -f -- "$NODE_EXEC_PATH" 2>/dev/null || true)"
-[[ "$NODE_EXEC_PATH" == /* ]] && [ -f "$NODE_EXEC_PATH" ] || exit 1
-readonly NPM_COMMAND_PATH NPM_REAL_PATH NODE_EXEC_PATH
+[[ "$NODE_EXEC_PATH" == /* ]] && [ -f "$NODE_EXEC_PATH" ] \
+  && [ ! -L "$NODE_EXEC_PATH" ] && [ -x "$NODE_EXEC_PATH" ] || exit 1
+CANDIDATE_NEXT_ENTRY="$CANDIDATE_RUNTIME_DIR/node_modules/next/dist/bin/next"
+FROZEN_NEXT_ENTRY="$FROZEN_RUNTIME_DIR/node_modules/next/dist/bin/next"
+for next_entry_pair in \
+  "$CANDIDATE_NEXT_ENTRY:$CANDIDATE_RUNTIME_DIR" \
+  "$FROZEN_NEXT_ENTRY:$FROZEN_RUNTIME_DIR"; do
+  next_entry="${next_entry_pair%%:*}"
+  next_runtime="${next_entry_pair#*:}"
+  [ -f "$next_entry" ] && [ ! -L "$next_entry" ] \
+    && [ "$(readlink -f -- "$next_entry" 2>/dev/null || true)" = \
+      "$next_runtime/node_modules/next/dist/bin/next" ] || exit 1
+done
+unset next_entry_pair next_entry next_runtime
+readonly NODE_EXEC_PATH CANDIDATE_NEXT_ENTRY FROZEN_NEXT_ENTRY
 
 started_pm2_state() {
   local kind="$1"
@@ -2577,7 +2597,8 @@ started_pm2_state() {
     FAOLLA_EXPECTED_NAME="$name" \
     FAOLLA_EXPECTED_CWD="$FROZEN_RUNTIME_DIR" \
     FAOLLA_EXPECTED_PORT="$APP_PORT" \
-    FAOLLA_EXPECTED_NPM="$NPM_REAL_PATH" \
+    FAOLLA_EXPECTED_NEXT="$FROZEN_NEXT_ENTRY" \
+    FAOLLA_EXPECTED_NODE_EXEC="$NODE_EXEC_PATH" \
     FAOLLA_EXPECTED_TSX="$FROZEN_RUNTIME_DIR/node_modules/tsx/dist/cli.mjs" \
     FAOLLA_EXPECTED_WORKER="$FROZEN_RUNTIME_DIR/scripts/run-merchant-enterprise-automation-worker.ts" \
     timeout --signal=TERM --kill-after=1s 3s node -e '
@@ -2601,15 +2622,18 @@ started_pm2_state() {
       ) process.exit(1);
       const env = entry.pm2_env;
       const args = kind === "web"
-        ? ["start", "--", "-p", process.env.FAOLLA_EXPECTED_PORT]
+        ? ["start", "-p", process.env.FAOLLA_EXPECTED_PORT]
         : [process.env.FAOLLA_EXPECTED_WORKER];
       const execPath = kind === "web"
-        ? process.env.FAOLLA_EXPECTED_NPM
+        ? process.env.FAOLLA_EXPECTED_NEXT
         : process.env.FAOLLA_EXPECTED_TSX;
+      const allowedInterpreters = kind === "web"
+        ? new Set(["node", process.env.FAOLLA_EXPECTED_NODE_EXEC])
+        : new Set(["node"]);
       if (
         !Number.isSafeInteger(entry.pm_id) || entry.pm_id < 0 || env.pm_id !== entry.pm_id ||
         env.pm_cwd !== cwd || env.pm_exec_path !== execPath ||
-        env.exec_interpreter !== "node" || env.exec_mode !== "fork_mode" ||
+        !allowedInterpreters.has(env.exec_interpreter) || env.exec_mode !== "fork_mode" ||
         !Array.isArray(env.args) || env.args.length !== args.length ||
         env.args.some((value, index) => value !== args[index]) ||
         !Array.isArray(env.node_args) || env.node_args.length !== 0
@@ -2637,8 +2661,7 @@ candidate_pm2_state() {
     FAOLLA_EXPECTED_NAME="$name" \
     FAOLLA_EXPECTED_CWD="$CANDIDATE_RUNTIME_DIR" \
     FAOLLA_EXPECTED_PORT="$APP_PORT" \
-    FAOLLA_EXPECTED_NPM_COMMAND="$NPM_COMMAND_PATH" \
-    FAOLLA_EXPECTED_NPM_REAL="$NPM_REAL_PATH" \
+    FAOLLA_EXPECTED_NEXT="$CANDIDATE_NEXT_ENTRY" \
     FAOLLA_EXPECTED_NODE_EXEC="$NODE_EXEC_PATH" \
     FAOLLA_EXPECTED_TSX="$CANDIDATE_RUNTIME_DIR/node_modules/tsx/dist/cli.mjs" \
     FAOLLA_EXPECTED_WORKER="$CANDIDATE_RUNTIME_DIR/scripts/run-merchant-enterprise-automation-worker.ts" \
@@ -2663,10 +2686,10 @@ candidate_pm2_state() {
       ) process.exit(1);
       const env = entry.pm2_env;
       const expectedArgs = kind === "web"
-        ? ["start", "--", "-p", process.env.FAOLLA_EXPECTED_PORT]
+        ? ["start", "-p", process.env.FAOLLA_EXPECTED_PORT]
         : [process.env.FAOLLA_EXPECTED_WORKER];
       const allowedExecPaths = kind === "web"
-        ? new Set([process.env.FAOLLA_EXPECTED_NPM_COMMAND, process.env.FAOLLA_EXPECTED_NPM_REAL])
+        ? new Set([process.env.FAOLLA_EXPECTED_NEXT])
         : new Set([process.env.FAOLLA_EXPECTED_TSX]);
       const allowedInterpreters = kind === "web"
         ? new Set(["node", process.env.FAOLLA_EXPECTED_NODE_EXEC])
@@ -2920,9 +2943,9 @@ set +e
     npm_config_node_options="" NPM_CONFIG_NODE_OPTIONS="" \
   MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$AUTOMATION_WORKER_ENABLED" \
     PORT="$APP_PORT" timeout --signal=TERM --kill-after=5s 30s \
-      pm2 start "$NPM_REAL_PATH" --name "$APP_NAME" \
-        --interpreter node --cwd "$FROZEN_RUNTIME_DIR" \
-        -- start -- -p "$APP_PORT" \
+      pm2 start "$FROZEN_NEXT_ENTRY" --name "$APP_NAME" \
+        --interpreter "$NODE_EXEC_PATH" --cwd "$FROZEN_RUNTIME_DIR" \
+        -- start -p "$APP_PORT" \
       >/dev/null 2>&1
 ) >/dev/null 2>&1
 web_start_status=$?
@@ -2978,12 +3001,13 @@ verify_process_environment() {
   capture_trusted_environment_helper_output snapshot 5 process-snapshot \
     "$pid" "$FROZEN_RUNTIME_DIR" || return 1
   mapfile -t parts <<< "$snapshot"
-  [ "${#parts[@]}" -eq 5 ] \
+  [ "${#parts[@]}" -eq 6 ] \
     && [ "${parts[0]}" = "present" ] \
-    && [ "${parts[1]}" = "$expected_start_ticks" ] \
-    && [ "${parts[2]}" = "$SNAPSHOT_INTERNAL_URL_B64" ] \
-    && [ "${parts[3]}" = "$SNAPSHOT_PUBLIC_URL_B64" ] \
-    && [ "${parts[4]}" = "$SNAPSHOT_ANON_KEY_B64" ] || return 1
+    && [ "${parts[1]}" = "absent" ] \
+    && [ "${parts[2]}" = "$expected_start_ticks" ] \
+    && [ "${parts[3]}" = "$SNAPSHOT_INTERNAL_URL_B64" ] \
+    && [ "${parts[4]}" = "$SNAPSHOT_PUBLIC_URL_B64" ] \
+    && [ "${parts[5]}" = "$SNAPSHOT_ANON_KEY_B64" ] || return 1
   timeout --signal=TERM --kill-after=1s 3s node -e '
     const fs = require("node:fs");
     const entries = fs.readFileSync(`/proc/${process.argv[1]}/environ`)
@@ -3039,7 +3063,8 @@ verify_web_launch_contract() {
     pm2 jlist 2>/dev/null)" || return 1
   FAOLLA_EXPECTED_WEB_NAME="$APP_NAME" \
     FAOLLA_EXPECTED_WEB_PID="$pid" \
-    FAOLLA_EXPECTED_NPM="$NPM_REAL_PATH" \
+    FAOLLA_EXPECTED_NEXT="$FROZEN_NEXT_ENTRY" \
+    FAOLLA_EXPECTED_NODE_EXEC="$NODE_EXEC_PATH" \
     FAOLLA_EXPECTED_CWD="$FROZEN_RUNTIME_DIR" \
     FAOLLA_EXPECTED_PORT="$APP_PORT" \
     timeout --signal=TERM --kill-after=1s 3s node -e '
@@ -3048,9 +3073,10 @@ verify_web_launch_contract() {
       try { list = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(1); }
       const name = process.env.FAOLLA_EXPECTED_WEB_NAME;
       const pid = process.env.FAOLLA_EXPECTED_WEB_PID;
-      const npm = process.env.FAOLLA_EXPECTED_NPM;
+      const next = process.env.FAOLLA_EXPECTED_NEXT;
+      const node = process.env.FAOLLA_EXPECTED_NODE_EXEC;
       const cwd = process.env.FAOLLA_EXPECTED_CWD;
-      const args = ["start", "--", "-p", process.env.FAOLLA_EXPECTED_PORT];
+      const args = ["start", "-p", process.env.FAOLLA_EXPECTED_PORT];
       if (!Array.isArray(list)) process.exit(1);
       const related = list.filter((entry) =>
         entry !== null && typeof entry === "object" && !Array.isArray(entry) &&
@@ -3066,8 +3092,8 @@ verify_web_launch_contract() {
       if (
         !/^[1-9][0-9]*$/.test(pid || "") || String(entry.pid) !== pid ||
         !Number.isSafeInteger(entry.pm_id) || entry.pm_id < 0 || env.pm_id !== entry.pm_id ||
-        env.status !== "online" || env.pm_exec_path !== npm || env.pm_cwd !== cwd ||
-        env.exec_interpreter !== "node" || env.exec_mode !== "fork_mode" ||
+        env.status !== "online" || env.pm_exec_path !== next || env.pm_cwd !== cwd ||
+        !new Set(["node", node]).has(env.exec_interpreter) || env.exec_mode !== "fork_mode" ||
         !Array.isArray(env.args) || env.args.length !== args.length ||
         env.args.some((value, index) => value !== args[index]) ||
         !Array.isArray(env.node_args) || env.node_args.length !== 0

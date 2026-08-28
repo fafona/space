@@ -113,14 +113,14 @@ test("manual entry is current-main-only, unique, attempt-one, and serialized", (
 });
 
 test("only the new machine interface is dispatchable", () => {
-  assert.match(workflow, /RECOVER_FAILED_POST_SWITCH_DEPLOY_32625801433/);
+  assert.match(workflow, /RECOVER_FAILED_POST_SWITCH_DEPLOY_33141616176/);
   assert.match(workflow, /recover-failed-post-switch-deploy\.yml/);
   assert.match(workflow, /recover-failed-post-switch-production-runtime\.sh/);
   assert.match(workflow, /FAOLLA_FAILED_POST_SWITCH_RECOVERY_ENVELOPE_V1/);
   assert.doesNotMatch(runtime, /PRE[_-]FORWARD|PREFORWARD/i);
   assert.doesNotMatch(workflow, /PRE[_-]FORWARD|PREFORWARD/i);
-  assert.match(workflow, /PRIOR_FAILED_RECOVERY_WORKFLOW_NAME: Recover Failed Post-Switch Production Runtime/);
-  assert.match(workflow, /PRIOR_FAILED_RECOVERY_WORKFLOW_PATH: \.github\/workflows\/recover-failed-post-switch-deploy\.yml/);
+  assert.match(workflow, /RUNTIME_DIAGNOSTIC_WORKFLOW_NAME: Production Runtime Supervision Diagnostic/);
+  assert.match(workflow, /RUNTIME_DIAGNOSTIC_WORKFLOW_PATH: \.github\/workflows\/production-runtime-supervision-diagnostic\.yml/);
 });
 
 test("new source has exactly one successful push CI and one recovery dispatch", () => {
@@ -133,23 +133,24 @@ test("new source has exactly one successful push CI and one recovery dispatch", 
   assert.match(allRuns, /git status --porcelain=v1 --untracked-files=all/);
 });
 
-test("incident, readiness, and failed prior recovery metadata are exact", () => {
+test("incident, readiness, and runtime diagnostic metadata are exact", () => {
   assert.deepEqual(
     {
-      runId: job.env.PRIOR_FAILED_RECOVERY_RUN_ID,
-      runAttempt: job.env.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT,
-      sha: job.env.PRIOR_FAILED_RECOVERY_SHA,
+      runId: job.env.RUNTIME_DIAGNOSTIC_RUN_ID,
+      runAttempt: job.env.RUNTIME_DIAGNOSTIC_RUN_ATTEMPT,
+      jobId: job.env.RUNTIME_DIAGNOSTIC_JOB_ID,
+      sha: job.env.RUNTIME_DIAGNOSTIC_SHA,
     },
     {
-      runId: "32630861830",
+      runId: "33141962030",
       runAttempt: "1",
-      sha: "fe1be992a48204e8f2426615762273f14331ab83",
+      jobId: "98754555489",
+      sha: "5867f1d5186e0068df8fb0d5e811e8287bc28ac4",
     },
   );
   for (const value of [
-    "32625801433", "58c26e178faeb3eee0172a2e0aa487084f6910e4", "32625773494",
-    "32630861830", "fe1be992a48204e8f2426615762273f14331ab83",
-    "2a121454a18a16ae30e356977ca82b24a310e8e5",
+    "33141616176", "5867f1d5186e0068df8fb0d5e811e8287bc28ac4", "33141577054",
+    "33135517954", "33141962030", "c90b02c85c18eb262c120bfd9d435038486f87c6",
   ]) assert.ok(workflow.includes(value));
   for (const obsolete of [
     "32613111789", "02db02135d2a376d624985831f5f0180cf813a29",
@@ -163,62 +164,64 @@ test("incident, readiness, and failed prior recovery metadata are exact", () => 
   assert.match(allRuns, /deploy\.conclusion !== "failure"/);
   assert.match(allRuns, /\[9, "Deploy To Server", "failure"\]/);
   assert.match(allRuns, /readiness\.conclusion !== "success"/);
-  assert.match(allRuns, /failedRecovery\.conclusion !== "failure"/);
-  assert.match(allRuns, /failedRecovery\.run_attempt !== 1/);
-  const expectedFailedRecoverySteps = [
+  assert.match(allRuns, /runtimeDiagnostic\.conclusion !== "failure"/);
+  assert.match(allRuns, /runtimeDiagnostic\.run_attempt !== 1/);
+  const expectedRuntimeDiagnosticSteps = [
     [1, "Set up job", "success"],
-    [2, "Validate Unique Manual Recovery Chain", "success"],
-    [3, "Checkout Exact Recovery Source", "success"],
-    [4, "Verify Exact Current Main Checkout", "success"],
-    [5, "Validate Incident Deploy Readiness And Failed Recovery Boundary", "success"],
-    [6, "Resolve Exact Readiness Artifact Inventory", "success"],
-    [7, "Verify Canonical Historical Readiness Evidence", "success"],
-    [8, "Setup Pinned SSH Recovery Alias", "success"],
-    [9, "Revalidate Main And CI Immediately Before Recovery", "success"],
-    [10, "Recover Frozen Production Runtime", "failure"],
-    [11, "Verify Public Frozen Runtime Recovery", "skipped"],
-    [22, "Post Checkout Exact Recovery Source", "success"],
-    [23, "Complete job", "success"],
+    [2, "Validate Diagnostic Request", "success"],
+    [3, "Checkout Exact Diagnostic Revision", "success"],
+    [4, "Verify Diagnostic Revision", "success"],
+    [5, "Setup SSH", "success"],
+    [6, "Check Runtime Supervision", "failure"],
+    [12, "Post Checkout Exact Diagnostic Revision", "success"],
+    [13, "Complete job", "success"],
   ];
-  for (const [number, name, conclusion] of expectedFailedRecoverySteps) {
+  for (const [number, name, conclusion] of expectedRuntimeDiagnosticSteps) {
     assert.ok(allRuns.includes(`[${number}, "${name}", "${conclusion}"]`));
   }
-  assert.match(allRuns, /failedRecoveryStarted <= completedEpoch/);
-  assert.doesNotMatch(allRuns, /failedRecoveryCompleted >= startedEpoch/);
-  assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ID !== "32630861830"/);
-  assert.match(allRuns, /values\.PRIOR_FAILED_RECOVERY_RUN_ATTEMPT !== "1"/);
+  assert.match(allRuns, /runtimeDiagnosticStarted <= completedEpoch/);
+  assert.doesNotMatch(allRuns, /runtimeDiagnosticCompleted >= startedEpoch/);
+  assert.match(allRuns, /values\.RUNTIME_DIAGNOSTIC_RUN_ID !== "33141962030"/);
+  assert.match(allRuns, /values\.RUNTIME_DIAGNOSTIC_RUN_ATTEMPT !== "1"/);
   assert.match(
     allRuns,
-    /values\.PRIOR_FAILED_RECOVERY_SHA !==\s+"fe1be992a48204e8f2426615762273f14331ab83"/,
+    /values\.RUNTIME_DIAGNOSTIC_SHA !==\s+"5867f1d5186e0068df8fb0d5e811e8287bc28ac4"/,
   );
   const timeGate = allRuns.match(
-    /if \(\s*(failedRecoveryCompleted <= failedRecoveryStarted \|\|[\s\S]*?failedRecoveryStarted <= completedEpoch)\s*\) fail\("prior_failed_recovery_time_window_invalid"\)/,
+    /if \(\s*(runtimeDiagnosticCompleted <= runtimeDiagnosticStarted \|\|[\s\S]*?runtimeDiagnosticStarted <= completedEpoch)\s*\) fail\("runtime_diagnostic_time_window_invalid"\)/,
   );
-  assert.ok(timeGate, "prior recovery temporal gate missing");
+  assert.ok(timeGate, "runtime diagnostic temporal gate missing");
   assert.equal(
     timeGate[1].replace(/\s+/g, " ").trim(),
-    "failedRecoveryCompleted <= failedRecoveryStarted || "
-      + "failedRecoveryCompleted - failedRecoveryStarted > 1_800 || "
-      + "failedRecoveryStarted <= completedEpoch",
+    "runtimeDiagnosticCompleted <= runtimeDiagnosticStarted || "
+      + "runtimeDiagnosticCompleted - runtimeDiagnosticStarted > 300 || "
+      + "runtimeDiagnosticStarted <= completedEpoch",
   );
-  const rejectsBoundary = (failedRecoveryStarted, failedRecoveryCompleted, completedEpoch) => (
-    failedRecoveryCompleted <= failedRecoveryStarted
-    || failedRecoveryCompleted - failedRecoveryStarted > 1_800
-    || failedRecoveryStarted <= completedEpoch
+  const rejectsBoundary = (runtimeDiagnosticStarted, runtimeDiagnosticCompleted, completedEpoch) => (
+    runtimeDiagnosticCompleted <= runtimeDiagnosticStarted
+    || runtimeDiagnosticCompleted - runtimeDiagnosticStarted > 300
+    || runtimeDiagnosticStarted <= completedEpoch
   );
   assert.equal(rejectsBoundary(2_001, 2_100, 2_000), false);
   assert.equal(rejectsBoundary(2_000, 2_100, 2_000), true);
   assert.equal(rejectsBoundary(1_999, 2_100, 2_000), true);
   assert.equal(rejectsBoundary(2_001, 2_001, 2_000), true);
-  assert.equal(rejectsBoundary(2_001, 3_802, 2_000), true);
-  assert.equal(rejectsBoundary(1_787_477_010, 1_787_477_067, 1_787_470_436), false);
+  assert.equal(rejectsBoundary(2_001, 2_302, 2_000), true);
+  assert.equal(rejectsBoundary(1_787_890_182, 1_787_890_192, 1_787_889_874), false);
+  assert.match(allRuns, /runtime_supervision_listener_absent/);
+  assert.match(allRuns, /Process completed with exit code 21/);
+  assert.match(allRuns, /actions\/jobs\/\$RUNTIME_DIAGNOSTIC_JOB_ID\/logs/);
+  assert.match(allRuns, /TextDecoder\("utf-8", \{ fatal: true \}\)/);
+  assert.match(allRuns, /bytes\.length > 8 \* 1024 \* 1024/);
+  assert.match(allRuns, /EXPECTED_RUNTIME_BUILD_ID:/);
+  assert.match(allRuns, /5867f1d5186e0068df8fb0d5e811e8287bc28ac4/);
 });
 
-test("payload has nineteen exact keys including prior recovery and database identity", () => {
+test("payload has nineteen exact keys including runtime diagnostic and database identity", () => {
   assert.match(allRuns, /keys\.length !== 19/);
   for (const key of [
-    "PRIOR_FAILED_RECOVERY_RUN_ID", "PRIOR_FAILED_RECOVERY_RUN_ATTEMPT",
-    "PRIOR_FAILED_RECOVERY_SHA", "DATABASE_CONTAINER_ID", "DATABASE_CONTAINER_NAME",
+    "RUNTIME_DIAGNOSTIC_RUN_ID", "RUNTIME_DIAGNOSTIC_RUN_ATTEMPT",
+    "RUNTIME_DIAGNOSTIC_SHA", "DATABASE_CONTAINER_ID", "DATABASE_CONTAINER_NAME",
     "DATABASE_NAME", "DATABASE_OID", "DATABASE_SYSTEM_ID", "DATABASE_PRIMARY",
   ]) assert.match(allRuns, new RegExp(`${key}:`));
   assert.match(allRuns, /JSON\.stringify\(Object\.fromEntries/);
@@ -292,6 +295,8 @@ test("readiness evidence remains canonical, historical, and database-bound", () 
   assert.match(allRuns, /database\.systemId/);
   assert.match(allRuns, /database\.primary/);
   assert.match(allRuns, /nowMs:\s*Date\.parse\(issuedAt\)/);
+  assert.equal(job.env.BACKUP_RUN_ID, "33135517954");
+  assert.match(allRuns, /expectedBackupRunId:\s*process\.env\.BACKUP_RUN_ID/);
 });
 
 test("SSH is pinned and all raw remote output stays hidden", () => {
