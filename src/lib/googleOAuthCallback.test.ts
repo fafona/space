@@ -8,7 +8,31 @@ import {
   readGoogleOAuthUrlCode,
   readGoogleOAuthUrlError,
   readGoogleOAuthUrlErrorDetails,
+  resolveGoogleOAuthRedirectOrigin,
 } from "./googleOAuthCallback";
+
+test("bridges the production portal through the allow-listed OAuth login origin", () => {
+  assert.equal(
+    resolveGoogleOAuthRedirectOrigin("https://launch.faolla.com"),
+    "https://faolla.com",
+  );
+  assert.equal(
+    resolveGoogleOAuthRedirectOrigin("https://launch.faolla.com:443"),
+    "https://faolla.com",
+  );
+});
+
+test("keeps non-production origins exact and rejects malformed origins", () => {
+  assert.equal(
+    resolveGoogleOAuthRedirectOrigin("http://localhost:3000"),
+    "http://localhost:3000",
+  );
+  assert.equal(
+    resolveGoogleOAuthRedirectOrigin("https://launch.faolla.com.example"),
+    "https://launch.faolla.com.example",
+  );
+  assert.equal(resolveGoogleOAuthRedirectOrigin("not-an-origin"), "");
+});
 
 test("reads Google OAuth implicit tokens from hash or search", () => {
   assert.deepEqual(

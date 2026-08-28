@@ -47,6 +47,7 @@ import {
   readGoogleOAuthUrlCode,
   readGoogleOAuthUrlErrorDetails,
   readGoogleOAuthUrlTokens,
+  resolveGoogleOAuthRedirectOrigin,
 } from "@/lib/googleOAuthCallback";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
@@ -1862,7 +1863,10 @@ function LoginPageInner() {
         return;
       }
 
-      const callbackUrl = new URL("/login", window.location.origin);
+      const callbackUrl = new URL(
+        "/login",
+        resolveGoogleOAuthRedirectOrigin(window.location.origin),
+      );
       callbackUrl.searchParams.set("oauth", "google");
       callbackUrl.searchParams.set("accountType", accountType);
       if (requestedRedirectPath) callbackUrl.searchParams.set("redirect", requestedRedirectPath);
