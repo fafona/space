@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const siteId = "10000000";
 const ownerId = "10000000-0000-4000-8000-000000000001";
 const roleId = "10000000-0000-4000-8000-000000000002";
+const employeeRoleId = "10000000-0000-4000-8000-000000000012";
+const supervisorRoleId = "10000000-0000-4000-8000-000000000013";
 const employeeId = "10000000-0000-4000-8000-000000000003";
 const boardId = "10000000-0000-4000-8000-000000000004";
 const todoColumnId = "10000000-0000-4000-8000-000000000005";
@@ -79,6 +82,34 @@ function createSharedState() {
           name: "管理员",
           description: "浏览器验收角色",
           permissions: allPermissions,
+          accessScope: "all",
+          allowedBoardIds: [],
+          status: "active",
+          isSystem: true,
+          version: 1,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        {
+          id: employeeRoleId,
+          siteId,
+          name: "员工",
+          description: "浏览器验收员工角色",
+          permissions: ["enterprise.view", "tasks.view"],
+          accessScope: "all",
+          allowedBoardIds: [],
+          status: "active",
+          isSystem: true,
+          version: 1,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        {
+          id: supervisorRoleId,
+          siteId,
+          name: "主管",
+          description: "浏览器验收主管角色",
+          permissions: ["enterprise.view", "tasks.view", "tasks.create", "tasks.update"],
           accessScope: "all",
           allowedBoardIds: [],
           status: "active",
@@ -1236,6 +1267,10 @@ async function openHarness(context, baseUrl) {
 
 async function run() {
   const state = createSharedState();
+  const screenshotDirectory = String(
+    process.env.FAOLLA_ENTERPRISE_E2E_SCREENSHOT_DIR || "",
+  ).trim();
+  if (screenshotDirectory) mkdirSync(screenshotDirectory, { recursive: true });
   const statsA = { overviewRequests: 0 };
   const statsB = { overviewRequests: 0 };
   const auditCreatedAt = timestamp();
@@ -1307,6 +1342,109 @@ async function run() {
     pageB.on("framenavigated", (frame) => {
       if (frame === pageB.mainFrame()) pageBNavigationCount += 1;
     });
+
+    await pageA.getByRole("button", { name: "角色权限", exact: true }).click();
+    await pageA.getByRole("heading", { name: "现有角色", exact: true }).waitFor();
+    const newRoleEditorBody = pageA.locator("#new-role-editor-body");
+    const primaryRoleEditorBody = pageA.locator(`#role-editor-${roleId}-body`);
+    assert(
+      await newRoleEditorBody.isHidden() && await primaryRoleEditorBody.isHidden(),
+      "role page did not start with creation and existing editors collapsed",
+    );
+    const roleDefaultMetrics = await pageA.evaluate(() => ({
+      innerHeight: window.innerHeight,
+      scrollHeight: document.documentElement.scrollHeight,
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    assert(
+      roleDefaultMetrics.scrollHeight <= roleDefaultMetrics.innerHeight * 2 &&
+        roleDefaultMetrics.scrollWidth <= roleDefaultMetrics.innerWidth + 1,
+      `compact desktop role page exceeded its height or width budget:${JSON.stringify(roleDefaultMetrics)}`,
+    );
+    if (screenshotDirectory) {
+      await pageA.screenshot({
+        path: path.join(screenshotDirectory, "role-permissions-desktop-default.png"),
+        fullPage: true,
+      });
+    }
+
+    const primaryRoleDisclosure = pageA.locator(
+      `button[aria-controls="role-editor-${roleId}-body"]`,
+    );
+    await primaryRoleDisclosure.click();
+    await primaryRoleEditorBody.waitFor();
+    const permissionNavigation = primaryRoleEditorBody.getByRole("navigation", {
+      name: "权限主要板块",
+    });
+    assert(
+      await permissionNavigation.getByRole("button").count() === 12,
+      "expanded role editor did not expose all 12 permission groups as compact navigation",
+    );
+    await permissionNavigation.getByRole("button", { name: /订单管理/ }).click();
+    const orderPermissionGroup = primaryRoleEditorBody.locator(
+      '[data-role-permission-group="订单管理"]',
+    );
+    assert(
+      await orderPermissionGroup.getByRole("checkbox").count() === 11,
+      "order permission group did not expose its 11 granular permissions",
+    );
+    const orderViewHelp = orderPermissionGroup.getByRole("button", {
+      name: "查看“查看订单”权限说明",
+      exact: true,
+    });
+    const orderViewTooltip = orderPermissionGroup.getByRole("tooltip").first();
+    assert(
+      await orderViewTooltip.evaluate((element) => getComputedStyle(element).opacity) === "0",
+      "permission description was visible before hover or focus",
+    );
+    await orderViewHelp.hover();
+    await pageA.waitForTimeout(200);
+    assert(
+      await orderViewTooltip.evaluate((element) => getComputedStyle(element).opacity) === "1",
+      "permission description did not appear on desktop hover",
+    );
+    if (screenshotDirectory) {
+      await pageA.screenshot({
+        path: path.join(screenshotDirectory, "role-permissions-desktop-expanded.png"),
+        fullPage: true,
+      });
+    }
+    await pageA.mouse.move(0, 0);
+    await pageA.waitForTimeout(200);
+    await orderViewHelp.focus();
+    await pageA.waitForTimeout(200);
+    assert(
+      await orderViewTooltip.evaluate((element) => getComputedStyle(element).opacity) === "1",
+      "permission description did not appear when its information button received keyboard focus",
+    );
+    await orderViewHelp.press("Escape");
+    await pageA.waitForTimeout(200);
+    assert(
+      await orderViewTooltip.evaluate((element) => getComputedStyle(element).opacity) === "0",
+      "permission description did not close with Escape",
+    );
+
+    const orderViewPermission = orderPermissionGroup.getByLabel("查看订单", { exact: true });
+    await orderViewPermission.check();
+    await primaryRoleDisclosure.click();
+    assert(
+      await primaryRoleEditorBody.isHidden() && await orderViewPermission.isChecked() &&
+        (await primaryRoleDisclosure.innerText()).includes("有未保存修改"),
+      "collapsing an edited role discarded its local permission draft or dirty summary",
+    );
+    await primaryRoleDisclosure.click();
+    assert(
+      await orderViewPermission.isChecked(),
+      "reopening a role did not preserve its unsaved permission draft",
+    );
+    await orderViewPermission.uncheck();
+    await pageA.locator(`button[aria-controls="role-editor-${employeeRoleId}-body"]`).click();
+    assert(
+      await primaryRoleEditorBody.isHidden() &&
+        await pageA.locator(`#role-editor-${employeeRoleId}-body`).isVisible(),
+      "opening another role did not keep the role list to one expanded editor",
+    );
 
     await pageA.getByRole("button", { name: "任务看板", exact: true }).click();
     await pageA.getByLabel("任务标题").fill("双会话创建任务");
@@ -2814,6 +2952,50 @@ async function run() {
       `enterprise workflow mobile layout overflows horizontally:${JSON.stringify(workflowViewport)}`,
     );
 
+    await mobilePage.getByRole("button", { name: "角色权限", exact: true }).click();
+    await mobilePage.getByRole("heading", { name: "现有角色", exact: true }).waitFor();
+    const mobileRoleBody = mobilePage.locator(`#role-editor-${roleId}-body`);
+    await mobilePage.locator(`button[aria-controls="role-editor-${roleId}-body"]`).click();
+    const mobilePermissionNavigation = mobileRoleBody.getByRole("navigation", {
+      name: "权限主要板块",
+    });
+    await mobilePermissionNavigation.getByRole("button", { name: /订单管理/ }).click();
+    const mobileOrderGroup = mobileRoleBody.locator(
+      '[data-role-permission-group="订单管理"]',
+    );
+    const mobileOrderViewHelp = mobileOrderGroup.getByRole("button", {
+      name: "查看“查看订单”权限说明",
+      exact: true,
+    });
+    const mobileOrderTooltip = mobileOrderGroup.getByRole("tooltip").first();
+    await mobileOrderViewHelp.click();
+    await mobilePage.waitForTimeout(200);
+    const mobileRoleMetrics = await mobilePage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    const mobileTooltipBounds = await mobileOrderTooltip.boundingBox();
+    assert(
+      mobileRoleMetrics.scrollWidth <= mobileRoleMetrics.innerWidth + 1 &&
+        mobileTooltipBounds &&
+        mobileTooltipBounds.x >= -1 &&
+        mobileTooltipBounds.x + mobileTooltipBounds.width <= mobileRoleMetrics.innerWidth + 1 &&
+        await mobileOrderTooltip.evaluate((element) => getComputedStyle(element).opacity) === "1",
+      `mobile role tooltip overflowed or did not open:${JSON.stringify({ mobileRoleMetrics, mobileTooltipBounds })}`,
+    );
+    if (screenshotDirectory) {
+      await mobilePage.screenshot({
+        path: path.join(screenshotDirectory, "role-permissions-mobile-expanded.png"),
+        fullPage: true,
+      });
+    }
+    await mobileOrderViewHelp.click();
+    await mobilePage.waitForTimeout(200);
+    assert(
+      await mobileOrderTooltip.evaluate((element) => getComputedStyle(element).opacity) === "0",
+      "mobile permission description did not close on its second tap",
+    );
+
     await Promise.all([
       ownerContextA.close(),
       ownerContextB.close(),
@@ -2827,6 +3009,8 @@ async function run() {
         ok: true,
         checks: [
           "desktop_owner_task_creation",
+          "desktop_compact_role_permissions_and_draft_retention",
+          "desktop_role_permission_hover_keyboard_help",
           "two_context_foreground_refresh",
           "draft_safe_refresh_pause_and_resume",
           "board_settings_dirty_switch_and_collapse_guards",
@@ -2856,6 +3040,7 @@ async function run() {
           "workflow_notification_slow_exact_preserves_newer_draft",
           "task_editor_unsaved_close_guard",
           "mobile_task_and_workflow_horizontal_layout",
+          "mobile_role_permission_help_and_horizontal_layout",
           "mobile_workflow_archive_pager_and_second_page",
         ],
       }) + "\n",

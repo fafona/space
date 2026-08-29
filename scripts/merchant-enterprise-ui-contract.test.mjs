@@ -2442,6 +2442,86 @@ test("role board access editor exposes accessible all and restricted board scope
   );
 });
 
+test("role permission editor exposes compact primary sections and accessible on-demand help", () => {
+  const permissionEditor = sliceBetween(
+    /function\s+RolePermissionEditor\(/,
+    /function\s+RoleEditor\(/,
+    "role permission editor",
+  );
+
+  assert.match(source, /const\s+ROLE_PERMISSION_SECTIONS[\s\S]{0,700}label:\s*["']企业协作["'][\s\S]{0,700}label:\s*["']业务菜单["']/);
+  assert.match(permissionEditor, /useState<RolePermissionGroup>/);
+  assert.match(permissionEditor, /aria-label=["']权限主要板块["']/);
+  assert.match(permissionEditor, /aria-pressed=\{isActive\}/);
+  assert.match(permissionEditor, /data-role-permission-group=\{group\}/);
+  assert.match(permissionEditor, /已选\s*\{selectedCount\}\/\{groupPermissions\.length\}/);
+  assert.match(permissionEditor, /disabled=\{!editable\s*\|\|\s*!canGrant\}/);
+  assert.match(permissionEditor, /toggleMerchantEnterprisePermissionSelection\(/);
+  assert.match(permissionEditor, /高风险/);
+  assert.match(permissionEditor, /敏感/);
+
+  assert.match(permissionEditor, /aria-describedby=\{descriptionId\}/);
+  assert.match(permissionEditor, /aria-controls=\{descriptionId\}/);
+  assert.match(permissionEditor, /aria-expanded=\{descriptionOpen\}/);
+  assert.match(
+    permissionEditor,
+    /aria-label=\{`查看“\$\{permission\.label\}”权限说明`\}[\s\S]{0,220}aria-describedby=\{descriptionId\}/,
+  );
+  assert.match(permissionEditor, /role=["']tooltip["']/);
+  assert.match(permissionEditor, /event\.pointerType\s*===\s*["']touch["']/);
+  assert.match(permissionEditor, /onPointerLeave=/);
+  assert.match(permissionEditor, /onFocus=\{\(\)\s*=>\s*setOpenDescriptionKey\(permission\.key\)\}/);
+  assert.match(permissionEditor, /pinnedDescriptionKey\s*===\s*permission\.key/);
+  assert.match(permissionEditor, /left-2\s+right-2[\s\S]{0,300}sm:left-auto[\s\S]{0,100}sm:w-72/);
+  assert.match(permissionEditor, /if\s*\(willClose\)\s*event\.currentTarget\.blur\(\)/);
+  assert.match(permissionEditor, /event\.key\s*!==\s*["']Escape["']/);
+  assert.equal(
+    [...permissionEditor.matchAll(/\{permission\.description\}/g)].length,
+    1,
+    "each small-permission description must only render inside the on-demand tooltip",
+  );
+  assert.match(
+    permissionEditor,
+    /role=["']tooltip["'][\s\S]{0,650}\{permission\.description\}/,
+    "the permission description must be owned by the tooltip instead of visible row copy",
+  );
+});
+
+test("role creation and existing editors stay mounted behind compact controlled disclosures", () => {
+  const roleEditor = sliceBetween(
+    /function\s+RoleEditor\(/,
+    /function\s+BoardSettings\(/,
+    "compact role editor",
+  );
+  const roleView = sliceBetween(
+    /\{!needsBootstrap\s*&&\s*tab\s*===\s*["']roles["']\s*\?\s*\(/,
+    /\{!needsBootstrap\s*&&\s*tab\s*===\s*["']audit["']\s*\?\s*\(/,
+    "compact roles view",
+  );
+
+  assert.match(roleEditor, /expanded:\s*boolean/);
+  assert.match(roleEditor, /onExpandedChange:\s*\(expanded:\s*boolean\)\s*=>\s*void/);
+  assert.match(roleEditor, /aria-expanded=\{expanded\}/);
+  assert.match(roleEditor, /aria-controls=\{editorBodyId\}/);
+  assert.match(roleEditor, /onExpandedChange\(!expanded\)/);
+  assert.match(roleEditor, /hidden=\{!expanded\}/);
+  assert.match(roleEditor, /roleEditorIsDirty\s*\?\s*\([\s\S]{0,300}有未保存修改/);
+
+  assert.match(roleView, /<WorkflowPermissionGapCard/);
+  assert.match(roleView, /新建角色/);
+  assert.match(roleView, /现有角色/);
+  assert.match(roleView, /aria-expanded=\{newRoleEditorOpen\}/);
+  assert.match(roleView, /hidden=\{!newRoleEditorOpen\}/);
+  assert.match(roleView, /roleComposerHasDraft\s*\?\s*\([\s\S]{0,300}有未保存草稿/);
+  assert.match(roleView, /expanded=\{expandedRoleId\s*===\s*role\.id\}/);
+  assert.match(roleView, /setExpandedRoleId\(expanded\s*\?\s*role\.id\s*:\s*["']["']\)/);
+  assert.doesNotMatch(
+    roleView,
+    /expandedRoleId\s*===\s*role\.id\s*\?\s*<RoleEditor/,
+    "collapsed role editors must remain mounted so local drafts and leave guards survive",
+  );
+});
+
 test("role create and edit workflows submit and preserve canonical board access", () => {
   assert.match(
     source,
