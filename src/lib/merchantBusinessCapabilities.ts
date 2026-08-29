@@ -29,6 +29,10 @@ export const MERCHANT_EMPLOYEE_BUSINESS_MENUS = [
 export type MerchantEmployeeBusinessMenuId =
   (typeof MERCHANT_EMPLOYEE_BUSINESS_MENUS)[number]["id"];
 
+export type MerchantEmployeeWorkspaceRoot =
+  | "collaboration"
+  | MerchantEmployeeBusinessMenuId;
+
 export type MerchantBusinessCapabilities = Readonly<{
   schemaVersion: 1;
   actor: Readonly<{
@@ -204,6 +208,32 @@ export function getMerchantEmployeeBusinessMenuIds(
   return MERCHANT_EMPLOYEE_BUSINESS_MENUS.filter((menu) =>
     selected.has(menu.rootPermission),
   ).map((menu) => menu.id);
+}
+
+export function getMerchantEmployeeWorkspaceRoots(
+  collaborationPermissions: readonly MerchantEnterpriseCollaborationPermission[],
+  permissions: readonly MerchantStaffBusinessPermission[],
+): MerchantEmployeeWorkspaceRoot[] {
+  return [
+    ...(collaborationPermissions.includes("enterprise.view")
+      ? (["collaboration"] as const)
+      : []),
+    ...getMerchantEmployeeBusinessMenuIds(permissions),
+  ];
+}
+
+export function resolveMerchantEmployeeWorkspaceRoot(
+  currentRoot: MerchantEmployeeWorkspaceRoot | null,
+  collaborationPermissions: readonly MerchantEnterpriseCollaborationPermission[],
+  permissions: readonly MerchantStaffBusinessPermission[],
+) {
+  const availableRoots = getMerchantEmployeeWorkspaceRoots(
+    collaborationPermissions,
+    permissions,
+  );
+  return currentRoot && availableRoots.includes(currentRoot)
+    ? currentRoot
+    : availableRoots[0] ?? null;
 }
 
 export function buildMerchantBusinessCapabilitiesMountKey(

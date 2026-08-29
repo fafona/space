@@ -12,8 +12,9 @@ import {
   buildMerchantBusinessCapabilitiesMountKey,
   getMerchantEmployeeBusinessMenuIds,
   parseMerchantBusinessCapabilitiesPayload,
+  resolveMerchantEmployeeWorkspaceRoot,
   type MerchantBusinessCapabilities,
-  type MerchantEmployeeBusinessMenuId,
+  type MerchantEmployeeWorkspaceRoot,
 } from "@/lib/merchantBusinessCapabilities";
 import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
 
@@ -61,7 +62,6 @@ type MerchantEmployeeWorkspaceProps = {
   accessToken: string;
 };
 
-type WorkspaceRoot = "collaboration" | MerchantEmployeeBusinessMenuId;
 type CapabilityStatus =
   | "loading"
   | "ready"
@@ -291,7 +291,10 @@ export default function MerchantEmployeeWorkspace({
   siteId,
   accessToken,
 }: MerchantEmployeeWorkspaceProps) {
-  const [activeRoot, setActiveRoot] = useState<WorkspaceRoot>("collaboration");
+  const [rootPreference, setRootPreference] = useState<{
+    capabilityMountKey: string;
+    root: MerchantEmployeeWorkspaceRoot | null;
+  }>({ capabilityMountKey: "", root: null });
   const [capabilityState, setCapabilityState] = useState<CapabilityState>({
     data: null,
     status: "loading",
@@ -324,7 +327,6 @@ export default function MerchantEmployeeWorkspace({
           epoch: current.data ? current.epoch + 1 : current.epoch,
         };
       });
-      setActiveRoot("collaboration");
     },
     [],
   );
@@ -367,6 +369,7 @@ export default function MerchantEmployeeWorkspace({
       if (!response.ok) {
         const errorCode = readErrorCode(payload);
         closeBusinessWorkspace(
+          response.status === 403 &&
           errorCode === "staff_business_access_disabled"
             ? "disabled"
             : response.status === 401 || response.status === 403
@@ -396,14 +399,6 @@ export default function MerchantEmployeeWorkspace({
               : current.epoch,
         };
       });
-      const menuIds = new Set(
-        getMerchantEmployeeBusinessMenuIds(parsed.permissions),
-      );
-      setActiveRoot((current) =>
-        current === "collaboration" || menuIds.has(current)
-          ? current
-          : "collaboration",
-      );
     } catch {
       if (
         controller.signal.aborted ||
@@ -450,6 +445,19 @@ export default function MerchantEmployeeWorkspace({
   const capabilityMountKey = capabilities
     ? buildMerchantBusinessCapabilitiesMountKey(capabilities)
     : "";
+  const preferredRoot =
+    rootPreference.capabilityMountKey === capabilityMountKey
+      ? rootPreference.root
+      : null;
+  const activeRoot = capabilities
+    ? resolveMerchantEmployeeWorkspaceRoot(
+        preferredRoot,
+        capabilities.collaborationPermissions,
+        capabilities.permissions,
+      )
+    : capabilityStatus === "disabled"
+      ? "collaboration"
+      : null;
   const businessApiClient = useMemo<MerchantBusinessApiClient | null>(() => {
     if (!capabilityMountKey) return null;
     const client = createMerchantBusinessApiClient({
@@ -482,9 +490,19 @@ export default function MerchantEmployeeWorkspace({
   const visibleMenus = MERCHANT_EMPLOYEE_BUSINESS_MENUS.filter((menu) =>
     visibleMenuIds.has(menu.id),
   );
+  const collaborationAvailable = capabilities
+    ? capabilities.collaborationPermissions.includes("enterprise.view")
+    : capabilityStatus === "disabled";
+  const capabilityDecisionPending =
+    !capabilities && capabilityStatus === "loading";
 
   let businessContent = null;
-  if (capabilities && businessApiClient && activeRoot !== "collaboration") {
+  if (
+    capabilities &&
+    businessApiClient &&
+    activeRoot &&
+    activeRoot !== "collaboration"
+  ) {
     const common = {
       siteId,
       siteName: capabilities.workspace.siteName,
@@ -543,18 +561,25 @@ export default function MerchantEmployeeWorkspace({
     <section className="min-w-0">
       <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-              activeRoot === "collaboration"
-                ? "bg-slate-950 text-white"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-            aria-current={activeRoot === "collaboration" ? "page" : undefined}
-            onClick={() => setActiveRoot("collaboration")}
-          >
-            企业协作
-          </button>
+          {collaborationAvailable ? (
+            <button
+              type="button"
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                activeRoot === "collaboration"
+                  ? "bg-slate-950 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+              aria-current={activeRoot === "collaboration" ? "page" : undefined}
+              onClick={() =>
+                setRootPreference({
+                  capabilityMountKey,
+                  root: "collaboration",
+                })
+              }
+            >
+              企业协作
+            </button>
+          ) : null}
           {visibleMenus.map((menu) => (
             <button
               key={menu.id}
@@ -565,7 +590,9 @@ export default function MerchantEmployeeWorkspace({
                   : "text-slate-600 hover:bg-slate-100"
               }`}
               aria-current={activeRoot === menu.id ? "page" : undefined}
-              onClick={() => setActiveRoot(menu.id)}
+              onClick={() =>
+                setRootPreference({ capabilityMountKey, root: menu.id })
+              }
             >
               {menu.label}
             </button>
@@ -593,7 +620,11 @@ export default function MerchantEmployeeWorkspace({
         </div>
       </div>
 
-      {activeRoot === "collaboration" ? (
+      {capabilityDecisionPending ? (
+        <div className="mx-auto max-w-7xl p-4 sm:p-6">
+          <WorkspaceLoading />
+        </div>
+      ) : activeRoot === "collaboration" && collaborationAvailable ? (
         <MerchantEnterpriseManager
           key={`${siteId}:${authorizationEpoch}:${capabilityMountKey || capabilityStatus}`}
           siteId={siteId}
@@ -607,6 +638,27 @@ export default function MerchantEmployeeWorkspace({
           className="mx-auto max-w-7xl p-4 sm:p-6"
         >
           {businessContent}
+        </div>
+      ) : capabilities && capabilityStatus === "ready" ? (
+        <div className="mx-auto max-w-7xl p-4 sm:p-6">
+          <div
+            role="status"
+            className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm"
+          >
+            当前角色没有可用功能，请联系企业负责人分配权限。
+          </div>
+        </div>
+      ) : capabilityStatus === "unavailable" ||
+        capabilityStatus === "authorization_invalid" ? (
+        <div className="mx-auto max-w-7xl p-4 sm:p-6">
+          <div
+            role="alert"
+            className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm"
+          >
+            {capabilityStatus === "authorization_invalid"
+              ? "登录状态或角色权限已变化，请重新核验。"
+              : "暂时无法核验当前角色权限，请稍后重试。"}
+          </div>
         </div>
       ) : (
         <div className="mx-auto max-w-7xl p-4 sm:p-6">

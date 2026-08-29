@@ -1265,6 +1265,137 @@ async function openHarness(context, baseUrl) {
   return page;
 }
 
+async function installEmployeeWorkspaceApiMock(context, mode, stats) {
+  await context.route("**/api/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const respond = (status, payload) =>
+      route.fulfill({
+        status,
+        contentType: "application/json",
+        headers: { "cache-control": "no-store" },
+        body: JSON.stringify(payload),
+      });
+
+    if (
+      url.pathname === "/api/merchant-business/capabilities" &&
+      request.method() === "GET"
+    ) {
+      stats.capabilityRequests += 1;
+      if (mode === "unavailable") {
+        return respond(503, { ok: false, error: "temporarily_unavailable" });
+      }
+      return respond(200, {
+        ok: true,
+        schemaVersion: 1,
+        actor: {
+          type: "employee",
+          displayName: "浏览器验收员工",
+          principalKey: "employee:10000000-0000-4000-8000-000000000099",
+          authorizationVersion: "1:1",
+        },
+        cacheNamespace: "employee-workspace-browser-members-only",
+        collaborationPermissions: [],
+        permissions: ["members.view"],
+        workspace: {
+          siteId,
+          siteName: "浏览器验收商户",
+          siteCountryCode: "ES",
+        },
+      });
+    }
+
+    if (
+      url.pathname === "/api/merchant-enterprise/overview" &&
+      request.method() === "GET"
+    ) {
+      stats.enterpriseOverviewRequests += 1;
+      return respond(500, { ok: false, error: "unexpected_enterprise_mount" });
+    }
+
+    if (url.pathname === "/api/memberships" && request.method() === "GET") {
+      stats.membershipRequests += 1;
+      return respond(200, {
+        ok: true,
+        memberships: [],
+        total: 0,
+        allTotal: 0,
+        hasMore: false,
+        version: "employee-workspace-browser-memberships-v1",
+      });
+    }
+
+    return respond(404, { ok: false, error: "employee_workspace_browser_unhandled_request" });
+  });
+}
+
+async function runEmployeeWorkspaceRootRegression(browser, baseUrl) {
+  const membersStats = {
+    capabilityRequests: 0,
+    enterpriseOverviewRequests: 0,
+    membershipRequests: 0,
+  };
+  const membersContext = await browser.newContext({
+    viewport: { width: 1440, height: 1000 },
+    serviceWorkers: "block",
+    locale: "zh-CN",
+  });
+  try {
+    await installEmployeeWorkspaceApiMock(membersContext, "members-only", membersStats);
+    const membersPage = await membersContext.newPage();
+    await membersPage.goto(`${baseUrl}/test-harness/employee-workspace`, {
+      waitUntil: "domcontentloaded",
+    });
+    const membersRoot = membersPage.getByRole("button", {
+      name: "会员管理",
+      exact: true,
+    });
+    await membersRoot.waitFor();
+    await membersPage
+      .getByRole("button", { name: "会员列表", exact: true })
+      .waitFor();
+    assert(
+      (await membersRoot.getAttribute("aria-current")) === "page" &&
+        (await membersPage.getByRole("button", { name: "企业协作", exact: true }).count()) === 0 &&
+        membersStats.capabilityRequests > 0 &&
+        membersStats.enterpriseOverviewRequests === 0,
+      `members-only employee did not land directly in the permitted business root:${JSON.stringify(membersStats)}`,
+    );
+  } finally {
+    await membersContext.close();
+  }
+
+  const unavailableStats = {
+    capabilityRequests: 0,
+    enterpriseOverviewRequests: 0,
+    membershipRequests: 0,
+  };
+  const unavailableContext = await browser.newContext({
+    viewport: { width: 1440, height: 1000 },
+    serviceWorkers: "block",
+    locale: "zh-CN",
+  });
+  try {
+    await installEmployeeWorkspaceApiMock(unavailableContext, "unavailable", unavailableStats);
+    const unavailablePage = await unavailableContext.newPage();
+    await unavailablePage.goto(`${baseUrl}/test-harness/employee-workspace`, {
+      waitUntil: "domcontentloaded",
+    });
+    await unavailablePage
+      .getByRole("button", { name: "重新核验", exact: true })
+      .waitFor();
+    assert(
+      (await unavailablePage.getByRole("button", { name: "企业协作", exact: true }).count()) === 0 &&
+        unavailableStats.capabilityRequests > 0 &&
+        unavailableStats.membershipRequests === 0 &&
+        unavailableStats.enterpriseOverviewRequests === 0,
+      `unavailable capabilities mounted a collaboration or business workspace:${JSON.stringify(unavailableStats)}`,
+    );
+  } finally {
+    await unavailableContext.close();
+  }
+}
+
 async function run() {
   const state = createSharedState();
   const screenshotDirectory = String(
@@ -1313,6 +1444,7 @@ async function run() {
   const { baseUrl, child, readServerOutput } = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
+    await runEmployeeWorkspaceRootRegression(browser, baseUrl);
     const ownerContextA = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
@@ -3286,6 +3418,8 @@ async function run() {
       JSON.stringify({
         ok: true,
         checks: [
+          "employee_members_only_business_root_without_enterprise_mount",
+          "employee_capabilities_unavailable_fail_closed",
           "desktop_owner_task_creation",
           "desktop_compact_role_permissions_and_draft_retention",
           "desktop_permission_selection_counts_and_state_separation",
