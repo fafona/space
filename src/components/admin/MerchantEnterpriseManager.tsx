@@ -2987,6 +2987,23 @@ const ROLE_PERMISSION_SECTIONS: ReadonlyArray<{
   },
 ];
 
+type RolePermissionSelectionState = "empty" | "partial" | "complete";
+
+function getRolePermissionSelectionState(
+  selectedCount: number,
+  totalCount: number,
+): RolePermissionSelectionState {
+  if (selectedCount === 0) return "empty";
+  if (selectedCount === totalCount) return "complete";
+  return "partial";
+}
+
+const ROLE_PERMISSION_SELECTION_LABELS: Record<RolePermissionSelectionState, string> = {
+  empty: "未选择",
+  partial: "已选",
+  complete: "已全选",
+};
+
 function RolePermissionEditor({
   idPrefix,
   permissions,
@@ -3016,6 +3033,9 @@ function RolePermissionEditor({
     ),
   })).filter((group) => group.permissions.length > 0);
   const activeGroupEntry = groups.find((entry) => entry.group === activeGroup) ?? groups[0];
+  const configuredGroupCount = groups.filter((entry) =>
+    entry.permissions.some((permission) => selected.has(permission.key)),
+  ).length;
 
   if (!activeGroupEntry) return null;
 
@@ -3044,9 +3064,27 @@ function RolePermissionEditor({
             先选择主要板块；悬停、聚焦或点击信息按钮可查看权限说明。
           </p>
         </div>
-        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-          已选 {permissions.length} 项
-        </span>
+        <div
+          className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-slate-600"
+          data-role-permission-summary
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span className="font-semibold text-slate-700">已选权限</span>
+          <strong className="text-base font-black tabular-nums text-blue-700">
+            {permissions.length}
+          </strong>
+          <span className="font-semibold tabular-nums">
+            / {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.length} 项
+          </span>
+          <span className="text-slate-300" aria-hidden="true">·</span>
+          <span>已配置</span>
+          <strong className="font-bold tabular-nums text-slate-900">
+            {configuredGroupCount}
+          </strong>
+          <span className="tabular-nums">/ {groups.length} 个功能组</span>
+        </div>
       </div>
 
       <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(250px,0.8fr)_minmax(0,1.7fr)]">
@@ -3054,54 +3092,131 @@ function RolePermissionEditor({
           className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3"
           aria-label="权限主要板块"
         >
-          {ROLE_PERMISSION_SECTIONS.map((section, sectionIndex) => (
-            <div key={section.key} className={sectionIndex > 0 ? "mt-4" : ""}>
-              <div className="flex items-center gap-2 px-1">
-                <span className="text-xs font-semibold text-slate-700">{section.label}</span>
-                <span className="h-px flex-1 bg-slate-200" aria-hidden="true" />
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-1.5">
-                {section.groups.map((group) => {
-                  const entry = groups.find((item) => item.group === group);
-                  if (!entry) return null;
-                  const selectedCount = entry.permissions.filter((permission) =>
-                    selected.has(permission.key),
-                  ).length;
-                  const isActive = activeGroupEntry.group === group;
-                  return (
-                    <button
-                      key={`${idPrefix}-group-${group}`}
-                      type="button"
-                      className={`min-h-11 rounded-xl border px-2.5 py-2 text-left transition ${
-                        isActive
-                          ? section.key === "business"
-                            ? "border-blue-600 bg-blue-600 text-white shadow-sm"
-                            : "border-slate-900 bg-slate-900 text-white shadow-sm"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-100"
-                      }`}
-                      aria-pressed={isActive}
-                      onClick={() => {
-                        setActiveGroup(group);
-                        setOpenDescriptionKey(null);
-                        setPinnedDescriptionKey(null);
-                      }}
-                    >
-                      <span className="block truncate text-xs font-semibold">
-                        {ROLE_PERMISSION_GROUP_LABELS[group]}
-                      </span>
-                      <span
-                        className={`mt-0.5 block text-[10px] ${
-                          isActive ? "text-white/75" : "text-slate-400"
-                        }`}
+          {ROLE_PERMISSION_SECTIONS.map((section, sectionIndex) => {
+            const sectionEntries = section.groups
+              .map((group) => groups.find((entry) => entry.group === group))
+              .filter((entry): entry is (typeof groups)[number] => Boolean(entry));
+            const sectionPermissionCount = sectionEntries.reduce(
+              (count, entry) => count + entry.permissions.length,
+              0,
+            );
+            const sectionSelectedCount = sectionEntries.reduce(
+              (count, entry) =>
+                count +
+                entry.permissions.filter((permission) => selected.has(permission.key)).length,
+              0,
+            );
+            const sectionConfiguredGroupCount = sectionEntries.filter((entry) =>
+              entry.permissions.some((permission) => selected.has(permission.key)),
+            ).length;
+
+            return (
+              <div
+                key={section.key}
+                className={sectionIndex > 0 ? "mt-4" : ""}
+                data-role-permission-section={section.key}
+              >
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1">
+                  <span className="text-xs font-bold text-slate-800">{section.label}</span>
+                  <span className="h-px min-w-4 flex-1 bg-slate-200" aria-hidden="true" />
+                  <span
+                    className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-600"
+                    data-role-permission-section-count
+                    aria-label={`${section.label}已选 ${sectionSelectedCount} 项，共 ${sectionPermissionCount} 项；已配置 ${sectionConfiguredGroupCount} 个功能组，共 ${sectionEntries.length} 个`}
+                  >
+                    已选 <strong className="font-extrabold text-blue-700">{sectionSelectedCount}</strong>
+                    /{sectionPermissionCount}
+                    <span className="mx-1 text-slate-300" aria-hidden="true">·</span>
+                    <strong className="font-extrabold text-slate-900">{sectionConfiguredGroupCount}</strong>
+                    /{sectionEntries.length} 组
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  {sectionEntries.map((entry) => {
+                    const group = entry.group;
+                    const selectedCount = entry.permissions.filter((permission) =>
+                      selected.has(permission.key),
+                    ).length;
+                    const isActive = activeGroupEntry.group === group;
+                    const selectionState = getRolePermissionSelectionState(
+                      selectedCount,
+                      entry.permissions.length,
+                    );
+                    const selectionLabel = ROLE_PERMISSION_SELECTION_LABELS[selectionState];
+                    const selectionIcon =
+                      selectionState === "complete"
+                        ? "✓"
+                        : selectionState === "partial"
+                          ? "◐"
+                          : "○";
+                    const progressPercent =
+                      entry.permissions.length > 0
+                        ? Math.round((selectedCount / entry.permissions.length) * 100)
+                        : 0;
+                    return (
+                      <button
+                        key={`${idPrefix}-group-${group}`}
+                        type="button"
+                        className={`relative min-h-12 overflow-hidden rounded-xl border px-2.5 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+                          selectionState === "complete"
+                            ? "border-emerald-300 bg-emerald-50/90 text-slate-800 hover:border-emerald-400 hover:shadow-sm"
+                            : selectionState === "partial"
+                              ? "border-blue-300 bg-blue-50/90 text-slate-800 hover:border-blue-400 hover:shadow-sm"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-400 hover:shadow-sm"
+                        } ${isActive ? "ring-2 ring-slate-900 ring-offset-1" : ""}`}
+                        aria-pressed={isActive}
+                        aria-label={`${ROLE_PERMISSION_GROUP_LABELS[group]}，${selectionLabel} ${selectedCount} 项，共 ${entry.permissions.length} 项${isActive ? "，当前查看" : ""}`}
+                        data-role-permission-selection={selectionState}
+                        onClick={() => {
+                          setActiveGroup(group);
+                          setOpenDescriptionKey(null);
+                          setPinnedDescriptionKey(null);
+                        }}
                       >
-                        {selectedCount}/{entry.permissions.length} 项
-                      </span>
-                    </button>
-                  );
-                })}
+                        <span className="flex min-w-0 items-start justify-between gap-1">
+                          <span className="block min-w-0 truncate text-xs font-bold">
+                            {ROLE_PERMISSION_GROUP_LABELS[group]}
+                          </span>
+                          {isActive ? (
+                            <span className="shrink-0 rounded bg-slate-900 px-1.5 py-0.5 text-[9px] font-bold leading-3 text-white">
+                              当前
+                            </span>
+                          ) : null}
+                        </span>
+                        <span
+                          className={`mt-0.5 flex items-baseline gap-1 text-xs font-semibold tabular-nums ${
+                            selectionState === "complete"
+                              ? "text-emerald-700"
+                              : selectionState === "partial"
+                                ? "text-blue-700"
+                                : "text-slate-600"
+                          }`}
+                          data-role-permission-selection-count
+                        >
+                          <span aria-hidden="true">{selectionIcon}</span>
+                          <span>{selectionLabel}</span>
+                          <strong className="text-xs font-black">{selectedCount}</strong>
+                          <span>/ {entry.permissions.length}</span>
+                        </span>
+                        <span
+                          className="absolute inset-x-0 bottom-0 h-0.5 bg-slate-100"
+                          data-role-permission-progress
+                          aria-hidden="true"
+                        >
+                          <span
+                            className={`block h-full transition-[width] duration-200 ${
+                              selectionState === "complete" ? "bg-emerald-500" : "bg-blue-500"
+                            }`}
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </nav>
 
         {(() => {
@@ -3116,6 +3231,11 @@ function RolePermissionEditor({
           const selectedCount = groupPermissions.filter((permission) =>
             selected.has(permission.key),
           ).length;
+          const selectionState = getRolePermissionSelectionState(
+            selectedCount,
+            groupPermissions.length,
+          );
+          const selectionLabel = ROLE_PERMISSION_SELECTION_LABELS[selectionState];
           const allSelected =
             grantableGroupPermissions.length > 0 &&
             grantableGroupPermissions.every((permission) => selected.has(permission.key));
@@ -3140,8 +3260,18 @@ function RolePermissionEditor({
                       业务菜单
                     </span>
                   ) : null}
-                  <span className="text-[11px] text-slate-500">
-                    已选 {selectedCount}/{groupPermissions.length}
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+                      selectionState === "complete"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : selectionState === "partial"
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-slate-50 text-slate-600"
+                    }`}
+                    data-role-permission-group-summary={selectionState}
+                  >
+                    {selectionLabel} <strong className="font-black">{selectedCount}</strong>
+                    / {groupPermissions.length}
                   </span>
                 </div>
                 <button
