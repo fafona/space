@@ -245,12 +245,25 @@ applies through the newest migration in the deployed revision:
    that no existing/default role changed and both v3 role RPCs are service-only;
    deploy and drain the compatible application fleet before enabling the
    feature or making any explicit owner-authorized business permission grant.
-7. Perform the separately supervised legacy personal recovery through the
+
+Migration `202608300042_merchant_enterprise_pgcrypto_schema_repair.sql`
+repairs the production pgcrypto schema mismatch in eleven existing invitation
+and outbox functions. It validates the exact pre-repair source, owner, ACL,
+arguments, defaults, volatility, fixed `search_path`, and staff-identity trigger
+shape before replacing each function in place. The only body change is
+`digest(` to `extensions.digest(`. Apart from its own migration-registry row,
+the migration changes no business-table row, trigger, role grant, function
+signature, or rollout mode, and a registered replay is a catalog-validation
+no-op.
+7. Back up and apply pgcrypto schema repair 042. Confirm the eleven source
+   fingerprints, staff-identity trigger, and RPC ACLs are unchanged apart from
+   the schema-qualified digest calls before retrying any failed invitation.
+8. Perform the separately supervised legacy personal recovery through the
    observer/create-only path without any direct protected-table read grant.
-8. Perform the remaining controlled canonical backfill, then deploy the
+9. Perform the remaining controlled canonical backfill, then deploy the
    application positive-resolver cutover. Require authoritative readiness to
    be true.
-9. A later PR adds the renumbered behavior-cutover migration and its
+10. A later PR adds the renumbered behavior-cutover migration and its
    acceptance/contract. Deploy, back up, and apply it manually. Never publish
    the behavior cutover before the
    intervening isolation, backfill, and application gates pass.

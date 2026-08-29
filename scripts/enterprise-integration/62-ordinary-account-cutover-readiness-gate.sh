@@ -321,13 +321,56 @@ run_psql --command \
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] accepting exact hosted platform function default ACL tuples'
+extensions_pgcrypto_fixture_identity="$(
+  run_psql --tuples-only --no-align --command "
+    select pg_catalog.concat_ws(
+      '|',
+      schema_metadata.oid::text,
+      schema_metadata.nspowner::text,
+      extension_metadata.oid::text,
+      extension_metadata.extnamespace::text,
+      pg_catalog.to_regprocedure('extensions.digest(bytea,text)')::oid::text,
+      pg_catalog.to_regprocedure('extensions.digest(text,text)')::oid::text,
+      exists (
+        select 1
+          from pg_catalog.pg_default_acl as default_acl
+          cross join lateral pg_catalog.aclexplode(default_acl.defaclacl)
+            as acl(grantor, grantee, privilege_type, is_grantable)
+          join pg_catalog.pg_roles as grantor_role
+            on grantor_role.oid = acl.grantor
+          join pg_catalog.pg_roles as grantee_role
+            on grantee_role.oid = acl.grantee
+         where default_acl.defaclrole = schema_metadata.nspowner
+           and default_acl.defaclnamespace = schema_metadata.oid
+           and default_acl.defaclobjtype = 'f'
+           and grantor_role.rolname = 'supabase_admin'
+           and grantee_role.rolname = 'postgres'
+           and acl.privilege_type = 'EXECUTE'
+           and acl.is_grantable
+      )
+    )
+      from pg_catalog.pg_namespace as schema_metadata
+      join pg_catalog.pg_roles as owner_role
+        on owner_role.oid = schema_metadata.nspowner
+       and owner_role.rolname = 'supabase_admin'
+      join pg_catalog.pg_extension as extension_metadata
+        on extension_metadata.extname = 'pgcrypto'
+       and extension_metadata.extnamespace = schema_metadata.oid
+     where schema_metadata.nspname = 'extensions';
+  "
+)"
+if [[ ! "${extensions_pgcrypto_fixture_identity}" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|(t|f)$ ]]; then
+  echo 'ordinary_readiness_extensions_pgcrypto_fixture_invalid' >&2
+  exit 1
+fi
+extensions_default_acl_was_present="${extensions_pgcrypto_fixture_identity##*|}"
+
 run_psql <<'SQL'
 create role dashboard_user nologin noinherit;
 create role redteam_platform_default_acl_extra nologin noinherit;
 create schema realtime authorization supabase_admin;
 create schema graphql_public authorization supabase_admin;
 create schema graphql authorization supabase_admin;
-create schema extensions authorization supabase_admin;
 create schema supabase_functions authorization postgres;
 
 alter default privileges for role supabase_admin in schema realtime
@@ -336,13 +379,15 @@ alter default privileges for role supabase_admin in schema graphql_public
   grant execute on functions to postgres, anon, authenticated, service_role;
 alter default privileges for role supabase_admin in schema graphql
   grant execute on functions to postgres, anon, authenticated, service_role;
-alter default privileges for role supabase_admin in schema extensions
-  grant execute on functions to postgres with grant option;
 alter default privileges for role postgres in schema storage
   grant execute on functions to postgres, anon, authenticated, service_role;
 alter default privileges for role postgres in schema supabase_functions
   grant execute on functions to postgres, anon, authenticated, service_role;
 SQL
+if [[ "${extensions_default_acl_was_present}" == f ]]; then
+  run_psql --command \
+    "alter default privileges for role supabase_admin in schema extensions grant execute on functions to postgres with grant option;"
+fi
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] blocking PUBLIC added to an exact platform tuple'
@@ -394,6 +439,10 @@ run_psql --command \
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] removing hosted platform default ACL fixtures'
+if [[ "${extensions_default_acl_was_present}" == f ]]; then
+  run_psql --command \
+    "alter default privileges for role supabase_admin in schema extensions revoke execute on functions from postgres;"
+fi
 run_psql <<'SQL'
 alter default privileges for role supabase_admin in schema realtime
   revoke execute on functions from postgres, dashboard_user;
@@ -401,8 +450,6 @@ alter default privileges for role supabase_admin in schema graphql_public
   revoke execute on functions from postgres, anon, authenticated, service_role;
 alter default privileges for role supabase_admin in schema graphql
   revoke execute on functions from postgres, anon, authenticated, service_role;
-alter default privileges for role supabase_admin in schema extensions
-  revoke execute on functions from postgres;
 alter default privileges for role postgres in schema storage
   revoke execute on functions from postgres, anon, authenticated, service_role;
 alter default privileges for role postgres in schema supabase_functions
@@ -410,11 +457,52 @@ alter default privileges for role postgres in schema supabase_functions
 drop schema realtime;
 drop schema graphql_public;
 drop schema graphql;
-drop schema extensions;
 drop schema supabase_functions;
 drop role redteam_platform_default_acl_extra;
 drop role dashboard_user;
 SQL
+extensions_pgcrypto_fixture_identity_after="$(
+  run_psql --tuples-only --no-align --command "
+    select pg_catalog.concat_ws(
+      '|',
+      schema_metadata.oid::text,
+      schema_metadata.nspowner::text,
+      extension_metadata.oid::text,
+      extension_metadata.extnamespace::text,
+      pg_catalog.to_regprocedure('extensions.digest(bytea,text)')::oid::text,
+      pg_catalog.to_regprocedure('extensions.digest(text,text)')::oid::text,
+      exists (
+        select 1
+          from pg_catalog.pg_default_acl as default_acl
+          cross join lateral pg_catalog.aclexplode(default_acl.defaclacl)
+            as acl(grantor, grantee, privilege_type, is_grantable)
+          join pg_catalog.pg_roles as grantor_role
+            on grantor_role.oid = acl.grantor
+          join pg_catalog.pg_roles as grantee_role
+            on grantee_role.oid = acl.grantee
+         where default_acl.defaclrole = schema_metadata.nspowner
+           and default_acl.defaclnamespace = schema_metadata.oid
+           and default_acl.defaclobjtype = 'f'
+           and grantor_role.rolname = 'supabase_admin'
+           and grantee_role.rolname = 'postgres'
+           and acl.privilege_type = 'EXECUTE'
+           and acl.is_grantable
+      )
+    )
+      from pg_catalog.pg_namespace as schema_metadata
+      join pg_catalog.pg_roles as owner_role
+        on owner_role.oid = schema_metadata.nspowner
+       and owner_role.rolname = 'supabase_admin'
+      join pg_catalog.pg_extension as extension_metadata
+        on extension_metadata.extname = 'pgcrypto'
+       and extension_metadata.extnamespace = schema_metadata.oid
+     where schema_metadata.nspname = 'extensions';
+  "
+)"
+if [[ "${extensions_pgcrypto_fixture_identity_after}" != "${extensions_pgcrypto_fixture_identity}" ]]; then
+  echo 'ordinary_readiness_extensions_pgcrypto_fixture_damaged' >&2
+  exit 1
+fi
 assert_ordinary_readiness_ready
 
 echo '[enterprise-integration] blocking a +1 merchant baseline drift and restoring -1'

@@ -850,6 +850,34 @@ test("the production probe is one read-only transaction with the exact runtime h
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190035/);
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190039/);
   assert.match(ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL, /202608190040/);
+  assert.equal(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.match(/202608300042/g)?.length,
+    2,
+  );
+  assert.equal(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.match(
+      /merchant_enterprise_pgcrypto_schema_repair/g,
+    )?.length,
+    2,
+  );
+  assert.equal(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.match(
+      /36c3010e94db4ba1618a4c636faa4577/g,
+    )?.length,
+    2,
+  );
+  assert.equal(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.match(
+      /8257998a8a5121e8d4076ff0cc66a883/g,
+    )?.length,
+    2,
+  );
+  assert.equal(
+    ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL.match(
+      /WHEN EXISTS \(\s+SELECT 1\s+FROM public\.faolla_schema_migrations AS pgcrypto_repair_registry\s+WHERE pgcrypto_repair_registry\.version = 202608300042\s+AND pgcrypto_repair_registry\.name =\s+'merchant_enterprise_pgcrypto_schema_repair'\s+\) THEN '36c3010e94db4ba1618a4c636faa4577'\s+ELSE '8257998a8a5121e8d4076ff0cc66a883'\s+END/g,
+    )?.length,
+    2,
+  );
   assert.match(
     ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
     /current_user = 'supabase_admin'/,
@@ -1291,6 +1319,32 @@ test("the PostgreSQL integration runner executes the fixed production readiness 
     /ordinary_readiness_personal_safe_restore_hash_invalid/,
   );
   assert.match(driftMatrix, /6c6a7472c2d303e319253578fc2a745a/);
+  assert.match(
+    driftMatrix,
+    /ordinary_readiness_extensions_pgcrypto_fixture_invalid/,
+  );
+  assert.match(
+    driftMatrix,
+    /ordinary_readiness_extensions_pgcrypto_fixture_damaged/,
+  );
+  assert.match(
+    driftMatrix,
+    /to_regprocedure\('extensions\.digest\(bytea,text\)'\)[\s\S]*to_regprocedure\('extensions\.digest\(text,text\)'\)/,
+  );
+  assert.equal(
+    (
+      driftMatrix.match(
+        /if \[\[ "\$\{extensions_default_acl_was_present\}" == f \]\]; then/g,
+      ) ?? []
+    ).length,
+    2,
+  );
+  assert.match(
+    driftMatrix,
+    /extensions_pgcrypto_fixture_identity_after[\s\S]*!= "\$\{extensions_pgcrypto_fixture_identity\}"/,
+  );
+  assert.doesNotMatch(driftMatrix, /create schema extensions/i);
+  assert.doesNotMatch(driftMatrix, /drop schema extensions/i);
 });
 
 test("argument parser exposes only JSON and fail-on-blocked controls", () => {

@@ -30,6 +30,20 @@ const RUNTIME_RPC_HARDENING_MIGRATION_URL = new URL(
   "./supabase-migrations/202608190039_runtime_rpc_execute_acl_hardening.sql",
   import.meta.url,
 );
+const FAIL_OUTBOX_RUNTIME_SOURCE_MD5 =
+  "8257998a8a5121e8d4076ff0cc66a883";
+const FAIL_OUTBOX_PGCRYPTO_REPAIRED_SOURCE_MD5 =
+  "36c3010e94db4ba1618a4c636faa4577";
+const FAIL_OUTBOX_RUNTIME_SOURCE_MD5_SQL = String.raw`CASE
+          WHEN EXISTS (
+            SELECT 1
+              FROM public.faolla_schema_migrations AS pgcrypto_repair_registry
+             WHERE pgcrypto_repair_registry.version = 202608300042
+               AND pgcrypto_repair_registry.name =
+                 'merchant_enterprise_pgcrypto_schema_repair'
+          ) THEN '${FAIL_OUTBOX_PGCRYPTO_REPAIRED_SOURCE_MD5}'
+          ELSE '${FAIL_OUTBOX_RUNTIME_SOURCE_MD5}'
+        END`;
 
 function extractDollarQuotedDoBlock(source, label) {
   const delimiter = `$${label}$`;
@@ -55,7 +69,7 @@ function loadRuntimeRpcHardeningReadOnlyBlocks() {
   if (sourceHash !== RUNTIME_RPC_HARDENING_MIGRATION_SHA256) {
     throw new Error("ordinary_account_readiness_runtime_source_invalid");
   }
-  return Object.fromEntries(
+  const blocks = Object.fromEntries(
     [
       "migrator_preflight",
       "catalog_quiescence_postlock",
@@ -66,6 +80,25 @@ function loadRuntimeRpcHardeningReadOnlyBlocks() {
       "registry_postcondition",
     ].map((label) => [label, extractDollarQuotedDoBlock(source, label)]),
   );
+
+  const sourceNeedle = `'${FAIL_OUTBOX_RUNTIME_SOURCE_MD5}'`;
+  for (const label of ["preflight", "definition_postcondition"]) {
+    const block = blocks[label];
+    if (
+      block.indexOf(sourceNeedle) < 0 ||
+      block.indexOf(sourceNeedle, block.indexOf(sourceNeedle) + 1) >= 0
+    ) {
+      throw new Error(
+        `ordinary_account_readiness_pgcrypto_repair_source_invalid:${label}`,
+      );
+    }
+    blocks[label] = block.replace(
+      sourceNeedle,
+      FAIL_OUTBOX_RUNTIME_SOURCE_MD5_SQL,
+    );
+  }
+
+  return blocks;
 }
 
 const RUNTIME_RPC_HARDENING_READ_ONLY_BLOCKS =
