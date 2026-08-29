@@ -17,6 +17,7 @@ import {
   POST as createColumn,
 } from "@/app/api/merchant-enterprise/columns/route";
 import {
+  classifyMerchantEnterpriseInvitationAuthError,
   createEmployeeInvitationCooldownResponse,
   createEmployeeInvitationResendResponse,
   getMerchantEnterpriseEmployeeMutationActor,
@@ -112,6 +113,48 @@ const ownerInvitationMutationActor = {
   actorType: "owner",
   actorId: "88888888-8888-4888-8888-888888888888",
 } as const;
+
+test("employee invitation Auth errors are reduced to a safe fixed allowlist", () => {
+  const cases: Array<[unknown, string]> = [
+    [
+      { code: "email_address_not_authorized", status: 403 },
+      "invitation_email_recipient_not_authorized",
+    ],
+    [
+      { code: "over_email_send_rate_limit", status: 429 },
+      "invitation_email_rate_limited",
+    ],
+    [
+      { code: "over_request_rate_limit", status: 429 },
+      "invitation_email_rate_limited",
+    ],
+    [
+      { code: "email_provider_disabled", status: 400 },
+      "invitation_email_provider_unconfigured",
+    ],
+    [
+      { code: "email_address_invalid", status: 422 },
+      "invitation_email_recipient_rejected",
+    ],
+    [
+      { code: "unexpected_failure", status: 500 },
+      "invitation_email_delivery_failed",
+    ],
+    [{ code: "future_unknown", status: 418 }, "invite_unavailable"],
+  ];
+
+  for (const [error, expected] of cases) {
+    assert.equal(classifyMerchantEnterpriseInvitationAuthError(error), expected);
+  }
+  assert.equal(
+    classifyMerchantEnterpriseInvitationAuthError({
+      code: "future_unknown",
+      status: 400,
+      message: "private provider detail that must never be returned",
+    }),
+    "invite_unavailable",
+  );
+});
 
 test("employee invitation resend enforces a 60-second cooldown without reserving", async () => {
   const nowMs = Date.parse("2026-07-31T10:00:00.000Z");

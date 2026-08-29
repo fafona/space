@@ -100,6 +100,27 @@ test("legacy staff creation writes the immutable email marker required by durabl
   );
 });
 
+test("legacy invitation delivery exposes only allowlisted Auth failure categories", () => {
+  const routeSource = read(employeeRoutePath);
+  const classifierStart = routeSource.indexOf(
+    "export function classifyMerchantEnterpriseInvitationAuthError(",
+  );
+  const classifierEnd = routeSource.indexOf("\n}\n", classifierStart);
+  assert.ok(classifierStart >= 0 && classifierEnd > classifierStart);
+  const classifierSource = routeSource.slice(classifierStart, classifierEnd + 3);
+  assert.match(classifierSource, /typeof candidate\?\.code === "string"/);
+  assert.match(classifierSource, /code === "unexpected_failure"/);
+  assert.doesNotMatch(classifierSource, /\.message|\.stack/);
+  assert.match(
+    routeSource,
+    /invite\.error[\s\S]{0,320}classifyMerchantEnterpriseInvitationAuthError\(invite\.error\)/,
+  );
+  assert.match(
+    routeSource,
+    /sendExistingStaffAccessEmail[\s\S]*classifyMerchantEnterpriseInvitationAuthError\(result\.error\)/,
+  );
+});
+
 test("durable invitation retries reach database idempotency before stale local checks", () => {
   const source = read(employeeRoutePath);
   const postStart = source.indexOf("export async function POST(request: Request)");
