@@ -528,6 +528,44 @@ function readApiErrorCode(payload: unknown) {
   );
 }
 
+const INVITATION_DELIVERY_ERROR_MESSAGES = {
+  invitation_email_recipient_not_authorized:
+    "当前邮件通道不允许向该收件地址发送，请检查正式 SMTP 配置后重试。",
+  invitation_email_rate_limited:
+    "邮件发送过于频繁，已被服务商限流，请稍后再试。",
+  invitation_email_provider_unconfigured:
+    "邮件服务尚未正确配置，请先完成 SMTP 配置后重试。",
+  invitation_email_recipient_rejected:
+    "邮件服务拒绝了该收件地址，请核对邮箱后重新邀请。",
+  invitation_email_delivery_failed:
+    "邮件通道未能完成发送，请检查发件域名验证、SMTP 配置或认证服务状态后重试。",
+  staff_identity_marker_failed:
+    "员工登录身份初始化失败，请稍后重试；请勿重复创建同一员工。",
+  staff_identity_cleanup_failed:
+    "员工登录身份初始化失败且需要管理员清理，请联系系统管理员处理。",
+  staff_identity_binding_failed:
+    "员工登录身份绑定失败，请稍后重试。",
+  invite_unavailable:
+    "邀请邮件暂未发出，请稍后重试；如持续失败，请检查邮件服务。",
+} as const;
+
+function readInvitationDeliveryError(payload: unknown) {
+  const invitation =
+    payload && typeof payload === "object"
+      ? (payload as { invitation?: unknown }).invitation
+      : null;
+  const code =
+    invitation && typeof invitation === "object"
+      ? (invitation as { error?: unknown }).error
+      : null;
+  return typeof code === "string" &&
+    Object.prototype.hasOwnProperty.call(INVITATION_DELIVERY_ERROR_MESSAGES, code)
+    ? INVITATION_DELIVERY_ERROR_MESSAGES[
+        code as keyof typeof INVITATION_DELIVERY_ERROR_MESSAGES
+      ]
+    : INVITATION_DELIVERY_ERROR_MESSAGES.invite_unavailable;
+}
+
 function readCurrentOperationsAuthorizationFingerprint(payload: unknown) {
   const value =
     payload && typeof payload === "object"
@@ -6216,6 +6254,7 @@ function MerchantEnterpriseManagerContent({
         invitationStatus === "already_queued" ||
         invitationStatus === "sending" ||
         payload.employee?.invitationDeliveryStatus === "sending";
+      const invitationFailure = readInvitationDeliveryError(payload);
       if (invitedEmployeeId) {
         setFailedInvitationEmployeeIds((current) => {
           const next = new Set(current);
@@ -6228,12 +6267,12 @@ function MerchantEnterpriseManagerContent({
       setEmployeeEmail("");
       setEmployeeRoleId("");
       setMessage({
-        kind: invitationSent ? "success" : "info",
+        kind: invitationSent ? "success" : invitationQueued ? "info" : "error",
         text: invitationSent
           ? "邀请邮件已发送，员工接受后即可进入企业工作台。"
           : invitationQueued
             ? "邀请邮件已加入发送队列，系统会自动发送并在失败时重试。"
-            : "员工记录已保存，但邀请邮件暂未发出，可稍后重试。",
+            : `员工记录已保存，但${invitationFailure}`,
       });
     }
   }
@@ -6277,6 +6316,7 @@ function MerchantEnterpriseManagerContent({
       invitationStatus === "already_queued" ||
       invitationStatus === "sending" ||
       payload.employee?.invitationDeliveryStatus === "sending";
+    const invitationFailure = readInvitationDeliveryError(payload);
     setFailedInvitationEmployeeIds((current) => {
       const next = new Set(current);
       if (invitationSent || invitationQueued) next.delete(employee.id);
@@ -6284,12 +6324,12 @@ function MerchantEnterpriseManagerContent({
       return next;
     });
     setMessage({
-      kind: invitationSent ? "success" : "info",
+      kind: invitationSent ? "success" : invitationQueued ? "info" : "error",
       text: invitationSent
         ? "邀请邮件已重新发送，员工接受后即可进入企业工作台。"
         : invitationQueued
           ? "邀请邮件已加入发送队列，系统会自动发送并在失败时重试。"
-          : "邀请邮件暂未发出，请稍后重试。",
+          : invitationFailure,
     });
   }
 

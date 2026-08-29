@@ -76,20 +76,61 @@ type InvitationAwareEmployee = MerchantEnterpriseEmployee & {
   invitationSentAt: string | null;
   invitationDeliveryStatus: "none" | "legacy" | "sending" | "sent" | "failed" | "revoked";
 };
+type InvitationDeliveryError =
+  | "employee_email_already_registered"
+  | "invitation_email_recipient_not_authorized"
+  | "invitation_email_rate_limited"
+  | "invitation_email_provider_unconfigured"
+  | "invitation_email_recipient_rejected"
+  | "invitation_email_delivery_failed"
+  | "invite_unavailable"
+  | "staff_identity_marker_failed"
+  | "staff_identity_cleanup_failed"
+  | "staff_identity_binding_failed";
 type InvitationResult =
   | { status: "sent" }
   | { status: "queued" }
   | {
       status: "failed";
-      error:
-        | "employee_email_already_registered"
-        | "invite_unavailable"
-        | "staff_identity_marker_failed"
-        | "staff_identity_cleanup_failed"
-        | "staff_identity_binding_failed";
+      error: InvitationDeliveryError;
     };
 
 const EMPLOYEE_INVITATION_RESEND_COOLDOWN_MS = 60_000;
+
+export function classifyMerchantEnterpriseInvitationAuthError(
+  error: unknown,
+): InvitationDeliveryError {
+  const candidate =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; status?: unknown })
+      : null;
+  const code = typeof candidate?.code === "string" ? candidate.code : "";
+  const status =
+    typeof candidate?.status === "number" && Number.isInteger(candidate.status)
+      ? candidate.status
+      : null;
+
+  if (code === "email_address_not_authorized") {
+    return "invitation_email_recipient_not_authorized";
+  }
+  if (
+    code === "over_email_send_rate_limit" ||
+    code === "over_request_rate_limit" ||
+    status === 429
+  ) {
+    return "invitation_email_rate_limited";
+  }
+  if (code === "email_provider_disabled") {
+    return "invitation_email_provider_unconfigured";
+  }
+  if (code === "email_address_invalid") {
+    return "invitation_email_recipient_rejected";
+  }
+  if (code === "unexpected_failure" || (status !== null && status >= 500)) {
+    return "invitation_email_delivery_failed";
+  }
+  return "invite_unavailable";
+}
 
 function text(value: unknown, max = 4096) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -519,14 +560,24 @@ async function sendExistingStaffAccessEmail(
     const result = await service.auth.resetPasswordForEmail(input.email, {
       redirectTo: input.redirectTo,
     });
-    return !result.error;
+    return result.error
+      ? ({
+          status: "failed",
+          error: classifyMerchantEnterpriseInvitationAuthError(result.error),
+        } as const)
+      : ({ status: "sent" } as const);
   }
   const result = await service.auth.resend({
     type: "signup",
     email: input.email,
     options: { emailRedirectTo: input.redirectTo },
   });
-  return !result.error;
+  return result.error
+    ? ({
+        status: "failed",
+        error: classifyMerchantEnterpriseInvitationAuthError(result.error),
+      } as const)
+    : ({ status: "sent" } as const);
 }
 
 async function bindEmployeeToStaffUser(
@@ -575,16 +626,14 @@ async function ensureEmployeeInvitation(
         invitation: { status: "failed", error: "staff_identity_marker_failed" },
       };
     }
-    const sent = await sendExistingStaffAccessEmail(service, {
+    const invitation = await sendExistingStaffAccessEmail(service, {
       email: employee.email,
       redirectTo: input.redirectTo,
       emailConfirmed: Boolean(user.email_confirmed_at),
     });
     return {
       employee,
-      invitation: sent
-        ? { status: "sent" }
-        : { status: "failed", error: "invite_unavailable" },
+      invitation,
     };
   }
 
@@ -599,7 +648,10 @@ async function ensureEmployeeInvitation(
     if (existing.lookupFailed || !existing.user) {
       return {
         employee,
-        invitation: { status: "failed", error: "invite_unavailable" },
+        invitation: {
+          status: "failed",
+          error: classifyMerchantEnterpriseInvitationAuthError(invite.error),
+        },
       };
     }
     if (!hasImmutableMerchantStaffPrincipal(existing.user)) {
@@ -658,15 +710,15 @@ async function ensureEmployeeInvitation(
   employee = boundEmployee;
 
   if (!invitationAlreadySent) {
-    const sent = await sendExistingStaffAccessEmail(service, {
+    const invitation = await sendExistingStaffAccessEmail(service, {
       email: employee.email,
       redirectTo: input.redirectTo,
       emailConfirmed: Boolean(authUser.email_confirmed_at),
     });
-    if (!sent) {
+    if (invitation.status === "failed") {
       return {
         employee,
-        invitation: { status: "failed", error: "invite_unavailable" },
+        invitation,
       };
     }
   }

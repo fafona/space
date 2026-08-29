@@ -1766,6 +1766,18 @@ test("desktop and mobile order details guard drafts, focus, navigation, and nati
 });
 
 test("pending employee invitations have a safe responsive management flow", () => {
+  assert.match(
+    source,
+    /const\s+INVITATION_DELIVERY_ERROR_MESSAGES\s*=\s*\{[\s\S]*invitation_email_delivery_failed:[\s\S]*invite_unavailable:/,
+  );
+  assert.match(
+    source,
+    /function\s+readInvitationDeliveryError\([\s\S]*hasOwnProperty\.call\(INVITATION_DELIVERY_ERROR_MESSAGES,\s*code\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /readInvitationDeliveryError\([\s\S]{0,800}\.(?:message|stack)/,
+  );
   const inviteEmployeeSource = sliceBetween(
     /async\s+function\s+inviteEmployee\b/,
     /async\s+function\s+sendEmployeeInvitation\b/,
@@ -1795,6 +1807,11 @@ test("pending employee invitations have a safe responsive management flow", () =
     inviteEmployeeSource,
     /invitationQueued[\s\S]{0,900}邀请邮件已加入发送队列，系统会自动发送并在失败时重试/,
   );
+  assert.match(inviteEmployeeSource, /readInvitationDeliveryError\(payload\)/);
+  assert.match(
+    inviteEmployeeSource,
+    /kind:\s*invitationSent\s*\?\s*"success"\s*:\s*invitationQueued\s*\?\s*"info"\s*:\s*"error"/,
+  );
 
   const sendInvitationSource = sliceBetween(
     /async\s+function\s+sendEmployeeInvitation\b/,
@@ -1817,6 +1834,11 @@ test("pending employee invitations have a safe responsive management flow", () =
   assert.match(
     sendInvitationSource,
     /if \(!payload\) return;[\s\S]{0,100}employeeInvitationDeliveryMutationRef\.current = null/,
+  );
+  assert.match(sendInvitationSource, /readInvitationDeliveryError\(payload\)/);
+  assert.match(
+    sendInvitationSource,
+    /kind:\s*invitationSent\s*\?\s*"success"\s*:\s*invitationQueued\s*\?\s*"info"\s*:\s*"error"/,
   );
   assert.match(source, /label:\s*"等待发送"[\s\S]{0,100}系统会自动发送，失败时自动重试/);
 
