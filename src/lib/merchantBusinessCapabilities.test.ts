@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   buildMerchantBusinessCapabilitiesMountKey,
   getMerchantEmployeeBusinessMenuIds,
+  getMerchantEmployeeWorkspaceRoots,
   parseMerchantBusinessCapabilitiesPayload,
+  resolveMerchantEmployeeWorkspaceRoot,
 } from "@/lib/merchantBusinessCapabilities";
 
 function payload(overrides: Record<string, unknown> = {}) {
@@ -34,6 +36,26 @@ test("capability parser accepts an exact dependency-complete employee payload", 
   assert.deepEqual(getMerchantEmployeeBusinessMenuIds(parsed.permissions), [
     "orders",
   ]);
+});
+
+test("capability parser accepts every valid workspace-root shape", () => {
+  for (const validPayload of [
+    payload({
+      collaborationPermissions: [],
+      permissions: ["orders.view"],
+    }),
+    payload({
+      collaborationPermissions: ["enterprise.view"],
+      permissions: [],
+    }),
+    payload({
+      collaborationPermissions: ["enterprise.view"],
+      permissions: ["orders.view"],
+    }),
+    payload({ collaborationPermissions: [], permissions: [] }),
+  ]) {
+    assert.ok(parseMerchantBusinessCapabilitiesPayload(validPayload));
+  }
 });
 
 test("capability parser rejects owner, unknown, duplicate, and dependency-broken payloads", () => {
@@ -74,6 +96,74 @@ test("menu derivation never invents unmentioned owner menus", () => {
     ]),
     ["redemptions", "bookings", "orders", "conversations", "members"],
   );
+});
+
+test("workspace roots expose only explicitly granted collaboration and business entries", () => {
+  assert.deepEqual(
+    getMerchantEmployeeWorkspaceRoots([], ["orders.view"]),
+    ["orders"],
+  );
+  assert.deepEqual(
+    getMerchantEmployeeWorkspaceRoots(["enterprise.view"], []),
+    ["collaboration"],
+  );
+  assert.deepEqual(
+    getMerchantEmployeeWorkspaceRoots(
+      ["enterprise.view"],
+      ["bookings.view", "members.view"],
+    ),
+    ["collaboration", "bookings", "members"],
+  );
+  assert.deepEqual(getMerchantEmployeeWorkspaceRoots([], []), []);
+});
+
+test("workspace root resolution never preserves a revoked or unavailable root", () => {
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot(
+      "collaboration",
+      [],
+      ["orders.view"],
+    ),
+    "orders",
+  );
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot(
+      "orders",
+      ["enterprise.view"],
+      ["members.view"],
+    ),
+    "collaboration",
+  );
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot("orders", [], ["members.view"]),
+    "members",
+  );
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot("orders", [], ["orders.view"]),
+    "orders",
+  );
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot(
+      "members",
+      ["enterprise.view"],
+      ["bookings.view", "members.view"],
+    ),
+    "members",
+  );
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot(null, ["enterprise.view"], []),
+    "collaboration",
+  );
+  assert.equal(
+    resolveMerchantEmployeeWorkspaceRoot(
+      null,
+      ["enterprise.view"],
+      ["orders.view"],
+    ),
+    "collaboration",
+  );
+  assert.equal(resolveMerchantEmployeeWorkspaceRoot("orders", [], []), null);
+  assert.equal(resolveMerchantEmployeeWorkspaceRoot(null, [], []), null);
 });
 
 test("booking capability payload requires exact-site normalized published options", () => {

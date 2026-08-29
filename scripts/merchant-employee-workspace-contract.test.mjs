@@ -16,6 +16,13 @@ const portal = await readFile(
   ),
   "utf8",
 );
+const employeeHarness = await readFile(
+  new URL(
+    "../src/app/test-harness/employee-workspace/page.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("employee portal mounts the dedicated workspace instead of the owner admin shell", () => {
   assert.match(portal, /MerchantEmployeeWorkspace/);
@@ -23,6 +30,17 @@ test("employee portal mounts the dedicated workspace instead of the owner admin 
   assert.doesNotMatch(workspace, /AdminClient/);
   assert.match(workspace, />\s*企业协作\s*</);
   assert.match(workspace, /MERCHANT_EMPLOYEE_BUSINESS_MENUS/);
+});
+
+test("employee workspace browser harness stays unavailable outside explicit local tests", () => {
+  assert.match(
+    employeeHarness,
+    /FAOLLA_ENTERPRISE_E2E_HARNESS[\s\S]{0,120}enabled-for-local-browser-tests[\s\S]{0,100}notFound\(\)/,
+  );
+  assert.match(
+    employeeHarness,
+    /robots:\s*\{\s*index:\s*false,\s*follow:\s*false\s*\}/,
+  );
 });
 
 test("business roots are lazy and receive one strict employee API boundary", () => {
@@ -60,9 +78,29 @@ test("capability lifecycle is no-store, fail-closed, refreshed and authorization
   assert.match(workspace, /addEventListener\("focus"/);
   assert.match(workspace, /addEventListener\("visibilitychange"/);
   assert.match(workspace, /response\.status === 401 \|\| response\.status === 403/);
-  assert.match(workspace, /staff_business_access_disabled/);
+  assert.match(
+    workspace,
+    /response\.status === 403 &&[\s\S]{0,120}staff_business_access_disabled/,
+  );
   assert.match(workspace, /closeBusinessWorkspace\("unavailable"/);
-  assert.match(workspace, /setActiveRoot\("collaboration"\)/);
+  assert.match(workspace, /resolveMerchantEmployeeWorkspaceRoot/);
+  assert.match(
+    workspace,
+    /collaborationPermissions\.includes\("enterprise\.view"\)/,
+  );
+  assert.match(
+    workspace,
+    /activeRoot === "collaboration" && collaborationAvailable/,
+  );
+  assert.match(
+    workspace,
+    /capabilityStatus === "disabled"[\s\S]+\? "collaboration"/,
+  );
+  assert.doesNotMatch(
+    workspace,
+    /capabilityStatus === "unavailable"[\s\S]{0,120}\? "collaboration"/,
+  );
+  assert.match(workspace, /当前角色没有可用功能/);
 });
 
 test("authorization fingerprint remounts every root and uploads stay inside gated leaf components", () => {
