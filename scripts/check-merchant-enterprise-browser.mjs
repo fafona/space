@@ -1439,11 +1439,208 @@ async function run() {
       "reopening a role did not preserve its unsaved permission draft",
     );
     await orderViewPermission.uncheck();
-    await pageA.locator(`button[aria-controls="role-editor-${employeeRoleId}-body"]`).click();
+    const employeeRoleDisclosure = pageA.locator(
+      `button[aria-controls="role-editor-${employeeRoleId}-body"]`,
+    );
+    await employeeRoleDisclosure.click();
+    const employeeRoleBody = pageA.locator(`#role-editor-${employeeRoleId}-body`);
     assert(
       await primaryRoleEditorBody.isHidden() &&
-        await pageA.locator(`#role-editor-${employeeRoleId}-body`).isVisible(),
+        await employeeRoleBody.isVisible(),
       "opening another role did not keep the role list to one expanded editor",
+    );
+
+    const employeePermissionNavigation = employeeRoleBody.getByRole("navigation", {
+      name: "权限主要板块",
+    });
+    const workbenchSelection = employeePermissionNavigation.getByRole("button", {
+      name: /^工作台，/,
+    });
+    const taskSelection = employeePermissionNavigation.getByRole("button", {
+      name: /^任务与看板，/,
+    });
+    const linkedOrderSelection = employeePermissionNavigation.getByRole("button", {
+      name: /^任务关联订单，/,
+    });
+    const collaborationSelectionSummary = employeePermissionNavigation.locator(
+      '[data-role-permission-section="collaboration"] [data-role-permission-section-count]',
+    );
+    const businessSelectionSummary = employeePermissionNavigation.locator(
+      '[data-role-permission-section="business"] [data-role-permission-section-count]',
+    );
+    const totalSelectionSummary = employeeRoleBody.locator('[data-role-permission-summary]');
+    assert(
+      await workbenchSelection.getAttribute("data-role-permission-selection") === "complete" &&
+        await taskSelection.getAttribute("data-role-permission-selection") === "partial" &&
+        await linkedOrderSelection.getAttribute("data-role-permission-selection") === "empty" &&
+        /已全选\s*1\s*\/\s*1/.test(await workbenchSelection.innerText()) &&
+        /已选\s*1\s*\/\s*6/.test(await taskSelection.innerText()) &&
+        /未选择\s*0\s*\/\s*1/.test(await linkedOrderSelection.innerText()),
+      "permission group navigation did not expose clear empty, partial, and complete selection states",
+    );
+    assert(
+      /已选\s*2\/18[\s\S]*2\/7\s*组/.test(await collaborationSelectionSummary.innerText()) &&
+        /已选\s*0\/39[\s\S]*0\/5\s*组/.test(await businessSelectionSummary.innerText()) &&
+        /已选权限\s*2\s*\/\s*57\s*项[\s\S]*已配置\s*2\s*\/\s*12\s*个功能组/.test(
+          await totalSelectionSummary.innerText(),
+        ),
+      "permission section or total selection summaries were not immediately readable",
+    );
+    const selectionCountStyles = await Promise.all(
+      [workbenchSelection, taskSelection, linkedOrderSelection].map((selection) =>
+        selection.locator("[data-role-permission-selection-count]").evaluate((element) => {
+          const style = getComputedStyle(element);
+          const colorCanvas = document.createElement("canvas");
+          colorCanvas.width = 1;
+          colorCanvas.height = 1;
+          const colorContext = colorCanvas.getContext("2d", { willReadFrequently: true });
+          const parseColor = (value) => {
+            colorContext.clearRect(0, 0, 1, 1);
+            colorContext.fillStyle = value;
+            colorContext.fillRect(0, 0, 1, 1);
+            const channels = colorContext.getImageData(0, 0, 1, 1).data;
+            return {
+              red: channels[0],
+              green: channels[1],
+              blue: channels[2],
+              alpha: channels[3] / 255,
+            };
+          };
+          const compositeOver = (foreground, background) => {
+            const alpha = foreground.alpha + background.alpha * (1 - foreground.alpha);
+            if (alpha === 0) {
+              return { red: 0, green: 0, blue: 0, alpha: 0 };
+            }
+            return {
+              red:
+                (foreground.red * foreground.alpha +
+                  background.red * background.alpha * (1 - foreground.alpha)) /
+                alpha,
+              green:
+                (foreground.green * foreground.alpha +
+                  background.green * background.alpha * (1 - foreground.alpha)) /
+                alpha,
+              blue:
+                (foreground.blue * foreground.alpha +
+                  background.blue * background.alpha * (1 - foreground.alpha)) /
+                alpha,
+              alpha,
+            };
+          };
+          const button = element.closest("button");
+          let renderedBackground = { red: 0, green: 0, blue: 0, alpha: 0 };
+          for (let ancestor = button; ancestor; ancestor = ancestor.parentElement) {
+            renderedBackground = compositeOver(
+              renderedBackground,
+              parseColor(getComputedStyle(ancestor).backgroundColor),
+            );
+            if (renderedBackground.alpha >= 0.999) break;
+          }
+          renderedBackground = compositeOver(renderedBackground, {
+            red: 255,
+            green: 255,
+            blue: 255,
+            alpha: 1,
+          });
+          const renderedForeground = compositeOver(parseColor(style.color), renderedBackground);
+          const relativeLuminance = ({ red, green, blue }) => {
+            const linearChannels = [red, green, blue].map((channel) => {
+              const normalized = channel / 255;
+              return normalized <= 0.04045
+                ? normalized / 12.92
+                : ((normalized + 0.055) / 1.055) ** 2.4;
+            });
+            return (
+              0.2126 * linearChannels[0] +
+              0.7152 * linearChannels[1] +
+              0.0722 * linearChannels[2]
+            );
+          };
+          const foregroundLuminance = relativeLuminance(renderedForeground);
+          const backgroundLuminance = relativeLuminance(renderedBackground);
+          const contrastRatio =
+            (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+            (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+          return {
+            fontSize: Number.parseFloat(style.fontSize),
+            fontWeight: Number.parseInt(style.fontWeight, 10),
+            color: style.color,
+            backgroundColor: getComputedStyle(button).backgroundColor,
+            contrastRatio,
+          };
+        }),
+      ),
+    );
+    assert(
+      selectionCountStyles.every(
+        (style) =>
+          style.fontSize >= 12 &&
+          style.fontWeight >= 600 &&
+          style.contrastRatio >= 4.5,
+      ) &&
+        new Set(selectionCountStyles.map((style) => `${style.color}|${style.backgroundColor}`)).size === 3,
+      `permission selection counts were not visually distinct, prominent, and WCAG-readable:${JSON.stringify(selectionCountStyles)}`,
+    );
+
+    let roleNavigationMutationCount = 0;
+    const countRoleNavigationMutations = (request) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname.startsWith("/api/merchant-enterprise/roles") &&
+        !["GET", "HEAD", "OPTIONS"].includes(request.method())
+      ) {
+        roleNavigationMutationCount += 1;
+      }
+    };
+    pageA.on("request", countRoleNavigationMutations);
+    await linkedOrderSelection.click();
+    assert(
+      await linkedOrderSelection.getAttribute("aria-pressed") === "true" &&
+        await linkedOrderSelection.getAttribute("data-role-permission-selection") === "empty" &&
+        await workbenchSelection.getAttribute("aria-pressed") === "false" &&
+        await workbenchSelection.getAttribute("data-role-permission-selection") === "complete",
+      "the current permission group was still visually or semantically confused with its selection state",
+    );
+    await taskSelection.focus();
+    await taskSelection.press("Enter");
+    assert(
+      await taskSelection.getAttribute("aria-pressed") === "true" &&
+        await taskSelection.getAttribute("data-role-permission-selection") === "partial" &&
+        (await taskSelection.getAttribute("aria-label"))?.includes("已选 1 项，共 6 项") === true,
+      "keyboard navigation did not preserve the partial selection state or announce its count",
+    );
+    const employeeTaskPermissionGroup = employeeRoleBody.locator(
+      '[data-role-permission-group="任务"]',
+    );
+    const taskCreatePermission = employeeTaskPermissionGroup.getByLabel("新建任务", {
+      exact: true,
+    });
+    await taskCreatePermission.check();
+    assert(
+      /已选\s*2\s*\/\s*6/.test(await taskSelection.innerText()) &&
+        /已选\s*3\/18/.test(await collaborationSelectionSummary.innerText()) &&
+        /已选权限\s*3\s*\/\s*57\s*项/.test(await totalSelectionSummary.innerText()),
+      "permission counts did not update from the local permission draft",
+    );
+    await employeeRoleDisclosure.click();
+    assert(
+      await employeeRoleBody.isHidden() &&
+        (await employeeRoleDisclosure.innerText()).includes("有未保存修改"),
+      "collapsing the employee role did not retain its dirty permission-count draft",
+    );
+    await employeeRoleDisclosure.click();
+    assert(
+      await taskCreatePermission.isChecked() &&
+        /已选\s*2\s*\/\s*6/.test(await taskSelection.innerText()) &&
+        /已选权限\s*3\s*\/\s*57\s*项/.test(await totalSelectionSummary.innerText()),
+      "reopening the employee role lost its permission counts or local selection draft",
+    );
+    await taskCreatePermission.uncheck();
+    assert(
+      roleNavigationMutationCount === 0 &&
+        /已选\s*1\s*\/\s*6/.test(await taskSelection.innerText()) &&
+        /已选权限\s*2\s*\/\s*57\s*项/.test(await totalSelectionSummary.innerText()),
+      "permission navigation caused a role mutation or failed to restore the original counts",
     );
 
     await pageA.getByRole("button", { name: "任务看板", exact: true }).click();
@@ -2996,6 +3193,87 @@ async function run() {
       "mobile permission description did not close on its second tap",
     );
 
+    const mobileEmployeeRoleBody = mobilePage.locator(`#role-editor-${employeeRoleId}-body`);
+    await mobilePage
+      .locator(`button[aria-controls="role-editor-${employeeRoleId}-body"]`)
+      .click();
+    await mobileEmployeeRoleBody.waitFor();
+    const mobileEmployeePermissionNavigation = mobileEmployeeRoleBody.getByRole("navigation", {
+      name: "权限主要板块",
+    });
+    const mobileWorkbenchSelection = mobileEmployeePermissionNavigation.getByRole("button", {
+      name: /^工作台，/,
+    });
+    const mobileTaskSelection = mobileEmployeePermissionNavigation.getByRole("button", {
+      name: /^任务与看板，/,
+    });
+    const mobileLinkedOrderSelection = mobileEmployeePermissionNavigation.getByRole("button", {
+      name: /^任务关联订单，/,
+    });
+    assert(
+      await mobileWorkbenchSelection.getAttribute("data-role-permission-selection") === "complete" &&
+        await mobileTaskSelection.getAttribute("data-role-permission-selection") === "partial" &&
+        await mobileLinkedOrderSelection.getAttribute("data-role-permission-selection") === "empty",
+      "mobile role navigation did not expose complete, partial, and empty selection states",
+    );
+    await mobileLinkedOrderSelection.click();
+    const mobileSelectionLayout = await Promise.all(
+      [mobileWorkbenchSelection, mobileTaskSelection, mobileLinkedOrderSelection].map(
+        (selection) =>
+          selection.evaluate((element) => {
+            const count = element.querySelector("[data-role-permission-selection-count]");
+            const buttonBounds = element.getBoundingClientRect();
+            const countBounds = count?.getBoundingClientRect();
+            return {
+              buttonClientWidth: element.clientWidth,
+              buttonScrollWidth: element.scrollWidth,
+              buttonLeft: buttonBounds.left,
+              buttonRight: buttonBounds.right,
+              countClientWidth: count?.clientWidth ?? 0,
+              countScrollWidth: count?.scrollWidth ?? 0,
+              countLeft: countBounds?.left ?? -1,
+              countRight: countBounds?.right ?? -1,
+              countFontSize: count ? Number.parseFloat(getComputedStyle(count).fontSize) : 0,
+              countFontWeight: count ? Number.parseInt(getComputedStyle(count).fontWeight, 10) : 0,
+            };
+          }),
+      ),
+    );
+    const mobileSelectionViewport = await mobilePage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    assert(
+      await mobileLinkedOrderSelection.getAttribute("aria-pressed") === "true" &&
+        await mobileLinkedOrderSelection.getAttribute("data-role-permission-selection") === "empty" &&
+        mobileSelectionViewport.scrollWidth <= mobileSelectionViewport.innerWidth + 1 &&
+        mobileSelectionLayout.every(
+          (item) =>
+            item.buttonScrollWidth <= item.buttonClientWidth + 1 &&
+            item.countScrollWidth <= item.countClientWidth + 1 &&
+            item.buttonLeft >= -1 &&
+            item.buttonRight <= mobileSelectionViewport.innerWidth + 1 &&
+            item.countLeft >= item.buttonLeft - 1 &&
+            item.countRight <= item.buttonRight + 1 &&
+            item.countFontSize >= 12 &&
+            item.countFontWeight >= 600,
+        ),
+      `mobile permission selection counts overflowed or were not prominent:${JSON.stringify({ mobileSelectionViewport, mobileSelectionLayout })}`,
+    );
+    if (screenshotDirectory) {
+      await mobilePage.screenshot({
+        path: path.join(screenshotDirectory, "role-permissions-mobile-selection-states.png"),
+        fullPage: true,
+      });
+    }
+
+    await pageA.waitForTimeout(100);
+    assert(
+      roleNavigationMutationCount === 0,
+      `permission navigation or local draft changes caused a delayed role mutation:${roleNavigationMutationCount}`,
+    );
+    pageA.off("request", countRoleNavigationMutations);
+
     await Promise.all([
       ownerContextA.close(),
       ownerContextB.close(),
@@ -3010,6 +3288,7 @@ async function run() {
         checks: [
           "desktop_owner_task_creation",
           "desktop_compact_role_permissions_and_draft_retention",
+          "desktop_permission_selection_counts_and_state_separation",
           "desktop_role_permission_hover_keyboard_help",
           "two_context_foreground_refresh",
           "draft_safe_refresh_pause_and_resume",
@@ -3041,6 +3320,7 @@ async function run() {
           "task_editor_unsaved_close_guard",
           "mobile_task_and_workflow_horizontal_layout",
           "mobile_role_permission_help_and_horizontal_layout",
+          "mobile_permission_selection_counts_without_overflow",
           "mobile_workflow_archive_pager_and_second_page",
         ],
       }) + "\n",

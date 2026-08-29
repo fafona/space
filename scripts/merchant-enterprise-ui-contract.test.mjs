@@ -2450,11 +2450,39 @@ test("role permission editor exposes compact primary sections and accessible on-
   );
 
   assert.match(source, /const\s+ROLE_PERMISSION_SECTIONS[\s\S]{0,700}label:\s*["']企业协作["'][\s\S]{0,700}label:\s*["']业务菜单["']/);
+  assert.match(
+    source,
+    /function\s+getRolePermissionSelectionState\([\s\S]{0,350}selectedCount\s*===\s*0\)[\s\S]{0,80}["']empty["'][\s\S]{0,180}selectedCount\s*===\s*totalCount\)[\s\S]{0,80}["']complete["'][\s\S]{0,100}["']partial["']/,
+  );
+  assert.match(
+    source,
+    /ROLE_PERMISSION_SELECTION_LABELS[\s\S]{0,300}empty:\s*["']未选择["'][\s\S]{0,120}partial:\s*["']已选["'][\s\S]{0,120}complete:\s*["']已全选["']/,
+  );
   assert.match(permissionEditor, /useState<RolePermissionGroup>/);
   assert.match(permissionEditor, /aria-label=["']权限主要板块["']/);
   assert.match(permissionEditor, /aria-pressed=\{isActive\}/);
   assert.match(permissionEditor, /data-role-permission-group=\{group\}/);
-  assert.match(permissionEditor, /已选\s*\{selectedCount\}\/\{groupPermissions\.length\}/);
+  assert.match(permissionEditor, /data-role-permission-summary[\s\S]{0,160}role=["']status["'][\s\S]{0,120}aria-live=["']polite["']/);
+  assert.match(
+    permissionEditor,
+    /已选权限[\s\S]{0,180}\{permissions\.length\}[\s\S]{0,180}MERCHANT_ENTERPRISE_PERMISSION_CATALOG\.length[\s\S]{0,260}已配置[\s\S]{0,180}\{configuredGroupCount\}/,
+  );
+  assert.match(permissionEditor, /data-role-permission-section=\{section\.key\}/);
+  assert.match(permissionEditor, /data-role-permission-section-count/);
+  assert.match(
+    permissionEditor,
+    /sectionSelectedCount[\s\S]{0,500}sectionConfiguredGroupCount[\s\S]{0,1000}已选[\s\S]{0,140}\{sectionSelectedCount\}[\s\S]{0,120}\{sectionPermissionCount\}/,
+  );
+  assert.match(permissionEditor, /data-role-permission-selection=\{selectionState\}/);
+  assert.match(permissionEditor, /data-role-permission-selection-count/);
+  assert.match(permissionEditor, /data-role-permission-progress/);
+  assert.match(
+    permissionEditor,
+    /aria-label=\{`\$\{ROLE_PERMISSION_GROUP_LABELS\[group\]\}，\$\{selectionLabel\} \$\{selectedCount\} 项，共 \$\{entry\.permissions\.length\} 项\$\{isActive \? ["']，当前查看["'] : ["']["']\}`\}/,
+  );
+  assert.match(permissionEditor, /selectionState\s*===\s*["']complete["'][\s\S]{0,500}selectionState\s*===\s*["']partial["']/);
+  assert.match(permissionEditor, /isActive\s*\?\s*["']ring-2 ring-slate-900 ring-offset-1["']/);
+  assert.match(permissionEditor, /data-role-permission-group-summary=\{selectionState\}/);
   assert.match(permissionEditor, /disabled=\{!editable\s*\|\|\s*!canGrant\}/);
   assert.match(permissionEditor, /toggleMerchantEnterprisePermissionSelection\(/);
   assert.match(permissionEditor, /高风险/);
