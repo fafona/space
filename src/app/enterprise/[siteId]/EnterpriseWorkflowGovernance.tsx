@@ -728,7 +728,7 @@ export function WorkflowPermissionGapCard({
   if (actorType !== "owner") return null;
 
   return (
-    <section className="rounded-3xl border border-cyan-200 bg-cyan-50/70 p-5 shadow-sm" data-workflow-permission-gaps>
+    <section className="rounded-3xl border border-cyan-200 bg-cyan-50/70 p-4 shadow-sm sm:p-5" data-workflow-permission-gaps>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">旧角色流程权限检查</h2>
@@ -752,11 +752,11 @@ export function WorkflowPermissionGapCard({
         </div>
       ) : null}
 
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {gaps.map((gap) => {
           const selected = selection[gap.roleId] ?? [];
           return (
-            <article key={gap.roleId} className="rounded-2xl border border-cyan-200 bg-white p-4">
+            <article key={gap.roleId} className="rounded-2xl border border-cyan-200 bg-white p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-semibold text-slate-950">{gap.name}</h3>

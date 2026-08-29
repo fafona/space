@@ -2953,6 +2953,40 @@ const ROLE_PERMISSION_GROUP_ORDER = [
   "会员管理",
 ] as const;
 
+type RolePermissionGroup = (typeof ROLE_PERMISSION_GROUP_ORDER)[number];
+
+const ROLE_PERMISSION_GROUP_LABELS: Record<RolePermissionGroup, string> = {
+  工作台: "工作台",
+  任务: "任务与看板",
+  订单: "任务关联订单",
+  员工: "员工账号",
+  角色: "角色权限",
+  流程: "工作流程",
+  审计: "审计记录",
+  积分兑换: "积分兑换",
+  预约管理: "预约管理",
+  订单管理: "订单管理",
+  会话: "会话",
+  会员管理: "会员管理",
+};
+
+const ROLE_PERMISSION_SECTIONS: ReadonlyArray<{
+  key: "collaboration" | "business";
+  label: string;
+  groups: readonly RolePermissionGroup[];
+}> = [
+  {
+    key: "collaboration",
+    label: "企业协作",
+    groups: ["工作台", "任务", "订单", "员工", "角色", "流程", "审计"],
+  },
+  {
+    key: "business",
+    label: "业务菜单",
+    groups: ["积分兑换", "预约管理", "订单管理", "会话", "会员管理"],
+  },
+];
+
 function RolePermissionEditor({
   idPrefix,
   permissions,
@@ -2968,12 +3002,22 @@ function RolePermissionEditor({
 }) {
   const selected = new Set(permissions);
   const grantable = new Set(grantablePermissions);
+  const [activeGroup, setActiveGroup] = useState<RolePermissionGroup>(
+    ROLE_PERMISSION_GROUP_ORDER[0],
+  );
+  const [openDescriptionKey, setOpenDescriptionKey] =
+    useState<MerchantEnterprisePermission | null>(null);
+  const [pinnedDescriptionKey, setPinnedDescriptionKey] =
+    useState<MerchantEnterprisePermission | null>(null);
   const groups = ROLE_PERMISSION_GROUP_ORDER.map((group) => ({
     group,
     permissions: MERCHANT_ENTERPRISE_PERMISSION_CATALOG.filter(
       (permission) => permission.group === group,
     ),
   })).filter((group) => group.permissions.length > 0);
+  const activeGroupEntry = groups.find((entry) => entry.group === activeGroup) ?? groups[0];
+
+  if (!activeGroupEntry) return null;
 
   function toggleGroup(
     groupPermissions: typeof MERCHANT_ENTERPRISE_PERMISSION_CATALOG,
@@ -2992,99 +3036,234 @@ function RolePermissionEditor({
   }
 
   return (
-    <div className="mt-4 space-y-4">
-      {groups.map(({ group, permissions: groupPermissions }) => {
-        const isBusinessGroup = groupPermissions.some((permission) =>
-          isMerchantStaffBusinessPermission(permission.key),
-        );
-        const grantableGroupPermissions = groupPermissions.filter((permission) =>
-          grantable.has(permission.key),
-        );
-        const allSelected =
-          grantableGroupPermissions.length > 0 &&
-          grantableGroupPermissions.every((permission) =>
-            selected.has(permission.key),
+    <section className="mt-4" aria-label="功能权限">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">功能权限</h3>
+          <p className="mt-0.5 text-xs leading-5 text-slate-500">
+            先选择主要板块；悬停、聚焦或点击信息按钮可查看权限说明。
+          </p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+          已选 {permissions.length} 项
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(250px,0.8fr)_minmax(0,1.7fr)]">
+        <nav
+          className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3"
+          aria-label="权限主要板块"
+        >
+          {ROLE_PERMISSION_SECTIONS.map((section, sectionIndex) => (
+            <div key={section.key} className={sectionIndex > 0 ? "mt-4" : ""}>
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-xs font-semibold text-slate-700">{section.label}</span>
+                <span className="h-px flex-1 bg-slate-200" aria-hidden="true" />
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                {section.groups.map((group) => {
+                  const entry = groups.find((item) => item.group === group);
+                  if (!entry) return null;
+                  const selectedCount = entry.permissions.filter((permission) =>
+                    selected.has(permission.key),
+                  ).length;
+                  const isActive = activeGroupEntry.group === group;
+                  return (
+                    <button
+                      key={`${idPrefix}-group-${group}`}
+                      type="button"
+                      className={`min-h-11 rounded-xl border px-2.5 py-2 text-left transition ${
+                        isActive
+                          ? section.key === "business"
+                            ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                            : "border-slate-900 bg-slate-900 text-white shadow-sm"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                      }`}
+                      aria-pressed={isActive}
+                      onClick={() => {
+                        setActiveGroup(group);
+                        setOpenDescriptionKey(null);
+                        setPinnedDescriptionKey(null);
+                      }}
+                    >
+                      <span className="block truncate text-xs font-semibold">
+                        {ROLE_PERMISSION_GROUP_LABELS[group]}
+                      </span>
+                      <span
+                        className={`mt-0.5 block text-[10px] ${
+                          isActive ? "text-white/75" : "text-slate-400"
+                        }`}
+                      >
+                        {selectedCount}/{entry.permissions.length} 项
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        {(() => {
+          const group = activeGroupEntry.group;
+          const groupPermissions = activeGroupEntry.permissions;
+          const isBusinessGroup = groupPermissions.some((permission) =>
+            isMerchantStaffBusinessPermission(permission.key),
           );
-        return (
-          <fieldset
-            key={`${idPrefix}-${group}`}
-            className={`rounded-2xl border p-3 ${
-              isBusinessGroup
-                ? "border-blue-100 bg-blue-50/35"
-                : "border-slate-200 bg-white"
-            }`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <legend className="px-1 text-sm font-semibold text-slate-900">
-                {group}
-                {isBusinessGroup ? (
-                  <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
-                    业务菜单
+          const grantableGroupPermissions = groupPermissions.filter((permission) =>
+            grantable.has(permission.key),
+          );
+          const selectedCount = groupPermissions.filter((permission) =>
+            selected.has(permission.key),
+          ).length;
+          const allSelected =
+            grantableGroupPermissions.length > 0 &&
+            grantableGroupPermissions.every((permission) => selected.has(permission.key));
+
+          return (
+            <fieldset
+              className={`min-w-0 rounded-2xl border p-3 ${
+                isBusinessGroup
+                  ? "border-blue-100 bg-blue-50/35"
+                  : "border-slate-200 bg-white"
+              }`}
+              data-role-permission-group={group}
+            >
+              <legend className="sr-only">{ROLE_PERMISSION_GROUP_LABELS[group]}</legend>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-semibold text-slate-900">
+                    {ROLE_PERMISSION_GROUP_LABELS[group]}
+                  </h4>
+                  {isBusinessGroup ? (
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                      业务菜单
+                    </span>
+                  ) : null}
+                  <span className="text-[11px] text-slate-500">
+                    已选 {selectedCount}/{groupPermissions.length}
                   </span>
-                ) : null}
-              </legend>
-              {grantableGroupPermissions.length > 1 ? (
+                </div>
                 <button
                   type="button"
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 disabled:opacity-45"
-                  disabled={!editable}
+                  className="min-h-9 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 disabled:opacity-45"
+                  disabled={!editable || grantableGroupPermissions.length === 0}
                   onClick={() => toggleGroup(groupPermissions, !allSelected)}
                 >
-                  {allSelected ? "清空本组" : "选择本组"}
+                  {allSelected ? "清空板块" : "全选板块"}
                 </button>
-              ) : null}
-            </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {groupPermissions.map((permission) => {
-                const checked = selected.has(permission.key);
-                const canGrant = grantable.has(permission.key);
-                return (
-                  <label
-                    key={`${idPrefix}-${permission.key}`}
-                    className={`flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 ${
-                      editable && canGrant ? "bg-white" : "bg-slate-50 opacity-65"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={checked}
-                      disabled={!editable || !canGrant}
-                      onChange={(event) =>
-                        onChange(
-                          toggleMerchantEnterprisePermissionSelection(
-                            permissions,
-                            permission.key,
-                            event.target.checked,
-                          ),
-                        )
-                      }
-                    />
-                    <span className="min-w-0">
-                      <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-slate-800">
+              </div>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
+                {groupPermissions.map((permission) => {
+                  const checked = selected.has(permission.key);
+                  const canGrant = grantable.has(permission.key);
+                  const inputId = `${idPrefix}-${permission.key}`;
+                  const descriptionId = `${inputId}-description`;
+                  const descriptionOpen = openDescriptionKey === permission.key;
+                  return (
+                    <div
+                      key={inputId}
+                      className={`relative flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 ${
+                        editable && canGrant
+                          ? checked
+                            ? "border-blue-200 bg-white"
+                            : "border-slate-200 bg-white"
+                          : "border-slate-200 bg-slate-50 text-slate-500"
+                      }`}
+                      onPointerEnter={(event) => {
+                        if (event.pointerType === "touch" || pinnedDescriptionKey) return;
+                        setOpenDescriptionKey(permission.key);
+                      }}
+                      onPointerLeave={() => {
+                        if (pinnedDescriptionKey === permission.key) return;
+                        setOpenDescriptionKey((current) =>
+                          current === permission.key ? null : current,
+                        );
+                      }}
+                    >
+                      <input
+                        id={inputId}
+                        type="checkbox"
+                        className="shrink-0"
+                        checked={checked}
+                        disabled={!editable || !canGrant}
+                        aria-describedby={descriptionId}
+                        onChange={(event) =>
+                          onChange(
+                            toggleMerchantEnterprisePermissionSelection(
+                              permissions,
+                              permission.key,
+                              event.target.checked,
+                            ),
+                          )
+                        }
+                      />
+                      <label
+                        htmlFor={inputId}
+                        className={`min-w-0 flex-1 text-xs font-medium leading-5 ${
+                          editable && canGrant ? "cursor-pointer text-slate-800" : "text-slate-500"
+                        }`}
+                      >
                         {permission.label}
-                        {permission.risk === "high" ? (
-                          <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold text-rose-700">
-                            高风险
-                          </span>
-                        ) : permission.risk === "sensitive" ? (
-                          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">
-                            敏感
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">
+                      </label>
+                      {permission.risk === "high" ? (
+                        <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold text-rose-700">
+                          高风险
+                        </span>
+                      ) : permission.risk === "sensitive" ? (
+                        <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">
+                          敏感
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="flex size-6 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[11px] font-bold text-slate-500 hover:border-slate-300 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        aria-label={`查看“${permission.label}”权限说明`}
+                        aria-expanded={descriptionOpen}
+                        aria-controls={descriptionId}
+                        aria-describedby={descriptionId}
+                        onClick={(event) => {
+                          const willClose = pinnedDescriptionKey === permission.key;
+                          setPinnedDescriptionKey(willClose ? null : permission.key);
+                          setOpenDescriptionKey(willClose ? null : permission.key);
+                          if (willClose) event.currentTarget.blur();
+                        }}
+                        onFocus={() => setOpenDescriptionKey(permission.key)}
+                        onBlur={() => {
+                          setPinnedDescriptionKey((current) =>
+                            current === permission.key ? null : current,
+                          );
+                          setOpenDescriptionKey((current) =>
+                            current === permission.key ? null : current,
+                          );
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Escape") return;
+                          setOpenDescriptionKey(null);
+                          event.currentTarget.blur();
+                        }}
+                      >
+                        i
+                      </button>
+                      <span
+                        id={descriptionId}
+                        role="tooltip"
+                        className={`pointer-events-none absolute left-2 right-2 top-[calc(100%+0.4rem)] z-30 w-auto rounded-xl bg-slate-950 px-3 py-2 text-[11px] font-normal leading-5 text-white shadow-xl transition-opacity sm:left-auto sm:right-2 sm:w-72 sm:max-w-[calc(100vw-3rem)] ${
+                          descriptionOpen ? "opacity-100" : "opacity-0"
+                        }`}
+                      >
                         {permission.description}
                       </span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
-        );
-      })}
-    </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          );
+        })()}
+      </div>
+    </section>
   );
 }
 
@@ -3096,6 +3275,8 @@ function RoleEditor({
   unavailableReason,
   grantablePermissions,
   canGrantAllBoards,
+  expanded,
+  onExpandedChange,
   onSave,
   onStatusChange,
   onDirtyChange,
@@ -3107,6 +3288,8 @@ function RoleEditor({
   unavailableReason?: string;
   grantablePermissions: readonly MerchantEnterprisePermission[];
   canGrantAllBoards: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   onSave: (
     role: MerchantEnterpriseRole,
     input: {
@@ -3131,6 +3314,14 @@ function RoleEditor({
     !haveSameStringValues(permissions, role.permissions) ||
     accessScope !== role.accessScope ||
     !haveSameStringValues(allowedBoardIds, role.allowedBoardIds);
+  const configuredGroupCount = new Set(
+    MERCHANT_ENTERPRISE_PERMISSION_CATALOG.filter((permission) =>
+      permissions.includes(permission.key),
+    ).map((permission) => permission.group),
+  ).size;
+  const boardAccessSummary =
+    accessScope === "all" ? "全部看板" : `${allowedBoardIds.length} 个指定看板`;
+  const editorBodyId = `role-editor-${role.id}-body`;
 
   useEffect(() => {
     setName(role.name);
@@ -3152,95 +3343,127 @@ function RoleEditor({
   );
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
-          {role.isSystem ? (
-            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">系统角色</span>
-          ) : null}
-          {role.status === "archived" ? (
-            <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">已归档</span>
-          ) : null}
+    <article className="overflow-visible rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <button
+        type="button"
+        className="flex min-h-20 w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 sm:px-5"
+        aria-expanded={expanded}
+        aria-controls={editorBodyId}
+        onClick={() => onExpandedChange(!expanded)}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-base font-semibold text-slate-950">{name || "未命名角色"}</span>
+            {role.isSystem ? (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                系统角色
+              </span>
+            ) : null}
+            {role.status === "archived" ? (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                已归档
+              </span>
+            ) : null}
+            {roleEditorIsDirty ? (
+              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                有未保存修改
+              </span>
+            ) : null}
+          </span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-5 text-slate-500">
+            <span>{permissions.length} 项权限 · {configuredGroupCount} 个功能组</span>
+            <span>{boardAccessSummary}</span>
+            {!editable && unavailableReason ? <span>{unavailableReason}</span> : null}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-600">
+          {expanded ? "收起" : editable ? "展开编辑" : "展开查看"}
+          <span
+            className={`text-lg leading-none transition-transform ${expanded ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          >
+            ⌄
+          </span>
+        </span>
+      </button>
+
+      <div id={editorBodyId} hidden={!expanded} className="border-t border-slate-200 px-4 pb-5 pt-4 sm:px-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-xs font-medium text-slate-600">
+            角色名称
+            <input
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              value={name}
+              maxLength={80}
+              disabled={!editable}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            角色说明
+            <input
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              value={description}
+              maxLength={1000}
+              disabled={!editable}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </label>
         </div>
-        {!editable && unavailableReason ? (
-          <span className="text-right text-xs leading-5 text-slate-500">{unavailableReason}</span>
-        ) : null}
-      </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="block text-xs font-medium text-slate-600">
-          角色名称
-          <input
-            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
-            value={name}
-            maxLength={80}
-            disabled={!editable}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label className="block text-xs font-medium text-slate-600">
-          角色说明
-          <input
-            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
-            value={description}
-            maxLength={1000}
-            disabled={!editable}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-      </div>
-      <RoleBoardAccessEditor
-        idPrefix={`role-${role.id}`}
-        accessScope={accessScope}
-        allowedBoardIds={allowedBoardIds}
-        boards={boards}
-        editable={editable}
-        canGrantAllBoards={canGrantAllBoards}
-        onChange={(value) => {
-          setAccessScope(value.accessScope);
-          setAllowedBoardIds(value.allowedBoardIds);
-        }}
-      />
-      <RolePermissionEditor
-        idPrefix={`role-${role.id}`}
-        permissions={permissions}
-        grantablePermissions={grantablePermissions}
-        editable={editable}
-        onChange={setPermissions}
-      />
-      {editable ? (
-        <div className="mt-4 flex flex-wrap justify-between gap-3">
-          {!role.isSystem ? (
+        <RoleBoardAccessEditor
+          idPrefix={`role-${role.id}`}
+          accessScope={accessScope}
+          allowedBoardIds={allowedBoardIds}
+          boards={boards}
+          editable={editable}
+          canGrantAllBoards={canGrantAllBoards}
+          onChange={(value) => {
+            setAccessScope(value.accessScope);
+            setAllowedBoardIds(value.allowedBoardIds);
+          }}
+        />
+        <RolePermissionEditor
+          idPrefix={`role-${role.id}`}
+          permissions={permissions}
+          grantablePermissions={grantablePermissions}
+          editable={editable}
+          onChange={setPermissions}
+        />
+        {editable ? (
+          <div className="mt-4 flex flex-wrap justify-between gap-3">
+            {!role.isSystem ? (
+              <button
+                type="button"
+                className={`min-h-11 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-45 ${
+                  role.status === "archived"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+                disabled={busy}
+                onClick={() => void onStatusChange(role, role.status === "archived" ? "active" : "archived")}
+              >
+                {role.status === "archived" ? "恢复角色" : "归档角色"}
+              </button>
+            ) : <span />}
             <button
               type="button"
-              className={`rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-45 ${
-                role.status === "archived"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                  : "border-rose-200 bg-rose-50 text-rose-700"
-              }`}
-              disabled={busy}
-              onClick={() => void onStatusChange(role, role.status === "archived" ? "active" : "archived")}
+              className="min-h-11 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+              disabled={busy || !name.trim()}
+              onClick={() =>
+                void onSave(role, {
+                  name,
+                  description,
+                  permissions,
+                  accessScope,
+                  allowedBoardIds: accessScope === "all" ? [] : allowedBoardIds,
+                })
+              }
             >
-              {role.status === "archived" ? "恢复角色" : "归档角色"}
+              保存角色
             </button>
-          ) : <span />}
-          <button
-            type="button"
-            className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-            disabled={busy || !name.trim()}
-            onClick={() =>
-              void onSave(role, {
-                name,
-                description,
-                permissions,
-                accessScope,
-                allowedBoardIds: accessScope === "all" ? [] : allowedBoardIds,
-              })
-            }
-          >
-            保存角色
-          </button>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+      </div>
     </article>
   );
 }
@@ -3970,6 +4193,8 @@ function MerchantEnterpriseManagerContent({
   const [roleAccessScope, setRoleAccessScope] = useState<RoleBoardAccessValue["accessScope"]>("all");
   const [roleAllowedBoardIds, setRoleAllowedBoardIds] = useState<string[]>([]);
   const [dirtyRoleIds, setDirtyRoleIds] = useState<Set<string>>(() => new Set());
+  const [newRoleEditorOpen, setNewRoleEditorOpen] = useState(false);
+  const [expandedRoleId, setExpandedRoleId] = useState("");
   const [workflowHasDraft, setWorkflowHasDraft] = useState(false);
   const [automationHasDraft, setAutomationHasDraft] = useState(false);
   const [workflowFocusRequest, setWorkflowFocusRequest] = useState<{
@@ -7612,84 +7837,137 @@ function MerchantEnterpriseManagerContent({
               />
             ) : null}
             {can(actor, "roles.manage") ? (
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-950">新建角色</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  业务菜单权限默认关闭且仅企业负责人可授予；勾选管理权限时会自动补齐所需的查看权限。
-                </p>
-                <div className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto]">
-                  <label className="block text-xs font-medium text-slate-600">
-                    角色名称
-                    <input
-                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                      value={roleName}
-                      maxLength={80}
-                      onChange={(event) => setRoleName(event.target.value)}
-                    />
-                  </label>
-                  <label className="block text-xs font-medium text-slate-600">
-                    角色说明
-                    <input
-                      className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                      value={roleDescription}
-                      maxLength={1000}
-                      onChange={(event) => setRoleDescription(event.target.value)}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="self-end rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
-                    disabled={busy || !roleName.trim()}
-                    onClick={() => void createRole()}
-                  >
-                    创建角色
-                  </button>
+              <section className="overflow-visible rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <button
+                  type="button"
+                  className="flex min-h-24 w-full items-center justify-between gap-3 rounded-3xl px-5 py-4 text-left hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                  aria-expanded={newRoleEditorOpen}
+                  aria-controls="new-role-editor-body"
+                  onClick={() => setNewRoleEditorOpen((current) => !current)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-lg font-semibold text-slate-950">新建角色</span>
+                      {roleComposerHasDraft ? (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          有未保存草稿
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">
+                      已选 {rolePermissions.length} 项权限 · 可从企业协作与业务菜单中精细配置
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-600">
+                    {newRoleEditorOpen ? "收起" : "展开创建"}
+                    <span
+                      className={`text-lg leading-none transition-transform ${newRoleEditorOpen ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    >
+                      ⌄
+                    </span>
+                  </span>
+                </button>
+
+                <div
+                  id="new-role-editor-body"
+                  hidden={!newRoleEditorOpen}
+                  className="border-t border-slate-200 px-5 pb-5 pt-4"
+                >
+                  <p className="text-sm text-slate-500">
+                    业务菜单权限默认关闭且仅企业负责人可授予；勾选管理权限时会自动补齐所需的查看权限。
+                  </p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto]">
+                    <label className="block text-xs font-medium text-slate-600">
+                      角色名称
+                      <input
+                        className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        value={roleName}
+                        maxLength={80}
+                        onChange={(event) => setRoleName(event.target.value)}
+                      />
+                    </label>
+                    <label className="block text-xs font-medium text-slate-600">
+                      角色说明
+                      <input
+                        className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        value={roleDescription}
+                        maxLength={1000}
+                        onChange={(event) => setRoleDescription(event.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="min-h-11 self-end rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-45"
+                      disabled={busy || !roleName.trim()}
+                      onClick={() => void createRole()}
+                    >
+                      创建角色
+                    </button>
+                  </div>
+                  <RoleBoardAccessEditor
+                    idPrefix="new-role"
+                    accessScope={roleAccessScope}
+                    allowedBoardIds={roleAllowedBoardIds}
+                    boards={snapshot.boards}
+                    editable={!busy}
+                    canGrantAllBoards={canGrantAllBoards}
+                    onChange={(value) => {
+                      setRoleAccessScope(value.accessScope);
+                      setRoleAllowedBoardIds(value.allowedBoardIds);
+                    }}
+                  />
+                  <RolePermissionEditor
+                    idPrefix="new-role"
+                    permissions={rolePermissions}
+                    grantablePermissions={grantablePermissions}
+                    editable={!busy}
+                    onChange={setRolePermissions}
+                  />
                 </div>
-                <RoleBoardAccessEditor
-                  idPrefix="new-role"
-                  accessScope={roleAccessScope}
-                  allowedBoardIds={roleAllowedBoardIds}
-                  boards={snapshot.boards}
-                  editable={!busy}
-                  canGrantAllBoards={canGrantAllBoards}
-                  onChange={(value) => {
-                    setRoleAccessScope(value.accessScope);
-                    setRoleAllowedBoardIds(value.allowedBoardIds);
-                  }}
-                />
-                <RolePermissionEditor
-                  idPrefix="new-role"
-                  permissions={rolePermissions}
-                  grantablePermissions={grantablePermissions}
-                  editable={!busy}
-                  onChange={setRolePermissions}
-                />
               </section>
             ) : null}
-            <section className="grid gap-4 lg:grid-cols-2">
-              {snapshot.roles.map((role) => {
-                const availability = roleEditAvailability(role);
-                return (
-                  <RoleEditor
-                    key={role.id}
-                    role={role}
-                    boards={snapshot.boards}
-                    busy={busy}
-                    editable={availability.editable}
-                    unavailableReason={availability.reason}
-                    grantablePermissions={grantablePermissions}
-                    canGrantAllBoards={canGrantAllBoards}
-                    onSave={saveRole}
-                    onStatusChange={updateRoleStatus}
-                    onDirtyChange={handleRoleEditorDirtyChange}
-                  />
-                );
-              })}
-              {snapshot.roles.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center text-sm text-slate-500 lg:col-span-2">
-                  还没有角色，请先初始化企业工作区。
+            <section className="rounded-3xl border border-slate-200 bg-white/70 p-4 shadow-sm sm:p-5" aria-labelledby="existing-roles-heading">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h2 id="existing-roles-heading" className="text-lg font-semibold text-slate-950">
+                    现有角色
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    先查看角色摘要，再展开需要配置的角色；同一时间只展开一个角色。
+                  </p>
                 </div>
-              ) : null}
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+                  {snapshot.roles.length} 个角色
+                </span>
+              </div>
+              <div className="mt-4 space-y-3">
+                {snapshot.roles.map((role) => {
+                  const availability = roleEditAvailability(role);
+                  return (
+                    <RoleEditor
+                      key={role.id}
+                      role={role}
+                      boards={snapshot.boards}
+                      busy={busy}
+                      editable={availability.editable}
+                      unavailableReason={availability.reason}
+                      grantablePermissions={grantablePermissions}
+                      canGrantAllBoards={canGrantAllBoards}
+                      expanded={expandedRoleId === role.id}
+                      onExpandedChange={(expanded) => setExpandedRoleId(expanded ? role.id : "")}
+                      onSave={saveRole}
+                      onStatusChange={updateRoleStatus}
+                      onDirtyChange={handleRoleEditorDirtyChange}
+                    />
+                  );
+                })}
+                {snapshot.roles.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center text-sm text-slate-500">
+                    还没有角色，请先初始化企业工作区。
+                  </div>
+                ) : null}
+              </div>
             </section>
           </div>
         ) : null}
