@@ -529,6 +529,8 @@ function readApiErrorCode(payload: unknown) {
 }
 
 const INVITATION_DELIVERY_ERROR_MESSAGES = {
+  employee_email_already_registered:
+    "该邮箱已注册为其他 Faolla 身份，请使用独立的员工邮箱。",
   invitation_email_recipient_not_authorized:
     "当前邮件通道不允许向该收件地址发送，请检查正式 SMTP 配置后重试。",
   invitation_email_rate_limited:
