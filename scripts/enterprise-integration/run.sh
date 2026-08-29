@@ -251,6 +251,7 @@ recovery_observer_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations
 rpc_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190039_runtime_rpc_execute_acl_hardening.sql"
 merchant_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql"
 staff_business_permissions_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608280041_merchant_staff_business_permissions.sql"
+pgcrypto_schema_repair_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608300042_merchant_enterprise_pgcrypto_schema_repair.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
 expected_registry_count=39
@@ -258,6 +259,8 @@ isolation_present=0
 recovery_observer_present=0
 rpc_acl_hardening_present=0
 merchant_acl_hardening_present=0
+staff_business_permissions_present=0
+pgcrypto_schema_repair_present=0
 cutover_present=0
 if [[ -f "${isolation_migration_path}" ]]; then
   expected_enterprise_migration_count=32
@@ -298,6 +301,16 @@ if [[ -f "${staff_business_permissions_migration_path}" ]]; then
   fi
   expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
   expected_registry_count=44
+  staff_business_permissions_present=1
+fi
+if [[ -f "${pgcrypto_schema_repair_migration_path}" ]]; then
+  if [[ "${staff_business_permissions_present}" -ne 1 ]]; then
+    echo 'Pgcrypto schema repair 042 requires the exact 041 staff business permission migration' >&2
+    exit 1
+  fi
+  expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
+  expected_registry_count=45
+  pgcrypto_schema_repair_present=1
 fi
 if [[ -f "${cutover_migration_path}" ]]; then
   if [[ "${isolation_present}" -eq 1 ]]; then
@@ -310,7 +323,7 @@ if [[ -f "${cutover_migration_path}" ]]; then
 fi
 
 if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
-  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-041), found ${#enterprise_migrations[@]}" >&2
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-042), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -1447,6 +1460,89 @@ for migration in "${enterprise_migrations[@]}"; do
     run_sql_file_as_role \
       "${SCRIPT_DIR}/63-staff-business-permissions.sql" supabase_admin
   elif [[ "$(basename -- "${migration}")" == \
+    "202608300042_merchant_enterprise_pgcrypto_schema_repair.sql" ]]; then
+    echo '[enterprise-integration] mirroring the hosted extensions-only pgcrypto layout'
+    run_psql <<'SQL'
+set role supabase_admin;
+create schema if not exists extensions authorization supabase_admin;
+alter extension pgcrypto set schema extensions;
+grant usage on schema extensions to anon, authenticated, service_role;
+
+alter function public.faolla_begin_merchant_employee_invitation_exchange_v1(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_bind_merchant_employee_invitation_identity_v2(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_complete_merchant_employee_invitation_delivery_v1(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_create_merchant_enterprise_employee_invitation_v2(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_lookup_merchant_enterprise_staff_identity_v1(text)
+  owner to supabase_admin;
+alter function public.faolla_mark_merchant_employee_invitation_exchange_issued_v1(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_prepare_merchant_employee_invitation_delivery_v1(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_recheck_merchant_employee_invitation_exchange_v1(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_schedule_merchant_employee_invitation_delivery_v2(jsonb)
+  owner to supabase_admin;
+alter function public.faolla_sync_merchant_enterprise_staff_identity_v1()
+  owner to supabase_admin;
+
+revoke all on function
+  public.faolla_begin_merchant_employee_invitation_exchange_v1(jsonb),
+  public.faolla_bind_merchant_employee_invitation_identity_v2(jsonb),
+  public.faolla_complete_merchant_employee_invitation_delivery_v1(jsonb),
+  public.faolla_create_merchant_enterprise_employee_invitation_v2(jsonb),
+  public.faolla_lookup_merchant_enterprise_staff_identity_v1(text),
+  public.faolla_mark_merchant_employee_invitation_exchange_issued_v1(jsonb),
+  public.faolla_prepare_merchant_employee_invitation_delivery_v1(jsonb),
+  public.faolla_recheck_merchant_employee_invitation_exchange_v1(jsonb),
+  public.faolla_schedule_merchant_employee_invitation_delivery_v2(jsonb)
+from public, postgres, anon, authenticated, service_role;
+grant execute on function
+  public.faolla_begin_merchant_employee_invitation_exchange_v1(jsonb),
+  public.faolla_bind_merchant_employee_invitation_identity_v2(jsonb),
+  public.faolla_complete_merchant_employee_invitation_delivery_v1(jsonb),
+  public.faolla_create_merchant_enterprise_employee_invitation_v2(jsonb),
+  public.faolla_lookup_merchant_enterprise_staff_identity_v1(text),
+  public.faolla_mark_merchant_employee_invitation_exchange_issued_v1(jsonb),
+  public.faolla_prepare_merchant_employee_invitation_delivery_v1(jsonb),
+  public.faolla_recheck_merchant_employee_invitation_exchange_v1(jsonb),
+  public.faolla_schedule_merchant_employee_invitation_delivery_v2(jsonb)
+to postgres, service_role;
+
+revoke all on function
+  public.faolla_sync_merchant_enterprise_staff_identity_v1()
+from public, postgres, anon, authenticated, service_role;
+grant execute on function
+  public.faolla_sync_merchant_enterprise_staff_identity_v1()
+to postgres;
+reset role;
+SQL
+
+    echo '[enterprise-integration] rejecting an untrusted 042 migration actor atomically'
+    expect_sql_file_error_as_role "${migration}" service_role \
+      'merchant_enterprise_pgcrypto_schema_repair_untrusted_migrator'
+
+    run_sql_file_as_role "${migration}" supabase_admin
+    run_sql_file "${SCRIPT_DIR}/64-pgcrypto-schema-repair.sql"
+
+    pgcrypto_repair_replay_before="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.md5(pg_catalog.string_agg(function_metadata.oid::text || ':' || pg_catalog.md5(pg_catalog.replace(function_metadata.prosrc, E'\\r\\n', E'\\n')) || ':' || function_metadata.proowner::text || ':' || function_metadata.proacl::text || ':' || function_metadata.proconfig::text, '|' order by function_metadata.proname)) || ':' || migration.applied_at::text from pg_catalog.pg_proc as function_metadata cross join public.faolla_schema_migrations as migration where function_metadata.oid = any(array['public.faolla_begin_merchant_employee_invitation_exchange_v1(jsonb)'::regprocedure::oid, 'public.faolla_bind_merchant_employee_invitation_identity_v2(jsonb)'::regprocedure::oid, 'public.faolla_complete_merchant_employee_invitation_delivery_v1(jsonb)'::regprocedure::oid, 'public.faolla_create_merchant_enterprise_employee_invitation_v2(jsonb)'::regprocedure::oid, 'public.faolla_fail_merchant_outbox_v1(uuid,text,text,text,boolean,integer)'::regprocedure::oid, 'public.faolla_lookup_merchant_enterprise_staff_identity_v1(text)'::regprocedure::oid, 'public.faolla_mark_merchant_employee_invitation_exchange_issued_v1(jsonb)'::regprocedure::oid, 'public.faolla_prepare_merchant_employee_invitation_delivery_v1(jsonb)'::regprocedure::oid, 'public.faolla_recheck_merchant_employee_invitation_exchange_v1(jsonb)'::regprocedure::oid, 'public.faolla_schedule_merchant_employee_invitation_delivery_v2(jsonb)'::regprocedure::oid, 'public.faolla_sync_merchant_enterprise_staff_identity_v1()'::regprocedure::oid]) and migration.version = 202608300042 and migration.name = 'merchant_enterprise_pgcrypto_schema_repair' group by migration.applied_at;"
+    )"
+    run_sql_file_as_role "${migration}" supabase_admin
+    pgcrypto_repair_replay_after="$(
+      run_psql --tuples-only --no-align --command \
+        "select pg_catalog.md5(pg_catalog.string_agg(function_metadata.oid::text || ':' || pg_catalog.md5(pg_catalog.replace(function_metadata.prosrc, E'\\r\\n', E'\\n')) || ':' || function_metadata.proowner::text || ':' || function_metadata.proacl::text || ':' || function_metadata.proconfig::text, '|' order by function_metadata.proname)) || ':' || migration.applied_at::text from pg_catalog.pg_proc as function_metadata cross join public.faolla_schema_migrations as migration where function_metadata.oid = any(array['public.faolla_begin_merchant_employee_invitation_exchange_v1(jsonb)'::regprocedure::oid, 'public.faolla_bind_merchant_employee_invitation_identity_v2(jsonb)'::regprocedure::oid, 'public.faolla_complete_merchant_employee_invitation_delivery_v1(jsonb)'::regprocedure::oid, 'public.faolla_create_merchant_enterprise_employee_invitation_v2(jsonb)'::regprocedure::oid, 'public.faolla_fail_merchant_outbox_v1(uuid,text,text,text,boolean,integer)'::regprocedure::oid, 'public.faolla_lookup_merchant_enterprise_staff_identity_v1(text)'::regprocedure::oid, 'public.faolla_mark_merchant_employee_invitation_exchange_issued_v1(jsonb)'::regprocedure::oid, 'public.faolla_prepare_merchant_employee_invitation_delivery_v1(jsonb)'::regprocedure::oid, 'public.faolla_recheck_merchant_employee_invitation_exchange_v1(jsonb)'::regprocedure::oid, 'public.faolla_schedule_merchant_employee_invitation_delivery_v2(jsonb)'::regprocedure::oid, 'public.faolla_sync_merchant_enterprise_staff_identity_v1()'::regprocedure::oid]) and migration.version = 202608300042 and migration.name = 'merchant_enterprise_pgcrypto_schema_repair' group by migration.applied_at;"
+    )"
+    if [[ -z "${pgcrypto_repair_replay_before}" || \
+      "${pgcrypto_repair_replay_after}" != "${pgcrypto_repair_replay_before}" ]]; then
+      echo '042 registered replay changed a function fingerprint or registry state' >&2
+      exit 1
+    fi
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -1592,7 +1688,7 @@ fi
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040, 202608280041) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040, 202608280041, 202608300042) or version between 202607310001 and 202608040026;"
 )"
 if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
   echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2

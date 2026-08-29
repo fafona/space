@@ -101,7 +101,15 @@ begin
           'faolla_complete_merchant_outbox_v1', 'ef0b107dd380ca3911d81458a6d65ddc',
           'plpgsql', 'boolean', 3, true, 'v', 'u', array['search_path=public']::text[], 'service_only'),
         ('public.faolla_fail_merchant_outbox_v1(uuid,text,text,text,boolean,integer)',
-          'faolla_fail_merchant_outbox_v1', '8257998a8a5121e8d4076ff0cc66a883',
+          'faolla_fail_merchant_outbox_v1', case
+            when exists (
+              select 1
+                from public.faolla_schema_migrations
+               where version = 202608300042
+                 and name = 'merchant_enterprise_pgcrypto_schema_repair'
+            ) then '36c3010e94db4ba1618a4c636faa4577'
+            else '8257998a8a5121e8d4076ff0cc66a883'
+          end,
           'plpgsql', 'jsonb', 6, true, 'v', 'u', array['search_path=public']::text[], 'service_only'),
         ('public.faolla_replay_merchant_outbox_v1(uuid,text,text)',
           'faolla_replay_merchant_outbox_v1', 'c22704e4f5509abad6af841cef776f4c',
