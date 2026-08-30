@@ -110,6 +110,187 @@ test("activation removes prior-generation page caches even under an unchanged le
   assert.equal(activeCacheNames.has("unrelated-runtime-cache"), false);
 });
 
+test("online login and application assets survive unavailable CacheStorage", async () => {
+  const source = readFileSync(new URL("../../public/faolla-sw.js", import.meta.url), "utf8");
+  const origin = "https://launch.faolla.com";
+  type WorkerListener = (event: {
+    request?: WorkerRequest;
+    preloadResponse?: Promise<Response | undefined>;
+    waitUntil?: (task: Promise<unknown>) => void;
+    respondWith?: (task: Promise<Response>) => void;
+  }) => void;
+  class WorkerRequest {
+    readonly url: string;
+    readonly method: string;
+    readonly mode: string;
+    readonly destination: string;
+    readonly cache: string;
+    readonly headers: Headers;
+
+    constructor(
+      input: string | WorkerRequest,
+      init: {
+        method?: string;
+        mode?: string;
+        destination?: string;
+        cache?: string;
+      } = {},
+    ) {
+      const sourceRequest = typeof input === "string" ? null : input;
+      this.url = new URL(typeof input === "string" ? input : input.url, origin).toString();
+      this.method = init.method ?? sourceRequest?.method ?? "GET";
+      this.mode = init.mode ?? sourceRequest?.mode ?? "cors";
+      this.destination = init.destination ?? sourceRequest?.destination ?? "";
+      this.cache = init.cache ?? sourceRequest?.cache ?? "default";
+      this.headers = sourceRequest?.headers ?? new Headers();
+    }
+  }
+
+  const listeners = new Map<string, WorkerListener[]>();
+  let skipWaitingCalls = 0;
+  let claimCalls = 0;
+  const requestedUrls: string[] = [];
+  const selfMock = {
+    location: {
+      href: `${origin}/faolla-sw.js?build=cache-storage-recovery`,
+      hostname: "launch.faolla.com",
+      origin,
+    },
+    navigator: {},
+    registration: {
+      navigationPreload: {
+        enable: async () => undefined,
+      },
+    },
+    clients: {
+      claim: async () => {
+        claimCalls += 1;
+      },
+    },
+    skipWaiting: async () => {
+      skipWaitingCalls += 1;
+    },
+    addEventListener: (type: string, listener: WorkerListener) => {
+      const current = listeners.get(type) ?? [];
+      current.push(listener);
+      listeners.set(type, current);
+    },
+  };
+  const cacheStorageError = new Error("CacheStorage quota unavailable");
+  let cacheStorageOpens = false;
+  let cacheStorageMatches = true;
+  const cachesMock = {
+    open: async () => {
+      if (!cacheStorageOpens) throw cacheStorageError;
+      return {
+        match: async () => {
+          if (!cacheStorageMatches) throw cacheStorageError;
+          return null;
+        },
+        put: async () => {
+          throw cacheStorageError;
+        },
+      };
+    },
+    keys: async () => {
+      throw cacheStorageError;
+    },
+    match: async () => {
+      throw cacheStorageError;
+    },
+    delete: async () => {
+      throw cacheStorageError;
+    },
+  };
+  const context = createContext({
+    self: selfMock,
+    caches: cachesMock,
+    URL,
+    Request: WorkerRequest,
+    Response,
+    fetch: async (request: WorkerRequest) => {
+      requestedUrls.push(request.url);
+      return new Response("online", { status: 200 });
+    },
+  });
+  new Script(source, { filename: "faolla-sw.js" }).runInContext(context);
+
+  const installListener = listeners.get("install")?.[0];
+  assert.ok(installListener, "service worker must register an install listener");
+  let installTask: Promise<unknown> | null = null;
+  installListener({
+    waitUntil(task) {
+      installTask = Promise.resolve(task);
+    },
+  });
+  assert.ok(installTask, "install listener must bind work to waitUntil");
+  await installTask;
+  assert.equal(skipWaitingCalls, 1);
+
+  const activateListener = listeners.get("activate")?.[0];
+  assert.ok(activateListener, "service worker must register an activate listener");
+  let activateTask: Promise<unknown> | null = null;
+  activateListener({
+    waitUntil(task) {
+      activateTask = Promise.resolve(task);
+    },
+  });
+  assert.ok(activateTask, "activate listener must bind work to waitUntil");
+  await activateTask;
+  assert.equal(claimCalls, 1);
+
+  const fetchListener = listeners.get("fetch")?.[0];
+  assert.ok(fetchListener, "service worker must register a fetch listener");
+  const loginUrl = `${origin}/login?loginFrom=https%3A%2F%2Fwww.faolla.com%2F`;
+  let loginTask: Promise<Response> | null = null;
+  fetchListener({
+    request: new WorkerRequest(loginUrl, { mode: "navigate", destination: "document" }),
+    preloadResponse: Promise.resolve(undefined),
+    respondWith(task) {
+      loginTask = Promise.resolve(task);
+    },
+  });
+  assert.ok(loginTask, "login navigation must be handled");
+  assert.equal((await loginTask).status, 200);
+
+  const scriptUrl = `${origin}/_next/static/chunks/app.js`;
+  let scriptTask: Promise<Response> | null = null;
+  fetchListener({
+    request: new WorkerRequest(scriptUrl, { mode: "cors", destination: "script" }),
+    respondWith(task) {
+      scriptTask = Promise.resolve(task);
+    },
+  });
+  assert.ok(scriptTask, "application asset request must be handled");
+  assert.equal((await scriptTask).status, 200);
+
+  cacheStorageOpens = true;
+  cacheStorageMatches = false;
+  const cacheReadFailureScriptUrl = `${origin}/_next/static/chunks/cache-read-failure.js`;
+  let cacheReadFailureScriptTask: Promise<Response> | null = null;
+  fetchListener({
+    request: new WorkerRequest(cacheReadFailureScriptUrl, { mode: "cors", destination: "script" }),
+    respondWith(task) {
+      cacheReadFailureScriptTask = Promise.resolve(task);
+    },
+  });
+  assert.ok(cacheReadFailureScriptTask, "cache read failure must fall back to the online asset");
+  assert.equal((await cacheReadFailureScriptTask).status, 200);
+
+  cacheStorageMatches = true;
+  const uncachedScriptUrl = `${origin}/_next/static/chunks/uncached.js`;
+  let uncachedScriptTask: Promise<Response> | null = null;
+  fetchListener({
+    request: new WorkerRequest(uncachedScriptUrl, { mode: "cors", destination: "script" }),
+    respondWith(task) {
+      uncachedScriptTask = Promise.resolve(task);
+    },
+  });
+  assert.ok(uncachedScriptTask, "cache write failure must not replace an online asset response");
+  assert.equal((await uncachedScriptTask).status, 200);
+  assert.deepEqual(requestedUrls, [loginUrl, scriptUrl, cacheReadFailureScriptUrl, uncachedScriptUrl]);
+});
+
 test("app-shell worker updater refreshes the scoped worker without install UI", () => {
   const updaterSource = readFileSync(
     new URL("../components/PwaServiceWorkerUpdater.tsx", import.meta.url),
