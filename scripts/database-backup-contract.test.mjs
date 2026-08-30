@@ -264,6 +264,80 @@ test("encrypted backup workflow requires an exact tested main commit", async () 
   );
   assert.doesNotMatch(workflow, /ssh-keyscan|accept-new/);
   assert.match(workflow, /StrictHostKeyChecking=yes/);
+  assert.doesNotMatch(workflow, /Host \*/);
+  assert.match(workflow, /ControlMaster=yes/);
+  assert.match(workflow, /ControlPersist=370m/);
+  assert.match(
+    workflow,
+    /fdb-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\/m/,
+  );
+  assert.match(workflow, /mkdir -m 700 -- "\$control_directory"/);
+  assert.match(workflow, /\[ "\$\{#control_path\}" -le 88 \]/);
+  const setupStep = workflow.match(
+    /- name: Setup Pinned SSH Host Trust([\s\S]*?)(?=\n\s+- name:)/,
+  );
+  assert.ok(setupStep, "pinned SSH setup step must exist");
+  const masterRetry = setupStep[1].match(
+    /for retry_delay in 0 5 10 20 40; do([\s\S]*?)\n\s+done/,
+  );
+  assert.ok(masterRetry, "master connection must use bounded retries");
+  assert.match(
+    masterRetry[1],
+    /-O check[\s\S]*rm -f -- "\$control_path"[\s\S]*-M -N -f[\s\S]*-O check/,
+  );
+  assert.doesNotMatch(
+    masterRetry[1],
+    /FAOLLA_|bash -s|worktree|create-production-database-backup/,
+  );
+  for (const stepName of [
+    "Prepare Remote Detached Exact Source",
+    "Verify Backup Configuration From Exact Source",
+    "Create Encrypted Database Backup From Exact Source",
+    "Transfer Complete Encrypted Backup",
+    "Remove Temporary Backup And Exact Source",
+  ]) {
+    const escapedStepName = stepName.replaceAll(" ", "\\s+");
+    const remoteStep = workflow.match(
+      new RegExp(`- name: ${escapedStepName}([\\s\\S]*?)(?=\\n\\s+- name:|$)`),
+    );
+    assert.ok(remoteStep, `${stepName} must exist`);
+    assert.match(
+      remoteStep[1],
+      /ControlPath="\$control_path"/,
+      `${stepName} must reuse the pinned master path`,
+    );
+    if (stepName !== "Remove Temporary Backup And Exact Source") {
+      assert.match(
+        remoteStep[1],
+        /-O check "\$SSH_USER@\$SSH_HOST"/,
+        `${stepName} must verify the pinned master before remote work`,
+      );
+    }
+  }
+  const transferStep = workflow.match(
+    /- name: Transfer Complete Encrypted Backup([\s\S]*?)(?=\n\s+- name:)/,
+  );
+  assert.ok(transferStep, "backup transfer step must exist");
+  assert.match(
+    transferStep[1],
+    /sftp -b -[\s\S]*?-o ControlPath="\$control_path"/,
+    "SFTP must reuse the pinned master path",
+  );
+  for (const stepName of [
+    "Prepare Remote Detached Exact Source",
+    "Create Encrypted Database Backup From Exact Source",
+  ]) {
+    const escapedStepName = stepName.replaceAll(" ", "\\s+");
+    const nonIdempotentStep = workflow.match(
+      new RegExp(`- name: ${escapedStepName}([\\s\\S]*?)(?=\\n\\s+- name:)`),
+    );
+    assert.ok(nonIdempotentStep, `${stepName} must exist`);
+    assert.doesNotMatch(nonIdempotentStep[1], /for\s+[^\n]+;\s*do/);
+  }
+  assert.match(
+    workflow,
+    /for cleanup_attempt in 1 2 3; do[\s\S]*remote_cleanup_status="\$\?"[\s\S]*cleanup_status="\$remote_cleanup_status"[\s\S]*-O exit[\s\S]*rmdir -- "\$control_directory"[\s\S]*exit "\$cleanup_status"/,
+  );
   assert.match(workflow, /worktree add --detach/);
   assert.match(workflow, /status --porcelain=v1 --untracked-files=all/);
   assert.match(workflow, /actions\/attest@v4/);
