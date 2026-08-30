@@ -51,6 +51,8 @@ type MerchantEmployeeShellProps = {
 };
 
 const MOBILE_SIDEBAR_MEDIA_QUERY = "(max-width: 1023px)";
+const MOBILE_SIDEBAR_FOCUSABLE_SELECTOR =
+  'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function isMobileSidebarViewport() {
   return window.matchMedia(MOBILE_SIDEBAR_MEDIA_QUERY).matches;
@@ -179,7 +181,12 @@ export default function MerchantEmployeeShell({
   const mobileSidebarRef = useRef<HTMLElement>(null);
   const mobileMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const focusFirstMobileSidebarControl = useCallback(() => {
-    mobileSidebarRef.current?.focus();
+    const sidebar = mobileSidebarRef.current;
+    if (!sidebar) return;
+    const firstControl = Array.from(
+      sidebar.querySelectorAll<HTMLElement>(MOBILE_SIDEBAR_FOCUSABLE_SELECTOR),
+    ).find((element) => element.offsetParent !== null);
+    (firstControl ?? sidebar).focus({ preventScroll: true });
   }, []);
   const openMobileSidebar = useCallback(() => {
     setMobileSidebarOpen(true);
@@ -195,8 +202,21 @@ export default function MerchantEmployeeShell({
 
   useEffect(() => {
     if (!mobileSidebarOpen || !isMobileSidebarViewport()) return;
+    const sidebar = mobileSidebarRef.current;
+    if (!sidebar) return;
+    const keepFocusInsideMobileSidebar = (event: FocusEvent) => {
+      if (!(event.target instanceof Node) || sidebar.contains(event.target)) {
+        return;
+      }
+      focusFirstMobileSidebarControl();
+    };
+    document.addEventListener("focusin", keepFocusInsideMobileSidebar);
+    focusFirstMobileSidebarControl();
     const frameId = window.requestAnimationFrame(focusFirstMobileSidebarControl);
-    return () => window.cancelAnimationFrame(frameId);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      document.removeEventListener("focusin", keepFocusInsideMobileSidebar);
+    };
   }, [focusFirstMobileSidebarControl, mobileSidebarOpen]);
 
   useEffect(() => {
@@ -251,7 +271,7 @@ export default function MerchantEmployeeShell({
     }
     const focusableElements = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        MOBILE_SIDEBAR_FOCUSABLE_SELECTOR,
       ),
     ).filter((element) => element.offsetParent !== null);
     if (focusableElements.length === 0) {
@@ -439,6 +459,8 @@ export default function MerchantEmployeeShell({
       </button>
 
       <div
+        data-employee-merchant-main="1"
+        inert={mobileSidebarOpen ? true : undefined}
         className={`min-h-screen min-w-0 transition-[margin] duration-200 ${
           desktopSidebarCollapsed ? "lg:ml-0" : "lg:ml-[228px]"
         }`}

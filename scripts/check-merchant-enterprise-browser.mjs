@@ -1535,19 +1535,35 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
     });
     await mobileMenuTrigger.waitFor();
     const mobileSidebar = mobilePage.locator('[data-employee-merchant-sidebar="1"]');
+    const mobileMain = mobilePage.locator('[data-employee-merchant-main="1"]');
     const mobileSidebarStartedHidden = await mobileSidebar.isHidden();
     await mobileMenuTrigger.click();
     await mobilePage.waitForTimeout(250);
+    const mobileProductSearch = mobilePage.locator(".product-search-input");
+    await mobileProductSearch.waitFor();
+    const mobileMainInertWhileOpen = await mobileMain.evaluate(
+      (main) => main.hasAttribute("inert") && main.inert === true,
+    );
+    await mobileProductSearch.evaluate((input) => input.focus());
     const openMobileSidebarBox = await mobileSidebar.boundingBox();
     const mobileNavigation = mobileSidebar.getByRole("navigation", {
       name: "员工工作区主导航",
     });
-    const mobileFocusState = await mobileSidebar.evaluate((sidebar) => ({
-      enteredSidebar: sidebar.contains(document.activeElement),
-      activeLabel: document.activeElement?.getAttribute("aria-label") || "",
-      activeText: document.activeElement?.textContent?.trim().slice(0, 80) || "",
-      activeTag: document.activeElement?.tagName || "",
-    }));
+    const mobileFocusState = await mobileSidebar.evaluate((sidebar) => {
+      const activeElement = document.activeElement;
+      const main = document.querySelector('[data-employee-merchant-main="1"]');
+      return {
+        enteredSidebar: sidebar.contains(activeElement),
+        activeLabel: activeElement?.getAttribute("aria-label") || "",
+        activeText: activeElement?.textContent?.trim().slice(0, 80) || "",
+        activeTag: activeElement?.tagName || "",
+        activeClass: activeElement?.getAttribute("class") || "",
+        activeInInert: Boolean(activeElement?.closest("[inert]")),
+        activeInsideMain: Boolean(main?.contains(activeElement)),
+        mainHasInert: Boolean(main?.hasAttribute("inert")),
+        mainInert: Boolean(main?.inert),
+      };
+    });
     const mobileFocusEnteredSidebar = mobileFocusState.enteredSidebar;
     const mobileMetrics = await mobilePage.evaluate(() => ({
       innerWidth: window.innerWidth,
@@ -1560,10 +1576,11 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
         Math.abs(openMobileSidebarBox.width - 228) <= 1 &&
         (await mobileNavigation.getByRole("button").count()) === 5 &&
         (await mobileNavigation.getByRole("button", { name: "会员管理", exact: true }).count()) === 1 &&
+        mobileMainInertWhileOpen &&
         mobileFocusEnteredSidebar &&
         mobileMetrics.scrollWidth <= mobileMetrics.innerWidth + 1 &&
         mobileStats.enterpriseOverviewRequests === 0,
-      `mobile employee sidebar was not permission-filtered or responsive:${JSON.stringify({ mobileSidebarStartedHidden, openMobileSidebarBox, mobileFocusState, mobileMetrics, mobileStats })}`,
+      `mobile employee sidebar was not permission-filtered or responsive:${JSON.stringify({ mobileSidebarStartedHidden, openMobileSidebarBox, mobileMainInertWhileOpen, mobileFocusState, mobileMetrics, mobileStats })}`,
     );
     if (screenshotDirectory) {
       await mobilePage.screenshot({
@@ -1587,6 +1604,9 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
     await mobilePage.waitForTimeout(250);
     assert(
       (await mobileSidebar.isHidden()) &&
+        (await mobileMain.evaluate(
+          (main) => !main.hasAttribute("inert") && main.inert === false,
+        )) &&
         (await mobileMenuTrigger.evaluate(
           (trigger) => document.activeElement === trigger,
         )),
