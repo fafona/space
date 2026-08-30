@@ -1,7 +1,19 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import MerchantEmployeeShell, {
+  type MerchantEmployeeShellContextItem,
+  type MerchantEmployeeShellIcon,
+  type MerchantEmployeeShellItem,
+} from "@/components/enterprise/MerchantEmployeeShell";
 import {
   MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY,
   createMerchantBusinessApiClient,
@@ -60,6 +72,9 @@ const MerchantEmployeeConversationPanel = dynamic(
 type MerchantEmployeeWorkspaceProps = {
   siteId: string;
   accessToken: string;
+  accountActions?: ReactNode;
+  onSignOut?: () => void;
+  signOutDisabled?: boolean;
 };
 
 type CapabilityStatus =
@@ -85,6 +100,79 @@ type RedemptionSubview =
 
 type MemberSubview = "list" | "levels" | "pointsRules";
 
+type AuthorizedSubviewPreference<T extends string> = {
+  authorizationKey: string;
+  view: T;
+};
+
+const REDEMPTION_VIEW_DEFINITIONS = [
+  { id: "cashier", label: "兑换收银", permission: "redemptions.view" },
+  { id: "records", label: "兑换记录", permission: "redemptions.view" },
+  {
+    id: "rechargeRecords",
+    label: "充值记录",
+    permission: "redemptions.view",
+  },
+  {
+    id: "rechargePlans",
+    label: "充值方案",
+    permission: "redemptions.catalog.manage",
+  },
+  {
+    id: "redemptionCategories",
+    label: "项目分类",
+    permission: "redemptions.catalog.manage",
+  },
+  {
+    id: "redemptionItems",
+    label: "兑换项目",
+    permission: "redemptions.catalog.manage",
+  },
+] as const satisfies ReadonlyArray<{
+  id: RedemptionSubview;
+  label: string;
+  permission: MerchantStaffBusinessPermission;
+}>;
+
+const MEMBER_VIEW_DEFINITIONS = [
+  { id: "list", label: "会员列表", permission: "members.view" },
+  {
+    id: "levels",
+    label: "等级与权益",
+    permission: "members.settings.manage",
+  },
+  {
+    id: "pointsRules",
+    label: "积分规则",
+    permission: "members.settings.manage",
+  },
+] as const satisfies ReadonlyArray<{
+  id: MemberSubview;
+  label: string;
+  permission: MerchantStaffBusinessPermission;
+}>;
+
+const EMPLOYEE_SHELL_ROOT_ORDER = [
+  "redemptions",
+  "bookings",
+  "orders",
+  "collaboration",
+  "conversations",
+  "members",
+] as const satisfies readonly MerchantEmployeeWorkspaceRoot[];
+
+const EMPLOYEE_SHELL_ICON_BY_ROOT = {
+  redemptions: "points",
+  bookings: "booking",
+  orders: "orders",
+  collaboration: "enterprise",
+  conversations: "support",
+  members: "members",
+} as const satisfies Record<
+  MerchantEmployeeWorkspaceRoot,
+  MerchantEmployeeShellIcon
+>;
+
 function hasPermission(
   permissions: readonly MerchantStaffBusinessPermission[],
   permission: MerchantStaffBusinessPermission,
@@ -97,101 +185,36 @@ function RedemptionWorkspace({
   siteName,
   apiClient,
   permissions,
+  activeView,
 }: {
   siteId: string;
   siteName: string;
   apiClient: MerchantBusinessApiClient;
   permissions: readonly MerchantStaffBusinessPermission[];
+  activeView: RedemptionSubview;
 }) {
-  const views = useMemo(
-    () =>
-      [
-        { id: "cashier", label: "兑换收银", permission: "redemptions.view" },
-        { id: "records", label: "兑换记录", permission: "redemptions.view" },
-        {
-          id: "rechargeRecords",
-          label: "充值记录",
-          permission: "redemptions.view",
-        },
-        {
-          id: "rechargePlans",
-          label: "充值方案",
-          permission: "redemptions.catalog.manage",
-        },
-        {
-          id: "redemptionCategories",
-          label: "项目分类",
-          permission: "redemptions.catalog.manage",
-        },
-        {
-          id: "redemptionItems",
-          label: "兑换项目",
-          permission: "redemptions.catalog.manage",
-        },
-      ].filter((item) =>
-        hasPermission(
-          permissions,
-          item.permission as MerchantStaffBusinessPermission,
-        ),
-      ) as Array<{
-        id: RedemptionSubview;
-        label: string;
-        permission: MerchantStaffBusinessPermission;
-      }>,
-    [permissions],
-  );
-  const [view, setView] = useState<RedemptionSubview>("cashier");
-  const activeView = views.some((item) => item.id === view)
-    ? view
-    : views[0]?.id;
-
-  if (!activeView) return null;
   const cashierView =
     activeView === "cashier" ||
     activeView === "records" ||
     activeView === "rechargeRecords";
 
-  return (
-    <div className="space-y-4">
-      <nav
-        aria-label="积分兑换功能"
-        className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
-      >
-        {views.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-              activeView === item.id
-                ? "bg-slate-950 text-white"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-            aria-current={activeView === item.id ? "page" : undefined}
-            onClick={() => setView(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      {cashierView ? (
-        <MerchantPointRedemptionCashier
-          siteId={siteId}
-          siteName={siteName}
-          view={activeView}
-          apiClient={apiClient}
-          cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
-          permissions={permissions}
-        />
-      ) : (
-        <MerchantMembershipSettingsPanel
-          siteId={siteId}
-          view={activeView}
-          apiClient={apiClient}
-          cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
-          permissions={permissions}
-        />
-      )}
-    </div>
+  return cashierView ? (
+    <MerchantPointRedemptionCashier
+      siteId={siteId}
+      siteName={siteName}
+      view={activeView}
+      apiClient={apiClient}
+      cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
+      permissions={permissions}
+    />
+  ) : (
+    <MerchantMembershipSettingsPanel
+      siteId={siteId}
+      view={activeView}
+      apiClient={apiClient}
+      cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
+      permissions={permissions}
+    />
   );
 }
 
@@ -200,84 +223,30 @@ function MemberWorkspace({
   siteName,
   apiClient,
   permissions,
+  activeView,
 }: {
   siteId: string;
   siteName: string;
   apiClient: MerchantBusinessApiClient;
   permissions: readonly MerchantStaffBusinessPermission[];
+  activeView: MemberSubview;
 }) {
-  const views = useMemo(
-    () =>
-      [
-        { id: "list", label: "会员列表", permission: "members.view" },
-        {
-          id: "levels",
-          label: "等级与权益",
-          permission: "members.settings.manage",
-        },
-        {
-          id: "pointsRules",
-          label: "积分规则",
-          permission: "members.settings.manage",
-        },
-      ].filter((item) =>
-        hasPermission(
-          permissions,
-          item.permission as MerchantStaffBusinessPermission,
-        ),
-      ) as Array<{
-        id: MemberSubview;
-        label: string;
-        permission: MerchantStaffBusinessPermission;
-      }>,
-    [permissions],
-  );
-  const [view, setView] = useState<MemberSubview>("list");
-  const activeView = views.some((item) => item.id === view)
-    ? view
-    : views[0]?.id;
-
-  if (!activeView) return null;
-  return (
-    <div className="space-y-4">
-      <nav
-        aria-label="会员管理功能"
-        className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
-      >
-        {views.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-              activeView === item.id
-                ? "bg-slate-950 text-white"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-            aria-current={activeView === item.id ? "page" : undefined}
-            onClick={() => setView(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      {activeView === "list" ? (
-        <MerchantMemberManager
-          siteId={siteId}
-          siteName={siteName}
-          apiClient={apiClient}
-          cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
-          permissions={permissions}
-        />
-      ) : (
-        <MerchantMembershipSettingsPanel
-          siteId={siteId}
-          view={activeView}
-          apiClient={apiClient}
-          cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
-          permissions={permissions}
-        />
-      )}
-    </div>
+  return activeView === "list" ? (
+    <MerchantMemberManager
+      siteId={siteId}
+      siteName={siteName}
+      apiClient={apiClient}
+      cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
+      permissions={permissions}
+    />
+  ) : (
+    <MerchantMembershipSettingsPanel
+      siteId={siteId}
+      view={activeView}
+      apiClient={apiClient}
+      cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
+      permissions={permissions}
+    />
   );
 }
 
@@ -290,11 +259,22 @@ function readErrorCode(value: unknown) {
 export default function MerchantEmployeeWorkspace({
   siteId,
   accessToken,
+  accountActions,
+  onSignOut,
+  signOutDisabled,
 }: MerchantEmployeeWorkspaceProps) {
   const [rootPreference, setRootPreference] = useState<{
     capabilityMountKey: string;
     root: MerchantEmployeeWorkspaceRoot | null;
   }>({ capabilityMountKey: "", root: null });
+  const [redemptionSubviewPreference, setRedemptionSubviewPreference] =
+    useState<AuthorizedSubviewPreference<RedemptionSubview>>({
+      authorizationKey: "",
+      view: "cashier",
+    });
+  const [memberSubviewPreference, setMemberSubviewPreference] = useState<
+    AuthorizedSubviewPreference<MemberSubview>
+  >({ authorizationKey: "", view: "list" });
   const [capabilityState, setCapabilityState] = useState<CapabilityState>({
     data: null,
     status: "loading",
@@ -445,6 +425,7 @@ export default function MerchantEmployeeWorkspace({
   const capabilityMountKey = capabilities
     ? buildMerchantBusinessCapabilitiesMountKey(capabilities)
     : "";
+  const subviewAuthorizationKey = `${authorizationEpoch}:${capabilityMountKey}`;
   const preferredRoot =
     rootPreference.capabilityMountKey === capabilityMountKey
       ? rootPreference.root
@@ -495,6 +476,98 @@ export default function MerchantEmployeeWorkspace({
     : capabilityStatus === "disabled";
   const capabilityDecisionPending =
     !capabilities && capabilityStatus === "loading";
+  const allowedRedemptionViews = capabilities
+    ? REDEMPTION_VIEW_DEFINITIONS.filter((view) =>
+        hasPermission(capabilities.permissions, view.permission),
+      )
+    : [];
+  const requestedRedemptionSubview =
+    redemptionSubviewPreference.authorizationKey === subviewAuthorizationKey
+      ? redemptionSubviewPreference.view
+      : "cashier";
+  const activeRedemptionSubview = allowedRedemptionViews.some(
+    (view) => view.id === requestedRedemptionSubview,
+  )
+    ? requestedRedemptionSubview
+    : allowedRedemptionViews[0]?.id;
+  const allowedMemberViews = capabilities
+    ? MEMBER_VIEW_DEFINITIONS.filter((view) =>
+        hasPermission(capabilities.permissions, view.permission),
+      )
+    : [];
+  const requestedMemberSubview =
+    memberSubviewPreference.authorizationKey === subviewAuthorizationKey
+      ? memberSubviewPreference.view
+      : "list";
+  const activeMemberSubview = allowedMemberViews.some(
+    (view) => view.id === requestedMemberSubview,
+  )
+    ? requestedMemberSubview
+    : allowedMemberViews[0]?.id;
+  const shellItems: MerchantEmployeeShellItem[] = [];
+  for (const root of EMPLOYEE_SHELL_ROOT_ORDER) {
+    if (root === "collaboration") {
+      if (collaborationAvailable) {
+        shellItems.push({
+          id: root,
+          label: "企业协作",
+          icon: EMPLOYEE_SHELL_ICON_BY_ROOT[root],
+        });
+      }
+      continue;
+    }
+    const menu = visibleMenus.find((candidate) => candidate.id === root);
+    if (menu) {
+      shellItems.push({
+        id: menu.id,
+        label: menu.label,
+        icon: EMPLOYEE_SHELL_ICON_BY_ROOT[menu.id],
+      });
+    }
+  }
+  const capabilityStatusLabel =
+    capabilityStatus === "loading"
+      ? "正在核验业务权限…"
+      : capabilityStatus === "disabled"
+        ? "业务功能尚未启用"
+        : capabilityStatus === "unavailable" ||
+            capabilityStatus === "authorization_invalid"
+          ? "业务权限暂不可用"
+          : "员工账号";
+  let shellContextLabel = "";
+  let shellContextHint = "";
+  let shellContextItems: MerchantEmployeeShellContextItem[] = [];
+  if (activeRoot === "redemptions") {
+    shellContextLabel = "积分兑换子菜单";
+    shellContextItems = allowedRedemptionViews
+      .filter((view) => view.id !== "cashier")
+      .map((view) => ({
+        id: view.id,
+        label: view.label,
+        active: activeRedemptionSubview === view.id,
+      }));
+  } else if (activeRoot === "bookings") {
+    shellContextLabel = "预约管理子菜单";
+    shellContextItems = [
+      { id: "booking-workbench", label: "预约工作台", active: true },
+    ];
+  } else if (activeRoot === "orders") {
+    shellContextLabel = "订单管理子菜单";
+    shellContextItems = [
+      { id: "order-workbench", label: "订单工作台", active: true },
+    ];
+  } else if (activeRoot === "conversations") {
+    shellContextHint = "这里集中处理当前角色获准访问的商户会话。";
+  } else if (activeRoot === "members") {
+    shellContextLabel = "会员管理子菜单";
+    shellContextItems = allowedMemberViews
+      .filter((view) => view.id !== "list")
+      .map((view) => ({
+        id: view.id,
+        label: view.label,
+        active: activeMemberSubview === view.id,
+      }));
+  }
 
   let businessContent = null;
   if (
@@ -539,10 +612,17 @@ export default function MerchantEmployeeWorkspace({
           onClose={() => undefined}
         />
       ) : null;
-    } else if (activeRoot === "members") {
-      businessContent = <MemberWorkspace {...common} />;
-    } else if (activeRoot === "redemptions") {
-      businessContent = <RedemptionWorkspace {...common} />;
+    } else if (activeRoot === "members" && activeMemberSubview) {
+      businessContent = (
+        <MemberWorkspace {...common} activeView={activeMemberSubview} />
+      );
+    } else if (activeRoot === "redemptions" && activeRedemptionSubview) {
+      businessContent = (
+        <RedemptionWorkspace
+          {...common}
+          activeView={activeRedemptionSubview}
+        />
+      );
     } else if (activeRoot === "conversations") {
       businessContent = (
         <MerchantEmployeeConversationPanel
@@ -557,114 +637,134 @@ export default function MerchantEmployeeWorkspace({
     }
   }
 
-  return (
-    <section className="min-w-0">
-      <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2">
-          {collaborationAvailable ? (
-            <button
-              type="button"
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                activeRoot === "collaboration"
-                  ? "bg-slate-950 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-              aria-current={activeRoot === "collaboration" ? "page" : undefined}
-              onClick={() =>
-                setRootPreference({
-                  capabilityMountKey,
-                  root: "collaboration",
-                })
-              }
-            >
-              企业协作
-            </button>
-          ) : null}
-          {visibleMenus.map((menu) => (
-            <button
-              key={menu.id}
-              type="button"
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                activeRoot === menu.id
-                  ? "bg-slate-950 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-              aria-current={activeRoot === menu.id ? "page" : undefined}
-              onClick={() =>
-                setRootPreference({ capabilityMountKey, root: menu.id })
-              }
-            >
-              {menu.label}
-            </button>
-          ))}
-          <span className="ml-auto text-xs text-slate-500" aria-live="polite">
-            {capabilityStatus === "loading"
-              ? "正在核验业务权限…"
-              : capabilityStatus === "disabled"
-                ? "业务功能尚未启用"
-                : capabilityStatus === "unavailable" ||
-                    capabilityStatus === "authorization_invalid"
-                  ? "业务权限暂不可用"
-                  : capabilities?.actor.displayName ?? ""}
-          </span>
-          {(capabilityStatus === "unavailable" ||
-            capabilityStatus === "authorization_invalid") && (
-            <button
-              type="button"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
-              onClick={() => void refreshCapabilities()}
-            >
-              重新核验
-            </button>
-          )}
+  let workspaceContent: ReactNode;
+  if (capabilityDecisionPending) {
+    workspaceContent = (
+      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+        <WorkspaceLoading />
+      </div>
+    );
+  } else if (activeRoot === "collaboration" && collaborationAvailable) {
+    workspaceContent = (
+      <MerchantEnterpriseManager
+        key={`${siteId}:${authorizationEpoch}:${capabilityMountKey || capabilityStatus}`}
+        siteId={siteId}
+        siteName={capabilities?.workspace.siteName}
+        accessToken={accessToken}
+        standalone
+      />
+    );
+  } else if (businessContent) {
+    workspaceContent = (
+      <div
+        key={`${capabilityMountKey}:${activeRoot}`}
+        className="mx-auto max-w-7xl p-4 sm:p-6"
+      >
+        {businessContent}
+      </div>
+    );
+  } else if (capabilities && capabilityStatus === "ready") {
+    workspaceContent = (
+      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+        <div
+          role="status"
+          className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm"
+        >
+          当前角色没有可用功能，请联系企业负责人分配权限。
         </div>
       </div>
-
-      {capabilityDecisionPending ? (
-        <div className="mx-auto max-w-7xl p-4 sm:p-6">
-          <WorkspaceLoading />
-        </div>
-      ) : activeRoot === "collaboration" && collaborationAvailable ? (
-        <MerchantEnterpriseManager
-          key={`${siteId}:${authorizationEpoch}:${capabilityMountKey || capabilityStatus}`}
-          siteId={siteId}
-          siteName={capabilities?.workspace.siteName}
-          accessToken={accessToken}
-          standalone
-        />
-      ) : businessContent ? (
+    );
+  } else if (
+    capabilityStatus === "unavailable" ||
+    capabilityStatus === "authorization_invalid"
+  ) {
+    workspaceContent = (
+      <div className="mx-auto max-w-7xl p-4 sm:p-6">
         <div
-          key={`${capabilityMountKey}:${activeRoot}`}
-          className="mx-auto max-w-7xl p-4 sm:p-6"
+          role="alert"
+          className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm"
         >
-          {businessContent}
-        </div>
-      ) : capabilities && capabilityStatus === "ready" ? (
-        <div className="mx-auto max-w-7xl p-4 sm:p-6">
-          <div
-            role="status"
-            className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm"
-          >
-            当前角色没有可用功能，请联系企业负责人分配权限。
-          </div>
-        </div>
-      ) : capabilityStatus === "unavailable" ||
-        capabilityStatus === "authorization_invalid" ? (
-        <div className="mx-auto max-w-7xl p-4 sm:p-6">
-          <div
-            role="alert"
-            className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm"
-          >
+          <p>
             {capabilityStatus === "authorization_invalid"
               ? "登录状态或角色权限已变化，请重新核验。"
               : "暂时无法核验当前角色权限，请稍后重试。"}
-          </div>
+          </p>
+          <button
+            type="button"
+            className="mt-4 rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900"
+            onClick={() => void refreshCapabilities()}
+          >
+            重新核验权限
+          </button>
         </div>
-      ) : (
-        <div className="mx-auto max-w-7xl p-4 sm:p-6">
-          <WorkspaceLoading />
-        </div>
-      )}
-    </section>
+      </div>
+    );
+  } else {
+    workspaceContent = (
+      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+        <WorkspaceLoading />
+      </div>
+    );
+  }
+
+  return (
+    <MerchantEmployeeShell
+      siteName={capabilities?.workspace.siteName}
+      actorName={capabilities?.actor.displayName}
+      items={shellItems}
+      activeItemId={activeRoot}
+      statusLabel={capabilityStatusLabel}
+      canRefresh={
+        capabilityStatus === "unavailable" ||
+        capabilityStatus === "authorization_invalid"
+      }
+      onRefresh={() => void refreshCapabilities()}
+      onSelect={(root) => {
+        if (root === "redemptions") {
+          setRedemptionSubviewPreference({
+            authorizationKey: subviewAuthorizationKey,
+            view: "cashier",
+          });
+        }
+        if (root === "members") {
+          setMemberSubviewPreference({
+            authorizationKey: subviewAuthorizationKey,
+            view: "list",
+          });
+        }
+        setRootPreference({ capabilityMountKey, root });
+      }}
+      contextLabel={shellContextLabel}
+      contextItems={shellContextItems}
+      contextHint={shellContextHint}
+      onSelectContextItem={(itemId) => {
+        if (activeRoot === "redemptions") {
+          const selected = allowedRedemptionViews.find(
+            (view) => view.id === itemId,
+          );
+          if (selected) {
+            setRedemptionSubviewPreference({
+              authorizationKey: subviewAuthorizationKey,
+              view: selected.id,
+            });
+          }
+        } else if (activeRoot === "members") {
+          const selected = allowedMemberViews.find(
+            (view) => view.id === itemId,
+          );
+          if (selected) {
+            setMemberSubviewPreference({
+              authorizationKey: subviewAuthorizationKey,
+              view: selected.id,
+            });
+          }
+        }
+      }}
+      onSignOut={onSignOut}
+      signOutDisabled={signOutDisabled}
+      accountActions={accountActions}
+    >
+      {workspaceContent}
+    </MerchantEmployeeShell>
   );
 }

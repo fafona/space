@@ -16,6 +16,13 @@ const portal = await readFile(
   ),
   "utf8",
 );
+const employeeShell = await readFile(
+  new URL(
+    "../src/components/enterprise/MerchantEmployeeShell.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const employeeHarness = await readFile(
   new URL(
     "../src/app/test-harness/employee-workspace/page.tsx",
@@ -26,10 +33,55 @@ const employeeHarness = await readFile(
 
 test("employee portal mounts the dedicated workspace instead of the owner admin shell", () => {
   assert.match(portal, /MerchantEmployeeWorkspace/);
+  assert.match(workspace, /MerchantEmployeeShell/);
   assert.doesNotMatch(portal, /AdminClient/);
   assert.doesNotMatch(workspace, /AdminClient/);
-  assert.match(workspace, />\s*企业协作\s*</);
+  assert.doesNotMatch(employeeShell, /AdminClient/);
+  assert.match(workspace, /label:\s*"企业协作"/);
   assert.match(workspace, /MERCHANT_EMPLOYEE_BUSINESS_MENUS/);
+});
+
+test("employee shell mirrors the merchant sidebar without owner identity or owner-only entries", () => {
+  assert.match(employeeShell, /data-employee-merchant-shell="1"/);
+  assert.match(employeeShell, /data-employee-merchant-sidebar="1"/);
+  assert.match(employeeShell, /w-\[228px\]/);
+  assert.match(employeeShell, /bg-\[#111827\]/);
+  assert.match(employeeShell, /员工工作区主导航/);
+  assert.match(employeeShell, /getSubmenuButtonClassName/);
+  assert.match(employeeShell, /contextItems\.map/);
+  assert.match(
+    employeeShell,
+    /selectContextItem[\s\S]{0,180}closeMobileSidebar\(\)/,
+  );
+  assert.match(employeeShell, /mobileMenuTriggerRef/);
+  assert.match(employeeShell, /mobileSidebarRef/);
+  assert.match(employeeShell, /trapMobileSidebarFocus/);
+  assert.match(
+    employeeShell,
+    /event\.key === "Escape"[\s\S]{0,100}mobileSidebarOpen/,
+  );
+  assert.match(employeeShell, /MOBILE_SIDEBAR_MEDIA_QUERY/);
+  assert.match(workspace, /积分兑换子菜单/);
+  assert.match(workspace, /会员管理子菜单/);
+  assert.doesNotMatch(workspace, /aria-label="积分兑换功能"/);
+  assert.doesNotMatch(workspace, /aria-label="会员管理功能"/);
+  assert.match(employeeShell, /aria-current=/);
+  assert.match(employeeShell, /lg:ml-\[228px\]/);
+  assert.match(employeeShell, /lg:hidden/);
+  assert.match(portal, /账户与安全/);
+  assert.match(portal, /autoComplete="new-password"/);
+  assert.match(portal, /setNewPassword\(""\)/);
+
+  const isolatedEmployeeUi = `${portal}\n${workspace}\n${employeeShell}`;
+  assert.doesNotMatch(
+    isolatedEmployeeUi,
+    /merchant-logout|readMerchantSessionPayload|\/api\/auth\/merchant-session/,
+  );
+  assert.doesNotMatch(
+    isolatedEmployeeUi,
+    />\s*(?:企业管理|优惠券|经营中心|商户信息|网站编辑)\s*</,
+  );
+  assert.doesNotMatch(employeeShell, /\bfetch\s*\(|accessToken|localStorage|sessionStorage|document\.cookie/);
 });
 
 test("employee workspace browser harness stays unavailable outside explicit local tests", () => {
@@ -105,6 +157,18 @@ test("capability lifecycle is no-store, fail-closed, refreshed and authorization
 
 test("authorization fingerprint remounts every root and uploads stay inside gated leaf components", () => {
   assert.match(workspace, /buildMerchantBusinessCapabilitiesMountKey/);
+  assert.match(
+    workspace,
+    /subviewAuthorizationKey = `\$\{authorizationEpoch\}:\$\{capabilityMountKey\}`/,
+  );
+  assert.match(
+    workspace,
+    /redemptionSubviewPreference\.authorizationKey === subviewAuthorizationKey/,
+  );
+  assert.match(
+    workspace,
+    /memberSubviewPreference\.authorizationKey === subviewAuthorizationKey/,
+  );
   assert.match(workspace, /key=\{`\$\{capabilityMountKey\}:\$\{activeRoot\}`\}/);
   assert.match(
     workspace,

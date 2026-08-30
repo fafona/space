@@ -379,6 +379,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const invitationCredentialRef = useRef<InvitationCredential | null>(null);
@@ -769,6 +770,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       const result = await supabase.auth.updateUser({ password: newPassword });
       if (result.error) throw result.error;
       setNewPassword("");
+      setAccountPanelOpen(false);
       setMessage("登录密码已设置。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "密码设置失败。");
@@ -807,6 +809,8 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     const generation = authGeneration.begin();
     authGeneration.bindSessionToken(generation, "");
     acceptedAcceptanceKeysRef.current.clear();
+    setNewPassword("");
+    setAccountPanelOpen(false);
     setAuthContext(null);
     setChecking(false);
     const result = await supabase.auth.signOut();
@@ -889,47 +893,92 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
 
   return (
     <main className="min-h-screen bg-[#f3f6fb]">
-      <div className="flex flex-wrap items-center justify-end gap-2 border-b border-slate-200 bg-white px-4 py-2">
-        <label htmlFor="enterprise-portal-new-password" className="sr-only">
-          设置或修改登录密码
-        </label>
-        <input
-          id="enterprise-portal-new-password"
-          type="password"
-          autoComplete="new-password"
-          className="w-48 rounded-lg border border-slate-300 px-3 py-2 text-xs"
-          placeholder="设置或修改登录密码"
-          value={newPassword}
-          onChange={(event) => setNewPassword(event.target.value)}
-        />
-        <button
-          type="button"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-45"
-          disabled={busy || !newPassword}
-          onClick={() => void setLoginPassword()}
-        >
-          设置密码
-        </button>
-        <button
-          type="button"
-          className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white"
-          onClick={() => void signOut()}
-        >
-          退出
-        </button>
-        <button
-          type="button"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
-          onClick={() => window.location.assign("/enterprise")}
-        >
-          切换企业
-        </button>
-        {message ? <span role="alert" className="text-xs text-slate-600">{message}</span> : null}
-      </div>
       <MerchantEmployeeWorkspace
         key={`${siteId}:${authContext?.generation ?? 0}`}
         siteId={siteId}
         accessToken={accessToken}
+        onSignOut={() => void signOut()}
+        signOutDisabled={busy}
+        accountActions={
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="w-full rounded-lg border border-blue-300/30 bg-white/5 px-3 py-2 text-left text-xs font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white"
+              aria-expanded={accountPanelOpen}
+              aria-controls="enterprise-portal-account-security"
+              onClick={() => {
+                setAccountPanelOpen((current) => {
+                  if (current) setNewPassword("");
+                  return !current;
+                });
+                setMessage("");
+              }}
+            >
+              账户与安全
+            </button>
+            {accountPanelOpen ? (
+              <div
+                id="enterprise-portal-account-security"
+                className="space-y-2 rounded-xl border border-white/10 bg-[#0f1b31] p-3"
+              >
+                <label
+                  htmlFor="enterprise-portal-new-password"
+                  className="block text-xs font-semibold text-slate-200"
+                >
+                  设置或修改登录密码
+                </label>
+                <input
+                  id="enterprise-portal-new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-950 outline-none focus:border-blue-400"
+                  placeholder="至少 8 个字符"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-45"
+                    disabled={busy || newPassword.length < 8}
+                    onClick={() => void setLoginPassword()}
+                  >
+                    {busy ? "保存中..." : "保存密码"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold text-slate-200"
+                    onClick={() => {
+                      setNewPassword("");
+                      setAccountPanelOpen(false);
+                    }}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="w-full rounded-lg border border-blue-300/30 bg-white/5 px-3 py-2 text-left text-xs font-semibold text-[#dbeafe] transition hover:bg-[#17233f] hover:text-white"
+              onClick={() => {
+                setNewPassword("");
+                setAccountPanelOpen(false);
+                window.location.assign("/enterprise");
+              }}
+            >
+              切换企业
+            </button>
+            {message ? (
+              <div
+                role="alert"
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs leading-5 text-slate-200"
+              >
+                {message}
+              </div>
+            ) : null}
+          </div>
+        }
       />
     </main>
   );
