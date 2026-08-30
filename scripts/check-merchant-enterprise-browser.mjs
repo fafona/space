@@ -1747,9 +1747,25 @@ async function run() {
     await pageA.getByRole("heading", { name: "现有角色", exact: true }).waitFor();
     const newRoleEditorBody = pageA.locator("#new-role-editor-body");
     const primaryRoleEditorBody = pageA.locator(`#role-editor-${roleId}-body`);
+    const readRoleEditorVisualState = (disclosure) =>
+      disclosure.evaluate((button) => {
+        const card = button.closest('[data-role-editor-state]');
+        if (!(card instanceof HTMLElement)) return null;
+        const style = getComputedStyle(card);
+        return {
+          state: card.getAttribute("data-role-editor-state"),
+          borderColor: style.borderColor,
+          backgroundColor: style.backgroundColor,
+          boxShadow: style.boxShadow,
+        };
+      });
     assert(
       await newRoleEditorBody.isHidden() && await primaryRoleEditorBody.isHidden(),
       "role page did not start with creation and existing editors collapsed",
+    );
+    assert(
+      await pageA.locator('[data-role-editor-state="expanded"]').count() === 0,
+      "role page started with an unexpected expanded role visual state",
     );
     const roleDefaultMetrics = await pageA.evaluate(() => ({
       innerHeight: window.innerHeight,
@@ -1772,8 +1788,23 @@ async function run() {
     const primaryRoleDisclosure = pageA.locator(
       `button[aria-controls="role-editor-${roleId}-body"]`,
     );
+    const primaryRoleCollapsedVisual = await readRoleEditorVisualState(primaryRoleDisclosure);
+    assert(
+      primaryRoleCollapsedVisual?.state === "collapsed",
+      "collapsed role editor did not expose its stable visual state",
+    );
     await primaryRoleDisclosure.click();
     await primaryRoleEditorBody.waitFor();
+    await pageA.waitForTimeout(200);
+    const primaryRoleExpandedVisual = await readRoleEditorVisualState(primaryRoleDisclosure);
+    assert(
+      await pageA.locator('[data-role-editor-state="expanded"]').count() === 1 &&
+        primaryRoleExpandedVisual?.state === "expanded" &&
+        primaryRoleExpandedVisual.borderColor !== primaryRoleCollapsedVisual.borderColor &&
+        primaryRoleExpandedVisual.backgroundColor !== primaryRoleCollapsedVisual.backgroundColor &&
+        primaryRoleExpandedVisual.boxShadow !== primaryRoleCollapsedVisual.boxShadow,
+      "expanded role editor was not visually distinct from collapsed roles",
+    );
     const permissionNavigation = primaryRoleEditorBody.getByRole("navigation", {
       name: "权限主要板块",
     });
@@ -1844,10 +1875,21 @@ async function run() {
     );
     await employeeRoleDisclosure.click();
     const employeeRoleBody = pageA.locator(`#role-editor-${employeeRoleId}-body`);
+    await employeeRoleBody.waitFor();
+    await pageA.waitForTimeout(200);
+    const primaryRoleAfterSwitchVisual = await readRoleEditorVisualState(primaryRoleDisclosure);
+    const employeeRoleExpandedVisual = await readRoleEditorVisualState(employeeRoleDisclosure);
     assert(
-      await primaryRoleEditorBody.isHidden() &&
-        await employeeRoleBody.isVisible(),
-      "opening another role did not keep the role list to one expanded editor",
+      await pageA.locator('[data-role-editor-state="expanded"]').count() === 1 &&
+        await primaryRoleEditorBody.isHidden() &&
+        await employeeRoleBody.isVisible() &&
+        primaryRoleAfterSwitchVisual?.state === "collapsed" &&
+        employeeRoleExpandedVisual?.state === "expanded" &&
+        primaryRoleAfterSwitchVisual.borderColor === primaryRoleCollapsedVisual.borderColor &&
+        primaryRoleAfterSwitchVisual.backgroundColor === primaryRoleCollapsedVisual.backgroundColor &&
+        employeeRoleExpandedVisual.borderColor === primaryRoleExpandedVisual.borderColor &&
+        employeeRoleExpandedVisual.backgroundColor === primaryRoleExpandedVisual.backgroundColor,
+      "opening another role did not transfer the unique expanded visual state",
     );
 
     const employeePermissionNavigation = employeeRoleBody.getByRole("navigation", {
@@ -2023,14 +2065,22 @@ async function run() {
       "permission counts did not update from the local permission draft",
     );
     await employeeRoleDisclosure.click();
+    await pageA.waitForTimeout(200);
+    const employeeRoleCollapsedVisual = await readRoleEditorVisualState(employeeRoleDisclosure);
     assert(
-      await employeeRoleBody.isHidden() &&
+      await pageA.locator('[data-role-editor-state="expanded"]').count() === 0 &&
+        await employeeRoleBody.isHidden() &&
+        employeeRoleCollapsedVisual?.state === "collapsed" &&
+        employeeRoleCollapsedVisual.borderColor === primaryRoleCollapsedVisual.borderColor &&
+        employeeRoleCollapsedVisual.backgroundColor === primaryRoleCollapsedVisual.backgroundColor &&
         (await employeeRoleDisclosure.innerText()).includes("有未保存修改"),
-      "collapsing the employee role did not retain its dirty permission-count draft",
+      "collapsing the employee role did not restore its frame or retain its dirty permission-count draft",
     );
     await employeeRoleDisclosure.click();
+    await pageA.waitForTimeout(200);
     assert(
-      await taskCreatePermission.isChecked() &&
+      await pageA.locator('[data-role-editor-state="expanded"]').count() === 1 &&
+        await taskCreatePermission.isChecked() &&
         /已选\s*2\s*\/\s*6/.test(await taskSelection.innerText()) &&
         /已选权限\s*3\s*\/\s*57\s*项/.test(await totalSelectionSummary.innerText()),
       "reopening the employee role lost its permission counts or local selection draft",

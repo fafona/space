@@ -2555,6 +2555,20 @@ test("role creation and existing editors stay mounted behind compact controlled 
   assert.match(roleEditor, /aria-controls=\{editorBodyId\}/);
   assert.match(roleEditor, /onExpandedChange\(!expanded\)/);
   assert.match(roleEditor, /hidden=\{!expanded\}/);
+  assert.match(
+    roleEditor,
+    /data-role-editor-state=\{expanded\s*\?\s*["']expanded["']\s*:\s*["']collapsed["']\}/,
+  );
+  assert.match(
+    roleEditor,
+    /expanded\s*\?\s*["']border-cyan-300 bg-cyan-50\/40 shadow-md["']\s*:\s*["']border-slate-200 bg-white shadow-sm["']/,
+    "the expanded role card must have a distinct frame and background",
+  );
+  assert.match(
+    roleEditor,
+    /expanded\s*\?\s*["']bg-cyan-50\/70 hover:bg-cyan-100\/60["']\s*:\s*["']hover:bg-slate-50["']/,
+    "the expanded role header must remain visually distinct while editing",
+  );
   assert.match(roleEditor, /roleEditorIsDirty\s*\?\s*\([\s\S]{0,300}有未保存修改/);
 
   assert.match(roleView, /<WorkflowPermissionGapCard/);

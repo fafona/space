@@ -3513,10 +3513,19 @@ function RoleEditor({
   );
 
   return (
-    <article className="overflow-visible rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <article
+      className={`overflow-visible rounded-2xl border transition-colors ${
+        expanded
+          ? "border-cyan-300 bg-cyan-50/40 shadow-md"
+          : "border-slate-200 bg-white shadow-sm"
+      }`}
+      data-role-editor-state={expanded ? "expanded" : "collapsed"}
+    >
       <button
         type="button"
-        className="flex min-h-20 w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 sm:px-5"
+        className={`flex min-h-20 w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 sm:px-5 ${
+          expanded ? "bg-cyan-50/70 hover:bg-cyan-100/60" : "hover:bg-slate-50"
+        }`}
         aria-expanded={expanded}
         aria-controls={editorBodyId}
         onClick={() => onExpandedChange(!expanded)}
@@ -3557,7 +3566,13 @@ function RoleEditor({
         </span>
       </button>
 
-      <div id={editorBodyId} hidden={!expanded} className="border-t border-slate-200 px-4 pb-5 pt-4 sm:px-5">
+      <div
+        id={editorBodyId}
+        hidden={!expanded}
+        className={`border-t px-4 pb-5 pt-4 sm:px-5 ${
+          expanded ? "border-cyan-200" : "border-slate-200"
+        }`}
+      >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-xs font-medium text-slate-600">
             角色名称
