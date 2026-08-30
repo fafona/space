@@ -62,7 +62,14 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       await self.skipWaiting();
-      const cache = await caches.open(FAOLLA_SHELL_CACHE);
+      let cache = null;
+      try {
+        cache = await caches.open(FAOLLA_SHELL_CACHE);
+      } catch {
+        // CacheStorage is optional. The worker must still install so online
+        // navigation can recover from a full or corrupted browser cache.
+        return;
+      }
       await Promise.all(
         resolveShellPrecacheUrls().map(async (path) => {
           try {
@@ -82,15 +89,19 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      const cacheKeys = await caches.keys();
-      await Promise.all(
-        cacheKeys.map((key) => {
-          if (!FAOLLA_PRESERVED_CACHES.has(key)) {
-            return caches.delete(key);
-          }
-          return Promise.resolve(false);
-        }),
-      );
+      try {
+        const cacheKeys = await caches.keys();
+        await Promise.all(
+          cacheKeys.map((key) => {
+            if (!FAOLLA_PRESERVED_CACHES.has(key)) {
+              return caches.delete(key);
+            }
+            return Promise.resolve(false);
+          }),
+        );
+      } catch {
+        // Activation and online navigation must not depend on CacheStorage.
+      }
       if ("navigationPreload" in self.registration) {
         try {
           await self.registration.navigationPreload.enable();
@@ -425,21 +436,40 @@ async function trimCacheEntries(cacheName, maxEntries) {
 
 async function persistNavigationResponse(cacheName, cacheKey, response, maxEntries, options = {}) {
   if (!shouldPersistNavigationResponse(response, options)) return;
-  const cache = await caches.open(cacheName);
-  await cache.put(cacheKey, response.clone());
-  await trimCacheEntries(cacheName, maxEntries);
+  try {
+    const cache = await caches.open(cacheName);
+    await cache.put(cacheKey, response.clone());
+    await trimCacheEntries(cacheName, maxEntries);
+  } catch {
+    // Runtime caching is best-effort and must never replace a valid response.
+  }
 }
 
 async function cacheStaticAsset(request) {
-  const cache = await caches.open(FAOLLA_STATIC_CACHE);
-  const cached = await cache.match(request);
+  let cache = null;
+  try {
+    cache = await caches.open(FAOLLA_STATIC_CACHE);
+  } catch {
+    // Keep the online application usable when browser storage is unavailable.
+    return fetch(request);
+  }
+  let cached = null;
+  try {
+    cached = await cache.match(request);
+  } catch {
+    return fetch(request);
+  }
 
   if (new URL(request.url).pathname.startsWith("/_next/static/")) {
     if (cached) return cached;
     try {
       const response = await fetch(request);
       if (response && response.ok) {
-        await cache.put(request, response.clone());
+        try {
+          await cache.put(request, response.clone());
+        } catch {
+          // Return the successful network response even if caching fails.
+        }
       }
       return response;
     } catch {
@@ -461,7 +491,11 @@ async function cacheStaticAsset(request) {
   try {
     const response = await fetch(request);
     if (response && response.ok) {
-      await cache.put(request, response.clone());
+      try {
+        await cache.put(request, response.clone());
+      } catch {
+        // Return the successful network response even if caching fails.
+      }
     }
     return response;
   } catch {
@@ -470,39 +504,47 @@ async function cacheStaticAsset(request) {
 }
 
 async function clearRuntimeCaches() {
-  const cacheKeys = await caches.keys();
-  await Promise.all(
-    cacheKeys.map((key) => {
-      if (key.startsWith("faolla-") && key !== FAOLLA_BADGE_CACHE) {
-        return caches.delete(key);
-      }
-      return Promise.resolve(false);
-    }),
-  );
+  try {
+    const cacheKeys = await caches.keys();
+    await Promise.all(
+      cacheKeys.map((key) => {
+        if (key.startsWith("faolla-") && key !== FAOLLA_BADGE_CACHE) {
+          return caches.delete(key);
+        }
+        return Promise.resolve(false);
+      }),
+    );
+  } catch {
+    // Cache cleanup is best-effort when browser storage is unavailable.
+  }
 }
 
 async function handleAuthNavigationRequest(event, request, url) {
-  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   try {
     return await resolveNavigationResponse(event, request);
   } catch {
-    if (url.pathname === "/launch") {
-      const launchTarget = await readLaunchTarget();
-      if (launchTarget) {
-        const cachedLaunchTarget = await caches.match(
-          normalizeNavigationCacheKey(new URL(launchTarget, self.location.origin)),
-          {
-            cacheName: FAOLLA_APP_PAGE_CACHE,
-          },
-        );
-        if (cachedLaunchTarget) return cachedLaunchTarget;
+    try {
+      const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+      if (url.pathname === "/launch") {
+        const launchTarget = await readLaunchTarget();
+        if (launchTarget) {
+          const cachedLaunchTarget = await caches.match(
+            normalizeNavigationCacheKey(new URL(launchTarget, self.location.origin)),
+            {
+              cacheName: FAOLLA_APP_PAGE_CACHE,
+            },
+          );
+          if (cachedLaunchTarget) return cachedLaunchTarget;
+        }
       }
+      const cachedResponse =
+        (await shellCache.match(url.pathname)) ||
+        (url.pathname !== "/login" ? await shellCache.match("/login") : null) ||
+        (await shellCache.match("/"));
+      if (cachedResponse) return cachedResponse;
+    } catch {
+      // Fall through to the in-memory offline page when cache access fails.
     }
-    const cachedResponse =
-      (await shellCache.match(url.pathname)) ||
-      (url.pathname !== "/login" ? await shellCache.match("/login") : null) ||
-      (await shellCache.match("/"));
-    if (cachedResponse) return cachedResponse;
     return buildOfflineFallbackResponse(request);
   }
 }
@@ -510,12 +552,17 @@ async function handleAuthNavigationRequest(event, request, url) {
 async function handleFastAppShellLaunchRequest(event, request, url) {
   const launchTarget = await readLaunchTarget();
   if (launchTarget) {
-    const cachedLaunchTarget = await caches.match(
-      normalizeNavigationCacheKey(new URL(launchTarget, self.location.origin)),
-      {
-        cacheName: FAOLLA_APP_PAGE_CACHE,
-      },
-    );
+    let cachedLaunchTarget = null;
+    try {
+      cachedLaunchTarget = await caches.match(
+        normalizeNavigationCacheKey(new URL(launchTarget, self.location.origin)),
+        {
+          cacheName: FAOLLA_APP_PAGE_CACHE,
+        },
+      );
+    } catch {
+      // Continue with an online auth navigation when CacheStorage is unavailable.
+    }
     if (cachedLaunchTarget) {
       event.waitUntil(
         Promise.allSettled([
@@ -540,7 +587,6 @@ async function resolveNavigationResponse(event, request) {
 }
 
 async function handlePublicNavigationRequest(event, request, url) {
-  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeNavigationCacheKey(url);
   const allowShellHomeFallback = !isFaollaMerchantSubdomain(url.hostname);
   try {
@@ -548,19 +594,28 @@ async function handlePublicNavigationRequest(event, request, url) {
     await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
     return response;
   } catch {
-    const cachedResponse =
-      (await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
-      (await shellCache.match(url.pathname)) ||
-      (allowShellHomeFallback && url.pathname !== "/" ? await shellCache.match("/") : null);
-    if (cachedResponse) return cachedResponse;
+    try {
+      const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+      const cachedResponse =
+        (await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
+        (await shellCache.match(url.pathname)) ||
+        (allowShellHomeFallback && url.pathname !== "/" ? await shellCache.match("/") : null);
+      if (cachedResponse) return cachedResponse;
+    } catch {
+      // Fall through to the in-memory offline page when cache access fails.
+    }
     return buildOfflineFallbackResponse(request);
   }
 }
 
 async function handleFaollaEmbeddedHomeRequest(event, request, url) {
-  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeFaollaEmbeddedHomeCacheKey(url);
-  const cachedResponse = await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE });
+  let cachedResponse = null;
+  try {
+    cachedResponse = await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE });
+  } catch {
+    // Continue with the network when CacheStorage is unavailable.
+  }
   const refresh = resolveNavigationResponse(event, request)
     .then(async (response) => {
       await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT, {
@@ -577,26 +632,35 @@ async function handleFaollaEmbeddedHomeRequest(event, request, url) {
 
   const response = await refresh;
   if (response) return response;
-  const fallbackResponse =
-    (await caches.match(normalizeNavigationCacheKey(url), { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
-    (await shellCache.match("/"));
-  if (fallbackResponse) return fallbackResponse;
+  try {
+    const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+    const fallbackResponse =
+      (await caches.match(normalizeNavigationCacheKey(url), { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
+      (await shellCache.match("/"));
+    if (fallbackResponse) return fallbackResponse;
+  } catch {
+    // Fall through to the in-memory offline page when cache access fails.
+  }
   return buildOfflineFallbackResponse(request);
 }
 
 async function handleAppNavigationRequest(event, request, url) {
-  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeNavigationCacheKey(url);
   try {
     const response = await resolveNavigationResponse(event, request);
     await persistNavigationResponse(FAOLLA_APP_PAGE_CACHE, cacheKey, response, FAOLLA_APP_PAGE_LIMIT);
     return response;
   } catch {
-    const cachedResponse =
-      (await caches.match(cacheKey, { cacheName: FAOLLA_APP_PAGE_CACHE })) ||
-      (await shellCache.match(url.pathname)) ||
-      (await shellCache.match("/login"));
-    if (cachedResponse) return cachedResponse;
+    try {
+      const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+      const cachedResponse =
+        (await caches.match(cacheKey, { cacheName: FAOLLA_APP_PAGE_CACHE })) ||
+        (await shellCache.match(url.pathname)) ||
+        (await shellCache.match("/login"));
+      if (cachedResponse) return cachedResponse;
+    } catch {
+      // Fall through to the in-memory offline page when cache access fails.
+    }
     return buildOfflineFallbackResponse(request);
   }
 }
