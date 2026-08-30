@@ -1285,6 +1285,7 @@ async function installEmployeeWorkspaceApiMock(context, mode, stats) {
       if (mode === "unavailable") {
         return respond(503, { ok: false, error: "temporarily_unavailable" });
       }
+      const fiveMenus = mode === "five-menus";
       return respond(200, {
         ok: true,
         schemaVersion: 1,
@@ -1294,13 +1295,35 @@ async function installEmployeeWorkspaceApiMock(context, mode, stats) {
           principalKey: "employee:10000000-0000-4000-8000-000000000099",
           authorizationVersion: "1:1",
         },
-        cacheNamespace: "employee-workspace-browser-members-only",
+        cacheNamespace: fiveMenus
+          ? "employee-workspace-browser-five-menus"
+          : "employee-workspace-browser-members-only",
         collaborationPermissions: [],
-        permissions: ["members.view"],
+        permissions: fiveMenus
+          ? [
+              "redemptions.view",
+              "bookings.view",
+              "orders.view",
+              "conversations.view",
+              "members.view",
+            ]
+          : ["members.view"],
         workspace: {
           siteId,
           siteName: "浏览器验收商户",
           siteCountryCode: "ES",
+          ...(fiveMenus
+            ? {
+                booking: {
+                  storeOptions: [],
+                  itemOptions: [],
+                  titleOptions: [],
+                  bookingRulesSnapshot: null,
+                  allowBookingEmailPrefill: false,
+                  allowCustomerAutoEmail: false,
+                },
+              }
+            : {}),
         },
       });
     }
@@ -1329,7 +1352,66 @@ async function installEmployeeWorkspaceApiMock(context, mode, stats) {
   });
 }
 
-async function runEmployeeWorkspaceRootRegression(browser, baseUrl) {
+async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDirectory) {
+  const fiveMenuStats = {
+    capabilityRequests: 0,
+    enterpriseOverviewRequests: 0,
+    membershipRequests: 0,
+  };
+  const fiveMenuContext = await browser.newContext({
+    viewport: { width: 1440, height: 1000 },
+    serviceWorkers: "block",
+    locale: "zh-CN",
+  });
+  try {
+    await installEmployeeWorkspaceApiMock(fiveMenuContext, "five-menus", fiveMenuStats);
+    const fiveMenuPage = await fiveMenuContext.newPage();
+    await fiveMenuPage.goto(`${baseUrl}/test-harness/employee-workspace`, {
+      waitUntil: "domcontentloaded",
+    });
+    const fiveMenuNavigation = fiveMenuPage
+      .locator('[data-employee-merchant-sidebar="1"]')
+      .getByRole("navigation", { name: "员工工作区主导航" });
+    await fiveMenuNavigation
+      .getByRole("button", { name: "积分兑换", exact: true })
+      .waitFor();
+    const redemptionContextNavigation = fiveMenuPage
+      .locator('[data-employee-merchant-sidebar="1"]')
+      .getByRole("navigation", { name: "积分兑换子菜单" });
+    await redemptionContextNavigation
+      .getByRole("button", { name: "兑换记录", exact: true })
+      .waitFor();
+    const fiveMenuLabels = await fiveMenuNavigation
+      .getByRole("button")
+      .allTextContents();
+    assert(
+      JSON.stringify(fiveMenuLabels.map((label) => label.trim())) ===
+        JSON.stringify(["积分兑换", "预约管理", "订单管理", "会话", "会员管理"]) &&
+        (await fiveMenuNavigation.getByRole("button", { name: "积分兑换", exact: true }).getAttribute("aria-current")) === "page" &&
+        (await redemptionContextNavigation.getByRole("button").allTextContents()).map((label) => label.trim()).join("|") === "兑换记录|充值记录" &&
+        fiveMenuStats.capabilityRequests > 0 &&
+        fiveMenuStats.enterpriseOverviewRequests === 0,
+      `five-menu employee navigation did not mirror the permitted merchant menu order:${JSON.stringify({ fiveMenuLabels, fiveMenuStats })}`,
+    );
+    await redemptionContextNavigation
+      .getByRole("button", { name: "兑换记录", exact: true })
+      .click();
+    assert(
+      (await redemptionContextNavigation
+        .getByRole("button", { name: "兑换记录", exact: true })
+        .getAttribute("aria-current")) === "page",
+      "employee redemption submenu did not become the active merchant-style context entry",
+    );
+    if (screenshotDirectory) {
+      await fiveMenuPage.screenshot({
+        path: path.join(screenshotDirectory, "employee-merchant-shell-desktop.png"),
+        fullPage: true,
+      });
+    }
+  } finally {
+    await fiveMenuContext.close();
+  }
+
   const membersStats = {
     capabilityRequests: 0,
     enterpriseOverviewRequests: 0,
@@ -1352,17 +1434,169 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl) {
     });
     await membersRoot.waitFor();
     await membersPage
-      .getByRole("button", { name: "会员列表", exact: true })
+      .getByRole("heading", { name: "会员列表", exact: true })
       .waitFor();
+    const desktopShell = membersPage.locator('[data-employee-merchant-shell="1"]');
+    const desktopSidebar = membersPage.locator('[data-employee-merchant-sidebar="1"]');
+    const desktopNavigation = desktopSidebar.getByRole("navigation", {
+      name: "员工工作区主导航",
+    });
+    const desktopSidebarBox = await desktopSidebar.boundingBox();
+    const desktopMetrics = await membersPage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
     assert(
       (await membersRoot.getAttribute("aria-current")) === "page" &&
+        (await desktopShell.count()) === 1 &&
+        desktopSidebarBox !== null &&
+        Math.abs(desktopSidebarBox.x) <= 1 &&
+        Math.abs(desktopSidebarBox.width - 228) <= 1 &&
+        (await desktopNavigation.getByRole("button").count()) === 1 &&
+        (await desktopSidebar.getByRole("navigation", { name: "会员管理子菜单" }).count()) === 0 &&
+        desktopMetrics.scrollWidth <= desktopMetrics.innerWidth + 1 &&
         (await membersPage.getByRole("button", { name: "企业协作", exact: true }).count()) === 0 &&
+        (await membersPage.getByRole("button", { name: "优惠券", exact: true }).count()) === 0 &&
+        (await membersPage.getByRole("button", { name: "经营中心", exact: true }).count()) === 0 &&
         membersStats.capabilityRequests > 0 &&
         membersStats.enterpriseOverviewRequests === 0,
       `members-only employee did not land directly in the permitted business root:${JSON.stringify(membersStats)}`,
     );
+    const collapseSidebar = membersPage.getByRole("button", {
+      name: "收起员工工作区侧栏",
+      exact: true,
+    });
+    await collapseSidebar.click();
+    await membersPage.getByRole("button", {
+      name: "展开员工工作区侧栏",
+      exact: true,
+    }).waitFor();
+    await membersPage.waitForTimeout(250);
+    assert(
+      await desktopSidebar.isHidden(),
+      "desktop employee sidebar did not become non-interactive after collapsing",
+    );
+    await membersPage.getByRole("button", {
+      name: "展开员工工作区侧栏",
+      exact: true,
+    }).click();
   } finally {
     await membersContext.close();
+  }
+
+  const mobileStats = {
+    capabilityRequests: 0,
+    enterpriseOverviewRequests: 0,
+    membershipRequests: 0,
+  };
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    serviceWorkers: "block",
+    locale: "zh-CN",
+  });
+  try {
+    await installEmployeeWorkspaceApiMock(mobileContext, "five-menus", mobileStats);
+    const mobilePage = await mobileContext.newPage();
+    await mobilePage.goto(`${baseUrl}/test-harness/employee-workspace`, {
+      waitUntil: "domcontentloaded",
+    });
+    const mobileMenuTrigger = mobilePage.getByRole("button", {
+      name: "打开员工工作区导航",
+      exact: true,
+    });
+    await mobileMenuTrigger.waitFor();
+    const mobileSidebar = mobilePage.locator('[data-employee-merchant-sidebar="1"]');
+    const mobileSidebarStartedHidden = await mobileSidebar.isHidden();
+    await mobileMenuTrigger.click();
+    await mobilePage.waitForTimeout(250);
+    const openMobileSidebarBox = await mobileSidebar.boundingBox();
+    const mobileNavigation = mobileSidebar.getByRole("navigation", {
+      name: "员工工作区主导航",
+    });
+    const mobileFocusState = await mobileSidebar.evaluate((sidebar) => ({
+      enteredSidebar: sidebar.contains(document.activeElement),
+      activeLabel: document.activeElement?.getAttribute("aria-label") || "",
+      activeText: document.activeElement?.textContent?.trim().slice(0, 80) || "",
+      activeTag: document.activeElement?.tagName || "",
+    }));
+    const mobileFocusEnteredSidebar = mobileFocusState.enteredSidebar;
+    const mobileMetrics = await mobilePage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    assert(
+      mobileSidebarStartedHidden &&
+        openMobileSidebarBox !== null &&
+        Math.abs(openMobileSidebarBox.x) <= 1 &&
+        Math.abs(openMobileSidebarBox.width - 228) <= 1 &&
+        (await mobileNavigation.getByRole("button").count()) === 5 &&
+        (await mobileNavigation.getByRole("button", { name: "会员管理", exact: true }).count()) === 1 &&
+        mobileFocusEnteredSidebar &&
+        mobileMetrics.scrollWidth <= mobileMetrics.innerWidth + 1 &&
+        mobileStats.enterpriseOverviewRequests === 0,
+      `mobile employee sidebar was not permission-filtered or responsive:${JSON.stringify({ mobileSidebarStartedHidden, openMobileSidebarBox, mobileFocusState, mobileMetrics, mobileStats })}`,
+    );
+    if (screenshotDirectory) {
+      await mobilePage.screenshot({
+        path: path.join(screenshotDirectory, "employee-merchant-shell-mobile.png"),
+        fullPage: true,
+      });
+    }
+    await mobilePage.keyboard.press("Shift+Tab");
+    assert(
+      await mobileSidebar.evaluate((sidebar) =>
+        sidebar.contains(document.activeElement),
+      ),
+      "mobile employee sidebar did not trap keyboard focus",
+    );
+    const mobileContextNavigation = mobileSidebar.getByRole("navigation", {
+      name: "积分兑换子菜单",
+    });
+    await mobileContextNavigation
+      .getByRole("button", { name: "兑换记录", exact: true })
+      .click();
+    await mobilePage.waitForTimeout(250);
+    assert(
+      (await mobileSidebar.isHidden()) &&
+        (await mobileMenuTrigger.evaluate(
+          (trigger) => document.activeElement === trigger,
+        )),
+      "mobile employee sidebar did not close after context navigation",
+    );
+    await mobileMenuTrigger.click();
+    await mobilePage.waitForTimeout(250);
+    await mobileNavigation
+      .getByRole("button", { name: "会员管理", exact: true })
+      .click();
+    await mobilePage.waitForTimeout(250);
+    assert(
+      (await mobileSidebar.isHidden()) &&
+        (await mobileMenuTrigger.evaluate(
+          (trigger) => document.activeElement === trigger,
+        )),
+      "mobile employee sidebar did not become non-interactive after navigation",
+    );
+    await mobilePage.evaluate(() => {
+      document.body.tabIndex = -1;
+      document.body.focus();
+    });
+    await mobilePage.keyboard.press("Escape");
+    assert(
+      await mobilePage.evaluate(() => document.activeElement === document.body),
+      "Escape moved focus while the mobile employee sidebar was already closed",
+    );
+    await mobileMenuTrigger.click();
+    await mobilePage.waitForTimeout(250);
+    await mobilePage.setViewportSize({ width: 1100, height: 844 });
+    await mobilePage.waitForTimeout(250);
+    assert(
+      (await mobilePage
+        .locator('button[aria-label="打开员工工作区导航"]')
+        .getAttribute("aria-expanded")) === "false",
+      "mobile drawer state remained active after entering the desktop viewport",
+    );
+  } finally {
+    await mobileContext.close();
   }
 
   const unavailableStats = {
@@ -1382,10 +1616,15 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl) {
       waitUntil: "domcontentloaded",
     });
     await unavailablePage
-      .getByRole("button", { name: "重新核验", exact: true })
+      .getByRole("button", { name: "重新核验权限", exact: true })
+      .first()
       .waitFor();
+    const unavailableNavigation = unavailablePage
+      .locator('[data-employee-merchant-sidebar="1"]')
+      .getByRole("navigation", { name: "员工工作区主导航" });
     assert(
       (await unavailablePage.getByRole("button", { name: "企业协作", exact: true }).count()) === 0 &&
+        (await unavailableNavigation.getByRole("button").count()) === 0 &&
         unavailableStats.capabilityRequests > 0 &&
         unavailableStats.membershipRequests === 0 &&
         unavailableStats.enterpriseOverviewRequests === 0,
@@ -1444,7 +1683,7 @@ async function run() {
   const { baseUrl, child, readServerOutput } = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
-    await runEmployeeWorkspaceRootRegression(browser, baseUrl);
+    await runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDirectory);
     const ownerContextA = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       serviceWorkers: "block",
