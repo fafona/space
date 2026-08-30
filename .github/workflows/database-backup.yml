@@ -99,14 +99,21 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         shell: bash
         run: |
           set -euo pipefail
+          umask 077
           test -n "$SSH_HOST"
+          test -n "$SSH_USER"
           test -n "$SSH_PRIVATE_KEY"
           test -n "$SSH_KNOWN_HOSTS"
+          test -n "$RUNNER_TEMP"
+          [[ "$RUNNER_TEMP" = /* ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           if ! [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] \
             || [ "${SSH_PORT:-22}" -lt 1 ] \
             || [ "${SSH_PORT:-22}" -gt 65535 ]; then
@@ -124,6 +131,49 @@ jobs:
             known_hosts_lookup="[$SSH_HOST]:${SSH_PORT}"
           fi
           ssh-keygen -F "$known_hosts_lookup" -f ~/.ssh/known_hosts >/dev/null 2>&1
+          control_directory="$RUNNER_TEMP/fdb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          control_path="$control_directory/m"
+          [[ "$control_directory" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [ "${#control_path}" -le 88 ]
+          test ! -e "$control_directory"
+          mkdir -m 700 -- "$control_directory"
+          test "$(stat -c '%a' "$control_directory")" = 700
+          test ! -e "$control_path"
+
+          ssh_args=(
+            -o BatchMode=yes
+            -o ConnectTimeout=20
+            -o ConnectionAttempts=1
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ControlPath="$control_path"
+            -p "${SSH_PORT:-22}"
+          )
+          control_ready=false
+          for retry_delay in 0 5 10 20 40; do
+            if ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+              >/dev/null 2>&1; then
+              control_ready=true
+              break
+            fi
+            rm -f -- "$control_path"
+            if [ "$retry_delay" -gt 0 ]; then sleep "$retry_delay"; fi
+            if ssh "${ssh_args[@]}" -M -N -f \
+              -o ControlMaster=yes -o ControlPersist=370m \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "$SSH_USER@$SSH_HOST"; then
+              :
+            fi
+            if ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+              >/dev/null 2>&1; then
+              control_ready=true
+              break
+            fi
+          done
+          test "$control_ready" = true
+          ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+            >/dev/null 2>&1
 
       - name: Prepare Remote Detached Exact Source
         env:
@@ -138,6 +188,7 @@ jobs:
           test -n "$APP_DIR"
           app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
           printf '::add-mask::%s\n' "$app_dir_b64"
+          control_path="$RUNNER_TEMP/fdb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/m"
           ssh_args=(
             -o BatchMode=yes
             -o ConnectTimeout=20
@@ -145,8 +196,11 @@ jobs:
             -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ControlPath="$control_path"
             -p "${SSH_PORT:-22}"
           )
+          ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+            >/dev/null 2>&1
           ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
             "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE bash -s" <<'REMOTE'
           set -euo pipefail
@@ -178,12 +232,16 @@ jobs:
           set -euo pipefail
           app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
           printf '::add-mask::%s\n' "$app_dir_b64"
+          control_path="$RUNNER_TEMP/fdb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/m"
           ssh_args=(
             -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ControlPath="$control_path"
             -p "${SSH_PORT:-22}"
           )
+          ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+            >/dev/null 2>&1
           ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
             "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE bash -s" <<'REMOTE' \
             | tee database-backup-readiness-report.log
@@ -216,12 +274,16 @@ jobs:
           test -n "$DATABASE_BACKUP_PASSPHRASE"
           app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
           printf '::add-mask::%s\n' "$app_dir_b64"
+          control_path="$RUNNER_TEMP/fdb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/m"
           ssh_args=(
             -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ControlPath="$control_path"
             -p "${SSH_PORT:-22}"
           )
+          ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+            >/dev/null 2>&1
           remote_script='set -euo pipefail; app_dir="$(printf "%s" "$FAOLLA_APP_DIR_B64" | base64 -d)"; cd "$FAOLLA_BACKUP_WORKTREE"; test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"; test -z "$(git status --porcelain=v1 --untracked-files=all)"; node --env-file="$app_dir/.env.local" scripts/create-production-database-backup.mjs --passphrase-stdin --output "$FAOLLA_REMOTE_BACKUP_PATH" --app-directory "$app_dir" --source-repository "$FAOLLA_SOURCE_REPOSITORY" --source-sha "$FAOLLA_TARGET_SHA" --json; test "$(git rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"; test -z "$(git status --porcelain=v1 --untracked-files=all)"'
           printf '%s\n' "$DATABASE_BACKUP_PASSPHRASE" \
             | ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
@@ -274,13 +336,17 @@ jobs:
             .source.stability.database == "matched_before_after"
           ' <<<"$create_report_json" >/dev/null
 
+          control_path="$RUNNER_TEMP/fdb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/m"
           ssh_args=(
             -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3
             -o ServerAliveInterval=30 -o ServerAliveCountMax=10
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ControlPath="$control_path"
             -p "${SSH_PORT:-22}"
           )
+          ssh "${ssh_args[@]}" -O check "$SSH_USER@$SSH_HOST" \
+            >/dev/null 2>&1
           if ! remote_backup_bytes="$(ssh "${ssh_args[@]}" \
             "$SSH_USER@$SSH_HOST" "stat -c '%s' -- '$REMOTE_BACKUP_PATH'")"; then
             fail_transfer remote_size_unavailable "$expected_backup_bytes" unknown 0 1
@@ -303,6 +369,7 @@ jobs:
                   -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
                   -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
                   -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                  -o ControlPath="$control_path" \
                   -P "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST"
             transfer_status="$?"
             set -e
@@ -538,17 +605,23 @@ jobs:
         shell: bash
         run: |
           set +e
+          cleanup_status=0
           rm -f -- "$LOCAL_BACKUP_PATH" "$LOCAL_BACKUP_PART_PATH" \
             "$BACKUP_SUBJECT_PATH" "$BACKUP_ATTESTATION_PATH"
           if [ -n "${SSH_USER:-}" ] && [ -n "${SSH_HOST:-}" ] \
             && [ -n "${APP_DIR:-}" ] && [ -s "$HOME/.ssh/known_hosts" ]; then
             app_dir_b64="$(printf '%s' "$APP_DIR" | base64 -w0)"
             printf '::add-mask::%s\n' "$app_dir_b64"
-            ssh -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=2 \
-              -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-              "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH bash -s" <<'REMOTE'
+            control_directory="$RUNNER_TEMP/fdb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            control_path="$control_directory/m"
+            remote_cleanup_status=1
+            for cleanup_attempt in 1 2 3; do
+              ssh -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=2 \
+                -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -o ControlPath="$control_path" \
+                -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+                "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH bash -s" <<'REMOTE'
           set -eu
           app_dir="$(printf '%s' "$FAOLLA_APP_DIR_B64" | base64 -d)"
           rm -f -- "$FAOLLA_REMOTE_BACKUP_PATH"
@@ -556,4 +629,26 @@ jobs:
             git -C "$app_dir" worktree remove --force "$FAOLLA_BACKUP_WORKTREE"
           fi
           REMOTE
+              remote_cleanup_status="$?"
+              if [ "$remote_cleanup_status" -eq 0 ]; then break; fi
+              if ! ssh -o BatchMode=yes -o ConnectTimeout=20 \
+                -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -o ControlPath="$control_path" \
+                -p "${SSH_PORT:-22}" -O check "$SSH_USER@$SSH_HOST" \
+                >/dev/null 2>&1; then
+                rm -f -- "$control_path"
+              fi
+              if [ "$cleanup_attempt" -lt 3 ]; then sleep 5; fi
+            done
+            cleanup_status="$remote_cleanup_status"
+            ssh -o BatchMode=yes -o ConnectTimeout=20 \
+              -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -o ControlPath="$control_path" \
+              -p "${SSH_PORT:-22}" -O exit "$SSH_USER@$SSH_HOST" \
+              >/dev/null 2>&1 || true
+            rm -f -- "$control_path"
+            rmdir -- "$control_directory" >/dev/null 2>&1 || true
           fi
+          exit "$cleanup_status"
