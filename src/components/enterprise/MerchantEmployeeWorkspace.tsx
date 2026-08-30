@@ -206,6 +206,7 @@ function RedemptionWorkspace({
       apiClient={apiClient}
       cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
       permissions={permissions}
+      className="min-h-[calc(100vh-14rem)] lg:py-6"
     />
   ) : (
     <MerchantMembershipSettingsPanel
@@ -214,6 +215,7 @@ function RedemptionWorkspace({
       apiClient={apiClient}
       cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
       permissions={permissions}
+      className="min-h-[calc(100vh-14rem)]"
     />
   );
 }
@@ -238,6 +240,7 @@ function MemberWorkspace({
       apiClient={apiClient}
       cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
       permissions={permissions}
+      className="min-h-[calc(100vh-14rem)] lg:py-6"
     />
   ) : (
     <MerchantMembershipSettingsPanel
@@ -246,6 +249,7 @@ function MemberWorkspace({
       apiClient={apiClient}
       cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
       permissions={permissions}
+      className="min-h-[calc(100vh-14rem)]"
     />
   );
 }
@@ -590,6 +594,7 @@ export default function MerchantEmployeeWorkspace({
           showCloseButton={false}
           {...common}
           cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
+          className="min-h-[calc(100vh-14rem)]"
           onClose={() => undefined}
         />
       );
@@ -609,6 +614,7 @@ export default function MerchantEmployeeWorkspace({
           allowBookingEmailPrefill={booking.allowBookingEmailPrefill}
           allowCustomerAutoEmail={booking.allowCustomerAutoEmail}
           cachePolicy={MERCHANT_BUSINESS_EMPLOYEE_CACHE_POLICY}
+          className="min-h-[calc(100vh-14rem)]"
           onClose={() => undefined}
         />
       ) : null;
@@ -640,7 +646,7 @@ export default function MerchantEmployeeWorkspace({
   let workspaceContent: ReactNode;
   if (capabilityDecisionPending) {
     workspaceContent = (
-      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+      <div className="w-full p-4 sm:p-6">
         <WorkspaceLoading />
       </div>
     );
@@ -658,14 +664,15 @@ export default function MerchantEmployeeWorkspace({
     workspaceContent = (
       <div
         key={`${capabilityMountKey}:${activeRoot}`}
-        className="mx-auto max-w-7xl p-4 sm:p-6"
+        data-employee-merchant-content="business"
+        className="w-full p-4 sm:p-6 lg:px-6 lg:pb-8 lg:pt-0"
       >
         {businessContent}
       </div>
     );
   } else if (capabilities && capabilityStatus === "ready") {
     workspaceContent = (
-      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+      <div className="w-full p-4 sm:p-6">
         <div
           role="status"
           className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm"
@@ -679,7 +686,7 @@ export default function MerchantEmployeeWorkspace({
     capabilityStatus === "authorization_invalid"
   ) {
     workspaceContent = (
-      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+      <div className="w-full p-4 sm:p-6">
         <div
           role="alert"
           className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm"
@@ -701,7 +708,7 @@ export default function MerchantEmployeeWorkspace({
     );
   } else {
     workspaceContent = (
-      <div className="mx-auto max-w-7xl p-4 sm:p-6">
+      <div className="w-full p-4 sm:p-6">
         <WorkspaceLoading />
       </div>
     );

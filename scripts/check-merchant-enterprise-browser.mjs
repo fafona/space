@@ -1359,7 +1359,7 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
     membershipRequests: 0,
   };
   const fiveMenuContext = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
+    viewport: { width: 1920, height: 944 },
     serviceWorkers: "block",
     locale: "zh-CN",
   });
@@ -1381,6 +1381,19 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
     await redemptionContextNavigation
       .getByRole("button", { name: "兑换记录", exact: true })
       .waitFor();
+    const fiveMenuSidebar = fiveMenuPage.locator(
+      '[data-employee-merchant-sidebar="1"]',
+    );
+    const fiveMenuCashier = fiveMenuPage.locator(
+      '[data-employee-merchant-content="business"] .merchant-pos-cashier',
+    );
+    await fiveMenuCashier.waitFor();
+    const fiveMenuSidebarBox = await fiveMenuSidebar.boundingBox();
+    const fiveMenuCashierBox = await fiveMenuCashier.boundingBox();
+    const fiveMenuLayoutMetrics = await fiveMenuPage.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
     const fiveMenuLabels = await fiveMenuNavigation
       .getByRole("button")
       .allTextContents();
@@ -1389,9 +1402,25 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
         JSON.stringify(["积分兑换", "预约管理", "订单管理", "会话", "会员管理"]) &&
         (await fiveMenuNavigation.getByRole("button", { name: "积分兑换", exact: true }).getAttribute("aria-current")) === "page" &&
         (await redemptionContextNavigation.getByRole("button").allTextContents()).map((label) => label.trim()).join("|") === "兑换记录|充值记录" &&
+        fiveMenuSidebarBox !== null &&
+        fiveMenuCashierBox !== null &&
+        Math.abs(
+          fiveMenuCashierBox.x -
+            (fiveMenuSidebarBox.x + fiveMenuSidebarBox.width + 24),
+        ) <= 1 &&
+        Math.abs(fiveMenuCashierBox.y) <= 1 &&
+        Math.abs(
+          fiveMenuCashierBox.width -
+            (fiveMenuLayoutMetrics.innerWidth -
+              fiveMenuSidebarBox.x -
+              fiveMenuSidebarBox.width -
+              48),
+        ) <= 1 &&
+        fiveMenuLayoutMetrics.scrollWidth <=
+          fiveMenuLayoutMetrics.innerWidth + 1 &&
         fiveMenuStats.capabilityRequests > 0 &&
         fiveMenuStats.enterpriseOverviewRequests === 0,
-      `five-menu employee navigation did not mirror the permitted merchant menu order:${JSON.stringify({ fiveMenuLabels, fiveMenuStats })}`,
+      `five-menu employee navigation or merchant-width layout did not match:${JSON.stringify({ fiveMenuLabels, fiveMenuStats, fiveMenuSidebarBox, fiveMenuCashierBox, fiveMenuLayoutMetrics })}`,
     );
     await redemptionContextNavigation
       .getByRole("button", { name: "兑换记录", exact: true })

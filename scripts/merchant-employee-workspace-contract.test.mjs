@@ -84,6 +84,19 @@ test("employee shell mirrors the merchant sidebar without owner identity or owne
   assert.doesNotMatch(employeeShell, /\bfetch\s*\(|accessToken|localStorage|sessionStorage|document\.cookie/);
 });
 
+test("employee business content keeps the merchant full-width desktop geometry", () => {
+  assert.match(workspace, /data-employee-merchant-content="business"/);
+  assert.match(
+    workspace,
+    /className="w-full p-4 sm:p-6 lg:px-6 lg:pb-8 lg:pt-0"/,
+  );
+  assert.doesNotMatch(workspace, /mx-auto max-w-7xl p-4 sm:p-6/);
+  assert.match(
+    workspace,
+    /MerchantPointRedemptionCashier[\s\S]{0,420}className="min-h-\[calc\(100vh-14rem\)\] lg:py-6"/,
+  );
+});
+
 test("employee workspace browser harness stays unavailable outside explicit local tests", () => {
   assert.match(
     employeeHarness,
