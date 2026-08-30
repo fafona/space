@@ -183,8 +183,7 @@ export default function MerchantEmployeeShell({
   }, []);
   const openMobileSidebar = useCallback(() => {
     setMobileSidebarOpen(true);
-    window.setTimeout(focusFirstMobileSidebarControl, 0);
-  }, [focusFirstMobileSidebarControl]);
+  }, []);
   const closeMobileSidebar = useCallback(() => {
     const shouldRestoreFocus =
       mobileSidebarOpen && isMobileSidebarViewport();
@@ -193,6 +192,12 @@ export default function MerchantEmployeeShell({
       window.setTimeout(() => mobileMenuTriggerRef.current?.focus(), 0);
     }
   }, [mobileSidebarOpen]);
+
+  useEffect(() => {
+    if (!mobileSidebarOpen || !isMobileSidebarViewport()) return;
+    const frameId = window.requestAnimationFrame(focusFirstMobileSidebarControl);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [focusFirstMobileSidebarControl, mobileSidebarOpen]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

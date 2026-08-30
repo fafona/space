@@ -44,7 +44,7 @@ test("member manager uses the injected business client and disables restricted c
   assert.match(memberManager, /"redemptions\.recharge"/);
 });
 
-test("cashier closes credential, persistence, search and local-log fallback paths", () => {
+test("cashier closes credential, persistence and local-log fallback paths while using scoped search", () => {
   assert.match(cashier, /apiClient\?: MerchantBusinessApiClient/);
   assert.match(cashier, /requestRedemptionApi\("\/api\/memberships"/);
   assert.match(
@@ -63,10 +63,14 @@ test("cashier closes credential, persistence, search and local-log fallback path
     cashier,
     /if \(!employeeMode\) recordMerchantOperationLog/g,
   );
+  assert.match(cashier, /action: "member_search"/);
   assert.match(
     cashier,
-    /employeeMode && !canSearchMemberDirectory/,
+    /requestRedemptionApi\("\/api\/merchant-admin\/redemption-cashier", \{[\s\S]{0,160}method: "POST"/,
   );
+  assert.doesNotMatch(cashier, /redemption-cashier\?[^"`]*query/);
+  assert.match(cashier, /memberSearchRateLimitedKeyword/);
+  assert.doesNotMatch(cashier, /canSearchMemberDirectory/);
   assert.match(cashier, /"redemptions\.recharge\.cancel"/);
   assert.match(cashier, /"members\.account\.adjust"/);
   assert.match(cashier, /"redemptions\.print"/);

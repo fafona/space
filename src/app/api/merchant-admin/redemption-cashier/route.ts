@@ -12,10 +12,34 @@ import {
   getMerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings.server";
 import { getMerchantMembershipsSnapshot } from "@/lib/merchantMemberships.server";
-import { buildRedemptionCashierMembershipList } from "@/lib/merchantRedemptionCashier";
+import {
+  buildRedemptionCashierMembershipList,
+  searchRedemptionCashierMemberships,
+} from "@/lib/merchantRedemptionCashier";
+import { consumeMerchantRedemptionCashierSearchRateLimit } from "@/lib/merchantRedemptionCashierSearchRateLimit.server";
+import {
+  getTrustedMutationRequestErrorResponse,
+  isTrustedSameOriginMutationRequest,
+} from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+export type MerchantRedemptionCashierRouteDependencies = {
+  authorizeActor: typeof authorizeMerchantBusinessRequest;
+  loadMembershipsSnapshot: typeof getMerchantMembershipsSnapshot;
+  loadSettings: typeof getMerchantMembershipSettings;
+  loadCouponsSnapshot: typeof getMerchantCouponsSnapshot;
+  consumeSearchRateLimit: typeof consumeMerchantRedemptionCashierSearchRateLimit;
+};
+
+const DEFAULT_DEPENDENCIES: MerchantRedemptionCashierRouteDependencies = {
+  authorizeActor: authorizeMerchantBusinessRequest,
+  loadMembershipsSnapshot: getMerchantMembershipsSnapshot,
+  loadSettings: getMerchantMembershipSettings,
+  loadCouponsSnapshot: getMerchantCouponsSnapshot,
+  consumeSearchRateLimit: consumeMerchantRedemptionCashierSearchRateLimit,
+};
 
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -40,7 +64,17 @@ function normalizeLimit(value: unknown) {
   return Math.min(300, Math.max(1, Math.floor(numberValue)));
 }
 
-export async function GET(request: Request) {
+function normalizeSearchLimit(value: unknown) {
+  const numberValue = Number(trimText(value, 32));
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return 20;
+  return Math.min(20, Math.max(1, Math.floor(numberValue)));
+}
+
+export async function handleMerchantRedemptionCashierGet(
+  request: Request,
+  dependencyOverrides: Partial<MerchantRedemptionCashierRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   try {
     const url = new URL(request.url);
     const siteId = readUniqueMerchantBusinessSiteId(url);
@@ -48,7 +82,7 @@ export async function GET(request: Request) {
       return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
 
-    const actor = await authorizeMerchantBusinessRequest(request, {
+    const actor = await dependencies.authorizeActor(request, {
       siteId,
       requiredPermission: "redemptions.view",
     });
@@ -61,9 +95,9 @@ export async function GET(request: Request) {
     const knownSettingsVersion = trimText(url.searchParams.get("knownSettingsVersion"), 128);
     const knownCouponVersion = trimText(url.searchParams.get("knownCouponVersion"), 128);
     const [membershipsSnapshot, settings, couponsSnapshot] = await Promise.all([
-      getMerchantMembershipsSnapshot(siteId, { applyScheduledRules: false }),
-      getMerchantMembershipSettings(siteId),
-      getMerchantCouponsSnapshot(siteId).catch(() => ({ coupons: [], updatedAt: null })),
+      dependencies.loadMembershipsSnapshot(siteId, { applyScheduledRules: false }),
+      dependencies.loadSettings(siteId),
+      dependencies.loadCouponsSnapshot(siteId).catch(() => ({ coupons: [], updatedAt: null })),
     ]);
     const membershipVersion = membershipsSnapshot.updatedAt;
     const settingsVersion = settings.updatedAt ?? null;
@@ -116,4 +150,85 @@ export async function GET(request: Request) {
       { status: 400 },
     );
   }
+}
+
+export async function GET(request: Request) {
+  return handleMerchantRedemptionCashierGet(request);
+}
+
+export async function handleMerchantRedemptionCashierPost(
+  request: Request,
+  dependencyOverrides: Partial<MerchantRedemptionCashierRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return applyPrivateResponseHeaders(getTrustedMutationRequestErrorResponse());
+  }
+  try {
+    const body = (await request.json().catch(() => null)) as {
+      action?: unknown;
+      siteId?: unknown;
+      query?: unknown;
+      limit?: unknown;
+    } | null;
+    const siteId = trimText(body?.siteId, 64);
+    if (!isMerchantNumericId(siteId)) {
+      return privateJson({ error: "invalid_site_id" }, { status: 400 });
+    }
+    if (trimText(body?.action, 80) !== "member_search") {
+      return privateJson({ error: "invalid_redemption_cashier_action" }, { status: 400 });
+    }
+    const query = trimText(body?.query, 200);
+    if (query.length < 2) {
+      return privateJson({ error: "invalid_member_search_query" }, { status: 400 });
+    }
+    const actor = await dependencies.authorizeActor(request, {
+      siteId,
+      requiredPermission: "redemptions.view",
+    });
+    const canViewCustomerData =
+      actor.type === "owner" ||
+      actor.businessPermissions.includes("redemptions.customer_data.view");
+    if (actor.type === "employee") {
+      const rateLimit = dependencies.consumeSearchRateLimit({
+        siteId,
+        principalKey: actor.principalKey,
+      });
+      if (!rateLimit.allowed) {
+        const response = privateJson(
+          { error: "member_search_rate_limited" },
+          { status: 429 },
+        );
+        response.headers.set("retry-after", String(rateLimit.retryAfterSeconds));
+        return response;
+      }
+    }
+    const searchLimit = normalizeSearchLimit(body?.limit);
+    const membershipsSnapshot = await dependencies.loadMembershipsSnapshot(siteId, {
+      applyScheduledRules: false,
+    });
+    const memberships = searchRedemptionCashierMemberships(
+      membershipsSnapshot.memberships,
+      {
+        query,
+        canViewCustomerData,
+        limit: searchLimit,
+      },
+    ).map((membership) =>
+      redactMerchantMembershipForCashier(membership, canViewCustomerData),
+    );
+    return privateJson({ ok: true, memberships });
+  } catch (error) {
+    if (error instanceof MerchantBusinessAccessError) {
+      return privateJson({ error: error.code }, { status: error.status });
+    }
+    return privateJson(
+      { error: "redemption_cashier_search_failed" },
+      { status: 503 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  return handleMerchantRedemptionCashierPost(request);
 }

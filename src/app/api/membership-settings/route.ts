@@ -27,6 +27,20 @@ import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusines
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+export type MerchantMembershipSettingsRouteDependencies = {
+  resolveActor: typeof resolveMerchantBusinessActor;
+  loadSettings: typeof getMerchantMembershipSettings;
+  updateSettings: typeof updateMerchantMembershipSettings;
+  updatePrintSettings: typeof updateMerchantMembershipPrintSettings;
+};
+
+const DEFAULT_DEPENDENCIES: MerchantMembershipSettingsRouteDependencies = {
+  resolveActor: resolveMerchantBusinessActor,
+  loadSettings: getMerchantMembershipSettings,
+  updateSettings: updateMerchantMembershipSettings,
+  updatePrintSettings: updateMerchantMembershipPrintSettings,
+};
+
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -59,9 +73,10 @@ function requireActorPermission(
 async function assertSettingsAuthorizationCurrent(
   request: Request,
   actor: MerchantBusinessActor,
+  resolveActor: MerchantMembershipSettingsRouteDependencies["resolveActor"],
   requiredPermission?: MerchantStaffBusinessPermission,
 ) {
-  const current = await resolveMerchantBusinessActor(request, { siteId: actor.siteId });
+  const current = await resolveActor(request, { siteId: actor.siteId });
   if (
     current.type !== actor.type ||
     current.principalKey !== actor.principalKey ||
@@ -85,14 +100,18 @@ function settingsErrorResponse(error: unknown, code: string) {
   );
 }
 
-export async function GET(request: Request) {
+export async function handleMerchantMembershipSettingsGet(
+  request: Request,
+  dependencyOverrides: Partial<MerchantMembershipSettingsRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   try {
     const url = new URL(request.url);
     const siteId = readUniqueMerchantBusinessSiteId(url);
     if (!isMerchantNumericId(siteId)) {
       return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
-    const actor = await resolveMerchantBusinessActor(request, { siteId });
+    const actor = await dependencies.resolveActor(request, { siteId });
     const rawScope = trimText(url.searchParams.get("scope"), 64);
     const employeeScope = readEmployeeScope(rawScope);
     if (actor.type === "employee") {
@@ -107,7 +126,7 @@ export async function GET(request: Request) {
       }
     }
 
-    const settings = await getMerchantMembershipSettings(siteId);
+    const settings = await dependencies.loadSettings(siteId);
     const version = settings.updatedAt ?? null;
     const knownVersion = trimText(url.searchParams.get("knownVersion"), 128);
     // Employees never receive `notModified`: a shared browser cache may have
@@ -127,7 +146,15 @@ export async function GET(request: Request) {
   }
 }
 
-export async function PUT(request: Request) {
+export async function GET(request: Request) {
+  return handleMerchantMembershipSettingsGet(request);
+}
+
+export async function handleMerchantMembershipSettingsPut(
+  request: Request,
+  dependencyOverrides: Partial<MerchantMembershipSettingsRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   if (!isTrustedSameOriginMutationRequest(request)) {
     return applyPrivateResponseHeaders(getTrustedMutationRequestErrorResponse());
   }
@@ -143,7 +170,7 @@ export async function PUT(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
-    const actor = await resolveMerchantBusinessActor(request, { siteId });
+    const actor = await dependencies.resolveActor(request, { siteId });
     let requiredPermission: MerchantStaffBusinessPermission | undefined;
     if (actor.type === "employee") {
       const scope = readEmployeeScope(trimText(body?.scope, 64));
@@ -156,13 +183,26 @@ export async function PUT(request: Request) {
         throw new MerchantBusinessAccessError("membership_settings_scope_mismatch", 403);
       }
     }
-    const settings = await updateMerchantMembershipSettings({
+    const updateSettings = dependencyOverrides.updateSettings
+      ? dependencies.updateSettings
+      : (input: Parameters<typeof updateMerchantMembershipSettings>[0]) =>
+          updateMerchantMembershipSettings({
+            ...input,
+            settings: body?.settings,
+            view: body?.view,
+          });
+    const settings = await updateSettings({
       siteId,
       settings: body?.settings,
       view: body?.view,
       operatorId: actor.principalKey,
       assertAuthorizationCurrent: () =>
-        assertSettingsAuthorizationCurrent(request, actor, requiredPermission),
+        assertSettingsAuthorizationCurrent(
+          request,
+          actor,
+          dependencies.resolveActor,
+          requiredPermission,
+        ),
       ...(body && Object.prototype.hasOwnProperty.call(body, "expectedUpdatedAt")
         ? { expectedUpdatedAt: body.expectedUpdatedAt }
         : {}),
@@ -180,7 +220,15 @@ export async function PUT(request: Request) {
   }
 }
 
-export async function PATCH(request: Request) {
+export async function PUT(request: Request) {
+  return handleMerchantMembershipSettingsPut(request);
+}
+
+export async function handleMerchantMembershipSettingsPatch(
+  request: Request,
+  dependencyOverrides: Partial<MerchantMembershipSettingsRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   if (!isTrustedSameOriginMutationRequest(request)) {
     return applyPrivateResponseHeaders(getTrustedMutationRequestErrorResponse());
   }
@@ -193,19 +241,27 @@ export async function PATCH(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
-    const actor = await resolveMerchantBusinessActor(request, { siteId });
+    const actor = await dependencies.resolveActor(request, { siteId });
     if (actor.type !== "owner") {
       throw new MerchantBusinessAccessError("owner_required", 403);
     }
-    const settings = await updateMerchantMembershipPrintSettings({
+    const settings = await dependencies.updatePrintSettings({
       siteId,
       printSettings: body?.printSettings,
       operatorId: actor.principalKey,
       assertAuthorizationCurrent: () =>
-        assertSettingsAuthorizationCurrent(request, actor),
+        assertSettingsAuthorizationCurrent(
+          request,
+          actor,
+          dependencies.resolveActor,
+        ),
     });
     return privateJson({ ok: true, settings });
   } catch (error) {
     return settingsErrorResponse(error, "membership_print_settings_save_failed");
   }
+}
+
+export async function PATCH(request: Request) {
+  return handleMerchantMembershipSettingsPatch(request);
 }
