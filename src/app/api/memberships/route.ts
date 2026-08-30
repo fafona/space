@@ -55,6 +55,24 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
 
+export type MerchantMembershipGetRouteDependencies = {
+  authorizeActor: typeof authorizeMerchantBusinessRequest;
+  reauthorizeActor: typeof reauthorizeMerchantBusinessMutation;
+  loadMembershipsSnapshot: typeof getMerchantMembershipsSnapshot;
+  listOrders: typeof listMerchantOrders;
+  listCoupons: typeof listMerchantCoupons;
+  getRechargeCancellationQuote: typeof getMerchantMembershipRechargeCancellationQuote;
+};
+
+const DEFAULT_GET_DEPENDENCIES: MerchantMembershipGetRouteDependencies = {
+  authorizeActor: authorizeMerchantBusinessRequest,
+  reauthorizeActor: reauthorizeMerchantBusinessMutation,
+  loadMembershipsSnapshot: getMerchantMembershipsSnapshot,
+  listOrders: listMerchantOrders,
+  listCoupons: listMerchantCoupons,
+  getRechargeCancellationQuote: getMerchantMembershipRechargeCancellationQuote,
+};
+
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -105,8 +123,12 @@ async function resolveMembershipAdminSession(
   request: Request,
   siteId: string,
   requiredPermission: MerchantStaffBusinessPermission,
+  authorizationDependencies: Pick<
+    MerchantMembershipGetRouteDependencies,
+    "authorizeActor" | "reauthorizeActor"
+  > = DEFAULT_GET_DEPENDENCIES,
 ): Promise<MerchantMembershipAdminSession> {
-  const actor = await authorizeMerchantBusinessRequest(request, {
+  const actor = await authorizationDependencies.authorizeActor(request, {
     siteId,
     requiredPermission,
   });
@@ -114,7 +136,7 @@ async function resolveMembershipAdminSession(
     actor,
     operatorId: actor.principalKey,
     assertAuthorizationCurrent: async () => {
-      await reauthorizeMerchantBusinessMutation(request, {
+      await authorizationDependencies.reauthorizeActor(request, {
         actor,
         requiredPermissions: [requiredPermission],
       });
@@ -409,7 +431,10 @@ async function resolveSiteName(siteId: string, fallback: string) {
   return trimText(snapshot?.merchantName, 120) || trimText(snapshot?.name, 120) || trimText(fallback, 120) || siteId;
 }
 
-async function handleGetMemberships(request: Request) {
+async function handleGetMembershipsRequest(
+  request: Request,
+  dependencies: MerchantMembershipGetRouteDependencies,
+) {
   const url = new URL(request.url);
   const siteId = readUniqueMerchantBusinessSiteId(url);
   if (!isMerchantNumericId(siteId)) {
@@ -424,6 +449,7 @@ async function handleGetMemberships(request: Request) {
     request,
     siteId,
     requiredPermission,
+    dependencies,
   );
   const canViewCustomerData =
     session.actor.type === "owner" ||
@@ -440,7 +466,7 @@ async function handleGetMemberships(request: Request) {
   if (action === "recharge_cancellation_quote") {
     try {
       await session.assertAuthorizationCurrent();
-      const quote = await getMerchantMembershipRechargeCancellationQuote({
+      const quote = await dependencies.getRechargeCancellationQuote({
         siteId,
         membershipId,
         memberNo: url.searchParams.get("memberNo"),
@@ -465,7 +491,7 @@ async function handleGetMemberships(request: Request) {
   const leanMemberships = !includeInsights && shouldReturnLeanMemberships(url.searchParams.get("lean"));
   const offset = normalizeListOffset(url.searchParams.get("offset"));
   const limit = normalizeListLimit(url.searchParams.get("limit"));
-  const membershipsSnapshot = await getMerchantMembershipsSnapshot(siteId, {
+  const membershipsSnapshot = await dependencies.loadMembershipsSnapshot(siteId, {
     // Scheduled point rules persist membership state. Employee GET requests
     // must stay read-only; owner/system paths remain responsible for applying
     // those rules until the write is moved behind an atomic authorization
@@ -495,8 +521,8 @@ async function handleGetMemberships(request: Request) {
   const [orders, coupons] =
     pagedMemberships.length > 0 && includeInsights
       ? await Promise.all([
-          listMerchantOrders(siteId).catch(() => []),
-          listMerchantCoupons(siteId).catch(() => []),
+          dependencies.listOrders(siteId).catch(() => []),
+          dependencies.listCoupons(siteId).catch(() => []),
         ])
       : [[], []];
   const now = new Date();
@@ -537,12 +563,20 @@ async function handleGetMemberships(request: Request) {
   });
 }
 
-export async function GET(request: Request) {
+export async function handleMerchantMembershipsGet(
+  request: Request,
+  dependencyOverrides: Partial<MerchantMembershipGetRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_GET_DEPENDENCIES, ...dependencyOverrides };
   try {
-    return await handleGetMemberships(request);
+    return await handleGetMembershipsRequest(request, dependencies);
   } catch (error) {
     return membershipAccessErrorResponse(error, "membership_list_failed");
   }
+}
+
+export async function GET(request: Request) {
+  return handleMerchantMembershipsGet(request);
 }
 
 export async function POST(request: Request) {

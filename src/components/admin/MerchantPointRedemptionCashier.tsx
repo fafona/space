@@ -370,6 +370,17 @@ function buildMemberSearchText(membership: MerchantMembershipListItem) {
     .toLowerCase();
 }
 
+function matchesCashierMemberSearch(
+  membership: MerchantMembershipListItem,
+  keyword: string,
+  canViewCustomerData: boolean,
+) {
+  if (!canViewCustomerData) {
+    return membership.memberNo.trim().toLowerCase() === keyword;
+  }
+  return buildMemberSearchText(membership).includes(keyword);
+}
+
 function mergeMemberLists(
   current: MerchantMembershipListItem[],
   incoming: MerchantMembershipListItem[],
@@ -828,10 +839,6 @@ export default function MerchantPointRedemptionCashier({
     effectivePermissions,
     "members.insights.view",
   );
-  const canSearchMemberDirectory = hasMerchantMembershipFrontendPermission(
-    effectivePermissions,
-    "members.view",
-  );
   const { locale, setLocale, t } = useI18n();
   const normalizedSiteId = siteId.trim();
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
@@ -859,6 +866,7 @@ export default function MerchantPointRedemptionCashier({
   const [memberSearchLoading, setMemberSearchLoading] = useState(false);
   const [memberSearchSkippedKeyword, setMemberSearchSkippedKeyword] = useState("");
   const [memberSearchFailedKeyword, setMemberSearchFailedKeyword] = useState("");
+  const [memberSearchRateLimitedKeyword, setMemberSearchRateLimitedKeyword] = useState("");
   const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
   const [selectedRechargePlanId, setSelectedRechargePlanId] = useState("");
   const [quickRedeemDialogOpen, setQuickRedeemDialogOpen] = useState(false);
@@ -1111,15 +1119,25 @@ export default function MerchantPointRedemptionCashier({
     if (!keyword) return [];
     const unique = new Map<string, MerchantMembershipListItem>();
     activeMemberSearchRows.forEach((row) => {
-      if (row.searchText.includes(keyword)) unique.set(row.membership.id, row.membership);
+      if (matchesCashierMemberSearch(row.membership, keyword, canViewCustomerData)) {
+        unique.set(row.membership.id, row.membership);
+      }
     });
     if (remoteMemberSearchKeyword === keyword) {
       remoteMemberSearchResults.forEach((membership) => {
-        if (buildMemberSearchText(membership).includes(keyword)) unique.set(membership.id, membership);
+        if (matchesCashierMemberSearch(membership, keyword, canViewCustomerData)) {
+          unique.set(membership.id, membership);
+        }
       });
     }
     return Array.from(unique.values()).slice(0, MEMBER_REMOTE_SEARCH_LIMIT);
-  }, [activeMemberSearchRows, deferredMemberKeyword, remoteMemberSearchKeyword, remoteMemberSearchResults]);
+  }, [
+    activeMemberSearchRows,
+    canViewCustomerData,
+    deferredMemberKeyword,
+    remoteMemberSearchKeyword,
+    remoteMemberSearchResults,
+  ]);
 
   const selectedMember = useMemo(
     () => activeMemberById.get(selectedMemberId) ?? null,
@@ -1479,6 +1497,9 @@ export default function MerchantPointRedemptionCashier({
       setRemoteMemberSearchKeyword("");
       setRemoteMemberSearchResults([]);
       setMemberSearchLoading(false);
+      setMemberSearchSkippedKeyword("");
+      setMemberSearchFailedKeyword("");
+      setMemberSearchRateLimitedKeyword("");
       return;
     }
     const normalizedKeyword = keyword.toLowerCase();
@@ -1489,6 +1510,7 @@ export default function MerchantPointRedemptionCashier({
       setMemberSearchLoading(false);
       setMemberSearchSkippedKeyword("");
       setMemberSearchFailedKeyword("");
+      setMemberSearchRateLimitedKeyword("");
       return;
     }
     const cacheKey = `${normalizedSiteId}:${normalizedKeyword}`;
@@ -1501,13 +1523,14 @@ export default function MerchantPointRedemptionCashier({
       setMemberSearchLoading(false);
       setMemberSearchSkippedKeyword("");
       setMemberSearchFailedKeyword("");
+      setMemberSearchRateLimitedKeyword("");
       return;
     }
     const localMatches = membershipsRef.current.filter(
       (membership) =>
         membership.profileVisible &&
         membership.status === "active" &&
-        buildMemberSearchText(membership).includes(normalizedKeyword),
+        matchesCashierMemberSearch(membership, normalizedKeyword, canViewCustomerData),
     );
     if (normalizedKeyword.length < 2 && localMatches.length > 0) {
       setRemoteMemberSearchKeyword("");
@@ -1515,6 +1538,7 @@ export default function MerchantPointRedemptionCashier({
       setMemberSearchLoading(false);
       setMemberSearchSkippedKeyword("");
       setMemberSearchFailedKeyword("");
+      setMemberSearchRateLimitedKeyword("");
       return;
     }
     if (normalizedKeyword.length < 2) {
@@ -1523,46 +1547,49 @@ export default function MerchantPointRedemptionCashier({
       setMemberSearchLoading(false);
       setMemberSearchSkippedKeyword(normalizedKeyword);
       setMemberSearchFailedKeyword("");
-      return;
-    }
-    if (employeeMode && !canSearchMemberDirectory) {
-      setRemoteMemberSearchKeyword("");
-      setRemoteMemberSearchResults([]);
-      setMemberSearchLoading(false);
-      setMemberSearchSkippedKeyword(normalizedKeyword);
-      setMemberSearchFailedKeyword("");
+      setMemberSearchRateLimitedKeyword("");
       return;
     }
     setMemberSearchLoading(true);
     setMemberSearchSkippedKeyword("");
     setMemberSearchFailedKeyword("");
+    setMemberSearchRateLimitedKeyword("");
     const timeoutId = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        siteId: normalizedSiteId,
-        status: "active",
-        query: keyword,
-        limit: String(MEMBER_REMOTE_SEARCH_LIMIT),
-        includeInsights: "0",
-        lean: "1",
-      });
-      void requestRedemptionApi(`/api/memberships?${params.toString()}`, {
-        method: "GET",
+      void requestRedemptionApi("/api/merchant-admin/redemption-cashier", {
+        method: "POST",
         cache: "no-store",
         credentials: "same-origin",
-        headers: { accept: "application/json" },
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          siteId: normalizedSiteId,
+          action: "member_search",
+          query: keyword,
+          limit: MEMBER_REMOTE_SEARCH_LIMIT,
+        }),
         timeoutMs: MEMBER_SEARCH_REQUEST_TIMEOUT_MS,
       })
         .then(async (response) => {
-          const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+          const payload = (await response.json().catch(() => null)) as RedemptionCashierPayload | null;
           if (memberSearchRequestIdRef.current !== requestId) return;
-          const nextMemberships =
-            response.ok && payload?.ok === true && Array.isArray(payload.memberships)
-              ? payload.memberships.filter(
-                  (membership) => membership.profileVisible && membership.status === "active",
-                )
-              : [];
+          if (response.status === 429) {
+            setRemoteMemberSearchKeyword("");
+            setRemoteMemberSearchResults([]);
+            setMemberSearchFailedKeyword("");
+            setMemberSearchRateLimitedKeyword(normalizedKeyword);
+            return;
+          }
+          if (!response.ok || payload?.ok !== true || !Array.isArray(payload.memberships)) {
+            throw new Error("member_search_failed");
+          }
+          const nextMemberships = payload.memberships.filter(
+            (membership) => membership.profileVisible && membership.status === "active",
+          );
           setRemoteMemberSearchKeyword(normalizedKeyword);
           setRemoteMemberSearchResults(nextMemberships);
+          setMemberSearchRateLimitedKeyword("");
           if (!employeeMode) memberSearchCacheRef.current.set(cacheKey, nextMemberships);
           setMemberships((current) => mergeMemberLists(current, nextMemberships));
         })
@@ -1571,6 +1598,7 @@ export default function MerchantPointRedemptionCashier({
           setRemoteMemberSearchKeyword("");
           setRemoteMemberSearchResults([]);
           setMemberSearchFailedKeyword(normalizedKeyword);
+          setMemberSearchRateLimitedKeyword("");
         })
         .finally(() => {
           if (memberSearchRequestIdRef.current === requestId) setMemberSearchLoading(false);
@@ -1579,7 +1607,7 @@ export default function MerchantPointRedemptionCashier({
     return () => window.clearTimeout(timeoutId);
   }, [
     canViewRedemptions,
-    canSearchMemberDirectory,
+    canViewCustomerData,
     deferredMemberKeyword,
     employeeMode,
     normalizedSiteId,
@@ -2038,6 +2066,7 @@ export default function MerchantPointRedemptionCashier({
     setMemberSearchLoading(false);
     setMemberSearchSkippedKeyword("");
     setMemberSearchFailedKeyword("");
+    setMemberSearchRateLimitedKeyword("");
     setNotice("");
     setError("");
   }
@@ -2050,11 +2079,15 @@ export default function MerchantPointRedemptionCashier({
     }
     const matches = new Map<string, MerchantMembershipListItem>();
     activeMemberSearchRows.forEach((row) => {
-      if (row.searchText.includes(keyword)) matches.set(row.membership.id, row.membership);
+      if (matchesCashierMemberSearch(row.membership, keyword, canViewCustomerData)) {
+        matches.set(row.membership.id, row.membership);
+      }
     });
     if (remoteMemberSearchKeyword === keyword) {
       remoteMemberSearchResults.forEach((membership) => {
-        if (buildMemberSearchText(membership).includes(keyword)) matches.set(membership.id, membership);
+        if (matchesCashierMemberSearch(membership, keyword, canViewCustomerData)) {
+          matches.set(membership.id, membership);
+        }
       });
     }
     const matchList = Array.from(matches.values());
@@ -2093,6 +2126,7 @@ export default function MerchantPointRedemptionCashier({
     setMemberSearchLoading(false);
     setMemberSearchSkippedKeyword("");
     setMemberSearchFailedKeyword("");
+    setMemberSearchRateLimitedKeyword("");
     setCouponWalletOpen(false);
   }
 
@@ -5883,6 +5917,12 @@ export default function MerchantPointRedemptionCashier({
                 ) : memberPickerOpen && memberSearchLoading ? (
                   <div className="member-suggestions">
                     <div className="member-suggestion-note">正在搜索会员...</div>
+                  </div>
+                ) : memberPickerOpen &&
+                  deferredMemberKeyword.trim() &&
+                  memberSearchRateLimitedKeyword === deferredMemberKeyword.trim().toLowerCase() ? (
+                  <div className="member-suggestions">
+                    <div className="member-suggestion-note">搜索过于频繁，请稍后重试。</div>
                   </div>
                 ) : memberPickerOpen &&
                   deferredMemberKeyword.trim() &&
