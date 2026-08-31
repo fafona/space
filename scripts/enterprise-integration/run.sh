@@ -242,7 +242,7 @@ run_sql_file_as_role "${REPOSITORY_ROOT}/scripts/supabase-migrations/20260725000
 
 mapfile -t enterprise_migrations < <(
   find "${REPOSITORY_ROOT}/scripts/supabase-migrations" -maxdepth 1 -type f \
-    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' -o -name '*_merchant_acl_contract_hardening.sql' -o -name '*_merchant_staff_business_permissions.sql' \) \
+    \( -name '*_merchant_enterprise_*.sql' -o -name '*_merchant_order_task_link.sql' -o -name '*_ordinary_account_authorization_*.sql' -o -name '*_ordinary_account_system_site_principal_isolation.sql' -o -name '*_ordinary_account_recovery_observer.sql' -o -name '*_runtime_rpc_execute_acl_hardening.sql' -o -name '*_merchant_acl_contract_hardening.sql' -o -name '*_merchant_staff_business_permissions.sql' -o -name '*_merchant_employee_initial_password_setup.sql' \) \
     -print | sort
 )
 
@@ -252,6 +252,7 @@ rpc_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations
 merchant_acl_hardening_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190040_merchant_acl_contract_hardening.sql"
 staff_business_permissions_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608280041_merchant_staff_business_permissions.sql"
 pgcrypto_schema_repair_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608300042_merchant_enterprise_pgcrypto_schema_repair.sql"
+initial_password_setup_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608310043_merchant_employee_initial_password_setup.sql"
 cutover_migration_path="${REPOSITORY_ROOT}/scripts/supabase-migrations/202608190037_ordinary_account_authorization_cutover.sql"
 expected_enterprise_migration_count=31
 expected_registry_count=39
@@ -261,6 +262,7 @@ rpc_acl_hardening_present=0
 merchant_acl_hardening_present=0
 staff_business_permissions_present=0
 pgcrypto_schema_repair_present=0
+initial_password_setup_present=0
 cutover_present=0
 if [[ -f "${isolation_migration_path}" ]]; then
   expected_enterprise_migration_count=32
@@ -312,6 +314,15 @@ if [[ -f "${pgcrypto_schema_repair_migration_path}" ]]; then
   expected_registry_count=45
   pgcrypto_schema_repair_present=1
 fi
+if [[ -f "${initial_password_setup_migration_path}" ]]; then
+  if [[ "${pgcrypto_schema_repair_present}" -ne 1 ]]; then
+    echo 'Initial password setup 043 requires the exact 042 pgcrypto repair migration' >&2
+    exit 1
+  fi
+  expected_enterprise_migration_count=$((expected_enterprise_migration_count + 1))
+  expected_registry_count=46
+  initial_password_setup_present=1
+fi
 if [[ -f "${cutover_migration_path}" ]]; then
   if [[ "${isolation_present}" -eq 1 ]]; then
     echo 'Refusing colliding 202608190037 isolation and cutover migrations' >&2
@@ -323,7 +334,7 @@ if [[ -f "${cutover_migration_path}" ]]; then
 fi
 
 if [[ "${#enterprise_migrations[@]}" -ne "${expected_enterprise_migration_count}" ]]; then
-  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-042), found ${#enterprise_migrations[@]}" >&2
+  echo "Expected ${expected_enterprise_migration_count} enterprise/identity migrations (001-026 plus staged 032-043), found ${#enterprise_migrations[@]}" >&2
   printf '  %s\n' "${enterprise_migrations[@]}" >&2
   exit 1
 fi
@@ -1543,6 +1554,35 @@ SQL
       exit 1
     fi
   elif [[ "$(basename -- "${migration}")" == \
+    "202608310043_merchant_employee_initial_password_setup.sql" ]]; then
+    initial_password_cas_prestate="$(
+      run_psql --tuples-only --no-align --command \
+        "select version::text || '|' || updated_at::text from public.merchant_enterprise_employees where merchant_id = '10000001' and email = 'cas-invite@example.test';"
+    )"
+    if [[ -z "${initial_password_cas_prestate}" ]]; then
+      echo '043 CAS preservation fixture is missing' >&2
+      exit 1
+    fi
+    run_sql_file_as_role "${migration}" supabase_admin
+    initial_password_cas_poststate="$(
+      run_psql --tuples-only --no-align --command \
+        "select version::text || '|' || updated_at::text from public.merchant_enterprise_employees where merchant_id = '10000001' and email = 'cas-invite@example.test';"
+    )"
+    if [[ "${initial_password_cas_poststate}" != "${initial_password_cas_prestate}" ]]; then
+      echo '043 legacy waiver backfill changed employee CAS state' >&2
+      exit 1
+    fi
+    run_sql_file "${SCRIPT_DIR}/65-employee-initial-password-setup.sql"
+    run_sql_file_as_role "${migration}" supabase_admin
+    initial_password_setup_replay_state="$(
+      run_psql --tuples-only --no-align --command \
+        "select (select count(*) = 1 from public.faolla_schema_migrations where version = 202608310043 and name = 'merchant_employee_initial_password_setup') and (select status = 'active' and initial_password_policy = 'completed' from public.merchant_enterprise_employees where id = '65100000-0000-4000-8000-000000000001'::uuid) and (select status = 'active' and initial_password_policy = 'waived' from public.merchant_enterprise_employees where id = '65100000-0000-4000-8000-000000000005'::uuid) and exists (select 1 from public.merchant_employee_initial_password_setups where employee_id = '65100000-0000-4000-8000-000000000005'::uuid and invitation_version = 1 and state = 'completed');"
+    )"
+    if [[ "${initial_password_setup_replay_state}" != 't' ]]; then
+      echo '043 registered replay changed policy, audit evidence, or registry state' >&2
+      exit 1
+    fi
+  elif [[ "$(basename -- "${migration}")" == \
     "202608190037_ordinary_account_authorization_cutover.sql" ]]; then
     echo '[enterprise-integration] running all pre-cutover acceptance before 037 exists in the registry'
     run_pre_cutover_acceptance
@@ -1688,7 +1728,7 @@ fi
 
 registry_count="$(
   run_psql --tuples-only --no-align --command \
-    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040, 202608280041, 202608300042) or version between 202607310001 and 202608040026;"
+    "select count(*) from public.faolla_schema_migrations where version in (202607250001, 202607250002, 202607250003, 202607250004, 202607250005, 202607250006, 202607250007, 202607250008, 202608180032, 202608190033, 202608190034, 202608190035, 202608190036, 202608190037, 202608190038, 202608190039, 202608190040, 202608280041, 202608300042, 202608310043) or version between 202607310001 and 202608040026;"
 )"
 if [[ "${registry_count}" -ne "${expected_registry_count}" ]]; then
   echo "Expected ${expected_registry_count} applied prerequisite/enterprise/identity versions, found ${registry_count}" >&2

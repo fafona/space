@@ -34,6 +34,8 @@ function dependencies(
         app_metadata: { principal_type: "merchant_staff" },
       },
       explicitToken: true,
+      jwtVerified: true,
+      authenticationMethods: ["password"],
     }),
     isStaffPrincipal: async () => true,
     loadEmployeeAuthorization: async () => ({
@@ -111,6 +113,8 @@ test("business authorization rejects tenant hosts before reading credentials", a
               return {
                 user: { id: AUTH_USER_ID },
                 explicitToken: true,
+                jwtVerified: true,
+                authenticationMethods: ["password"],
               };
             },
           }),
@@ -165,6 +169,8 @@ test("staff principals require an explicit portal token and never authorize from
               app_metadata: { principal_type: "merchant_staff" },
             },
             explicitToken: false,
+            jwtVerified: true,
+            authenticationMethods: ["password"],
           }),
           loadSite: async () => {
             siteChecks += 1;
@@ -188,6 +194,54 @@ test("staff principals require an explicit portal token and never authorize from
   assert.equal(siteChecks, 0);
   assert.equal(employeeChecks, 0);
   assert.equal(ownerChecks, 0);
+});
+
+test("employee access requires a verified password JWT and rejects link or recovery AMR", async () => {
+  const rejectedAuthContexts = [
+    { jwtVerified: false, authenticationMethods: ["password"] },
+    { jwtVerified: true, authenticationMethods: [] },
+    { jwtVerified: true, authenticationMethods: ["oauth", "google"] },
+    { jwtVerified: true, authenticationMethods: ["password", "invite"] },
+    { jwtVerified: true, authenticationMethods: ["password", "magiclink"] },
+    { jwtVerified: true, authenticationMethods: ["password", "recovery"] },
+  ];
+
+  for (const authContext of rejectedAuthContexts) {
+    let siteChecks = 0;
+    let employeeChecks = 0;
+    await assert.rejects(
+      () =>
+        authorizeMerchantBusinessRequest(
+          request({ "x-merchant-access-token": "employee-token" }),
+          { siteId: SITE_ID, requiredPermission: "orders.view" },
+          dependencies({
+            resolveAuthUser: async () => ({
+              user: {
+                id: AUTH_USER_ID,
+                email: "employee@example.com",
+                app_metadata: { principal_type: "merchant_staff" },
+              },
+              explicitToken: true,
+              ...authContext,
+            }),
+            loadSite: async () => {
+              siteChecks += 1;
+              throw new Error("invalid employee authentication must fail first");
+            },
+            loadEmployeeAuthorization: async () => {
+              employeeChecks += 1;
+              throw new Error("invalid employee authentication must fail first");
+            },
+          }),
+        ),
+      (error: unknown) =>
+        error instanceof MerchantBusinessAccessError &&
+        error.code === "employee_password_authentication_required" &&
+        error.status === 403,
+    );
+    assert.equal(siteChecks, 0);
+    assert.equal(employeeChecks, 0);
+  }
 });
 
 test("employee access is default-off and requires the exact site allowlist", async () => {
@@ -284,28 +338,32 @@ test("staff classification failures never fall back to owner authorization", asy
   assert.equal(ownerChecks, 0);
 });
 
-test("owners keep business access while employee rollout remains off", async () => {
-  const actor = await authorizeMerchantBusinessRequest(
-    request(),
-    { siteId: SITE_ID, requiredPermission: "orders.view" },
-    dependencies({
-      resolveAuthUser: async () => ({
-        user: { id: AUTH_USER_ID, email: "owner@example.com" },
-        explicitToken: false,
+test("owners keep OAuth and Google business access while employee rollout remains off", async () => {
+  for (const authenticationMethods of [["oauth"], ["google"]]) {
+    const actor = await authorizeMerchantBusinessRequest(
+      request(),
+      { siteId: SITE_ID, requiredPermission: "orders.view" },
+      dependencies({
+        resolveAuthUser: async () => ({
+          user: { id: AUTH_USER_ID, email: "owner@example.com" },
+          explicitToken: false,
+          jwtVerified: true,
+          authenticationMethods,
+        }),
+        isStaffPrincipal: async () => false,
+        loadOwnerAuthorization: async () => ({
+          displayName: "Owner",
+          email: "owner@example.com",
+          source: "database",
+        }),
+        rolloutConfig: { mode: "off", siteIds: [], valid: true },
       }),
-      isStaffPrincipal: async () => false,
-      loadOwnerAuthorization: async () => ({
-        displayName: "Owner",
-        email: "owner@example.com",
-        source: "database",
-      }),
-      rolloutConfig: { mode: "off", siteIds: [], valid: true },
-    }),
-  );
-  assert.equal(actor.type, "owner");
-  assert.equal(actor.principalKey, `owner:${AUTH_USER_ID}`);
-  assert.equal(actor.businessPermissions.includes("orders.view"), true);
-  assert.equal(actor.businessPermissions.includes("members.settings.manage"), false);
+    );
+    assert.equal(actor.type, "owner");
+    assert.equal(actor.principalKey, `owner:${AUTH_USER_ID}`);
+    assert.equal(actor.businessPermissions.includes("orders.view"), true);
+    assert.equal(actor.businessPermissions.includes("members.settings.manage"), false);
+  }
 });
 
 test("forged personal-account merchant metadata never grants owner access", async () => {
@@ -324,6 +382,8 @@ test("forged personal-account merchant metadata never grants owner access", asyn
               app_metadata: { account_type: "personal" },
             },
             explicitToken: false,
+            jwtVerified: true,
+            authenticationMethods: ["magiclink"],
           }),
           isStaffPrincipal: async () => false,
           loadOwnerAuthorization: async (siteId, user) => {

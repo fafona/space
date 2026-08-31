@@ -13,6 +13,7 @@ import {
 } from "@/lib/merchantEnterpriseInvitationSecret.server";
 import {
   hasImmutableMerchantStaffPrincipal,
+  MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY,
   MERCHANT_STAFF_PRINCIPAL_TYPE,
 } from "@/lib/merchantStaffPrincipal.server";
 import type { MerchantOutboxRpcClient } from "@/lib/merchantOutboxEnqueue.server";
@@ -86,6 +87,7 @@ export type MerchantEnterpriseInvitationAuthAdmin = {
     app_metadata: {
       principal_type: typeof MERCHANT_STAFF_PRINCIPAL_TYPE;
       merchant_staff_email_hash: string;
+      merchant_staff_password_initialized: false;
     };
   }): AuthAdminResult<{ user: User | null }>;
 };
@@ -107,6 +109,7 @@ export type MerchantEnterpriseInvitationWorkerDependencies = {
     workerId: string;
     authUserId: string;
     emailHash: string;
+    initialPasswordPolicy: "required" | "waived";
   }) => Promise<void>;
   sendEmail?: typeof sendMerchantEnterpriseInvitationEmail;
 };
@@ -364,6 +367,7 @@ export async function ensureMerchantEnterpriseInvitationStaffUser(
       app_metadata: {
         principal_type: MERCHANT_STAFF_PRINCIPAL_TYPE,
         merchant_staff_email_hash: normalizedEmailHash(email),
+        [MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY]: false,
       },
     });
   } catch {
@@ -449,6 +453,12 @@ export function createMerchantEnterpriseInvitationOutboxHandler(
       workerId,
       authUserId: user.id,
       emailHash: prepared.emailHash,
+      initialPasswordPolicy:
+        user.app_metadata?.[
+          MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY
+        ] === false
+          ? "required"
+          : "waived",
     });
     if (!(await context.renewLease())) {
       throw safeTaskError("lease_expired", { retryable: true });
@@ -629,7 +639,13 @@ export function createMerchantEnterpriseInvitationRpcDependencies(
         retryable: true,
       });
     },
-    async bindStaffIdentity({ event, workerId, authUserId, emailHash }) {
+    async bindStaffIdentity({
+      event,
+      workerId,
+      authUserId,
+      emailHash,
+      initialPasswordPolicy,
+    }) {
       try {
         await callInvitationRpc(
           client,
@@ -640,6 +656,7 @@ export function createMerchantEnterpriseInvitationRpcDependencies(
               worker_id: workerId,
               auth_user_id: authUserId,
               email_hash: emailHash,
+              initial_password_policy: initialPasswordPolicy,
             },
           },
         );

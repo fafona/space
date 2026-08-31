@@ -27,6 +27,7 @@ import {
   type ResetPasswordRecoveryPayload,
 } from "@/lib/resetPasswordRecoveryPayload";
 import { getResolvedSupabaseUrl, resolvedSupabaseAnonKey } from "@/lib/supabase";
+import { resolveAuthResetReturnPath } from "@/lib/authResetReturnPath";
 
 type RecoveryState = "checking" | "ready" | "expired";
 
@@ -52,7 +53,8 @@ function hasRecoveryIndicators() {
     hashParams.has("refresh_token") ||
     (url.searchParams.get("type") ?? "").trim() === "recovery" ||
     Boolean((url.searchParams.get("code") ?? "").trim()) ||
-    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim())
+    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim()) ||
+    Boolean((url.searchParams.get("reset_intent") ?? "").trim())
   );
 }
 
@@ -66,14 +68,15 @@ function hasUrlRecoveryIndicators() {
     hashParams.has("refresh_token") ||
     (url.searchParams.get("type") ?? "").trim() === "recovery" ||
     Boolean((url.searchParams.get("code") ?? "").trim()) ||
-    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim())
+    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim()) ||
+    Boolean((url.searchParams.get("reset_intent") ?? "").trim())
   );
 }
 
 function clearRecoveryUrlArtifacts() {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
-  for (const key of ["code", "type", "token_hash", "token", "confirmed", "confirm_message"]) {
+  for (const key of ["code", "type", "token_hash", "token", "reset_intent", "confirmed", "confirm_message"]) {
     url.searchParams.delete(key);
   }
   url.hash = "";
@@ -97,6 +100,10 @@ export default function ResetPasswordPage() {
   const timeoutMessageRef = useRef(t("login.timeout"));
   const recoveryResolvedRef = useRef(false);
   const recoveryPayloadRef = useRef<ResetPasswordRecoveryPayload | null>(null);
+  const returnPath = useMemo(() => {
+    if (typeof window === "undefined") return "/login";
+    return resolveAuthResetReturnPath(new URL(window.location.href).searchParams);
+  }, []);
   const resetSupabase = useMemo(() => {
     return createClient(getResolvedSupabaseUrl(), resolvedSupabaseAnonKey, {
       auth: {
@@ -202,6 +209,7 @@ export default function ResetPasswordPage() {
             tokenHash: payload.tokenHash ?? "",
             code: payload.code ?? "",
             type: payload.type ?? "",
+            recoveryIntent: payload.recoveryIntent ?? "",
           }),
         }),
         timeoutMs,
@@ -391,10 +399,10 @@ export default function ResetPasswordPage() {
     clearStoredResetPasswordEmailRequest();
     setMsg(t("reset.successRedirect"));
     setTimeout(() => {
-      window.location.href = "/login";
+      window.location.href = returnPath;
     }, 900);
     return true;
-  }, [password, t, withTimeout]);
+  }, [password, returnPath, t, withTimeout]);
 
   async function updatePassword() {
     if (saving) return;
@@ -445,7 +453,7 @@ export default function ResetPasswordPage() {
             "Content-Type": "application/json",
             accept: "application/json",
           },
-          body: JSON.stringify({ email }),
+          body: JSON.stringify({ email, returnTo: returnPath }),
         }),
       );
       const payload = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
@@ -613,7 +621,7 @@ export default function ResetPasswordPage() {
 
         <button
           className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50"
-          onClick={() => (window.location.href = "/login")}
+          onClick={() => (window.location.href = returnPath)}
         >
           {t("common.backToLogin")}
         </button>

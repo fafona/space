@@ -55,6 +55,53 @@ test("the strict owner filter cannot authorize by email or user-controlled metad
   }
 });
 
+test("employee business access requires password AMR from a subject-bound verified JWT", () => {
+  const authResolver = source.match(
+    /async function resolveAuthUser\([\s\S]+?\n}\n\nexport function readMerchantBusinessRequestAccessTokens/,
+  )?.[0];
+  assert.ok(authResolver, "business auth resolver must remain present");
+  assert.match(authResolver, /auth\.getClaims\(accessToken\)/);
+  assert.match(authResolver, /auth\.getUser\(accessToken\)/);
+  assert.match(
+    authResolver,
+    /trimText\(claims\.sub, 80\) === trimText\(user\.id, 80\)/,
+  );
+  assert.match(
+    authResolver,
+    /jwtVerified[\s\S]+normalizeAuthenticationMethods\(claims\?\.amr\)/,
+  );
+
+  const passwordGuard = source.match(
+    /function requireMerchantBusinessEmployeePasswordAuthentication\([\s\S]+?\n}/,
+  )?.[0];
+  assert.ok(passwordGuard, "employee password AMR guard must remain present");
+  assert.match(passwordGuard, /auth\.jwtVerified !== true/);
+  assert.match(
+    passwordGuard,
+    /!auth\.authenticationMethods\.includes\("password"\)/,
+  );
+  assert.match(
+    passwordGuard,
+    /EMPLOYEE_FORBIDDEN_AUTHENTICATION_METHODS\.has\(method\)/,
+  );
+  for (const method of ["invite", "magiclink", "recovery"]) {
+    assert.match(
+      source,
+      new RegExp(`EMPLOYEE_FORBIDDEN_AUTHENTICATION_METHODS[\\s\\S]+"${method}"`),
+    );
+  }
+
+  const staffPasswordGate = source.indexOf(
+    "requireMerchantBusinessEmployeePasswordAuthentication(auth);",
+  );
+  const siteLoad = source.indexOf("const site = await dependencies.loadSite(siteId);");
+  assert.match(
+    source,
+    /if \(staffPrincipal\) \{\s+requireMerchantBusinessEmployeePasswordAuthentication\(auth\);\s+}/,
+  );
+  assert.ok(staffPasswordGate >= 0 && siteLoad > staffPasswordGate);
+});
+
 test("role writes cannot retain staff business permissions while the exact-site rollout is off", () => {
   assert.match(
     roleRouteSource,

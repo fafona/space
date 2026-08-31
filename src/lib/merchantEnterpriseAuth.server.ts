@@ -1,3 +1,4 @@
+import type { User } from "@supabase/supabase-js";
 import {
   getMissingMerchantEnterprisePermissionDependencies,
   hasMerchantEnterpriseBoardAccess,
@@ -40,6 +41,50 @@ export function readMerchantEnterpriseRequestAccessTokens(request: Request) {
   return readMerchantRequestAccessTokens(request);
 }
 
+export type MerchantEnterpriseValidatedAuthContext = {
+  accessToken: string;
+  authenticationMethods: string[];
+  user: User;
+};
+
+const EMPLOYEE_FORBIDDEN_AUTHENTICATION_METHODS = new Set([
+  "invite",
+  "magiclink",
+  "recovery",
+]);
+
+function normalizeAuthenticationMethods(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => {
+          if (typeof entry === "string") return entry.trim().toLowerCase();
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return "";
+          const method = (entry as { method?: unknown }).method;
+          return typeof method === "string" ? method.trim().toLowerCase() : "";
+        })
+        .filter(Boolean),
+    ),
+  );
+}
+
+export function requireMerchantEnterprisePasswordAuthentication(
+  context: Pick<MerchantEnterpriseValidatedAuthContext, "authenticationMethods">,
+) {
+  if (
+    !context.authenticationMethods.includes("password") ||
+    context.authenticationMethods.some((method) =>
+      EMPLOYEE_FORBIDDEN_AUTHENTICATION_METHODS.has(method),
+    )
+  ) {
+    throw new MerchantEnterpriseAccessError(
+      "employee_password_authentication_required",
+      403,
+    );
+  }
+}
+
 function strictOwnerFilter(authUserId: string) {
   const escaped = authUserId.replace(/[^a-fA-F0-9-]/g, "");
   if (!escaped) return "";
@@ -54,18 +99,39 @@ function strictOwnerFilter(authUserId: string) {
   ].join(",");
 }
 
-export async function resolveValidatedMerchantEnterpriseAuthUser(request: Request) {
+export async function resolveValidatedMerchantEnterpriseAuthContext(
+  request: Request,
+): Promise<MerchantEnterpriseValidatedAuthContext> {
   const tokens = readMerchantEnterpriseRequestAccessTokens(request);
   if (tokens.length === 0) throw new MerchantEnterpriseAccessError("unauthorized", 401);
   const authClient = createServerSupabaseAuthClient();
   if (!authClient) throw new MerchantEnterpriseAccessError("enterprise_auth_unavailable", 503);
   for (const accessToken of tokens) {
-    const result = await authClient.auth.getUser(accessToken).catch(() => null);
-    if (result?.data?.user && !result.error) {
-      return result.data.user;
+    const [claimsResult, userResult] = await Promise.all([
+      authClient.auth.getClaims(accessToken).catch(() => null),
+      authClient.auth.getUser(accessToken).catch(() => null),
+    ]);
+    const claims = claimsResult?.data?.claims;
+    const user = userResult?.data?.user;
+    if (
+      claims &&
+      user &&
+      !claimsResult?.error &&
+      !userResult?.error &&
+      normalizeText(claims.sub, 80) === normalizeText(user.id, 80)
+    ) {
+      return {
+        accessToken,
+        authenticationMethods: normalizeAuthenticationMethods(claims.amr),
+        user,
+      };
     }
   }
   throw new MerchantEnterpriseAccessError("unauthorized", 401);
+}
+
+export async function resolveValidatedMerchantEnterpriseAuthUser(request: Request) {
+  return (await resolveValidatedMerchantEnterpriseAuthContext(request)).user;
 }
 
 export async function requireMerchantEnterpriseEntitlement(
@@ -102,7 +168,8 @@ export async function resolveMerchantEnterpriseActor(
     throw new MerchantEnterpriseAccessError("invalid_site_id", 400);
   }
 
-  const user = await resolveValidatedMerchantEnterpriseAuthUser(request);
+  const authContext = await resolveValidatedMerchantEnterpriseAuthContext(request);
+  const user = authContext.user;
   const authUserId = normalizeText(user.id, 80);
   const email = normalizeText(user.email, 320).toLowerCase();
   if (!authUserId) throw new MerchantEnterpriseAccessError("unauthorized", 401);
@@ -137,6 +204,11 @@ export async function resolveMerchantEnterpriseActor(
       };
     }
   }
+
+  // Invitation, magic-link and recovery sessions prove mailbox control, but
+  // employee business access must use the password established during
+  // onboarding. Owners keep their existing OAuth and password sign-in options.
+  requireMerchantEnterprisePasswordAuthentication(authContext);
 
   const employeeResult = await service
     .from("merchant_enterprise_employees")

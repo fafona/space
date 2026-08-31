@@ -13,6 +13,8 @@ import { getResolvedSupabaseUrl, resolvedSupabaseAnonKey } from "@/lib/supabase"
 async function syncRecoverySessionToServer(input: {
   accessToken: string;
   refreshToken: string;
+  recoveryIntent?: string;
+  type?: string;
 }) {
   try {
     await fetch("/api/auth/reset-password/session", {
@@ -25,6 +27,8 @@ async function syncRecoverySessionToServer(input: {
       body: JSON.stringify({
         accessToken: input.accessToken,
         refreshToken: input.refreshToken,
+        recoveryIntent: input.recoveryIntent ?? "",
+        type: input.type ?? "recovery",
       }),
     });
   } catch {
@@ -78,6 +82,8 @@ export default function ResetPasswordBridgePage() {
       await syncRecoverySessionToServer({
         accessToken,
         refreshToken,
+        recoveryIntent: payload.recoveryIntent,
+        type: payload.type,
       });
       redirectToResetPage();
     },

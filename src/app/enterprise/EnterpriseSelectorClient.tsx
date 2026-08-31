@@ -23,6 +23,11 @@ type SelectorAuthContext = {
   generation: number;
 };
 
+type PasswordResetRequestPayload = {
+  ok?: unknown;
+  error?: unknown;
+};
+
 function membershipLoadError(response: Response, payload: MembershipPayload | null) {
   if (response.status === 401) return "企业登录已失效，请退出后重新登录。";
   if (response.status === 403) return "当前账号无权读取企业身份。";
@@ -30,6 +35,16 @@ function membershipLoadError(response: Response, payload: MembershipPayload | nu
     return "企业身份暂时无法读取，请稍后重试。";
   }
   return "无法加载企业列表，请稍后重试。";
+}
+
+function passwordResetRequestError(payload: PasswordResetRequestPayload | null) {
+  if (payload?.error === "reset_password_invalid_email") {
+    return "请输入有效的员工邮箱。";
+  }
+  if (payload?.error === "auth_rate_limited") {
+    return "发送请求过于频繁，请稍后再试。";
+  }
+  return "暂时无法发送密码设置邮件，请稍后重试。";
 }
 
 function membershipStatusLabel(status: string) {
@@ -240,12 +255,26 @@ export default function EnterpriseSelectorClient() {
     setBusy(true);
     setMessage("");
     try {
-      const redirectTo =
-        typeof window === "undefined" ? undefined : `${window.location.origin}/enterprise`;
-      const result = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-        ...(redirectTo ? { redirectTo } : {}),
+      const response = await fetch("/api/auth/reset-password/request", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify({
+          email: normalizedEmail,
+          returnTo: "/enterprise",
+        }),
       });
-      if (result.error) throw result.error;
+      const payload = (await response.json().catch(() => null)) as
+        | PasswordResetRequestPayload
+        | null;
+      if (!response.ok || payload?.ok !== true) {
+        setMessage(passwordResetRequestError(payload));
+        return;
+      }
       setMessage("如果该邮箱已开通员工账号，密码设置邮件会发送到邮箱。");
     } catch {
       setMessage("暂时无法发送密码设置邮件，请稍后重试。");

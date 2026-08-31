@@ -312,7 +312,7 @@ test("lost createUser response converges through the exact staff registry", asyn
   assert.equal(lookups, 2);
 });
 
-test("new Auth staff identity carries both immutable recovery markers", async () => {
+test("new Auth staff identity carries immutable identity and password-state markers", async () => {
   let attributes: Record<string, unknown> | undefined;
   const created = await ensureMerchantEnterpriseInvitationStaffUser(
     { email: "Staff@Example.com", authUserId: null },
@@ -334,6 +334,7 @@ test("new Auth staff identity carries both immutable recovery markers", async ()
     app_metadata: {
       principal_type: "merchant_staff",
       merchant_staff_email_hash: emailHash,
+      merchant_staff_password_initialized: false,
     },
   });
 });
@@ -342,6 +343,14 @@ test("worker derives one stable token, binds identity, and returns only safe res
   const calls: string[] = [];
   let sentToken = "";
   let sentReplayCount = -1;
+  let boundInitialPasswordPolicy = "";
+  const uninitializedUser = staffUser({
+    app_metadata: {
+      principal_type: "merchant_staff",
+      merchant_staff_email_hash: emailHash,
+      merchant_staff_password_initialized: false,
+    },
+  });
   const dependencies: MerchantEnterpriseInvitationWorkerDependencies = {
     keyring: { activeKeyId: "k1", keys: new Map([["k1", hmacKey]]) },
     emailConfig: {
@@ -350,8 +359,8 @@ test("worker derives one stable token, binds identity, and returns only safe res
       publicOrigin: "https://faolla.example",
     },
     authAdmin: {
-      getUserById: async () => ({ data: { user: staffUser() }, error: null }),
-      createUser: async () => ({ data: { user: staffUser() }, error: null }),
+      getUserById: async () => ({ data: { user: uninitializedUser }, error: null }),
+      createUser: async () => ({ data: { user: uninitializedUser }, error: null }),
     },
     prepareDelivery: async ({ tokenHash }) => {
       calls.push(`prepare:${tokenHash}`);
@@ -365,8 +374,9 @@ test("worker derives one stable token, binds identity, and returns only safe res
       };
     },
     lookupStaffIdentity: async () => ({ status: "staff", authUserId }),
-    bindStaffIdentity: async () => {
+    bindStaffIdentity: async ({ initialPasswordPolicy }) => {
       calls.push("bind");
+      boundInitialPasswordPolicy = initialPasswordPolicy;
     },
     sendEmail: async (input) => {
       calls.push("send");
@@ -383,6 +393,7 @@ test("worker derives one stable token, binds identity, and returns only safe res
   });
   assert.match(sentToken, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(sentReplayCount, 2);
+  assert.equal(boundInitialPasswordPolicy, "required");
   assert.equal(calls[0]?.startsWith("prepare:"), true);
   assert.deepEqual(calls.slice(1), ["bind", "send"]);
   assert.deepEqual(result, { status: "sent", invitation_version: 7 });
@@ -477,6 +488,7 @@ test("RPC dependencies validate prepare data and bind the exact email hash", asy
     workerId: "enterprise-invitation:test",
     authUserId,
     emailHash,
+    initialPasswordPolicy: "required",
   });
   assert.deepEqual(calls[2], {
     name: "faolla_bind_merchant_employee_invitation_identity_v2",
@@ -486,6 +498,7 @@ test("RPC dependencies validate prepare data and bind the exact email hash", asy
         worker_id: "enterprise-invitation:test",
         auth_user_id: authUserId,
         email_hash: emailHash,
+        initial_password_policy: "required",
       },
     },
   });

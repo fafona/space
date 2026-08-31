@@ -4,6 +4,7 @@ export type ResetPasswordRecoveryPayload = {
   tokenHash: string;
   code: string;
   type: string;
+  recoveryIntent?: string;
   capturedAt: number;
 };
 
@@ -22,6 +23,7 @@ export function normalizeResetPasswordRecoveryPayload(
   const tokenHash = normalizeText(input?.tokenHash);
   const code = normalizeText(input?.code);
   const type = normalizeText(input?.type);
+  const recoveryIntent = normalizeText(input?.recoveryIntent);
   const capturedAt =
     typeof input?.capturedAt === "number" && Number.isFinite(input.capturedAt) ? input.capturedAt : Date.now();
   if (!accessToken && !tokenHash && !code) return null;
@@ -32,6 +34,7 @@ export function normalizeResetPasswordRecoveryPayload(
     tokenHash,
     code,
     type,
+    recoveryIntent,
     capturedAt,
   };
 }
@@ -60,6 +63,10 @@ export function readResetPasswordRecoveryPayloadFromUrl(url: URL) {
     tokenHash: url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "",
     code: url.searchParams.get("code") ?? "",
     type: hashParams.get("type") ?? url.searchParams.get("type") ?? "",
+    recoveryIntent:
+      hashParams.get("reset_intent") ??
+      url.searchParams.get("reset_intent") ??
+      "",
     capturedAt: Date.now(),
   });
 }
@@ -129,6 +136,9 @@ export function buildResetPasswordRecoveryUrl(
   if (normalized.type) hashParams.set("type", normalized.type);
   if (normalized.tokenHash) hashParams.set("token_hash", normalized.tokenHash);
   if (normalized.code) hashParams.set("code", normalized.code);
+  if (normalized.recoveryIntent) {
+    hashParams.set("reset_intent", normalized.recoveryIntent);
+  }
   url.hash = hashParams.toString();
   return url;
 }

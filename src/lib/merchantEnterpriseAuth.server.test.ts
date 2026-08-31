@@ -9,6 +9,7 @@ import {
   requireMerchantEnterpriseAllBoardAccess,
   requireMerchantEnterpriseBoardAccess,
   requireMerchantEnterpriseEntitlement,
+  requireMerchantEnterprisePasswordAuthentication,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
@@ -105,6 +106,65 @@ test("enterprise entitlement uses only the injected authoritative current snapsh
   );
 });
 
+test("enterprise employee access requires a password-authenticated session", () => {
+  assert.doesNotThrow(() =>
+    requireMerchantEnterprisePasswordAuthentication({
+      authenticationMethods: ["password"],
+    }),
+  );
+  assert.doesNotThrow(() =>
+    requireMerchantEnterprisePasswordAuthentication({
+      authenticationMethods: ["token_refresh", "password"],
+    }),
+  );
+
+  for (const authenticationMethods of [
+    [],
+    ["invite"],
+    ["magiclink"],
+    ["recovery"],
+    ["token_refresh"],
+    ["oauth", "google"],
+  ]) {
+    assert.throws(
+      () =>
+        requireMerchantEnterprisePasswordAuthentication({
+          authenticationMethods,
+        }),
+      (error: unknown) =>
+        error instanceof MerchantEnterpriseAccessError &&
+        error.code === "employee_password_authentication_required" &&
+        error.status === 403,
+      authenticationMethods.join(",") || "missing amr",
+    );
+  }
+});
+
+test("enterprise auth verifies signed AMR claims against the resolved user", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/merchantEnterpriseAuth.server.ts"),
+    "utf8",
+  );
+  const claimsLookup = source.indexOf("authClient.auth.getClaims(accessToken)");
+  const userLookup = source.indexOf("authClient.auth.getUser(accessToken)");
+  const subjectBinding = source.indexOf(
+    "normalizeText(claims.sub, 80) === normalizeText(user.id, 80)",
+  );
+  const amrBinding = source.indexOf(
+    "authenticationMethods: normalizeAuthenticationMethods(claims.amr)",
+  );
+
+  assert.ok(claimsLookup >= 0);
+  assert.ok(userLookup >= 0);
+  assert.ok(subjectBinding > claimsLookup && subjectBinding > userLookup);
+  assert.ok(amrBinding > subjectBinding);
+  assert.match(source, /!claimsResult\?\.error[\s\S]{0,120}!userResult\?\.error/);
+  assert.doesNotMatch(
+    source,
+    /authenticationMethods:\s*normalizeAuthenticationMethods\(user(?:\.|\?\.)/,
+  );
+});
+
 test("enterprise actor resolution is read-only and gates before membership lookup", () => {
   const source = readFileSync(
     join(process.cwd(), "src/lib/merchantEnterpriseAuth.server.ts"),
@@ -116,8 +176,15 @@ test("enterprise actor resolution is read-only and gates before membership looku
   const employeeLookupIndex = source.indexOf(
     '.from("merchant_enterprise_employees")',
   );
+  const ownerLookupIndex = source.indexOf('.from("merchants")');
+  const passwordGateIndex = source.indexOf(
+    "requireMerchantEnterprisePasswordAuthentication(authContext)",
+  );
 
   assert.ok(gateIndex >= 0);
+  assert.ok(ownerLookupIndex > gateIndex);
+  assert.ok(passwordGateIndex > ownerLookupIndex);
+  assert.ok(employeeLookupIndex > passwordGateIndex);
   assert.ok(employeeLookupIndex > gateIndex);
   assert.equal(source.includes(".update({"), false);
   assert.match(source, /\.eq\("status", "active"\)/);

@@ -1,4 +1,6 @@
 export const MERCHANT_STAFF_PRINCIPAL_TYPE = "merchant_staff";
+export const MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY =
+  "merchant_staff_password_initialized";
 
 export type MerchantStaffPrincipalUser = {
   id?: string | null;

@@ -20,14 +20,41 @@ const portalPage = read(portalPagePath);
 const authGeneration = read(authGenerationPath);
 const membershipNormalizer = read(membershipNormalizerPath);
 
-test("enterprise selector reuses the isolated employee session and supports login recovery", () => {
+test("enterprise selector reuses the isolated employee session", () => {
   assert.match(selector, /merchantEnterpriseSupabase\s+as\s+supabase/);
   assert.match(selector, /supabase\.auth\.signInWithPassword\(/);
-  assert.match(selector, /supabase\.auth\.resetPasswordForEmail\(/);
-  assert.match(selector, /`\$\{window\.location\.origin\}\/enterprise`/);
   assert.match(selector, /supabase\.auth\.exchangeCodeForSession\(code\)/);
   assert.match(selector, /supabase\.auth\.setSession\(/);
   assert.match(selectorPage, /referrer:\s*["']no-referrer["']/);
+});
+
+test("enterprise password recovery uses the blind same-origin server endpoint", () => {
+  const selectorResetStart = selector.indexOf("async function requestPasswordReset()");
+  const selectorResetEnd = selector.indexOf("async function setLoginPassword()", selectorResetStart);
+  const selectorReset = selector.slice(selectorResetStart, selectorResetEnd);
+  const portalResetStart = portal.indexOf("async function requestPasswordReset()");
+  const portalResetEnd = portal.indexOf("async function signOut()", portalResetStart);
+  const portalReset = portal.slice(portalResetStart, portalResetEnd);
+
+  assert.ok(selectorResetStart >= 0 && selectorResetEnd > selectorResetStart);
+  assert.ok(portalResetStart >= 0 && portalResetEnd > portalResetStart);
+  for (const resetSource of [selectorReset, portalReset]) {
+    assert.match(resetSource, /fetch\("\/api\/auth\/reset-password\/request",\s*\{/);
+    assert.match(resetSource, /method:\s*"POST"/);
+    assert.match(resetSource, /"content-type":\s*"application\/json"/);
+    assert.match(resetSource, /credentials:\s*"same-origin"/);
+    assert.match(resetSource, /cache:\s*"no-store"/);
+    assert.match(resetSource, /email:\s*normalizedEmail/);
+    assert.match(resetSource, /payload\?\.ok !== true/);
+    assert.match(resetSource, /如果该邮箱已开通员工账号，密码设置邮件会发送到邮箱。/);
+    assert.doesNotMatch(resetSource, /resetPasswordForEmail|maskedEmail/);
+  }
+  assert.match(selectorReset, /returnTo:\s*"\/enterprise"/);
+  assert.match(portalReset, /returnTo:\s*`\/enterprise\/\$\{siteId\}`/);
+  for (const source of [selector, portal]) {
+    assert.match(source, /reset_password_invalid_email/);
+    assert.match(source, /auth_rate_limited/);
+  }
 });
 
 test("membership discovery is a private no-store request with an explicit employee token", () => {
@@ -74,7 +101,7 @@ test("session initialization and auth events share a latest-wins generation", ()
     if (source === portal) {
       assert.match(
         callback,
-        /if \(authCallbackInProgressRef\.current\) return;\s*const generation = authGeneration\.begin\(\);/,
+        /if \(authCallbackInProgressRef\.current\) return;\s*if \(passwordSetupTransitionRef\.current\) return;\s*const generation = authGeneration\.begin\(\);/,
         "a stale INITIAL_SESSION must be ignored while the callback resolver owns the generation",
       );
     } else {

@@ -34,6 +34,13 @@ type MerchantBusinessAuthUser = {
   app_metadata?: Record<string, unknown> | null;
 };
 
+type MerchantBusinessResolvedAuth = {
+  user: MerchantBusinessAuthUser;
+  explicitToken: boolean;
+  jwtVerified: boolean;
+  authenticationMethods: string[];
+};
+
 type MerchantBusinessEmployeeAuthorization = {
   employeeId: string;
   employeeVersion: number;
@@ -97,9 +104,7 @@ export class MerchantBusinessAccessError extends Error {
 }
 
 export type MerchantBusinessActorDependencies = {
-  resolveAuthUser: (
-    request: Request,
-  ) => Promise<{ user: MerchantBusinessAuthUser; explicitToken: boolean }>;
+  resolveAuthUser: (request: Request) => Promise<MerchantBusinessResolvedAuth>;
   isStaffPrincipal: (user: MerchantBusinessAuthUser) => Promise<boolean>;
   loadEmployeeAuthorization: (
     siteId: string,
@@ -122,6 +127,47 @@ function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+const EMPLOYEE_FORBIDDEN_AUTHENTICATION_METHODS = new Set([
+  "invite",
+  "magiclink",
+  "recovery",
+]);
+
+function normalizeAuthenticationMethods(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => {
+          if (typeof entry === "string") return trimText(entry, 80).toLowerCase();
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return "";
+          return trimText((entry as { method?: unknown }).method, 80).toLowerCase();
+        })
+        .filter(Boolean),
+    ),
+  );
+}
+
+function requireMerchantBusinessEmployeePasswordAuthentication(
+  auth: Pick<
+    MerchantBusinessResolvedAuth,
+    "jwtVerified" | "authenticationMethods"
+  >,
+) {
+  if (
+    auth.jwtVerified !== true ||
+    !auth.authenticationMethods.includes("password") ||
+    auth.authenticationMethods.some((method) =>
+      EMPLOYEE_FORBIDDEN_AUTHENTICATION_METHODS.has(method),
+    )
+  ) {
+    throw new MerchantBusinessAccessError(
+      "employee_password_authentication_required",
+      403,
+    );
+  }
+}
+
 function strictOwnerFilter(authUserId: string) {
   const escaped = authUserId.replace(/[^a-fA-F0-9-]/g, "");
   if (!escaped || escaped !== authUserId) return "";
@@ -138,7 +184,7 @@ function strictOwnerFilter(authUserId: string) {
 
 async function resolveAuthUser(
   request: Request,
-): Promise<{ user: MerchantBusinessAuthUser; explicitToken: boolean }> {
+): Promise<MerchantBusinessResolvedAuth> {
   const { candidates, explicitToken } = readMerchantBusinessRequestAccessTokens(request);
   if (candidates.length === 0) {
     throw new MerchantBusinessAccessError("unauthorized", 401);
@@ -148,11 +194,26 @@ async function resolveAuthUser(
     throw new MerchantBusinessAccessError("business_auth_unavailable", 503);
   }
   for (const accessToken of candidates) {
-    const result = await authClient.auth.getUser(accessToken).catch(() => null);
-    if (result?.data?.user && !result.error) {
+    const [claimsResult, userResult] = await Promise.all([
+      authClient.auth.getClaims(accessToken).catch(() => null),
+      authClient.auth.getUser(accessToken).catch(() => null),
+    ]);
+    const user = userResult?.data?.user;
+    if (user && !userResult?.error) {
+      const claims = claimsResult?.data?.claims;
+      const jwtVerified = Boolean(
+        claims &&
+          !claimsResult?.error &&
+          trimText(claims.sub, 80) !== "" &&
+          trimText(claims.sub, 80) === trimText(user.id, 80),
+      );
       return {
-        user: result.data.user as MerchantBusinessAuthUser,
+        user: user as MerchantBusinessAuthUser,
         explicitToken,
+        jwtVerified,
+        authenticationMethods: jwtVerified
+          ? normalizeAuthenticationMethods(claims?.amr)
+          : [],
       };
     }
   }
@@ -324,7 +385,8 @@ async function resolveMerchantBusinessActorContext(
     throw new MerchantBusinessAccessError("invalid_site_id", 400);
   }
   const dependencies = { ...defaultDependencies(), ...dependencyOverrides };
-  const { user, explicitToken } = await dependencies.resolveAuthUser(request);
+  const auth = await dependencies.resolveAuthUser(request);
+  const { user, explicitToken } = auth;
   const authUserId = trimText(user.id, 80);
   if (!authUserId) throw new MerchantBusinessAccessError("unauthorized", 401);
 
@@ -337,6 +399,9 @@ async function resolveMerchantBusinessActorContext(
 
   if (staffPrincipal && !explicitToken) {
     throw new MerchantBusinessAccessError("unauthorized", 401);
+  }
+  if (staffPrincipal) {
+    requireMerchantBusinessEmployeePasswordAuthentication(auth);
   }
 
   const site = await dependencies.loadSite(siteId);

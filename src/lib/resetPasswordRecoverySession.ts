@@ -4,6 +4,8 @@ import { appendLegacyCookieExpiration } from "@/lib/legacyCookieCleanup";
 
 export const RESET_PASSWORD_RECOVERY_COOKIE = "__Host-faolla-reset-recovery-v2";
 export const RESET_PASSWORD_RECOVERY_REFRESH_COOKIE = "__Host-faolla-reset-recovery-refresh-v2";
+export const RESET_PASSWORD_RECOVERY_PROOF_COOKIE =
+  "__Host-faolla-reset-recovery-proof-v1";
 export const LEGACY_RESET_PASSWORD_RECOVERY_COOKIE = "merchant-space-reset-recovery";
 export const LEGACY_RESET_PASSWORD_RECOVERY_REFRESH_COOKIE = "merchant-space-reset-recovery-refresh";
 
@@ -46,6 +48,37 @@ export function readResetRecoveryCookie(request: Request) {
 
 export function readResetRecoveryRefreshCookie(request: Request) {
   return parseCookieValue(request.headers.get("cookie") ?? "", RESET_PASSWORD_RECOVERY_REFRESH_COOKIE).trim();
+}
+
+export function readResetRecoveryProofCookie(request: Request) {
+  return parseCookieValue(
+    request.headers.get("cookie") ?? "",
+    RESET_PASSWORD_RECOVERY_PROOF_COOKIE,
+  ).trim();
+}
+
+export function setResetRecoveryProofCookie(
+  response: NextResponse,
+  proofToken: string,
+) {
+  const normalized = String(proofToken ?? "").trim();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(normalized)) {
+    response.cookies.set(RESET_PASSWORD_RECOVERY_PROOF_COOKIE, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: true,
+      path: "/",
+      maxAge: 0,
+    });
+    return;
+  }
+  response.cookies.set(RESET_PASSWORD_RECOVERY_PROOF_COOKIE, normalized, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: "/",
+    maxAge: 30 * 60,
+  });
 }
 
 export function setResetRecoveryCookies(
@@ -100,6 +133,13 @@ export function clearResetRecoveryCookies(response: NextResponse, request?: Requ
     maxAge: 0,
   });
   response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: "/",
+    maxAge: 0,
+  });
+  response.cookies.set(RESET_PASSWORD_RECOVERY_PROOF_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
     secure: true,
