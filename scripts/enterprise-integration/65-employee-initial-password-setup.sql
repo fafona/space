@@ -259,7 +259,7 @@ insert into public.merchant_enterprise_employees (
     'initial-complete-65@example.test',
     'Initial complete 65',
     :'initial_password_role_a'::uuid,
-    'invited', statement_timestamp(), 1, 1, repeat('1', 64),
+    'invited', statement_timestamp(), 1, 1, repeat('10', 32),
     statement_timestamp() + interval '1 day', statement_timestamp(), 'sent'
   ),
   (
@@ -269,7 +269,7 @@ insert into public.merchant_enterprise_employees (
     'initial-lease-65@example.test',
     'Initial lease 65',
     :'initial_password_role_a'::uuid,
-    'invited', statement_timestamp(), 1, 1, repeat('2', 64),
+    'invited', statement_timestamp(), 1, 1, repeat('20', 32),
     statement_timestamp() + interval '1 day', statement_timestamp(), 'sent'
   ),
   (
@@ -279,7 +279,7 @@ insert into public.merchant_enterprise_employees (
     'initial-cross-65@example.test',
     'Initial cross merchant A 65',
     :'initial_password_role_a'::uuid,
-    'invited', statement_timestamp(), 1, 1, repeat('3', 64),
+    'invited', statement_timestamp(), 1, 1, repeat('30', 32),
     statement_timestamp() + interval '1 day', statement_timestamp(), 'sent'
   ),
   (
@@ -289,7 +289,7 @@ insert into public.merchant_enterprise_employees (
     'initial-cross-65@example.test',
     'Initial cross merchant B 65',
     :'initial_password_role_b'::uuid,
-    'invited', statement_timestamp(), 1, 1, repeat('4', 64),
+    'invited', statement_timestamp(), 1, 1, repeat('40', 32),
     statement_timestamp() + interval '1 day', statement_timestamp(), 'sent'
   ),
   (
@@ -299,7 +299,7 @@ insert into public.merchant_enterprise_employees (
     'initial-waive-65@example.test',
     'Initial waive 65',
     :'initial_password_role_a'::uuid,
-    'invited', statement_timestamp(), 1, 1, repeat('5', 64),
+    'invited', statement_timestamp(), 1, 1, repeat('50', 32),
     statement_timestamp() + interval '1 day', statement_timestamp(), 'sent'
   );
 
@@ -329,7 +329,7 @@ select enterprise_integration.expect_error(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000004',
         'invitation_version', 1,
-        'token_hash', repeat('5', 64)
+        'token_hash', repeat('50', 32)
       )
     )
   $sql$,
@@ -356,7 +356,7 @@ select enterprise_integration.assert_true(
       'merchant_id', '10000001',
       'auth_user_id', '65000000-0000-4000-8000-000000000004',
       'invitation_version', 1,
-      'token_hash', repeat('5', 64)
+      'token_hash', repeat('50', 32)
     )
   ) = jsonb_build_object('policy', 'waived', 'changed', true),
   'required invitation was not explicitly waived'
@@ -366,7 +366,7 @@ select public.faolla_accept_merchant_employee_invitation_v1(
     'merchant_id', '10000001',
     'auth_user_id', '65000000-0000-4000-8000-000000000004',
     'invitation_version', 1,
-    'token_hash', repeat('5', 64)
+    'token_hash', repeat('50', 32)
   )
 );
 reset role;
@@ -392,7 +392,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000001',
         'invitation_version', 1,
-        'token_hash', repeat('1', 64),
+        'token_hash', repeat('10', 32),
         'operation_id', '65000001-0000-4000-8000-000000000001',
         'password_fingerprint', repeat('a', 64)
       )
@@ -407,7 +407,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000001',
         'invitation_version', 1,
-        'token_hash', repeat('1', 64),
+        'token_hash', repeat('10', 32),
         'operation_id', '65000001-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('a', 64)
       )
@@ -443,7 +443,7 @@ select enterprise_integration.expect_error(
           'merchant_id', '10000001',
           'auth_user_id', '65000000-0000-4000-8000-000000000001',
           'invitation_version', 1,
-          'token_hash', repeat('1', 64),
+          'token_hash', repeat('10', 32),
           'operation_id', '65000001-0000-4000-8000-000000000002',
           'password_fingerprint', repeat('a', 64)
         )
@@ -480,7 +480,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000001',
         'invitation_version', 1,
-        'token_hash', repeat('1', 64),
+        'token_hash', repeat('10', 32),
         'operation_id', '65000001-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('a', 64)
       )
@@ -495,7 +495,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000001',
         'invitation_version', 1,
-        'token_hash', repeat('1', 64),
+        'token_hash', repeat('10', 32),
         'operation_id', '65000001-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('a', 64)
       )
@@ -526,7 +526,7 @@ select public.faolla_accept_merchant_employee_invitation_v1(
     'merchant_id', '10000001',
     'auth_user_id', '65000000-0000-4000-8000-000000000001',
     'invitation_version', 1,
-    'token_hash', repeat('1', 64)
+    'token_hash', repeat('10', 32)
   )
 );
 reset role;
@@ -549,7 +549,7 @@ select public.faolla_claim_merchant_employee_initial_password_setup_v1(
     'merchant_id', '10000001',
     'auth_user_id', '65000000-0000-4000-8000-000000000002',
     'invitation_version', 1,
-    'token_hash', repeat('2', 64),
+    'token_hash', repeat('20', 32),
     'operation_id', '65000002-0000-4000-8000-000000000001',
     'password_fingerprint', repeat('b', 64)
   )
@@ -568,7 +568,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000002',
         'invitation_version', 1,
-        'token_hash', repeat('2', 64),
+        'token_hash', repeat('20', 32),
         'operation_id', '65000002-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('c', 64)
       )
@@ -599,7 +599,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000001',
         'auth_user_id', '65000000-0000-4000-8000-000000000002',
         'invitation_version', 1,
-        'token_hash', repeat('2', 64),
+        'token_hash', repeat('20', 32),
         'operation_id', '65000002-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('c', 64)
       )
@@ -617,7 +617,7 @@ select public.faolla_claim_merchant_employee_initial_password_setup_v1(
     'merchant_id', '10000001',
     'auth_user_id', '65000000-0000-4000-8000-000000000003',
     'invitation_version', 1,
-    'token_hash', repeat('3', 64),
+    'token_hash', repeat('30', 32),
     'operation_id', '65000003-0000-4000-8000-000000000001',
     'password_fingerprint', repeat('d', 64)
   )
@@ -629,7 +629,7 @@ select enterprise_integration.expect_error(
         'merchant_id', '10000002',
         'auth_user_id', '65000000-0000-4000-8000-000000000003',
         'invitation_version', 1,
-        'token_hash', repeat('4', 64),
+        'token_hash', repeat('40', 32),
         'operation_id', '65000003-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('e', 64)
       )
@@ -651,7 +651,7 @@ select enterprise_integration.assert_true(
         'merchant_id', '10000002',
         'auth_user_id', '65000000-0000-4000-8000-000000000003',
         'invitation_version', 1,
-        'token_hash', repeat('4', 64),
+        'token_hash', repeat('40', 32),
         'operation_id', '65000003-0000-4000-8000-000000000002',
         'password_fingerprint', repeat('e', 64)
       )
@@ -685,7 +685,7 @@ select public.faolla_release_merchant_employee_initial_password_setup_v1(
     'merchant_id', '10000002',
     'auth_user_id', '65000000-0000-4000-8000-000000000003',
     'invitation_version', 1,
-    'token_hash', repeat('4', 64),
+    'token_hash', repeat('40', 32),
     'operation_id', '65000003-0000-4000-8000-000000000002',
     'password_fingerprint', repeat('e', 64)
   )
