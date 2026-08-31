@@ -1,11 +1,14 @@
 begin;
 
 alter table public.merchant_enterprise_employees
-  add column if not exists initial_password_policy text;
+  add column if not exists initial_password_policy text default 'waived';
 
 -- Every invitation that existed before this migration keeps the legacy
 -- password contract. Invitations inserted after the migration default to a
--- fail-closed requirement, including during the rolling app deployment.
+-- fail-closed requirement, including during the rolling app deployment. The
+-- ADD COLUMN default fills clean pre-043 rows without firing the employee CAS
+-- version trigger; the UPDATE is only a repair path for a pre-existing nullable
+-- column and is a no-op during the normal migration.
 update public.merchant_enterprise_employees
    set initial_password_policy = 'waived'
  where initial_password_policy is null;

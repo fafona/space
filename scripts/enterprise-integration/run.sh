@@ -1555,7 +1555,23 @@ SQL
     fi
   elif [[ "$(basename -- "${migration}")" == \
     "202608310043_merchant_employee_initial_password_setup.sql" ]]; then
+    initial_password_cas_prestate="$(
+      run_psql --tuples-only --no-align --command \
+        "select version::text || '|' || updated_at::text from public.merchant_enterprise_employees where merchant_id = '10000001' and email = 'cas-invite@example.test';"
+    )"
+    if [[ -z "${initial_password_cas_prestate}" ]]; then
+      echo '043 CAS preservation fixture is missing' >&2
+      exit 1
+    fi
     run_sql_file_as_role "${migration}" supabase_admin
+    initial_password_cas_poststate="$(
+      run_psql --tuples-only --no-align --command \
+        "select version::text || '|' || updated_at::text from public.merchant_enterprise_employees where merchant_id = '10000001' and email = 'cas-invite@example.test';"
+    )"
+    if [[ "${initial_password_cas_poststate}" != "${initial_password_cas_prestate}" ]]; then
+      echo '043 legacy waiver backfill changed employee CAS state' >&2
+      exit 1
+    fi
     run_sql_file "${SCRIPT_DIR}/65-employee-initial-password-setup.sql"
     run_sql_file_as_role "${migration}" supabase_admin
     initial_password_setup_replay_state="$(

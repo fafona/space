@@ -38,7 +38,7 @@ function functionBody(name) {
 test("initial-password setup is claimed once and acceptance fences incomplete Auth writes", () => {
   assert.match(
     source,
-    /add column if not exists initial_password_policy text[\s\S]+set initial_password_policy = 'waived'[\s\S]+set default 'required'[\s\S]+set not null/i,
+    /add column if not exists initial_password_policy text default 'waived'[\s\S]+set initial_password_policy = 'waived'[\s\S]+set default 'required'[\s\S]+set not null/i,
   );
   assert.match(
     source,
@@ -206,6 +206,10 @@ test("new security tables and RPCs are service-role only and migration is regist
   assert.match(
     integrationRunner,
     /65-employee-initial-password-setup\.sql[\s\S]+run_sql_file_as_role "\$\{migration\}" supabase_admin[\s\S]+043 registered replay changed policy, audit evidence, or registry state/,
+  );
+  assert.match(
+    integrationRunner,
+    /initial_password_cas_prestate[\s\S]+cas-invite@example\.test[\s\S]+initial_password_cas_poststate[\s\S]+043 legacy waiver backfill changed employee CAS state/,
   );
 });
 
