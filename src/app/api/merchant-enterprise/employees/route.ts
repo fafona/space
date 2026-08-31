@@ -30,6 +30,8 @@ import {
   revokeMerchantEnterpriseEmployeeInvitation,
   scheduleMerchantEnterpriseEmployeeInvitationDeliveryV2,
 } from "@/lib/merchantEnterpriseInvitationStore.server";
+import { addMerchantEnterpriseInitialPasswordOnboarding } from "@/lib/merchantEnterpriseInvitationOnboarding";
+import { preparePasswordRecoveryRequest } from "@/lib/passwordRecoveryRequest.server";
 import {
   isValidAuthEmail,
   normalizeAuthEmail,
@@ -38,6 +40,7 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { normalizeMutationOperationId } from "@/lib/mutationOperationId";
 import {
   hasImmutableMerchantStaffPrincipal,
+  MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY,
   MERCHANT_STAFF_PRINCIPAL_TYPE,
 } from "@/lib/merchantStaffPrincipal.server";
 import {
@@ -509,7 +512,7 @@ async function markAuthUserAsStaff(service: ServiceClient, user: {
   id: string;
   email?: string | null;
   app_metadata?: Record<string, unknown> | null;
-}, expectedEmail: string) {
+}, expectedEmail: string, initializePasswordState = false) {
   const normalizedEmail = normalizeAuthEmail(expectedEmail);
   if (
     !isValidAuthEmail(normalizedEmail) ||
@@ -531,7 +534,10 @@ async function markAuthUserAsStaff(service: ServiceClient, user: {
   if (currentEmailHash && currentEmailHash !== expectedEmailHash) return false;
   if (
     hasImmutableMerchantStaffPrincipal(user) &&
-    currentEmailHash === expectedEmailHash
+    currentEmailHash === expectedEmailHash &&
+    (!initializePasswordState ||
+      typeof currentAppMetadata[MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY] ===
+        "boolean")
   ) {
     return true;
   }
@@ -541,6 +547,11 @@ async function markAuthUserAsStaff(service: ServiceClient, user: {
         ...currentAppMetadata,
         principal_type: MERCHANT_STAFF_PRINCIPAL_TYPE,
         merchant_staff_email_hash: expectedEmailHash,
+        ...(initializePasswordState &&
+        typeof currentAppMetadata[MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY] !==
+          "boolean"
+          ? { [MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY]: false }
+          : {}),
       },
     });
     if (!result.error) return true;
@@ -557,8 +568,13 @@ async function sendExistingStaffAccessEmail(
   },
 ) {
   if (input.emailConfirmed) {
-    const result = await service.auth.resetPasswordForEmail(input.email, {
+    const prepared = await preparePasswordRecoveryRequest(service, {
+      email: input.email,
       redirectTo: input.redirectTo,
+      source: "reset_email",
+    });
+    const result = await service.auth.resetPasswordForEmail(input.email, {
+      redirectTo: prepared.redirectTo,
     });
     return result.error
       ? ({
@@ -567,10 +583,12 @@ async function sendExistingStaffAccessEmail(
         } as const)
       : ({ status: "sent" } as const);
   }
+  const initialPasswordRedirect =
+    addMerchantEnterpriseInitialPasswordOnboarding(input.redirectTo);
   const result = await service.auth.resend({
     type: "signup",
     email: input.email,
-    options: { emailRedirectTo: input.redirectTo },
+    options: { emailRedirectTo: initialPasswordRedirect },
   });
   return result.error
     ? ({
@@ -638,7 +656,7 @@ async function ensureEmployeeInvitation(
   }
 
   const invite = await service.auth.admin.inviteUserByEmail(employee.email, {
-    redirectTo: input.redirectTo,
+    redirectTo: addMerchantEnterpriseInitialPasswordOnboarding(input.redirectTo),
     data: { principal_type: MERCHANT_STAFF_PRINCIPAL_TYPE },
   });
   let authUser = invite.data.user;
@@ -667,7 +685,14 @@ async function ensureEmployeeInvitation(
     invitationAlreadySent = false;
   }
 
-  if (!(await markAuthUserAsStaff(service, authUser, employee.email))) {
+  if (
+    !(await markAuthUserAsStaff(
+      service,
+      authUser,
+      employee.email,
+      invitationAlreadySent,
+    ))
+  ) {
     if (invitationAlreadySent) {
       const cleanup = await service.auth.admin.deleteUser(authUser.id);
       if (cleanup.error) {

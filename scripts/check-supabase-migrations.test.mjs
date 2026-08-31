@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import "./merchant-employee-initial-password-setup-migration-contract.test.mjs";
 import {
   checkSupabaseMigrations,
   validateMigrationSource,

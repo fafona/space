@@ -1996,6 +1996,7 @@ function LoginPageInner() {
           },
           body: JSON.stringify({
             email: trimmedEmail,
+            returnTo: "/login",
           }),
         }),
       );

@@ -14,6 +14,10 @@ const portalPath =
 const portalPagePath = "src/app/enterprise/[siteId]/page.tsx";
 const acceptRoutePath =
   "src/app/api/merchant-enterprise/employees/accept/route.ts";
+const membershipsRoutePath =
+  "src/app/api/merchant-enterprise/memberships/route.ts";
+const initialPasswordRoutePath =
+  "src/app/api/merchant-enterprise/invitations/initial-password/route.ts";
 const employeeRoutePath =
   "src/app/api/merchant-enterprise/employees/route.ts";
 const invitationStorePath =
@@ -30,12 +34,230 @@ test("acceptance hashes the URL bearer token before the service-role RPC", () =>
   );
   assert.match(
     source,
-    /service\.rpc\("faolla_accept_merchant_employee_invitation_v1",[\s\S]*invitation_version:\s*invitationVersion,[\s\S]*token_hash:\s*invitationTokenHash\(invitationToken\)/,
+    /tokenHash = hasInvitationVersion[\s\S]{0,100}invitationTokenHash\(invitationToken\)[\s\S]+service\.rpc\([\s\S]{0,100}"faolla_waive_employee_initial_password_v1"[\s\S]{0,400}invitation_version:\s*invitationVersion,[\s\S]{0,120}token_hash:\s*tokenHash[\s\S]+service\.rpc\("faolla_accept_merchant_employee_invitation_v1",[\s\S]{0,400}token_hash:\s*tokenHash/,
   );
   assert.doesNotMatch(
     source,
     /p_input:\s*\{[\s\S]{0,400}invitation_token:\s*invitationToken/,
   );
+});
+
+test("employee acceptance and membership selection require password authentication", () => {
+  const acceptSource = read(acceptRoutePath);
+  const acceptAuthContext = acceptSource.indexOf(
+    "resolveValidatedMerchantEnterpriseAuthContext(request)",
+  );
+  const acceptPasswordGate = acceptSource.indexOf(
+    "requireMerchantEnterprisePasswordAuthentication(authContext)",
+  );
+  const acceptEntitlement = acceptSource.indexOf(
+    "requireMerchantEnterpriseEntitlement(siteId)",
+  );
+  const acceptRpc = acceptSource.indexOf(
+    'service.rpc("faolla_accept_merchant_employee_invitation_v1"',
+  );
+  const waiverRpc = acceptSource.indexOf(
+    '"faolla_waive_employee_initial_password_v1"',
+  );
+  assert.ok(acceptAuthContext >= 0);
+  assert.ok(acceptPasswordGate > acceptAuthContext);
+  assert.ok(acceptEntitlement > acceptPasswordGate);
+  assert.ok(waiverRpc > acceptEntitlement);
+  assert.ok(acceptRpc > waiverRpc);
+  assert.doesNotMatch(
+    acceptSource,
+    /resolveValidatedMerchantEnterpriseAuthUser\(request\)/,
+  );
+
+  const membershipsSource = read(membershipsRoutePath);
+  const defaultDependenciesStart = membershipsSource.indexOf(
+    "const DEFAULT_DEPENDENCIES",
+  );
+  const handlerStart = membershipsSource.indexOf(
+    "export async function handleMerchantEnterpriseMembershipsGet",
+  );
+  const defaultDependenciesSource = membershipsSource.slice(
+    defaultDependenciesStart,
+    handlerStart,
+  );
+  const membershipAuthContext = defaultDependenciesSource.indexOf(
+    "resolveValidatedMerchantEnterpriseAuthContext(request)",
+  );
+  const membershipPasswordGate = defaultDependenciesSource.indexOf(
+    "requireMerchantEnterprisePasswordAuthentication(authContext)",
+  );
+  const returnUser = defaultDependenciesSource.indexOf(
+    "return authContext.user",
+  );
+  assert.ok(defaultDependenciesStart >= 0 && handlerStart > defaultDependenciesStart);
+  assert.ok(membershipAuthContext >= 0);
+  assert.ok(membershipPasswordGate > membershipAuthContext);
+  assert.ok(returnUser > membershipPasswordGate);
+  assert.doesNotMatch(
+    defaultDependenciesSource,
+    /resolveValidatedMerchantEnterpriseAuthUser\(request\)/,
+  );
+});
+
+test("initial password setup revalidates invitation and identity before the Auth mutation", () => {
+  const source = read(initialPasswordRoutePath);
+  const handlerStart = source.indexOf(
+    "export function createMerchantEnterpriseInitialPasswordHandler",
+  );
+  const postStart = source.indexOf("export async function POST", handlerStart);
+  assert.ok(handlerStart >= 0 && postStart > handlerStart);
+  const handlerSource = source.slice(handlerStart, postStart);
+
+  const originGate = handlerSource.indexOf(
+    "isTrustedSameOriginMutationRequest(request)",
+  );
+  const explicitSessionGate = handlerSource.indexOf(
+    "requireExplicitInviteSession(request)",
+  );
+  const parseInput = handlerSource.indexOf("await parseRequest(request)");
+  const resolveUser = handlerSource.indexOf(
+    "await dependencies.resolveAuthUser(request)",
+  );
+  const firstInvitationRead = handlerSource.indexOf(
+    "dependencies.loadInvitation(",
+  );
+  const firstRoleRead = handlerSource.indexOf(
+    "dependencies.loadRole(",
+    firstInvitationRead,
+  );
+  const identityRead = handlerSource.indexOf(
+    "dependencies.loadStaffIdentity(",
+  );
+  const finalInvitationRead = handlerSource.indexOf(
+    "dependencies.loadInvitation(",
+    firstInvitationRead + 1,
+  );
+  const finalRoleRead = handlerSource.indexOf(
+    "dependencies.loadRole(",
+    finalInvitationRead,
+  );
+  const setupClaim = handlerSource.indexOf(
+    "dependencies.claimInitialPasswordSetup(",
+    finalRoleRead,
+  );
+  const currentAuthRead = handlerSource.indexOf(
+    "dependencies.getAuthUserById(",
+    setupClaim,
+  );
+  const passwordStateGate = handlerSource.indexOf(
+    "requireKnownUninitializedPasswordState(",
+    currentAuthRead,
+  );
+  const authMutation = handlerSource.indexOf(
+    "dependencies.updateAuthUserById(",
+    currentAuthRead,
+  );
+  const successResponse = handlerSource.indexOf(
+    "return jsonResponse({ ok: true }, 200)",
+    authMutation,
+  );
+
+  assert.ok(originGate >= 0);
+  assert.ok(explicitSessionGate > originGate);
+  assert.ok(parseInput > explicitSessionGate);
+  assert.ok(resolveUser > parseInput);
+  assert.ok(firstInvitationRead > resolveUser);
+  assert.ok(firstRoleRead > firstInvitationRead);
+  assert.ok(identityRead > firstRoleRead);
+  assert.ok(finalInvitationRead > identityRead);
+  assert.ok(finalRoleRead > finalInvitationRead);
+  assert.ok(setupClaim > finalRoleRead);
+  assert.ok(currentAuthRead > setupClaim);
+  assert.ok(passwordStateGate > currentAuthRead);
+  assert.ok(authMutation > currentAuthRead);
+  assert.ok(successResponse > authMutation);
+  assert.ok(
+    (handlerSource.match(/invitationVersion:\s*input\.invitationVersion/g)?.length ??
+      0) >= 4,
+    "both invitation reads and normalizations must bind the submitted generation",
+  );
+  assert.match(
+    handlerSource.slice(finalInvitationRead, authMutation),
+    /finalInvitation\.id !== firstInvitation\.id[\s\S]{0,500}finalInvitation\.roleId !== firstInvitation\.roleId[\s\S]{0,500}finalInvitation\.invitationTokenHash !== firstInvitation\.invitationTokenHash/,
+  );
+  assert.match(
+    handlerSource.slice(authMutation, successResponse),
+    /MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY[\s\S]{0,160}true/,
+  );
+  assert.doesNotMatch(
+    handlerSource,
+    /faolla_accept_merchant_employee_invitation_v1|status:\s*["']active["']/,
+  );
+});
+
+test("portal completes server-validated password setup before fresh login and acceptance", () => {
+  const source = read(portalPath);
+  const initializerStart = source.indexOf(
+    "async function initializeEnterpriseStaffPassword",
+  );
+  const componentStart = source.indexOf(
+    "export default function EnterprisePortalClient",
+    initializerStart,
+  );
+  assert.ok(initializerStart >= 0 && componentStart > initializerStart);
+  const initializerSource = source.slice(initializerStart, componentStart);
+  assert.match(
+    initializerSource,
+    /fetch\(\s*"\/api\/merchant-enterprise\/invitations\/initial-password"/,
+  );
+  assert.match(initializerSource, /"x-merchant-access-token": accessToken/);
+  assert.match(initializerSource, /credentials:\s*"same-origin"/);
+  assert.match(initializerSource, /cache:\s*"no-store"/);
+  assert.match(
+    initializerSource,
+    /JSON\.stringify\(\{[\s\S]{0,240}siteId,[\s\S]{0,120}invitationVersion: invitation\.invitationVersion,[\s\S]{0,120}invitationToken: invitation\.invitationToken,[\s\S]{0,120}operationId,[\s\S]{0,120}newPassword/,
+  );
+
+  const setupStart = source.indexOf(
+    "async function completeInitialPasswordSetup",
+  );
+  const setupEnd = source.indexOf(
+    "async function retryInvitationAcceptance",
+    setupStart,
+  );
+  assert.ok(setupStart >= 0 && setupEnd > setupStart);
+  const setupSource = source.slice(setupStart, setupEnd);
+  const serverSetup = setupSource.indexOf(
+    "await initializeEnterpriseStaffPassword(",
+  );
+  const clearOperation = setupSource.indexOf(
+    "clearInitialPasswordOperation(initialPasswordOperation.operationId)",
+  );
+  const clearSubmittedPassword = setupSource.indexOf('setNewPassword("")');
+  const markPasswordCompleted = setupSource.indexOf(
+    "markInvitationPasswordCompleted(",
+  );
+  const signOut = setupSource.indexOf(
+    'supabase.auth.signOut({ scope: "local" })',
+  );
+  const passwordSignIn = setupSource.indexOf(
+    "supabase.auth.signInWithPassword(",
+  );
+  const acceptInvitation = setupSource.indexOf(
+    "await acceptPendingInvitationWithPasswordSession(passwordSessionToken)",
+  );
+  assert.ok(serverSetup >= 0);
+  assert.ok(clearOperation > serverSetup);
+  assert.ok(clearSubmittedPassword > serverSetup);
+  assert.ok(clearSubmittedPassword < markPasswordCompleted);
+  assert.ok(markPasswordCompleted > serverSetup);
+  assert.ok(signOut > markPasswordCompleted);
+  assert.ok(passwordSignIn > signOut);
+  assert.ok(acceptInvitation > passwordSignIn);
+  assert.match(
+    setupSource,
+    /initialPasswordOperationFor\([\s\S]{0,160}storedInvitation,[\s\S]{0,80}submittedPassword[\s\S]{0,240}initialPasswordOperation\.operationId/,
+  );
+  assert.match(
+    setupSource,
+    /error instanceof EnterpriseInitialPasswordSetupError[\s\S]{0,100}error\.existingPasswordRequired[\s\S]{0,220}setNewPassword\(""\)[\s\S]{0,120}setConfirmNewPassword\(""\)/,
+  );
+  assert.doesNotMatch(setupSource, /supabase\.auth\.updateUser\(/);
 });
 
 test("legacy Auth callbacks preserve credentials while durable email uses a fragment", () => {
@@ -87,8 +309,17 @@ test("legacy staff creation writes the immutable email marker required by durabl
   );
   assert.match(
     routeSource,
-    /currentEmailHash && currentEmailHash !== expectedEmailHash[\s\S]{0,500}merchant_staff_email_hash: expectedEmailHash/,
+    /currentEmailHash && currentEmailHash !== expectedEmailHash\) return false/,
     "a different immutable email marker must be rejected rather than overwritten",
+  );
+  assert.match(
+    routeSource,
+    /app_metadata:[\s\S]{0,240}merchant_staff_email_hash: expectedEmailHash/,
+  );
+  assert.match(
+    routeSource,
+    /MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY[\s\S]{0,300}: false/,
+    "new staff identities must start with a server-owned uninitialized password marker",
   );
   assert.match(
     routeSource,
@@ -96,7 +327,7 @@ test("legacy staff creation writes the immutable email marker required by durabl
   );
   assert.match(
     routeSource,
-    /markAuthUserAsStaff\(service, authUser, employee\.email\)/,
+    /markAuthUserAsStaff\([\s\S]{0,80}service,[\s\S]{0,80}authUser,[\s\S]{0,80}employee\.email,[\s\S]{0,80}invitationAlreadySent/,
   );
 });
 
@@ -354,11 +585,11 @@ test("portal resumes an authenticated invitation acceptance without issuing anot
   const source = read(portalPath);
   assert.match(
     source,
-    /stage: "exchange_pending" \| "accept_pending"/,
+    /stage: "exchange_pending" \| "password_pending" \| "accept_pending"/,
   );
   assert.match(
     source,
-    /function markInvitationAcceptPending\([\s\S]{0,500}authUserId,[\s\S]{0,120}stage: "accept_pending"[\s\S]{0,160}persistStoredInvitationCredential/,
+    /function markInvitationAcceptPending\([\s\S]{0,500}requiresInitialPassword = false[\s\S]{0,500}stage: requiresInitialPassword \? "password_pending" : "accept_pending"[\s\S]{0,160}persistStoredInvitationCredential/,
   );
   assert.match(
     source,
@@ -384,6 +615,11 @@ test("portal resumes an authenticated invitation acceptance without issuing anot
     "const result = await supabase.auth.getSession();",
     scrubCallback,
   );
+  const passwordPendingGate = source.indexOf(
+    'if (token && storedInvitation?.stage === "password_pending")',
+    fallbackSessionRead,
+  );
+  const passwordPendingReturn = source.indexOf("return;", passwordPendingGate);
   const acceptMembership = source.indexOf(
     "ensureMembershipAccepted(token)",
     fallbackSessionRead,
@@ -394,12 +630,23 @@ test("portal resumes an authenticated invitation acceptance without issuing anot
       markPending > callbackGenerationGuard &&
       scrubCallback > markPending &&
       fallbackSessionRead > scrubCallback &&
+      passwordPendingGate > fallbackSessionRead &&
+      passwordPendingReturn > passwordPendingGate &&
       acceptMembership > fallbackSessionRead,
-    "the callback result must persist accept_pending and scrub before any fallback session read",
+    "the callback result must persist password_pending and scrub before any fallback session read",
+  );
+  assert.ok(
+    passwordPendingReturn < acceptMembership,
+    "an invitation bootstrap session must return before membership acceptance",
+  );
+  assert.match(
+    source.slice(markPending, markPending + 420),
+    /callbackSession\.user\.id,\s*true/,
+    "an Auth invitation callback must enter password_pending",
   );
   assert.match(
     source,
-    /storedInvitation\?\.stage === "accept_pending"[\s\S]{0,100}session\?\.user\?\.id !== storedInvitation\.authUserId[\s\S]{0,180}请使用该邀请已验证的员工账号登录后重试/,
+    /storedInvitation\?\.stage === "password_pending"[\s\S]{0,100}storedInvitation\?\.stage === "accept_pending"[\s\S]{0,120}session\?\.user\?\.id !== storedInvitation\.authUserId/,
     "a different cached employee session must never consume the stored invitation",
   );
   assert.match(
@@ -415,7 +662,150 @@ test("portal resumes an authenticated invitation acceptance without issuing anot
   assert.match(
     source,
     /markInvitationAcceptPending\([\s\S]{0,650}storedInvitationCredentialRef\.current = storedInvitation;[\s\S]{0,650}scrubResolvedCallbackUrl\?\.\(\)/,
-    "the callback URL may be scrubbed only after accept_pending survives a reload",
+    "the callback URL may be scrubbed only after password_pending survives a reload",
+  );
+
+  const listenerStart = source.indexOf("supabase.auth.onAuthStateChange");
+  const listenerPasswordGate = source.indexOf(
+    'if (storedInvitation?.stage === "password_pending")',
+    listenerStart,
+  );
+  const listenerPasswordReturn = source.indexOf("return;", listenerPasswordGate);
+  const listenerAccept = source.indexOf(
+    "void ensureMembershipAccepted(token)",
+    listenerStart,
+  );
+  assert.ok(listenerPasswordGate > listenerStart);
+  assert.ok(listenerPasswordReturn > listenerPasswordGate);
+  assert.ok(listenerAccept > listenerPasswordReturn);
+
+  const passwordUiGate = source.indexOf(
+    "if (accessToken && initialPasswordSetupState)",
+  );
+  const workspaceRender = source.indexOf("<MerchantEmployeeWorkspace");
+  assert.ok(passwordUiGate >= 0 && workspaceRender > passwordUiGate);
+
+  const passwordAcceptanceStart = source.indexOf(
+    "async function acceptPendingInvitationWithPasswordSession",
+  );
+  const passwordAcceptanceEnd = source.indexOf(
+    "async function signIn()",
+    passwordAcceptanceStart,
+  );
+  const passwordAcceptanceSource = source.slice(
+    passwordAcceptanceStart,
+    passwordAcceptanceEnd,
+  );
+  const markPasswordCompleted = source.indexOf(
+    "markInvitationPasswordCompleted(siteId, storedInvitation)",
+    passwordAcceptanceStart,
+  );
+  const acceptanceGeneration = passwordAcceptanceSource.indexOf(
+    "beginPasswordAuthenticatedPortalSession(token)",
+  );
+  const passwordSessionAccept = passwordAcceptanceSource.indexOf(
+    "await ensureMembershipAccepted(token)",
+  );
+  const currentGenerationGuard = passwordAcceptanceSource.indexOf(
+    "authGeneration.isCurrent(generation, token)",
+    passwordSessionAccept,
+  );
+  const acceptanceSuccess = passwordAcceptanceSource.indexOf(
+    "setInitialPasswordSetupState(null)",
+    currentGenerationGuard,
+  );
+  assert.ok(passwordAcceptanceStart >= 0);
+  assert.ok(passwordAcceptanceEnd > passwordAcceptanceStart);
+  assert.ok(markPasswordCompleted > passwordAcceptanceStart);
+  assert.ok(acceptanceGeneration > 0);
+  assert.ok(passwordSessionAccept > acceptanceGeneration);
+  assert.ok(currentGenerationGuard > passwordSessionAccept);
+  assert.ok(acceptanceSuccess > currentGenerationGuard);
+  assert.match(
+    passwordAcceptanceSource,
+    /finally\s*\{[\s\S]{0,160}authGeneration\.isCurrent\(generation, token\)[\s\S]{0,100}setChecking\(false\)/,
+  );
+  assert.doesNotMatch(
+    passwordAcceptanceSource.slice(passwordSessionAccept),
+    /beginPasswordAuthenticatedPortalSession\(token\)|authGeneration\.begin\(\)/,
+    "an old acceptance completion must never create a newer generation",
+  );
+});
+
+test("portal exits terminal password acceptance states and never traps sign-out", () => {
+  const source = read(portalPath);
+  const signInStart = source.indexOf("async function signIn()");
+  const signInEnd = source.indexOf(
+    "async function completeInitialPasswordSetup()",
+    signInStart,
+  );
+  const signInSource = source.slice(signInStart, signInEnd);
+  const terminalBranch = signInSource.indexOf(
+    "error instanceof EnterpriseInvitationAcceptanceError",
+  );
+  const credentialRetry = signInSource.indexOf(
+    'storedInvitationCredentialRef.current?.stage === "accept_pending"',
+    terminalBranch,
+  );
+  assert.ok(signInStart >= 0 && signInEnd > signInStart);
+  assert.ok(terminalBranch >= 0 && credentialRetry > terminalBranch);
+  assert.match(
+    signInSource.slice(terminalBranch, credentialRetry),
+    /error\.terminal[\s\S]{0,220}setAuthContext\(null\)[\s\S]{0,120}setInitialPasswordSetupState\(null\)[\s\S]{0,120}setChecking\(false\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /disabled=\{busy \|\| initialPasswordSetupState === "accepting"\}/,
+  );
+  const exitText = source.indexOf("退出并稍后处理");
+  const exitButton = source.lastIndexOf("<button", exitText);
+  assert.ok(exitText > 0 && exitButton > 0);
+  assert.match(source.slice(exitButton, exitText), /disabled=\{busy\}/);
+});
+
+test("portal clears initial password secrets before leaving onboarding", () => {
+  const source = read(portalPath);
+  assert.match(
+    source,
+    /error instanceof EnterpriseInitialPasswordSetupError[\s\S]{0,120}error\.existingPasswordRequired[\s\S]{0,260}setNewPassword\(""\)[\s\S]{0,120}setConfirmNewPassword\(""\)/,
+  );
+  assert.match(
+    source,
+    /aria-controls="enterprise-portal-account-security"[\s\S]{0,220}clearInitialPasswordOperation\(\)[\s\S]{0,100}setNewPassword\(""\)[\s\S]{0,100}setConfirmNewPassword\(""\)/,
+  );
+});
+
+test("portal persists one UUID for the invitation across reload-safe password retries", () => {
+  const source = read(portalPath);
+  const operationStart = source.indexOf("function initialPasswordOperationFor(");
+  const operationEnd = source.indexOf(
+    "function clearInitialPasswordOperation(",
+    operationStart,
+  );
+  const operationSource = source.slice(operationStart, operationEnd);
+  assert.ok(operationStart >= 0 && operationEnd > operationStart);
+  assert.match(
+    operationSource,
+    /current\?\.invitationVersion === invitation\.invitationVersion[\s\S]{0,180}current\.invitationToken === invitation\.invitationToken[\s\S]{0,160}current\.password === submittedPassword[\s\S]{0,100}return current/,
+  );
+  assert.match(
+    operationSource,
+    /invitation\.initialPasswordOperationId[\s\S]{0,900}operationId: invitation\.initialPasswordOperationId[\s\S]{0,100}password: submittedPassword[\s\S]{0,120}initialPasswordOperationRef\.current = operation/,
+  );
+  assert.match(
+    source,
+    /initialPasswordOperationId: requiresInitialPassword[\s\S]{0,160}credential\.initialPasswordOperationId \?\? createInvitationAttemptId\(\)/,
+    "the password operation UUID must be persisted before the setup form is shown",
+  );
+  assert.match(
+    source,
+    /initialPasswordOperationId,invitationToken,invitationVersion,stage[\s\S]{0,700}stage === "password_pending"[\s\S]{0,180}INVITATION_ATTEMPT_ID_PATTERN\.test\(initialPasswordOperationId\)/,
+    "a reloaded password-pending handoff must require the persisted UUID",
+  );
+  assert.match(
+    source,
+    /payload\?\.error === "employee_initial_password_setup_in_progress"[\s\S]{0,180}response\.status >= 400 && !retryableOperationFailure/,
+    "an in-progress response must preserve the operation UUID for retry",
   );
 });
 

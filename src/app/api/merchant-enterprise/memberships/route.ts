@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import {
   MerchantEnterpriseAccessError,
-  resolveValidatedMerchantEnterpriseAuthUser,
+  requireMerchantEnterprisePasswordAuthentication,
+  resolveValidatedMerchantEnterpriseAuthContext,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import {
@@ -44,7 +45,11 @@ async function loadMemberships(authUserId: string) {
 }
 
 const DEFAULT_DEPENDENCIES: MerchantEnterpriseMembershipsRouteDependencies = {
-  resolveAuthUser: resolveValidatedMerchantEnterpriseAuthUser,
+  resolveAuthUser: async (request) => {
+    const authContext = await resolveValidatedMerchantEnterpriseAuthContext(request);
+    requireMerchantEnterprisePasswordAuthentication(authContext);
+    return authContext.user;
+  },
   loadMemberships,
   loadCurrentSites: loadAuthoritativeCurrentMerchantSnapshotSites,
 };

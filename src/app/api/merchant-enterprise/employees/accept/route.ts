@@ -4,10 +4,12 @@ import { normalizeMerchantEnterpriseEmployee } from "@/lib/merchantEnterprise";
 import {
   MerchantEnterpriseAccessError,
   requireMerchantEnterpriseEntitlement,
-  resolveValidatedMerchantEnterpriseAuthUser,
+  requireMerchantEnterprisePasswordAuthentication,
+  resolveValidatedMerchantEnterpriseAuthContext,
   toMerchantEnterpriseAccessResponse,
 } from "@/lib/merchantEnterpriseAuth.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY } from "@/lib/merchantStaffPrincipal.server";
 import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
@@ -44,6 +46,9 @@ export function merchantEmployeeInvitationAcceptError(error: unknown) {
   if (message.includes("employee_invitation_expired")) {
     return new MerchantEnterpriseAccessError("employee_invitation_expired", 410);
   }
+  if (message.includes("employee_invitation_invalid_or_expired")) {
+    return new MerchantEnterpriseAccessError("employee_invitation_superseded", 410);
+  }
   if (message.includes("employee_invitation_revoked")) {
     return new MerchantEnterpriseAccessError("employee_invitation_revoked", 410);
   }
@@ -55,6 +60,12 @@ export function merchantEmployeeInvitationAcceptError(error: unknown) {
   }
   if (message.includes("employee_invitation_credentials_required")) {
     return new MerchantEnterpriseAccessError("employee_invitation_credentials_required", 403);
+  }
+  if (message.includes("employee_initial_password_setup_incomplete")) {
+    return new MerchantEnterpriseAccessError(
+      "employee_initial_password_setup_incomplete",
+      409,
+    );
   }
   if (message.includes("employee_account_disabled")) {
     return new MerchantEnterpriseAccessError("employee_account_disabled", 403);
@@ -110,21 +121,66 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await resolveValidatedMerchantEnterpriseAuthUser(request);
+    const authContext = await resolveValidatedMerchantEnterpriseAuthContext(request);
+    requireMerchantEnterprisePasswordAuthentication(authContext);
+    const user = authContext.user;
+    if (
+      user.app_metadata?.[
+        MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY
+      ] === false
+    ) {
+      throw new MerchantEnterpriseAccessError(
+        "employee_initial_password_setup_required",
+        409,
+      );
+    }
     await requireMerchantEnterpriseEntitlement(siteId);
     const service = createServerSupabaseServiceClient();
     if (!service) {
       throw new MerchantEnterpriseAccessError("enterprise_store_unavailable", 503);
     }
 
+    const authUserId = text(user.id, 80);
+    const tokenHash = hasInvitationVersion
+      ? invitationTokenHash(invitationToken)
+      : "";
+    if (hasInvitationVersion) {
+      const waiverResult = await service.rpc(
+        "faolla_waive_employee_initial_password_v1",
+        {
+          p_input: {
+            merchant_id: siteId,
+            auth_user_id: authUserId,
+            invitation_version: invitationVersion,
+            token_hash: tokenHash,
+          },
+        },
+      );
+      if (waiverResult.error) {
+        throw merchantEmployeeInvitationAcceptError(waiverResult.error);
+      }
+      const waiver =
+        waiverResult.data &&
+        typeof waiverResult.data === "object" &&
+        !Array.isArray(waiverResult.data)
+          ? (waiverResult.data as Record<string, unknown>)
+          : null;
+      if (waiver?.policy !== "waived" && waiver?.policy !== "completed") {
+        throw new MerchantEnterpriseAccessError(
+          "merchant_employee_accept_failed",
+          503,
+        );
+      }
+    }
+
     const result = await service.rpc("faolla_accept_merchant_employee_invitation_v1", {
       p_input: {
         merchant_id: siteId,
-        auth_user_id: text(user.id, 80),
+        auth_user_id: authUserId,
         ...(hasInvitationVersion
           ? {
               invitation_version: invitationVersion,
-              token_hash: invitationTokenHash(invitationToken),
+              token_hash: tokenHash,
             }
           : {}),
       },

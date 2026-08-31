@@ -5,6 +5,7 @@ import { normalizeAuthEmail } from "@/lib/authCredentialValidation";
 import { hashMerchantEnterpriseInvitationToken } from "@/lib/merchantEnterpriseInvitationSecret.server";
 import type { MerchantOutboxRpcClient } from "@/lib/merchantOutboxEnqueue.server";
 import { hasImmutableMerchantStaffPrincipal } from "@/lib/merchantStaffPrincipal.server";
+import { addMerchantEnterpriseInitialPasswordOnboarding } from "@/lib/merchantEnterpriseInvitationOnboarding";
 import { isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -477,10 +478,12 @@ export function createMerchantEnterpriseInvitationExchangeHandler(
     }
 
     const claim = begin.claim;
-    const redirectTo = new URL(
-      `/enterprise/${encodeURIComponent(claim.siteId)}`,
-      dependencies.config.publicOrigin,
-    ).toString();
+    const callbackRedirectTo = addMerchantEnterpriseInitialPasswordOnboarding(
+      new URL(
+        `/enterprise/${encodeURIComponent(claim.siteId)}`,
+        dependencies.config.publicOrigin,
+      ).toString(),
+    );
     let generationStarted = false;
     try {
       const initial = await Promise.resolve(
@@ -489,6 +492,7 @@ export function createMerchantEnterpriseInvitationExchangeHandler(
       if (initial.error) throw initial.error;
       let user = assertExactStaffUser(initial.data.user, claim);
       let type: ExchangeLinkType = isConfirmedUser(user) ? "magiclink" : "invite";
+      let redirectTo = callbackRedirectTo;
       generationStarted = true;
       let generated = await Promise.resolve(
         dependencies.authAdmin.generateLink({
@@ -505,6 +509,7 @@ export function createMerchantEnterpriseInvitationExchangeHandler(
         user = assertExactStaffUser(refreshed.data.user, claim);
         if (!isConfirmedUser(user)) throw generated.error;
         type = "magiclink";
+        redirectTo = callbackRedirectTo;
         generated = await Promise.resolve(
           dependencies.authAdmin.generateLink({
             type,

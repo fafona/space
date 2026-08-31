@@ -16,7 +16,8 @@ const issuanceId = "123e4567-e89b-42d3-a456-426614174000";
 const invitationToken = "A".repeat(43);
 const email = "staff@example.com";
 const emailHash = createHash("sha256").update(email).digest("hex");
-const redirectTo = `https://faolla.example/enterprise/${siteId}`;
+const redirectTo =
+  `https://faolla.example/enterprise/${siteId}?onboarding=initial-password`;
 
 function user(overrides: Partial<User> = {}): User {
   return {

@@ -1,12 +1,26 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isAuthRateLimitError, isValidAuthPassword, readAuthPassword } from "@/lib/authCredentialValidation";
+import { isDefinitiveAuthMutationRejection } from "@/lib/authMutationOutcome.server";
 import {
   clearResetRecoveryCookies,
   readResetRecoveryCookie,
+  readResetRecoveryProofCookie,
   readResetRecoveryRefreshCookie,
 } from "@/lib/resetPasswordRecoverySession";
+import {
+  activatePasswordRecoveryGrant,
+  claimPasswordRecoveryGrant,
+  completePasswordRecoveryGrant,
+  createPasswordRecoveryProofToken,
+  PasswordRecoveryGrantError,
+  releasePasswordRecoveryGrant,
+} from "@/lib/passwordRecoveryGrant.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import {
+  hasImmutableMerchantStaffPrincipal,
+  MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY,
+} from "@/lib/merchantStaffPrincipal.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -18,6 +32,10 @@ type ResetPasswordPayload = {
   tokenHash?: unknown;
   token?: unknown;
 };
+
+export function shouldReleaseRecoveryGrantAfterAuthError(error: unknown) {
+  return isDefinitiveAuthMutationRejection(error);
+}
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
@@ -55,19 +73,65 @@ function createServiceRoleSupabaseClient() {
   });
 }
 
-async function resolveRecoveryUserId(payload: {
+async function resolveRecoveryAccessTokenContext(
+  anonSupabase: ReturnType<typeof createAnonSupabaseClient>,
+  accessToken: string,
+) {
+  if (!anonSupabase || !accessToken) return null;
+  const [claimsResult, userResult] = await Promise.all([
+    anonSupabase.auth.getClaims(accessToken).catch(() => null),
+    anonSupabase.auth.getUser(accessToken).catch(() => null),
+  ]);
+  const claims = claimsResult?.data?.claims;
+  const userId = String(userResult?.data?.user?.id ?? "").trim();
+  const sessionId = String(claims?.session_id ?? "").trim();
+  const email = String(userResult?.data?.user?.email ?? "").trim().toLowerCase();
+  if (
+    claimsResult?.error ||
+    userResult?.error ||
+    !claims ||
+    !userId ||
+    String(claims.sub ?? "").trim() !== userId ||
+    !sessionId ||
+    !email
+  ) {
+    return null;
+  }
+  return { userId, sessionId, email, accessToken };
+}
+
+async function resolveRecoveryContext(payload: {
   accessToken: string;
   refreshToken: string;
   tokenHash: string;
 }) {
   const anonSupabase = createAnonSupabaseClient();
   if (!anonSupabase) {
-    return { userId: "", error: "reset_password_env_missing" };
+    return { context: null, error: "reset_password_env_missing", typedRecovery: false };
   }
 
   const accessToken = payload.accessToken.trim();
   const refreshToken = payload.refreshToken.trim();
   const tokenHash = payload.tokenHash.trim();
+
+  if (tokenHash) {
+    try {
+      const { data, error } = await anonSupabase.auth.verifyOtp({
+        type: "recovery",
+        token_hash: tokenHash,
+      });
+      const sessionAccessToken = String(data.session?.access_token ?? "").trim();
+      const context = !error && sessionAccessToken
+        ? await resolveRecoveryAccessTokenContext(anonSupabase, sessionAccessToken)
+        : null;
+      if (context) {
+        return { context, error: "", typedRecovery: true };
+      }
+    } catch {
+      // Treat as expired recovery link below.
+    }
+    return { context: null, error: "reset_password_session_expired", typedRecovery: false };
+  }
 
   if (accessToken && refreshToken) {
     try {
@@ -75,9 +139,12 @@ async function resolveRecoveryUserId(payload: {
         access_token: accessToken,
         refresh_token: refreshToken,
       });
-      const userId = String(data.session?.user?.id ?? data.user?.id ?? "").trim();
-      if (!error && userId) {
-        return { userId, error: "" };
+      const sessionAccessToken = String(data.session?.access_token ?? accessToken).trim();
+      const context = !error
+        ? await resolveRecoveryAccessTokenContext(anonSupabase, sessionAccessToken)
+        : null;
+      if (context) {
+        return { context, error: "", typedRecovery: false };
       }
     } catch {
       // Fall through to direct token validation below.
@@ -86,32 +153,19 @@ async function resolveRecoveryUserId(payload: {
 
   if (accessToken) {
     try {
-      const { data, error } = await anonSupabase.auth.getUser(accessToken);
-      const userId = String(data.user?.id ?? "").trim();
-      if (!error && userId) {
-        return { userId, error: "" };
+      const context = await resolveRecoveryAccessTokenContext(
+        anonSupabase,
+        accessToken,
+      );
+      if (context) {
+        return { context, error: "", typedRecovery: false };
       }
     } catch {
       // Fall through to token-hash verification below.
     }
   }
 
-  if (tokenHash) {
-    try {
-      const { data, error } = await anonSupabase.auth.verifyOtp({
-        type: "recovery",
-        token_hash: tokenHash,
-      });
-      const userId = String(data.user?.id ?? data.session?.user?.id ?? "").trim();
-      if (!error && userId) {
-        return { userId, error: "" };
-      }
-    } catch {
-      // Treat as expired recovery link below.
-    }
-  }
-
-  return { userId: "", error: "reset_password_session_expired" };
+  return { context: null, error: "reset_password_session_expired", typedRecovery: false };
 }
 
 export async function POST(request: Request) {
@@ -122,11 +176,14 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as ResetPasswordPayload | null;
     const password = readAuthPassword(payload?.password);
-    const accessTokenFromBody = typeof payload?.accessToken === "string" ? payload.accessToken : "";
-    const refreshTokenFromBody = typeof payload?.refreshToken === "string" ? payload.refreshToken : "";
     const tokenHash = typeof payload?.tokenHash === "string" ? payload.tokenHash : typeof payload?.token === "string" ? payload.token : "";
-    const accessToken = accessTokenFromBody.trim() || readResetRecoveryCookie(request);
-    const refreshToken = refreshTokenFromBody.trim() || readResetRecoveryRefreshCookie(request);
+    // Access and refresh tokens supplied by the browser may belong to an
+    // ordinary password, OAuth, invite, or magic-link session. Final reset may
+    // use only the HttpOnly recovery session established by the session or
+    // verify-code route, or a token hash verified as type=recovery below.
+    const accessToken = readResetRecoveryCookie(request);
+    const refreshToken = readResetRecoveryRefreshCookie(request);
+    const cookieProofToken = readResetRecoveryProofCookie(request);
 
     if (!isValidAuthPassword(password)) {
       return noStoreJson({ ok: false, error: "reset_password_invalid_password" }, { status: 400 });
@@ -136,12 +193,12 @@ export async function POST(request: Request) {
       return noStoreJson({ ok: false, error: "reset_password_missing_recovery_payload" }, { status: 400 });
     }
 
-    const resolved = await resolveRecoveryUserId({
+    const resolved = await resolveRecoveryContext({
       accessToken,
       refreshToken,
       tokenHash,
     });
-    if (!resolved.userId) {
+    if (!resolved.context) {
       const errorCode = resolved.error || "reset_password_session_expired";
       const response = noStoreJson(
         { ok: false, error: errorCode },
@@ -158,17 +215,89 @@ export async function POST(request: Request) {
       return response;
     }
 
-    const { error } = await serviceSupabase.auth.admin.updateUserById(resolved.userId, {
+    const proofToken = resolved.typedRecovery
+      ? createPasswordRecoveryProofToken()
+      : /^[A-Za-z0-9_-]{43}$/.test(cookieProofToken)
+        ? cookieProofToken
+        : "";
+    if (!proofToken) {
+      const response = noStoreJson(
+        { ok: false, error: "reset_password_missing_recovery_proof" },
+        { status: 401 },
+      );
+      clearResetRecoveryCookies(response, request);
+      return response;
+    }
+    if (resolved.typedRecovery) {
+      await activatePasswordRecoveryGrant(serviceSupabase, {
+        proofToken,
+        email: resolved.context.email,
+        authUserId: resolved.context.userId,
+        sessionId: resolved.context.sessionId,
+        proofKind: "typed_recovery",
+      });
+    }
+    const grant = await claimPasswordRecoveryGrant(serviceSupabase, {
+      proofToken,
+      authUserId: resolved.context.userId,
+      sessionId: resolved.context.sessionId,
       password,
     });
+    if (grant.state === "completed") {
+      const response = noStoreJson({ ok: true });
+      clearResetRecoveryCookies(response, request);
+      return response;
+    }
+
+    const existing = await serviceSupabase.auth.admin.getUserById(
+      resolved.context.userId,
+    );
+    if (existing.error || !existing.data.user) {
+      await releasePasswordRecoveryGrant(serviceSupabase, {
+        proofToken,
+        authUserId: resolved.context.userId,
+        sessionId: resolved.context.sessionId,
+        passwordFingerprint: grant.passwordFingerprint,
+      });
+      const response = noStoreJson(
+        { ok: false, error: "reset_password_update_failed" },
+        { status: 503 },
+      );
+      return response;
+    }
+    const existingAppMetadata =
+      existing.data.user.app_metadata &&
+      typeof existing.data.user.app_metadata === "object"
+        ? existing.data.user.app_metadata
+        : {};
+    const { error } = await serviceSupabase.auth.admin.updateUserById(resolved.context.userId, {
+      password,
+      ...(hasImmutableMerchantStaffPrincipal(existing.data.user)
+        ? {
+            app_metadata: {
+              ...existingAppMetadata,
+              [MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY]: true,
+            },
+          }
+        : {}),
+    });
     if (error) {
+      const releaseGrant = shouldReleaseRecoveryGrantAfterAuthError(error);
+      if (releaseGrant) {
+        await releasePasswordRecoveryGrant(serviceSupabase, {
+          proofToken,
+          authUserId: resolved.context.userId,
+          sessionId: resolved.context.sessionId,
+          passwordFingerprint: grant.passwordFingerprint,
+        });
+      }
       const rateLimited = isAuthRateLimitError(error);
       const response = noStoreJson(
         {
           ok: false,
           error: rateLimited ? "auth_rate_limited" : "reset_password_update_failed",
         },
-        { status: rateLimited ? 429 : 400 },
+        { status: rateLimited ? 429 : releaseGrant ? 400 : 503 },
       );
       if (/session|expired|invalid/i.test(String(error.message ?? ""))) {
         clearResetRecoveryCookies(response, request);
@@ -176,10 +305,25 @@ export async function POST(request: Request) {
       return response;
     }
 
+    await completePasswordRecoveryGrant(serviceSupabase, {
+      proofToken,
+      authUserId: resolved.context.userId,
+      sessionId: resolved.context.sessionId,
+      passwordFingerprint: grant.passwordFingerprint,
+    });
+
     const response = noStoreJson({ ok: true });
     clearResetRecoveryCookies(response, request);
     return response;
-  } catch {
+  } catch (error) {
+    if (error instanceof PasswordRecoveryGrantError) {
+      const response = noStoreJson(
+        { ok: false, error: error.code },
+        { status: error.status },
+      );
+      if (error.status < 500) clearResetRecoveryCookies(response, request);
+      return response;
+    }
     const response = noStoreJson({ ok: false, error: "reset_password_unavailable" }, { status: 503 });
     clearResetRecoveryCookies(response, request);
     return response;

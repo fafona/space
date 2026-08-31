@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import MerchantEmployeeWorkspace from "@/components/enterprise/MerchantEmployeeWorkspace";
 import { MerchantEnterpriseAuthGeneration } from "@/lib/merchantEnterpriseAuthGeneration";
+import {
+  MERCHANT_ENTERPRISE_ONBOARDING_QUERY_KEY,
+} from "@/lib/merchantEnterpriseInvitationOnboarding";
 import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
 
 type EnterpriseAuthSession = Awaited<
@@ -18,7 +21,20 @@ type StoredInvitationCredential = InvitationCredential & {
   attemptId: string;
   authUserId: string | null;
   createdAt: number;
-  stage: "exchange_pending" | "accept_pending";
+  initialPasswordOperationId: string | null;
+  stage: "exchange_pending" | "password_pending" | "accept_pending";
+};
+
+type InitialPasswordSetupState = "required" | "accepting" | "retry_acceptance" | null;
+
+type InitialPasswordOperation = InvitationCredential & {
+  operationId: string;
+  password: string;
+};
+
+type PasswordResetRequestPayload = {
+  ok?: unknown;
+  error?: unknown;
 };
 
 const INVITATION_HANDOFF_TTL_MS = 2 * 60 * 60 * 1000;
@@ -29,12 +45,38 @@ const INVITATION_ATTEMPT_ID_PATTERN =
 const AUTH_USER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function passwordResetRequestError(payload: PasswordResetRequestPayload | null) {
+  if (payload?.error === "reset_password_invalid_email") {
+    return "请输入有效的员工邮箱。";
+  }
+  if (payload?.error === "auth_rate_limited") {
+    return "发送请求过于频繁，请稍后再试。";
+  }
+  return "暂时无法发送密码设置邮件，请稍后重试。";
+}
+
 class EnterpriseInvitationAcceptanceError extends Error {
   readonly terminal: boolean;
 
   constructor(message: string, terminal = false) {
     super(message);
     this.name = "EnterpriseInvitationAcceptanceError";
+    this.terminal = terminal;
+  }
+}
+
+class EnterpriseInitialPasswordSetupError extends Error {
+  readonly existingPasswordRequired: boolean;
+  readonly terminal: boolean;
+
+  constructor(
+    message: string,
+    existingPasswordRequired = false,
+    terminal = false,
+  ) {
+    super(message);
+    this.name = "EnterpriseInitialPasswordSetupError";
+    this.existingPasswordRequired = existingPasswordRequired;
     this.terminal = terminal;
   }
 }
@@ -142,6 +184,7 @@ function storeInvitationCredential(
     attemptId: createInvitationAttemptId(),
     authUserId: null,
     createdAt: Date.now(),
+    initialPasswordOperationId: null,
     stage: "exchange_pending",
   };
   persistStoredInvitationCredential(siteId, stored);
@@ -169,6 +212,7 @@ function markInvitationAcceptPending(
   siteId: string,
   credential: StoredInvitationCredential,
   authUserId: string,
+  requiresInitialPassword = false,
 ) {
   if (!AUTH_USER_ID_PATTERN.test(authUserId)) {
     throw new EnterpriseInvitationAcceptanceError(
@@ -179,6 +223,32 @@ function markInvitationAcceptPending(
   const next: StoredInvitationCredential = {
     ...credential,
     authUserId,
+    initialPasswordOperationId: requiresInitialPassword
+      ? credential.initialPasswordOperationId ?? createInvitationAttemptId()
+      : null,
+    stage: requiresInitialPassword ? "password_pending" : "accept_pending",
+  };
+  persistStoredInvitationCredential(siteId, next);
+  return next;
+}
+
+function markInvitationPasswordCompleted(
+  siteId: string,
+  credential: StoredInvitationCredential,
+) {
+  if (
+    credential.stage !== "password_pending" ||
+    !credential.authUserId ||
+    !AUTH_USER_ID_PATTERN.test(credential.authUserId)
+  ) {
+    throw new EnterpriseInvitationAcceptanceError(
+      "初始密码设置会话无效，请重新打开最新邀请邮件。",
+      true,
+    );
+  }
+  const next: StoredInvitationCredential = {
+    ...credential,
+    initialPasswordOperationId: null,
     stage: "accept_pending",
   };
   persistStoredInvitationCredential(siteId, next);
@@ -205,19 +275,29 @@ function readStoredInvitationCredential(siteId: string): {
     const attemptId = typeof value.attemptId === "string" ? value.attemptId : "";
     const authUserId = typeof value.authUserId === "string" ? value.authUserId : null;
     const createdAt = Number(value.createdAt);
+    const initialPasswordOperationId =
+      typeof value.initialPasswordOperationId === "string"
+        ? value.initialPasswordOperationId
+        : null;
     const stage = value.stage;
     const now = Date.now();
     if (
       exactKeys !==
-        "attemptId,authUserId,createdAt,invitationToken,invitationVersion,stage" ||
+        "attemptId,authUserId,createdAt,initialPasswordOperationId,invitationToken,invitationVersion,stage" ||
       !Number.isSafeInteger(invitationVersion) ||
       invitationVersion <= 0 ||
       !INVITATION_TOKEN_PATTERN.test(invitationToken) ||
       !INVITATION_ATTEMPT_ID_PATTERN.test(attemptId) ||
-      (stage !== "exchange_pending" && stage !== "accept_pending") ||
+      (stage !== "exchange_pending" &&
+        stage !== "password_pending" &&
+        stage !== "accept_pending") ||
       (stage === "exchange_pending" && authUserId !== null) ||
-      (stage === "accept_pending" &&
+      ((stage === "password_pending" || stage === "accept_pending") &&
         (authUserId === null || !AUTH_USER_ID_PATTERN.test(authUserId))) ||
+      (stage === "password_pending"
+        ? !initialPasswordOperationId ||
+          !INVITATION_ATTEMPT_ID_PATTERN.test(initialPasswordOperationId)
+        : initialPasswordOperationId !== null) ||
       !Number.isSafeInteger(createdAt) ||
       createdAt <= 0 ||
       createdAt > now + 60_000 ||
@@ -233,6 +313,7 @@ function readStoredInvitationCredential(siteId: string): {
         attemptId,
         authUserId,
         createdAt,
+        initialPasswordOperationId,
         stage,
       },
       expired: false,
@@ -370,7 +451,104 @@ async function acceptEnterpriseMembership(
       true,
     );
   }
+  if (payload?.error === "employee_password_authentication_required") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "请先设置员工登录密码，并使用邮箱和密码重新登录。",
+    );
+  }
   throw new EnterpriseInvitationAcceptanceError("员工邀请确认失败，请稍后重试。");
+}
+
+async function initializeEnterpriseStaffPassword(
+  siteId: string,
+  accessToken: string,
+  invitation: InvitationCredential,
+  operationId: string,
+  newPassword: string,
+) {
+  const response = await fetch(
+    "/api/merchant-enterprise/invitations/initial-password",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-merchant-access-token": accessToken,
+      },
+      credentials: "same-origin",
+      cache: "no-store",
+      body: JSON.stringify({
+        siteId,
+        invitationVersion: invitation.invitationVersion,
+        invitationToken: invitation.invitationToken,
+        operationId,
+        newPassword,
+      }),
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    error?: string;
+  } | null;
+  if (response.ok && payload?.ok) return;
+  if (
+    payload?.error === "employee_password_already_initialized" ||
+    payload?.error === "employee_password_state_unknown"
+  ) {
+    throw new EnterpriseInitialPasswordSetupError(
+      "该员工账号已有密码或属于历史账号，请使用现有密码登录；忘记密码时可发送重置邮件。",
+      true,
+      true,
+    );
+  }
+  if (payload?.error === "employee_invitation_expired") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "这封邀请已过期，请联系企业负责人重新发送。",
+      true,
+    );
+  }
+  if (payload?.error === "employee_invitation_invalid_or_expired") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "邀请无效、已过期或已被撤销，请联系企业负责人重新发送。",
+      true,
+    );
+  }
+  if (payload?.error === "employee_invitation_revoked") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "这封邀请已被撤销，请联系企业负责人。",
+      true,
+    );
+  }
+  if (
+    payload?.error === "employee_invitation_superseded" ||
+    payload?.error === "invalid_employee_invitation_credentials"
+  ) {
+    throw new EnterpriseInvitationAcceptanceError(
+      "这不是最新的邀请，请重新打开最近收到的邮件。",
+      true,
+    );
+  }
+  if (payload?.error === "employee_invitation_identity_mismatch") {
+    throw new EnterpriseInvitationAcceptanceError(
+      "员工登录身份与邀请不一致，请重新打开最新邀请邮件。",
+      true,
+    );
+  }
+  if (payload?.error === "invalid_employee_password") {
+    throw new EnterpriseInitialPasswordSetupError(
+      "密码需为 8 至 128 个字符，请重新输入。",
+      false,
+      true,
+    );
+  }
+  const retryableOperationFailure =
+    response.status >= 500 ||
+    response.status === 429 ||
+    payload?.error === "employee_initial_password_setup_in_progress";
+  throw new EnterpriseInitialPasswordSetupError(
+    "密码暂时未能设置，请稍后重试。",
+    false,
+    response.status >= 400 && !retryableOperationFailure,
+  );
 }
 
 export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
@@ -379,6 +557,10 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [invitedAccountEmail, setInvitedAccountEmail] = useState("");
+  const [initialPasswordSetupState, setInitialPasswordSetupState] =
+    useState<InitialPasswordSetupState>(null);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -390,6 +572,10 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   const acceptanceInFlightRef = useRef(new Map<string, Promise<void>>());
   const invitationExchangeSubmittedRef = useRef(false);
   const authCallbackInProgressRef = useRef(false);
+  const passwordSetupTransitionRef = useRef(false);
+  const initialPasswordOperationRef = useRef<InitialPasswordOperation | null>(
+    null,
+  );
   const authGenerationRef = useRef(new MerchantEnterpriseAuthGeneration());
   const accessToken = authContext?.siteId === siteId ? authContext.token : "";
   const portalContextMismatch = Boolean(authContext && authContext.siteId !== siteId);
@@ -400,6 +586,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       invitationCredentialRef.current = null;
       storedInvitationCredentialRef.current = null;
       invitationVersionRef.current = 0;
+      initialPasswordOperationRef.current = null;
       clearStoredInvitationCredential(siteId);
     },
     [siteId],
@@ -459,6 +646,9 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
             throw new EnterpriseInvitationAcceptanceError("企业入口无效。", true);
           }
           const url = new URL(window.location.href);
+          const hasOnboardingMarker = url.searchParams.has(
+            MERCHANT_ENTERPRISE_ONBOARDING_QUERY_KEY,
+          );
           const code = url.searchParams.get("code")?.trim() ?? "";
           const exchangeError = parseInvitationExchangeError(url.searchParams);
           const queryInvitation = parseInvitationCredential(url.searchParams);
@@ -480,7 +670,8 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
               exchangeError ||
               hasInvitationInQuery ||
               hasInvitationInFragment ||
-              hasAuthHash,
+              hasAuthHash ||
+              hasOnboardingMarker,
           );
           let incomingCredential: InvitationCredential | null = null;
           let invitationError = "";
@@ -525,6 +716,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
             url.searchParams.delete("it");
             url.searchParams.delete("invitation_error");
             url.searchParams.delete("retry_after");
+            url.searchParams.delete(MERCHANT_ENTERPRISE_ONBOARDING_QUERY_KEY);
             if (hasInvitationInFragment || hasAuthHash) url.hash = "";
             window.history.replaceState(
               window.history.state,
@@ -614,11 +806,13 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
                 siteId,
                 callbackInvitation,
                 callbackSession.user.id,
+                true,
               );
               storedInvitationCredentialRef.current = callbackInvitation;
             }
             if (
-              callbackInvitation?.stage === "accept_pending" &&
+              (callbackInvitation?.stage === "password_pending" ||
+                callbackInvitation?.stage === "accept_pending") &&
               callbackSession.user.id !== callbackInvitation.authUserId
             ) {
               throw new EnterpriseInvitationAcceptanceError(
@@ -645,11 +839,13 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
             siteId,
             storedInvitation,
             authUserId,
+            authCallbackInProgress,
           );
           storedInvitationCredentialRef.current = storedInvitation;
         }
         if (
-          storedInvitation?.stage === "accept_pending" &&
+          (storedInvitation?.stage === "password_pending" ||
+            storedInvitation?.stage === "accept_pending") &&
           session?.user?.id !== storedInvitation.authUserId
         ) {
           throw new EnterpriseInvitationAcceptanceError(
@@ -658,8 +854,15 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         }
         scrubResolvedCallbackUrl?.();
         if (cancelled || !authGeneration.bindSessionToken(generation, token)) return;
+        if (token && storedInvitation?.stage === "password_pending") {
+          setInvitedAccountEmail(session?.user?.email?.trim().toLowerCase() ?? "");
+          setInitialPasswordSetupState("required");
+          setAuthContext({ siteId, token, generation });
+          return;
+        }
         if (token) await ensureMembershipAccepted(token);
         if (!authGeneration.isCurrent(generation, token, cancelled)) return;
+        setInitialPasswordSetupState(null);
         setAuthContext(token ? { siteId, token, generation } : null);
       } catch (error) {
         if (
@@ -691,6 +894,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       // callback resolver own that transition so stale credentials can never
       // consume or clear the new invitation.
       if (authCallbackInProgressRef.current) return;
+      if (passwordSetupTransitionRef.current) return;
       const generation = authGeneration.begin();
       if (invitationExchangeSubmittedRef.current) {
         authGeneration.bindSessionToken(generation, "");
@@ -701,12 +905,14 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       setAuthContext(null);
       if (!token) {
         acceptedAcceptanceKeysRef.current.clear();
+        setInitialPasswordSetupState(null);
         setChecking(false);
         return;
       }
       const storedInvitation = storedInvitationCredentialRef.current;
       if (
-        storedInvitation?.stage === "accept_pending" &&
+        (storedInvitation?.stage === "password_pending" ||
+          storedInvitation?.stage === "accept_pending") &&
         session?.user?.id !== storedInvitation.authUserId
       ) {
         setMessage("请使用该邀请已验证的员工账号登录后重试。");
@@ -718,10 +924,18 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         setChecking(false);
         return;
       }
+      if (storedInvitation?.stage === "password_pending") {
+        setInvitedAccountEmail(session?.user?.email?.trim().toLowerCase() ?? "");
+        setInitialPasswordSetupState("required");
+        setAuthContext({ siteId, token, generation });
+        setChecking(false);
+        return;
+      }
       setChecking(true);
       void ensureMembershipAccepted(token)
         .then(() => {
           if (!authGeneration.isCurrent(generation, token, cancelled)) return;
+          setInitialPasswordSetupState(null);
           setAuthContext({ siteId, token, generation });
         })
         .catch((error) => {
@@ -741,6 +955,96 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     };
   }, [clearInvitationCredential, ensureMembershipAccepted, siteId]);
 
+  function beginPasswordAuthenticatedPortalSession(token: string) {
+    const authGeneration = authGenerationRef.current;
+    const generation = authGeneration.begin();
+    if (!authGeneration.bindSessionToken(generation, token)) {
+      throw new EnterpriseInvitationAcceptanceError("登录会话已更新，请重试。");
+    }
+    return { authGeneration, generation };
+  }
+
+  function bindPasswordAuthenticatedPortalSession(token: string) {
+    const { generation } = beginPasswordAuthenticatedPortalSession(token);
+    setAuthContext({ siteId, token, generation });
+  }
+
+  function initialPasswordOperationFor(
+    invitation: StoredInvitationCredential,
+    submittedPassword: string,
+  ) {
+    if (
+      !invitation.initialPasswordOperationId ||
+      !INVITATION_ATTEMPT_ID_PATTERN.test(
+        invitation.initialPasswordOperationId,
+      )
+    ) {
+      throw new EnterpriseInitialPasswordSetupError(
+        "密码设置会话已失效，请重新打开最新邀请邮件。",
+        false,
+        true,
+      );
+    }
+    const current = initialPasswordOperationRef.current;
+    if (
+      current?.invitationVersion === invitation.invitationVersion &&
+      current.invitationToken === invitation.invitationToken &&
+      current.password === submittedPassword
+    ) {
+      return current;
+    }
+    const operation: InitialPasswordOperation = {
+      ...invitation,
+      operationId: invitation.initialPasswordOperationId,
+      password: submittedPassword,
+    };
+    initialPasswordOperationRef.current = operation;
+    return operation;
+  }
+
+  function clearInitialPasswordOperation(expectedOperationId?: string) {
+    if (
+      expectedOperationId &&
+      initialPasswordOperationRef.current?.operationId !== expectedOperationId
+    ) {
+      return;
+    }
+    initialPasswordOperationRef.current = null;
+  }
+
+  async function acceptPendingInvitationWithPasswordSession(token: string) {
+    let storedInvitation = storedInvitationCredentialRef.current;
+    if (!storedInvitation) {
+      throw new EnterpriseInvitationAcceptanceError(
+        "邀请处理会话已过期，请重新打开最新邮件。",
+        true,
+      );
+    }
+    if (storedInvitation.stage === "password_pending") {
+      storedInvitation = markInvitationPasswordCompleted(siteId, storedInvitation);
+      storedInvitationCredentialRef.current = storedInvitation;
+    }
+    if (storedInvitation.stage !== "accept_pending") {
+      throw new EnterpriseInvitationAcceptanceError(
+        "邀请处理状态无效，请重新打开最新邮件。",
+        true,
+      );
+    }
+    const { authGeneration, generation } =
+      beginPasswordAuthenticatedPortalSession(token);
+    setInitialPasswordSetupState("accepting");
+    setChecking(false);
+    setAuthContext({ siteId, token, generation });
+    try {
+      await ensureMembershipAccepted(token);
+      if (!authGeneration.isCurrent(generation, token)) return;
+      setInitialPasswordSetupState(null);
+      setMessage("邀请已接受，已进入企业工作台。");
+    } finally {
+      if (authGeneration.isCurrent(generation, token)) setChecking(false);
+    }
+  }
+
   async function signIn() {
     setBusy(true);
     setMessage("");
@@ -752,8 +1056,207 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       if (result.error) throw result.error;
       const token = result.data.session?.access_token ?? "";
       if (!token) throw new Error("登录未返回有效会话。");
+      setInvitedAccountEmail(result.data.session?.user?.email?.trim().toLowerCase() ?? "");
+      if (
+        storedInvitationCredentialRef.current?.stage === "password_pending" ||
+        storedInvitationCredentialRef.current?.stage === "accept_pending"
+      ) {
+        await acceptPendingInvitationWithPasswordSession(token);
+      }
+      setPassword("");
     } catch (error) {
+      if (
+        error instanceof EnterpriseInvitationAcceptanceError &&
+        error.terminal
+      ) {
+        initialPasswordOperationRef.current = null;
+        setPassword("");
+        setAuthContext(null);
+        setInitialPasswordSetupState(null);
+        setChecking(false);
+      } else if (
+        storedInvitationCredentialRef.current?.stage === "accept_pending"
+      ) {
+        setInitialPasswordSetupState("retry_acceptance");
+      }
       setMessage(error instanceof Error ? error.message : "登录失败，请检查邮箱和密码。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completeInitialPasswordSetup() {
+    if (busy) return;
+    if (newPassword.length < 8) {
+      setMessage("新密码至少需要 8 个字符。");
+      return;
+    }
+    if (newPassword.length > 128) {
+      setMessage("新密码不能超过 128 个字符。");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setMessage("两次输入的密码不一致。");
+      return;
+    }
+    const submittedPassword = newPassword;
+    const storedInvitation = storedInvitationCredentialRef.current;
+    if (storedInvitation?.stage !== "password_pending") {
+      setMessage("邀请处理会话已过期，请重新打开最新邮件。");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    passwordSetupTransitionRef.current = true;
+    let passwordSessionToken = "";
+    let accountEmail = invitedAccountEmail;
+    try {
+      const current = await supabase.auth.getSession();
+      if (current.error) throw current.error;
+      const currentSession = current.data.session;
+      accountEmail =
+        currentSession?.user?.email?.trim().toLowerCase() || invitedAccountEmail;
+      if (
+        !currentSession ||
+        !accountEmail ||
+        currentSession.user.id !== storedInvitation.authUserId
+      ) {
+        throw new EnterpriseInvitationAcceptanceError(
+          "员工登录身份与邀请不一致，请重新打开最新邀请邮件。",
+          true,
+        );
+      }
+
+      const initialPasswordOperation = initialPasswordOperationFor(
+        storedInvitation,
+        submittedPassword,
+      );
+      await initializeEnterpriseStaffPassword(
+        siteId,
+        currentSession.access_token,
+        storedInvitation,
+        initialPasswordOperation.operationId,
+        submittedPassword,
+      );
+      clearInitialPasswordOperation(initialPasswordOperation.operationId);
+      setNewPassword("");
+      setConfirmNewPassword("");
+      const passwordCompletedInvitation = markInvitationPasswordCompleted(
+        siteId,
+        storedInvitation,
+      );
+      storedInvitationCredentialRef.current = passwordCompletedInvitation;
+
+      const signedOut = await supabase.auth.signOut({ scope: "local" });
+      if (signedOut.error) throw signedOut.error;
+      const signedIn = await supabase.auth.signInWithPassword({
+        email: accountEmail,
+        password: submittedPassword,
+      });
+      if (signedIn.error) throw signedIn.error;
+      passwordSessionToken = signedIn.data.session?.access_token ?? "";
+      if (!passwordSessionToken) {
+        throw new EnterpriseInvitationAcceptanceError(
+          "密码已保存，但未能建立新的登录会话，请使用新密码重新登录。",
+        );
+      }
+
+      await acceptPendingInvitationWithPasswordSession(passwordSessionToken);
+    } catch (error) {
+      if (
+        error instanceof EnterpriseInitialPasswordSetupError &&
+        error.terminal
+      ) {
+        clearInitialPasswordOperation();
+      }
+      if (
+        error instanceof EnterpriseInitialPasswordSetupError &&
+        error.existingPasswordRequired
+      ) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => null);
+        setNewPassword("");
+        setConfirmNewPassword("");
+        setEmail(accountEmail);
+        setPassword("");
+        setAuthContext(null);
+        setInitialPasswordSetupState(null);
+        setChecking(false);
+        setMessage(error.message);
+        return;
+      }
+      if (
+        error instanceof EnterpriseInvitationAcceptanceError &&
+        error.terminal
+      ) {
+        clearInvitationCredential();
+        setNewPassword("");
+        setConfirmNewPassword("");
+        setAuthContext(null);
+        setInitialPasswordSetupState(null);
+        setChecking(false);
+        setMessage(error.message);
+        return;
+      }
+      const pendingStage = storedInvitationCredentialRef.current?.stage;
+      if (pendingStage === "accept_pending" && passwordSessionToken) {
+        bindPasswordAuthenticatedPortalSession(passwordSessionToken);
+        setInitialPasswordSetupState("retry_acceptance");
+      } else if (passwordSessionToken) {
+        bindPasswordAuthenticatedPortalSession(passwordSessionToken);
+        setInitialPasswordSetupState("required");
+      } else {
+        const recovered = await supabase.auth.getSession().catch(() => null);
+        const recoveredSession = recovered?.data?.session ?? null;
+        const recoveredToken = recoveredSession?.access_token ?? "";
+        if (
+          recoveredToken &&
+          storedInvitationCredentialRef.current?.stage === "password_pending"
+        ) {
+          setInvitedAccountEmail(
+            recoveredSession?.user?.email?.trim().toLowerCase() ?? invitedAccountEmail,
+          );
+          bindPasswordAuthenticatedPortalSession(recoveredToken);
+          setInitialPasswordSetupState("required");
+        } else {
+          setAuthContext(null);
+          setInitialPasswordSetupState(null);
+        }
+      }
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "密码设置未完成，请重新打开邀请邮件后重试。",
+      );
+    } finally {
+      passwordSetupTransitionRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function retryInvitationAcceptance() {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await supabase.auth.getSession();
+      if (result.error) throw result.error;
+      const token = result.data.session?.access_token ?? "";
+      if (!token) throw new Error("登录会话已失效，请使用员工邮箱和密码重新登录。");
+      await acceptPendingInvitationWithPasswordSession(token);
+    } catch (error) {
+      if (
+        error instanceof EnterpriseInvitationAcceptanceError &&
+        error.terminal
+      ) {
+        clearInitialPasswordOperation();
+        setAuthContext(null);
+        setInitialPasswordSetupState(null);
+        setChecking(false);
+      } else {
+        setInitialPasswordSetupState("retry_acceptance");
+      }
+      setMessage(error instanceof Error ? error.message : "邀请确认失败，请稍后重试。");
     } finally {
       setBusy(false);
     }
@@ -788,14 +1291,26 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     setBusy(true);
     setMessage("");
     try {
-      const redirectTo =
-        typeof window === "undefined"
-          ? undefined
-          : `${window.location.origin}/enterprise/${encodeURIComponent(siteId)}`;
-      const result = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-        ...(redirectTo ? { redirectTo } : {}),
+      const response = await fetch("/api/auth/reset-password/request", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify({
+          email: normalizedEmail,
+          returnTo: `/enterprise/${siteId}`,
+        }),
       });
-      if (result.error) throw result.error;
+      const payload = (await response.json().catch(() => null)) as
+        | PasswordResetRequestPayload
+        | null;
+      if (!response.ok || payload?.ok !== true) {
+        setMessage(passwordResetRequestError(payload));
+        return;
+      }
       setMessage("如果该邮箱已开通员工账号，密码设置邮件会发送到邮箱。");
     } catch {
       setMessage("暂时无法发送密码设置邮件，请稍后重试。");
@@ -809,7 +1324,11 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     const generation = authGeneration.begin();
     authGeneration.bindSessionToken(generation, "");
     acceptedAcceptanceKeysRef.current.clear();
+    clearInitialPasswordOperation();
     setNewPassword("");
+    setConfirmNewPassword("");
+    setInvitedAccountEmail("");
+    setInitialPasswordSetupState(null);
     setAccountPanelOpen(false);
     setAuthContext(null);
     setChecking(false);
@@ -829,6 +1348,116 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-950 px-4 text-white">
         <div className="rounded-3xl border border-white/10 bg-white/5 p-6">企业入口无效。</div>
+      </main>
+    );
+  }
+
+  if (accessToken && initialPasswordSetupState) {
+    const invitationAcceptancePending =
+      initialPasswordSetupState === "accepting" ||
+      initialPasswordSetupState === "retry_acceptance";
+    return (
+      <main className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top,#164e63,#0f172a_55%)] px-4 py-10">
+        <section className="w-full max-w-md rounded-3xl border border-white/10 bg-white p-6 shadow-2xl sm:p-8">
+          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">
+            Faolla Enterprise
+          </div>
+          <h1 className="mt-3 text-2xl font-bold text-slate-950">
+            {invitationAcceptancePending ? "正在开通员工账号" : "设置员工登录密码"}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            {invitationAcceptancePending
+              ? "密码已经设置。完成邀请确认后，才会进入企业工作台。"
+              : "邀请身份已经验证。请先设置登录密码，完成前不会进入企业工作台。"}
+          </p>
+          {invitedAccountEmail ? (
+            <div className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              员工邮箱：<span className="font-semibold">{invitedAccountEmail}</span>
+            </div>
+          ) : null}
+
+          {initialPasswordSetupState === "required" ? (
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void completeInitialPasswordSetup();
+              }}
+            >
+              <label className="block text-sm font-medium text-slate-700">
+                新密码
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={128}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-3 text-base text-slate-950 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  placeholder="至少 8 个字符"
+                  value={newPassword}
+                  onChange={(event) => {
+                    const nextPassword = event.target.value;
+                    if (
+                      initialPasswordOperationRef.current?.password !==
+                      nextPassword
+                    ) {
+                      clearInitialPasswordOperation();
+                    }
+                    setNewPassword(nextPassword);
+                  }}
+                  disabled={busy}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                确认新密码
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={128}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-3 text-base text-slate-950 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  placeholder="再次输入新密码"
+                  value={confirmNewPassword}
+                  onChange={(event) => setConfirmNewPassword(event.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <button
+                type="submit"
+                className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-45"
+                disabled={busy || newPassword.length < 8 || newPassword !== confirmNewPassword}
+              >
+                {busy ? "正在安全设置..." : "设置密码并进入工作台"}
+              </button>
+            </form>
+          ) : initialPasswordSetupState === "retry_acceptance" ? (
+            <button
+              type="button"
+              className="mt-5 w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-45"
+              disabled={busy}
+              onClick={() => void retryInvitationAcceptance()}
+            >
+              {busy ? "正在确认邀请..." : "重试确认邀请"}
+            </button>
+          ) : (
+            <div className="mt-5 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              正在确认员工权限，请稍候...
+            </div>
+          )}
+
+          {message ? (
+            <div role="alert" className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {message}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="mt-3 w-full rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-45"
+            disabled={busy}
+            onClick={() => void signOut()}
+          >
+            退出并稍后处理
+          </button>
+        </section>
       </main>
     );
   }
@@ -907,10 +1536,10 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
               aria-expanded={accountPanelOpen}
               aria-controls="enterprise-portal-account-security"
               onClick={() => {
-                setAccountPanelOpen((current) => {
-                  if (current) setNewPassword("");
-                  return !current;
-                });
+                clearInitialPasswordOperation();
+                setNewPassword("");
+                setConfirmNewPassword("");
+                setAccountPanelOpen((current) => !current);
                 setMessage("");
               }}
             >

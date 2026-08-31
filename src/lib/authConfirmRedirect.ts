@@ -9,7 +9,9 @@ export function appendResetPasswordBridgeRedirectParams(
   redirectTo: URL,
   input: { type: EmailOtpType; tokenHash?: string; code?: string },
 ) {
-  const targetUrl = new URL("/reset-password", redirectTo.origin);
+  const targetUrl = new URL(redirectTo.toString());
+  targetUrl.pathname = "/reset-password";
+  targetUrl.hash = "";
   targetUrl.searchParams.set("type", input.type);
   const tokenHash = String(input.tokenHash ?? "").trim();
   const code = String(input.code ?? "").trim();

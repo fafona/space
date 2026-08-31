@@ -7,8 +7,18 @@ import {
   normalizeAuthVerificationCode,
 } from "@/lib/authCredentialValidation";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { createServerSupabaseAuthClient } from "@/lib/superAdminServer";
-import { setResetRecoveryCookies } from "@/lib/resetPasswordRecoverySession";
+import {
+  activatePasswordRecoveryGrant,
+  createPasswordRecoveryProofToken,
+} from "@/lib/passwordRecoveryGrant.server";
+import {
+  setResetRecoveryCookies,
+  setResetRecoveryProofCookie,
+} from "@/lib/resetPasswordRecoverySession";
+import {
+  createServerSupabaseAuthClient,
+  createServerSupabaseServiceClient,
+} from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,14 +51,15 @@ export async function POST(request: Request) {
     }
 
     const supabase = createServerSupabaseAuthClient();
-    if (!supabase) {
+    const service = createServerSupabaseServiceClient();
+    if (!supabase || !service) {
       return noStoreJson({ ok: false, error: "reset_password_env_missing" }, { status: 503 });
     }
 
     const { data, error } = await supabase.auth.verifyOtp({
       email,
       token: code,
-      type: "email",
+      type: "recovery",
     });
 
     const accessToken = String(data.session?.access_token ?? "").trim();
@@ -66,6 +77,33 @@ export async function POST(request: Request) {
       );
     }
 
+    const claimsResult = await supabase.auth.getClaims(accessToken);
+    const claims = claimsResult.data?.claims;
+    const user = data.user ?? data.session?.user;
+    const authUserId = String(user?.id ?? "").trim().toLowerCase();
+    const sessionId = String(claims?.session_id ?? "").trim();
+    if (
+      claimsResult.error ||
+      !authUserId ||
+      String(claims?.sub ?? "").trim().toLowerCase() !== authUserId ||
+      !sessionId ||
+      normalizeAuthEmail(user?.email) !== email
+    ) {
+      return noStoreJson(
+        { ok: false, error: "reset_password_invalid_or_expired_code" },
+        { status: 401 },
+      );
+    }
+
+    const proofToken = createPasswordRecoveryProofToken();
+    await activatePasswordRecoveryGrant(service, {
+      proofToken,
+      email,
+      authUserId,
+      sessionId,
+      proofKind: "typed_recovery",
+    });
+
     const response = noStoreJson({
       ok: true,
       ready: true,
@@ -75,6 +113,7 @@ export async function POST(request: Request) {
       refreshToken,
       maxAgeSeconds: data.session?.expires_in,
     }, request);
+    setResetRecoveryProofCookie(response, proofToken);
     return response;
   } catch {
     return noStoreJson({ ok: false, error: "reset_password_verify_unavailable" }, { status: 503 });

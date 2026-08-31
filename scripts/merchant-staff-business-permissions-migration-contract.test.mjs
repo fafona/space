@@ -693,7 +693,7 @@ test("repository migration checks and PG15 integration runner are wired through 
   );
   assert.match(
     enterpriseRunnerSource,
-    /version in \([^)]*202608190040, 202608280041, 202608300042\)/,
+    /version in \([^)]*202608190040, 202608280041, 202608300042(?:, 202608310043)?\)/,
   );
   assert.match(
     enterpriseRunnerSource,
