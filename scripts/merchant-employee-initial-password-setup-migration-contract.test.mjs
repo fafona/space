@@ -92,6 +92,14 @@ test("initial-password setup is claimed once and acceptance fences incomplete Au
     source,
     /to_regprocedure\([\s\S]+faolla_accept_employee_invite_pre043\(jsonb\)[\s\S]+rename to faolla_accept_employee_invite_pre043/i,
   );
+  assert.match(
+    source,
+    /alter function public\.faolla_bind_employee_invite_identity_pre043\(jsonb\)\s+owner to supabase_admin/i,
+  );
+  assert.match(
+    source,
+    /alter function public\.faolla_accept_employee_invite_pre043\(jsonb\)\s+owner to supabase_admin/i,
+  );
 
   const bind = functionBody(
     "faolla_bind_merchant_employee_invitation_identity_v2",

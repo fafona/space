@@ -852,6 +852,13 @@ begin
 end;
 $bind_wrapper_install$;
 
+-- ALTER FUNCTION ... RENAME preserves the historical owner. Pin the private
+-- compatibility entry point to the trusted migration owner so it cannot retain
+-- a legacy postgres owner in environments where 042 repaired only the public
+-- binding entry point.
+alter function public.faolla_bind_employee_invite_identity_pre043(jsonb)
+  owner to supabase_admin;
+
 create or replace function public.faolla_bind_merchant_employee_invitation_identity_v2(
   p_input jsonb
 )
@@ -1049,6 +1056,12 @@ begin
   end if;
 end;
 $accept_wrapper_install$;
+
+-- The pre-043 accept RPC predates the owner normalization performed for the
+-- invitation-delivery RPCs. RENAME keeps that legacy owner, so normalize it
+-- explicitly before the private function is called by the new policy wrapper.
+alter function public.faolla_accept_employee_invite_pre043(jsonb)
+  owner to supabase_admin;
 
 create or replace function public.faolla_accept_merchant_employee_invitation_v1(
   p_input jsonb
