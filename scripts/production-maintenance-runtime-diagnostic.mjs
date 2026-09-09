@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeSync, openSync, readSync, readdirSync, realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 
 // Read-only observations, NOT a runtime proof or permission to use PM2. In
@@ -12,9 +13,16 @@ const META_KEYS = ["cwdLiteralMatch", "cwdCanonicalMatch", "entryLiteralMatch", 
   "interpreterLiteralMatch", "interpreterCanonicalMatch", "argsMatch", "nodeArgsEmpty"];
 const ENV_KEYS = ["args", "exec_interpreter", "exec_mode", "name", "node_args", "pm_cwd", "pm_exec_path", "pm_id", "PM2_HOME"];
 const OVERRIDE_KEYS = ["PM2_DAEMON_RPC_PORT", "PM2_DAEMON_PUB_PORT", "PM2_PID_FILE_PATH"];
+const VERSION = /^(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})$/;
+const ENDPOINT_STATES = ["verified", "missing", "unsafe", "unverified"];
+const DRIFT = Symbol("identity_drift");
+const PYTHON_PATH = "/usr/bin/python3";
+const PYTHON_SOURCE = 'import json,sys,socket; print(json.dumps({"version":"%d.%d.%d" % sys.version_info[:3],"afUnixApiAvailable":hasattr(socket,"AF_UNIX"),"soPeercredApiAvailable":hasattr(socket,"SO_PEERCRED")}))';
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const fail = () => { throw new Error(ERROR); };
+const drift = () => { const error = new Error(ERROR); error[DRIFT] = true; throw error; };
+const rethrowDrift = (error) => { if (error?.[DRIFT]) throw error; };
 const bool = (value) => value === null || typeof value === "boolean";
 const count = (value) => value === null || (Number.isSafeInteger(value) && value >= 0 && value <= 16384);
 function exact(value, keys) {
@@ -27,13 +35,16 @@ function exact(value, keys) {
 const absolute = (value) => typeof value === "string" && value.length <= 4096 &&
   value.startsWith("/") && !/[\0\r\n]/.test(value) && posix.normalize(value) === value;
 function empty() {
-  return { version: 1, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null,
+  return { version: 2, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null,
     daemonCwdIsRoot: null, webMetadata: Object.fromEntries(META_KEYS.map((key) => [key, null])),
     supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
-    runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked" };
+    runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
+    pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
+    workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null },
+    python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null } };
 }
 export function validateRuntimeCompatibilityDiagnostic(value) {
-  if (!exact(value, Object.keys(empty())) || value.version !== 1 || value.maintenance !== "not_verified" ||
+  if (!exact(value, Object.keys(empty())) || value.version !== 2 || value.maintenance !== "not_verified" ||
       !["stable", "unverified"].includes(value.stability) || !["verified", "unverified"].includes(value.disk) ||
       (value.supervision !== null && !CODES.includes(value.supervision)) || !bool(value.daemonCwdIsRoot) ||
       !exact(value.webMetadata, META_KEYS) || !META_KEYS.every((key) => bool(value.webMetadata[key])) ||
@@ -42,10 +53,29 @@ export function validateRuntimeCompatibilityDiagnostic(value) {
       !["not_observed", "owned", "unverified"].includes(value.worker.state) ||
       !count(value.worker.nodeDescendantCount) || !count(value.worker.nonNodeDescendantCount) ||
       !count(value.runtimeExtraProcessCount) || !["matches", "differs", "absent", "unverified"].includes(value.pm2Home) ||
-      !bool(value.pm2PathOverridesPresent) || value.pm2Connection !== "not_checked") fail();
+      !bool(value.pm2PathOverridesPresent) || value.pm2Connection !== "not_checked" ||
+      !(value.pm2Version === null || (typeof value.pm2Version === "string" && VERSION.test(value.pm2Version))) ||
+      !exact(value.pm2Endpoint, ["home", "rpcSocket", "pidFile", "pidMatches"]) ||
+      !["home", "rpcSocket", "pidFile"].every((key) => ENDPOINT_STATES.includes(value.pm2Endpoint[key])) || !bool(value.pm2Endpoint.pidMatches) ||
+      !exact(value.workerNative, ["esbuildCount", "otherCount", "unknownCount", "controlledIdentityVerified"]) ||
+      !["esbuildCount", "otherCount", "unknownCount"].every((key) => count(value.workerNative[key])) || !bool(value.workerNative.controlledIdentityVerified) ||
+      !exact(value.python, ["version", "executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable"]) ||
+      !(value.python.version === null || (typeof value.python.version === "string" && value.python.version.startsWith("3.") && VERSION.test(value.python.version))) ||
+      !["executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable"].every((key) => bool(value.python[key]))) fail();
   if (value.worker.state === "unverified" ? value.worker.nodeDescendantCount !== null || value.worker.nonNodeDescendantCount !== null
     : value.worker.nodeDescendantCount === null || value.worker.nonNodeDescendantCount === null ||
       (value.worker.state === "not_observed" && (value.worker.nodeDescendantCount !== 0 || value.worker.nonNodeDescendantCount !== 0))) fail();
+  const native = value.workerNative;
+  if (value.worker.state === "unverified" ? !equal(native, empty().workerNative) :
+    [native.esbuildCount, native.otherCount, native.unknownCount].some((n) => n === null) ||
+      native.esbuildCount + native.otherCount + native.unknownCount !== value.worker.nonNodeDescendantCount ||
+      (value.worker.nonNodeDescendantCount === 0 ? native.controlledIdentityVerified !== null :
+        native.unknownCount > 0 ? native.controlledIdentityVerified !== null : native.controlledIdentityVerified === null)) fail();
+  if ((value.pm2Endpoint.home !== "verified" && (value.pm2Endpoint.rpcSocket !== "unverified" || value.pm2Endpoint.pidFile !== "unverified")) ||
+      (value.pm2Endpoint.pidFile !== "verified" && value.pm2Endpoint.pidMatches !== null) ||
+      (value.pm2Version === null && !equal(value.pm2Endpoint, empty().pm2Endpoint)) ||
+      (value.python.executableVerified !== true && (value.python.version !== null || value.python.afUnixApiAvailable !== null || value.python.soPeercredApiAvailable !== null)) ||
+      (value.python.version === null && (value.python.afUnixApiAvailable !== null || value.python.soPeercredApiAvailable !== null))) fail();
   if (value.stability === "unverified" && !equal(value, empty())) fail();
   if (value.stability === "stable" && value.disk !== "verified") fail();
   return structuredClone(value);
@@ -64,6 +94,123 @@ function boundedFile(path, limit) {
     if (size > limit) fail();
     return result.subarray(0, size);
   } finally { closeSync(fd); }
+}
+const statIdentity = (stat) => ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"].map((key) => String(stat[key])).join(":");
+function pathInfo(path) {
+  try {
+    const stat = lstatSync(path, { bigint: true });
+    return { identity: statIdentity(stat), uid: Number(stat.uid), mode: Number(stat.mode), size: Number(stat.size), nlink: Number(stat.nlink),
+      type: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "directory" : stat.isSocket() ? "socket" : stat.isFile() ? "file" : "other" };
+  } catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+}
+function regular(info, owner, limit) {
+  return info?.type === "file" && info.nlink === 1 && [0, owner].includes(info.uid) && (info.mode & 0o022) === 0 &&
+    Number.isSafeInteger(info.size) && info.size > 0 && info.size <= limit;
+}
+function readRegular(path, limit, expected) {
+  // Used only after type/owner/size checks; no-follow and nonblocking also
+  // prevent a concurrent FIFO/symlink substitution from hanging this probe.
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    if (statIdentity(fstatSync(fd, { bigint: true })) !== expected.identity) drift();
+    const bytes = Buffer.alloc(limit + 1); let size = 0;
+    while (size < bytes.length) { const n = readSync(fd, bytes, size, bytes.length - size, null); if (!n) break; size += n; }
+    if (size > limit || size !== expected.size || statIdentity(fstatSync(fd, { bigint: true })) !== expected.identity ||
+        pathInfo(path)?.identity !== expected.identity) drift();
+    const result = bytes.subarray(0, size);
+    return { bytes: result, digest: createHash("sha256").update(result).digest("hex") };
+  } finally { closeSync(fd); }
+}
+function directoryChain(path, owner, d) {
+  if (!absolute(path) || path.split("/").length > 64) return { state: "unsafe", entries: [] };
+  const entries = []; const paths = ["/"]; let current = "";
+  for (const segment of path.split("/").filter(Boolean)) { current += "/" + segment; paths.push(current); }
+  for (const item of paths) {
+    const info = d.pathInfo(item); entries.push({ path: item, info });
+    if (!info) return { state: "missing", entries };
+    if (info.type !== "directory" || ![0, owner].includes(info.uid) || (info.mode & 0o022) !== 0 || d.canonical(item) !== item) return { state: "unsafe", entries };
+  }
+  return { state: "verified", entries };
+}
+function revalidatePaths(entries, d) {
+  for (const { path, info } of entries) if (!equal(d.pathInfo(path), info)) drift();
+}
+function endpointObservation(home, daemon, d) {
+  const result = { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null };
+  const witness = []; const chain = directoryChain(home, daemon.uid, d); witness.push(...chain.entries); result.home = chain.state;
+  if (chain.state !== "verified") { revalidatePaths(witness, d); return { result, witness }; }
+  for (const [key, suffix, type] of [["rpcSocket", "rpc.sock", "socket"], ["pidFile", "pm2.pid", "file"]]) {
+    const path = home + "/" + suffix; const info = d.pathInfo(path); witness.push({ path, info });
+    // Socket permissions alone do not prove peer identity or exposure. This is
+    // metadata only, under the verified directory chain; NO socket is opened.
+    result[key] = !info ? "missing" : info.type !== type || info.uid !== daemon.uid || info.nlink !== 1 ||
+      (type === "file" && !regular(info, daemon.uid, 32)) ? "unsafe" : "verified";
+    if (key === "pidFile" && result[key] === "verified") {
+      try {
+        const read = d.readRegular(path, 32, info); const text = new TextDecoder("utf-8", { fatal: true }).decode(read.bytes);
+        if (/^[1-9]\d{0,9}\n?$/.test(text) && Number(text.trim()) <= 2_147_483_647) result.pidMatches = Number(text.trim()) === daemon.pid;
+      } catch (error) { rethrowDrift(error); result.pidFile = "unverified"; }
+    }
+  }
+  revalidatePaths(witness, d); return { result, witness };
+}
+function nativeObservation(facts, runtime, node, owner, d) {
+  const native = facts.slice(1).filter((fact) => fact.executable !== node);
+  const result = { esbuildCount: 0, otherCount: 0, unknownCount: 0, controlledIdentityVerified: null }; const witness = [];
+  const architecture = d.arch();
+  const suffix = ["x64", "arm64"].includes(architecture) ? `@esbuild/linux-${architecture}` : null;
+  const packages = suffix ? [runtime + "/node_modules/" + suffix, runtime + "/node_modules/tsx/node_modules/" + suffix] : [];
+  let controlled = true;
+  for (const fact of native) {
+    try {
+      if (!equal(d.readProcess(fact.pid), fact)) drift();
+      const chain = directoryChain(posix.dirname(fact.executable), owner, d);
+      const binary = d.pathInfo(fact.executable); const entries = [...chain.entries, { path: fact.executable, info: binary }];
+      if (!binary || binary.identity !== fact.executableIdentity) { if (binary) drift(); fail(); }
+      if (chain.state !== "verified" || !regular(binary, owner, 64 * 1024 * 1024) || (binary.mode & 0o111) === 0 ||
+          d.canonical(fact.executable) !== fact.executable) {
+        controlled = false; result.unknownCount++; witness.push(entries); revalidatePaths(entries, d); continue;
+      }
+      const packageRoot = packages.find((base) => fact.executable === base + "/bin/esbuild"); let recognized = false;
+      if (packageRoot) {
+        const path = packageRoot + "/package.json"; const info = d.pathInfo(path); entries.push({ path, info });
+        if (!regular(info, owner, 8192)) fail();
+        const read = d.readRegular(path, 8192, info); const pkg = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes));
+        if (pkg?.name !== suffix || typeof pkg?.version !== "string" || !VERSION.test(pkg.version)) fail();
+        recognized = equal(fact.commandLine, [fact.executable, `--service=${pkg.version}`, "--ping"]);
+      }
+      revalidatePaths(entries, d); if (!equal(d.readProcess(fact.pid), fact)) drift(); witness.push(entries);
+      if (recognized) result.esbuildCount++; else result.otherCount++;
+    } catch (error) { rethrowDrift(error); result.unknownCount++; controlled = false; }
+  }
+  if (native.length && result.unknownCount === 0) result.controlledIdentityVerified = controlled;
+  return { result, witness };
+}
+function runPython(executable) {
+  return spawnSync(executable, ["-I", "-S", "-B", "-c", PYTHON_SOURCE], { encoding: "utf8", timeout: 3000, maxBuffer: 4096, killSignal: "SIGKILL",
+    cwd: "/", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+}
+function pythonObservation(d) {
+  const result = { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null };
+  const witness = [];
+  try {
+    const chain = directoryChain("/usr/bin", 0, d); witness.push(...chain.entries);
+    const original = d.pathInfo(PYTHON_PATH); witness.push({ path: PYTHON_PATH, info: original });
+    if (chain.state !== "verified" || !original || original.uid !== 0 || !["symlink", "file"].includes(original.type)) return { result, witness };
+    const executable = d.canonical(PYTHON_PATH);
+    if (!/^\/usr\/bin\/python3(?:\.(?:0|[1-9]\d{0,3}))?$/.test(executable)) { result.executableVerified = false; return { result, witness }; }
+    const target = d.pathInfo(executable); witness.push({ path: executable, info: target });
+    if (!regular(target, 0, 64 * 1024 * 1024) || (target.mode & 0o111) === 0) { result.executableVerified = false; return { result, witness }; }
+    result.executableVerified = true;
+    const output = d.runPython(executable);
+    revalidatePaths(witness, d); if (d.canonical(PYTHON_PATH) !== executable) drift();
+    if (output.error || output.signal || output.status !== 0 || typeof output.stdout !== "string" || output.stdout.length > 4096) return { result, witness };
+    const data = JSON.parse(output.stdout);
+    if (!exact(data, ["version", "afUnixApiAvailable", "soPeercredApiAvailable"]) || typeof data.version !== "string" ||
+        !data.version.startsWith("3.") || !VERSION.test(data.version) || typeof data.afUnixApiAvailable !== "boolean" || typeof data.soPeercredApiAvailable !== "boolean") return { result, witness };
+    Object.assign(result, data);
+  } catch (error) { rethrowDrift(error); }
+  return { result, witness };
 }
 function selectedEnvironment(pid) {
   const bytes = boundedFile(`/proc/${pid}/environ`, 1_048_576);
@@ -108,6 +255,7 @@ async function dependencies(overrides) {
   return { disk: runtime.captureRuntimeProof, supervision: runtime.captureSupervisionSnapshot,
     classify: runtime.classifyRuntimeSupervision, readProcess: runtime.captureProcessFact,
     readSelected: selectedEnvironment, scan: scanProcesses, canonical: realpathSync,
+    pathInfo, readRegular, runPython, arch: () => process.arch,
     nodePath: () => realpathSync(process.execPath),
     readRollback: environment.readFrozenProductionSupabaseRollbackEnvironmentSnapshot,
     readProcessEnvironment: environment.captureStableProductionProcessSupabaseEnvironment,
@@ -131,9 +279,9 @@ function metadata(values, disk, node, port, d) {
     nodeArgsEmpty: values.node_args === null || values.node_args === "" };
 }
 function readStableSelected(fact, d) {
-  if (!equal(d.readProcess(fact.pid), fact)) fail();
+  if (!equal(d.readProcess(fact.pid), fact)) drift();
   const result = d.readSelected(fact.pid);
-  if (!equal(d.readProcess(fact.pid), fact)) fail();
+  if (!equal(d.readProcess(fact.pid), fact)) drift();
   return result;
 }
 function descendants(index, root) {
@@ -150,7 +298,7 @@ function workerObservation(input, disk, web, daemon, node, d) {
   if (children.length > 64) fail();
   for (const child of children) {
     const fact = d.readProcess(child.pid);
-    if (fact.parentPid !== daemon.pid) fail();
+    if (fact.parentPid !== daemon.pid) drift();
     // Do not inspect another PM2 application's environment. The frozen
     // runtime directory and daemon ancestry bound this application's scope.
     if (fact.cwd !== disk.runtime || fact.uid !== daemon.uid) continue;
@@ -171,6 +319,7 @@ function workerObservation(input, disk, web, daemon, node, d) {
         (values.exec_interpreter !== "node" && canonical(values.exec_interpreter, d) !== node)) fail();
     workerFacts.push(...descendants(scan.index, fact.pid).map((pid) => d.readProcess(pid)));
     if (workerFacts.some((entry) => entry.uid !== daemon.uid || entry.cwd !== disk.runtime)) fail();
+    if (workerFacts.some((entry) => entry.parentPid !== scan.index.find((row) => row.pid === entry.pid)?.parentPid)) drift();
     worker = { state: "owned", nodeDescendantCount: workerFacts.slice(1).filter((entry) => entry.executable === node).length,
       nonNodeDescendantCount: workerFacts.slice(1).filter((entry) => entry.executable !== node).length };
   }
@@ -179,12 +328,14 @@ function workerObservation(input, disk, web, daemon, node, d) {
   const allowed = new Set([web.pid, ...workerFacts.map((fact) => fact.pid)]);
   // A child with an unknown executable is observed, not authorized for stopping.
   const extra = scan.runtimePids.filter((pid) => !allowed.has(pid)).length;
-  return { worker, extra, witness: { observed, workerFacts, runtimeFacts } };
+  const native = nativeObservation(workerFacts, disk.runtime, node, daemon.uid, d);
+  return { worker, extra, native: native.result, witness: { observed, workerFacts, runtimeFacts, native: native.witness } };
 }
 async function observe(input, d) {
   const report = empty(); const disk = d.disk(input.appDir, input.expectedOldSha);
   const snapshot = await d.supervision(input.appName, disk, input.appPort, input.expectedOldSha);
   const witness = { disk, snapshot }; report.disk = "verified";
+  const python = pythonObservation(d); report.python = python.result; witness.python = python.witness;
   report.supervision = d.classify({ ...snapshot, runtime: disk.runtime, stable: true });
   if (!CODES.includes(report.supervision)) fail();
   const web = snapshot.listener?.chain?.find((entry) => entry.pid === snapshot.ownership?.pid);
@@ -193,31 +344,36 @@ async function observe(input, d) {
   const node = d.nodePath();
   if (!equal(d.readProcess(web.pid), web) || !equal(d.readProcess(daemon.pid), daemon)) fail();
   report.daemonCwdIsRoot = daemon.cwd === "/";
-  try { const values = readStableSelected(web, d); report.webMetadata = metadata(values, disk, node, input.appPort, d); witness.webMetadataHash = hash(values); } catch { /* Unknown, not false. */ }
+  const daemonTitle = daemon.commandLine?.length === 1 ? daemon.commandLine[0].match(/^PM2 v([^\s:]{1,64}): God Daemon \(([^\0\r\n]{1,4096})\)$/) : null;
+  report.pm2Version = daemonTitle && VERSION.test(daemonTitle[1]) ? daemonTitle[1] : null;
+  try { const values = readStableSelected(web, d); report.webMetadata = metadata(values, disk, node, input.appPort, d); witness.webMetadataHash = hash(values); } catch (error) { rethrowDrift(error); /* Unknown, not false. */ }
   try {
     const file = d.readRollback(disk.runtime + "/.env.local", input.expectedOldSha);
     const live = d.readProcessEnvironment(String(web.pid), disk.runtime);
-    if (live.startTicks !== web.startTicks || file.fileIdentity !== disk.environmentIdentity || file.sha256 !== disk.environmentDigest) fail();
+    if (live.startTicks !== web.startTicks || file.fileIdentity !== disk.environmentIdentity || file.sha256 !== disk.environmentDigest) drift();
     const matches = ["internalUrl", "publicUrl", "anonKey"].every((key) => live[key] === file[key]) &&
       (live.rolloutStatus === "present" ? ["staffBusinessRbacMode", "staffBusinessRbacSiteIds", "canonicalPortalOrigin"].every((key) => live[key] === file[key])
         : live.rolloutStatus === "absent" && file.rolloutStatus === "legacy-off");
     report.supabaseEnvironment = live.status === "absent" ? "absent" : live.status === "present" ? matches ? "matches" : "differs" : "unverified";
     witness.environmentHash = hash({ file, live });
-  } catch { /* A failed read is not an absent configuration. */ }
+  } catch (error) { rethrowDrift(error); /* A failed read is not an absent configuration. */ }
   try { const result = workerObservation(input, disk, web, daemon, node, d);
-    report.worker = result.worker; report.runtimeExtraProcessCount = result.extra; witness.worker = result.witness;
-  } catch { /* No PM2 registry read or fallback to another owner. */ }
+    report.worker = result.worker; report.workerNative = result.native; report.runtimeExtraProcessCount = result.extra; witness.worker = result.witness;
+  } catch (error) { rethrowDrift(error); /* No PM2 registry read or fallback to another owner. */ }
   try {
     const cli = d.cliEnvironment(); if (typeof cli.overridesPresent !== "boolean") fail();
     report.pm2PathOverridesPresent = cli.overridesPresent;
     const values = readStableSelected(daemon, d);
-    const title = daemon.commandLine?.length === 1 ? daemon.commandLine[0].match(/^PM2 v[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9._-]+)?: God Daemon \(([^\0\r\n]{1,4096})\)$/)?.[1] : null;
+    const title = report.pm2Version !== null ? daemonTitle[2] : null;
     const home = values.PM2_HOME || title;
     if (values.PM2_HOME && title && canonical(values.PM2_HOME, d) !== canonical(title, d)) fail();
     const actual = canonical(home, d); const intended = canonical(cli.home, d);
     report.pm2Home = !cli.home || !home ? "absent" : actual === null || intended === null ? "unverified" : actual === intended ? "matches" : "differs";
     witness.home = { metadataHash: hash(values), cliHash: hash(cli) };
-  } catch { report.pm2Home = "unverified"; }
+    if (title && absolute(home)) {
+      const endpoint = endpointObservation(home, daemon, d); report.pm2Endpoint = endpoint.result; witness.endpoint = endpoint.witness;
+    }
+  } catch (error) { rethrowDrift(error); report.pm2Home = "unverified"; }
   if (!equal(d.readProcess(web.pid), web) || !equal(d.readProcess(daemon.pid), daemon)) fail();
   return { report, witness };
 }

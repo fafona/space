@@ -4,6 +4,7 @@ import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openS
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
+import { diagnosePm2Peer, validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -19,7 +20,7 @@ const exact = (value, keys) => record(value) && Object.keys(value).length === ke
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "plan", "prepare", "check-held", "check-runtime-held", "runtime-handoff", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "check-held", "check-runtime-held", "runtime-handoff", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
@@ -36,7 +37,7 @@ export function parseMaintenanceRequest(argv) {
       path.posix.normalize(request.appDir) !== request.appDir || request.appDir.endsWith("/") || !APP.test(request.appName ?? "") ||
       !Number.isSafeInteger(request.appPort) || request.appPort < 1024 || request.appPort > 65535 || !SHA.test(request.targetSha ?? "") ||
       !SHA.test(request.expectedOldSha ?? "") || request.targetSha === request.expectedOldSha ||
-      (["diagnose-runtime", "plan", "prepare"].includes(action) ? request.operationId !== null : !UUID.test(request.operationId ?? ""))) failure("maintenance_arguments_invalid");
+      (["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? request.operationId !== null : !UUID.test(request.operationId ?? ""))) failure("maintenance_arguments_invalid");
   return request;
 }
 
@@ -47,6 +48,14 @@ export async function createRuntimeDiagnosticReport(request, diagnose = diagnose
   }));
   // This report has no operation UUID and is never a held or release proof.
   return { version: 1, targetSha: request.targetSha, expectedOldSha: request.expectedOldSha, state: "runtime-diagnosed", diagnostics };
+}
+
+export async function createPm2PeerDiagnosticReport(request, diagnose = diagnosePm2Peer) {
+  if (request.action !== "diagnose-pm2-peer" || request.operationId !== null) failure("maintenance_arguments_invalid");
+  const diagnostics = validatePm2PeerDiagnostic(await diagnose({
+    appDir: request.appDir, appName: request.appName, appPort: request.appPort, expectedOldSha: request.expectedOldSha,
+  }));
+  return { version: 1, targetSha: request.targetSha, expectedOldSha: request.expectedOldSha, state: "pm2-peer-diagnosed", diagnostics };
 }
 
 export function validateMaintenanceState(state, request, bootId, now) {
@@ -412,6 +421,8 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
       // Deliberately bypass the operation-state/actuator factory and lock:
       // diagnosis only reads existing state and cannot start maintenance.
       result = await createRuntimeDiagnosticReport(request);
+    } else if (request.action === "diagnose-pm2-peer") {
+      result = await createPm2PeerDiagnosticReport(request);
     } else {
       const ops = await productionOperations(request);
       result = await withPrivateOperationLock(request, () => runMaintenanceAction(request, ops));

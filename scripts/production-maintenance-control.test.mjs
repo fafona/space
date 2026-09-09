@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -9,13 +9,16 @@ const target = "b".repeat(40);
 const token = "c".repeat(64);
 const boot = "12345678-1234-4123-8123-987654321abc";
 const flags = ["--app-dir", "/srv/faolla", "--app-name", "faolla", "--app-port", "3000", "--target-sha", target, "--expected-old-sha", old, "--json"];
-const request = (action) => parseMaintenanceRequest([action, ...flags, ...(["diagnose-runtime", "plan", "prepare"].includes(action) ? [] : ["--expected-operation-id", operationId])]);
+const request = (action) => parseMaintenanceRequest([action, ...flags, ...(["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? [] : ["--expected-operation-id", operationId])]);
 const diagnosticFixture = () => ({
-  version: 1, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  version: 2, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
   webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
     interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
   supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
   runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
+  pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
+  workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null },
+  python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null },
 });
 function fixture(phase = "held") {
   const events = [];
@@ -65,6 +68,42 @@ test("runtime diagnosis has no operation and only invokes its read-only inspecto
   assert.throws(() => validateMaintenanceState(result, input, boot, 200), /maintenance_state_binding_invalid/);
   await assert.rejects(createRuntimeDiagnosticReport(input, async () => ({ ...diagnosticFixture(), raw: "must-not-disclose" })));
   await assert.rejects(createRuntimeDiagnosticReport(request("prepare"), async () => { throw new Error("must-not-run"); }), /maintenance_arguments_invalid/);
+});
+
+test("PM2 peer diagnosis invokes only its exact read-only inspector and never creates an operation", async () => {
+  const input = request("diagnose-pm2-peer");
+  assert.equal(input.operationId, null);
+  assert.throws(() => parseMaintenanceRequest(["diagnose-pm2-peer", ...flags, "--expected-operation-id", operationId]), /maintenance_arguments_invalid/);
+  for (const diagnostics of [
+    { version: 1, maintenance: "not_verified", peerVerified: null, pm2Version: null },
+    { version: 1, maintenance: "not_verified", peerVerified: true, pm2Version: "6.0.8" },
+  ]) {
+    let called = 0;
+    const result = await createPm2PeerDiagnosticReport(input, async (observed) => {
+      called += 1;
+      assert.deepEqual(observed, { appDir: input.appDir, appName: input.appName, appPort: input.appPort, expectedOldSha: old });
+      return diagnostics;
+    });
+    assert.equal(called, 1);
+    assert.deepEqual(result, { version: 1, targetSha: target, expectedOldSha: old, state: "pm2-peer-diagnosed", diagnostics });
+    assert.equal(Object.hasOwn(result, "operationId"), false);
+    assert.throws(() => validateMaintenanceState(result, input, boot, 200), /maintenance_state_binding_invalid/);
+  }
+});
+
+test("PM2 peer report rejects polluted observations and non-diagnostic requests", async () => {
+  const diagnostics = { version: 1, maintenance: "not_verified", peerVerified: true, pm2Version: "6.0.8" };
+  for (const patch of [{ raw: "must-not-disclose" }, { socketPath: "/private/rpc.sock" }, { pid: 123 },
+    { maintenance: "held" }, { peerVerified: false }, { peerVerified: null }, { pm2Version: null },
+    { pm2Version: "6.0.8\nmust-not-disclose" }]) {
+    await assert.rejects(createPm2PeerDiagnosticReport(request("diagnose-pm2-peer"), async () => ({ ...diagnostics, ...patch })),
+      /^Error: production_maintenance_pm2_peer_unverified$/);
+  }
+  let called = 0;
+  for (const input of [request("prepare"), request("diagnose-runtime"), { ...request("diagnose-pm2-peer"), operationId }]) {
+    await assert.rejects(createPm2PeerDiagnosticReport(input, async () => { called += 1; return diagnostics; }), /maintenance_arguments_invalid/);
+  }
+  assert.equal(called, 0);
 });
 test("fixed PostgreSQL projections preserve typed database identity and all required ACL operations", () => {
   assert.match(PRODUCTION_MAINTENANCE_QUIET_SQL, /'databaseOid',\(SELECT oid::bigint FROM pg_database WHERE datname=current_database\(\)\)/);
