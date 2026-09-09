@@ -16,6 +16,7 @@ concurrency:
 
 permissions:
   actions: read
+  attestations: read
   contents: read
 
 jobs:
@@ -26,6 +27,8 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       HOTFIX_COMMIT: 26a3b2b0d0a82b3f972d13102b1b87c6fec6e589
       REVOCATION_CUTOFF: 2026-08-20T03:01:52Z
+      # Immutable pre-maintenance source ceiling; artifact absence never selects legacy mode.
+      LEGACY_BACKUP_MAX_SOURCE_SHA: 22e6db38d017e05d8399ffbf60c6bea02fcb7bc9
 
     steps:
       - name: Checkout Operation Source
@@ -42,13 +45,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REPOSITORY" = "fafona/space"
           test "$CONFIRMATION" = "REVOKE_LEGACY_BROWSER_AUTH_SESSIONS"
           [[ "$BACKUP_RUN_ID" =~ ^[0-9]+$ ]]
           git merge-base --is-ancestor "$HOTFIX_COMMIT" HEAD
 
           backup_json="$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}")"
-          jq -e '
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg run "$BACKUP_RUN_ID" '
+            .id == ($run | tonumber) and
+            (.run_attempt | type) == "number" and .run_attempt >= 1 and
+            .repository.full_name == $repo and .head_repository.full_name == $repo and
             .name == "Encrypted Database Backup" and
             .path == ".github/workflows/database-backup.yml" and
             .event == "workflow_dispatch" and
@@ -57,18 +64,69 @@ jobs:
             .conclusion == "success"
           ' <<<"$backup_json" >/dev/null
 
-          artifact_json="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}/artifacts?per_page=100")"
-          jq -e --arg artifact_name \
-            "faolla-encrypted-disaster-recovery-${BACKUP_RUN_ID}" '
-              [.artifacts[] |
-                select(
-                  .name == $artifact_name and
-                  .expired == false and
-                  .size_in_bytes > 0
-                )
-              ] | length == 1
-            ' <<<"$artifact_json" >/dev/null
+          backup_sha="$(jq -r '.head_sha' <<<"$backup_json")"
+          backup_attempt="$(jq -r '.run_attempt' <<<"$backup_json")"
+          [[ "$backup_sha" =~ ^[0-9a-f]{40}$ && "$backup_attempt" =~ ^[1-9][0-9]*$ ]]
+          git cat-file -e "${backup_sha}^{commit}"
+          git merge-base --is-ancestor "$backup_sha" HEAD
+          protocol_path="$(git ls-tree --name-only "$backup_sha" -- scripts/production-maintenance-workflow-contract.mjs)"
+          if [ "$protocol_path" = scripts/production-maintenance-workflow-contract.mjs ]; then
+            backup_protocol=maintenance-binding-v1
+          else
+            test -z "$protocol_path"
+            git merge-base --is-ancestor "$backup_sha" "$LEGACY_BACKUP_MAX_SOURCE_SHA"
+            backup_protocol=legacy
+          fi
+          evidence_dir="$(mktemp -d "$RUNNER_TEMP/revoke-backup-binding.XXXXXXXX")"
+          trap 'rm -f -- "$evidence_dir/inventory.json" "$evidence_dir/production-maintenance-binding.json" "$evidence_dir/provenance.json"; rmdir -- "$evidence_dir"' EXIT
+          gh api --method GET --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RUN_ID}/artifacts?per_page=100" > "$evidence_dir/inventory.json"
+          node --input-type=module - "$evidence_dir/inventory.json" "$BACKUP_RUN_ID" "$backup_attempt" "$backup_sha" "$backup_protocol" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const [file, run, attempt, sha, protocol] = process.argv.slice(2);
+          const pages = JSON.parse(readFileSync(file, "utf8"));
+          const fail = () => { throw new Error("session_revocation_backup_inventory_invalid"); };
+          if (!Array.isArray(pages) || pages.length === 0 || !pages.every((page) => Array.isArray(page?.artifacts))) fail();
+          const artifacts = pages.flatMap((page) => page.artifacts);
+          const suffix = `${run}-${attempt}`;
+          const expected = new Set([
+            `faolla-encrypted-disaster-recovery-${suffix}`,
+            `faolla-production-backup-attestation-${suffix}`,
+            `faolla-backup-verification-reports-${suffix}`,
+            `faolla-encrypted-backup-attestation-bundle-${suffix}`,
+            `faolla-production-backup-attestation-bundle-${suffix}`,
+          ]);
+          if (protocol === "maintenance-binding-v1") expected.add(`faolla-maintenance-backup-binding-${suffix}`);
+          else if (protocol !== "legacy") fail();
+          if (artifacts.length !== expected.size || pages.some((page) => page.total_count !== expected.size)) fail();
+          const ids = new Set();
+          for (const item of artifacts) {
+            if (!expected.delete(item?.name) || !Number.isSafeInteger(item.id) || item.id <= 0 || ids.has(item.id) ||
+              item.expired !== false || !Number.isSafeInteger(item.size_in_bytes) || item.size_in_bytes <= 0 ||
+              !/^sha256:[0-9a-f]{64}$/.test(item.digest ?? "") ||
+              !Number.isFinite(Date.parse(item.created_at)) || !Number.isFinite(Date.parse(item.expires_at)) ||
+              Date.parse(item.created_at) >= Date.parse(item.expires_at) || Date.parse(item.expires_at) <= Date.now() ||
+              item.workflow_run?.id !== Number(run) || item.workflow_run?.head_branch !== "main" || item.workflow_run?.head_sha !== sha) fail();
+            ids.add(item.id);
+          }
+          if (expected.size !== 0) fail();
+          NODE
+          if [ "$backup_protocol" = maintenance-binding-v1 ]; then
+            gh run download "$BACKUP_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "faolla-maintenance-backup-binding-${BACKUP_RUN_ID}-${backup_attempt}" --dir "$evidence_dir"
+            test -f "$evidence_dir/production-maintenance-binding.json"
+            test ! -L "$evidence_dir/production-maintenance-binding.json"
+            gh attestation verify "$evidence_dir/production-maintenance-binding.json" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/database-backup.yml" \
+              --source-digest "$backup_sha" --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners --limit 10 --format json \
+              > "$evidence_dir/provenance.json"
+            node scripts/production-maintenance-workflow-contract.mjs verify \
+              --file "$evidence_dir/production-maintenance-binding.json" --provenance "$evidence_dir/provenance.json" \
+              --phase backup --target-sha "$backup_sha" --run-id "$BACKUP_RUN_ID" --run-attempt "$backup_attempt" \
+              --mode off --operation-id "" --old-sha ""
+          fi
 
           completed_at="$(jq -r '.updated_at' <<<"$backup_json")"
           completed_epoch="$(date -u -d "$completed_at" +%s)"

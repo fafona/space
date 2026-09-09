@@ -212,8 +212,20 @@ test("recovery runner cannot start a client by default or against another test p
   }
 });
 
+test("pages ACL acceptance uses isolated PostgreSQL 15 with bound identity and no application credentials", () => {
+  const acl = jobBlock("pages-acl-database");
+  assert.match(acl, /needs:\s*quality/);
+  assert.match(acl, /image:\s*postgres:15/);
+  assert.match(acl, /POSTGRES_DB:\s*faolla_pages_acl_test/);
+  assert.match(acl, /PAGES_ACL_INTEGRATION_ALLOW_DISPOSABLE_DATABASE:\s*"1"/);
+  assert.match(acl, /persist-credentials:\s*false/);
+  assert.match(acl, /run:\s*node scripts\/pages-acl-integration\/run\.mjs/);
+  assert.doesNotMatch(acl, /continue-on-error|secrets\.|DATABASE_URL|\.env\.local|SUPABASE_SERVICE_ROLE_KEY/);
+  assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/pages-acl-integration/run.mjs"), false);
+});
+
 test("container-network PostgreSQL jobs bind their exact trusted service identity before database acceptance", () => {
-  for (const jobName of ["checkout-database", "recovery-database"]) {
+  for (const jobName of ["checkout-database", "recovery-database", "pages-acl-database"]) {
     const job = jobBlock(jobName);
     assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, 2);
     const bindAt = job.indexOf("node scripts/ci-postgres-service-identity.mjs");

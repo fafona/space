@@ -13,8 +13,9 @@ concurrency:
 
 permissions:
   actions: read
-  attestations: read
+  attestations: write
   contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -153,12 +154,13 @@ jobs:
             }
             artifacts.push(...page.artifacts);
           }
-          if (artifacts.length !== 2 || pages.some((page) => page.total_count !== artifacts.length)) {
+          if (artifacts.length !== 3 || pages.some((page) => page.total_count !== artifacts.length)) {
             fail("readiness_artifact_inventory_invalid");
           }
           const expected = new Map([
             [`faolla-production-readiness-report-${process.env.READINESS_RUN_ID}-${process.env.READINESS_RUN_ATTEMPT}`, "report"],
             [`faolla-production-readiness-attestation-${process.env.READINESS_RUN_ID}-${process.env.READINESS_RUN_ATTEMPT}`, "attestation"],
+            [`faolla-maintenance-readiness-binding-${process.env.READINESS_RUN_ID}-${process.env.READINESS_RUN_ATTEMPT}`, "maintenance_binding"],
           ]);
           const now = Date.now();
           const outputs = new Map();
@@ -189,7 +191,7 @@ jobs:
             outputs.set(`${key}_id`, String(artifact.id));
             outputs.set(`${key}_digest`, artifact.digest);
           }
-          if (outputs.size !== 4) fail("readiness_artifact_inventory_incomplete");
+          if (outputs.size !== 6) fail("readiness_artifact_inventory_incomplete");
           appendFileSync(
             process.env.GITHUB_OUTPUT,
             [...outputs].map(([key, value]) => `${key}=${value}\n`).join(""),
@@ -479,19 +481,19 @@ jobs:
           const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
           if (!Array.isArray(pages) || pages.length === 0) process.exit(1);
           const artifacts = pages.flatMap((page) => {
-            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 5) process.exit(1);
+            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 6) process.exit(1);
             return page.artifacts;
           });
           const ids = artifacts.map((artifact) => artifact?.id);
           if (
-            artifacts.length !== 5 ||
+            artifacts.length !== 6 ||
             ids.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
-            new Set(ids).size !== 5
+            new Set(ids).size !== 6
           ) process.exit(1);
           process.stdout.write(`${ids.sort((left, right) => left - right).join("\n")}\n`);
           NODE
           )
-          test "${#artifact_ids[@]}" -eq 5
+          test "${#artifact_ids[@]}" -eq 6
           for artifact_id in "${artifact_ids[@]}"; do
             [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
             gh api --method GET \
@@ -562,12 +564,12 @@ jobs:
           ) fail("backup_revalidation_workflow_contract_invalid");
           if (!Array.isArray(pages) || pages.length === 0) fail("backup_revalidation_pages_invalid");
           const artifacts = pages.flatMap((page) => {
-            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 5) {
+            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 6) {
               fail("backup_revalidation_page_invalid");
             }
             return page.artifacts;
           });
-          if (artifacts.length !== 5) fail("backup_revalidation_inventory_count_invalid");
+          if (artifacts.length !== 6) fail("backup_revalidation_inventory_count_invalid");
           const suffix = `${process.env.BACKUP_RUN_ID}-${process.env.BACKUP_RUN_ATTEMPT}`;
           const expectedNames = new Map([
             [`faolla-encrypted-disaster-recovery-${suffix}`, "primary"],
@@ -575,13 +577,14 @@ jobs:
             [`faolla-backup-verification-reports-${suffix}`, "verificationReports"],
             [`faolla-encrypted-backup-attestation-bundle-${suffix}`, "encryptedAttestationBundle"],
             [`faolla-production-backup-attestation-bundle-${suffix}`, "productionAttestationBundle"],
+            [`faolla-maintenance-backup-binding-${suffix}`, "maintenanceBinding"],
           ]);
           const expectedFiles = artifacts
             .map((artifact) => `${artifact?.id}.json`)
             .sort();
           const detailFiles = readdirSync(detailsDirectory).sort();
           if (
-            detailFiles.length !== 5 ||
+            detailFiles.length !== 6 ||
             detailFiles.some((file, index) => file !== expectedFiles[index])
           ) fail("backup_revalidation_direct_inventory_invalid");
           const now = Date.now();
@@ -627,7 +630,7 @@ jobs:
             ids.add(artifact.id);
             roles.set(role, artifact);
           }
-          if (ids.size !== 5 || roles.size !== 5) fail("backup_revalidation_contract_invalid");
+          if (ids.size !== 6 || roles.size !== 6) fail("backup_revalidation_contract_invalid");
           const primary = roles.get("primary");
           const attestation = roles.get("attestation");
           if (
@@ -639,7 +642,55 @@ jobs:
           ) fail("backup_revalidation_verified_binding_mismatch");
           NODE
 
+      - name: Verify Signed Readiness Maintenance Binding
+        id: maintenance-binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BINDING_RUN_ID: ${{ env.READINESS_RUN_ID }}
+          BINDING_RUN_ATTEMPT: ${{ env.READINESS_RUN_ATTEMPT }}
+          BINDING_TARGET_SHA: ${{ env.DEPLOY_REF }}
+          EXPECTED_BACKUP_RUN_ID: ${{ steps.readiness-evidence.outputs.backup_run_id }}
+          EXPECTED_BACKUP_RUN_ATTEMPT: ${{ steps.readiness-evidence.outputs.backup_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$BINDING_RUN_ID" =~ ^[1-9][0-9]*$ && "$BINDING_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BINDING_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          binding_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-binding.XXXXXXXX")"
+          trap 'rm -f -- "$binding_dir/production-maintenance-binding.json" "$binding_dir/provenance.json"; rmdir -- "$binding_dir"' EXIT
+          gh run download "$BINDING_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "faolla-maintenance-readiness-binding-$BINDING_RUN_ID-$BINDING_RUN_ATTEMPT" --dir "$binding_dir"
+          test -f "$binding_dir/production-maintenance-binding.json"
+          test ! -L "$binding_dir/production-maintenance-binding.json"
+          gh attestation verify "$binding_dir/production-maintenance-binding.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/ordinary-account-cutover-readiness.yml" \
+            --source-digest "$BINDING_TARGET_SHA" --source-ref refs/heads/main \
+            --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+            --limit 10 --format json > "$binding_dir/provenance.json"
+          node scripts/production-maintenance-workflow-contract.mjs verify \
+            --file "$binding_dir/production-maintenance-binding.json" --provenance "$binding_dir/provenance.json" \
+            --phase readiness --target-sha "$BINDING_TARGET_SHA" \
+            --run-id "$BINDING_RUN_ID" --run-attempt "$BINDING_RUN_ATTEMPT" \
+            --backup-run-id "$EXPECTED_BACKUP_RUN_ID" --backup-run-attempt "$EXPECTED_BACKUP_RUN_ATTEMPT" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Export Verified Maintenance Binding
+        env:
+          BOUND_MODE: ${{ steps.maintenance-binding.outputs.mode }}
+          BOUND_OPERATION_ID: ${{ steps.maintenance-binding.outputs.operation_id }}
+          BOUND_OLD_SHA: ${{ steps.maintenance-binding.outputs.old_sha }}
+          BOUND_BACKUP_ID: ${{ steps.maintenance-binding.outputs.backup_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "MAINTENANCE_MODE=$BOUND_MODE" "MAINTENANCE_OPERATION_ID=$BOUND_OPERATION_ID" \
+            "EXPECTED_OLD_SHA=$BOUND_OLD_SHA" "TARGET_SHA=$DEPLOY_REF" "BACKUP_RUN_ID=$BOUND_BACKUP_ID" >> "$GITHUB_ENV"
+
+
       - name: Setup SSH
+        # The signed readiness binding is mandatory even when mode is off.
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
@@ -670,6 +721,9 @@ jobs:
 
       - name: Deploy To Server
         env:
+          PRODUCTION_MAINTENANCE_MODE: ${{ steps.maintenance-binding.outputs.mode }}
+          PRODUCTION_MAINTENANCE_OPERATION_ID: ${{ steps.maintenance-binding.outputs.operation_id }}
+          PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA: ${{ steps.maintenance-binding.outputs.old_sha }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -829,6 +883,8 @@ jobs:
           APP_PORT="${APP_PORT:-3000}"
           export \
             APP_DIR APP_NAME APP_PORT APP_BRANCH EXPECTED_DEPLOY_SHA \
+            PRODUCTION_MAINTENANCE_MODE PRODUCTION_MAINTENANCE_OPERATION_ID \
+            PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA \
             PRODUCTION_READINESS_ATTESTATION_FILE \
             PRODUCTION_READINESS_ATTESTATION_SHA256 \
             PRODUCTION_READINESS_RUN_ID PRODUCTION_READINESS_RUN_ATTEMPT \
@@ -874,6 +930,8 @@ jobs:
 
           const keys = [
             "APP_DIR", "APP_NAME", "APP_PORT", "APP_BRANCH",
+            "PRODUCTION_MAINTENANCE_MODE", "PRODUCTION_MAINTENANCE_OPERATION_ID",
+            "PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA",
             "EXPECTED_DEPLOY_SHA", "SUPABASE_INTERNAL_URL_B64",
             "NEXT_PUBLIC_SUPABASE_URL_B64", "NEXT_PUBLIC_SUPABASE_ANON_KEY_B64",
             "SUPABASE_SERVICE_ROLE_KEY_B64", "GOOGLE_BUSINESS_PROFILE_CLIENT_ID_B64",
@@ -940,6 +998,8 @@ jobs:
           rm -f -- "$PRODUCTION_READINESS_ATTESTATION_FILE"
           unset \
             APP_DIR APP_NAME APP_PORT APP_BRANCH EXPECTED_DEPLOY_SHA \
+            PRODUCTION_MAINTENANCE_MODE PRODUCTION_MAINTENANCE_OPERATION_ID \
+            PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA \
             PRODUCTION_READINESS_ATTESTATION_FILE \
             PRODUCTION_READINESS_ATTESTATION_SHA256 \
             PRODUCTION_READINESS_ATTESTATION_BYTES \
@@ -1169,6 +1229,7 @@ jobs:
           fi
 
       - name: Verify Public Release
+        if: steps.maintenance-binding.outputs.mode == 'off'
         env:
           EXPECTED_BUILD: ${{ steps.deploy-commit.outputs.sha }}
         run: |
@@ -1179,3 +1240,68 @@ jobs:
             --attempts 8 \
             --delay-ms 2000 \
             --timeout-ms 12000
+
+      - name: Verify Candidate While Public Entry Remains Held
+        if: env.MAINTENANCE_MODE == 'maintenance'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q check-candidate --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state candidate --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
+
+      - name: Build Canonical Maintenance Binding
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ steps.readiness-evidence.outputs.backup_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/production-maintenance-workflow-contract.mjs build \
+            --phase deploy --file production-maintenance-binding.json
+
+      - name: Upload Canonical Maintenance Binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-maintenance-deploy-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production-maintenance-binding.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attest Canonical Maintenance Binding
+        uses: actions/attest@v4
+        with:
+          subject-path: production-maintenance-binding.json

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { maintenanceProbeHeaders } from "./maintenance-control-probe-headers.mjs";
 
 function parseEnvFile(filePath) {
   const parsed = {};
@@ -58,7 +59,8 @@ async function checkEndpoint(name, target, headers = {}) {
   try {
     const response = await fetch(target, {
       method: "GET",
-      headers,
+      headers: { ...headers, ...maintenanceProbeHeaders(target, "GET") },
+      redirect: "error",
       cache: "no-store",
       signal: controller.signal,
     });

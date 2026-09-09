@@ -11,6 +11,16 @@ on:
       confirmation:
         description: Type BACKUP to confirm the production backup
         required: true
+      maintenance_mode:
+        description: Bind this backup to the active held maintenance operation
+        type: boolean
+        default: false
+      maintenance_operation_id:
+        description: Exact operation UUID returned by maintenance prepare
+        required: false
+      expected_old_sha:
+        description: Frozen old build SHA (required in maintenance mode)
+        required: false
 
 concurrency:
   # Share the protected production lock with deploys and schema changes.
@@ -30,6 +40,9 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
+      MAINTENANCE_MODE: ${{ inputs.maintenance_mode && 'maintenance' || 'off' }}
+      MAINTENANCE_OPERATION_ID: ${{ inputs.maintenance_operation_id }}
+      EXPECTED_OLD_SHA: ${{ inputs.expected_old_sha }}
       REMOTE_BACKUP_PATH: /tmp/faolla-database-backup-${{ github.run_id }}-${{ github.run_attempt }}.tar.enc
       REMOTE_BACKUP_WORKTREE: /tmp/faolla-database-backup-source-${{ github.run_id }}-${{ github.run_attempt }}
       LOCAL_BACKUP_PATH: faolla-database-backup.tar.enc
@@ -221,6 +234,49 @@ jobs:
           test -f "$app_dir/.env.local"
           REMOTE
 
+      - name: Verify Held Maintenance Before Backup
+        if: env.MAINTENANCE_MODE == 'maintenance'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ env.REMOTE_BACKUP_WORKTREE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q check-held --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state held --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
+
       - name: Verify Backup Configuration From Exact Source
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -289,6 +345,49 @@ jobs:
             | ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" \
                 "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH FAOLLA_SOURCE_REPOSITORY=$GITHUB_REPOSITORY bash -lc '$remote_script'" \
             | tee database-backup-create-report.log
+
+      - name: Verify Held Maintenance After Backup Capture
+        if: env.MAINTENANCE_MODE == 'maintenance'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ env.REMOTE_BACKUP_WORKTREE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q check-held --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state held --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
 
       - name: Transfer Complete Encrypted Backup
         env:
@@ -578,6 +677,71 @@ jobs:
           path: ${{ steps.canonical-backup-attestation.outputs.bundle-path }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Verify Held Maintenance Before Backup Attestation
+        if: env.MAINTENANCE_MODE == 'maintenance'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ env.REMOTE_BACKUP_WORKTREE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q check-held --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state held --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
+
+      - name: Build Canonical Maintenance Binding
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/production-maintenance-workflow-contract.mjs build \
+            --phase backup --file production-maintenance-binding.json
+
+      - name: Upload Canonical Maintenance Binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-maintenance-backup-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production-maintenance-binding.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attest Canonical Maintenance Binding
+        uses: actions/attest@v4
+        with:
+          subject-path: production-maintenance-binding.json
 
       - name: Upload Backup Failure Diagnostics
         if: failure()

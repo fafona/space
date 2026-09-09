@@ -38,6 +38,9 @@ jobs:
       - name: Maintenance Topology Diagnostic Tests
         run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs scripts/check-production-maintenance-capabilities.test.mjs
 
+      - name: Maintenance Control and Pages ACL Contract Tests
+        run: node --test scripts/production-maintenance-*.test.mjs scripts/maintenance-control-probe-headers.test.mjs scripts/pages-client-write-acl-migration-contract.test.mjs scripts/pages-acl-integration/run.test.mjs
+
       - name: Lint
         run: npm run lint -- --quiet
 
@@ -234,6 +237,47 @@ jobs:
         env:
           FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: node scripts/checkout-integration/run.mjs
+
+  pages-acl-database:
+    name: Pages Client Write ACL PostgreSQL Acceptance
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_pages_acl_test
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_pages_acl_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PAGES_ACL_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Check PostgreSQL client
+        run: psql --version
+      - name: Bind pages ACL PostgreSQL service identity
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/ci-postgres-service-identity.mjs
+      - name: Run pages client-write ACL database acceptance
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/pages-acl-integration/run.mjs
 
   recovery-database:
     name: Recovery Content PostgreSQL Acceptance

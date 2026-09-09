@@ -7,6 +7,7 @@ import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { pathToFileURL } from "node:url";
+import { maintenanceProbeHeaders } from "./maintenance-control-probe-headers.mjs";
 
 import {
   ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
@@ -3015,7 +3016,16 @@ function probeRequestSpecifications(environment, randomHex) {
   return [
     ...createPair(environment.internalUrl, "internal"),
     ...createPair(environment.publicUrl, "public"),
-  ];
+  ].map((specification) => ({
+    ...specification,
+    request: {
+      ...specification.request,
+      headers: {
+        ...specification.request.headers,
+        ...maintenanceProbeHeaders(specification.url, specification.request.method),
+      },
+    },
+  }));
 }
 
 function waiterValidationFailureCode(
