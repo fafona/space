@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { parseMaintenanceRequest, runMaintenanceAction, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -9,7 +9,14 @@ const target = "b".repeat(40);
 const token = "c".repeat(64);
 const boot = "12345678-1234-4123-8123-987654321abc";
 const flags = ["--app-dir", "/srv/faolla", "--app-name", "faolla", "--app-port", "3000", "--target-sha", target, "--expected-old-sha", old, "--json"];
-const request = (action) => parseMaintenanceRequest([action, ...flags, ...(["plan", "prepare"].includes(action) ? [] : ["--expected-operation-id", operationId])]);
+const request = (action) => parseMaintenanceRequest([action, ...flags, ...(["diagnose-runtime", "plan", "prepare"].includes(action) ? [] : ["--expected-operation-id", operationId])]);
+const diagnosticFixture = () => ({
+  version: 1, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
+    interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
+  supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
+  runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
+});
 function fixture(phase = "held") {
   const events = [];
   let state = { version: 1, operationId, targetSha: target, expectedOldSha: old, appDir: "/srv/faolla", appName: "faolla", appPort: 3000,
@@ -41,6 +48,23 @@ test("strict CLI rejects missing, duplicate, unexpected and unbound inputs", () 
   for (const args of [["plan", ...flags, "--app-name", "x"], ["end", ...flags], ["plan", ...flags, "--expected-operation-id", operationId], ["prepare", ...flags, "--force"],
     ["prepare", ...flags.filter((value) => value !== "--json")], ["plan", ...flags.map((value) => value === "/srv/faolla" ? "/srv/../faolla" : value)],
     ["plan", ...flags.map((value) => value === target ? old : value)]]) assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
+});
+test("runtime diagnosis has no operation and only invokes its read-only inspector", async () => {
+  const input = request("diagnose-runtime");
+  assert.equal(input.operationId, null);
+  assert.throws(() => parseMaintenanceRequest(["diagnose-runtime", ...flags, "--expected-operation-id", operationId]), /maintenance_arguments_invalid/);
+  let called = 0;
+  const result = await createRuntimeDiagnosticReport(input, async (observed) => {
+    called += 1;
+    assert.deepEqual(observed, { appDir: input.appDir, appName: input.appName, appPort: input.appPort, expectedOldSha: old });
+    return diagnosticFixture();
+  });
+  assert.equal(called, 1);
+  assert.deepEqual(result, { version: 1, targetSha: target, expectedOldSha: old, state: "runtime-diagnosed", diagnostics: diagnosticFixture() });
+  assert.equal(Object.hasOwn(result, "operationId"), false);
+  assert.throws(() => validateMaintenanceState(result, input, boot, 200), /maintenance_state_binding_invalid/);
+  await assert.rejects(createRuntimeDiagnosticReport(input, async () => ({ ...diagnosticFixture(), raw: "must-not-disclose" })));
+  await assert.rejects(createRuntimeDiagnosticReport(request("prepare"), async () => { throw new Error("must-not-run"); }), /maintenance_arguments_invalid/);
 });
 test("fixed PostgreSQL projections preserve typed database identity and all required ACL operations", () => {
   assert.match(PRODUCTION_MAINTENANCE_QUIET_SQL, /'databaseOid',\(SELECT oid::bigint FROM pg_database WHERE datname=current_database\(\)\)/);
