@@ -23,6 +23,11 @@ function rows() {
 }
 function database() {
   return { databaseMatches: true, readOnly: true, statsComplete: true, activeBackends: 2, openTransactions: 1, preparedTransactions: 0,
+    pagesWriteGrants: { tablePresent: true, rlsEnabled: true, rlsForced: false, policyCount: 4,
+      roles: Object.fromEntries(["anon", "authenticated", "service_role"].map((role) => [role, {
+        rolePresent: true, tableInsert: role !== "anon", tableUpdate: role !== "anon", tableDelete: role !== "anon",
+        anyColumnInsert: role !== "anon", anyColumnUpdate: role !== "anon",
+      }])), rowWriteAccess: "not_verified" },
     extensions: { pgCron: true, pgNet: false, http: false, dblink: false, postgresFdw: false, otherCount: 1 },
     cronTablePresent: true, cronReadable: true, cronComplete: true };
 }
@@ -179,12 +184,70 @@ test("DB uses configured credentials only inside fixed script with read-only SQL
   for (const sql of [MAINTENANCE_DATABASE_SQL, MAINTENANCE_CRON_SQL]) {
     assert.match(sql, /^BEGIN READ ONLY;/); assert.match(sql, /statement_timeout='5s'/);
     assert.match(sql, /lock_timeout='1s'/); assert.match(sql, /ROLLBACK;\s*$/);
-    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|pg_terminate_backend|cron\.unschedule)\b/i);
+    // Fixed privilege-name string literals are metadata, not DML statements.
+    assert.doesNotMatch(sql.replace(/'(?:''|[^'])*'/g, "''"), /\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|SET\s+ROLE|pg_terminate_backend|cron\.unschedule)\b/i);
     assert.doesNotMatch(sql, /\b(?:query|command|gid|client_addr)\b/i);
   }
   assert.match(MAINTENANCE_DATABASE_SQL, /'pg_read_all_stats', 'USAGE'/);
   assert.match(MAINTENANCE_DATABASE_SQL, /NOT relrowsecurity/);
   assert.match(MAINTENANCE_DATABASE_SQL, /rolbypassrls/);
+});
+
+test("pages metadata includes column grants without claiming row writes or maintenance verified", async () => {
+  const db = database();
+  db.pagesWriteGrants.roles.authenticated.tableInsert = false;
+  db.pagesWriteGrants.roles.authenticated.tableUpdate = false;
+  const f = fixture({ database: db }); const result = await collectMaintenanceCapabilities(args(), f.deps);
+  const grants = result.database.summary.data.pagesWriteGrants;
+  assert.equal(grants.roles.authenticated.tableUpdate, false);
+  assert.equal(grants.roles.authenticated.anyColumnUpdate, true);
+  assert.equal(grants.roles.service_role.tableDelete, true);
+  assert.equal(grants.rlsEnabled, true); assert.equal(grants.rlsForced, false); assert.equal(grants.policyCount, 4);
+  assert.equal(grants.rowWriteAccess, "not_verified"); assert.equal(result.maintenanceState, "not_verified");
+  assert.equal(f.calls.filter((call) => call.input === MAINTENANCE_DATABASE_SQL).length, 1);
+  assert.equal(f.calls.filter((call) => call.input).length, 2);
+  assert.match(MAINTENANCE_DATABASE_SQL, /pg_catalog\.to_regclass\('public\.pages'\)/);
+  assert.match(MAINTENANCE_DATABASE_SQL, /FROM \(VALUES \('anon'\),\('authenticated'\),\('service_role'\)\)/);
+  assert.equal((MAINTENANCE_DATABASE_SQL.match(/pg_catalog\.has_table_privilege\(roles\.oid/g) || []).length, 3);
+  assert.equal((MAINTENANCE_DATABASE_SQL.match(/pg_catalog\.has_any_column_privilege\(roles\.oid/g) || []).length, 2);
+  assert.doesNotMatch(MAINTENANCE_DATABASE_SQL, /\b(?:polqual|polwithcheck|pg_get_expr|SET\s+ROLE)\b/i);
+  assert.doesNotMatch(MAINTENANCE_DATABASE_SQL, /\bFROM\s+public\.pages\b/i);
+});
+
+test("missing pages table or fixed role keeps permission unknown instead of false", async () => {
+  const roleAbsent = database();
+  roleAbsent.pagesWriteGrants.roles.anon = { rolePresent: false, tableInsert: null, tableUpdate: null,
+    tableDelete: null, anyColumnInsert: null, anyColumnUpdate: null };
+  const tableAbsent = database();
+  Object.assign(tableAbsent.pagesWriteGrants, { tablePresent: false, rlsEnabled: null, rlsForced: null, policyCount: null });
+  for (const role of Object.values(tableAbsent.pagesWriteGrants.roles)) {
+    Object.assign(role, { tableInsert: null, tableUpdate: null, tableDelete: null, anyColumnInsert: null, anyColumnUpdate: null });
+  }
+  for (const db of [roleAbsent, tableAbsent]) {
+    const result = await collectMaintenanceCapabilities(args(), fixture({ database: db }).deps);
+    assert.equal(result.database.summary.status, "observed");
+    assert.deepEqual(result.database.summary.data.pagesWriteGrants, db.pagesWriteGrants);
+  }
+});
+
+test("pages grant metadata rejects false absence, extra identities, policy bodies and certainty", async () => {
+  for (const mutate of [
+    (grants) => { grants.roles.authenticated.rolePresent = false; },
+    (grants) => { grants.tablePresent = false; },
+    (grants) => { grants.roles.authenticated.anyColumnUpdate = "true"; },
+    (grants) => { grants.roles.private_user = SECRET; },
+    (grants) => { grants.policyExpression = SECRET; },
+    (grants) => { grants.rowWriteAccess = "verified"; },
+    (grants) => { grants.policyCount = -1; },
+    (grants) => { delete grants.roles.service_role; },
+  ]) {
+    const db = database(); mutate(db.pagesWriteGrants);
+    const result = await collectMaintenanceCapabilities(args(), fixture({ database: db }).deps);
+    assert.equal(result.database.summary.status, "unknown"); assert.equal(result.database.summary.data, null);
+    assert.equal(JSON.stringify(result).includes(SECRET), false);
+    const valid = await report(); valid.database.summary.data = db;
+    assert.throws(() => validateMaintenanceCapabilitiesReport(valid, BUILD));
+  }
 });
 
 test("partial stats must stay null and cron RLS visibility cannot be mistaken for zero", async () => {

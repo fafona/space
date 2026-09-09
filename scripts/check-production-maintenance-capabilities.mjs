@@ -13,6 +13,7 @@ const roleImages = { kong: "kong", db: "supabase/postgres", rest: "postgrest/pos
   studio: "supabase/studio", functions: "supabase/edge-runtime", analytics: "supabase/logflare",
   vector: "timberio/vector", imgproxy: "darthsim/imgproxy", supavisor: "supabase/supavisor" };
 const coreRoles = ["kong", "db", "rest", "auth"];
+const pagesRoles = ["anon", "authenticated", "service_role"];
 const states = ["created", "running", "paused", "restarting", "removing", "exited", "dead"];
 const exposureTypes = ["none", "loopback", "all_interfaces", "non_loopback", "unknown"];
 const networkModes = ["host", "bridge", "none", "container", "custom"];
@@ -40,6 +41,8 @@ const SQL_START = "BEGIN READ ONLY;\nSET LOCAL statement_timeout='5s';\nSET LOCA
 export const MAINTENANCE_DATABASE_SQL = SQL_START + [
   "WITH visibility AS (SELECT current_setting('is_superuser') = 'on'",
   " OR pg_catalog.pg_has_role(current_user, 'pg_read_all_stats', 'USAGE') AS complete),",
+  "pages_info AS (SELECT oid, relrowsecurity, relforcerowsecurity FROM pg_catalog.pg_class",
+  " WHERE oid=pg_catalog.to_regclass('public.pages')),",
   "counts AS (SELECT count(*) FILTER (WHERE state = 'active') AS active,",
   " count(*) FILTER (WHERE xact_start IS NOT NULL) AS transactions",
   " FROM pg_catalog.pg_stat_activity WHERE pid <> pg_catalog.pg_backend_pid())",
@@ -50,6 +53,22 @@ export const MAINTENANCE_DATABASE_SQL = SQL_START + [
   " 'activeBackends', CASE WHEN visibility.complete THEN counts.active ELSE NULL END,",
   " 'openTransactions', CASE WHEN visibility.complete THEN counts.transactions ELSE NULL END,",
   " 'preparedTransactions', CASE WHEN visibility.complete THEN (SELECT count(*) FROM pg_catalog.pg_prepared_xacts) ELSE NULL END,",
+  // Table privileges are not row-level authorization; do not evaluate policies or try writes.
+  " 'pagesWriteGrants', json_build_object(",
+  " 'tablePresent', EXISTS(SELECT 1 FROM pages_info),",
+  " 'rlsEnabled', (SELECT relrowsecurity FROM pages_info),",
+  " 'rlsForced', (SELECT relforcerowsecurity FROM pages_info),",
+  " 'policyCount', CASE WHEN EXISTS(SELECT 1 FROM pages_info) THEN (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid=(SELECT oid FROM pages_info)) ELSE NULL END,",
+  " 'roles', (SELECT json_object_agg(requested.name, json_build_object(",
+  " 'rolePresent', roles.oid IS NOT NULL,",
+  " 'tableInsert', CASE WHEN roles.oid IS NOT NULL AND EXISTS(SELECT 1 FROM pages_info) THEN pg_catalog.has_table_privilege(roles.oid, (SELECT oid FROM pages_info), 'INSERT') ELSE NULL END,",
+  " 'tableUpdate', CASE WHEN roles.oid IS NOT NULL AND EXISTS(SELECT 1 FROM pages_info) THEN pg_catalog.has_table_privilege(roles.oid, (SELECT oid FROM pages_info), 'UPDATE') ELSE NULL END,",
+  " 'tableDelete', CASE WHEN roles.oid IS NOT NULL AND EXISTS(SELECT 1 FROM pages_info) THEN pg_catalog.has_table_privilege(roles.oid, (SELECT oid FROM pages_info), 'DELETE') ELSE NULL END,",
+  " 'anyColumnInsert', CASE WHEN roles.oid IS NOT NULL AND EXISTS(SELECT 1 FROM pages_info) THEN pg_catalog.has_any_column_privilege(roles.oid, (SELECT oid FROM pages_info), 'INSERT') ELSE NULL END,",
+  " 'anyColumnUpdate', CASE WHEN roles.oid IS NOT NULL AND EXISTS(SELECT 1 FROM pages_info) THEN pg_catalog.has_any_column_privilege(roles.oid, (SELECT oid FROM pages_info), 'UPDATE') ELSE NULL END))",
+  " FROM (VALUES ('anon'),('authenticated'),('service_role')) AS requested(name)",
+  " LEFT JOIN pg_catalog.pg_roles AS roles ON roles.rolname=requested.name),",
+  " 'rowWriteAccess', 'not_verified'),",
   " 'extensions', json_build_object(",
   " 'pgCron', EXISTS(SELECT 1 FROM pg_catalog.pg_extension WHERE extname='pg_cron'),",
   " 'pgNet', EXISTS(SELECT 1 FROM pg_catalog.pg_extension WHERE extname='pg_net'),",
@@ -248,9 +267,20 @@ function kongFacts(execute, row) {
   }
   return result;
 }
+function validPagesWriteGrants(value) {
+  return exact(value, ["tablePresent", "rlsEnabled", "rlsForced", "policyCount", "roles", "rowWriteAccess"]) &&
+    typeof value.tablePresent === "boolean" && value.rowWriteAccess === "not_verified" &&
+    (value.tablePresent ? typeof value.rlsEnabled === "boolean" && typeof value.rlsForced === "boolean" && integer(value.policyCount)
+      : value.rlsEnabled === null && value.rlsForced === null && value.policyCount === null) &&
+    exact(value.roles, pagesRoles) && Object.values(value.roles).every((role) =>
+      exact(role, ["rolePresent", "tableInsert", "tableUpdate", "tableDelete", "anyColumnInsert", "anyColumnUpdate"]) && typeof role.rolePresent === "boolean" &&
+      ["tableInsert", "tableUpdate", "tableDelete", "anyColumnInsert", "anyColumnUpdate"].every((privilege) => value.tablePresent && role.rolePresent
+        ? typeof role[privilege] === "boolean" : role[privilege] === null));
+}
 function validDatabase(value) {
-  return exact(value, ["databaseMatches", "readOnly", "statsComplete", "activeBackends", "openTransactions", "preparedTransactions", "extensions", "cronTablePresent", "cronReadable", "cronComplete"]) &&
+  return exact(value, ["databaseMatches", "readOnly", "statsComplete", "activeBackends", "openTransactions", "preparedTransactions", "pagesWriteGrants", "extensions", "cronTablePresent", "cronReadable", "cronComplete"]) &&
     value.databaseMatches === true && value.readOnly === true && typeof value.statsComplete === "boolean" &&
+    validPagesWriteGrants(value.pagesWriteGrants) &&
     ["activeBackends", "openTransactions", "preparedTransactions"].every((key) => value.statsComplete ? integer(value[key], 1_000_000_000) : value[key] === null) &&
     exact(value.extensions, ["pgCron", "pgNet", "http", "dblink", "postgresFdw", "otherCount"]) &&
     ["pgCron", "pgNet", "http", "dblink", "postgresFdw"].every((key) => typeof value.extensions[key] === "boolean") &&

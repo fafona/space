@@ -53,6 +53,14 @@ text, job commands or prepared transaction identifiers. Insufficient effective
 statistics privileges must not appear as a verified zero. A snapshot of zero
 active transactions is not proof that future writes are fenced.
 
+The same read-only query reports `pagesWriteGrants` for the fixed `anon`,
+`authenticated` and `service_role` roles, including table and column INSERT/UPDATE
+grants, table DELETE grants and RLS metadata. A missing role or relation yields
+unknown (`null`) privileges, not a denial. A granted privilege does not prove that
+RLS permits a specific row: `rowWriteAccess` always remains `not_verified`.
+No policy expression, business row, impersonated user session or trial write is
+read or executed by this check.
+
 This probe is not a complete host scheduler inventory, firewall reachability
 test, in-flight operation drain or maintenance certificate. It cannot stop or
 restart any service, enable a plugin, alter database privileges or invoke the
