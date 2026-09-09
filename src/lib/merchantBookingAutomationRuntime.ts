@@ -1,3 +1,5 @@
+import { areBackgroundJobsPaused } from "./backgroundJobsPause";
+
 const DEFAULT_AUTOMATION_INTERVAL_MS = 60_000;
 const STARTED_KEY = "__merchantBookingAutomationRuntimeStarted";
 const RUNNING_KEY = "__merchantBookingAutomationRuntimeRunning";
@@ -32,6 +34,7 @@ function getAutomationStore() {
 }
 
 async function runAutomationTick() {
+  if (areBackgroundJobsPaused()) return;
   const store = getAutomationStore();
   if (store[RUNNING_KEY]) return;
   store[RUNNING_KEY] = true;
@@ -40,6 +43,7 @@ async function runAutomationTick() {
     const { runMerchantBookingAutomationForAllSites } = (await import("./merchantBookings.server")) as {
       runMerchantBookingAutomationForAllSites: () => Promise<MerchantBookingAutomationResult>;
     };
+    if (areBackgroundJobsPaused()) return;
     const result = await runMerchantBookingAutomationForAllSites();
     const completedAt = new Date().toISOString();
     store[LAST_RESULT_KEY] = result;

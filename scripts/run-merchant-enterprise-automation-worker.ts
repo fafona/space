@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 
 import { loadEnvConfig } from "@next/env";
 
+import { areBackgroundJobsPaused } from "../src/lib/backgroundJobsPause";
 import type { MerchantOutboxRpcClient } from "../src/lib/merchantOutboxEnqueue.server";
 import {
   isMerchantEnterpriseAutomationWorkerEnabled,
@@ -529,6 +530,17 @@ export function sleepWithSignal(milliseconds: number, signal: AbortSignal) {
   });
 }
 
+export async function waitForPausedEnterpriseWorkerShutdown(
+  signal: AbortSignal,
+  sleep: typeof sleepWithSignal = sleepWithSignal,
+) {
+  // Keep the supervised process alive without initializing clients or jobs.
+  // Resume requires an explicit environment update and process restart.
+  while (!signal.aborted) {
+    await sleep(60_000, signal);
+  }
+}
+
 function withShutdownSignal(
   handler: MerchantOutboxTaskHandler,
   workerSignal: AbortSignal,
@@ -662,10 +674,18 @@ export async function runMerchantEnterpriseAutomationWorker(
     }
     cycles += 1;
     try {
+      if (areBackgroundJobsPaused()) {
+        await sleep(input.config.pollIntervalMs, input.signal);
+        continue;
+      }
       const merchantIds = await discoverMerchantIds(input.runtime, input.config, {
         afterMerchantId: discoveryCursor,
       });
       if (input.signal.aborted) break;
+      if (areBackgroundJobsPaused()) {
+        await sleep(input.config.pollIntervalMs, input.signal);
+        continue;
+      }
       if (merchantIds.length === 0) {
         consecutiveFailures = 0;
         await sleep(input.config.pollIntervalMs, input.signal);
@@ -734,10 +754,18 @@ export async function runMerchantEnterpriseInvitationWorker(
     }
     cycles += 1;
     try {
+      if (areBackgroundJobsPaused()) {
+        await sleep(input.config.pollIntervalMs, input.signal);
+        continue;
+      }
       const merchantIds = await discoverMerchantIds(input.runtime, input.config, {
         afterMerchantId: discoveryCursor,
       });
       if (input.signal.aborted) break;
+      if (areBackgroundJobsPaused()) {
+        await sleep(input.config.pollIntervalMs, input.signal);
+        continue;
+      }
       if (merchantIds.length === 0) {
         discoveryCursor = null;
         consecutiveFailures = 0;
@@ -784,14 +812,6 @@ export async function runMerchantEnterpriseInvitationWorker(
 
 async function main() {
   loadEnvConfig(process.cwd());
-  const automationConfig = resolveMerchantEnterpriseAutomationWorkerConfig();
-  const invitationConfig = resolveMerchantEnterpriseInvitationWorkerConfig();
-  if (!automationConfig.enabled && !invitationConfig.enabled) {
-    throw new Error("enterprise_workers_disabled");
-  }
-  const runtime = createMerchantEnterpriseAutomationWorkerRestRuntime();
-  const client = createServerSupabaseServiceClient();
-  if (!client) throw new Error("supabase_service_env_missing");
   const controller = new AbortController();
   const requestShutdown = (signal: string) => {
     console.info(`[enterprise-automation-worker] draining signal=${signal}`);
@@ -802,6 +822,20 @@ async function main() {
   process.once("SIGTERM", onSigterm);
   process.once("SIGINT", onSigint);
   try {
+    if (areBackgroundJobsPaused()) {
+      console.info("[enterprise-worker-supervisor] paused restart-required=true");
+      // Do not advertise schema-ready while initialization is deliberately skipped.
+      await waitForPausedEnterpriseWorkerShutdown(controller.signal);
+      return;
+    }
+    const automationConfig = resolveMerchantEnterpriseAutomationWorkerConfig();
+    const invitationConfig = resolveMerchantEnterpriseInvitationWorkerConfig();
+    if (!automationConfig.enabled && !invitationConfig.enabled) {
+      throw new Error("enterprise_workers_disabled");
+    }
+    const runtime = createMerchantEnterpriseAutomationWorkerRestRuntime();
+    const client = createServerSupabaseServiceClient();
+    if (!client) throw new Error("supabase_service_env_missing");
     const rpcClient = client as unknown as MerchantOutboxRpcClient & {
       auth: {
         admin: Parameters<
