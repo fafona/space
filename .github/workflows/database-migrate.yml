@@ -32,6 +32,13 @@ on:
         required: true
         type: boolean
         default: false
+      maintenance_mode:
+        description: Require a real held maintenance operation instead of live old-web smoke
+        type: boolean
+        default: false
+      maintenance_operation_id:
+        description: Exact operation UUID returned by maintenance prepare
+        required: false
 
 concurrency:
   group: production-deploy
@@ -50,6 +57,9 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       TARGET_SHA: ${{ inputs.target_sha }}
       EXPECTED_LIVE_APP_SHA: ${{ inputs.expected_live_app_sha }}
+      MAINTENANCE_MODE: ${{ inputs.maintenance_mode && 'maintenance' || 'off' }}
+      MAINTENANCE_OPERATION_ID: ${{ inputs.maintenance_operation_id }}
+      EXPECTED_OLD_SHA: ${{ inputs.maintenance_mode && inputs.expected_live_app_sha || '' }}
       THROUGH_VERSION: ${{ inputs.through }}
       FORWARD_REPAIR_CONFIRMED: ${{ inputs.forward_repair_confirmed }}
       FORWARD_REPAIR_CONFIRMATION: ${{ inputs.forward_repair_confirmation }}
@@ -277,12 +287,12 @@ jobs:
           const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
           if (!Array.isArray(pages) || pages.length === 0) fail("backup_artifact_pages_invalid");
           const artifacts = pages.flatMap((page) => {
-            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 5) {
+            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 6) {
               fail("backup_artifact_page_invalid");
             }
             return page.artifacts;
           });
-          if (artifacts.length !== 5) fail("backup_artifact_inventory_count_invalid");
+          if (artifacts.length !== 6) fail("backup_artifact_inventory_count_invalid");
           const suffix = `${process.env.BACKUP_RUN_ID}-${process.env.BACKUP_RUN_ATTEMPT}`;
           const expected = new Map([
             [`faolla-encrypted-disaster-recovery-${suffix}`, "primary"],
@@ -290,6 +300,7 @@ jobs:
             [`faolla-backup-verification-reports-${suffix}`, "verificationReports"],
             [`faolla-encrypted-backup-attestation-bundle-${suffix}`, "encryptedAttestationBundle"],
             [`faolla-production-backup-attestation-bundle-${suffix}`, "productionAttestationBundle"],
+            [`faolla-maintenance-backup-binding-${suffix}`, "maintenanceBinding"],
           ]);
           const byRole = new Map();
           const ids = new Set();
@@ -536,7 +547,40 @@ jobs:
           rm -f -- "$first_summary_path" "$primary_artifact_json"
           rmdir "$evidence_root"
 
+      - name: Verify Signed Backup Maintenance Binding
+        id: maintenance-binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BINDING_RUN_ID: ${{ env.BACKUP_RUN_ID }}
+          BINDING_RUN_ATTEMPT: ${{ steps.chain.outputs.backup_run_attempt }}
+          BINDING_TARGET_SHA: ${{ env.TARGET_SHA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$BINDING_RUN_ID" =~ ^[1-9][0-9]*$ && "$BINDING_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BINDING_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          binding_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-binding.XXXXXXXX")"
+          trap 'rm -f -- "$binding_dir/production-maintenance-binding.json" "$binding_dir/provenance.json"; rmdir -- "$binding_dir"' EXIT
+          gh run download "$BINDING_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "faolla-maintenance-backup-binding-$BINDING_RUN_ID-$BINDING_RUN_ATTEMPT" --dir "$binding_dir"
+          test -f "$binding_dir/production-maintenance-binding.json"
+          test ! -L "$binding_dir/production-maintenance-binding.json"
+          gh attestation verify "$binding_dir/production-maintenance-binding.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/database-backup.yml" \
+            --source-digest "$BINDING_TARGET_SHA" --source-ref refs/heads/main \
+            --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+            --limit 10 --format json > "$binding_dir/provenance.json"
+          node scripts/production-maintenance-workflow-contract.mjs verify \
+            --file "$binding_dir/production-maintenance-binding.json" --provenance "$binding_dir/provenance.json" \
+            --phase backup --target-sha "$BINDING_TARGET_SHA" \
+            --run-id "$BINDING_RUN_ID" --run-attempt "$BINDING_RUN_ATTEMPT" \
+            --mode "$MAINTENANCE_MODE" --operation-id "$MAINTENANCE_OPERATION_ID" --old-sha "$EXPECTED_OLD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Verify Expected Live Application Build Exactly
+        if: env.MAINTENANCE_MODE == 'off'
         shell: bash
         run: |
           set -euo pipefail
@@ -619,6 +663,49 @@ jobs:
           test -f "$FAOLLA_MIGRATION_WORKTREE/scripts/production-release-attestation.mjs"
           test -f "$repository_dir/.env.local"
           REMOTE
+
+      - name: Verify Held Maintenance Before Migration
+        if: env.MAINTENANCE_MODE == 'maintenance'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ env.REMOTE_MIGRATION_WORKTREE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q check-held --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state held --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
 
       - name: Revalidate Evidence And Apply Exact Through
         env:
@@ -708,12 +795,12 @@ jobs:
           ) fail("jit_backup_workflow_contract_invalid");
           if (!Array.isArray(pages) || pages.length === 0) fail("jit_backup_artifact_pages_invalid");
           const artifacts = pages.flatMap((page) => {
-            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 5) {
+            if (!page || !Array.isArray(page.artifacts) || page.total_count !== 6) {
               fail("jit_backup_artifact_page_invalid");
             }
             return page.artifacts;
           });
-          if (artifacts.length !== 5) fail("jit_backup_artifact_inventory_count_invalid");
+          if (artifacts.length !== 6) fail("jit_backup_artifact_inventory_count_invalid");
           const suffix = `${process.env.BACKUP_RUN_ID}-${process.env.BACKUP_RUN_ATTEMPT}`;
           const expectedNames = new Set([
             `faolla-encrypted-disaster-recovery-${suffix}`,
@@ -721,6 +808,7 @@ jobs:
             `faolla-backup-verification-reports-${suffix}`,
             `faolla-encrypted-backup-attestation-bundle-${suffix}`,
             `faolla-production-backup-attestation-bundle-${suffix}`,
+            `faolla-maintenance-backup-binding-${suffix}`,
           ]);
           const names = new Set();
           const ids = new Set();
@@ -767,11 +855,11 @@ jobs:
           mapfile -t jit_artifact_ids < <(node --input-type=module - "$jit_manifest" <<'NODE'
           import { readFileSync } from "node:fs";
           const artifacts = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (!Array.isArray(artifacts) || artifacts.length !== 5) process.exit(1);
+          if (!Array.isArray(artifacts) || artifacts.length !== 6) process.exit(1);
           for (const artifact of artifacts) process.stdout.write(`${artifact.id}\n`);
           NODE
           )
-          test "${#jit_artifact_ids[@]}" = "5"
+          test "${#jit_artifact_ids[@]}" = "6"
           for artifact_id in "${jit_artifact_ids[@]}"; do
             [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
             gh api --method GET \
@@ -1172,7 +1260,51 @@ jobs:
           NODE
           fi
 
+      - name: Verify Held Maintenance After Migration
+        if: env.MAINTENANCE_MODE == 'maintenance'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ env.REMOTE_MIGRATION_WORKTREE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q check-held --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state held --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
+
       - name: Verify Expected Live Application Build Remains Exact
+        if: env.MAINTENANCE_MODE == 'off'
         shell: bash
         run: |
           set -euo pipefail

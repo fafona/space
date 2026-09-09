@@ -2,17 +2,16 @@ import {
   normalizeMerchantMembershipSettings,
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
-import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+import { commitMerchantRedemptionTransaction } from "@/lib/merchantRedemptionTransaction.server";
+import type { MerchantTransactionClient } from "@/lib/merchantOrderMembershipTransaction.server";
 
 const MERCHANT_MEMBERSHIP_SETTINGS_SLUG_PREFIX = "__merchant_membership_settings__:";
-const MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_SLUG_PREFIX = "__merchant_membership_settings_history__:";
-const MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_membership_settings_history_backup__:";
 
 export type MerchantMembershipSettingsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from: (table: string) => any;
-};
+} & MerchantTransactionClient;
 
 type StoredMerchantMembershipSettingsRow = {
   id?: string | number | null;
@@ -54,14 +53,6 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildSettingsSlug(siteId: string) {
   return `${MERCHANT_MEMBERSHIP_SETTINGS_SLUG_PREFIX}${siteId}`;
-}
-
-function buildSettingsHistorySlug(siteId: string) {
-  return `${MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_SLUG_PREFIX}${siteId}`;
-}
-
-function buildSettingsHistoryBackupSlug(siteId: string) {
-  return `${MERCHANT_MEMBERSHIP_SETTINGS_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredSettingsRows(supabase: MerchantMembershipSettingsStoreClient, siteId: string) {
@@ -108,8 +99,9 @@ async function queryStoredSettingsRows(supabase: MerchantMembershipSettingsStore
     }
   }
 
-  if (error) return [];
-  return Array.isArray(data) ? data : [];
+  if (error) throw new Error(`merchant_membership_settings_read_failed:${toErrorMessage(error)}`);
+  if (!Array.isArray(data)) throw new Error("merchant_membership_settings_read_failed:invalid_rows");
+  return data;
 }
 
 export async function loadStoredMerchantMembershipSettings(
@@ -137,70 +129,22 @@ export async function saveStoredMerchantMembershipSettings(
     expectedUpdatedAt?: string | null;
     view?: unknown;
   },
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; updatedAt?: string | null }> {
   const normalizedSiteId = normalizeText(input.siteId);
   if (!normalizedSiteId) return { error: "invalid_site_id" };
-  const slug = buildSettingsSlug(normalizedSiteId);
+  if (!Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt") ||
+    (input.expectedUpdatedAt !== null && typeof input.expectedUpdatedAt !== "string")) {
+    return { error: "merchant_membership_settings_conflict" };
+  }
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
   const settings = normalizeMerchantMembershipSettings(normalizedSiteId, {
     ...input.settings,
     siteId: normalizedSiteId,
     updatedAt,
   });
-  const existing = (await queryStoredSettingsRows(supabase, normalizedSiteId))[0];
-  const shouldCheckVersion = Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt");
-  const expectedUpdatedAt = normalizeText(input.expectedUpdatedAt);
-  const existingUpdatedAt = normalizeText(existing?.updated_at);
-  if (shouldCheckVersion && expectedUpdatedAt !== existingUpdatedAt) {
-    return { error: "merchant_membership_settings_conflict" };
-  }
-  const beforeSettings = existing ? normalizeMerchantMembershipSettings(normalizedSiteId, existing.blocks) : null;
-  const history = await saveMerchantSnapshotHistory(supabase, {
-    siteId: normalizedSiteId,
-    slug: buildSettingsHistorySlug(normalizedSiteId),
-    backupSlug: buildSettingsHistoryBackupSlug(normalizedSiteId),
-    source: normalizeText(input.view) || "membership-settings",
-    before: beforeSettings,
-    after: settings,
-    at: updatedAt,
+  const committed = await commitMerchantRedemptionTransaction(supabase, normalizedSiteId, {
+    settings: { expectedUpdatedAt: input.expectedUpdatedAt, next: settings },
   });
-  if (history.error) return { error: `membership_settings_history_save_failed:${history.error}` };
-
-  const updateExisting = async (body: Record<string, unknown>) => {
-    if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-    let query = supabase.from("pages").update(body).eq("id", existing.id);
-    if (shouldCheckVersion && expectedUpdatedAt) {
-      query = query.eq("updated_at", expectedUpdatedAt).select("id");
-    }
-    const updated = await query;
-    if (updated.error) return { error: toErrorMessage(updated.error) };
-    if (shouldCheckVersion && expectedUpdatedAt && Array.isArray(updated.data) && updated.data.length === 0) {
-      return { error: "merchant_membership_settings_conflict" };
-    }
-    return { error: null };
-  };
-
-  const insertNew = async (body: Record<string, unknown>) => {
-    const inserted = await supabase.from("pages").insert({
-      ...body,
-      slug,
-      merchant_id: normalizedSiteId,
-    });
-    const error = inserted.error ? toErrorMessage(inserted.error) : null;
-    if (!error || !isMissingMerchantIdColumn(error)) return { error };
-    const retry = await supabase.from("pages").insert({
-      ...body,
-      slug,
-    });
-    return retry.error ? { error: toErrorMessage(retry.error) } : { error: null };
-  };
-
-  const basePayload = {
-    blocks: settings,
-    updated_at: updatedAt,
-  };
-  const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
-  if (!first.error) return first;
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return existing ? updateExisting({ blocks: settings }) : insertNew({ blocks: settings });
+  if (committed.error) return { error: committed.error };
+  return { error: null, updatedAt: committed.versions?.settings ?? null };
 }

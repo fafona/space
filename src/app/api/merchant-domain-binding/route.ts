@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getPlatformSnapshotWriteMode, PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID } from "@/lib/platformSnapshotAtomicMode.server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantContactVisibility, MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
@@ -479,6 +480,12 @@ export async function POST(request: Request) {
     const authorized = await isAuthorizedForMerchant(request, supabase, merchantId);
     if (!authorized) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
+    // Reject a misspelled cutover mode before the earlier page/name writes too.
+    // Atomic snapshot mode does not make those other tables part of its transaction.
+    try { getPlatformSnapshotWriteMode(); } catch {
+      return NextResponse.json({ error: PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID }, { status: 503 });
     }
 
     const slugResult = await updateMerchantSlug(supabase, merchantId, domainPrefix);

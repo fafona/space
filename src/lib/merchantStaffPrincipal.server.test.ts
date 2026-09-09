@@ -107,7 +107,6 @@ test("legacy owner-only token routes apply the staff principal guard", () => {
     "src/app/api/publish/route.ts",
     "src/app/api/merchant-draft/route.ts",
     "src/app/api/merchant-domain-binding/route.ts",
-    "src/app/api/merchant-chat-business-card/route.ts",
   ].forEach((relativePath) => {
     const source = fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
     assert.match(
@@ -116,4 +115,36 @@ test("legacy owner-only token routes apply the staff principal guard", () => {
       relativePath,
     );
   });
+});
+
+test("chat token handlers bind the real staff guard and await its acceptance before owner lookup", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/merchant-chat-business-card/route.ts"), "utf8");
+  assert.match(source, /import \{ assertLegacyMerchantIdentityAllowed \} from "@\/lib\/merchantStaffPrincipal\.server"/);
+  const defaultsStart = source.indexOf("const defaultDependencies:");
+  const defaultsEnd = source.indexOf("function normalizeText(", defaultsStart);
+  assert.ok(defaultsStart >= 0 && defaultsEnd > defaultsStart);
+  assert.match(source.slice(defaultsStart, defaultsEnd), /assertLegacyIdentityAllowed:\s*assertLegacyMerchantIdentityAllowed\s*,/);
+
+  const authorizationStart = source.indexOf("async function isAuthorizedForMerchant(");
+  const authorizationEnd = source.indexOf("async function resolveMerchantName(", authorizationStart);
+  assert.ok(authorizationStart >= 0 && authorizationEnd > authorizationStart);
+  const authorization = source.slice(authorizationStart, authorizationEnd);
+  const authenticate = authorization.indexOf("await supabase.auth.getUser(accessToken)");
+  const guard = authorization.indexOf("await dependencies.assertLegacyIdentityAllowed(");
+  const refusal = authorization.indexOf("if (!legacyIdentityAllowed) continue;");
+  const ownerLookup = authorization.indexOf("await getAuthorizedMerchantIds(");
+  assert.ok(authenticate >= 0 && guard > authenticate && refusal > guard && ownerLookup > refusal,
+    "a verified token must pass the staff guard before its aliases can authorize an owner");
+  assert.match(authorization.slice(guard, refusal), /authResult\.data\.user,[\s\S]*\)\.then\(\s*\(\) => true,\s*\(\) => false,/,
+    "staff or unavailable-authority rejection must fail closed, not authorize legacy aliases");
+
+  // A mockable handler is safe only if the actual Next exports use the real
+  // default dependencies and select the intended read/write policy.
+  for (const [method, suffix, access] of [["GET", "Get", "read"], ["POST", "Post", "write"]] as const) {
+    assert.match(source, new RegExp(`export async function handleMerchantChatBusinessCard${suffix}\\(\\s*request: Request,\\s*dependencies: MerchantChatBusinessCardDependencies = defaultDependencies,`));
+    assert.match(source, new RegExp(`export async function ${method}\\(request: Request\\) \\{\\s*return handleMerchantChatBusinessCard${suffix}\\(request\\);\\s*\\}`));
+    const start = source.indexOf(`export async function handleMerchantChatBusinessCard${suffix}(`);
+    const nextExport = source.indexOf("export async function ", start + 1);
+    assert.match(source.slice(start, nextExport), new RegExp(`await isAuthorizedForMerchant\\(request, supabase, merchantId, "${access}", dependencies\\)`));
+  }
 });

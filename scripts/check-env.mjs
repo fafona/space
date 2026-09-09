@@ -205,6 +205,12 @@ const supabaseUrlIssue = validateSupabaseUrl(mergedEnv.NEXT_PUBLIC_SUPABASE_URL)
 if (supabaseUrlIssue) invalidMessages.push(supabaseUrlIssue);
 invalidMessages.push(...validateLegacyPersonalRecovery(mergedEnv));
 invalidMessages.push(...validateMerchantStaffBusinessRbac(mergedEnv));
+const platformSnapshotWriteMode = mergedEnv.FAOLLA_PLATFORM_SNAPSHOT_WRITE_MODE;
+if (platformSnapshotWriteMode !== undefined && platformSnapshotWriteMode !== "" && platformSnapshotWriteMode !== "off") {
+  invalidMessages.push(platformSnapshotWriteMode === "atomic"
+    ? "Platform snapshot atomic mode is local-candidate-only; production build/cutover is not approved yet."
+    : "FAOLLA_PLATFORM_SNAPSHOT_WRITE_MODE must be the exact off value for this release.");
+}
 
 if (missingKeys.length === 0 && invalidMessages.length === 0) {
   console.log("[env-check] OK");

@@ -692,6 +692,7 @@ function validBackupArtifactInventory() {
     `faolla-backup-verification-reports-${suffix}`,
     `faolla-encrypted-backup-attestation-bundle-${suffix}`,
     `faolla-production-backup-attestation-bundle-${suffix}`,
+    `faolla-maintenance-backup-binding-${suffix}`,
   ];
   const createdAt = new Date(Date.now() - 60_000).toISOString().replace(".000Z", "Z");
   const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000)
@@ -699,7 +700,7 @@ function validBackupArtifactInventory() {
     .replace(".000Z", "Z");
   return [
     {
-      total_count: 5,
+      total_count: 6,
       artifacts: names.map((name, index) => ({
         id: 91001 + index,
         name,
@@ -833,7 +834,7 @@ test("main, CI, backup run, and backup workflow mismatches fail closed", async (
   }
 });
 
-test("valid exact-five backup artifact inventory is accepted and normalized", async () => {
+test("valid exact-six backup artifact inventory is accepted and normalized", async () => {
   const { output, result } = await runArtifactInventoryScenario();
   assert.equal(result.status, 0, result.stderr);
   assert.match(output, /id=91002/);
@@ -1258,15 +1259,16 @@ test("blocked readiness preserves one report artifact then fails before attestat
   );
   assert.equal(
     (workflow.slice(gateIndex).match(/uses: actions\/upload-artifact@v4/g) ?? []).length,
-    1,
+    2,
   );
   assert.equal(
     (workflow.slice(gateIndex).match(/uses: actions\/attest@v4/g) ?? []).length,
-    2,
+    3,
   );
-  const cleanupIndex = workflow.indexOf("- name: Remove Remote Exact Readiness Source");
+  const maintenanceHeldIndex = workflow.indexOf("- name: Verify Held Maintenance After Readiness");
+  assert.ok(maintenanceHeldIndex > attestationUploadIndex);
   assert.doesNotMatch(
-    workflow.slice(attestationBuildIndex, cleanupIndex),
+    workflow.slice(attestationBuildIndex, maintenanceHeldIndex),
     /^\s+if:/m,
   );
 });
@@ -1351,19 +1353,20 @@ test("builder and readiness validator bind every upstream ID, digest, TTL, and s
   assert.match(workflow, /new Date\(timestamp\)\.toISOString\(\)/);
 });
 
-test("success publishes exactly the two canonical readiness artifacts and native attestations", () => {
+test("success publishes two canonical readiness artifacts plus their maintenance binding and attestations", () => {
   const uploadActions = workflow.match(/uses: actions\/upload-artifact@v4/g) ?? [];
-  assert.equal(uploadActions.length, 2);
+  assert.equal(uploadActions.length, 3);
   assert.match(workflow, /name: faolla-production-readiness-report-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}[\s\S]*?path: \$\{\{ env\.READINESS_REPORT_PATH \}\}/);
   assert.match(workflow, /name: faolla-production-readiness-attestation-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}[\s\S]*?path: \$\{\{ env\.READINESS_ATTESTATION_PATH \}\}/);
   assert.match(workflow, /READINESS_REPORT_PATH: production-readiness-report\.json/);
   assert.match(workflow, /READINESS_ATTESTATION_PATH: production-readiness-attestation\.json/);
   const attestActions = workflow.match(/uses: actions\/attest@v4/g) ?? [];
-  assert.equal(attestActions.length, 2);
+  assert.equal(attestActions.length, 3);
   assert.match(workflow, /subject-path: \$\{\{ env\.READINESS_REPORT_PATH \}\}/);
   assert.match(workflow, /subject-path: \$\{\{ env\.READINESS_ATTESTATION_PATH \}\}/);
-  assert.match(workflow, /artifacts\.length !== 2/);
-  assert.match(workflow, /page\.total_count !== 2/);
+  assert.match(workflow, /artifacts\.length !== 3/);
+  assert.match(workflow, /page\.total_count !== 3/);
+  assert.match(workflow, /faolla-maintenance-readiness-binding-/);
   assert.doesNotMatch(workflow, /if:\s*failure\(\)[\s\S]{0,300}upload-artifact/);
   assert.doesNotMatch(workflow, /diagnostic[^\n]*artifact/i);
 });

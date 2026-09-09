@@ -1,14 +1,16 @@
 import { normalizeMerchantCouponRecords, type MerchantCouponRecord } from "@/lib/merchantCoupons";
-import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+import { commitMerchantRedemptionTransaction } from "@/lib/merchantRedemptionTransaction.server";
 
 const MERCHANT_COUPON_SLUG_PREFIX = "__merchant_coupons__:";
-const MERCHANT_COUPON_HISTORY_SLUG_PREFIX = "__merchant_coupons_history__:";
-const MERCHANT_COUPON_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_coupons_history_backup__:";
 
 export type MerchantCouponsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from: (table: string) => any;
+  rpc?: (
+    functionName: string,
+    args: Record<string, unknown>,
+  ) => PromiseLike<{ data?: unknown; error?: unknown }>;
 };
 
 export type StoredMerchantCoupons = {
@@ -62,14 +64,6 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildCouponsSlug(siteId: string) {
   return `${MERCHANT_COUPON_SLUG_PREFIX}${siteId}`;
-}
-
-function buildCouponsHistorySlug(siteId: string) {
-  return `${MERCHANT_COUPON_HISTORY_SLUG_PREFIX}${siteId}`;
-}
-
-function buildCouponsHistoryBackupSlug(siteId: string) {
-  return `${MERCHANT_COUPON_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
 }
 
 async function queryStoredCouponRows(supabase: MerchantCouponsStoreClient, siteId: string) {
@@ -172,61 +166,27 @@ export async function saveStoredMerchantCoupons(
   input: {
     siteId: string;
     coupons: MerchantCouponRecord[];
+    expectedUpdatedAt: string | null;
     updatedAt?: string | null;
     existingRowId?: string | number | null;
   },
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeText(input.siteId);
   if (!normalizedSiteId) return { error: "invalid_site_id" };
-  const slug = buildCouponsSlug(normalizedSiteId);
+  if (
+    !Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt") ||
+    (input.expectedUpdatedAt !== null &&
+      (typeof input.expectedUpdatedAt !== "string" || !input.expectedUpdatedAt.trim()))
+  ) {
+    return { error: "merchant_coupons_expected_version_required" };
+  }
   const coupons = normalizeMerchantCouponRecords(input.coupons).filter((coupon) => coupon.siteId === normalizedSiteId);
-  const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const hasKnownExistingRow = Object.prototype.hasOwnProperty.call(input, "existingRowId");
-  const beforeCoupons = (await loadStoredMerchantCoupons(supabase, normalizedSiteId))?.coupons ?? null;
-  const history = await saveMerchantSnapshotHistory(supabase, {
-    siteId: normalizedSiteId,
-    slug: buildCouponsHistorySlug(normalizedSiteId),
-    backupSlug: buildCouponsHistoryBackupSlug(normalizedSiteId),
-    source: "merchant-coupons",
-    before: beforeCoupons,
-    after: coupons,
-    at: updatedAt,
-    maxEntries: 30,
+  // Preserve the original read version. The transaction checks it under the
+  // database lock and commits history with the data, never through old writes.
+  return commitMerchantRedemptionTransaction(supabase, normalizedSiteId, {
+    coupons: {
+      expectedUpdatedAt: input.expectedUpdatedAt === null ? null : input.expectedUpdatedAt.trim(),
+      next: coupons,
+    },
   });
-  if (history.error) return { error: `merchant_coupons_history_save_failed:${history.error}` };
-  const existing = hasKnownExistingRow
-    ? input.existingRowId !== undefined && input.existingRowId !== null
-      ? ({ id: input.existingRowId } as StoredMerchantCouponsRow)
-      : undefined
-    : (await queryStoredCouponRows(supabase, normalizedSiteId))[0];
-
-  const updateExisting = async (body: Record<string, unknown>) => {
-    if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-    const updated = await supabase.from("pages").update(body).eq("id", existing.id);
-    return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
-  };
-
-  const insertNew = async (body: Record<string, unknown>) => {
-    const inserted = await supabase.from("pages").insert({
-      ...body,
-      slug,
-      merchant_id: normalizedSiteId,
-    });
-    const error = inserted.error ? toErrorMessage(inserted.error) : null;
-    if (!error || !isMissingMerchantIdColumn(error)) return { error };
-    const retry = await supabase.from("pages").insert({
-      ...body,
-      slug,
-    });
-    return retry.error ? { error: toErrorMessage(retry.error) } : { error: null };
-  };
-
-  const basePayload = {
-    blocks: coupons,
-    updated_at: updatedAt,
-  };
-  const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
-  if (!first.error) return first;
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return existing ? updateExisting({ blocks: coupons }) : insertNew({ blocks: coupons });
 }

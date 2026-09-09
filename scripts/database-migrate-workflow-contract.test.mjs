@@ -228,6 +228,7 @@ function validArtifacts() {
     `faolla-backup-verification-reports-${suffix}`,
     `faolla-encrypted-backup-attestation-bundle-${suffix}`,
     `faolla-production-backup-attestation-bundle-${suffix}`,
+    `faolla-maintenance-backup-binding-${suffix}`,
   ];
   const createdAt = new Date(Date.now() - 60_000).toISOString();
   const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
@@ -248,7 +249,7 @@ function validArtifacts() {
 }
 
 function validArtifactPages() {
-  return [{ total_count: 5, artifacts: validArtifacts() }];
+  return [{ total_count: 6, artifacts: validArtifacts() }];
 }
 
 const baseline = Object.fromEntries(
@@ -761,7 +762,7 @@ test("hostile main, CI, backup run, and workflow substitutions fail closed", asy
   }
 });
 
-test("exact-five backup artifact inventory accepts only run-attempt-qualified artifacts", async () => {
+test("exact-six backup artifact inventory accepts only run-attempt-qualified artifacts", async () => {
   const { result, output } = await runInventoryScenario();
   assert.equal(result.status, 0, result.stderr);
   assert.match(output, /id=91002/);
@@ -790,7 +791,7 @@ test("hostile initial artifact count, identity, digest, size, expiry, and run bi
   }
 });
 
-test("just-in-time backup run, workflow, exact-five list, and canonical bindings are dynamic", async () => {
+test("just-in-time backup run, workflow, exact-six list, and canonical bindings are dynamic", async () => {
   const { result } = await runJitInventoryScenario();
   assert.equal(result.status, 0, result.stderr);
   const mutations = [

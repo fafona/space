@@ -128,6 +128,7 @@ async function mirrorConversationMutation(
   options?: {
     config?: MerchantConversationDualWriteConfig;
     logger?: MerchantConversationShadowLogger;
+    awaitSettlement?: boolean;
   },
 ): Promise<MerchantConversationDualWriteResult> {
   const config =
@@ -157,6 +158,10 @@ async function mirrorConversationMutation(
       }),
     ]);
     if (result === timeoutToken) {
+      // Required restore writes must not release their caller/queue while this
+      // already-started RPC can still finish. This is not cancellation: a hung
+      // transport may wait indefinitely, and process termination remains unknown.
+      if (options?.awaitSettlement) await query.catch(() => undefined);
       const error = `shadow_write_timeout:${config.timeoutMs}`;
       (options?.logger ?? defaultShadowLogger)({
         event: "merchant_conversation_shadow_write_failed",
@@ -170,6 +175,9 @@ async function mirrorConversationMutation(
       return { status: "timeout", count, error };
     }
     if (result.error) throw result.error;
+    if (options?.awaitSettlement && (result.error !== null || typeof result.data !== "number" || !Number.isSafeInteger(result.data) || result.data < 0)) {
+      throw new Error("shadow_write_unconfirmed");
+    }
     return { status: "written", count };
   } catch (error) {
     const message = toErrorMessage(error);
@@ -226,6 +234,8 @@ export function mirrorPlatformSupportConversationSnapshot(
     config?: MerchantConversationDualWriteConfig;
     logger?: MerchantConversationShadowLogger;
     buildMutation?: typeof buildPlatformSupportConversationV1Mutation;
+    /** Restore-only: a timeout stays a failure, but wait for the RPC to settle. */
+    awaitSettlement?: boolean;
   },
 ) {
   return mirrorConversationMutation(

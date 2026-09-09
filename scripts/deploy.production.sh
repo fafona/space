@@ -53,6 +53,9 @@ DEPLOY_PAYLOAD_KEYS=(
   SUPER_ADMIN_PASSWORD
   SUPER_ADMIN_VERIFICATION_EMAIL
   SUPER_ADMIN_VERIFICATION_SECRET
+  PRODUCTION_MAINTENANCE_MODE
+  PRODUCTION_MAINTENANCE_OPERATION_ID
+  PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA
 )
 
 load_deploy_payload() {
@@ -107,7 +110,8 @@ load_deploy_payload() {
       ORDINARY_LEGACY_PERSONAL_RECOVERY_HMAC_SECRET_B64|\
       RESEND_API_KEY_B64|WEB_PUSH_PUBLIC_KEY|WEB_PUSH_PRIVATE_KEY|\
       WEB_PUSH_SUBJECT|SUPER_ADMIN_ACCOUNT|SUPER_ADMIN_PASSWORD|\
-      SUPER_ADMIN_VERIFICATION_EMAIL|SUPER_ADMIN_VERIFICATION_SECRET)
+      SUPER_ADMIN_VERIFICATION_EMAIL|SUPER_ADMIN_VERIFICATION_SECRET|\
+      PRODUCTION_MAINTENANCE_MODE|PRODUCTION_MAINTENANCE_OPERATION_ID|PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA)
         printf -v "$payload_key" '%s' "$payload_value"
         loaded_count=$((loaded_count + 1))
         ;;
@@ -195,6 +199,9 @@ const expectedKeys = [
   "SUPER_ADMIN_PASSWORD",
   "SUPER_ADMIN_VERIFICATION_EMAIL",
   "SUPER_ADMIN_VERIFICATION_SECRET",
+  "PRODUCTION_MAINTENANCE_MODE",
+  "PRODUCTION_MAINTENANCE_OPERATION_ID",
+  "PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA",
 ];
 const fail = () => process.exit(1);
 const isPlainRecord = (value) => {
@@ -473,6 +480,74 @@ cleanup_initial_release_evidence() {
   rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE"
 }
 trap cleanup_initial_release_evidence EXIT
+
+case "$PRODUCTION_MAINTENANCE_MODE" in
+  off)
+    [ -z "$PRODUCTION_MAINTENANCE_OPERATION_ID" ] && [ -z "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" ] || exit 1
+    ;;
+  maintenance)
+    [[ "$PRODUCTION_MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+      && [[ "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+    ;;
+  *) echo "[deploy] production maintenance binding is invalid"; exit 1 ;;
+esac
+
+maintenance_control() {
+  local operation="$1"
+  [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ] || return 1
+  case "$operation" in check-held|check-runtime-held|register-candidate|check-candidate|fail-held) ;; *) return 1 ;; esac
+  timeout --signal=TERM --kill-after=5s 120s \
+    node "$APP_DIR/scripts/production-maintenance-control.mjs" "$operation" \
+      --app-dir "$APP_DIR" --app-name "$APP_NAME" --app-port "$APP_PORT" \
+      --target-sha "$EXPECTED_DEPLOY_SHA" --expected-old-sha "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" \
+      --expected-operation-id "$PRODUCTION_MAINTENANCE_OPERATION_ID" --json >/dev/null 2>&1
+}
+
+load_maintenance_previous_runtime() {
+  local key value count=0
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    case "$key" in
+      PREVIOUS_LINK_TARGET|PREVIOUS_RUNTIME_DIR|PREVIOUS_RUNTIME_PARENT|PREVIOUS_RELEASE_NAME|PREVIOUS_BUILD_PREFIX|\
+      PREVIOUS_BUILD_ID|PREVIOUS_RUNTIME_IDENTITY|PREVIOUS_WEB_CWD_IDENTITY|PREVIOUS_WEB_PID|PREVIOUS_WEB_PROCESS_START_TICKS|\
+      PREVIOUS_WEB_PROCESS_IDENTITY|PREVIOUS_ENVIRONMENT_DIRECTORY_IDENTITY|PREVIOUS_ENVIRONMENT_FILE_IDENTITY|\
+      PREVIOUS_ENVIRONMENT_SHA256|PREVIOUS_SUPABASE_INTERNAL_URL|PREVIOUS_NEXT_PUBLIC_SUPABASE_URL|PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY|\
+      PREVIOUS_SUPABASE_INTERNAL_URL_B64|PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64|PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64|\
+      PREVIOUS_STAFF_ROLLOUT_STATUS|PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN|PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE|\
+      PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS|PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN|\
+      PREVIOUS_AUTOMATION_WORKER_STATE|PREVIOUS_AUTOMATION_WORKER_RUNNING)
+        printf -v "$key" '%s' "$value"; count=$((count + 1)) ;;
+      *) return 1 ;;
+    esac
+  done < <(timeout --signal=TERM --kill-after=5s 120s node --input-type=module - \
+      "$APP_DIR" "$APP_NAME" "$APP_PORT" "$EXPECTED_DEPLOY_SHA" \
+      "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" "$PRODUCTION_MAINTENANCE_OPERATION_ID" <<'NODE'
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+const [appDir, appName, appPort, targetSha, expectedOldSha, operationId] = process.argv.slice(2);
+try {
+  const result = spawnSync(process.execPath, [appDir + "/scripts/production-maintenance-control.mjs", "runtime-handoff",
+    "--app-dir", appDir, "--app-name", appName, "--app-port", appPort, "--target-sha", targetSha,
+    "--expected-old-sha", expectedOldSha, "--expected-operation-id", operationId, "--json"],
+  { encoding: "utf8", timeout: 100000, maxBuffer: 131072, stdio: ["ignore", "pipe", "pipe"] });
+  if (result.error || result.signal || result.status !== 0) throw new Error();
+  const value = JSON.parse(result.stdout);
+  if (!value || Object.keys(value).sort().join(",") !== "expectedOldSha,operationId,runtime,state,targetSha,version" ||
+      value.version !== 1 || value.state !== "held" || value.operationId !== operationId || value.targetSha !== targetSha || value.expectedOldSha !== expectedOldSha) throw new Error();
+  const { validateRuntimeProof, readDeploymentHandoffFields } = await import(pathToFileURL(appDir + "/scripts/production-maintenance-runtime.mjs").href);
+  const proof = validateRuntimeProof(value.runtime);
+  if (proof.input.appDir !== appDir || proof.input.appName !== appName || String(proof.input.appPort) !== appPort || proof.input.expectedOldSha !== expectedOldSha) throw new Error();
+  const fields = await readDeploymentHandoffFields(proof);
+  if (Object.keys(fields).length !== 27) throw new Error();
+  for (const [key, value] of Object.entries(fields)) {
+    if (typeof value !== "string" || value.includes("\0")) throw new Error();
+    process.stdout.write(key + "\0" + value + "\0");
+  }
+} catch { process.exitCode = 1; }
+NODE
+  )
+  [ "$count" -eq 27 ] || return 1
+  maintenance_control check-held
+}
 
 if [ "$FAOLLA_CANONICAL_PORTAL_ORIGIN" != "https://launch.faolla.com" ]; then
   echo "[deploy] the canonical production portal origin must be https://launch.faolla.com"
@@ -1207,6 +1282,9 @@ validate_release_attestation_preflight
 # Capture rollback identity before any persistent environment or cache mutation.
 # In the legacy layout APP_DIR itself is the live runtime, so reading this after
 # write_env_value would substitute the new build ID into the rollback proof.
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  load_maintenance_previous_runtime || exit 1
+else
 PREVIOUS_LINK_TARGET="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 if [ -n "$PREVIOUS_LINK_TARGET" ] && [ -d "$PREVIOUS_LINK_TARGET/.next" ]; then
   PREVIOUS_RUNTIME_DIR="$PREVIOUS_LINK_TARGET"
@@ -1255,6 +1333,8 @@ if ! PREVIOUS_BUILD_ID="$(
   || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
   echo "[deploy] an exact previous atomic release is required before environment mutation"
   exit 1
+fi
+
 fi
 
 # An enforce release may persist permission keys that older strict parsers do
@@ -1428,8 +1508,9 @@ NODE
   )" \
     || [ "$PREVIOUS_STAFF_BUSINESS_COMPATIBILITY" != "v1:39:bf35ba5e297d8a9dc0f164cd02063758ed245fd4d66ccfd71e45929c884c09a2:4d82b7912ff8acfd21550cc9d6884bb5bd75189aaef89fd7a4b0acd89ea3c2e5" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
-    || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
-    || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ] \
+    || { [ "$PRODUCTION_MAINTENANCE_MODE" = off ] && { \
+      [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
+      || [ "$(stat -Lc '%d:%i' -- "/proc/$PREVIOUS_WEB_PID" 2>/dev/null || true)" != "$PREVIOUS_WEB_PROCESS_IDENTITY" ]; }; } \
     || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
     echo "[deploy] deploy_preflight_staff_compatibility_marker_failed"
     echo "[deploy] staff business enforce requires a compatible frozen rollback release"
@@ -1541,6 +1622,7 @@ decode_frozen_environment_value() {
   printf '%s' "$encoded" | base64 -d
 }
 
+if [ "$PRODUCTION_MAINTENANCE_MODE" = off ]; then
 PREVIOUS_SUPABASE_INTERNAL_URL=""
 PREVIOUS_NEXT_PUBLIC_SUPABASE_URL=""
 PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY=""
@@ -1760,6 +1842,16 @@ if ! CURRENT_PREVIOUS_WEB_PID="$(timeout --signal=TERM --kill-after=1s 2s \
 fi
 unset CURRENT_PREVIOUS_WEB_PID CURRENT_PREVIOUS_WEB_PROCESS_START_TICKS \
   PREVIOUS_PROCESS_ENVIRONMENT_STATUS
+else
+  maintenance_control check-held || exit 1
+  staff_business_rollout_values_valid \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE" \
+    "$PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" \
+    "$PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN" \
+    "$PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN" || exit 1
+  if [ "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" = enforce ] \
+    && [ "$PREVIOUS_STAFF_ROLLOUT_STATUS" != explicit ]; then exit 1; fi
+fi
 unset PREVIOUS_RUNTIME_PARENT PREVIOUS_RELEASE_NAME PREVIOUS_BUILD_PREFIX
 
 FAOLLA_WEB_BUILD_ID="$EXPECTED_DEPLOY_SHA"
@@ -1822,6 +1914,10 @@ if [ -z "$FINAL_NEXT_PUBLIC_SUPABASE_URL" ]; then
   exit 1
 fi
 if [ -z "$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+  if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+    maintenance_control check-held || exit 1
+    PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64="$PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64"
+  else
   if [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "$PREVIOUS_RUNTIME_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$PREVIOUS_WEB_PID/cwd" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ] \
@@ -1838,6 +1934,7 @@ if [ -z "$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
     || [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_DIR" ]; then
     echo "[deploy] the previous atomic release Supabase environment is unavailable"
     exit 1
+  fi
   fi
   if [ -z "$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" ] \
     || ! [[ "$PERSISTED_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
@@ -1862,6 +1959,13 @@ fi
 export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"
 export NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL"
 export NEXT_PUBLIC_SUPABASE_ANON_KEY="$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  export FAOLLA_MAINTENANCE_APP_NAME="$APP_NAME"
+  export FAOLLA_MAINTENANCE_OPERATION_ID="$PRODUCTION_MAINTENANCE_OPERATION_ID"
+  export FAOLLA_MAINTENANCE_TARGET_SHA="$EXPECTED_DEPLOY_SHA"
+else
+  unset FAOLLA_MAINTENANCE_APP_NAME FAOLLA_MAINTENANCE_OPERATION_ID FAOLLA_MAINTENANCE_TARGET_SHA
+fi
 write_env_value "NEXT_PUBLIC_SUPABASE_URL" "$FINAL_NEXT_PUBLIC_SUPABASE_URL"
 write_env_value "SUPABASE_INTERNAL_URL" "$FINAL_SUPABASE_INTERNAL_URL"
 write_env_value "NEXT_PUBLIC_SUPABASE_ANON_KEY" "$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"
@@ -2381,6 +2485,8 @@ start_release() {
   local node_entry
   local runtime_root
   local next_entry
+  local background_jobs_paused="0"
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then background_jobs_paused="1"; fi
   if [ -z "$runtime_dir" ] || [ ! -f "$runtime_dir/package.json" ] || [ ! -d "$runtime_dir/.next" ]; then
     return 1
   fi
@@ -2406,7 +2512,8 @@ start_release() {
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
   (
     cd "$runtime_root" || exit 1
-    MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
+    FAOLLA_BACKGROUND_JOBS_PAUSED="$background_jobs_paused" \
+      MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED="$automation_worker_enabled" \
       MERCHANT_STAFF_BUSINESS_RBAC_MODE="$staff_business_mode" \
       MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS="$staff_business_site_ids" \
       FAOLLA_CANONICAL_PORTAL_ORIGIN="$canonical_portal_origin" \
@@ -4270,6 +4377,35 @@ try {
 NODE
 }
 
+maintenance_preflight_checkpoint() {
+  if [ "${READINESS_FENCE_ACTIVE:-0}" = 1 ]; then
+    # The exact readiness fence owns its own long database transaction here.
+    # Do not misreport that as a globally idle database or exempt other writers.
+    # Pair the runtime/ingress-only proof with the existing strict fence checks.
+    assert_readiness_fence_before_process_quiescence 125 \
+      && maintenance_control check-runtime-held \
+      && assert_readiness_fence_before_process_quiescence 1
+  else
+    maintenance_control check-held
+  fi
+}
+
+previous_runtime_preflight_identity_matches() {
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    maintenance_preflight_checkpoint && previous_runtime_recovery_identity_matches
+  else
+    previous_web_process_identity_matches "$@"
+  fi
+}
+
+preflight_process_state_matches() {
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    [ "${PROCESSES_STOPPED:-0}" = 1 ] && maintenance_preflight_checkpoint
+  else
+    [ "${PROCESSES_STOPPED:-0}" = 0 ]
+  fi
+}
+
 assert_booking_persistence_preflight_state() {
   local absolute_deadline_seconds="$1"
   local build_id_snapshot
@@ -4280,7 +4416,7 @@ assert_booking_persistence_preflight_state() {
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ "${WEB_COMMITTED:-0}" != "0" ] \
     || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
-    || [ "${PROCESSES_STOPPED:-0}" != "0" ] \
+    || ! preflight_process_state_matches \
     || [ "${FORWARD_MUTATION_STARTED:-0}" != "0" ] \
     || [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
     || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
@@ -4329,7 +4465,7 @@ capture_booking_persistence_preflight_identity() {
   if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ "${SWITCH_COMPLETED:-0}" != "0" ] \
-    || [ "${PROCESSES_STOPPED:-0}" != "0" ] \
+    || ! preflight_process_state_matches \
     || [ "${FORWARD_MUTATION_STARTED:-0}" != "0" ] \
     || [ -L "$RELEASE_DIR" ] \
     || [ "$(readlink -f -- "$RELEASE_DIR" 2>/dev/null || true)" != "$RELEASE_DIR" ]; then
@@ -4400,7 +4536,7 @@ run_booking_persistence_preflight() {
       BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS +
       protected_quiescence_budget_seconds
     ))" \
-    && previous_web_process_identity_matches \
+    && previous_runtime_preflight_identity_matches \
     && previous_runtime_recovery_identity_matches \
     && capture_booking_persistence_preflight_identity \
       "$absolute_deadline_seconds"; then
@@ -4418,7 +4554,7 @@ run_booking_persistence_preflight() {
     fi
     if ! assert_booking_persistence_preflight_state \
         "$absolute_deadline_seconds" \
-      || ! previous_web_process_identity_matches \
+      || ! previous_runtime_preflight_identity_matches \
       || ! previous_runtime_recovery_identity_matches \
       || ! assert_readiness_fence_before_process_quiescence \
         "$protected_quiescence_budget_seconds"; then
@@ -5301,7 +5437,7 @@ readiness_fence_process_identity_sha256() {
       "$absolute_deadline_seconds" 2 1)" || return 1
   fi
   timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
-    node --input-type=module - "$READINESS_FENCE_PID" "$RELEASE_DIR" <<'NODE'
+    node --input-type=module - "$READINESS_FENCE_PID" "$APP_DIR" <<'NODE'
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
@@ -5352,7 +5488,7 @@ readiness_fence_process_start_ticks() {
       "$absolute_deadline_seconds" 2 1)" || return 1
   fi
   timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
-    node --input-type=module - "$READINESS_FENCE_PID" "$RELEASE_DIR" <<'NODE'
+    node --input-type=module - "$READINESS_FENCE_PID" "$APP_DIR" <<'NODE'
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 
@@ -5842,12 +5978,15 @@ start_readiness_fence() {
   READINESS_FENCE_BACKEND_PID=""
   READINESS_FENCE_APPLICATION_NAME=""
   (
-    cd "$RELEASE_DIR" || exit 1
+    # Keep the long-lived diagnostic outside the candidate runtime directory.
+    # All fence paths and service configuration are explicit; its code still
+    # comes from the verified immutable candidate release.
+    cd "$APP_DIR" || exit 1
     export SUPABASE_INTERNAL_URL="$FINAL_SUPABASE_INTERNAL_URL"
     export NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL"
     export NEXT_PUBLIC_SUPABASE_ANON_KEY="$FINAL_NEXT_PUBLIC_SUPABASE_ANON_KEY"
     export FAOLLA_READINESS_FENCE_RELEASE_TOKEN="$READINESS_FENCE_RELEASE_TOKEN"
-    exec node scripts/hold-ordinary-account-cutover-readiness-fence.mjs hold \
+    exec node "$RELEASE_DIR/scripts/hold-ordinary-account-cutover-readiness-fence.mjs" hold \
       --attestation "$DEPLOY_ATTESTATION_FILE" \
       --expected-target-sha "$EXPECTED_DEPLOY_SHA" \
       --expected-run-id "$RELEASE_READINESS_RUN_ID" \
@@ -6313,6 +6452,7 @@ RELEASE_STAMP="$(date -u +"%Y%m%d%H%M%S")"
 RELEASE_NAME="${FAOLLA_WEB_BUILD_ID:0:12}-${RELEASE_STAMP}"
 RELEASE_BUILD_DIR="$RELEASES_DIR/.${RELEASE_NAME}.building"
 RELEASE_DIR="$RELEASES_DIR/$RELEASE_NAME"
+if [ "$PRODUCTION_MAINTENANCE_MODE" = off ]; then
 PREVIOUS_AUTOMATION_WORKER_RUNNING=0
 if ! PREVIOUS_AUTOMATION_WORKER_STATE="$(pm2_process_state "$AUTOMATION_WORKER_NAME")"; then
   echo "[deploy] previous automation worker state could not be proven"
@@ -6323,8 +6463,13 @@ case "$PREVIOUS_AUTOMATION_WORKER_STATE" in
   absent|inactive) ;;
   *) exit 1 ;;
 esac
+fi
 SWITCH_COMPLETED=0
 PROCESSES_STOPPED=0
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  maintenance_control check-held || exit 1
+  PROCESSES_STOPPED=1
+fi
 DEPLOY_HEALTHY=0
 WEB_COMMITTED=0
 ROLLBACK_COMPLETED=0
@@ -6815,6 +6960,26 @@ cleanup_failed_build() {
   if [ -d "$RELEASE_BUILD_DIR" ]; then
     safe_remove_release_path "$RELEASE_BUILD_DIR"
   fi
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    # The ingress controller owns this offline operation. Never restart the old
+    # writer or reopen ingress from an application-deployment failure handler.
+    if [ "${CANDIDATE_WEB_HANDOFF_STATE:-}" = exact ]; then
+      stop_frozen_candidate_web_bounded >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if [ "${READINESS_FENCE_ACTIVE:-0}" = 1 ]; then
+      discard_failed_readiness_fence >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if [ "$cleanup_status" -eq 0 ]; then
+      maintenance_control fail-held || cleanup_status=1
+    fi
+    rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE"
+    if [ "$cleanup_status" -ne 0 ]; then
+      echo "[deploy] maintenance cleanup is unverified; ingress remains closed and no held result is certified"
+      exit 1
+    fi
+    echo "[deploy] maintenance deployment failed; ingress remains held and no previous writer is resumed"
+    exit 1
+  fi
   if [ "$WEB_COMMITTED" = "1" ]; then
     echo "[deploy] post-commit failure: the verified web release remains active and will not be rolled back without a fence"
     if ! stop_pm2_process_bounded "$AUTOMATION_WORKER_NAME" "$AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS"; then
@@ -7113,7 +7278,7 @@ if [ -z "$PREVIOUS_RUNTIME_DIR" ] \
   exit 1
 fi
 echo "[deploy] acquiring ordinary-account cutover readiness fence"
-if ! previous_web_process_identity_matches; then
+if ! previous_runtime_preflight_identity_matches; then
   echo "[deploy] deploy_preflight_previous_web_identity_unverified"
   exit 1
 fi
@@ -7136,7 +7301,7 @@ PROTECTED_QUIESCENCE_BUDGET_SECONDS="$((
 ))"
 run_booking_persistence_preflight \
   "$PROTECTED_QUIESCENCE_BUDGET_SECONDS" || exit 1
-if ! previous_web_process_identity_matches; then
+if ! previous_runtime_preflight_identity_matches; then
   echo "[deploy] deploy_preflight_post_booking_web_identity_unverified"
   exit 1
 fi
@@ -7146,12 +7311,17 @@ if ! previous_runtime_recovery_identity_matches; then
 fi
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  maintenance_preflight_checkpoint || exit 1
+  PREVIOUS_WEB_FROZEN_STOP_COMPLETED=1
+else
 capture_previous_web_listener_handoff_identity || exit 1
 PROCESSES_STOPPED=1
 stop_frozen_previous_web_bounded "$WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS" \
   "$PORT_RELEASE_TOTAL_TIMEOUT_SECONDS" || exit 1
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_worker_quiesce_failed"
 stop_previous_automation_worker_bounded || exit 1
+fi
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_forward_switch_failed"
 wait_for_readiness_fence_database_quiescence || exit 1
 assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1
@@ -7222,6 +7392,9 @@ if ! wait_for_release_health "$FAOLLA_WEB_BUILD_ID"; then
   echo "[deploy] release health check failed"
   exit 1
 fi
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  maintenance_control register-candidate || exit 1
+fi
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
 if ! running_release_rollout_environment_matches \
   "$APP_NAME" "$RELEASE_DIR" \
@@ -7262,6 +7435,9 @@ assert_readiness_fence_forward_checkpoint || exit 1
 assert_readiness_fence_before_forward_operation "$NGINX_RELEASE_GATE_TOTAL_TIMEOUT_SECONDS" || exit 1
 verify_nginx_release_static_access || exit 1
 assert_readiness_fence_forward_checkpoint || exit 1
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  maintenance_control check-candidate || exit 1
+fi
 echo "[deploy] releasing ordinary-account cutover readiness fence after all web checks"
 release_readiness_fence || exit 1
 WEB_COMMITTED=1
@@ -7270,6 +7446,10 @@ DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_post_commit_finalize_failed"
 finalize_legacy_runtime_compatibility_paths || exit 1
 rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE" || exit 1
 
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  maintenance_control check-candidate || exit 1
+  echo "[deploy] maintenance candidate verified with background work paused; independent end is required"
+else
 stop_pm2_process_bounded "$AUTOMATION_WORKER_NAME" \
   "$AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS" 1 || exit 1
 
@@ -7290,13 +7470,14 @@ if [ "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" = "true" ] \
 else
   echo "[deploy] enterprise worker supervisor is disabled"
 fi
+fi
 
 if ! timeout --signal=TERM --kill-after=2s 10s pm2 save; then
   echo "[deploy] warning: pm2 save failed after the healthy release was activated"
 fi
 
 safe_remove_release_path "$RELEASE_BUILD_DIR"
-cleanup_old_releases
+if [ "$PRODUCTION_MAINTENANCE_MODE" = off ]; then cleanup_old_releases; fi
 
 trap - EXIT
 report_disk_status

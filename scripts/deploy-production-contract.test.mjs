@@ -153,6 +153,9 @@ const DEPLOY_PAYLOAD_KEYS = [
   "SUPER_ADMIN_PASSWORD",
   "SUPER_ADMIN_VERIFICATION_EMAIL",
   "SUPER_ADMIN_VERIFICATION_SECRET",
+  "PRODUCTION_MAINTENANCE_MODE",
+  "PRODUCTION_MAINTENANCE_OPERATION_ID",
+  "PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA",
 ];
 const FIXTURE_NOW_MS = Date.now();
 const FIXTURE_TARGET_SHA = "a".repeat(40);
@@ -481,6 +484,7 @@ function earlyDeployValues(appDirectory, overrides = {}) {
     MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS: "3600",
     MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS: "3900",
     ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "false",
+    PRODUCTION_MAINTENANCE_MODE: "off",
     ...overrides,
   };
 }
@@ -576,6 +580,9 @@ async function runDeployTransportScenario({
     SUPER_ADMIN_PASSWORD: superAdminPassword,
     SUPER_ADMIN_VERIFICATION_EMAIL: "verify@example.test",
     SUPER_ADMIN_VERIFICATION_SECRET: superAdminVerificationSecret,
+    PRODUCTION_MAINTENANCE_MODE: "off",
+    PRODUCTION_MAINTENANCE_OPERATION_ID: "",
+    PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA: "",
   };
   assert.deepEqual(Object.keys(expectedPayloadValues), DEPLOY_PAYLOAD_KEYS);
   const readinessAttestationPath = join(
@@ -748,6 +755,9 @@ sleep() { :; }
       SUPER_ADMIN_VERIFICATION_EMAIL:
         expectedPayloadValues.SUPER_ADMIN_VERIFICATION_EMAIL,
       SUPER_ADMIN_VERIFICATION_SECRET: superAdminVerificationSecret,
+      PRODUCTION_MAINTENANCE_MODE: "off",
+      PRODUCTION_MAINTENANCE_OPERATION_ID: "",
+      PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA: "",
       ...evidenceEnvironment,
     },
   });
@@ -1349,6 +1359,7 @@ test("remote deploy consumes one exact payload file and erases it before validat
     MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS: "",
     FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
     SUPER_ADMIN_PASSWORD: hostileSecret,
+    PRODUCTION_MAINTENANCE_MODE: "off",
   });
   await writeFile(
     payloadPath,
@@ -1519,6 +1530,7 @@ test("a moving main ref fails before production config or caches are mutated", a
     MERCHANT_ENTERPRISE_INVITATION_AUTH_LINK_TTL_SECONDS: "3600",
     MERCHANT_ENTERPRISE_INVITATION_ISSUANCE_LEASE_SECONDS: "3900",
     ORDINARY_LEGACY_PERSONAL_RECOVERY_ENABLED: "false",
+    PRODUCTION_MAINTENANCE_MODE: "off",
   });
   await writeFile(
     payloadPath,
@@ -2004,7 +2016,7 @@ test("private deployment output exposes only immutable static assets to nginx be
   );
   const moveIndex = deployScript.indexOf('mv -- "$RELEASE_BUILD_DIR" "$RELEASE_DIR"');
   const fenceIndex = deployScript.lastIndexOf("if ! start_readiness_fence 1; then");
-  const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1");
+  const processMutationIndex = deployScript.indexOf("PROCESSES_STOPPED=1", fenceIndex);
   assert.ok(permissionIndex >= 0 && permissionIndex < nginxPreMoveIndex);
   assert.ok(nginxPreMoveIndex < moveIndex);
   assert.ok(moveIndex < fenceIndex && fenceIndex < processMutationIndex);
@@ -2175,7 +2187,7 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
-  assert.equal(deployNodeSources.length, 16);
+  assert.equal(deployNodeSources.length, 17);
   for (const [index, source] of deployNodeSources.entries()) {
     const result = spawnSync(
       process.execPath,
@@ -2290,6 +2302,7 @@ test("actual artifact inventory validator rejects ambiguity, expiry, emptiness, 
   const expectedArtifacts = [
     artifact("faolla-production-readiness-report-8002-1", 9003, "e"),
     artifact("faolla-production-readiness-attestation-8002-1", 9004, "f"),
+    artifact("faolla-maintenance-readiness-binding-8002-1", 9005, "d"),
   ];
   const run = async (artifacts, totalCount = artifacts.length) => {
     await writeFile(
@@ -2394,13 +2407,14 @@ test("live nested backup revalidation rejects deleted, substituted, stale, and n
       state: "active",
     },
     pages: [{
-      total_count: 5,
+      total_count: 6,
       artifacts: [
         artifact("faolla-encrypted-disaster-recovery-8001-2", 91001, "1"),
         artifact("faolla-production-backup-attestation-8001-2", 91002, "2"),
         artifact("faolla-backup-verification-reports-8001-2", 91003, "3"),
         artifact("faolla-encrypted-backup-attestation-bundle-8001-2", 91004, "4"),
         artifact("faolla-production-backup-attestation-bundle-8001-2", 91005, "5"),
+        artifact("faolla-maintenance-backup-binding-8001-2", 91006, "6"),
       ],
     }],
   });
@@ -2569,7 +2583,9 @@ test("production deployment accepts only a successful exact readiness run for cu
   );
   assert.match(deployWorkflow, /workflow\.state !== "active"/);
   assert.match(deployWorkflow, /actions:\s*read/);
-  assert.match(deployWorkflow, /attestations:\s*read/);
+  assert.match(deployWorkflow, /attestations:\s*write/);
+  assert.match(deployWorkflow, /id-token:\s*write/);
+  assert.match(deployWorkflow, /subject-path: production-maintenance-binding\.json/);
   assert.match(deployWorkflow, /contents:\s*read/);
 
   const eligible = (run) =>
@@ -2653,7 +2669,7 @@ printf '%s\n' archive_permissions_stripped
 );
 
 test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bound", () => {
-  assert.match(deployWorkflow, /artifacts\.length !== 2/);
+  assert.match(deployWorkflow, /artifacts\.length !== 3/);
   assert.match(
     deployWorkflow,
     /faolla-production-readiness-report-\$\{process\.env\.READINESS_RUN_ID\}-\$\{process\.env\.READINESS_RUN_ATTEMPT\}/,
@@ -2715,7 +2731,7 @@ test("readiness artifacts are exact, canonical, provenance-verified, and CLI-bou
   assert.match(deployWorkflow, /summary\.backupAttestationArtifactId/);
 });
 
-test("nested backup evidence is re-fetched and exact-five validated immediately before SSH", () => {
+test("nested backup evidence is re-fetched and exact-six validated immediately before SSH", () => {
   const revalidationIndex = deployWorkflow.indexOf(
     "      - name: Revalidate Live Recursive Backup Evidence",
   );
@@ -2742,14 +2758,15 @@ test("nested backup evidence is re-fetched and exact-five validated immediately 
   assert.match(deployWorkflow, /run\.run_attempt !== expectedRunAttempt/);
   assert.match(deployWorkflow, /run\.event !== "workflow_dispatch"/);
   assert.match(deployWorkflow, /run\.conclusion !== "success"/);
-  assert.match(deployWorkflow, /artifacts\.length !== 5/);
-  assert.match(deployWorkflow, /page\.total_count !== 5/);
+  assert.match(deployWorkflow, /artifacts\.length !== 6/);
+  assert.match(deployWorkflow, /page\.total_count !== 6/);
   for (const name of [
     "faolla-encrypted-disaster-recovery-",
     "faolla-production-backup-attestation-",
     "faolla-backup-verification-reports-",
     "faolla-encrypted-backup-attestation-bundle-",
     "faolla-production-backup-attestation-bundle-",
+    "faolla-maintenance-backup-binding-",
   ]) {
     assert.ok(deployWorkflow.includes(name), `missing exact backup artifact name: ${name}`);
   }
@@ -2765,7 +2782,7 @@ test("nested backup evidence is re-fetched and exact-five validated immediately 
 });
 
 test("verified readiness bytes and artifact references ride inside the V2 payload with the exact deploy values", () => {
-  assert.equal(DEPLOY_PAYLOAD_KEYS.length, 38);
+  assert.equal(DEPLOY_PAYLOAD_KEYS.length, 41);
   assert.match(deployWorkflow, /releaseAttestation = \{/);
   for (const field of [
     "repository",
@@ -2867,7 +2884,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   }
   assert.doesNotMatch(sequence, /BOOKING_PERSISTENCE_STATUS/);
   assert.equal(
-    sequence.match(/if ! previous_web_process_identity_matches; then/g)?.length,
+    sequence.match(/if ! previous_runtime_preflight_identity_matches; then/g)?.length,
     2,
   );
   assert.equal(
@@ -2876,7 +2893,7 @@ test("readiness fence lifecycle holds every web checkpoint and releases before w
   );
   assert.match(
     sequence,
-    /run_booking_persistence_preflight[\s\S]+if ! previous_web_process_identity_matches; then[\s\S]+deploy_preflight_post_booking_web_identity_unverified[\s\S]+if ! previous_runtime_recovery_identity_matches; then[\s\S]+deploy_preflight_post_booking_runtime_identity_unverified[\s\S]+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"\s+capture_previous_web_listener_handoff_identity \|\| exit 1\s+PROCESSES_STOPPED=1\s+stop_frozen_previous_web_bounded/,
+    /run_booking_persistence_preflight[\s\S]+if ! previous_runtime_preflight_identity_matches; then[\s\S]+deploy_preflight_post_booking_web_identity_unverified[\s\S]+if ! previous_runtime_recovery_identity_matches; then[\s\S]+deploy_preflight_post_booking_runtime_identity_unverified[\s\S]+DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"\s+if \[ "\$PRODUCTION_MAINTENANCE_MODE" = maintenance \]; then\s+maintenance_preflight_checkpoint \|\| exit 1\s+PREVIOUS_WEB_FROZEN_STOP_COMPLETED=1\s+else\s+capture_previous_web_listener_handoff_identity \|\| exit 1\s+PROCESSES_STOPPED=1\s+stop_frozen_previous_web_bounded/,
   );
   const previousWebQuiesce = sequence.slice(
     sequence.indexOf('DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_previous_web_quiesce_failed"'),
@@ -3309,12 +3326,14 @@ test("a late frozen-runtime drift fails before any protected process is stopped"
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "faolla-pre-stop-identity-"));
   const callsPath = join(temporaryDirectory, "calls");
   const transition = extractShellRegion(
-    "if ! previous_web_process_identity_matches; then\n  echo \"[deploy] deploy_preflight_previous_web_identity_unverified\"",
+    "if ! previous_runtime_preflight_identity_matches; then\n  echo \"[deploy] deploy_preflight_previous_web_identity_unverified\"",
     "\nFORWARD_MUTATION_STARTED=1",
   ).replaceAll("exit 1", "return 1");
   const script = [
     "set +e",
+    extractShellFunction("previous_runtime_preflight_identity_matches"),
     `CALLS='${toBashPath(callsPath)}'`,
+    "PRODUCTION_MAINTENANCE_MODE=off",
     "PROCESSES_STOPPED=0",
     "AUTOMATION_WORKER_STOP_TOTAL_TIMEOUT_SECONDS=20",
     "WEB_PROCESS_STOP_TOTAL_TIMEOUT_SECONDS=40",
@@ -3846,6 +3865,7 @@ test("resolved probe inputs use the current public URL, frozen anon key, and lit
       'NEXT_PUBLIC_SUPABASE_URL_B64="$CONTRACT_PUBLIC_URL_B64"',
       'NEXT_PUBLIC_SUPABASE_ANON_KEY_B64=""',
       'SUPABASE_INTERNAL_URL_B64=""',
+      'PRODUCTION_MAINTENANCE_MODE="off"',
       'SUPABASE_INTERNAL_URL="https://ambient.invalid/?secret=must-not-win"',
       'PREVIOUS_SUPABASE_INTERNAL_URL="http://127.0.0.1:8000"',
       'PREVIOUS_NEXT_PUBLIC_SUPABASE_URL="$CONTRACT_PUBLIC_URL"',
@@ -5546,6 +5566,7 @@ test("booking preflight is single-query, pre-mutation, classified, and rollback-
       encoding: "utf8",
       input: [
         "set +e",
+        extractShellFunction("previous_runtime_preflight_identity_matches"),
         preflightFunction,
         `CALLS='${toBashPath(callsPath)}'`,
         `CHECKER_STATUS='${checkerStatus}'`,
@@ -5882,7 +5903,7 @@ test("booking persistence retries only status two across fully revalidated read-
   assert.match(checkerFunction, /cd "\$RELEASE_DIR" \|\| exit 4/);
   assert.equal(
     deployScript.match(/^\s*cd "\$RELEASE_DIR" \|\| exit 1$/gm)?.length,
-    4,
+    3,
   );
   assert.doesNotMatch(deployScript, /^\s*cd "\$RELEASE_DIR"\s*$/gm);
   assert.match(

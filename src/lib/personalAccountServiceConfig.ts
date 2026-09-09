@@ -30,7 +30,9 @@ function readMetadataNumber(metadata: AuthMetadata, ...keys: string[]) {
     const value = metadata[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string") {
-      const parsed = Number(value.trim());
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      const parsed = Number(trimmed);
       if (Number.isFinite(parsed)) return parsed;
     }
   }
@@ -89,31 +91,23 @@ export function normalizePersonalAccountServiceConfig(value: unknown): PersonalA
 }
 
 export function readPersonalAccountServiceConfigFromMetadata(user: MerchantAuthUserSummary | null | undefined) {
-  const userMetadata = user?.user_metadata ?? null;
+  // Supabase lets users edit user_metadata. Service entitlements must come
+  // only from server-managed app_metadata, including all legacy aliases.
   const appMetadata = user?.app_metadata ?? null;
-  const record =
-    readMetadataRecord(userMetadata, "personal_service_config", "personalServiceConfig") ??
-    readMetadataRecord(appMetadata, "personal_service_config", "personalServiceConfig");
+  const record = readMetadataRecord(appMetadata, "personal_service_config", "personalServiceConfig");
   const fallback = createDefaultPersonalAccountServiceConfig();
   return normalizePersonalAccountServiceConfig({
     ...(record ?? {}),
     servicePaused:
       readMetadataBoolean(record, "servicePaused", "service_paused") ??
-      readMetadataBoolean(userMetadata, "personal_service_paused", "personalServicePaused") ??
       readMetadataBoolean(appMetadata, "personal_service_paused", "personalServicePaused") ??
       fallback.servicePaused,
     businessCardLimit:
       readMetadataNumber(record, "businessCardLimit", "business_card_limit") ??
-      readMetadataNumber(userMetadata, "personal_business_card_limit", "personalBusinessCardLimit") ??
       readMetadataNumber(appMetadata, "personal_business_card_limit", "personalBusinessCardLimit") ??
       fallback.businessCardLimit,
     allowBusinessCardLinkMode:
       readMetadataBoolean(record, "allowBusinessCardLinkMode", "allow_business_card_link_mode") ??
-      readMetadataBoolean(
-        userMetadata,
-        "personal_allow_business_card_link_mode",
-        "personalAllowBusinessCardLinkMode",
-      ) ??
       readMetadataBoolean(
         appMetadata,
         "personal_allow_business_card_link_mode",
@@ -123,11 +117,6 @@ export function readPersonalAccountServiceConfigFromMetadata(user: MerchantAuthU
     businessCardBackgroundImageLimitKb:
       readMetadataNumber(record, "businessCardBackgroundImageLimitKb", "business_card_background_image_limit_kb") ??
       readMetadataNumber(
-        userMetadata,
-        "personal_business_card_background_image_limit_kb",
-        "personalBusinessCardBackgroundImageLimitKb",
-      ) ??
-      readMetadataNumber(
         appMetadata,
         "personal_business_card_background_image_limit_kb",
         "personalBusinessCardBackgroundImageLimitKb",
@@ -135,11 +124,6 @@ export function readPersonalAccountServiceConfigFromMetadata(user: MerchantAuthU
       fallback.businessCardBackgroundImageLimitKb,
     businessCardContactImageLimitKb:
       readMetadataNumber(record, "businessCardContactImageLimitKb", "business_card_contact_image_limit_kb") ??
-      readMetadataNumber(
-        userMetadata,
-        "personal_business_card_contact_image_limit_kb",
-        "personalBusinessCardContactImageLimitKb",
-      ) ??
       readMetadataNumber(
         appMetadata,
         "personal_business_card_contact_image_limit_kb",
@@ -168,20 +152,10 @@ export function buildPersonalAccountServiceMetadataPatch(
   value: PersonalAccountServiceConfig | null | undefined,
 ) {
   const config = normalizePersonalAccountServiceConfig(value);
+  // Preserve account/profile metadata for the account-creation caller, but
+  // do not publish new entitlement copies into user-editable metadata.
   const userMetadata = cloneMetadata(user?.user_metadata);
   const appMetadata = cloneMetadata(user?.app_metadata);
-  userMetadata.personal_service_config = config;
-  userMetadata.personalServiceConfig = config;
-  userMetadata.personal_service_paused = config.servicePaused;
-  userMetadata.personalServicePaused = config.servicePaused;
-  userMetadata.personal_business_card_limit = config.businessCardLimit;
-  userMetadata.personalBusinessCardLimit = config.businessCardLimit;
-  userMetadata.personal_allow_business_card_link_mode = config.allowBusinessCardLinkMode;
-  userMetadata.personalAllowBusinessCardLinkMode = config.allowBusinessCardLinkMode;
-  userMetadata.personal_business_card_background_image_limit_kb = config.businessCardBackgroundImageLimitKb;
-  userMetadata.personalBusinessCardBackgroundImageLimitKb = config.businessCardBackgroundImageLimitKb;
-  userMetadata.personal_business_card_contact_image_limit_kb = config.businessCardContactImageLimitKb;
-  userMetadata.personalBusinessCardContactImageLimitKb = config.businessCardContactImageLimitKb;
   appMetadata.personal_service_config = config;
   appMetadata.personalServiceConfig = config;
   appMetadata.personal_service_paused = config.servicePaused;

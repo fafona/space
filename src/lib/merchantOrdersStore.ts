@@ -1,14 +1,17 @@
 import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/merchantOrders";
-import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+import {
+  commitMerchantOrderMembershipTransaction,
+  type MerchantOrderMembershipMutation,
+  type MerchantTransactionClient,
+  type MerchantTransactionPageSnapshot,
+} from "@/lib/merchantOrderMembershipTransaction.server";
 
 const MERCHANT_ORDER_SLUG_PREFIX = "__merchant_orders__:";
-const MERCHANT_ORDER_HISTORY_SLUG_PREFIX = "__merchant_orders_history_v2__:";
-const MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_orders_history_backup_v2__:";
 const MERCHANT_ORDER_CHUNK_SIZE = 100;
 const MERCHANT_ORDER_FULL_READ_PAGE_SIZE = 1000;
 const MERCHANT_ORDER_FULL_READ_MAX_ROWS = 10_000;
 
-export type MerchantOrdersStoreClient = {
+export type MerchantOrdersStoreClient = MerchantTransactionClient & {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from: (table: string) => any;
@@ -18,6 +21,8 @@ export type StoredMerchantOrders = {
   siteId: string;
   orders: MerchantOrderRecord[];
   updatedAt: string | null;
+  /** Raw read-time values for a later database CAS, never reconstructed at save. */
+  storageRows?: MerchantTransactionPageSnapshot[];
 };
 
 export type StoredMerchantOrdersWindow = StoredMerchantOrders & {
@@ -67,18 +72,6 @@ function isMissingUpdatedAtColumn(message: string) {
 
 function buildOrdersSlug(siteId: string) {
   return `${MERCHANT_ORDER_SLUG_PREFIX}${siteId}`;
-}
-
-function buildOrdersHistorySlug(siteId: string) {
-  return `${MERCHANT_ORDER_HISTORY_SLUG_PREFIX}${siteId}`;
-}
-
-function buildOrdersHistoryBackupSlug(siteId: string) {
-  return `${MERCHANT_ORDER_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
-}
-
-function buildOrdersChunkSlug(siteId: string, index: number) {
-  return `${buildOrdersSlug(siteId)}:chunk:${index}`;
 }
 
 function parseOrdersChunkIndex(siteId: string, slug: string) {
@@ -133,23 +126,6 @@ export function getChangedMerchantOrderChunkIndexes(
     }
   }
   return changedIndexes;
-}
-
-function buildMerchantOrderChunkHistorySnapshot(
-  siteId: string,
-  orders: MerchantOrderRecord[],
-  chunkIndexes: number[],
-) {
-  const chunks = chunkMerchantOrderRecords(orders);
-  return {
-    format: "merchant-order-chunks-v2",
-    siteId,
-    totalOrders: orders.length,
-    chunks: chunkIndexes.map((index) => ({
-      index,
-      orders: chunks[index] ?? [],
-    })),
-  };
 }
 
 export function getMerchantOrderChunkIndexesForWindow(
@@ -518,7 +494,19 @@ export async function loadStoredMerchantOrders(
   const normalizedSiteId = normalizeSiteId(siteId);
   if (!normalizedSiteId) return null;
   const rows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
-  return mergeStoredMerchantOrdersRows(normalizedSiteId, rows);
+  const stored = mergeStoredMerchantOrdersRows(normalizedSiteId, rows);
+  if (!stored) return null;
+  return {
+    ...stored,
+    storageRows: rows
+      .filter((row) => parseOrdersChunkIndex(normalizedSiteId, normalizeText(row.slug)) !== null)
+      .map((row) => ({
+        id: String(row.id ?? ""),
+        slug: normalizeText(row.slug),
+        blocks: row.blocks,
+        updated_at: normalizeText(row.updated_at) || null,
+      })),
+  };
 }
 
 export async function loadStoredMerchantOrder(
@@ -646,118 +634,20 @@ export async function saveStoredMerchantOrders(
   input: {
     siteId: string;
     orders: MerchantOrderRecord[];
+    expectedRows: MerchantTransactionPageSnapshot[];
+    memberships?: MerchantOrderMembershipMutation["memberships"];
     previousOrders?: MerchantOrderRecord[] | null;
     updatedAt?: string | null;
   },
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeSiteId(input.siteId);
   if (!normalizedSiteId) return { error: "invalid_site_id" };
-  const normalizedOrders = normalizeMerchantOrderRecords(input.orders);
-  const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const hasPreviousOrders = Object.prototype.hasOwnProperty.call(input, "previousOrders");
-  const existingRows = hasPreviousOrders
-    ? await listStoredMerchantOrdersRowMetadata(supabase, normalizedSiteId)
-    : await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
-  const beforeOrders = hasPreviousOrders
-    ? normalizeMerchantOrderRecords(input.previousOrders ?? [])
-    : mergeStoredMerchantOrdersRows(normalizedSiteId, existingRows)?.orders ?? null;
-  const contentChangedChunkIndexes =
-    beforeOrders === null
-      ? chunkMerchantOrderRecords(normalizedOrders).map((_, index) => index)
-      : getChangedMerchantOrderChunkIndexes(beforeOrders, normalizedOrders);
-  const desiredChunks = chunkMerchantOrderRecords(normalizedOrders);
-  const desiredSlugs = desiredChunks.map((_, index) => buildOrdersChunkSlug(normalizedSiteId, index));
-  const existingSlugSet = new Set(existingRows.map((row) => normalizeText(row.slug)).filter(Boolean));
-  const missingChunkIndexes = desiredSlugs.flatMap((slug, index) => (existingSlugSet.has(slug) ? [] : [index]));
-  const changedChunkIndexes = [...new Set([...contentChangedChunkIndexes, ...missingChunkIndexes])].sort(
-    (left, right) => left - right,
-  );
-  const staleRows = existingRows.filter((row) => {
-    const slug = normalizeText(row.slug);
-    return slug && !desiredSlugs.includes(slug);
+  if (!Array.isArray(input.expectedRows)) return { error: "order_update_conflict" };
+  return commitMerchantOrderMembershipTransaction(supabase, normalizedSiteId, {
+    orders: {
+      expectedRows: input.expectedRows,
+      next: normalizeMerchantOrderRecords(input.orders),
+    },
+    ...(input.memberships ? { memberships: input.memberships } : {}),
   });
-
-  if (changedChunkIndexes.length === 0 && staleRows.length === 0) {
-    return { error: null };
-  }
-
-  if (contentChangedChunkIndexes.length > 0) {
-    const history = await saveMerchantSnapshotHistory(supabase, {
-      siteId: normalizedSiteId,
-      slug: buildOrdersHistorySlug(normalizedSiteId),
-      backupSlug: buildOrdersHistoryBackupSlug(normalizedSiteId),
-      source: "merchant-orders-chunks-v2",
-      before:
-        beforeOrders === null
-          ? null
-          : buildMerchantOrderChunkHistorySnapshot(normalizedSiteId, beforeOrders, contentChangedChunkIndexes),
-      after: buildMerchantOrderChunkHistorySnapshot(
-        normalizedSiteId,
-        normalizedOrders,
-        contentChangedChunkIndexes,
-      ),
-      at: updatedAt,
-      maxEntries: 20,
-    });
-    if (history.error) return { error: `merchant_orders_history_save_failed:${history.error}` };
-  }
-  const existingBySlug = new Map(
-    existingRows
-      .map((row) => [normalizeText(row.slug), row] as const)
-      .filter(([slug]) => Boolean(slug)),
-  );
-
-  const upsertChunk = async (slug: string, orders: MerchantOrderRecord[]) => {
-    const existing = existingBySlug.get(slug);
-    const basePayload = {
-      blocks: orders,
-      updated_at: updatedAt,
-    };
-
-    const updateExisting = async (body: Record<string, unknown>) => {
-      if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-      const updated = await supabase.from("pages").update(body).eq("id", existing.id);
-      return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
-    };
-
-    const insertNew = async (body: Record<string, unknown>) => {
-      const inserted = await supabase.from("pages").insert({
-        ...body,
-        slug,
-        merchant_id: normalizedSiteId,
-      });
-      const error = inserted.error ? toErrorMessage(inserted.error) : null;
-      if (!error || !isMissingMerchantIdColumn(error)) {
-        return { error };
-      }
-      const retry = await supabase.from("pages").insert({
-        ...body,
-        slug,
-      });
-      return retry.error ? { error: toErrorMessage(retry.error) } : { error: null };
-    };
-
-    const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
-    if (!first.error) return first;
-    if (!isMissingUpdatedAtColumn(first.error)) return first;
-    return existing ? updateExisting({ blocks: orders }) : insertNew({ blocks: orders });
-  };
-
-  for (const index of changedChunkIndexes) {
-    const chunkOrders = desiredChunks[index] ?? [];
-    if (chunkOrders.length === 0) continue;
-    const slug = desiredSlugs[index] ?? buildOrdersChunkSlug(normalizedSiteId, index);
-    const result = await upsertChunk(slug, chunkOrders);
-    if (result.error) return result;
-  }
-
-  for (const row of staleRows) {
-    if (row.id === undefined || row.id === null) continue;
-    const deleted = await supabase.from("pages").delete().eq("id", row.id);
-    if (deleted.error) {
-      return { error: toErrorMessage(deleted.error) };
-    }
-  }
-
-  return { error: null };
 }

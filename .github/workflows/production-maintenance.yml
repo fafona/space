@@ -1,0 +1,412 @@
+name: Production Maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Fixed audited maintenance transition (never an arbitrary command)
+        required: true
+        type: choice
+        options: [plan, prepare, check, end]
+      target_sha:
+        description: Exact current main SHA with successful push CI
+        required: true
+      expected_old_sha:
+        description: Exact old build frozen by this maintenance operation
+        required: true
+      maintenance_operation_id:
+        description: UUID returned by prepare; required for check and end
+        required: false
+      check_state:
+        description: State to verify for the check action
+        type: choice
+        options: [held, candidate]
+        default: held
+      successful_deploy_run_id:
+        description: Exact successful maintenance Deploy Production run required for end
+        required: false
+      successful_deploy_run_attempt:
+        description: Exact successful deploy attempt required for end
+        required: false
+      confirmation:
+        description: CHECK_PRODUCTION_MAINTENANCE_PLAN, PREPARE_PRODUCTION_MAINTENANCE, CHECK_PRODUCTION_MAINTENANCE or END_PRODUCTION_MAINTENANCE
+        required: true
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TARGET_SHA: ${{ inputs.target_sha }}
+      EXPECTED_OLD_SHA: ${{ inputs.expected_old_sha }}
+      MAINTENANCE_MODE: maintenance
+      MAINTENANCE_OPERATION_ID: ${{ inputs.maintenance_operation_id }}
+      REMOTE_MAINTENANCE_WORKTREE: /tmp/faolla-maintenance-control-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Validate Fixed Manual Transition
+        env:
+          ACTION: ${{ inputs.action }}
+          CHECK_STATE: ${{ inputs.check_state }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DEPLOY_RUN_ID: ${{ inputs.successful_deploy_run_id }}
+          DEPLOY_RUN_ATTEMPT: ${{ inputs.successful_deploy_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = fafona/space
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$TARGET_SHA" = "$GITHUB_SHA"
+          case "$ACTION" in
+            plan)
+              test "$CONFIRMATION" = CHECK_PRODUCTION_MAINTENANCE_PLAN
+              test -z "$MAINTENANCE_OPERATION_ID"
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
+            prepare)
+              test "$CONFIRMATION" = PREPARE_PRODUCTION_MAINTENANCE
+              test -z "$MAINTENANCE_OPERATION_ID"
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
+            check|end)
+              [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+              if [ "$ACTION" = check ]; then
+                test "$CONFIRMATION" = CHECK_PRODUCTION_MAINTENANCE
+                test "$CHECK_STATE" = held || test "$CHECK_STATE" = candidate
+                test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              else
+                test "$CONFIRMATION" = END_PRODUCTION_MAINTENANCE
+                [[ "$DEPLOY_RUN_ID" =~ ^[1-9][0-9]*$ && "$DEPLOY_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+              fi
+              ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Checkout Exact Maintenance Source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Require Current Main And Exact Successful Push CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test -f scripts/production-maintenance-control.mjs
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$TARGET_SHA"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f event=push -f branch=main -f status=success -f head_sha="$TARGET_SHA" -f per_page=100 |
+            jq -e --arg repository "$GITHUB_REPOSITORY" --arg sha "$TARGET_SHA" '
+              any(.workflow_runs[];
+                .name == "CI" and .path == ".github/workflows/ci.yml" and .event == "push" and
+                .head_branch == "main" and .head_sha == $sha and .status == "completed" and
+                .conclusion == "success" and .repository.full_name == $repository and
+                .head_repository.full_name == $repository)' >/dev/null
+
+      - name: Require Exact Successful Maintenance Deploy Before End
+        if: inputs.action == 'end'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_RUN_ID: ${{ inputs.successful_deploy_run_id }}
+          DEPLOY_RUN_ATTEMPT: ${{ inputs.successful_deploy_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DEPLOY_RUN_ID" |
+            jq -e --arg repository "$GITHUB_REPOSITORY" --arg sha "$TARGET_SHA" \
+              --arg id "$DEPLOY_RUN_ID" --arg attempt "$DEPLOY_RUN_ATTEMPT" '
+              (.id | tostring) == $id and (.run_attempt | tostring) == $attempt and
+              .name == "Deploy Production" and .path == ".github/workflows/deploy.yml" and
+              .event == "workflow_run" and .head_branch == "main" and .head_sha == $sha and
+              .status == "completed" and .conclusion == "success" and
+              .repository.full_name == $repository and .head_repository.full_name == $repository' >/dev/null
+
+      - name: Verify Signed Deploy Maintenance Binding
+        if: inputs.action == 'end'
+        id: maintenance-binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BINDING_RUN_ID: ${{ inputs.successful_deploy_run_id }}
+          BINDING_RUN_ATTEMPT: ${{ inputs.successful_deploy_run_attempt }}
+          BINDING_TARGET_SHA: ${{ env.TARGET_SHA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$BINDING_RUN_ID" =~ ^[1-9][0-9]*$ && "$BINDING_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BINDING_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          binding_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-binding.XXXXXXXX")"
+          trap 'rm -f -- "$binding_dir/production-maintenance-binding.json" "$binding_dir/provenance.json"; rmdir -- "$binding_dir"' EXIT
+          gh run download "$BINDING_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "faolla-maintenance-deploy-binding-$BINDING_RUN_ID-$BINDING_RUN_ATTEMPT" --dir "$binding_dir"
+          test -f "$binding_dir/production-maintenance-binding.json"
+          test ! -L "$binding_dir/production-maintenance-binding.json"
+          gh attestation verify "$binding_dir/production-maintenance-binding.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/deploy.yml" \
+            --source-digest "$BINDING_TARGET_SHA" --source-ref refs/heads/main \
+            --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+            --limit 10 --format json > "$binding_dir/provenance.json"
+          node scripts/production-maintenance-workflow-contract.mjs verify \
+            --file "$binding_dir/production-maintenance-binding.json" --provenance "$binding_dir/provenance.json" \
+            --phase deploy --target-sha "$BINDING_TARGET_SHA" \
+            --run-id "$BINDING_RUN_ID" --run-attempt "$BINDING_RUN_ATTEMPT" \
+            --mode "$MAINTENANCE_MODE" --operation-id "$MAINTENANCE_OPERATION_ID" --old-sha "$EXPECTED_OLD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Setup Pinned SSH Trust
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
+          [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]]
+          test "${SSH_PORT:-22}" -ge 1 && test "${SSH_PORT:-22}" -le 65535
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null 2>&1
+          lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != 22 ]; then lookup="[$SSH_HOST]:$SSH_PORT"; fi
+          ssh-keygen -F "$lookup" -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1
+
+      - name: Prepare Remote Detached Exact Control Source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_DIR" != / && "$APP_DIR" != */ && "$APP_DIR" != *//* ]]
+          [[ "/$APP_DIR/" != *"/../"* && "/$APP_DIR/" != *"/./"* ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$TARGET_SHA"
+          printf -v remote_command "bash -s -- %q %q %q" "$APP_DIR" "$REMOTE_MAINTENANCE_WORKTREE" "$TARGET_SHA"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" <<'REMOTE'
+          set -euo pipefail
+          app_dir="$1"; worktree="$2"; target="$3"
+          [[ "$worktree" =~ ^/tmp/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          test -d "$app_dir" && test ! -e "$worktree"
+          git -C "$app_dir" fetch --no-tags --prune origin "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git -C "$app_dir" rev-parse refs/remotes/origin/main)" = "$target"
+          git -C "$app_dir" worktree add --detach "$worktree" "$target"
+          test "$(git -C "$worktree" rev-parse HEAD)" = "$target"
+          test -z "$(git -C "$worktree" status --porcelain=v1 --untracked-files=all)"
+          test -f "$worktree/scripts/production-maintenance-control.mjs"
+          REMOTE
+
+      - name: Execute Fixed Maintenance Transition
+        id: transition
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          ACTION: ${{ inputs.action }}
+          CHECK_STATE: ${{ inputs.check_state }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          case "$ACTION" in
+            plan) command=plan; expected_state=planned ;;
+            prepare) command=prepare; expected_state=held ;;
+            check)
+              case "$CHECK_STATE" in
+                held) command=check-held; expected_state=held ;;
+                candidate) command=check-candidate; expected_state=candidate ;;
+                *) exit 1 ;;
+              esac ;;
+            end) command=end; expected_state=ended ;;
+            *) exit 1 ;;
+          esac
+          operation_args=()
+          local_operation_args=()
+          if [ "$command" != prepare ] && [ "$command" != plan ]; then
+            operation_args=(--expected-operation-id "$MAINTENANCE_OPERATION_ID")
+            local_operation_args=(--operation-id "$MAINTENANCE_OPERATION_ID")
+          fi
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-transition.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q %q --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q " \
+            "$REMOTE_MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" "$command" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA"
+          if [ "${#operation_args[@]}" -gt 0 ]; then
+            printf -v quoted_operation '%q ' "${operation_args[@]}"
+            remote_command+="$quoted_operation"
+          fi
+          remote_command+='--json'
+          echo 'attempted=true' >> "$GITHUB_OUTPUT"
+          status=0
+          timeout --signal=TERM --kill-after=10s 1200s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            if [ "$ACTION" = plan ]; then
+              if plan_diagnostic="$(node --input-type=module - "$capture_dir/err" 2>/dev/null <<'NODE'
+          import { readFileSync } from "node:fs";
+          const allowed = new Set([
+            "maintenance_plan_operation_state_unverified",
+            "maintenance_plan_runtime_unverified",
+            "maintenance_plan_public_gateway_unverified",
+            "maintenance_plan_ingress_unverified",
+            "maintenance_plan_database_unverified",
+            "maintenance_plan_installation_unverified",
+          ]);
+          try {
+            const bytes = readFileSync(process.argv[2]);
+            if (bytes.length > 128) process.exit(1);
+            const code = bytes.toString("utf8");
+            const diagnostic = code.endsWith("\n") ? code.slice(0, -1) : code;
+            if (!allowed.has(diagnostic)) process.exit(1);
+            process.stdout.write(diagnostic + "\n");
+          } catch { process.exit(1); }
+          NODE
+              )"; then
+                printf '%s\n' "$plan_diagnostic"
+                exit 1
+              fi
+            fi
+            if [ "$ACTION" = prepare ] && [ -s "$capture_dir/out" ]; then
+              # A failed prepare can already own a private operation. Preserve
+              # only its validated diagnostic UUID; this never grants held status.
+              for failed_state in failed-held failed-unknown; do
+                if diagnostic="$(node scripts/production-maintenance-workflow-contract.mjs verify-control \
+                  --file "$capture_dir/out" --state "$failed_state" --target-sha "$TARGET_SHA" \
+                  --old-sha "$EXPECTED_OLD_SHA" 2>/dev/null)"; then
+                  printf '%s\n' "$diagnostic" | tee -a "$GITHUB_STEP_SUMMARY"
+                  break
+                fi
+              done
+            fi
+            echo 'production_maintenance_transition_unconfirmed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state "$expected_state" --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" "${local_operation_args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify Real Public Release After End
+        if: inputs.action == 'end'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-production-smoke.mjs --origin https://faolla.com \
+            --paths /,/login,/10909094,/admin --expected-build "$TARGET_SHA" \
+            --attempts 8 --delay-ms 2000 --timeout-ms 12000
+
+      - name: Reclose Entry And Fail Held If End Is Unconfirmed
+        if: always() && (failure() || cancelled()) && inputs.action == 'end' && steps.transition.outputs.attempted == 'true'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          MAINTENANCE_WORKTREE: ${{ env.REMOTE_MAINTENANCE_WORKTREE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$MAINTENANCE_WORKTREE" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MAINTENANCE_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-check.XXXXXXXX")"
+          trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q fail-held --app-dir %q --app-name %q --app-port %q --target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=5s 180s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_check_failed'
+            exit 1
+          fi
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$capture_dir/out" --state failed-held --target-sha "$TARGET_SHA" \
+            --old-sha "$EXPECTED_OLD_SHA" --operation-id "$MAINTENANCE_OPERATION_ID"
+
+      - name: Remove Exact Temporary Control Source
+        if: always()
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The operation state lives outside this temporary checkout and is never removed here.
+          if [ ! -f "$HOME/.ssh/id_ed25519" ] || [ ! -f "$HOME/.ssh/known_hosts" ]; then exit 0; fi
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          printf -v remote_command "bash -s -- %q %q %q" "$APP_DIR" "$REMOTE_MAINTENANCE_WORKTREE" "$TARGET_SHA"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" <<'REMOTE'
+          set -euo pipefail
+          app_dir="$1"; worktree="$2"; target="$3"
+          [[ "$worktree" =~ ^/tmp/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          if [ ! -e "$worktree" ]; then exit 0; fi
+          test ! -L "$worktree"
+          test "$(git -C "$worktree" rev-parse HEAD)" = "$target"
+          test -z "$(git -C "$worktree" status --porcelain=v1 --untracked-files=all)"
+          git -C "$app_dir" worktree remove "$worktree"
+          REMOTE
+
+      - name: Remove Runner SSH Material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"

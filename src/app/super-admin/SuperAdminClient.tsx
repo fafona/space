@@ -122,6 +122,33 @@ import {
   type PlatformAdminDataBackupListItem,
   type PlatformAdminDataBackupRestoreScope,
 } from "@/lib/platformAdminDataBackup";
+import { PLATFORM_ADMIN_DATA_BACKUP_SCOPE } from "@/lib/platformAdminDataBackupScope";
+import type { PlatformAdminBackupRestorePreview } from "@/lib/platformAdminBackupRestorePreview";
+import PlatformAdminBackupRestoreDialog from "@/components/admin/PlatformAdminBackupRestoreDialog";
+import PlatformAdminBackupRestoreReceiptPanel from "@/components/admin/PlatformAdminBackupRestoreReceiptPanel";
+import { createPlatformAdminBackupRestoreReceiptAttempt, lookupPlatformAdminBackupRestoreReceiptForAttempt,
+  parsePlatformAdminBackupRestoreReceiptReply, readPlatformAdminBackupRestoreIdentityOnce,
+  type PlatformAdminBackupRestoreReceiptAttempt, type PlatformAdminBackupRestoreReceiptProgress,
+} from "@/lib/platformAdminBackupRestoreReceiptWorkflow";
+import {
+  createPlatformAdminBackupRestoreRequestGuard,
+  createPlatformAdminBackupRestoreSyncGuard,
+  isPlatformAdminBackupRestoreRejectedBeforeWrite,
+  parsePlatformAdminBackupRestoreAuthoritativeSnapshot,
+  parsePlatformAdminBackupRestorePreview,
+  parsePlatformAdminBackupRestoreResult,
+  parsePlatformAdminBackupRestoreSnapshotWriteAck,
+  platformAdminBackupRestoreFailureMessage,
+  readPlatformAdminBackupRestoreJson,
+  requestPlatformAdminBackupRestoreOnce,
+} from "@/lib/platformAdminBackupRestoreClient";
+import { STORAGE_KEY as RESTORE_JOURNAL_KEY, readRestoreJournal, writeRestoreJournalAhead,
+  clearRestoreJournalExact, withRestoreJournalExclusive, withRestoreJournalWriter,
+} from "@/lib/platformAdminBackupRestoreJournal";
+import { parsePlatformAdminBackupCreateAck } from "@/lib/platformAdminBackupCreateClient";
+import { inspectPlatformAdminBackupRestoreForAttempt } from "@/lib/platformAdminBackupRestoreInspectionWorkflow";
+import type { PlatformAdminBackupRestoreInspectionResult } from "@/lib/platformAdminBackupRestoreInspectionClient";
+import PlatformAdminBackupRestoreInspectionPanel from "@/components/admin/PlatformAdminBackupRestoreInspectionPanel";
 import type { SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import { resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
@@ -146,6 +173,11 @@ import { useHydrated } from "@/lib/useHydrated";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { useNotificationSound } from "@/lib/useNotificationSound";
+
+function getRestoreJournalStorage(): Storage | null {
+  try { return typeof window === "undefined" ? null : window.localStorage; }
+  catch { return null; }
+}
 
 const ChatBusinessCardDialog = dynamic(() => import("@/components/admin/ChatBusinessCardDialog"), {
   ssr: false,
@@ -2255,6 +2287,42 @@ export default function SuperAdminClient() {
   const [dataBackupsError, setDataBackupsError] = useState("");
   const [dataBackupCreating, setDataBackupCreating] = useState(false);
   const [dataBackupRestoringKey, setDataBackupRestoringKey] = useState("");
+  const [dataBackupPreviewingKey, setDataBackupPreviewingKey] = useState("");
+  const [dataBackupRestorePreview, setDataBackupRestorePreview] = useState<PlatformAdminBackupRestorePreview | null>(null);
+  const [dataBackupConfirmEmpty, setDataBackupConfirmEmpty] = useState(false);
+  const [dataBackupSyncPaused, setDataBackupSyncPaused] = useState(true);
+  const [dataBackupJournalReady, setDataBackupJournalReady] = useState(false);
+  const dataBackupJournalReadyRef = useRef(false);
+  const [dataBackupJournalEpoch, setDataBackupJournalEpoch] = useState(0);
+  const [dataBackupJournalNotice, setDataBackupJournalNotice] = useState("");
+  const [dataBackupReceiptRetained, setDataBackupReceiptRetained] = useState(false);
+  const dataBackupRestoreRequestGuardRef = useRef(createPlatformAdminBackupRestoreRequestGuard());
+  // Paused before any hydration effect or timer can send old browser configuration.
+  const dataBackupRestoreSyncGuardRef = useRef(createPlatformAdminBackupRestoreSyncGuard({ initiallyPaused: true }));
+  const dataBackupRestoreRequestRef = useRef<AbortController | null>(null);
+  const dataBackupRestoreAttemptedRef = useRef(false);
+  const dataBackupRestoreBusyRef = useRef(false);
+  const dataBackupPreviewLocalStateRef = useRef<PlatformState | null>(null);
+  const dataBackupPreviewDeviceRef = useRef<string | null>(null);
+  const dataBackupReceiptAttemptRef = useRef<PlatformAdminBackupRestoreReceiptAttempt | null>(null);
+  const [dataBackupReceiptProgress, setDataBackupReceiptProgress] = useState<PlatformAdminBackupRestoreReceiptProgress | null>(null);
+  const [dataBackupReceiptQuerying, setDataBackupReceiptQuerying] = useState(false);
+  const [dataBackupReceiptQueryError, setDataBackupReceiptQueryError] = useState("");
+  const dataBackupReceiptQueryRef = useRef<AbortController | null>(null);
+  const dataBackupReceiptQueryGuardRef = useRef(createPlatformAdminBackupRestoreRequestGuard());
+  const [dataBackupInspection, setDataBackupInspection] = useState<{
+    attempt: PlatformAdminBackupRestoreReceiptAttempt; result: PlatformAdminBackupRestoreInspectionResult;
+  } | null>(null);
+  const [dataBackupInspecting, setDataBackupInspecting] = useState(false);
+  const [dataBackupInspectionError, setDataBackupInspectionError] = useState(false);
+  const dataBackupInspectionRequestRef = useRef<AbortController | null>(null);
+  const dataBackupInspectionGuardRef = useRef(createPlatformAdminBackupRestoreRequestGuard());
+  const runDataBackupSnapshotWrite = useCallback(<T,>(write: (isCurrent: () => boolean) => Promise<T>) =>
+    dataBackupRestoreSyncGuardRef.current.runWrite((isCurrent) =>
+      withRestoreJournalWriter(getRestoreJournalStorage(), navigator.locks, () => {
+        if (!isCurrent()) throw new Error("super_admin_backup_restore_sync_paused");
+        return write(isCurrent);
+      })), []);
   const [dataBackupDetail, setDataBackupDetail] = useState<PlatformAdminDataBackupEntry | null>(null);
   const [dataBackupDetailLoadingId, setDataBackupDetailLoadingId] = useState("");
   const [dataBackupDetailError, setDataBackupDetailError] = useState<{ id: string; text: string } | null>(null);
@@ -2520,6 +2588,9 @@ export default function SuperAdminClient() {
         markBackgroundSyncBaseline?: boolean;
       } = {},
     ) => {
+      const isCurrent = dataBackupRestoreSyncGuardRef.current.captureCurrent();
+      return withRestoreJournalWriter(getRestoreJournalStorage(), navigator.locks, async () => {
+      if (!isCurrent()) throw new Error("super_admin_backup_restore_sync_paused");
       const response = await fetchWithTimeout(
         "/api/super-admin/platform-merchant-snapshot",
         {
@@ -2530,7 +2601,7 @@ export default function SuperAdminClient() {
         },
         PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS,
       );
-      const raw = (await response.json().catch(() => null)) as
+      const raw = (await readPlatformAdminBackupRestoreJson(response, PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS, options.signal)) as
         | {
             payload?: unknown;
             error?: string;
@@ -2540,6 +2611,9 @@ export default function SuperAdminClient() {
       if (!response.ok) {
         throw new Error(raw?.message || raw?.error || "platform_merchant_snapshot_load_failed");
       }
+      if (!isCurrent()) {
+        throw new Error("super_admin_backup_restore_sync_paused");
+      }
       const payload = normalizePlatformMerchantSnapshotPayload(raw?.payload ?? {});
       if (options.markBackgroundSyncBaseline) {
         platformSnapshotBackgroundSyncBaselineRef.current = `${payload.revision}:${payload.snapshot.length}`;
@@ -2548,6 +2622,7 @@ export default function SuperAdminClient() {
         conflictTip: options.conflictTip,
       });
       return payload;
+      });
     },
     [hydratePlatformMerchantSnapshotFromServerPayload],
   );
@@ -2648,7 +2723,7 @@ export default function SuperAdminClient() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated || !authed) return;
+    if (!hydrated || !authed || !dataBackupJournalReady) return;
     if (isMobileSupportOnlyMode) return;
     const controller = new AbortController();
     const run = async () => {
@@ -2670,7 +2745,7 @@ export default function SuperAdminClient() {
     };
     void run();
     return () => controller.abort();
-  }, [authed, hydrated, isMobileSupportOnlyMode, loadPlatformMerchantSnapshotFromServer]);
+  }, [authed, dataBackupJournalReady, hydrated, isMobileSupportOnlyMode, loadPlatformMerchantSnapshotFromServer]);
 
   useEffect(() => {
     if (!hydrated || !authed || activeMenu !== "online_payments") return;
@@ -2681,6 +2756,7 @@ export default function SuperAdminClient() {
     if (!hydrated || !authed) return;
     if (isMobileSupportOnlyMode) return;
     if (!platformSnapshotServerReady) return;
+    if (dataBackupSyncPaused || dataBackupRestoreSyncGuardRef.current.isPaused()) return;
     if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
     const baselineKey = `${platformSnapshotRevisionRef.current}:${platformMerchantSnapshotPayload.snapshot.length}`;
     if (platformSnapshotBackgroundSyncBaselineRef.current === baselineKey) {
@@ -2688,8 +2764,10 @@ export default function SuperAdminClient() {
       return;
     }
     const timer = window.setTimeout(() => {
+      if (dataBackupRestoreSyncGuardRef.current.isPaused()) return;
       const payload = buildPlatformMerchantSnapshotSyncPayload(stateRef.current);
-      void fetchWithTimeout(
+      void runDataBackupSnapshotWrite(async (isCurrent) => {
+        const response = await fetchWithTimeout(
         "/api/super-admin/platform-merchant-snapshot",
         {
           method: "POST",
@@ -2701,11 +2779,20 @@ export default function SuperAdminClient() {
           body: JSON.stringify(payload),
         },
         PLATFORM_MERCHANT_SNAPSHOT_BACKGROUND_SYNC_TIMEOUT_MS,
-      )
-        .then(async (response) => {
-          const result = (await response.json().catch(() => null)) as
+        );
+          const result = (await readPlatformAdminBackupRestoreJson(response, PLATFORM_MERCHANT_SNAPSHOT_BACKGROUND_SYNC_TIMEOUT_MS)) as
             | { ok?: boolean; error?: string; message?: string; payload?: unknown }
             | null;
+          if ((!response.ok && response.status !== 409) || (response.ok && result?.ok !== true)) {
+            throw new Error("platform_merchant_snapshot_save_unconfirmed");
+          }
+          if (response.status === 409 && (result?.error !== "platform_merchant_snapshot_conflict" || result.ok === true)) {
+            throw new Error("platform_merchant_snapshot_save_unconfirmed");
+          }
+          if (response.ok && !parsePlatformAdminBackupRestoreSnapshotWriteAck(result)) {
+            throw new Error("platform_merchant_snapshot_save_unconfirmed");
+          }
+          if (!isCurrent()) return;
           if (response.status === 409) {
             const latestPayload = normalizePlatformMerchantSnapshotPayload(result?.payload ?? {});
             if (latestPayload.snapshot.length > 0 || latestPayload.revision) {
@@ -2735,6 +2822,7 @@ export default function SuperAdminClient() {
     };
   }, [
     authed,
+    dataBackupSyncPaused,
     buildPlatformMerchantSnapshotSyncPayload,
     hydratePlatformMerchantSnapshotFromServerPayload,
     hydrated,
@@ -2742,6 +2830,7 @@ export default function SuperAdminClient() {
     loadPlatformMerchantSnapshotFromServer,
     platformMerchantSnapshotPayload.snapshot.length,
     platformSnapshotServerReady,
+    runDataBackupSnapshotWrite,
   ]);
 
   useEffect(() => {
@@ -3368,7 +3457,7 @@ export default function SuperAdminClient() {
     if (!Number.isFinite(passedDays) || passedDays >= 3) {
       return "当前已到自动备份周期，系统会在本次后台会话中自动补备份。";
     }
-    return `距离下一次自动备份还差 ${Math.max(0, 3 - passedDays)} 天（西班牙时间 0 点执行）。`;
+    return `距下一次快照补建周期还差 ${Math.max(0, 3 - passedDays)} 天；到期后进入后台时检查补建，不保证凌晨执行。`;
   }, [currentMadridDateKey, latestAutoDataBackup]);
   const selectedMerchantRow =
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
@@ -4364,8 +4453,10 @@ export default function SuperAdminClient() {
       if (payload.snapshot.length === 0) {
         throw new Error("empty_snapshot");
       }
-      const sendSnapshotRequest = () =>
-        fetchWithTimeout(
+      const outcome = await runDataBackupSnapshotWrite(async (isCurrent) => {
+      const sendSnapshotRequest = () => {
+        if (!isCurrent()) throw new Error("super_admin_backup_restore_sync_paused");
+        return fetchWithTimeout(
           "/api/super-admin/platform-merchant-snapshot",
           {
             method: "POST",
@@ -4378,6 +4469,7 @@ export default function SuperAdminClient() {
           },
           PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS,
         );
+      };
       let response = await sendSnapshotRequest();
       if (response.status === 401 || response.status === 403) {
         const recovered = await refreshSuperAdminAuthenticatedState();
@@ -4388,9 +4480,19 @@ export default function SuperAdminClient() {
           setAuthed(false);
         }
       }
-      const result = (await response.json().catch(() => null)) as
+      const result = (await readPlatformAdminBackupRestoreJson(response, PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS)) as
         | { ok?: boolean; error?: string; message?: string; payload?: unknown }
         | null;
+      if ((!response.ok && response.status !== 409) || (response.ok && result?.ok !== true)) {
+        throw new Error("platform_merchant_snapshot_save_unconfirmed");
+      }
+      if (response.status === 409 && (result?.error !== "platform_merchant_snapshot_conflict" || result.ok === true)) {
+        throw new Error("platform_merchant_snapshot_save_unconfirmed");
+      }
+      if (response.ok && !parsePlatformAdminBackupRestoreSnapshotWriteAck(result)) {
+        throw new Error("platform_merchant_snapshot_save_unconfirmed");
+      }
+      if (!isCurrent()) return;
       if (response.status === 409) {
         const latestPayload = normalizePlatformMerchantSnapshotPayload(result?.payload ?? {});
         if (latestPayload.snapshot.length > 0 || latestPayload.revision) {
@@ -4402,7 +4504,7 @@ export default function SuperAdminClient() {
             conflictTip: options.conflictTip || "检测到其他超级后台已更新配置，当前页面已同步到最新版本",
           });
         }
-        throw new Error("platform_merchant_snapshot_conflict");
+        return "conflict" as const;
       }
       if (!response.ok) {
         throw new Error(result?.message || result?.error || "platform_merchant_snapshot_save_failed");
@@ -4412,11 +4514,14 @@ export default function SuperAdminClient() {
         platformSnapshotRevisionRef.current = savedPayload.revision;
       }
       setPlatformSnapshotServerReady(true);
+      });
+      if (outcome === "conflict") throw new Error("platform_merchant_snapshot_conflict");
     },
     [
       buildPlatformMerchantSnapshotSyncPayload,
       hydratePlatformMerchantSnapshotFromServerPayload,
       loadPlatformMerchantSnapshotFromServer,
+      runDataBackupSnapshotWrite,
     ],
   );
 
@@ -5057,26 +5162,29 @@ export default function SuperAdminClient() {
   }, [requestDataBackupsWithSessionRecovery]);
 
   const createDataBackupAction = useCallback(async (source: "manual" | "auto") => {
+    if (dataBackupRestoreSyncGuardRef.current.isPaused()) return;
     if (!authed || !hydrated) return false;
     if (source === "manual") {
       setDataBackupCreating(true);
     }
     setDataBackupsError("");
     try {
-      const response = await requestDataBackupsWithSessionRecovery({
+      return await runDataBackupSnapshotWrite(async (isCurrent) => {
+      const response = await fetchWithTimeout("/api/super-admin/data-backups", {
         method: "POST",
+        credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           source,
           operator: operatorName,
-          summary: source === "auto" ? "超级后台自动备份" : "超级后台手动备份",
+          summary: source === "auto" ? "超级后台应用快照（访问时补建）" : "超级后台应用快照（手动）",
           platformState: state,
           merchantAccounts: backendMerchantAccounts,
         }),
-      });
-      const payload = (await response.json().catch(() => null)) as
+      }, PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS);
+      const payload = (await readPlatformAdminBackupRestoreJson(response, PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS)) as
         | {
             backups?: PlatformAdminDataBackupListItem[];
             created?: boolean;
@@ -5084,33 +5192,39 @@ export default function SuperAdminClient() {
             message?: string;
           }
         | null;
+      if (!isCurrent()) throw new Error("super_admin_backup_restore_sync_paused");
       if (!response.ok) {
-        setDataBackupsError(payload?.message || payload?.error || "备份创建失败，请稍后重试");
-        return false;
+        if (response.status === 401 || response.status === 403) setAuthed(false);
+        throw new Error("super_admin_backup_create_unconfirmed");
       }
-      setDataBackups(Array.isArray(payload?.backups) ? payload.backups : []);
+      const acknowledgement = parsePlatformAdminBackupCreateAck(payload);
+      if (!acknowledgement) throw new Error("super_admin_backup_create_unconfirmed");
+      setDataBackups(acknowledgement.backups);
       setDataBackupsError("");
-      if (payload?.created !== false) {
+      if (acknowledgement.created) {
         recordAuditBestEffort(
           "data_backup_create",
           "data_backup",
           source,
-          `来源:${formatPlatformAdminBackupSourceLabel(source)}；备份数量:${Array.isArray(payload?.backups) ? payload.backups.length : "-"}；商户账号:${backendMerchantAccounts.length}`,
+          `来源:${formatPlatformAdminBackupSourceLabel(source)}；备份数量:${acknowledgement.backups.length}；商户账号:${backendMerchantAccounts.length}`,
         );
       }
       if (source === "manual") {
-        setTip(payload?.created === false ? "当前还没到自动备份周期，无需重复创建自动备份" : "超级后台备份已创建");
+        setTip(!acknowledgement.created ? "当前还没到快照补建周期，无需重复创建" : "后台应用快照已创建；这不是数据库完整备份");
       }
-      return payload?.created !== false;
+      return acknowledgement.created;
+      });
     } catch {
-      setDataBackupsError("备份创建失败，请稍后重试");
+      dataBackupRestoreSyncGuardRef.current.block();
+      setDataBackupSyncPaused(true);
+      setDataBackupsError("快照创建结果未能可靠确认，已暂停本页配置同步和恢复。请先核对服务器及登录状态，不要立即重复创建。");
       return false;
     } finally {
       if (source === "manual") {
         setDataBackupCreating(false);
       }
     }
-  }, [authed, backendMerchantAccounts, hydrated, operatorName, recordAuditBestEffort, requestDataBackupsWithSessionRecovery, state]);
+  }, [authed, backendMerchantAccounts, hydrated, operatorName, recordAuditBestEffort, runDataBackupSnapshotWrite, state]);
 
   async function viewDataBackupDetailAction(backupId: string) {
     if (!authed || !hydrated) return;
@@ -5153,73 +5267,423 @@ export default function SuperAdminClient() {
     }
   }
 
+  const cancelDataBackupReceiptQuery = useCallback(() => {
+    dataBackupReceiptQueryGuardRef.current.invalidate();
+    dataBackupReceiptQueryRef.current?.abort();
+    dataBackupReceiptQueryRef.current = null;
+    setDataBackupReceiptQuerying(false);
+    dataBackupInspectionGuardRef.current.invalidate();
+    dataBackupInspectionRequestRef.current?.abort();
+    dataBackupInspectionRequestRef.current = null;
+    setDataBackupInspecting(false);
+    setDataBackupInspection(null);
+    setDataBackupInspectionError(false);
+  }, []);
+
+  const closeDataBackupRestorePreview = useCallback(() => {
+    cancelDataBackupReceiptQuery();
+    if (!dataBackupRestoreRequestRef.current && !dataBackupPreviewLocalStateRef.current &&
+        !dataBackupRestoreSyncGuardRef.current.isPaused()) return;
+    dataBackupRestoreRequestGuardRef.current.invalidate();
+    dataBackupRestoreRequestRef.current?.abort();
+    dataBackupRestoreRequestRef.current = null;
+    dataBackupPreviewLocalStateRef.current = null;
+    dataBackupPreviewDeviceRef.current = null;
+    setDataBackupRestorePreview(null);
+    setDataBackupConfirmEmpty(false);
+    setDataBackupPreviewingKey("");
+    setDataBackupRestoringKey("");
+    dataBackupRestoreBusyRef.current = false;
+    if (dataBackupRestoreAttemptedRef.current) {
+      setDataBackupReceiptProgress((current) => current && current.status === "pending" ? { ...current, status: "unknown" } : current);
+      dataBackupRestoreSyncGuardRef.current.block();
+      setDataBackupSyncPaused(true);
+      setDataBackupsError(platformAdminBackupRestoreFailureMessage(null));
+    } else if (dataBackupJournalReadyRef.current && dataBackupRestoreSyncGuardRef.current.resume()) {
+      setDataBackupSyncPaused(false);
+    }
+  }, [cancelDataBackupReceiptQuery]);
+
+  useEffect(() => {
+    if (!authed || !hydrated || activeMenu !== "stats") closeDataBackupRestorePreview();
+  }, [activeMenu, authed, closeDataBackupRestorePreview, hydrated]);
+
+  const invalidateDataBackupReceiptIdentity = useCallback(() => {
+    closeDataBackupRestorePreview();
+    // Hide prior-identity metadata, but NEVER reset attempted/unknown write protection.
+    dataBackupReceiptAttemptRef.current = null;
+    setDataBackupReceiptProgress(null);
+    setDataBackupReceiptQueryError("");
+  }, [closeDataBackupRestorePreview]);
+
+  useEffect(() => { invalidateDataBackupReceiptIdentity(); }, [authed, currentSuperAdminDeviceId, invalidateDataBackupReceiptIdentity]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const controller = new AbortController();
+    const journal = readRestoreJournal(getRestoreJournalStorage());
+    dataBackupJournalReadyRef.current = true;
+    setDataBackupJournalReady(true);
+    if (journal.status === "empty") {
+      // Empty storage is not evidence that a previously unknown write stopped.
+      // Auth hydration/pageshow must not advance a live GET's generation or cancel an active preview.
+      if (dataBackupRestoreSyncGuardRef.current.isPaused() && !dataBackupRestoreRequestRef.current &&
+          !dataBackupPreviewLocalStateRef.current && !dataBackupRestoreAttemptedRef.current &&
+          dataBackupRestoreSyncGuardRef.current.resume()) setDataBackupSyncPaused(false);
+      return () => controller.abort();
+    }
+    dataBackupRestoreSyncGuardRef.current.block();
+    dataBackupRestoreAttemptedRef.current = true;
+    setDataBackupSyncPaused(true);
+    setDataBackupReceiptRetained(true);
+    setDataBackupJournalNotice(journal.status === "pending"
+      ? "发现尚未核对的恢复操作，已暂停本页配置同步及新恢复。请使用原登录身份进入备份区，只读查询结果；不会自动重发。"
+      : "恢复操作记录无法可靠读取，已暂停本页配置同步及新恢复。请保留浏览器数据并联系维护人员核对，不要清除记录后重试。");
+    if (journal.status !== "pending" || !authed) return () => controller.abort();
+    const attempt = journal.attempt;
+    void readPlatformAdminBackupRestoreIdentityOnce(fetch, { expected: attempt.deviceId, signal: controller.signal })
+      .then(() => {
+        if (controller.signal.aborted) return;
+        const latest = readRestoreJournal(getRestoreJournalStorage());
+        if (latest.status !== "pending" || JSON.stringify(latest.attempt) !== JSON.stringify(attempt)) return;
+        // Rebinding creates a new attempt object. Retire all old read-only requests
+        // before changing its identity so their busy refs cannot be stranded.
+        cancelDataBackupReceiptQuery();
+        dataBackupReceiptAttemptRef.current = attempt;
+        setDataBackupReceiptProgress({ attempt, status: "unknown", receipt: null, application: "unconfirmed" });
+        // Storage carries no authoritative outcome. Reopening never queries or applies automatically.
+      }).catch(() => {
+        if (!controller.signal.aborted) setDataBackupJournalNotice("存在未核对恢复操作，但当前登录身份无法确认。操作详情已隐藏，配置同步保护保持；请用原身份重新登录后查询。");
+      });
+    return () => controller.abort();
+  }, [authed, cancelDataBackupReceiptQuery, currentSuperAdminDeviceId, dataBackupJournalEpoch, hydrated]);
+
+  useEffect(() => {
+    const invalidate = () => invalidateDataBackupReceiptIdentity();
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key === RESTORE_JOURNAL_KEY) {
+        // A foreign clear/update is NEVER permission to resume this tab's old state.
+        dataBackupRestoreSyncGuardRef.current.block();
+        dataBackupRestoreAttemptedRef.current = true;
+        setDataBackupSyncPaused(true);
+        setDataBackupJournalNotice("另一页面的恢复记录发生变化，已暂停本页配置同步。请核对恢复操作，不要重复提交。");
+        invalidate();
+        setDataBackupJournalEpoch((value) => value + 1);
+        return;
+      }
+      if (event.key === null || event.key === "merchant-space:super-admin-session:v1" ||
+          event.key === "merchant-space:super-admin-device-id:v1") {
+        invalidate();
+        setDataBackupJournalEpoch((value) => value + 1);
+      }
+    };
+    const shown = () => setDataBackupJournalEpoch((value) => value + 1);
+    window.addEventListener("pagehide", invalidate);
+    window.addEventListener("pageshow", shown);
+    window.addEventListener("storage", changed);
+    return () => { window.removeEventListener("pagehide", invalidate); window.removeEventListener("pageshow", shown); window.removeEventListener("storage", changed); };
+  }, [invalidateDataBackupReceiptIdentity]);
+
+  useEffect(() => () => {
+    dataBackupRestoreRequestGuardRef.current.invalidate();
+    dataBackupRestoreRequestRef.current?.abort();
+    dataBackupReceiptQueryGuardRef.current.invalidate();
+    dataBackupReceiptQueryRef.current?.abort();
+    dataBackupInspectionGuardRef.current.invalidate();
+    dataBackupInspectionRequestRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (dataBackupPreviewLocalStateRef.current && dataBackupPreviewLocalStateRef.current !== state) {
+      closeDataBackupRestorePreview();
+      setDataBackupsError("本浏览器后台状态已变化，原确认已取消。请重新预览后再恢复。");
+    }
+  }, [closeDataBackupRestorePreview, state]);
+
   async function restoreDataBackupAction(backupId: string, scope: PlatformAdminDataBackupRestoreScope) {
-    if (!authed || !hydrated) return;
-    const target = dataBackups.find((item) => item.id === backupId);
-    if (!target) {
-      setDataBackupsError("备份记录不存在，恢复失败");
+    if (!authed || !hydrated || !dataBackupJournalReadyRef.current || dataBackupRestoreBusyRef.current) return;
+    if (dataBackupRestoreAttemptedRef.current) {
+      setDataBackupsError(platformAdminBackupRestoreFailureMessage(null));
       return;
     }
-    const scopeLabel = scope === "user_manage" ? "用户管理" : "信息处理";
-    const confirmed = window.confirm(`确认恢复“${target.summary || "备份"}”中的${scopeLabel}数据吗？当前对应菜单的数据会被覆盖。`);
-    if (!confirmed) return;
-
-    setDataBackupRestoringKey(`${backupId}:${scope}`);
+    if (!dataBackups.some((item) => item.id === backupId)) {
+      setDataBackupsError("备份记录不存在，请刷新后重新预览。");
+      return;
+    }
+    dataBackupRestoreRequestRef.current?.abort();
+    cancelDataBackupReceiptQuery();
+    dataBackupPreviewDeviceRef.current = null;
+    const controller = new AbortController();
+    dataBackupRestoreRequestRef.current = controller;
+    const generation = dataBackupRestoreRequestGuardRef.current.begin();
+    dataBackupRestoreBusyRef.current = true;
+    dataBackupPreviewLocalStateRef.current = stateRef.current;
+    setDataBackupRestorePreview(null);
+    setDataBackupConfirmEmpty(false);
+    setDataBackupPreviewingKey(`${backupId}:${scope}`);
     setDataBackupsError("");
+    setDataBackupSyncPaused(true);
     try {
+      // Wait for this page's already-sent writers; aborting a request is not proof that its DB write stopped.
+      const known = await dataBackupRestoreSyncGuardRef.current.pause();
+      if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+      if (!known) {
+        setDataBackupsError("此前配置同步结果不明，恢复预览已阻止。请先核对服务器数据，本页不会继续写入配置。");
+        return;
+      }
       const response = await requestDataBackupsWithSessionRecovery({
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          backupId,
-          scope,
-        }),
+        method: "PATCH", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        signal: controller.signal, body: JSON.stringify({ backupId, scope, action: "preview" }),
       });
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-            message?: string;
-            platformState?: PlatformState;
-            merchantAccounts?: BackendMerchantAccount[];
-            threads?: PlatformSupportThread[];
+      const payload = await readPlatformAdminBackupRestoreJson(response, PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS, controller.signal);
+      if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+      const preview = response.ok ? parsePlatformAdminBackupRestorePreview(payload, { backupId, scope }) : null;
+      if (!preview) {
+        const error = payload && typeof payload === "object" ? (payload as { error?: unknown }).error : null;
+        setDataBackupsError(response.status === 401 || response.status === 403 || error === "super_admin_backup_read_unavailable"
+          ? platformAdminBackupRestoreFailureMessage(error, response.status)
+          : "恢复预览未能可靠读取，尚未开始恢复。请检查数据服务后重新预览。");
+        return;
+      }
+      if (preview.receiptProtocol === 1) {
+        const deviceId = await readPlatformAdminBackupRestoreIdentityOnce(fetch, { signal: controller.signal });
+        if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+        dataBackupPreviewDeviceRef.current = deviceId;
+      }
+      setDataBackupRestorePreview(preview);
+    } catch {
+      if (dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) {
+        setDataBackupsError("恢复预览读取失败，尚未开始恢复。请重新预览。");
+      }
+    } finally {
+      if (dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) {
+        setDataBackupPreviewingKey("");
+        dataBackupRestoreBusyRef.current = false;
+      }
+    }
+  }
+
+  async function queryDataBackupRestoreReceiptAction() {
+    const attempt = dataBackupReceiptAttemptRef.current;
+    if (!authed || !hydrated || activeMenu !== "stats" || !attempt || dataBackupReceiptQueryRef.current ||
+        dataBackupRestoreBusyRef.current || dataBackupInspectionRequestRef.current) return;
+    const controller = new AbortController();
+    const generation = dataBackupReceiptQueryGuardRef.current.begin();
+    dataBackupReceiptQueryRef.current = controller;
+    setDataBackupReceiptQuerying(true); setDataBackupReceiptQueryError("");
+    const current = () => dataBackupReceiptQueryGuardRef.current.isCurrent(generation) && dataBackupReceiptAttemptRef.current === attempt;
+    try {
+      const result = await lookupPlatformAdminBackupRestoreReceiptForAttempt(fetch, attempt, controller.signal);
+      if (!current()) return;
+      setDataBackupReceiptProgress((progress) => {
+        if (!progress || progress.attempt !== attempt) return progress;
+        // A later missing row cannot erase an already observed historical commit.
+        if (result.outcome === "unknown" && progress.status === "committed") return progress;
+        return { ...progress, status: result.outcome, receipt: result.receipt };
+      });
+      if (result.outcome === "unknown") setDataBackupReceiptQueryError("本次未查到匹配凭据，不能据此断定未执行；请勿重复恢复，继续核对服务器。");
+      // Deliberately no local state application, retry, attempted reset or sync resume here.
+    } catch {
+      if (current()) setDataBackupReceiptQueryError("查询未能确认，或登录身份已变化。原结果和安全保护保留；不会重新发送恢复。");
+    } finally {
+      if (current()) { dataBackupReceiptQueryRef.current = null; setDataBackupReceiptQuerying(false); }
+    }
+  }
+
+  async function inspectDataBackupRestoreAction() {
+    const attempt = dataBackupReceiptAttemptRef.current;
+    if (!authed || !hydrated || activeMenu !== "stats" || !attempt || !dataBackupReceiptRetained ||
+        dataBackupRestoreBusyRef.current || dataBackupReceiptQueryRef.current || dataBackupInspectionRequestRef.current) return;
+    const controller = new AbortController();
+    const generation = dataBackupInspectionGuardRef.current.begin();
+    dataBackupInspectionRequestRef.current = controller;
+    setDataBackupInspecting(true); setDataBackupInspection(null); setDataBackupInspectionError(false);
+    const current = () => dataBackupInspectionGuardRef.current.isCurrent(generation) && dataBackupReceiptAttemptRef.current === attempt;
+    try {
+      const result = await inspectPlatformAdminBackupRestoreForAttempt(fetch, attempt, getRestoreJournalStorage(), controller.signal);
+      if (!current()) return;
+      setDataBackupInspection({ attempt, result });
+      if (result.outcome === "committed") setDataBackupReceiptProgress((progress) => progress?.attempt === attempt
+        ? { ...progress, status: "committed", receipt: result.receipt } : progress);
+      // This observation never applies a snapshot, removes a journal or resumes any write guard.
+    } catch {
+      if (current()) setDataBackupInspectionError(true);
+    } finally {
+      if (current()) { dataBackupInspectionRequestRef.current = null; setDataBackupInspecting(false); }
+    }
+  }
+
+  async function confirmDataBackupRestoreAction() {
+    const preview = dataBackupRestorePreview;
+    if (!authed || !hydrated || !preview || dataBackupRestoreBusyRef.current || dataBackupRestoreAttemptedRef.current ||
+        (preview.requiresEmptyConfirmation && !dataBackupConfirmEmpty)) return;
+    if (dataBackupPreviewLocalStateRef.current !== stateRef.current) {
+      closeDataBackupRestorePreview();
+      setDataBackupsError("本浏览器后台状态已变化，请重新预览。");
+      return;
+    }
+    const controller = new AbortController();
+    cancelDataBackupReceiptQuery();
+    dataBackupRestoreRequestRef.current = controller;
+    const generation = dataBackupRestoreRequestGuardRef.current.begin();
+    dataBackupRestoreBusyRef.current = true;
+    let sent = false;
+    let journalTouched = false;
+    let attempt: PlatformAdminBackupRestoreReceiptAttempt | null = null;
+    setDataBackupRestoringKey(`${preview.backupId}:${preview.scope}`);
+    setDataBackupsError("");
+    const execute = async () => {
+    try {
+      if (preview.receiptProtocol === 1) {
+        const expectedDevice = dataBackupPreviewDeviceRef.current;
+        if (!expectedDevice) throw new Error("super_admin_backup_restore_identity_unconfirmed");
+        const deviceId = await readPlatformAdminBackupRestoreIdentityOnce(fetch, { expected: expectedDevice, signal: controller.signal });
+        if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+        attempt = createPlatformAdminBackupRestoreReceiptAttempt(preview, dataBackupConfirmEmpty, deviceId);
+        // Write-ahead + verified readback under the same exclusive browser lock.
+        // A failed store can still leave a record: preserve it and refuse the PATCH.
+        journalTouched = true;
+        attempt = writeRestoreJournalAhead(getRestoreJournalStorage(), attempt);
+        setDataBackupReceiptRetained(true);
+        dataBackupReceiptAttemptRef.current = attempt;
+        setDataBackupReceiptProgress({ attempt, status: "pending", receipt: null, application: "unconfirmed" });
+        setDataBackupReceiptQueryError("");
+      }
+      if (controller.signal.aborted || !dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+      dataBackupRestoreAttemptedRef.current = true;
+      sent = true;
+      const response = await requestPlatformAdminBackupRestoreOnce(
+        (url, init) => fetchWithTimeout(url, init, PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS),
+        preview, dataBackupConfirmEmpty, controller.signal, attempt?.binding.operationId,
+      );
+      const payload = await readPlatformAdminBackupRestoreJson(response, PLATFORM_MERCHANT_SNAPSHOT_SAVE_TIMEOUT_MS, controller.signal);
+      if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+      if (attempt) {
+        await readPlatformAdminBackupRestoreIdentityOnce(fetch, { expected: attempt.deviceId, signal: controller.signal });
+        if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+        const committed = response.ok ? parsePlatformAdminBackupRestoreReceiptReply(payload, attempt) : null;
+        if (committed) {
+          setDataBackupReceiptProgress((progress) => progress?.attempt === attempt
+            ? { ...progress, status: "committed", receipt: committed.receipt } : progress);
+          if (committed.replayed) {
+            dataBackupRestoreSyncGuardRef.current.block();
+            setDataBackupsError("已确认该操作的服务器历史提交。此次只返回凭据，未重新恢复或应用旧快照；页面及其他同步结果仍需核对，保护保持。");
+            return;
           }
-        | null;
-      if (!response.ok) {
-        setDataBackupsError(payload?.message || payload?.error || "备份恢复失败，请稍后重试");
+        } else if (response.ok) {
+          // A legacy/incorrect success body cannot silently downgrade a receipt-enabled confirmation.
+          throw new Error("super_admin_backup_restore_receipt_reply_unconfirmed");
+        }
+      }
+      const error = payload && typeof payload === "object" ? (payload as { error?: unknown }).error : null;
+      const result = response.ok ? parsePlatformAdminBackupRestoreResult(payload, preview) : null;
+      if (!result) {
+        // Only explicitly pre-write failures allow a new preview; an unknown result never unlocks writes.
+        const rejectedBeforeWrite = !response.ok && isPlatformAdminBackupRestoreRejectedBeforeWrite(response.status, payload);
+        if (rejectedBeforeWrite && attempt) {
+          clearRestoreJournalExact(getRestoreJournalStorage(), attempt);
+          setDataBackupReceiptRetained(false);
+          setDataBackupJournalNotice("");
+        }
+        dataBackupRestoreAttemptedRef.current = !rejectedBeforeWrite;
+        setDataBackupReceiptProgress((progress) => progress?.attempt === attempt && progress.status !== "committed"
+          ? { ...progress, status: rejectedBeforeWrite ? "rejected" : "unknown" } : progress);
+        if (!rejectedBeforeWrite) dataBackupRestoreSyncGuardRef.current.block();
+        if (response.status === 401 || response.status === 403) setAuthed(false);
+        setDataBackupsError(platformAdminBackupRestoreFailureMessage(rejectedBeforeWrite ? error : null, response.status));
         return;
       }
 
-      if (scope === "user_manage" && payload?.platformState) {
-        const restoredState = payload.platformState;
-        savePlatformState(restoredState);
-        setState(restoredState);
-        setPortalDraft(buildPortalDraft(restoredState));
-        if (Array.isArray(payload?.merchantAccounts)) {
-          setBackendMerchantAccounts(payload.merchantAccounts);
+      if (result.scope === "user_manage") {
+        // Align local state AND its revision with the same authoritative post-restore response; no POST occurs here.
+        const revisionResponse = await fetchWithTimeout("/api/super-admin/platform-merchant-snapshot", {
+          method: "GET", credentials: "same-origin", cache: "no-store", signal: controller.signal,
+        }, PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS);
+        const revisionRaw = await readPlatformAdminBackupRestoreJson(revisionResponse, PLATFORM_MERCHANT_SNAPSHOT_LOAD_TIMEOUT_MS, controller.signal);
+        if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+        if (attempt) {
+          await readPlatformAdminBackupRestoreIdentityOnce(fetch, { expected: attempt.deviceId, signal: controller.signal });
+          if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
         }
-        if (merchantPanelOpen && userPanelMode === "backup" && selectedMerchantRow?.hasSite) {
-          void loadMerchantConfigArchiveAction(String(selectedMerchantRow.site.id ?? ""), { silent: true }).catch(() => {});
+        const authoritative = revisionResponse.ok ? parsePlatformAdminBackupRestoreAuthoritativeSnapshot(revisionRaw) : null;
+        if (!authoritative) {
+          dataBackupRestoreSyncGuardRef.current.block();
+          setDataBackupsError("服务器已返回恢复成功，但当前配置版本未能可靠重读。已暂停本页同步，请先人工核对，不要重复恢复。");
+          return;
         }
+        const nextState = applyServerMerchantSnapshotPayloadToState(result.platformState, authoritative);
+        dataBackupPreviewLocalStateRef.current = null;
+        setDataBackupRestorePreview(null);
+        if (!savePlatformState(nextState)) {
+          dataBackupRestoreSyncGuardRef.current.block();
+          setDataBackupsError("服务器已返回恢复成功，但本浏览器缓存写入失败，恢复未完整应用。已暂停同步，请检查存储空间并核对服务器，不要重复恢复。");
+          return;
+        }
+        stateRef.current = nextState;
+        setState(nextState);
+        setPortalDraft(buildPortalDraft(nextState));
+        setBackendMerchantAccounts(result.merchantAccounts as unknown as BackendMerchantAccount[]);
+        platformSnapshotRevisionRef.current = authoritative.revision;
+        const localSnapshot = buildPlatformMerchantSnapshotPayloadFromSites(nextState.sites, nextState.homeLayout.merchantDefaultSortRule);
+        platformSnapshotBackgroundSyncBaselineRef.current = `${authoritative.revision}:${localSnapshot.snapshot.length}`;
+        setPlatformSnapshotServerReady(true);
+      } else {
+        dataBackupPreviewLocalStateRef.current = null;
+        setDataBackupRestorePreview(null);
+        applySupportThreadsState(result.threads);
       }
-
-      if (scope === "support_messages" && Array.isArray(payload?.threads)) {
-        applySupportThreadsState(payload.threads);
+      setDataBackupReceiptProgress((progress) => progress?.attempt === attempt ? { ...progress, application: "applied" } : progress);
+      if (attempt) {
+        clearRestoreJournalExact(getRestoreJournalStorage(), attempt);
+        setDataBackupReceiptRetained(false);
+        setDataBackupJournalNotice("");
       }
-
-      recordAuditBestEffort(
-        "data_backup_restore",
-        "data_backup",
-        backupId,
-        `范围:${scopeLabel}；备份:${target.summary || backupId}；备份时间:${fmt(target.at)}；来源:${formatPlatformAdminBackupSourceLabel(target.source)}`,
-      );
-      setTip(`${scopeLabel}数据已恢复`);
+      dataBackupRestoreAttemptedRef.current = false;
+      if (dataBackupRestoreSyncGuardRef.current.resume()) setDataBackupSyncPaused(false);
+      const scopeLabel = PLATFORM_ADMIN_DATA_BACKUP_SCOPE.restoreScopes[preview.scope].label;
+      recordAuditBestEffort("data_backup_restore", "data_backup", preview.backupId,
+        `范围:${scopeLabel}；已确认预览；快照时间:${fmt(preview.backupAt)}`);
+      setTip(`${scopeLabel}已按既有恢复规则处理；这不是全库原子恢复。`);
     } catch {
-      setDataBackupsError("备份恢复失败，请稍后重试");
+      if (dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) {
+        if (sent || journalTouched) {
+          dataBackupRestoreSyncGuardRef.current.block();
+          dataBackupRestoreAttemptedRef.current = true;
+          setDataBackupSyncPaused(true);
+          setDataBackupJournalNotice("恢复操作尚未完整核对，已保留保护并暂停配置同步。请勿重复恢复；记录如可读取，可在备份区只读查询。");
+          setDataBackupReceiptProgress((progress) => progress?.attempt === attempt && progress.status !== "committed"
+            ? { ...progress, status: "unknown" } : progress);
+        }
+        setDataBackupsError(sent ? platformAdminBackupRestoreFailureMessage(null)
+          : journalTouched ? "尚未发送恢复，但操作记录未能可靠保存或核对，保护保持。请保留浏览器数据并联系维护人员，不要清空记录重试。"
+            : "登录身份或操作编号未能可靠确认，尚未发送恢复。请重新预览；不会自动重发。");
+      }
     } finally {
-      setDataBackupRestoringKey("");
+      if (dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) {
+        // Every attempt consumes the UI confirmation, including stale/failed/unknown responses.
+        dataBackupPreviewLocalStateRef.current = null;
+        dataBackupPreviewDeviceRef.current = null;
+        setDataBackupRestorePreview(null);
+        setDataBackupConfirmEmpty(false);
+        setDataBackupRestoringKey("");
+        dataBackupRestoreRequestRef.current = null;
+        dataBackupRestoreBusyRef.current = false;
+      }
+    }
+    };
+    try {
+      if (preview.receiptProtocol === 1) await withRestoreJournalExclusive(navigator.locks, execute);
+      else await withRestoreJournalWriter(getRestoreJournalStorage(), navigator.locks, execute);
+    } catch {
+      if (!dataBackupRestoreRequestGuardRef.current.isCurrent(generation)) return;
+      // Failure before the lock callback is a no-send result, never a reason to overwrite a journal.
+      if (readRestoreJournal(getRestoreJournalStorage()).status !== "empty") {
+        dataBackupRestoreSyncGuardRef.current.block();
+        dataBackupRestoreAttemptedRef.current = true;
+        setDataBackupJournalEpoch((value) => value + 1);
+      }
+      closeDataBackupRestorePreview();
+      setDataBackupsError("未发送恢复：浏览器恢复保护不可用、被其他页面占用或存在未核对记录。请保留现有记录并核对，不会自动重试。");
     }
   }
 
@@ -5229,12 +5693,12 @@ export default function SuperAdminClient() {
   }, [authed, hydrated, loadDataBackupsAction]);
 
   useEffect(() => {
-    if (!hydrated || !authed) return;
+    if (!hydrated || !authed || !dataBackupJournalReady || dataBackupSyncPaused) return;
     if (backendMerchantAccountsLoading) return;
     if (dataBackupAutoChecked) return;
     setDataBackupAutoChecked(true);
     void createDataBackupAction("auto");
-  }, [authed, backendMerchantAccountsLoading, createDataBackupAction, dataBackupAutoChecked, hydrated]);
+  }, [authed, backendMerchantAccountsLoading, createDataBackupAction, dataBackupAutoChecked, dataBackupJournalReady, dataBackupSyncPaused, hydrated]);
 
   async function sendSupportReplyAction() {
     if (!selectedSupportThread || supportSending) return;
@@ -7437,6 +7901,8 @@ export default function SuperAdminClient() {
     return undefined;
   }, [isMobileSupportOnlyMode, supportMerchantInfoSheetOpen, supportMobileView]);
   function logoutSuperAdmin() {
+    // Invalidate synchronously, before waiting for the logout response/navigation.
+    invalidateDataBackupReceiptIdentity();
     clearSuperAdminAuthenticated();
     void fetch("/api/super-admin/auth/logout", {
       method: "POST",
@@ -7522,6 +7988,11 @@ export default function SuperAdminClient() {
           ) : null}
 
           <div className={isMobileSupportOnlyMode ? "flex-1 min-h-0 overflow-hidden p-0" : "space-y-4 p-4"}>
+            {dataBackupJournalNotice ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+              {dataBackupJournalNotice}
+              {!isMobileSupportOnlyMode && activeMenu !== "stats" ? <button type="button" className="ml-3 rounded border border-amber-300 px-2 py-1 text-xs"
+                onClick={() => setActiveMenu("stats")}>查看备份与恢复记录</button> : null}
+            </div> : null}
             {activeMenu === "site_editor" ? (
               <>
                 <section className="rounded-lg border bg-white p-4">
@@ -11226,9 +11697,9 @@ export default function SuperAdminClient() {
                 <div className="rounded-lg border bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="font-semibold">数据备份</h2>
+                      <h2 className="font-semibold">{PLATFORM_ADMIN_DATA_BACKUP_SCOPE.title}（非数据库灾备）</h2>
                       <div className="mt-1 text-xs text-slate-500">
-                        备份范围：用户管理菜单 + 信息处理菜单。自动备份按西班牙时间每隔 3 天的 0 点补一档，最多保留最近 8 次。
+                        {PLATFORM_ADMIN_DATA_BACKUP_SCOPE.schedule.notice}
                       </div>
                       <div className="mt-2 text-xs text-slate-600">
                         {latestAutoDataBackup
@@ -11250,13 +11721,51 @@ export default function SuperAdminClient() {
                         type="button"
                         className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
                         onClick={() => void createDataBackupAction("manual")}
-                        disabled={dataBackupCreating}
+                        disabled={dataBackupCreating || dataBackupSyncPaused}
                       >
-                        {dataBackupCreating ? "备份中..." : "立即备份"}
+                        {dataBackupCreating ? "创建中..." : "创建应用快照"}
                       </button>
                     </div>
                   </div>
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-slate-700" aria-label="应用快照范围说明">
+                    <p className="font-semibold text-amber-900">{PLATFORM_ADMIN_DATA_BACKUP_SCOPE.storageNotice}</p>
+                    <div className="mt-2 grid gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="font-semibold">仅包含</div>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">{PLATFORM_ADMIN_DATA_BACKUP_SCOPE.included.map((item) => <li key={item}>{item}</li>)}</ul>
+                      </div>
+                      <div>
+                        <div className="font-semibold">不包含 / 不能恢复</div>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">{PLATFORM_ADMIN_DATA_BACKUP_SCOPE.excluded.map((item) => <li key={item}>{item}</li>)}</ul>
+                      </div>
+                    </div>
+                  </div>
                   {dataBackupsError ? <div className="mt-3 text-sm text-rose-600">{dataBackupsError}</div> : null}
+                  {dataBackupReceiptProgress ? <PlatformAdminBackupRestoreReceiptPanel
+                    operationId={dataBackupReceiptProgress.attempt.binding.operationId}
+                    backupId={dataBackupReceiptProgress.attempt.binding.backupId}
+                    scope={dataBackupReceiptProgress.attempt.binding.scope}
+                    status={dataBackupReceiptProgress.status} committedAt={dataBackupReceiptProgress.receipt?.committedAt}
+                    application={dataBackupReceiptProgress.application} querying={dataBackupReceiptQuerying}
+                    retained={dataBackupReceiptRetained}
+                    queryError={dataBackupReceiptQueryError} onQuery={() => void queryDataBackupRestoreReceiptAction()}
+                  /> : null}
+                  {dataBackupReceiptRetained && dataBackupReceiptProgress ? <PlatformAdminBackupRestoreInspectionPanel
+                    result={dataBackupInspection?.attempt === dataBackupReceiptProgress.attempt ? dataBackupInspection.result : null}
+                    inspecting={dataBackupInspecting} error={dataBackupInspectionError}
+                    disabled={dataBackupReceiptQuerying || !!dataBackupRestoringKey || dataBackupReceiptProgress.status === "pending" || dataBackupReceiptProgress.status === "rejected"}
+                    onInspect={() => void inspectDataBackupRestoreAction()}
+                  /> : null}
+                  {dataBackupSyncPaused ? <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950" role="status">
+                    本页后台配置同步已暂停。未知或部分恢复结果需先人工核对，不能把关闭预览视为撤销服务器写入。
+                    {!dataBackupRestorePreview && !dataBackupPreviewingKey && !dataBackupRestoringKey && !dataBackupRestoreAttemptedRef.current ?
+                      <button type="button" className="ml-2 rounded border px-2 py-1" onClick={closeDataBackupRestorePreview}>取消尚未执行的预览</button> : null}
+                  </div> : null}
+                  {dataBackupRestorePreview ? renderTopMostOverlay(<PlatformAdminBackupRestoreDialog
+                    preview={dataBackupRestorePreview} confirmEmpty={dataBackupConfirmEmpty}
+                    submitting={!!dataBackupRestoringKey} onConfirmEmptyChange={setDataBackupConfirmEmpty}
+                    onCancel={closeDataBackupRestorePreview} onConfirm={() => void confirmDataBackupRestoreAction()}
+                  />) : null}
                   {dataBackupsLoading && dataBackups.length === 0 ? (
                     <div className="mt-3 text-xs text-slate-500">正在加载备份记录…</div>
                   ) : dataBackups.length === 0 ? (
@@ -11268,6 +11777,8 @@ export default function SuperAdminClient() {
                       {dataBackups.map((backup) => {
                         const restoringUserManage = dataBackupRestoringKey === `${backup.id}:user_manage`;
                         const restoringSupport = dataBackupRestoringKey === `${backup.id}:support_messages`;
+                        const previewingUserManage = dataBackupPreviewingKey === `${backup.id}:user_manage`;
+                        const previewingSupport = dataBackupPreviewingKey === `${backup.id}:support_messages`;
                         const detailOpen = dataBackupDetail?.id === backup.id;
                         const detailLoading = dataBackupDetailLoadingId === backup.id;
                         const detailError = dataBackupDetailError?.id === backup.id ? dataBackupDetailError.text : "";
@@ -11297,10 +11808,10 @@ export default function SuperAdminClient() {
                                   {fmt(backup.at)} | {backup.operator} | 周期 {backup.scheduleDateKey || "-"}
                                 </div>
                                 <div className="text-slate-600">
-                                  用户管理：站点 {backup.userManageCounts.siteCount} / 用户 {backup.userManageCounts.userCount} / 角色 {backup.userManageCounts.roleCount} / 商户账号 {backup.userManageCounts.merchantAccountCount}
+                                  后台管理状态：站点 {backup.userManageCounts.siteCount} / 用户 {backup.userManageCounts.userCount} / 角色 {backup.userManageCounts.roleCount} / 商户账号摘要 {backup.userManageCounts.merchantAccountCount}
                                 </div>
                                 <div className="text-slate-600">
-                                  信息处理：会话 {backup.supportCounts.threadCount} / 消息 {backup.supportCounts.messageCount}
+                                  平台客服：会话 {backup.supportCounts.threadCount} / 消息 {backup.supportCounts.messageCount}
                                 </div>
                               </div>
                               <div className="flex flex-wrap gap-2">
@@ -11316,17 +11827,17 @@ export default function SuperAdminClient() {
                                   type="button"
                                   className="rounded border px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
                                   onClick={() => void restoreDataBackupAction(backup.id, "user_manage")}
-                                  disabled={!!dataBackupRestoringKey}
+                                  disabled={!!dataBackupRestoringKey || !!dataBackupPreviewingKey}
                                 >
-                                  {restoringUserManage ? "恢复中..." : "恢复用户管理"}
+                                  {restoringUserManage ? "恢复中..." : previewingUserManage ? "预览中..." : `预览恢复${PLATFORM_ADMIN_DATA_BACKUP_SCOPE.restoreScopes.user_manage.label}`}
                                 </button>
                                 <button
                                   type="button"
                                   className="rounded border px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
                                   onClick={() => void restoreDataBackupAction(backup.id, "support_messages")}
-                                  disabled={!!dataBackupRestoringKey}
+                                  disabled={!!dataBackupRestoringKey || !!dataBackupPreviewingKey}
                                 >
-                                  {restoringSupport ? "恢复中..." : "恢复信息处理"}
+                                  {restoringSupport ? "恢复中..." : previewingSupport ? "预览中..." : `预览恢复${PLATFORM_ADMIN_DATA_BACKUP_SCOPE.restoreScopes.support_messages.label}`}
                                 </button>
                               </div>
                             </div>
@@ -11335,7 +11846,7 @@ export default function SuperAdminClient() {
                               <div className="mt-3 space-y-3 rounded border bg-slate-50 p-3">
                                 <div className="grid gap-3 md:grid-cols-2">
                                   <div className="rounded border bg-white p-3">
-                                    <div className="font-semibold text-slate-900">用户管理内容</div>
+                                    <div className="font-semibold text-slate-900">后台管理配置快照（账号摘要不代表登录身份备份）</div>
                                     <div className="mt-1 text-slate-600">
                                       站点 {backupSites.length} / 用户 {backupUsers.length} / 角色 {backupRoles.length} / 商户账号{" "}
                                       {backupMerchantAccounts.length}

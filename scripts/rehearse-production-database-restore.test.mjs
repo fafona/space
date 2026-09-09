@@ -3,9 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { recoveryContentFixture } from "./test-fixtures/database-recovery-content.mjs";
 
 import {
   isDeferredGraphqlAclStatement,
+  queryRestoredRecoveryContent,
   rehearseVerifiedDatabaseBackup,
 } from "./rehearse-production-database-restore.mjs";
 
@@ -69,6 +71,140 @@ function restoreManifest(image = "supabase/postgres:15.8.1.085") {
     },
   };
 }
+
+test("restored financial proof uses stable formatting and rejects every same-count mismatch", async () => {
+  const expected = recoveryContentFixture({ migrated: true, receipts: true });
+  let commands = [];
+  const result = await queryRestoredRecoveryContent(async (_command, args) => {
+    assert.ok(args.includes("--quiet"));
+    assert.equal(args[args.indexOf("-d") + 1], "synthetic_restore");
+    assert.equal(args.includes("-c"), false);
+    const commandArgs = args.slice(args.indexOf("--command"));
+    assert.equal(commandArgs.length, 12);
+    assert.deepEqual(commandArgs.filter((_arg, index) => index % 2 === 0), Array(6).fill("--command"));
+    commands = commandArgs.filter((_arg, index) => index % 2 === 1);
+    return { stdout: JSON.stringify(expected) };
+  }, "synthetic_restore_container", "synthetic_restore", expected);
+  assert.deepEqual(result, expected);
+  assert.equal(commands[0], "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;");
+  assert.match(commands[1], /^SET LOCAL timezone\s*=\s*'UTC';$/);
+  assert.match(commands[2], /^SET LOCAL datestyle\s*=\s*'ISO,YMD';$/);
+  assert.match(commands[3], /^SET LOCAL extra_float_digits\s*=\s*3;$/);
+  assert.match(commands[4], /^SELECT /);
+  assert.doesNotMatch(commands[4], /BEGIN ISOLATION|SET LOCAL|COMMIT;/);
+  assert.equal(commands[5], "COMMIT;");
+  for (const index of [0, 1, 2, 3, 4]) {
+    const changed = structuredClone(expected);
+    changed.relations[index].contentSha256 = "f".repeat(64);
+    await assert.rejects(queryRestoredRecoveryContent(
+      async () => ({ stdout: JSON.stringify(changed) }), "synthetic", "synthetic", expected,
+    ), /restore_recovery_content_mismatch/);
+  }
+  for (const stdout of ["not-json", "{}", "null"]) {
+    await assert.rejects(queryRestoredRecoveryContent(
+      async () => ({ stdout }), "synthetic", "synthetic", expected,
+    ), /restore_recovery_content_invalid/);
+  }
+});
+
+test("current restored-content probe rejects both legacy directions and absent or replaced fifth relation", async () => {
+  const current = recoveryContentFixture({ migrated: true, receipts: true });
+  const legacy = recoveryContentFixture({ schemaVersion: 1, migrated: true });
+  let probes = 0;
+  await assert.rejects(queryRestoredRecoveryContent(async () => {
+    probes++; return { stdout: JSON.stringify(current) };
+  }, "synthetic", "synthetic", legacy), /restore_recovery_content_invalid/);
+  assert.equal(probes, 0);
+  const missing = structuredClone(current); missing.relations.pop();
+  const replaced = structuredClone(current); replaced.relations.at(-1).name = "public.wrong_receipts";
+  for (const actual of [legacy, missing, replaced]) {
+    await assert.rejects(queryRestoredRecoveryContent(async () => ({ stdout: JSON.stringify(actual) }),
+      "synthetic", "synthetic", current), /restore_recovery_content_invalid/);
+  }
+  const absent = structuredClone(current);
+  Object.assign(absent.relations.at(-1), { present: false, rowCount: null, contentSha256: null });
+  await assert.rejects(queryRestoredRecoveryContent(async () => ({ stdout: JSON.stringify(absent) }),
+    "synthetic", "synthetic", current), /restore_recovery_content_mismatch/);
+});
+
+test("legacy profile restore retains prior identity gate and reports no current restored-content proof", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-legacy-profile-restore-test-"));
+  const manifest = restoreManifest();
+  manifest.source.database.recoveryContent = recoveryContentFixture({ schemaVersion: 1, migrated: true });
+  let restored = 0; let probes = 0;
+  try {
+    const report = await rehearseVerifiedDatabaseBackup({ directory, manifest, resourceSuffix: "legacy-profile",
+      sleep: async () => {}, restoreSql: async () => { restored++; return { skippedGraphqlPublicAclCount: 0 }; },
+      runCommand: async (command, args, options) => {
+        if (command === "tar" && args.some((item) => item.endsWith("postgres-config.tar.gz"))) {
+          await writeFile(path.join(args[args.indexOf("-C") + 1], "pgsodium_root.key"), "synthetic-key");
+        }
+        if (options.errorCode === "restore_recovery_content_probe_failed") probes++;
+        return { stdout: options.errorCode === "restore_authoritative_baseline_probe_failed"
+          ? JSON.stringify(RESTORED_BASELINE) : "0" };
+      },
+    });
+    assert.equal(restored, 1); assert.equal(probes, 0);
+    assert.equal(report.status, "restored"); assert.equal(report.recoveryContentStatus, "legacy_profile");
+    assert.equal(report.restoredRecoveryContent, null);
+    assert.deepEqual(report.restoredBaseline, RESTORED_BASELINE);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("restore enforces financial proof and fails closed after attempting all resource cleanup", async () => {
+  for (const failure of [null, "proof", "container", "volume", "config"]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-recovery-proof-test-"));
+    const cleanup = [];
+    const expected = recoveryContentFixture({ migrated: true });
+    const manifest = restoreManifest();
+    manifest.source.database.recoveryContent = expected;
+    try {
+      const action = rehearseVerifiedDatabaseBackup({
+        directory, manifest, resourceSuffix: "proof-test", sleep: async () => {},
+        restoreSql: async () => ({ skippedGraphqlPublicAclCount: 0 }),
+        runCommand: async (command, args, options) => {
+          if (command === "tar") {
+            const destination = args[args.indexOf("-C") + 1];
+            if (args.some((item) => item.endsWith("postgres-config.tar.gz"))) {
+              await writeFile(path.join(destination, "pgsodium_root.key"), "synthetic-key");
+            }
+            return { stdout: "" };
+          }
+          if (options.errorCode === "restore_recovery_content_probe_failed") {
+            const actual = structuredClone(expected);
+            if (failure === "proof") actual.relations[0].contentSha256 = "f".repeat(64);
+            return { stdout: JSON.stringify(actual) };
+          }
+          if (options.errorCode === "restore_authoritative_baseline_probe_failed") {
+            return { stdout: JSON.stringify(RESTORED_BASELINE) };
+          }
+          const cleanupName = {
+            restore_database_container_cleanup_failed: "container",
+            restore_database_volume_cleanup_failed: "volume",
+            restore_database_config_volume_cleanup_failed: "config",
+          }[options.errorCode];
+          if (cleanupName) {
+            cleanup.push(cleanupName);
+            if (cleanupName === failure) throw new Error("synthetic cleanup failure");
+          }
+          return { stdout: "0" };
+        },
+      });
+      if (failure) {
+        await assert.rejects(action, failure === "proof"
+          ? /restore_recovery_content_mismatch/
+          : /restore_resource_cleanup_failed/);
+      } else {
+        const report = await action;
+        assert.equal(report.recoveryContentStatus, "verified");
+        assert.deepEqual(report.restoredRecoveryContent, expected);
+      }
+      assert.deepEqual(cleanup, ["container", "volume", "config"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
 
 test("database restore rehearsal uses an isolated container and validates key data", async () => {
   const directory = await mkdtemp(
@@ -147,6 +283,8 @@ test("database restore rehearsal uses an isolated container and validates key da
     assert.equal(report.status, "restored");
     assert.equal(report.isolation, "ephemeral_docker_no_network");
     assert.deepEqual(report.restoredBaseline, RESTORED_BASELINE);
+    assert.equal(report.recoveryContentStatus, "legacy_missing");
+    assert.equal(report.restoredRecoveryContent, null);
     assert.deepEqual(report.database, {
       schemas: 8,
       tables: 42,

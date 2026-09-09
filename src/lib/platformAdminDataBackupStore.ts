@@ -7,6 +7,15 @@ import {
   readPlatformAdminDataBackupFromBlocks,
   type PlatformAdminDataBackupPayload,
 } from "@/lib/platformAdminDataBackup";
+import { readPlatformAdminBackupBlocksStrict } from "@/lib/platformAdminBackupStrictRead";
+import { assertPlatformAdminBackupCopiesConsistent, assertPlatformAdminBackupSavePayload, readPlatformAdminDataBackupBlocksValidated } from "@/lib/platformAdminBackupValidation";
+import {
+  PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED, readPlatformAdminBackupRowForWriteStrict,
+  persistPlatformAdminBackupRowStrict, type StrictPlatformAdminBackupWriteClient,
+} from "@/lib/platformAdminBackupStrictWrite";
+import { getPlatformSnapshotWriteMode, PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID } from "@/lib/platformSnapshotAtomicMode.server";
+import { loadPlatformAdminDataBackupsAtomic, savePlatformAdminDataBackupsAtomic } from "@/lib/platformAdminDataBackupAtomic.server";
+import type { PlatformSnapshotAtomicClient } from "@/lib/platformSnapshotAtomic.server";
 
 type BackupErrorLike = { message?: string } | null;
 
@@ -139,7 +148,21 @@ async function loadStoredPlatformAdminDataBackupBySlug(
 
 export async function loadStoredPlatformAdminDataBackups(
   supabase: PlatformAdminDataBackupStoreClient,
+  options?: { strict?: boolean },
 ): Promise<PlatformAdminDataBackupPayload> {
+  if (getPlatformSnapshotWriteMode() === "atomic") {
+    // A cache/read compatibility fallback must not hide a broken candidate store.
+    platformAdminDataBackupCache = null;
+    return loadPlatformAdminDataBackupsAtomic(supabase as unknown as PlatformSnapshotAtomicClient);
+  }
+  if (options?.strict) {
+    const blocks = await Promise.all([
+      readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_ADMIN_DATA_BACKUP_SLUG),
+      readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG),
+    ]);
+    assertPlatformAdminBackupCopiesConsistent(blocks);
+    return mergePlatformAdminDataBackupPayloads(...blocks.map(readPlatformAdminDataBackupBlocksValidated));
+  }
   if (platformAdminDataBackupCache && platformAdminDataBackupCache.expiresAt > Date.now()) {
     return platformAdminDataBackupCache.value;
   }
@@ -157,7 +180,52 @@ export async function loadStoredPlatformAdminDataBackups(
 export async function savePlatformAdminDataBackups(
   supabase: PlatformAdminDataBackupStoreClient,
   payload: PlatformAdminDataBackupPayload,
+  options?: { requireAllWrites?: boolean; expectedPayload?: PlatformAdminDataBackupPayload },
 ): Promise<{ error: string | null; payload?: PlatformAdminDataBackupPayload }> {
+  let mode: "off" | "atomic";
+  try { mode = getPlatformSnapshotWriteMode(); }
+  catch { return { error: PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID }; }
+  if (mode === "atomic") {
+    platformAdminDataBackupCache = null;
+    try {
+      const saved = await savePlatformAdminDataBackupsAtomic(supabase as unknown as PlatformSnapshotAtomicClient,
+        payload, options?.expectedPayload);
+      // Atomic reads bypass the process-local cache; do not publish a stale local baseline.
+      return { error: null, payload: saved };
+    } catch { return { error: PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED }; }
+  }
+  if (options?.requireAllWrites) {
+    platformAdminDataBackupCache = null;
+    try {
+      const client = supabase as unknown as StrictPlatformAdminBackupWriteClient;
+      // Validate before normalization and verify all existing destinations before writing.
+      assertPlatformAdminBackupSavePayload(payload);
+      const validated = normalizePlatformAdminDataBackupPayload(payload);
+      const slugs = [PLATFORM_ADMIN_DATA_BACKUP_SLUG, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG];
+      const reads = await Promise.allSettled(slugs.map((slug) => readPlatformAdminBackupRowForWriteStrict(client, slug)));
+      const rows = reads.map((read) => {
+        if (read.status === "rejected") throw new Error(PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED);
+        return read.value;
+      });
+      const copies = rows.map((row) => {
+        if (row && !Array.isArray(row.blocks)) throw new Error(PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED);
+        return row ? row.blocks as unknown[] : null;
+      });
+      assertPlatformAdminBackupCopiesConsistent(copies);
+      copies.forEach(readPlatformAdminDataBackupBlocksValidated);
+      const blocks = buildPlatformAdminDataBackupBlocks(validated);
+      const writes = await Promise.allSettled(slugs.map((slug, index) =>
+        persistPlatformAdminBackupRowStrict(client, slug, blocks, rows[index])));
+      if (writes.some((write) => write.status === "rejected")) throw new Error(PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED);
+      platformAdminDataBackupCache = {
+        expiresAt: Date.now() + PLATFORM_ADMIN_DATA_BACKUP_CACHE_TTL_MS, value: validated,
+      };
+      return { error: null, payload: validated };
+    } catch {
+      platformAdminDataBackupCache = null;
+      return { error: PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED };
+    }
+  }
   const normalizedPayload = normalizePlatformAdminDataBackupPayload(payload);
   const blocks = buildPlatformAdminDataBackupBlocks(normalizedPayload);
   const basePayload = {

@@ -242,52 +242,52 @@ test("online login and application assets survive unavailable CacheStorage", asy
   const fetchListener = listeners.get("fetch")?.[0];
   assert.ok(fetchListener, "service worker must register a fetch listener");
   const loginUrl = `${origin}/login?loginFrom=https%3A%2F%2Fwww.faolla.com%2F`;
-  let loginTask: Promise<Response> | null = null;
+  const loginTask: { value: Promise<Response> | null } = { value: null };
   fetchListener({
     request: new WorkerRequest(loginUrl, { mode: "navigate", destination: "document" }),
     preloadResponse: Promise.resolve(undefined),
     respondWith(task) {
-      loginTask = Promise.resolve(task);
+      loginTask.value = Promise.resolve(task);
     },
   });
-  assert.ok(loginTask, "login navigation must be handled");
-  assert.equal((await loginTask).status, 200);
+  assert.ok(loginTask.value, "login navigation must be handled");
+  assert.equal((await loginTask.value).status, 200);
 
   const scriptUrl = `${origin}/_next/static/chunks/app.js`;
-  let scriptTask: Promise<Response> | null = null;
+  const scriptTask: { value: Promise<Response> | null } = { value: null };
   fetchListener({
     request: new WorkerRequest(scriptUrl, { mode: "cors", destination: "script" }),
     respondWith(task) {
-      scriptTask = Promise.resolve(task);
+      scriptTask.value = Promise.resolve(task);
     },
   });
-  assert.ok(scriptTask, "application asset request must be handled");
-  assert.equal((await scriptTask).status, 200);
+  assert.ok(scriptTask.value, "application asset request must be handled");
+  assert.equal((await scriptTask.value).status, 200);
 
   cacheStorageOpens = true;
   cacheStorageMatches = false;
   const cacheReadFailureScriptUrl = `${origin}/_next/static/chunks/cache-read-failure.js`;
-  let cacheReadFailureScriptTask: Promise<Response> | null = null;
+  const cacheReadFailureScriptTask: { value: Promise<Response> | null } = { value: null };
   fetchListener({
     request: new WorkerRequest(cacheReadFailureScriptUrl, { mode: "cors", destination: "script" }),
     respondWith(task) {
-      cacheReadFailureScriptTask = Promise.resolve(task);
+      cacheReadFailureScriptTask.value = Promise.resolve(task);
     },
   });
-  assert.ok(cacheReadFailureScriptTask, "cache read failure must fall back to the online asset");
-  assert.equal((await cacheReadFailureScriptTask).status, 200);
+  assert.ok(cacheReadFailureScriptTask.value, "cache read failure must fall back to the online asset");
+  assert.equal((await cacheReadFailureScriptTask.value).status, 200);
 
   cacheStorageMatches = true;
   const uncachedScriptUrl = `${origin}/_next/static/chunks/uncached.js`;
-  let uncachedScriptTask: Promise<Response> | null = null;
+  const uncachedScriptTask: { value: Promise<Response> | null } = { value: null };
   fetchListener({
     request: new WorkerRequest(uncachedScriptUrl, { mode: "cors", destination: "script" }),
     respondWith(task) {
-      uncachedScriptTask = Promise.resolve(task);
+      uncachedScriptTask.value = Promise.resolve(task);
     },
   });
-  assert.ok(uncachedScriptTask, "cache write failure must not replace an online asset response");
-  assert.equal((await uncachedScriptTask).status, 200);
+  assert.ok(uncachedScriptTask.value, "cache write failure must not replace an online asset response");
+  assert.equal((await uncachedScriptTask.value).status, 200);
   assert.deepEqual(requestedUrls, [loginUrl, scriptUrl, cacheReadFailureScriptUrl, uncachedScriptUrl]);
 });
 

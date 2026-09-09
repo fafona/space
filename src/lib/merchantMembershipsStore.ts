@@ -3,11 +3,9 @@ import {
   mirrorMerchantMembershipLedgerChanges,
   resolveMerchantMembershipLedgerDualWriteConfig,
 } from "@/lib/merchantMembershipLedgerDualWrite.server";
-import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+import { commitMerchantOrderMembershipTransaction } from "@/lib/merchantOrderMembershipTransaction.server";
 
 const MERCHANT_MEMBERSHIP_SLUG_PREFIX = "__merchant_memberships__:";
-const MERCHANT_MEMBERSHIP_HISTORY_SLUG_PREFIX = "__merchant_memberships_history__:";
-const MERCHANT_MEMBERSHIP_HISTORY_BACKUP_SLUG_PREFIX = "__merchant_memberships_history_backup__:";
 
 export type MerchantMembershipsStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -31,21 +29,6 @@ type StoredMerchantMembershipsRow = {
   blocks?: unknown;
   updated_at?: unknown;
 };
-
-function storedMembershipRowTimestamp(row: StoredMerchantMembershipsRow) {
-  const timestamp = Date.parse(normalizeText(row.updated_at));
-  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
-}
-
-function selectLatestStoredMembershipRow(rows: StoredMerchantMembershipsRow[]) {
-  return rows.reduce<StoredMerchantMembershipsRow | undefined>((latest, row) => {
-    if (!latest) return row;
-    const timestampDifference = storedMembershipRowTimestamp(row) - storedMembershipRowTimestamp(latest);
-    if (timestampDifference > 0) return row;
-    if (timestampDifference < 0) return latest;
-    return String(row.id ?? "") > String(latest.id ?? "") ? row : latest;
-  }, undefined);
-}
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -82,15 +65,7 @@ function buildMembershipsSlug(siteId: string) {
   return `${MERCHANT_MEMBERSHIP_SLUG_PREFIX}${siteId}`;
 }
 
-function buildMembershipsHistorySlug(siteId: string) {
-  return `${MERCHANT_MEMBERSHIP_HISTORY_SLUG_PREFIX}${siteId}`;
-}
-
-function buildMembershipsHistoryBackupSlug(siteId: string) {
-  return `${MERCHANT_MEMBERSHIP_HISTORY_BACKUP_SLUG_PREFIX}${siteId}`;
-}
-
-async function mirrorSavedMemberships(
+export async function mirrorSavedMemberships(
   supabase: MerchantMembershipsStoreClient,
   input: {
     siteId: string;
@@ -227,87 +202,38 @@ export async function saveStoredMerchantMemberships(
     siteId: string;
     memberships: MerchantMembershipRecord[];
     updatedAt?: string | null;
-    expectedUpdatedAt?: string | null;
+    expectedUpdatedAt: string | null;
   },
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeText(input.siteId);
   if (!normalizedSiteId) return { error: "invalid_site_id" };
-  const slug = buildMembershipsSlug(normalizedSiteId);
+  if (
+    !Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt") ||
+    (input.expectedUpdatedAt !== null &&
+      (typeof input.expectedUpdatedAt !== "string" || !input.expectedUpdatedAt.trim()))
+  ) {
+    return { error: "merchant_memberships_expected_version_required" };
+  }
   const memberships = normalizeMerchantMembershipRecords(input.memberships).filter((membership) => membership.siteId === normalizedSiteId);
-  const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
   const existingRows = await queryStoredMembershipRows(supabase, normalizedSiteId);
-  const existing = selectLatestStoredMembershipRow(existingRows);
   const existingSnapshot = mergeStoredMerchantMembershipRows(normalizedSiteId, existingRows);
-  const shouldCheckVersion = Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt");
-  const expectedUpdatedAt = normalizeText(input.expectedUpdatedAt);
-  const existingUpdatedAt = normalizeText(existingSnapshot?.updatedAt ?? existing?.updated_at);
-  if (shouldCheckVersion && expectedUpdatedAt !== existingUpdatedAt) {
+  const expectedUpdatedAt = input.expectedUpdatedAt === null ? null : input.expectedUpdatedAt.trim();
+  const existingUpdatedAt = existingSnapshot?.updatedAt ?? null;
+  if (expectedUpdatedAt !== existingUpdatedAt) {
     return { error: "merchant_memberships_conflict" };
   }
   const beforeMemberships = existingSnapshot?.memberships ?? null;
-  const history = await saveMerchantSnapshotHistory(supabase, {
-    siteId: normalizedSiteId,
-    slug: buildMembershipsHistorySlug(normalizedSiteId),
-    backupSlug: buildMembershipsHistoryBackupSlug(normalizedSiteId),
-    source: "merchant-memberships",
-    before: beforeMemberships,
-    after: memberships,
-    at: updatedAt,
+  // The RPC rechecks the version under the shared database lock, then commits
+  // the document and its history together. Never fall back to direct writes.
+  const committed = await commitMerchantOrderMembershipTransaction(supabase, normalizedSiteId, {
+    memberships: { expectedUpdatedAt, next: memberships },
   });
-  if (history.error) return { error: `merchant_memberships_history_save_failed:${history.error}` };
-
-  const updateExisting = async (body: Record<string, unknown>) => {
-    if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
-    let query = supabase.from("pages").update(body).eq("id", existing.id);
-    if (shouldCheckVersion && expectedUpdatedAt) {
-      query = query.eq("updated_at", expectedUpdatedAt).select("id");
-    }
-    const updated = await query;
-    if (updated.error) return { error: toErrorMessage(updated.error) };
-    if (shouldCheckVersion && expectedUpdatedAt && Array.isArray(updated.data) && updated.data.length === 0) {
-      return { error: "merchant_memberships_conflict" };
-    }
-    return { error: null };
-  };
-
-  const insertNew = async (body: Record<string, unknown>) => {
-    const inserted = await supabase.from("pages").insert({
-      ...body,
-      slug,
-      merchant_id: normalizedSiteId,
-    });
-    const error = inserted.error ? toErrorMessage(inserted.error) : null;
-    if (!error || !isMissingMerchantIdColumn(error)) return { error };
-    const retry = await supabase.from("pages").insert({
-      ...body,
-      slug,
-    });
-    return retry.error ? { error: toErrorMessage(retry.error) } : { error: null };
-  };
-
-  const basePayload = {
-    blocks: memberships,
-    updated_at: updatedAt,
-  };
-  const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
-  if (!first.error) {
-    await mirrorSavedMemberships(supabase, {
-      siteId: normalizedSiteId,
-      previousMemberships: beforeMemberships,
-      nextMemberships: memberships,
-    });
-    return first;
-  }
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
-  const fallback = existing
-    ? await updateExisting({ blocks: memberships })
-    : await insertNew({ blocks: memberships });
-  if (!fallback.error) {
+  if (!committed.error) {
     await mirrorSavedMemberships(supabase, {
       siteId: normalizedSiteId,
       previousMemberships: beforeMemberships,
       nextMemberships: memberships,
     });
   }
-  return fallback;
+  return committed;
 }

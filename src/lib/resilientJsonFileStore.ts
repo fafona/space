@@ -10,7 +10,9 @@ export async function readJsonFileWithBackup<T>(
   const paths = [filePath, `${filePath}.bak`];
   for (const candidatePath of paths) {
     try {
-      const raw = await readFile(candidatePath, "utf8");
+      // Runtime data and its backup remain on the persistent volume; never
+      // trace the whole workspace into the server bundle to find these files.
+      const raw = await readFile(/* turbopackIgnore: true */ candidatePath, "utf8");
       const normalized = normalize(JSON.parse(raw));
       if (normalized) return normalized;
     } catch {

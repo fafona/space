@@ -55,6 +55,21 @@ function shadowConfig(timeoutMs = 1000) {
   };
 }
 
+test("required support shadow waits for a late RPC rejection but retains timeout status", { timeout: 5000 }, async () => {
+  let reject!: (error: Error) => void;
+  const pending = new Promise<{ data: number }>((_resolve, fail) => { reject = fail; });
+  const previous: PlatformSupportInboxPayload = { threads: [{ merchantId: "10000000", siteId: "10000000", merchantName: "Synthetic",
+    merchantEmail: "example@example.test", updatedAt: "2026-09-08T12:00:00.000Z", messages: [] }] };
+  let settled = false;
+  const operation = mirrorPlatformSupportConversationSnapshot({ rpc: () => pending }, {
+    current: { threads: [] }, previous, replace: true,
+  }, { config: shadowConfig(5), awaitSettlement: true, logger: () => undefined }).then((result) => { settled = true; return result; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(settled, false);
+  reject(new Error("late private failure"));
+  assert.equal((await operation).status, "timeout");
+});
+
 test("conversation shadow configuration is default-off and deny-by-default", () => {
   assert.deepEqual(resolveMerchantConversationDualWriteConfig({}), {
     mode: "off",

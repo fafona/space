@@ -336,7 +336,7 @@ function decodeCommandLine(bytes) {
   return records;
 }
 
-function captureProcessFact(pid) {
+export function captureProcessFact(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("invalid_pid");
   const procPath = `/proc/${pid}`;
   const firstRawStat = readFileSync(join(procPath, "stat"), "utf8");
@@ -625,7 +625,7 @@ async function captureHealth(port, expectedBuildId) {
   });
 }
 
-async function captureSupervisionSnapshot(appName, runtimeProof, port, expectedBuildId) {
+export async function captureSupervisionSnapshot(appName, runtimeProof, port, expectedBuildId) {
   const listener = captureListener(port);
   const ownership = listener.state === "single"
     ? capturePm2Ownership(

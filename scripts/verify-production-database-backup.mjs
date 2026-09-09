@@ -9,6 +9,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { DATABASE_RECOVERY_CONTENT_SCHEMA_VERSION } from "./database-recovery-content-contract.mjs";
 
 import {
   validateDatabaseBackupArchiveEntries,
@@ -375,6 +376,11 @@ export async function withVerifiedProductionDatabaseBackup(input) {
       inputFile: path.basename(inputPath),
       inputBytes: inputDetails.size,
       source: verification.manifest.source,
+      // Archive verification checks the supplied proof shape, not restored data.
+      recoveryContentStatus: verification.manifest.source?.database?.recoveryContent
+        ? verification.manifest.source.database.recoveryContent.schemaVersion === DATABASE_RECOVERY_CONTENT_SCHEMA_VERSION
+          ? "present_unverified" : "legacy_profile"
+        : "legacy_missing",
       dumpFiles: verification.manifest.files.map((item) => ({
         name: item.name,
         bytes: item.bytes,
