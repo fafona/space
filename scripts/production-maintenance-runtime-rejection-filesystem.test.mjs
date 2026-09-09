@@ -16,7 +16,7 @@ function realInfo(path) {
   return { identity: identity(stat), uid: Number(stat.uid), mode: Number(stat.mode), size: Number(stat.size), nlink: Number(stat.nlink),
     type: stat.isFile() ? "file" : stat.isSymbolicLink() ? "symlink" : "other" };
 }
-function fixture(t) {
+function fixture(t, platformNested = false) {
   const directory = mkdtempSync(join(scriptsDirectory, ".runtime-rejection-files-"));
   chmodSync(directory, 0o700);
   t.after(() => {
@@ -31,7 +31,8 @@ function fixture(t) {
   writeFileSync(packagePath, JSON.stringify({ name: "@esbuild/linux-x64", version: "0.27.3" }), { flag: "wx", mode: 0o644 });
   const uid = typeof process.getuid === "function" ? process.getuid() : realInfo(binaryPath).uid;
   const runtime = "/srv/faolla.releases/aaaaaaaaaaaa-20260909120000"; const node = "/opt/node/bin/node";
-  const base = runtime + "/node_modules/@esbuild/linux-x64"; const executable = base + "/bin/esbuild";
+  const base = runtime + (platformNested ? "/node_modules/tsx" : "") + "/node_modules/@esbuild/linux-x64";
+  const executable = base + "/bin/esbuild";
   const mapped = new Map([[executable, binaryPath], [base + "/package.json", packagePath]]);
   const fact = (pid, parentPid, cwd = runtime, entry = node) => ({ pid, parentPid, uid, cwd, executable: entry,
     startTicks: String(pid * 10), commandLineDigest: "b".repeat(64), commandLine: ["node"] });
@@ -46,7 +47,17 @@ function fixture(t) {
   const environments = new Map([[10, { PM2_HOME: "/srv/pm2" }], [100, values("faolla", disk.nextEntryPath, "start,-p,3000")],
     [200, values("faolla-enterprise-automation-worker", runtime + "/node_modules/tsx/dist/cli.mjs", runtime + "/scripts/run-merchant-enterprise-automation-worker.ts")]]);
   let executionAttempts = 0; let diskReads = 0; const regularReads = [];
-  const result = { directory, binaryPath, packagePath, child, beforeSecondObservation: () => {} };
+  const result = { directory, binaryPath, packagePath, child, runtime, executable, beforeSecondObservation: () => {} };
+  result.addWrapperPair = (wrapperNested = false) => {
+    const wrapperRoot = runtime + (wrapperNested ? "/node_modules/tsx" : "") + "/node_modules/esbuild";
+    result.wrapperPath = join(directory, "wrapper-bin"); result.wrapperPackagePath = join(directory, "wrapper-package.json");
+    linkSync(binaryPath, result.wrapperPath);
+    writeFileSync(result.wrapperPackagePath, JSON.stringify({ name: "esbuild", version: "0.27.3",
+      optionalDependencies: { "@esbuild/linux-x64": "0.27.3" } }), { flag: "wx", mode: 0o644 });
+    mapped.set(wrapperRoot + "/bin/esbuild", result.wrapperPath);
+    mapped.set(wrapperRoot + "/package.json", result.wrapperPackagePath);
+    child.executableIdentity = realInfo(binaryPath).identity;
+  };
   const forbidExecution = () => { executionAttempts++; throw new Error("test_execution_forbidden"); };
   const deps = {
     disk: () => { if (++diskReads === 2) result.beforeSecondObservation(); return structuredClone(disk); },
@@ -61,10 +72,10 @@ function fixture(t) {
     readProcessEnvironment: () => { throw new Error("unexpected_environment_read"); },
     cliEnvironment: () => ({ home: "/srv/pm2", overridesPresent: false }),
     pathInfo: (path) => mapped.has(path) ? realInfo(mapped.get(path))
-      : path.startsWith("/usr") || path.startsWith("/srv/pm2") ? null
+      : path.startsWith("/usr") || path.startsWith("/srv/pm2") || path.endsWith("/package.json") || path.endsWith("/bin/esbuild") ? null
         : { type: "directory", identity: "synthetic-directory:" + path, uid: 0, mode: 0o40755, size: 0, nlink: 1 },
     readRegular: (path, limit, expected) => {
-      assert.ok(mapped.has(path), "only the two synthetic files may be read"); regularReads.push(path);
+      assert.ok(mapped.has(path), "only explicitly mapped synthetic files may be read"); regularReads.push(path);
       const actual = mapped.get(path); assert.equal(realInfo(actual).identity, expected.identity);
       const bytes = readFileSync(actual); assert.ok(bytes.length <= limit); assert.equal(realInfo(actual).identity, expected.identity);
       return { bytes, digest: createHash("sha256").update(bytes).digest("hex") };
@@ -73,7 +84,7 @@ function fixture(t) {
   };
   result.diagnose = async () => {
     const report = await diagnoseRuntimeCompatibility({ appDir: "/srv/faolla", appName: "faolla", appPort: 3000, expectedOldSha: "a".repeat(40) }, deps);
-    assert.equal(executionAttempts, 0); assert.equal(report.version, 3); assert.equal(report.maintenance, "not_verified");
+    assert.equal(executionAttempts, 0); assert.equal(report.version, 4); assert.equal(report.maintenance, "not_verified");
     assert.equal(report.pm2Connection, "not_checked"); assert.deepEqual(validateRuntimeCompatibilityDiagnostic(report), report);
     assert.equal(JSON.stringify(report).includes(directory), false);
     return report;
@@ -92,7 +103,10 @@ test("real same-inode hardlink reports file_links without running or reading nat
   const original = lstatSync(f.binaryPath, { bigint: true }); const linked = lstatSync(alias, { bigint: true });
   assert.equal(original.dev, linked.dev); assert.equal(original.ino, linked.ino); assert.equal(original.nlink, 2n);
   f.child.executableIdentity = realInfo(f.binaryPath).identity;
-  assertOneReason(await f.diagnose(), "file_links"); assert.deepEqual(f.regularReads, []);
+  const report = await f.diagnose(); assertOneReason(report, "file_links");
+  assert.equal(report.layoutEvidence.nativeFileLinks.linkCounts.two, 1);
+  assert.equal(report.layoutEvidence.nativeFileLinks.outcomes.matched, 0);
+  assert.equal(f.regularReads.includes(f.executable), false);
 });
 
 test("Linux actual mode and size obey the first-rejection order, with a valid real-package baseline", { skip: !unixModes }, async (t) => {
@@ -125,5 +139,62 @@ test("real binary replacement, package replacement and Linux mode drift discard 
     assert.equal(report.stability, "unverified"); assert.equal(report.disk, "unverified"); assert.equal(report.supervision, null);
     assert.equal(report.worker.state, "unverified"); assert.equal(report.workerNative.unknownReasons, null);
     assert.equal(report.workerNative.esbuildCount, null); assert.equal(report.python.rejectionReason, null);
+    assert.equal(report.layoutEvidence.nativeFileLinks, null);
+  }
+});
+
+test("Linux real installer hardlinks match root, nested and hoisted pairs without authorizing native files", { skip: !unixModes }, async (t) => {
+  for (const [platformNested, wrapperNested] of [[false, false], [true, true], [false, true]]) {
+    const f = fixture(t, platformNested); f.addWrapperPair(wrapperNested);
+    const binary = lstatSync(f.binaryPath, { bigint: true }); const wrapper = lstatSync(f.wrapperPath, { bigint: true });
+    assert.equal(binary.dev, wrapper.dev); assert.equal(binary.ino, wrapper.ino);
+    assert.equal(binary.nlink, 2n); assert.equal(wrapper.nlink, 2n);
+    const report = await f.diagnose(); assertOneReason(report, "file_links");
+    assert.equal(report.layoutEvidence.nativeFileLinks.linkCounts.two, 1);
+    assert.equal(report.layoutEvidence.nativeFileLinks.outcomes.matched, 1);
+    assert.equal(f.regularReads.includes(f.executable), false);
+    assert.ok(f.regularReads.some((path) => path.endsWith("/esbuild/package.json")));
+    assert.ok(f.regularReads.some((path) => path.endsWith("/@esbuild/linux-x64/package.json")));
+  }
+});
+
+test("Linux real third links, other inode, package and argv mismatches never become an installer match", { skip: !unixModes }, async (t) => {
+  const changes = [
+    (f) => linkSync(f.binaryPath, join(f.directory, "unexpected-third-link")),
+    (f) => {
+      const bytes = readFileSync(f.wrapperPath); renameSync(f.wrapperPath, join(f.directory, "retained-wrapper"));
+      writeFileSync(f.wrapperPath, bytes, { flag: "wx", mode: 0o755 });
+      linkSync(f.wrapperPath, join(f.directory, "different-inode-link"));
+      assert.equal(lstatSync(f.wrapperPath).nlink, 2); assert.equal(lstatSync(f.binaryPath).nlink, 2);
+      assert.notEqual(lstatSync(f.wrapperPath).ino, lstatSync(f.binaryPath).ino);
+    },
+    (f) => writeFileSync(f.packagePath, JSON.stringify({ name: "@esbuild/linux-arm64", version: "0.27.3" })),
+    (f) => writeFileSync(f.wrapperPackagePath, JSON.stringify({ name: "esbuild", version: "0.27.2",
+      optionalDependencies: { "@esbuild/linux-x64": "0.27.3" } })),
+    (f) => writeFileSync(f.wrapperPackagePath, JSON.stringify({ name: "esbuild", version: "0.27.3",
+      optionalDependencies: { "@esbuild/linux-x64": "0.27.2" } })),
+    (f) => { f.child.commandLine.push("--unexpected"); },
+  ];
+  for (const change of changes) {
+    const f = fixture(t); f.addWrapperPair(); change(f); f.child.executableIdentity = realInfo(f.binaryPath).identity;
+    const report = await f.diagnose(); assertOneReason(report, "file_links");
+    assert.equal(report.layoutEvidence.nativeFileLinks.outcomes.matched, 0);
+    assert.equal(Object.values(report.layoutEvidence.nativeFileLinks.outcomes).reduce((sum, count) => sum + count, 0), 1);
+  }
+});
+
+test("Linux replacement of a paired wrapper or either package discards even unchanged parsed metadata", { skip: !unixModes }, async (t) => {
+  for (const key of ["wrapperPath", "wrapperPackagePath", "packagePath"]) {
+    const f = fixture(t); f.addWrapperPair();
+    f.beforeSecondObservation = () => {
+      const target = f[key]; const before = realInfo(target); const bytes = readFileSync(target);
+      renameSync(target, join(f.directory, "retained-pair-file"));
+      writeFileSync(target, bytes, { flag: "wx", mode: before.mode & 0o777 });
+      assert.notEqual(realInfo(target).identity, before.identity);
+    };
+    const report = await f.diagnose(); assert.equal(report.stability, "unverified");
+    assert.equal(report.disk, "unverified"); assert.equal(report.supervision, null);
+    assert.equal(report.workerNative.unknownReasons, null); assert.equal(report.layoutEvidence.nativeFileLinks, null);
+    assert.equal(report.pm2Version, null);
   }
 });

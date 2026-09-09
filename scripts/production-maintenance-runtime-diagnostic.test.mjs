@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic, PYTHON_REJECTION_REASONS,
   NATIVE_UNKNOWN_REASONS, createNativeUnknownReasonCounts } from "./production-maintenance-runtime-diagnostic.mjs";
+import { emptyPythonLayout, emptyNativeFileLinkEvidence } from "./production-maintenance-runtime-layout.mjs";
 
 const SECRET = "DIAGNOSTIC_SECRET_DO_NOT_DISCLOSE";
 const DIRECT = "runtime_supervision_direct_next_owned";
@@ -83,11 +84,56 @@ test("stable direct diagnostic distinguishes a root-cwd daemon without granting 
   assert.equal(result.supabaseEnvironment, "matches"); assert.equal(result.worker.state, "not_observed");
   assert.equal(result.runtimeExtraProcessCount, 0); assert.equal(result.pm2Home, "matches");
   assert.equal(result.maintenance, "not_verified"); assert.equal(result.pm2Connection, "not_checked");
-  assert.equal(result.version, 3); assert.equal(result.pm2Version, "6.0.8");
+  assert.equal(result.version, 4); assert.equal(result.pm2Version, "6.0.8");
   assert.deepEqual(result.pm2Endpoint, { home: "verified", rpcSocket: "verified", pidFile: "verified", pidMatches: true });
   assert.deepEqual(result.python, { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null });
   assert.deepEqual(validateRuntimeCompatibilityDiagnostic(result), result);
   assert.equal(JSON.stringify(result).includes(SECRET), false); assert.equal(JSON.stringify(result).includes("/srv/"), false);
+});
+
+test("outside-allowlist Python layout is metadata only and never enables execution or peer capabilities", async () => {
+  const f = fixture(); const target = "/usr/local/bin/python3.12";
+  f.putPath(target, "file", "synthetic, never execute"); f.paths.set("/usr/bin/python3", target);
+  const report = await diagnose(f);
+  assert.equal(report.stability, "stable"); assert.equal(report.version, 4);
+  assert.deepEqual(report.python, { version: null, executableVerified: false, afUnixApiAvailable: null,
+    soPeercredApiAvailable: null, rejectionReason: "target_path" });
+  assert.deepEqual(report.layoutEvidence.python, { location: "usr_local_bin", pathSuffix: "3.12", assessment: "metadata_verified" });
+  assert.deepEqual(f.pythonCalls, []); assert.equal(report.pm2Connection, "not_checked");
+  assert.equal(report.maintenance, "not_verified");
+  assert.equal(JSON.stringify(report).includes(target), false);
+  f.filesystem.get(target).info.uid = 1000;
+  assert.equal((await diagnose(f)).layoutEvidence.python.assessment, "file_owner");
+  assert.deepEqual(f.pythonCalls, []);
+});
+
+test("unsupported Python locations are classified without probing, and canonical target drift discards all evidence", async () => {
+  const f = fixture(); const target = "/opt/private/python3.12";
+  f.paths.set("/usr/bin/python3", target);
+  const original = f.deps.pathInfo;
+  f.deps.pathInfo = (path) => { assert.ok(!path.startsWith("/opt/private")); return original(path); };
+  const report = await diagnose(f);
+  assert.deepEqual(report.layoutEvidence.python, { location: "opt", pathSuffix: "3.12", assessment: "out_of_scope" });
+  assert.deepEqual(f.pythonCalls, []);
+  let calls = 0; const disk = f.deps.disk;
+  f.deps.disk = (...args) => { if (++calls === 2) f.paths.set("/usr/bin/python3", "/opt/other/python3.12"); return disk(...args); };
+  assertUnknown(await diagnose(f));
+});
+
+test("v4 layout schema rejects count mismatches, accessor fields, stale versions and authority claims", async () => {
+  const report = await diagnose(fixture());
+  assert.deepEqual(report.layoutEvidence, { python: emptyPythonLayout(), nativeFileLinks: emptyNativeFileLinkEvidence() });
+  for (const mutate of [
+    (value) => { value.version = 3; },
+    (value) => { value.layoutEvidence.nativeFileLinks.linkCounts.two = 1; },
+    (value) => { value.layoutEvidence.nativeFileLinks.outcomes.matched = 1; },
+    (value) => { value.layoutEvidence.python = { location: "usr_local_bin", pathSuffix: "3.12", assessment: "metadata_verified" }; },
+    (value) => { value.layoutEvidence.maintenance = "held"; },
+    (value) => { Object.defineProperty(value.layoutEvidence, "python", { enumerable: true, get() { assert.fail("must not read getter"); } }); },
+  ]) {
+    const value = structuredClone(report); mutate(value);
+    assert.throws(() => validateRuntimeCompatibilityDiagnostic(value));
+  }
 });
 
 test("canonical aliases remain distinguishable from strict literal metadata requirements", async () => {
