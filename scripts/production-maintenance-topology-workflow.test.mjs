@@ -65,7 +65,7 @@ test("SSH trust is pre-pinned with no unknown-host fallback or escalation", () =
 test("diagnostic is streamed over stdin, no production checkout/env or process mutation", () => {
   const body = block("Inspect Runtime Configuration");
   assert.match(body, /node --input-type=module - %q %q %q %q/);
-  assert.match(body, /< scripts\/check-production-maintenance-topology\.mjs/);
+  assert.match(body, /< scripts\/check-production-maintenance-capabilities\.mjs/);
   assert.match(body, /NODE_OPTIONS='' NODE_PATH=''/);
   assert.doesNotMatch(body, /git (?:fetch|checkout|reset|worktree)|\bscp\b|\.env|\bpm2\b|\bdocker\b|nginx|maintenance_window_confirmed/);
 });
@@ -92,6 +92,9 @@ test("only explicit temporary files and runner SSH material are removed", () => 
 
 test("diagnostic tests are wired into CI", () => {
   assert.match(ci, /node --test scripts\/check-production-maintenance-topology\.test\.mjs scripts\/production-maintenance-topology-workflow\.test\.mjs/);
+  assert.match(ci, /scripts\/check-production-maintenance-capabilities\.test\.mjs/);
+  assert.match(block("Require Current Main And Successful Push CI"), /test -f scripts\/check-production-maintenance-capabilities\.mjs/);
+  assert.match(block("Inspect Runtime Configuration"), /node scripts\/check-production-maintenance-capabilities\.mjs/);
 });
 
 test("every embedded shell block parses", { skip: !existsSync(bash) }, () => {
