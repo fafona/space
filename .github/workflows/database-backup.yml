@@ -44,7 +44,7 @@ jobs:
       MAINTENANCE_OPERATION_ID: ${{ inputs.maintenance_operation_id }}
       EXPECTED_OLD_SHA: ${{ inputs.expected_old_sha }}
       REMOTE_BACKUP_PATH: /tmp/faolla-database-backup-${{ github.run_id }}-${{ github.run_attempt }}.tar.enc
-      REMOTE_BACKUP_WORKTREE: /tmp/faolla-database-backup-source-${{ github.run_id }}-${{ github.run_attempt }}
+      REMOTE_BACKUP_WORKTREE: /var/lib/faolla-maintenance-code/faolla-database-backup-source-${{ github.run_id }}-${{ github.run_attempt }}
       LOCAL_BACKUP_PATH: faolla-database-backup.tar.enc
       LOCAL_BACKUP_PART_PATH: faolla-database-backup.tar.enc.part
       BACKUP_SUBJECT_PATH: database-backup-subject.json
@@ -220,7 +220,24 @@ jobs:
           app_dir="$(printf '%s' "$FAOLLA_APP_DIR_B64" | base64 -d)"
           test -n "$app_dir"
           test -d "$app_dir"
-          test ! -e "$FAOLLA_BACKUP_WORKTREE"
+          test "$(id -u)" = 0
+          umask 077
+          verify_source_directory() {
+            local directory="$1" mode
+            test -d "$directory" && test ! -L "$directory" || return 1
+            test "$(readlink -f -- "$directory")" = "$directory" || return 1
+            test "$(stat -c '%u' -- "$directory")" = 0 || return 1
+            mode="$(stat -c '%a' -- "$directory")" || return 1
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 8#22) == 0 ))
+          }
+          for directory in / /var /var/lib; do verify_source_directory "$directory" || exit 1; done
+          source_root=/var/lib/faolla-maintenance-code
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then mkdir -m 700 -- "$source_root"; fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          [[ "$FAOLLA_BACKUP_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-database-backup-source-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test ! -e "$FAOLLA_BACKUP_WORKTREE" && test ! -L "$FAOLLA_BACKUP_WORKTREE" || exit 1
           test "$(git -C "$app_dir" rev-parse --is-inside-work-tree)" = "true"
           git -C "$app_dir" fetch --no-tags --prune origin \
             "+refs/heads/main:refs/remotes/origin/main"
@@ -228,6 +245,8 @@ jobs:
           git -C "$app_dir" cat-file -e "$FAOLLA_TARGET_SHA^{commit}"
           git -C "$app_dir" worktree add --detach \
             "$FAOLLA_BACKUP_WORKTREE" "$FAOLLA_TARGET_SHA"
+          verify_source_directory "$FAOLLA_BACKUP_WORKTREE"
+          test "$(stat -c '%a' -- "$FAOLLA_BACKUP_WORKTREE")" = 700
           test "$(git -C "$FAOLLA_BACKUP_WORKTREE" rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
           test -z "$(git -C "$FAOLLA_BACKUP_WORKTREE" status --porcelain=v1 --untracked-files=all)"
           test -f "$FAOLLA_BACKUP_WORKTREE/scripts/create-production-database-backup.mjs"
@@ -785,13 +804,40 @@ jobs:
                 -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
                 -o ControlPath="$control_path" \
                 -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-                "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH bash -s" <<'REMOTE'
-          set -eu
+                "FAOLLA_APP_DIR_B64=$app_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_BACKUP_WORKTREE=$REMOTE_BACKUP_WORKTREE FAOLLA_REMOTE_BACKUP_PATH=$REMOTE_BACKUP_PATH bash -s" <<'REMOTE'
+          set -euo pipefail
           app_dir="$(printf '%s' "$FAOLLA_APP_DIR_B64" | base64 -d)"
+          test "$(id -u)" = 0
+          verify_source_directory() {
+            local directory="$1" mode
+            test -d "$directory" && test ! -L "$directory" || return 1
+            test "$(readlink -f -- "$directory")" = "$directory" || return 1
+            test "$(stat -c '%u' -- "$directory")" = 0 || return 1
+            mode="$(stat -c '%a' -- "$directory")" || return 1
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 8#22) == 0 ))
+          }
+          for directory in / /var /var/lib; do verify_source_directory "$directory" || exit 1; done
+          source_root=/var/lib/faolla-maintenance-code
+          [[ "$FAOLLA_BACKUP_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-database-backup-source-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$FAOLLA_REMOTE_BACKUP_PATH" =~ ^/tmp/faolla-database-backup-[1-9][0-9]*-[1-9][0-9]*\.tar\.enc$ ]]
           rm -f -- "$FAOLLA_REMOTE_BACKUP_PATH"
-          if [ -e "$FAOLLA_BACKUP_WORKTREE" ]; then
-            git -C "$app_dir" worktree remove --force "$FAOLLA_BACKUP_WORKTREE"
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then
+            test ! -e "$FAOLLA_BACKUP_WORKTREE" && test ! -L "$FAOLLA_BACKUP_WORKTREE" || exit 1
+            exit 0
           fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          if [ -e "$FAOLLA_BACKUP_WORKTREE" ] || [ -L "$FAOLLA_BACKUP_WORKTREE" ]; then
+            verify_source_directory "$FAOLLA_BACKUP_WORKTREE"
+            test "$(stat -c '%a' -- "$FAOLLA_BACKUP_WORKTREE")" = 700
+            source_head="$(git -C "$FAOLLA_BACKUP_WORKTREE" rev-parse HEAD)" || exit 1
+            test "$source_head" = "$FAOLLA_TARGET_SHA"
+            source_status="$(git -C "$FAOLLA_BACKUP_WORKTREE" status --porcelain=v1 --untracked-files=all)" || exit 1
+            test -z "$source_status"
+            git -C "$app_dir" worktree remove "$FAOLLA_BACKUP_WORKTREE"
+          fi
+          test ! -e "$FAOLLA_BACKUP_WORKTREE" && test ! -L "$FAOLLA_BACKUP_WORKTREE" || exit 1
           REMOTE
               remote_cleanup_status="$?"
               if [ "$remote_cleanup_status" -eq 0 ]; then break; fi

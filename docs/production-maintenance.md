@@ -55,13 +55,20 @@ changes, participate in the two-observation stability check. Neither layout
 evidence nor its matching result may authorize PM2 access, maintenance or release.
 
 Both diagnostic consumers use one metadata-only trusted-Python verifier. Its
-entry is fixed at `/usr/bin/python3`; canonical targets remain limited to that
-path or `/usr/bin/python3.N`, where N is 0 through 9999 with no leading zero.
-There is no `/usr/local` exception, PATH search, environment override or fallback.
-The private proof freezes both canonical directory chains and the entry/target
-identities (device, inode, size, modification/change times, link count, UID and
-mode). Files must be root-owned, single-link, executable, non-writable by other
-users, and between 1 byte and 64 MiB. The helper never executes a process.
+entry is fixed at `/usr/bin/python3`. Private proof version 2 explicitly selects
+either the ordinary canonical target `/usr/bin/python3` or `/usr/bin/python3.N`
+(N is 0 through 9999 with no leading zero), or the one reviewed EL8 layout:
+`/usr/libexec/platform-python3.6` paired with
+`/usr/libexec/platform-python3.6m`. The latter is never itself an execution
+target. Both EL8 files must have identical complete eight-field identities,
+including the same device/inode and exactly two links; a third link, different
+pair, symlinked pair or changed directory chain is rejected. Ordinary targets
+still require one link. No `/usr/local` exception, PATH search, environment
+override or fallback is permitted. The proof freezes the fixed entry, target,
+optional pair and their root-owned canonical directory chains. Files must be
+root-owned, executable, non-writable by other users, and between 1 byte and
+64 MiB. The helper never executes a process; package ownership or a layout match
+alone grants no maintenance permission.
 Consumers recheck the proof immediately before and after their bounded isolated
 Python call. Runtime diagnostics also reconcile earlier metadata before the
 call; detected drift discards the complete report, never retries the call, and
@@ -95,6 +102,64 @@ authorize prepare, backup, migration, deployment or end. It does not repair or
 approve the broader maintenance control transport. No diagnostic result
 automatically retries `plan` or starts maintenance.
 
+## Bound maintenance process control
+
+The protected maintenance path uses a connect-only transport for the explicitly
+supported PM2 `6.0.14` daemon. It derives the fixed socket from independently
+checked daemon metadata, verifies Unix peer credentials and process generation
+on that same connection, and verifies the version before each bounded operation.
+It never invokes ambient `pm2`, changes `PM2_HOME`, starts another daemon, or
+falls back to a CLI. Only the fixed registry reads, exact stop/delete, and the
+three fixed candidate/final-Web/final-worker launch configurations are supported.
+Unknown metadata, watched/cron-managed processes or incompatible identities are
+refused. A pre-read is not a PM2 server-side atomic compare-and-swap; old writer
+drain and the independently verified ingress fence remain required.
+
+Controller source worktrees for maintenance, backup, migration and readiness
+live under `/var/lib/faolla-maintenance-code/`, not beneath writable `/tmp`.
+Creation requires canonical root-owned ancestors with no group/other write,
+an existing safe or newly created root-only `0700` source root, and a new `0700`
+worktree for the exact run/attempt. Existing unsafe directories are rejected,
+never repaired with `chmod`. Cleanup rechecks the fixed path, ownership, exact
+commit and clean worktree; it does not remove operation state or change the
+application directory's permissions. Temporary output capture is not executable
+controller source and remains separately scoped.
+
+The private operation state is version 2 and includes `revision`, `launchDisk`,
+`launchJournal` and `finalDump`. Older state is rejected, not silently migrated.
+All replacements use the same existing operation lock and the actual previous
+revision and byte digest; they require file fsync, atomic rename, parent fsync
+and exact readback. This is not filesystem CAS against unrelated root writers,
+a power-loss acceptance result, or permission to steal a stale lock.
+
+Before sending a launch, one unique nonce is persisted through separate empty,
+planned and attempted journal states. Only an acknowledged attempted write
+permits one send. Lost ACKs and unknown outcomes never authorize another launch;
+reconciliation may only confirm the original nonce, environment digest and
+complete observed process generation. Confirmation records identity, not health
+or `held`. Registration verifies an already journaled candidate rather than
+adopting an independently started process. During partial final-resume cleanup,
+the runtime checkpoints actual complete Web/worker proofs, including controlled
+native descendants, into this same state before deleting them. A failed
+checkpoint remains unknown; missing proofs are never fabricated from a PID or
+an error string.
+
+Before reopening ingress, `end` saves and verifies the final PM2 dump using the
+same bound peer. The fixed private `dump.pm2` and `dump.pm2.bak` files retain the
+full non-module process environments, while public receipts contain only
+identities, hashes and counts. The previous primary is backed up before the
+new primary is replaced. Current restart configuration is compared privately,
+not merely its filtered public metadata: only the four top-level `axm_actions`,
+`axm_monitor`, `axm_options` and `axm_dynamic` telemetry fields, which PM2 6.0.14
+reinitializes on launch, are excluded from that comparison. The saved file
+still retains their original full bytes under its exact hash/identity; nested
+environment fields with those names and every other configuration field remain
+strictly compared. Both file persistence and subsequent exact
+verification must succeed before ingress restoration. The two-file sequence is
+not a transaction: ambiguous replacement never triggers an automatic retry,
+rollback to an older dump, or reopening. The verified dump proof is saved as
+`finalDump` in the operation state; it is not itself a health certificate.
+
 ## Release order
 
 1. Merge the reviewed exact candidate and require successful push CI, including
@@ -115,7 +180,8 @@ automatically retries `plan` or starts maintenance.
    remain real; ordinary external access remains closed.
 6. Run **end** only with the exact successful maintenance deployment run and
    attempt. It checks the final ACL boundary, resumes only the verified new
-   runtime, reopens the identified ingress, then performs real public smoke.
+   runtime, durably saves and verifies its PM2 dump, reopens the identified
+   ingress, then performs real public smoke.
 
 `check-runtime-held` is an internal deployment checkpoint paired with the
 separately verified readiness transaction. It does **not** certify database

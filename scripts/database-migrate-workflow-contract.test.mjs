@@ -1126,7 +1126,8 @@ test("remote worktree and local evidence are always cleaned without broad deleti
   )?.run.replace(/\r\n/g, "\n");
   assert.equal(typeof cleanupSource, "string");
   assert.match(workflow, /- name: Remove Remote Exact Migration Source\r?\n        if: always\(\)/);
-  assert.match(workflow, /git -C "\$repository_dir" worktree remove --force "\$FAOLLA_MIGRATION_WORKTREE"/);
+  assert.match(workflow, /git -C "\$repository_dir" worktree remove "\$FAOLLA_MIGRATION_WORKTREE"/);
+  assert.doesNotMatch(workflow, /worktree remove --force/);
   assert.match(workflow, /test ! -e "\$FAOLLA_MIGRATION_WORKTREE"/);
   for (const [name, fileName] of [
     ["BACKUP_ATTESTATION_PATH", "production-backup-attestation.json"],
@@ -1353,7 +1354,7 @@ test("forward repair postflight requires complete readiness without diagnostics"
 test("temporary migration paths use four full-string Bash ERE checks", () => {
   assert.equal(
     (workflow.match(
-      /\[\[ "\$FAOLLA_MIGRATION_WORKTREE" =~ \^\/tmp\/faolla-database-migrate-\[1-9\]\[0-9\]\*-\[1-9\]\[0-9\]\*\$ \]\]/g,
+      /\[\[ "\$FAOLLA_MIGRATION_WORKTREE" =~ \^\/var\/lib\/faolla-maintenance-code\/faolla-database-migrate-\[1-9\]\[0-9\]\*-\[1-9\]\[0-9\]\*\$ \]\]/g,
     ) ?? []).length,
     3,
   );

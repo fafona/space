@@ -51,7 +51,7 @@ jobs:
       EXPECTED_OLD_SHA: ${{ inputs.expected_old_sha }}
       MAINTENANCE_MODE: maintenance
       MAINTENANCE_OPERATION_ID: ${{ inputs.maintenance_operation_id }}
-      REMOTE_MAINTENANCE_WORKTREE: /tmp/faolla-maintenance-control-${{ github.run_id }}-${{ github.run_attempt }}
+      REMOTE_MAINTENANCE_WORKTREE: /var/lib/faolla-maintenance-code/faolla-maintenance-control-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Validate Fixed Manual Transition
         env:
@@ -225,13 +225,32 @@ jobs:
             -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" <<'REMOTE'
           set -euo pipefail
           app_dir="$1"; worktree="$2"; target="$3"
-          [[ "$worktree" =~ ^/tmp/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]
-          test -d "$app_dir" && test ! -e "$worktree"
+          [[ "$worktree" =~ ^/var/lib/faolla-maintenance-code/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          test "$(id -u)" = 0
+          umask 077
+          verify_source_directory() {
+            local source_dir="$1" source_mode
+            test -d "$source_dir" && test ! -L "$source_dir" || exit 1
+            test "$(stat -c '%u' -- "$source_dir")" = 0
+            test "$(readlink -f -- "$source_dir")" = "$source_dir"
+            source_mode="$(stat -c '%a' -- "$source_dir")"
+            [[ "$source_mode" =~ ^[0-7]{3,4}$ ]]
+            (( (8#$source_mode & 8#22) == 0 ))
+          }
+          for source_parent in / /var /var/lib; do verify_source_directory "$source_parent"; done
+          source_root=/var/lib/faolla-maintenance-code
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then mkdir -m 700 -- "$source_root"; fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          test -d "$app_dir" && test ! -e "$worktree" && test ! -L "$worktree" || exit 1
           git -C "$app_dir" fetch --no-tags --prune origin "+refs/heads/main:refs/remotes/origin/main"
           test "$(git -C "$app_dir" rev-parse refs/remotes/origin/main)" = "$target"
           git -C "$app_dir" worktree add --detach "$worktree" "$target"
+          verify_source_directory "$worktree"
+          test "$(stat -c '%a' -- "$worktree")" = 700
           test "$(git -C "$worktree" rev-parse HEAD)" = "$target"
-          test -z "$(git -C "$worktree" status --porcelain=v1 --untracked-files=all)"
+          source_status="$(git -C "$worktree" status --porcelain=v1 --untracked-files=all)"
+          test -z "$source_status"
           test -f "$worktree/scripts/production-maintenance-control.mjs"
           REMOTE
 
@@ -418,11 +437,28 @@ jobs:
             -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" <<'REMOTE'
           set -euo pipefail
           app_dir="$1"; worktree="$2"; target="$3"
-          [[ "$worktree" =~ ^/tmp/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]
-          if [ ! -e "$worktree" ]; then exit 0; fi
-          test ! -L "$worktree"
+          [[ "$worktree" =~ ^/var/lib/faolla-maintenance-code/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          test "$(id -u)" = 0
+          verify_source_directory() {
+            local source_dir="$1" source_mode
+            test -d "$source_dir" && test ! -L "$source_dir" || exit 1
+            test "$(stat -c '%u' -- "$source_dir")" = 0
+            test "$(readlink -f -- "$source_dir")" = "$source_dir"
+            source_mode="$(stat -c '%a' -- "$source_dir")"
+            [[ "$source_mode" =~ ^[0-7]{3,4}$ ]]
+            (( (8#$source_mode & 8#22) == 0 ))
+          }
+          for source_parent in / /var /var/lib; do verify_source_directory "$source_parent"; done
+          source_root=/var/lib/faolla-maintenance-code
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then exit 0; fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          if [ ! -e "$worktree" ] && [ ! -L "$worktree" ]; then exit 0; fi
+          verify_source_directory "$worktree"
+          test "$(stat -c '%a' -- "$worktree")" = 700
           test "$(git -C "$worktree" rev-parse HEAD)" = "$target"
-          test -z "$(git -C "$worktree" status --porcelain=v1 --untracked-files=all)"
+          source_status="$(git -C "$worktree" status --porcelain=v1 --untracked-files=all)"
+          test -z "$source_status"
           git -C "$app_dir" worktree remove "$worktree"
           REMOTE
 

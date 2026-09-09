@@ -203,4 +203,3 @@ test("real checkpoint retains full final proof before already-gone cleanup", asy
   assert.ok(saves.some(s => s.candidate?.pauseExpected === "0"));
   await assertRuntimeStopped(proof, f.deps);
 });
-

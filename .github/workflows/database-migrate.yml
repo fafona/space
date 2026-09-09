@@ -66,7 +66,7 @@ jobs:
       BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
       BACKUP_WORKFLOW_NAME: Encrypted Database Backup
       BACKUP_WORKFLOW_PATH: .github/workflows/database-backup.yml
-      REMOTE_MIGRATION_WORKTREE: /tmp/faolla-database-migrate-${{ github.run_id }}-${{ github.run_attempt }}
+      REMOTE_MIGRATION_WORKTREE: /var/lib/faolla-maintenance-code/faolla-database-migrate-${{ github.run_id }}-${{ github.run_attempt }}
       REMOTE_MIGRATION_REPORT_DIR: /tmp/faolla-database-migrate-report-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
@@ -644,9 +644,25 @@ jobs:
           set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
           test -n "$repository_dir"
-          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
           test -d "$repository_dir"
-          test ! -e "$FAOLLA_MIGRATION_WORKTREE"
+          test "$(id -u)" = 0
+          umask 077
+          verify_source_directory() {
+            local directory="$1" mode
+            test -d "$directory" && test ! -L "$directory" || return 1
+            test "$(readlink -f -- "$directory")" = "$directory" || return 1
+            test "$(stat -c '%u' -- "$directory")" = 0 || return 1
+            mode="$(stat -c '%a' -- "$directory")" || return 1
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 8#22) == 0 ))
+          }
+          for directory in / /var /var/lib; do verify_source_directory "$directory" || exit 1; done
+          source_root=/var/lib/faolla-maintenance-code
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then mkdir -m 700 -- "$source_root"; fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test ! -e "$FAOLLA_MIGRATION_WORKTREE" && test ! -L "$FAOLLA_MIGRATION_WORKTREE" || exit 1
           test "$(git -C "$repository_dir" rev-parse --is-inside-work-tree)" = "true"
           git -C "$repository_dir" fetch --no-tags --prune origin \
             "+refs/heads/main:refs/remotes/origin/main"
@@ -654,6 +670,8 @@ jobs:
           git -C "$repository_dir" cat-file -e "$FAOLLA_TARGET_SHA^{commit}"
           git -C "$repository_dir" worktree add --detach \
             "$FAOLLA_MIGRATION_WORKTREE" "$FAOLLA_TARGET_SHA"
+          verify_source_directory "$FAOLLA_MIGRATION_WORKTREE"
+          test "$(stat -c '%a' -- "$FAOLLA_MIGRATION_WORKTREE")" = 700
           test "$(git -C "$FAOLLA_MIGRATION_WORKTREE" rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
           if git -C "$FAOLLA_MIGRATION_WORKTREE" symbolic-ref -q HEAD >/dev/null; then exit 1; fi
           test -z "$(git -C "$FAOLLA_MIGRATION_WORKTREE" status --porcelain=v1 --untracked-files=all)"
@@ -933,7 +951,7 @@ jobs:
           set -euo pipefail
           umask 077
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
-          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
           [[ "$FAOLLA_REPORT_DIR" =~ ^/tmp/faolla-database-migrate-report-[1-9][0-9]*-[1-9][0-9]*$ ]]
           [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$FAOLLA_THROUGH" =~ ^[0-9]{12}$ ]]
@@ -1346,13 +1364,37 @@ jobs:
               -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
               -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-              "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_MIGRATION_WORKTREE=$REMOTE_MIGRATION_WORKTREE bash -s" <<'REMOTE'
-          set -eu
+              "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_TARGET_SHA=$TARGET_SHA FAOLLA_MIGRATION_WORKTREE=$REMOTE_MIGRATION_WORKTREE bash -s" <<'REMOTE'
+          set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
-          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/tmp/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
-          if [ -e "$FAOLLA_MIGRATION_WORKTREE" ]; then
-            git -C "$repository_dir" worktree remove --force "$FAOLLA_MIGRATION_WORKTREE"
+          test "$(id -u)" = 0
+          verify_source_directory() {
+            local directory="$1" mode
+            test -d "$directory" && test ! -L "$directory" || return 1
+            test "$(readlink -f -- "$directory")" = "$directory" || return 1
+            test "$(stat -c '%u' -- "$directory")" = 0 || return 1
+            mode="$(stat -c '%a' -- "$directory")" || return 1
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 8#22) == 0 ))
+          }
+          for directory in / /var /var/lib; do verify_source_directory "$directory" || exit 1; done
+          source_root=/var/lib/faolla-maintenance-code
+          [[ "$FAOLLA_MIGRATION_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-database-migrate-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then
+            test ! -e "$FAOLLA_MIGRATION_WORKTREE" && test ! -L "$FAOLLA_MIGRATION_WORKTREE" || exit 1
+            exit 0
           fi
-          test ! -e "$FAOLLA_MIGRATION_WORKTREE"
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          if [ -e "$FAOLLA_MIGRATION_WORKTREE" ] || [ -L "$FAOLLA_MIGRATION_WORKTREE" ]; then
+            verify_source_directory "$FAOLLA_MIGRATION_WORKTREE"
+            test "$(stat -c '%a' -- "$FAOLLA_MIGRATION_WORKTREE")" = 700
+            source_head="$(git -C "$FAOLLA_MIGRATION_WORKTREE" rev-parse HEAD)" || exit 1
+            test "$source_head" = "$FAOLLA_TARGET_SHA"
+            source_status="$(git -C "$FAOLLA_MIGRATION_WORKTREE" status --porcelain=v1 --untracked-files=all)" || exit 1
+            test -z "$source_status"
+            git -C "$repository_dir" worktree remove "$FAOLLA_MIGRATION_WORKTREE"
+          fi
+          test ! -e "$FAOLLA_MIGRATION_WORKTREE" && test ! -L "$FAOLLA_MIGRATION_WORKTREE" || exit 1
           REMOTE
           fi
