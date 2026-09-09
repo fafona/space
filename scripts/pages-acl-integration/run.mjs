@@ -46,6 +46,10 @@ export function runPagesAclIntegration(environment = process.env, args = process
   };
   const query = (sql) => {
     const result = execute(sql);
+    if (result.status !== 0) {
+      const state = result.error.match(/ERROR:\s+([A-Z0-9]{5})(?:\s|$)/)?.[1] || "unknown";
+      console.error(`[pages-acl-postgres] synthetic_query_failed sqlstate=${state}`);
+    }
     assert.equal(result.status, 0, "synthetic SQL did not complete");
     return result.output;
   };
@@ -71,6 +75,11 @@ export function runPagesAclIntegration(environment = process.env, args = process
   "refusing a non-empty or differently bound PostgreSQL service");
   pass("fixed empty PG15 CI service identity");
   const quiet = json(PRODUCTION_MAINTENANCE_QUIET_SQL);
+  if (quiet.complete !== true || quiet.schedulerSafe !== true || quiet.transactions !== 0 || quiet.prepared !== 0 || !Number.isSafeInteger(quiet.databaseOid)) {
+    console.error(JSON.stringify({ checkpoint: "maintenance-quiet-projection", complete: quiet.complete === true,
+      schedulerSafe: quiet.schedulerSafe === true, transactionsZero: quiet.transactions === 0,
+      preparedZero: quiet.prepared === 0, databaseOidType: typeof quiet.databaseOid }));
+  }
   assert.deepEqual(Object.keys(quiet).sort(), ["complete", "schedulerSafe", "transactions", "prepared", "databaseOid"].sort());
   assert.equal(quiet.complete, true);
   assert.equal(quiet.schedulerSafe, true);

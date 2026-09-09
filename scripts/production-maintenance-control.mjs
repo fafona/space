@@ -268,7 +268,7 @@ const QUIET_SQL = "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SET LOCAL 
   "SELECT json_build_object('complete', current_setting('is_superuser')='on' OR pg_has_role(current_user,'pg_read_all_stats','USAGE')," +
   "'schedulerSafe',(" + SCHEDULER_SAFE_SQL + ")," +
   "'transactions',(SELECT count(*) FROM pg_stat_activity WHERE pid<>pg_backend_pid() AND xact_start IS NOT NULL)," +
-  "'prepared',(SELECT count(*) FROM pg_prepared_xacts), 'databaseOid',(SELECT oid FROM pg_database WHERE datname=current_database()))::text; ROLLBACK;";
+  "'prepared',(SELECT count(*) FROM pg_prepared_xacts), 'databaseOid',(SELECT oid::bigint FROM pg_database WHERE datname=current_database()))::text; ROLLBACK;";
 const ACL_SQL = "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='1s'; " +
   "SELECT json_build_object('migration',exists(select 1 from public.faolla_schema_migrations where version=202609090048 and name='pages_client_write_acl')," +
   "'clientsDenied',bool_and(NOT has_table_privilege(r.oid,'public.pages','INSERT') AND NOT has_table_privilege(r.oid,'public.pages','UPDATE') AND NOT has_table_privilege(r.oid,'public.pages','DELETE') AND NOT has_any_column_privilege(r.oid,'public.pages','INSERT') AND NOT has_any_column_privilege(r.oid,'public.pages','UPDATE')) AND count(*)=2," +

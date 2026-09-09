@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { parseMaintenanceRequest, runMaintenanceAction, validateMaintenanceState } from "./production-maintenance-control.mjs";
+import { parseMaintenanceRequest, runMaintenanceAction, validateMaintenanceState, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -41,6 +41,15 @@ test("strict CLI rejects missing, duplicate, unexpected and unbound inputs", () 
   for (const args of [["plan", ...flags, "--app-name", "x"], ["end", ...flags], ["plan", ...flags, "--expected-operation-id", operationId], ["prepare", ...flags, "--force"],
     ["prepare", ...flags.filter((value) => value !== "--json")], ["plan", ...flags.map((value) => value === "/srv/faolla" ? "/srv/../faolla" : value)],
     ["plan", ...flags.map((value) => value === target ? old : value)]]) assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
+});
+test("fixed PostgreSQL projections preserve typed database identity and all required ACL operations", () => {
+  assert.match(PRODUCTION_MAINTENANCE_QUIET_SQL, /'databaseOid',\(SELECT oid::bigint FROM pg_database WHERE datname=current_database\(\)\)/);
+  assert.match(PRODUCTION_MAINTENANCE_QUIET_SQL, /NOT EXISTS \(SELECT 1 FROM pg_subscription WHERE subenabled\)/);
+  assert.match(PRODUCTION_MAINTENANCE_QUIET_SQL, /to_regclass\('cron\.job'\) IS NULL/);
+  assert.match(PRODUCTION_MAINTENANCE_ACL_SQL, /has_table_privilege\('service_role','public.pages','INSERT'\) AND has_table_privilege\('service_role','public.pages','UPDATE'\) AND has_table_privilege\('service_role','public.pages','DELETE'\)/);
+  for (const sql of [PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL]) {
+    assert.match(sql, /^BEGIN READ ONLY;/); assert.match(sql, /ROLLBACK;$/);
+  }
 });
 test("plan checks actual supported capture without private persistence or actuation", async () => {
   const f = fixture();
