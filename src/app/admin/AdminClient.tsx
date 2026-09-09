@@ -108,6 +108,10 @@ import {
   readPublishFailureSnapshots,
 } from "@/data/blockStore";
 import {
+  isServerPublishConfirmed,
+  readServerPublishCompletionError,
+} from "@/lib/serverPublishConfirmation";
+import {
   BACKEND_UNAVAILABLE_NOTICE,
   canReachSupabaseGateway,
   getResolvedSupabaseUrl,
@@ -1190,19 +1194,11 @@ type GlobalPageRecord = {
 
 let pagesSlugColumnSupported: boolean | null = null;
 let pagesMerchantIdColumnSupported: boolean | null = null;
-let pagesUpdatedAtColumnSupported: boolean | null = null;
 
 function isMissingSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
     /could not find the ['"]slug['"] column of ['"]pages['"] in the schema cache/i.test(message)
-  );
-}
-
-function isMissingUpdatedAtColumn(message: string) {
-  return (
-    /column\s+pages\.updated_at\s+does\s+not\s+exist/i.test(message) ||
-    /could not find the ['"]updated_at['"] column of ['"]pages['"] in the schema cache/i.test(message)
   );
 }
 
@@ -2536,137 +2532,6 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
   return "未匹配到你的商户站点，当前仅展示本地草稿。请先在“商户信息”完善绑定。";
 }
 
-  async function saveBlocksToSupabaseFallback(
-    payload: { blocks: Block[]; updated_at: string },
-    merchantIds: string[],
-    merchantSlug = "",
-  ): Promise<SaveErrorLike> {
-  const sanitizedBlocks = sanitizeBlocksForRuntime(payload.blocks).blocks;
-  const normalizedMerchantSlug = normalizeDomainPrefixForMerchant(merchantSlug) || "home";
-
-  async function trySaveWithPayload(sanitizedPayload: { blocks: Block[]; updated_at?: string }): Promise<SaveErrorLike> {
-    // Public homepage publish: only touch the global row (merchant_id is null).
-    if (merchantIds.length === 0) {
-      const existingGlobal = await queryGlobalPageRecord("id");
-      if (existingGlobal.error) return existingGlobal.error;
-
-      const globalRowId = existingGlobal.record?.id;
-      if (globalRowId !== undefined && globalRowId !== null) {
-        const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", globalRowId);
-        if (!byId.error) return null;
-        return byId.error;
-      }
-
-      if (pagesSlugColumnSupported !== false) {
-        const initHome = await supabase.from("pages").insert({
-          ...sanitizedPayload,
-          slug: "home",
-        });
-        if (!initHome.error) {
-          pagesSlugColumnSupported = true;
-          return null;
-        }
-        if (isMissingSlugColumn(initHome.error.message)) {
-          pagesSlugColumnSupported = false;
-        } else {
-          return initHome.error;
-        }
-      }
-
-      const initWithoutSlug = await supabase.from("pages").insert(sanitizedPayload);
-      if (!initWithoutSlug.error) return null;
-      return initWithoutSlug.error;
-    }
-
-    for (const merchantId of merchantIds) {
-      const byMerchant = await supabase
-        .from("pages")
-        .select("id")
-        .eq("merchant_id", merchantId)
-        .limit(1)
-        .maybeSingle();
-      if (byMerchant.error) continue;
-
-      if (byMerchant.data?.id !== undefined && byMerchant.data?.id !== null) {
-        if (pagesSlugColumnSupported !== false) {
-          const byIdWithSlug = await supabase
-            .from("pages")
-            .update({ ...sanitizedPayload, slug: normalizedMerchantSlug })
-            .eq("id", byMerchant.data.id);
-          if (!byIdWithSlug.error) {
-            pagesSlugColumnSupported = true;
-            return null;
-          }
-          if (!isMissingSlugColumn(byIdWithSlug.error.message)) {
-            return byIdWithSlug.error;
-          }
-          pagesSlugColumnSupported = false;
-        }
-
-        const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", byMerchant.data.id);
-        if (!byId.error) return null;
-        return byId.error;
-      }
-    }
-
-    const initErrors: string[] = [];
-
-    for (const merchantId of merchantIds) {
-      const withSlug = await supabase.from("pages").insert({
-        ...sanitizedPayload,
-        merchant_id: merchantId,
-        slug: normalizedMerchantSlug,
-      });
-      if (!withSlug.error) return null;
-      initErrors.push(`pages 初始插入（含 slug）失败(${merchantId}): ${withSlug.error.message}`);
-
-      if (isMissingSlugColumn(withSlug.error.message)) {
-        const withoutSlug = await supabase.from("pages").insert({
-          ...sanitizedPayload,
-          merchant_id: merchantId,
-        });
-        if (!withoutSlug.error) return null;
-        initErrors.push(`pages 初始插入（不含 slug）失败(${merchantId}): ${withoutSlug.error.message}`);
-      }
-
-      // Fallback: let DB default/trigger populate merchant_id when explicit id is invalid.
-      const autoMerchantWithSlug = await supabase.from("pages").insert({
-        ...sanitizedPayload,
-        slug: normalizedMerchantSlug,
-      });
-      if (!autoMerchantWithSlug.error) return null;
-      initErrors.push(`pages 初始插入（自动 merchant_id，含 slug）失败(${merchantId}): ${autoMerchantWithSlug.error.message}`);
-
-      if (isMissingSlugColumn(autoMerchantWithSlug.error.message)) {
-        const autoMerchantWithoutSlug = await supabase.from("pages").insert(sanitizedPayload);
-        if (!autoMerchantWithoutSlug.error) return null;
-        initErrors.push(
-          `pages 初始插入（自动 merchant_id，不含 slug）失败(${merchantId}): ${autoMerchantWithoutSlug.error.message}`,
-        );
-      }
-    }
-
-    return {
-      message:
-        initErrors.length > 0
-          ? `存在可更新 pages 记录，但自动初始化失败：${initErrors.join("；")}`
-          : "存在可更新 pages 记录，但初始化失败",
-    };
-  }
-
-  const withUpdatedAt = { blocks: sanitizedBlocks, updated_at: payload.updated_at };
-  if (pagesUpdatedAtColumnSupported !== false) {
-    const first = await trySaveWithPayload(withUpdatedAt);
-    if (!first) {
-      pagesUpdatedAtColumnSupported = true;
-      return null;
-    }
-    if (!isMissingUpdatedAtColumn(first.message)) return first;
-    pagesUpdatedAtColumnSupported = false;
-  }
-
-  return trySaveWithPayload({ blocks: sanitizedBlocks });
-}
 
 function formatSupportClockTime(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -6450,38 +6315,6 @@ export default function AdminClient({
     syncHistoryFlags();
   }
 
-  async function trySaveWithResolvedMerchantIds(
-    payload: { blocks: Block[]; updated_at: string },
-    preferredMerchantIds: string[] = [],
-    merchantSlug = "",
-    timeoutMs = 45000,
-  ) {
-    if (isPlatformEditor) {
-      merchantIdsRef.current = [];
-      return withTimeout(saveBlocksToSupabaseFallback(payload, []), timeoutMs);
-    }
-    const strictPreferred = [...new Set(preferredMerchantIds.map((item) => item.trim()).filter(Boolean))];
-    if (strictPreferred.length > 0) {
-      merchantIdsRef.current = strictPreferred;
-      return withTimeout(saveBlocksToSupabaseFallback(payload, strictPreferred, merchantSlug), timeoutMs);
-    }
-    let merchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
-    try {
-      const gatewayReady = await canReachSupabaseGateway(Math.min(2500, AUTH_CHECK_TIMEOUT_MS));
-      if (!gatewayReady) return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds, merchantSlug), timeoutMs);
-      await readFreshMerchantSessionIdentity(Math.min(3600, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
-      const resolvedMerchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
-      // Always prefer freshly resolved ids to avoid stale in-memory/session cache blocking publish.
-      if (resolvedMerchantIds.length > 0) {
-        merchantIds = mergePreferredMerchantIds(preferredMerchantIds, resolvedMerchantIds);
-        merchantIdsRef.current = merchantIds;
-      }
-    } catch {
-      merchantIds = merchantIdsRef.current;
-    }
-    merchantIds = mergePreferredMerchantIds(preferredMerchantIds, merchantIds);
-    return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds, merchantSlug), timeoutMs);
-  }
 
   async function trySaveViaServerPublishApi(
     payload: { blocks: Block[]; updated_at: string },
@@ -6500,75 +6333,46 @@ export default function AdminClient({
       merchantSlug,
       isPlatformEditor,
     });
-    const waitBeforeRetry = () => new Promise<void>((resolve) => window.setTimeout(resolve, 1200));
-    const isRetriablePublishFailure = (status: number, code: string) =>
-      status === 502 ||
-      status === 503 ||
-      status === 504 ||
-      code === "publish_backend_request_timeout" ||
-      code === "publish_request_deadline_exceeded" ||
-      code === "publish_request_failed";
-    const sendRequest = async () => {
-      const controller = new AbortController();
-      const timer = window.setTimeout(() => {
-        controller.abort();
-      }, Math.max(3000, timeoutMs));
-      try {
-        const response = await fetch("/api/publish", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          signal: controller.signal,
-          body: requestBody,
-        });
-        const data = (await response.json().catch(() => null)) as
-          | { ok?: boolean; code?: string; message?: string }
-          | null;
-        return { response, data };
-      } finally {
-        window.clearTimeout(timer);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      controller.abort();
+    }, Math.max(3000, timeoutMs));
+    try {
+      // One server request only. A lost response does not authorize another
+      // write, a browser Supabase fallback, or a local published-state update.
+      const response = await fetch("/api/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: controller.signal,
+        body: requestBody,
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const failure = data && typeof data === "object" && !Array.isArray(data)
+          ? data as { code?: unknown; message?: unknown }
+          : null;
+        const code = typeof failure?.code === "string" ? failure.code : "";
+        const message = typeof failure?.message === "string"
+          ? failure.message
+          : `发布接口错误（HTTP ${response.status}）`;
+        return {
+          handled: true,
+          error: { code, message: normalizePublishApiErrorMessage(code, message, response.status) },
+        };
       }
-    };
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const { response, data } = await sendRequest();
-        if (!response.ok) {
-          const code = typeof data?.code === "string" ? data.code : "";
-          const message = typeof data?.message === "string" ? data.message : `发布接口错误（HTTP ${response.status}）`;
-          if (attempt === 0 && isRetriablePublishFailure(response.status, code)) {
-            showSavePublishTip("发布接口响应超时，正在自动确认结果...");
-            await waitBeforeRetry();
-            continue;
-          }
-          if (!isPlatformEditor && isRetriablePublishFailure(response.status, code)) {
-            showSavePublishTip("发布接口仍超时，正在切换备用发布通道...");
-            return { handled: false, error: null };
-          }
-          if (code === "publish_service_unavailable") {
-            return { handled: false, error: null };
-          }
-          return {
-            handled: true,
-            error: {
-              code,
-              message: normalizePublishApiErrorMessage(code, message, response.status),
-            },
-          };
-        }
-        return { handled: true, error: null };
-      } catch {
-        if (attempt === 0) {
-          showSavePublishTip("发布接口连接中断，正在自动确认结果...");
-          await waitBeforeRetry();
-          continue;
-        }
-        if (!isPlatformEditor) showSavePublishTip("发布接口仍中断，正在切换备用发布通道...");
+      if (!isServerPublishConfirmed(response, data, {
+        requestId,
+        updatedAt: payload.updated_at,
+        mode: isPlatformEditor ? "platform" : "merchant",
+      })) {
         return { handled: false, error: null };
       }
+      return { handled: true, error: null };
+    } catch {
+      return { handled: false, error: null };
+    } finally {
+      window.clearTimeout(timer);
     }
-    return { handled: false, error: null };
   }
 
   function openAlert(message: string, title = "提示"): Promise<void> {
@@ -9562,8 +9366,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
 
       saveBlocksToStorage(isPlatformEditor ? combinedBlocks : draftBlocks, storeScope);
-      recordPublishedVersion(combinedBlocks, storeScope);
-      savePublishedBlocksToStorage(combinedBlocks, storeScope);
 
       if (payloadBytes > MAX_PUBLISH_PAYLOAD_BYTES) {
         const breakdown = getPublishSizeBreakdown(payload.blocks);
@@ -9592,25 +9394,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         await openAlert(lines.join("\n"), "发布体积明细");
         return;
       }
-      let error: SaveErrorLike = null;
       const serverPublishResult = await trySaveViaServerPublishApi(payload, preferredMerchantIds, publishTargetDomainPrefix, 70000);
-      if (serverPublishResult.handled) {
-        error = serverPublishResult.error;
-      } else {
-        try {
-          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, publishTargetDomainPrefix, 45000);
-        } catch (firstError) {
-          if (!(firstError instanceof Error) || !firstError.message.includes("保存超时")) {
-            throw firstError;
-          }
-          showSavePublishTip("首次发布超时，正在自动重试...");
-          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, publishTargetDomainPrefix, 60000);
-        }
-      }
+      const error = readServerPublishCompletionError(serverPublishResult);
 
       if (error) {
         const normalizedReason = normalizeSaveErrorMessage(error.message);
-        showPublishFailedTip(`草稿已保存，发布失败：${normalizedReason}`);
+        showPublishFailedTip(error.code === "publish_result_unconfirmed"
+          ? normalizedReason
+          : `发布未完成：${normalizedReason}`);
         savePublishFailureSnapshot({
           reason: normalizedReason,
           bytes: payloadBytes,
@@ -9622,7 +9413,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           changedBlocks: totalChanges,
           reason: normalizedReason,
         });
-        if (shouldOfferCompressionPresetForPublishError(normalizedReason, error.code)) {
+        if (error.code !== "publish_result_unconfirmed" && shouldOfferCompressionPresetForPublishError(normalizedReason, error.code)) {
           await openAlert(
             `真实错误：${normalizedReason}\n\n系统发布前已自动尝试压缩和外链化。请先重试发布；若仍失败，请检查上传接口、存储桶和服务端密钥配置。`,
             "发布失败",
