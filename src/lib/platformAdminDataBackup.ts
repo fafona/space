@@ -106,7 +106,7 @@ function nextBackupId() {
   return `platform-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeInt(value: unknown, fallback = 0, min = 0, max = 1_000_000) {
+function normalizeInt(value: unknown, fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER) {
   const next = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
   return Math.max(min, Math.min(max, next));
 }
@@ -305,7 +305,7 @@ export function createPlatformAdminDataBackupEntry(input: {
   operator: string;
   summary?: string;
   scheduleDateKey?: string | null;
-  snapshot: PlatformAdminDataBackupSnapshot;
+  snapshot: Omit<PlatformAdminDataBackupSnapshot, "merchantAccounts"> & { merchantAccounts: unknown[] };
 }) {
   const snapshot = normalizePlatformAdminDataBackupSnapshot(input.snapshot);
   const counts = createDefaultEntryCounts(snapshot);

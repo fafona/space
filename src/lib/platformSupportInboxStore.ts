@@ -11,6 +11,14 @@ import {
   type MerchantConversationShadowClient,
 } from "@/lib/merchantConversationDualWrite.server";
 import { saveMerchantSnapshotHistory } from "@/lib/merchantSnapshotHistoryStore";
+import { readPlatformAdminBackupBlocksStrict } from "@/lib/platformAdminBackupStrictRead";
+import { readPlatformSupportInboxBlocksValidated } from "@/lib/platformAdminBackupValidation";
+import { PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED, readPlatformAdminBackupRowForWriteStrict,
+  persistPlatformAdminBackupRowStrict, type StrictPlatformAdminBackupWriteClient } from "@/lib/platformAdminBackupStrictWrite";
+import { getPlatformSnapshotWriteMode } from "@/lib/platformSnapshotAtomicMode.server";
+import { loadPlatformSupportInboxAtomic, savePlatformSupportInboxAtomic,
+  platformSupportInboxAtomicErrorCode } from "@/lib/platformSupportInboxAtomic.server";
+import type { PlatformSnapshotAtomicClient } from "@/lib/platformSnapshotAtomic.server";
 
 const PLATFORM_SUPPORT_INBOX_HISTORY_SLUG = "__platform_support_inbox_history__";
 const PLATFORM_SUPPORT_INBOX_HISTORY_BACKUP_SLUG = "__platform_support_inbox_history_backup__";
@@ -72,10 +80,56 @@ function isMissingUpdatedAtColumn(message: string) {
   );
 }
 
+type SupportSaveOptions = { replace?: boolean; requireAllWrites?: boolean };
+
+async function saveRequiredPlatformSupportInbox(
+  supabase: PlatformSupportInboxStoreClient, payload: PlatformSupportInboxPayload, options: SupportSaveOptions,
+): Promise<{ error: string | null; payload: PlatformSupportInboxPayload | null }> {
+  platformSupportInboxCache = null;
+  try {
+    // Validate the raw replacement before any builder can normalize it away.
+    const incoming = readPlatformSupportInboxBlocksValidated([
+      { type: "common", props: { isPlatformSupportInbox: true, payload } },
+    ]);
+    const client = supabase as StrictPlatformAdminBackupWriteClient;
+    const existing = await readPlatformAdminBackupRowForWriteStrict(client, PLATFORM_SUPPORT_INBOX_SLUG);
+    if (existing && !Array.isArray(existing.blocks)) throw new Error(PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED);
+    const before = readPlatformSupportInboxBlocksValidated(existing ? existing.blocks as unknown[] : null);
+    const target = options.replace ? incoming : mergePlatformSupportInboxPayloads(before, incoming);
+    const at = new Date().toISOString();
+    const history = await saveMerchantSnapshotHistory(supabase, {
+      siteId: PLATFORM_SUPPORT_INBOX_HISTORY_SITE_ID, slug: PLATFORM_SUPPORT_INBOX_HISTORY_SLUG,
+      backupSlug: PLATFORM_SUPPORT_INBOX_HISTORY_BACKUP_SLUG, source: "platform-support-inbox",
+      before, after: target, at, maxEntries: 20, merchantId: null, requireAllWrites: true,
+    });
+    if (history.error) throw new Error(PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED);
+    await persistPlatformAdminBackupRowStrict(client, PLATFORM_SUPPORT_INBOX_SLUG, buildPlatformSupportInboxBlocks(target), existing);
+    const mirrored = await mirrorPlatformSupportConversationSnapshot(supabase, {
+      current: target, previous: before, replace: options.replace, operationAt: at,
+    }, { awaitSettlement: true, logger: () => undefined });
+    if (mirrored.status === "failed" || mirrored.status === "timeout") throw new Error(PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED);
+    // No success cache before required history, main-row readback and any enabled
+    // shadow RPC settle. Disabled/unscoped shadow modes are legitimate no-ops.
+    platformSupportInboxCache = { expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS, value: target };
+    return { error: null, payload: target };
+  } catch {
+    platformSupportInboxCache = null;
+    return { error: PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED, payload: null };
+  }
+}
+
 export async function loadStoredPlatformSupportInbox(
   supabase: PlatformSupportInboxStoreClient,
-  options?: { bypassCache?: boolean },
+  options?: { bypassCache?: boolean; strict?: boolean },
 ): Promise<PlatformSupportInboxPayload> {
+  if (getPlatformSnapshotWriteMode() === "atomic") {
+    platformSupportInboxCache = null;
+    return loadPlatformSupportInboxAtomic(supabase as PlatformSnapshotAtomicClient);
+  }
+  if (options?.strict) {
+    const blocks = await readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_SUPPORT_INBOX_SLUG);
+    return readPlatformSupportInboxBlocksValidated(blocks);
+  }
   if (!options?.bypassCache && platformSupportInboxCache && platformSupportInboxCache.expiresAt > Date.now()) {
     return platformSupportInboxCache.value;
   }
@@ -124,8 +178,23 @@ export async function loadStoredPlatformSupportInbox(
 async function savePlatformSupportInboxUnlocked(
   supabase: PlatformSupportInboxStoreClient,
   payload: PlatformSupportInboxPayload,
-  options?: { replace?: boolean },
+  options?: SupportSaveOptions,
 ): Promise<{ error: string | null; payload: PlatformSupportInboxPayload | null }> {
+  let mode: "off" | "atomic";
+  try { mode = getPlatformSnapshotWriteMode(); }
+  catch (error) {
+    platformSupportInboxCache = null;
+    return { error: platformSupportInboxAtomicErrorCode(error), payload: null };
+  }
+  if (mode === "atomic") {
+    platformSupportInboxCache = null;
+    const result = await savePlatformSupportInboxAtomic(supabase as PlatformSnapshotAtomicClient, payload, options);
+    if (!result.error && result.payload) platformSupportInboxCache = {
+      expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS, value: result.payload,
+    };
+    return result;
+  }
+  if (options?.requireAllWrites) return saveRequiredPlatformSupportInbox(supabase, payload, options);
   platformSupportInboxCache = null;
   const beforePayload = await loadStoredPlatformSupportInbox(supabase, { bypassCache: true });
   const incomingPayload = normalizePlatformSupportInboxPayload(payload);
@@ -247,7 +316,7 @@ async function savePlatformSupportInboxUnlocked(
 export function savePlatformSupportInbox(
   supabase: PlatformSupportInboxStoreClient,
   payload: PlatformSupportInboxPayload,
-  options?: { replace?: boolean },
+  options?: SupportSaveOptions,
 ): Promise<{ error: string | null; payload: PlatformSupportInboxPayload | null }> {
   const operation = platformSupportInboxWriteQueue
     .catch(() => undefined)

@@ -3,12 +3,14 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { recoveryContentFixture } from "./test-fixtures/database-recovery-content.mjs";
 
 import {
   buildDatabaseBackupManifest,
@@ -31,6 +33,7 @@ const SOURCE_IDENTITY = {
     serverVersionNum: "150008",
     postmasterStartedAt: "2026-08-20T10:00:01.000Z",
     primary: true,
+    recoveryContent: recoveryContentFixture(),
     baseline: {
       merchantRecordCount: "10",
       merchantAuthoritativeBindingCount: "10",
@@ -127,6 +130,7 @@ test("encrypted database backup verifies every nested recovery component", async
     assert.equal(report.status, "verified");
     assert.equal(report.schemaVersion, 2);
     assert.equal(report.manifestSchemaVersion, 2);
+    assert.equal(report.recoveryContentStatus, "present_unverified");
     assert.equal(report.source.sha, SOURCE_IDENTITY.sourceSha);
     assert.equal(report.nestedArchives.postgresConfig.entryCount, 2);
     assert.equal(report.nestedArchives.storage.entryCount, 1);
@@ -134,6 +138,34 @@ test("encrypted database backup verifies every nested recovery component", async
     assert.equal(report.nestedArchives.appConfig.entryCount, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy v1 and v2 archive verification explicitly reports missing recovery proof", async () => {
+  for (const version of [1, 2]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-db-legacy-verify-test-"));
+    try {
+      const fixture = await createFixture(directory);
+      const manifestPath = path.join(fixture.sourceDirectory, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      delete manifest.source.database.recoveryContent;
+      if (version === 1) {
+        manifest.schemaVersion = 1;
+        manifest.format = "self-hosted-supabase-dr-v1";
+        delete manifest.source.database;
+      }
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const report = await verifyProductionDatabaseBackup({
+        inputPath: fixture.encryptedPath,
+        passphrase: "long-enough-encryption-passphrase",
+        runCommand: fixtureRunner(fixture.sourceDirectory),
+      });
+      assert.equal(report.status, "verified");
+      assert.equal(report.manifestSchemaVersion, version);
+      assert.equal(report.recoveryContentStatus, "legacy_missing");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
 
@@ -155,5 +187,25 @@ test("encrypted database backup rejects a missing pgsodium recovery key", async 
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("archive verification preserves legacy four-table profiles and never marks them current", async () => {
+  for (const version of [1, 2]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-db-profile-verify-test-"));
+    try {
+      const fixture = await createFixture(directory);
+      const manifestPath = path.join(fixture.sourceDirectory, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      manifest.schemaVersion = version; manifest.format = `self-hosted-supabase-dr-v${version}`;
+      manifest.source.database.recoveryContent = recoveryContentFixture({ schemaVersion: 1, migrated: true });
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const report = await verifyProductionDatabaseBackup({ inputPath: fixture.encryptedPath,
+        passphrase: "long-enough-encryption-passphrase", runCommand: fixtureRunner(fixture.sourceDirectory) });
+      assert.equal(report.status, "verified"); assert.equal(report.manifestSchemaVersion, version);
+      assert.equal(report.recoveryContentStatus, "legacy_profile");
+      assert.deepEqual(report.source.database.recoveryContent, manifest.source.database.recoveryContent);
+      assert.equal(report.source.database.recoveryContent.relations.length, 4);
+    } finally { await rm(directory, { recursive: true, force: true }); }
   }
 });

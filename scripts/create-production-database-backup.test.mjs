@@ -3,6 +3,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { recoveryContentFixture } from "./test-fixtures/database-recovery-content.mjs";
 
 import {
   captureDatabaseIdentity,
@@ -22,6 +23,7 @@ const DATABASE_IDENTITY = {
   serverVersionNum: "150008",
   postmasterStartedAt: "2026-08-20T10:00:01.000Z",
   primary: true,
+  recoveryContent: recoveryContentFixture({ receipts: true }),
   baseline: {
     merchantRecordCount: "10",
     merchantAuthoritativeBindingCount: "10",
@@ -180,6 +182,15 @@ function successfulCommandRunner(input = {}) {
           serverVersionNum: DATABASE_IDENTITY.serverVersionNum,
           postmasterStartedAt: DATABASE_IDENTITY.postmasterStartedAt,
           primary: DATABASE_IDENTITY.primary,
+          recoveryContent: identityProbeCount > 1 && input.changedRecoveryContent
+            ? {
+                ...DATABASE_IDENTITY.recoveryContent,
+                relations: DATABASE_IDENTITY.recoveryContent.relations.map((relation) =>
+                  relation.name === (input.changedRecoveryRelation ?? "public.pages")
+                    ? { ...relation, contentSha256: "4".repeat(64) }
+                    : relation),
+              }
+            : DATABASE_IDENTITY.recoveryContent,
           baseline,
         })}\n`,
         stderr: "",
@@ -285,6 +296,7 @@ test("database identity probe selects the container POSTGRES_DB, not postgres", 
         serverVersionNum: DATABASE_IDENTITY.serverVersionNum,
         postmasterStartedAt: DATABASE_IDENTITY.postmasterStartedAt,
         primary: DATABASE_IDENTITY.primary,
+        recoveryContent: DATABASE_IDENTITY.recoveryContent,
         baseline: DATABASE_IDENTITY.baseline,
       })}\n`,
       stderr: "",
@@ -401,4 +413,88 @@ test("production database backup rejects a same-count identity content replaceme
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("backup rejects same-count financial content changes and never encrypts a success artifact", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-db-recovery-change-test-"));
+  const outputPath = path.join(directory, "backup.tar.enc");
+  const lockPath = path.join(directory, "backup.lock");
+  let encrypted = false;
+  try {
+    await assert.rejects(createProductionDatabaseBackup({
+      env: {}, outputPath, lockPath,
+      passphrase: "long-enough-encryption-passphrase",
+      selfHostedTopology: selfHostedTopology(),
+      runCommand: successfulCommandRunner({ changedRecoveryContent: true }),
+      encryptArchive: async () => { encrypted = true; },
+      appDirectory: directory, sourceDirectory: directory,
+      sourceRepository: SOURCE_REPOSITORY, sourceSha: SOURCE_SHA,
+    }), /database_identity_changed_during_backup/);
+    assert.equal(encrypted, false);
+    assert.equal(await exists(outputPath), false);
+    assert.equal(await exists(lockPath), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("backup capture probes identity and recovery content in one repeatable-read transaction", async () => {
+  const runner = successfulCommandRunner();
+  let probeArgs = [];
+  let probeScript = "";
+  await captureDatabaseIdentity(async (command, args, options) => {
+    if (options?.errorCode === "database_identity_postgres_probe_failed") {
+      probeArgs = args.slice(6);
+      probeScript = args[4];
+    }
+    return runner(command, args, options);
+  }, "supabase-db");
+  assert.equal(probeArgs.length, 12);
+  assert.deepEqual(probeArgs.filter((_arg, index) => index % 2 === 0), Array(6).fill("--command"));
+  const commands = probeArgs.filter((_arg, index) => index % 2 === 1);
+  assert.equal(commands[0], "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;");
+  assert.match(commands[1], /^SET LOCAL timezone\s*=\s*'UTC';$/);
+  assert.match(commands[2], /^SET LOCAL datestyle\s*=\s*'ISO,YMD';$/);
+  assert.match(commands[3], /^SET LOCAL extra_float_digits\s*=\s*3;$/);
+  assert.match(commands[4], /^WITH readiness AS MATERIALIZED/);
+  assert.match(commands[4], /'recoveryContent'/);
+  assert.match(commands[4], /'schemaVersion', 2/);
+  assert.match(commands[4], /public\.faolla_platform_snapshot_restore_receipts/);
+  assert.doesNotMatch(commands[4], /BEGIN ISOLATION|SET LOCAL|COMMIT;/);
+  assert.equal(commands[5], "COMMIT;");
+  assert.match(probeScript, /--quiet/);
+  assert.match(probeScript, /--no-align "\$@"$/);
+  assert.doesNotMatch(probeScript, /--command "\$1"/);
+});
+
+test("new live capture rejects legacy profiles and missing or renamed receipt relation", async () => {
+  const missing = recoveryContentFixture(); missing.relations.pop();
+  const replaced = recoveryContentFixture(); replaced.relations.at(-1).name = "public.wrong_receipts";
+  for (const proof of [recoveryContentFixture({ schemaVersion: 1 }), missing, replaced]) {
+    const runner = successfulCommandRunner();
+    await assert.rejects(captureDatabaseIdentity(async (command, args, options) => {
+      const result = await runner(command, args, options);
+      if (options?.errorCode === "database_identity_postgres_probe_failed") {
+        const value = JSON.parse(result.stdout); value.recoveryContent = proof;
+        return { ...result, stdout: JSON.stringify(value) };
+      }
+      return result;
+    }, "supabase-db"), /database_identity_probe_invalid/);
+  }
+});
+
+test("backup rejects same-count durable restore-receipt changes before encryption", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-db-receipt-change-test-"));
+  const outputPath = path.join(directory, "backup.tar.enc"); const lockPath = path.join(directory, "backup.lock");
+  let encrypted = false;
+  try {
+    await assert.rejects(createProductionDatabaseBackup({ env: {}, outputPath, lockPath,
+      passphrase: "long-enough-encryption-passphrase", selfHostedTopology: selfHostedTopology(),
+      runCommand: successfulCommandRunner({ changedRecoveryContent: true,
+        changedRecoveryRelation: "public.faolla_platform_snapshot_restore_receipts" }),
+      encryptArchive: async () => { encrypted = true; }, appDirectory: directory, sourceDirectory: directory,
+      sourceRepository: SOURCE_REPOSITORY, sourceSha: SOURCE_SHA,
+    }), /database_identity_changed_during_backup/);
+    assert.equal(encrypted, false); assert.equal(await exists(outputPath), false); assert.equal(await exists(lockPath), false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

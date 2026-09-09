@@ -1,3 +1,12 @@
+import {
+  PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED,
+  readPlatformAdminBackupRowForWriteStrict,
+  persistPlatformAdminBackupRowStrict,
+  type StrictPlatformAdminBackupWriteClient,
+} from "@/lib/platformAdminBackupStrictWrite";
+import { PLATFORM_SNAPSHOT_ATOMIC_SCOPES } from "@/lib/platformSnapshotAtomic.server";
+import { getPlatformSnapshotWriteMode, PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID } from "@/lib/platformSnapshotAtomicMode.server";
+
 export type MerchantSnapshotHistoryStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,6 +39,96 @@ export type MerchantSnapshotHistoryPayload = {
   updatedAt: string | null;
   entries: MerchantSnapshotHistoryEntry[];
 };
+
+const REQUIRED_HISTORY_WRITE_ERROR = PLATFORM_ADMIN_BACKUP_WRITE_UNCONFIRMED;
+type SnapshotHistoryInput = {
+  siteId: string; slug: string; backupSlug: string; source: string;
+  before: unknown; after: unknown; at?: string | null; maxEntries?: number; merchantId?: string | null;
+  /** Refuse unsafe updates when the backing schema cannot CAS updated_at. */
+  requireCompareAndSwap?: boolean;
+  /** Restore-only null-owner history: require primary and backup acknowledgements. */
+  requireAllWrites?: boolean;
+};
+
+function canonicalHistoryJson(value: unknown, depth = 0): string {
+  if (depth > 64) throw new Error(REQUIRED_HISTORY_WRITE_ERROR);
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalHistoryJson(item, depth + 1)).join(",")}]`;
+  if (!value || typeof value !== "object" || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    throw new Error(REQUIRED_HISTORY_WRITE_ERROR);
+  }
+  return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right, "en"))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalHistoryJson(item, depth + 1)}`).join(",")}}`;
+}
+
+function validateRequiredHistory(value: unknown, siteId: string): MerchantSnapshotHistoryPayload {
+  const fail = (): never => { throw new Error(REQUIRED_HISTORY_WRITE_ERROR); };
+  const record = (item: unknown, keys: string[]): Record<string, unknown> => {
+    if (!item || typeof item !== "object" || Array.isArray(item) ||
+      Object.keys(item).some((key) => !keys.includes(key)) || keys.some((key) => !Object.hasOwn(item, key))) fail();
+    return item as Record<string, unknown>;
+  };
+  const date = (item: unknown) => typeof item === "string" && !!item.trim() && Number.isFinite(Date.parse(item));
+  const payload = record(value, ["siteId", "updatedAt", "entries"]);
+  if (payload.siteId !== siteId || (payload.updatedAt !== null && !date(payload.updatedAt)) || !Array.isArray(payload.entries)) fail();
+  const seen = new Set<string>();
+  for (const item of payload.entries as unknown[]) {
+    const entry = record(item, ["id", "siteId", "at", "source", "before", "after"]);
+    const id = normalizeText(entry.id);
+    if (!id || seen.has(id) || entry.siteId !== siteId || !date(entry.at) || !normalizeText(entry.source)) fail();
+    canonicalHistoryJson(entry.before); canonicalHistoryJson(entry.after); seen.add(id);
+  }
+  return value as MerchantSnapshotHistoryPayload;
+}
+
+async function saveRequiredSnapshotHistory(
+  supabase: MerchantSnapshotHistoryStoreClient, input: SnapshotHistoryInput,
+): Promise<{ error: string | null }> {
+  try {
+    // This opt-in belongs only to platform restore; ordinary merchant histories
+    // keep their existing compatibility/CAS path below.
+    const siteId = normalizeText(input.siteId); const slug = normalizeText(input.slug); const backupSlug = normalizeText(input.backupSlug);
+    const maxEntries = input.maxEntries ?? 240;
+    if (!siteId || !slug || !backupSlug || slug === backupSlug || input.merchantId !== null || input.requireCompareAndSwap ||
+      !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 1000) {
+      throw new Error(REQUIRED_HISTORY_WRITE_ERROR);
+    }
+    const client = supabase as StrictPlatformAdminBackupWriteClient;
+    const reads = await Promise.allSettled([
+      readPlatformAdminBackupRowForWriteStrict(client, slug),
+      readPlatformAdminBackupRowForWriteStrict(client, backupSlug),
+    ]);
+    const primary = reads[0]; const backup = reads[1];
+    if (primary.status !== "fulfilled" || backup.status !== "fulfilled") throw new Error(REQUIRED_HISTORY_WRITE_ERROR);
+    const empty = (): MerchantSnapshotHistoryPayload => ({ siteId, updatedAt: null, entries: [] });
+    const current = primary.value ? validateRequiredHistory(primary.value.blocks, siteId) : empty();
+    const previousBackup = backup.value ? validateRequiredHistory(backup.value.blocks, siteId) : empty();
+    const allEntries = new Map<string, MerchantSnapshotHistoryEntry>();
+    for (const entry of [...current.entries, ...previousBackup.entries]) {
+      const id = entry.id.trim(); const existing = allEntries.get(id);
+      if (existing && canonicalHistoryJson(existing) !== canonicalHistoryJson(entry)) throw new Error(REQUIRED_HISTORY_WRITE_ERROR);
+      allEntries.set(id, entry);
+    }
+    const at = normalizeText(input.at) || new Date().toISOString();
+    const source = normalizeText(input.source) || "save";
+    const entry: MerchantSnapshotHistoryEntry = { id: `${siteId}:${at}:${source}:${Math.random().toString(36).slice(2, 8)}`,
+      siteId, at, source, before: input.before ?? null, after: input.after ?? null };
+    const timestamp = Math.max(Date.now(), Date.parse(at), Date.parse(current.updatedAt ?? "") + 1 || 0,
+      Date.parse(previousBackup.updatedAt ?? "") + 1 || 0);
+    const next = { siteId, updatedAt: new Date(timestamp).toISOString(), entries: [entry, ...allEntries.values()] };
+    validateRequiredHistory(next, siteId);
+    const normalized = normalizeHistoryPayload(next, siteId);
+    const payload = { ...normalized, entries: normalized.entries.slice(0, maxEntries) };
+    // Sequential writes: on failure there is no already-started sibling left
+    // behind. Earlier writes may remain; this is deliberately not atomic/CAS.
+    await persistPlatformAdminBackupRowStrict(client, slug, payload, primary.value);
+    await persistPlatformAdminBackupRowStrict(client, backupSlug, payload, backup.value);
+    return { error: null };
+  } catch {
+    return { error: REQUIRED_HISTORY_WRITE_ERROR };
+  }
+}
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -216,20 +315,19 @@ async function persistSnapshotHistoryPayload(
 
 export async function saveMerchantSnapshotHistory(
   supabase: MerchantSnapshotHistoryStoreClient,
-  input: {
-    siteId: string;
-    slug: string;
-    backupSlug: string;
-    source: string;
-    before: unknown;
-    after: unknown;
-    at?: string | null;
-    maxEntries?: number;
-    merchantId?: string | null;
-    /** Refuse unsafe updates when the backing schema cannot CAS updated_at. */
-    requireCompareAndSwap?: boolean;
-  },
+  input: SnapshotHistoryInput,
 ): Promise<{ error: string | null }> {
+  // These rows belong to a complete atomic scope. This generic two-row writer
+  // cannot safely participate, including its restore-only strict branch.
+  const internalSlugs = Object.values(PLATFORM_SNAPSHOT_ATOMIC_SCOPES).flat() as readonly string[];
+  if (internalSlugs.includes(normalizeText(input.slug)) || internalSlugs.includes(normalizeText(input.backupSlug))) {
+    try {
+      if (getPlatformSnapshotWriteMode() === "atomic") return { error: "platform_snapshot_atomic_direct_write_forbidden" };
+    } catch {
+      return { error: PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID };
+    }
+  }
+  if (input.requireAllWrites) return saveRequiredSnapshotHistory(supabase, input);
   const siteId = normalizeText(input.siteId);
   const slug = normalizeText(input.slug);
   const backupSlug = normalizeText(input.backupSlug);

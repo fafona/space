@@ -5,6 +5,7 @@ import {
 import {
   loadStoredPlatformMerchantConfigArchive,
   savePlatformMerchantConfigArchive,
+  setPlatformMerchantConfigArchiveAtomicCache,
   type PlatformMerchantConfigArchiveStoreClient,
 } from "@/lib/platformMerchantConfigArchiveStore";
 import {
@@ -20,6 +21,17 @@ import {
   type PlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
 import { mergePublishedMerchantSnapshots } from "@/lib/platformPublished";
+import { readPlatformAdminBackupBlocksStrict } from "@/lib/platformAdminBackupStrictRead";
+import { assertPlatformAdminBackupMerchantSnapshot, readPlatformMerchantSnapshotBlocksValidated } from "@/lib/platformAdminBackupValidation";
+import {
+  persistPlatformAdminBackupRowStrict,
+  readPlatformAdminBackupRowForWriteStrict,
+  type StrictPlatformAdminBackupWriteClient,
+} from "@/lib/platformAdminBackupStrictWrite";
+import { getPlatformSnapshotWriteMode } from "@/lib/platformSnapshotAtomicMode.server";
+import { readPlatformMerchantUserManageAtomic, savePlatformMerchantUserManageAtomic,
+  platformMerchantUserManageAtomicError } from "@/lib/platformMerchantUserManageAtomic.server";
+import type { PlatformSnapshotAtomicClient } from "@/lib/platformSnapshotAtomic.server";
 
 type SnapshotErrorLike = { message?: string } | null;
 
@@ -46,6 +58,7 @@ export type PlatformMerchantSnapshotSaveResult = {
 export type PlatformMerchantSnapshotLoadOptions = {
   bypassCache?: boolean;
   includeHistory?: boolean;
+  strict?: boolean;
 };
 
 export type AuthoritativePlatformMerchantSnapshotLoadResult = {
@@ -276,6 +289,22 @@ export async function loadStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
   options: PlatformMerchantSnapshotLoadOptions = {},
 ): Promise<PlatformMerchantSnapshotPayload | null> {
+  if (getPlatformSnapshotWriteMode() === "atomic") {
+    const state = await readPlatformMerchantUserManageAtomic(supabase as unknown as PlatformSnapshotAtomicClient);
+    return state.snapshot && options.includeHistory === false
+      ? normalizePlatformMerchantSnapshotPayload({ ...state.snapshot, merchantConfigHistoryBySiteId: {} })
+      : state.snapshot;
+  }
+  if (options.strict) {
+    const blocks = await Promise.all([
+      readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG),
+      readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG),
+      readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG),
+      readPlatformAdminBackupBlocksStrict(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG),
+    ]);
+    const [primary, ...fallbacks] = blocks.map(readPlatformMerchantSnapshotBlocksValidated);
+    return mergeSnapshotPayloadHistory(primary, ...fallbacks);
+  }
   const includeHistory = options.includeHistory !== false;
   if (includeHistory && !options.bypassCache && platformMerchantSnapshotCache && platformMerchantSnapshotCache.expiresAt > Date.now()) {
     return platformMerchantSnapshotCache.value;
@@ -315,6 +344,13 @@ export async function loadStoredPlatformMerchantSnapshot(
 export async function loadAuthoritativeStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
 ): Promise<AuthoritativePlatformMerchantSnapshotLoadResult> {
+  if (getPlatformSnapshotWriteMode() === "atomic") {
+    try {
+      const { primarySnapshot } = await readPlatformMerchantUserManageAtomic(supabase as unknown as PlatformSnapshotAtomicClient);
+      return primarySnapshot?.snapshot.length ? { payload: primarySnapshot, error: null }
+        : { payload: null, error: "platform_merchant_snapshot_missing" };
+    } catch (error) { return { payload: null, error: platformMerchantUserManageAtomicError(error) }; }
+  }
   const primaryEntry = await loadStoredPlatformMerchantSnapshotEntryBySlug(
     supabase,
     PLATFORM_MERCHANT_SNAPSHOT_SLUG,
@@ -342,8 +378,24 @@ export async function savePlatformMerchantSnapshot(
   payload: PlatformMerchantSnapshotPayload,
   options: {
     expectedRevision?: string | null;
+    requireAllWrites?: boolean;
   } = {},
 ): Promise<PlatformMerchantSnapshotSaveResult> {
+  // The mode gate takes precedence over strict/legacy paths; an atomic error must never scatter writes.
+  if (getPlatformSnapshotWriteMode() === "atomic") {
+    platformMerchantSnapshotCache = null;
+    setPlatformMerchantConfigArchiveAtomicCache(null);
+    try {
+      const result = await savePlatformMerchantUserManageAtomic(
+        supabase as unknown as PlatformSnapshotAtomicClient, payload, options.expectedRevision,
+      );
+      if (result.error) return result;
+      platformMerchantSnapshotCache = { expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS, value: result.payload };
+      setPlatformMerchantConfigArchiveAtomicCache(result.archive);
+      return { error: null, payload: result.payload };
+    } catch (error) { return { error: platformMerchantUserManageAtomicError(error) }; }
+  }
+  if (options.requireAllWrites) return savePlatformMerchantSnapshotStrict(supabase, payload, options);
   const [primaryEntry, historyEntry] = await Promise.all([
     loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG),
     loadStoredPlatformMerchantSnapshotEntryBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG),
@@ -505,4 +557,64 @@ export async function savePlatformMerchantSnapshot(
     error: null,
     payload: payloadToPersist,
   };
+}
+
+/** Restore-only completion contract. This is NOT an atomic transaction or a cross-instance write lock. */
+async function savePlatformMerchantSnapshotStrict(
+  supabase: PlatformMerchantSnapshotStoreClient,
+  payload: PlatformMerchantSnapshotPayload,
+  options: { expectedRevision?: string | null },
+): Promise<PlatformMerchantSnapshotSaveResult> {
+  platformMerchantSnapshotCache = null;
+  const client = supabase as unknown as StrictPlatformAdminBackupWriteClient;
+  const fail = () => {
+    platformMerchantSnapshotCache = null;
+    return { error: "super_admin_backup_write_unconfirmed" };
+  };
+  try {
+    assertPlatformAdminBackupMerchantSnapshot(payload);
+    const slugs = [PLATFORM_MERCHANT_SNAPSHOT_SLUG, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG,
+      PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG];
+    const rows = await Promise.all(slugs.map((slug) => readPlatformAdminBackupRowForWriteStrict(client, slug)));
+    const stored = rows.map((row) => {
+      if (row === null) return null;
+      if (!Array.isArray(row.blocks)) throw new Error("super_admin_backup_write_unconfirmed");
+      // An existing empty directory may still hold valid history and a version.
+      return readPlatformMerchantSnapshotBlocksValidated(row.blocks);
+    });
+    const existingPayload = mergeSnapshotPayloadHistory(stored[0], ...stored.slice(1));
+    if (options.expectedRevision !== undefined && String(options.expectedRevision ?? "").trim() !== String(existingPayload?.revision ?? "").trim()) {
+      return { error: "platform_merchant_snapshot_conflict", code: "conflict", payload: existingPayload ?? undefined };
+    }
+    const merged = existingPayload ? mergePlatformMerchantSnapshotPayloads(payload, existingPayload) : payload;
+    const next = normalizePlatformMerchantSnapshotPayload({
+      ...merged, revision: createPlatformMerchantSnapshotRevision(),
+      merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(merged.merchantConfigHistoryBySiteId, existingPayload?.merchantConfigHistoryBySiteId),
+    });
+    const currentBlocks = buildPlatformMerchantSnapshotBlocks(next, { includeHistory: false });
+    const historyBlocks = buildPlatformMerchantSnapshotBlocks(next);
+    const archiveDelta = derivePlatformMerchantConfigArchiveEntries({
+      previousHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId,
+      nextHistoryBySiteId: next.merchantConfigHistoryBySiteId, nextSnapshot: next.snapshot,
+    });
+    const archiveClient = supabase as unknown as PlatformMerchantConfigArchiveStoreClient;
+    const archive = archiveDelta.audits.length > 0 || archiveDelta.backups.length > 0
+      ? mergePlatformMerchantConfigArchivePayloads(await loadStoredPlatformMerchantConfigArchive(archiveClient, { strict: true }), archiveDelta)
+      : null;
+    const persist = (index: number) => persistPlatformAdminBackupRowStrict(client, slugs[index],
+      index === 0 || index === 2 ? currentBlocks : historyBlocks, rows[index]);
+    // A rejected branch must not abandon another already-started branch.
+    const main = await Promise.allSettled([persist(0), persist(1)]);
+    if (main.some((result) => result.status === "rejected")) return fail();
+    const auxiliary = [persist(2), persist(3)];
+    if (archive) auxiliary.push((async () => {
+      const saved = await savePlatformMerchantConfigArchive(archiveClient, archive, { requireAllWrites: true });
+      if (saved.error) throw new Error("super_admin_backup_write_unconfirmed");
+    })());
+    // Deliberately no legacy 3.5s Promise.race: PATCH must not start target-archive restoration while these still write.
+    const completed = await Promise.allSettled(auxiliary);
+    if (completed.some((result) => result.status === "rejected")) return fail();
+    platformMerchantSnapshotCache = { expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS, value: next };
+    return { error: null, payload: next };
+  } catch { return fail(); }
 }

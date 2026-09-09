@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getPlatformSnapshotWriteMode, PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID } from "@/lib/platformSnapshotAtomicMode.server";
 import { attachPersonalMerchantBookingsByGuestHash } from "@/lib/merchantBookings.server";
 import { attachPersonalMerchantOrdersByGuestHash } from "@/lib/merchantOrders.server";
 import {
@@ -126,6 +127,14 @@ export async function POST(request: Request) {
   const bookingRefs = normalizeBookingRefs(body?.bookings);
   const supportMessages = normalizeSupportMessages(body?.supportMessages);
   const hasGuestPeerData = Array.isArray(body?.peerContacts) || Array.isArray(body?.peerThreads);
+
+  // If this request will write platform support rows, reject invalid rollout
+  // configuration before the independent order/booking attachment operations.
+  if (supportMessages.length > 0) {
+    try { getPlatformSnapshotWriteMode(); } catch {
+      return noStoreJson({ ok: false, error: PLATFORM_SNAPSHOT_ATOMIC_CONFIGURATION_INVALID }, { status: 503 });
+    }
+  }
 
   const [attachedOrders, attachedBookings] = await Promise.all([
     attachPersonalMerchantOrdersByGuestHash({

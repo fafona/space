@@ -10,10 +10,12 @@ import {
   DATABASE_BACKUP_DATA_FILES,
   validateDatabaseBackupArchiveEntries,
   validateDatabaseBackupManifest,
+  validateDatabaseBackupSourceIdentity,
   validateDatabaseBackupNestedArchiveEntry,
   verifyDatabaseBackupManifestFiles,
 } from "./database-backup-contract.mjs";
 import { ORDINARY_ACCOUNT_IDENTITY_CONTENT_SHA256_SCALAR_SQL } from "./ordinary-account-identity-content-contract.mjs";
+import { recoveryContentFixture } from "./test-fixtures/database-recovery-content.mjs";
 
 const STABLE_SOURCE = {
   sourceRepository: "fafona/space",
@@ -29,6 +31,7 @@ const STABLE_SOURCE = {
     serverVersionNum: "150008",
     postmasterStartedAt: "2026-08-20T10:00:01.000Z",
     primary: true,
+    recoveryContent: recoveryContentFixture(),
     baseline: {
       merchantRecordCount: "10",
       merchantAuthoritativeBindingCount: "10",
@@ -117,6 +120,29 @@ test("database backup verification detects changed contents", async () => {
   });
 });
 
+test("new manifests require recovery proof while existing v2 archives remain readable", async () => {
+  await withBackupDirectory(async (directory) => {
+    const input = {
+      directory,
+      databaseImage: "supabase/postgres:15.8.1.085",
+      storageImage: "supabase/storage-api:v1.37.8",
+      storageBackend: "file",
+      ...structuredClone(STABLE_SOURCE),
+    };
+    const manifest = await buildDatabaseBackupManifest(input);
+    assert.deepEqual(manifest.source.database.recoveryContent, recoveryContentFixture());
+    delete input.databaseIdentity.recoveryContent;
+    await assert.rejects(buildDatabaseBackupManifest(input), /manifest_recovery_content_invalid/);
+    delete manifest.source.database.recoveryContent;
+    assert.equal(validateDatabaseBackupManifest(manifest).valid, true);
+    manifest.source.database.recoveryContent = null;
+    assert.equal(validateDatabaseBackupManifest(manifest).valid, false);
+    manifest.source.database.recoveryContent = recoveryContentFixture();
+    manifest.source.database.recoveryContent.relations[0].contentSha256 = "bad";
+    assert.equal(validateDatabaseBackupManifest(manifest).valid, false);
+  });
+});
+
 test("database backup archive rejects traversal and unexpected files", () => {
   assert.equal(
     validateDatabaseBackupArchiveEntries([
@@ -152,6 +178,37 @@ test("database backup archive rejects traversal and unexpected files", () => {
     ]).valid,
     false,
   );
+});
+
+test("current proof is mandatory for new manifests while old proof versions remain readable without promotion", async () => {
+  await withBackupDirectory(async (directory) => {
+    const input = { directory, databaseImage: "supabase/postgres:15.8.1.085",
+      storageImage: "supabase/storage-api:v1.37.8", storageBackend: "file", ...structuredClone(STABLE_SOURCE) };
+    const manifest = await buildDatabaseBackupManifest(input);
+    const legacy = recoveryContentFixture({ schemaVersion: 1 });
+    input.databaseIdentity.recoveryContent = legacy;
+    await assert.rejects(buildDatabaseBackupManifest(input), /manifest_recovery_content_invalid/);
+    for (const version of [1, 2]) {
+      const archived = structuredClone(manifest);
+      archived.schemaVersion = version; archived.format = `self-hosted-supabase-dr-v${version}`;
+      archived.source.database.recoveryContent = legacy;
+      const result = validateDatabaseBackupManifest(archived);
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.manifest.source.database.recoveryContent, legacy);
+      assert.equal(result.manifest.source.database.recoveryContent.relations.length, 4);
+    }
+    const legacySource = structuredClone(manifest.source);
+    legacySource.database.recoveryContent = legacy;
+    assert.equal(validateDatabaseBackupSourceIdentity(legacySource).valid, true);
+    assert.equal(validateDatabaseBackupSourceIdentity(legacySource, { requireRecoveryContent: true }).valid, false);
+    for (const change of [
+      (proof) => { proof.relations.pop(); },
+      (proof) => { proof.relations.at(-1).name = "public.wrong_receipts"; },
+    ]) {
+      const archived = structuredClone(manifest); change(archived.source.database.recoveryContent);
+      assert.equal(validateDatabaseBackupManifest(archived).valid, false);
+    }
+  });
 });
 
 test("nested backup archives reject traversal and absolute paths", () => {

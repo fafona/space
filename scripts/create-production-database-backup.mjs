@@ -16,6 +16,10 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import { pathToFileURL } from "node:url";
+import {
+  buildDatabaseRecoveryContentScalarSql,
+  buildDatabaseRecoveryReadOnlyPsqlArgs,
+} from "./database-recovery-content-contract.mjs";
 
 import {
   buildDatabaseBackupManifest,
@@ -490,11 +494,13 @@ export async function captureDatabaseIdentity(commandRunner, databaseName) {
     "  'primary', NOT pg_catalog.pg_is_in_recovery(),",
     "  'baseline',",
     buildDatabaseBackupAuthoritativeBaselineJsonSql(),
+    ", 'recoveryContent',",
+    buildDatabaseRecoveryContentScalarSql(),
     ")::text FROM readiness;",
   ].join("\n");
   const probeScript = [
     'export PGPASSWORD="${POSTGRES_PASSWORD:-}"',
-    'exec psql -h localhost -U supabase_admin -d "${POSTGRES_DB:?POSTGRES_DB is required}" --no-password --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "$1"',
+    'exec psql -h localhost -U supabase_admin -d "${POSTGRES_DB:?POSTGRES_DB is required}" --no-password --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --tuples-only --no-align "$@"',
   ].join("\n");
   const databaseResult = await commandRunner(
     "docker",
@@ -505,7 +511,7 @@ export async function captureDatabaseIdentity(commandRunner, databaseName) {
       "-lc",
       probeScript,
       "backup-identity",
-      probeSql,
+      ...buildDatabaseRecoveryReadOnlyPsqlArgs(probeSql),
     ],
     { errorCode: "database_identity_postgres_probe_failed", timeoutMs: 60_000 },
   );
@@ -520,6 +526,8 @@ export async function captureDatabaseIdentity(commandRunner, databaseName) {
   } catch {
     throw new DatabaseBackupError("database_identity_probe_invalid");
   }
+  // This live capture must prove the current complete recovery unit, never a
+  // legacy four-table profile that omits durable snapshot restore receipts.
   const validation = validateDatabaseBackupSourceIdentity({
     repository: "validation/source",
     sha: "0".repeat(40),
@@ -531,7 +539,7 @@ export async function captureDatabaseIdentity(commandRunner, databaseName) {
       database: "matched_before_after",
     },
     database: identity,
-  });
+  }, { requireRecoveryContent: true });
   if (!validation.valid) {
     throw new DatabaseBackupError("database_identity_probe_invalid");
   }

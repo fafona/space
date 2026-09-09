@@ -5,6 +5,12 @@ import { StringDecoder } from "node:string_decoder";
 import { chmod, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  DATABASE_RECOVERY_CONTENT_SCHEMA_VERSION,
+  buildDatabaseRecoveryContentSql,
+  buildDatabaseRecoveryReadOnlyPsqlArgs,
+  validateDatabaseRecoveryContent,
+} from "./database-recovery-content-contract.mjs";
 
 import {
   buildDatabaseBackupAuthoritativeBaselineJsonSql,
@@ -369,6 +375,7 @@ async function queryScalar(
       "exec",
       containerName,
       "psql",
+      "--quiet",
       "-v",
       "ON_ERROR_STOP=1",
       "-At",
@@ -376,8 +383,7 @@ async function queryScalar(
       RESTORE_BOOTSTRAP_USER,
       "-d",
       databaseName,
-      "-c",
-      sql,
+      ...(Array.isArray(sql) ? sql : ["-c", sql]),
     ],
     { errorCode, timeoutMs: 60_000 },
   );
@@ -453,6 +459,34 @@ async function queryAuthoritativeBaseline(
   return Object.fromEntries(
     PRODUCTION_RELEASE_BASELINE_KEYS.map((key) => [key, parsed[key]]),
   );
+}
+
+export async function queryRestoredRecoveryContent(commandRunner, containerName, databaseName, expected) {
+  const source = validateDatabaseRecoveryContent(expected, { requireCurrent: true });
+  if (!source.valid) {
+    throw new DatabaseRestoreRehearsalError("restore_recovery_content_invalid");
+  }
+  const output = await queryScalar(
+    commandRunner,
+    containerName,
+    databaseName,
+    buildDatabaseRecoveryReadOnlyPsqlArgs(buildDatabaseRecoveryContentSql()),
+    "restore_recovery_content_probe_failed",
+  );
+  let parsed;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new DatabaseRestoreRehearsalError("restore_recovery_content_invalid");
+  }
+  const actual = validateDatabaseRecoveryContent(parsed, { requireCurrent: true });
+  if (!actual.valid) {
+    throw new DatabaseRestoreRehearsalError("restore_recovery_content_invalid");
+  }
+  if (JSON.stringify(actual.content) !== JSON.stringify(source.content)) {
+    throw new DatabaseRestoreRehearsalError("restore_recovery_content_mismatch");
+  }
+  return actual.content;
 }
 
 async function repairDeferredGraphqlAcl(
@@ -711,6 +745,17 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       );
     }
 
+    // Legacy profiles remain usable artifacts, not evidence of the current
+    // complete recovery unit. Never manufacture the missing receipt-table proof.
+    const restoredRecoveryContent = sourceDatabase.recoveryContent?.schemaVersion === DATABASE_RECOVERY_CONTENT_SCHEMA_VERSION
+      ? await queryRestoredRecoveryContent(
+          commandRunner,
+          containerName,
+          restoreDatabaseName,
+          sourceDatabase.recoveryContent,
+        )
+      : null;
+
     const database = {
       schemas: await queryCount(
         commandRunner,
@@ -790,28 +835,37 @@ export async function rehearseVerifiedDatabaseBackup(input) {
       databaseImage,
       database,
       restoredBaseline,
+      restoredRecoveryContent,
+      recoveryContentStatus: restoredRecoveryContent ? "verified"
+        : sourceDatabase.recoveryContent ? "legacy_profile" : "legacy_missing",
       storage,
     };
   } finally {
+    let cleanupFailed = false;
     if (containerCreated) {
       await commandRunner("docker", ["rm", "-f", containerName], {
         errorCode: "restore_database_container_cleanup_failed",
         timeoutMs: 60_000,
-      }).catch(() => {});
+      }).catch(() => { cleanupFailed = true; });
     }
     if (volumeCreated) {
       await commandRunner("docker", ["volume", "rm", "-f", volumeName], {
         errorCode: "restore_database_volume_cleanup_failed",
         timeoutMs: 60_000,
-      }).catch(() => {});
+      }).catch(() => { cleanupFailed = true; });
     }
     if (configVolumeCreated) {
       await commandRunner("docker", ["volume", "rm", "-f", configVolumeName], {
         errorCode: "restore_database_config_volume_cleanup_failed",
         timeoutMs: 60_000,
-      }).catch(() => {});
+      }).catch(() => { cleanupFailed = true; });
     }
-    await rm(runtimeDirectory, { recursive: true, force: true });
+    await rm(runtimeDirectory, { recursive: true, force: true }).catch(() => {
+      cleanupFailed = true;
+    });
+    if (cleanupFailed) {
+      throw new DatabaseRestoreRehearsalError("restore_resource_cleanup_failed");
+    }
   }
 }
 

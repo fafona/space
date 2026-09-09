@@ -23,20 +23,30 @@ import {
 } from "@/lib/merchantMemberships";
 import {
   getMerchantMembershipSettings,
-  releaseMerchantMembershipRedemptionStock,
-  reserveMerchantMembershipRedemptionStock,
 } from "@/lib/merchantMembershipSettings.server";
 import {
   calculateMerchantMemberPointDeduction,
   getMerchantMemberHolidayNamesForDate,
   parseMerchantMemberPointDiscountRate,
+  reserveMerchantRedemptionStock,
   type MerchantMemberLevel,
   type MerchantMembershipSettings,
 } from "@/lib/merchantMembershipSettings";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
-import { MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES } from "@/lib/merchantCoupons";
-import { redeemMerchantCouponRecords, releaseMerchantCouponRedemptions } from "@/lib/merchantCoupons.server";
-import { loadStoredMerchantMemberships, saveStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
+import { MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES, getMerchantCouponDiscountLabel, getMerchantCouponDisplayTitle } from "@/lib/merchantCoupons";
+import { prepareMerchantCouponRedemptions, mirrorPreparedCouponRedemptions } from "@/lib/merchantCoupons.server";
+import {
+  buildMerchantRedemptionFingerprint,
+  requireMerchantRedemptionOperationId,
+} from "@/lib/merchantRedemptionTransaction.server";
+import { commitMerchantRedemptionCheckout, getMerchantRedemptionCheckout, stageMerchantRedemptionCheckout } from "@/lib/merchantRedemptionCheckout.server";
+import type { MerchantRedemptionCheckoutReceipt, MerchantRedemptionCheckoutContext } from "@/lib/merchantRedemptionCheckout";
+import {
+  loadStoredMerchantMemberships,
+  saveStoredMerchantMemberships,
+  mirrorSavedMemberships,
+  type StoredMerchantMemberships,
+} from "@/lib/merchantMembershipsStore";
 import {
   loadMerchantMembershipV1VerificationData,
   readMerchantMembershipsWithV1Verification,
@@ -822,17 +832,9 @@ async function applyMerchantMembershipAccountOperationUnlocked(input: {
   if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
   const type: MerchantMemberAccountTransactionType = input.type === "recharge" ? "recharge" : "redeem";
   const redemptionItemId = trimText(input.redemptionItemId, 120);
-  if (type === "redeem" && redemptionItemId) {
-    return applyMerchantMembershipRedemptionCart({
-      siteId,
-      membershipId,
-      memberNo,
-      items: [{ redemptionItemId, quantity: input.redemptionQuantity }],
-      note: input.note,
-      operatorId: input.operatorId,
-      operationId: input.operationId,
-      assertAuthorizationCurrent: input.assertAuthorizationCurrent,
-    });
+  const hasRedemptionItem = input.redemptionItemId !== undefined && input.redemptionItemId !== null && input.redemptionItemId !== "";
+  if (type === "redeem" && hasRedemptionItem) {
+    throw new Error("redemption_checkout_context_required");
   }
   const stored = await loadStoredMerchantMemberships(supabase, siteId);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
@@ -939,18 +941,11 @@ export async function applyMerchantMembershipAccountOperation(
   input: Parameters<typeof applyMerchantMembershipAccountOperationUnlocked>[0],
 ) {
   const siteId = trimText(input.siteId, 64);
-  const redemptionItemId = trimText(input.redemptionItemId, 120);
-  if (input.type !== "recharge" && redemptionItemId) {
-    return applyMerchantMembershipRedemptionCart({
-      siteId,
-      membershipId: input.membershipId,
-      memberNo: input.memberNo,
-      items: [{ redemptionItemId, quantity: input.redemptionQuantity }],
-      note: input.note,
-      operatorId: input.operatorId,
-      operationId: input.operationId,
-      assertAuthorizationCurrent: input.assertAuthorizationCurrent,
-    });
+  const hasRedemptionItem = input.redemptionItemId !== undefined && input.redemptionItemId !== null && input.redemptionItemId !== "";
+  if (input.type !== "recharge" && hasRedemptionItem) {
+    // Product checkout callers must consume its authority receipt and explicit
+    // confirmation lifecycle, not this membership-only legacy return value.
+    throw new Error("redemption_checkout_context_required");
   }
   return withMerchantMembershipMutationLock(
     siteId,
@@ -1133,17 +1128,62 @@ type MerchantMembershipRedemptionCartInput = {
   assertAuthorizationCurrent?: () => Promise<void>;
 };
 
+type MerchantRedemptionCheckoutDependencies = {
+  createClient: typeof requireMembershipsStoreClient;
+  loadMemberships: typeof loadStoredMerchantMemberships;
+  loadSettings: typeof getMerchantMembershipSettings;
+  prepareCoupons: typeof prepareMerchantCouponRedemptions;
+  getCheckout: typeof getMerchantRedemptionCheckout;
+  stage: typeof stageMerchantRedemptionCheckout;
+  commit: typeof commitMerchantRedemptionCheckout;
+  mirrorMemberships: typeof mirrorSavedMemberships;
+  mirrorCoupons: typeof mirrorPreparedCouponRedemptions;
+  now: () => string;
+};
+
+const REDEMPTION_CHECKOUT_DEPENDENCIES: MerchantRedemptionCheckoutDependencies = {
+  createClient: requireMembershipsStoreClient,
+  loadMemberships: loadStoredMerchantMemberships,
+  loadSettings: getMerchantMembershipSettings,
+  prepareCoupons: prepareMerchantCouponRedemptions,
+  getCheckout: getMerchantRedemptionCheckout,
+  stage: stageMerchantRedemptionCheckout,
+  commit: commitMerchantRedemptionCheckout,
+  mirrorMemberships: mirrorSavedMemberships,
+  mirrorCoupons: mirrorPreparedCouponRedemptions,
+  now: () => new Date().toISOString(),
+};
+
+export type MerchantMembershipRedemptionCheckoutResult = {
+  membership: MerchantMembershipListItem | null;
+  receipt: MerchantRedemptionCheckoutReceipt;
+  replayed: boolean;
+};
+
+async function readCommittedRedemptionCheckout(
+  input: { siteId: string; assertAuthorizationCurrent?: () => Promise<void> },
+  context: MerchantRedemptionCheckoutContext,
+  dependencies: MerchantRedemptionCheckoutDependencies,
+): Promise<MerchantMembershipRedemptionCheckoutResult> {
+  if (!context.result || context.status !== "committed") throw new Error("merchant_transaction_unavailable");
+  const stored = await dependencies.loadMemberships(dependencies.createClient(), input.siteId);
+  const member = stored?.memberships.find((entry) => entry.id === context.membershipId);
+  await input.assertAuthorizationCurrent?.();
+  return { membership: member ? toMerchantMembershipListItem(member) : null, receipt: context.result, replayed: true };
+}
+
 async function applyMerchantMembershipRedemptionCartUnlocked(
   input: MerchantMembershipRedemptionCartInput,
-  attempt = 0,
-): Promise<MerchantMembershipListItem> {
-  const supabase = requireMembershipsStoreClient();
+  dependencies: MerchantRedemptionCheckoutDependencies,
+): Promise<MerchantMembershipRedemptionCheckoutResult> {
+  const supabase = dependencies.createClient();
   const siteId = trimText(input.siteId, 64);
   const membershipId = trimText(input.membershipId, 160);
   const memberNo = trimText(input.memberNo, 120);
   if (!siteId || (!membershipId && !memberNo)) throw new Error("membership_not_found");
-  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
-  if (!settings) throw new Error("membership_settings_unavailable");
+  const operationId = requireMerchantRedemptionOperationId(input.operationId);
+  const operatorId = typeof input.operatorId === "string" ? input.operatorId.trim() : "";
+  if (!operatorId || operatorId.length > 120) throw new Error("merchant_transaction_unavailable");
   const requestedItems = Array.isArray(input.items)
     ? input.items
         .map((entry) => {
@@ -1236,6 +1276,12 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
       couponTitle: entry.couponTitle,
       couponDiscountLabel: entry.couponDiscountLabel,
     };
+    if (JSON.stringify({ ...current, quantity: 0 }) !== JSON.stringify({
+      quantity: 0, customName: entry.customName, customCode: entry.customCode,
+      customPoints: entry.customPoints, couponId: entry.couponId,
+      couponClaimId: entry.couponClaimId, couponSettlementCode: entry.couponSettlementCode,
+      couponTitle: entry.couponTitle, couponDiscountLabel: entry.couponDiscountLabel,
+    })) throw new Error("membership_redemption_item_conflict");
     quantityByItemId.set(entry.itemId, {
       ...current,
       quantity: current.quantity + entry.quantity,
@@ -1247,15 +1293,40 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
     throw new Error("membership_redemption_quantity_invalid");
   }
 
-  const stored = await loadStoredMerchantMemberships(supabase, siteId);
+  const stored = await dependencies.loadMemberships(supabase, siteId);
   const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
   const index = findMerchantMembershipIndexByIdentity(current, { membershipId, memberNo });
   if (index < 0) throw new Error("membership_not_found");
   const currentMembership = current[index];
-  const operationMarker = buildMutationOperationMarker("member-redemption-checkout", input.operationId);
-  if (!operationMarker) throw new Error("mutation_operation_id_required");
-  const alreadyApplied = transactionHasMarker(currentMembership, operationMarker);
+  const operationMarker = buildMutationOperationMarker("member-redemption-checkout", operationId);
+  const operation = {
+    id: operationId,
+    membershipId: currentMembership.id,
+    fingerprint: buildMerchantRedemptionFingerprint({
+      siteId, membershipId: currentMembership.id, operatorId,
+      items: cartItems, note: trimText(input.note, 500),
+    }),
+  };
+  const prior = await dependencies.getCheckout(siteId, operatorId, operationId, supabase);
+  if (prior && (prior.fingerprint !== operation.fingerprint || prior.membershipId !== currentMembership.id)) {
+    throw new Error("redemption_operation_conflict");
+  }
+  if (prior?.status === "cancelled") throw new Error("redemption_checkout_cancelled");
+  if (prior?.status === "committed") {
+    return readCommittedRedemptionCheckout({ siteId, assertAuthorizationCurrent: input.assertAuthorizationCurrent }, prior, dependencies);
+  }
   if (currentMembership.status !== "active") throw new Error("membership_not_active");
+  // Old note/stock markers have no request fingerprint. Never adopt an old
+  // partial checkout as a verified receipt or spend a different cart against it.
+  if (transactionHasMarker(currentMembership, operationMarker)) {
+    throw new Error("redemption_legacy_operation_requires_review");
+  }
+  const settings = await dependencies.loadSettings(siteId);
+  if (prior && prior.request.settingsVersion !== settings.updatedAt) throw new Error("redemption_checkout_quote_changed");
+  const stockOperationMarker = buildMutationOperationMarker("member-redemption-stock", operationId);
+  if (settings.redemptionStockOperationIds.includes(stockOperationMarker)) {
+    throw new Error("redemption_legacy_operation_requires_review");
+  }
 
   const redemptionRows = cartItems.map((cartItem) => {
     const item = settings.redemptionItems.find((entry) => entry.enabled && entry.id === cartItem.itemId);
@@ -1351,7 +1422,7 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
     settlementCode: row.couponSettlementCode,
     expectedCouponId: row.couponId,
     expectedClaimEventId: row.couponClaimId,
-    operationId: input.operationId,
+    operationId,
     operationScope: "member-redemption-checkout",
     note: fallbackNote || `积分兑换使用卡券：${row.couponTitle || row.item.name}`,
     expectedAccountId: currentMembership.accountId,
@@ -1359,15 +1430,19 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
     expectedEmail: currentMembership.email,
     allowedDiscountTypes: MERCHANT_COUPON_DIRECT_REDEMPTION_DISCOUNT_TYPES,
   }));
-  const couponPreviews =
+  const preparedCoupons =
     couponRedemptionRequests.length > 0
-      ? await redeemMerchantCouponRecords({
+      ? await dependencies.prepareCoupons({
           siteId,
-          operatorId: trimText(input.operatorId, 120),
+          operatorId,
           redemptions: couponRedemptionRequests,
-          commit: false,
+          rejectExistingOperation: true,
         })
-      : [];
+      : null;
+  const couponPreviews = preparedCoupons?.redeemedCoupons ?? [];
+  if (prior && prior.request.couponVersion !== (preparedCoupons?.mutation.expectedUpdatedAt ?? null)) {
+    throw new Error("redemption_checkout_quote_changed");
+  }
   const pointsVoucherPreviews = couponPreviews.filter(isPointsVoucherCoupon);
   const rawCouponPointDiscountTotal = couponPreviews.reduce(
     (sum, coupon) => sum + readPointsVoucherDiscount(coupon),
@@ -1396,58 +1471,13 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
     throw new Error("membership_redemption_quantity_invalid");
   }
 
-  const commitCouponRedemptions = async () => {
-    if (couponRedemptionRows.length === 0) return;
-    let lastError: unknown = null;
-    for (let commitAttempt = 0; commitAttempt < 3; commitAttempt += 1) {
-      try {
-        await redeemMerchantCouponRecords({
-          siteId,
-          operatorId: trimText(input.operatorId, 120),
-          redemptions: couponRedemptionRequests,
-        });
-        return;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error("coupon_redeem_failed");
-  };
-  const rollbackCouponRedemptions = async () => {
-    if (couponRedemptionRows.length === 0) return;
-    await releaseMerchantCouponRedemptions({ siteId, redemptions: couponRedemptionRequests });
-  };
-
-  if (alreadyApplied) {
-    await commitCouponRedemptions();
-    return toMerchantMembershipListItem(currentMembership);
-  }
   const nextPointBalance = currentMembership.pointBalance - totalPoints;
   if (nextPointBalance < 0) throw new Error("membership_balance_insufficient");
-
-  await commitCouponRedemptions();
-  if (stockDeltas.length > 0) {
-    try {
-      await reserveMerchantMembershipRedemptionStock({
-        siteId,
-        operationId: input.operationId,
-        deltas: stockDeltas,
-        expectedUpdatedAt: settings.updatedAt,
-      });
-    } catch (error) {
-      try {
-        await rollbackCouponRedemptions();
-      } catch {
-        throw new Error("membership_redemption_rollback_failed");
-      }
-      if (error instanceof Error && error.message === "merchant_membership_settings_conflict" && attempt < 2) {
-        return applyMerchantMembershipRedemptionCartUnlocked(input, attempt + 1);
-      }
-      throw error;
-    }
-  }
-
-  const now = new Date().toISOString();
+  const reservation = reserveMerchantRedemptionStock({
+    settings, operationId: stockOperationMarker, deltas: stockDeltas,
+  });
+  if (reservation.alreadyApplied) throw new Error("redemption_legacy_operation_requires_review");
+  const now = dependencies.now();
   const growthDelta = settings ? totalPoints * settings.growthRules.spendPointGrowth : 0;
   const summary = redemptionRows.map((row) => `${row.item.name} x ${row.quantity}`).join(" / ");
   let nextMembership: MerchantMembershipRecord = {
@@ -1475,50 +1505,105 @@ async function applyMerchantMembershipRedemptionCartUnlocked(
   });
   const nextMemberships = [...current];
   nextMemberships[index] = nextMembership;
-  const saved = await saveStoredMerchantMemberships(supabase, {
-    siteId,
-    memberships: nextMemberships,
-    updatedAt: now,
-    expectedUpdatedAt: stored?.updatedAt ?? null,
+  let remainingDiscount = couponPointDiscountTotal;
+  let couponIndex = 0;
+  const lines = redemptionRows.map((row) => {
+    const coupon = row.couponSettlementCode ? couponPreviews[couponIndex++] : null;
+    const discount = coupon ? Math.min(remainingDiscount, readPointsVoucherDiscount(coupon)) : 0;
+    remainingDiscount -= discount;
+    const couponContents = coupon?.discountType === "product_voucher"
+      ? `（1 张券，含 ${coupon.productQuantity} 件）`
+      : coupon?.discountType === "exchange_voucher" ? `（1 张券，含 ${coupon.exchangeQuantity} 次）` : "";
+    const couponDiscountLabel = coupon
+      ? `${trimText(getMerchantCouponDiscountLabel(coupon), 200 - couponContents.length)}${couponContents}` : "";
+    return {
+      code: coupon ? coupon.code : row.item.code || row.item.id,
+      name: trimText(coupon ? getMerchantCouponDisplayTitle(coupon) : row.item.name, 200),
+      categoryName: trimText(settings.redemptionCategories.find((entry) => entry.id === row.item.categoryId)?.name, 200),
+      quantity: row.quantity, unitPoints: row.unitPoints, subtotalPoints: row.subtotalPoints,
+      couponDiscountLabel, couponPointDiscount: discount,
+    };
   });
-  if (saved.error) {
-    let rollbackFailed = false;
-    if (stockDeltas.length > 0) {
-      try {
-        await releaseMerchantMembershipRedemptionStock({
-          siteId,
-          operationId: input.operationId,
-          deltas: stockDeltas,
-        });
-      } catch {
-        rollbackFailed = true;
-      }
-    }
-    try {
-      await rollbackCouponRedemptions();
-    } catch {
-      rollbackFailed = true;
-    }
-    if (rollbackFailed) throw new Error("membership_redemption_rollback_failed");
-    if (saved.error === "merchant_memberships_conflict" && attempt < 2) {
-      return applyMerchantMembershipRedemptionCartUnlocked(input, attempt + 1);
-    }
-    throw new Error(saved.error);
+  const quote = {
+    totalQuantity: redemptionRows.reduce((sum, row) => sum + row.quantity, 0),
+    grossPoints, couponPointDiscountTotal, totalPoints, couponCount: couponPreviews.length, lines,
+  };
+  const request = {
+    membershipId: currentMembership.id,
+    items: cartItems.map((entry): Record<string, string | number> => entry.customName ? {
+      customName: entry.customName, customCode: entry.customCode, customPoints: entry.customPoints,
+      couponId: entry.couponId, couponClaimId: entry.couponClaimId,
+      couponSettlementCode: entry.couponSettlementCode, couponTitle: entry.couponTitle,
+      couponDiscountLabel: entry.couponDiscountLabel, quantity: entry.quantity,
+    } : { redemptionItemId: entry.itemId, quantity: entry.quantity }),
+    note: fallbackNote, settingsVersion: settings.updatedAt,
+    couponVersion: preparedCoupons?.mutation.expectedUpdatedAt ?? null, quote,
+  };
+  const receipt: MerchantRedemptionCheckoutReceipt = {
+    version: 1, siteId, operationId, membershipId: currentMembership.id, createdAt: now,
+    transactionId: nextMembership.transactions.find((entry) => entry.type === "redeem" && entry.note.includes(operationMarker))!.id,
+    beforePointBalance: currentMembership.pointBalance, afterPointBalance: nextMembership.pointBalance,
+    ...quote, note: fallbackNote,
+  };
+  await input.assertAuthorizationCurrent?.();
+  const staged = await dependencies.stage(supabase, siteId, operatorId, operation, request);
+  if (staged.status === "cancelled") throw new Error("redemption_checkout_cancelled");
+  if (staged.status === "committed") {
+    return readCommittedRedemptionCheckout({ siteId, assertAuthorizationCurrent: input.assertAuthorizationCurrent }, staged, dependencies);
   }
-
-  return toMerchantMembershipListItem(nextMembership);
+  await input.assertAuthorizationCurrent?.();
+  const saved = await dependencies.commit(supabase, siteId, operatorId, {
+    operation,
+    settings: { expectedUpdatedAt: settings.updatedAt, next: reservation.settings },
+    memberships: { expectedUpdatedAt: stored?.updatedAt ?? null, next: nextMemberships },
+    ...(preparedCoupons ? { coupons: preparedCoupons.mutation } : {}),
+  }, receipt);
+  // One transaction owns all business documents and histories. An unknown
+  // response may follow COMMIT: do not reverse coupons/stock or replace the ID.
+  if (saved.error) throw new Error(saved.error);
+  if (!saved.result) throw new Error("merchant_transaction_unavailable");
+  if (saved.replayed) {
+    return readCommittedRedemptionCheckout({ siteId, assertAuthorizationCurrent: input.assertAuthorizationCurrent },
+      { ...staged, status: "committed", result: saved.result }, dependencies);
+  }
+  await dependencies.mirrorMemberships(supabase, {
+    siteId, previousMemberships: current, nextMemberships,
+  });
+  if (preparedCoupons) await dependencies.mirrorCoupons(supabase, preparedCoupons.shadowChanges);
+  return { membership: toMerchantMembershipListItem(nextMembership), receipt: saved.result, replayed: false };
 }
 
 export async function applyMerchantMembershipRedemptionCart(
   input: MerchantMembershipRedemptionCartInput,
-): Promise<MerchantMembershipListItem> {
+  dependencyOverrides: Partial<MerchantRedemptionCheckoutDependencies> = {},
+): Promise<MerchantMembershipRedemptionCheckoutResult> {
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
   return withMerchantMembershipMutationLock(
     siteId,
-    () => applyMerchantMembershipRedemptionCartUnlocked({ ...input, siteId }),
+    () => applyMerchantMembershipRedemptionCartUnlocked({ ...input, siteId }, {
+      ...REDEMPTION_CHECKOUT_DEPENDENCIES, ...dependencyOverrides,
+    }),
     input.assertAuthorizationCurrent,
   );
+}
+
+export async function retryMerchantMembershipRedemptionCheckout(input: {
+  siteId: string; operatorId: string; operationId: string; assertAuthorizationCurrent?: () => Promise<void>;
+}, dependencyOverrides: Partial<MerchantRedemptionCheckoutDependencies> = {}): Promise<MerchantMembershipRedemptionCheckoutResult> {
+  const dependencies = { ...REDEMPTION_CHECKOUT_DEPENDENCIES, ...dependencyOverrides };
+  const siteId = trimText(input.siteId, 64);
+  const operationId = requireMerchantRedemptionOperationId(input.operationId);
+  return withMerchantMembershipMutationLock(siteId, async () => {
+    const context = await dependencies.getCheckout(siteId, input.operatorId, operationId, dependencies.createClient());
+    if (!context) throw new Error("redemption_checkout_not_found");
+    if (context.status === "cancelled") throw new Error("redemption_checkout_cancelled");
+    if (context.status === "committed") return readCommittedRedemptionCheckout(input, context, dependencies);
+    return applyMerchantMembershipRedemptionCartUnlocked({
+      siteId, operationId, operatorId: input.operatorId, membershipId: context.membershipId,
+      items: context.request.items, note: context.request.note, assertAuthorizationCurrent: input.assertAuthorizationCurrent,
+    }, dependencies);
+  }, input.assertAuthorizationCurrent);
 }
 
 function findMembershipIndexForOrder(memberships: MerchantMembershipRecord[], order: MerchantOrderRecord) {
@@ -1606,56 +1691,90 @@ export function revokeOrderPointsFromMembership(input: {
   });
 }
 
-export async function syncMerchantMembershipPointsForOrderTransitions(
+export type PreparedMerchantMembershipOrderPoints = {
+  mutation: { expectedUpdatedAt: string | null; next: MerchantMembershipRecord[] };
+  previousMemberships: MerchantMembershipRecord[];
+};
+
+type MerchantMembershipPointsPreparationDependencies = {
+  loadMemberships: (siteId: string) => Promise<StoredMerchantMemberships | null>;
+  loadSettings: typeof getMerchantMembershipSettings;
+  now: () => string;
+};
+
+export async function prepareMerchantMembershipPointsForOrderTransitions(
   transitions: Array<{ previous: MerchantOrderRecord; next: MerchantOrderRecord }>,
-) {
+  dependencyOverrides: Partial<MerchantMembershipPointsPreparationDependencies> = {},
+): Promise<PreparedMerchantMembershipOrderPoints | null> {
   const relevant = transitions.filter(
     ({ previous, next }) =>
       (previous.status !== "completed" && next.status === "completed") ||
       (previous.status === "completed" && next.status !== "completed"),
   );
-  if (relevant.length === 0) return [];
+  if (relevant.length === 0) return null;
   const siteId = trimText(relevant[0]?.next.siteId || relevant[0]?.previous.siteId, 64);
   if (!siteId || relevant.some(({ previous, next }) => previous.siteId !== siteId || next.siteId !== siteId)) {
     throw new Error("invalid_site_id");
   }
 
-  const supabase = requireMembershipsStoreClient();
-  let settings: MerchantMembershipSettings | undefined;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const stored = await loadStoredMerchantMemberships(supabase, siteId);
-    const memberships = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
-    const hasMatchingMembership = relevant.some(({ previous, next }) => {
-      const order = next.status === "completed" ? next : previous;
-      return findMembershipIndexForOrder(memberships, order) >= 0;
-    });
-    if (!hasMatchingMembership) return memberships.map(toMerchantMembershipListItem);
-    settings = settings ?? (await getMerchantMembershipSettings(siteId));
-    const nextMemberships = [...memberships];
-    const now = new Date().toISOString();
-    let changed = false;
+  const dependencies: MerchantMembershipPointsPreparationDependencies = {
+    loadMemberships: (id) => loadStoredMerchantMemberships(requireMembershipsStoreClient(), id),
+    loadSettings: getMerchantMembershipSettings,
+    now: () => new Date().toISOString(),
+    ...dependencyOverrides,
+  };
+  const stored = await dependencies.loadMemberships(siteId);
+  const memberships = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
+  const prepared: PreparedMerchantMembershipOrderPoints = {
+    mutation: { expectedUpdatedAt: stored?.updatedAt ?? null, next: [...memberships] },
+    previousMemberships: memberships,
+  };
+  const hasMatchingMembership = relevant.some(({ previous, next }) => {
+    const order = next.status === "completed" ? next : previous;
+    return findMembershipIndexForOrder(memberships, order) >= 0;
+  });
+  // Even an empty/no-op snapshot must participate in the order transaction:
+  // an account can join or become active between this read and the commit.
+  if (!hasMatchingMembership) return prepared;
+  const settings = await dependencies.loadSettings(siteId);
+  const now = dependencies.now();
+  for (const transition of relevant) {
+    const order = transition.next.status === "completed" ? transition.next : transition.previous;
+    const index = findMembershipIndexForOrder(prepared.mutation.next, order);
+    if (index < 0) continue;
+    const currentMembership = prepared.mutation.next[index];
+    prepared.mutation.next[index] = transition.next.status === "completed"
+      ? awardOrderPointsToMembership({ membership: currentMembership, order: transition.next, settings, now })
+      : revokeOrderPointsFromMembership({ membership: currentMembership, order: transition.previous, settings, now });
+  }
+  return prepared;
+}
 
-    for (const transition of relevant) {
-      const order = transition.next.status === "completed" ? transition.next : transition.previous;
-      const index = findMembershipIndexForOrder(nextMemberships, order);
-      if (index < 0) continue;
-      const currentMembership = nextMemberships[index];
-      const nextMembership = transition.next.status === "completed"
-        ? awardOrderPointsToMembership({ membership: currentMembership, order: transition.next, settings, now })
-        : revokeOrderPointsFromMembership({ membership: currentMembership, order: transition.previous, settings, now });
-      if (nextMembership === currentMembership) continue;
-      nextMemberships[index] = nextMembership;
-      changed = true;
-    }
-
-    if (!changed) return nextMemberships.map(toMerchantMembershipListItem);
-    const saved = await saveStoredMerchantMemberships(supabase, {
+export async function syncMerchantMembershipPointsForOrderTransitions(
+  transitions: Array<{ previous: MerchantOrderRecord; next: MerchantOrderRecord }>,
+  dependencyOverrides: Partial<{
+    prepare: typeof prepareMerchantMembershipPointsForOrderTransitions;
+    save: (siteId: string, prepared: PreparedMerchantMembershipOrderPoints) => Promise<{ error: string | null }>;
+  }> = {},
+) {
+  const dependencies = {
+    prepare: prepareMerchantMembershipPointsForOrderTransitions,
+    save: (siteId: string, prepared: PreparedMerchantMembershipOrderPoints) => saveStoredMerchantMemberships(requireMembershipsStoreClient(), {
       siteId,
-      memberships: nextMemberships,
-      updatedAt: now,
-      expectedUpdatedAt: stored?.updatedAt ?? null,
-    });
-    if (!saved.error) return nextMemberships.map(toMerchantMembershipListItem);
+      memberships: prepared.mutation.next,
+      expectedUpdatedAt: prepared.mutation.expectedUpdatedAt,
+    }),
+    ...dependencyOverrides,
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const prepared = await dependencies.prepare(transitions);
+    if (!prepared) return [];
+    const relevant = transitions.find(({ previous, next }) =>
+      (previous.status === "completed") !== (next.status === "completed"),
+    );
+    const siteId = trimText(relevant?.next.siteId || relevant?.previous.siteId, 64);
+    const saved = await dependencies.save(siteId, prepared);
+    if (!saved.error) return prepared.mutation.next.map(toMerchantMembershipListItem);
     if (saved.error !== "merchant_memberships_conflict" || attempt >= 2) throw new Error(saved.error);
   }
   throw new Error("merchant_memberships_conflict");

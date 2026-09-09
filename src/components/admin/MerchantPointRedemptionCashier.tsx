@@ -20,6 +20,17 @@ import {
 } from "@/lib/merchantAdminDataCache";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import type { MerchantRedemptionCheckoutReceipt, MerchantRedemptionCheckoutSummary } from "@/lib/merchantRedemptionCheckout";
+import {
+  cashierCheckoutBlocksNewSale,
+  cashierCheckoutErrorAfterRecovery,
+  cashierCheckoutPrintReceipt,
+  cashierCheckoutRequestQuantity,
+  cashierCouponQuantityLabel,
+  createCashierCheckoutRequestGuard,
+  readCashierCheckoutReceipt,
+  readCashierCheckoutSummary,
+} from "@/lib/merchantRedemptionCheckoutRecovery";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import type {
   MerchantBusinessApiClient,
@@ -102,8 +113,17 @@ type MembershipSettingsPayload = {
 
 type MembershipPatchPayload = {
   ok?: unknown;
-  membership?: MerchantMembershipListItem;
+  membership?: MerchantMembershipListItem | null;
   message?: unknown;
+  receipt?: unknown;
+  replayed?: unknown;
+};
+
+type CheckoutRecoveryState = {
+  scope: object;
+  phase: "checking" | "ready" | "error";
+  checkout: MerchantRedemptionCheckoutSummary | null;
+  message: string;
 };
 
 type RechargeCancellationQuotePayload = {
@@ -454,13 +474,21 @@ function operationErrorMessage(message: unknown, fallback: string, operationType
   if (text === "membership_balance_insufficient") return "会员积分不足，不能兑换。";
   if (text === "membership_redemption_stock_insufficient") return "兑换项目库存不足。";
   if (text === "membership_redemption_quantity_invalid") return "兑换数量无效或超过单次上限。";
-  if (text === "merchant_memberships_conflict" || text === "merchant_membership_settings_conflict") {
-    return "会员积分或库存刚被其他操作更新，请刷新数据后重新结算。";
+  if (text === "merchant_memberships_conflict" || text === "merchant_membership_settings_conflict" || text === "merchant_coupons_conflict") {
+    return "会员积分、库存或卡券刚被其他操作更新，本次未提交，请刷新数据后重试。";
   }
+  if (text === "merchant_transaction_unavailable") return "暂时无法确认结算结果。请先核对兑换记录，勿更换会员、修改购物车或刷新页面后直接重复结算；有疑问请联系负责人。";
+  if (text === "redemption_operation_conflict") return "该结算编号已用于另一份购物车或会员，请先核对兑换记录，不要重复扣减。";
+  if (text === "redemption_checkout_quote_changed") return "原单价格或规则已变化。请放弃尚未完成的原结算，确认后重新选购；系统不会按新价格自动扣减。";
+  if (text === "redemption_checkout_pending_exists" || text === "redemption_checkout_unacknowledged") return "还有一笔原结算等待处理或确认，请先核对原单再开始下一单。";
+  if (text === "redemption_checkout_response_invalid") return "无法验证服务器返回的原单结果，已暂停新结算。请重新核对状态。";
+  if (text === "redemption_legacy_operation_requires_review") return "发现旧版未核实的结算记录，请先核对会员积分、库存和卡券记录，再由负责人处理。";
+  if (text === "membership_redemption_item_conflict" || text === "coupon_duplicate_settlement_code") return "购物车存在重复或冲突的卡券/项目，请核对后重试。";
   if (text === "membership_redemption_rollback_failed" || text === "membership_redemption_stock_rollback_failed") {
     return "结算未完成且数据自动回退失败，请勿重复操作，并立即核对会员、库存和卡券记录。";
   }
   if (text === "mutation_operation_id_required") return "结算操作编号缺失，请刷新页面后重试。";
+  if (text === "mutation_operation_id_invalid") return "结算操作编号格式无效，请先核对记录后重新操作。";
   if (text === "membership_operation_empty") {
     return operationType === "recharge" ? "充值方案金额和积分不能都为空" : "请选择兑换项目。";
   }
@@ -841,6 +869,21 @@ export default function MerchantPointRedemptionCashier({
   );
   const { locale, setLocale, t } = useI18n();
   const normalizedSiteId = siteId.trim();
+  const checkoutScope = useMemo(() => ({ normalizedSiteId, requestRedemptionApi, canCheckoutRedemptions, canViewCustomerData, canPrint }),
+    [normalizedSiteId, requestRedemptionApi, canCheckoutRedemptions, canViewCustomerData, canPrint]);
+  const [checkoutRecovery, setCheckoutRecovery] = useState<CheckoutRecoveryState>({
+    scope: checkoutScope, phase: "checking", checkout: null, message: "",
+  });
+  const [checkoutRecoveryBusy, setCheckoutRecoveryBusy] = useState(false);
+  const checkoutRecoveryGuardRef = useRef(createCashierCheckoutRequestGuard());
+  checkoutRecoveryGuardRef.current.setScope(checkoutScope);
+  const checkoutRecoveryActionRef = useRef(false);
+  const checkoutRecoveryFailureRef = useRef<{ operationId: string; message: string } | null>(null);
+  const checkoutRecoveryScopeRef = useRef<object | null>(checkoutScope);
+  checkoutRecoveryScopeRef.current = checkoutScope;
+  const activeCheckoutRecovery = checkoutRecovery.scope === checkoutScope ? checkoutRecovery : null;
+  const checkoutRecoveryBlocksNewSale = !activeCheckoutRecovery || cashierCheckoutBlocksNewSale(activeCheckoutRecovery.phase, activeCheckoutRecovery.checkout);
+  const visibleCheckout = activeCheckoutRecovery?.phase === "ready" ? activeCheckoutRecovery.checkout : null;
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
   const [settings, setSettings] = useState<MerchantMembershipSettings | null>(null);
   const [coupons, setCoupons] = useState<MerchantCouponRecord[]>([]);
@@ -923,6 +966,7 @@ export default function MerchantPointRedemptionCashier({
   const selectedMemberIdRef = useRef("");
   const productSearchInputRef = useRef<HTMLInputElement | null>(null);
   const checkoutSubmittingRef = useRef(false);
+  const checkoutPreflightRef = useRef(false);
   const checkoutMutationRef = useRef<{ fingerprint: string; operationId: string }>({
     fingerprint: "",
     operationId: "",
@@ -1362,6 +1406,8 @@ export default function MerchantPointRedemptionCashier({
   const hasRedeemableCartEffect = cartRows.some((row) => row.subtotalPoints > 0 || (row.couponSettlementCode && row.couponPointDiscount <= 0));
   const canSubmitCheckout =
     canCheckoutRedemptions &&
+    !checkoutRecoveryBlocksNewSale &&
+    !checkoutRecoveryBusy &&
     Boolean(selectedMember) &&
     cartRows.length > 0 &&
     hasRedeemableCartEffect &&
@@ -1810,6 +1856,67 @@ export default function MerchantPointRedemptionCashier({
     requestRedemptionApi,
     view,
   ]);
+
+  const refreshCheckoutRecovery = useCallback(async (options?: { afterUncertainMutation?: boolean }) => {
+    if (!canCheckoutRedemptions || !/^\d{8}$/.test(normalizedSiteId) || checkoutRecoveryActionRef.current || checkoutSubmittingRef.current) return undefined;
+    const ticket = checkoutRecoveryGuardRef.current.begin();
+    setCheckoutRecovery({ scope: checkoutScope, phase: "checking", checkout: null, message: "" });
+    try {
+      const response = await requestRedemptionApi(`/api/merchant-admin/redemption-checkout?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+        method: "GET", credentials: "same-origin", cache: "no-store", headers: { accept: "application/json" },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!checkoutRecoveryGuardRef.current.isCurrent(ticket)) return undefined;
+      if (!response.ok) throw new Error(operationErrorMessage(payload?.message ?? payload?.error, "暂时无法核对原结算，请重新读取状态。"));
+      const checkout = readCashierCheckoutSummary(payload, normalizedSiteId);
+      if (options?.afterUncertainMutation && !checkout) {
+        setCheckoutRecovery({ scope: checkoutScope, phase: "error", checkout: null,
+          message: "暂未查询到原单，不能据此认定请求未发送。请先核对兑换记录，再重新读取结算状态。" });
+        return undefined;
+      }
+      setCheckoutRecovery({ scope: checkoutScope, phase: "ready", checkout: checkout?.acknowledgedAt ? null : checkout, message: "" });
+      const failedMutation = checkoutRecoveryFailureRef.current;
+      setError((current) => cashierCheckoutErrorAfterRecovery(current, checkout, failedMutation));
+      return checkout;
+    } catch (recoveryError) {
+      if (checkoutRecoveryGuardRef.current.isCurrent(ticket)) {
+        setCheckoutRecovery({ scope: checkoutScope, phase: "error", checkout: null,
+          message: operationErrorMessage(recoveryError instanceof Error ? recoveryError.message : "", "暂时无法核对原结算，已暂停新结算。") });
+      }
+      return undefined;
+    }
+  }, [canCheckoutRedemptions, normalizedSiteId, requestRedemptionApi, checkoutScope]);
+
+  useEffect(() => {
+    const guard = checkoutRecoveryGuardRef.current;
+    checkoutRecoveryScopeRef.current = checkoutScope;
+    checkoutRecoveryActionRef.current = false;
+    checkoutRecoveryFailureRef.current = null;
+    checkoutSubmittingRef.current = false;
+    checkoutPreflightRef.current = false;
+    checkoutMutationRef.current = { fingerprint: "", operationId: "" };
+    setCheckoutRecoveryBusy(false);
+    setCheckoutRecovery({ scope: checkoutScope, phase: "checking", checkout: null, message: "" });
+    setCart([]); setNote(""); setSelectedMemberId(""); selectedMemberIdRef.current = "";
+    setMemberships([]); membershipsRef.current = []; setSettings(null); setCoupons([]);
+    setError(""); setNotice(""); setSaving(false); setCheckoutConfirmOpen(false);
+    cashierLoadRequestIdRef.current += 1;
+    memberSearchRequestIdRef.current += 1;
+    void refreshCheckoutRecovery();
+    return () => { guard.invalidate(); checkoutRecoveryScopeRef.current = null; };
+  }, [checkoutScope, refreshCheckoutRecovery]);
+
+  useEffect(() => {
+    const restore = () => {
+      if (document.visibilityState !== "hidden") void refreshCheckoutRecovery();
+    };
+    window.addEventListener("focus", restore);
+    document.addEventListener("visibilitychange", restore);
+    return () => {
+      window.removeEventListener("focus", restore);
+      document.removeEventListener("visibilitychange", restore);
+    };
+  }, [refreshCheckoutRecovery]);
 
   useEffect(() => {
     cashierResumeRefreshAtRef.current = Date.now();
@@ -2767,9 +2874,129 @@ export default function MerchantPointRedemptionCashier({
     setHeldOpen((current) => !current);
   }
 
+  async function printConfirmedCheckout(
+    receipt: MerchantRedemptionCheckoutReceipt,
+    scope: object,
+    explicit: boolean,
+    confirmedMember?: MerchantMembershipListItem | null,
+  ) {
+    if (!canPrint || checkoutRecoveryScopeRef.current !== scope) return;
+    const matchingMember = confirmedMember === undefined
+      ? membershipsRef.current.find((member) => member.id === receipt.membershipId)
+      : confirmedMember?.id === receipt.membershipId ? confirmedMember : null;
+    const receiptData = cashierCheckoutPrintReceipt(receipt, {
+      siteName: trimText(siteName, 120) || normalizedSiteId,
+      memberName: canViewCustomerData && matchingMember ? getMemberDisplayName(matchingMember) : "会员",
+      memberNo: matchingMember?.memberNo ?? "",
+    });
+    let latestPrintSettings = settings?.printSettings as MerchantReceiptPrintSettings | undefined;
+    try {
+      const latest = await fetchLatestCashierPrintSettings(normalizedSiteId, requestRedemptionApi);
+      if (checkoutRecoveryScopeRef.current !== scope) return;
+      if (latest?.printSettings) { latestPrintSettings = latest.printSettings; setSettings(latest); }
+    } catch { /* Printing may use the current settings, never current checkout amounts. */ }
+    if (checkoutRecoveryScopeRef.current !== scope) return;
+    try {
+      const outcome = await printRedemptionReceipt(
+        explicit && latestPrintSettings ? { ...latestPrintSettings, autoPrintRedemptionReceipt: true } : latestPrintSettings,
+        receiptData,
+      );
+      if (checkoutRecoveryScopeRef.current !== scope) return;
+      recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, outcome, !employeeMode);
+      const bridgeStatus = resolveCashierPrintBridgeStatusFromOutcome(outcome);
+      if (bridgeStatus) { setPrintBridgeStatus(bridgeStatus); setPrintBridgeCheckedAt(Date.now()); }
+      const message = redemptionReceiptPrintNotice(outcome);
+      if (message) {
+        if (outcome.ok) setNotice((current) => `${current} ${message}`.trim());
+        else setError(`原结算已完成，但${message}`);
+      }
+    } catch {
+      if (checkoutRecoveryScopeRef.current === scope) setError("原结算已完成，但小票打印失败。可以核对打印机后显式重打，不要重新结算。");
+    }
+  }
+
+  function acceptConfirmedCheckout(
+    receipt: MerchantRedemptionCheckoutReceipt,
+    membership: MerchantMembershipListItem | null | undefined,
+    scope: object,
+  ) {
+    if (checkoutRecoveryScopeRef.current !== scope) return;
+    setCheckoutRecovery({ scope, phase: "ready", message: "", checkout: {
+      operationId: receipt.operationId, status: "committed", createdAt: receipt.createdAt, acknowledgedAt: null, result: receipt,
+    } });
+    if (membership?.id === receipt.membershipId) {
+      setMemberships((current) => current.map((member) => member.id === membership.id ? membership : member));
+      selectedMemberIdRef.current = membership.id; setSelectedMemberId(membership.id);
+    } else if (membership === null) {
+      membershipsRef.current = membershipsRef.current.filter((member) => member.id !== receipt.membershipId);
+      setMemberships((current) => current.filter((member) => member.id !== receipt.membershipId));
+      if (selectedMemberIdRef.current === receipt.membershipId) { selectedMemberIdRef.current = ""; setSelectedMemberId(""); }
+    }
+    setCart([]); setNote("");
+    setNotice(`原结算已完成：扣减 ${formatPoints(receipt.totalPoints)} 积分，核销 ${receipt.couponCount} 张卡券。请确认后开始下一单。`);
+  }
+
+  async function handleCheckoutRecoveryAction(action: "retry" | "cancel" | "ack") {
+    const checkout = visibleCheckout;
+    if (!canCheckoutRedemptions || !checkout || checkoutRecoveryActionRef.current || checkoutSubmittingRef.current) return;
+    if (action === "ack" ? checkout.status === "pending" : checkout.status !== "pending") return;
+    const scope = checkoutScope;
+    const ticket = checkoutRecoveryGuardRef.current.begin();
+    checkoutRecoveryActionRef.current = true; setCheckoutRecoveryBusy(true); setError("");
+    let needsRecoveryRefresh = false;
+    try {
+      const response = await requestRedemptionApi("/api/merchant-admin/redemption-checkout", {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ siteId: normalizedSiteId, operationId: checkout.operationId, action }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!checkoutRecoveryGuardRef.current.isCurrent(ticket)) return;
+      if (!response.ok || payload?.ok !== true) throw new Error(operationErrorMessage(payload?.message ?? payload?.error, "无法确认原结算状态，请重新核对。"));
+      if (action === "retry") {
+        if (typeof payload.replayed !== "boolean") throw new Error("redemption_checkout_response_invalid");
+        const receipt = readCashierCheckoutReceipt(payload.receipt, normalizedSiteId, checkout.operationId);
+        acceptConfirmedCheckout(receipt, payload.membership ?? null, scope);
+        // Recovery/replay never automatically prints or acknowledges a result.
+        void loadData(true, { silent: true });
+      } else {
+        const result = readCashierCheckoutSummary(payload, normalizedSiteId);
+        if (result && result.operationId !== checkout.operationId) throw new Error("redemption_checkout_response_invalid");
+        if (action === "ack") {
+          if (result && (!result.acknowledgedAt || result.status === "pending")) throw new Error("redemption_checkout_response_invalid");
+          setCheckoutRecovery({ scope, phase: "ready", checkout: null, message: "" });
+          checkoutMutationRef.current = { fingerprint: "", operationId: "" };
+          setCart([]); setNote(""); setNotice("原单已确认，可以开始下一单。");
+        } else {
+          if (!result || result.acknowledgedAt) throw new Error("redemption_checkout_response_invalid");
+          setCheckoutRecovery({ scope, phase: "ready", checkout: result, message: "" });
+          setNotice(result.status === "committed"
+            ? "原结算已经完成，未取消、未撤销任何扣减。请核对原单结果后确认。"
+            : result.status === "cancelled" ? "尚未完成的原结算已放弃。请确认后开始下一单。" : "原结算仍待处理，请重新核对。");
+        }
+      }
+    } catch (recoveryError) {
+      if (checkoutRecoveryGuardRef.current.isCurrent(ticket)) {
+        const message = operationErrorMessage(recoveryError instanceof Error ? recoveryError.message : "", "无法确认原结算状态，请重新核对。");
+        checkoutRecoveryFailureRef.current = { operationId: checkout.operationId, message };
+        setError(message);
+        needsRecoveryRefresh = true;
+      }
+    } finally {
+      if (checkoutRecoveryScopeRef.current === scope) {
+        checkoutRecoveryActionRef.current = false; setCheckoutRecoveryBusy(false);
+        if (needsRecoveryRefresh) void refreshCheckoutRecovery({ afterUncertainMutation: true });
+      }
+    }
+  }
+
   async function submitCheckout() {
     if (!canCheckoutRedemptions) return;
-    if (checkoutSubmittingRef.current) return;
+    if (checkoutSubmittingRef.current || checkoutPreflightRef.current) return;
+    if (checkoutRecoveryBlocksNewSale || checkoutRecoveryActionRef.current) {
+      setError("请先核对并确认原结算状态，再开始下一单。");
+      return;
+    }
     setError("");
     setNotice("");
     if (!selectedMember) {
@@ -2801,6 +3028,16 @@ export default function MerchantPointRedemptionCashier({
       setError("会员积分不足，不能兑换。");
       return;
     }
+    const scope = checkoutScope;
+    checkoutPreflightRef.current = true;
+    let originalCheckout: MerchantRedemptionCheckoutSummary | null | undefined;
+    try { originalCheckout = await refreshCheckoutRecovery(); }
+    finally { if (checkoutRecoveryScopeRef.current === scope) checkoutPreflightRef.current = false; }
+    if (checkoutRecoveryScopeRef.current !== scope || originalCheckout === undefined) return;
+    if (originalCheckout && !originalCheckout.acknowledgedAt) {
+      setError("检测到尚未确认的原结算，请先处理原单。");
+      return;
+    }
     const redemptionItems = cartRows.map((row) => ({
       redemptionItemId: row.item?.id,
       customName: row.custom ? row.name : undefined,
@@ -2812,7 +3049,7 @@ export default function MerchantPointRedemptionCashier({
       couponTitle: row.couponTitle || undefined,
       couponDiscountLabel: row.couponDiscountLabel || undefined,
       couponPointDiscount: row.couponPointDiscount || undefined,
-      quantity: row.quantity,
+      quantity: cashierCheckoutRequestQuantity(row),
     }));
     const receiptNote = note.trim();
     const checkoutFingerprint = JSON.stringify({
@@ -2828,18 +3065,8 @@ export default function MerchantPointRedemptionCashier({
         : createClientMutationOperationId("member-redemption-checkout");
     checkoutMutationRef.current = { fingerprint: checkoutFingerprint, operationId };
     checkoutSubmittingRef.current = true;
-    const receiptCreatedAt = new Date();
-    const receiptBeforePointBalance = selectedInsight.pointBalance;
-    const receiptLines = cartRows.map((row) => ({
-      code: row.code || row.itemId,
-      name: row.name,
-      categoryName: row.categoryId ? categoryName(enabledCategories, row.categoryId) : "",
-      quantity: row.quantity,
-      unitPoints: row.unitPoints,
-      subtotalPoints: row.subtotalPoints,
-      couponDiscountLabel: row.couponDiscountLabel,
-      couponPointDiscount: row.couponPointDiscount,
-    }));
+    const ticket = checkoutRecoveryGuardRef.current.begin();
+    let needsRecoveryRefresh = false;
     setSaving(true);
     try {
       const response = await requestRedemptionApi("/api/memberships", {
@@ -2857,43 +3084,16 @@ export default function MerchantPointRedemptionCashier({
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
-      if (!response.ok || !payload?.ok || !payload.membership) {
+      if (!checkoutRecoveryGuardRef.current.isCurrent(ticket)) return;
+      if (!response.ok || payload?.ok !== true) {
         throw new Error(operationErrorMessage(payload?.message, "积分兑换失败，请稍后重试"));
       }
       const updatedMembership = payload.membership;
-      const receiptData: MerchantRedemptionReceiptData = {
-        receiptNo: operationId.slice(-12).toUpperCase(),
-        siteId: normalizedSiteId,
-        siteName: trimText(siteName, 120) || normalizedSiteId,
-        memberName: canViewCustomerData ? getMemberDisplayName(updatedMembership) : "会员",
-        memberNo: updatedMembership.memberNo,
-        beforePointBalance: receiptBeforePointBalance,
-        afterPointBalance: updatedMembership.pointBalance,
-        totalQuantity,
-        grossPoints,
-        couponPointDiscountTotal,
-        totalPoints,
-        note: receiptNote,
-        createdAt: receiptCreatedAt,
-        lines: receiptLines,
-      };
-      let latestPrintSettings = settings?.printSettings as MerchantReceiptPrintSettings | undefined;
-      try {
-        const latestSettings = canPrint
-          ? await fetchLatestCashierPrintSettings(normalizedSiteId, requestRedemptionApi)
-          : null;
-        if (latestSettings?.printSettings) {
-          latestPrintSettings = latestSettings.printSettings as MerchantReceiptPrintSettings;
-          setSettings(latestSettings);
-        }
-      } catch {
-        latestPrintSettings = settings?.printSettings as MerchantReceiptPrintSettings | undefined;
+      const confirmedReceipt = readCashierCheckoutReceipt(payload.receipt, normalizedSiteId, operationId);
+      if (typeof payload.replayed !== "boolean" || (updatedMembership && updatedMembership.id !== confirmedReceipt.membershipId)) {
+        throw new Error("redemption_checkout_response_invalid");
       }
-      setMemberships((current) =>
-        current.map((membership) => (isSameMembershipRecord(membership, updatedMembership) ? updatedMembership : membership)),
-      );
-      selectedMemberIdRef.current = updatedMembership.id;
-      setSelectedMemberId(updatedMembership.id);
+      acceptConfirmedCheckout(confirmedReceipt, updatedMembership, scope);
       if (effectiveCachePolicy.allowPersistentWrite) {
         invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
         invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
@@ -2902,58 +3102,24 @@ export default function MerchantPointRedemptionCashier({
           makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, selectedMember.id),
         );
         invalidateMerchantAdminDataCachePrefix(
-          makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, updatedMembership.id),
+            makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId, confirmedReceipt.membershipId),
         );
       }
-      setCart([]);
-      setNote("");
-      checkoutMutationRef.current = { fingerprint: "", operationId: "" };
-      const couponLineCount = cartRows.filter((row) => row.couponSettlementCode).length;
-      setNotice(
-        totalPoints > 0 && couponLineCount > 0
-          ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分，并核销 ${couponLineCount} 张卡券。`
-          : totalPoints === 0 && couponPointDiscountTotal > 0 && couponLineCount > 0
-            ? `兑换完成，积分券已抵扣 ${formatPoints(couponPointDiscountTotal)} 积分，并核销 ${couponLineCount} 张卡券。`
-          : totalPoints > 0
-          ? `兑换完成，已扣减 ${formatPoints(totalPoints)} 积分。`
-          : `兑换完成，已核销 ${couponLineCount} 张卡券。`,
-      );
-      if (canPrint) void printRedemptionReceipt(latestPrintSettings, receiptData)
-        .then((printOutcome) => {
-          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome, !employeeMode);
-          const nextPrintBridgeStatus = resolveCashierPrintBridgeStatusFromOutcome(printOutcome);
-          if (nextPrintBridgeStatus) {
-            setPrintBridgeStatus((current) =>
-              nextPrintBridgeStatus === "online" && current === "update_available" ? current : nextPrintBridgeStatus,
-            );
-            setPrintBridgeCheckedAt(Date.now());
-          }
-          const printNotice = redemptionReceiptPrintNotice(printOutcome);
-          if (!printNotice) return;
-          if (printOutcome.ok) {
-            setNotice((current) => (current ? `${current} ${printNotice}` : printNotice));
-            return;
-          }
-          setError(`兑换已完成，但${printNotice}`);
-        })
-        .catch((printError) => {
-          const printOutcome: RedemptionReceiptPrintOutcome = {
-            ok: false,
-            skipped: false,
-            method: "local_bridge",
-            message: printError instanceof Error ? printError.message : "receipt_print_failed",
-          };
-          recordRedemptionReceiptPrintOutcome(normalizedSiteId, receiptData, printOutcome, !employeeMode);
-          setPrintBridgeStatus("error");
-          setPrintBridgeCheckedAt(Date.now());
-          setError("兑换已完成，但小票打印失败，请检查本机打印助手和打印机连接。");
-        });
+      if (canPrint && !payload.replayed) void printConfirmedCheckout(confirmedReceipt, scope, false, updatedMembership ?? null);
       void loadData(true, { silent: true });
     } catch (checkoutError) {
-      setError(checkoutError instanceof Error ? checkoutError.message : "积分兑换失败，请稍后重试");
+      if (checkoutRecoveryGuardRef.current.isCurrent(ticket)) {
+        const message = operationErrorMessage(checkoutError instanceof Error ? checkoutError.message : "", "无法确认结算结果，请核对原单。");
+        checkoutRecoveryFailureRef.current = { operationId, message };
+        setError(message);
+        needsRecoveryRefresh = true;
+      }
     } finally {
-      checkoutSubmittingRef.current = false;
-      setSaving(false);
+      if (checkoutRecoveryScopeRef.current === scope) {
+        checkoutSubmittingRef.current = false;
+        setSaving(false);
+        if (needsRecoveryRefresh) void refreshCheckoutRecovery({ afterUncertainMutation: true });
+      }
     }
   }
 
@@ -3102,6 +3268,10 @@ export default function MerchantPointRedemptionCashier({
         </div>
       </section>
     );
+  }
+
+  if (checkoutRecovery.scope !== checkoutScope) {
+    return <section className={className} aria-busy="true">正在切换收银身份并核对原结算...</section>;
   }
 
   return (
@@ -5259,6 +5429,21 @@ export default function MerchantPointRedemptionCashier({
           text-align: center;
         }
 
+        .merchant-pos-cashier .checkout-recovery {
+          margin: 0 0 18px;
+          padding: 18px 20px;
+          border: 1px solid #9ab6df;
+          border-left: 5px solid var(--pos-primary);
+          border-radius: 14px;
+          background: #eff5ff;
+        }
+        .merchant-pos-cashier .checkout-recovery h3 { margin: 0 0 8px; font-size: 17px; }
+        .merchant-pos-cashier .checkout-recovery p { margin: 6px 0; }
+        .merchant-pos-cashier .checkout-recovery .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .merchant-pos-cashier .checkout-recovery .recovery-result { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 10px 0; }
+        .merchant-pos-cashier .checkout-recovery .recovery-result strong { font-size: 20px; color: var(--pos-primary-dark); }
+        .merchant-pos-cashier .checkout-recovery .recovery-error { color: #a8251a; }
+
         @media (max-width: 1280px) {
           .merchant-pos-cashier .cashier-workbench {
             grid-template-columns: 1fr;
@@ -5346,6 +5531,39 @@ export default function MerchantPointRedemptionCashier({
           </div>
         </div>
       </div>
+
+      {view === "cashier" && canCheckoutRedemptions && (checkoutRecoveryBlocksNewSale || checkoutRecoveryBusy) ? (
+        <section className="checkout-recovery" aria-label="原结算恢复" aria-busy={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"}>
+          <h3>{activeCheckoutRecovery?.phase === "checking" ? "正在核对原结算" : activeCheckoutRecovery?.phase === "error" ? "新结算已暂停" :
+            visibleCheckout?.status === "pending" ? "有一笔原结算等待处理" : visibleCheckout?.status === "committed" ? "原结算已完成，等待确认" : "原结算已放弃，等待确认"}</h3>
+          {activeCheckoutRecovery?.phase === "checking" ? <p>请稍候，正在读取当前账号的未确认结算。核对完成前不会开始新单。</p> : null}
+          {activeCheckoutRecovery?.message ? <p role="alert" className="recovery-error">{activeCheckoutRecovery.message}</p> : null}
+          {visibleCheckout ? <p>结算编号：{visibleCheckout.operationId} · {new Date(visibleCheckout.createdAt).toLocaleString()}</p> : null}
+          {visibleCheckout?.status === "pending" ? <p>仅使用服务器保存的原单，当前购物车为空也可核对；未完成的结算仍需通过余额、库存与权限检查。</p> : null}
+          {visibleCheckout?.status === "pending" ? <p>放弃仅针对尚未完成的原单；若已经完成，将显示原结果，不会撤销扣减。</p> : null}
+          {visibleCheckout?.result ? <div className="recovery-result" aria-label="服务器确认的原单金额">
+            <span>原单扣减 <strong>{formatPoints(visibleCheckout.result.totalPoints)}</strong> 积分</span>
+            <span>积分券抵扣 {formatPoints(visibleCheckout.result.couponPointDiscountTotal)}</span>
+            <span>原单余额 {formatPoints(visibleCheckout.result.beforePointBalance)} → {formatPoints(visibleCheckout.result.afterPointBalance)}</span>
+            <span>核销卡券 {visibleCheckout.result.couponCount} 张</span>
+          </div> : null}
+          {error && activeCheckoutRecovery?.phase === "ready" ? <p role="alert" className="recovery-error">{error}</p> : null}
+          <div className="recovery-actions">
+            <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"}
+              onClick={() => void refreshCheckoutRecovery()}>重新读取结算状态</button>
+            {visibleCheckout?.status === "pending" ? <>
+              <button type="button" className="el-button el-button--primary" disabled={checkoutRecoveryBusy}
+                onClick={() => void handleCheckoutRecoveryAction("retry")}>核对/重试原结算</button>
+              <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
+                onClick={() => void handleCheckoutRecoveryAction("cancel")}>放弃尚未完成的原结算</button>
+            </> : null}
+            {visibleCheckout && visibleCheckout.status !== "pending" ? <button type="button" className="el-button el-button--primary" disabled={checkoutRecoveryBusy}
+              onClick={() => void handleCheckoutRecoveryAction("ack")}>确认并开始下一单</button> : null}
+            {canPrint && visibleCheckout?.result ? <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
+              onClick={() => { if (visibleCheckout.result) void printConfirmedCheckout(visibleCheckout.result, checkoutScope, true); }}>重打原单小票</button> : null}
+          </div>
+        </section>
+      ) : null}
 
       {view === "records" || view === "rechargeRecords" ? (
         <>
@@ -5981,11 +6199,12 @@ export default function MerchantPointRedemptionCashier({
                                 ? "快捷兑换"
                                 : categoryName(enabledCategories, row.categoryId)}
                           </span>
+                          {row.couponClaimId ? <span className="cart-meta">{cashierCouponQuantityLabel(row.quantity)}</span> : null}
                         </strong>
                         <span>{row.couponPointDiscount > 0 ? `-${formatPoints(row.couponPointDiscount)}` : formatPoints(row.unitPoints)}</span>
                         <div className="quantity-control">
                           {row.couponSettlementCode ? (
-                            <span className="coupon-locked-quantity">{row.quantity}</span>
+                            <span className="coupon-locked-quantity" title={cashierCouponQuantityLabel(row.quantity)}>1 张</span>
                           ) : (
                             <>
                               <button type="button" className="qty-button" onClick={() => changeQuantity(index, row.quantity - 1)}>
@@ -6055,7 +6274,7 @@ export default function MerchantPointRedemptionCashier({
                 ) : null}
               </div>
               <div className="summary-item">
-                <span>项目</span>
+                <span>{cartRows.some((row) => row.couponClaimId && row.quantity > 1) ? "项目（含券内商品）" : "项目"}</span>
                 <strong>{totalQuantity}</strong>
               </div>
               <div className="summary-item">
@@ -6565,7 +6784,13 @@ export default function MerchantPointRedemptionCashier({
                     ? `${canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员"} / ${selectedMember.memberNo}`
                     : "-"}
                 </div>
-                <div>项目：{totalQuantity}</div>
+                <div>项目：{totalQuantity}{cartRows.some((row) => row.couponClaimId && row.quantity > 1) ? "（含券内商品数量）" : ""}</div>
+                {cartRows.some((row) => row.couponClaimId) ? <div>
+                  核销卡券：{cartRows.filter((row) => row.couponClaimId).length} 张（每条领取记录为一张券）
+                  {cartRows.filter((row) => row.couponClaimId).map((row) => (
+                    <div key={row.couponClaimId}>{row.name}：{cashierCouponQuantityLabel(row.quantity)}</div>
+                  ))}
+                </div> : null}
                 {couponPointDiscountTotal > 0 ? <div>积分券抵扣：-{formatPoints(couponPointDiscountTotal)}</div> : null}
                 <div>扣减积分：{formatPoints(totalPoints)}</div>
               </div>

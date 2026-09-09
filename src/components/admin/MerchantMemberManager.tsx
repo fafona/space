@@ -19,6 +19,11 @@ import {
   writeMerchantAdminDataCache,
 } from "@/lib/merchantAdminDataCache";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
+import { cashierCheckoutBlocksNewSale } from "@/lib/merchantRedemptionCheckoutRecovery";
+import type { MemberCheckoutRecoveryAction } from "@/lib/merchantMemberCheckoutRecovery";
+import { memberOperationUsesProductCheckout, readMemberScopedKeyword } from "@/lib/merchantMemberCheckoutRecovery";
+import MerchantCheckoutRecoveryPanel from "@/components/admin/MerchantCheckoutRecoveryPanel";
+import { useMerchantMemberCheckoutRecovery } from "@/components/admin/useMerchantMemberCheckoutRecovery";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
 import type {
   MerchantBusinessApiClient,
@@ -268,6 +273,9 @@ function readPayloadMessage(value: unknown, fallback: string) {
 
 async function fetchMemberJson(input: RequestInfo | URL, init: RequestInit = {}) {
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abortFromCaller();
+  else init.signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeoutId = window.setTimeout(() => controller.abort(), MERCHANT_MEMBER_REQUEST_TIMEOUT_MS);
   try {
     return await fetchWithAdminPerformance(input, {
@@ -281,6 +289,7 @@ async function fetchMemberJson(input: RequestInfo | URL, init: RequestInit = {})
     throw error;
   } finally {
     window.clearTimeout(timeoutId);
+    init.signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -365,6 +374,7 @@ export default function MerchantMemberManager({
       effectivePermissions,
       "redemptions.checkout",
     );
+  const canRecoverProductCheckout = hasMerchantMembershipFrontendPermission(effectivePermissions, "redemptions.checkout");
   const canRecharge = hasMerchantMembershipFrontendPermission(
     effectivePermissions,
     "redemptions.recharge",
@@ -412,7 +422,45 @@ export default function MerchantMemberManager({
   const [memberSettings, setMemberSettings] = useState<MerchantMembershipSettings | null>(null);
   const [memberSettingsError, setMemberSettingsError] = useState("");
   const normalizedSiteId = siteId.trim();
-  const deferredKeyword = useDeferredValue(keyword);
+  const memberPermissionKey = effectivePermissions === undefined ? "owner" : [...effectivePermissions].sort().join("|");
+  const memberScope = useMemo(() => ({ normalizedSiteId, requestMemberApi, memberPermissionKey,
+    allowPersistentRead: effectiveCachePolicy.allowPersistentRead, allowPersistentWrite: effectiveCachePolicy.allowPersistentWrite }),
+  [normalizedSiteId, requestMemberApi, memberPermissionKey, effectiveCachePolicy.allowPersistentRead, effectiveCachePolicy.allowPersistentWrite]);
+  const currentMemberScopeRef = useRef<object | null>(memberScope);
+  currentMemberScopeRef.current = memberScope;
+  const [visibleMemberScope, setVisibleMemberScope] = useState(memberScope);
+  const isCurrentMemberScope = useCallback(() => currentMemberScopeRef.current === memberScope, [memberScope]);
+  const { controller: productCheckoutController, snapshot: productCheckoutRecovery } = useMerchantMemberCheckoutRecovery({
+    siteId: normalizedSiteId, enabled: canRecoverProductCheckout, requestApi: requestMemberApi, scope: memberScope,
+  });
+  const productCheckoutBlocked = productCheckoutRecovery.busy || cashierCheckoutBlocksNewSale(productCheckoutRecovery.phase, productCheckoutRecovery.checkout);
+  const handledProductResultRef = useRef("");
+  const memberSearchInput = useMemo(() => ({ scope: memberScope, keyword: readMemberScopedKeyword(memberScope, visibleMemberScope, keyword) }),
+    [memberScope, visibleMemberScope, keyword]);
+  const deferredMemberSearch = useDeferredValue(memberSearchInput);
+  const deferredKeyword = readMemberScopedKeyword(memberScope, deferredMemberSearch.scope, deferredMemberSearch.keyword);
+  const activeStatusFilter = visibleMemberScope === memberScope ? statusFilter : "all";
+
+  useEffect(() => {
+    const insightRequests = membershipInsightRequestIdsRef.current;
+    currentMemberScopeRef.current = memberScope;
+    membershipLoadRequestIdRef.current += 1; memberSettingsLoadRequestIdRef.current += 1;
+    membershipInsightRequestIdsRef.current.clear(); membershipsRef.current = [];
+    handledProductResultRef.current = "";
+    memberOperationSubmittingRef.current = false; memberOperationMutationRef.current = { fingerprint: "", operationId: "" };
+    setMemberships([]); setMemberSettings(null); setSelectedMembershipId(""); setKeyword(""); setStatusFilter("all");
+    setMembershipTotal(0); setMembershipAllTotal(0); setMembershipHasMore(false); setLoading(false); setLoadError("");
+    setCouponWalletMembershipId(""); setCouponHistoryOpen(false); setTransactionHistoryExpanded(false);
+    setOperationDialog(null); setOperationPoints(""); setOperationBalance(""); setOperationNote("");
+    setOperationRechargePlanId(""); setOperationRedemptionItemId(""); setOperationRedemptionQuantity("1");
+    setOperationSaving(false); setOperationError(""); setMemberSettingsError(""); setAllergenError(""); setAllergenSaving(false);
+    setVisibleMemberScope(memberScope);
+    return () => {
+      currentMemberScopeRef.current = null;
+      membershipLoadRequestIdRef.current += 1; memberSettingsLoadRequestIdRef.current += 1;
+      insightRequests.clear();
+    };
+  }, [memberScope]);
 
   const membershipById = useMemo(
     () => new Map(memberships.map((membership) => [membership.id, membership])),
@@ -486,6 +534,7 @@ export default function MerchantMemberManager({
   }, [allergenError, operationError]);
 
   const loadMemberships = useCallback(async (mode: "reset" | "append" = "reset", force = false) => {
+    if (!isCurrentMemberScope()) return;
     if (!canViewMembers) {
       setMemberships([]);
       setSelectedMembershipId("");
@@ -512,12 +561,12 @@ export default function MerchantMemberManager({
       limit: String(MERCHANT_MEMBER_PAGE_SIZE),
       includeInsights: "0",
     });
-    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (activeStatusFilter !== "all") params.set("status", activeStatusFilter);
     if (normalizedKeyword) params.set("query", normalizedKeyword);
     const cacheKey = makeMerchantAdminDataCacheKey(
       "merchant-memberships",
       normalizedSiteId,
-      statusFilter,
+      activeStatusFilter,
       normalizedKeyword,
       offset,
       MERCHANT_MEMBER_PAGE_SIZE,
@@ -528,6 +577,7 @@ export default function MerchantMemberManager({
       ? null
       : readMerchantAdminDataCacheSnapshot<MembershipsPayload>(cacheKey, MERCHANT_ADMIN_DATA_CACHE_TTL_MS);
     const applyMembershipsPayload = (payload: MembershipsPayload) => {
+      if (!isCurrentMemberScope()) return;
       const nextMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
       setMemberships((current) => {
         if (mode !== "append") return nextMemberships;
@@ -556,6 +606,7 @@ export default function MerchantMemberManager({
         },
       });
       const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
+      if (!isCurrentMemberScope()) throw new Error("member_scope_changed");
       if (!response.ok || payload?.ok !== true) {
         throw new Error(readPayloadMessage(payload?.message, "会员列表加载失败，请稍后重试"));
       }
@@ -568,11 +619,11 @@ export default function MerchantMemberManager({
       setLoadError("");
       try {
         const payload = await loadMembershipsFromServer();
-        if (membershipLoadRequestIdRef.current === requestId) {
+        if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) {
           applyMembershipsPayload(payload);
         }
       } catch (error) {
-        if (membershipLoadRequestIdRef.current === requestId) {
+        if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) {
           setLoadError(
             error instanceof Error
               ? error.message
@@ -580,7 +631,7 @@ export default function MerchantMemberManager({
           );
         }
       } finally {
-        if (membershipLoadRequestIdRef.current === requestId) setLoading(false);
+        if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) setLoading(false);
       }
       return;
     }
@@ -595,7 +646,7 @@ export default function MerchantMemberManager({
           cacheVersion: () => loadedMembershipsVersion,
         })
           .then((payload) => {
-            if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
+            if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
           })
           .catch(() => {});
       }
@@ -609,25 +660,27 @@ export default function MerchantMemberManager({
         loadMembershipsFromServer,
         { force, allowStaleOnError: true, cacheVersion: () => loadedMembershipsVersion },
       );
-      if (membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
+      if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) applyMembershipsPayload(payload);
     } catch (error) {
-      if (membershipLoadRequestIdRef.current === requestId) {
+      if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) {
         setLoadError(error instanceof Error ? error.message : "会员列表加载失败，请稍后重试");
       }
     } finally {
-      if (membershipLoadRequestIdRef.current === requestId) setLoading(false);
+      if (isCurrentMemberScope() && membershipLoadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [
     canViewMembers,
+    isCurrentMemberScope,
     deferredKeyword,
     effectiveCachePolicy.allowPersistentRead,
     employeeMode,
     normalizedSiteId,
     requestMemberApi,
-    statusFilter,
+    activeStatusFilter,
   ]);
 
   const loadMemberSettings = useCallback(async (force = false) => {
+    if (!isCurrentMemberScope()) return;
     if (employeeMode && !canViewRedemptions && !canManageMemberSettings) {
       setMemberSettings(null);
       setMemberSettingsError("");
@@ -660,6 +713,7 @@ export default function MerchantMemberManager({
         },
       });
       const payload = (await response.json().catch(() => null)) as MembershipSettingsPayload | null;
+      if (!isCurrentMemberScope()) throw new Error("member_scope_changed");
       if (!response.ok || payload?.ok !== true) {
         throw new Error(readPayloadMessage(payload?.message, "会员配置加载失败，充值和兑换将暂时使用手动输入。"));
       }
@@ -674,11 +728,11 @@ export default function MerchantMemberManager({
       setMemberSettingsError("");
       try {
         const settings = await loadSettingsFromServer();
-        if (memberSettingsLoadRequestIdRef.current === requestId) {
+        if (isCurrentMemberScope() && memberSettingsLoadRequestIdRef.current === requestId) {
           setMemberSettings(settings);
         }
       } catch (error) {
-        if (memberSettingsLoadRequestIdRef.current === requestId) {
+        if (isCurrentMemberScope() && memberSettingsLoadRequestIdRef.current === requestId) {
           setMemberSettings(null);
           setMemberSettingsError(
             error instanceof Error ? error.message : "会员配置加载失败，请稍后重试",
@@ -697,7 +751,7 @@ export default function MerchantMemberManager({
         cacheVersion: () => loadedMemberSettingsVersion,
       })
         .then((settings) => {
-          if (memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
+          if (isCurrentMemberScope() && memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
         })
         .catch(() => {});
       return;
@@ -709,15 +763,16 @@ export default function MerchantMemberManager({
         loadSettingsFromServer,
         { force, allowStaleOnError: true, cacheVersion: () => loadedMemberSettingsVersion },
       );
-      if (memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
+      if (isCurrentMemberScope() && memberSettingsLoadRequestIdRef.current === requestId) setMemberSettings(settings);
     } catch (error) {
-      if (memberSettingsLoadRequestIdRef.current === requestId) {
+      if (isCurrentMemberScope() && memberSettingsLoadRequestIdRef.current === requestId) {
         setMemberSettings(null);
         setMemberSettingsError(error instanceof Error ? error.message : "会员配置加载失败，充值和兑换将暂时使用手动输入。");
       }
     }
   }, [
     canManageMemberSettings,
+    isCurrentMemberScope,
     canViewRedemptions,
     effectiveCachePolicy.allowPersistentRead,
     employeeMode,
@@ -726,7 +781,7 @@ export default function MerchantMemberManager({
   ]);
 
   const ensureMembershipInsight = useCallback(async (membershipId: string) => {
-    if (!canViewInsights) return;
+    if (!canViewInsights || !isCurrentMemberScope()) return;
     const normalizedMembershipId = trimText(membershipId, 160);
     if (!/^\d{8}$/.test(normalizedSiteId) || !normalizedMembershipId) return;
     const currentMembership = membershipsRef.current.find((membership) => membership.id === normalizedMembershipId);
@@ -765,6 +820,7 @@ export default function MerchantMemberManager({
       });
       const payload = (await response.json().catch(() => null)) as MembershipsPayload | null;
       const detailedMembership = Array.isArray(payload?.memberships) ? payload.memberships[0] : null;
+      if (!isCurrentMemberScope()) return;
       if (!response.ok || payload?.ok !== true || !detailedMembership) return;
       if (effectiveCachePolicy.allowPersistentWrite) {
         writeMerchantAdminDataCache(cacheKey, detailedMembership);
@@ -777,10 +833,11 @@ export default function MerchantMemberManager({
     } catch {
       // The list stays usable; insight data can be retried by reopening the member.
     } finally {
-      membershipInsightRequestIdsRef.current.delete(normalizedMembershipId);
+      if (isCurrentMemberScope()) membershipInsightRequestIdsRef.current.delete(normalizedMembershipId);
     }
   }, [
     canViewInsights,
+    isCurrentMemberScope,
     effectiveCachePolicy.allowPersistentRead,
     effectiveCachePolicy.allowPersistentWrite,
     normalizedSiteId,
@@ -794,6 +851,25 @@ export default function MerchantMemberManager({
   useEffect(() => {
     void loadMemberSettings();
   }, [loadMemberSettings]);
+
+  useEffect(() => {
+    const original = productCheckoutRecovery.checkout;
+    if (!isCurrentMemberScope() || original?.status !== "committed" || !original.result || handledProductResultRef.current === original.operationId) return;
+    handledProductResultRef.current = original.operationId;
+    // Checkout responses use different PII permissions and may contain internal rather than member-list IDs.
+    // Reload the member-list projection; never merge a cashier membership or key a list update by receipt.membershipId.
+    if (effectiveCachePolicy.allowPersistentWrite) {
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-memberships", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId));
+      invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
+    }
+    if (operationDialog && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId)) {
+      setOperationDialog(null); setOperationError("");
+    }
+    void loadMemberships("reset", true);
+    void loadMemberSettings(true);
+  }, [productCheckoutRecovery.checkout, isCurrentMemberScope, effectiveCachePolicy.allowPersistentWrite,
+    normalizedSiteId, loadMemberships, loadMemberSettings, operationDialog, operationRedemptionItemId]);
 
   useEffect(() => {
     const refreshOnVisible = () => {
@@ -827,6 +903,7 @@ export default function MerchantMemberManager({
 
   async function toggleMemberAllergen(allergen: string) {
     if (
+      !isCurrentMemberScope() ||
       !canManageAllergens ||
       !selectedMembership ||
       !selectedMembership.profileVisible ||
@@ -862,6 +939,7 @@ export default function MerchantMemberManager({
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+      if (!isCurrentMemberScope()) return;
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readPayloadMessage(payload?.message, "过敏信息保存失败，请稍后重试"));
       }
@@ -883,6 +961,7 @@ export default function MerchantMemberManager({
         ),
       );
     } catch (error) {
+      if (!isCurrentMemberScope()) return;
       setMemberships((current) =>
         current.map((membership) =>
           membership.id === selectedMembership.id ? { ...membership, allergens: previousAllergens } : membership,
@@ -891,7 +970,7 @@ export default function MerchantMemberManager({
       setAllergenError(error instanceof Error ? error.message : "过敏信息保存失败，请稍后重试");
       void loadMemberships("reset", true);
     } finally {
-      setAllergenSaving(false);
+      if (isCurrentMemberScope()) setAllergenSaving(false);
     }
   }
 
@@ -964,6 +1043,7 @@ export default function MerchantMemberManager({
 
   async function submitMemberOperation() {
     if (
+      !isCurrentMemberScope() ||
       !operationDialog ||
       !operationMembership ||
       operationSaving ||
@@ -971,6 +1051,8 @@ export default function MerchantMemberManager({
       (operationDialog.type === "recharge" && !canRecharge) ||
       (operationDialog.type === "redeem" && !canRedeem)
     ) return;
+    const isProductCheckout = memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId);
+    if (isProductCheckout && (!selectedRedemptionItem || productCheckoutBlocked || productCheckoutController.blocksNewSale())) return;
     const redemptionQuantity = Math.max(1, Number.parseInt(operationRedemptionQuantity, 10) || 1);
     const points =
       operationDialog.type === "recharge" && selectedRechargePlan
@@ -993,6 +1075,21 @@ export default function MerchantMemberManager({
         setOperationError("积分或余额不足，不能兑换。");
         return;
       }
+    }
+    if (isProductCheckout && selectedRedemptionItem) {
+      memberOperationSubmittingRef.current = true;
+      setOperationSaving(true); setOperationError("");
+      try {
+        await productCheckoutController.submitOriginal({
+          action: "member_operation", type: "redeem", siteId: normalizedSiteId, membershipId: operationMembership.id,
+          points, balanceAmount, note: operationNote, rechargePlanId: "",
+          redemptionItemId: selectedRedemptionItem.id, redemptionQuantity,
+        });
+        // The recovery panel owns the server receipt and explicit acknowledgement. No automatic acknowledgement or printing.
+      } finally {
+        if (isCurrentMemberScope()) { memberOperationSubmittingRef.current = false; setOperationSaving(false); }
+      }
+      return;
     }
     const operationFingerprint = JSON.stringify({
       siteId: normalizedSiteId,
@@ -1038,6 +1135,7 @@ export default function MerchantMemberManager({
         }),
       });
       const payload = (await response.json().catch(() => null)) as MembershipPatchPayload | null;
+      if (!isCurrentMemberScope()) return;
       if (!response.ok || payload?.ok !== true || !payload.membership) {
         throw new Error(readOperationErrorMessage(payload?.message, "会员账户操作失败，请稍后重试"));
       }
@@ -1072,11 +1170,24 @@ export default function MerchantMemberManager({
         void loadMemberSettings(true);
       }
     } catch (error) {
-      setOperationError(error instanceof Error ? error.message : "会员账户操作失败，请稍后重试");
+      if (isCurrentMemberScope()) setOperationError(error instanceof Error ? error.message : "会员账户操作失败，请稍后重试");
     } finally {
-      memberOperationSubmittingRef.current = false;
-      setOperationSaving(false);
+      if (isCurrentMemberScope()) { memberOperationSubmittingRef.current = false; setOperationSaving(false); }
     }
+  }
+
+  async function handleProductRecoveryAction(action: MemberCheckoutRecoveryAction) {
+    if (!isCurrentMemberScope()) return;
+    await productCheckoutController.act(action);
+    if (!isCurrentMemberScope()) return;
+    if (action === "ack" && !productCheckoutController.blocksNewSale()) {
+      // Clear only the product form; unrelated manual/recharge work is not a checkout acknowledgement.
+      if (operationDialog && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId)) setOperationDialog(null);
+    }
+  }
+
+  if (visibleMemberScope !== memberScope) {
+    return <section className={className} aria-busy="true">正在切换会员工作区…</section>;
   }
 
   if (!canViewMembers) {
@@ -1093,6 +1204,8 @@ export default function MerchantMemberManager({
 
   return (
     <section className={`space-y-4 ${className}`}>
+      {canRecoverProductCheckout && !(operationDialog && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId)) ? <MerchantCheckoutRecoveryPanel snapshot={productCheckoutRecovery}
+        onRefresh={() => void productCheckoutController.refresh()} onAction={(action) => void handleProductRecoveryAction(action)} /> : null}
       {loadError ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>
       ) : null}
@@ -1742,7 +1855,7 @@ export default function MerchantMemberManager({
           />
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
             <form
-              className="pointer-events-auto w-full max-w-lg overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-2xl"
+              className="pointer-events-auto max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-[24px] border border-slate-200 bg-white shadow-2xl"
               onSubmit={(event) => {
                 event.preventDefault();
                 void submitMemberOperation();
@@ -1767,6 +1880,11 @@ export default function MerchantMemberManager({
                 </button>
               </div>
               <div className="space-y-4 px-5 py-4">
+                {canRecoverProductCheckout && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId) ? <>
+                  <MerchantCheckoutRecoveryPanel snapshot={productCheckoutRecovery}
+                    onRefresh={() => void productCheckoutController.refresh()} onAction={(action) => void handleProductRecoveryAction(action)} />
+                  {!selectedRedemptionItem ? <p role="alert" className="text-sm text-rose-700">原选择的商品已停用或数据已更新。请先核对原单，不会自动转换为手工扣减。</p> : null}
+                </> : null}
                 <div className="grid gap-2 sm:grid-cols-2">
                   <ProfileField label="当前积分" value={operationInsight.pointBalance} />
                   <ProfileField label="当前余额" value={formatMoney(operationInsight.balanceAmount)} />
@@ -1895,7 +2013,7 @@ export default function MerchantMemberManager({
                 <button
                   type="submit"
                   className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={operationSaving}
+                  disabled={operationSaving || (memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId) && (productCheckoutBlocked || !selectedRedemptionItem))}
                 >
                   {operationSaving ? "保存中..." : "确认"}
                 </button>

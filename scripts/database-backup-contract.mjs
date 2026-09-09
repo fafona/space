@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { validateDatabaseRecoveryContent } from "./database-recovery-content-contract.mjs";
 
 import {
   PRODUCTION_RELEASE_AGGREGATE_KEYS,
@@ -116,7 +117,7 @@ export async function sha256File(filePath) {
   return hash.digest("hex");
 }
 
-export function validateDatabaseBackupSourceIdentity(value) {
+export function validateDatabaseBackupSourceIdentity(value, options = {}) {
   const repository = trimText(value?.repository);
   const sha = trimText(value?.sha);
   const originMainSha = trimText(value?.originMainSha);
@@ -136,6 +137,18 @@ export function validateDatabaseBackupSourceIdentity(value) {
       ? Object.keys(baseline).sort()
       : [];
   const expectedBaselineKeys = [...PRODUCTION_RELEASE_BASELINE_KEYS].sort();
+  const hasRecoveryContent = Object.hasOwn(database ?? {}, "recoveryContent");
+  const recoveryValidation = hasRecoveryContent
+    ? validateDatabaseRecoveryContent(database.recoveryContent, {
+        requireCurrent: options.requireRecoveryContent === true,
+      })
+    : null;
+  if (
+    (options.requireRecoveryContent === true && !hasRecoveryContent) ||
+    (recoveryValidation && !recoveryValidation.valid)
+  ) {
+    return { valid: false, error: "manifest_recovery_content_invalid" };
+  }
   const baselineValid =
     baselineKeys.length === expectedBaselineKeys.length &&
     baselineKeys.every((key, index) => key === expectedBaselineKeys[index]) &&
@@ -195,6 +208,7 @@ export function validateDatabaseBackupSourceIdentity(value) {
         baseline: Object.fromEntries(
           PRODUCTION_RELEASE_BASELINE_KEYS.map((key) => [key, baseline[key]]),
         ),
+        ...(recoveryValidation ? { recoveryContent: recoveryValidation.content } : {}),
       },
     },
   };
@@ -226,7 +240,7 @@ export async function buildDatabaseBackupManifest(input) {
       database: "matched_before_after",
     },
     database: input.databaseIdentity,
-  });
+  }, { requireRecoveryContent: true });
   if (!sourceIdentity.valid) {
     throw new Error(sourceIdentity.error);
   }
@@ -284,6 +298,12 @@ export function validateDatabaseBackupManifest(value) {
   if (sourceIdentity && !sourceIdentity.valid) {
     return sourceIdentity;
   }
+  const legacyRecovery = legacyFormat && Object.hasOwn(value.source?.database ?? {}, "recoveryContent")
+    ? validateDatabaseRecoveryContent(value.source.database.recoveryContent, { requireCurrent: false })
+    : null;
+  if (legacyRecovery && !legacyRecovery.valid) {
+    return { valid: false, error: "manifest_recovery_content_invalid" };
+  }
 
   const entries = new Map();
   for (const item of value.files) {
@@ -325,6 +345,7 @@ export function validateDatabaseBackupManifest(value) {
         storageImage,
         storageBackend,
         ...(sourceIdentity?.source ?? {}),
+        ...(legacyRecovery ? { database: { recoveryContent: legacyRecovery.content } } : {}),
       },
       files: DATABASE_BACKUP_DATA_FILES.map((name) => entries.get(name)),
     },

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { discoverLocalTests } from "./run-local-tests.mjs";
 
 const migrationDirectory = path.join(
   process.cwd(),
@@ -676,8 +677,14 @@ test("runner and real PostgreSQL acceptance cover independently staged migration
     packageSource,
     /"test:db-migrations":\s*"[^"]*ordinary-account-authorization-cutover-migration-contract\.test\.mjs/i,
   );
-  assert.match(
-    packageSource,
-    /"test":\s*"npm run test:db-migrations/i,
+  assert.equal(
+    JSON.parse(packageSource).scripts.test,
+    "node scripts/run-local-tests.mjs && npm run check:db-migrations",
+  );
+  assert.ok(
+    discoverLocalTests(process.cwd()).includes(
+      "scripts/ordinary-account-authorization-cutover-migration-contract.test.mjs",
+    ),
+    "the default test runner must discover the cutover migration contract",
   );
 });

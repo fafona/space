@@ -9,8 +9,40 @@ import {
   loadStoredMerchantOrder,
   loadStoredMerchantOrders,
   mergeStoredMerchantOrdersRows,
+  saveStoredMerchantOrders,
   type MerchantOrdersStoreClient,
 } from "@/lib/merchantOrdersStore";
+
+test("order save commits the read-time snapshot without re-reading or direct page writes", async () => {
+  const expectedRows = [{ id: "1", slug: "__merchant_orders__:10000000", blocks: [], updated_at: "2026-09-08T10:00:00Z" }];
+  let calls = 0;
+  const client: MerchantOrdersStoreClient = {
+    from: () => assert.fail("saving must not read a newer snapshot or write pages directly"),
+    rpc: async (name, args) => {
+      calls += 1;
+      assert.equal(name, "faolla_commit_order_membership_v1");
+      assert.deepEqual(args.p_mutation, {
+        orders: { expectedRows, next: [] },
+        memberships: { expectedUpdatedAt: null, next: [] },
+      });
+      return { data: { updatedAt: "2026-09-08T10:00:00.001Z" } };
+    },
+  };
+  assert.equal((await saveStoredMerchantOrders(client, {
+    siteId: "10000000", orders: [], expectedRows,
+    memberships: { expectedUpdatedAt: null, next: [] },
+  })).error, null);
+  assert.equal(calls, 1);
+});
+
+test("order write cannot run without an explicit expected snapshot or RPC", async () => {
+  const client: MerchantOrdersStoreClient = { from: () => assert.fail("unsafe fallback") };
+  assert.equal((await saveStoredMerchantOrders(client, {
+    siteId: "10000000", orders: [], expectedRows: [],
+  })).error, "merchant_transaction_unavailable");
+  const input = { siteId: "10000000", orders: [] } as unknown as Parameters<typeof saveStoredMerchantOrders>[1];
+  assert.equal((await saveStoredMerchantOrders(client, input)).error, "order_update_conflict");
+});
 
 function createReadClient(result: { data: unknown; error: unknown }): MerchantOrdersStoreClient {
   const query = {

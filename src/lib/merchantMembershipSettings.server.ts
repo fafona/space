@@ -12,6 +12,7 @@ import {
 import {
   loadStoredMerchantMembershipSettings,
   saveStoredMerchantMembershipSettings,
+  type MerchantMembershipSettingsStoreClient,
 } from "@/lib/merchantMembershipSettingsStore";
 import { buildMutationOperationMarker } from "@/lib/mutationOperationId";
 
@@ -129,17 +130,18 @@ async function updateMerchantMembershipSettingsUnlocked(input: {
   expectedUpdatedAt?: unknown;
   operatorId?: unknown;
   assertAuthorizationCurrent?: () => Promise<void>;
-}): Promise<MerchantMembershipSettings> {
+}, supabase: MerchantMembershipSettingsStoreClient): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
-  const supabase = requireMembershipSettingsStoreClient();
   const now = new Date().toISOString();
   const existing =
     (await loadStoredMerchantMembershipSettings(supabase, normalizedSiteId)) ??
     createEmptyMerchantMembershipSettings(normalizedSiteId);
   const hasExpectedUpdatedAt = Object.prototype.hasOwnProperty.call(input, "expectedUpdatedAt");
   const expectedUpdatedAt = trimText(input.expectedUpdatedAt, 128);
-  if (hasExpectedUpdatedAt && expectedUpdatedAt !== trimText(existing.updatedAt, 128)) {
+  if (!hasExpectedUpdatedAt ||
+    (input.expectedUpdatedAt !== null && typeof input.expectedUpdatedAt !== "string") ||
+    expectedUpdatedAt !== trimText(existing.updatedAt, 128)) {
     throw new Error("merchant_membership_settings_conflict");
   }
   const incomingSettings = normalizeMerchantMembershipSettings(normalizedSiteId, {
@@ -153,26 +155,28 @@ async function updateMerchantMembershipSettingsUnlocked(input: {
     normalizedSiteId,
     mergeMerchantMembershipSettingsForView(incomingSettings, existing, normalizeSettingsView(input.view)),
   );
+  await input.assertAuthorizationCurrent?.();
   const saved = await saveStoredMerchantMembershipSettings(supabase, {
     siteId: normalizedSiteId,
     settings,
     updatedAt: now,
-    ...(hasExpectedUpdatedAt ? { expectedUpdatedAt: existing.updatedAt } : {}),
+    expectedUpdatedAt: existing.updatedAt,
     view: `${normalizeSettingsView(input.view) || "membership-settings"}${
       trimText(input.operatorId, 120) ? `:${trimText(input.operatorId, 120)}` : ""
     }`,
   });
   if (saved.error) throw new Error(saved.error);
-  return settings;
+  return { ...settings, updatedAt: saved.updatedAt ?? null };
 }
 
 export async function updateMerchantMembershipSettings(
   input: Parameters<typeof updateMerchantMembershipSettingsUnlocked>[0],
+  client: MerchantMembershipSettingsStoreClient = requireMembershipSettingsStoreClient(),
 ) {
   const siteId = trimText(input.siteId, 64);
   return withMerchantMembershipSettingsMutationLock(
     siteId,
-    () => updateMerchantMembershipSettingsUnlocked({ ...input, siteId }),
+    () => updateMerchantMembershipSettingsUnlocked({ ...input, siteId }, client),
     input.assertAuthorizationCurrent,
   );
 }
@@ -182,12 +186,11 @@ export async function reserveMerchantMembershipRedemptionStock(input: {
   operationId: unknown;
   deltas: readonly MerchantRedemptionStockDelta[];
   expectedUpdatedAt?: string | null;
-}): Promise<MerchantMembershipSettings> {
+}, supabase: MerchantMembershipSettingsStoreClient = requireMembershipSettingsStoreClient()): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   const operationMarker = buildMutationOperationMarker("member-redemption-stock", input.operationId);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
   if (!operationMarker) throw new Error("mutation_operation_id_required");
-  const supabase = requireMembershipSettingsStoreClient();
   const stored = await loadStoredMerchantMembershipSettings(supabase, normalizedSiteId);
   const current = stored ?? createEmptyMerchantMembershipSettings(normalizedSiteId);
   if (
@@ -212,19 +215,18 @@ export async function reserveMerchantMembershipRedemptionStock(input: {
     view: "redemption-stock-reserve",
   });
   if (saved.error) throw new Error(saved.error);
-  return settings;
+  return { ...settings, updatedAt: saved.updatedAt ?? null };
 }
 
 export async function releaseMerchantMembershipRedemptionStock(input: {
   siteId: string;
   operationId: unknown;
   deltas: readonly MerchantRedemptionStockDelta[];
-}): Promise<MerchantMembershipSettings> {
+}, supabase: MerchantMembershipSettingsStoreClient = requireMembershipSettingsStoreClient()): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   const operationMarker = buildMutationOperationMarker("member-redemption-stock", input.operationId);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
   if (!operationMarker) throw new Error("mutation_operation_id_required");
-  const supabase = requireMembershipSettingsStoreClient();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const stored = await loadStoredMerchantMembershipSettings(supabase, normalizedSiteId);
     const current = stored ?? createEmptyMerchantMembershipSettings(normalizedSiteId);
@@ -243,7 +245,7 @@ export async function releaseMerchantMembershipRedemptionStock(input: {
       expectedUpdatedAt: stored?.updatedAt ?? null,
       view: "redemption-stock-release",
     });
-    if (!saved.error) return settings;
+    if (!saved.error) return { ...settings, updatedAt: saved.updatedAt ?? null };
     if (saved.error !== "merchant_membership_settings_conflict" || attempt >= 2) throw new Error(saved.error);
   }
   throw new Error("merchant_membership_settings_conflict");
@@ -254,10 +256,9 @@ async function updateMerchantMembershipPrintSettingsUnlocked(input: {
   printSettings: unknown;
   operatorId?: unknown;
   assertAuthorizationCurrent?: () => Promise<void>;
-}): Promise<MerchantMembershipSettings> {
+}, supabase: MerchantMembershipSettingsStoreClient): Promise<MerchantMembershipSettings> {
   const normalizedSiteId = trimText(input.siteId, 64);
   if (!normalizedSiteId) throw new Error("invalid_site_id");
-  const supabase = requireMembershipSettingsStoreClient();
   const now = new Date().toISOString();
   const incomingPrintSettings =
     input.printSettings && typeof input.printSettings === "object" && !Array.isArray(input.printSettings)
@@ -277,6 +278,7 @@ async function updateMerchantMembershipPrintSettingsUnlocked(input: {
       },
       updatedAt,
     });
+    await input.assertAuthorizationCurrent?.();
     const saved = await saveStoredMerchantMembershipSettings(supabase, {
       siteId: normalizedSiteId,
       settings,
@@ -284,7 +286,7 @@ async function updateMerchantMembershipPrintSettingsUnlocked(input: {
       expectedUpdatedAt: current.updatedAt,
       view: `print-settings${trimText(input.operatorId, 120) ? `:${trimText(input.operatorId, 120)}` : ""}`,
     });
-    if (!saved.error) return settings;
+    if (!saved.error) return { ...settings, updatedAt: saved.updatedAt ?? null };
     if (saved.error !== "merchant_membership_settings_conflict" || attempt >= 2) throw new Error(saved.error);
   }
   throw new Error("merchant_membership_settings_conflict");
@@ -292,11 +294,12 @@ async function updateMerchantMembershipPrintSettingsUnlocked(input: {
 
 export async function updateMerchantMembershipPrintSettings(
   input: Parameters<typeof updateMerchantMembershipPrintSettingsUnlocked>[0],
+  client: MerchantMembershipSettingsStoreClient = requireMembershipSettingsStoreClient(),
 ) {
   const siteId = trimText(input.siteId, 64);
   return withMerchantMembershipSettingsMutationLock(
     siteId,
-    () => updateMerchantMembershipPrintSettingsUnlocked({ ...input, siteId }),
+    () => updateMerchantMembershipPrintSettingsUnlocked({ ...input, siteId }, client),
     input.assertAuthorizationCurrent,
   );
 }

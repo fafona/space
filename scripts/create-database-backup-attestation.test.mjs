@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { recoveryContentFixture } from "./test-fixtures/database-recovery-content.mjs";
 
 import {
   buildDatabaseBackupAttestationPredicate,
@@ -41,6 +42,7 @@ const SOURCE = {
     serverVersionNum: "150008",
     postmasterStartedAt: "2026-08-20T10:00:01.000Z",
     primary: true,
+    recoveryContent: recoveryContentFixture({ receipts: true }),
     baseline: {
       merchantRecordCount: "10",
       merchantAuthoritativeBindingCount: "10",
@@ -103,6 +105,8 @@ async function createEvidenceFixture(directory) {
     isolation: "ephemeral_docker_no_network",
     source: SOURCE,
     restoredBaseline: SOURCE.database.baseline,
+    restoredRecoveryContent: SOURCE.database.recoveryContent,
+    recoveryContentStatus: "verified",
   });
   const transferReportPath = path.join(directory, "transfer.log");
   await writeFile(
@@ -346,4 +350,99 @@ test("backup attestation rejects a same-count restored identity mismatch", async
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("new backup subject rejects legacy proof absence and unverifiable restored financial content", async () => {
+  for (const failure of ["legacy_create", "missing_restore", "mismatched_restore", "unverified_restore"]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-backup-proof-attestation-test-"));
+    try {
+      const fixture = await createEvidenceFixture(directory);
+      const reportPath = failure === "legacy_create" ? fixture.createReportPath : fixture.restoreReportPath;
+      const report = JSON.parse((await readFile(reportPath, "utf8")).trim().split(/\r?\n/).at(-1));
+      if (failure === "legacy_create") delete report.source.database.recoveryContent;
+      if (failure === "missing_restore") delete report.restoredRecoveryContent;
+      if (failure === "mismatched_restore") report.restoredRecoveryContent.relations[0].contentSha256 = "f".repeat(64);
+      if (failure === "unverified_restore") report.recoveryContentStatus = "legacy_missing";
+      await writeFile(reportPath, JSON.stringify(report));
+      await assert.rejects(createDatabaseBackupSubjectEvidence({
+        ...fixture, repository: REPOSITORY, targetSha: TARGET_SHA,
+        ciRunId: "101", workflowRunId: "202", workflowRunAttempt: "1", workflowEvent: "workflow_dispatch",
+      }), failure === "legacy_create" ? /attestation_create_source_invalid/
+        : failure === "unverified_restore" ? /attestation_restore_recovery_content_missing/
+        : /attestation_restore_recovery_content_mismatch/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("predicate cannot newly sign a legacy subject lacking recovery proof", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-backup-legacy-subject-test-"));
+  try {
+    const fixture = await createEvidenceFixture(directory);
+    const subjectEvidence = await createDatabaseBackupSubjectEvidence({
+      ...fixture, repository: REPOSITORY, targetSha: TARGET_SHA,
+      ciRunId: "101", workflowRunId: "202", workflowRunAttempt: "1", workflowEvent: "workflow_dispatch",
+    });
+    delete subjectEvidence.source.database.recoveryContent;
+    await assert.rejects(buildDatabaseBackupAttestationPredicate({
+      subjectEvidence, backupPath: fixture.backupPath,
+    }), /attestation_subject_source_invalid/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("new attestation rejects legacy proof at every boundary even when all steps agree on the downgrade", async () => {
+  for (const boundary of ["create", "verify", "restore", "restored", "all"]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-attestation-profile-downgrade-test-"));
+    try {
+      const fixture = await createEvidenceFixture(directory);
+      const legacy = recoveryContentFixture({ schemaVersion: 1 });
+      for (const name of ["create", "verify", "restore"]) {
+        const reportPath = fixture[`${name}ReportPath`];
+        const report = JSON.parse((await readFile(reportPath, "utf8")).trim().split(/\r?\n/).at(-1));
+        if (boundary === name || boundary === "all") report.source.database.recoveryContent = legacy;
+        if (name === "restore" && (boundary === "restored" || boundary === "all")) {
+          report.restoredRecoveryContent = legacy; report.recoveryContentStatus = "verified";
+        }
+        await writeFile(reportPath, JSON.stringify(report));
+      }
+      await assert.rejects(createDatabaseBackupSubjectEvidence({ ...fixture, repository: REPOSITORY, targetSha: TARGET_SHA,
+        ciRunId: "101", workflowRunId: "202", workflowRunAttempt: "1", workflowEvent: "workflow_dispatch",
+      }), boundary === "restored" ? /attestation_restore_recovery_content_mismatch/
+        : new RegExp(`attestation_${boundary === "all" ? "create" : boundary}_source_invalid`));
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }
+});
+
+test("restored receipt table cannot be dropped, renamed or changed at equal row count in an attestation", async () => {
+  for (const change of [
+    (proof) => { proof.relations.at(-1).contentSha256 = "e".repeat(64); },
+    (proof) => { proof.relations.pop(); },
+    (proof) => { proof.relations.at(-1).name = "public.wrong_receipts"; },
+    (proof) => { Object.assign(proof.relations.at(-1), { present: false, rowCount: null, contentSha256: null }); },
+  ]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-attestation-receipt-mismatch-test-"));
+    try {
+      const fixture = await createEvidenceFixture(directory);
+      const report = JSON.parse((await readFile(fixture.restoreReportPath, "utf8")).trim().split(/\r?\n/).at(-1));
+      change(report.restoredRecoveryContent); await writeFile(fixture.restoreReportPath, JSON.stringify(report));
+      await assert.rejects(createDatabaseBackupSubjectEvidence({ ...fixture, repository: REPOSITORY, targetSha: TARGET_SHA,
+        ciRunId: "101", workflowRunId: "202", workflowRunAttempt: "1", workflowEvent: "workflow_dispatch",
+      }), /attestation_restore_recovery_content_mismatch/);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }
+});
+
+test("predicate cannot re-sign a legacy four-table subject as current recovery evidence", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "faolla-attestation-legacy-resign-test-"));
+  try {
+    const fixture = await createEvidenceFixture(directory);
+    const subjectEvidence = await createDatabaseBackupSubjectEvidence({ ...fixture, repository: REPOSITORY, targetSha: TARGET_SHA,
+      ciRunId: "101", workflowRunId: "202", workflowRunAttempt: "1", workflowEvent: "workflow_dispatch" });
+    subjectEvidence.source.database.recoveryContent = recoveryContentFixture({ schemaVersion: 1 });
+    await assert.rejects(buildDatabaseBackupAttestationPredicate({ subjectEvidence, backupPath: fixture.backupPath }),
+      /attestation_subject_source_invalid/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

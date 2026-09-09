@@ -14,7 +14,8 @@ import {
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
-import { syncMerchantMembershipPointsForOrderTransitions } from "@/lib/merchantMemberships.server";
+import { prepareMerchantMembershipPointsForOrderTransitions } from "@/lib/merchantMemberships.server";
+import { mirrorSavedMemberships } from "@/lib/merchantMembershipsStore";
 import {
   listStoredMerchantOrdersByCustomer,
   loadStoredMerchantOrder,
@@ -158,6 +159,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
     const saved = await saveStoredMerchantOrders(supabase, {
       siteId: next.siteId,
       orders,
+      expectedRows: stored?.storageRows ?? [],
       previousOrders: existingOrders,
       updatedAt: next.updatedAt,
     });
@@ -226,6 +228,7 @@ export async function cancelPersonalMerchantOrder(input: {
     const saved = await saveStoredMerchantOrders(supabase, {
       siteId,
       orders: updatedOrders,
+      expectedRows: stored?.storageRows ?? [],
       previousOrders: orders,
       updatedAt: now,
     });
@@ -289,6 +292,7 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
         const saved = await saveStoredMerchantOrders(supabase, {
           siteId,
           orders: nextOrders,
+          expectedRows: stored?.storageRows ?? [],
           previousOrders: orders,
           updatedAt: new Date().toISOString(),
         });
@@ -308,6 +312,24 @@ export async function attachPersonalMerchantOrdersByGuestHash(input: {
   return attached;
 }
 
+export type MerchantOrderUpdateDependencies = {
+  createClient: () => Parameters<typeof saveStoredMerchantOrders>[0] & Parameters<typeof mirrorMerchantOrderTransitions>[0];
+  loadOrders: typeof loadStoredMerchantOrders;
+  prepareMemberships: typeof prepareMerchantMembershipPointsForOrderTransitions;
+  saveOrders: typeof saveStoredMerchantOrders;
+  mirrorOrders: typeof mirrorMerchantOrderTransitions;
+  mirrorMemberships: typeof mirrorSavedMemberships;
+};
+
+const ORDER_UPDATE_DEPENDENCIES: MerchantOrderUpdateDependencies = {
+  createClient: requireOrdersStoreClient,
+  loadOrders: loadStoredMerchantOrders,
+  prepareMemberships: prepareMerchantMembershipPointsForOrderTransitions,
+  saveOrders: saveStoredMerchantOrders,
+  mirrorOrders: mirrorMerchantOrderTransitions,
+  mirrorMemberships: mirrorSavedMemberships,
+};
+
 export async function updateMerchantOrderBySite(input: {
   siteId: string;
   orderId: string;
@@ -317,12 +339,12 @@ export async function updateMerchantOrderBySite(input: {
   expectedUpdatedAt?: unknown;
   allowCompletedTransition?: boolean;
   assertAuthorizationCurrent?: () => Promise<void>;
-}) {
-  const supabase = requireOrdersStoreClient();
+}, dependencies: MerchantOrderUpdateDependencies = ORDER_UPDATE_DEPENDENCIES) {
+  const supabase = dependencies.createClient();
   const siteId = trimText(input.siteId);
   return withMerchantOrderMutationLock(siteId, async () => {
     await input.assertAuthorizationCurrent?.();
-    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const stored = await dependencies.loadOrders(supabase, siteId);
     const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
     const orderIndex = orders.findIndex((order) => order.id === input.orderId);
     if (orderIndex < 0) {
@@ -343,20 +365,29 @@ export async function updateMerchantOrderBySite(input: {
     ) {
       throw new Error("permission_denied");
     }
-    await syncMerchantMembershipPointsForOrderTransitions([{ previous: current, next }]);
+    const memberships = await dependencies.prepareMemberships([{ previous: current, next }]);
     const updatedOrders = [...orders];
     updatedOrders[orderIndex] = next;
-    const saved = await saveStoredMerchantOrders(supabase, {
+    await input.assertAuthorizationCurrent?.();
+    const saved = await dependencies.saveOrders(supabase, {
       siteId,
       orders: updatedOrders,
+      expectedRows: stored?.storageRows ?? [],
+      memberships: memberships?.mutation,
       previousOrders: orders,
       updatedAt: now,
     });
     if (saved.error) {
-      await syncMerchantMembershipPointsForOrderTransitions([{ previous: next, next: current }]).catch(() => null);
       throw new Error(saved.error);
     }
-    await mirrorMerchantOrderTransitions(supabase, [{ previous: current, next }]);
+    if (memberships) {
+      await dependencies.mirrorMemberships(supabase, {
+        siteId,
+        previousMemberships: memberships.previousMemberships,
+        nextMemberships: memberships.mutation.next,
+      });
+    }
+    await dependencies.mirrorOrders(supabase, [{ previous: current, next }]);
     return next;
   });
 }
@@ -368,8 +399,8 @@ export async function updateMerchantOrdersBatchBySite(input: {
   status?: MerchantOrderStatus;
   allowCompletedTransition?: boolean;
   assertAuthorizationCurrent?: () => Promise<void>;
-}) {
-  const supabase = requireOrdersStoreClient();
+}, dependencies: MerchantOrderUpdateDependencies = ORDER_UPDATE_DEPENDENCIES) {
+  const supabase = dependencies.createClient();
   const siteId = trimText(input.siteId);
   const orderIds = [...new Set((Array.isArray(input.orderIds) ? input.orderIds : []).map((item) => trimText(item)).filter(Boolean))];
   if (!siteId || orderIds.length === 0) {
@@ -380,7 +411,7 @@ export async function updateMerchantOrdersBatchBySite(input: {
   }
   return withMerchantOrderMutationLock(siteId, async () => {
     await input.assertAuthorizationCurrent?.();
-    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const stored = await dependencies.loadOrders(supabase, siteId);
     const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
     const orderIdSet = new Set(orderIds);
     const now = new Date().toISOString();
@@ -412,20 +443,27 @@ export async function updateMerchantOrdersBatchBySite(input: {
     ) {
       throw new Error("permission_denied");
     }
-    await syncMerchantMembershipPointsForOrderTransitions(transitions);
-    const saved = await saveStoredMerchantOrders(supabase, {
+    const memberships = await dependencies.prepareMemberships(transitions);
+    await input.assertAuthorizationCurrent?.();
+    const saved = await dependencies.saveOrders(supabase, {
       siteId,
       orders: nextOrders,
+      expectedRows: stored?.storageRows ?? [],
+      memberships: memberships?.mutation,
       previousOrders: orders,
       updatedAt: now,
     });
     if (saved.error) {
-      await syncMerchantMembershipPointsForOrderTransitions(
-        transitions.map(({ previous, next }) => ({ previous: next, next: previous })),
-      ).catch(() => null);
       throw new Error(saved.error);
     }
-    await mirrorMerchantOrderTransitions(supabase, transitions);
+    if (memberships) {
+      await dependencies.mirrorMemberships(supabase, {
+        siteId,
+        previousMemberships: memberships.previousMemberships,
+        nextMemberships: memberships.mutation.next,
+      });
+    }
+    await dependencies.mirrorOrders(supabase, transitions);
     return updatedOrders;
   });
 }

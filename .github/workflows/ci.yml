@@ -36,8 +36,7 @@ jobs:
         run: npm run check:encoding:strict
 
       - name: Lint
-        continue-on-error: true
-        run: npm run lint -- --max-warnings=9999
+        run: npm run lint -- --quiet
 
       - name: Tests
         run: npm test
@@ -75,3 +74,211 @@ jobs:
 
       - name: Enterprise Browser Journeys
         run: npm run test:enterprise-browser
+
+  qr-database:
+    name: QR Atomic PostgreSQL Acceptance
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_qr_test
+          POSTGRES_USER: postgres
+          # Disposable CI-only instance, never application credentials.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_qr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      QR_TOKEN_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+      QR_TOKEN_TEST_PORT: "5432"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Check PostgreSQL client
+        run: psql --version
+      - name: Run QR atomic database acceptance
+        run: node scripts/qr-token-integration/run.mjs
+
+  transaction-database:
+    name: Order Membership PostgreSQL Acceptance
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_transaction_test
+          POSTGRES_USER: postgres
+          # Disposable CI-only instance, never application credentials.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_transaction_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TRANSACTION_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+      TRANSACTION_TEST_PORT: "5432"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Check PostgreSQL client
+        run: psql --version
+      - name: Run order membership atomic database acceptance
+        run: node scripts/transaction-integration/run.mjs
+
+  redemption-database:
+    name: Redemption PostgreSQL Acceptance
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_redemption_test
+          POSTGRES_USER: postgres
+          # Disposable CI-only instance, never application credentials.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_redemption_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      REDEMPTION_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+      REDEMPTION_TEST_PORT: "5432"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Check PostgreSQL client
+        run: psql --version
+      - name: Run redemption atomic database acceptance
+        run: node scripts/redemption-integration/run.mjs
+
+  checkout-database:
+    name: Checkout Context PostgreSQL Acceptance
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_checkout_test
+          POSTGRES_USER: postgres
+          # Disposable CI-only instance, never application credentials.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_checkout_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CHECKOUT_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+      CHECKOUT_TEST_PORT: "5432"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Check PostgreSQL client
+        run: psql --version
+      - name: Bind checkout PostgreSQL service identity
+        # psql connects to the host-mapped port; PostgreSQL observes its exact
+        # service-container address, not the runner's 127.0.0.1 destination.
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/ci-postgres-service-identity.mjs
+
+      - name: Run checkout context database acceptance
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/checkout-integration/run.mjs
+
+  recovery-database:
+    name: Recovery Content PostgreSQL Acceptance
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_recovery_source_test
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_recovery_source_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      RECOVERY_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+      RECOVERY_TEST_PORT: "5432"
+      RECOVERY_TEST_PSQL: /usr/lib/postgresql/16/bin/psql
+      RECOVERY_TEST_PG_DUMP: /usr/lib/postgresql/16/bin/pg_dump
+      RECOVERY_TEST_PG_RESTORE: /usr/lib/postgresql/16/bin/pg_restore
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Create empty disposable restore target
+        run: createdb --host=127.0.0.1 --port=5432 --username=postgres --no-password faolla_recovery_target_test
+      - name: Check PostgreSQL clients
+        run: |
+          /usr/lib/postgresql/16/bin/psql --version
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          /usr/lib/postgresql/16/bin/pg_restore --version
+      - name: Bind recovery PostgreSQL service identity
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/ci-postgres-service-identity.mjs
+
+      - name: Run database dump and restore content acceptance
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/recovery-integration/run.mjs

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { validateDatabaseRecoveryContent } from "./database-recovery-content-contract.mjs";
 
 import {
   sha256File,
@@ -108,7 +109,9 @@ async function requireEvidenceFile(filePath, code) {
 }
 
 function requireStableSource(value, repository, targetSha, code) {
-  const validation = validateDatabaseBackupSourceIdentity(value);
+  const validation = validateDatabaseBackupSourceIdentity(value, {
+    requireRecoveryContent: true,
+  });
   if (
     !validation.valid ||
     validation.source.repository !== repository ||
@@ -247,6 +250,18 @@ export async function createDatabaseBackupSubjectEvidence(input) {
       "attestation_restore_baseline_mismatch",
     );
   }
+  if (restore.recoveryContentStatus !== "verified") {
+    throw new DatabaseBackupAttestationError("attestation_restore_recovery_content_missing");
+  }
+  const restoredProof = validateDatabaseRecoveryContent(restore.restoredRecoveryContent, { requireCurrent: true });
+  if (!restoredProof.valid) {
+    throw new DatabaseBackupAttestationError("attestation_restore_recovery_content_mismatch");
+  }
+  assertSameSource(
+    restoredProof.content,
+    source.database.recoveryContent,
+    "attestation_restore_recovery_content_mismatch",
+  );
 
   const reportPaths = {
     readiness: input.readinessReportPath,

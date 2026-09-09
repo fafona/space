@@ -50,6 +50,7 @@ import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchant
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import { readMerchantRedemptionCheckoutError } from "@/lib/merchantRedemptionCheckoutErrors";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -71,6 +72,17 @@ const DEFAULT_GET_DEPENDENCIES: MerchantMembershipGetRouteDependencies = {
   listOrders: listMerchantOrders,
   listCoupons: listMerchantCoupons,
   getRechargeCancellationQuote: getMerchantMembershipRechargeCancellationQuote,
+};
+
+export type MerchantMembershipPatchRouteDependencies = Pick<MerchantMembershipGetRouteDependencies, "authorizeActor" | "reauthorizeActor"> & {
+  applyAccountOperation: typeof applyMerchantMembershipAccountOperation;
+  applyRedemptionCheckout: typeof applyMerchantMembershipRedemptionCart;
+};
+const DEFAULT_PATCH_DEPENDENCIES: MerchantMembershipPatchRouteDependencies = {
+  authorizeActor: authorizeMerchantBusinessRequest,
+  reauthorizeActor: reauthorizeMerchantBusinessMutation,
+  applyAccountOperation: applyMerchantMembershipAccountOperation,
+  applyRedemptionCheckout: applyMerchantMembershipRedemptionCart,
 };
 
 function trimText(value: unknown, maxLength = 4096) {
@@ -132,16 +144,31 @@ async function resolveMembershipAdminSession(
     siteId,
     requiredPermission,
   });
-  return {
+  const session: MerchantMembershipAdminSession = {
     actor,
     operatorId: actor.principalKey,
     assertAuthorizationCurrent: async () => {
-      await authorizationDependencies.reauthorizeActor(request, {
+      session.actor = await authorizationDependencies.reauthorizeActor(request, {
         actor,
         requiredPermissions: [requiredPermission],
       });
     },
   };
+  return session;
+}
+
+function checkoutResultResponse(
+  result: Awaited<ReturnType<typeof applyMerchantMembershipRedemptionCart>>,
+  session: MerchantMembershipAdminSession,
+) {
+  return privateJson({
+    ok: true,
+    membership: result.membership ? redactMembershipMutationResult(
+      { ...result.membership, transactions: [], insight: undefined }, session, "redemptions.checkout",
+    ) : null,
+    receipt: result.receipt,
+    replayed: result.replayed,
+  });
 }
 
 function membershipAccessErrorResponse(error: unknown, fallbackError: string, status = 500) {
@@ -626,9 +653,18 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  return handleMerchantMembershipsPatch(request);
+}
+
+export async function handleMerchantMembershipsPatch(
+  request: Request,
+  dependencyOverrides: Partial<MerchantMembershipPatchRouteDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_PATCH_DEPENDENCIES, ...dependencyOverrides };
   if (!isTrustedSameOriginMutationRequest(request)) {
     return applyPrivateResponseHeaders(getTrustedMutationRequestErrorResponse());
   }
+  let checkoutRequest = false;
   try {
     const body = (await request.json().catch(() => null)) as {
       action?: unknown;
@@ -657,6 +693,10 @@ export async function PATCH(request: Request) {
       return privateJson({ error: "invalid_site_id" }, { status: 400 });
     }
     const action = trimText(body?.action, 80);
+    const operationType = trimText(body?.type, 80) === "recharge" ? "recharge" : "redeem";
+    const hasRedemptionItem = body?.redemptionItemId !== undefined && body?.redemptionItemId !== null && body?.redemptionItemId !== "";
+    const memberItemCheckout = action === "member_operation" && operationType === "redeem" && hasRedemptionItem;
+    checkoutRequest = action === "member_redemption_checkout" || memberItemCheckout;
     const merchantPermission = getMerchantMembershipPatchRequiredPermission({
       action,
       type: trimText(body?.type, 80),
@@ -671,7 +711,7 @@ export async function PATCH(request: Request) {
       );
     }
     const merchantSession = merchantPermission
-      ? await resolveMembershipAdminSession(request, siteId, merchantPermission)
+      ? await resolveMembershipAdminSession(request, siteId, merchantPermission, dependencies)
       : null;
     if (action === "update_allergens" && merchantSession) {
       const membership = await updateMerchantMembershipAllergens({
@@ -690,11 +730,30 @@ export async function PATCH(request: Request) {
       });
     }
     if (action === "member_operation" && merchantSession) {
-      const membership = await applyMerchantMembershipAccountOperation({
+      if (memberItemCheckout) {
+        // Never discard a product selection or truncate it to a different item.
+        // Only explicit empty selection continues to the legacy manual operation.
+        if (typeof body?.redemptionItemId !== "string" || !body.redemptionItemId.trim() || body.redemptionItemId.trim().length > 120) {
+          throw new Error("membership_redemption_item_invalid");
+        }
+        const result = await dependencies.applyRedemptionCheckout({
+          siteId,
+          membershipId: trimText(body.membershipId, 160),
+          memberNo: trimText(body.memberNo, 120),
+          items: [{ redemptionItemId: body.redemptionItemId.trim(), quantity: body.redemptionQuantity }],
+          note: body.note,
+          operatorId: merchantSession.operatorId,
+          operationId: body.operationId,
+          assertAuthorizationCurrent: merchantSession.assertAuthorizationCurrent,
+        });
+        await merchantSession.assertAuthorizationCurrent();
+        return checkoutResultResponse(result, merchantSession);
+      }
+      const membership = await dependencies.applyAccountOperation({
         siteId,
         membershipId: trimText(body?.membershipId, 160),
         memberNo: trimText(body?.memberNo, 120),
-        type: trimText(body?.type, 80) === "recharge" ? "recharge" : "redeem",
+        type: operationType,
         points: body?.points,
         balanceAmount: body?.balanceAmount,
         note: body?.note,
@@ -758,7 +817,7 @@ export async function PATCH(request: Request) {
       });
     }
     if (action === "member_redemption_checkout" && merchantSession) {
-      const membership = await applyMerchantMembershipRedemptionCart({
+      const result = await dependencies.applyRedemptionCheckout({
         siteId,
         membershipId: trimText(body?.membershipId, 160),
         memberNo: trimText(body?.memberNo, 120),
@@ -768,14 +827,8 @@ export async function PATCH(request: Request) {
         operationId: body?.operationId,
         assertAuthorizationCurrent: merchantSession.assertAuthorizationCurrent,
       });
-      return privateJson({
-        ok: true,
-        membership: redactMembershipMutationResult(
-          membership,
-          merchantSession,
-          "redemptions.checkout",
-        ),
-      });
+      await merchantSession.assertAuthorizationCurrent();
+      return checkoutResultResponse(result, merchantSession);
     }
     if (action === "member_checkin") {
       const session = await resolvePersonalAccountSessionFromRequest(request);
@@ -851,9 +904,15 @@ export async function PATCH(request: Request) {
     if (error instanceof MerchantBusinessAccessError) {
       return privateJson({ error: error.code }, { status: error.status });
     }
+    if (checkoutRequest) {
+      const { code, status } = readMerchantRedemptionCheckoutError(error);
+      return privateJson({ error: code, message: code }, { status });
+    }
     const message = error instanceof Error ? error.message : "unknown_error";
     const status =
-      message === "membership_not_found" || message === "membership_recharge_not_found"
+      message === "merchant_transaction_unavailable"
+        ? 503
+        : message === "membership_not_found" || message === "membership_recharge_not_found"
         ? 404
         : message === "membership_redemption_rollback_failed" ||
             message === "membership_redemption_stock_rollback_failed" ||
@@ -865,6 +924,12 @@ export async function PATCH(request: Request) {
             message === "membership_redemption_stock_insufficient" ||
             message === "merchant_memberships_conflict" ||
             message === "merchant_membership_settings_conflict" ||
+            message === "merchant_coupons_conflict" ||
+            message === "redemption_operation_conflict" ||
+            message === "redemption_legacy_operation_requires_review" ||
+            message === "redemption_checkout_cancelled" ||
+            message === "redemption_pending_checkout_exists" ||
+            message === "redemption_checkout_quote_changed" ||
             message === "coupon_already_redeemed"
           ? 409
           : 400;

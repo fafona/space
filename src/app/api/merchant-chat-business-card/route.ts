@@ -57,6 +57,35 @@ function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
 
+export type MerchantChatBusinessCardDependencies = {
+  createClient: () => LooseSupabaseClient | null;
+  authorizeSuperAdmin: typeof isSuperAdminRequestAuthorized;
+  resolveMerchantSession: typeof resolveMerchantSessionFromRequest;
+  readAccessTokens: typeof readMerchantRequestAccessTokens;
+  assertLegacyIdentityAllowed: typeof assertLegacyMerchantIdentityAllowed;
+  loadPeerInbox: typeof loadStoredMerchantPeerInbox;
+  loadSnapshot: typeof loadStoredPlatformMerchantSnapshot;
+  saveSnapshot: typeof savePlatformMerchantSnapshot;
+};
+
+const defaultDependencies: MerchantChatBusinessCardDependencies = {
+  createClient: () => {
+    const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+    const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey) return null;
+    return createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    }) as unknown as LooseSupabaseClient;
+  },
+  authorizeSuperAdmin: isSuperAdminRequestAuthorized,
+  resolveMerchantSession: resolveMerchantSessionFromRequest,
+  readAccessTokens: readMerchantRequestAccessTokens,
+  assertLegacyIdentityAllowed: assertLegacyMerchantIdentityAllowed,
+  loadPeerInbox: loadStoredMerchantPeerInbox,
+  loadSnapshot: loadStoredPlatformMerchantSnapshot,
+  saveSnapshot: savePlatformMerchantSnapshot,
+};
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -176,10 +205,11 @@ async function hasPeerMerchantAccess(
   supabase: LooseSupabaseClient,
   authorizedMerchantIds: Iterable<string>,
   merchantId: string,
+  dependencies: MerchantChatBusinessCardDependencies,
 ) {
   const ownerMerchantIds = [...new Set(Array.from(authorizedMerchantIds).map((value) => normalizeMerchantId(value)).filter(Boolean))];
   if (ownerMerchantIds.length === 0) return false;
-  const peerInbox = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+  const peerInbox = await dependencies.loadPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
   return ownerMerchantIds.some((authorizedMerchantId) =>
     listMerchantPeerContactsForMerchant(peerInbox, authorizedMerchantId).some((contact) => contact.merchantId === merchantId),
   );
@@ -223,14 +253,16 @@ async function isAuthorizedForMerchant(
   request: Request,
   supabase: LooseSupabaseClient,
   merchantId: string,
+  access: "read" | "write",
+  dependencies: MerchantChatBusinessCardDependencies,
 ) {
-  if (await isSuperAdminRequestAuthorized(request)) {
+  if (await dependencies.authorizeSuperAdmin(request)) {
     return true;
   }
 
   const authorizedMerchantIdSet = new Set<string>();
 
-  const resolvedSession = await resolveMerchantSessionFromRequest(request);
+  const resolvedSession = await dependencies.resolveMerchantSession(request);
   if (resolvedSession?.merchantId) {
     authorizedMerchantIdSet.add(resolvedSession.merchantId);
     if (resolvedSession.merchantId === merchantId) {
@@ -238,11 +270,11 @@ async function isAuthorizedForMerchant(
     }
   }
 
-  const accessTokens = readMerchantRequestAccessTokens(request);
+  const accessTokens = dependencies.readAccessTokens(request);
   for (const accessToken of accessTokens) {
     const authResult = await supabase.auth.getUser(accessToken);
     if (authResult.error || !authResult.data.user) continue;
-    const legacyIdentityAllowed = await assertLegacyMerchantIdentityAllowed(
+    const legacyIdentityAllowed = await dependencies.assertLegacyIdentityAllowed(
       supabase,
       authResult.data.user,
     ).then(
@@ -264,11 +296,13 @@ async function isAuthorizedForMerchant(
     }
   }
 
-  if (authorizedMerchantIdSet.size === 0) {
+  // A contact relationship permits reading a shared card, never editing its owner.
+  // Keep the existing owner/staff-identity checks above for both operations.
+  if (access === "write" || authorizedMerchantIdSet.size === 0) {
     return false;
   }
 
-  return hasPeerMerchantAccess(supabase, authorizedMerchantIdSet, merchantId);
+  return hasPeerMerchantAccess(supabase, authorizedMerchantIdSet, merchantId, dependencies);
 }
 
 async function resolveMerchantName(supabase: LooseSupabaseClient, merchantId: string) {
@@ -282,10 +316,12 @@ async function resolveMerchantName(supabase: LooseSupabaseClient, merchantId: st
   return normalizeText((data as MerchantRow | null)?.name) || merchantId;
 }
 
-export async function GET(request: Request) {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
+export async function handleMerchantChatBusinessCardGet(
+  request: Request,
+  dependencies: MerchantChatBusinessCardDependencies = defaultDependencies,
+) {
+  const supabase = dependencies.createClient();
+  if (!supabase) {
     return NextResponse.json({ error: "merchant_chat_business_card_env_missing" }, { status: 503 });
   }
 
@@ -295,20 +331,12 @@ export async function GET(request: Request) {
   }
 
   try {
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    }) as unknown as LooseSupabaseClient;
-
-    const authorized = await isAuthorizedForMerchant(request, supabase, merchantId);
+    const authorized = await isAuthorizedForMerchant(request, supabase, merchantId, "read", dependencies);
     if (!authorized) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    const snapshotPayload = await loadStoredPlatformMerchantSnapshot(
+    const snapshotPayload = await dependencies.loadSnapshot(
       supabase as unknown as PlatformMerchantSnapshotStoreClient,
     );
     const snapshotSite = snapshotPayload?.snapshot.find((site) => site.id === merchantId) ?? null;
@@ -341,13 +369,15 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function handleMerchantChatBusinessCardPost(
+  request: Request,
+  dependencies: MerchantChatBusinessCardDependencies = defaultDependencies,
+) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
   }
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
+  const supabase = dependencies.createClient();
+  if (!supabase) {
     return NextResponse.json({ error: "merchant_chat_business_card_env_missing" }, { status: 503 });
   }
 
@@ -364,22 +394,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    }) as unknown as LooseSupabaseClient;
-
-    const authorized = await isAuthorizedForMerchant(request, supabase, merchantId);
+    const authorized = await isAuthorizedForMerchant(request, supabase, merchantId, "write", dependencies);
     if (!authorized) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const isSuperAdminActor = await isSuperAdminRequestAuthorized(request);
+    const isSuperAdminActor = await dependencies.authorizeSuperAdmin(request);
 
     const snapshotStore = supabase as unknown as PlatformMerchantSnapshotStoreClient;
-    const existingPayload = await loadStoredPlatformMerchantSnapshot(snapshotStore);
+    const existingPayload = await dependencies.loadSnapshot(snapshotStore);
     const existingSite = existingPayload?.snapshot.find((site) => site.id === merchantId) ?? null;
     const merchantName = existingSite?.merchantName || (await resolveMerchantName(supabase, merchantId));
     const normalizedBusinessCards = Object.prototype.hasOwnProperty.call(body ?? {}, "businessCards")
@@ -432,7 +454,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "merchant_chat_business_card_invalid" }, { status: 400 });
     }
 
-    const saveResult = await savePlatformMerchantSnapshot(snapshotStore, {
+    const saveResult = await dependencies.saveSnapshot(snapshotStore, {
       revision: existingPayload?.revision ?? "",
       snapshot: upsertPlatformMerchantSnapshotSite(existingPayload?.snapshot ?? [], snapshotSite),
       defaultSortRule: existingPayload?.defaultSortRule ?? "created_desc",
@@ -467,4 +489,12 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(request: Request) {
+  return handleMerchantChatBusinessCardGet(request);
+}
+
+export async function POST(request: Request) {
+  return handleMerchantChatBusinessCardPost(request);
 }
