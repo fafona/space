@@ -47,11 +47,16 @@ function captureInput(value) {
       !/^[A-Za-z0-9._-]{1,100}$/.test(value.appName) || !integer(value.appPort, 1) || value.appPort > 65535 || !SHA.test(value.expectedOldSha)) fail();
   return { ...value };
 }
-function validProcess(value) {
+function validProcess(value, allowRootCwd = false) {
   return exact(value, PROCESS_KEYS) && integer(value.pid, 1) && integer(value.parentPid) && integer(value.uid) &&
     /^[1-9]\d{0,24}$/.test(value.startTicks) && IDENTITY.test(value.processIdentity) && IDENTITY.test(value.cwdIdentity) &&
-    IDENTITY.test(value.executableIdentity) && absolute(value.cwd) && absolute(value.executable) && DIGEST.test(value.commandLineDigest);
+    IDENTITY.test(value.executableIdentity) && (absolute(value.cwd) || (allowRootCwd && value.cwd === "/")) &&
+    absolute(value.executable) && DIGEST.test(value.commandLineDigest);
 }
+// A verified supervisor can legitimately start from /. This exception applies
+// only to its working directory, never application paths or executables. The
+// same frozen process/directory identities and ancestry checks still apply.
+const validDaemonProcess = (value) => validProcess(value, true);
 function validPm2(value) {
   return exact(value, PM2_KEYS) && integer(value.pmId) && integer(value.pid) && text(value.name, 150) &&
     ["online", "stopped"].includes(value.status) && Number.isSafeInteger(value.createdAt) && value.createdAt > 0 &&
@@ -80,7 +85,7 @@ export function validateRuntimeProof(value) {
   if (!exact(value, ["version", "input", "bootId", "disk", "environment", "daemon", "web", "worker"]) || value.version !== 1) fail();
   const input = captureInput(value.input);
   if (!UUID.test(value.bootId) || !validDisk(value.disk, input, input.expectedOldSha) || !validEnvironment(value.environment, value.disk) ||
-      !validProcess(value.daemon) || !validManaged(value.web, input.appName, value.disk.runtime) || value.web.processes.length !== 1 ||
+      !validDaemonProcess(value.daemon) || !validManaged(value.web, input.appName, value.disk.runtime) || value.web.processes.length !== 1 ||
       value.web.processes[0].parentPid !== value.daemon.pid ||
       !exact(value.worker, ["state", "managed"]) || !["running", "inactive", "absent"].includes(value.worker.state)) fail();
   if (value.worker.state === "absent" ? value.worker.managed !== null :
@@ -93,7 +98,7 @@ export function validateCandidateProof(value, rawRuntimeProof) {
   const proof = validateRuntimeProof(rawRuntimeProof);
   if (!exact(value, ["version", "targetSha", "pauseExpected", "disk", "environment", "daemon", "web"]) || value.version !== 1 ||
       !SHA.test(value.targetSha) || !["0", "1"].includes(value.pauseExpected) || !validDisk(value.disk, proof.input, value.targetSha) ||
-      !validEnvironment(value.environment, value.disk) || !validProcess(value.daemon) ||
+      !validEnvironment(value.environment, value.disk) || !validDaemonProcess(value.daemon) ||
       !validManaged(value.web, proof.input.appName, value.disk.runtime) || value.web.processes.length !== 1 ||
       value.web.processes[0].parentPid !== value.daemon.pid) fail();
   return structuredClone(value);
@@ -217,7 +222,7 @@ async function observe(input, d, pauseExpected = null, workerRuntime = null) {
   const supervision = await d.supervision(input.appName, disk, input.appPort, input.expectedOldSha);
   if (classifyRuntimeSupervision({ ...supervision, runtime: disk.runtime, stable: true }) !== RUNTIME_SUPERVISION_CODES.direct) fail();
   const daemon = pick(supervision.listener.chain.find((entry) => entry.pid === supervision.ownership.daemonPid) ?? {}, PROCESS_KEYS);
-  if (!validProcess(daemon)) fail();
+  if (!validDaemonProcess(daemon)) fail();
   const entries = pm2List(daemon, d);
   const web = managedProcess(entries, input.appName, disk.runtime, "web", daemon, d);
   if (!web || web.pm2.pid !== supervision.listener.pid || web.processes.length !== 1) fail();

@@ -16,6 +16,13 @@ transport. Do not retry `plan` or start `prepare` until that transport is bound
 to the verified daemon without automatic daemon creation and the reported
 runtime compatibility failures have been addressed.
 
+A root working directory is valid for an otherwise verified supervisor; it is
+not valid for the application release or executable. Accepting that directory
+does not approve the PM2 connection or any worker descendants. In particular,
+non-Node worker descendants remain unsupported until their identities and
+stop/restore behavior are explicitly verified. This compatibility correction
+alone is not permission to retry `plan` or `prepare`.
+
 ## Release order
 
 1. Merge the reviewed exact candidate and require successful push CI, including

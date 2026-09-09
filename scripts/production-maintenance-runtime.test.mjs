@@ -86,6 +86,63 @@ test("capture freezes direct owner, environment equality and worker without raw 
   assert.equal(f.calls.some((call) => call.args[0] !== "jlist"), false);
 });
 
+test("an owned daemon may have root cwd through capture and candidate verification", async () => {
+  const f = fixture(); f.facts.get(10).cwd = "/";
+  const proof = await captureRuntime(input(), f.deps);
+  assert.equal(proof.daemon.cwd, "/");
+  assert.deepEqual(validateRuntimeProof(proof), proof);
+  await stopRuntime(proof, f.deps); await assertRuntimeStopped(proof, f.deps);
+  f.installCandidate(); const candidate = await captureCandidate(proof, TARGET, "1", f.deps);
+  assert.equal(candidate.daemon.cwd, "/");
+  await verifyCandidate(proof, candidate, "1", f.deps);
+  await stopCandidate(proof, candidate, f.deps);
+  assert.equal(f.calls.some((call) => call.args[0] === "start"), false);
+});
+
+test("root-cwd daemon does not permit root app paths, malformed identities or root-cwd workers", async () => {
+  const f = fixture(); f.facts.get(10).cwd = "/";
+  const proof = await captureRuntime(input(), f.deps);
+  for (const change of [
+    (copy) => { copy.input.appDir = "/"; },
+    (copy) => { copy.disk.runtime = "/"; },
+    (copy) => { copy.web.processes[0].cwd = "/"; },
+    (copy) => { copy.worker.managed.processes[0].cwd = "/"; },
+    (copy) => { copy.daemon.cwd = "/../"; },
+    (copy) => { copy.daemon.cwd = "/./"; },
+    (copy) => { copy.daemon.executable = "/"; },
+    (copy) => { copy.daemon.cwdIdentity = "invalid"; },
+    (copy) => { copy.daemon.startTicks = "0"; },
+  ]) {
+    const copy = structuredClone(proof); change(copy);
+    assert.throws(() => validateRuntimeProof(copy), { message: "production_maintenance_runtime_unverified" });
+  }
+});
+
+test("root-cwd daemon identity drift still prevents control of frozen processes", async () => {
+  for (const change of [
+    (fact) => { fact.cwdIdentity = id(777); },
+    (fact) => { fact.commandLineDigest = hash("replacement"); },
+    (fact) => { fact.startTicks = "99999"; },
+    (fact) => { fact.pid = 11; },
+    (fact) => { fact.processIdentity = id(888); },
+    (fact) => { fact.cwd = "/srv/pm2"; },
+  ]) {
+    const f = fixture(); f.facts.get(10).cwd = "/";
+    const proof = await captureRuntime(input(), f.deps);
+    change(f.facts.get(10));
+    await assert.rejects(stopRuntime(proof, f.deps), { message: "production_maintenance_runtime_unverified" });
+    assert.equal(f.calls.some((call) => call.args[0] !== "jlist"), false);
+  }
+});
+
+test("native worker descendants remain unsupported after accepting a root-cwd daemon", async () => {
+  const f = fixture(); f.facts.get(10).cwd = "/";
+  f.facts.set(202, { ...f.process(202, f.runtime(OLD), 201), executable: "/opt/unverified-native" });
+  await assert.rejects(captureRuntime(input(), f.deps), { message: "production_maintenance_runtime_unverified" });
+  assert.ok(f.calls.some((call) => call.args[0] === "jlist"));
+  assert.equal(f.calls.some((call) => call.args[0] !== "jlist"), false);
+});
+
 test("capture rejects legacy topology, environment mismatch, duplicate PM2 and unstable observations", async () => {
   for (const change of [
     (f) => { const previous = f.deps.supervision; f.deps.supervision = async () => { const value = await previous(); value.ownership.mode = "legacy"; return value; }; },
