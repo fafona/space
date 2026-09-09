@@ -310,3 +310,90 @@ test("reinstall returns updated retiring-worker identities for caller persistenc
   assert(second.nginx.retiringWorkers.length > first.nginx.retiringWorkers.length);
   await verifyIngress(second, h.d);
 });
+
+function controlLocationBody(planned) {
+  const file = planned.installation.files.find((entry) => entry.path === SITE);
+  const body = file.modified.match(/server_name db\.example\.test;\s*(?:proxy_set_header[^;]+;\s*)*location \/ \{([^}]+)\}/)?.[1];
+  assert(body, "expected exact synthetic control location");
+  return body;
+}
+function headerDirectives(source) {
+  return [...source.matchAll(/proxy_set_header\s+([A-Za-z0-9-]+)\s+("[^"\n]*"|[^;\s]+)\s*;/g)]
+    .map((match) => ({ name: match[1].toLowerCase(), value: match[2].replace(/^"|"$/g, "") }));
+}
+function projectedUpstreamHeaders(directives, incoming) {
+  // Pure model of the explicitly covered Nginx empty-value suppression rule,
+  // not a claim that a real Nginx instance was run by this unit test.
+  const outgoing = { ...incoming };
+  for (const directive of directives) {
+    const value = directive.value.startsWith("$http_") ? incoming[directive.value.slice(6).replaceAll("_", "-")] : directive.value;
+    if (value === "") delete outgoing[directive.name]; else outgoing[directive.name] = value;
+  }
+  return outgoing;
+}
+
+for (const level of ["none", "http", "server", "location"]) test(`control header is stripped at exact location while ${level} header behavior is preserved`, () => {
+  const h = host();
+  const headers = 'proxy_set_header Authorization "$http_authorization"; proxy_set_header apikey $http_apikey; proxy_set_header Cookie $http_cookie; proxy_set_header X-Existing "kept";';
+  if (level === "http") h.state.files.set(ROOT, h.state.files.get(ROOT).replace("http {", `http { ${headers}`));
+  if (level === "server") {
+    h.state.files.set(ROOT, h.state.files.get(ROOT).replace("http {", "http { proxy_set_header X-Overridden parent;"));
+    h.state.files.set(SITE, h.state.files.get(SITE).replace("server_name db.example.test;", `server_name db.example.test; ${headers}`));
+  }
+  if (level === "location") {
+    h.state.files.set(ROOT, h.state.files.get(ROOT).replace("http {", "http { proxy_set_header X-Overridden parent;"));
+    h.state.files.set(SITE, h.state.files.get(SITE).replace("location / { proxy_pass http://127.0.0.1:8000;", `location / { ${headers} proxy_pass http://127.0.0.1:8000;`));
+  }
+  const planned = planIngressInstallation(h.capture(), TOKEN);
+  assert.equal(planned.nginx.plan.controlLocations.length, 1, "one shared exact context for the four control paths");
+  const body = controlLocationBody(planned);
+  assert.equal((body.match(/proxy_set_header X-Faolla-Maintenance-Control "";/g) || []).length, 1);
+  assert(!body.includes("X-Overridden"), "do not revive an overridden ancestor setting");
+  if (level !== "none") for (const directive of headers.match(/proxy_set_header[^;]+;/g)) assert(body.includes(directive), "retain exact original directive text and values");
+  const incoming = { authorization: "Bearer synthetic", apikey: "synthetic", cookie: "synthetic_cookie", "x-faolla-maintenance-control": TOKEN };
+  const expected = projectedUpstreamHeaders(headerDirectives(level === "none" ? "" : headers), incoming);
+  delete expected["x-faolla-maintenance-control"];
+  assert.deepEqual(projectedUpstreamHeaders(headerDirectives(body), incoming), expected);
+  assert.equal(incoming["x-faolla-maintenance-control"], TOKEN, "incoming header is untouched for rewrite map evaluation");
+  assert.match(planned.installation.privateContent, /map \$http_x_faolla_maintenance_control/);
+  assert.equal(planned.nginx.plan.controlLocations[0].inheritedHeaders.length, ["http", "server"].includes(level) ? 4 : 0);
+});
+
+test("every distinct exact/static control location gets its own upstream strip, including existing custom headers", () => {
+  const h = host();
+  const locations = ["/rest/v1/", "/rest/v1/pages", "/auth/v1/settings", "/auth/v1/token"]
+    .map((path) => `location = ${path} { proxy_set_header X-Existing keep; proxy_pass http://127.0.0.1:8000; }`).join("\n");
+  h.state.files.set(SITE, h.state.files.get(SITE).replace("location / { proxy_pass http://127.0.0.1:8000; }", locations));
+  const planned = planIngressInstallation(h.capture(), TOKEN);
+  assert.equal(planned.nginx.plan.controlLocations.length, 4);
+  const modified = planned.installation.files.find((entry) => entry.path === SITE).modified;
+  assert.equal((modified.match(/proxy_set_header X-Faolla-Maintenance-Control "";/g) || []).length, 4);
+  assert.equal((modified.match(/proxy_set_header X-Existing keep;/g) || []).length, 4);
+});
+
+test("headers supplied by a location include remain local and their shared file is not rewritten", () => {
+  const h = host(), path = "/etc/nginx/proxy/headers.inc";
+  const original = 'proxy_set_header Authorization "$http_authorization";\nproxy_set_header Cookie $http_cookie;\n';
+  h.state.files.set(path, original);
+  h.state.files.set(SITE, h.state.files.get(SITE).replace("location / { proxy_pass http://127.0.0.1:8000;", `location / { include ${path}; proxy_pass http://127.0.0.1:8000;`));
+  const planned = planIngressInstallation(h.capture(), TOKEN);
+  assert.deepEqual(planned.nginx.plan.controlLocations[0].inheritedHeaders, []);
+  assert.equal(planned.installation.files.find((entry) => entry.path === path).modified, original);
+  assert.match(controlLocationBody(planned), /proxy_set_header X-Faolla-Maintenance-Control "";/);
+});
+
+test("uncertain header-name inheritance and tampered strip plans are rejected before mutations", () => {
+  const h = host();
+  h.state.files.set(ROOT, h.state.files.get(ROOT).replace("http {", "http { proxy_set_header $unverified_name value;"));
+  assert.throws(h.capture);
+  assert.equal(h.state.mutations.length, 0);
+  const clean = host(), planned = planIngressInstallation(clean.capture(), TOKEN);
+  for (const change of [
+    (proof) => { proof.nginx.plan.controlLocations = []; },
+    (proof) => { proof.nginx.plan.controlLocations[0].inheritedHeaders = ["proxy_set_header Authorization erased;"]; },
+    (proof) => {
+      const file = proof.installation.files.find((entry) => entry.path === SITE);
+      file.modified = file.modified.replace('proxy_set_header X-Faolla-Maintenance-Control "";', ""); file.modifiedHash = sha(file.modified);
+    },
+  ]) { const forged = structuredClone(planned); change(forged); assert.throws(() => validateIngressProof(forged)); }
+});

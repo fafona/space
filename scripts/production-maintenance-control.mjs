@@ -50,6 +50,20 @@ export function validateMaintenanceState(state, request, bootId, now) {
   return state;
 }
 
+export function validateMaintenanceSubproofBindings(state) {
+  const runtime = state.runtime;
+  const ingress = state.ingress;
+  const database = ingress?.docker?.containers?.find((container) => container.service === "db");
+  if (!runtime?.input || !ingress?.input || !database || runtime.bootId !== state.bootId ||
+      ["appDir", "appName", "appPort", "expectedOldSha"].some((key) => runtime.input[key] !== state[key]) ||
+      ingress.input.operationId !== state.operationId || ingress.input.appPort !== state.appPort ||
+      database.id !== state.database?.id || database.image !== state.database?.image) failure("maintenance_subproof_binding_invalid");
+  let publicUrl;
+  try { publicUrl = new URL(state.publicSupabaseUrl).href; } catch { failure("maintenance_subproof_binding_invalid"); }
+  if (ingress.input.publicSupabaseUrl !== publicUrl) failure("maintenance_subproof_binding_invalid");
+  return true;
+}
+
 function publicSummary(state, value = state.phase) {
   return { version: 1, operationId: state.operationId, targetSha: state.targetSha, expectedOldSha: state.expectedOldSha, state: value };
 }
@@ -341,6 +355,7 @@ async function productionOperations(request) {
     },
     validateProofs(state) {
       runtime.validateRuntimeProof(state.runtime); ingress.validateIngressProof(state.ingress);
+      validateMaintenanceSubproofBindings(state);
       if (state.candidate) {
         runtime.validateCandidateProof(state.candidate, state.runtime);
         if (state.candidate.targetSha !== state.targetSha) failure("maintenance_candidate_target_invalid");

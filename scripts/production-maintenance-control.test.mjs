@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { parseMaintenanceRequest, runMaintenanceAction, validateMaintenanceState, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { parseMaintenanceRequest, runMaintenanceAction, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -49,6 +49,24 @@ test("fixed PostgreSQL projections preserve typed database identity and all requ
   assert.match(PRODUCTION_MAINTENANCE_ACL_SQL, /has_table_privilege\('service_role','public.pages','INSERT'\) AND has_table_privilege\('service_role','public.pages','UPDATE'\) AND has_table_privilege\('service_role','public.pages','DELETE'\)/);
   for (const sql of [PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL]) {
     assert.match(sql, /^BEGIN READ ONLY;/); assert.match(sql, /ROLLBACK;$/);
+  }
+});
+test("individually valid subordinate proofs must bind to the same operation, boot, runtime, gateway and DB", () => {
+  const state = { ...fixture().state(), database: { id: "database-id", image: "database-image" } };
+  state.runtime = { input: { appDir: state.appDir, appName: state.appName, appPort: state.appPort, expectedOldSha: old }, bootId: boot };
+  state.ingress = { input: { appPort: state.appPort, operationId, publicSupabaseUrl: "https://database.example/" }, docker: { containers: [{ service: "db", ...state.database }] } };
+  assert.equal(validateMaintenanceSubproofBindings(state), true);
+  for (const mutate of [
+    (copy) => { copy.runtime.bootId = "different"; },
+    (copy) => { copy.runtime.input.expectedOldSha = target; },
+    (copy) => { copy.ingress.input.operationId = "different"; },
+    (copy) => { copy.ingress.input.appPort = 3001; },
+    (copy) => { copy.database.id = "replacement"; },
+    (copy) => { copy.database.image = "replacement"; },
+    (copy) => { copy.publicSupabaseUrl = "https://other.example"; },
+  ]) {
+    const copy = structuredClone(state); mutate(copy);
+    assert.throws(() => validateMaintenanceSubproofBindings(copy), /maintenance_subproof_binding_invalid/);
   }
 });
 test("plan checks actual supported capture without private persistence or actuation", async () => {

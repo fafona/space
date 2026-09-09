@@ -209,7 +209,27 @@ function nginxPlan(dump, version, files, capture, docker) {
   const kongAddress = docker.containers.find((row) => row.service === "kong").address;
   const appTargets = [`127.0.0.1:${capture.appPort}`, `localhost:${capture.appPort}`, `[::1]:${capture.appPort}`];
   const kongTargets = ["127.0.0.1", "localhost", "[::1]", kongAddress].flatMap((host) => [`${host}:8000`, `${host}:8443`]);
-  const selected = [], probes = [];
+  const selected = [], probes = [], controlLocations = [];
+  function preserveInheritedProxyHeaders(location) {
+    // Nginx inherits this directive family only when the current level has no
+    // proxy_set_header of its own. Adding just the empty control header would
+    // otherwise discard inherited Host/Authorization/apikey/Cookie settings.
+    const ancestry = [];
+    function find(node, path) {
+      if (node === location) { ancestry.push(...path, node); return true; }
+      return node.children?.some((child) => find(child, [...path, node])) || false;
+    }
+    if (!find(http[0], []) || ancestry.some((node) => !["http", "server", "location"].includes(node.name)) ||
+        all.filter((node) => node.name === "location" && node.file === location.file && node.body === location.body).length !== 1) fail();
+    let inherited = [];
+    for (const scope of ancestry) {
+      const headers = scope.children.filter((node) => node.name === "proxy_set_header");
+      if (headers.some((node) => node.children || node.args.length !== 2 || node.args[0].includes("$") || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(node.args[0]))) fail();
+      if (headers.length) inherited = headers;
+      if (scope === location && headers.length) return [];
+    }
+    return inherited.map((node) => byPath.get(node.file).content.slice(node.start, node.body));
+  }
   let hasApp = false, hasKong = false, publicRouteVerified = false;
   for (const server of http[0].children.filter((node) => node.name === "server")) {
     if (!server.children) fail();
@@ -261,6 +281,9 @@ function nginxPlan(dump, version, files, capture, docker) {
         const replacement = passes[0].args[0].match(/^https?:\/\/[^/]+(\/.*)$/)?.[1];
         const upstreamUri = replacement === undefined ? uri : replacement + uri.slice(location.args.at(-1).length);
         if (upstreamUri !== suffix || location.children.some((node) => ["return", "if"].includes(node.name))) fail();
+        if (!controlLocations.some((node) => node.file === location.file && node.offset === location.body)) {
+          controlLocations.push({ file: location.file, offset: location.body, inheritedHeaders: preserveInheritedProxyHeaders(location) });
+        }
       }
       publicRouteVerified = true;
     }
@@ -271,7 +294,7 @@ function nginxPlan(dump, version, files, capture, docker) {
   }
   const publicProbeUrls = [...new Set(probes)].sort();
   if (!publicProbeUrls.length || publicProbeUrls.length > 16) fail();
-  return { http: { file: http[0].file, offset: http[0].body }, selected, publicProbeUrls };
+  return { http: { file: http[0].file, offset: http[0].body }, selected, controlLocations, publicProbeUrls };
 }
 
 function captureNginx(d, capture, docker) {
@@ -474,7 +497,9 @@ function buildInstallation(proof, controlToken) {
     `map "${variable}_peer:${variable}_token:${variable}_route" ${variable}_deny { default 1;\n` +
     ['"1:0:0" 0;', '"1:0:1" 0;', '"1:1:0" 0;', '"1:1:1" 0;', '"0:1:1" 0;'].join("\n") + "\n}\n";
   const inserts = [{ ...proof.nginx.plan.http, content: `\n  include ${privatePath};\n` },
-    ...proof.nginx.plan.selected.map((entry) => ({ ...entry, content: `\n  if (${variable}_deny) { return 503; }\n` }))];
+    ...proof.nginx.plan.selected.map((entry) => ({ ...entry, content: `\n  if (${variable}_deny) { return 503; }\n` })),
+    ...proof.nginx.plan.controlLocations.map((entry) => ({ ...entry,
+      content: "\n" + entry.inheritedHeaders.map((header) => `  ${header}\n`).join("") + '  proxy_set_header X-Faolla-Maintenance-Control "";\n' }))];
   const files = proof.nginx.files.map((file) => {
     let modified = file.content;
     for (const entry of inserts.filter((item) => item.file === file.requestedPath).sort((a, b) => b.offset - a.offset)) {
@@ -503,7 +528,7 @@ export function validateIngressProof(value) {
         absolute(file.requestedPath) && absolute(file.actualPath) && text(file.content) && file.uid === 0 && Number.isInteger(file.gid) &&
         Number.isInteger(file.mode) && file.mode >= 0 && file.mode <= 0o777 && !(file.mode & 0o022) &&
         (file.link === null || text(file.link, 600)) && list(file.parents, (parent) => text(parent, 600), 20), 64) ||
-      !exact(value.nginx.plan, ["http", "selected", "publicProbeUrls"]) ||
+      !exact(value.nginx.plan, ["http", "selected", "controlLocations", "publicProbeUrls"]) ||
       !exact(value.docker, ["project", "networkId", "bridge", "containers"]) || !text(value.docker.project, 100) || !HEX.test(value.docker.networkId) || !/^[A-Za-z0-9_-]{1,15}$/.test(value.docker.bridge) ||
       !list(value.docker.containers, (row) => exact(row, ["id", "name", "service", "image", "address", "networkId", "networkName", "publishedPorts"]) &&
         HEX.test(row.id) && text(row.name, 100) && Object.hasOwn(ROLES, row.service) && text(row.image, 200) && private4(row.address) &&
@@ -513,6 +538,9 @@ export function validateIngressProof(value) {
   const point = (node) => exact(node, ["file", "offset"]) && Number.isSafeInteger(node.offset) && node.offset > 0 &&
     value.nginx.files.some((file) => file.requestedPath === node.file && file.content[node.offset - 1] === "{");
   if (!point(value.nginx.plan.http) || !list(value.nginx.plan.selected, point, 128) || !value.nginx.plan.selected.length ||
+      !list(value.nginx.plan.controlLocations, (node) => exact(node, ["file", "offset", "inheritedHeaders"]) &&
+        point({ file: node.file, offset: node.offset }) && list(node.inheritedHeaders, (header) => text(header, 8192), 128), 128) ||
+      !value.nginx.plan.controlLocations.length ||
       !list(value.nginx.plan.publicProbeUrls, (url) => text(url, 1000), 128)) fail();
   if (value.installation !== null) {
     const plan = value.installation;
