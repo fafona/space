@@ -1187,6 +1187,74 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function confirmBoardSettingsAction(page, {
+  action, accept, expectedMessage, expectedBoardId, expectedDraft, failureMessage,
+}) {
+  const timeout = 5_000;
+  let dialogSeen = false;
+  let dialogHandled = false;
+  let dialogMatched = false;
+  let stage = "action_or_dialog";
+  let timer;
+  let handleDialog;
+  const confirmation = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      stage = "confirm_timeout";
+      reject(new Error(stage));
+    }, timeout);
+    handleDialog = (dialog) => {
+      dialogSeen = true;
+      void (async () => {
+        dialogMatched = dialog.type() === "confirm" && dialog.message() === expectedMessage;
+        if (!dialogMatched) {
+          stage = "unexpected_dialog";
+          await dialog.dismiss();
+          throw new Error(stage);
+        }
+        if (accept) await dialog.accept();
+        else await dialog.dismiss();
+        dialogHandled = true;
+        resolve();
+      })().catch(reject);
+    };
+    page.once("dialog", handleDialog);
+  });
+  try {
+    // A select/click completing is not proof that its expected confirm was seen
+    // and handled. Observe both bounded operations, including on either failure.
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => action(timeout)), confirmation,
+    ]);
+    if (results.some((result) => result.status === "rejected")) throw new Error(stage);
+    clearTimeout(timer);
+    stage = "state_not_settled";
+    const settled = await page.waitForFunction(({ boardId: expectedBoard, draft: expectedValue }) => {
+      const selector = [...document.querySelectorAll("select")].find((element) =>
+        element.closest("label")?.textContent?.includes("当前看板"));
+      const draft = document.querySelector('input[placeholder="新工作列名称"]');
+      // Check board and draft together. null means a confirmed collapse must
+      // unmount settings, not merely hide or move the draft to another board.
+      return selector?.value === expectedBoard &&
+        (expectedValue === null ? draft === null : draft?.value === expectedValue);
+    }, { boardId: expectedBoardId, draft: expectedDraft }, { timeout });
+    await settled.dispose();
+    assert(dialogSeen && dialogMatched && dialogHandled, failureMessage);
+  } catch {
+    const [actualBoard, actualDraft] = await Promise.all([
+      page.getByLabel("当前看板").inputValue({ timeout: 500 }).catch(() => null),
+      page.getByPlaceholder("新工作列名称").inputValue({ timeout: 500 }).catch(() => null),
+    ]);
+    throw new Error(`${failureMessage}:${JSON.stringify({
+      stage, dialogSeen, dialogMatched, dialogHandled,
+      boardId: actualBoard?.slice(0, 80) ?? null,
+      draft: actualDraft?.slice(0, 120) ?? null,
+    })}`);
+  } finally {
+    clearTimeout(timer);
+    page.off("dialog", handleDialog);
+  }
+}
+
 async function waitForServer(baseUrl, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "server_not_ready";
@@ -2164,30 +2232,33 @@ async function run() {
     const boardSelector = pageA.getByLabel("当前看板");
     const newColumnDraft = pageA.getByPlaceholder("新工作列名称");
     await newColumnDraft.fill("不可串板的工作列草稿");
-    pageA.once("dialog", (dialog) => void dialog.dismiss());
-    await boardSelector.selectOption(secondBoardId);
-    assert(
-      (await boardSelector.inputValue()) === boardId &&
-        (await newColumnDraft.inputValue()) === "不可串板的工作列草稿",
-      "canceling a board switch discarded or moved the local board-settings draft",
-    );
-    pageA.once("dialog", (dialog) => void dialog.accept());
-    await boardSelector.selectOption(secondBoardId);
-    assert(
-      (await boardSelector.inputValue()) === secondBoardId &&
-        (await pageA.getByPlaceholder("新工作列名称").inputValue()) === "",
-      "confirming a board switch did not reset the discarded column draft",
-    );
+    const boardSwitchMessage = "看板设置中有尚未保存的内容。切换看板将放弃这些修改，是否继续？";
+    await confirmBoardSettingsAction(pageA, {
+      action: (timeout) => boardSelector.selectOption(secondBoardId, { timeout }),
+      accept: false, expectedMessage: boardSwitchMessage,
+      expectedBoardId: boardId, expectedDraft: "不可串板的工作列草稿",
+      failureMessage: "canceling a board switch discarded or moved the local board-settings draft",
+    });
+    await confirmBoardSettingsAction(pageA, {
+      action: (timeout) => boardSelector.selectOption(secondBoardId, { timeout }),
+      accept: true, expectedMessage: boardSwitchMessage,
+      expectedBoardId: secondBoardId, expectedDraft: "",
+      failureMessage: "confirming a board switch did not reset the discarded column draft",
+    });
     await pageA.getByPlaceholder("新工作列名称").fill("收起前的工作列草稿");
-    pageA.once("dialog", (dialog) => void dialog.dismiss());
-    await pageA.getByRole("button", { name: "收起看板设置", exact: true }).click();
-    assert(
-      (await pageA.getByPlaceholder("新工作列名称").inputValue()) === "收起前的工作列草稿",
-      "canceling board-settings collapse discarded its local draft",
-    );
-    pageA.once("dialog", (dialog) => void dialog.accept());
-    await pageA.getByRole("button", { name: "收起看板设置", exact: true }).click();
-    await pageA.getByPlaceholder("新工作列名称").waitFor({ state: "hidden" });
+    const boardCollapseMessage = "看板设置中有尚未保存的内容。收起设置将放弃这些修改，是否继续？";
+    await confirmBoardSettingsAction(pageA, {
+      action: (timeout) => pageA.getByRole("button", { name: "收起看板设置", exact: true }).click({ timeout }),
+      accept: false, expectedMessage: boardCollapseMessage,
+      expectedBoardId: secondBoardId, expectedDraft: "收起前的工作列草稿",
+      failureMessage: "canceling board-settings collapse discarded its local draft",
+    });
+    await confirmBoardSettingsAction(pageA, {
+      action: (timeout) => pageA.getByRole("button", { name: "收起看板设置", exact: true }).click({ timeout }),
+      accept: true, expectedMessage: boardCollapseMessage,
+      expectedBoardId: secondBoardId, expectedDraft: null,
+      failureMessage: "confirming board-settings collapse did not remove its local draft",
+    });
 
     await pageA.getByRole("button", { name: "员工账号", exact: true }).click();
     const firstEmployeeRow = pageA.locator("div.px-5.py-4").filter({
