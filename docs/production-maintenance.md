@@ -16,6 +16,37 @@ transport. Do not retry `plan` or start `prepare` until that transport is bound
 to the verified daemon without automatic daemon creation and the reported
 runtime compatibility failures have been addressed.
 
+The version 2 diagnostic adds bounded version strings and metadata-only
+observations of the daemon's fixed socket/PID paths, native worker descendants,
+and a fixed trusted Python interpreter's Unix-socket API availability. It does
+not connect to PM2 or execute native worker binaries. `verified` endpoint
+metadata is not peer authentication; native classifications are not stop or
+restart approval. Missing, unsafe and unreadable observations stay distinct.
+The report still cannot establish a maintenance operation or authorize changes.
+
+## Read-only PM2 peer diagnosis
+
+**diagnose-pm2-peer** is a separate, manually confirmed action using the exact
+phrase `CHECK_PRODUCTION_PM2_PEER`. It requires current main, successful push CI
+for that exact target, and the exact old build. Operation UUID and deployment
+run/attempt inputs must be empty. Unlike metadata-only `diagnose-runtime`, this
+action connects to the frozen daemon's fixed Unix socket, authenticates its
+process identity, and makes one fixed read-only `getVersion` request. It does
+not invoke or initialize the PM2 CLI, create a daemon, choose another socket,
+retry a connection, or perform a process mutation.
+
+Its public report has state `pm2-peer-diagnosed` and no operation UUID.
+`diagnostics` contains only `version: 1`, `maintenance: "not_verified"`,
+`peerVerified: true | null`, and a strict PM2 version string or `null`. Paths,
+PIDs, UIDs, environment values and raw RPC responses are never public. An
+unconfirmed observation remains unknown, not a successful peer verification.
+
+Even a successful result proves only the sampled peer identity and version.
+It is not `held` evidence, does not approve arbitrary PM2 methods, and cannot
+authorize prepare, backup, migration, deployment or end. It does not repair or
+approve the broader maintenance control transport. No diagnostic result
+automatically retries `plan` or starts maintenance.
+
 ## Release order
 
 1. Merge the reviewed exact candidate and require successful push CI, including

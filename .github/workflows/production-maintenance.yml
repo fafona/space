@@ -7,7 +7,7 @@ on:
         description: Fixed audited maintenance transition (never an arbitrary command)
         required: true
         type: choice
-        options: [diagnose-runtime, plan, prepare, check, end]
+        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, check, end]
       target_sha:
         description: Exact current main SHA with successful push CI
         required: true
@@ -29,7 +29,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: CHECK_PRODUCTION_RUNTIME_COMPATIBILITY, CHECK_PRODUCTION_MAINTENANCE_PLAN, PREPARE_PRODUCTION_MAINTENANCE, CHECK_PRODUCTION_MAINTENANCE or END_PRODUCTION_MAINTENANCE
+        description: CHECK_PRODUCTION_RUNTIME_COMPATIBILITY, CHECK_PRODUCTION_PM2_PEER, CHECK_PRODUCTION_MAINTENANCE_PLAN, PREPARE_PRODUCTION_MAINTENANCE, CHECK_PRODUCTION_MAINTENANCE or END_PRODUCTION_MAINTENANCE
         required: true
 
 concurrency:
@@ -72,6 +72,11 @@ jobs:
           case "$ACTION" in
             diagnose-runtime)
               test "$CONFIRMATION" = CHECK_PRODUCTION_RUNTIME_COMPATIBILITY
+              test -z "$MAINTENANCE_OPERATION_ID"
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
+            diagnose-pm2-peer)
+              test "$CONFIRMATION" = CHECK_PRODUCTION_PM2_PEER
               test -z "$MAINTENANCE_OPERATION_ID"
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
               ;;
@@ -251,6 +256,7 @@ jobs:
           [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
           case "$ACTION" in
             diagnose-runtime) command=diagnose-runtime; expected_state=runtime-diagnosed ;;
+            diagnose-pm2-peer) command=diagnose-pm2-peer; expected_state=pm2-peer-diagnosed ;;
             plan) command=plan; expected_state=planned ;;
             prepare) command=prepare; expected_state=held ;;
             check)
@@ -264,7 +270,7 @@ jobs:
           esac
           operation_args=()
           local_operation_args=()
-          if [ "$command" != prepare ] && [ "$command" != plan ] && [ "$command" != diagnose-runtime ]; then
+          if [ "$command" != prepare ] && [ "$command" != plan ] && [ "$command" != diagnose-runtime ] && [ "$command" != diagnose-pm2-peer ]; then
             operation_args=(--expected-operation-id "$MAINTENANCE_OPERATION_ID")
             local_operation_args=(--operation-id "$MAINTENANCE_OPERATION_ID")
           fi
@@ -325,6 +331,11 @@ jobs:
             fi
             echo 'production_maintenance_transition_unconfirmed'
             exit 1
+          fi
+          if [ "$command" = diagnose-pm2-peer ]; then
+            node scripts/production-maintenance-workflow-contract.mjs verify-pm2-peer-diagnostic \
+              --file "$capture_dir/out" --target-sha "$TARGET_SHA" --old-sha "$EXPECTED_OLD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           if [ "$command" = diagnose-runtime ]; then
             node scripts/production-maintenance-workflow-contract.mjs verify-runtime-diagnostic \

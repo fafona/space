@@ -15,6 +15,7 @@ import {
   validateProductionMaintenanceBinding,
   validateProductionMaintenanceControlReport,
   validateProductionRuntimeDiagnosticReport,
+  validateProductionPm2PeerDiagnosticReport,
 } from "./production-maintenance-workflow-contract.mjs";
 
 const env = {
@@ -25,11 +26,14 @@ const env = {
 };
 const failure = /production_maintenance_binding_invalid/;
 const diagnosticFixture = () => ({
-  version: 1, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  version: 2, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
   webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
     interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
   supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
   runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
+  pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
+  workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null },
+  python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null },
 });
 
 test("maintenance bindings explicitly identify each phase and exact parent runs", () => {
@@ -111,7 +115,10 @@ test("runtime diagnostic report is exact-bound, non-authoritative and never disc
   assert.throws(() => validateProductionMaintenanceControlReport(report, {}), failure);
   for (const patch of [{ operationId: env.MAINTENANCE_OPERATION_ID }, { state: "held" }, { targetSha: env.EXPECTED_OLD_SHA },
     { expectedOldSha: env.TARGET_SHA }, { diagnostics: { ...diagnosticFixture(), raw: "never-disclose" } },
-    { diagnostics: { ...diagnosticFixture(), pm2Home: "/never-disclose" } }]) {
+    { diagnostics: { ...diagnosticFixture(), pm2Home: "/never-disclose" } },
+    { diagnostics: { ...diagnosticFixture(), version: 1 } },
+    { diagnostics: { ...diagnosticFixture(), pm2Version: "6.0.8\nnever-disclose" } },
+    { diagnostics: { ...diagnosticFixture(), python: { ...diagnosticFixture().python, executable: "/never-disclose" } } }]) {
     assert.throws(() => validateProductionRuntimeDiagnosticReport({ ...report, ...patch }, expected), failure);
   }
   const directory = mkdtempSync(join(tmpdir(), "faolla-runtime-diagnostic-contract-"));
@@ -131,6 +138,79 @@ test("runtime diagnostic report is exact-bound, non-authoritative and never disc
     }
     for (const extra of [["--state", "held"], ["--operation-id", env.MAINTENANCE_OPERATION_ID], ["--github-output", "must-not-create"]]) {
       const result = execute(report, extra); assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("runtime capability metadata is bounded and cannot grant a verified PM2 connection or held state", () => {
+  const diagnostics = { ...diagnosticFixture(), stability: "stable", disk: "verified",
+    supervision: "runtime_supervision_direct_next_owned", daemonCwdIsRoot: true,
+    worker: { state: "owned", nodeDescendantCount: 1, nonNodeDescendantCount: 2 },
+    pm2Version: "6.0.8", pm2Home: "matches", pm2PathOverridesPresent: false,
+    pm2Endpoint: { home: "verified", rpcSocket: "verified", pidFile: "verified", pidMatches: true },
+    workerNative: { esbuildCount: 2, otherCount: 0, unknownCount: 0, controlledIdentityVerified: true },
+    python: { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true } };
+  const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "runtime-diagnosed", diagnostics };
+  const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
+  assert.deepEqual(validateProductionRuntimeDiagnosticReport(report, expected), report);
+  assert.ok(Buffer.byteLength(JSON.stringify(report)) < 4096);
+  assert.throws(() => validateProductionMaintenanceControlReport(report, { state: "held" }), failure);
+  for (const patch of [{ pm2Connection: "verified" }, { maintenance: "held" },
+    { pm2Endpoint: { ...diagnostics.pm2Endpoint, home: "/private" } },
+    { python: { ...diagnostics.python, version: "private-value" } },
+    { workerNative: { ...diagnostics.workerNative, otherCount: 1 } }]) {
+    assert.throws(() => validateProductionRuntimeDiagnosticReport({ ...report, diagnostics: { ...diagnostics, ...patch } }, expected), failure);
+  }
+});
+
+test("PM2 peer public report is exact-bound, redacted and cannot establish held state", () => {
+  const diagnostics = { version: 1, maintenance: "not_verified", peerVerified: true, pm2Version: "6.0.8" };
+  const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "pm2-peer-diagnosed", diagnostics };
+  const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
+  assert.deepEqual(validateProductionPm2PeerDiagnosticReport(report, expected), report);
+  const unknown = { ...report, diagnostics: { version: 1, maintenance: "not_verified", peerVerified: null, pm2Version: null } };
+  assert.deepEqual(validateProductionPm2PeerDiagnosticReport(unknown, expected), unknown);
+  for (const value of [report, unknown]) assert.throws(() => validateProductionMaintenanceControlReport(value, { state: "held" }), failure);
+  for (const patch of [{ operationId: env.MAINTENANCE_OPERATION_ID }, { raw: "must-not-disclose" }, { state: "held" },
+    { targetSha: env.EXPECTED_OLD_SHA }, { expectedOldSha: env.TARGET_SHA },
+    ...[{ socketPath: "/private/rpc.sock" }, { pid: 123 }, { maintenance: "held" }, { peerVerified: false },
+      { peerVerified: null }, { pm2Version: null }, { pm2Version: "6.0.8\nmust-not-disclose" }].map((item) => ({ diagnostics: { ...diagnostics, ...item } }))]) {
+    assert.throws(() => validateProductionPm2PeerDiagnosticReport({ ...report, ...patch }, expected), failure);
+  }
+  for (const invalidExpected of [{ targetSha: env.EXPECTED_OLD_SHA }, { expectedOldSha: env.TARGET_SHA }, { state: "held" }, { operationId: env.MAINTENANCE_OPERATION_ID }]) {
+    assert.throws(() => validateProductionPm2PeerDiagnosticReport(report, invalidExpected), failure);
+  }
+});
+
+test("PM2 peer report CLI admits only bounded exact diagnostic JSON and never emits contaminated content", () => {
+  const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "pm2-peer-diagnosed",
+    diagnostics: { version: 1, maintenance: "not_verified", peerVerified: true, pm2Version: "6.0.8" } };
+  const directory = mkdtempSync(join(tmpdir(), "faolla-pm2-peer-diagnostic-contract-"));
+  const file = join(directory, "report.json");
+  const script = fileURLToPath(new URL("./production-maintenance-workflow-contract.mjs", import.meta.url));
+  const execute = (bytes, additional = []) => {
+    writeFileSync(file, bytes);
+    return spawnSync(process.execPath, [script, "verify-pm2-peer-diagnostic", "--file", file,
+      "--target-sha", env.TARGET_SHA, "--old-sha", env.EXPECTED_OLD_SHA, ...additional],
+    { encoding: "utf8", env: { SystemRoot: process.env.SystemRoot ?? "" } });
+  };
+  const rejected = (result) => {
+    assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "production_maintenance_binding_invalid\n");
+  };
+  try {
+    for (const diagnostics of [report.diagnostics, { version: 1, maintenance: "not_verified", peerVerified: null, pm2Version: null }]) {
+      const value = { ...report, diagnostics };
+      const result = execute(JSON.stringify(value));
+      assert.equal(result.status, 0); assert.deepEqual(JSON.parse(result.stdout), value); assert.equal(result.stderr, "");
+    }
+    for (const value of [{ ...report, state: "held" }, { ...report, targetSha: env.EXPECTED_OLD_SHA },
+      { ...report, operationId: env.MAINTENANCE_OPERATION_ID }, { ...report, raw: "must-not-disclose" },
+      { ...report, diagnostics: { ...report.diagnostics, socketPath: "/must-not-disclose" } }]) rejected(execute(JSON.stringify(value)));
+    for (const bytes of ["{must-not-disclose", "x".repeat(4097), "null", "[]"]) rejected(execute(bytes));
+    for (const extra of [["--state", "held"], ["--operation-id", env.MAINTENANCE_OPERATION_ID],
+      ["--github-output", join(directory, "must-not-create")], ["--target-sha", env.TARGET_SHA], ["--old-sha", env.EXPECTED_OLD_SHA]]) {
+      rejected(execute(JSON.stringify(report), extra));
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -184,7 +264,7 @@ test("all affected workflow YAML and embedded bash remain syntactically valid", 
 
 test("maintenance control is a fixed manual current-main exact-CI pinned-SSH workflow", () => {
   const source = sources["production-maintenance"];
-  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "plan", "prepare", "check", "end"]);
+  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "check", "end"]);
   assert.deepEqual(Object.keys(workflows["production-maintenance"].on), ["workflow_dispatch"]);
   assert.match(source, /CHECK_PRODUCTION_MAINTENANCE_PLAN/);
   assert.match(source, /test "\$TARGET_SHA" = "\$GITHUB_SHA"/);
@@ -216,7 +296,7 @@ test("runtime diagnostic workflow is a separately confirmed read-only action wit
   assert.match(control, /\[ "\$command" != diagnose-runtime \]/);
   assert.match(control, /if \[ "\$command" = diagnose-runtime \]; then\n\s+node scripts\/production-maintenance-workflow-contract\.mjs verify-runtime-diagnostic[\s\S]+?exit 0\n[ \t]*fi/);
   const source = readFileSync(new URL("./production-maintenance-control.mjs", import.meta.url), "utf8");
-  assert.match(source, /if \(request\.action === "diagnose-runtime"\) \{[^}]+createRuntimeDiagnosticReport\(request\);\n\s+\} else \{\n\s+const ops = await productionOperations\(request\);/);
+  assert.match(source, /if \(request\.action === "diagnose-runtime"\) \{[^}]+createRuntimeDiagnosticReport\(request\);\n\s+\} else if \(request\.action === "diagnose-pm2-peer"\) \{\n\s+result = await createPm2PeerDiagnosticReport\(request\);\n\s+\} else \{\n\s+const ops = await productionOperations\(request\);/);
   const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
   const base = { SystemRoot: process.env.SystemRoot ?? "", GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_REF: "refs/heads/main", GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: env.TARGET_SHA, TARGET_SHA: env.TARGET_SHA,
@@ -226,6 +306,34 @@ test("runtime diagnostic workflow is a separately confirmed read-only action wit
   assert.equal(execute({}).status, 0);
   for (const patch of [{ CONFIRMATION: "CHECK_PRODUCTION_MAINTENANCE_PLAN" }, { MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID },
     { DEPLOY_RUN_ID: "123" }, { DEPLOY_RUN_ATTEMPT: "1" }, { GITHUB_REF: "refs/heads/other" }, { GITHUB_SHA: env.EXPECTED_OLD_SHA }]) {
+    assert.notEqual(execute(patch).status, 0);
+  }
+});
+
+test("PM2 peer workflow requires its fixed confirmation and bypasses maintenance state and locks", () => {
+  const validation = step("production-maintenance", "Validate Fixed Manual Transition").run;
+  assert.match(validation, /diagnose-pm2-peer\)\n\s+test "\$CONFIRMATION" = CHECK_PRODUCTION_PM2_PEER\n\s+test -z "\$MAINTENANCE_OPERATION_ID"\n\s+test -z "\$DEPLOY_RUN_ID" && test -z "\$DEPLOY_RUN_ATTEMPT"/);
+  const control = step("production-maintenance", "Execute Fixed Maintenance Transition").run;
+  assert.match(control, /diagnose-pm2-peer\) command=diagnose-pm2-peer; expected_state=pm2-peer-diagnosed/);
+  assert.match(control, /\[ "\$command" != diagnose-pm2-peer \]/);
+  const branch = control.match(/if \[ "\$command" = diagnose-pm2-peer \]; then\n[\s\S]+?\n[ \t]*fi/)?.[0];
+  assert.ok(branch);
+  assert.match(branch, /verify-pm2-peer-diagnostic[\s\S]+--file "\$capture_dir\/out"[\s\S]+--target-sha "\$TARGET_SHA"[\s\S]+--old-sha "\$EXPECTED_OLD_SHA"[\s\S]+exit 0/);
+  assert.doesNotMatch(branch, /verify-control|GITHUB_OUTPUT|operation-id/);
+  const successVerification = control.indexOf("\nnode scripts/production-maintenance-workflow-contract.mjs verify-control");
+  assert.ok(successVerification > control.indexOf(branch));
+  const source = readFileSync(new URL("./production-maintenance-control.mjs", import.meta.url), "utf8");
+  assert.match(source, /else if \(request\.action === "diagnose-pm2-peer"\) \{\n\s+result = await createPm2PeerDiagnosticReport\(request\);\n\s+\} else \{\n\s+const ops = await productionOperations\(request\);\n\s+result = await withPrivateOperationLock\(request, \(\) => runMaintenanceAction\(request, ops\)\);/);
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  const base = { SystemRoot: process.env.SystemRoot ?? "", GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch",
+    GITHUB_REF: "refs/heads/main", GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: env.TARGET_SHA, TARGET_SHA: env.TARGET_SHA,
+    EXPECTED_OLD_SHA: env.EXPECTED_OLD_SHA, ACTION: "diagnose-pm2-peer", CONFIRMATION: "CHECK_PRODUCTION_PM2_PEER",
+    MAINTENANCE_OPERATION_ID: "", DEPLOY_RUN_ID: "", DEPLOY_RUN_ATTEMPT: "", CHECK_STATE: "held" };
+  const execute = (patch) => spawnSync(bash, ["-s"], { input: validation, encoding: "utf8", env: { ...base, ...patch } });
+  assert.equal(execute({}).status, 0);
+  for (const patch of [{ CONFIRMATION: "CHECK_PRODUCTION_RUNTIME_COMPATIBILITY" }, { CONFIRMATION: "CHECK_PRODUCTION_PM2_PEER\nextra" },
+    { MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID }, { DEPLOY_RUN_ID: "123" }, { DEPLOY_RUN_ATTEMPT: "1" },
+    { GITHUB_REF: "refs/heads/other" }, { GITHUB_SHA: env.EXPECTED_OLD_SHA }, { GITHUB_RUN_ATTEMPT: "2" }]) {
     assert.notEqual(execute(patch).status, 0);
   }
 });

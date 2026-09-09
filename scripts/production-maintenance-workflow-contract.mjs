@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { canonicalJsonBytes } from "./production-release-attestation.mjs";
 import { validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
+import { validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -82,6 +83,20 @@ export function validateProductionRuntimeDiagnosticReport(value, expected) {
   return Object.freeze({ ...value, diagnostics });
 }
 
+export function validateProductionPm2PeerDiagnosticReport(value, expected) {
+  const keys = ["version", "targetSha", "expectedOldSha", "state", "diagnostics"];
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).sort().join("|") !== keys.sort().join("|") || value.version !== 1 ||
+      value.state !== "pm2-peer-diagnosed" || !SHA.test(value.targetSha ?? "") || !SHA.test(value.expectedOldSha ?? "") ||
+      value.targetSha === value.expectedOldSha) fail();
+  for (const [key, required] of Object.entries(expected)) {
+    if (!["targetSha", "expectedOldSha"].includes(key) || value[key] !== required) fail();
+  }
+  let diagnostics;
+  try { diagnostics = validatePm2PeerDiagnostic(value.diagnostics); } catch { fail(); }
+  return Object.freeze({ ...value, diagnostics });
+}
+
 const FLAGS = {
   "--phase": "phase", "--target-sha": "targetSha", "--mode": "mode",
   "--operation-id": "operationId", "--old-sha": "expectedOldSha",
@@ -92,7 +107,7 @@ const FLAGS = {
 
 async function main(args, env) {
   const [command, ...rest] = args;
-  if (!["build", "verify", "verify-control", "verify-runtime-diagnostic"].includes(command) || rest.length % 2) fail();
+  if (!["build", "verify", "verify-control", "verify-runtime-diagnostic", "verify-pm2-peer-diagnostic"].includes(command) || rest.length % 2) fail();
   const options = new Map();
   for (let i = 0; i < rest.length; i += 2) {
     if ((!Object.hasOwn(FLAGS, rest[i]) && !["--file", "--github-output", "--provenance", "--state"].includes(rest[i])) || options.has(rest[i])) fail();
@@ -100,12 +115,13 @@ async function main(args, env) {
   }
   const file = options.get("--file");
   if (!file) fail();
-  if (command === "verify-runtime-diagnostic") {
+  if (["verify-runtime-diagnostic", "verify-pm2-peer-diagnostic"].includes(command)) {
     if ([...options.keys()].some((key) => !["--file", "--target-sha", "--old-sha"].includes(key))) fail();
     for (const flag of ["--target-sha", "--old-sha"]) if (!options.get(flag)) fail();
     const bytes = await readFile(file);
     if (bytes.length > 4096) fail();
-    const report = validateProductionRuntimeDiagnosticReport(JSON.parse(bytes.toString("utf8")), {
+    const validate = command === "verify-runtime-diagnostic" ? validateProductionRuntimeDiagnosticReport : validateProductionPm2PeerDiagnosticReport;
+    const report = validate(JSON.parse(bytes.toString("utf8")), {
       targetSha: options.get("--target-sha"), expectedOldSha: options.get("--old-sha"),
     });
     process.stdout.write(`${JSON.stringify(report)}\n`);
