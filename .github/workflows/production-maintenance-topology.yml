@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact current main SHA containing this read-only diagnostic
+        description: Exact current main SHA containing the read-only capability diagnostic
         required: true
         type: string
       expected_live_app_sha:
@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          test -f scripts/check-production-maintenance-topology.mjs
+          test -f scripts/check-production-maintenance-capabilities.mjs
           main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           test "$main_sha" = "$TARGET_SHA"
           gh api --method GET \
@@ -152,7 +152,7 @@ jobs:
                 -o StrictHostKeyChecking=yes \
                 -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
                 -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
-                < scripts/check-production-maintenance-topology.mjs
+                < scripts/check-production-maintenance-capabilities.mjs
           ) > "$stdout_file" 2> "$stderr_file"
           remote_status=$?
           set -e
@@ -162,10 +162,10 @@ jobs:
           fi
           # Never print SSH banners, raw process environments or config output.
           # The local validator accepts only the fixed, bounded report schema.
-          node scripts/check-production-maintenance-topology.mjs \
+          node scripts/check-production-maintenance-capabilities.mjs \
             --validate-report "$stdout_file" "$EXPECTED_LIVE_APP_SHA"
           printf '%s\n' \
-            'Read-only topology inspection completed; maintenance is NOT enabled.' \
+            'Read-only maintenance capability inspection completed; maintenance is NOT enabled.' \
             'This report is not write-drain, migration or deployment authorization evidence.' \
             >> "$GITHUB_STEP_SUMMARY"
 
