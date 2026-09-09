@@ -80,6 +80,29 @@ test("prepare rejects unsupported capture before any mutations", async () => {
   await assert.rejects(runMaintenanceAction(request("prepare"), f.ops), /unsupported/);
   assert.equal(f.events.includes("create"), false); assert.equal(f.events.includes("stopRuntime"), false);
 });
+test("failed read-only plan exposes only a fixed phase and never persists or acts on host state", async () => {
+  for (const [method, stage] of [
+    ["assertNoActiveOperation", "operation_state"], ["captureRuntime", "runtime"],
+    ["readPublicSupabaseUrl", "public_gateway"], ["captureIngress", "ingress"],
+    ["captureDatabase", "database"], ["planIngressInstallation", "installation"],
+  ]) {
+    for (const asynchronous of [false, true]) {
+      const f = fixture();
+      const hostError = new Error("synthetic-private-host-content\nnot-public");
+      f.ops[method] = asynchronous ? async () => { throw hostError; } : () => { throw hostError; };
+      await assert.rejects(runMaintenanceAction(request("plan"), f.ops), (error) => {
+        assert.equal(error.message, `maintenance_plan_${stage}_unverified`);
+        assert.equal(error.cause, undefined);
+        assert.equal(error.maintenanceReport, undefined);
+        return true;
+      });
+      assert(f.events.every((event) => ["noActive", "captureRuntime", "readPublicUrl", "captureIngress", "captureDatabase", "planIngress"].includes(event)));
+      const prepare = fixture(); prepare.ops[method] = f.ops[method];
+      await assert.rejects(runMaintenanceAction(request("prepare"), prepare.ops), (error) => error === hostError);
+      assert.equal(prepare.events.includes("create"), false);
+    }
+  }
+});
 test("prepare persists exact recovery proof then gates, stops and drains before reporting held", async () => {
   const f = fixture();
   assert.equal((await runMaintenanceAction(request("prepare"), f.ops)).state, "held");

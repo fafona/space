@@ -170,6 +170,68 @@ test("maintenance control is a fixed manual current-main exact-CI pinned-SSH wor
   assert.match(failed, /production_maintenance_transition_unconfirmed'\n\s+exit 1/);
 });
 
+test("plan failure prints only one exact allowlisted stage code and always fails", () => {
+  const control = step("production-maintenance", "Execute Fixed Maintenance Transition").run;
+  const start = control.indexOf('if [ "$status" -ne 0 ]');
+  const end = control.indexOf('\nnode scripts/production-maintenance-workflow-contract.mjs verify-control', start);
+  assert.ok(start >= 0 && end > start);
+  const failed = control.slice(start, end);
+  const directory = mkdtempSync(join(tmpdir(), "faolla-maintenance-plan-diagnostic-"));
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  const codes = [
+    "maintenance_plan_operation_state_unverified",
+    "maintenance_plan_runtime_unverified",
+    "maintenance_plan_public_gateway_unverified",
+    "maintenance_plan_ingress_unverified",
+    "maintenance_plan_database_unverified",
+    "maintenance_plan_installation_unverified",
+  ];
+  const execute = (stderr, action = "plan", status = "1") => {
+    writeFileSync(join(directory, "err"), stderr);
+    writeFileSync(join(directory, "out"), "");
+    return spawnSync(bash, ["-s"], {
+      input: `set -euo pipefail\nnode() { "$NODE_BINARY" "$@"; }\n${failed}\nexit 0\n`,
+      encoding: "utf8",
+      env: {
+        SystemRoot: process.env.SystemRoot ?? "", NODE_BINARY: process.execPath.replaceAll("\\", "/"),
+        capture_dir: directory.replaceAll("\\", "/"), ACTION: action, status,
+      },
+    });
+  };
+  try {
+    for (const code of codes) {
+      for (const ending of ["", "\n"]) {
+        const result = execute(code + ending);
+        assert.equal(result.status, 1, code);
+        assert.equal(result.stdout, code + "\n");
+        assert.equal(result.stderr, "");
+      }
+    }
+    const code = codes[0];
+    for (const invalid of [
+      "", "unknown_error\n", "must-never-disclose-secret\n", `${code}\n\n`,
+      `${code}\nmust-never-disclose-secret\n`, `warning\n${code}\n`,
+      `${code}\n${codes[1]}\n`, `${code}\r\n`, `${code} `, ` ${code}`,
+      `${code}\0`, "x".repeat(256),
+    ]) {
+      const result = execute(invalid);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "production_maintenance_transition_unconfirmed\n");
+      assert.equal(result.stderr, "");
+    }
+    for (const action of ["prepare", "check", "end"]) {
+      const result = execute(code + "\n", action);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "production_maintenance_transition_unconfirmed\n");
+      assert.equal(result.stderr, "");
+    }
+    const unconfirmed = execute(code + "\n", "plan", "0");
+    assert.equal(unconfirmed.status, 1);
+    assert.equal(unconfirmed.stdout, code + "\n");
+    assert.equal(unconfirmed.stderr, "");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("end requires a successful exact deploy and its signed matching operation before opening", () => {
   const meta = step("production-maintenance", "Require Exact Successful Maintenance Deploy Before End");
   assert.match(meta.run, /\.conclusion == "success"/);

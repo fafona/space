@@ -105,16 +105,25 @@ export async function runMaintenanceAction(request, ops) {
   };
 
   if (["plan", "prepare"].includes(request.action)) {
-    ops.assertNoActiveOperation();
+    const captureStep = async (stage, inspect) => {
+      try { return await inspect(); }
+      catch (error) {
+        // The read-only workflow may publish only these fixed phase codes,
+        // never raw host/configuration/transport errors or a success proof.
+        if (request.action === "plan") failure(`maintenance_plan_${stage}_unverified`);
+        throw error;
+      }
+    };
+    await captureStep("operation_state", () => ops.assertNoActiveOperation());
     const operationId = ops.uuid();
     if (!UUID.test(operationId)) failure("maintenance_operation_invalid");
-    const runtime = await ops.captureRuntime({ appDir: request.appDir, appName: request.appName, appPort: request.appPort, expectedOldSha: request.expectedOldSha });
-    const publicSupabaseUrl = await ops.readPublicSupabaseUrl(runtime);
-    const capturedIngress = await ops.captureIngress({ appPort: request.appPort, publicSupabaseUrl, operationId });
-    const database = await ops.captureDatabase();
+    const runtime = await captureStep("runtime", () => ops.captureRuntime({ appDir: request.appDir, appName: request.appName, appPort: request.appPort, expectedOldSha: request.expectedOldSha }));
+    const publicSupabaseUrl = await captureStep("public_gateway", () => ops.readPublicSupabaseUrl(runtime));
+    const capturedIngress = await captureStep("ingress", () => ops.captureIngress({ appPort: request.appPort, publicSupabaseUrl, operationId }));
+    const database = await captureStep("database", () => ops.captureDatabase());
     const token = ops.token();
     if (!/^[0-9a-f]{64}$/.test(token)) failure("maintenance_token_invalid");
-    const ingress = ops.planIngressInstallation(capturedIngress, token);
+    const ingress = await captureStep("installation", () => ops.planIngressInstallation(capturedIngress, token));
     if (request.action === "plan") return publicSummary({ ...request, operationId }, "planned");
     const state = { version: 1, operationId, targetSha: request.targetSha, expectedOldSha: request.expectedOldSha,
       appDir: request.appDir, appName: request.appName, appPort: request.appPort, bootId: ops.bootId(), createdAt: ops.now(),

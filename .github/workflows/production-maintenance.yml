@@ -280,6 +280,31 @@ jobs:
               -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
               > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
           if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            if [ "$ACTION" = plan ]; then
+              if plan_diagnostic="$(node --input-type=module - "$capture_dir/err" 2>/dev/null <<'NODE'
+          import { readFileSync } from "node:fs";
+          const allowed = new Set([
+            "maintenance_plan_operation_state_unverified",
+            "maintenance_plan_runtime_unverified",
+            "maintenance_plan_public_gateway_unverified",
+            "maintenance_plan_ingress_unverified",
+            "maintenance_plan_database_unverified",
+            "maintenance_plan_installation_unverified",
+          ]);
+          try {
+            const bytes = readFileSync(process.argv[2]);
+            if (bytes.length > 128) process.exit(1);
+            const code = bytes.toString("utf8");
+            const diagnostic = code.endsWith("\n") ? code.slice(0, -1) : code;
+            if (!allowed.has(diagnostic)) process.exit(1);
+            process.stdout.write(diagnostic + "\n");
+          } catch { process.exit(1); }
+          NODE
+              )"; then
+                printf '%s\n' "$plan_diagnostic"
+                exit 1
+              fi
+            fi
             if [ "$ACTION" = prepare ] && [ -s "$capture_dir/out" ]; then
               # A failed prepare can already own a private operation. Preserve
               # only its validated diagnostic UUID; this never grants held status.
