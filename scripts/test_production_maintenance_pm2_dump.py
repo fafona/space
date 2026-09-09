@@ -78,6 +78,29 @@ class PureTests(unittest.TestCase):
                 dump._assert_dump_content(changed, saved, count)
             self.assertEqual(str(failure.exception), "pm2_dump_registry_changed")
 
+    def test_only_four_top_level_fields_reset_by_pm2_execute_are_transient(self):
+        fields = ("axm_actions", "axm_monitor", "axm_options", "axm_dynamic")
+        self.assertEqual(dump._RESET_ON_EXECUTE, frozenset(fields))
+        raw = [record()]
+        for field in fields:
+            raw[0]["pm2_env"][field] = {"synthetic_telemetry": "before"}
+        saved, count = dump._dump_content(raw)
+        for field in fields:
+            changed = copy.deepcopy(raw)
+            changed[0]["pm2_env"][field] = {"synthetic_telemetry": "after"}
+            with self.subTest(field=field):
+                dump._assert_dump_content(changed, saved, count)
+                self.assertNotEqual(dump._dump_content(changed)[0], saved)
+            changed = copy.deepcopy(raw)
+            changed[0]["pm2_env"]["env"][field] = "different-launch-environment"
+            with self.subTest(nested=field), self.assertRaises(dump.PM2DumpError):
+                dump._assert_dump_content(changed, saved, count)
+        for field in ("axm_unknown", "pmx", "node_version", "kill_timeout"):
+            changed = copy.deepcopy(raw)
+            changed[0]["pm2_env"][field] = "different"
+            with self.subTest(other=field), self.assertRaises(dump.PM2DumpError):
+                dump._assert_dump_content(changed, saved, count)
+
     def test_capture_proof_rejects_extra_fields_and_foreign_binding(self):
         daemon = {"pid": 1, "uid": 1, "startTicks": "1", "bootId": "00000000-0000-0000-0000-000000000000",
                   "executable": "/usr/bin/node", "executableIdentity": "1:2:3:4:5:1:1:33261"}
@@ -312,6 +335,26 @@ class FilesystemTests(unittest.TestCase):
                 with self.assertRaises(dump.PM2DumpError) as failure:
                     dump.verify_pm2_dump(peer.path, peer.daemon, registry, receipt)
                 self.assertEqual(str(failure.exception), "pm2_dump_registry_changed")
+
+    def test_live_telemetry_changes_allow_save_verify_but_disk_changes_still_reject(self):
+        with FakePeer() as peer:
+            def update_telemetry(count):
+                for row in peer.raw:
+                    for field in dump._RESET_ON_EXECUTE:
+                        row["pm2_env"][field] = {"synthetic_counter": count}
+            peer.monitor_hook = update_telemetry
+            registry = peer.expected()
+            receipt = peer.persist(peer.capture())
+            saved = peer.file("dump.pm2").read_bytes()
+            self.assertTrue(dump.verify_pm2_dump(peer.path, peer.daemon, registry, receipt))
+            self.assertEqual(peer.file("dump.pm2").read_bytes(), saved)
+            stored = json.loads(saved.decode("utf-8"))
+            self.assertEqual(stored[0]["axm_monitor"], {"synthetic_counter": 1})
+            stored[0]["axm_monitor"] = {"synthetic_counter": 999}
+            peer.write("dump.pm2", json.dumps(stored).encode("utf-8"))
+            with self.assertRaises(dump.PM2DumpError) as failure:
+                dump.verify_pm2_dump(peer.path, peer.daemon, registry, receipt)
+            self.assertEqual(str(failure.exception), "pm2_dump_target_changed")
 
 
 if __name__ == "__main__":

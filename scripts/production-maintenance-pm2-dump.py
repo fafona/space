@@ -11,6 +11,10 @@ an invitation to retry/restore an older dump or open ingress.
 Dump content follows https://github.com/Unitech/pm2/blob/v6.0.14/lib/API/Startup.js
 lines 476-485: preserve all non-module pm2_env objects, remove only instances,
 pm_id and prev_restart_delay. Unlike the CLI, backup failures do not get ignored.
+Current-vs-saved comparisons cover restart configuration, not unchanged runtime
+telemetry: God.js lines 163-172 resets exactly four top-level axm_* fields on
+executeApp. Only those fields are excluded from that comparison. They remain in
+the saved bytes and exact file hash; nested env fields are never excluded.
 Python 3.6+ / Linux standard library. No import-time filesystem mutation or CLI.
 """
 
@@ -34,6 +38,7 @@ _spec.loader.exec_module(_control)
 _peer = _control._peer
 MAX_DUMP_BYTES = 2097152
 _FILES = ("dump.pm2", "dump.pm2.bak")
+_RESET_ON_EXECUTE = frozenset(("axm_actions", "axm_monitor", "axm_options", "axm_dynamic"))
 
 
 class PM2DumpError(Exception):
@@ -171,7 +176,17 @@ def _assert_registry(raw, expected):
 
 def _assert_dump_content(raw, expected_content, expected_count):
     content, count = _dump_content(raw)
-    if content != expected_content or count != expected_count:
+    # https://github.com/Unitech/pm2/blob/v6.0.14/lib/God.js#L163-L172
+    # Do not recursively filter: env.axm_monitor is still launch configuration.
+    # The raw saved file is independently bound by exact bytes/identity/hash.
+    def restart_configuration(value):
+        rows = json.loads(value.decode("utf-8"))
+        if type(rows) is not list or any(type(row) is not dict for row in rows):
+            _fail()
+        return _control._json([{key: item for key, item in row.items()
+                                if key not in _RESET_ON_EXECUTE} for row in rows])
+    if (count != expected_count
+            or restart_configuration(content) != restart_configuration(expected_content)):
         _fail("pm2_dump_registry_changed")
 
 
@@ -352,5 +367,5 @@ def persist_pm2_dump(socket_path, daemon, expected_registry, target_proof, *, ti
 
 
 def verify_pm2_dump(socket_path, daemon, expected_registry, receipt, *, timeout_ms=15000):
-    """Read-only exact persisted identity/hash + current filtered registry check."""
+    """Exact persisted identity/hash, instance registry and restart configuration."""
     return _run(socket_path, daemon, "verify", expected_registry, receipt, timeout_ms)

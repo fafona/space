@@ -329,8 +329,15 @@ export async function captureRuntime(rawInput, overrides = {}) {
     const first = await observe(input, d); await d.sleep(50); const second = await observe(input, d);
     if (!equal(first, second) || d.boot() !== bootId) fail();
     assertNoUnfrozenRuntimeProcess(second.disk.runtime, [...second.web.processes, ...(second.worker.managed?.processes || [])].map((fact) => fact.pid), d);
-    return validateRuntimeProof({ version: 1, input, bootId, ...second });
+    const proof = validateRuntimeProof({ version: 1, input, bootId, ...second });
+    assertWorkerPolicy(proof, d);
+    return proof;
   });
+}
+function assertWorkerPolicy(proof, d) {
+  const descriptor = { disk: proof.disk, environment: proof.environment, targetSha: proof.input.expectedOldSha };
+  const env = startEnvironment(descriptor, d);
+  if ([env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED, env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED].includes("true") !== (proof.worker.state === "running")) fail();
 }
 function assertFrozenDisk(proof, d) {
   if (d.boot() !== proof.bootId || d.runtimeIdentity(proof.disk.runtime) !== proof.disk.runtimeIdentity) fail();
@@ -403,7 +410,7 @@ async function deleteExact(managed, kind, daemon, runtime, d) {
 export async function stopRuntime(rawProof, overrides = {}) {
   return guarded(async () => {
     const proof = validateRuntimeProof(rawProof); const d = dependencies(overrides, proof.input.appPort, proof.bootId);
-    assertFrozenDisk(proof, d);
+    assertFrozenDisk(proof, d); assertWorkerPolicy(proof, d);
     if (d.current(proof.input.appDir) !== proof.disk.runtime) fail();
     await stopFrozenOrAlreadyGone(proof.worker.managed, "worker", proof.daemon, proof.disk.runtime, d);
     assertFrozenDisk(proof, d);

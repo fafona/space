@@ -160,6 +160,18 @@ test("capture freezes direct owner, environment equality and worker without raw 
   assert.deepEqual(validateRuntimeProof(proof), proof);
   assert.equal(f.calls.some((call) => call.args[0] !== "jlist"), false);
 });
+test("worker policy mismatch refuses plan and stop before any process mutation", async () => {
+  for (const worker of ["absent", "inactive", "running"]) {
+    const f = fixture({ worker });
+    f.flags.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED = worker === "running" ? "false" : "true";
+    await assert.rejects(captureRuntime(input(), f.deps));
+    assert.equal(f.calls.some(call => call.command === "adapter-control"), false);
+  }
+  const f = fixture(), proof = await captureRuntime(input(), f.deps);
+  f.flags.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED = "false";
+  await assert.rejects(stopRuntime(proof, f.deps));
+  assert.equal(f.calls.some(call => call.command === "adapter-control"), false);
+});
 
 function nativeFixture(kind = "root_pair") {
   const f = fixture(), files = new Map(), fullFacts = new Map(); let ino = 2000;

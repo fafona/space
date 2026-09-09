@@ -15,6 +15,9 @@ const scripts = dirname(fileURLToPath(import.meta.url));
 const controlSource = join(scripts, "production-maintenance-pm2-control.py");
 const dumpSource = join(scripts, "production-maintenance-pm2-dump.py");
 const safeCodes = new Set(["pm2_control_precondition_failed", "pm2_control_outcome_unknown"]);
+const dumpCodes = new Set(["pm2_dump_unverified", "pm2_dump_invalid_request", "pm2_dump_empty_registry",
+  "pm2_dump_registry_changed", "pm2_dump_target_changed", "pm2_dump_outcome_unknown",
+  "pm2_dump_platform_unsupported", "pm2_dump_version_unsupported"]);
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const compact = (value) => JSON.stringify(Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]])));
@@ -39,7 +42,9 @@ try:
     else: raise ValueError()
     sys.stdout.write(json.dumps({"ok":True,"result":result},separators=(",",":"))+"\\n")
 except BaseException as error:
-    code=str(error) if str(error) in ("pm2_control_precondition_failed","pm2_control_outcome_unknown") else "pm2_acceptance_transport_failed"
+    code=str(error) if str(error) in ("pm2_control_precondition_failed","pm2_control_outcome_unknown",
+        "pm2_dump_unverified","pm2_dump_invalid_request","pm2_dump_empty_registry","pm2_dump_registry_changed",
+        "pm2_dump_target_changed","pm2_dump_outcome_unknown","pm2_dump_platform_unsupported","pm2_dump_version_unsupported") else "pm2_acceptance_transport_failed"
     sys.stdout.write(json.dumps({"ok":False,"error":code})+"\\n")
     sys.exit(1)
 `;
@@ -89,6 +94,7 @@ async function main() {
       if (!safeCodes.has(expectedError) || result.status !== 1 || body?.ok !== false || body.error !== expectedError) fail("pm2_acceptance_rejection_unverified");
       return null;
     }
+    if (result.status === 1 && body?.ok === false && dumpCodes.has(body.error)) fail(body.error);
     if (result.status !== 0 || body?.ok !== true || !Object.hasOwn(body, "result")) fail("pm2_acceptance_transport_failed");
     return body.result;
   }
@@ -249,12 +255,16 @@ async function main() {
     stage = "private-dump-save-verify";
     prepare(launch("final-web", "other-synthetic-app"));
     const savedRegistry = registry();
+    stage = "private-dump-capture";
     const proof = python({ action: "capture", socketPath, daemon });
+    stage = "private-dump-persist";
     const receipt = python({ action: "persist", socketPath, daemon, registry: savedRegistry, proof });
     assert.equal(receipt.saved, true);
     assert.equal(receipt.processCount, 3);
     assert.ok(!JSON.stringify(receipt).includes("synthetic-private-key"));
+    stage = "private-dump-verify";
     assert.equal(python({ action: "verify", socketPath, daemon, registry: savedRegistry, receipt }), true);
+    stage = "private-dump-file-check";
     const saved = JSON.parse(readFileSync(join(pm2Home, "dump.pm2"), "utf8"));
     assert.deepEqual(saved.map((entry) => entry.name).sort(), savedRegistry.map((entry) => entry.name).sort());
     assert.ok(saved.every((entry) => !Object.hasOwn(entry, "pm_id") && !Object.hasOwn(entry, "instances") && !Object.hasOwn(entry, "prev_restart_delay")));
@@ -313,6 +323,6 @@ catch (error) {
     "pm2_acceptance_transport_failed", "pm2_acceptance_rejection_unverified", "pm2_acceptance_daemon_changed", "pm2_acceptance_process_unverified",
     "pm2_acceptance_process_replaced", "pm2_acceptance_process_not_stopped", "pm2_acceptance_daemon_unverified", "pm2_acceptance_install_failed",
     "pm2_acceptance_version_unverified", "pm2_acceptance_home_not_empty", "pm2_acceptance_bootstrap_failed", "pm2_acceptance_cleanup_unverified"]);
-  console.error(JSON.stringify({ error: allowed.has(error?.message) ? error.message : "pm2_acceptance_unverified", stage }));
+  console.error(JSON.stringify({ error: allowed.has(error?.message) || dumpCodes.has(error?.message) ? error.message : "pm2_acceptance_unverified", stage }));
   process.exitCode = 1;
 }
