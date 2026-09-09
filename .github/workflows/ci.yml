@@ -36,7 +36,7 @@ jobs:
         run: npm run check:encoding:strict
 
       - name: Maintenance Topology Diagnostic Tests
-        run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs
+        run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs scripts/check-production-maintenance-capabilities.test.mjs
 
       - name: Lint
         run: npm run lint -- --quiet
