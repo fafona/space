@@ -181,8 +181,11 @@ class FakePeer:
 
     def __exit__(self, *_):
         self.stop.set()
-        self.listener.close()
+        # Let accept() observe a connection that the client already closed after
+        # peer rejection. Closing the listener first races its pending backlog.
+        # Both accept and recv have bounded timeouts, including zero-connect tests.
         self.thread.join(2)
+        self.listener.close()
         if self.thread.is_alive():
             raise AssertionError("fake_peer_thread_not_stopped")
         self.directory.cleanup()
