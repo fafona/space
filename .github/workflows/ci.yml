@@ -35,6 +35,9 @@ jobs:
       - name: Encoding Check (Strict)
         run: npm run check:encoding:strict
 
+      - name: Maintenance Topology Diagnostic Tests
+        run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs
+
       - name: Lint
         continue-on-error: true
         run: npm run lint -- --max-warnings=9999
