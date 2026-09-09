@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import { diagnoseRuntimeCompatibility } from "./production-maintenance-runtime-diagnostic.mjs";
+import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
 
 const ERROR = "production_maintenance_pm2_peer_unverified";
 const SEMVER = /^(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})$/;
@@ -106,14 +106,14 @@ export async function diagnosePm2Peer(rawInput, overrides = {}) {
   try {
     const d = await dependencies(overrides);
     const boot = d.boot(); if (!BOOT.test(boot)) fail();
-    const metadata = await d.metadata(input);
-    if (metadata.version !== 2 || metadata.stability !== "stable" || metadata.disk !== "verified" ||
+    const metadata = validateRuntimeCompatibilityDiagnostic(await d.metadata(input));
+    if (metadata.version !== 3 || metadata.stability !== "stable" || metadata.disk !== "verified" ||
         metadata.supervision !== "runtime_supervision_direct_next_owned" || metadata.pm2Connection !== "not_checked" ||
         !SEMVER.test(metadata.pm2Version ?? "") || metadata.pm2PathOverridesPresent !== false ||
         metadata.pm2Endpoint?.home !== "verified" || metadata.pm2Endpoint?.rpcSocket !== "verified" ||
         metadata.pm2Endpoint?.pidFile !== "verified" || metadata.pm2Endpoint?.pidMatches !== true ||
         metadata.python?.executableVerified !== true || metadata.python?.afUnixApiAvailable !== true ||
-        metadata.python?.soPeercredApiAvailable !== true) fail();
+        metadata.python?.soPeercredApiAvailable !== true || metadata.python?.rejectionReason !== null) fail();
     const before = await observation(input, d); const python = d.python();
     if (before.pm2Version !== metadata.pm2Version || d.boot() !== boot) fail();
     const daemon = Object.fromEntries(["pid", "uid", "startTicks", "executable", "executableIdentity"]

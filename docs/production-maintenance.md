@@ -24,6 +24,17 @@ metadata is not peer authentication; native classifications are not stop or
 restart approval. Missing, unsafe and unreadable observations stay distinct.
 The report still cannot establish a maintenance operation or authorize changes.
 
+Version 3 adds the first fixed rejection reason for Python and a fixed set of
+reason counts for unclassified native descendants. The counts must sum to the
+unknown descendant count. No path, PID, argument, file content or raw exception
+is included. A failed gate stops that observation; collecting reasons does not
+permit probing beyond it. Detected identity drift still discards the whole
+diagnostic. An unverified executable does not mean Python is absent or that its
+socket APIs were tested. These reasons never relax the existing path, owner,
+link-count, permission, size or executable checks, and cannot authorize a retry,
+peer connection, maintenance operation or release. Consumers reject older or
+inconsistent diagnostic schemas instead of silently dropping the reason fields.
+
 ## Read-only PM2 peer diagnosis
 
 **diagnose-pm2-peer** is a separate, manually confirmed action using the exact
