@@ -495,7 +495,7 @@ esac
 maintenance_control() {
   local operation="$1"
   [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ] || return 1
-  case "$operation" in check-held|check-runtime-held|register-candidate|check-candidate|fail-held) ;; *) return 1 ;; esac
+  case "$operation" in check-held|check-runtime-held|start-candidate|register-candidate|check-candidate|fail-held) ;; *) return 1 ;; esac
   timeout --signal=TERM --kill-after=5s 120s \
     node "$APP_DIR/scripts/production-maintenance-control.mjs" "$operation" \
       --app-dir "$APP_DIR" --app-name "$APP_NAME" --app-port "$APP_PORT" \
@@ -503,8 +503,20 @@ maintenance_control() {
       --expected-operation-id "$PRODUCTION_MAINTENANCE_OPERATION_ID" --json >/dev/null 2>&1
 }
 
+maintenance_deployment_read() {
+  local action="$1" timeout_ms="$2"
+  shift 2
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ] || return 1
+  [[ "$timeout_ms" =~ ^[1-9][0-9]*$ ]] && [ "$timeout_ms" -ge 1000 ] && [ "$timeout_ms" -le 120000 ] || return 1
+  timeout --signal=TERM --kill-after=1s "$(((timeout_ms + 999) / 1000))s" \
+    node "$APP_DIR/scripts/production-maintenance-deploy-read.mjs" "$action" \
+      "$APP_DIR" "$APP_NAME" "$APP_PORT" "$EXPECTED_DEPLOY_SHA" \
+      "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" "$PRODUCTION_MAINTENANCE_OPERATION_ID" "$timeout_ms" "$@" 2>/dev/null
+}
+
 load_maintenance_previous_runtime() {
   local key value count=0
+  local -A seen=()
   while IFS= read -r -d '' key && IFS= read -r -d '' value; do
     case "$key" in
       PREVIOUS_LINK_TARGET|PREVIOUS_RUNTIME_DIR|PREVIOUS_RUNTIME_PARENT|PREVIOUS_RELEASE_NAME|PREVIOUS_BUILD_PREFIX|\
@@ -515,36 +527,14 @@ load_maintenance_previous_runtime() {
       PREVIOUS_STAFF_ROLLOUT_STATUS|PREVIOUS_STAFF_ALLOW_LEGACY_EMPTY_ORIGIN|PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_MODE|\
       PREVIOUS_MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS|PREVIOUS_FAOLLA_CANONICAL_PORTAL_ORIGIN|\
       PREVIOUS_AUTOMATION_WORKER_STATE|PREVIOUS_AUTOMATION_WORKER_RUNNING)
-        printf -v "$key" '%s' "$value"; count=$((count + 1)) ;;
+        [ -z "${seen[$key]+present}" ] || return 1
+        seen[$key]=1; printf -v "$key" '%s' "$value"; count=$((count + 1)) ;;
       *) return 1 ;;
     esac
-  done < <(timeout --signal=TERM --kill-after=5s 120s node --input-type=module - \
+  done < <(timeout --signal=TERM --kill-after=5s 120s \
+    node "$APP_DIR/scripts/production-maintenance-deploy-read.mjs" runtime-handoff \
       "$APP_DIR" "$APP_NAME" "$APP_PORT" "$EXPECTED_DEPLOY_SHA" \
-      "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" "$PRODUCTION_MAINTENANCE_OPERATION_ID" <<'NODE'
-import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
-const [appDir, appName, appPort, targetSha, expectedOldSha, operationId] = process.argv.slice(2);
-try {
-  const result = spawnSync(process.execPath, [appDir + "/scripts/production-maintenance-control.mjs", "runtime-handoff",
-    "--app-dir", appDir, "--app-name", appName, "--app-port", appPort, "--target-sha", targetSha,
-    "--expected-old-sha", expectedOldSha, "--expected-operation-id", operationId, "--json"],
-  { encoding: "utf8", timeout: 100000, maxBuffer: 131072, stdio: ["ignore", "pipe", "pipe"] });
-  if (result.error || result.signal || result.status !== 0) throw new Error();
-  const value = JSON.parse(result.stdout);
-  if (!value || Object.keys(value).sort().join(",") !== "expectedOldSha,operationId,runtime,state,targetSha,version" ||
-      value.version !== 1 || value.state !== "held" || value.operationId !== operationId || value.targetSha !== targetSha || value.expectedOldSha !== expectedOldSha) throw new Error();
-  const { validateRuntimeProof, readDeploymentHandoffFields } = await import(pathToFileURL(appDir + "/scripts/production-maintenance-runtime.mjs").href);
-  const proof = validateRuntimeProof(value.runtime);
-  if (proof.input.appDir !== appDir || proof.input.appName !== appName || String(proof.input.appPort) !== appPort || proof.input.expectedOldSha !== expectedOldSha) throw new Error();
-  const fields = await readDeploymentHandoffFields(proof);
-  if (Object.keys(fields).length !== 27) throw new Error();
-  for (const [key, value] of Object.entries(fields)) {
-    if (typeof value !== "string" || value.includes("\0")) throw new Error();
-    process.stdout.write(key + "\0" + value + "\0");
-  }
-} catch { process.exitCode = 1; }
-NODE
-  )
+      "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" "$PRODUCTION_MAINTENANCE_OPERATION_ID" 115000 2>/dev/null)
   [ "$count" -eq 27 ] || return 1
   maintenance_control check-held
 }
@@ -661,7 +651,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v pm2 >/dev/null 2>&1; then
+if [ "$PRODUCTION_MAINTENANCE_MODE" = off ] && ! command -v pm2 >/dev/null 2>&1; then
   echo "[deploy] pm2 is required on the server"
   exit 1
 fi
@@ -2509,6 +2499,12 @@ start_release() {
   staff_business_rollout_values_valid \
     "$staff_business_mode" "$staff_business_site_ids" \
     "$canonical_portal_origin" "$allow_legacy_empty_origin" || return 1
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    [ "$runtime_root" = "$RELEASE_DIR" ] \
+      && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$runtime_root" ] || return 1
+    maintenance_control start-candidate
+    return $?
+  fi
   automation_worker_enabled="$(read_runtime_automation_worker_enabled "$runtime_dir")"
   (
     cd "$runtime_root" || exit 1
@@ -2527,6 +2523,19 @@ start_release() {
 pm2_process_snapshot() {
   local process_name="$1"
   local absolute_deadline_seconds="${2:-}"
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    local read_action reader_timeout_seconds=30
+    case "$process_name" in
+      "$APP_NAME") read_action=snapshot-web ;;
+      "$AUTOMATION_WORKER_NAME") read_action=snapshot-worker ;;
+      *) return 1 ;;
+    esac
+    if [ -n "$absolute_deadline_seconds" ]; then
+      reader_timeout_seconds="$(deadline_bounded_command_timeout_seconds "$absolute_deadline_seconds" 30 1)" || return 1
+    fi
+    maintenance_deployment_read "$read_action" "$((reader_timeout_seconds * 1000))"
+    return $?
+  fi
   local jlist_timeout_seconds=5
   local parse_timeout_seconds=2
   local process_list
@@ -2599,6 +2608,11 @@ pm2_rollout_environment_pid() {
   local expected_mode="$2"
   local expected_site_ids="$3"
   local expected_portal_origin="$4"
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    [ "$process_name" = "$APP_NAME" ] || return 1
+    maintenance_deployment_read rollout-web 30000 "$expected_mode" "$expected_site_ids" "$expected_portal_origin"
+    return $?
+  fi
   local process_list
   if ! process_list="$(PM2_SILENT=true timeout --signal=TERM --kill-after=2s 5s \
       pm2 jlist 2>/dev/null)"; then
@@ -2739,6 +2753,7 @@ previous_web_process_identity_matches() {
 }
 
 previous_web_listener_handoff_operation() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" != maintenance ] || return 1
   local operation="$1"
   local absolute_deadline_seconds="${2:-}"
   local expected_launch_mode="${3:-${PREVIOUS_WEB_EXPECTED_LAUNCH_MODE:-either}}"
@@ -3459,6 +3474,34 @@ capture_candidate_web_listener_handoff_identity() {
     || ! [[ "$PREVIOUS_RUNTIME_IDENTITY" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]]; then
     return 1
   fi
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    local reader_timeout_seconds key value count=0
+    local -A seen=()
+    [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$RELEASE_DIR" ] \
+      && [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" = "$PREVIOUS_RUNTIME_IDENTITY" ] || return 1
+    reader_timeout_seconds="$(deadline_bounded_command_timeout_seconds "$absolute_deadline_seconds" 30 1)" || return 1
+    while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+      case "$key" in
+        CANDIDATE_WEB_PID|CANDIDATE_WEB_PROCESS_START_TICKS|CANDIDATE_WEB_PROCESS_IDENTITY|CANDIDATE_WEB_CWD_IDENTITY|CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64)
+          [ -z "${seen[$key]+present}" ] || return 1
+          seen[$key]=1; printf -v "$key" '%s' "$value"; count=$((count + 1)) ;;
+        *) return 1 ;;
+      esac
+    done < <(maintenance_deployment_read candidate-handoff "$((reader_timeout_seconds * 1000))")
+    [ "$count" -eq 5 ] && [ "$SECONDS" -lt "$absolute_deadline_seconds" ] \
+      && [[ "$CANDIDATE_WEB_PID" =~ ^[1-9][0-9]*$ ]] \
+      && [[ "$CANDIDATE_WEB_PROCESS_START_TICKS" =~ ^[1-9][0-9]*$ ]] \
+      && [[ "$CANDIDATE_WEB_PROCESS_IDENTITY" =~ ^[0-9]+:[0-9]+$ ]] \
+      && [ "$CANDIDATE_WEB_CWD_IDENTITY" = "$PREVIOUS_RUNTIME_IDENTITY" ] \
+      && [ -n "$CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64" ] \
+      && [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$RELEASE_DIR" ] \
+      && [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" = "$PREVIOUS_RUNTIME_IDENTITY" ] || return 1
+    CANDIDATE_WEB_PM2_DELETE_ATTEMPTS=0
+    CANDIDATE_WEB_PM2_DELETE_COMPLETED=0
+    CANDIDATE_WEB_FROZEN_STOP_COMPLETED=0
+    CANDIDATE_WEB_HANDOFF_STATE=exact
+    return 0
+  fi
   while [ "$SECONDS" -lt "$absolute_deadline_seconds" ]; do
     if [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
       || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$PREVIOUS_RUNTIME_IDENTITY" ]; then
@@ -3578,6 +3621,7 @@ quiesce_frozen_previous_web_listener_bounded() {
 }
 
 stop_frozen_previous_web_bounded() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   local process_timeout_seconds="$1"
   local port_timeout_seconds="$2"
   local process_deadline_seconds
@@ -3646,6 +3690,12 @@ stop_frozen_previous_web_bounded() {
 }
 
 stop_frozen_candidate_web_bounded() {
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    maintenance_control fail-held && maintenance_control check-held || return 4
+    CANDIDATE_WEB_HANDOFF_STATE=absent
+    CANDIDATE_WEB_FROZEN_STOP_COMPLETED=1
+    return 0
+  fi
   local PREVIOUS_RUNTIME_DIR="$RELEASE_DIR"
   local PREVIOUS_RUNTIME_IDENTITY="$CANDIDATE_RUNTIME_IDENTITY"
   local PREVIOUS_WEB_PID="$CANDIDATE_WEB_PID"
@@ -3693,6 +3743,7 @@ stop_frozen_candidate_web_bounded() {
 }
 
 stop_pm2_process_bounded() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   local process_name="$1"
   local total_timeout_seconds="$2"
   local remove_inactive="${3:-1}"
@@ -3757,6 +3808,7 @@ stop_previous_automation_worker_bounded() {
 }
 
 start_automation_worker_process() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   local runtime_dir="$1"
   local staff_business_mode="${2:-}"
   local staff_business_site_ids="${3:-}"
@@ -3802,6 +3854,7 @@ start_automation_worker_process() {
 }
 
 start_frozen_previous_release() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   if [ -z "${PREVIOUS_SUPABASE_INTERNAL_URL:-}" ] \
     || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_URL:-}" ] \
     || [ -z "${PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ] \
@@ -6614,6 +6667,7 @@ pre_forward_recovery_original_process_is_gone() {
 }
 
 cleanup_pre_forward_recovery_started_process() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   local process_name="$1"
   local process_pid="$2"
   local process_start_ticks="$3"
@@ -6670,6 +6724,7 @@ cleanup_pre_forward_previous_runtime_attempts() {
 }
 
 recover_pre_forward_previous_runtime() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   local web_start_status=0
   local worker_start_status=0
   PRE_FORWARD_RECOVERY_FAILURE_PHASE="preflight"
@@ -6807,6 +6862,7 @@ recover_pre_forward_previous_runtime() {
 }
 
 rollback_release() {
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = off ] || return 1
   local candidate_stop_status=0
   ROLLBACK_FAILURE_CODE=""
   if { [ "$SWITCH_COMPLETED" != "1" ] && [ "$PROCESSES_STOPPED" != "1" ]; } \
@@ -6963,9 +7019,6 @@ cleanup_failed_build() {
   if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
     # The ingress controller owns this offline operation. Never restart the old
     # writer or reopen ingress from an application-deployment failure handler.
-    if [ "${CANDIDATE_WEB_HANDOFF_STATE:-}" = exact ]; then
-      stop_frozen_candidate_web_bounded >/dev/null 2>&1 || cleanup_status=1
-    fi
     if [ "${READINESS_FENCE_ACTIVE:-0}" = 1 ]; then
       discard_failed_readiness_fence >/dev/null 2>&1 || cleanup_status=1
     fi
@@ -7339,8 +7392,12 @@ fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"
+CANDIDATE_WEB_START_RESERVE_SECONDS="$RELEASE_PROCESS_START_TIMEOUT_SECONDS"
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  CANDIDATE_WEB_START_RESERVE_SECONDS=120
+fi
 assert_readiness_fence_before_forward_operation "$((
-  RELEASE_PROCESS_START_TIMEOUT_SECONDS +
+  CANDIDATE_WEB_START_RESERVE_SECONDS +
   PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
   READINESS_FENCE_OPERATION_MARGIN_SECONDS
 ))" || exit 1
@@ -7472,7 +7529,7 @@ else
 fi
 fi
 
-if ! timeout --signal=TERM --kill-after=2s 10s pm2 save; then
+if [ "$PRODUCTION_MAINTENANCE_MODE" = off ] && ! timeout --signal=TERM --kill-after=2s 10s pm2 save; then
   echo "[deploy] warning: pm2 save failed after the healthy release was activated"
 fi
 

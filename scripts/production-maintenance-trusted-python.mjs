@@ -7,12 +7,16 @@ import { types } from "node:util";
 // Never derive an executable or a filesystem lookup from a supplied proof.
 const ENTRY = "/usr/bin/python3";
 const TARGET = /^\/usr\/bin\/python3(?:\.(?:0|[1-9]\d{0,3}))?$/;
+const PLATFORM_TARGET = "/usr/libexec/platform-python3.6";
+const PLATFORM_PAIR = "/usr/libexec/platform-python3.6m";
 const ERROR = "maintenance_trusted_python_unverified";
 const FIELDS = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"];
 const fail = () => { throw new Error(ERROR); };
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-export const isTrustedPythonTarget = (path) => typeof path === "string" && path.length < 64 && TARGET.exec(path)?.[0] === path;
+export const trustedPythonTargetLinkCount = (path) => path === PLATFORM_TARGET ? 2 :
+  typeof path === "string" && path.length < 64 && TARGET.exec(path)?.[0] === path ? 1 : 0;
+export const isTrustedPythonTarget = (path) => trustedPythonTargetLinkCount(path) !== 0;
 const directoryPaths = (path) => {
   const result = ["/"];
   for (const segment of posix.dirname(path).split("/").filter(Boolean)) result.push(posix.join(result.at(-1), segment));
@@ -48,20 +52,21 @@ function identity(value) {
   return result;
 }
 
-function checkIdentity(value, type) {
+function checkIdentity(value, type, links = 1) {
   const stat = identity(value);
   const kinds = { file: 0o100000n, directory: 0o040000n, symlink: 0o120000n };
   if (typeof type !== "string" || !Object.hasOwn(kinds, type) || (stat.mode & 0o170000n) !== kinds[type] || stat.uid !== 0n) fail();
   if (type === "directory" && (stat.mode & 0o022n) !== 0n) fail();
-  if (type === "file" && (stat.nlink !== 1n || (stat.mode & 0o022n) !== 0n ||
+  if (type === "file" && (stat.nlink !== BigInt(links) || (stat.mode & 0o022n) !== 0n ||
       (stat.mode & 0o111n) === 0n || stat.size < 1n || stat.size > 67108864n)) fail();
 }
 
-function node(value, target = false) {
+function node(value, role = "entry") {
   const copy = record(value, ["path", "type", "identity"]);
-  if (target ? !isTrustedPythonTarget(copy.path) || copy.type !== "file"
-    : copy.path !== ENTRY || !["file", "symlink"].includes(copy.type)) fail();
-  checkIdentity(copy.identity, copy.type);
+  if (role === "target" ? !isTrustedPythonTarget(copy.path) || copy.type !== "file"
+    : role === "pair" ? copy.path !== PLATFORM_PAIR || copy.type !== "file"
+      : copy.path !== ENTRY || !["file", "symlink"].includes(copy.type)) fail();
+  checkIdentity(copy.identity, copy.type, role === "pair" ? 2 : role === "target" ? trustedPythonTargetLinkCount(copy.path) : 1);
   return Object.freeze(copy);
 }
 
@@ -76,12 +81,19 @@ function chain(value, executable) {
 }
 
 function captureProof(value) {
-  const copy = record(value, ["version", "entry", "target", "entryDirectories", "targetDirectories"]);
-  if (copy.version !== 1) fail();
-  const entry = node(copy.entry), target = node(copy.target, true);
-  const proof = { version: 1, entry, target,
-    entryDirectories: chain(copy.entryDirectories, entry.path), targetDirectories: chain(copy.targetDirectories, target.path) };
-  if (proof.entryDirectories.some((item) => proof.targetDirectories.some((other) => item.path === other.path && item.identity !== other.identity)) ||
+  const copy = record(value, ["version", "layout", "entry", "target", "pair", "entryDirectories", "targetDirectories", "pairDirectories"]);
+  if (copy.version !== 2) fail();
+  const entry = node(copy.entry), target = node(copy.target, "target");
+  const platform = target.path === PLATFORM_TARGET;
+  if (copy.layout !== (platform ? "el8_platform_python36_pair" : "usr_bin_single") ||
+      (!platform && (copy.pair !== null || copy.pairDirectories !== null))) fail();
+  const pair = platform ? node(copy.pair, "pair") : null;
+  if (pair && pair.identity !== target.identity) fail();
+  const proof = { version: 2, layout: copy.layout, entry, target, pair,
+    entryDirectories: chain(copy.entryDirectories, entry.path), targetDirectories: chain(copy.targetDirectories, target.path),
+    pairDirectories: pair ? chain(copy.pairDirectories, pair.path) : null };
+  const witnesses = [...proof.entryDirectories, ...proof.targetDirectories, ...(proof.pairDirectories ?? [])];
+  if (witnesses.some((item) => witnesses.some((other) => item.path === other.path && item.identity !== other.identity)) ||
       (proof.entry.type === "file" && (proof.target.path !== ENTRY || proof.entry.identity !== proof.target.identity)) ||
       (proof.entry.type === "symlink" && proof.target.path === ENTRY) || JSON.stringify(proof).length > 4096) fail();
   return Object.freeze(proof);
@@ -106,12 +118,12 @@ function dependencies(overrides) {
 }
 
 function observe(d) {
-  const read = (path) => {
+  const read = (path, links = 1) => {
     const info = record(d.pathInfo(path), ["identity", "uid", "mode", "size", "nlink", "type"]);
     const stat = identity(info.identity);
     if (["uid", "mode", "size", "nlink"].some((key) => !Number.isSafeInteger(info[key]) ||
         info[key] < 0 || BigInt(info[key]) !== stat[key])) fail();
-    checkIdentity(info.identity, info.type);
+    checkIdentity(info.identity, info.type, links);
     return info;
   };
   const directories = (executable) => directoryPaths(executable).map((path) => {
@@ -125,10 +137,17 @@ function observe(d) {
   const executable = d.canonical(ENTRY);
   if (!isTrustedPythonTarget(executable)) fail();
   const targetDirectories = directories(executable);
-  const target = read(executable);
+  const target = read(executable, trustedPythonTargetLinkCount(executable));
   if (target.type !== "file" || d.canonical(executable) !== executable || d.canonical(ENTRY) !== executable) fail();
-  return captureProof({ version: 1, entry: { path: ENTRY, type: entry.type, identity: entry.identity },
-    target: { path: executable, type: target.type, identity: target.identity }, entryDirectories, targetDirectories });
+  const platform = executable === PLATFORM_TARGET;
+  const pairDirectories = platform ? directories(PLATFORM_PAIR) : null;
+  const pair = platform ? read(PLATFORM_PAIR, 2) : null;
+  if (pair && (pair.type !== "file" || d.canonical(PLATFORM_PAIR) !== PLATFORM_PAIR || pair.identity !== target.identity)) fail();
+  return captureProof({ version: 2, layout: platform ? "el8_platform_python36_pair" : "usr_bin_single",
+    entry: { path: ENTRY, type: entry.type, identity: entry.identity },
+    target: { path: executable, type: target.type, identity: target.identity },
+    pair: pair ? { path: PLATFORM_PAIR, type: pair.type, identity: pair.identity } : null,
+    entryDirectories, targetDirectories, pairDirectories });
 }
 
 function capture(d) {

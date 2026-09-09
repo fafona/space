@@ -2187,7 +2187,9 @@ test("deploy workflow bash and every embedded program have real syntax", () => {
     assert.equal(result.status, 0, `workflow NODE heredoc ${index + 1}: ${result.stderr}`);
   }
   const deployNodeSources = extractShellHeredocs(deployScript, "NODE");
-  assert.equal(deployNodeSources.length, 17);
+  // Maintenance runtime handoff now runs a real standalone script entry point;
+  // importing runtime from stdin could accidentally execute its legacy CLI.
+  assert.equal(deployNodeSources.length, 16);
   for (const [index, source] of deployNodeSources.entries()) {
     const result = spawnSync(
       process.execPath,
@@ -8212,7 +8214,7 @@ test("candidate listener identity is frozen before every post-start gate and dri
   }
   assert.match(
     transition,
-    /RELEASE_PROCESS_START_TIMEOUT_SECONDS \+\s+PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS \+\s+READINESS_FENCE_OPERATION_MARGIN_SECONDS/,
+    /CANDIDATE_WEB_START_RESERVE_SECONDS \+\s+PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS \+\s+READINESS_FENCE_OPERATION_MARGIN_SECONDS/,
   );
   assert.match(capture, /local PREVIOUS_RUNTIME_DIR="\$RELEASE_DIR"/);
   assert.match(capture, /local PREVIOUS_RUNTIME_IDENTITY="\$CANDIDATE_RUNTIME_IDENTITY"/);
