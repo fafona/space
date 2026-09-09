@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
+import { captureTrustedPython, verifyTrustedPython } from "./production-maintenance-trusted-python.mjs";
 
 const ERROR = "production_maintenance_pm2_peer_unverified";
 const SEMVER = /^(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})$/;
@@ -32,22 +33,9 @@ function inputCopy(value) {
       typeof value.expectedOldSha !== "string" || !/^[a-f0-9]{40}$/.test(value.expectedOldSha)) fail();
   return { ...value };
 }
-const identity = (value) => ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"]
-  .map((key) => String(value[key])).join(":");
 function pythonIdentity() {
-  const directories = ["/", "/usr", "/usr/bin"].map((path) => {
-    const stat = lstatSync(path, { bigint: true });
-    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== 0n || (stat.mode & 0o022n) !== 0n || realpathSync(path) !== path) fail();
-    return identity(stat);
-  });
-  const link = lstatSync("/usr/bin/python3", { bigint: true });
-  if (link.uid !== 0n || (!link.isSymbolicLink() && !link.isFile())) fail();
-  const executable = realpathSync("/usr/bin/python3");
-  if (!/^\/usr\/bin\/python3(?:\.\d{1,2})?$/.test(executable)) fail();
-  const stat = lstatSync(executable, { bigint: true });
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== 0n || (stat.mode & 0o022n) !== 0n ||
-      (stat.mode & 0o111n) === 0n || stat.nlink !== 1n || stat.size < 1n) fail();
-  return { executable, link: identity(link), file: identity(stat), directories };
+  const proof = captureTrustedPython();
+  return { executable: proof.target.path, proof };
 }
 
 // Data travels only on private stdin. No arbitrary module, command, RPC method,
@@ -69,11 +57,14 @@ except BaseException:
     sys.exit(1)
 `;
 function invokePython(python, payload) {
+  if (python?.executable !== python?.proof?.target?.path) fail();
+  verifyTrustedPython(python.proof);
   const helper = fileURLToPath(new URL("./production-maintenance-pm2-connection.py", import.meta.url));
   const result = spawnSync(python.executable, ["-I", "-S", "-B", "-c", PM2_PEER_BRIDGE_SOURCE, helper], {
     input: JSON.stringify(payload), encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", maxBuffer: 4096, shell: false, windowsHide: true,
     cwd: "/", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, stdio: ["pipe", "pipe", "pipe"],
   });
+  verifyTrustedPython(python.proof);
   if (result.error || result.signal || result.status !== 0 || result.stderr !== "" ||
       typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 4096) fail();
   return JSON.parse(result.stdout);

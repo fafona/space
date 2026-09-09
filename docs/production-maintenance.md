@@ -54,6 +54,24 @@ All private witnesses, including rejected Python target changes and paired-file
 changes, participate in the two-observation stability check. Neither layout
 evidence nor its matching result may authorize PM2 access, maintenance or release.
 
+Both diagnostic consumers use one metadata-only trusted-Python verifier. Its
+entry is fixed at `/usr/bin/python3`; canonical targets remain limited to that
+path or `/usr/bin/python3.N`, where N is 0 through 9999 with no leading zero.
+There is no `/usr/local` exception, PATH search, environment override or fallback.
+The private proof freezes both canonical directory chains and the entry/target
+identities (device, inode, size, modification/change times, link count, UID and
+mode). Files must be root-owned, single-link, executable, non-writable by other
+users, and between 1 byte and 64 MiB. The helper never executes a process.
+Consumers recheck the proof immediately before and after their bounded isolated
+Python call. Runtime diagnostics also reconcile earlier metadata before the
+call; detected drift discards the complete report, never retries the call, and
+never exposes the private proof. These checks detect sampled changes; they do
+not prevent a privileged writer from racing after verification.
+If the fixed entry resolves to an unsupported layout, obtain its canonical
+target through the operator's private server terminal before proposing a narrow
+compatibility change. Do not guess another path, change the system link, install
+an interpreter, or publish arbitrary host paths in the diagnostic log.
+
 ## Read-only PM2 peer diagnosis
 
 **diagnose-pm2-peer** is a separate, manually confirmed action using the exact
