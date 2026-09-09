@@ -4,6 +4,18 @@ This protocol is for the coordinated client-write ACL cutover. It is not a
 general-purpose remote shell, a substitute for backup, or a claim that a server
 has entered maintenance merely because a workflow input was confirmed.
 
+When runtime capture is unsupported, use the separately confirmed
+**diagnose-runtime** action before retrying the maintenance plan. It inspects
+existing disk/process metadata without invoking the PM2 CLI or RPC. Its strict
+report contains only fixed classifications, booleans and bounded counts, never
+raw environment values, paths, process arguments or credentials. It creates no
+maintenance operation, never reports `held`, and cannot authorize a backup,
+migration or deployment. Unverified observations remain unverified.
+This diagnostic action does not repair or approve the existing PM2 control
+transport. Do not retry `plan` or start `prepare` until that transport is bound
+to the verified daemon without automatic daemon creation and the reported
+runtime compatibility failures have been addressed.
+
 ## Release order
 
 1. Merge the reviewed exact candidate and require successful push CI, including

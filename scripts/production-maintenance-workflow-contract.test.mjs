@@ -14,6 +14,7 @@ import {
   buildProductionMaintenanceBinding,
   validateProductionMaintenanceBinding,
   validateProductionMaintenanceControlReport,
+  validateProductionRuntimeDiagnosticReport,
 } from "./production-maintenance-workflow-contract.mjs";
 
 const env = {
@@ -23,6 +24,13 @@ const env = {
   READINESS_RUN_ID: "122", READINESS_RUN_ATTEMPT: "1",
 };
 const failure = /production_maintenance_binding_invalid/;
+const diagnosticFixture = () => ({
+  version: 1, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
+    interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
+  supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
+  runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
+});
 
 test("maintenance bindings explicitly identify each phase and exact parent runs", () => {
   for (const phase of ["backup", "readiness", "deploy"]) {
@@ -96,6 +104,36 @@ test("public control report admits only fixed metadata and plan cannot serve as 
   assert.throws(() => validateProductionMaintenanceControlReport({ ...report, state: "failed-unknown" }, { state: "held" }), failure);
   assert.throws(() => validateProductionMaintenanceControlReport({ ...report, state: "runtime-held" }, {}), failure);
 });
+test("runtime diagnostic report is exact-bound, non-authoritative and never discloses arbitrary content", () => {
+  const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "runtime-diagnosed", diagnostics: diagnosticFixture() };
+  const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
+  assert.deepEqual(validateProductionRuntimeDiagnosticReport(report, expected), report);
+  assert.throws(() => validateProductionMaintenanceControlReport(report, {}), failure);
+  for (const patch of [{ operationId: env.MAINTENANCE_OPERATION_ID }, { state: "held" }, { targetSha: env.EXPECTED_OLD_SHA },
+    { expectedOldSha: env.TARGET_SHA }, { diagnostics: { ...diagnosticFixture(), raw: "never-disclose" } },
+    { diagnostics: { ...diagnosticFixture(), pm2Home: "/never-disclose" } }]) {
+    assert.throws(() => validateProductionRuntimeDiagnosticReport({ ...report, ...patch }, expected), failure);
+  }
+  const directory = mkdtempSync(join(tmpdir(), "faolla-runtime-diagnostic-contract-"));
+  const file = join(directory, "report.json");
+  const script = fileURLToPath(new URL("./production-maintenance-workflow-contract.mjs", import.meta.url));
+  const execute = (value, additional = []) => {
+    writeFileSync(file, JSON.stringify(value));
+    return spawnSync(process.execPath, [script, "verify-runtime-diagnostic", "--file", file, "--target-sha", env.TARGET_SHA,
+      "--old-sha", env.EXPECTED_OLD_SHA, ...additional], { encoding: "utf8", env: { SystemRoot: process.env.SystemRoot ?? "" } });
+  };
+  try {
+    const good = execute(report); assert.equal(good.status, 0); assert.deepEqual(JSON.parse(good.stdout), report);
+    for (const value of [{ ...report, state: "held" }, { ...report, targetSha: env.EXPECTED_OLD_SHA },
+      { ...report, diagnostics: { ...diagnosticFixture(), secret: "must-not-disclose" } }]) {
+      const result = execute(value); assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "production_maintenance_binding_invalid\n");
+    }
+    for (const extra of [["--state", "held"], ["--operation-id", env.MAINTENANCE_OPERATION_ID], ["--github-output", "must-not-create"]]) {
+      const result = execute(report, extra); assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 test("failed prepare CLI diagnostics disclose only valid exact-bound metadata and never become held proof", () => {
   const directory = mkdtempSync(join(tmpdir(), "faolla-maintenance-diagnostic-"));
@@ -146,7 +184,7 @@ test("all affected workflow YAML and embedded bash remain syntactically valid", 
 
 test("maintenance control is a fixed manual current-main exact-CI pinned-SSH workflow", () => {
   const source = sources["production-maintenance"];
-  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["plan", "prepare", "check", "end"]);
+  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "plan", "prepare", "check", "end"]);
   assert.deepEqual(Object.keys(workflows["production-maintenance"].on), ["workflow_dispatch"]);
   assert.match(source, /CHECK_PRODUCTION_MAINTENANCE_PLAN/);
   assert.match(source, /test "\$TARGET_SHA" = "\$GITHUB_SHA"/);
@@ -168,6 +206,28 @@ test("maintenance control is a fixed manual current-main exact-CI pinned-SSH wor
   assert.match(failed, /--state "\$failed_state" --target-sha "\$TARGET_SHA"/);
   assert.match(failed, /--old-sha "\$EXPECTED_OLD_SHA"/);
   assert.match(failed, /production_maintenance_transition_unconfirmed'\n\s+exit 1/);
+});
+
+test("runtime diagnostic workflow is a separately confirmed read-only action without release outputs", () => {
+  const validation = step("production-maintenance", "Validate Fixed Manual Transition").run;
+  assert.match(validation, /diagnose-runtime\)\n\s+test "\$CONFIRMATION" = CHECK_PRODUCTION_RUNTIME_COMPATIBILITY\n\s+test -z "\$MAINTENANCE_OPERATION_ID"/);
+  const control = step("production-maintenance", "Execute Fixed Maintenance Transition").run;
+  assert.match(control, /diagnose-runtime\) command=diagnose-runtime; expected_state=runtime-diagnosed/);
+  assert.match(control, /\[ "\$command" != diagnose-runtime \]/);
+  assert.match(control, /if \[ "\$command" = diagnose-runtime \]; then\n\s+node scripts\/production-maintenance-workflow-contract\.mjs verify-runtime-diagnostic[\s\S]+?exit 0\n[ \t]*fi/);
+  const source = readFileSync(new URL("./production-maintenance-control.mjs", import.meta.url), "utf8");
+  assert.match(source, /if \(request\.action === "diagnose-runtime"\) \{[^}]+createRuntimeDiagnosticReport\(request\);\n\s+\} else \{\n\s+const ops = await productionOperations\(request\);/);
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  const base = { SystemRoot: process.env.SystemRoot ?? "", GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch",
+    GITHUB_REF: "refs/heads/main", GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: env.TARGET_SHA, TARGET_SHA: env.TARGET_SHA,
+    EXPECTED_OLD_SHA: env.EXPECTED_OLD_SHA, ACTION: "diagnose-runtime", CONFIRMATION: "CHECK_PRODUCTION_RUNTIME_COMPATIBILITY",
+    MAINTENANCE_OPERATION_ID: "", DEPLOY_RUN_ID: "", DEPLOY_RUN_ATTEMPT: "", CHECK_STATE: "held" };
+  const execute = (patch) => spawnSync(bash, ["-s"], { input: validation, encoding: "utf8", env: { ...base, ...patch } });
+  assert.equal(execute({}).status, 0);
+  for (const patch of [{ CONFIRMATION: "CHECK_PRODUCTION_MAINTENANCE_PLAN" }, { MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID },
+    { DEPLOY_RUN_ID: "123" }, { DEPLOY_RUN_ATTEMPT: "1" }, { GITHUB_REF: "refs/heads/other" }, { GITHUB_SHA: env.EXPECTED_OLD_SHA }]) {
+    assert.notEqual(execute(patch).status, 0);
+  }
 });
 
 test("plan failure prints only one exact allowlisted stage code and always fails", () => {

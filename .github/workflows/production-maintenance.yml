@@ -7,7 +7,7 @@ on:
         description: Fixed audited maintenance transition (never an arbitrary command)
         required: true
         type: choice
-        options: [plan, prepare, check, end]
+        options: [diagnose-runtime, plan, prepare, check, end]
       target_sha:
         description: Exact current main SHA with successful push CI
         required: true
@@ -29,7 +29,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: CHECK_PRODUCTION_MAINTENANCE_PLAN, PREPARE_PRODUCTION_MAINTENANCE, CHECK_PRODUCTION_MAINTENANCE or END_PRODUCTION_MAINTENANCE
+        description: CHECK_PRODUCTION_RUNTIME_COMPATIBILITY, CHECK_PRODUCTION_MAINTENANCE_PLAN, PREPARE_PRODUCTION_MAINTENANCE, CHECK_PRODUCTION_MAINTENANCE or END_PRODUCTION_MAINTENANCE
         required: true
 
 concurrency:
@@ -70,6 +70,11 @@ jobs:
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$TARGET_SHA" = "$GITHUB_SHA"
           case "$ACTION" in
+            diagnose-runtime)
+              test "$CONFIRMATION" = CHECK_PRODUCTION_RUNTIME_COMPATIBILITY
+              test -z "$MAINTENANCE_OPERATION_ID"
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
             plan)
               test "$CONFIRMATION" = CHECK_PRODUCTION_MAINTENANCE_PLAN
               test -z "$MAINTENANCE_OPERATION_ID"
@@ -245,6 +250,7 @@ jobs:
           [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
           [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
           case "$ACTION" in
+            diagnose-runtime) command=diagnose-runtime; expected_state=runtime-diagnosed ;;
             plan) command=plan; expected_state=planned ;;
             prepare) command=prepare; expected_state=held ;;
             check)
@@ -258,7 +264,7 @@ jobs:
           esac
           operation_args=()
           local_operation_args=()
-          if [ "$command" != prepare ] && [ "$command" != plan ]; then
+          if [ "$command" != prepare ] && [ "$command" != plan ] && [ "$command" != diagnose-runtime ]; then
             operation_args=(--expected-operation-id "$MAINTENANCE_OPERATION_ID")
             local_operation_args=(--operation-id "$MAINTENANCE_OPERATION_ID")
           fi
@@ -319,6 +325,11 @@ jobs:
             fi
             echo 'production_maintenance_transition_unconfirmed'
             exit 1
+          fi
+          if [ "$command" = diagnose-runtime ]; then
+            node scripts/production-maintenance-workflow-contract.mjs verify-runtime-diagnostic \
+              --file "$capture_dir/out" --target-sha "$TARGET_SHA" --old-sha "$EXPECTED_OLD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           node scripts/production-maintenance-workflow-contract.mjs verify-control \
             --file "$capture_dir/out" --state "$expected_state" --target-sha "$TARGET_SHA" \
