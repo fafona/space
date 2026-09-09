@@ -1,0 +1,177 @@
+name: Production Maintenance Topology
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact current main SHA containing this read-only diagnostic
+        required: true
+        type: string
+      expected_live_app_sha:
+        description: Exact build currently expected from the live application
+        required: true
+        type: string
+      confirmation:
+        description: Type CHECK_PRODUCTION_MAINTENANCE_TOPOLOGY (does not enable maintenance)
+        required: true
+        type: string
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TARGET_SHA: ${{ inputs.target_sha }}
+      EXPECTED_LIVE_APP_SHA: ${{ inputs.expected_live_app_sha }}
+    steps:
+      - name: Validate Manual Read-only Request
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "fafona/space"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$CONFIRMATION" = "CHECK_PRODUCTION_MAINTENANCE_TOPOLOGY"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_LIVE_APP_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$TARGET_SHA" = "$GITHUB_SHA"
+
+      - name: Checkout Exact Diagnostic Source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Require Current Main And Successful Push CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test -f scripts/check-production-maintenance-topology.mjs
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$main_sha" = "$TARGET_SHA"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f event=push -f branch=main -f status=success \
+            -f head_sha="$TARGET_SHA" -f per_page=100 |
+            jq -e --arg repository "$GITHUB_REPOSITORY" --arg sha "$TARGET_SHA" '
+              any(.workflow_runs[];
+                .name == "CI" and .path == ".github/workflows/ci.yml" and
+                .event == "push" and .head_branch == "main" and
+                .head_sha == $sha and .status == "completed" and
+                .conclusion == "success" and
+                .repository.full_name == $repository and
+                .head_repository.full_name == $repository
+              )' >/dev/null
+
+      - name: Setup Pinned SSH Trust
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
+          [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]]
+          test "${SSH_PORT:-22}" -ge 1
+          test "${SSH_PORT:-22}" -le 65535
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null 2>&1
+          lookup="$SSH_HOST"
+          if [ "${SSH_PORT:-22}" != 22 ]; then lookup="[$SSH_HOST]:$SSH_PORT"; fi
+          ssh-keygen -F "$lookup" -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1
+
+      - name: Inspect Runtime Configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          [[ "$APP_DIR" != / && "$APP_DIR" != */ && "$APP_DIR" != *//* ]]
+          [[ "/$APP_DIR/" != *"/../"* && "/$APP_DIR/" != *"/./"* ]]
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]]
+          test "$APP_PORT" -ge 1
+          test "$APP_PORT" -le 65535
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$main_sha" = "$TARGET_SHA"
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/faolla-topology.XXXXXXXX")"
+          stdout_file="$capture_dir/stdout"
+          stderr_file="$capture_dir/stderr"
+          cleanup() {
+            rm -f -- "$stdout_file" "$stderr_file"
+            rmdir -- "$capture_dir"
+          }
+          trap cleanup EXIT
+          trap 'exit 1' HUP INT TERM
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node --input-type=module - %q %q %q %q" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$EXPECTED_LIVE_APP_SHA"
+          set +e
+          (
+            ulimit -f 64
+            timeout --signal=TERM --kill-after=5s 180s \
+              ssh -T -o BatchMode=yes -o IdentitiesOnly=yes \
+                -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+                -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+                < scripts/check-production-maintenance-topology.mjs
+          ) > "$stdout_file" 2> "$stderr_file"
+          remote_status=$?
+          set -e
+          if [ "$remote_status" -ne 0 ] || [ -s "$stderr_file" ]; then
+            echo 'maintenance_topology_remote_capture_failed'
+            exit 1
+          fi
+          # Never print SSH banners, raw process environments or config output.
+          # The local validator accepts only the fixed, bounded report schema.
+          node scripts/check-production-maintenance-topology.mjs \
+            --validate-report "$stdout_file" "$EXPECTED_LIVE_APP_SHA"
+          printf '%s\n' \
+            'Read-only topology inspection completed; maintenance is NOT enabled.' \
+            'This report is not write-drain, migration or deployment authorization evidence.' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove Runner SSH Material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
