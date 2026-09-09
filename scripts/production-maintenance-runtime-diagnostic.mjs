@@ -4,6 +4,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { posix } from "node:path";
 import { emptyPythonLayout, emptyNativeFileLinkEvidence, validatePythonLayout, validateNativeFileLinkEvidence,
   observePythonLayout, observeNativeFileLink } from "./production-maintenance-runtime-layout.mjs";
+import { captureTrustedPython, verifyTrustedPython, isTrustedPythonTarget } from "./production-maintenance-trusted-python.mjs";
 
 // Read-only observations, NOT a runtime proof or permission to use PM2. In
 // particular, matching homes does not verify a socket, RPC client or namespace.
@@ -266,43 +267,50 @@ function runPython(executable) {
 }
 function pythonObservation(d) {
   const result = { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null };
-  const witness = []; let layout = emptyPythonLayout();
+  const witness = []; let layout = emptyPythonLayout(); let trustedProof = null;
+  const captured = () => ({ result, witness, layout, trustedProof });
   let reason = "directory_unreadable";
   try {
     const chain = diagnosticDirectoryChain("/usr/bin", 0, d); witness.push(...chain.entries);
-    if (chain.reason) { result.rejectionReason = chain.reason; return { result, witness }; }
+    if (chain.reason) { result.rejectionReason = chain.reason; return captured(); }
     reason = "entry_unreadable";
     const original = d.pathInfo(PYTHON_PATH); witness.push({ path: PYTHON_PATH, info: original });
     if (!original || original.uid !== 0 || !["symlink", "file"].includes(original.type)) {
       result.rejectionReason = !original ? "entry_missing" : original.uid !== 0 ? "entry_owner" : "entry_type";
-      return { result, witness };
+      return captured();
     }
     reason = "target_unreadable";
     const executable = d.canonical(PYTHON_PATH);
-    if (!/^\/usr\/bin\/python3(?:\.(?:0|[1-9]\d{0,3}))?$/.test(executable)) {
+    if (!isTrustedPythonTarget(executable)) {
       result.executableVerified = false; result.rejectionReason = "target_path";
       const evidence = observePythonLayout(executable, { ...d, drift, rethrowDrift });
       layout = evidence.result; witness.push(...evidence.witness);
-      return { result, witness, layout, layoutTarget: executable };
+      return { ...captured(), layoutTarget: executable };
     }
     const target = d.pathInfo(executable); witness.push({ path: executable, info: target });
     const rejected = regularRejection(target, 0, 64 * 1024 * 1024, "target") || ((target.mode & 0o111) === 0 ? "target_not_executable" : null);
-    if (rejected) { result.executableVerified = false; result.rejectionReason = rejected; return { result, witness }; }
+    if (rejected) { result.executableVerified = false; result.rejectionReason = rejected; return captured(); }
+    const trustedDependencies = { pathInfo: d.pathInfo, canonical: d.canonical };
+    try { trustedProof = captureTrustedPython(trustedDependencies); } catch { drift(); }
+    if (trustedProof.target.path !== executable) drift();
+    revalidatePaths(witness, d); if (d.canonical(PYTHON_PATH) !== executable) drift();
+    try { verifyTrustedPython(trustedProof, trustedDependencies); } catch { drift(); }
     result.executableVerified = true;
     reason = "probe_failed";
     const output = d.runPython(executable);
+    try { verifyTrustedPython(trustedProof, trustedDependencies); } catch { drift(); }
     revalidatePaths(witness, d); if (d.canonical(PYTHON_PATH) !== executable) drift();
-    if (output.error || output.signal || output.status !== 0) { result.rejectionReason = reason; return { result, witness }; }
+    if (output.error || output.signal || output.status !== 0) { result.rejectionReason = reason; return captured(); }
     reason = "probe_output";
-    if (typeof output.stdout !== "string" || output.stdout.length > 4096) { result.rejectionReason = reason; return { result, witness }; }
+    if (typeof output.stdout !== "string" || output.stdout.length > 4096) { result.rejectionReason = reason; return captured(); }
     const data = JSON.parse(output.stdout);
     if (!exact(data, ["version", "afUnixApiAvailable", "soPeercredApiAvailable"]) || typeof data.version !== "string" ||
         !data.version.startsWith("3.") || !VERSION.test(data.version) || typeof data.afUnixApiAvailable !== "boolean" || typeof data.soPeercredApiAvailable !== "boolean") {
-      result.rejectionReason = reason; return { result, witness };
+      result.rejectionReason = reason; return captured();
     }
     Object.assign(result, data);
   } catch (error) { rethrowDrift(error); result.rejectionReason = reason; }
-  return { result, witness, layout };
+  return captured();
 }
 function selectedEnvironment(pid) {
   const bytes = boundedFile(`/proc/${pid}/environ`, 1_048_576);
@@ -431,6 +439,7 @@ async function observe(input, d) {
   const python = pythonObservation(d); report.python = python.result; witness.python = python.witness;
   report.layoutEvidence.python = python.layout ?? emptyPythonLayout();
   witness.pythonLayoutTarget = python.layoutTarget ?? null;
+  witness.trustedPython = python.trustedProof ?? null;
   report.supervision = d.classify({ ...snapshot, runtime: disk.runtime, stable: true });
   if (!CODES.includes(report.supervision)) fail();
   const web = snapshot.listener?.chain?.find((entry) => entry.pid === snapshot.ownership?.pid);

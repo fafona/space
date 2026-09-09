@@ -17,8 +17,9 @@ function fixture() {
   function putPath(path, type, content = "", changes = {}) {
     const parent = path.slice(0, path.lastIndexOf("/")) || "/";
     if (path !== "/" && !filesystem.has(parent)) putPath(parent, "directory");
-    const info = { type, identity: `inode-${++inode}`, uid: 0, mode: type === "directory" ? 0o40755 : 0o100755,
+    const info = { type, uid: 0, mode: type === "directory" ? 0o40755 : 0o100755,
       nlink: 1, size: Buffer.byteLength(content), ...changes };
+    info.identity = changes.identity ?? `1:${++inode}:${info.size}:4:5:${info.nlink}:${info.uid}:${info.mode}`;
     filesystem.set(path, { info, content }); return info;
   }
   putPath(home, "directory", "", { uid: 1000, mode: 0o40700 });
@@ -69,6 +70,10 @@ function fixture() {
     selectedReads, processReads, filesystem, putPath, regularReads, pythonCalls };
 }
 const diagnose = (f) => diagnoseRuntimeCompatibility(input(), f.deps);
+function replaceInode(f, path) {
+  const info = f.filesystem.get(path).info; const fields = info.identity.split(":");
+  fields[1] = String(BigInt(fields[1]) + 100000n); info.identity = fields.join(":");
+}
 function assertUnknown(result) {
   assert.equal(result.stability, "unverified"); assert.equal(result.disk, "unverified");
   assert.equal(result.daemonCwdIsRoot, null); assert.equal(result.supervision, null);
@@ -89,6 +94,48 @@ test("stable direct diagnostic distinguishes a root-cwd daemon without granting 
   assert.deepEqual(result.python, { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null });
   assert.deepEqual(validateRuntimeCompatibilityDiagnostic(result), result);
   assert.equal(JSON.stringify(result).includes(SECRET), false); assert.equal(JSON.stringify(result).includes("/srv/"), false);
+});
+
+test("shared Python metadata contradictions refuse before execution and disclose no proof", async () => {
+  for (const path of ["/usr/bin/python3", "/usr/bin/python3.12", "/usr/bin"]) {
+    const f = fixture(); const info = f.filesystem.get(path).info;
+    const fields = info.identity.split(":"); fields[6] = "1000"; info.identity = fields.join(":");
+    const report = await diagnose(f); assertUnknown(report); assert.deepEqual(f.pythonCalls, []);
+    assert.doesNotMatch(JSON.stringify(report), /entryDirectories|targetDirectories|trustedPython|\/usr\/bin/);
+  }
+});
+
+test("replacement between early Python metadata and shared capture is refused before execution", async () => {
+  for (const path of ["/usr/bin/python3", "/usr/bin/python3.12", "/usr/bin", "/usr", "/"]) {
+    const f = fixture(); const read = f.deps.pathInfo; let replaced = false;
+    f.deps.pathInfo = (requested) => {
+      const result = read(requested);
+      if (requested === "/usr/bin/python3.12" && !replaced) { replaceInode(f, path); replaced = true; }
+      return result;
+    };
+    assertUnknown(await diagnose(f)); assert.equal(replaced, true); assert.deepEqual(f.pythonCalls, []);
+  }
+});
+
+test("replacement after shared capture but before the Python call is refused without executing", async () => {
+  for (const path of ["/usr/bin/python3", "/usr/bin/python3.12", "/usr/bin"]) {
+    const f = fixture(); const read = f.deps.pathInfo; let targetReads = 0;
+    f.deps.pathInfo = (requested) => {
+      const result = read(requested);
+      // Early target read, two shared observations, then early witness revalidation.
+      if (requested === "/usr/bin/python3.12" && ++targetReads === 4) replaceInode(f, path);
+      return result;
+    };
+    assertUnknown(await diagnose(f)); assert.ok(targetReads >= 4); assert.deepEqual(f.pythonCalls, []);
+  }
+});
+
+test("valid Python entry, target and ancestor replacements during the probe discard all evidence after one call", async () => {
+  for (const path of ["/usr/bin/python3", "/usr/bin/python3.12", "/usr/bin", "/usr", "/"]) {
+    const f = fixture(); const run = f.deps.runPython;
+    f.deps.runPython = (...args) => { const result = run(...args); replaceInode(f, path); return result; };
+    assertUnknown(await diagnose(f)); assert.deepEqual(f.pythonCalls, ["/usr/bin/python3.12"]);
+  }
 });
 
 test("outside-allowlist Python layout is metadata only and never enables execution or peer capabilities", async () => {
