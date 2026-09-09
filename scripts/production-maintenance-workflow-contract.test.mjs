@@ -10,6 +10,7 @@ import test from "node:test";
 
 import { canonicalJsonBytes } from "./production-release-attestation.mjs";
 import { createNativeUnknownReasonCounts } from "./production-maintenance-runtime-diagnostic.mjs";
+import { emptyPythonLayout, emptyNativeFileLinkEvidence } from "./production-maintenance-runtime-layout.mjs";
 import {
   assertProductionMaintenanceProvenance,
   buildProductionMaintenanceBinding,
@@ -27,7 +28,7 @@ const env = {
 };
 const failure = /production_maintenance_binding_invalid/;
 const diagnosticFixture = () => ({
-  version: 3, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  version: 4, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
   webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
     interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
   supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
@@ -35,6 +36,7 @@ const diagnosticFixture = () => ({
   pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
   workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null, unknownReasons: null },
   python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null },
+  layoutEvidence: { python: emptyPythonLayout(), nativeFileLinks: null },
 });
 
 test("maintenance bindings explicitly identify each phase and exact parent runs", () => {
@@ -143,15 +145,18 @@ test("runtime diagnostic report is exact-bound, non-authoritative and never disc
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("v3 fixed rejection counts remain bounded and cannot become maintenance authority", () => {
+test("v4 fixed rejection and layout counts remain bounded and cannot become maintenance authority", () => {
   const reasons = createNativeUnknownReasonCounts();
   for (const key of Object.keys(reasons)) reasons[key] = Math.floor(16384 / Object.keys(reasons).length);
   const count = Object.values(reasons).reduce((sum, value) => sum + value, 0);
+  const evidence = emptyNativeFileLinkEvidence();
+  evidence.linkCounts.two = reasons.file_links; evidence.outcomes.matched = reasons.file_links;
   const diagnostics = { ...diagnosticFixture(), stability: "stable", disk: "verified",
     worker: { state: "owned", nodeDescendantCount: 1, nonNodeDescendantCount: count },
     workerNative: { esbuildCount: 0, otherCount: 0, unknownCount: count, controlledIdentityVerified: null, unknownReasons: reasons },
     python: { version: null, executableVerified: false, afUnixApiAvailable: null, soPeercredApiAvailable: null,
-      rejectionReason: "target_not_executable" } };
+      rejectionReason: "target_not_executable" },
+    layoutEvidence: { python: emptyPythonLayout(), nativeFileLinks: evidence } };
   const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA,
     state: "runtime-diagnosed", diagnostics };
   const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
@@ -159,12 +164,14 @@ test("v3 fixed rejection counts remain bounded and cannot become maintenance aut
   assert.ok(Buffer.byteLength(JSON.stringify(report)) < 4096);
   assert.throws(() => validateProductionMaintenanceControlReport(report, {}), failure);
   for (const patch of [
-    { version: 2 },
+    { version: 3 },
+    { layoutEvidence: { ...diagnostics.layoutEvidence, rawPath: "/private/python3" } },
+    { layoutEvidence: { ...diagnostics.layoutEvidence, nativeFileLinks: { ...evidence, linkCounts: { ...evidence.linkCounts, two: 0 } } } },
     { python: { ...diagnostics.python, rejectionReason: "/private/executable" } },
     { workerNative: { ...diagnostics.workerNative, unknownReasons: { ...reasons, file_links: count + 1 } } },
     { workerNative: { ...diagnostics.workerNative, unknownReasons: { ...reasons, rawError: "secret" } } },
   ]) assert.throws(() => validateProductionRuntimeDiagnosticReport({ ...report, diagnostics: { ...diagnostics, ...patch } }, expected), failure);
-  const directory = mkdtempSync(join(tmpdir(), "faolla-runtime-v3-contract-"));
+  const directory = mkdtempSync(join(tmpdir(), "faolla-runtime-v4-contract-"));
   try {
     const file = join(directory, "report.json"); writeFileSync(file, JSON.stringify(report));
     const script = fileURLToPath(new URL("./production-maintenance-workflow-contract.mjs", import.meta.url));
@@ -183,7 +190,8 @@ test("runtime capability metadata is bounded and cannot grant a verified PM2 con
     pm2Version: "6.0.8", pm2Home: "matches", pm2PathOverridesPresent: false,
     pm2Endpoint: { home: "verified", rpcSocket: "verified", pidFile: "verified", pidMatches: true },
     workerNative: { esbuildCount: 2, otherCount: 0, unknownCount: 0, controlledIdentityVerified: true, unknownReasons: createNativeUnknownReasonCounts() },
-    python: { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null } };
+    python: { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null },
+    layoutEvidence: { python: emptyPythonLayout(), nativeFileLinks: emptyNativeFileLinkEvidence() } };
   const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "runtime-diagnosed", diagnostics };
   const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
   assert.deepEqual(validateProductionRuntimeDiagnosticReport(report, expected), report);

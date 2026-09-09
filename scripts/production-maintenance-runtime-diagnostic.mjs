@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
+import { emptyPythonLayout, emptyNativeFileLinkEvidence, validatePythonLayout, validateNativeFileLinkEvidence,
+  observePythonLayout, observeNativeFileLink } from "./production-maintenance-runtime-layout.mjs";
 
 // Read-only observations, NOT a runtime proof or permission to use PM2. In
 // particular, matching homes does not verify a socket, RPC client or namespace.
@@ -44,16 +46,17 @@ function exact(value, keys) {
 const absolute = (value) => typeof value === "string" && value.length <= 4096 &&
   value.startsWith("/") && !/[\0\r\n]/.test(value) && posix.normalize(value) === value;
 function empty() {
-  return { version: 3, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null,
+  return { version: 4, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null,
     daemonCwdIsRoot: null, webMetadata: Object.fromEntries(META_KEYS.map((key) => [key, null])),
     supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
     runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
     pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
     workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null, unknownReasons: null },
-    python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null } };
+    python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null },
+    layoutEvidence: { python: emptyPythonLayout(), nativeFileLinks: null } };
 }
 export function validateRuntimeCompatibilityDiagnostic(value) {
-  if (!exact(value, Object.keys(empty())) || value.version !== 3 || value.maintenance !== "not_verified" ||
+  if (!exact(value, Object.keys(empty())) || value.version !== 4 || value.maintenance !== "not_verified" ||
       !["stable", "unverified"].includes(value.stability) || !["verified", "unverified"].includes(value.disk) ||
       (value.supervision !== null && !CODES.includes(value.supervision)) || !bool(value.daemonCwdIsRoot) ||
       !exact(value.webMetadata, META_KEYS) || !META_KEYS.every((key) => bool(value.webMetadata[key])) ||
@@ -73,7 +76,15 @@ export function validateRuntimeCompatibilityDiagnostic(value) {
       !exact(value.python, ["version", "executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable", "rejectionReason"]) ||
       !(value.python.rejectionReason === null || PYTHON_REJECTION_REASONS.includes(value.python.rejectionReason)) ||
       !(value.python.version === null || (typeof value.python.version === "string" && value.python.version.startsWith("3.") && VERSION.test(value.python.version))) ||
-      !["executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable"].every((key) => bool(value.python[key]))) fail();
+      !["executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable"].every((key) => bool(value.python[key])) ||
+      !exact(value.layoutEvidence, ["python", "nativeFileLinks"])) fail();
+  validatePythonLayout(value.layoutEvidence.python);
+  if (value.worker.state === "unverified") {
+    if (value.layoutEvidence.nativeFileLinks !== null) fail();
+  } else {
+    validateNativeFileLinkEvidence(value.layoutEvidence.nativeFileLinks, value.workerNative.unknownReasons?.file_links);
+  }
+  if (value.python.rejectionReason !== "target_path" && !equal(value.layoutEvidence.python, emptyPythonLayout())) fail();
   if (value.worker.state === "unverified" ? value.worker.nodeDescendantCount !== null || value.worker.nonNodeDescendantCount !== null
     : value.worker.nodeDescendantCount === null || value.worker.nonNodeDescendantCount === null ||
       (value.worker.state === "not_observed" && (value.worker.nodeDescendantCount !== 0 || value.worker.nonNodeDescendantCount !== 0))) fail();
@@ -203,7 +214,7 @@ function endpointObservation(home, daemon, d) {
 function nativeObservation(facts, runtime, node, owner, d) {
   const native = facts.slice(1).filter((fact) => fact.executable !== node);
   const result = { esbuildCount: 0, otherCount: 0, unknownCount: 0, controlledIdentityVerified: null,
-    unknownReasons: createNativeUnknownReasonCounts() }; const witness = [];
+    unknownReasons: createNativeUnknownReasonCounts() }; const witness = []; const layout = emptyNativeFileLinkEvidence();
   const architecture = d.arch();
   const suffix = ["x64", "arm64"].includes(architecture) ? `@esbuild/linux-${architecture}` : null;
   const packages = suffix ? [runtime + "/node_modules/" + suffix, runtime + "/node_modules/tsx/node_modules/" + suffix] : [];
@@ -219,7 +230,15 @@ function nativeObservation(facts, runtime, node, owner, d) {
       const binary = d.pathInfo(fact.executable); entries.push({ path: fact.executable, info: binary });
       if (binary && binary.identity !== fact.executableIdentity) drift();
       const rejected = regularRejection(binary, owner, 64 * 1024 * 1024, "file");
-      if (rejected) { reason = rejected; fail(); }
+      if (rejected) {
+        reason = rejected;
+        if (rejected === "file_links") {
+          const evidence = observeNativeFileLink({ fact, runtime, owner, architecture, binary }, { ...d, drift, rethrowDrift });
+          layout.linkCounts[evidence.linkCount]++; layout.outcomes[evidence.outcome]++;
+          entries.push(...evidence.witness);
+        }
+        fail();
+      }
       if ((binary.mode & 0o111) === 0) { reason = "file_not_executable"; fail(); }
       if (d.canonical(fact.executable) !== fact.executable) { reason = "file_canonical"; fail(); }
       const packageRoot = packages.find((base) => fact.executable === base + "/bin/esbuild"); let recognized = false;
@@ -239,7 +258,7 @@ function nativeObservation(facts, runtime, node, owner, d) {
     } catch (error) { rethrowDrift(error); result.unknownCount++; result.unknownReasons[reason]++; controlled = false; }
   }
   if (native.length && result.unknownCount === 0) result.controlledIdentityVerified = controlled;
-  return { result, witness };
+  return { result, witness, layout };
 }
 function runPython(executable) {
   return spawnSync(executable, ["-I", "-S", "-B", "-c", PYTHON_SOURCE], { encoding: "utf8", timeout: 3000, maxBuffer: 4096, killSignal: "SIGKILL",
@@ -247,7 +266,7 @@ function runPython(executable) {
 }
 function pythonObservation(d) {
   const result = { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null };
-  const witness = [];
+  const witness = []; let layout = emptyPythonLayout();
   let reason = "directory_unreadable";
   try {
     const chain = diagnosticDirectoryChain("/usr/bin", 0, d); witness.push(...chain.entries);
@@ -261,7 +280,10 @@ function pythonObservation(d) {
     reason = "target_unreadable";
     const executable = d.canonical(PYTHON_PATH);
     if (!/^\/usr\/bin\/python3(?:\.(?:0|[1-9]\d{0,3}))?$/.test(executable)) {
-      result.executableVerified = false; result.rejectionReason = "target_path"; return { result, witness };
+      result.executableVerified = false; result.rejectionReason = "target_path";
+      const evidence = observePythonLayout(executable, { ...d, drift, rethrowDrift });
+      layout = evidence.result; witness.push(...evidence.witness);
+      return { result, witness, layout, layoutTarget: executable };
     }
     const target = d.pathInfo(executable); witness.push({ path: executable, info: target });
     const rejected = regularRejection(target, 0, 64 * 1024 * 1024, "target") || ((target.mode & 0o111) === 0 ? "target_not_executable" : null);
@@ -280,7 +302,7 @@ function pythonObservation(d) {
     }
     Object.assign(result, data);
   } catch (error) { rethrowDrift(error); result.rejectionReason = reason; }
-  return { result, witness };
+  return { result, witness, layout };
 }
 function selectedEnvironment(pid) {
   const bytes = boundedFile(`/proc/${pid}/environ`, 1_048_576);
@@ -399,13 +421,16 @@ function workerObservation(input, disk, web, daemon, node, d) {
   // A child with an unknown executable is observed, not authorized for stopping.
   const extra = scan.runtimePids.filter((pid) => !allowed.has(pid)).length;
   const native = nativeObservation(workerFacts, disk.runtime, node, daemon.uid, d);
-  return { worker, extra, native: native.result, witness: { observed, workerFacts, runtimeFacts, native: native.witness } };
+  return { worker, extra, native: native.result, nativeLayout: native.layout,
+    witness: { observed, workerFacts, runtimeFacts, native: native.witness } };
 }
 async function observe(input, d) {
   const report = empty(); const disk = d.disk(input.appDir, input.expectedOldSha);
   const snapshot = await d.supervision(input.appName, disk, input.appPort, input.expectedOldSha);
   const witness = { disk, snapshot }; report.disk = "verified";
   const python = pythonObservation(d); report.python = python.result; witness.python = python.witness;
+  report.layoutEvidence.python = python.layout ?? emptyPythonLayout();
+  witness.pythonLayoutTarget = python.layoutTarget ?? null;
   report.supervision = d.classify({ ...snapshot, runtime: disk.runtime, stable: true });
   if (!CODES.includes(report.supervision)) fail();
   const web = snapshot.listener?.chain?.find((entry) => entry.pid === snapshot.ownership?.pid);
@@ -429,6 +454,7 @@ async function observe(input, d) {
   } catch (error) { rethrowDrift(error); /* A failed read is not an absent configuration. */ }
   try { const result = workerObservation(input, disk, web, daemon, node, d);
     report.worker = result.worker; report.workerNative = result.native; report.runtimeExtraProcessCount = result.extra; witness.worker = result.witness;
+    report.layoutEvidence.nativeFileLinks = result.nativeLayout;
   } catch (error) { rethrowDrift(error); /* No PM2 registry read or fallback to another owner. */ }
   try {
     const cli = d.cliEnvironment(); if (typeof cli.overridesPresent !== "boolean") fail();

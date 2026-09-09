@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { emptyPythonLayout } from "./production-maintenance-runtime-layout.mjs";
 import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
@@ -11,7 +12,7 @@ const boot = "12345678-1234-4123-8123-987654321abc";
 const flags = ["--app-dir", "/srv/faolla", "--app-name", "faolla", "--app-port", "3000", "--target-sha", target, "--expected-old-sha", old, "--json"];
 const request = (action) => parseMaintenanceRequest([action, ...flags, ...(["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? [] : ["--expected-operation-id", operationId])]);
 const diagnosticFixture = () => ({
-  version: 3, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  version: 4, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
   webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
     interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
   supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
@@ -19,6 +20,7 @@ const diagnosticFixture = () => ({
   pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
   workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null, unknownReasons: null },
   python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null },
+  layoutEvidence: { python: emptyPythonLayout(), nativeFileLinks: null },
 });
 function fixture(phase = "held") {
   const events = [];

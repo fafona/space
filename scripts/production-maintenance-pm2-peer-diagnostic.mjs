@@ -107,7 +107,7 @@ export async function diagnosePm2Peer(rawInput, overrides = {}) {
     const d = await dependencies(overrides);
     const boot = d.boot(); if (!BOOT.test(boot)) fail();
     const metadata = validateRuntimeCompatibilityDiagnostic(await d.metadata(input));
-    if (metadata.version !== 3 || metadata.stability !== "stable" || metadata.disk !== "verified" ||
+    if (metadata.version !== 4 || metadata.stability !== "stable" || metadata.disk !== "verified" ||
         metadata.supervision !== "runtime_supervision_direct_next_owned" || metadata.pm2Connection !== "not_checked" ||
         !SEMVER.test(metadata.pm2Version ?? "") || metadata.pm2PathOverridesPresent !== false ||
         metadata.pm2Endpoint?.home !== "verified" || metadata.pm2Endpoint?.rpcSocket !== "verified" ||

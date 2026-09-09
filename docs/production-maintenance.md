@@ -24,7 +24,7 @@ metadata is not peer authentication; native classifications are not stop or
 restart approval. Missing, unsafe and unreadable observations stay distinct.
 The report still cannot establish a maintenance operation or authorize changes.
 
-Version 3 adds the first fixed rejection reason for Python and a fixed set of
+Version 3 introduced the first fixed rejection reason for Python and a fixed set of
 reason counts for unclassified native descendants. The counts must sum to the
 unknown descendant count. No path, PID, argument, file content or raw exception
 is included. A failed gate stops that observation; collecting reasons does not
@@ -34,6 +34,25 @@ socket APIs were tested. These reasons never relax the existing path, owner,
 link-count, permission, size or executable checks, and cannot authorize a retry,
 peer connection, maintenance operation or release. Consumers reject older or
 inconsistent diagnostic schemas instead of silently dropping the reason fields.
+
+Version 4 adds separate `layoutEvidence`, without changing either refusal.
+For `target_path`, Python evidence reports a fixed installation-location class,
+a strictly bounded filename suffix (NOT an executed Python version), and a
+metadata assessment. Only fixed `/usr/bin` and `/usr/local/bin` Python targets
+receive further root-owned, canonical-directory and file-attribute checks;
+other locations are classified without probing their target. No new interpreter
+is executed. Native `file_links` objects receive separate link-count and outcome
+counts; each map must sum to the number of rejected objects, not to a guessed
+number of filesystem links. Only three fixed esbuild/platform-package pairs
+(root, nested, or nested-wrapper with hoisted platform package) are considered.
+Both trusted paths must be ordinary executable files with the same device/inode
+and exactly two links before their bounded package metadata is read. The two
+package names, versions, exact optional dependency and process arguments must
+match. A `matched` layout is neither binary provenance nor permission to stop
+that process: the original unknown count and `file_links` refusal remain intact.
+All private witnesses, including rejected Python target changes and paired-file
+changes, participate in the two-observation stability check. Neither layout
+evidence nor its matching result may authorize PM2 access, maintenance or release.
 
 ## Read-only PM2 peer diagnosis
 
