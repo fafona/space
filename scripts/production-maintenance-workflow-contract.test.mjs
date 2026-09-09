@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { canonicalJsonBytes } from "./production-release-attestation.mjs";
+import { createNativeUnknownReasonCounts } from "./production-maintenance-runtime-diagnostic.mjs";
 import {
   assertProductionMaintenanceProvenance,
   buildProductionMaintenanceBinding,
@@ -26,14 +27,14 @@ const env = {
 };
 const failure = /production_maintenance_binding_invalid/;
 const diagnosticFixture = () => ({
-  version: 2, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
+  version: 3, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
   webMetadata: { cwdLiteralMatch: null, cwdCanonicalMatch: null, entryLiteralMatch: null, entryCanonicalMatch: null,
     interpreterLiteralMatch: null, interpreterCanonicalMatch: null, argsMatch: null, nodeArgsEmpty: null },
   supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
   runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
   pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
-  workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null },
-  python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null },
+  workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null, unknownReasons: null },
+  python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null },
 });
 
 test("maintenance bindings explicitly identify each phase and exact parent runs", () => {
@@ -142,14 +143,47 @@ test("runtime diagnostic report is exact-bound, non-authoritative and never disc
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("v3 fixed rejection counts remain bounded and cannot become maintenance authority", () => {
+  const reasons = createNativeUnknownReasonCounts();
+  for (const key of Object.keys(reasons)) reasons[key] = Math.floor(16384 / Object.keys(reasons).length);
+  const count = Object.values(reasons).reduce((sum, value) => sum + value, 0);
+  const diagnostics = { ...diagnosticFixture(), stability: "stable", disk: "verified",
+    worker: { state: "owned", nodeDescendantCount: 1, nonNodeDescendantCount: count },
+    workerNative: { esbuildCount: 0, otherCount: 0, unknownCount: count, controlledIdentityVerified: null, unknownReasons: reasons },
+    python: { version: null, executableVerified: false, afUnixApiAvailable: null, soPeercredApiAvailable: null,
+      rejectionReason: "target_not_executable" } };
+  const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA,
+    state: "runtime-diagnosed", diagnostics };
+  const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
+  assert.deepEqual(validateProductionRuntimeDiagnosticReport(report, expected), report);
+  assert.ok(Buffer.byteLength(JSON.stringify(report)) < 4096);
+  assert.throws(() => validateProductionMaintenanceControlReport(report, {}), failure);
+  for (const patch of [
+    { version: 2 },
+    { python: { ...diagnostics.python, rejectionReason: "/private/executable" } },
+    { workerNative: { ...diagnostics.workerNative, unknownReasons: { ...reasons, file_links: count + 1 } } },
+    { workerNative: { ...diagnostics.workerNative, unknownReasons: { ...reasons, rawError: "secret" } } },
+  ]) assert.throws(() => validateProductionRuntimeDiagnosticReport({ ...report, diagnostics: { ...diagnostics, ...patch } }, expected), failure);
+  const directory = mkdtempSync(join(tmpdir(), "faolla-runtime-v3-contract-"));
+  try {
+    const file = join(directory, "report.json"); writeFileSync(file, JSON.stringify(report));
+    const script = fileURLToPath(new URL("./production-maintenance-workflow-contract.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [script, "verify-runtime-diagnostic", "--file", file,
+      "--target-sha", env.TARGET_SHA, "--old-sha", env.EXPECTED_OLD_SHA],
+    { encoding: "utf8", env: { SystemRoot: process.env.SystemRoot ?? "" } });
+    assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), report);
+    assert.equal(result.stderr, ""); assert.equal(Object.hasOwn(JSON.parse(result.stdout), "operationId"), false);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("runtime capability metadata is bounded and cannot grant a verified PM2 connection or held state", () => {
   const diagnostics = { ...diagnosticFixture(), stability: "stable", disk: "verified",
     supervision: "runtime_supervision_direct_next_owned", daemonCwdIsRoot: true,
     worker: { state: "owned", nodeDescendantCount: 1, nonNodeDescendantCount: 2 },
     pm2Version: "6.0.8", pm2Home: "matches", pm2PathOverridesPresent: false,
     pm2Endpoint: { home: "verified", rpcSocket: "verified", pidFile: "verified", pidMatches: true },
-    workerNative: { esbuildCount: 2, otherCount: 0, unknownCount: 0, controlledIdentityVerified: true },
-    python: { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true } };
+    workerNative: { esbuildCount: 2, otherCount: 0, unknownCount: 0, controlledIdentityVerified: true, unknownReasons: createNativeUnknownReasonCounts() },
+    python: { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null } };
   const report = { version: 1, targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "runtime-diagnosed", diagnostics };
   const expected = { targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA };
   assert.deepEqual(validateProductionRuntimeDiagnosticReport(report, expected), report);

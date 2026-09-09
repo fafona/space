@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { diagnosePm2Peer, PM2_PEER_BRIDGE_SOURCE, validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
+import { createNativeUnknownReasonCounts } from "./production-maintenance-runtime-diagnostic.mjs";
 
 const ERROR = "production_maintenance_pm2_peer_unverified";
 const SECRET = "PEER_SECRET_MUST_NOT_LEAK";
@@ -17,10 +18,14 @@ function fixture() {
   const web = { pid: 100, uid: 1000, startTicks: "1000", cwd: "/srv/release", commandLine: ["node", SECRET] };
   const snapshot = { listener: { chain: [web, daemon] }, ownership: { pid: 100, daemonPid: 10 } };
   const disk = { runtime: "/srv/release", build: "a".repeat(40) };
-  const metadata = { version: 2, stability: "stable", disk: "verified", supervision: DIRECT,
-    pm2Connection: "not_checked", pm2Version: "6.0.14", pm2PathOverridesPresent: false,
+  const metadata = { version: 3, maintenance: "not_verified", stability: "stable", disk: "verified", supervision: DIRECT,
+    daemonCwdIsRoot: true, webMetadata: { cwdLiteralMatch: true, cwdCanonicalMatch: true, entryLiteralMatch: true,
+      entryCanonicalMatch: true, interpreterLiteralMatch: true, interpreterCanonicalMatch: true, argsMatch: true, nodeArgsEmpty: true },
+    supabaseEnvironment: "matches", worker: { state: "not_observed", nodeDescendantCount: 0, nonNodeDescendantCount: 0 },
+    runtimeExtraProcessCount: 0, pm2Home: "matches", pm2Connection: "not_checked", pm2Version: "6.0.14", pm2PathOverridesPresent: false,
     pm2Endpoint: { home: "verified", rpcSocket: "verified", pidFile: "verified", pidMatches: true },
-    python: { executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true } };
+    workerNative: { esbuildCount: 0, otherCount: 0, unknownCount: 0, controlledIdentityVerified: null, unknownReasons: createNativeUnknownReasonCounts() },
+    python: { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null } };
   const python = { executable: "/usr/bin/python3.12", file: "frozen-file", directories: ["root", "usr", "bin"] };
   const calls = [];
   const state = { boot: BOOT };
@@ -69,6 +74,21 @@ test("frozen daemon version and canonical home are required before connecting", 
   }
   const f = fixture(); f.deps.canonical = () => "/other/pm2";
   assert.deepEqual(await diagnose(f), UNKNOWN); assert.equal(f.calls.length, 0);
+});
+
+test("v3 reasons are informational and malformed or rejected metadata cannot reach the peer", async () => {
+  for (const change of [
+    (m) => { m.version = 2; },
+    (m) => { m.python.rejectionReason = "target_links"; },
+    (m) => { m.python = { version: null, executableVerified: false, afUnixApiAvailable: null,
+      soPeercredApiAvailable: null, rejectionReason: "target_links" }; },
+    (m) => { m.workerNative.unknownReasons.file_links = 1; },
+    (m) => { m.workerNative.unknownReasons.secret = SECRET; },
+    (m) => { m.python.rejectionReason = SECRET; },
+  ]) {
+    const f = fixture(); change(f.metadata);
+    assert.deepEqual(await diagnose(f), UNKNOWN); assert.equal(f.calls.length, 0);
+  }
 });
 
 test("live process, Python or boot failures prevent a connection", async () => {

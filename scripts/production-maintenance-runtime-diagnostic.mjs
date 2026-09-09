@@ -15,6 +15,15 @@ const ENV_KEYS = ["args", "exec_interpreter", "exec_mode", "name", "node_args", 
 const OVERRIDE_KEYS = ["PM2_DAEMON_RPC_PORT", "PM2_DAEMON_PUB_PORT", "PM2_PID_FILE_PATH"];
 const VERSION = /^(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})\.(?:0|[1-9]\d{0,3})$/;
 const ENDPOINT_STATES = ["verified", "missing", "unsafe", "unverified"];
+export const PYTHON_REJECTION_REASONS = Object.freeze(["directory_path", "directory_missing", "directory_type", "directory_owner",
+  "directory_writable", "directory_canonical", "directory_unreadable", "entry_missing", "entry_type", "entry_owner", "entry_unreadable",
+  "target_path", "target_missing", "target_type", "target_owner", "target_links", "target_writable", "target_size", "target_not_executable",
+  "target_unreadable", "probe_failed", "probe_output"]);
+export const NATIVE_UNKNOWN_REASONS = Object.freeze(["process_unreadable", "directory_path", "directory_missing", "directory_type",
+  "directory_owner", "directory_writable", "directory_canonical", "directory_unreadable", "file_missing", "file_type", "file_owner",
+  "file_links", "file_writable", "file_size", "file_not_executable", "file_canonical", "file_unreadable", "package_missing", "package_type",
+  "package_owner", "package_links", "package_writable", "package_size", "package_unreadable", "package_metadata"]);
+export const createNativeUnknownReasonCounts = () => Object.fromEntries(NATIVE_UNKNOWN_REASONS.map((key) => [key, 0]));
 const DRIFT = Symbol("identity_drift");
 const PYTHON_PATH = "/usr/bin/python3";
 const PYTHON_SOURCE = 'import json,sys,socket; print(json.dumps({"version":"%d.%d.%d" % sys.version_info[:3],"afUnixApiAvailable":hasattr(socket,"AF_UNIX"),"soPeercredApiAvailable":hasattr(socket,"SO_PEERCRED")}))';
@@ -35,16 +44,16 @@ function exact(value, keys) {
 const absolute = (value) => typeof value === "string" && value.length <= 4096 &&
   value.startsWith("/") && !/[\0\r\n]/.test(value) && posix.normalize(value) === value;
 function empty() {
-  return { version: 2, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null,
+  return { version: 3, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null,
     daemonCwdIsRoot: null, webMetadata: Object.fromEntries(META_KEYS.map((key) => [key, null])),
     supabaseEnvironment: "unverified", worker: { state: "unverified", nodeDescendantCount: null, nonNodeDescendantCount: null },
     runtimeExtraProcessCount: null, pm2Home: "unverified", pm2PathOverridesPresent: null, pm2Connection: "not_checked",
     pm2Version: null, pm2Endpoint: { home: "unverified", rpcSocket: "unverified", pidFile: "unverified", pidMatches: null },
-    workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null },
-    python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null } };
+    workerNative: { esbuildCount: null, otherCount: null, unknownCount: null, controlledIdentityVerified: null, unknownReasons: null },
+    python: { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null } };
 }
 export function validateRuntimeCompatibilityDiagnostic(value) {
-  if (!exact(value, Object.keys(empty())) || value.version !== 2 || value.maintenance !== "not_verified" ||
+  if (!exact(value, Object.keys(empty())) || value.version !== 3 || value.maintenance !== "not_verified" ||
       !["stable", "unverified"].includes(value.stability) || !["verified", "unverified"].includes(value.disk) ||
       (value.supervision !== null && !CODES.includes(value.supervision)) || !bool(value.daemonCwdIsRoot) ||
       !exact(value.webMetadata, META_KEYS) || !META_KEYS.every((key) => bool(value.webMetadata[key])) ||
@@ -57,9 +66,12 @@ export function validateRuntimeCompatibilityDiagnostic(value) {
       !(value.pm2Version === null || (typeof value.pm2Version === "string" && VERSION.test(value.pm2Version))) ||
       !exact(value.pm2Endpoint, ["home", "rpcSocket", "pidFile", "pidMatches"]) ||
       !["home", "rpcSocket", "pidFile"].every((key) => ENDPOINT_STATES.includes(value.pm2Endpoint[key])) || !bool(value.pm2Endpoint.pidMatches) ||
-      !exact(value.workerNative, ["esbuildCount", "otherCount", "unknownCount", "controlledIdentityVerified"]) ||
+      !exact(value.workerNative, ["esbuildCount", "otherCount", "unknownCount", "controlledIdentityVerified", "unknownReasons"]) ||
       !["esbuildCount", "otherCount", "unknownCount"].every((key) => count(value.workerNative[key])) || !bool(value.workerNative.controlledIdentityVerified) ||
-      !exact(value.python, ["version", "executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable"]) ||
+      !(value.workerNative.unknownReasons === null || (exact(value.workerNative.unknownReasons, NATIVE_UNKNOWN_REASONS) &&
+        NATIVE_UNKNOWN_REASONS.every((key) => value.workerNative.unknownReasons[key] !== null && count(value.workerNative.unknownReasons[key])))) ||
+      !exact(value.python, ["version", "executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable", "rejectionReason"]) ||
+      !(value.python.rejectionReason === null || PYTHON_REJECTION_REASONS.includes(value.python.rejectionReason)) ||
       !(value.python.version === null || (typeof value.python.version === "string" && value.python.version.startsWith("3.") && VERSION.test(value.python.version))) ||
       !["executableVerified", "afUnixApiAvailable", "soPeercredApiAvailable"].every((key) => bool(value.python[key]))) fail();
   if (value.worker.state === "unverified" ? value.worker.nodeDescendantCount !== null || value.worker.nonNodeDescendantCount !== null
@@ -67,7 +79,8 @@ export function validateRuntimeCompatibilityDiagnostic(value) {
       (value.worker.state === "not_observed" && (value.worker.nodeDescendantCount !== 0 || value.worker.nonNodeDescendantCount !== 0))) fail();
   const native = value.workerNative;
   if (value.worker.state === "unverified" ? !equal(native, empty().workerNative) :
-    [native.esbuildCount, native.otherCount, native.unknownCount].some((n) => n === null) ||
+    [native.esbuildCount, native.otherCount, native.unknownCount].some((n) => n === null) || native.unknownReasons === null ||
+      Object.values(native.unknownReasons).reduce((sum, n) => sum + n, 0) !== native.unknownCount ||
       native.esbuildCount + native.otherCount + native.unknownCount !== value.worker.nonNodeDescendantCount ||
       (value.worker.nonNodeDescendantCount === 0 ? native.controlledIdentityVerified !== null :
         native.unknownCount > 0 ? native.controlledIdentityVerified !== null : native.controlledIdentityVerified === null)) fail();
@@ -75,7 +88,14 @@ export function validateRuntimeCompatibilityDiagnostic(value) {
       (value.pm2Endpoint.pidFile !== "verified" && value.pm2Endpoint.pidMatches !== null) ||
       (value.pm2Version === null && !equal(value.pm2Endpoint, empty().pm2Endpoint)) ||
       (value.python.executableVerified !== true && (value.python.version !== null || value.python.afUnixApiAvailable !== null || value.python.soPeercredApiAvailable !== null)) ||
+      (value.python.version !== null && (typeof value.python.afUnixApiAvailable !== "boolean" || typeof value.python.soPeercredApiAvailable !== "boolean")) ||
       (value.python.version === null && (value.python.afUnixApiAvailable !== null || value.python.soPeercredApiAvailable !== null))) fail();
+  const python = value.python;
+  if (python.rejectionReason !== null) {
+    const executable = python.rejectionReason.startsWith("probe_") ? true :
+      python.rejectionReason.startsWith("target_") && python.rejectionReason !== "target_unreadable" ? false : null;
+    if (python.version !== null || python.executableVerified !== executable) fail();
+  } else if (python.version === null && !equal(python, empty().python)) fail();
   if (value.stability === "unverified" && !equal(value, empty())) fail();
   if (value.stability === "stable" && value.disk !== "verified") fail();
   return structuredClone(value);
@@ -107,6 +127,15 @@ function regular(info, owner, limit) {
   return info?.type === "file" && info.nlink === 1 && [0, owner].includes(info.uid) && (info.mode & 0o022) === 0 &&
     Number.isSafeInteger(info.size) && info.size > 0 && info.size <= limit;
 }
+function regularRejection(info, owner, limit, prefix) {
+  if (!info) return prefix + "_missing";
+  if (info.type !== "file") return prefix + "_type";
+  if (info.nlink !== 1) return prefix + "_links";
+  if (![0, owner].includes(info.uid)) return prefix + "_owner";
+  if ((info.mode & 0o022) !== 0) return prefix + "_writable";
+  if (!Number.isSafeInteger(info.size) || info.size <= 0 || info.size > limit) return prefix + "_size";
+  return null;
+}
 function readRegular(path, limit, expected) {
   // Used only after type/owner/size checks; no-follow and nonblocking also
   // prevent a concurrent FIFO/symlink substitution from hanging this probe.
@@ -132,6 +161,23 @@ function directoryChain(path, owner, d) {
   }
   return { state: "verified", entries };
 }
+function diagnosticDirectoryChain(path, owner, d) {
+  const entries = [];
+  if (!absolute(path) || path.split("/").length > 64) return { entries, reason: "directory_path" };
+  const paths = ["/"]; let current = "";
+  for (const segment of path.split("/").filter(Boolean)) { current += "/" + segment; paths.push(current); }
+  try {
+    for (const item of paths) {
+      const info = d.pathInfo(item); entries.push({ path: item, info });
+      if (!info) return { entries, reason: "directory_missing" };
+      if (info.type !== "directory") return { entries, reason: "directory_type" };
+      if (![0, owner].includes(info.uid)) return { entries, reason: "directory_owner" };
+      if ((info.mode & 0o022) !== 0) return { entries, reason: "directory_writable" };
+      if (d.canonical(item) !== item) return { entries, reason: "directory_canonical" };
+    }
+  } catch (error) { rethrowDrift(error); return { entries, reason: "directory_unreadable" }; }
+  return { entries, reason: null };
+}
 function revalidatePaths(entries, d) {
   for (const { path, info } of entries) if (!equal(d.pathInfo(path), info)) drift();
 }
@@ -156,32 +202,41 @@ function endpointObservation(home, daemon, d) {
 }
 function nativeObservation(facts, runtime, node, owner, d) {
   const native = facts.slice(1).filter((fact) => fact.executable !== node);
-  const result = { esbuildCount: 0, otherCount: 0, unknownCount: 0, controlledIdentityVerified: null }; const witness = [];
+  const result = { esbuildCount: 0, otherCount: 0, unknownCount: 0, controlledIdentityVerified: null,
+    unknownReasons: createNativeUnknownReasonCounts() }; const witness = [];
   const architecture = d.arch();
   const suffix = ["x64", "arm64"].includes(architecture) ? `@esbuild/linux-${architecture}` : null;
   const packages = suffix ? [runtime + "/node_modules/" + suffix, runtime + "/node_modules/tsx/node_modules/" + suffix] : [];
   let controlled = true;
   for (const fact of native) {
+    let reason = "process_unreadable"; const entries = []; witness.push(entries);
     try {
       if (!equal(d.readProcess(fact.pid), fact)) drift();
-      const chain = directoryChain(posix.dirname(fact.executable), owner, d);
-      const binary = d.pathInfo(fact.executable); const entries = [...chain.entries, { path: fact.executable, info: binary }];
-      if (!binary || binary.identity !== fact.executableIdentity) { if (binary) drift(); fail(); }
-      if (chain.state !== "verified" || !regular(binary, owner, 64 * 1024 * 1024) || (binary.mode & 0o111) === 0 ||
-          d.canonical(fact.executable) !== fact.executable) {
-        controlled = false; result.unknownCount++; witness.push(entries); revalidatePaths(entries, d); continue;
-      }
+      reason = "directory_path";
+      const chain = diagnosticDirectoryChain(posix.dirname(fact.executable), owner, d); entries.push(...chain.entries);
+      if (chain.reason) { reason = chain.reason; fail(); }
+      reason = "file_unreadable";
+      const binary = d.pathInfo(fact.executable); entries.push({ path: fact.executable, info: binary });
+      if (binary && binary.identity !== fact.executableIdentity) drift();
+      const rejected = regularRejection(binary, owner, 64 * 1024 * 1024, "file");
+      if (rejected) { reason = rejected; fail(); }
+      if ((binary.mode & 0o111) === 0) { reason = "file_not_executable"; fail(); }
+      if (d.canonical(fact.executable) !== fact.executable) { reason = "file_canonical"; fail(); }
       const packageRoot = packages.find((base) => fact.executable === base + "/bin/esbuild"); let recognized = false;
       if (packageRoot) {
+        reason = "package_unreadable";
         const path = packageRoot + "/package.json"; const info = d.pathInfo(path); entries.push({ path, info });
-        if (!regular(info, owner, 8192)) fail();
-        const read = d.readRegular(path, 8192, info); const pkg = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes));
+        const rejected = regularRejection(info, owner, 8192, "package");
+        if (rejected) { reason = rejected; fail(); }
+        const read = d.readRegular(path, 8192, info); reason = "package_metadata";
+        const pkg = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes));
         if (pkg?.name !== suffix || typeof pkg?.version !== "string" || !VERSION.test(pkg.version)) fail();
         recognized = equal(fact.commandLine, [fact.executable, `--service=${pkg.version}`, "--ping"]);
       }
-      revalidatePaths(entries, d); if (!equal(d.readProcess(fact.pid), fact)) drift(); witness.push(entries);
+      reason = "file_unreadable"; revalidatePaths(entries, d);
+      reason = "process_unreadable"; if (!equal(d.readProcess(fact.pid), fact)) drift();
       if (recognized) result.esbuildCount++; else result.otherCount++;
-    } catch (error) { rethrowDrift(error); result.unknownCount++; controlled = false; }
+    } catch (error) { rethrowDrift(error); result.unknownCount++; result.unknownReasons[reason]++; controlled = false; }
   }
   if (native.length && result.unknownCount === 0) result.controlledIdentityVerified = controlled;
   return { result, witness };
@@ -191,25 +246,40 @@ function runPython(executable) {
     cwd: "/", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 }
 function pythonObservation(d) {
-  const result = { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null };
+  const result = { version: null, executableVerified: null, afUnixApiAvailable: null, soPeercredApiAvailable: null, rejectionReason: null };
   const witness = [];
+  let reason = "directory_unreadable";
   try {
-    const chain = directoryChain("/usr/bin", 0, d); witness.push(...chain.entries);
+    const chain = diagnosticDirectoryChain("/usr/bin", 0, d); witness.push(...chain.entries);
+    if (chain.reason) { result.rejectionReason = chain.reason; return { result, witness }; }
+    reason = "entry_unreadable";
     const original = d.pathInfo(PYTHON_PATH); witness.push({ path: PYTHON_PATH, info: original });
-    if (chain.state !== "verified" || !original || original.uid !== 0 || !["symlink", "file"].includes(original.type)) return { result, witness };
+    if (!original || original.uid !== 0 || !["symlink", "file"].includes(original.type)) {
+      result.rejectionReason = !original ? "entry_missing" : original.uid !== 0 ? "entry_owner" : "entry_type";
+      return { result, witness };
+    }
+    reason = "target_unreadable";
     const executable = d.canonical(PYTHON_PATH);
-    if (!/^\/usr\/bin\/python3(?:\.(?:0|[1-9]\d{0,3}))?$/.test(executable)) { result.executableVerified = false; return { result, witness }; }
+    if (!/^\/usr\/bin\/python3(?:\.(?:0|[1-9]\d{0,3}))?$/.test(executable)) {
+      result.executableVerified = false; result.rejectionReason = "target_path"; return { result, witness };
+    }
     const target = d.pathInfo(executable); witness.push({ path: executable, info: target });
-    if (!regular(target, 0, 64 * 1024 * 1024) || (target.mode & 0o111) === 0) { result.executableVerified = false; return { result, witness }; }
+    const rejected = regularRejection(target, 0, 64 * 1024 * 1024, "target") || ((target.mode & 0o111) === 0 ? "target_not_executable" : null);
+    if (rejected) { result.executableVerified = false; result.rejectionReason = rejected; return { result, witness }; }
     result.executableVerified = true;
+    reason = "probe_failed";
     const output = d.runPython(executable);
     revalidatePaths(witness, d); if (d.canonical(PYTHON_PATH) !== executable) drift();
-    if (output.error || output.signal || output.status !== 0 || typeof output.stdout !== "string" || output.stdout.length > 4096) return { result, witness };
+    if (output.error || output.signal || output.status !== 0) { result.rejectionReason = reason; return { result, witness }; }
+    reason = "probe_output";
+    if (typeof output.stdout !== "string" || output.stdout.length > 4096) { result.rejectionReason = reason; return { result, witness }; }
     const data = JSON.parse(output.stdout);
     if (!exact(data, ["version", "afUnixApiAvailable", "soPeercredApiAvailable"]) || typeof data.version !== "string" ||
-        !data.version.startsWith("3.") || !VERSION.test(data.version) || typeof data.afUnixApiAvailable !== "boolean" || typeof data.soPeercredApiAvailable !== "boolean") return { result, witness };
+        !data.version.startsWith("3.") || !VERSION.test(data.version) || typeof data.afUnixApiAvailable !== "boolean" || typeof data.soPeercredApiAvailable !== "boolean") {
+      result.rejectionReason = reason; return { result, witness };
+    }
     Object.assign(result, data);
-  } catch (error) { rethrowDrift(error); }
+  } catch (error) { rethrowDrift(error); result.rejectionReason = reason; }
   return { result, witness };
 }
 function selectedEnvironment(pid) {

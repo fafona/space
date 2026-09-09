@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
+import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic, PYTHON_REJECTION_REASONS,
+  NATIVE_UNKNOWN_REASONS, createNativeUnknownReasonCounts } from "./production-maintenance-runtime-diagnostic.mjs";
 
 const SECRET = "DIAGNOSTIC_SECRET_DO_NOT_DISCLOSE";
 const DIRECT = "runtime_supervision_direct_next_owned";
@@ -71,6 +72,7 @@ function assertUnknown(result) {
   assert.equal(result.stability, "unverified"); assert.equal(result.disk, "unverified");
   assert.equal(result.daemonCwdIsRoot, null); assert.equal(result.supervision, null);
   assert.equal(result.worker.state, "unverified"); assert.equal(result.pm2Home, "unverified");
+  assert.equal(result.python.rejectionReason, null); assert.equal(result.workerNative.unknownReasons, null);
   assert.ok(Object.values(result.webMetadata).every((value) => value === null));
 }
 
@@ -81,9 +83,9 @@ test("stable direct diagnostic distinguishes a root-cwd daemon without granting 
   assert.equal(result.supabaseEnvironment, "matches"); assert.equal(result.worker.state, "not_observed");
   assert.equal(result.runtimeExtraProcessCount, 0); assert.equal(result.pm2Home, "matches");
   assert.equal(result.maintenance, "not_verified"); assert.equal(result.pm2Connection, "not_checked");
-  assert.equal(result.version, 2); assert.equal(result.pm2Version, "6.0.8");
+  assert.equal(result.version, 3); assert.equal(result.pm2Version, "6.0.8");
   assert.deepEqual(result.pm2Endpoint, { home: "verified", rpcSocket: "verified", pidFile: "verified", pidMatches: true });
-  assert.deepEqual(result.python, { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true });
+  assert.deepEqual(result.python, { version: "3.12.3", executableVerified: true, afUnixApiAvailable: true, soPeercredApiAvailable: true, rejectionReason: null });
   assert.deepEqual(validateRuntimeCompatibilityDiagnostic(result), result);
   assert.equal(JSON.stringify(result).includes(SECRET), false); assert.equal(JSON.stringify(result).includes("/srv/"), false);
 });
@@ -278,7 +280,7 @@ function nativeFixture(nested = false) {
 test("esbuild classification requires fixed root or nested runtime package, identity, version and exact argv", async () => {
   for (const nested of [false, true]) {
     const f = nativeFixture(nested); const result = await diagnose(f);
-    assert.deepEqual(result.workerNative, { esbuildCount: 1, otherCount: 0, unknownCount: 0, controlledIdentityVerified: true });
+    assert.deepEqual(result.workerNative, { esbuildCount: 1, otherCount: 0, unknownCount: 0, controlledIdentityVerified: true, unknownReasons: createNativeUnknownReasonCounts() });
     assert.equal(result.maintenance, "not_verified"); assert.equal(result.pm2Connection, "not_checked");
     assert.ok(f.regularReads.includes(f.base + "/package.json"));
   }
@@ -291,7 +293,7 @@ test("unsupported stable native invocations are other, unreadable or uncontrolle
     (f) => { f.child.commandLine = [SECRET]; },
   ]) {
     const f = nativeFixture(); change(f); const result = await diagnose(f);
-    assert.deepEqual(result.workerNative, { esbuildCount: 0, otherCount: 1, unknownCount: 0, controlledIdentityVerified: true });
+    assert.deepEqual(result.workerNative, { esbuildCount: 0, otherCount: 1, unknownCount: 0, controlledIdentityVerified: true, unknownReasons: createNativeUnknownReasonCounts() });
     assert.equal(JSON.stringify(result).includes(SECRET), false);
   }
   for (const change of [
@@ -301,7 +303,9 @@ test("unsupported stable native invocations are other, unreadable or uncontrolle
     (f) => { f.filesystem.get(f.executable).info.mode = 0o100777; },
   ]) {
     const f = nativeFixture(); change(f); const result = await diagnose(f);
-    assert.deepEqual(result.workerNative, { esbuildCount: 0, otherCount: 0, unknownCount: 1, controlledIdentityVerified: null });
+    assert.equal(result.workerNative.esbuildCount, 0); assert.equal(result.workerNative.otherCount, 0);
+    assert.equal(result.workerNative.unknownCount, 1); assert.equal(result.workerNative.controlledIdentityVerified, null);
+    assert.equal(Object.values(result.workerNative.unknownReasons).reduce((sum, n) => sum + n, 0), 1);
   }
 });
 
@@ -350,7 +354,7 @@ test("endpoint, Python and native identity changes invalidate the entire diagnos
   assertUnknown(await diagnose(g));
 });
 
-test("v2 validator rejects false authorization, version injection and contradictory new evidence", async () => {
+test("v3 validator rejects false authorization, version injection and contradictory new evidence", async () => {
   const result = await diagnose(fixture());
   for (const change of [
     (v) => { v.version = 1; }, (v) => { v.pm2Version = "6.0.8+" + SECRET; },
@@ -359,6 +363,138 @@ test("v2 validator rejects false authorization, version injection and contradict
     (v) => { v.python.executableVerified = false; }, (v) => { v.python.version = null; },
     (v) => { v.python.socketConnected = true; }, (v) => { v.pm2Endpoint.pid = 10; },
   ]) { const value = structuredClone(result); change(value); assert.throws(() => validateRuntimeCompatibilityDiagnostic(value)); }
+});
+
+test("Python rejection reasons stop at the first directory, entry or target failure without probing", async () => {
+  const target = "/usr/bin/python3.12";
+  const cases = [
+    ["directory_missing", (f) => { f.filesystem.delete("/usr/bin"); }],
+    ["directory_type", (f) => { f.filesystem.get("/usr/bin").info.type = "symlink"; }],
+    ["directory_owner", (f) => { f.filesystem.get("/usr/bin").info.uid = 5; }],
+    ["directory_writable", (f) => { f.filesystem.get("/usr/bin").info.mode = 0o40777; }],
+    ["directory_canonical", (f) => { f.paths.set("/usr/bin", "/private"); }],
+    ["directory_unreadable", (f) => { const read = f.deps.pathInfo; f.deps.pathInfo = (path) => { if (path === "/usr/bin") throw new Error(SECRET); return read(path); }; }],
+    ["entry_missing", (f) => { f.filesystem.delete("/usr/bin/python3"); }],
+    ["entry_type", (f) => { f.filesystem.get("/usr/bin/python3").info.type = "other"; }],
+    ["entry_owner", (f) => { f.filesystem.get("/usr/bin/python3").info.uid = 5; }],
+    ["entry_unreadable", (f) => { const read = f.deps.pathInfo; f.deps.pathInfo = (path) => { if (path === "/usr/bin/python3") throw new Error(SECRET); return read(path); }; }],
+    ["target_path", (f) => { f.paths.set("/usr/bin/python3", "/private/" + SECRET); }],
+    ["target_missing", (f) => { f.filesystem.delete(target); }],
+    ["target_type", (f) => { f.filesystem.get(target).info.type = "symlink"; }],
+    ["target_owner", (f) => { f.filesystem.get(target).info.uid = 5; }],
+    ["target_links", (f) => { Object.assign(f.filesystem.get(target).info, { nlink: 2, uid: 5, mode: 0o100777, size: 0 }); }],
+    ["target_writable", (f) => { f.filesystem.get(target).info.mode = 0o100777; }],
+    ["target_size", (f) => { f.filesystem.get(target).info.size = 0; }],
+    ["target_not_executable", (f) => { f.filesystem.get(target).info.mode = 0o100644; }],
+    ["target_unreadable", (f) => { const read = f.deps.pathInfo; f.deps.pathInfo = (path) => { if (path === target) throw new Error(SECRET); return read(path); }; }],
+  ];
+  for (const [reason, change] of cases) {
+    const f = fixture(); change(f); const reads = []; const read = f.deps.pathInfo;
+    f.deps.pathInfo = (path) => { reads.push(path); return read(path); };
+    const result = await diagnose(f);
+    assert.equal(result.python.rejectionReason, reason, reason); assert.equal(result.stability, "stable");
+    assert.equal(result.python.version, null); assert.equal(f.pythonCalls.length, 0);
+    if (reason.startsWith("directory_")) assert.equal(reads.includes("/usr/bin/python3"), false, reason);
+    if (reason.startsWith("entry_") || reason === "target_path") assert.equal(reads.includes(target), false, reason);
+    assert.equal(JSON.stringify(result).includes(SECRET), false); assert.equal(JSON.stringify(result).includes("/private"), false);
+  }
+});
+
+test("Python probe failures and malformed replies have fixed reasons without changing executable trust", async () => {
+  for (const [reason, run] of [
+    ["probe_failed", () => { throw new Error(SECRET); }],
+    ["probe_failed", () => ({ status: 1, stdout: SECRET, stderr: SECRET })],
+    ["probe_failed", () => ({ status: null, signal: "SIGKILL", stdout: SECRET })],
+    ["probe_output", () => ({ status: 0, stdout: "x".repeat(4097) })],
+    ["probe_output", () => ({ status: 0, stdout: SECRET })],
+    ["probe_output", () => ({ status: 0, stdout: JSON.stringify({ version: SECRET }) })],
+  ]) {
+    const f = fixture(); f.deps.runPython = run; const result = await diagnose(f);
+    assert.equal(result.python.rejectionReason, reason); assert.equal(result.python.executableVerified, true);
+    assert.equal(result.python.version, null); assert.equal(JSON.stringify(result).includes(SECRET), false);
+  }
+});
+
+test("each native unknown has exactly one first-failure reason and never reads beyond its failed gate", async () => {
+  const cases = [
+    ["process_unreadable", (f) => { const read = f.deps.readProcess; let n = 0; f.deps.disk = () => { n = 0; return structuredClone(f.disk); };
+      f.deps.readProcess = (pid) => { if (pid === 201 && ++n === 3) throw new Error(SECRET); return read(pid); }; }],
+    ["directory_path", (f) => { f.child.executable = "/" + "segment/".repeat(65) + "esbuild"; }],
+    ["directory_missing", (f) => { f.filesystem.delete(f.base + "/bin"); }],
+    ["directory_type", (f) => { f.filesystem.get(f.base + "/bin").info.type = "symlink"; }],
+    ["directory_owner", (f) => { f.filesystem.get(f.base + "/bin").info.uid = 5; }],
+    ["directory_writable", (f) => { f.filesystem.get(f.base + "/bin").info.mode = 0o40777; }],
+    ["directory_canonical", (f) => { f.paths.set(f.base + "/bin", "/private"); }],
+    ["directory_unreadable", (f) => { const read = f.deps.pathInfo; f.deps.pathInfo = (path) => { if (path === f.base + "/bin") throw new Error(SECRET); return read(path); }; }],
+    ["file_missing", (f) => { f.filesystem.delete(f.executable); }],
+    ["file_type", (f) => { f.filesystem.get(f.executable).info.type = "other"; }],
+    ["file_owner", (f) => { f.filesystem.get(f.executable).info.uid = 5; }],
+    ["file_links", (f) => { Object.assign(f.filesystem.get(f.executable).info, { nlink: 2, uid: 5, mode: 0o100777, size: 0 }); }],
+    ["file_writable", (f) => { f.filesystem.get(f.executable).info.mode = 0o100777; }],
+    ["file_size", (f) => { f.filesystem.get(f.executable).info.size = 0; }],
+    ["file_not_executable", (f) => { f.filesystem.get(f.executable).info.mode = 0o100644; }],
+    ["file_canonical", (f) => { f.paths.set(f.executable, "/private"); }],
+    ["file_unreadable", (f) => { const read = f.deps.pathInfo; f.deps.pathInfo = (path) => { if (path === f.executable) throw new Error(SECRET); return read(path); }; }],
+    ["package_missing", (f) => { f.filesystem.delete(f.base + "/package.json"); }],
+    ["package_type", (f) => { f.filesystem.get(f.base + "/package.json").info.type = "symlink"; }],
+    ["package_owner", (f) => { f.filesystem.get(f.base + "/package.json").info.uid = 5; }],
+    ["package_links", (f) => { Object.assign(f.filesystem.get(f.base + "/package.json").info, { nlink: 2, uid: 5, mode: 0o100777, size: 0 }); }],
+    ["package_writable", (f) => { f.filesystem.get(f.base + "/package.json").info.mode = 0o100777; }],
+    ["package_size", (f) => { f.filesystem.get(f.base + "/package.json").info.size = 8193; }],
+    ["package_unreadable", (f) => { const read = f.deps.readRegular; f.deps.readRegular = (path, ...args) => { if (path === f.base + "/package.json") throw new Error(SECRET); return read(path, ...args); }; }],
+    ["package_metadata", (f) => { f.filesystem.get(f.base + "/package.json").content = SECRET; }],
+  ];
+  assert.deepEqual(cases.map(([key]) => key).sort(), [...NATIVE_UNKNOWN_REASONS].sort());
+  for (const [reason, change] of cases) {
+    const f = nativeFixture(); change(f); const result = await diagnose(f);
+    assert.equal(result.worker.state, "owned", reason); assert.equal(result.workerNative.unknownCount, 1, reason);
+    assert.deepEqual(result.workerNative.unknownReasons, { ...createNativeUnknownReasonCounts(), [reason]: 1 }, reason);
+    assert.equal(result.workerNative.controlledIdentityVerified, null, reason);
+    if (!reason.startsWith("package_")) assert.equal(f.regularReads.includes(f.base + "/package.json"), false, reason);
+    assert.equal(JSON.stringify(result).includes(SECRET), false, reason); assert.equal(JSON.stringify(result).includes("/private"), false);
+  }
+});
+
+test("native unknown reasons aggregate only their own descendants and drift erases every reason", async () => {
+  const f = nativeFixture(); f.filesystem.get(f.executable).info.nlink = 2;
+  f.facts.set(202, { ...f.child, pid: 202, startTicks: "2020" });
+  const result = await diagnose(f);
+  assert.equal(result.workerNative.unknownCount, 2);
+  assert.deepEqual(result.workerNative.unknownReasons, { ...createNativeUnknownReasonCounts(), file_links: 2 });
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 4096);
+  for (const mutate of [
+    (g) => { g.filesystem.get(g.executable).info.nlink = 3; },
+    (g) => { g.filesystem.get("/usr/bin/python3.12").info.nlink = 3; },
+  ]) {
+    const g = nativeFixture(); g.filesystem.get(g.executable).info.nlink = 2;
+    g.filesystem.get("/usr/bin/python3.12").info.nlink = 2;
+    let n = 0; g.deps.disk = () => { if (++n === 2) mutate(g); return structuredClone(g.disk); };
+    assertUnknown(await diagnose(g));
+  }
+});
+
+test("v3 reason schema is immutable, exact, bounded, semantically consistent and rejects accessors", async () => {
+  assert.equal(Object.isFrozen(PYTHON_REJECTION_REASONS), true); assert.equal(Object.isFrozen(NATIVE_UNKNOWN_REASONS), true);
+  const counts = createNativeUnknownReasonCounts(); counts.file_links = 1;
+  assert.equal(createNativeUnknownReasonCounts().file_links, 0);
+  const f = nativeFixture(); f.filesystem.get(f.executable).info.nlink = 2;
+  const result = await diagnose(f);
+  for (const change of [
+    (v) => { v.version = 2; }, (v) => { v.python.rejectionReason = SECRET; },
+    (v) => { v.python.rejectionReason = "target_links"; }, (v) => { v.workerNative.unknownReasons.file_links = 0; },
+    (v) => { v.python.afUnixApiAvailable = null; }, (v) => { v.python.soPeercredApiAvailable = null; },
+    (v) => { v.workerNative.unknownReasons.file_owner = 1; }, (v) => { v.workerNative.unknownReasons.file_links = -1; },
+    (v) => { v.workerNative.unknownReasons.file_links = 1.5; }, (v) => { v.workerNative.unknownReasons.file_links = 16385; },
+    (v) => { v.workerNative.unknownReasons.file_links = null; }, (v) => { v.workerNative.unknownReasons.file_links = "1"; },
+    (v) => { v.workerNative.unknownReasons.raw = SECRET; }, (v) => { delete v.workerNative.unknownReasons.file_owner; },
+    (v) => { v.workerNative.unknownReasons = null; },
+  ]) { const value = structuredClone(result); change(value); assert.throws(() => validateRuntimeCompatibilityDiagnostic(value)); }
+  for (const key of ["python", "workerNative"]) {
+    const value = structuredClone(result); let invoked = false;
+    const target = key === "python" ? value.python : value.workerNative.unknownReasons;
+    Object.defineProperty(target, key === "python" ? "rejectionReason" : "file_links", { enumerable: true, get() { invoked = true; return SECRET; } });
+    assert.throws(() => validateRuntimeCompatibilityDiagnostic(value)); assert.equal(invoked, false);
+  }
 });
 
 test("diagnostic module has no PM2 actuation dependency and importing from stdin has no host effects", () => {
