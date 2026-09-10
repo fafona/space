@@ -115,6 +115,18 @@ Unknown metadata, watched/cron-managed processes or incompatible identities are
 refused. A pre-read is not a PM2 server-side atomic compare-and-swap; old writer
 drain and the independently verified ingress fence remain required.
 
+Native worker evidence retains complete eight-field file and directory identities.
+Live capture and live verification compare all fields. Only files-only historical
+verification, used alongside independent stopped-process checks, allows entry
+metadata changes in strict ancestors of the frozen runtime: shared ancestors
+remain bound by device, inode, owner and full mode, with fresh directory-type,
+ownership, non-writability and canonical-path checks. Their historical size,
+mtime, ctime and link count may change when sibling releases are built or renamed.
+The runtime directory itself, all descendants, binaries and package metadata
+remain fully bound. Both fresh observations still compare all eight fields,
+and the stored proof is never refreshed. This does not prove process absence,
+authorize a live-process rebind, or detect every transient ancestor ABA change.
+
 Controller source worktrees for maintenance, backup, migration and readiness
 live under `/var/lib/faolla-maintenance-code/`, not beneath writable `/tmp`.
 Creation requires canonical root-owned ancestors with no group/other write,
