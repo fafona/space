@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ingressAcceptanceTopology, planIngressAcceptanceNginx, readIngressAcceptanceBridgeState, readIngressAcceptanceDiagnostic,
+import { ingressAcceptanceTopology, planIngressAcceptanceNginx, readIngressAcceptanceBridgeState, readIngressAcceptanceDiagnostic, readSyntheticFixtureNftStderr,
   validateIngressAcceptanceInvocation } from "./production-maintenance-ingress-acceptance.mjs";
 import { captureNftFirewall, planNftFirewall } from "./production-maintenance-nft.mjs";
 
@@ -69,7 +69,7 @@ test("CI startup diagnostics disclose only fixed tool and namespace phases witho
 });
 
 test("failure diagnostics preserve actual bounded tool versions but never raw commands, responses or errors", () => {
-  const value = { lastTool: "nft", action: "read_ruleset", exitCode: 1, signal: null, errno: null, stderrClass: "managed_warning",
+  const value = { lastTool: "nft", action: "read_ruleset", exitCode: 1, signal: null, errno: null, stderrClass: "managed_warning", fixtureNftStderr: null,
     warnings: ["# Warning: table ip filter is managed by iptables-nft, do not touch!"],
     frames: [{ file: "production-maintenance-nft.mjs", line: 33, column: 9 }], nftShape: [{ left: "ct.state", op: "==", right: "set:established,related" }],
     versions: { nft: "nftables v1.0.9 (Old Doc Yak #3)",
@@ -83,6 +83,19 @@ test("failure diagnostics preserve actual bounded tool versions but never raw co
     assert.equal(readIngressAcceptanceDiagnostic({ ...value, ...patch }), null);
   }
   assert.equal(readIngressAcceptanceDiagnostic(null), null);
+});
+
+test("raw tool stderr exception is bounded and only matches the immutable synthetic baseline input", () => {
+  const input = "add table inet fixture_firewalld\nadd chain inet fixture_firewalld input { type filter hook input priority 10; policy accept; }\nadd chain inet fixture_firewalld forward { type filter hook forward priority 10; policy accept; }\nadd rule inet fixture_firewalld input counter accept\nadd rule inet fixture_firewalld forward counter accept\n";
+  const read = (command = "nft", args = ["-f", "-"], script = input, phase = "baseline_tables", stderr = "fixed fixture tool error") =>
+    readSyntheticFixtureNftStderr(command, args, script, phase, stderr);
+  assert.equal(read(), "fixed fixture tool error");
+  assert.equal(read("curl"), null);
+  assert.equal(read("nft", ["-j", "list", "ruleset"]), null);
+  assert.equal(read("nft", ["-f", "-"], input + "# extra"), null);
+  assert.equal(read("nft", ["-f", "-"], input, "nft_install"), null);
+  assert.equal(Buffer.byteLength(read("nft", ["-f", "-"], input, "baseline_tables", "x".repeat(5000))), 1024);
+  assert.ok(Buffer.byteLength(read("nft", ["-f", "-"], input, "baseline_tables", "界".repeat(5000))) <= 1024);
 });
 
 test("bridge fixture only accepts modern CI kernel and fixed per-net fields, preserving parent verification on failure", () => {

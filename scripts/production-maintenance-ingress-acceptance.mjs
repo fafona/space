@@ -15,6 +15,7 @@ const HERE = fileURLToPath(import.meta.url);
 const ROOT = dirname(dirname(HERE));
 const OPERATION = "11111111-2222-4333-8444-555555555555";
 const TOKEN = "a".repeat(64); // Synthetic fixture only, never a production token.
+const BASELINE_NFT_SCRIPT = "add table inet fixture_firewalld\nadd chain inet fixture_firewalld input { type filter hook input priority 10; policy accept; }\nadd chain inet fixture_firewalld forward { type filter hook forward priority 10; policy accept; }\nadd rule inet fixture_firewalld input counter accept\nadd rule inet fixture_firewalld forward counter accept\n";
 const ROLES = ["kong", "db", "rest", "auth", "realtime", "storage", "meta", "studio", "functions", "analytics", "vector", "imgproxy", "supavisor"];
 const FAMILIES = ["kong", "supabase/postgres", "postgrest/postgrest", "supabase/gotrue", "supabase/realtime", "supabase/storage-api", "supabase/postgres-meta", "supabase/studio", "supabase/edge-runtime", "supabase/logflare", "timberio/vector", "darthsim/imgproxy", "supabase/supavisor"];
 const BRIDGE = "faolla_br0";
@@ -82,10 +83,23 @@ function nftReadbackShape(stdout) {
   } catch { return []; }
 }
 
+export function readSyntheticFixtureNftStderr(command, args, input, phase, stderr) {
+  // Explicit exception only for this immutable, credential-free CI fixture.
+  // No generated operation plan, production call or arbitrary input can qualify.
+  if (phase !== "baseline_tables" || command !== "nft" || !Array.isArray(args) || args.join("\0") !== "-f\0-" ||
+      input !== BASELINE_NFT_SCRIPT || typeof stderr !== "string") return null;
+  const bytes = Buffer.from(stderr);
+  let end = Math.min(bytes.length, 1024);
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString("utf8").replace(/\u0000/g, "?");
+}
+
 export function readIngressAcceptanceDiagnostic(value) {
-  if (!value || Object.keys(value).sort().join(",") !== "action,errno,exitCode,frames,lastTool,nftShape,signal,stderrClass,versions,warnings" || !Object.hasOwn(BINARIES, value.lastTool) ||
+  if (!value || Object.keys(value).sort().join(",") !== "action,errno,exitCode,fixtureNftStderr,frames,lastTool,nftShape,signal,stderrClass,versions,warnings" || !Object.hasOwn(BINARIES, value.lastTool) ||
       !(value.exitCode === null || Number.isInteger(value.exitCode) && value.exitCode >= 0 && value.exitCode <= 255) ||
       !ACTIONS.includes(value.action) || !SIGNALS.includes(value.signal) || !ERRNOS.includes(value.errno) || !STDERR.includes(value.stderrClass) ||
+      !(value.fixtureNftStderr === null || value.lastTool === "nft" && value.action === "write_ruleset" &&
+        typeof value.fixtureNftStderr === "string" && Buffer.byteLength(value.fixtureNftStderr) <= 1024 && !value.fixtureNftStderr.includes("\0")) ||
       !Array.isArray(value.warnings) || value.warnings.length > 3 || value.warnings.some((item) => typeof item !== "string" || !WARNING.test(item)) ||
       value.warnings.join("\n").length > 512 || !Array.isArray(value.frames) || value.frames.length > 6 || value.frames.some((item) =>
         !item || Object.keys(item).sort().join(",") !== "column,file,line" || !FRAME_FILES.includes(item.file) ||
@@ -169,6 +183,7 @@ async function runIsolated(parentNetns) {
     diagnostic = { lastTool: command, action: actionOf(command, args), exitCode: Number.isInteger(answer.status) ? answer.status : null,
       signal: SIGNALS.includes(answer.signal ?? null) ? answer.signal ?? null : "other",
       errno: ERRNOS.includes(answer.error?.code ?? null) ? answer.error?.code ?? null : "other", stderrClass, warnings,
+      fixtureNftStderr: readSyntheticFixtureNftStderr(command, args, options.input, stage, stderr),
       versions, frames: diagnostic?.frames ?? [],
       nftShape: command === "nft" && args[0] === "-j" ? nftReadbackShape(answer.stdout) : diagnostic?.nftShape ?? [] };
     return answer;
@@ -298,7 +313,7 @@ async function runIsolated(parentNetns) {
     run("iptables", ["-A", "FORWARD", "-j", "ACCEPT"]);
     run("ip6tables", ["-A", "INPUT", "-j", "ACCEPT"]);
     run("ebtables", ["-A", "FORWARD", "-j", "ACCEPT"]);
-    run("nft", ["-f", "-"], { input: "add table inet fixture_firewalld\nadd chain inet fixture_firewalld input { type filter hook input priority 10; policy accept; }\nadd chain inet fixture_firewalld forward { type filter hook forward priority 10; policy accept; }\nadd rule inet fixture_firewalld input counter accept\nadd rule inet fixture_firewalld forward counter accept\n" });
+    run("nft", ["-f", "-"], { input: BASELINE_NFT_SCRIPT });
     stage = "baseline_input";
     for (const port of [3000, 8000, 8443, 5432, 6543]) ok("external", `http://10.200.0.1:${port}/`);
     ok("external", "http://[fd42:200::1]:3000/");
@@ -472,6 +487,7 @@ export async function main() {
           detail.error === "ingress_acceptance_failed" && STAGES.has(detail.stage)) {
         stage = detail.stage;
         diagnostic = readIngressAcceptanceDiagnostic(detail.diagnostic);
+        if (diagnostic?.fixtureNftStderr !== null && stage !== "baseline_tables") diagnostic = null;
       }
     } catch { /* Never reveal subprocess stderr or response bodies. */ }
     fail();
