@@ -9,6 +9,7 @@ import { captureNginx, checkNginxIncludeCoverage as checkIncludeCoverage, getNgi
 import { captureNftFirewall, checkNftFirewall, installNftFirewall, planNftFirewall, restoreNftFirewall,
   validateNftFirewall, verifyNftFirewall } from "./production-maintenance-nft.mjs";
 import { captureNetworkBypass, validateNetworkBypass } from "./production-maintenance-network-bypass.mjs";
+import { runNftBatch } from "./production-maintenance-nft-transport.mjs";
 
 // No CLI, state file, deployment authority or automatic rollback. The caller
 // must durably save planIngressInstallation() before the first host mutation.
@@ -52,9 +53,9 @@ function input(value) {
 function run(command, args, options) {
   if (options !== undefined && (command !== "nft" || !eq(args, ["-f", "-"]) ||
       !exact(options, ["input"]) || !text(options.input))) fail();
+  if (options !== undefined) return runNftBatch(options.input);
   const result = spawnSync(command, args, { encoding: "utf8", shell: false, windowsHide: true,
-    timeout: 15_000, maxBuffer: MAX, stdio: [options ? "pipe" : "ignore", "pipe", "pipe"],
-    ...(options ? { input: options.input } : {}),
+    timeout: 15_000, maxBuffer: MAX, stdio: ["ignore", "pipe", "pipe"],
     env: { PATH: process.env.PATH || "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C", LC_ALL: "C" } });
   if (result.error || result.signal || result.status !== 0) fail();
   return { stdout: result.stdout, stderr: result.stderr };

@@ -130,6 +130,17 @@ test("acceptance keeps real capture install verification and exact restore, with
   assert.doesNotMatch(source, /nftables v0\.9\.3|iptables v1\.8\.4/);
 });
 
+test("every nft stdin batch uses the real production pipe transport without faking interpreter checks or retrying", () => {
+  assert.match(source, /import \{ runNftBatch \} from "\.\/production-maintenance-nft-transport\.mjs"/);
+  const runner = source.slice(source.indexOf("const result = (command, args"), source.indexOf("const namespaceOf ="));
+  assert.match(runner, /command === "nft" && args\.length === 2 && args\[0\] === "-f" && args\[1\] === "-"/);
+  assert.match(runner, /runNftBatch\(options\.input, \{ spawn\(command, args, options\) \{\s*assertIsolated\(\);\s*observed = spawnSync\(command, args, options\);\s*return observed;/);
+  assert.doesNotMatch(runner, /capturePython:|verifyPython:|NFT_PIPE_PYTHON|retry|for\s*\(|while\s*\(/);
+  assert.equal((runner.match(/runNftBatch\(/g) ?? []).length, 1);
+  assert.match(runner, /answer = \{ stdout: observed\?\.stdout \?\? "", stderr: observed\?\.stderr \?\? "", status: 1/);
+  assert.match(runner, /if \(Object\.hasOwn\(options, "input"\)\) fail\(\)/);
+});
+
 test("nginx runs only generated private fixture config and validates control-header stripping", () => {
   assert.match(source, /planIngressInstallation\(proof, TOKEN\)/);
   assert.match(source, /source\.replace\(planned\.installation\.privatePath, include\)/);

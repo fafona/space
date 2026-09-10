@@ -263,7 +263,11 @@ Before any Nginx write, the frozen baseline and any existing operation-owned
 table must match exactly. Installation uses an atomic fail-if-present create
 batch; a partial or foreign table is never adopted. Restore removes only that
 verified table, then requires the original baseline again. It never flushes or
-replays the host ruleset. Read-only interface and kernel qdisc observations also
+replays the host ruleset. The fixed nft batch uses the pre/post-verified Python
+interpreter to provide a real OS pipe: Node's socket-backed stdin is rejected
+by supported nft releases. Rule content is never placed in process arguments,
+a shell command or a temporary file, and a failed write is not replayed.
+Read-only interface and kernel qdisc observations also
 reject XDP, ingress/clsact and unreviewed classifier-capable qdiscs. This uses
 the fixed trusted Python interpreter and GET-only netlink, not installation of
 `tc`, deletion of filters, or an assumption based on an `ip link` label.

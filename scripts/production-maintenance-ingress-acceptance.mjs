@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runNftBatch } from "./production-maintenance-nft-transport.mjs";
 
 // CI-only data-plane acceptance, never a production maintenance entrypoint.
 // No network/firewall mutation is available until a fresh network AND PID
@@ -43,7 +44,8 @@ const ERRNOS = [null, "ENOENT", "EACCES", "EPERM", "EROFS", "ETIMEDOUT", "ENOBUF
 const STDERR = ["empty", "managed_warning", "permission_denied", "syntax_error", "unsupported", "other"];
 const WARNING = /^# Warning: table (?:ip|ip6|bridge) (?:filter|nat|mangle|raw|security) is managed by (?:iptables|ip6tables|ebtables)-nft, do not touch!$/;
 const FRAME_FILES = ["production-maintenance-ingress-acceptance.mjs", "production-maintenance-ingress.mjs",
-  "production-maintenance-nft.mjs", "production-maintenance-network-bypass.mjs", "production-maintenance-nginx-profile.mjs"];
+  "production-maintenance-nft.mjs", "production-maintenance-nft-transport.mjs",
+  "production-maintenance-network-bypass.mjs", "production-maintenance-nginx-profile.mjs"];
 const NFT_LEFT = ["ct.state", "ct.direction", "meta.l4proto"];
 const NFT_VALUE = /^(?:set:)?(?:tcp|established|related|reply|original|[0-9]{1,3}|unrecognized)(?:,(?:tcp|established|related|reply|original|[0-9]{1,3}))*$/;
 
@@ -168,8 +170,30 @@ async function runIsolated(parentNetns) {
   const result = (command, args, options = {}) => {
     assertIsolated();
     const executable = BINARIES[command]; if (!executable) fail();
-    const answer = spawnSync(executable, args, { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", maxBuffer: 2_097_152,
-      cwd: fixture, env: environment, shell: false, windowsHide: true, ...options });
+    let answer;
+    if (command === "nft" && args.length === 2 && args[0] === "-f" && args[1] === "-") {
+      // Exercise the production transport and its real OS pipe. Only observe
+      // the actual interpreter result for the existing bounded CI diagnostics;
+      // do not replace interpreter validation, payload, argv or subprocess I/O.
+      let observed = null;
+      try {
+        const output = runNftBatch(options.input, { spawn(command, args, options) {
+          assertIsolated();
+          observed = spawnSync(command, args, options);
+          return observed;
+        } });
+        answer = { ...output, status: 0, signal: null };
+      } catch {
+        // A post-execution verification failure is still failure even when
+        // the interpreter exited zero. Never replay a submitted batch.
+        answer = { stdout: observed?.stdout ?? "", stderr: observed?.stderr ?? "", status: 1,
+          signal: observed?.signal ?? null, error: observed?.error };
+      }
+    } else {
+      if (Object.hasOwn(options, "input")) fail();
+      answer = spawnSync(executable, args, { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", maxBuffer: 2_097_152,
+        cwd: fixture, env: environment, shell: false, windowsHide: true, ...options });
+    }
     const versions = diagnostic?.versions ?? {};
     if (VERSION_TOOLS.includes(command) && args.length === 1 && args[0] === "--version") {
       const observed = typeof answer.stdout === "string" ? answer.stdout.trim() : "";
