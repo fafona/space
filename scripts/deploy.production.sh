@@ -5099,9 +5099,11 @@ validate_readiness_fence_marker() {
     FAOLLA_NEXT_PUBLIC_SUPABASE_URL="$FINAL_NEXT_PUBLIC_SUPABASE_URL" \
     timeout --signal=TERM --kill-after=1s "${command_timeout_seconds}s" \
       node --input-type=module - \
-      "$READINESS_FENCE_MARKER" "$READINESS_FENCE_RELEASE_REQUEST" <<'NODE'
-import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+      "$READINESS_FENCE_MARKER" "$READINESS_FENCE_RELEASE_REQUEST" \
+      "$PRODUCTION_MAINTENANCE_MODE" "$APP_DIR/scripts" <<'NODE'
+import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
 const fail = () => process.exit(1);
 const markerPath = process.argv[2];
@@ -5224,7 +5226,18 @@ const normalizeBase = (raw) => {
   return value.href;
 };
 const internalBaseSha = sha256(Buffer.from(normalizeBase(process.env.FAOLLA_SUPABASE_INTERNAL_URL ?? ""), "utf8"));
-const publicBaseSha = sha256(Buffer.from(normalizeBase(process.env.FAOLLA_NEXT_PUBLIC_SUPABASE_URL ?? ""), "utf8"));
+let publicBase = process.env.FAOLLA_NEXT_PUBLIC_SUPABASE_URL ?? "";
+const maintenanceMode = process.argv[4] ?? "off";
+if (maintenanceMode === "maintenance") {
+  const scripts = process.argv[5];
+  if (typeof scripts !== "string" || !/^\/[A-Za-z0-9._/-]+\/scripts$/.test(scripts) || realpathSync(scripts) !== scripts) fail();
+  const { readMaintenanceProbeContext } = await import(pathToFileURL(`${scripts}/production-maintenance-control.mjs`).href);
+  const { bindMaintenancePublicSupabaseUrl } = await import(pathToFileURL(`${scripts}/maintenance-effective-public-gateway.mjs`).href);
+  const context = readMaintenanceProbeContext(process.env);
+  if (context === null) fail();
+  publicBase = bindMaintenancePublicSupabaseUrl(publicBase, context.publicSupabaseUrl);
+} else if (maintenanceMode !== "off") fail();
+const publicBaseSha = sha256(Buffer.from(normalizeBase(publicBase), "utf8"));
 const expectedProbes = [
   ["internalRest", "public", "pages", internalBaseSha],
   ["internalAuth", "auth", "users", internalBaseSha],

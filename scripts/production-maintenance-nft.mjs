@@ -271,6 +271,30 @@ function splitOwned(snapshot, plan) {
   }
   return { owned, rest: { ...snapshot, baseline: { nftables: baseline } } };
 }
+function normalizeOwnedReadback(rows, plan) {
+  // Numeric nft output uses NF_CT_STATE_BIT(IP_CT_ESTABLISHED) == 2 and
+  // IP_CT_DIR_REPLY == 1 (Linux UAPI nf_conntrack_common/tuple_common.h).
+  // nft also elides the redundant l4proto dependency of a typed tcp dport.
+  // Only these exact own-rule spellings are equivalent; raw/th/udp payloads,
+  // other numbers/operators, extra predicates and missing verdicts stay unequal.
+  // https://netfilter.org/projects/nftables/manpage.html (RAW PAYLOAD EXPRESSION)
+  // Never apply this representation normalization to the frozen foreign rules.
+  return rows.map((entry) => {
+    if (!entry.rule) return entry;
+    const rule = entry.rule;
+    let expr = rule.expr.map((item) => {
+      if (same(item, match({ ct: { key: "state" } }, 2, "in"))) return match({ ct: { key: "state" } }, "established", "in");
+      if (same(item, match({ ct: { key: "direction" } }, 1))) return match({ ct: { key: "direction" } }, "reply");
+      return item;
+    });
+    if (rule.chain === "input" && expr.length === 3 &&
+        same(expr[0], match(meta("iifname"), "lo", "!=")) && same(expr[2], { drop: null }) &&
+        plan.inputPorts.some((port) => same(expr[1], match(payload("tcp", "dport"), port)))) {
+      expr = [expr[0], match(meta("l4proto"), "tcp"), expr[1], expr[2]];
+    }
+    return { rule: { ...rule, expr } };
+  });
+}
 function state(frozen, plan, d) {
   const result = splitOwned(capture(d), plan);
   if (!same(result.rest, frozen)) fail("production_maintenance_nft_baseline_changed");
@@ -280,7 +304,7 @@ function state(frozen, plan, d) {
     const key = (entry) => entry.table ? "0" : entry.chain ? `1:${entry.chain.name}` : `2:${entry.rule.chain}`;
     return key(a).localeCompare(key(b));
   });
-  if (result.owned.length && !same(order(result.owned), order(expectedOwned(plan)))) fail("production_maintenance_nft_owned_table_changed");
+  if (result.owned.length && !same(order(normalizeOwnedReadback(result.owned, plan)), order(expectedOwned(plan)))) fail("production_maintenance_nft_owned_table_changed");
   return result.owned.length > 0;
 }
 export function installNftFirewall(rawFrozen, rawPlan, d) {

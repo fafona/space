@@ -149,7 +149,13 @@ test("nginx runs only generated private fixture config and validates control-hea
   assert.match(source, /controlHeaderPresent: false/);
   assert.match(source, /X-Forwarded-For: 127\.0\.0\.1/);
   assert.match(source, /grant_type=refresh_token/);
+  assert.match(source, /TOKEN\.toUpperCase\(\), TOKEN \+ "0", "0" \+ TOKEN, "b"\.repeat\(64\)/);
+  assert.match(source, /https:\/\/guard-example-test:18443\/rest\/v1\//);
+  assert.match(source, /\["OPTIONS", "\/rest\/v1\/"\]/);
   assert.match(source, /synthetic_config_and_requests_only/);
+  for (const directory of ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"]) {
+    assert.ok(source.includes(`${directory}_temp_path $` + "{fixture}/"), directory);
+  }
   assert.doesNotMatch(source, /nginx", \["-s"|writeFileSync\("\/etc\/|writeFileSync\("\/www\//);
 });
 
@@ -176,7 +182,8 @@ test("actual ingress planner accepts the complete synthetic namespace fixture wi
   assert.equal(planned.nginx.plan.controlLocations.length, 1);
   assert.equal(planned.installation.allowlist.length, 4);
   assert.match(planned.installation.files[0].modified, /proxy_set_header X-Faolla-Maintenance-Control "";/);
-  assert.match(planned.installation.privateContent, /https:guard\.example\.test:18443:POST:\/auth\/v1\/token:password/);
+  assert.ok(planned.installation.privateContent.includes(
+    JSON.stringify(String.raw`~\Ahttps:guard\.example\.test:18443:POST:/auth/v1/token:password\z`) + " 1;"));
   assert.match(source, /const network = networkHelper\.captureNetworkBypass\(\)/);
   assert.match(source, /networkHelper\.verifyNetworkBypass\(network\)/);
 });

@@ -192,6 +192,85 @@ test("explicit newer CI profile is bound honestly and cannot drift after capture
   state.versions.nft = "nftables v1.0.8 (Old Doc Yak)"; state.nft.nftables[0].metainfo.version = "1.0.8";
   assert.throws(() => installNftFirewall(frozen, plan, d));
 });
+
+function numericCompactOwnRows(plan) {
+  return installedRows(plan).map((entry) => {
+    if (!entry.rule) return entry;
+    const expr = entry.rule.expr.filter(item => !(entry.rule.chain === "input" && item.match?.left?.meta?.key === "l4proto"));
+    for (const item of expr) {
+      if (item.match?.left?.ct?.key === "state") item.match.right = 2;
+      if (item.match?.left?.ct?.key === "direction") item.match.right = 1;
+    }
+    return { rule: { ...entry.rule, expr } };
+  });
+}
+
+test("real nft numeric conntrack and implicit typed TCP readback verify without changing foreign baseline", () => {
+  const { state, frozen, plan, d } = fixture();
+  const before = structuredClone(frozen);
+  state.afterWrite = () => {
+    state.nft.nftables = state.nft.nftables.filter(row => (row.table?.name ?? row.chain?.table ?? row.rule?.table) !== plan.tableName);
+    state.nft.nftables.push(...numericCompactOwnRows(plan));
+  };
+  assert.deepEqual(installNftFirewall(frozen, plan, d), { verified: true });
+  assert.deepEqual(checkNftFirewall(frozen, plan, d), { installed: true });
+  assert.deepEqual(verifyNftFirewall(frozen, plan, d), { verified: true });
+  assert.deepEqual(frozen, before);
+  state.afterWrite = null;
+  assert.deepEqual(restoreNftFirewall(frozen, plan, d), { restored: true });
+  assert.equal(state.mutations.length, 2);
+});
+
+test("numeric representation never accepts different conntrack state direction type or predicate", () => {
+  for (const change of [
+    (expr) => { expr[4].match.right = 6; },
+    (expr) => { expr[4].match.right = "2"; },
+    (expr) => { expr[4].match.op = "=="; },
+    (expr) => { expr[4].match.left.ct.unknown = true; },
+    (expr) => { expr[5].match.right = 0; },
+    (expr) => { expr[5].match.right = "1"; },
+    (expr) => { expr[5].match.op = "!="; },
+    (expr) => { expr.splice(4, 1); },
+    (expr) => { [expr[4], expr[5]] = [expr[5], expr[4]]; },
+    (expr) => { expr.push({ accept: null }); },
+  ]) {
+    const { state, frozen, plan, d } = fixture();
+    const own = numericCompactOwnRows(plan), reply = own.find(row => row.rule?.expr.some(item => item.match?.left?.ct?.key === "state"));
+    change(reply.rule.expr); state.nft.nftables.push(...own);
+    assert.throws(() => checkNftFirewall(frozen, plan, d), /owned_table_changed|nft_unverified/);
+    assert.equal(state.mutations.length, 0);
+  }
+});
+
+test("implicit TCP is exact typed input rule only, never missing DROP or broad raw transport", () => {
+  for (const change of [
+    (expr) => { expr[1].match.left.payload.protocol = "udp"; },
+    (expr) => { expr[1].match.left.payload.protocol = "th"; },
+    (expr) => { expr[1].match.left.payload = { base: "th", offset: 16, len: 16 }; },
+    (expr) => { expr[1].match.right = 65535; },
+    (expr) => { expr[1].match.op = "!="; },
+    (expr) => { expr[2] = { accept: null }; },
+    (expr) => { expr.pop(); },
+    (expr) => { expr[0].match.op = "=="; },
+    (expr) => { expr.splice(1, 0, match(meta("l4proto"), "udp")); },
+    (expr) => { expr.splice(1, 0, match(meta("l4proto"), 17)); },
+  ]) {
+    const { state, frozen, plan, d } = fixture();
+    const own = numericCompactOwnRows(plan), input = own.find(row => row.rule?.chain === "input");
+    change(input.rule.expr); state.nft.nftables.push(...own);
+    assert.throws(() => checkNftFirewall(frozen, plan, d), /owned_table_changed/);
+    assert.equal(state.mutations.length, 0);
+  }
+});
+
+test("equivalent spelling changes in an existing third-party rule still invalidate its frozen baseline", () => {
+  const { state, plan, d } = fixture();
+  state.nft.nftables[3].rule.expr = [match({ ct: { key: "state" } }, "established", "in"), { accept: null }];
+  const frozen = captureNftFirewall(d);
+  state.nft.nftables[3].rule.expr[0].match.right = 2;
+  assert.throws(() => checkNftFirewall(frozen, plan, d), /baseline_changed/);
+  assert.equal(state.mutations.length, 0);
+});
 test("suppressed mutation and unknown ACK fail without automatic replay", () => {
   for (const kind of ["suppressWrite", "throwWrite"]) {
     const { frozen, plan, d, state } = fixture(); state[kind] = true;

@@ -421,6 +421,8 @@ export async function planIngressAcceptanceNginx({ fixture, frozen, docker, netw
   const root = "/etc/nginx/nginx.conf", certificate = join(fixture, "certificate.pem"), key = join(fixture, "key.pem");
   const tls = `ssl_certificate ${certificate}; ssl_certificate_key ${key};`;
   const content = `pid ${fixture}/nginx.pid; error_log ${fixture}/nginx-error.log; events {} http { access_log off;
+client_body_temp_path ${fixture}/client-body; proxy_temp_path ${fixture}/proxy;
+fastcgi_temp_path ${fixture}/fastcgi; uwsgi_temp_path ${fixture}/uwsgi; scgi_temp_path ${fixture}/scgi;
 server { listen 18444 ssl; server_name app.example.test; ${tls} location / { proxy_pass http://127.0.0.1:3000; } }
 server { listen 18443 ssl; server_name guard.example.test; ${tls} location / {
 proxy_set_header Authorization $http_authorization; proxy_set_header apikey $http_apikey; proxy_set_header Cookie $http_cookie;
@@ -468,12 +470,17 @@ async function verifyNginxFixture({ fixture, frozen, docker, network, run, reque
   for (const path of ["/", "/rest/v1/", "/auth/v1/settings"]) assert.equal(external(path).status, 503);
   assert.equal(external("/", { headers: ["X-Forwarded-For: 127.0.0.1"] }).status, 503);
   const headers = [`X-Faolla-Maintenance-Control: ${TOKEN}`, "Authorization: Bearer synthetic", "apikey: synthetic", "Cookie: synthetic=value"];
+  for (const wrongToken of [TOKEN.toUpperCase(), TOKEN + "0", "0" + TOKEN, "b".repeat(64)]) {
+    assert.equal(external("/rest/v1/", { headers: [`X-Faolla-Maintenance-Control: ${wrongToken}`] }).status, 503);
+  }
+  assert.equal(request("external", "https://guard-example-test:18443/rest/v1/", { headers,
+    resolveHost: "guard-example-test:18443:10.200.0.1" }).status, 503);
   for (const [method, path] of [["GET", "/rest/v1/"], ["GET", "/rest/v1/pages"], ["GET", "/auth/v1/settings"], ["POST", "/auth/v1/token?grant_type=password"]]) {
     const answer = external(path, { method, headers }); assert.equal(answer.status, 200);
     assert.deepEqual(JSON.parse(answer.body), { ok: true, controlHeaderPresent: false,
       authorization: "Bearer synthetic", apikey: "synthetic", cookie: "synthetic=value" });
   }
-  for (const [method, path] of [["POST", "/rest/v1/pages"], ["DELETE", "/rest/v1/pages"], ["GET", "/rest/v1/other"],
+  for (const [method, path] of [["OPTIONS", "/rest/v1/"], ["POST", "/rest/v1/pages"], ["DELETE", "/rest/v1/pages"], ["GET", "/rest/v1/other"],
     ["POST", "/auth/v1/token?grant_type=refresh_token"], ["POST", "/auth/v1/token"], ["GET", "/unrelated"]]) {
     assert.equal(external(path, { method, headers }).status, 503);
   }

@@ -137,11 +137,34 @@ test("capture is read-only; plan preserves every original byte except exact inse
   for (const file of planned.installation.files) assert(!file.modified.includes(TOKEN));
   assert(planned.installation.privateContent.includes(TOKEN));
   assert.match(planned.installation.privateContent, /\$realip_remote_addr/);
-  assert.match(planned.installation.privateContent, /https:db\.example\.test:443:POST:\/auth\/v1\/token:password/);
+  assert(planned.installation.privateContent.includes("https:db\\\\.example\\\\.test:443:POST:/auth/v1/token:password"));
   const publicInfo = getIngressProbePlan(planned);
   assert.equal(publicInfo.controlAllowlist.length, 4);
   assert.equal(publicInfo.controlAllowlist.filter((entry) => entry.method === "POST")[0].url, "https://db.example.test/auth/v1/token?grant_type=password");
   assert(!JSON.stringify(publicInfo).includes(TOKEN));
+});
+
+test("generated long map keys are fully anchored case-sensitive literal regexes without global hash changes", () => {
+  const h = host(), planned = planIngressInstallation(h.capture(), TOKEN);
+  const content = planned.installation.privateContent;
+  assert.equal(content.includes("map_hash_bucket_size"), false);
+  // Decode only the escaped backslashes that Nginx's quoted token lexer removes.
+  const keys = [...content.matchAll(/"~((?:\\.|[^"\\])*)"\s+1;/g)]
+    .map((entry) => entry[1].replace(/\\\\/g, "\\"));
+  assert.equal(keys.length, 5);
+  const matchers = keys.map((key) => {
+    assert(key.startsWith("\\A") && key.endsWith("\\z"));
+    return new RegExp("^(?:" + key.slice(2, -2) + ")$(?![\\s\\S])");
+  });
+  assert(matchers[0].test(TOKEN));
+  for (const wrong of [TOKEN.toUpperCase(), "x" + TOKEN, TOKEN + "x", TOKEN + "\n"]) assert(!matchers[0].test(wrong));
+  for (const entry of planned.installation.allowlist) {
+    const url = new URL(entry.url), expected = `https:${url.hostname}:443:${entry.method}:${url.pathname}:${entry.method === "POST" ? "password" : ""}`;
+    assert.equal(matchers.slice(1).filter((test) => test.test(expected)).length, 1);
+    for (const wrong of [expected.replace("db.example", "dbXexample"), expected + "x", expected + "\n", "x" + expected]) {
+      assert.equal(matchers.slice(1).some((test) => test.test(wrong)), false);
+    }
+  }
 });
 
 test("install, real-probe projection, exact restore and same-operation reinstall are idempotent", async () => {

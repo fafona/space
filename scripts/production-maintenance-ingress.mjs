@@ -238,11 +238,15 @@ function buildInstallation(proof, controlToken) {
   const allowlist = [["GET", "/rest/v1/"], ["GET", "/rest/v1/pages"], ["GET", "/auth/v1/settings"], ["POST", "/auth/v1/token"]]
     .map(([method, path]) => ({ method, url: new URL(prefix + path + (method === "POST" ? "?grant_type=password" : ""), route.origin).href }));
   const privatePath = getNginxPrivateIncludePath(proof.input.operationId, proof.nginx.profile);
+  // Long literal hash keys do not fit Nginx's common 64-byte default bucket.
+  // Anchored, case-sensitive literal regex keys avoid changing any global
+  // hash setting. Double backslashes survive quoted Nginx token parsing.
+  const regexKey = (value) => '"~' + ('\\A' + value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '\\z').replace(/\\/g, "\\\\") + '"';
   const content = `# faolla maintenance ${proof.input.operationId}\n` +
     `map $realip_remote_addr ${variable}_peer { default 0; 127.0.0.1 1; ::1 1; }\n` +
-    `map $http_x_faolla_maintenance_control ${variable}_token { default 0; "${controlToken}" 1; }\n` +
+    `map $http_x_faolla_maintenance_control ${variable}_token { default 0; ${regexKey(controlToken)} 1; }\n` +
     `map "$scheme:$host:$server_port:$request_method:$uri:$arg_grant_type" ${variable}_route { default 0;\n` +
-    allowlist.map((entry) => `  "https:${route.hostname}:${route.port || 443}:${entry.method}:${new URL(entry.url).pathname}:${entry.method === "POST" ? "password" : ""}" 1;`).join("\n") + "\n}\n" +
+    allowlist.map((entry) => `  ${regexKey(`https:${route.hostname}:${route.port || 443}:${entry.method}:${new URL(entry.url).pathname}:${entry.method === "POST" ? "password" : ""}`)} 1;`).join("\n") + "\n}\n" +
     `map "${variable}_peer:${variable}_token:${variable}_route" ${variable}_deny { default 1;\n` +
     ['"1:0:0" 0;', '"1:0:1" 0;', '"1:1:0" 0;', '"1:1:1" 0;', '"0:1:1" 0;'].join("\n") + "\n}\n";
   const inserts = [{ ...proof.nginx.plan.http, content: `\n  include ${privatePath};\n` },
@@ -304,7 +308,7 @@ export function validateIngressProof(value) {
           value.nginx.files.some((original) => original.requestedPath === file.path && hash(original.content) === file.originalHash), 64) ||
         plan.files.length !== value.nginx.files.length || !list(plan.allowlist, (entry) => exact(entry, ["method", "url"]) &&
           ["GET", "POST"].includes(entry.method) && text(entry.url, 1000), 4) || plan.allowlist.length !== 4) fail();
-    const token = plan.privateContent.match(/map \$http_x_faolla_maintenance_control [^\n]+ \{ default 0; "([0-9a-f]{64})" 1; \}/)?.[1];
+    const token = plan.privateContent.match(/map \$http_x_faolla_maintenance_control [^\n]+ \{ default 0; "~\\\\A([0-9a-f]{64})\\\\z" 1; \}/)?.[1];
     if (!token || hash(token) !== plan.controlTokenHash || !eq(plan, buildInstallation(value, token))) fail();
   }
   if (new Set(value.docker.containers.map((row) => row.id)).size !== 13 || new Set(value.docker.containers.map((row) => row.service)).size !== 13 ||
@@ -364,7 +368,7 @@ function probeHeaders(d) {
 }
 async function verifyHttp(proof, d) {
   const headers = probeHeaders(d);
-  const token = proof.installation.privateContent.match(/map \$http_x_faolla_maintenance_control [^\n]+ \{ default 0; "([0-9a-f]{64})" 1; \}/)?.[1];
+  const token = proof.installation.privateContent.match(/map \$http_x_faolla_maintenance_control [^\n]+ \{ default 0; "~\\\\A([0-9a-f]{64})\\\\z" 1; \}/)?.[1];
   const request = async (url, control, kind) => {
     const parsed = new URL(url); parsed.searchParams.set("faolla_maintenance_probe", randomUUID());
     const controller = new AbortController();

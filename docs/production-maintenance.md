@@ -248,6 +248,18 @@ the frozen Kong target via proven exact or `^~` prefix locations; arbitrary
 rewrites, scripts, URI remapping and ambiguous regex precedence are refused.
 QUIC listeners must share their server and port with a verified TLS listener.
 
+An existing runtime may retain a raw HTTP IPv4 Supabase endpoint while its
+Faolla HTTPS browser session already uses the same-origin Nginx gateway.
+Maintenance does not rewrite that runtime setting. Only the reviewed legacy
+shape (global IPv4, HTTP port 8000, root path, no credentials/query/fragment)
+selects the fixed `https://faolla.com/` maintenance candidate; all other HTTP
+shapes are refused. The real ingress capture must then prove that candidate's
+control routes reach the frozen Kong before persisting an operation. Readiness
+probes and deployment endpoint hashes use this same active-state-bound HTTPS
+gateway. Normal non-maintenance behavior, internal health endpoints and frozen
+runtime/environment digests remain unchanged. The maintenance token is never
+sent to the raw HTTP endpoint.
+
 The nf_tables backend captures the full nft JSON ruleset plus all three
 iptables/ip6tables/ebtables compatibility saves, including versions. Old nft
 releases may report opaque `xt: null`; the complete compatibility saves are
