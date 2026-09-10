@@ -10,10 +10,25 @@ const MAX = 2_097_152;
 const LIMIT = 1024;
 const ROOT = 0xffffffff;
 // Linux sch_generic.c, sch_mq.c and sch_fifo.c have no classifier attachment for
-// these kinds. fq_codel is deliberately NOT allowed: sch_fq_codel.c has tcf_block
+// these kinds. fq_codel is NOT generally allowed: sch_fq_codel.c has tcf_block
 // and invokes tcf_classify (including actions), even without clsact/ingress.
 // https://raw.githubusercontent.com/torvalds/linux/v4.18/net/sched/sch_fq_codel.c
 const KINDS = Object.freeze(["noqueue", "mq", "pfifo_fast", "pfifo", "bfifo"]);
+const DEFAULT_MQ_KERNEL = "4.18.0-348.7.1.el8_5.x86_64";
+const DEFAULT_MQ_BASIS = "kernel_default_mq_unaddressable";
+// The sole v2 exception is an OS-semantics proof, NOT an empty filter dump.
+// Exact vendor source: https://sources.almalinux.org/a3793e19a4f8237adb530a9ea1230ccafdf2c2ff
+// SHA1 a3793e19a4f8237adb530a9ea1230ccafdf2c2ff (linux-4.18.0-348.7.1.el8_5.tar.xz),
+// recorded at https://git.almalinux.org/jonathan/kernel/src/commit/ba708d9db898f657f7e2d80c39343f5e01f65fb2/.kernel.metadata
+// Vendor net/sched/: generic qdisc_alloc:849/create_dflt:916 zero-allocate a new
+// object; mq_init:70/attach:109 create fresh child queues, never transplant an old
+// filtered root; fq_codel_init:453 gets a new private block. cls_api __tcf_qdisc_find:1029
+// chooses only root/handle, not mq leaf; sch_api lookup_rcu:320 rejects handle 0;
+// mq_class_ops:277 has no tcf_block. Manual qdisc_create:1162 assigns nonzero handles,
+// qdisc_change:1321 never changes them. Thus default mq0/fq0 children are not TC-API
+// addressable. Parent=0/1..N GETTFILTER would query root/missing objects and prove
+// nothing. This trusts the reported, reviewed OS implementation, not a hostile
+// kernel, in-memory patch, arbitrary module or later privileged network change.
 const fail = () => { throw new Error(ERROR); };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const uint = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
@@ -23,13 +38,14 @@ const name = (s) => typeof s === "string" && /^[A-Za-z0-9_.:-]{1,15}$/.test(s);
 // in tests. The only emitted netlink request is RTM_GETQDISC + DUMP_INVISIBLE;
 // the latter includes hidden mq children rather than assuming they are harmless.
 export const NETWORK_BYPASS_PYTHON = String.raw`
-import json, socket, struct, sys, time
+import json, os, socket, struct, sys, time
 MAX_BYTES = 2097152
 MAX_ROWS = 1024
 HEADER = struct.Struct("=IHHII")
 TCMSG = struct.Struct("=BBHiIII")
 ATTRIBUTE = struct.Struct("=HH")
 KINDS = frozenset(("noqueue", "mq", "pfifo_fast", "pfifo", "bfifo"))
+DEFAULT_MQ_KERNEL = "4.18.0-348.7.1.el8_5.x86_64"
 
 def reject():
     raise ValueError("network_bypass_unverified")
@@ -64,7 +80,7 @@ def attributes(raw):
     if len(raw_kind) < 2 or len(raw_kind) > 16 or raw_kind[-1:] != b"\x00" or b"\x00" in raw_kind[:-1]:
         reject()
     kind = raw_kind[:-1].decode("ascii", "strict")
-    if kind not in KINDS:
+    if kind not in KINDS and kind != "fq_codel":
         reject()
     return kind
 
@@ -103,7 +119,7 @@ def decode(data, sender, recv_flags, port, sequence):
         offset += aligned
     return rows, done
 
-def collect(factory=socket.socket, clock=time.monotonic):
+def collect_dump(factory, clock, deadline, budget):
     sock = factory(socket.AF_NETLINK, socket.SOCK_RAW, socket.NETLINK_ROUTE)
     try:
         sock.bind((0, 0))
@@ -113,21 +129,22 @@ def collect(factory=socket.socket, clock=time.monotonic):
         seq = 1
         body = TCMSG.pack(0, 0, 0, 0, 0, 0, 0) + ATTRIBUTE.pack(4, 10)
         request = HEADER.pack(HEADER.size + len(body), 38, 0x301, seq, port) + body
-        deadline = clock() + 4.0
-        sock.settimeout(4.0)
+        remaining = deadline - clock()
+        if remaining <= 0:
+            reject()
+        sock.settimeout(remaining)
         if sock.sendto(request, (0, 0)) != len(request):
             reject()
         rows = []
         seen = set()
-        total = 0
         while True:
             remaining = deadline - clock()
             if remaining <= 0:
                 reject()
             sock.settimeout(remaining)
             data, ancillary, flags, sender = sock.recvmsg(65536, 0)
-            total += len(data)
-            if ancillary or total > MAX_BYTES:
+            budget["bytes"] += len(data)
+            if ancillary or budget["bytes"] > MAX_BYTES:
                 reject()
             part, done = decode(data, sender, flags, port, seq)
             for row in part:
@@ -137,9 +154,44 @@ def collect(factory=socket.socket, clock=time.monotonic):
                 seen.add(key)
                 rows.append(row)
             if done:
-                return {"version": 1, "qdiscs": rows}
+                return sorted(rows, key=lambda row: (row["index"], row["parent"], row["handle"]))
     finally:
         sock.close()
+
+def default_mq_evidence(rows, release):
+    if release != DEFAULT_MQ_KERNEL:
+        reject()
+    roots = [row for row in rows if row["kind"] == "mq"]
+    if not roots:
+        reject()
+    queues = []
+    for root in roots:
+        if root["handle"] != 0 or root["parent"] != 0xffffffff:
+            reject()
+        children = [row for row in rows if row["index"] == root["index"] and row is not root]
+        if not children or any(row["kind"] != "fq_codel" or row["handle"] != 0 or
+                               row["parent"] < 1 or row["parent"] > 1024 for row in children):
+            reject()
+        queues.extend({"index": row["index"], "parent": row["parent"]} for row in children)
+    fq = [row for row in rows if row["kind"] == "fq_codel"]
+    if len(queues) != len(fq) or any(not any(root["index"] == row["index"] for root in roots) for row in fq):
+        reject()
+    return {"basis": "kernel_default_mq_unaddressable", "kernelRelease": release,
+            "queues": sorted(queues, key=lambda row: (row["index"], row["parent"]))}
+
+def collect(factory=socket.socket, clock=time.monotonic):
+    deadline = clock() + 4.0
+    budget = {"bytes": 0}
+    first = collect_dump(factory, clock, deadline, budget)
+    if not any(row["kind"] == "fq_codel" for row in first):
+        return {"version": 1, "qdiscs": first}
+    evidence = default_mq_evidence(first, os.uname().release)
+    second = collect_dump(factory, clock, deadline, budget)
+    if first != second or evidence != default_mq_evidence(second, os.uname().release):
+        reject()
+    # Independent link num_tx_queues before/after this program is checked in JS;
+    # observed row count is never treated as the expected hardware queue count.
+    return {"version": 2, "qdiscs": second, "defaultMqEvidence": evidence}
 
 if __name__ == "__main__":
     try:
@@ -168,9 +220,16 @@ function array(value) {
   });
 }
 
+function version(value) {
+  if (!value || typeof value !== "object" || types.isProxy(value)) fail();
+  const descriptor = Object.getOwnPropertyDescriptor(value, "version");
+  if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value") || ![1, 2].includes(descriptor.value)) fail();
+  return descriptor.value;
+}
+
 function validate(value) {
-  const proof = record(value, ["version", "links", "qdiscs"]);
-  if (proof.version !== 1) fail();
+  const v = version(value);
+  const proof = record(value, v === 1 ? ["version", "links", "qdiscs"] : ["version", "links", "qdiscs", "defaultMqEvidence"]);
   const links = array(proof.links).map((item) => {
     const row = record(item, ["index", "name", "qdisc", "master", "kind"]);
     if (!uint(row.index) || row.index < 1 || row.index > 0x7fffffff || !name(row.name) || !KINDS.includes(row.qdisc) ||
@@ -180,7 +239,7 @@ function validate(value) {
   });
   const qdiscs = array(proof.qdiscs).map((item) => {
     const row = record(item, ["index", "kind", "handle", "parent"]);
-    if (!uint(row.index) || !KINDS.includes(row.kind) || !uint(row.handle) || !uint(row.parent) ||
+    if (!uint(row.index) || (!KINDS.includes(row.kind) && !(v === 2 && row.kind === "fq_codel")) || !uint(row.handle) || !uint(row.parent) ||
         row.parent === 0 || !links.some((link) => link.index === row.index)) fail();
     return row;
   });
@@ -196,7 +255,31 @@ function validate(value) {
   }
   links.sort((a, b) => a.index - b.index);
   qdiscs.sort((a, b) => a.index - b.index || a.parent - b.parent || a.handle - b.handle);
-  const result = { version: 1, links, qdiscs };
+  const result = { version: v, links, qdiscs };
+  if (v === 2) {
+    const evidence = record(proof.defaultMqEvidence, ["basis", "kernelRelease", "queues", "interfaces"]);
+    if (evidence.basis !== DEFAULT_MQ_BASIS || evidence.kernelRelease !== DEFAULT_MQ_KERNEL) fail();
+    const queues = array(evidence.queues).map((value) => record(value, ["index", "parent"]));
+    const interfaces = array(evidence.interfaces).map((value) => {
+      const item = record(value, ["index", "numTxQueues"]);
+      if (!uint(item.index) || !Number.isInteger(item.numTxQueues) || item.numTxQueues < 1 || item.numTxQueues > LIMIT) fail();
+      return item;
+    });
+    if (!queues.length || !interfaces.length || new Set(interfaces.map((item) => item.index)).size !== interfaces.length) fail();
+    interfaces.sort((a, b) => a.index - b.index);
+    if (!same(interfaces.map((item) => item.index), links.filter((item) => item.qdisc === "mq").map((item) => item.index))) fail();
+    for (const item of interfaces) {
+      const root = qdiscs.find((row) => row.index === item.index && row.parent === ROOT);
+      if (!root || root.kind !== "mq" || root.handle !== 0) fail();
+      const children = qdiscs.filter((row) => row.index === item.index && row.parent !== ROOT);
+      if (children.length !== item.numTxQueues || children.some((row, index) => row.kind !== "fq_codel" ||
+          row.handle !== 0 || row.parent !== index + 1)) fail();
+    }
+    if (queues.some((item) => !uint(item.index) || !uint(item.parent))) fail();
+    queues.sort((a, b) => a.index - b.index || a.parent - b.parent);
+    if (!same(queues, qdiscs.filter((row) => row.kind === "fq_codel").map(({ index, parent }) => ({ index, parent })))) fail();
+    result.defaultMqEvidence = { basis: DEFAULT_MQ_BASIS, kernelRelease: DEFAULT_MQ_KERNEL, queues, interfaces };
+  }
   if (Buffer.byteLength(JSON.stringify(result)) > MAX) fail();
   return result;
 }
@@ -242,14 +325,17 @@ function linksFromJson(value) {
       scan(item, depth + 1);
     }
   };
-  return array(value).map((row) => {
+  const interfaces = [];
+  const links = array(value).map((row) => {
     if (!row || typeof row !== "object" || Array.isArray(row)) fail();
     scan(row);
     const linkinfo = row.linkinfo;
     if (linkinfo !== undefined && (!linkinfo || typeof linkinfo !== "object" || Array.isArray(linkinfo))) fail();
+    if (row.qdisc === "mq") interfaces.push({ index: row.ifindex, numTxQueues: row.num_tx_queues ?? null });
     return { index: row.ifindex, name: row.ifname, qdisc: row.qdisc, master: row.master ?? null,
       kind: linkinfo?.info_kind ?? null };
   }).sort((a, b) => a.index - b.index);
+  return { links, interfaces: interfaces.sort((a, b) => a.index - b.index) };
 }
 
 export function captureNetworkBypass(overrides = {}) {
@@ -258,11 +344,16 @@ export function captureNetworkBypass(overrides = {}) {
     const first = linksFromJson(jsonOutput(d, "ip", ["-j", "-d", "link", "show"], deadline));
     const python = d.capturePython();
     if (d.verifyPython(python) !== true) fail();
-    const dump = record(jsonOutput(d, python.target.path, ["-I", "-S", "-B", "-c", NETWORK_BYPASS_PYTHON], deadline), ["version", "qdiscs"]);
-    if (d.verifyPython(python) !== true || dump.version !== 1) fail();
+    const rawDump = jsonOutput(d, python.target.path, ["-I", "-S", "-B", "-c", NETWORK_BYPASS_PYTHON], deadline);
+    if (d.verifyPython(python) !== true) fail();
+    const v = version(rawDump);
+    const dump = record(rawDump, v === 1 ? ["version", "qdiscs"] : ["version", "qdiscs", "defaultMqEvidence"]);
     const second = linksFromJson(jsonOutput(d, "ip", ["-j", "-d", "link", "show"], deadline));
     if (!same(first, second)) fail();
-    return validate({ version: 1, links: second, qdiscs: dump.qdiscs });
+    const proof = { version: v, links: second.links, qdiscs: dump.qdiscs };
+    if (v === 2) proof.defaultMqEvidence = { ...record(dump.defaultMqEvidence, ["basis", "kernelRelease", "queues"]),
+      interfaces: second.interfaces };
+    return validate(proof);
   } catch { fail(); }
 }
 

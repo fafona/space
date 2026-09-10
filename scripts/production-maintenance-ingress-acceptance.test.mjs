@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ingressAcceptanceTopology, planIngressAcceptanceNginx, readIngressAcceptanceBridgeState, validateIngressAcceptanceInvocation } from "./production-maintenance-ingress-acceptance.mjs";
+import { ingressAcceptanceTopology, planIngressAcceptanceNginx, readIngressAcceptanceBridgeState, readIngressAcceptanceDiagnostic,
+  validateIngressAcceptanceInvocation } from "./production-maintenance-ingress-acceptance.mjs";
 import { captureNftFirewall, planNftFirewall } from "./production-maintenance-nft.mjs";
 
 const script = fileURLToPath(new URL("./production-maintenance-ingress-acceptance.mjs", import.meta.url));
@@ -65,6 +66,23 @@ test("CI startup diagnostics disclose only fixed tool and namespace phases witho
   assert.match(source, /STAGES\.has\(detail\.stage\)/);
   assert.match(source, /readFileSync\(`\/proc\/sys\/net\/bridge\/\$\{name\}`, "utf8"\)\.trim\(\), "1"/);
   assert.doesNotMatch(source, /stderr\.write\(error|stderr\.write\(result|JSON\.stringify\(error\)|console\.(?:log|error)\(error/);
+});
+
+test("failure diagnostics preserve actual bounded tool versions but never raw commands, responses or errors", () => {
+  const value = { lastTool: "nft", action: "read_ruleset", exitCode: 1, signal: null, errno: null, stderrClass: "managed_warning",
+    warnings: ["# Warning: table ip filter is managed by iptables-nft, do not touch!"],
+    frames: [{ file: "production-maintenance-nft.mjs", line: 33, column: 9 }], nftShape: [{ left: "ct.state", op: "==", right: "set:established,related" }],
+    versions: { nft: "nftables v1.0.9 (Old Doc Yak #3)",
+    iptables: "iptables v1.8.10 (nf_tables)", "ebtables-save": "unrecognized" } };
+  assert.deepEqual(readIngressAcceptanceDiagnostic(value), value);
+  for (const patch of [{ lastTool: "/private/path" }, { exitCode: -1 }, { exitCode: 1.5 }, { stderr: "sensitive" },
+    { versions: { nft: "private-error credential" } }, { versions: { private: "nftables v1.0.9" } },
+    { versions: { nft: "nftables v1.0.9\nprivate" } }, { action: "privatecommand" }, { signal: "private" }, { errno: "private" },
+    { frames: [{ file: "/private/path", line: 1, column: 1 }] }, { warnings: ["secret"] },
+    { nftShape: [{ left: "ip.daddr", op: "==", right: "private-value" }] }]) {
+    assert.equal(readIngressAcceptanceDiagnostic({ ...value, ...patch }), null);
+  }
+  assert.equal(readIngressAcceptanceDiagnostic(null), null);
 });
 
 test("bridge fixture only accepts modern CI kernel and fixed per-net fields, preserving parent verification on failure", () => {

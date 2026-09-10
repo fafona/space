@@ -268,6 +268,24 @@ reject XDP, ingress/clsact and unreviewed classifier-capable qdiscs. This uses
 the fixed trusted Python interpreter and GET-only netlink, not installation of
 `tc`, deletion of filters, or an assumption based on an `ip link` label.
 
+Network proof version 2 has one narrowly reviewed exception: the exact kernel
+`4.18.0-348.7.1.el8_5.x86_64` may have default `mq` roots and hidden `fq_codel`
+children, all with handle zero. Every child must map exactly to `1..N`, where
+`N` is the independently observed interface TX queue count, not the number of
+returned qdisc rows. Two complete hidden-inclusive qdisc dumps and surrounding
+interface observations must agree, and verification repeats the capture.
+The evidence is named `kernel_default_mq_unaddressable`: the reviewed kernel
+creates fresh, private classifier blocks for these children, and its TC API
+cannot address them through the zero handle or `mq` root. It is not an empty
+filter-query result. Root `fq_codel`, nonzero child handles, a different kernel,
+missing queues or an attempted version-1 downgrade are refused. This relies on
+the same trusted-OS assumption as the other host proofs, not protection against
+kernel tampering or later privileged network changes.
+The exact vendor source archive is bound by SHA-1
+`a3793e19a4f8237adb530a9ea1230ccafdf2c2ff` in its
+[source metadata](https://git.almalinux.org/jonathan/kernel/src/commit/ba708d9db898f657f7e2d80c39343f5e01f65fb2/.kernel.metadata);
+the reviewed paths are `net/sched/{sch_api,cls_api,sch_mq,sch_generic,sch_fq_codel}.c`.
+
 Public HTTP probes allow at most one permanent HTTP-to-HTTPS upgrade, without
 credentials, to the same host, path and query on HTTPS port 443. The destination
 must actually return 503. Control-token probes never follow a redirect. The

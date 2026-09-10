@@ -26,11 +26,79 @@ const BINARIES = { nft: "/usr/sbin/nft", ip: "/usr/sbin/ip", iptables: "/usr/sbi
 const STAGES = new Set(["guards", "namespace_launch", "namespace_setup", "namespace_loopback", "namespace_bridge",
   "namespace_forwarding", "namespace_bridge_hooks", "namespace_endpoints", "network_capture", "baseline", "nft_install", "input_dataplane",
   "bridge_dataplane", "nginx_fixture", "restore", "cleanup", "parent_bridge_capture", "parent_bridge_verification",
+  "baseline_tables", "baseline_input", "baseline_bridge", "nft_capture", "nft_plan",
   ...Object.keys(BINARIES).map((tool) => `tool_${tool}`)]);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const fail = () => { throw new Error("ingress_acceptance_failed"); };
 const pause = (ms) => new Promise((accept) => setTimeout(accept, ms));
 let stage = "guards";
+let diagnostic = null;
+const VERSION_TOOLS = ["nft", "iptables", "ip6tables", "iptables-save", "ip6tables-save", "ebtables-save"];
+const safeVersion = (value) => typeof value === "string" && value.length <= 120 &&
+  /^(?:nftables|iptables|ip6tables|iptables-save|ip6tables-save|ebtables|ebtables-save) v[0-9]+\.[0-9]+\.[0-9]+(?: \([A-Za-z0-9 ._#-]{1,80}\))?$/.test(value);
+const ACTIONS = ["version", "read_ruleset", "write_ruleset", "save", "fixture_accept", "link_setup", "http_request", "config_test", "certificate", "other"];
+const SIGNALS = [null, "SIGKILL", "SIGTERM", "SIGABRT", "other"];
+const ERRNOS = [null, "ENOENT", "EACCES", "EPERM", "EROFS", "ETIMEDOUT", "ENOBUFS", "EIO", "other"];
+const STDERR = ["empty", "managed_warning", "permission_denied", "syntax_error", "unsupported", "other"];
+const WARNING = /^# Warning: table (?:ip|ip6|bridge) (?:filter|nat|mangle|raw|security) is managed by (?:iptables|ip6tables|ebtables)-nft, do not touch!$/;
+const FRAME_FILES = ["production-maintenance-ingress-acceptance.mjs", "production-maintenance-ingress.mjs",
+  "production-maintenance-nft.mjs", "production-maintenance-network-bypass.mjs", "production-maintenance-nginx-profile.mjs"];
+const NFT_LEFT = ["ct.state", "ct.direction", "meta.l4proto"];
+const NFT_VALUE = /^(?:set:)?(?:tcp|established|related|reply|original|[0-9]{1,3}|unrecognized)(?:,(?:tcp|established|related|reply|original|[0-9]{1,3}))*$/;
+
+function actionOf(command, args) {
+  if (args.length === 1 && args[0] === "--version") return "version";
+  if (command === "nft") return args[0] === "-j" ? "read_ruleset" : "write_ruleset";
+  if (command.endsWith("-save")) return "save";
+  if (["iptables", "ip6tables", "ebtables"].includes(command)) return "fixture_accept";
+  if (command === "ip") return "link_setup";
+  if (command === "curl" || command === "nsenter" && args.includes(BINARIES.curl)) return "http_request";
+  if (command === "nginx") return "config_test";
+  return command === "openssl" ? "certificate" : "other";
+}
+
+function errorFrames(error) {
+  if (typeof error?.stack !== "string") return [];
+  return error.stack.split(/\r?\n/).slice(1, 10).flatMap((line) => {
+    const match = line.match(/^\s*at (?:[^\r\n]*?\()?file:\/\/\/[^\r\n]*\/(production-maintenance-[a-z-]+\.mjs):([0-9]+):([0-9]+)\)?$/);
+    return match && FRAME_FILES.includes(match[1]) ? [{ file: match[1], line: Number(match[2]), column: Number(match[3]) }] : [];
+  }).slice(0, 6);
+}
+
+function nftReadbackShape(stdout) {
+  try {
+    const rows = JSON.parse(stdout).nftables;
+    if (!Array.isArray(rows)) return [];
+    return rows.flatMap((row) => (row.rule?.expr ?? []).flatMap((expression) => {
+      const match = expression.match;
+      if (!match || !["==", "!=", "in"].includes(match.op)) return [];
+      const left = match.left?.ct ? `ct.${match.left.ct.key}` : `meta.${match.left?.meta?.key}`;
+      if (!NFT_LEFT.includes(left)) return [];
+      const value = match.right, elements = value?.set ?? [value];
+      const valid = Array.isArray(elements) && elements.length <= 8 && elements.every((item) =>
+        ["tcp", "established", "related", "reply", "original"].includes(item) || Number.isInteger(item) && item >= 0 && item <= 255);
+      return [{ left, op: match.op, right: valid ? `${value?.set ? "set:" : ""}${elements.join(",")}` : "unrecognized" }];
+    })).slice(0, 24);
+  } catch { return []; }
+}
+
+export function readIngressAcceptanceDiagnostic(value) {
+  if (!value || Object.keys(value).sort().join(",") !== "action,errno,exitCode,frames,lastTool,nftShape,signal,stderrClass,versions,warnings" || !Object.hasOwn(BINARIES, value.lastTool) ||
+      !(value.exitCode === null || Number.isInteger(value.exitCode) && value.exitCode >= 0 && value.exitCode <= 255) ||
+      !ACTIONS.includes(value.action) || !SIGNALS.includes(value.signal) || !ERRNOS.includes(value.errno) || !STDERR.includes(value.stderrClass) ||
+      !Array.isArray(value.warnings) || value.warnings.length > 3 || value.warnings.some((item) => typeof item !== "string" || !WARNING.test(item)) ||
+      value.warnings.join("\n").length > 512 || !Array.isArray(value.frames) || value.frames.length > 6 || value.frames.some((item) =>
+        !item || Object.keys(item).sort().join(",") !== "column,file,line" || !FRAME_FILES.includes(item.file) ||
+        !Number.isSafeInteger(item.line) || item.line < 1 || item.line > 10000 || !Number.isSafeInteger(item.column) || item.column < 1 || item.column > 10000) ||
+      !Array.isArray(value.nftShape) || value.nftShape.length > 24 || value.nftShape.some((item) =>
+        !item || Object.keys(item).sort().join(",") !== "left,op,right" || !NFT_LEFT.includes(item.left) ||
+        !["==", "!=", "in"].includes(item.op) || typeof item.right !== "string" || item.right.length > 120 || !NFT_VALUE.test(item.right)) ||
+      !value.versions || typeof value.versions !== "object" || Array.isArray(value.versions) ||
+      Object.keys(value.versions).some((tool) => !VERSION_TOOLS.includes(tool) ||
+        value.versions[tool] !== "unrecognized" && !safeVersion(value.versions[tool]))) return null;
+  const result = structuredClone(value);
+  return JSON.stringify(result).length <= 4096 ? result : null;
+}
 
 export function readIngressAcceptanceBridgeState(readText = (path) => readFileSync(path, "utf8")) {
   const kernelRelease = readText("/proc/sys/kernel/osrelease").trim();
@@ -86,8 +154,24 @@ async function runIsolated(parentNetns) {
   const result = (command, args, options = {}) => {
     assertIsolated();
     const executable = BINARIES[command]; if (!executable) fail();
-    return spawnSync(executable, args, { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", maxBuffer: 2_097_152,
+    const answer = spawnSync(executable, args, { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", maxBuffer: 2_097_152,
       cwd: fixture, env: environment, shell: false, windowsHide: true, ...options });
+    const versions = diagnostic?.versions ?? {};
+    if (VERSION_TOOLS.includes(command) && args.length === 1 && args[0] === "--version") {
+      const observed = typeof answer.stdout === "string" ? answer.stdout.trim() : "";
+      versions[command] = safeVersion(observed) ? observed : "unrecognized";
+    }
+    const stderr = typeof answer.stderr === "string" ? answer.stderr : "";
+    const warnings = stderr.split(/\r?\n/).filter((line) => WARNING.test(line)).slice(0, 3);
+    const stderrClass = !stderr.trim() ? "empty" : warnings.length && stderr.trim() === warnings.join("\n") ? "managed_warning" :
+      /Operation not permitted|Permission denied/i.test(stderr) ? "permission_denied" : /syntax error/i.test(stderr) ? "syntax_error" :
+      /not supported|unsupported/i.test(stderr) ? "unsupported" : "other";
+    diagnostic = { lastTool: command, action: actionOf(command, args), exitCode: Number.isInteger(answer.status) ? answer.status : null,
+      signal: SIGNALS.includes(answer.signal ?? null) ? answer.signal ?? null : "other",
+      errno: ERRNOS.includes(answer.error?.code ?? null) ? answer.error?.code ?? null : "other", stderrClass, warnings,
+      versions, frames: diagnostic?.frames ?? [],
+      nftShape: command === "nft" && args[0] === "-j" ? nftReadbackShape(answer.stdout) : diagnostic?.nftShape ?? [] };
+    return answer;
   };
   const run = (command, args, options = {}) => {
     const answer = result(command, args, options);
@@ -207,7 +291,7 @@ async function runIsolated(parentNetns) {
     const network = networkHelper.captureNetworkBypass();
     assertIsolated();
 
-    stage = "baseline";
+    stage = "baseline_tables";
     // Actual compatibility tables plus independent early ACCEPT hooks. A later
     // private DROP must still win without flushing or rewriting these tables.
     run("iptables", ["-A", "INPUT", "-j", "ACCEPT"]);
@@ -215,8 +299,10 @@ async function runIsolated(parentNetns) {
     run("ip6tables", ["-A", "INPUT", "-j", "ACCEPT"]);
     run("ebtables", ["-A", "FORWARD", "-j", "ACCEPT"]);
     run("nft", ["-f", "-"], { input: "add table inet fixture_firewalld\nadd chain inet fixture_firewalld input { type filter hook input priority 10; policy accept; }\nadd chain inet fixture_firewalld forward { type filter hook forward priority 10; policy accept; }\nadd rule inet fixture_firewalld input counter accept\nadd rule inet fixture_firewalld forward counter accept\n" });
+    stage = "baseline_input";
     for (const port of [3000, 8000, 8443, 5432, 6543]) ok("external", `http://10.200.0.1:${port}/`);
     ok("external", "http://[fd42:200::1]:3000/");
+    stage = "baseline_bridge";
     for (const from of ["kong", "rest", "auth", "db", "functions"]) for (const to of ["kong", "rest", "auth", "db"]) {
       if (from !== to) ok(from, url(to));
     }
@@ -226,7 +312,9 @@ async function runIsolated(parentNetns) {
       if (!/^\/proc\/sys\/net\/bridge\/bridge-nf-call-ip(?:6)?tables$/.test(path)) fail();
       return readFileSync(path, "utf8");
     } };
+    stage = "nft_capture";
     const frozen = firewall.captureNftFirewall(d);
+    stage = "nft_plan";
     const plan = firewall.planNftFirewall({ input: { operationId: OPERATION, appPort: 3000 }, docker });
     group();
 
@@ -380,7 +468,11 @@ export async function main() {
   if (result.error || result.signal || result.status !== 0 || result.stderr !== "") {
     try {
       const detail = JSON.parse(result.stderr);
-      if (detail && Object.keys(detail).sort().join(",") === "error,stage" && detail.error === "ingress_acceptance_failed" && STAGES.has(detail.stage)) stage = detail.stage;
+      if (detail && ["error,stage", "diagnostic,error,stage"].includes(Object.keys(detail).sort().join(",")) &&
+          detail.error === "ingress_acceptance_failed" && STAGES.has(detail.stage)) {
+        stage = detail.stage;
+        diagnostic = readIngressAcceptanceDiagnostic(detail.diagnostic);
+      }
     } catch { /* Never reveal subprocess stderr or response bodies. */ }
     fail();
   }
@@ -399,6 +491,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   catch (error) {
     const code = ["ingress_acceptance_opt_in_required", "ingress_acceptance_namespace_required"].includes(error?.message)
       ? error.message : "ingress_acceptance_failed";
-    process.stderr.write(JSON.stringify({ error: code, stage }) + "\n"); process.exitCode = 1;
+    if (diagnostic && !diagnostic.frames.length) diagnostic.frames = errorFrames(error);
+    const safeDiagnostic = readIngressAcceptanceDiagnostic(diagnostic);
+    process.stderr.write(JSON.stringify({ error: code, stage, ...(safeDiagnostic ? { diagnostic: safeDiagnostic } : {}) }) + "\n"); process.exitCode = 1;
   }
 }

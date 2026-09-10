@@ -8,7 +8,7 @@ const ROOT = 0xffffffff;
 const clone = (value) => structuredClone(value);
 const link = (index = 1, qdisc = "noqueue") => ({ ifindex: index, ifname: index === 1 ? "lo" : "eth0", qdisc, xdp: null });
 const row = (index = 1, kind = "noqueue", parent = ROOT, handle = 0) => ({ index, kind, handle, parent });
-function fixture({ links = [link()], qdiscs = [row()], after = links } = {}) {
+function fixture({ links = [link()], qdiscs = [row()], after = links, dump = { version: 1, qdiscs } } = {}) {
   const calls = [];
   let reads = 0, verifies = 0;
   const python = { target: { path: "/usr/bin/python3.6" } };
@@ -25,7 +25,7 @@ function fixture({ links = [link()], qdiscs = [row()], after = links } = {}) {
       }
       assert.equal(command, python.target.path);
       assert.deepEqual(args, ["-I", "-S", "-B", "-c", NETWORK_BYPASS_PYTHON]);
-      return { stdout: JSON.stringify({ version: 1, qdiscs }), stderr: "" };
+      return { stdout: JSON.stringify(dump), stderr: "" };
     },
   };
   return { overrides, calls, get verifies() { return verifies; } };
@@ -129,6 +129,72 @@ test("dependency injection is bounded; no accessor execution or arbitrary option
   }
 });
 
+const defaultMq = () => {
+  const qdiscs = [row(2, "mq"), row(2, "fq_codel", 1), row(2, "fq_codel", 2)];
+  const links = [{ ...link(2, "mq"), num_tx_queues: 2 }];
+  const evidence = { basis: "kernel_default_mq_unaddressable", kernelRelease: "4.18.0-348.7.1.el8_5.x86_64",
+    queues: [{ index: 2, parent: 1 }, { index: 2, parent: 2 }] };
+  return { qdiscs, links, dump: { version: 2, qdiscs, defaultMqEvidence: evidence } };
+};
+
+test("v2 distinguishes exact vendor default mq unaddressability from an empty filter dump", () => {
+  const f = defaultMq();
+  const proof = captureNetworkBypass(fixture(f).overrides);
+  assert.equal(proof.version, 2);
+  assert.deepEqual(proof.defaultMqEvidence, { ...f.dump.defaultMqEvidence, interfaces: [{ index: 2, numTxQueues: 2 }] });
+  assert.equal(verifyNetworkBypass(proof, fixture(defaultMq()).overrides), true);
+  assert.doesNotMatch(JSON.stringify(proof), /filterCount|empty_filter|filter_dump/);
+});
+
+test("v2 requires independently observed TX queue count, not the number of received rows", () => {
+  for (const count of [undefined, null, 0, 1, 3, 1025, "2", true]) {
+    const f = defaultMq(); f.links[0].num_tx_queues = count;
+    assert.throws(() => captureNetworkBypass(fixture(f).overrides), ERROR);
+  }
+  const f = defaultMq();
+  assert.throws(() => captureNetworkBypass(fixture({ ...f, after: [{ ...f.links[0], num_tx_queues: 3 }] }).overrides), ERROR);
+});
+
+test("v2 refuses root fq0, nonzero mq or fq handles, other leaves, gaps and missing queues", () => {
+  for (const change of [
+    (f) => { f.qdiscs[0].kind = "fq_codel"; f.links[0].qdisc = "fq_codel"; },
+    (f) => { f.qdiscs[0].handle = 65536; },
+    (f) => { f.qdiscs[1].handle = 65536; },
+    (f) => { f.qdiscs[1].kind = "pfifo_fast"; },
+    (f) => { f.qdiscs[2].parent = 3; },
+    (f) => { f.qdiscs.pop(); },
+    (f) => { f.qdiscs.push(row(2, "fq_codel", 3)); },
+  ]) {
+    const f = defaultMq(); change(f);
+    assert.throws(() => captureNetworkBypass(fixture(f).overrides), ERROR);
+  }
+});
+
+test("v2 evidence cannot be forged, downgraded, duplicated or used on another kernel", () => {
+  const proof = captureNetworkBypass(fixture(defaultMq()).overrides);
+  for (const change of [
+    (p) => { p.defaultMqEvidence.kernelRelease = "4.18.0-348.7.2.el8_5.x86_64"; },
+    (p) => { p.defaultMqEvidence.basis = "empty_filter_dump"; },
+    (p) => { p.defaultMqEvidence.queues.pop(); },
+    (p) => { p.defaultMqEvidence.queues[1] = p.defaultMqEvidence.queues[0]; },
+    (p) => { p.defaultMqEvidence.interfaces = []; },
+    (p) => { p.defaultMqEvidence.interfaces[0].numTxQueues = 1; },
+    (p) => { p.defaultMqEvidence.interfaces[0].index = 3; },
+    (p) => { p.defaultMqEvidence.interfaces.push(p.defaultMqEvidence.interfaces[0]); },
+    (p) => { p.defaultMqEvidence.extra = "SECRET"; },
+    (p) => { p.version = 1; delete p.defaultMqEvidence; },
+  ]) {
+    const copy = clone(proof); change(copy);
+    assert.throws(() => validateNetworkBypass(copy), ERROR);
+  }
+  let read = false;
+  const accessor = clone(proof);
+  Object.defineProperty(accessor.defaultMqEvidence, "queues", { enumerable: true, get() { read = true; return []; } });
+  assert.throws(() => validateNetworkBypass(accessor), ERROR);
+  assert.equal(read, false);
+  assert.throws(() => validateNetworkBypass({ ...proof, defaultMqEvidence: new Proxy(proof.defaultMqEvidence, {}) }), ERROR);
+});
+
 test("actual Python decoder rejects malformed netlink frames; fake socket sends exactly one GET", () => {
   // Executes the production decoder, but all sockets below are in-memory fakes.
   // No connection, system network inspection or TC mutation occurs in this test.
@@ -157,7 +223,7 @@ def bad(frame, sender=(0,0), flags=0):
 for frame in [b"", good[:15], good[:-1], good + b"x", done + good, msg(flags=2|16), msg(flags=2|32),
               msg(seq=2), msg(pid=0), msg(2, b"\x00"*4), msg(4, b""), msg(3, struct.pack("=i", -1)),
               msg(3,b"\x00"), msg(payload=T.pack(0,0,0,0,0,0xffffffff,0)+attr(1,b"noqueue\x00")),
-              msg(payload=T.pack(0,0,0,1,0,0xffffffff,0)+attr(1,b"fq_codel\x00")),
+              msg(payload=T.pack(0,0,0,1,0,0xffffffff,0)+attr(1,b"cake\x00")),
               msg(payload=T.pack(0,0,0,1,0,0xffffffff,0)+attr(1,b"noqueue\x00")+attr(13,b"\x00"*4)),
               msg(payload=T.pack(0,0,0,1,0,0xffffffff,0)+attr(1,b"noqueue\x00")+attr(14,b"\x01"*4)),
               msg(payload=T.pack(0,0,0,1,0,0xffffffff,0)+attr(1,b"noqueue\x00")+attr(12,b"\x01")),
@@ -216,7 +282,37 @@ try:
     ns["collect"](lambda *args: f, lambda: next(ticks))
     raise AssertionError("accepted expired deadline")
 except ValueError:
-    assert f.closed and len(f.sent) == 1
+    assert f.closed and len(f.sent) == 0
+# The exact vendor exception uses two real decoder passes, not filter-query emptiness.
+from types import SimpleNamespace
+ns["os"].uname = lambda: SimpleNamespace(release="4.18.0-348.7.1.el8_5.x86_64")
+mq = msg(payload=T.pack(0,0,0,1,0,0xffffffff,0)+attr(1,b"mq\x00"))
+fq = msg(payload=T.pack(0,0,0,1,0,1,0)+attr(1,b"fq_codel\x00"))
+created = []
+def mq_factory(*args):
+    sock = Fake([(mq+fq+done,[],0,(0,0))]); created.append(sock); return sock
+answer = ns["collect"](mq_factory)
+assert answer["version"] == 2 and len(created) == 2
+assert answer["defaultMqEvidence"] == {"basis":"kernel_default_mq_unaddressable", "kernelRelease":"4.18.0-348.7.1.el8_5.x86_64", "queues":[{"index":1,"parent":1}]}
+assert all(len(sock.sent)==1 and sock.closed for sock in created)
+for rows, release in [([{"index":1,"kind":"fq_codel","handle":0,"parent":0xffffffff}], "4.18.0-348.7.1.el8_5.x86_64"),
+    (answer["qdiscs"],"6.8.0"),
+    ([{"index":1,"kind":"mq","handle":65536,"parent":0xffffffff},{"index":1,"kind":"fq_codel","handle":0,"parent":1}], "4.18.0-348.7.1.el8_5.x86_64"),
+    ([{"index":1,"kind":"mq","handle":0,"parent":0xffffffff},{"index":1,"kind":"fq_codel","handle":65536,"parent":1}], "4.18.0-348.7.1.el8_5.x86_64")]:
+    try:
+        ns["default_mq_evidence"](rows,release)
+        raise AssertionError("accepted unsupported fq context")
+    except ValueError: pass
+for changed in [msg(payload=T.pack(0,0,0,1,0,2,0)+attr(1,b"fq_codel\x00")),
+                msg(payload=T.pack(0,0,0,1,0,1,0)+attr(1,b"pfifo\x00"))]:
+    created=[]
+    def drift_factory(*args):
+        sock=Fake([(mq+(fq if not created else changed)+done,[],0,(0,0))]);created.append(sock);return sock
+    try:
+        ns["collect"](drift_factory)
+        raise AssertionError("accepted qdisc drift")
+    except ValueError:
+        assert len(created)==2 and all(sock.closed for sock in created)
 print("decoder-fixtures-passed")
 `;
   const result = spawnSync(process.platform === "win32" ? "python" : "/usr/bin/python3", ["-I", "-S", "-B", "-c", script],
