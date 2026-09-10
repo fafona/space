@@ -44,6 +44,9 @@ function host() {
     action?.();
   }
   const d = {
+    captureNetwork: () => ({ version: 1,
+      links: [{ index: 1, name: "lo", qdisc: "noqueue", master: null, kind: null }],
+      qdiscs: [{ index: 1, kind: "noqueue", handle: 0, parent: 4294967295 }] }),
     readFile: (path) => { assert(files.has(path), "unexpected read"); return fact(path); },
     readText: (path) => path.startsWith("/proc/sys/net/bridge/") ? state.bridgeEnabled :
       /^\/proc\/[0-9]+\/stat$/.test(path) ? `${path.split("/")[2]} (nginx) ${Array.from({ length: 20 }, (_, i) => i === 19 ? path.split("/")[2] + "45" : "0").join(" ")}` : assert.fail("unexpected text read"),
@@ -59,7 +62,9 @@ function host() {
     probeHeaders: { apikey: "synthetic-" + "b".repeat(32), authorization: "Bearer synthetic-" + "b".repeat(32) },
     async fetch(url, options) {
       state.requests.push({ url, options });
-      assert.equal(options.method, "GET"); assert.equal(options.redirect, "error"); assert.equal(options.cache, "no-store");
+      assert.equal(options.method, "GET");
+      assert.equal(options.redirect, new URL(url).protocol === "http:" ? "manual" : "error");
+      assert.equal(options.cache, "no-store");
       assert(new URL(url).searchParams.has("faolla_maintenance_probe"));
       if (state.failFetch) return state.failFetch(url, options);
       const path = new URL(url).pathname;
@@ -69,7 +74,7 @@ function host() {
       return new Response("maintenance", { status: 503 });
     },
     run(command, args) {
-      if (command === "nginx") {
+      if (command === "/usr/sbin/nginx") {
         if (args[0] === "-V") return out("", state.version);
         if (args[0] === "-T") {
           const included = files.get(ROOT).includes("faolla-maintenance-") ? [...state.private] : [];
@@ -84,7 +89,7 @@ function host() {
       }
       if (command === "ps") return out(`100 1 0 nginx: master process /usr/sbin/nginx\n${state.worker} 100 33 nginx: worker process\n` +
         (state.drainingWorker ? `${state.drainingWorker} 100 33 nginx: worker process is shutting down\n` : ""));
-      if (command === "readlink") return out("/usr/sbin/nginx\n");
+      if (command === "readlink") return out(args[0].endsWith("/ns/net") ? "net:[1234]\n" : "/usr/sbin/nginx\n");
       if (command === "ip") return out(JSON.stringify([{ ifname: bridge, linkinfo: { info_kind: "bridge" } }]));
       if (command === "nft") return out(JSON.stringify(state.nft));
       if (command === "docker") {
@@ -132,11 +137,34 @@ test("capture is read-only; plan preserves every original byte except exact inse
   for (const file of planned.installation.files) assert(!file.modified.includes(TOKEN));
   assert(planned.installation.privateContent.includes(TOKEN));
   assert.match(planned.installation.privateContent, /\$realip_remote_addr/);
-  assert.match(planned.installation.privateContent, /https:db\.example\.test:443:POST:\/auth\/v1\/token:password/);
+  assert(planned.installation.privateContent.includes("https:db\\\\.example\\\\.test:443:POST:/auth/v1/token:password"));
   const publicInfo = getIngressProbePlan(planned);
   assert.equal(publicInfo.controlAllowlist.length, 4);
   assert.equal(publicInfo.controlAllowlist.filter((entry) => entry.method === "POST")[0].url, "https://db.example.test/auth/v1/token?grant_type=password");
   assert(!JSON.stringify(publicInfo).includes(TOKEN));
+});
+
+test("generated long map keys are fully anchored case-sensitive literal regexes without global hash changes", () => {
+  const h = host(), planned = planIngressInstallation(h.capture(), TOKEN);
+  const content = planned.installation.privateContent;
+  assert.equal(content.includes("map_hash_bucket_size"), false);
+  // Decode only the escaped backslashes that Nginx's quoted token lexer removes.
+  const keys = [...content.matchAll(/"~((?:\\.|[^"\\])*)"\s+1;/g)]
+    .map((entry) => entry[1].replace(/\\\\/g, "\\"));
+  assert.equal(keys.length, 5);
+  const matchers = keys.map((key) => {
+    assert(key.startsWith("\\A") && key.endsWith("\\z"));
+    return new RegExp("^(?:" + key.slice(2, -2) + ")$(?![\\s\\S])");
+  });
+  assert(matchers[0].test(TOKEN));
+  for (const wrong of [TOKEN.toUpperCase(), "x" + TOKEN, TOKEN + "x", TOKEN + "\n"]) assert(!matchers[0].test(wrong));
+  for (const entry of planned.installation.allowlist) {
+    const url = new URL(entry.url), expected = `https:${url.hostname}:443:${entry.method}:${url.pathname}:${entry.method === "POST" ? "password" : ""}`;
+    assert.equal(matchers.slice(1).filter((test) => test.test(expected)).length, 1);
+    for (const wrong of [expected.replace("db.example", "dbXexample"), expected + "x", expected + "\n", "x" + expected]) {
+      assert.equal(matchers.slice(1).some((test) => test.test(wrong)), false);
+    }
+  }
 });
 
 test("install, real-probe projection, exact restore and same-operation reinstall are idempotent", async () => {
@@ -254,6 +282,52 @@ test("correct files/rules alone are insufficient: public 200, redirect, false JS
     () => new Response(null, { status: 302, headers: { location: "https://elsewhere.example.test/" } }),
     (url, options) => options.headers["x-faolla-maintenance-control"] ? Response.json({ synthetic: "not upstream" }) : new Response(null, { status: 503 }),
   ]) { h.state.failFetch = response; await assert.rejects(verifyIngress(proof, h.d), /http_unverified/); }
+});
+
+test("only one exact credential-free edge HTTPS upgrade can precede a required 503", async () => {
+  const h = host(); h.state.files.set(SITE, h.state.files.get(SITE).replace("listen 443 ssl;", "listen 80; listen 443 ssl;"));
+  const proof = planIngressInstallation(h.capture(), TOKEN); await installIngress(proof, TOKEN, h.d);
+  const baseFetch = h.d.fetch;
+  for (const status of [301, 308]) {
+    h.state.failFetch = null;
+    const requests = [];
+    const fetch = (url, options) => {
+      const parsed = new URL(url); requests.push({ url, options });
+      if (parsed.protocol === "http:") {
+        assert.equal(options.headers["x-faolla-maintenance-control"], undefined);
+        assert.equal(options.redirect, "manual"); parsed.protocol = "https:";
+        return Promise.resolve(new Response(null, { status, headers: { location: parsed.href } }));
+      }
+      assert.equal(options.redirect, "error"); return baseFetch(url, options);
+    };
+    assert.equal((await verifyIngress(proof, { ...h.d, fetch })).activeHttpVerified, true);
+    assert(requests.some((request) => request.url.startsWith("http:")));
+  }
+  for (const alter of [
+    (url) => { url.hostname = "other.example.test"; }, (url) => { url.pathname = "/elsewhere"; },
+    (url) => { url.search = ""; }, (url) => { url.hash = "extra"; },
+    (url) => { url.username = "user"; }, (url) => { url.port = "8443"; },
+  ]) {
+    const fetch = (url, options) => {
+      const target = new URL(url);
+      if (target.protocol !== "http:") return baseFetch(url, options);
+      target.protocol = "https:"; alter(target);
+      return Promise.resolve(new Response(null, { status: 301, headers: { location: target.href } }));
+    };
+    await assert.rejects(verifyIngress(proof, { ...h.d, fetch }), /http_unverified/);
+  }
+  for (const status of [200, 302, 307]) {
+    const fetch = (url, options) => new URL(url).protocol === "http:" ?
+      Promise.resolve(new Response(null, { status, headers: { location: url.replace("http:", "https:") } })) : baseFetch(url, options);
+    await assert.rejects(verifyIngress(proof, { ...h.d, fetch }), /http_unverified/);
+  }
+});
+
+test("network bypass proof drift is refused before modifying config or firewall", async () => {
+  const h = host(), proof = planIngressInstallation(h.capture(), TOKEN), network = h.d.captureNetwork();
+  h.d.captureNetwork = () => ({ ...network, links: network.links.map((link) => ({ ...link, name: "changed" })) });
+  await assert.rejects(installIngress(proof, TOKEN, h.d));
+  assert.equal(h.state.mutations.length, 0);
 });
 
 test("unexpected included file prevents claiming verification", async () => {

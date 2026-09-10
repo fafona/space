@@ -187,6 +187,30 @@ test("prepare rejects unsupported capture before any mutations", async () => {
   await assert.rejects(runMaintenanceAction(request("prepare"), f.ops), /unsupported/);
   assert.equal(f.events.includes("create"), false); assert.equal(f.events.includes("stopRuntime"), false);
 });
+test("legacy raw HTTP endpoint uses only a proven HTTPS maintenance gateway without changing runtime config", async () => {
+  const f = fixture(), raw = "http://8.8.8.8:8000/";
+  f.ops.readPublicSupabaseUrl = async () => { f.events.push("readPublicUrl"); return raw; };
+  const capture = f.ops.captureIngress;
+  f.ops.captureIngress = async (input) => {
+    assert.equal(input.publicSupabaseUrl, "https://faolla.com/");
+    assert.equal(f.events.includes("create"), false);
+    return capture(input);
+  };
+  const result = await runMaintenanceAction(request("prepare"), f.ops);
+  assert.equal(result.state, "held");
+  assert.equal(f.state().publicSupabaseUrl, "https://faolla.com/");
+  assert.equal(raw, "http://8.8.8.8:8000/");
+});
+test("an unprovable HTTPS mapping or unsupported HTTP config cannot persist or actuate", async () => {
+  const f = fixture();
+  f.ops.readPublicSupabaseUrl = async () => "http://8.8.8.8:8000/";
+  f.ops.captureIngress = async (input) => { assert.equal(input.publicSupabaseUrl, "https://faolla.com/"); throw new Error("route_not_proven"); };
+  await assert.rejects(runMaintenanceAction(request("prepare"), f.ops), /route_not_proven/);
+  assert.equal(f.events.includes("create"), false); assert.equal(f.events.includes("installIngress"), false);
+  const invalid = fixture(); invalid.ops.readPublicSupabaseUrl = async () => "http://unknown.example:8000/";
+  await assert.rejects(runMaintenanceAction(request("plan"), invalid.ops), /maintenance_plan_public_gateway_unverified/);
+  assert.equal(invalid.events.includes("captureIngress"), false); assert.equal(invalid.events.includes("create"), false);
+});
 test("failed read-only plan exposes only a fixed phase and never persists or acts on host state", async () => {
   for (const [method, stage] of [
     ["assertNoActiveOperation", "operation_state"], ["captureRuntime", "runtime"],

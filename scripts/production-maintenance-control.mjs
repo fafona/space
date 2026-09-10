@@ -9,6 +9,7 @@ import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMainte
 import { createMaintenanceLaunchJournalStorage } from "./production-maintenance-launch-journal-storage.mjs";
 import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
 import { diagnosePm2Peer, validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
+import { selectMaintenancePublicGateway } from "./maintenance-effective-public-gateway.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -285,7 +286,11 @@ export async function runMaintenanceAction(request, ops) {
     const operationId = ops.uuid();
     if (!UUID.test(operationId)) failure("maintenance_operation_invalid");
     const runtime = await captureStep("runtime", () => ops.captureRuntime({ appDir: request.appDir, appName: request.appName, appPort: request.appPort, expectedOldSha: request.expectedOldSha }));
-    const publicSupabaseUrl = await captureStep("public_gateway", () => ops.readPublicSupabaseUrl(runtime));
+    // Preserve the frozen runtime configuration. Only maintenance probes use
+    // the browser-equivalent HTTPS gateway; captureIngress must independently
+    // prove that gateway reaches the exact frozen Kong before state is saved.
+    const publicSupabaseUrl = await captureStep("public_gateway", async () =>
+      selectMaintenancePublicGateway(await ops.readPublicSupabaseUrl(runtime)));
     const capturedIngress = await captureStep("ingress", () => ops.captureIngress({ appPort: request.appPort, publicSupabaseUrl, operationId }));
     const database = await captureStep("database", () => ops.captureDatabase());
     const token = ops.token();

@@ -175,7 +175,7 @@ rollback to an older dump, or reopening. The verified dump proof is saved as
 ## Release order
 
 1. Merge the reviewed exact candidate and require successful push CI, including
-   the disposable PostgreSQL acceptance jobs.
+   the disposable PostgreSQL and isolated maintenance-ingress acceptance jobs.
 2. Run **Production Maintenance / plan** with the exact candidate and old build.
    It only captures the runtime, routing, firewall and database prerequisites.
    Unsupported topology is a stop condition before traffic or services change.
@@ -227,3 +227,95 @@ quiet and cannot replace `check-held` in backup or migration workflows.
 
 Pure tests use injected hosts and never operate production. Passing them is not
 proof that the real host is supported: the real read-only plan is mandatory.
+
+## Existing Nginx and nf_tables compatibility
+
+The ingress adapter preserves the installed network architecture. Nginx has two
+closed profiles: `/usr/sbin/nginx` with `/etc/nginx/nginx.conf`, or the BaoTa
+binary and configuration under `/www/server/nginx`. The latter may read only
+its fixed configuration root and the panel's `vhost/nginx` and `vhost/rewrite`
+roots. The host network namespace, master process generation and executable
+are bound before using the same absolute binary for tests or reloads. Container
+OpenResty masters and their workers are not part of that host process proof.
+
+Original configuration bytes (including CRLF), include membership, ownership
+and parent identities remain frozen. Empty stream includes stay monitored;
+adding a stream route invalidates the plan. An unselected cohost's conditional
+Lua is parsed as opaque code and is never modified or admitted in a selected
+Faolla server or inherited scope. This is routing separation, not a sandbox
+against a malicious privileged cohost program. Control routes must resolve to
+the frozen Kong target via proven exact or `^~` prefix locations; arbitrary
+rewrites, scripts, URI remapping and ambiguous regex precedence are refused.
+QUIC listeners must share their server and port with a verified TLS listener.
+
+An existing runtime may retain a raw HTTP IPv4 Supabase endpoint while its
+Faolla HTTPS browser session already uses the same-origin Nginx gateway.
+Maintenance does not rewrite that runtime setting. Only the reviewed legacy
+shape (global IPv4, HTTP port 8000, root path, no credentials/query/fragment)
+selects the fixed `https://faolla.com/` maintenance candidate; all other HTTP
+shapes are refused. The real ingress capture must then prove that candidate's
+control routes reach the frozen Kong before persisting an operation. Readiness
+probes and deployment endpoint hashes use this same active-state-bound HTTPS
+gateway. Normal non-maintenance behavior, internal health endpoints and frozen
+runtime/environment digests remain unchanged. The maintenance token is never
+sent to the raw HTTP endpoint.
+
+The nf_tables backend captures the full nft JSON ruleset plus all three
+iptables/ip6tables/ebtables compatibility saves, including versions. Old nft
+releases may report opaque `xt: null`; the complete compatibility saves are
+therefore required, not discarded. Only recognized packet/byte counters and
+save timestamps are normalized. An operation creates one independently owned
+`inet` table at filter priority 200; existing tables, policies and firewalld or
+Docker services are not changed. Later or colliding base chains, flowtables,
+offload and unsupported expressions cause refusal. The fence covers published
+ports and the thirteen frozen container destinations; only four explicit
+service directions and their established reply direction remain allowed.
+
+Before any Nginx write, the frozen baseline and any existing operation-owned
+table must match exactly. Installation uses an atomic fail-if-present create
+batch; a partial or foreign table is never adopted. Restore removes only that
+verified table, then requires the original baseline again. It never flushes or
+replays the host ruleset. The fixed nft batch uses the pre/post-verified Python
+interpreter to provide a real OS pipe: Node's socket-backed stdin is rejected
+by supported nft releases. Rule content is never placed in process arguments,
+a shell command or a temporary file, and a failed write is not replayed.
+Read-only interface and kernel qdisc observations also
+reject XDP, ingress/clsact and unreviewed classifier-capable qdiscs. This uses
+the fixed trusted Python interpreter and GET-only netlink, not installation of
+`tc`, deletion of filters, or an assumption based on an `ip link` label.
+
+Network proof version 2 has one narrowly reviewed exception: the exact kernel
+`4.18.0-348.7.1.el8_5.x86_64` may have default `mq` roots and hidden `fq_codel`
+children, all with handle zero. Every child must map exactly to `1..N`, where
+`N` is the independently observed interface TX queue count, not the number of
+returned qdisc rows. Two complete hidden-inclusive qdisc dumps and surrounding
+interface observations must agree, and verification repeats the capture.
+The evidence is named `kernel_default_mq_unaddressable`: the reviewed kernel
+creates fresh, private classifier blocks for these children, and its TC API
+cannot address them through the zero handle or `mq` root. It is not an empty
+filter-query result. Root `fq_codel`, nonzero child handles, a different kernel,
+missing queues or an attempted version-1 downgrade are refused. This relies on
+the same trusted-OS assumption as the other host proofs, not protection against
+kernel tampering or later privileged network changes.
+The exact vendor source archive is bound by SHA-1
+`a3793e19a4f8237adb530a9ea1230ccafdf2c2ff` in its
+[source metadata](https://git.almalinux.org/jonathan/kernel/src/commit/ba708d9db898f657f7e2d80c39343f5e01f65fb2/.kernel.metadata);
+the reviewed paths are `net/sched/{sch_api,cls_api,sch_mq,sch_generic,sch_fq_codel}.c`.
+
+Public HTTP probes allow at most one permanent HTTP-to-HTTPS upgrade, without
+credentials, to the same host, path and query on HTTPS port 443. The destination
+must actually return 503. Control-token probes never follow a redirect. The
+isolated Linux CI job tests real nft installation, data-plane blocking, limited
+service connectivity, table restoration, and generated Nginx syntax/HTTP gates.
+This dedicated Ubuntu 24.04 job suppresses package service startup and explicitly
+loads `br_netfilter` once on its disposable CI host. The runner requires Linux
+6.x before initializing the two per-network-namespace bridge sysctls inside its
+independently verified new namespace. It reads the parent's original values and
+requires them to remain unchanged even when the child fails; it never repairs
+parent state. This CI setup is not a production action: production only reads
+these prerequisites and refuses if they are unavailable or disabled.
+Its disposable Ubuntu binary test is not a claim to have tested a production
+BaoTa installation; the real protected plan and subsequent held checks remain
+mandatory. No snapshot prevents a later privileged administrator or service
+from changing the host: configuration changes during the window are prohibited
+and invalidate the operation when detected.

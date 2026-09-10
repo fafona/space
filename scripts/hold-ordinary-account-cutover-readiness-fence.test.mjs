@@ -2295,6 +2295,54 @@ test("four anon behavior probes bind internal/public REST pages and Auth users w
   );
 });
 
+test("maintenance public probes and evidence use the verified HTTPS gateway while raw and internal configuration remain unchanged", async () => {
+  const calls = [], snapshots = successfulProbeSequence(), causal = causalFetchRecorder(calls);
+  const token = "f".repeat(64);
+  const environment = {
+    SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000",
+    NEXT_PUBLIC_SUPABASE_URL: "http://8.8.8.8:8000",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-only-key",
+  };
+  const original = structuredClone(environment);
+  let reads = 0;
+  const evidence = await probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+    { containerId: CONTAINER_ID, databaseName: "postgres", databaseOid: "16384", fenceBackendPid: "4321" },
+    {
+      environment,
+      readMaintenanceContext(received) { assert.equal(received, environment); reads++; return { publicSupabaseUrl: "https://faolla.com/", token }; },
+      randomProbeHex: (bytes) => "a".repeat(bytes * 2), fetchImpl: causal.fetchImpl,
+      observeWaiters: async () => snapshots.shift() ?? observation(), cancelWaiter: causal.cancelWaiter,
+      serviceIdentities: SERVICE_IDENTITIES, poll: async () => {},
+    },
+  );
+  assert.equal(reads, 1);
+  assert.deepEqual(environment, original);
+  assert.deepEqual(calls.map(({ url }) => new URL(url).origin), ["http://127.0.0.1:8000", "http://127.0.0.1:8000", "https://faolla.com", "https://faolla.com"]);
+  assert.deepEqual(calls.map(({ options }) => options.headers["x-faolla-maintenance-control"]), [undefined, undefined, token, token]);
+  assert.ok(calls.every(({ options }) => options.redirect === "error"));
+  assert.deepEqual(evidence.map((entry) => entry.baseEndpointSha256), [
+    sha256Hex(Buffer.from("http://127.0.0.1:8000/")), sha256Hex(Buffer.from("http://127.0.0.1:8000/")),
+    sha256Hex(Buffer.from("https://faolla.com/")), sha256Hex(Buffer.from("https://faolla.com/")),
+  ]);
+  assert.doesNotMatch(JSON.stringify(evidence), /8\.8\.8\.8|faolla\.com|anon-only-key/);
+  assert.ok(!JSON.stringify(evidence).includes(token));
+});
+
+test("maintenance gateway mismatch and private-context failure send no REST or Auth probe", async () => {
+  for (const readMaintenanceContext of [
+    () => ({ publicSupabaseUrl: "https://other.example/", token: "f".repeat(64) }),
+    () => { throw new Error("maintenance_probe_binding_invalid"); },
+  ]) {
+    let sent = 0;
+    await assert.rejects(probeOrdinaryAccountCutoverReadinessFenceEndpoints(
+      { containerId: CONTAINER_ID, databaseName: "postgres", databaseOid: "16384", fenceBackendPid: "4321" },
+      { environment: { SUPABASE_INTERNAL_URL: "http://127.0.0.1:8000", NEXT_PUBLIC_SUPABASE_URL: "http://8.8.8.8:8000", NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-only" },
+        readMaintenanceContext, fetchImpl() { sent++; throw new Error("unexpected_send"); } },
+    ), /maintenance_(?:public_gateway_unverified|probe_binding_invalid)/);
+    assert.equal(sent, 0);
+  }
+});
+
 test("child diagnostics expose only bounded status and an exact SQLSTATE", async (t) => {
   const runFailure = async (stderr, code = 3, signal = null) => {
     let failureBytes;

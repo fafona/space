@@ -8,6 +8,8 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 import { pathToFileURL } from "node:url";
 import { maintenanceProbeHeaders } from "./maintenance-control-probe-headers.mjs";
+import { readMaintenanceProbeContext } from "./production-maintenance-control.mjs";
+import { bindMaintenancePublicSupabaseUrl } from "./maintenance-effective-public-gateway.mjs";
 
 import {
   ORDINARY_ACCOUNT_CUTOVER_READINESS_SQL,
@@ -2894,7 +2896,7 @@ function parseWaiterObservation(value) {
   return { ...source, serviceSessions, waiters };
 }
 
-function requiredProbeEnvironment(environment) {
+function requiredProbeEnvironment(environment, readContext = readMaintenanceProbeContext) {
   const internalUrl = environment.SUPABASE_INTERNAL_URL;
   const publicUrl = environment.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = environment.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -2927,10 +2929,13 @@ function requiredProbeEnvironment(environment) {
     }
     return value;
   };
+  const maintenanceContext = readContext(environment);
+  const effectivePublicUrl = bindMaintenancePublicSupabaseUrl(publicUrl, maintenanceContext === null ? null : maintenanceContext.publicSupabaseUrl);
   return {
     internalUrl: parseBase(internalUrl),
-    publicUrl: parseBase(publicUrl),
+    publicUrl: parseBase(effectivePublicUrl),
     anonKey,
+    maintenanceContext,
   };
 }
 
@@ -3022,7 +3027,7 @@ function probeRequestSpecifications(environment, randomHex) {
       ...specification.request,
       headers: {
         ...specification.request.headers,
-        ...maintenanceProbeHeaders(specification.url, specification.request.method),
+        ...maintenanceProbeHeaders(specification.url, specification.request.method, {}, () => environment.maintenanceContext),
       },
     },
   }));
@@ -3177,6 +3182,7 @@ export async function probeOrdinaryAccountCutoverReadinessFenceEndpoints(
   }
   const environment = requiredProbeEnvironment(
     dependencies.environment ?? process.env,
+    dependencies.readMaintenanceContext ?? readMaintenanceProbeContext,
   );
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") {
