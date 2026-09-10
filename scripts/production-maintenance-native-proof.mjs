@@ -299,6 +299,18 @@ export async function verifyNativeFiles(rawProof, rawContext, overrides) {
     const proof = captureProof(rawProof, rawContext), d = dependencies(overrides);
     const expected = { layout: proof.layout, directories: proof.directories, binaries: proof.binaries, packages: proof.packages };
     const first = observeFiles(proof.context, proof.process, d), second = observeFiles(proof.context, proof.process, d);
-    if (!equal(expected, first) || !equal(first, second)) fail(); return true;
+    // A stopped release shares ancestors with new sibling releases. Historical
+    // entry churn there changes size/times/nlink without replacing a directory.
+    // Keep the raw eight-field proof; only this historical, files-only comparison
+    // uses dev/ino/uid/full mode for STRICT ancestors. Every fresh observation
+    // still checks type, owner, permissions, canonical paths and all eight fields.
+    // The runtime itself, descendants, binaries and packages remain fully bound.
+    const historical = (files) => ({ ...files, directories: files.directories.map((entry) => {
+      const ancestor = entry.path === "/" || proof.context.runtime.startsWith(entry.path + "/");
+      if (!ancestor) return entry;
+      const stat = identity(entry.identity);
+      return { path: entry.path, identity: [stat.dev, stat.ino, stat.uid, stat.mode].join(":") };
+    }) });
+    if (!equal(historical(expected), historical(first)) || !equal(first, second)) fail(); return true;
   } catch { fail(); }
 }

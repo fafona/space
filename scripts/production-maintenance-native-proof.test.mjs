@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -189,6 +189,65 @@ test("valid file, directory and package replacement or digest change invalidate 
   }
 });
 
+test("only historical shared-ancestor entry metadata may change in files-only verification", async () => {
+  const parent = dirname(runtime);
+  for (const kind of ["root_pair", "nested_pair", "hoisted_pair"]) {
+    for (const patch of [{ size: 8192 }, { mtimeNs: 123 }, { ctimeNs: 456 }, { nlink: 7 }]) {
+      const f = fixture(kind), proof = await captureNativeProcessProof(f.input(), f.d);
+      const original = JSON.stringify(proof);
+      f.change(parent, patch);
+      assert.equal(await verifyNativeFiles(proof, f.c, f.d), true);
+      assert.equal(JSON.stringify(proof), original, "verification must not refresh the persisted proof");
+      await assert.rejects(verifyNativeProcessProof(proof, f.c, f.d), safeFailure);
+    }
+  }
+});
+
+test("historical shared ancestors still bind device inode owner full mode type and canonical path", async () => {
+  const parent = dirname(runtime);
+  for (const change of [(f) => f.change(parent, { dev: 2 }), (f) => f.change(parent, { ino: 999 }),
+    (f) => f.change(parent, { uid: 1000 }), (f) => f.change(parent, { mode: 0o040700 }),
+    (f) => f.change(parent, { mode: 0o040777 }), (f) => f.change(parent, { type: "symlink", mode: 0o120777 }),
+    (f) => f.aliases.set(parent, "/other/releases")]) {
+    const f = fixture(), proof = await captureNativeProcessProof(f.input(), f.d); change(f);
+    await assert.rejects(verifyNativeFiles(proof, f.c, f.d), safeFailure);
+  }
+});
+
+test("runtime and descendant directory changes retain all eight historical identity checks", async () => {
+  for (const path of [runtime, runtime + "/node_modules", runtime + "/node_modules/@esbuild/linux-x64/bin"]) {
+    for (const patch of [{ dev: 2 }, { ino: 999 }, { size: 8192 }, { mtimeNs: 123 }, { ctimeNs: 456 },
+      { nlink: 7 }, { uid: 1000 }, { mode: 0o040700 }]) {
+      const f = fixture(), proof = await captureNativeProcessProof(f.input(), f.d); f.change(path, patch);
+      await assert.rejects(verifyNativeFiles(proof, f.c, f.d), safeFailure);
+    }
+  }
+});
+
+test("shared-ancestor metadata must remain fully stable inside fresh observations and live capture", async () => {
+  const parent = dirname(runtime);
+  for (const mode of ["files", "capture", "between_file_observations"]) {
+    const f = fixture(), proof = await captureNativeProcessProof(f.input(), f.d); let changed = false;
+    if (mode === "between_file_observations") {
+      let checks = 0; const canonical = f.d.canonical;
+      // Change only after the first observation's final package witness check,
+      // when all its ancestor identities have already been revalidated.
+      f.d.canonical = (path) => {
+        const value = canonical(path);
+        if (path === f.wrapper + "/package.json" && ++checks === 2) {
+          changed = true; f.change(parent, { ctimeNs: 456 });
+        }
+        return value;
+      };
+    } else {
+      f.afterPackage = () => { if (!changed) { changed = true; f.change(parent, { ctimeNs: 456 }); } };
+    }
+    if (mode === "capture") await assert.rejects(captureNativeProcessProof(f.input(), f.d), safeFailure);
+    else await assert.rejects(verifyNativeFiles(proof, f.c, f.d), safeFailure);
+    assert.equal(changed, true);
+  }
+});
+
 test("capture observes files and live generation twice and rejects changes inside either phase", async () => {
   for (const kind of ["binary", "directory", "package", "process", "boot"]) {
     const f = fixture(); let changed = false;
@@ -254,13 +313,14 @@ test("exceptions are fixed and the module has no execution or termination capabi
   assert.match(source, /O_NOFOLLOW \| constants\.O_NONBLOCK/);
 });
 
-test("Linux real hardlinks and secure package fd reads reject a third link", { skip: process.platform !== "linux" }, async () => {
+test("Linux shared release-directory churn preserves stopped native files but a third link is rejected", { skip: process.platform !== "linux" }, async () => {
   const scripts = dirname(fileURLToPath(import.meta.url));
   for (const kind of ["root_pair", "nested_pair", "hoisted_pair"]) {
     const directory = mkdtempSync(join(scripts, ".native-proof-fs-"));
     try {
-      const c = { runtime: directory, owner: process.getuid(), architecture: "x64" };
-      const modules = join(directory, "node_modules"), nested = join(modules, "tsx/node_modules");
+      const c = { runtime: join(directory, "old-release"), owner: process.getuid(), architecture: "x64" };
+      mkdirSync(c.runtime, { mode: 0o755 });
+      const modules = join(c.runtime, "node_modules"), nested = join(modules, "tsx/node_modules");
       const platform = join(kind === "nested_pair" ? nested : modules, "@esbuild/linux-x64");
       const wrapper = join(kind === "root_pair" ? modules : nested, "esbuild");
       mkdirSync(join(platform, "bin"), { recursive: true, mode: 0o755 });
@@ -273,15 +333,25 @@ test("Linux real hardlinks and secure package fd reads reject a third link", { s
       const readIdentity = (path) => { const stat = lstatSync(path, { bigint: true }); return FIELDS.map((key) => String(stat[key])).join(":"); };
       assert.equal(lstatSync(executable).nlink, 2); assert.equal(readIdentity(executable), readIdentity(peer));
       const commandLine = [executable, "--service=0.27.3", "--ping"];
-      const current = { pid: 301, parentPid: 300, startTicks: "123456", processIdentity: readIdentity(directory), uid: c.owner,
-        cwd: directory, cwdIdentity: readIdentity(directory), executable, executableIdentity: readIdentity(executable), commandLine,
+      const current = { pid: 301, parentPid: 300, startTicks: "123456", processIdentity: readIdentity(c.runtime), uid: c.owner,
+        cwd: c.runtime, cwdIdentity: readIdentity(c.runtime), executable, executableIdentity: readIdentity(executable), commandLine,
         commandLineDigest: hash(Buffer.from(commandLine.join("\0") + "\0")) };
       // Only /proc is synthetic. Files use the actual default Linux lstat,
       // canonical paths, O_NOFOLLOW descriptors and pre/post package identities.
       const d = { readProcess: () => structuredClone(current), boot: () => BOOT };
       const proof = await captureNativeProcessProof({ fact: current, ...c }, d);
       assert.equal(proof.layout, kind); assert.equal(await verifyNativeFiles(proof, c), true);
-      linkSync(executable, join(directory, "third-link"));
+      const original = JSON.stringify(proof);
+      chmodSync(directory, lstatSync(directory).mode & 0o777);
+      assert.equal(await verifyNativeFiles(proof, c), true);
+      mkdirSync(join(directory, ".candidate.building"), { mode: 0o755 });
+      assert.equal(await verifyNativeFiles(proof, c), true);
+      renameSync(join(directory, ".candidate.building"), join(directory, "candidate-release"));
+      assert.equal(await verifyNativeFiles(proof, c), true);
+      assert.equal(JSON.stringify(proof), original);
+      // Keep the third link outside the old runtime so rejection cannot be
+      // explained merely by changing the old runtime directory's own metadata.
+      linkSync(executable, join(directory, "candidate-release/third-link"));
       await assert.rejects(verifyNativeFiles(proof, c), safeFailure);
     } finally {
       assert.equal(dirname(resolve(directory)), scripts); assert.ok(basename(directory).startsWith(".native-proof-fs-"));
