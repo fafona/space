@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { emptyPythonLayout } from "./production-maintenance-runtime-layout.mjs";
-import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, validateMaintenanceLaunchProofBindings, maintenanceLaunchBinding, createMaintenanceLaunchCallbacks, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -10,6 +11,27 @@ const target = "b".repeat(40);
 const token = "c".repeat(64);
 const boot = "12345678-1234-4123-8123-987654321abc";
 const flags = ["--app-dir", "/srv/faolla", "--app-name", "faolla", "--app-port", "3000", "--target-sha", target, "--expected-old-sha", old, "--json"];
+const identity = "1:2:3:4:5:1:0:33261";
+const launchDisk = () => ({ runtime: "/srv/faolla.releases/" + target.slice(0, 12) + "-20260909120000", runtimeIdentity: identity, nextBuildDigest: "d".repeat(64) });
+const daemon = () => ({ pid: 100, uid: 0, startTicks: "123", executable: "/usr/bin/node", executableIdentity: identity });
+const nonce = (n) => `12345678-1234-4123-8123-${String(n).padStart(12, "0")}`;
+const environmentDigest = "e".repeat(64);
+function observation(role, observedNonce) {
+  const number = ["paused-web", "resumed-web", "worker"].indexOf(role) + 1;
+  return { observedNonce, environmentDigest, instance: { pmId: number, pid: 200 + number, parentPid: 100, uid: 0,
+    startTicks: String(2000 + number), processIdentity: identity, cwd: launchDisk().runtime, cwdIdentity: identity,
+    executable: "/usr/bin/node", executableIdentity: identity, commandLineDigest: "f".repeat(64),
+    createdAt: 100, pmUptime: 100, restartTime: 0, metadataDigest: "a".repeat(64) } };
+}
+function addConfirmed(state, role) {
+  state.launchDisk ??= launchDisk();
+  const binding = maintenanceLaunchBinding(state), sequence = ["paused-web", "resumed-web", "worker"].indexOf(role) + 1;
+  state.launchJournal ??= createMaintenanceLaunchJournal(binding);
+  state.launchJournal = planMaintenanceLaunch(state.launchJournal, binding, { role, sequence, nonce: nonce(sequence), environmentDigest });
+  state.launchJournal = transitionMaintenanceLaunch(state.launchJournal, binding, { role, sequence, nonce: nonce(sequence), phase: "attempted" });
+  state.launchJournal = transitionMaintenanceLaunch(state.launchJournal, binding, { role, sequence, nonce: nonce(sequence), phase: "confirmed",
+    observation: { ...binding, role, sequence, ...observation(role, nonce(sequence)) } });
+}
 const request = (action) => parseMaintenanceRequest([action, ...flags, ...(["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? [] : ["--expected-operation-id", operationId])]);
 const diagnosticFixture = () => ({
   version: 4, maintenance: "not_verified", stability: "unverified", disk: "unverified", supervision: null, daemonCwdIsRoot: null,
@@ -24,17 +46,21 @@ const diagnosticFixture = () => ({
 });
 function fixture(phase = "held") {
   const events = [];
-  let state = { version: 1, operationId, targetSha: target, expectedOldSha: old, appDir: "/srv/faolla", appName: "faolla", appPort: 3000,
-    bootId: boot, createdAt: 100, phase, runtime: { old: true }, ingress: { planned: true }, database: { frozen: true },
+  let state = { version: 2, revision: 0, operationId, targetSha: target, expectedOldSha: old, appDir: "/srv/faolla", appName: "faolla", appPort: 3000,
+    bootId: boot, createdAt: 100, phase, runtime: { old: true, daemon: daemon() }, ingress: { planned: true }, database: { frozen: true },
     publicSupabaseUrl: "https://database.example", tokenHash: createHash("sha256").update(token).digest("hex"),
-    candidate: ["candidate", "resuming", "ended"].includes(phase) ? { targetSha: target } : null, resumed: phase === "ended" ? { ready: true } : null };
+    candidate: ["candidate", "resuming", "ended"].includes(phase) ? { targetSha: target } : null, resumed: phase === "ended" ? { ready: true } : null,
+    launchDisk: null, launchJournal: null, finalDump: phase === "ended" ? { verified: true } : null };
+  if (state.candidate) addConfirmed(state, "paused-web");
+  if (state.resumed) addConfirmed(state, "resumed-web");
+  let nextNonce = 10;
   const effect = (name, result) => async (...args) => { events.push(name); if (typeof result === "function") return result(...args); return result; };
   const ops = {
-    uuid: () => operationId, token: () => token, bootId: () => boot, now: () => 200,
-    load: () => structuredClone(state), save: (value) => { events.push("save:" + value.phase); state = structuredClone(value); },
+    uuid: () => nextNonce++ === 10 ? operationId : nonce(nextNonce), token: () => token, bootId: () => boot, now: () => 200,
+    load: () => structuredClone(state), save: (value) => { events.push("save:" + value.phase); value.revision++; state = structuredClone(value); },
     create: (value, secret) => { assert.equal(secret, token); events.push("create"); state = structuredClone(value); },
     assertNoActiveOperation: () => { events.push("noActive"); }, readToken: () => token,
-    captureRuntime: effect("captureRuntime", (input) => { assert.deepEqual(Object.keys(input).sort(), ["appDir", "appName", "appPort", "expectedOldSha"].sort()); return { old: true }; }),
+    captureRuntime: effect("captureRuntime", (input) => { assert.deepEqual(Object.keys(input).sort(), ["appDir", "appName", "appPort", "expectedOldSha"].sort()); return { old: true, daemon: daemon() }; }),
     readPublicSupabaseUrl: effect("readPublicUrl", "https://database.example"),
     captureIngress: effect("captureIngress", { captured: true }), captureDatabase: effect("captureDatabase", { frozen: true }),
     planIngressInstallation: (proof, secret) => { assert.equal(secret, token); assert.ok(proof.captured); events.push("planIngress"); return { planned: true }; },
@@ -43,9 +69,25 @@ function fixture(phase = "held") {
     waitDatabaseQuiet: effect("waitQuiet"), assertDatabaseQuiet: effect("assertQuiet"), assertClientWritesDenied: effect("assertAcl"),
     validateProofs: () => { events.push("validateProofs"); },
     captureCandidate: effect("captureCandidate", { targetSha: target }),
+    validateLaunchDisk: (disk) => structuredClone(disk),
+    startCandidate: async (_proof, sha, { launchJournal }) => {
+      assert.equal(sha, target); const value = await launchJournal.attempt("paused-web", launchDisk(), environmentDigest);
+      assert.equal(state.launchJournal.slots["paused-web"].phase, "attempted"); events.push("send:paused-web");
+      await launchJournal.confirm("paused-web", observation("paused-web", value)); return { targetSha: target };
+    },
     verifyCandidate: effect("verifyCandidate", (_runtime, candidate, pause) => { assert.equal(candidate.targetSha, target); assert.equal(pause, "1"); }),
-    stopCandidate: effect("stopCandidate"), resumeCandidate: effect("resumeCandidate", { ready: true }),
+    stopCandidate: effect("stopCandidate"), resumeCandidate: async (_proof, _candidate, _sha, { launchJournal }) => {
+      events.push("resumeCandidate"); const value = await launchJournal.attempt("resumed-web", launchDisk(), environmentDigest);
+      assert.equal(state.launchJournal.slots["resumed-web"].phase, "attempted"); events.push("send:resumed-web");
+      await launchJournal.confirm("resumed-web", observation("resumed-web", value)); return { ready: true };
+    },
     verifyResumedCandidate: effect("verifyResumed"), stopResumedCandidate: effect("stopResumed"),
+    persistResumedDump: effect("persistDump", { verified: true }), verifyResumedDump: effect("verifyDump"),
+    validateResumedDumpProof: () => { events.push("validateDump"); },
+    readManagedSnapshot: effect("snapshot", "absent"),
+    readCandidateHandoffFields: effect("handoff", { CANDIDATE_WEB_PID: "201", CANDIDATE_WEB_PROCESS_START_TICKS: "2001", CANDIDATE_WEB_PROCESS_IDENTITY: identity,
+      CANDIDATE_WEB_CWD_IDENTITY: identity, CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64: "e30=" }),
+    reconcileMaintenanceLaunches: async () => { throw new Error("no actual observation"); },
   };
   return { events, ops, state: () => state, replace: (value) => { state = value; } };
 }
@@ -219,9 +261,11 @@ test("the fence-only checkpoint never claims database quiet or runs conflicting 
   assert.equal((await runMaintenanceAction(request("check-runtime-held"), f.ops)).state, "runtime-held");
   assert.deepEqual(f.events, ["validateProofs", "verifyIngress", "assertStopped"]);
 });
-test("register persists candidate identity and requires paused real runtime", async () => {
-  const f = fixture(); assert.equal((await runMaintenanceAction(request("register-candidate"), f.ops)).state, "candidate");
-  assert.deepEqual(f.events, ["validateProofs", "verifyIngress", "captureCandidate", "save:candidate", "verifyIngress", "verifyCandidate"]);
+test("register only verifies an already journaled candidate and never adopts or starts one", async () => {
+  const f = fixture("candidate"); assert.equal((await runMaintenanceAction(request("register-candidate"), f.ops)).state, "candidate");
+  assert.deepEqual(f.events, ["validateProofs", "verifyIngress", "verifyCandidate"]);
+  const held = fixture(); await assert.rejects(runMaintenanceAction(request("register-candidate"), held.ops), /maintenance_candidate_unverified/);
+  assert.equal(held.events.includes("captureCandidate"), false);
 });
 test("wrong candidate target cannot pass verification or reopen traffic", async () => {
   const f = fixture("candidate"); f.replace({ ...f.state(), candidate: { targetSha: old } });
@@ -230,7 +274,7 @@ test("wrong candidate target cannot pass verification or reopen traffic", async 
 });
 test("end requires final ACL boundary before resume and real verification before reopen", async () => {
   const f = fixture("candidate"); assert.equal((await runMaintenanceAction(request("end"), f.ops)).state, "ended");
-  assert.deepEqual(f.events, ["validateProofs", "verifyIngress", "verifyCandidate", "assertAcl", "save:resuming", "resumeCandidate", "save:resuming", "verifyResumed", "verifyIngress", "restoreIngress", "verifyResumed", "save:ended"]);
+  assert.deepEqual(f.events, ["validateProofs", "verifyIngress", "verifyCandidate", "assertAcl", "save:resuming", "resumeCandidate", "save:resuming", "save:resuming", "send:resumed-web", "save:resuming", "save:resuming", "verifyResumed", "persistDump", "validateDump", "save:resuming", "verifyDump", "verifyIngress", "restoreIngress", "verifyResumed", "verifyDump", "save:ended"]);
 });
 test("failed ACL never resumes or opens ingress", async () => {
   const f = fixture("candidate"); f.ops.assertClientWritesDenied = async () => { throw new Error("acl"); };
@@ -245,5 +289,219 @@ test("end reopen failure reinstalls gate before stopping the new candidate", asy
 });
 test("post-end smoke failure can reclose and stop exact resumed runtime", async () => {
   const f = fixture("ended"); assert.equal((await runMaintenanceAction(request("fail-held"), f.ops)).state, "failed-held");
-  assert.deepEqual(f.events, ["validateProofs", "installIngress", "save:ended", "stopResumed", "verifyIngress", "assertStopped", "assertQuiet", "save:failed-held"]);
+  assert.deepEqual(f.events, ["validateProofs", "installIngress", "save:ended", "validateProofs", "stopResumed", "verifyIngress", "assertStopped", "assertQuiet", "save:failed-held"]);
+});
+
+test("start persists empty, planned and attempted before its only send; registration never sends again", async () => {
+  const f = fixture(); const result = await runMaintenanceAction(request("start-candidate"), f.ops);
+  assert.equal(result.state, "candidate"); assert.equal(f.state().launchJournal.slots["paused-web"].phase, "confirmed");
+  assert.deepEqual(f.events, ["validateProofs", "verifyIngress", "save:held", "save:held", "save:held", "send:paused-web",
+    "save:held", "verifyCandidate", "save:candidate", "verifyIngress", "verifyCandidate"]);
+  await runMaintenanceAction(request("register-candidate"), f.ops);
+  await assert.rejects(runMaintenanceAction(request("start-candidate"), f.ops), /maintenance_not_held/);
+  assert.equal(f.events.filter((event) => event === "send:paused-web").length, 1);
+});
+
+test("every pre-send durable failure permits zero sends and does not silently reinitialize the slot", async () => {
+  for (const failureAt of [1, 2, 3]) {
+    const f = fixture(), state = f.state(), original = f.ops.save; let writes = 0, sends = 0;
+    f.ops.save = async (value) => { if (++writes === failureAt) throw new Error("fsync failed"); original(value); };
+    const callbacks = createMaintenanceLaunchCallbacks(state, f.ops);
+    await assert.rejects(async () => { await callbacks.attempt("paused-web", launchDisk(), environmentDigest); sends++; }, /fsync failed/);
+    await assert.rejects(callbacks.attempt("paused-web", launchDisk(), environmentDigest), /persistence_unconfirmed/);
+    assert.equal(sends, 0); assert.equal(writes, failureAt);
+  }
+});
+
+test("only a previously planned identical launch can advance; attempted and unknown can only reconcile", async () => {
+  for (const initialPhase of ["attempted", "unknown"]) {
+    const f = fixture(), state = f.state(), callbacks = createMaintenanceLaunchCallbacks(state, f.ops);
+    const value = await callbacks.attempt("paused-web", launchDisk(), environmentDigest);
+    if (initialPhase === "unknown") await callbacks.unknown("paused-web");
+    const before = f.events.length;
+    await assert.rejects(callbacks.attempt("paused-web", launchDisk(), environmentDigest), /already_attempted/);
+    assert.equal(f.events.length, before); assert.equal((await callbacks.read("paused-web")).phase, initialPhase);
+    await assert.rejects(callbacks.confirm("paused-web", observation("paused-web", nonce(999))), /binding_mismatch/);
+    await callbacks.confirm("paused-web", observation("paused-web", value));
+    assert.equal((await callbacks.read("paused-web")).phase, "confirmed");
+    await callbacks.unknown("paused-web"); assert.equal((await callbacks.read("paused-web")).phase, "confirmed");
+  }
+  const f = fixture(), state = f.state(); state.launchDisk = launchDisk();
+  state.launchJournal = planMaintenanceLaunch(createMaintenanceLaunchJournal(maintenanceLaunchBinding(state)), maintenanceLaunchBinding(state), {
+    role: "paused-web", sequence: 1, nonce: nonce(88), environmentDigest });
+  const callbacks = createMaintenanceLaunchCallbacks(state, f.ops);
+  await assert.rejects(callbacks.attempt("paused-web", launchDisk(), "f".repeat(64)), /already_attempted/);
+  assert.equal(await callbacks.attempt("paused-web", launchDisk(), environmentDigest), nonce(88));
+  assert.equal(f.events.length, 1);
+});
+
+test("runtime cannot replace operation binding, release, nonce, environment or inject observation accessors", async () => {
+  const f = fixture(), callbacks = createMaintenanceLaunchCallbacks(f.state(), f.ops);
+  const value = await callbacks.attempt("paused-web", launchDisk(), environmentDigest);
+  for (const patch of [{ operationId }, { observedNonce: nonce(55) }, { environmentDigest: "a".repeat(64) },
+    { instance: { ...observation("paused-web", value).instance, pid: 100 } }]) {
+    await assert.rejects(callbacks.confirm("paused-web", { ...observation("paused-web", value), ...patch }));
+  }
+  let accessed = 0;
+  const evil = observation("paused-web", value);
+  Object.defineProperty(evil, "instance", { enumerable: true, get: () => { accessed++; return {}; } });
+  await assert.rejects(callbacks.confirm("paused-web", evil)); assert.equal(accessed, 0);
+  await assert.rejects(callbacks.attempt("paused-web", { ...launchDisk(), runtimeIdentity: "2:2:3:4:5:1:0:33261" }, environmentDigest), /binding_invalid/);
+  await assert.rejects(callbacks.attempt("resumed-web", launchDisk(), environmentDigest), /phase_invalid/);
+});
+
+test("lost launch ACK without exact observation stays unknown and cannot claim held or resend", async () => {
+  const f = fixture(); f.ops.startCandidate = async (_proof, _sha, { launchJournal }) => {
+    await launchJournal.attempt("paused-web", launchDisk(), environmentDigest); f.events.push("one-send");
+    await launchJournal.unknown("paused-web"); throw new Error("ACK lost");
+  };
+  await assert.rejects(runMaintenanceAction(request("start-candidate"), f.ops), /maintenance_failure_state_unverified/);
+  assert.equal(f.state().phase, "failed-unknown"); assert.equal(f.state().launchJournal.slots["paused-web"].phase, "unknown");
+  await assert.rejects(runMaintenanceAction(request("start-candidate"), f.ops), /maintenance_not_held/);
+  assert.equal(f.events.filter((event) => event === "one-send").length, 1);
+  f.replace({ ...f.state(), phase: "held" });
+  await assert.rejects(runMaintenanceAction(request("check-held"), f.ops), /reconciliation_unverified/);
+});
+
+test("lost ACK cleanup confirms only persisted nonce observation then saves and stops that candidate", async () => {
+  const f = fixture(); f.ops.startCandidate = async (_proof, _sha, { launchJournal }) => {
+    await launchJournal.attempt("paused-web", launchDisk(), environmentDigest); f.events.push("one-send"); throw new Error("ACK lost");
+  };
+  f.ops.reconcileMaintenanceLaunches = async (_proof, disk, sha, { launchJournal }) => {
+    assert.deepEqual(disk, launchDisk()); assert.equal(sha, target);
+    const slot = await launchJournal.read("paused-web"); assert.equal(slot.phase, "attempted");
+    await launchJournal.confirm("paused-web", observation("paused-web", slot.nonce));
+    return { candidate: { targetSha: target }, resumed: null };
+  };
+  await assert.rejects(runMaintenanceAction(request("start-candidate"), f.ops), /maintenance_candidate_start_failed_held/);
+  assert.equal(f.state().phase, "failed-held"); assert.equal(f.state().launchJournal.slots["paused-web"].phase, "confirmed");
+  assert.equal(f.events.filter((event) => event === "one-send").length, 1);
+  assert.equal(f.events.filter((event) => event === "stopCandidate").length, 1);
+});
+
+test("snapshot and handoff are exact read-only candidate inspections and never inspect a running DB fence", async () => {
+  for (const action of ["snapshot-web", "snapshot-worker", "candidate-handoff"]) {
+    const f = fixture("candidate"); f.ops.assertDatabaseQuiet = async () => { throw new Error("fence must remain untouched"); };
+    const result = await runMaintenanceAction(request(action), f.ops);
+    assert.deepEqual(f.events.slice(0, 3), ["validateProofs", "verifyIngress", "verifyCandidate"]);
+    assert.equal(f.events.some((event) => event.startsWith("save:") || event.startsWith("send:")), false);
+    assert.equal(action === "candidate-handoff" ? typeof result.fields.CANDIDATE_WEB_PID : result.snapshot, action === "candidate-handoff" ? "string" : "absent");
+  }
+  for (const invalid of ["running:0", "123", { pid: 123 }, "running:12\nsecret"]) {
+    const f = fixture(); f.ops.readManagedSnapshot = async () => invalid;
+    await assert.rejects(runMaintenanceAction(request("snapshot-web"), f.ops), /snapshot_unverified/);
+  }
+  await assert.rejects(runMaintenanceAction(request("candidate-handoff"), fixture().ops), /candidate_unverified/);
+});
+
+test("dump save, validation or readback failures must keep traffic fenced and stop confirmed final runtime", async () => {
+  for (const method of ["persistResumedDump", "validateResumedDumpProof", "verifyResumedDump"]) {
+    const f = fixture("candidate"); f.ops[method] = () => { throw new Error("dump ambiguous"); };
+    await assert.rejects(runMaintenanceAction(request("end"), f.ops), /maintenance_end_failed_held/);
+    assert.equal(f.events.includes("restoreIngress"), false); assert.equal(f.events.includes("stopResumed"), true);
+    assert.equal(f.state().phase, "failed-held");
+  }
+});
+
+test("old state version, absent durable slots and false ended state fail before actuators", async () => {
+  for (const patch of [{ version: 1 }, { revision: -1 }, { revision: "0" }, { launchJournal: undefined }, { finalDump: undefined }]) {
+    const f = fixture(); f.replace({ ...f.state(), ...patch });
+    await assert.rejects(runMaintenanceAction(request("check-held"), f.ops)); assert.deepEqual(f.events, []);
+  }
+  const ended = fixture("ended"); ended.replace({ ...ended.state(), finalDump: null });
+  await assert.rejects(runMaintenanceAction(request("fail-held"), ended.ops), /state_binding_invalid/);
+  assert.deepEqual(ended.events, []);
+});
+
+test("individually valid candidate/resumed proofs must equal the confirmed disk daemon and complete instance", () => {
+  const f = fixture("candidate"), state = f.state();
+  const managed = (role) => {
+    const observed = state.launchJournal.slots[role].instance;
+    const { pmId, createdAt, pmUptime, restartTime, metadataDigest, ...process } = observed;
+    return { pm2: { pmId, createdAt, pmUptime, restartTime, metadataHash: metadataDigest }, processes: [process] };
+  };
+  state.candidate = { targetSha: target, pauseExpected: "1", disk: structuredClone(state.launchDisk), daemon: daemon(), web: managed("paused-web") };
+  state.runtime.worker = { state: "running" }; addConfirmed(state, "resumed-web"); addConfirmed(state, "worker");
+  state.resumed = { candidate: { ...structuredClone(state.candidate), pauseExpected: "0", web: managed("resumed-web") }, worker: managed("worker") };
+  assert.equal(validateMaintenanceLaunchProofBindings(state), true);
+  // Equal facts with different property order remain the same observation.
+  state.candidate.web.processes[0] = Object.fromEntries(Object.entries(state.candidate.web.processes[0]).reverse());
+  assert.equal(validateMaintenanceLaunchProofBindings(state), true);
+  for (const mutate of [
+    (copy) => { copy.candidate.disk.runtime += "0"; },
+    (copy) => { copy.candidate.disk.nextBuildDigest = "a".repeat(64); },
+    (copy) => { copy.candidate.daemon.pid++; },
+    (copy) => { copy.candidate.web.processes[0].startTicks += "0"; },
+    (copy) => { copy.candidate.web.processes[0].commandLineDigest = "b".repeat(64); },
+    (copy) => { copy.candidate.web.pm2.createdAt++; },
+    (copy) => { copy.candidate.web.pm2.metadataHash = "b".repeat(64); },
+    (copy) => { copy.resumed.candidate.web.pm2.restartTime++; },
+    (copy) => { copy.resumed.candidate.pauseExpected = "1"; },
+    (copy) => { copy.resumed.worker.pm2.pmId++; },
+    (copy) => { copy.resumed.worker.processes[0].cwdIdentity = "2:2:3:4:5:1:0:33261"; },
+    (copy) => { copy.resumed.worker = null; },
+  ]) {
+    const copy = structuredClone(state); mutate(copy);
+    assert.throws(() => validateMaintenanceLaunchProofBindings(copy), /maintenance_launch_binding_invalid/);
+  }
+  const recovered = structuredClone(state); recovered.candidate = recovered.resumed.candidate; recovered.resumed = null;
+  assert.equal(validateMaintenanceLaunchProofBindings(recovered), true, "reconciled pause0 web may be saved solely for exact shutdown");
+});
+
+function checkpointFixture(withWorker = false) {
+  const f = fixture("candidate"), state = f.state(); state.phase = "resuming";
+  state.runtime.worker = { state: withWorker ? "running" : "absent" };
+  addConfirmed(state, "resumed-web"); if (withWorker) addConfirmed(state, "worker");
+  const managed = (role) => {
+    const { pmId, createdAt, pmUptime, restartTime, metadataDigest, ...process } = state.launchJournal.slots[role].instance;
+    return { pm2: { pmId, createdAt, pmUptime, restartTime, metadataHash: metadataDigest }, processes: [process] };
+  };
+  const candidate = { targetSha: target, pauseExpected: "0", disk: structuredClone(state.launchDisk), daemon: daemon(), web: managed("resumed-web") };
+  const payload = { candidate, resumed: withWorker ? { candidate, worker: managed("worker") } : null };
+  return { ...f, current: state, payload, callbacks: createMaintenanceLaunchCallbacks(state, f.ops) };
+}
+
+test("partial-resume checkpoint durably saves real complete proof before runtime cleanup, without a new launch", async () => {
+  for (const worker of [false, true]) {
+    const f = checkpointFixture(worker); await f.callbacks.checkpoint(f.payload);
+    assert.deepEqual(f.state().candidate, f.payload.candidate); assert.deepEqual(f.state().resumed, f.payload.resumed);
+    assert.deepEqual(f.events, ["validateProofs", "save:resuming"]);
+    // Runtime's subsequent deletion is simulated. fail-held must consume the
+    // saved proof; it may not demand that the deleted process be live again.
+    f.ops.reconcileMaintenanceLaunches = async () => { throw new Error("must not recapture deleted checkpoint"); };
+    assert.equal((await runMaintenanceAction(request("fail-held"), f.ops)).state, "failed-held");
+    assert.equal(f.events.includes(worker ? "stopResumed" : "stopCandidate"), true);
+    assert.equal(f.events.some((event) => event.startsWith("send:")), false);
+  }
+});
+
+test("checkpoint rejection or ambiguous persistence grants no delete acknowledgement and cannot be retried", async () => {
+  const f = checkpointFixture(true); let deleted = 0;
+  f.ops.save = async () => { throw new Error("directory fsync unknown"); };
+  await assert.rejects(async () => { await f.callbacks.checkpoint(f.payload); deleted++; }, /directory fsync unknown/);
+  await assert.rejects(f.callbacks.checkpoint(f.payload), /persistence_unconfirmed/);
+  assert.equal(deleted, 0);
+  for (const mutate of [
+    (copy) => { copy.candidate.disk.runtime += "0"; },
+    (copy) => { copy.candidate.web.pm2.metadataHash = "b".repeat(64); },
+    (copy) => { copy.resumed.worker.processes[0].pid++; },
+    (copy) => { copy.resumed.worker = null; },
+    (copy) => { copy.extra = true; },
+  ]) {
+    const rejected = checkpointFixture(true), copy = structuredClone(rejected.payload); mutate(copy);
+    await assert.rejects(rejected.callbacks.checkpoint(copy));
+    assert.equal(rejected.events.some((event) => event.startsWith("save:")), false);
+    assert.equal(rejected.current.resumed, null);
+  }
+});
+
+test("checkpoint cannot lose existing worker proof or invoke accessor fields", async () => {
+  const f = checkpointFixture(true); await f.callbacks.checkpoint(f.payload);
+  const writes = f.events.filter((event) => event.startsWith("save:")).length;
+  await f.callbacks.checkpoint(structuredClone(f.payload));
+  await assert.rejects(f.callbacks.checkpoint({ candidate: f.payload.candidate, resumed: null }), /checkpoint_invalid/);
+  assert.equal(f.events.filter((event) => event.startsWith("save:")).length, writes);
+  let accessed = 0;
+  await assert.rejects(f.callbacks.checkpoint({ get candidate() { accessed++; return f.payload.candidate; }, resumed: f.payload.resumed }), /checkpoint_invalid/);
+  assert.equal(accessed, 0);
 });

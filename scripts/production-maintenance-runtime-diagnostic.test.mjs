@@ -154,6 +154,37 @@ test("outside-allowlist Python layout is metadata only and never enables executi
   assert.deepEqual(f.pythonCalls, []);
 });
 
+test("fixed EL8 platform Python requires its exact safe hardlink pair before any isolated probe", async () => {
+  const target = "/usr/libexec/platform-python3.6", pair = target + "m";
+  const prepared = () => {
+    const f = fixture(); const info = f.putPath(target, "file", "synthetic platform interpreter", { nlink: 2 });
+    f.putPath(pair, "file", "synthetic platform interpreter", { ...info });
+    f.paths.set("/usr/bin/python3", target);
+    const run = f.deps.runPython;
+    f.deps.runPython = (path) => ({ ...run(path), stdout: JSON.stringify({ version: "3.6.8", afUnixApiAvailable: true, soPeercredApiAvailable: true }) });
+    return f;
+  };
+  const stable = prepared(); const report = await diagnose(stable);
+  assert.equal(report.stability, "stable"); assert.equal(report.python.version, "3.6.8");
+  assert.equal(report.python.executableVerified, true); assert.equal(report.python.rejectionReason, null);
+  assert.deepEqual(stable.pythonCalls, [target, target]); assert.equal(report.pm2Connection, "not_checked");
+  for (const mutate of [
+    (f) => f.filesystem.delete(pair),
+    (f) => replaceInode(f, pair),
+    (f) => { f.filesystem.get(target).info.nlink = 3; },
+    (f) => { f.filesystem.get(pair).info.uid = 1; },
+    (f) => f.paths.set("/usr/libexec", "/tmp/alias"),
+  ]) {
+    const f = prepared(); mutate(f); const rejected = await diagnose(f);
+    assert.notEqual(rejected.python.executableVerified, true); assert.deepEqual(f.pythonCalls, []);
+  }
+  for (const path of [target, pair, "/usr/libexec"]) {
+    const f = prepared(); const run = f.deps.runPython;
+    f.deps.runPython = (...args) => { const result = run(...args); replaceInode(f, path); return result; };
+    assertUnknown(await diagnose(f)); assert.deepEqual(f.pythonCalls, [target]);
+  }
+});
+
 test("unsupported Python locations are classified without probing, and canonical target drift discards all evidence", async () => {
   const f = fixture(); const target = "/opt/private/python3.12";
   f.paths.set("/usr/bin/python3", target);

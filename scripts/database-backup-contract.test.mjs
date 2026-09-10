@@ -389,7 +389,12 @@ test("encrypted backup workflow requires an exact tested main commit", async () 
       new RegExp(`- name: ${escapedStepName}([\\s\\S]*?)(?=\\n\\s+- name:)`),
     );
     assert.ok(nonIdempotentStep, `${stepName} must exist`);
-    assert.doesNotMatch(nonIdempotentStep[1], /for\s+[^\n]+;\s*do/);
+    // This exact read-only ancestor walk is not a retry of a source mutation.
+    const mutationSource = nonIdempotentStep[1].replace(
+      'for directory in / /var /var/lib; do verify_source_directory "$directory" || exit 1; done',
+      "",
+    );
+    assert.doesNotMatch(mutationSource, /for\s+[^\n]+;\s*do/);
   }
   assert.match(
     workflow,

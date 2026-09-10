@@ -29,11 +29,17 @@ test("maintenance is an explicit bound mode and missing old process never invoke
 
 test("private handoff validates every binding and frozen proof before exposing selected fields", () => {
   const handoff = region("load_maintenance_previous_runtime() {", '\nif [ "$FAOLLA_CANONICAL_PORTAL_ORIGIN"');
-  for (const text of ["runtime-handoff", "expected-operation-id", "expectedOldSha", "operationId", "targetSha", "validateRuntimeProof", "readDeploymentHandoffFields", "check-held"]) {
+  const reader = readFileSync(new URL("./production-maintenance-deploy-read.mjs", import.meta.url), "utf8");
+  for (const text of ["runtime-handoff", "PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA", "PRODUCTION_MAINTENANCE_OPERATION_ID", "EXPECTED_DEPLOY_SHA", "check-held"]) {
     assert.ok(handoff.includes(text), text);
   }
+  for (const text of ["expected-operation-id", "expectedOldSha", "operationId", "targetSha", "validateRuntimeProof", "readDeploymentHandoffFields"]) {
+    assert.ok(reader.includes(text), text);
+  }
+  assert.match(handoff, /node "\$APP_DIR\/scripts\/production-maintenance-deploy-read\.mjs" runtime-handoff/);
   assert.match(handoff, /\[ "\$count" -eq 27 \]/);
-  assert.doesNotMatch(handoff, /eval |source |readFileSync\([^\n]*environ/);
+  assert.match(handoff, /seen\[\$key\]\+present/);
+  assert.doesNotMatch(handoff, /eval |source |readFileSync\([^\n]*environ|--input-type=module|await import/);
 });
 
 test("normal preflight still calls the original alive verifier, offline preflight requires held proof", () => {
@@ -94,36 +100,40 @@ test("candidate is paused, registered only after health and cannot automatically
 test("maintenance failure never falls through to legacy automatic rollback or previous writer restart", () => {
   const cleanup = fn("cleanup_failed_build");
   const branch = cleanup.slice(cleanup.indexOf('if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then'), cleanup.indexOf('if [ "$WEB_COMMITTED" = "1" ]; then'));
-  assert.match(branch, /stop_frozen_candidate_web_bounded/); assert.match(branch, /maintenance_control fail-held/);
+  assert.match(branch, /maintenance_control fail-held/);
   assert.match(branch, /discard_failed_readiness_fence/); assert.match(branch, /exit 1\s+fi/);
-  assert.ok(branch.indexOf("stop_frozen_candidate_web_bounded") < branch.indexOf("discard_failed_readiness_fence"));
   assert.ok(branch.indexOf("discard_failed_readiness_fence") < branch.indexOf("maintenance_control fail-held"));
   assert.match(branch, /if \[ "\$cleanup_status" -eq 0 \]; then\s+maintenance_control fail-held/);
   assert.match(branch, /no held result is certified/);
-  assert.doesNotMatch(branch, /rollback_release|start_frozen_previous|recover_pre_forward|maintenance_control end/);
+  assert.doesNotMatch(branch, /stop_frozen_candidate_web_bounded|rollback_release|start_frozen_previous|recover_pre_forward|maintenance_control end/);
 });
 
-test("maintenance cleanup only certifies held after both exact stop and own-fence disposal succeed", () => {
+test("maintenance cleanup certifies held only after own-fence disposal and controller verification succeed", () => {
   const cleanup = fn("cleanup_failed_build");
   const branch = cleanup.slice(cleanup.indexOf('if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then'), cleanup.indexOf('if [ "$WEB_COMMITTED" = "1" ]; then'));
-  for (const [stop, discard, expected] of [["0", "0", true], ["1", "0", false], ["0", "1", false]]) {
+  for (const [active, discard, control, expected] of [["1", "0", "0", true], ["1", "1", "0", false], ["1", "0", "1", false], ["0", "0", "0", true]]) {
     const body = `
 cleanup_status=0
 PRODUCTION_MAINTENANCE_MODE=maintenance
 CANDIDATE_WEB_HANDOFF_STATE=exact
-READINESS_FENCE_ACTIVE=1
 DEPLOY_ATTESTATION_FILE=/synthetic-not-read
 DEPLOY_RELEASE_BINDING_FILE=/synthetic-not-read
-STOP_SEEN=0
 DISCARD_SEEN=0
-stop_frozen_candidate_web_bounded() { STOP_SEEN=1; return "$STOP_STATUS"; }
-discard_failed_readiness_fence() { [ "$STOP_SEEN" = 1 ] || return 1; DISCARD_SEEN=1; return "$DISCARD_STATUS"; }
-maintenance_control() { [ "$DISCARD_SEEN" = 1 ] && [ "$1" = fail-held ] || return 1; printf 'certified-held\\n'; }
+stop_frozen_candidate_web_bounded() { printf 'forbidden-old-stop\\n'; return 90; }
+discard_failed_readiness_fence() { DISCARD_SEEN=1; return "$DISCARD_STATUS"; }
+maintenance_control() {
+  [ "$1" = fail-held ] && { [ "$READINESS_FENCE_ACTIVE" = 0 ] || [ "$DISCARD_SEEN" = 1 ]; } || return 1
+  printf 'controller-called\\n'
+  [ "$CONTROL_STATUS" = 0 ] || return 1
+  printf 'certified-held\\n'
+}
 rm() { :; }
 ${branch}
 `;
-    const result = shell(body, { STOP_STATUS: stop, DISCARD_STATUS: discard });
+    const result = shell(body, { READINESS_FENCE_ACTIVE: active, DISCARD_STATUS: discard, CONTROL_STATUS: control });
     assert.equal(result.status, 1);
+    assert.doesNotMatch(result.stdout, /forbidden-old-stop/);
+    assert.equal(result.stdout.includes("controller-called"), active === "0" || discard === "0");
     assert.equal(result.stdout.includes("certified-held"), expected);
     assert.equal(result.stdout.includes("no held result is certified"), !expected);
   }

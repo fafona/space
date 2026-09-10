@@ -41,6 +41,12 @@ jobs:
       - name: Maintenance Control and Pages ACL Contract Tests
         run: node --test scripts/production-maintenance-*.test.mjs scripts/maintenance-control-probe-headers.test.mjs scripts/pages-client-write-acl-migration-contract.test.mjs scripts/pages-acl-integration/run.test.mjs
 
+      - name: Isolated PM2 6.0.14 Maintenance Transport Acceptance
+        timeout-minutes: 7
+        env:
+          FAOLLA_PM2_REAL_ACCEPTANCE: "1"
+        run: node scripts/production-maintenance-pm2-acceptance.mjs
+
       - name: Lint
         run: npm run lint -- --quiet
 

@@ -53,7 +53,7 @@ jobs:
       BACKUP_WORKFLOW_PATH: .github/workflows/database-backup.yml
       BACKUP_ATTESTATION_PATH: production-backup-attestation.json
       BACKUP_ATTESTATION_ARTIFACT_METADATA_PATH: backup-attestation-artifact.json
-      REMOTE_READINESS_WORKTREE: /tmp/faolla-ordinary-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+      REMOTE_READINESS_WORKTREE: /var/lib/faolla-maintenance-code/faolla-ordinary-readiness-${{ github.run_id }}-${{ github.run_attempt }}
       REMOTE_FRAME_PATH: ordinary-account-readiness-remote-frame.txt
       READINESS_REPORT_PATH: production-readiness-report.json
       READINESS_ARTIFACT_METADATA_PATH: production-readiness-artifact.json
@@ -614,9 +614,25 @@ jobs:
           set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
           test -n "$repository_dir"
-          [[ "$FAOLLA_READINESS_WORKTREE" =~ ^/tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_READINESS_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          test "$(id -u)" = 0
+          umask 077
+          verify_source_directory() {
+            local source_dir="$1" source_mode
+            test -d "$source_dir" && test ! -L "$source_dir" || exit 1
+            test "$(stat -c '%u' -- "$source_dir")" = 0
+            test "$(readlink -f -- "$source_dir")" = "$source_dir"
+            source_mode="$(stat -c '%a' -- "$source_dir")"
+            [[ "$source_mode" =~ ^[0-7]{3,4}$ ]]
+            (( (8#$source_mode & 8#22) == 0 ))
+          }
+          for source_parent in / /var /var/lib; do verify_source_directory "$source_parent"; done
+          source_root=/var/lib/faolla-maintenance-code
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then mkdir -m 700 -- "$source_root"; fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
           test -d "$repository_dir"
-          test ! -e "$FAOLLA_READINESS_WORKTREE"
+          test ! -e "$FAOLLA_READINESS_WORKTREE" && test ! -L "$FAOLLA_READINESS_WORKTREE" || exit 1
           test "$(git -C "$repository_dir" rev-parse --is-inside-work-tree)" = "true"
           git -C "$repository_dir" fetch --no-tags --prune origin \
             "+refs/heads/main:refs/remotes/origin/main"
@@ -624,9 +640,12 @@ jobs:
           git -C "$repository_dir" cat-file -e "$FAOLLA_TARGET_SHA^{commit}"
           git -C "$repository_dir" worktree add --detach \
             "$FAOLLA_READINESS_WORKTREE" "$FAOLLA_TARGET_SHA"
+          verify_source_directory "$FAOLLA_READINESS_WORKTREE"
+          test "$(stat -c '%a' -- "$FAOLLA_READINESS_WORKTREE")" = 700
           test "$(git -C "$FAOLLA_READINESS_WORKTREE" rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
           if git -C "$FAOLLA_READINESS_WORKTREE" symbolic-ref -q HEAD >/dev/null; then exit 1; fi
-          test -z "$(git -C "$FAOLLA_READINESS_WORKTREE" status --porcelain=v1 --untracked-files=all)"
+          source_status="$(git -C "$FAOLLA_READINESS_WORKTREE" status --porcelain=v1 --untracked-files=all)"
+          test -z "$source_status"
           test -f "$FAOLLA_READINESS_WORKTREE/scripts/check-ordinary-account-cutover-readiness.mjs"
           test -f "$repository_dir/.env.local"
           REMOTE
@@ -1389,12 +1408,32 @@ jobs:
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_READINESS_WORKTREE=$REMOTE_READINESS_WORKTREE bash -s" <<'REMOTE'
+            "FAOLLA_REPOSITORY_DIR_B64=$repository_dir_b64 FAOLLA_READINESS_WORKTREE=$REMOTE_READINESS_WORKTREE FAOLLA_TARGET_SHA=$TARGET_SHA bash -s" <<'REMOTE'
           set -euo pipefail
           repository_dir="$(printf '%s' "$FAOLLA_REPOSITORY_DIR_B64" | base64 -d)"
-          [[ "$FAOLLA_READINESS_WORKTREE" =~ ^/tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]
-          if [ -e "$FAOLLA_READINESS_WORKTREE" ]; then
-            git -C "$repository_dir" worktree remove --force "$FAOLLA_READINESS_WORKTREE"
-          fi
+          [[ "$FAOLLA_READINESS_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]
+          [[ "$FAOLLA_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(id -u)" = 0
+          verify_source_directory() {
+            local source_dir="$1" source_mode
+            test -d "$source_dir" && test ! -L "$source_dir" || exit 1
+            test "$(stat -c '%u' -- "$source_dir")" = 0
+            test "$(readlink -f -- "$source_dir")" = "$source_dir"
+            source_mode="$(stat -c '%a' -- "$source_dir")"
+            [[ "$source_mode" =~ ^[0-7]{3,4}$ ]]
+            (( (8#$source_mode & 8#22) == 0 ))
+          }
+          for source_parent in / /var /var/lib; do verify_source_directory "$source_parent"; done
+          source_root=/var/lib/faolla-maintenance-code
+          if [ ! -e "$source_root" ] && [ ! -L "$source_root" ]; then exit 0; fi
+          verify_source_directory "$source_root"
+          test "$(stat -c '%a' -- "$source_root")" = 700
+          if [ ! -e "$FAOLLA_READINESS_WORKTREE" ] && [ ! -L "$FAOLLA_READINESS_WORKTREE" ]; then exit 0; fi
+          verify_source_directory "$FAOLLA_READINESS_WORKTREE"
+          test "$(stat -c '%a' -- "$FAOLLA_READINESS_WORKTREE")" = 700
+          test "$(git -C "$FAOLLA_READINESS_WORKTREE" rev-parse HEAD)" = "$FAOLLA_TARGET_SHA"
+          source_status="$(git -C "$FAOLLA_READINESS_WORKTREE" status --porcelain=v1 --untracked-files=all)"
+          test -z "$source_status"
+          git -C "$repository_dir" worktree remove "$FAOLLA_READINESS_WORKTREE"
           test ! -e "$FAOLLA_READINESS_WORKTREE"
           REMOTE

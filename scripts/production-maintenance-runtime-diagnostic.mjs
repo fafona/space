@@ -4,7 +4,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { posix } from "node:path";
 import { emptyPythonLayout, emptyNativeFileLinkEvidence, validatePythonLayout, validateNativeFileLinkEvidence,
   observePythonLayout, observeNativeFileLink } from "./production-maintenance-runtime-layout.mjs";
-import { captureTrustedPython, verifyTrustedPython, isTrustedPythonTarget } from "./production-maintenance-trusted-python.mjs";
+import { captureTrustedPython, verifyTrustedPython, isTrustedPythonTarget, trustedPythonTargetLinkCount } from "./production-maintenance-trusted-python.mjs";
 
 // Read-only observations, NOT a runtime proof or permission to use PM2. In
 // particular, matching homes does not verify a socket, RPC client or namespace.
@@ -139,10 +139,10 @@ function regular(info, owner, limit) {
   return info?.type === "file" && info.nlink === 1 && [0, owner].includes(info.uid) && (info.mode & 0o022) === 0 &&
     Number.isSafeInteger(info.size) && info.size > 0 && info.size <= limit;
 }
-function regularRejection(info, owner, limit, prefix) {
+function regularRejection(info, owner, limit, prefix, expectedLinks = 1) {
   if (!info) return prefix + "_missing";
   if (info.type !== "file") return prefix + "_type";
-  if (info.nlink !== 1) return prefix + "_links";
+  if (info.nlink !== expectedLinks) return prefix + "_links";
   if (![0, owner].includes(info.uid)) return prefix + "_owner";
   if ((info.mode & 0o022) !== 0) return prefix + "_writable";
   if (!Number.isSafeInteger(info.size) || info.size <= 0 || info.size > limit) return prefix + "_size";
@@ -288,7 +288,8 @@ function pythonObservation(d) {
       return { ...captured(), layoutTarget: executable };
     }
     const target = d.pathInfo(executable); witness.push({ path: executable, info: target });
-    const rejected = regularRejection(target, 0, 64 * 1024 * 1024, "target") || ((target.mode & 0o111) === 0 ? "target_not_executable" : null);
+    const rejected = regularRejection(target, 0, 64 * 1024 * 1024, "target", trustedPythonTargetLinkCount(executable)) ||
+      ((target.mode & 0o111) === 0 ? "target_not_executable" : null);
     if (rejected) { result.executableVerified = false; result.rejectionReason = rejected; return captured(); }
     const trustedDependencies = { pathInfo: d.pathInfo, canonical: d.canonical };
     try { trustedProof = captureTrustedPython(trustedDependencies); } catch { drift(); }

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { captureTrustedPython, isTrustedPythonTarget, verifyTrustedPython } from "./production-maintenance-trusted-python.mjs";
+import { captureTrustedPython, isTrustedPythonTarget, trustedPythonTargetLinkCount, verifyTrustedPython } from "./production-maintenance-trusted-python.mjs";
 
 const ENTRY = "/usr/bin/python3";
+const PLATFORM = "/usr/libexec/platform-python3.6";
+const PAIR = PLATFORM + "m";
 const ERROR = "maintenance_trusted_python_unverified";
 const FIELDS = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "nlink", "uid", "mode"];
 function info(type, ino, changes = {}) {
@@ -29,6 +31,13 @@ function fixture(target = "/usr/bin/python3.12") {
   };
   return state;
 }
+function platformFixture() {
+  const f = fixture(PLATFORM);
+  f.files.set("/usr/libexec", info("directory", 6));
+  f.files.set(PLATFORM, info("file", 5, { nlink: 2 }));
+  f.files.set(PAIR, info("file", 5, { nlink: 2 }));
+  return f;
+}
 function rejects(fn) {
   assert.throws(fn, (error) => error instanceof Error && error.message === ERROR && error.cause === undefined);
 }
@@ -42,9 +51,10 @@ test("static target allowlist is exact, pure, and keeps future /usr/local layout
   }
 });
 
-test("capture returns a bounded frozen private version 1 proof and verify freshly recaptures", () => {
+test("capture returns a bounded frozen private version 2 proof and verify freshly recaptures", () => {
   const f = fixture(), proof = captureTrustedPython(f.d), count = f.calls.length;
-  assert.equal(proof.version, 1); assert.equal(proof.target.path, f.target);
+  assert.equal(proof.version, 2); assert.equal(proof.layout, "usr_bin_single"); assert.equal(proof.target.path, f.target);
+  assert.equal(proof.pair, null); assert.equal(proof.pairDirectories, null);
   assert.deepEqual(proof.entryDirectories.map((item) => item.path), ["/", "/usr", "/usr/bin"]);
   assert.deepEqual(proof.targetDirectories, proof.entryDirectories);
   assert.ok(JSON.stringify(proof).length < 4096);
@@ -141,7 +151,7 @@ test("metadata must match the exact eight-field identity, including type bits", 
 
 test("malformed or foreign proofs fail before any filesystem lookup", () => {
   const good = captureTrustedPython(fixture().d);
-  const variants = [null, [], { ...good, version: 2 }, { ...good, raw: "secret" }, { ...good, executable: "/arbitrary" }];
+  const variants = [null, [], { ...good, version: 1 }, { ...good, version: 3 }, { ...good, raw: "secret" }, { ...good, executable: "/arbitrary" }];
   for (const alter of [(p) => { p.entry.path = "/arbitrary"; }, (p) => { p.target.path = "/usr/local/bin/python3.12"; },
     (p) => { p.target.identity = "secret"; }, (p) => { p.entryDirectories[0].path = "/tmp"; },
     (p) => { p.targetDirectories.pop(); }, (p) => { p.entryDirectories[0].raw = "secret"; },
@@ -198,4 +208,76 @@ test("source is import-inert metadata only: no subprocess, environment, file rea
   assert.match(source, /import \{ lstatSync, realpathSync \} from "node:fs"/);
   assert.match(source, /const expected = captureProof\(proof\);/);
   assert.doesNotMatch(source, /d\.(?:pathInfo|canonical)\(proof\./);
+});
+
+test("only the exact platform target requests two links; its pair is never an executable target", () => {
+  for (const path of [ENTRY, `${ENTRY}.0`, `${ENTRY}.9999`]) assert.equal(trustedPythonTargetLinkCount(path), 1);
+  assert.equal(trustedPythonTargetLinkCount(PLATFORM), 2); assert.equal(isTrustedPythonTarget(PLATFORM), true);
+  for (const path of [PAIR, "/usr/libexec/platform-python", "/usr/libexec/platform-python3.7", `${PLATFORM}\n`,
+    "/usr/local/bin/python3.6", "/usr/libexec/../libexec/platform-python3.6", null, {}]) {
+    assert.equal(trustedPythonTargetLinkCount(path), 0); assert.equal(isTrustedPythonTarget(path), false);
+  }
+});
+
+test("platform proof binds the exact double-linked pair and all independently observed directory chains", () => {
+  const f = platformFixture(), proof = captureTrustedPython(f.d);
+  assert.equal(proof.version, 2); assert.equal(proof.layout, "el8_platform_python36_pair");
+  assert.equal(proof.target.path, PLATFORM); assert.equal(proof.pair.path, PAIR);
+  assert.equal(proof.target.identity, proof.pair.identity);
+  assert.deepEqual(proof.targetDirectories.map((p) => p.path), ["/", "/usr", "/usr/libexec"]);
+  assert.deepEqual(proof.pairDirectories, proof.targetDirectories);
+  assert.equal(Object.isFrozen(proof.pair), true); assert.equal(Object.isFrozen(proof.pairDirectories), true);
+  assert.ok(JSON.stringify(proof).length < 4096); assert.equal(verifyTrustedPython(proof, f.d), true);
+  assert.ok(f.calls.every((p) => ["/", "/usr", "/usr/bin", "/usr/libexec", ENTRY, PLATFORM, PAIR].includes(p)));
+});
+
+test("platform pair is mandatory, canonical, regular and exact nlink two with no third link or symlink", () => {
+  for (const path of [PLATFORM, PAIR]) {
+    for (const bad of [null, info("symlink", 5, { nlink: 2 }), info("file", 5), info("file", 5, { nlink: 3 }),
+      info("file", 5, { nlink: 2, uid: 1000 }), info("file", 5, { nlink: 2, mode: 0o100777 }),
+      info("file", 5, { nlink: 2, mode: 0o100644 }), info("file", 5, { nlink: 2, size: 0 }),
+      info("file", 5, { nlink: 2, size: 67108865 })]) {
+      const f = platformFixture(); f.files.set(path, bad); rejects(() => captureTrustedPython(f.d));
+    }
+    const f = platformFixture(); f.canonicalOverride = (p) => p === path ? "/unsafe" : undefined;
+    rejects(() => captureTrustedPython(f.d));
+  }
+});
+
+test("pair must match every one of the eight target identity fields", () => {
+  for (const field of FIELDS) {
+    const f = platformFixture();
+    const parts = f.files.get(PAIR).identity.split(":"), i = FIELDS.indexOf(field);
+    f.files.set(PAIR, info("file", 5, { nlink: 2, [field]: Number(parts[i]) + 1 }));
+    rejects(() => captureTrustedPython(f.d));
+  }
+});
+
+test("pair, target, and libexec ancestor replacement invalidate fresh capture and existing proof", () => {
+  for (const path of [PLATFORM, PAIR, "/usr/libexec"]) {
+    const f = platformFixture(), proof = captureTrustedPython(f.d);
+    const previous = f.files.get(path);
+    f.files.set(path, info(previous.type, 999, { nlink: previous.nlink }));
+    rejects(() => verifyTrustedPython(proof, f.d));
+    const g = platformFixture();
+    g.beforeRead = (p, n) => { if (p === path && n === 2) g.files.set(p, info(previous.type, 999, { nlink: previous.nlink })); };
+    rejects(() => captureTrustedPython(g.d));
+  }
+});
+
+test("pair-layout proof extensions, mixed layouts, old versions and foreign pair paths fail before any I/O", () => {
+  const good = captureTrustedPython(platformFixture().d), variants = [];
+  for (const change of [(p) => { p.version = 1; }, (p) => { p.layout = "usr_bin_single"; },
+    (p) => { p.pair = null; }, (p) => { p.pairDirectories = null; }, (p) => { p.pair.path = PLATFORM; },
+    (p) => { p.pair.path = "/foreign/python"; }, (p) => { p.pair.extra = "secret"; },
+    (p) => { p.pair.identity = info("file", 999, { nlink: 2 }).identity; },
+    (p) => { p.pairDirectories[2].path = "/usr/bin"; }, (p) => { p.pairDirectories[2].identity = info("directory", 999).identity; }]) {
+    const value = clone(good); change(value); variants.push(value);
+  }
+  const single = clone(captureTrustedPython(fixture().d)); single.pair = good.pair; variants.push(single);
+  let reads = 0, traps = 0;
+  variants.push({ ...good, pair: new Proxy(good.pair, { get() { traps++; } }) });
+  const getter = clone(good); Object.defineProperty(getter.pair, "path", { enumerable: true, get() { traps++; } }); variants.push(getter);
+  for (const value of variants) rejects(() => verifyTrustedPython(value, { pathInfo() { reads++; }, canonical() { reads++; } }));
+  assert.equal(reads, 0); assert.equal(traps, 0);
 });

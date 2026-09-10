@@ -941,17 +941,19 @@ test("SSH trust and exact remote source are pinned without live-tree execution",
 
 test("remote worktree guards accept attempt one and reject unsafe paths", () => {
   const guard =
-    '[[ "$FAOLLA_READINESS_WORKTREE" =~ ^/tmp/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]';
+    '[[ "$FAOLLA_READINESS_WORKTREE" =~ ^/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-[1-9][0-9]*-[1-9][0-9]*$ ]]';
   assert.equal(workflow.split(guard).length - 1, 2);
 
   const bash = resolveBash();
   for (const [candidate, accepted] of [
-    ["/tmp/faolla-ordinary-readiness-32383310388-1", true],
-    ["/tmp/faolla-ordinary-readiness-1-10", true],
-    ["/tmp/faolla-ordinary-readiness-0-1", false],
-    ["/tmp/faolla-ordinary-readiness-1-01", false],
-    ["/tmp/faolla-ordinary-readiness-1-1-extra", false],
-    ["/tmp/faolla-ordinary-readiness-1-a", false],
+    ["/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-32383310388-1", true],
+    ["/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-1-10", true],
+    ["/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-0-1", false],
+    ["/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-1-01", false],
+    ["/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-1-1-extra", false],
+    ["/var/lib/faolla-maintenance-code/faolla-ordinary-readiness-1-a", false],
+    ["/tmp/faolla-ordinary-readiness-1-1", false],
+    ["/var/lib/faolla-maintenance-code/../faolla-ordinary-readiness-1-1", false],
   ]) {
     const result = spawnSync(
       bash,
@@ -1384,11 +1386,35 @@ test("readiness artifact REST checks fail on identity, digest, expiry, and run m
   assert.match(workflow, /artifactIds\.has\(artifact\.id\)/);
 });
 
-test("remote exact worktree is always removed without a broad recursive delete", () => {
+test("remote exact worktree cleanup is always attempted but only removes a still-safe clean exact source", () => {
   assert.match(workflow, /- name: Remove Remote Exact Readiness Source\r?\n        if: always\(\)/);
-  assert.match(workflow, /git -C "\$repository_dir" worktree remove --force "\$FAOLLA_READINESS_WORKTREE"/);
+  const cleanup = workflow.slice(workflow.indexOf("- name: Remove Remote Exact Readiness Source"));
+  assert.match(cleanup, /verify_source_directory "\$FAOLLA_READINESS_WORKTREE"/);
+  assert.match(cleanup, /test "\$\(stat -c '%a' -- "\$FAOLLA_READINESS_WORKTREE"\)" = 700/);
+  assert.match(cleanup, /rev-parse HEAD\)" = "\$FAOLLA_TARGET_SHA"/);
+  assert.match(cleanup, /status --porcelain=v1 --untracked-files=all/);
+  assert.match(cleanup, /git -C "\$repository_dir" worktree remove "\$FAOLLA_READINESS_WORKTREE"/);
+  assert.doesNotMatch(cleanup, /worktree remove --force/);
   assert.match(workflow, /test ! -e "\$FAOLLA_READINESS_WORKTREE"/);
   assert.doesNotMatch(workflow, /rm\s+-rf|rm\s+-fr/);
+});
+
+test("readiness executable source lives in an exact root-only trusted chain without chmod repairs", () => {
+  const create = workflow.slice(workflow.indexOf("- name: Prepare Remote"), workflow.indexOf("- name: Verify Held Maintenance Before Readiness"));
+  assert.match(workflow, /REMOTE_READINESS_WORKTREE: \/var\/lib\/faolla-maintenance-code\/faolla-ordinary-readiness-/);
+  assert.equal((workflow.match(/verify_source_directory\(\) \{/g) ?? []).length, 2);
+  for (const token of ["test \"$(id -u)\" = 0", "for source_parent in / /var /var/lib", "test -d \"$source_dir\" && test ! -L \"$source_dir\"",
+    "test \"$(stat -c '%u' -- \"$source_dir\")\" = 0", "test \"$(readlink -f -- \"$source_dir\")\" = \"$source_dir\"", "(( (8#$source_mode & 8#22) == 0 ))"]) assert.ok(workflow.includes(token), token);
+  assert.match(workflow, /if \[ ! -e "\$source_root" \] && \[ ! -L "\$source_root" \]; then mkdir -m 700 -- "\$source_root"; fi/);
+  assert.match(workflow, /test "\$\(stat -c '%a' -- "\$source_root"\)" = 700/);
+  assert.ok(create.includes('test ! -e "$FAOLLA_READINESS_WORKTREE" && test ! -L "$FAOLLA_READINESS_WORKTREE" || exit 1'));
+  assert.equal((workflow.match(/test -d "\$source_dir" && test ! -L "\$source_dir" \|\| exit 1/g) ?? []).length, 2);
+  assert.equal((workflow.match(/source_status="\$\(git -C "\$FAOLLA_READINESS_WORKTREE" status --porcelain=v1 --untracked-files=all\)"\r?\n\s+test -z "\$source_status"/g) ?? []).length, 2);
+  assert.ok(create.indexOf('umask 077') < create.indexOf('worktree add --detach'));
+  assert.ok(create.indexOf('verify_source_directory "$source_root"') < create.indexOf('worktree add --detach'));
+  assert.ok(create.indexOf('verify_source_directory "$FAOLLA_READINESS_WORKTREE"') > create.indexOf('worktree add --detach'));
+  assert.doesNotMatch(workflow, /chmod[^\n]*(?:source_root|source_parent|FAOLLA_READINESS_WORKTREE|repository_dir)/);
+  assert.ok(create.length > 0);
 });
 
 test("workflow has no public-live probe, arbitrary SQL, or dynamic evaluation surface", () => {

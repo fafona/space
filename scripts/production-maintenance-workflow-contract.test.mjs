@@ -538,3 +538,29 @@ test("historical recovery workflows remain fixed incidents and cannot accept a n
     assert.match(source, /artifacts\.length !== 2/);
   }
 });
+
+test("maintenance controller executable worktrees require a root-only canonical code root, never writable tmp", () => {
+  const source = sources["production-maintenance"];
+  assert.match(source, /REMOTE_MAINTENANCE_WORKTREE: \/var\/lib\/faolla-maintenance-code\/faolla-maintenance-control-/);
+  const guard = '[[ "$worktree" =~ ^/var/lib/faolla-maintenance-code/faolla-maintenance-control-[1-9][0-9]*-[1-9][0-9]*$ ]]';
+  assert.equal(source.split(guard).length - 1, 2);
+  assert.equal((source.match(/verify_source_directory\(\) \{/g) ?? []).length, 2);
+  for (const token of ["test \"$(id -u)\" = 0", "for source_parent in / /var /var/lib", "test -d \"$source_dir\" && test ! -L \"$source_dir\"",
+    "test \"$(stat -c '%u' -- \"$source_dir\")\" = 0", "test \"$(readlink -f -- \"$source_dir\")\" = \"$source_dir\"", "(( (8#$source_mode & 8#22) == 0 ))",
+    "test \"$(stat -c '%a' -- \"$source_root\")\" = 700", "test \"$(stat -c '%a' -- \"$worktree\")\" = 700"]) assert.ok(source.includes(token), token);
+  assert.match(source, /if \[ ! -e "\$source_root" \] && \[ ! -L "\$source_root" \]; then mkdir -m 700 -- "\$source_root"; fi/);
+  assert.ok(source.includes('test -d "$app_dir" && test ! -e "$worktree" && test ! -L "$worktree" || exit 1'));
+  assert.equal((source.match(/test -d "\$source_dir" && test ! -L "\$source_dir" \|\| exit 1/g) ?? []).length, 2);
+  assert.equal((source.match(/source_status="\$\(git -C "\$worktree" status --porcelain=v1 --untracked-files=all\)"\r?\n\s+test -z "\$source_status"/g) ?? []).length, 2);
+  const add = source.indexOf('worktree add --detach "$worktree"');
+  assert.ok(source.lastIndexOf("umask 077", add) > 0);
+  assert.ok(source.indexOf('verify_source_directory "$source_root"') < add);
+  assert.ok(source.indexOf('verify_source_directory "$worktree"', add) > add);
+  assert.doesNotMatch(source, /chmod[^\n]*(?:source_root|source_parent|worktree|app_dir)/);
+  const cleanup = source.slice(source.indexOf("# The operation state lives outside this temporary checkout"));
+  assert.match(cleanup, /verify_source_directory "\$worktree"/);
+  assert.match(cleanup, /rev-parse HEAD\)" = "\$target"/);
+  assert.match(cleanup, /status --porcelain=v1 --untracked-files=all/);
+  assert.match(cleanup, /git -C "\$app_dir" worktree remove "\$worktree"/);
+  assert.doesNotMatch(cleanup, /worktree remove --force|rm -rf/);
+});

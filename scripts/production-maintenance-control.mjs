@@ -1,8 +1,12 @@
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isProxy } from "node:util/types";
+import { isDeepStrictEqual } from "node:util";
+import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch, validateMaintenanceLaunchJournal } from "./production-maintenance-launch-journal.mjs";
+import { createMaintenanceLaunchJournalStorage } from "./production-maintenance-launch-journal-storage.mjs";
 import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
 import { diagnosePm2Peer, validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
 
@@ -17,10 +21,51 @@ const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const failure = (code) => { throw new Error(code); };
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const exact = (value, keys) => record(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const LAUNCH_ROLES = ["paused-web", "resumed-web", "worker"];
+const clone = (value) => structuredClone(value);
+const equal = isDeepStrictEqual;
+
+export function maintenanceLaunchBinding(state) {
+  const daemon = state.runtime?.daemon, disk = state.launchDisk;
+  if (!daemon || !disk) failure("maintenance_launch_binding_invalid");
+  return { operationId: state.operationId, targetSha: state.targetSha, appName: state.appName, appPort: state.appPort,
+    daemon: { pid: daemon.pid, uid: daemon.uid, startTicks: daemon.startTicks, bootId: state.bootId,
+      executable: daemon.executable, executableIdentity: daemon.executableIdentity },
+    release: { path: disk.runtime, identity: disk.runtimeIdentity, buildDigest: disk.nextBuildDigest } };
+}
+
+export function validateMaintenanceLaunchProofBindings(state) {
+  if (state.launchJournal === null) {
+    if (state.launchDisk !== null || state.candidate !== null || state.resumed !== null) failure("maintenance_launch_binding_invalid");
+    return true;
+  }
+  const journal = validateMaintenanceLaunchJournal(state.launchJournal, maintenanceLaunchBinding(state));
+  const instanceKeys = ["pid", "parentPid", "uid", "startTicks", "processIdentity", "cwd", "cwdIdentity", "executable", "executableIdentity", "commandLineDigest"];
+  const verifyManaged = (managed, role) => {
+    const slot = journal.slots[role], process = managed?.processes?.[0], pm2 = managed?.pm2;
+    if (!slot || slot.phase !== "confirmed" || !process || !pm2) failure("maintenance_launch_binding_invalid");
+    const observed = { ...Object.fromEntries(instanceKeys.map((key) => [key, process[key]])), pmId: pm2.pmId,
+      createdAt: pm2.createdAt, pmUptime: pm2.pmUptime, restartTime: pm2.restartTime, metadataDigest: pm2.metadataHash };
+    if (!equal(observed, slot.instance)) failure("maintenance_launch_binding_invalid");
+  };
+  const verifyCandidate = (candidate, expectedRole = null) => {
+    const role = candidate?.pauseExpected === "1" ? "paused-web" : candidate?.pauseExpected === "0" ? "resumed-web" : null;
+    if (!role || (expectedRole && role !== expectedRole) || candidate.targetSha !== state.targetSha ||
+        !equal(candidate.disk, state.launchDisk) || !equal(candidate.daemon, state.runtime.daemon)) failure("maintenance_launch_binding_invalid");
+    verifyManaged(candidate.web, role);
+  };
+  if (state.candidate) verifyCandidate(state.candidate);
+  if (state.resumed) {
+    verifyCandidate(state.resumed.candidate, "resumed-web");
+    if (state.resumed.worker) verifyManaged(state.resumed.worker, "worker");
+    else if (state.runtime.worker?.state === "running" || journal.slots.worker !== null) failure("maintenance_launch_binding_invalid");
+  }
+  return true;
+}
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "check-held", "check-runtime-held", "runtime-handoff", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
@@ -59,14 +104,95 @@ export async function createPm2PeerDiagnosticReport(request, diagnose = diagnose
 }
 
 export function validateMaintenanceState(state, request, bootId, now) {
-  if (!exact(state, ["version", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed"]) ||
-      state.version !== 1 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
+  if (!exact(state, ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump"]) ||
+      state.version !== 2 || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
       !Number.isSafeInteger(state.createdAt) || state.createdAt > now || now - state.createdAt > MAX_AGE_MS ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
+      !(state.finalDump === null || record(state.finalDump)) || !(state.launchDisk === null || record(state.launchDisk)) ||
+      (state.launchDisk === null) !== (state.launchJournal === null) ||
       ["targetSha", "expectedOldSha", "appDir", "appName", "appPort", "operationId"].some((key) => state[key] !== request[key])) failure("maintenance_state_binding_invalid");
   if (["candidate", "resuming", "ended"].includes(state.phase) && !state.candidate) failure("maintenance_state_binding_invalid");
+  if (state.launchJournal !== null) validateMaintenanceLaunchJournal(state.launchJournal, maintenanceLaunchBinding(state));
+  if ((state.candidate && state.launchJournal?.slots["paused-web"]?.phase !== "confirmed") ||
+      (state.resumed && state.launchJournal?.slots["resumed-web"]?.phase !== "confirmed") ||
+      (state.finalDump && !state.resumed) || (state.phase === "ended" && !state.finalDump)) failure("maintenance_state_binding_invalid");
   return state;
+}
+
+// These callbacks supply no process facts: only runtime's exact observations
+// may confirm a previously persisted send. Never refresh a stale CAS from disk.
+export function createMaintenanceLaunchCallbacks(state, ops) {
+  let queue = Promise.resolve(), poisoned = false;
+  const serialized = (task) => {
+    const result = queue.then(async () => { if (poisoned) failure("maintenance_launch_persistence_unconfirmed"); return task(); });
+    queue = result.catch(() => {}); return result;
+  };
+  const persist = async () => { try { await ops.save(state); } catch (error) { poisoned = true; throw error; } };
+  const slot = (role) => {
+    if (!LAUNCH_ROLES.includes(role)) failure("maintenance_launch_role_invalid");
+    if (state.launchJournal === null) return null;
+    return validateMaintenanceLaunchJournal(state.launchJournal, maintenanceLaunchBinding(state)).slots[role];
+  };
+  return {
+    read: (role) => serialized(() => clone(slot(role))),
+    attempt: (role, rawDisk, environmentDigest) => serialized(async () => {
+      slot(role);
+      if (role === "paused-web" ? state.phase !== "held" : state.phase !== "resuming") failure("maintenance_launch_phase_invalid");
+      const disk = ops.validateLaunchDisk(rawDisk, state.runtime, state.targetSha);
+      if (typeof environmentDigest !== "string" || !/^[0-9a-f]{64}$/.test(environmentDigest)) failure("maintenance_launch_binding_invalid");
+      if (state.launchDisk === null) {
+        state.launchDisk = clone(disk); state.launchJournal = createMaintenanceLaunchJournal(maintenanceLaunchBinding(state));
+        await persist();
+      } else if (!equal(state.launchDisk, disk)) failure("maintenance_launch_binding_invalid");
+      let current = slot(role);
+      const binding = maintenanceLaunchBinding(state), sequence = LAUNCH_ROLES.indexOf(role) + 1;
+      if (current === null) {
+        state.launchJournal = planMaintenanceLaunch(state.launchJournal, binding, { role, sequence, nonce: ops.uuid(), environmentDigest });
+        await persist(); current = slot(role);
+      }
+      if (current.phase !== "planned" || current.environmentDigest !== environmentDigest) failure("maintenance_launch_already_attempted");
+      state.launchJournal = transitionMaintenanceLaunch(state.launchJournal, binding, { role, sequence, nonce: current.nonce, phase: "attempted" });
+      await persist();
+      return current.nonce;
+    }),
+    confirm: (role, observation) => serialized(async () => {
+      const current = slot(role);
+      if (!current || !observation || isProxy(observation) || ![Object.prototype, null].includes(Object.getPrototypeOf(observation))) failure("maintenance_launch_observation_invalid");
+      const descriptors = Object.getOwnPropertyDescriptors(observation), keys = ["observedNonce", "environmentDigest", "instance"];
+      if (Reflect.ownKeys(descriptors).length !== keys.length || !keys.every((key) => descriptors[key]?.enumerable && Object.hasOwn(descriptors[key], "value"))) failure("maintenance_launch_observation_invalid");
+      const binding = maintenanceLaunchBinding(state);
+      const next = transitionMaintenanceLaunch(state.launchJournal, binding, { role, sequence: current.sequence, nonce: current.nonce,
+        phase: "confirmed", observation: { ...binding, role, sequence: current.sequence, ...observation } });
+      if (!equal(next, state.launchJournal)) { state.launchJournal = next; await persist(); }
+    }),
+    checkpoint: (value) => serialized(async () => {
+      if (state.phase !== "resuming" || !value || isProxy(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) failure("maintenance_launch_checkpoint_invalid");
+      const descriptors = Object.getOwnPropertyDescriptors(value), keys = ["candidate", "resumed"];
+      if (Reflect.ownKeys(descriptors).length !== keys.length || !keys.every((key) => descriptors[key]?.enumerable && Object.hasOwn(descriptors[key], "value")) ||
+          !record(value.candidate) || !(value.resumed === null || record(value.resumed))) failure("maintenance_launch_checkpoint_invalid");
+      const next = { ...state, candidate: value.candidate, resumed: value.resumed };
+      if (next.candidate.pauseExpected !== "0" || (state.candidate?.pauseExpected === "0" && !equal(state.candidate, next.candidate)) ||
+          (state.resumed !== null && !equal(state.resumed, next.resumed))) failure("maintenance_launch_checkpoint_invalid");
+      // A checkpoint is private identity evidence, never health or launch ACK.
+      // Save the complete actual native-descendant proofs before runtime's
+      // catch deletes them, so a later command can verify already-gone facts.
+      validateMaintenanceState(next, { ...next }, ops.bootId(), ops.now());
+      ops.validateProofs(next); validateMaintenanceLaunchProofBindings(next);
+      const candidate = clone(next.candidate), resumed = clone(next.resumed);
+      if (!equal(state.candidate, candidate) || !equal(state.resumed, resumed)) {
+        state.candidate = candidate; state.resumed = resumed; await persist();
+      }
+    }),
+    unknown: (role) => serialized(async () => {
+      const current = slot(role);
+      if (!current) failure("maintenance_launch_observation_invalid");
+      if (current.phase === "unknown" || current.phase === "confirmed") return;
+      state.launchJournal = transitionMaintenanceLaunch(state.launchJournal, maintenanceLaunchBinding(state), {
+        role, sequence: current.sequence, nonce: current.nonce, phase: "unknown" });
+      await persist();
+    }),
+  };
 }
 
 export function validateMaintenanceSubproofBindings(state) {
@@ -87,10 +213,19 @@ function publicSummary(state, value = state.phase) {
   return { version: 1, operationId: state.operationId, targetSha: state.targetSha, expectedOldSha: state.expectedOldSha, state: value };
 }
 
+function needsLaunchReconciliation(state) {
+  const slots = state.launchJournal?.slots;
+  return Boolean(slots && (Object.values(slots).some((entry) => entry && ["attempted", "unknown"].includes(entry.phase)) ||
+    (!state.candidate && slots["paused-web"]?.phase === "confirmed") ||
+    (!state.resumed && state.candidate?.pauseExpected !== "0" && slots["resumed-web"]?.phase === "confirmed") ||
+    (!state.resumed?.worker && slots.worker?.phase === "confirmed")));
+}
+
 /** All effects are injected: unit tests never start a process or contact production. */
 export async function runMaintenanceAction(request, ops) {
   const assertHeld = async (state, requireDatabase = true) => {
     if (!["held", "failed-held"].includes(state.phase)) failure("maintenance_not_held");
+    if (needsLaunchReconciliation(state)) failure("maintenance_launch_reconciliation_unverified");
     await ops.verifyIngress(state.ingress, { probeControlServices: requireDatabase });
     await ops.assertRuntimeStopped(state.runtime);
     if (requireDatabase) await ops.assertDatabaseQuiet(state.database);
@@ -105,9 +240,22 @@ export async function runMaintenanceAction(request, ops) {
     let verified = true;
     try {
       state.ingress = await ops.installIngress(state.ingress, ops.readToken(state), { probeControlServices: false });
-      ops.save(state);
+      await ops.save(state);
     } catch { verified = false; }
     try {
+      if (needsLaunchReconciliation(state)) {
+        const recovered = await ops.reconcileMaintenanceLaunches(state.runtime, state.launchDisk, state.targetSha,
+          { launchJournal: createMaintenanceLaunchCallbacks(state, ops) });
+        if (!exact(recovered, ["candidate", "resumed"])) failure("maintenance_launch_reconciliation_unverified");
+        if (recovered.candidate) state.candidate = recovered.candidate;
+        if (recovered.resumed) state.resumed = recovered.resumed;
+        if (Object.values(state.launchJournal.slots).some((entry) => entry && ["attempted", "unknown"].includes(entry.phase))) failure("maintenance_launch_reconciliation_unverified");
+        await ops.save(state);
+      }
+    } catch { verified = false; }
+    try {
+      // Even failure cleanup must not act on an unbound, partly returned proof.
+      ops.validateProofs(state);
       if (state.resumed) await ops.stopResumedCandidate(state.runtime, state.resumed);
       else if (state.candidate) await ops.stopCandidate(state.runtime, state.candidate);
       else await ops.stopRuntime(state.runtime);
@@ -118,7 +266,7 @@ export async function runMaintenanceAction(request, ops) {
       await ops.assertDatabaseQuiet(state.database);
     } catch { verified = false; }
     state.phase = verified ? "failed-held" : "failed-unknown";
-    ops.save(state);
+    await ops.save(state);
     if (!verified) failure("maintenance_failure_state_unverified");
     return publicSummary(state);
   };
@@ -144,24 +292,25 @@ export async function runMaintenanceAction(request, ops) {
     if (!/^[0-9a-f]{64}$/.test(token)) failure("maintenance_token_invalid");
     const ingress = await captureStep("installation", () => ops.planIngressInstallation(capturedIngress, token));
     if (request.action === "plan") return publicSummary({ ...request, operationId }, "planned");
-    const state = { version: 1, operationId, targetSha: request.targetSha, expectedOldSha: request.expectedOldSha,
+    const state = { version: 2, revision: 0, operationId, targetSha: request.targetSha, expectedOldSha: request.expectedOldSha,
       appDir: request.appDir, appName: request.appName, appPort: request.appPort, bootId: ops.bootId(), createdAt: ops.now(),
-      phase: "preparing", runtime, ingress, database, publicSupabaseUrl, tokenHash: digest(token), candidate: null, resumed: null };
+      phase: "preparing", runtime, ingress, database, publicSupabaseUrl, tokenHash: digest(token), candidate: null, resumed: null,
+      launchDisk: null, launchJournal: null, finalDump: null };
     validateMaintenanceState(state, { ...request, operationId }, ops.bootId(), ops.now());
     ops.validateProofs(state);
     if (Buffer.byteLength(JSON.stringify(state)) > MAX_STATE_BYTES) failure("maintenance_state_size_exceeded");
     // Persist the exact recovery targets before the first network or process mutation.
-    ops.create(state, token);
+    await ops.create(state, token);
     try {
       state.ingress = await ops.installIngress(state.ingress, token);
-      ops.save(state);
+      await ops.save(state);
       await ops.stopRuntime(runtime);
       await ops.assertRuntimeStopped(runtime);
       await ops.verifyIngress(state.ingress);
       await ops.waitDatabaseQuiet(database);
       await ops.verifyIngress(state.ingress);
       state.phase = "held";
-      ops.save(state);
+      await ops.save(state);
       return publicSummary(state);
     } catch {
       let code = "maintenance_prepare_failed_held";
@@ -176,7 +325,7 @@ export async function runMaintenanceAction(request, ops) {
     }
   }
 
-  const state = validateMaintenanceState(ops.load(), request, ops.bootId(), ops.now());
+  const state = validateMaintenanceState(await ops.load(), request, ops.bootId(), ops.now());
   // Validation of subordinate proofs is mandatory before they reach an actuator.
   ops.validateProofs(state);
   if (request.action === "fail-held") return keepFailedClosed(state);
@@ -191,16 +340,36 @@ export async function runMaintenanceAction(request, ops) {
     const summary = publicSummary(state, "held");
     return request.action === "runtime-handoff" ? { ...summary, runtime: state.runtime } : summary;
   }
-  if (request.action === "register-candidate") {
+  if (["snapshot-web", "snapshot-worker"].includes(request.action)) {
+    if (state.phase === "candidate") await assertCandidate(state);
+    else await assertHeld(state, false);
+    const snapshot = await ops.readManagedSnapshot(state.runtime, state.candidate,
+      request.action === "snapshot-web" ? "web" : "worker");
+    if (typeof snapshot !== "string" || !/^(?:absent|inactive|running:[1-9][0-9]{0,9})$/.test(snapshot)) failure("maintenance_snapshot_unverified");
+    return { ...publicSummary(state), snapshot };
+  }
+  if (request.action === "candidate-handoff") {
+    await assertCandidate(state);
+    const fields = await ops.readCandidateHandoffFields(state.runtime, state.candidate);
+    const keys = ["CANDIDATE_WEB_PID", "CANDIDATE_WEB_PROCESS_START_TICKS", "CANDIDATE_WEB_PROCESS_IDENTITY", "CANDIDATE_WEB_CWD_IDENTITY", "CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64"];
+    if (!exact(fields, keys) || Object.values(fields).some((value) => typeof value !== "string" || !value || value.length > 65536 || /[\r\n\0]/.test(value))) failure("maintenance_candidate_handoff_unverified");
+    return { ...publicSummary(state), fields };
+  }
+  if (request.action === "start-candidate") {
     if (state.phase !== "held") failure("maintenance_not_held");
     await ops.verifyIngress(state.ingress, { probeControlServices: false });
-    state.candidate = await ops.captureCandidate(state.runtime, state.targetSha, "1");
-    state.phase = "candidate";
-    ops.save(state);
-    await assertCandidate(state);
-    return publicSummary(state);
+    try {
+      state.candidate = await ops.startCandidate(state.runtime, state.targetSha, { launchJournal: createMaintenanceLaunchCallbacks(state, ops) });
+      if (state.launchJournal?.slots["paused-web"]?.phase !== "confirmed" || state.candidate?.targetSha !== state.targetSha) failure("maintenance_candidate_unverified");
+      await ops.verifyCandidate(state.runtime, state.candidate, "1");
+      state.phase = "candidate"; await ops.save(state);
+      await assertCandidate(state); return publicSummary(state);
+    } catch {
+      await keepFailedClosed(state); failure("maintenance_candidate_start_failed_held");
+    }
   }
-  if (request.action === "check-candidate") {
+  if (["register-candidate", "check-candidate"].includes(request.action)) {
+    // Registration cannot adopt an independently started process or launch again.
     await assertCandidate(state);
     return publicSummary(state);
   }
@@ -208,16 +377,23 @@ export async function runMaintenanceAction(request, ops) {
     await assertCandidate(state);
     await ops.assertClientWritesDenied(state.database);
     state.phase = "resuming";
-    ops.save(state);
+    await ops.save(state);
     try {
-      state.resumed = await ops.resumeCandidate(state.runtime, state.candidate, state.targetSha);
-      ops.save(state);
+      state.resumed = await ops.resumeCandidate(state.runtime, state.candidate, state.targetSha,
+        { launchJournal: createMaintenanceLaunchCallbacks(state, ops) });
+      if (state.launchJournal?.slots["resumed-web"]?.phase !== "confirmed") failure("maintenance_launch_reconciliation_unverified");
+      await ops.save(state);
       await ops.verifyResumedCandidate(state.runtime, state.resumed);
+      state.finalDump = await ops.persistResumedDump(state.runtime, state.resumed);
+      ops.validateResumedDumpProof(state.finalDump, state.runtime, state.resumed);
+      await ops.save(state);
+      await ops.verifyResumedDump(state.runtime, state.resumed, state.finalDump);
       await ops.verifyIngress(state.ingress);
       await ops.restoreIngress(state.ingress);
       await ops.verifyResumedCandidate(state.runtime, state.resumed);
+      await ops.verifyResumedDump(state.runtime, state.resumed, state.finalDump);
       state.phase = "ended";
-      ops.save(state);
+      await ops.save(state);
       return publicSummary(state);
     } catch {
       await keepFailedClosed(state);
@@ -246,18 +422,21 @@ function readPrivate(file, maximum = MAX_STATE_BYTES) {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } finally { if (fd !== undefined) closeSync(fd); }
 }
-function writePrivate(file, content, replace = false) {
+// Initial creation only. Subsequent state writes MUST use the journal storage's
+// real previous revision/digest CAS. Ambiguous temporary files are retained.
+function writePrivate(file, content) {
   const temporary = `${file}.${randomUUID()}.tmp`;
   let fd;
   try {
-    if (!replace) { try { lstatSync(file); failure("maintenance_private_file_exists"); } catch (error) { if (error.code !== "ENOENT") throw error; } }
-    else readPrivate(file);
+    try { lstatSync(file); failure("maintenance_private_file_exists"); } catch (error) { if (error.code !== "ENOENT") throw error; }
     fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeFileSync(fd, content, "utf8"); fsyncSync(fd); closeSync(fd); fd = undefined;
     renameSync(temporary, file);
+    fd = openSync(path.posix.dirname(file), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    fsyncSync(fd); closeSync(fd); fd = undefined;
+    if (readPrivate(file) !== content) failure("maintenance_private_write_unconfirmed");
   } finally {
     if (fd !== undefined) closeSync(fd);
-    try { unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
   }
 }
 
@@ -287,6 +466,17 @@ export function readMaintenanceProbeContext(environment = process.env) {
 }
 
 // A stale lock is an explicit operator stop, never automatically broken or stolen.
+const ownedOperationLocks = new Map();
+async function underExistingOperationLock(appName, action) {
+  const expected = ownedOperationLocks.get(appName), file = `${ROOT}/${appName}/operation.lock`;
+  const check = () => {
+    if (!expected || ownedOperationLocks.get(appName) !== expected) failure("maintenance_operation_lock_not_owned");
+    const current = lstatSync(file);
+    if (!current.isDirectory() || current.isSymbolicLink() || current.uid !== 0 || (current.mode & 0o077) !== 0 ||
+        current.dev !== expected.dev || current.ino !== expected.ino) failure("maintenance_lock_identity_changed");
+  };
+  check(); const result = await action(); check(); return result;
+}
 async function withPrivateOperationLock(request, action) {
   if (request.action === "plan") return action();
   secureDirectory(ROOT, true);
@@ -295,7 +485,9 @@ async function withPrivateOperationLock(request, action) {
   const lock = `${directory}/operation.lock`;
   try { mkdirSync(lock, { mode: 0o700 }); } catch { failure("maintenance_operation_locked"); }
   const identity = lstatSync(lock);
+  ownedOperationLocks.set(request.appName, identity);
   try { return await action(); } finally {
+    ownedOperationLocks.delete(request.appName);
     const current = lstatSync(lock);
     if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino) failure("maintenance_lock_identity_changed");
     rmdirSync(lock);
@@ -329,8 +521,44 @@ async function productionOperations(request) {
   const statePath = `${directory}/state.json`;
   const tokenPath = `${directory}/control.token`;
   const bootId = () => readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-  const load = () => { secureDirectory(ROOT); secureDirectory(directory); return JSON.parse(readPrivate(statePath)); };
-  const save = (state) => { secureDirectory(ROOT); secureDirectory(directory); writePrivate(statePath, JSON.stringify(state), true); };
+  const validateProofs = (state) => {
+    runtime.validateRuntimeProof(state.runtime); ingress.validateIngressProof(state.ingress);
+    validateMaintenanceSubproofBindings(state);
+    if (state.launchDisk) runtime.validateLaunchDisk(state.launchDisk, state.runtime, state.targetSha);
+    if (state.candidate) {
+      runtime.validateCandidateProof(state.candidate, state.runtime);
+      if (state.candidate.targetSha !== state.targetSha) failure("maintenance_candidate_target_invalid");
+    }
+    if (state.resumed) {
+      runtime.validateResumedCandidateProof(state.resumed, state.runtime);
+      if (state.resumed.candidate.targetSha !== state.targetSha) failure("maintenance_candidate_target_invalid");
+    }
+    if (state.finalDump) runtime.validateResumedDumpProof(state.finalDump, state.runtime, state.resumed);
+    validateMaintenanceLaunchProofBindings(state);
+  };
+  const store = createMaintenanceLaunchJournalStorage({ appName: request.appName,
+    withExistingOperationLock: (action) => underExistingOperationLock(request.appName, action),
+    captureState: (value) => {
+      validateMaintenanceState(value, { ...request, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
+      validateProofs(value); return value;
+    } });
+  // Each loaded object keeps its OWN baseline. A later probe read must never
+  // refresh another object's CAS and thereby authorize writing a stale view.
+  const baselines = new WeakMap(), poisonedStates = new WeakSet();
+  const load = async () => {
+    const snapshot = await store.readOperationUnderExistingOperationLock();
+    const state = clone(snapshot.state); baselines.set(state, snapshot); return state;
+  };
+  const save = async (state) => {
+    const previous = baselines.get(state);
+    if (!previous || poisonedStates.has(state)) failure("maintenance_state_write_unconfirmed");
+    try {
+      const next = { ...state, revision: previous.revision + 1 };
+      const snapshot = await store.replaceOperationUnderExistingOperationLock({
+        expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+      state.revision = snapshot.revision; baselines.set(state, snapshot);
+    } catch (error) { poisonedStates.add(state); throw error; }
+  };
   const captureDatabase = () => {
     const item = JSON.parse(execute("docker", [...DOCKER, "inspect", "--type=container", "--format", '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"running":{{json .State.Running}}}', "supabase-db"]));
     if (!exact(item, ["id", "name", "image", "running"]) || !/^[0-9a-f]{64}$/.test(item.id) || item.name !== "/supabase-db" || !item.image.startsWith("supabase/postgres:") || item.running !== true) failure("maintenance_database_identity_invalid");
@@ -352,7 +580,7 @@ async function productionOperations(request) {
     if (!exact(row, ["complete", "schedulerSafe", "transactions", "prepared", "databaseOid"]) || row.schedulerSafe !== true || row.complete !== true || row.transactions !== 0 || row.prepared !== 0 || row.databaseOid !== proof.databaseOid) failure("maintenance_database_not_quiet");
   };
   const privateProbeOptions = async () => {
-    const loaded = load();
+    const loaded = await load();
     const state = validateMaintenanceState(loaded, { ...request, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
     if (typeof environment.anonKey !== "string" || !environment.anonKey || /[\r\n]/.test(environment.anonKey)) failure("maintenance_probe_credentials_invalid");
@@ -365,34 +593,32 @@ async function productionOperations(request) {
     restoreIngress: async (proof) => ingress.restoreIngress(proof, await privateProbeOptions()),
     assertNoActiveOperation() {
       try {
-        const previous = load();
+        // This is also called by read-only plan, before any operation lock.
+        // Presence alone blocks; it never supplies a mutation CAS baseline.
+        secureDirectory(ROOT); secureDirectory(directory);
+        const previous = JSON.parse(readPrivate(statePath));
         if (previous.phase !== "ended") failure("maintenance_operation_already_active");
         // Retain completed evidence; never automatically replace it on a new request.
         failure("maintenance_previous_operation_requires_archival");
       } catch (error) { if (error.code !== "ENOENT") throw error; }
     },
-    create(state, token) {
-      secureDirectory(ROOT, true); secureDirectory(directory, true);
-      writePrivate(tokenPath, token);
-      writePrivate(statePath, JSON.stringify(state));
+    async create(state, token) {
+      await underExistingOperationLock(request.appName, async () => {
+        secureDirectory(ROOT, true); secureDirectory(directory, true);
+        if (state.revision !== 0 || state.launchDisk !== null || state.launchJournal !== null) failure("maintenance_state_binding_invalid");
+        writePrivate(tokenPath, token);
+        writePrivate(statePath, JSON.stringify(state));
+        const snapshot = await store.readOperationUnderExistingOperationLock();
+        if (!equal(state, snapshot.state)) failure("maintenance_state_write_unconfirmed");
+        baselines.set(state, snapshot);
+      });
     },
     readToken(state) {
       const token = readPrivate(tokenPath, 64);
       if (!/^[0-9a-f]{64}$/.test(token) || digest(token) !== state.tokenHash) failure("maintenance_token_identity_invalid");
       return token;
     },
-    validateProofs(state) {
-      runtime.validateRuntimeProof(state.runtime); ingress.validateIngressProof(state.ingress);
-      validateMaintenanceSubproofBindings(state);
-      if (state.candidate) {
-        runtime.validateCandidateProof(state.candidate, state.runtime);
-        if (state.candidate.targetSha !== state.targetSha) failure("maintenance_candidate_target_invalid");
-      }
-      if (state.resumed) {
-        runtime.validateResumedCandidateProof(state.resumed, state.runtime);
-        if (state.resumed.candidate.targetSha !== state.targetSha) failure("maintenance_candidate_target_invalid");
-      }
-    },
+    validateProofs,
     readPublicSupabaseUrl: async (proof) => (await runtime.readRuntimeHandoffEnvironment(proof)).publicUrl,
     captureDatabase, assertDatabaseQuiet,
     async waitDatabaseQuiet(proof) {

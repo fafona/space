@@ -47,6 +47,52 @@ test("CI keeps quality checks independent from browser system packages", () => {
   assert.doesNotMatch(quality, /playwright install|test:enterprise-browser|apt-get/);
 });
 
+test("real PM2 transport acceptance is mandatory inside Quality without adding or weakening approval jobs", () => {
+  const quality = jobBlock("quality");
+  const contractAt = quality.indexOf("name: Maintenance Control and Pages ACL Contract Tests");
+  const acceptanceAt = quality.indexOf("name: Isolated PM2 6.0.14 Maintenance Transport Acceptance");
+  const lintAt = quality.indexOf("name: Lint");
+  assert.ok(contractAt >= 0 && acceptanceAt > contractAt && lintAt > acceptanceAt);
+  const step = quality.slice(acceptanceAt, lintAt);
+  assert.match(step, /timeout-minutes:\s*7/);
+  assert.match(step, /FAOLLA_PM2_REAL_ACCEPTANCE:\s*"1"/);
+  assert.match(step, /run:\s*node scripts\/production-maintenance-pm2-acceptance\.mjs/);
+  assert.doesNotMatch(step, /continue-on-error|\bif:|secrets\.|PM2_HOME:|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
+  const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
+  assert.deepEqual(jobs, ["quality", "browser", "qr-database", "transaction-database", "redemption-database",
+    "checkout-database", "pages-acl-database", "recovery-database"]);
+});
+
+test("real PM2 acceptance refuses implicit or non-CI use before installing or creating a fixture", () => {
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const script = fileURLToPath(new URL("./production-maintenance-pm2-acceptance.mjs", import.meta.url));
+  assert.equal(discoverLocalTests(root).includes("scripts/production-maintenance-pm2-acceptance.mjs"), false);
+  for (const env of [{ GITHUB_ACTIONS: "true", FAOLLA_PM2_REAL_ACCEPTANCE: "" },
+    { GITHUB_ACTIONS: "false", FAOLLA_PM2_REAL_ACCEPTANCE: "1" }]) {
+    const result = spawnSync(process.execPath, [script], { cwd: root, env: { ...env, PATH: "" },
+      encoding: "utf8", timeout: 5000, windowsHide: true, shell: false });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.deepEqual(JSON.parse(result.stderr), { error: "pm2_acceptance_opt_in_required", stage: "guards" });
+  }
+});
+
+test("real PM2 fixture pins its version, private home, exact daemon cleanup and no business server", () => {
+  const source = readFileSync(new URL("./production-maintenance-pm2-acceptance.mjs", import.meta.url), "utf8");
+  assert.match(source, /mkdtempSync\(join\(home, "\.faolla-pm2-"\)\)/);
+  assert.match(source, /Buffer\.byteLength\(socketPath\) >= 107/);
+  assert.match(source, /"pm2@6\.0\.14"/);
+  assert.match(source, /"--ignore-scripts"/);
+  assert.match(source, /"--userconfig", userConfig/);
+  assert.match(source, /packageInfo\.version !== "6\.0\.14"/);
+  assert.match(source, /process\.kill\(daemon\.pid, "SIGINT"\)/);
+  assert.match(source, /if \(!daemon && bootstrapAttempted\) \{[\s\S]*?if \(!daemon\) fail\("pm2_acceptance_cleanup_unverified"\)/);
+  assert.match(source, /metadata\.dev !== fixtureIdentity\.dev \|\| metadata\.ino !== fixtureIdentity\.ino/);
+  assert.match(source, /cleanupVerified: clean/);
+  assert.doesNotMatch(source, /\.\.\.process\.env|createServer\(|\.listen\(|pm2", "kill"|PM2_HOME: process\.env/);
+});
+
 test("browser journeys use the lockfile-matched official Playwright image", () => {
   const browser = jobBlock("browser");
   const lockedVersion = lockfile.packages?.["node_modules/playwright"]?.version;
