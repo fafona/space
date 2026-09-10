@@ -39,7 +39,8 @@ jobs:
         run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs scripts/check-production-maintenance-capabilities.test.mjs
 
       - name: Maintenance Control and Pages ACL Contract Tests
-        run: node --test scripts/production-maintenance-*.test.mjs scripts/maintenance-control-probe-headers.test.mjs scripts/pages-client-write-acl-migration-contract.test.mjs scripts/pages-acl-integration/run.test.mjs
+        # Full-ancestor filesystem proofs must not overlap sibling fixture creation.
+        run: node --test --test-concurrency=1 scripts/production-maintenance-*.test.mjs scripts/maintenance-control-probe-headers.test.mjs scripts/pages-client-write-acl-migration-contract.test.mjs scripts/pages-acl-integration/run.test.mjs
 
       - name: Isolated PM2 6.0.14 Maintenance Transport Acceptance
         timeout-minutes: 7

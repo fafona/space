@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { discoverLocalTests } from "./run-local-tests.mjs";
+import { createLocalTestBatches, discoverLocalTests } from "./run-local-tests.mjs";
 
 const workflow = readFileSync(
   new URL("../.github/workflows/ci.yml", import.meta.url),
@@ -61,6 +61,22 @@ test("real PM2 transport acceptance is mandatory inside Quality without adding o
   const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
   assert.deepEqual(jobs, ["quality", "browser", "qr-database", "transaction-database", "redemption-database",
     "checkout-database", "pages-acl-database", "recovery-database"]);
+});
+
+test("both CI test entrypoints retain native filesystem coverage without concurrent sibling fixtures", () => {
+  const quality = jobBlock("quality");
+  const start = quality.indexOf("name: Maintenance Control and Pages ACL Contract Tests");
+  const end = quality.indexOf("name: Isolated PM2 6.0.14 Maintenance Transport Acceptance");
+  assert.ok(start >= 0 && end > start);
+  const step = quality.slice(start, end);
+  assert.match(step, /run: node --test --test-concurrency=1 scripts\/production-maintenance-\*\.test\.mjs scripts\/maintenance-control-probe-headers\.test\.mjs scripts\/pages-client-write-acl-migration-contract\.test\.mjs scripts\/pages-acl-integration\/run\.test\.mjs/);
+  assert.doesNotMatch(step, /continue-on-error|\bif:|--test-skip-pattern|\|\|\s*true/);
+  const native = "scripts/production-maintenance-native-proof.test.mjs";
+  const files = discoverLocalTests(fileURLToPath(new URL("../", import.meta.url)));
+  assert.equal(files.filter((file) => file === native).length, 1);
+  const batches = createLocalTestBatches(files, ["--test", "--test-concurrency=4"]);
+  assert.deepEqual(batches.flat(), files);
+  assert.deepEqual(batches.filter((batch) => batch.includes(native)), [[native]]);
 });
 
 test("real PM2 acceptance refuses implicit or non-CI use before installing or creating a fixture", () => {

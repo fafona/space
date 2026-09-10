@@ -9,6 +9,10 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const testFilePattern = /\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
 const testRoots = ["src", "scripts"];
 const maximumCommandLength = 7_000;
+// This real-filesystem proof intentionally witnesses every ancestor's full
+// identity. Other test files create/remove sibling fixtures in scripts/, so it
+// must finish in its own batch rather than weakening the production witness.
+const exclusiveTestFiles = new Set(["scripts/production-maintenance-native-proof.test.mjs"]);
 
 export function discoverLocalTests(rootDirectory = repositoryRoot) {
   const root = path.resolve(rootDirectory);
@@ -80,6 +84,13 @@ export function createLocalTestBatches(files, baseArguments, batchSize = 40) {
     const size = argumentLength(file);
     if (baseLength + size > maximumCommandLength) {
       throw new Error(`local_test_path_too_long:${file}`);
+    }
+    if (exclusiveTestFiles.has(file)) {
+      if (current.length) batches.push(current);
+      batches.push([file]);
+      current = [];
+      commandLength = baseLength;
+      continue;
     }
     if (current.length && (current.length >= batchSize || commandLength + size > maximumCommandLength)) {
       batches.push(current);

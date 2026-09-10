@@ -86,6 +86,45 @@ test("batching preserves every file while respecting file and Windows argument s
   assert.throws(() => createLocalTestBatches([`src/${"a".repeat(7_000)}.test.ts`], base), /local_test_path_too_long/);
 });
 
+test("native full-ancestor filesystem proof is an exclusive batch without losing or reordering files", () => {
+  const native = "scripts/production-maintenance-native-proof.test.mjs";
+  const ordinary = ["scripts/a.test.mjs", "scripts/b.test.mjs", "src/c.test.ts"];
+  for (const size of [1, 2, 40]) for (let position = 0; position <= ordinary.length; position++) {
+    const files = [...ordinary.slice(0, position), native, ...ordinary.slice(position)];
+    const batches = createLocalTestBatches(files, ["--test", "--test-concurrency=4"], size);
+    assert.deepEqual(batches.flat(), files);
+    assert.deepEqual(batches.filter((batch) => batch.includes(native)), [[native]]);
+    assert.ok(batches.every((batch) => batch.length <= size));
+  }
+  assert.deepEqual(createLocalTestBatches([native], ["--test"]), [[native]]);
+});
+
+test("exclusive native batch waits for siblings and failures never trigger an automatic retry", async () => {
+  const native = "scripts/production-maintenance-native-proof.test.mjs";
+  const files = ["scripts/a.test.mjs", native, "src/c.test.ts"];
+  const children = [], commands = [];
+  const stdout = outputBuffer(), stderr = outputBuffer();
+  const running = runLocalTests({ files, concurrency: 4, stdout, stderr,
+    spawnProcess(command, args) {
+      commands.push({ command, files: args.filter((arg) => files.includes(arg)) });
+      const child = new EventEmitter();
+      child.stdout = new PassThrough(); child.stderr = new PassThrough(); children.push(child);
+      return child;
+    },
+  });
+  const advance = () => new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(commands.map((item) => item.files), [[files[0]]]);
+  await advance(); assert.equal(children.length, 1);
+  children[0].emit("close", 0, null);
+  await advance(); assert.deepEqual(commands.map((item) => item.files), [[files[0]], [native]]);
+  await advance(); assert.equal(children.length, 2);
+  children[1].emit("close", 1, null);
+  await advance(); assert.deepEqual(commands.map((item) => item.files), [[files[0]], [native], [files[2]]]);
+  children[2].emit("close", 0, null);
+  assert.deepEqual(await running, { files: 3, batches: 3, failedBatches: 1, exitCode: 1 });
+  assert.equal(commands.filter((item) => item.files.includes(native)).length, 1);
+});
+
 test("all batches run and child failure or launch failure remains a nonzero result", async () => {
   const commands = [];
   const stdout = outputBuffer();
