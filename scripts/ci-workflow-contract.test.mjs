@@ -60,7 +60,7 @@ test("real PM2 transport acceptance is mandatory inside Quality without adding o
   assert.doesNotMatch(step, /continue-on-error|\bif:|secrets\.|PM2_HOME:|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
   const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
   assert.deepEqual(jobs, ["quality", "browser", "qr-database", "transaction-database", "redemption-database",
-    "checkout-database", "pages-acl-database", "recovery-database"]);
+    "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress"]);
 });
 
 test("both CI test entrypoints retain native filesystem coverage without concurrent sibling fixtures", () => {
@@ -77,6 +77,24 @@ test("both CI test entrypoints retain native filesystem coverage without concurr
   const batches = createLocalTestBatches(files, ["--test", "--test-concurrency=4"]);
   assert.deepEqual(batches.flat(), files);
   assert.deepEqual(batches.filter((batch) => batch.includes(native)), [[native]]);
+});
+
+test("real ingress acceptance is an opt-in isolated job and package installation cannot start nginx", () => {
+  const job = jobBlock("maintenance-ingress");
+  assert.doesNotMatch(job, /\bneeds:/);
+  assert.match(job, /runs-on:\s*ubuntu-24\.04/);
+  assert.match(job, /FAOLLA_INGRESS_REAL_ACCEPTANCE:\s*"1"/);
+  assert.match(job, /test "\$GITHUB_ACTIONS" = true/);
+  assert.match(job, /policy=\/usr\/sbin\/policy-rc\.d/);
+  assert.match(job, /test ! -e "\$policy" && test ! -L "\$policy" \|\| exit 1/);
+  assert.match(job, /exit 101/);
+  assert.match(job, /trap cleanup_policy EXIT/);
+  assert.ok(job.indexOf("trap cleanup_policy EXIT") < job.indexOf("apt-get install"));
+  assert.match(job, /nftables iproute2 iptables ebtables curl openssl nginx/);
+  assert.match(job, /test "\$\{actual%% \*\}" = "\$2"; rm -- "\$1"/);
+  assert.match(job, /run: node scripts\/production-maintenance-ingress-acceptance\.mjs/);
+  assert.doesNotMatch(job, /continue-on-error|secrets\.|\.env\.local|services:|ports:|network host/);
+  assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/production-maintenance-ingress-acceptance.mjs"), false);
 });
 
 test("real PM2 acceptance refuses implicit or non-CI use before installing or creating a fixture", () => {
@@ -130,7 +148,10 @@ test("browser journeys use the lockfile-matched official Playwright image", () =
   assert.match(browser, /run:\s*npm run build/);
   assert.match(browser, /run:\s*npm run test:enterprise-browser/);
   assert.doesNotMatch(browser, /continue-on-error|playwright install|apt-get/);
-  assert.doesNotMatch(workflow, /playwright install --with-deps|apt-get/);
+  assert.doesNotMatch(workflow, /playwright install --with-deps/);
+  // Only the dedicated isolated ingress job may install its networking tools;
+  // browser and every pre-existing quality/database job keep their prohibition.
+  assert.doesNotMatch(workflow.slice(0, workflow.indexOf("  maintenance-ingress:\n")), /apt-get/);
 });
 
 test("QR atomic acceptance is a required CI job against a fresh PostgreSQL service", () => {

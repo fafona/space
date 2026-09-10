@@ -336,3 +336,45 @@ jobs:
         env:
           FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: node scripts/recovery-integration/run.mjs
+
+  maintenance-ingress:
+    name: Isolated Maintenance Ingress Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      FAOLLA_INGRESS_REAL_ACCEPTANCE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Install Isolated Acceptance Tools Without Starting Services
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          policy=/usr/sbin/policy-rc.d
+          test ! -e "$policy" && test ! -L "$policy" || exit 1
+          fixture_policy="$(mktemp "$RUNNER_TEMP/faolla-ci-policy.XXXXXXXX")"
+          printf '#!/bin/sh\nexit 101\n' > "$fixture_policy"
+          policy_hash="$(sha256sum "$fixture_policy")"
+          policy_hash="${policy_hash%% *}"
+          cleanup_policy() {
+            local status=$?
+            if ! sudo -n bash -c 'set -euo pipefail; test -f "$1"; test ! -L "$1"; actual="$(sha256sum "$1")"; test "${actual%% *}" = "$2"; rm -- "$1"' -- "$policy" "$policy_hash"; then
+              status=1
+            fi
+            rm -f -- "$fixture_policy"
+            exit "$status"
+          }
+          sudo -n install -o root -g root -m 755 "$fixture_policy" "$policy"
+          trap cleanup_policy EXIT
+          sudo -n apt-get update
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables iproute2 iptables ebtables curl openssl nginx
+      - name: Run Real Ingress Rules Only Inside New Network Namespace
+        run: node scripts/production-maintenance-ingress-acceptance.mjs

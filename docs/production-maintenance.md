@@ -175,7 +175,7 @@ rollback to an older dump, or reopening. The verified dump proof is saved as
 ## Release order
 
 1. Merge the reviewed exact candidate and require successful push CI, including
-   the disposable PostgreSQL acceptance jobs.
+   the disposable PostgreSQL and isolated maintenance-ingress acceptance jobs.
 2. Run **Production Maintenance / plan** with the exact candidate and old build.
    It only captures the runtime, routing, firewall and database prerequisites.
    Unsupported topology is a stop condition before traffic or services change.
@@ -227,3 +227,54 @@ quiet and cannot replace `check-held` in backup or migration workflows.
 
 Pure tests use injected hosts and never operate production. Passing them is not
 proof that the real host is supported: the real read-only plan is mandatory.
+
+## Existing Nginx and nf_tables compatibility
+
+The ingress adapter preserves the installed network architecture. Nginx has two
+closed profiles: `/usr/sbin/nginx` with `/etc/nginx/nginx.conf`, or the BaoTa
+binary and configuration under `/www/server/nginx`. The latter may read only
+its fixed configuration root and the panel's `vhost/nginx` and `vhost/rewrite`
+roots. The host network namespace, master process generation and executable
+are bound before using the same absolute binary for tests or reloads. Container
+OpenResty masters and their workers are not part of that host process proof.
+
+Original configuration bytes (including CRLF), include membership, ownership
+and parent identities remain frozen. Empty stream includes stay monitored;
+adding a stream route invalidates the plan. An unselected cohost's conditional
+Lua is parsed as opaque code and is never modified or admitted in a selected
+Faolla server or inherited scope. This is routing separation, not a sandbox
+against a malicious privileged cohost program. Control routes must resolve to
+the frozen Kong target via proven exact or `^~` prefix locations; arbitrary
+rewrites, scripts, URI remapping and ambiguous regex precedence are refused.
+QUIC listeners must share their server and port with a verified TLS listener.
+
+The nf_tables backend captures the full nft JSON ruleset plus all three
+iptables/ip6tables/ebtables compatibility saves, including versions. Old nft
+releases may report opaque `xt: null`; the complete compatibility saves are
+therefore required, not discarded. Only recognized packet/byte counters and
+save timestamps are normalized. An operation creates one independently owned
+`inet` table at filter priority 200; existing tables, policies and firewalld or
+Docker services are not changed. Later or colliding base chains, flowtables,
+offload and unsupported expressions cause refusal. The fence covers published
+ports and the thirteen frozen container destinations; only four explicit
+service directions and their established reply direction remain allowed.
+
+Before any Nginx write, the frozen baseline and any existing operation-owned
+table must match exactly. Installation uses an atomic fail-if-present create
+batch; a partial or foreign table is never adopted. Restore removes only that
+verified table, then requires the original baseline again. It never flushes or
+replays the host ruleset. Read-only interface and kernel qdisc observations also
+reject XDP, ingress/clsact and unreviewed classifier-capable qdiscs. This uses
+the fixed trusted Python interpreter and GET-only netlink, not installation of
+`tc`, deletion of filters, or an assumption based on an `ip link` label.
+
+Public HTTP probes allow at most one permanent HTTP-to-HTTPS upgrade, without
+credentials, to the same host, path and query on HTTPS port 443. The destination
+must actually return 503. Control-token probes never follow a redirect. The
+isolated Linux CI job tests real nft installation, data-plane blocking, limited
+service connectivity, table restoration, and generated Nginx syntax/HTTP gates.
+Its disposable Ubuntu binary test is not a claim to have tested a production
+BaoTa installation; the real protected plan and subsequent held checks remain
+mandatory. No snapshot prevents a later privileged administrator or service
+from changing the host: configuration changes during the window are prohibited
+and invalidate the operation when detected.
