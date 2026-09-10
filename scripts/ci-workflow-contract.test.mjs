@@ -90,11 +90,22 @@ test("real ingress acceptance is an opt-in isolated job and package installation
   assert.match(job, /exit 101/);
   assert.match(job, /trap cleanup_policy EXIT/);
   assert.ok(job.indexOf("trap cleanup_policy EXIT") < job.indexOf("apt-get install"));
-  assert.match(job, /nftables iproute2 iptables ebtables curl openssl nginx/);
+  assert.match(job, /nftables iproute2 iptables ebtables curl openssl nginx kmod/);
   assert.match(job, /test "\$\{actual%% \*\}" = "\$2"; rm -- "\$1"/);
   assert.match(job, /run: node scripts\/production-maintenance-ingress-acceptance\.mjs/);
   assert.doesNotMatch(job, /continue-on-error|secrets\.|\.env\.local|services:|ports:|network host/);
   assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/production-maintenance-ingress-acceptance.mjs"), false);
+});
+
+test("bridge module initialization is fixed and confined to the disposable Ubuntu ingress job", () => {
+  const job = jobBlock("maintenance-ingress");
+  assert.equal((workflow.match(/modprobe/g) ?? []).length, 1);
+  assert.match(job, /test "\$RUNNER_OS" = Linux/);
+  assert.match(job, /ubuntu:24\.04/);
+  assert.match(job, /case "\$\(uname -r\)" in 6\.\*\) ;; \*\) exit 1 ;; esac/);
+  assert.match(job, /sudo -n \/usr\/sbin\/modprobe br_netfilter/);
+  assert.doesNotMatch(job, /modprobe[^\n]*\$|sysctl|\/proc\/sys\/net\/bridge/);
+  assert.ok(job.indexOf("/usr/sbin/modprobe br_netfilter") < job.indexOf("run: node scripts/production-maintenance-ingress-acceptance.mjs"));
 });
 
 test("real PM2 acceptance refuses implicit or non-CI use before installing or creating a fixture", () => {

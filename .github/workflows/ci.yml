@@ -375,6 +375,15 @@ jobs:
           sudo -n install -o root -g root -m 755 "$fixture_policy" "$policy"
           trap cleanup_policy EXIT
           sudo -n apt-get update
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables iproute2 iptables ebtables curl openssl nginx
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables iproute2 iptables ebtables curl openssl nginx kmod
+      - name: Initialize Bridge Netfilter Module on Disposable CI Host Only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_OS" = Linux
+          test "$(. /etc/os-release; printf '%s:%s' "$ID" "$VERSION_ID")" = ubuntu:24.04
+          case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac
+          sudo -n /usr/sbin/modprobe br_netfilter
       - name: Run Real Ingress Rules Only Inside New Network Namespace
         run: node scripts/production-maintenance-ingress-acceptance.mjs

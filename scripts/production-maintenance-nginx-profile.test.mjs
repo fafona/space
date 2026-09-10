@@ -239,6 +239,14 @@ test("cohost conditional Lua stays opaque and cannot be admitted in selected or 
   assert.throws(f.plan, denied);
 });
 
+test("unselected regex or variable server names cannot silently shadow protected hosts", () => {
+  for (const name of ['~^faolla\\.com$', '$hostname', '~^other\\.example$']) {
+    const f = fixture();
+    f.files.set("/www/server/panel/vhost/nginx/shadow.conf", `server { listen 443 ssl; server_name ${name}; root /synthetic; }`);
+    assert.throws(f.plan, denied);
+  }
+});
+
 test("CRLF configuration is parsed without changing original bytes or insertion offsets", () => {
   const f = fixture();
   for (const [path, content] of f.files) f.files.set(path, content.replace(/\r?\n/g, "\r\n"));

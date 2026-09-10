@@ -273,6 +273,13 @@ credentials, to the same host, path and query on HTTPS port 443. The destination
 must actually return 503. Control-token probes never follow a redirect. The
 isolated Linux CI job tests real nft installation, data-plane blocking, limited
 service connectivity, table restoration, and generated Nginx syntax/HTTP gates.
+This dedicated Ubuntu 24.04 job suppresses package service startup and explicitly
+loads `br_netfilter` once on its disposable CI host. The runner requires Linux
+6.x before initializing the two per-network-namespace bridge sysctls inside its
+independently verified new namespace. It reads the parent's original values and
+requires them to remain unchanged even when the child fails; it never repairs
+parent state. This CI setup is not a production action: production only reads
+these prerequisites and refuses if they are unavailable or disabled.
 Its disposable Ubuntu binary test is not a claim to have tested a production
 BaoTa installation; the real protected plan and subsequent held checks remain
 mandatory. No snapshot prevents a later privileged administrator or service

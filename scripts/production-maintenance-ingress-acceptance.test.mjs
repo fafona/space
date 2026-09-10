@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ingressAcceptanceTopology, planIngressAcceptanceNginx, validateIngressAcceptanceInvocation } from "./production-maintenance-ingress-acceptance.mjs";
+import { ingressAcceptanceTopology, planIngressAcceptanceNginx, readIngressAcceptanceBridgeState, validateIngressAcceptanceInvocation } from "./production-maintenance-ingress-acceptance.mjs";
 import { captureNftFirewall, planNftFirewall } from "./production-maintenance-nft.mjs";
 
 const script = fileURLToPath(new URL("./production-maintenance-ingress-acceptance.mjs", import.meta.url));
@@ -65,6 +65,26 @@ test("CI startup diagnostics disclose only fixed tool and namespace phases witho
   assert.match(source, /STAGES\.has\(detail\.stage\)/);
   assert.match(source, /readFileSync\(`\/proc\/sys\/net\/bridge\/\$\{name\}`, "utf8"\)\.trim\(\), "1"/);
   assert.doesNotMatch(source, /stderr\.write\(error|stderr\.write\(result|JSON\.stringify\(error\)|console\.(?:log|error)\(error/);
+});
+
+test("bridge fixture only accepts modern CI kernel and fixed per-net fields, preserving parent verification on failure", () => {
+  const calls = [];
+  const values = { "/proc/sys/kernel/osrelease": "6.14.0-1017-azure\n", "/proc/sys/net/bridge/bridge-nf-call-iptables": "0\n",
+    "/proc/sys/net/bridge/bridge-nf-call-ip6tables": "1\n" };
+  const read = (path) => { calls.push(path); assert.ok(Object.hasOwn(values, path)); return values[path]; };
+  assert.deepEqual(readIngressAcceptanceBridgeState(read), { kernelRelease: "6.14.0-1017-azure", bridge4: "0", bridge6: "1" });
+  assert.deepEqual(calls, Object.keys(values));
+  for (const kernel of ["4.18.0-348.7.1.el8_5.x86_64", "5.15.0-1", "7.0.0-unknown", "untrusted/path", "6.0"]) {
+    assert.throws(() => readIngressAcceptanceBridgeState((path) => path.endsWith("osrelease") ? kernel : read(path)), /ingress_acceptance_failed/);
+  }
+  for (const value of ["", "2", "false", "1\n0"]) {
+    assert.throws(() => readIngressAcceptanceBridgeState((path) => path.endsWith("osrelease") ? values[path] : value), /ingress_acceptance_failed/);
+  }
+  assert.throws(() => readIngressAcceptanceBridgeState(() => { throw new Error("missing"); }), /missing/);
+  const checks = source.slice(source.indexOf('// Always verify parent state'));
+  assert.ok(checks.indexOf("JSON.stringify(readIngressAcceptanceBridgeState())") < checks.indexOf("if (result.error"));
+  assert.match(source, /assertIsolated\(\);\s*writeFileSync\(`\/proc\/sys\/net\/bridge\/\$\{name\}`, "1\\n"\)/);
+  assert.match(checks, /JSON.stringify\(parentBridge\)\) fail\(\)/);
 });
 
 test("acceptance keeps real capture install verification and exact restore, with actual data-plane baselines", () => {

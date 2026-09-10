@@ -8,6 +8,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // CI-only data-plane acceptance, never a production maintenance entrypoint.
 // No network/firewall mutation is available until a fresh network AND PID
 // namespace has been independently checked. No host nft/iptables write occurs.
+// The separate CI tool-preparation step may load br_netfilter once on its
+// disposable host. Bridge sysctl writes below are only in a new Linux 6.x
+// network namespace; the outer process verifies its own values remain intact.
 const HERE = fileURLToPath(import.meta.url);
 const ROOT = dirname(dirname(HERE));
 const OPERATION = "11111111-2222-4333-8444-555555555555";
@@ -22,11 +25,23 @@ const BINARIES = { nft: "/usr/sbin/nft", ip: "/usr/sbin/ip", iptables: "/usr/sbi
   nsenter: "/usr/bin/nsenter", unshare: "/usr/bin/unshare" };
 const STAGES = new Set(["guards", "namespace_launch", "namespace_setup", "namespace_loopback", "namespace_bridge",
   "namespace_forwarding", "namespace_bridge_hooks", "namespace_endpoints", "network_capture", "baseline", "nft_install", "input_dataplane",
-  "bridge_dataplane", "nginx_fixture", "restore", "cleanup", ...Object.keys(BINARIES).map((tool) => `tool_${tool}`)]);
+  "bridge_dataplane", "nginx_fixture", "restore", "cleanup", "parent_bridge_capture", "parent_bridge_verification",
+  ...Object.keys(BINARIES).map((tool) => `tool_${tool}`)]);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const fail = () => { throw new Error("ingress_acceptance_failed"); };
 const pause = (ms) => new Promise((accept) => setTimeout(accept, ms));
 let stage = "guards";
+
+export function readIngressAcceptanceBridgeState(readText = (path) => readFileSync(path, "utf8")) {
+  const kernelRelease = readText("/proc/sys/kernel/osrelease").trim();
+  // CI is pinned to Ubuntu 24.04 and modern Linux 6.x, where bridge netfilter
+  // sysctls are per-net. Do not apply this initialization to the EL8 host.
+  if (!/^6\.[0-9]+\.[0-9]+(?:[-+.][A-Za-z0-9._+-]+)?$/.test(kernelRelease) || kernelRelease.length > 128) fail();
+  const bridge4 = readText("/proc/sys/net/bridge/bridge-nf-call-iptables").trim();
+  const bridge6 = readText("/proc/sys/net/bridge/bridge-nf-call-ip6tables").trim();
+  if (![bridge4, bridge6].every((value) => value === "0" || value === "1")) fail();
+  return { kernelRelease, bridge4, bridge6 };
+}
 
 export function validateIngressAcceptanceInvocation({ platform, env, argv, pid, uid, netns }) {
   if (platform !== "linux" || env.GITHUB_ACTIONS !== "true" || env.FAOLLA_INGRESS_REAL_ACCEPTANCE !== "1" ||
@@ -61,6 +76,7 @@ async function runIsolated(parentNetns) {
         readlinkSync("/proc/self/ns/net") !== netns) fail();
   };
   assertIsolated();
+  readIngressAcceptanceBridgeState();
   const fixture = mkdtempSync("/tmp/faolla-ingress-acceptance-");
   chmodSync(fixture, 0o700);
   const fixtureIdentity = lstatSync(fixture);
@@ -161,12 +177,15 @@ async function runIsolated(parentNetns) {
     run("ip", ["link", "add", BRIDGE, "type", "bridge"]);
     run("ip", ["address", "add", "172.30.0.1/24", "dev", BRIDGE]);
     run("ip", ["link", "set", BRIDGE, "up"]);
-    // This sysctl is network-namespace local. Bridge hooks must already be on;
-    // no host/global module, sysctl or firewall setting is repaired by this test.
+    // These sysctls are network-namespace local on this CI-only Linux 6.x
+    // fixture. Production capture still requires existing hooks and never
+    // repairs them. Host module preparation is explicit in the separate job.
     stage = "namespace_forwarding";
     assertIsolated(); writeFileSync("/proc/sys/net/ipv4/ip_forward", "1\n");
     stage = "namespace_bridge_hooks";
     for (const name of ["bridge-nf-call-iptables", "bridge-nf-call-ip6tables"]) {
+      assertIsolated();
+      writeFileSync(`/proc/sys/net/bridge/${name}`, "1\n");
       assert.equal(readFileSync(`/proc/sys/net/bridge/${name}`, "utf8").trim(), "1");
     }
     stage = "namespace_endpoints";
@@ -246,6 +265,7 @@ async function runIsolated(parentNetns) {
     assertIsolated();
     group();
     return { ok: true, groups, namespaceIsolated: true, nftVersion: frozen.nftVersion, iptablesVersion: frozen.version4,
+      kernelRelease: readIngressAcceptanceBridgeState().kernelRelease,
       planSha256: hash(plan.script), nginxEvidence: "synthetic_config_and_requests_only" };
   } finally {
     const priorStage = stage;
@@ -341,8 +361,10 @@ export async function main() {
   const checked = validateIngressAcceptanceInvocation({ platform: process.platform, env: process.env, argv: args,
     pid: process.pid, uid: process.getuid?.(), netns: process.platform === "linux" ? readlinkSync("/proc/self/ns/net") : null });
   if (checked.isolated) return runIsolated(checked.parentNetns);
-  stage = "namespace_launch";
+  stage = "parent_bridge_capture";
+  const parentBridge = readIngressAcceptanceBridgeState();
   const parentNetns = readlinkSync("/proc/self/ns/net");
+  stage = "namespace_launch";
   const result = spawnSync("/usr/bin/sudo", ["--non-interactive", "/usr/bin/env", "GITHUB_ACTIONS=true", "FAOLLA_INGRESS_REAL_ACCEPTANCE=1",
     "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "/usr/bin/unshare", "--net", "--mount", "--pid", "--fork",
     "--kill-child=KILL", "--mount-proc", "--", process.execPath, HERE, "--isolated", parentNetns], {
@@ -350,7 +372,12 @@ export async function main() {
     env: { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C", LC_ALL: "C", GITHUB_ACTIONS: "true", FAOLLA_INGRESS_REAL_ACCEPTANCE: "1" },
     shell: false, windowsHide: true,
   });
-  if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || readlinkSync("/proc/self/ns/net") !== parentNetns) {
+  // Always verify parent state, including a failed or timed-out child. A short-
+  // circuit on result.status must not omit this check. Never repair parent state.
+  stage = "parent_bridge_verification";
+  if (readlinkSync("/proc/self/ns/net") !== parentNetns ||
+      JSON.stringify(readIngressAcceptanceBridgeState()) !== JSON.stringify(parentBridge)) fail();
+  if (result.error || result.signal || result.status !== 0 || result.stderr !== "") {
     try {
       const detail = JSON.parse(result.stderr);
       if (detail && Object.keys(detail).sort().join(",") === "error,stage" && detail.error === "ingress_acceptance_failed" && STAGES.has(detail.stage)) stage = detail.stage;
@@ -358,8 +385,9 @@ export async function main() {
     fail();
   }
   const report = JSON.parse(result.stdout);
-  if (!report || Object.keys(report).sort().join(",") !== "groups,iptablesVersion,namespaceIsolated,nftVersion,nginxEvidence,ok,planSha256" ||
+  if (!report || Object.keys(report).sort().join(",") !== "groups,iptablesVersion,kernelRelease,namespaceIsolated,nftVersion,nginxEvidence,ok,planSha256" ||
       report.ok !== true || report.namespaceIsolated !== true || report.groups !== 7 ||
+      report.kernelRelease !== parentBridge.kernelRelease ||
       typeof report.nftVersion !== "string" || !/^nftables v(?:0\.9\.3|1\.0\.[0-9]+)(?: \([^\r\n]{1,80}\))?$/.test(report.nftVersion) ||
       typeof report.iptablesVersion !== "string" || !/^iptables v1\.8\.[0-9]+ \(nf_tables\)$/.test(report.iptablesVersion) ||
       report.nginxEvidence !== "synthetic_config_and_requests_only" || !/^[0-9a-f]{64}$/.test(report.planSha256)) fail();

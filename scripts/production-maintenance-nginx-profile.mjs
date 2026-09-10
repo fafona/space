@@ -264,6 +264,10 @@ export function nginxPlan(dump, version, files, capture, docker, rawProfile) {
     if (!server.children) fail();
     const descendants = flattened(server.children).map((item) => item.node);
     const names = server.children.filter((node) => node.name === "server_name").flatMap((node) => node.args);
+    // An unclassified regex/variable server name could win routing for a
+    // protected hostname even without a recognized proxy_pass in its body.
+    // Do not infer cohost separation from a failed literal-name comparison.
+    if (names.some((name) => name !== "_" && !/^(?:\*\.)?[a-z0-9.-]+$/.test(name))) fail();
     const targets = descendants.filter((node) => node.name === "proxy_pass").flatMap((node) => {
       if (node.args.length !== 1 || node.args[0].includes("$")) fail();
       const match = node.args[0].match(/^https?:\/\/([^/]+)(?:\/.*)?$/); if (!match) fail();
