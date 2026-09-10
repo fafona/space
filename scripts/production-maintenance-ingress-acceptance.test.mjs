@@ -57,6 +57,16 @@ test("all privileged networking happens only after independent network and PID n
   assert.doesNotMatch(source, /run\("docker"|modprobe|systemctl|service\s+nginx|nft.*flush ruleset|\.\.\.process\.env/);
 });
 
+test("CI startup diagnostics disclose only fixed tool and namespace phases without relaxing prerequisites", () => {
+  for (const step of ["namespace_loopback", "namespace_bridge", "namespace_forwarding", "namespace_bridge_hooks", "namespace_endpoints"]) {
+    assert.ok(source.includes(`stage = "${step}";`));
+  }
+  assert.match(source, /stage = `tool_\$\{key\}`;\s*return \[key, realpathSync\(value\)\]/);
+  assert.match(source, /STAGES\.has\(detail\.stage\)/);
+  assert.match(source, /readFileSync\(`\/proc\/sys\/net\/bridge\/\$\{name\}`, "utf8"\)\.trim\(\), "1"/);
+  assert.doesNotMatch(source, /stderr\.write\(error|stderr\.write\(result|JSON\.stringify\(error\)|console\.(?:log|error)\(error/);
+});
+
 test("acceptance keeps real capture install verification and exact restore, with actual data-plane baselines", () => {
   for (const call of ["captureNftFirewall(d)", "installNftFirewall(frozen, plan, d)", "verifyNftFirewall(frozen, plan, d)", "restoreNftFirewall(frozen, plan, d)"]) {
     assert.ok(source.includes(call), call);

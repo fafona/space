@@ -16,12 +16,13 @@ const ROLES = ["kong", "db", "rest", "auth", "realtime", "storage", "meta", "stu
 const FAMILIES = ["kong", "supabase/postgres", "postgrest/postgrest", "supabase/gotrue", "supabase/realtime", "supabase/storage-api", "supabase/postgres-meta", "supabase/studio", "supabase/edge-runtime", "supabase/logflare", "timberio/vector", "darthsim/imgproxy", "supabase/supavisor"];
 const BRIDGE = "faolla_br0";
 const NET_ID = /^net:\[[1-9][0-9]*\]$/;
-const STAGES = new Set(["guards", "namespace_launch", "namespace_setup", "network_capture", "baseline", "nft_install", "input_dataplane",
-  "bridge_dataplane", "nginx_fixture", "restore", "cleanup"]);
 const BINARIES = { nft: "/usr/sbin/nft", ip: "/usr/sbin/ip", iptables: "/usr/sbin/iptables", ip6tables: "/usr/sbin/ip6tables",
   "iptables-save": "/usr/sbin/iptables-save", "ip6tables-save": "/usr/sbin/ip6tables-save", ebtables: "/usr/sbin/ebtables",
   "ebtables-save": "/usr/sbin/ebtables-save", curl: "/usr/bin/curl", openssl: "/usr/bin/openssl", nginx: "/usr/sbin/nginx",
   nsenter: "/usr/bin/nsenter", unshare: "/usr/bin/unshare" };
+const STAGES = new Set(["guards", "namespace_launch", "namespace_setup", "namespace_loopback", "namespace_bridge",
+  "namespace_forwarding", "namespace_bridge_hooks", "namespace_endpoints", "network_capture", "baseline", "nft_install", "input_dataplane",
+  "bridge_dataplane", "nginx_fixture", "restore", "cleanup", ...Object.keys(BINARIES).map((tool) => `tool_${tool}`)]);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const fail = () => { throw new Error("ingress_acceptance_failed"); };
 const pause = (ms) => new Promise((accept) => setTimeout(accept, ms));
@@ -149,18 +150,26 @@ async function runIsolated(parentNetns) {
   const group = () => { groups++; };
   try {
     stage = "namespace_setup";
-    const tools = Object.fromEntries(Object.entries(BINARIES).map(([key, value]) => [key, realpathSync(value)]));
+    const tools = Object.fromEntries(Object.entries(BINARIES).map(([key, value]) => {
+      stage = `tool_${key}`;
+      return [key, realpathSync(value)];
+    }));
     assert.equal(Object.keys(tools).length, Object.keys(BINARIES).length);
+    stage = "namespace_loopback";
     run("ip", ["link", "set", "lo", "up"]);
+    stage = "namespace_bridge";
     run("ip", ["link", "add", BRIDGE, "type", "bridge"]);
     run("ip", ["address", "add", "172.30.0.1/24", "dev", BRIDGE]);
     run("ip", ["link", "set", BRIDGE, "up"]);
     // This sysctl is network-namespace local. Bridge hooks must already be on;
     // no host/global module, sysctl or firewall setting is repaired by this test.
+    stage = "namespace_forwarding";
     assertIsolated(); writeFileSync("/proc/sys/net/ipv4/ip_forward", "1\n");
+    stage = "namespace_bridge_hooks";
     for (const name of ["bridge-nf-call-iptables", "bridge-nf-call-ip6tables"]) {
       assert.equal(readFileSync(`/proc/sys/net/bridge/${name}`, "utf8").trim(), "1");
     }
+    stage = "namespace_endpoints";
     await endpoint("external", 0, "10.200.0.2", true);
     const docker = ingressAcceptanceTopology();
     for (const [index, role] of ["kong", "rest", "auth", "db", "functions"].entries()) {
