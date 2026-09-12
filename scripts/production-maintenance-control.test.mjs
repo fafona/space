@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { emptyPythonLayout } from "./production-maintenance-runtime-layout.mjs";
-import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, validateMaintenanceLaunchProofBindings, maintenanceLaunchBinding, createMaintenanceLaunchCallbacks, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, validateMaintenanceLaunchProofBindings, maintenanceLaunchBinding, createMaintenanceLaunchCallbacks, queryMaintenanceDatabaseQuiet, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
+import { SUPABASE_SCHEDULER_IMAGE } from "./maintenance-supabase-scheduler-profile.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
@@ -157,6 +159,39 @@ test("fixed PostgreSQL projections preserve typed database identity and all requ
   for (const sql of [PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL]) {
     assert.match(sql, /^BEGIN READ ONLY;/); assert.match(sql, /ROLLBACK;$/);
   }
+});
+
+test("quiet routing preserves the legacy SQL and never falls back after an exact Supabase profile failure", () => {
+  const row = { complete: true, schedulerSafe: false, transactions: 0, prepared: 0, databaseOid: 5 };
+  for (const image of ["supabase/postgres:15.8.1.060", "supabase/postgres:15.8.1.085-custom", "supabase/postgres:17.0"]) {
+    const calls = [];
+    assert.equal(queryMaintenanceDatabaseQuiet({ image }, (name, sql) => {
+      calls.push([name, sql]); return row;
+    }), row);
+    assert.deepEqual(calls, [["postgres", PRODUCTION_MAINTENANCE_QUIET_SQL]]);
+  }
+  const calls = [];
+  assert.throws(() => queryMaintenanceDatabaseQuiet({ id: "c".repeat(64), image: SUPABASE_SCHEDULER_IMAGE, databaseOid: 0 }, (name, sql) => {
+    calls.push([name, sql]); throw new Error("synthetic private database error");
+  }), /maintenance_database_scheduler_profile_unverified/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "postgres");
+  assert.notEqual(calls[0][1], PRODUCTION_MAINTENANCE_QUIET_SQL);
+});
+
+test("both initial capture and every held quiet check use the image-bound scheduler profile", () => {
+  const source = readFileSync(new URL("./production-maintenance-control.mjs", import.meta.url), "utf8");
+  for (const name of ["captureDatabase", "assertDatabaseQuiet"]) {
+    const start = source.indexOf(`const ${name} =`);
+    assert.ok(start > 0);
+    const end = source.indexOf("\n  };", start);
+    assert.ok(end > start);
+    const block = source.slice(start, end);
+    assert.match(block, /queryMaintenanceDatabaseQuiet\(proof, \(name, sql\) => queryDatabase\(proof, sql, name\)\)/);
+    assert.doesNotMatch(block, /queryDatabase\(proof, QUIET_SQL\)/);
+  }
+  assert.match(source, /databaseName !== "postgres" && \(proof.image !== SUPABASE_SCHEDULER_IMAGE \|\| databaseName !== "_supabase"\)/);
+  assert.match(source, /\[SUPABASE_SCHEDULER_PSQL_SCRIPT, "faolla-maintenance-readonly", databaseName\]/);
 });
 test("individually valid subordinate proofs must bind to the same operation, boot, runtime, gateway and DB", () => {
   const state = { ...fixture().state(), database: { id: "database-id", image: "database-image" } };

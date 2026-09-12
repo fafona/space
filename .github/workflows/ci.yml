@@ -387,3 +387,26 @@ jobs:
           sudo -n /usr/sbin/modprobe br_netfilter
       - name: Run Real Ingress Rules Only Inside New Network Namespace
         run: node scripts/production-maintenance-ingress-acceptance.mjs
+
+  maintenance-supabase-scheduler:
+    name: Isolated Supabase Scheduler Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      FAOLLA_SUPABASE_SCHEDULER_ACCEPTANCE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Scheduler Acceptance Safety Contracts
+        run: node --test scripts/maintenance-supabase-scheduler-profile.test.mjs scripts/maintenance-supabase-scheduler-acceptance.test.mjs
+      - name: Real Supabase 15.8.1.085 Scheduler SQL in Owned Disposable Container
+        # Runner pins image/container identities, no network/ports/host mounts,
+        # synthetic credentials, and a new tmpfs cluster. No production data.
+        run: node scripts/maintenance-supabase-scheduler-acceptance.mjs

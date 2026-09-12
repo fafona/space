@@ -10,6 +10,7 @@ import { createMaintenanceLaunchJournalStorage } from "./production-maintenance-
 import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } from "./production-maintenance-runtime-diagnostic.mjs";
 import { diagnosePm2Peer, validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
 import { selectMaintenancePublicGateway } from "./maintenance-effective-public-gateway.mjs";
+import { SUPABASE_SCHEDULER_IMAGE, SUPABASE_SCHEDULER_PSQL_SCRIPT, readSupportedSupabaseMaintenanceQuiet } from "./maintenance-supabase-scheduler-profile.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -516,6 +517,14 @@ const ACL_SQL = "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SET LOCAL lo
 export const PRODUCTION_MAINTENANCE_QUIET_SQL = QUIET_SQL;
 export const PRODUCTION_MAINTENANCE_ACL_SQL = ACL_SQL;
 
+// The original profile is unchanged. Only the reviewed, exact Supabase build
+// takes the additional cross-database checks, on EVERY quiet observation. An
+// unsupported or failed Supabase observation never falls back to the old SQL.
+export function queryMaintenanceDatabaseQuiet(proof, query) {
+  if (proof?.image === SUPABASE_SCHEDULER_IMAGE) return readSupportedSupabaseMaintenanceQuiet(proof, query);
+  return query("postgres", QUIET_SQL);
+}
+
 async function productionOperations(request) {
   if (process.platform !== "linux" || process.getuid?.() !== 0) failure("maintenance_host_authority_unavailable");
   if (realpathSync(request.appDir) !== request.appDir) failure("maintenance_app_path_invalid");
@@ -568,20 +577,23 @@ async function productionOperations(request) {
     const item = JSON.parse(execute("docker", [...DOCKER, "inspect", "--type=container", "--format", '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"running":{{json .State.Running}}}', "supabase-db"]));
     if (!exact(item, ["id", "name", "image", "running"]) || !/^[0-9a-f]{64}$/.test(item.id) || item.name !== "/supabase-db" || !item.image.startsWith("supabase/postgres:") || item.running !== true) failure("maintenance_database_identity_invalid");
     const proof = { id: item.id, image: item.image, databaseOid: 0 };
-    const row = queryDatabase(proof, QUIET_SQL);
+    const row = queryMaintenanceDatabaseQuiet(proof, (name, sql) => queryDatabase(proof, sql, name));
     if (!row.complete || !Number.isSafeInteger(row.databaseOid) || row.databaseOid < 1) failure("maintenance_database_visibility_incomplete");
     if (row.schedulerSafe !== true) failure("maintenance_database_scheduler_unsupported");
     proof.databaseOid = row.databaseOid;
     return proof;
   };
-  const queryDatabase = (proof, sql) => {
+  const queryDatabase = (proof, sql, databaseName = "postgres") => {
     if (!exact(proof, ["id", "image", "databaseOid"]) || !/^[0-9a-f]{64}$/.test(proof.id) || !proof.image.startsWith("supabase/postgres:") || !Number.isSafeInteger(proof.databaseOid)) failure("maintenance_database_identity_invalid");
+    if (databaseName !== "postgres" && (proof.image !== SUPABASE_SCHEDULER_IMAGE || databaseName !== "_supabase")) failure("maintenance_database_identity_invalid");
     const observed = JSON.parse(execute("docker", [...DOCKER, "inspect", "--type=container", "--format", '{"id":{{json .Id}},"image":{{json .Config.Image}},"running":{{json .State.Running}}}', "supabase-db"]));
     if (observed.id !== proof.id || observed.image !== proof.image || observed.running !== true) failure("maintenance_database_identity_changed");
-    return JSON.parse(execute("docker", [...DOCKER, "exec", "-i", proof.id, "sh", "-c", MAINTENANCE_PSQL_CONTAINER_SCRIPT], sql).trim());
+    const command = databaseName === "postgres" ? [MAINTENANCE_PSQL_CONTAINER_SCRIPT] :
+      [SUPABASE_SCHEDULER_PSQL_SCRIPT, "faolla-maintenance-readonly", databaseName];
+    return JSON.parse(execute("docker", [...DOCKER, "exec", "-i", proof.id, "sh", "-c", ...command], sql).trim());
   };
   const assertDatabaseQuiet = (proof) => {
-    const row = queryDatabase(proof, QUIET_SQL);
+    const row = queryMaintenanceDatabaseQuiet(proof, (name, sql) => queryDatabase(proof, sql, name));
     if (!exact(row, ["complete", "schedulerSafe", "transactions", "prepared", "databaseOid"]) || row.schedulerSafe !== true || row.complete !== true || row.transactions !== 0 || row.prepared !== 0 || row.databaseOid !== proof.databaseOid) failure("maintenance_database_not_quiet");
   };
   const privateProbeOptions = async () => {
