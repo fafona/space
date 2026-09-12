@@ -199,6 +199,15 @@ CI fixture includes a separate real PostgREST 14.5 regression against only its
 owned disposable network-none database namespace; this proves REST parser
 compatibility, not the production Kong/Nginx path or production maintenance.
 
+Positive Auth settings and REST root probes have a 15-second whole-request and
+body-read deadline: the observed cold gateway path can return valid JSON just
+after eight seconds. All blocked-route probes, including the token-bearing
+out-of-allowlist negative, retain eight seconds. Status, body shape, nonce,
+credential scope, redirect refusal and zero-retry requirements are unchanged;
+test-only timeout injection can only shorten these deadlines. This is a bounded
+probe-budget correction, not evidence that gateway DNS latency has been repaired.
+Recovery still requires actual successful fresh requests and the original TTL.
+
 Before sending a launch, one unique nonce is persisted through separate empty,
 planned and attempted journal states. Only an acknowledged attempted write
 permits one send. Lost ACKs and unknown outcomes never authorize another launch;

@@ -386,6 +386,60 @@ test("headers and stalled body have a bounded timeout even if transport ignores 
   await assert.rejects(verifyIngress(proof, { ...h.d, probeTimeoutMs: 2 }), /http_unverified/);
 });
 
+test("correct single control responses between eight and fifteen seconds pass without widening blocked probes", async (t) => {
+  const h = host(), proof = planIngressInstallation(h.capture(), TOKEN);
+  await installIngress(proof, TOKEN, h.d);
+  const baseFetch = h.d.fetch, counts = new Map();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fetch = (url, options) => {
+    const pathname = new URL(url).pathname;
+    const positive = !!options.headers["x-faolla-maintenance-control"] && ["/rest/v1/", "/auth/v1/settings"].includes(pathname);
+    counts.set(pathname, (counts.get(pathname) ?? 0) + 1);
+    return positive ? new Promise(resolve => setTimeout(() => resolve(baseFetch(url, options)), 8500)) : baseFetch(url, options);
+  };
+  let settled = false;
+  const pending = verifyIngress(proof, { ...h.d, fetch }).then(value => { settled = true; return value; });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(8001); await new Promise(setImmediate);
+  assert.equal(settled, false);
+  t.mock.timers.tick(499);
+  assert.equal((await pending).controlServicesVerified, true);
+  assert.equal(counts.get("/auth/v1/settings"), 1);
+  assert.equal(counts.get("/rest/v1/"), 2, "exactly one positive and one credential-free negative; no retry");
+});
+
+for (const mode of ["headers", "body", "token-negative"]) test(`default ${mode} timeout remains bounded with no second request`, async (t) => {
+  const h = host(), proof = planIngressInstallation(h.capture(), TOKEN);
+  await installIngress(proof, TOKEN, h.d);
+  const baseFetch = h.d.fetch; let stalled = 0, aborted = false;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fetch = (url, options) => {
+    const pathname = new URL(url).pathname;
+    const selected = mode === "token-negative" ? pathname === "/auth/v1/token" : pathname === "/auth/v1/settings";
+    if (!selected) return baseFetch(url, options);
+    assert.ok(options.headers["x-faolla-maintenance-control"]);
+    stalled++; options.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+    return mode === "body" ? new Response(new ReadableStream({ pull() { return new Promise(() => {}); } }),
+      { headers: { "content-type": "application/json" } }) : new Promise(() => {});
+  };
+  const rejected = assert.rejects(verifyIngress(proof, { ...h.d, fetch }), /http_unverified/);
+  await new Promise(setImmediate);
+  const deadline = mode === "token-negative" ? 8000 : 15000;
+  t.mock.timers.tick(deadline - 1); await new Promise(setImmediate); assert.equal(aborted, false);
+  t.mock.timers.tick(1); await rejected;
+  assert.equal(aborted, true); assert.equal(stalled, 1);
+});
+
+test("timeout injection cannot extend either production deadline or admit invalid values", async () => {
+  const h = host(), proof = planIngressInstallation(h.capture(), TOKEN);
+  await installIngress(proof, TOKEN, h.d);
+  for (const probeTimeoutMs of [0, -1, 8001, 15000, 1.5, NaN, Infinity, "8000"]) {
+    const before = h.state.requests.length;
+    await assert.rejects(verifyIngress(proof, { ...h.d, probeTimeoutMs }), /credentials_unavailable/);
+    assert.equal(h.state.requests.length, before);
+  }
+});
+
 test("structural install does not wait for old Websocket workers but held verification must drain them", async () => {
   const h = host(), proof = planIngressInstallation(h.capture(), TOKEN);
   h.state.keepOldWorker = true;

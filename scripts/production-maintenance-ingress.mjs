@@ -384,7 +384,11 @@ async function verifyHttp(proof, d) {
     let reader, expired = false, timer;
     const deadline = new Promise((_, reject) => { timer = setTimeout(() => {
       expired = true; controller.abort(); reject(new Error("production_maintenance_ingress_http_unverified"));
-    }, d.probeTimeoutMs ?? 8000); });
+    // Observed valid gateway responses can arrive just after eight seconds.
+    // Only the two positive upstream probes get this bounded
+    // margin; every blocked route (including a token-bearing negative) keeps
+    // its eight-second deadline. The test override can only shorten either.
+    }, d.probeTimeoutMs ?? (kind === "rest" || kind === "auth" ? 15000 : 8000)); });
     const action = (async () => {
       const upgrade = kind === "blocked" && !control && parsed.protocol === "http:" && (!parsed.port || parsed.port === "80");
       const options = { method: "GET", redirect: upgrade ? "manual" : "error", cache: "no-store", signal: controller.signal,
