@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { captureIngress, planIngressInstallation, validateIngressProof, getIngressProbePlan,
+import { captureIngress, planIngressInstallation, validateIngressProof, getIngressProbePlan, createIngressProbeUrl,
   installIngress, verifyIngress, restoreIngress } from "./production-maintenance-ingress.mjs";
 
 // Synthetic-only host. No default process, filesystem, network or Docker
@@ -65,11 +65,16 @@ function host() {
       assert.equal(options.method, "GET");
       assert.equal(options.redirect, new URL(url).protocol === "http:" ? "manual" : "error");
       assert.equal(options.cache, "no-store");
+      assert.equal(options.headers["cache-control"], "no-cache, no-store");
+      assert.equal(options.headers.pragma, "no-cache");
       assert(new URL(url).searchParams.has("faolla_maintenance_probe"));
       if (state.failFetch) return state.failFetch(url, options);
       const path = new URL(url).pathname;
       const allowed = options.headers["x-faolla-maintenance-control"] === TOKEN;
-      if (allowed && path === "/rest/v1/") return Response.json({ swagger: "2.0", paths: {} });
+      if (allowed && path === "/rest/v1/") {
+        assert.match(new URL(url).searchParams.get("faolla_maintenance_probe"), /^eq\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        return Response.json({ swagger: "2.0", paths: {} });
+      }
       if (allowed && path === "/auth/v1/settings") return Response.json({ external: {}, disable_signup: true });
       return new Response("maintenance", { status: 503 });
     },
@@ -126,6 +131,21 @@ function host() {
   };
   return { state, d, capture: () => captureIngress(INPUT, d) };
 }
+
+test("REST uses a valid PostgREST filter nonce without reusing a cache key or changing other probes", () => {
+  const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+  for (const kind of ["rest", "auth", "blocked"]) {
+    const urls = Array.from({ length: 4 }, () => createIngressProbeUrl("https://db.example.test/rest/v1/?existing=1", kind));
+    assert.equal(new Set(urls).size, 4);
+    for (const url of urls) {
+      const parsed = new URL(url);
+      assert.equal(parsed.origin, "https://db.example.test"); assert.equal(parsed.pathname, "/rest/v1/");
+      assert.equal(parsed.searchParams.get("existing"), "1");
+      assert.match(parsed.searchParams.get("faolla_maintenance_probe"), new RegExp("^" + (kind === "rest" ? "eq\\." : "") + uuid + "$"));
+    }
+  }
+  assert.throws(() => createIngressProbeUrl("https://db.example.test/", "unknown"));
+});
 
 test("capture is read-only; plan preserves every original byte except exact insertions and private token stays private", () => {
   const h = host(), proof = h.capture(), original = JSON.stringify(proof);

@@ -366,11 +366,20 @@ function probeHeaders(d) {
   }
   return { ...value };
 }
+export function createIngressProbeUrl(url, kind) {
+  if (!["blocked", "rest", "auth"].includes(kind)) fail();
+  const parsed = new URL(url);
+  // PostgREST v14 parses unknown query keys as filters even at its OpenAPI
+  // root. Keep a fresh cache key, but supply a valid equality expression.
+  // Schema inspection does not apply these filters to business rows.
+  parsed.searchParams.set("faolla_maintenance_probe", (kind === "rest" ? "eq." : "") + randomUUID());
+  return parsed.href;
+}
 async function verifyHttp(proof, d) {
   const headers = probeHeaders(d);
   const token = proof.installation.privateContent.match(/map \$http_x_faolla_maintenance_control [^\n]+ \{ default 0; "~\\\\A([0-9a-f]{64})\\\\z" 1; \}/)?.[1];
   const request = async (url, control, kind) => {
-    const parsed = new URL(url); parsed.searchParams.set("faolla_maintenance_probe", randomUUID());
+    const parsed = new URL(createIngressProbeUrl(url, kind));
     const controller = new AbortController();
     let reader, expired = false, timer;
     const deadline = new Promise((_, reject) => { timer = setTimeout(() => {

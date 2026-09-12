@@ -11,6 +11,10 @@ import { diagnoseRuntimeCompatibility, validateRuntimeCompatibilityDiagnostic } 
 import { diagnosePm2Peer, validatePm2PeerDiagnostic } from "./production-maintenance-pm2-peer-diagnostic.mjs";
 import { selectMaintenancePublicGateway } from "./maintenance-effective-public-gateway.mjs";
 import { SUPABASE_SCHEDULER_IMAGE, SUPABASE_SCHEDULER_PSQL_SCRIPT, readSupportedSupabaseMaintenanceQuiet } from "./maintenance-supabase-scheduler-profile.mjs";
+import { createMaintenanceRecoveryInspection, decodeMaintenanceRecoveryEvidence, buildMaintenanceRecoveredState,
+  validateMaintenanceRecoveryState } from "./production-maintenance-recovery.mjs";
+import { readMaintenanceRecoverySourceProof, MAINTENANCE_RECOVERY_MIGRATION_SQL,
+  validateMaintenanceRecoveryMigrationProof } from "./production-maintenance-recovery-evidence.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -67,13 +71,13 @@ export function validateMaintenanceLaunchProofBindings(state) {
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (flags.has(key)) failure("maintenance_arguments_invalid");
     if (key === "--json") { flags.set(key, true); continue; }
-    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id"].includes(key)) failure("maintenance_arguments_invalid");
+    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence"].includes(key)) failure("maintenance_arguments_invalid");
     const value = values[++index];
     if (typeof value !== "string" || value.startsWith("--")) failure("maintenance_arguments_invalid");
     flags.set(key, value);
@@ -85,6 +89,19 @@ export function parseMaintenanceRequest(argv) {
       !Number.isSafeInteger(request.appPort) || request.appPort < 1024 || request.appPort > 65535 || !SHA.test(request.targetSha ?? "") ||
       !SHA.test(request.expectedOldSha ?? "") || request.targetSha === request.expectedOldSha ||
       (["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? request.operationId !== null : !UUID.test(request.operationId ?? ""))) failure("maintenance_arguments_invalid");
+  if (["inspect-recovery", "recover-held"].includes(action)) {
+    request.previousTargetSha = flags.get("--previous-target-sha");
+    if (!SHA.test(request.previousTargetSha ?? "") || request.previousTargetSha === request.targetSha ||
+        request.previousTargetSha === request.expectedOldSha) failure("maintenance_arguments_invalid");
+    if (action === "inspect-recovery") {
+      if (flags.has("--recovery-evidence")) failure("maintenance_arguments_invalid");
+    } else {
+      const encoded = flags.get("--recovery-evidence");
+      if (typeof encoded !== "string" || encoded.length < 1 || encoded.length > 16384 || !/^[A-Za-z0-9_-]+$/.test(encoded)) failure("maintenance_arguments_invalid");
+      try { request.recoveryEvidence = decodeMaintenanceRecoveryEvidence(encoded); }
+      catch { failure("maintenance_arguments_invalid"); }
+    }
+  } else if (flags.has("--previous-target-sha") || flags.has("--recovery-evidence")) failure("maintenance_arguments_invalid");
   return request;
 }
 
@@ -106,8 +123,10 @@ export async function createPm2PeerDiagnosticReport(request, diagnose = diagnose
 }
 
 export function validateMaintenanceState(state, request, bootId, now) {
-  if (!exact(state, ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump"]) ||
-      state.version !== 2 || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
+  const keys = ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
+  if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); }
+  if (!exact(state, keys) ||
+      ![2, 3].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
       !Number.isSafeInteger(state.createdAt) || state.createdAt > now || now - state.createdAt > MAX_AGE_MS ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
@@ -272,6 +291,33 @@ export async function runMaintenanceAction(request, ops) {
     if (!verified) failure("maintenance_failure_state_unverified");
     return publicSummary(state);
   };
+
+  if (["inspect-recovery", "recover-held"].includes(request.action)) {
+    // This branch is not a fresh plan, a launch reconciliation, or a general
+    // target override. It can consume only the explicit old failed operation.
+    const snapshot = await ops.readRecoverySnapshot();
+    const state = validateMaintenanceState(snapshot.state, { ...request, targetSha: request.previousTargetSha }, ops.bootId(), ops.now());
+    if (state.version !== 2 || state.phase !== "failed-held" ||
+        ["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"].some(key => state[key] !== null)) failure("maintenance_recovery_state_invalid");
+    ops.validateProofs(state);
+    await assertHeld(state);
+    const source = await ops.readRecoverySourceProof(request);
+    const migrationDigest = await ops.readRecoveryMigrationProof(state);
+    const context = { operationId: request.operationId, previousTargetSha: request.previousTargetSha, targetSha: request.targetSha,
+      expectedOldSha: request.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
+      bootId: ops.bootId(), now: ops.now(), sourceDiffDigest: source.sourceDiffDigest, migrationDigest };
+    const inspection = createMaintenanceRecoveryInspection(state, context);
+    if (request.action === "inspect-recovery") return inspection;
+    // All inspected digests and the runner history grant must still match.
+    // No retry, failure cleanup, new process, or ingress mutation is permitted.
+    await assertHeld(state);
+    // Recheck history freshness AFTER the potentially slow final host checks.
+    const next = buildMaintenanceRecoveredState(state, request.recoveryEvidence, { ...context, now: ops.now() });
+    validateMaintenanceState(next, request, ops.bootId(), ops.now()); ops.validateProofs(next);
+    const saved = await ops.commitRecovery(snapshot, next);
+    if (!equal(saved, next)) failure("maintenance_recovery_write_unconfirmed");
+    return publicSummary(saved, "held");
+  }
 
   if (["plan", "prepare"].includes(request.action)) {
     const captureStep = async (stage, inspect) => {
@@ -553,7 +599,13 @@ async function productionOperations(request) {
   const store = createMaintenanceLaunchJournalStorage({ appName: request.appName,
     withExistingOperationLock: (action) => underExistingOperationLock(request.appName, action),
     captureState: (value) => {
-      validateMaintenanceState(value, { ...request, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
+      const recovery = ["inspect-recovery", "recover-held"].includes(request.action);
+      // Reading T1 and acknowledging T2 are separately bound; ordinary callers
+      // never inherit this compatibility branch from the contents of a file.
+      const targetSha = recovery && value.version === 2 ? request.previousTargetSha : request.targetSha;
+      validateMaintenanceState(value, { ...request, targetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
+      if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
+          value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
       validateProofs(value); return value;
     } });
   // Each loaded object keeps its OWN baseline. A later probe read must never
@@ -598,7 +650,8 @@ async function productionOperations(request) {
   };
   const privateProbeOptions = async () => {
     const loaded = await load();
-    const state = validateMaintenanceState(loaded, { ...request, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
+    const targetSha = ["inspect-recovery", "recover-held"].includes(request.action) && loaded.version === 2 ? request.previousTargetSha : request.targetSha;
+    const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
     if (typeof environment.anonKey !== "string" || !environment.anonKey || /[\r\n]/.test(environment.anonKey)) failure("maintenance_probe_credentials_invalid");
     return { probeHeaders: { apikey: environment.anonKey, authorization: `Bearer ${environment.anonKey}` } };
@@ -608,6 +661,24 @@ async function productionOperations(request) {
     installIngress: async (proof, token, options = {}) => ingress.installIngress(proof, token, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     verifyIngress: async (proof, options = {}) => ingress.verifyIngress(proof, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     restoreIngress: async (proof) => ingress.restoreIngress(proof, await privateProbeOptions()),
+    async readRecoverySnapshot() {
+      const state = await load(), previous = baselines.get(state);
+      return { state, revision: previous.revision, digest: previous.digest };
+    },
+    readRecoverySourceProof: () => readMaintenanceRecoverySourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    readRecoveryMigrationProof: (state) => validateMaintenanceRecoveryMigrationProof(
+      queryDatabase(state.database, MAINTENANCE_RECOVERY_MIGRATION_SQL), state.database.databaseOid, state.createdAt),
+    async commitRecovery(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          request.action !== "recover-held" || next.revision !== previous.revision + 1) failure("maintenance_recovery_write_unconfirmed");
+      try {
+        // buildMaintenanceRecoveredState already advanced revision exactly once.
+        const result = await store.replaceOperationUnderExistingOperationLock({
+          expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(result.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
+    },
     assertNoActiveOperation() {
       try {
         // This is also called by read-only plan, before any operation lock.

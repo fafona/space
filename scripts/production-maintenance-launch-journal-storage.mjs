@@ -5,6 +5,7 @@ import process from "node:process";
 import { TextDecoder } from "node:util";
 import { isProxy } from "node:util/types";
 import { planMaintenanceLaunch, transitionMaintenanceLaunch, validateMaintenanceLaunchJournal } from "./production-maintenance-launch-journal.mjs";
+import { assertMaintenanceRecoveryProgress } from "./production-maintenance-recovery.mjs";
 
 /** Private operation-state persistence; no process-control capability.
  * The caller MUST supply the existing operation lock, held until this callback
@@ -162,6 +163,9 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
   }
 
   function persist(previous, next, binding, parents, operation = false) {
+    // Applies to both full-state replacement and journal-only writes, before
+    // any temporary file is opened. Recovery audit cannot be reset or erased.
+    assertMaintenanceRecoveryProgress(previous.state, next);
     const bytes = encode(next);
     const fd = io.openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     let temporaryIdentity;

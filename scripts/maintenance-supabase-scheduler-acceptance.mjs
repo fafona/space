@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { lstatSync, mkdtempSync, realpathSync, rmdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runPostgrestRootAcceptance } from "./maintenance-postgrest-root-acceptance.mjs";
 import {
   SUPABASE_SCHEDULER_IMAGE, SUPABASE_SCHEDULER_PSQL_SCRIPT,
   SUPABASE_SCHEDULER_DATABASES_SQL, SUPABASE_SCHEDULER_DATABASE_SQL,
@@ -239,6 +240,8 @@ export async function runSupabaseSchedulerAcceptance(overrides = {}) {
     const databases = query("postgres", SUPABASE_SCHEDULER_DATABASES_SQL);
     const proof = { id, image: SUPABASE_SCHEDULER_IMAGE, databaseOid: databases.find(row => row.name === "postgres")?.oid };
     assert.ok(Number.isSafeInteger(proof.databaseOid) && proof.databaseOid > 0);
+    stage = "postgrest_root";
+    const postgrest = await runPostgrestRootAcceptance({ databaseId: id, assertDatabase: () => inspect("running"), docker });
     const waitSetting = async expected => {
       const deadline = Date.now() + 5000;
       do {
@@ -248,9 +251,12 @@ export async function runSupabaseSchedulerAcceptance(overrides = {}) {
       fail();
     };
     const groups = await runSchedulerAcceptanceCases(proof, query, (db, sql) => execute(db, sql, false), waitSetting);
-    return { ok: true, groups, image: SUPABASE_SCHEDULER_IMAGE, serverVersion: "15.8", network: "none",
+    return { ok: true, groups, postgrest, image: SUPABASE_SCHEDULER_IMAGE, serverVersion: "15.8", network: "none",
       evidence: "real_image_synthetic_cluster_not_full_stack" };
   } catch (error) {
+    if (stage === "postgrest_root" && /^postgrest_root_acceptance_(?:image|create|start|ready|legacy_nonce|valid_nonce|cleanup)_failed$/.test(error?.message ?? "")) {
+      stage = error.message; // Fixed companion phases only; never raw Docker/HTTP errors or its synthetic URI.
+    }
     if (owned && ["start_container", "wait_postgres"].includes(stage)) {
       try {
         const raw = JSON.parse(docker(["inspect", owned.id]));

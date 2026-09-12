@@ -6,6 +6,7 @@ import { emptyPythonLayout } from "./production-maintenance-runtime-layout.mjs";
 import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, validateMaintenanceLaunchProofBindings, maintenanceLaunchBinding, createMaintenanceLaunchCallbacks, queryMaintenanceDatabaseQuiet, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 import { SUPABASE_SCHEDULER_IMAGE } from "./maintenance-supabase-scheduler-profile.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
+import { encodeMaintenanceRecoveryEvidence } from "./production-maintenance-recovery.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -97,6 +98,113 @@ test("strict CLI rejects missing, duplicate, unexpected and unbound inputs", () 
   for (const args of [["plan", ...flags, "--app-name", "x"], ["end", ...flags], ["plan", ...flags, "--expected-operation-id", operationId], ["prepare", ...flags, "--force"],
     ["prepare", ...flags.filter((value) => value !== "--json")], ["plan", ...flags.map((value) => value === "/srv/faolla" ? "/srv/../faolla" : value)],
     ["plan", ...flags.map((value) => value === target ? old : value)]]) assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
+});
+
+test("recovery CLI alone accepts explicit previous target and bounded canonical evidence", () => {
+  const previous = "d".repeat(40), operationFlags = ["--expected-operation-id", operationId];
+  const raw = value => Buffer.from(value).toString("base64url");
+  const base = [...flags, ...operationFlags, "--previous-target-sha", previous];
+  assert.equal(parseMaintenanceRequest(["inspect-recovery", ...base]).previousTargetSha, previous);
+  const evidence = { version: 1, state: "recovery-inspected", operationId, targetSha: target, previousTargetSha: previous,
+    expectedOldSha: old, revision: 3, stateDigest: "a".repeat(64), createdAt: 100, sourceDiffDigest: "b".repeat(64),
+    migrationDigest: "c".repeat(64), toolsSha: target, recoveryRunId: "123", recoveryRunAttempt: 1,
+    mainCIrunId: "124", historyDigest: "d".repeat(64), historyCheckedAt: 199 };
+  assert.deepEqual(parseMaintenanceRequest(["recover-held", ...base, "--recovery-evidence", encodeMaintenanceRecoveryEvidence(evidence)]).recoveryEvidence, evidence);
+  for (const args of [
+    ["inspect-recovery", ...flags, ...operationFlags], ["recover-held", ...base],
+    ["inspect-recovery", ...base, "--recovery-evidence", raw('{}')],
+    ["check-held", ...base], ["prepare", ...flags, "--previous-target-sha", previous],
+    ["check-held", ...flags, ...operationFlags, "--recovery-evidence", raw('{}')],
+    ["inspect-recovery", ...base.map(value => value === previous ? target : value)],
+    ...['{}\n', '{"x":1,"x":2}', '[]', 'null', '{ "x":1}', 'PRIVATE', '"' + 'x'.repeat(17000) + '"']
+      .map(value => ["recover-held", ...base, "--recovery-evidence", raw(value)]),
+    ["recover-held", ...base, "--recovery-evidence", "e30="],
+  ]) assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
+});
+
+function recoveryFixture() {
+  const f = fixture("failed-held"), nextTarget = "f".repeat(40);
+  const args = [...flags.map(value => value === target ? nextTarget : value), "--expected-operation-id", operationId, "--previous-target-sha", target];
+  const inspect = parseMaintenanceRequest(["inspect-recovery", ...args]);
+  const source = { sourceDiffDigest: "1".repeat(64), sourceChangedPaths: ["scripts/production-maintenance-control.mjs"] };
+  let migrationDigest = "2".repeat(64);
+  f.ops.readRecoverySnapshot = () => {
+    f.events.push("readRecovery"); const state = f.ops.load();
+    return { state, revision: state.revision, digest: createHash("sha256").update(JSON.stringify(state)).digest("hex") };
+  };
+  f.ops.readRecoverySourceProof = async () => { f.events.push("readSource"); return source; };
+  f.ops.readRecoveryMigrationProof = async () => { f.events.push("readMigrations"); return migrationDigest; };
+  f.ops.commitRecovery = async (snapshot, next) => {
+    assert.equal(snapshot.revision, f.state().revision);
+    assert.equal(snapshot.digest, createHash("sha256").update(JSON.stringify(f.state())).digest("hex"));
+    assert.equal(next.revision, snapshot.revision + 1);
+    f.events.push("commitRecovery"); f.replace(structuredClone(next)); return structuredClone(next);
+  };
+  return { ...f, inspect, nextTarget, source, setMigration: value => { migrationDigest = value; },
+    grant: inspection => ({ ...inspection, toolsSha: nextTarget, recoveryRunId: "123", recoveryRunAttempt: 1,
+      mainCIrunId: "124", historyDigest: "3".repeat(64), historyCheckedAt: 199 }),
+    recover: evidence => parseMaintenanceRequest(["recover-held", ...args, "--recovery-evidence", encodeMaintenanceRecoveryEvidence(evidence)]),
+  };
+}
+
+test("recovery inspection is read-only and bound recovery commits once without refreshing original TTL or frozen proof", async () => {
+  const f = recoveryFixture(), original = structuredClone(f.state());
+  const inspection = await runMaintenanceAction(f.inspect, f.ops);
+  assert.equal(inspection.state, "recovery-inspected"); assert.equal(inspection.targetSha, f.nextTarget);
+  assert.equal(inspection.previousTargetSha, target); assert.equal(inspection.revision, original.revision);
+  assert.equal(inspection.createdAt, original.createdAt); assert.deepEqual(f.state(), original);
+  assert.deepEqual(f.events, ["readRecovery", "validateProofs", "verifyIngress", "assertStopped", "assertQuiet", "readSource", "readMigrations"]);
+  f.events.length = 0;
+  const result = await runMaintenanceAction(f.recover(f.grant(inspection)), f.ops);
+  assert.deepEqual(result, { version: 1, operationId, targetSha: f.nextTarget, expectedOldSha: old, state: "held" });
+  const saved = f.state(); assert.equal(saved.version, 3); assert.equal(saved.revision, original.revision + 1);
+  assert.equal(saved.createdAt, original.createdAt); assert.equal(saved.phase, "held");
+  for (const key of Object.keys(original).filter(key => !["version", "revision", "targetSha", "phase"].includes(key))) assert.deepEqual(saved[key], original[key]);
+  assert.equal(f.events.filter(value => value === "commitRecovery").length, 1);
+  assert.equal(f.events.some(value => /^(?:save:|create$|installIngress$|restoreIngress$|stopRuntime$|send:)/.test(value)), false);
+  assert.equal(validateMaintenanceState(saved, { ...f.inspect, targetSha: f.nextTarget }, boot, 200), saved);
+  await assert.rejects(runMaintenanceAction(f.recover(f.grant(inspection)), f.ops));
+  assert.equal(f.events.filter(value => value === "commitRecovery").length, 1);
+});
+
+test("recovery requires still-held full checks and identical inspected state, source and migration digests", async () => {
+  for (const mutate of [
+    f => { f.state().revision++; }, f => { f.source.sourceDiffDigest = "4".repeat(64); },
+    f => { f.setMigration("5".repeat(64)); }, f => { f.ops.assertDatabaseQuiet = async () => { throw new Error("quiet-unverified"); }; },
+    f => { f.ops.verifyIngress = async () => { throw new Error("gateway-unverified"); }; },
+    f => { f.ops.assertRuntimeStopped = async () => { throw new Error("writer-unverified"); }; },
+    f => { f.ops.readRecoverySourceProof = async () => { throw new Error("source-unverified"); }; },
+    f => { f.ops.readRecoveryMigrationProof = async () => { throw new Error("registry-unverified"); }; },
+  ]) {
+    const f = recoveryFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops); f.events.length = 0;
+    mutate(f); const original = structuredClone(f.state());
+    await assert.rejects(runMaintenanceAction(f.recover(f.grant(inspection)), f.ops));
+    assert.equal(f.events.includes("commitRecovery"), false); assert.deepEqual(f.state(), original);
+  }
+});
+
+test("recovery rejects wrong phase or any launch evidence, stale history, and never retries an ambiguous commit", async () => {
+  for (const mutate of [f => { f.state().phase = "held"; }, f => { f.state().phase = "failed-unknown"; },
+    f => { addConfirmed(f.state(), "paused-web"); }, f => { f.state().candidate = { targetSha: target }; }]) {
+    const f = recoveryFixture(); mutate(f);
+    await assert.rejects(runMaintenanceAction(f.inspect, f.ops));
+    assert.equal(f.events.includes("readSource"), false); assert.equal(f.events.includes("commitRecovery"), false);
+  }
+  const stale = recoveryFixture(), inspection = await runMaintenanceAction(stale.inspect, stale.ops);
+  stale.ops.now = () => 400000;
+  await assert.rejects(runMaintenanceAction(stale.recover(stale.grant(inspection)), stale.ops));
+  assert.equal(stale.events.includes("commitRecovery"), false);
+  const slow = recoveryFixture(), slowInspection = await runMaintenanceAction(slow.inspect, slow.ops);
+  let heldChecks = 0;
+  slow.ops.assertDatabaseQuiet = async () => { if (++heldChecks === 2) slow.ops.now = () => 400000; };
+  await assert.rejects(runMaintenanceAction(slow.recover(slow.grant(slowInspection)), slow.ops));
+  assert.equal(slow.events.includes("commitRecovery"), false);
+  const f = recoveryFixture(), observed = await runMaintenanceAction(f.inspect, f.ops);
+  let sends = 0;
+  f.ops.commitRecovery = async (_snapshot, next) => { sends++; f.replace(structuredClone(next)); throw new Error("fsync-unconfirmed"); };
+  await assert.rejects(runMaintenanceAction(f.recover(f.grant(observed)), f.ops), /fsync-unconfirmed/);
+  await assert.rejects(runMaintenanceAction(f.recover(f.grant(observed)), f.ops));
+  assert.equal(sends, 1); assert.equal(f.state().version, 3); assert.equal(f.events.some(value => value.startsWith("save:")), false);
 });
 test("runtime diagnosis has no operation and only invokes its read-only inspector", async () => {
   const input = request("diagnose-runtime");
