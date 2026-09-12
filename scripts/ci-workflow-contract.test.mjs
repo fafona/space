@@ -60,7 +60,21 @@ test("real PM2 transport acceptance is mandatory inside Quality without adding o
   assert.doesNotMatch(step, /continue-on-error|\bif:|secrets\.|PM2_HOME:|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
   const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
   assert.deepEqual(jobs, ["quality", "browser", "qr-database", "transaction-database", "redemption-database",
-    "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress"]);
+    "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress", "maintenance-supabase-scheduler"]);
+});
+
+test("real Supabase scheduler acceptance is a required independent job without weakening the previous nine", () => {
+  const job = jobBlock("maintenance-supabase-scheduler");
+  assert.match(job, /name:\s*Isolated Supabase Scheduler Acceptance/);
+  assert.match(job, /runs-on:\s*ubuntu-24\.04/);
+  assert.match(job, /timeout-minutes:\s*12/);
+  assert.match(job, /FAOLLA_SUPABASE_SCHEDULER_ACCEPTANCE:\s*"1"/);
+  assert.match(job, /persist-credentials:\s*false/);
+  assert.match(job, /node-version:\s*20/);
+  assert.match(job, /node --test scripts\/maintenance-supabase-scheduler-profile\.test\.mjs scripts\/maintenance-supabase-scheduler-acceptance\.test\.mjs/);
+  assert.match(job, /run: node scripts\/maintenance-supabase-scheduler-acceptance\.mjs/);
+  assert.doesNotMatch(job, /\bneeds:|continue-on-error|\bif:|secrets\.|services:|ports:|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|\.env\.local/);
+  assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/maintenance-supabase-scheduler-acceptance.mjs"), false);
 });
 
 test("both CI test entrypoints retain native filesystem coverage without concurrent sibling fixtures", () => {

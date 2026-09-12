@@ -319,3 +319,51 @@ BaoTa installation; the real protected plan and subsequent held checks remain
 mandatory. No snapshot prevents a later privileged administrator or service
 from changing the host: configuration changes during the window are prohibited
 and invalidate the operation when detected.
+
+## Fixed Supabase 15 scheduler compatibility
+
+The exact `supabase/postgres:15.8.1.085` image uses an additional read-only
+profile. Other images retain the original quiet SQL. A failed new-profile
+observation never falls back to that original query or authorizes maintenance.
+The profile requires PostgreSQL 15.8, Vault 0.3.1, the available TimescaleDB
+2.16.1 and pg_tle 1.4.0 versions, and only the reviewed extension/preload sets.
+Both databases reject unknown extensions; Vault, when present, must be 0.3.1.
+
+Every initial capture and held quiet check requires precisely the two
+connectable, non-template databases `postgres` and `_supabase`. Their names and
+numeric OIDs are checked before and after that observation. Each database must
+have complete read-only visibility, no TimescaleDB, TimescaleDB OSM or pg_tle
+extension, and no TimescaleDB catalog/configuration schema. The caller binds
+each query to the same frozen running container; the secondary connection uses
+the existing configured database credential and a fixed database-name argument,
+never SQL interpolation or a caller-selected endpoint.
+
+The main-database query additionally requires both pg_tle authentication/password
+features to be `off`, no pg_tle background worker, and no TimescaleDB worker
+except its exact background launcher. It retains the absent cron job table,
+matching cron database, disabled subscriptions, complete activity visibility,
+cluster-wide transaction/prepared counts, and frozen primary database OID checks.
+All queries use bounded read-only transactions and a catalog-only search path.
+Unknown results, extra databases, incomplete visibility and observed drift fail
+closed. No extension, configuration, job, credential or running database process
+is modified to satisfy these checks.
+
+This is a task-source check, not a claim that PostgreSQL has no background
+processes or that independent database queries form one transaction snapshot.
+The TimescaleDB launcher can still inspect catalogs; the reviewed loader starts
+a scheduler only where its extension is installed. The secondary database OID
+is checked within each observation, not persisted as an operation-wide snapshot.
+Ingress closure, stopped business processes, repeated held checks and the ban
+on concurrent privileged configuration changes remain mandatory.
+
+The image's fixed build source is
+[`b2c91b0a`](https://github.com/supabase/postgres/tree/b2c91b0a29332cec79473ee8a6dfa0e205cd0aaa).
+The review follows its Nix extension pins, not unused Docker build arguments:
+[TimescaleDB loader](https://github.com/timescale/timescaledb/blob/2.16.1/src/loader/bgw_launcher.c),
+[pg_tle client authentication](https://github.com/aws/pg_tle/blob/v1.4.0/src/clientauth.c),
+[pg_tle password checks](https://github.com/aws/pg_tle/blob/v1.4.0/src/passcheck.c),
+[Vault initialization](https://github.com/supabase/vault/blob/6e0cd916242d922a646e4d611cc215e09dd429f4/src/supabase_vault.c),
+[plan_filter](https://github.com/pgexperts/pg_plan_filter/blob/5081a7b5cb890876e67d8e7486b6a64c38c9a492/plan_filter.c),
+and [plpgsql_check](https://github.com/okbob/plpgsql_check/tree/7e23f9daa6b5408151aaec197c6cf6c948e23957).
+The latter hooks can perform synchronous work when explicitly invoked; they are
+not described as universally read-only or a replacement for the writer fence.
