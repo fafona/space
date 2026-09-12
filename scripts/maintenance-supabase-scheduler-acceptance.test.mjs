@@ -23,7 +23,7 @@ function container() {
     HostConfig: { NetworkMode: "none", ReadonlyRootfs: true, Privileged: false, Binds: [], PortBindings: {},
       PublishAllPorts: false, Devices: [], CapDrop: ["ALL"], CapAdd: [], SecurityOpt: ["no-new-privileges"],
       PidMode: "", IpcMode: "private", UTSMode: "", PidsLimit: 256, Memory: 1073741824,
-      Tmpfs: { "/var/lib/postgresql/data": "rw,nosuid,nodev,noexec,size=512m,mode=1777", "/tmp": "rw,nosuid,nodev,size=32m,mode=1777" } },
+      Tmpfs: { "/var/lib/postgresql/data": "rw,nosuid,nodev,noexec,size=512m,mode=1777", "/tmp": "rw,nosuid,nodev,exec,size=32m,mode=1777" } },
     NetworkSettings: { Networks: { none: {} } }, State: { Status: "running", Running: true } }];
 }
 function invocation() {
@@ -55,6 +55,8 @@ test("creation pins official image with no host network, mount, port, or privile
   assert.equal(args[args.indexOf("--entrypoint") + 1], "/bin/sh");
   assert.equal(args.at(-3), SUPABASE_SCHEDULER_IMAGE);
   assert.ok(args.includes("--read-only")); assert.ok(args.includes("--tmpfs"));
+  assert.ok(args.includes("/tmp:rw,nosuid,nodev,exec,size=32m,mode=1777"));
+  assert.ok(args.includes("/var/lib/postgresql/data:rw,nosuid,nodev,noexec,size=512m,mode=1777"));
   for (const forbidden of ["--privileged", "--publish", "-p", "-v", "--volume", "--mount", "--pid", "--network=host"]) assert.ok(!args.includes(forbidden));
   assert.throws(() => schedulerAcceptanceCreateArgs("production", expected.nonce));
   assert.throws(() => schedulerAcceptanceCreateArgs(expected.name, "other"));
@@ -87,6 +89,15 @@ test("host access or writable mount drift fails closed before any SQL or cleanup
     v => v[0].HostConfig.SecurityOpt = [], v => v[0].HostConfig.Memory = 0]) {
     const value = container(); mutate(value); assert.throws(() => validateSchedulerAcceptanceContainer(value, expected, "running"), /acceptance_failed/);
   }
+});
+test("only the private synthetic-key tmpfs is executable while data remains noexec", () => {
+  for (const [path, flags] of [["/tmp", "rw,nosuid,nodev,size=32m,mode=1777"],
+    ["/var/lib/postgresql/data", "rw,nosuid,nodev,exec,size=512m,mode=1777"]]) {
+    const value = container(); value[0].HostConfig.Tmpfs[path] = flags;
+    assert.throws(() => validateSchedulerAcceptanceContainer(value, expected, "running"));
+  }
+  assert.match(SCHEDULER_ACCEPTANCE_START, /chmod 700 \/tmp\/fixture-vault-key/);
+  assert.doesNotMatch(SCHEDULER_ACCEPTANCE_START, /chmod 777|chown|sudo|gosu/);
 });
 test("empty cluster binding rejects wrong version, populated database or missing actual preload", () => {
   const initial = { version: "150008", data: "/var/lib/postgresql/data/fixture", database: "postgres", user: "supabase_admin", superuser: "on",

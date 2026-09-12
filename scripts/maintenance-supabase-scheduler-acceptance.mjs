@@ -68,7 +68,9 @@ export function schedulerAcceptanceCreateArgs(name, nonce) {
     "--network", "none", "--read-only", "--user", "postgres", "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges", "--pids-limit", "256", "--memory", "1g", "--shm-size", "128m",
     "--tmpfs", "/var/lib/postgresql/data:rw,nosuid,nodev,noexec,size=512m,mode=1777",
-    "--tmpfs", "/tmp:rw,nosuid,nodev,size=32m,mode=1777", "--env", `POSTGRES_PASSWORD=${PASSWORD}`,
+    // Docker tmpfs defaults to noexec. Only this private fixture /tmp needs
+    // exec for Vault's fixed synthetic getkey script; PGDATA stays noexec.
+    "--tmpfs", "/tmp:rw,nosuid,nodev,exec,size=32m,mode=1777", "--env", `POSTGRES_PASSWORD=${PASSWORD}`,
     "--env", "POSTGRES_DB=postgres", "--entrypoint", "/bin/sh", SUPABASE_SCHEDULER_IMAGE,
     "-c", SCHEDULER_ACCEPTANCE_START];
 }
@@ -93,7 +95,7 @@ export function validateSchedulerAcceptanceContainer(value, expected, state) {
       !host.SecurityOpt?.includes("no-new-privileges") || host.PidMode || host.IpcMode === "host" ||
       host.UTSMode === "host" || host.PidsLimit !== 256 || host.Memory !== 1073741824 ||
       host.Tmpfs?.["/var/lib/postgresql/data"] !== "rw,nosuid,nodev,noexec,size=512m,mode=1777" ||
-      host.Tmpfs?.["/tmp"] !== "rw,nosuid,nodev,size=32m,mode=1777" || Object.keys(host.Tmpfs ?? {}).length !== 2 ||
+      host.Tmpfs?.["/tmp"] !== "rw,nosuid,nodev,exec,size=32m,mode=1777" || Object.keys(host.Tmpfs ?? {}).length !== 2 ||
       row.State?.Status !== state || (state === "running" && row.State?.Running !== true)) fail();
   return true;
 }
