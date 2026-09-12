@@ -366,16 +366,29 @@ function probeHeaders(d) {
   }
   return { ...value };
 }
+export function createIngressProbeUrl(url, kind) {
+  if (!["blocked", "rest", "auth"].includes(kind)) fail();
+  const parsed = new URL(url);
+  // PostgREST v14 parses unknown query keys as filters even at its OpenAPI
+  // root. Keep a fresh cache key, but supply a valid equality expression.
+  // Schema inspection does not apply these filters to business rows.
+  parsed.searchParams.set("faolla_maintenance_probe", (kind === "rest" ? "eq." : "") + randomUUID());
+  return parsed.href;
+}
 async function verifyHttp(proof, d) {
   const headers = probeHeaders(d);
   const token = proof.installation.privateContent.match(/map \$http_x_faolla_maintenance_control [^\n]+ \{ default 0; "~\\\\A([0-9a-f]{64})\\\\z" 1; \}/)?.[1];
   const request = async (url, control, kind) => {
-    const parsed = new URL(url); parsed.searchParams.set("faolla_maintenance_probe", randomUUID());
+    const parsed = new URL(createIngressProbeUrl(url, kind));
     const controller = new AbortController();
     let reader, expired = false, timer;
     const deadline = new Promise((_, reject) => { timer = setTimeout(() => {
       expired = true; controller.abort(); reject(new Error("production_maintenance_ingress_http_unverified"));
-    }, d.probeTimeoutMs ?? 8000); });
+    // Observed valid gateway responses can arrive just after eight seconds.
+    // Only the two positive upstream probes get this bounded
+    // margin; every blocked route (including a token-bearing negative) keeps
+    // its eight-second deadline. The test override can only shorten either.
+    }, d.probeTimeoutMs ?? (kind === "rest" || kind === "auth" ? 15000 : 8000)); });
     const action = (async () => {
       const upgrade = kind === "blocked" && !control && parsed.protocol === "http:" && (!parsed.port || parsed.port === "80");
       const options = { method: "GET", redirect: upgrade ? "manual" : "error", cache: "no-store", signal: controller.signal,

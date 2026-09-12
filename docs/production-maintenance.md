@@ -137,12 +137,76 @@ commit and clean worktree; it does not remove operation state or change the
 application directory's permissions. Temporary output capture is not executable
 controller source and remains separately scoped.
 
-The private operation state is version 2 and includes `revision`, `launchDisk`,
-`launchJournal` and `finalDump`. Older state is rejected, not silently migrated.
+New private operations use version 2 and include `revision`, `launchDisk`,
+`launchJournal` and `finalDump`. The separately confirmed recovery below is the
+only version 2 to version 3 conversion; older state is never silently migrated.
 All replacements use the same existing operation lock and the actual previous
 revision and byte digest; they require file fsync, atomic rename, parent fsync
 and exact readback. This is not filesystem CAS against unrelated root writers,
 a power-loss acceptance result, or permission to steal a stale lock.
+
+## Explicit pre-migration failed-held recovery
+
+`recover-held` is a one-time, manually confirmed transition, not a retry of
+`prepare`, an arbitrary retarget, or permission to reopen production. It requires
+`RECOVER_PRODUCTION_MAINTENANCE`, the original operation UUID and old build, the
+original `previous_target_sha` (T1), and an exact current-main target (T2) with
+successful push CI. It runs only on attempt 1 under the same `production-deploy`
+workflow concurrency lock as backup, migration, readiness and deployment.
+
+The remote `inspect-recovery` phase is read-only. Only an unexpired version 2
+`failed-held` operation on the original boot is eligible; candidate, resumed,
+launch-disk, launch-journal and final-dump fields must all still be null. Actual
+ingress isolation, stopped original processes and database quiet must pass.
+The executing clean T2 checkout must descend from T1 and differ only through
+the exact recovery/probe/controller/test/documentation file allowlist. No app,
+migration, dependency, deletion, rename, symlink or file-mode change is accepted.
+The source proof binds the exact old/new Git blob IDs, not just file names.
+
+The database proof uses a fixed read-only, timeout-bounded transaction against
+the frozen database identity. It hashes the complete ordered migration registry
+metadata, refuses any applied timestamp later than the original operation
+creation (including microseconds), and requires the cutover migration to remain
+absent. It never reads application records or executes a migration.
+
+The runner then independently rechecks current main and successful exact CI,
+and reads complete, bounded GitHub histories for backup, migration, readiness
+and deployment through the configured authenticated API. Any run/attempt active
+or updated in the original maintenance window is refused regardless of outcome;
+missing pages, inventory changes and unknown metadata fail closed. The resulting
+five-minute grant binds U, O, T1, T2, the original state bytes/revision/creation,
+source and registry digests, this workflow run/attempt, CI run and history digest.
+An inspection or a well-shaped grant is not itself a `held` receipt.
+
+The remote `recover-held` phase rechecks those original bytes/revision and fresh
+source, registry, ingress, process and database evidence under the existing
+private operation lock. A single compare-and-replace writes version 3 `held`
+with target T2 and an immutable recovery audit. All original frozen identities,
+credentials, operation UUID and creation time remain unchanged. The original
+12-hour maintenance deadline is never extended. Subsequent state replacements
+must retain the recovery audit; downgrade, rebind and replay are refused.
+
+No service start, ingress opening, backup, migration or automatic retry occurs
+during recovery. Unknown write/SSH outcomes require read-only reconciliation,
+not another recovery invocation. After a verified T2 `held` receipt, start a
+**new** backup and the normal migration/readiness/deployment chain bound to
+T2/U/O. T1 artifacts cannot be reused. Only normal verified `end` may reopen.
+
+The REST root health probe retains a fresh nonce and no-cache headers but uses
+PostgREST filter syntax `faolla_maintenance_probe=eq.<uuid>`. A raw UUID is parsed
+as an invalid filter by PostgREST, not as an ignored cache-buster. The scheduler
+CI fixture includes a separate real PostgREST 14.5 regression against only its
+owned disposable network-none database namespace; this proves REST parser
+compatibility, not the production Kong/Nginx path or production maintenance.
+
+Positive Auth settings and REST root probes have a 15-second whole-request and
+body-read deadline: the observed cold gateway path can return valid JSON just
+after eight seconds. All blocked-route probes, including the token-bearing
+out-of-allowlist negative, retain eight seconds. Status, body shape, nonce,
+credential scope, redirect refusal and zero-retry requirements are unchanged;
+test-only timeout injection can only shorten these deadlines. This is a bounded
+probe-budget correction, not evidence that gateway DNS latency has been repaired.
+Recovery still requires actual successful fresh requests and the original TTL.
 
 Before sending a launch, one unique nonce is persisted through separate empty,
 planned and attempted journal states. Only an acknowledged attempted write

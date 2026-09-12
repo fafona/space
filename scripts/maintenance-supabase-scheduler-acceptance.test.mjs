@@ -205,6 +205,14 @@ test("transport uses fixed Docker socket, private empty config, exact-ID cleanup
   assert.doesNotMatch(source, /docker\(\["(?:system|volume|container)", "prune"|rmSync\(|process\.env\.(?:DATABASE_URL|DOCKER_HOST|POSTGRES_PASSWORD)/);
   assert.match(source, /rmdirSync\(configDirectory\)/);
 });
+test("real PostgREST root regression shares only the verified new DB namespace and completes before all nine scheduler groups", () => {
+  const call = source.indexOf("await runPostgrestRootAcceptance({ databaseId: id, assertDatabase: () => inspect(\"running\"), docker })");
+  assert.ok(call > source.indexOf('stage = "fixture_setup"'));
+  assert.ok(call > source.indexOf("validateSchedulerAcceptanceInitial(query(\"postgres\", INITIAL_SQL))"));
+  assert.ok(call < source.indexOf("const groups = await runSchedulerAcceptanceCases"));
+  assert.match(source, /return \{ ok: true, groups, postgrest,/);
+  assert.ok(source.includes('stage === "postgrest_root" && /^postgrest_root_acceptance_(?:image|create|start|ready|legacy_nonce|valid_nonce|cleanup)_failed$/'));
+});
 test("startup diagnostics expose only bounded owned-container state/logs and redact synthetic credentials", () => {
   const state = { Status: "exited", ExitCode: 1, OOMKilled: false, Config: { Env: ["SECRET_SENTINEL"] }, Pid: 1234 };
   const result = schedulerAcceptanceStartupDiagnostic(state, "initdb starting\nfaolla-ci-only-disposable-scheduler\n", "FATAL: fixture error\nPOSTGRES_PASSWORD=SECRET_SENTINEL");
