@@ -1116,6 +1116,7 @@ jobs:
               '[deploy] deploy_preflight_booking_persistence_integrity_failed' \
               '[deploy] deploy_preflight_booking_persistence_invocation_failed' \
               '[deploy] deploy_preflight_booking_persistence_transient_failed' \
+              '[deploy] deploy_preflight_maintenance_handoff_failed' \
               '[deploy] deploy_preflight_post_booking_runtime_identity_unverified' \
               '[deploy] deploy_preflight_post_booking_web_identity_unverified' \
               '[deploy] deploy_preflight_previous_release_evidence_unverified' \

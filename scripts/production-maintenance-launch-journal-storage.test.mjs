@@ -7,6 +7,8 @@ import test from "node:test";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch, validateMaintenanceLaunchJournal } from "./production-maintenance-launch-journal.mjs";
 import { createMaintenanceLaunchJournalStorage } from "./production-maintenance-launch-journal-storage.mjs";
 import { createMaintenanceRecoveryInspection, buildMaintenanceRecoveredState, validateMaintenanceRecoveryState } from "./production-maintenance-recovery.mjs";
+import { MAINTENANCE_CONTINUATION_INCIDENT, createMaintenanceContinuationInspection, buildMaintenanceContinuedState,
+  validateMaintenanceContinuationState } from "./production-maintenance-continuation.mjs";
 
 const SECRET = "PRIVATE_STATE_MUST_NOT_APPEAR_IN_ERROR";
 const ROOT = "/var/lib/faolla-maintenance/faolla";
@@ -355,6 +357,90 @@ test("ambiguous recovery rename is not replayed, and journal-only writes also en
   assert.equal(f.events.filter(value => value === "rename").length, 1);
   const source = readFileSync(new URL("./production-maintenance-launch-journal-storage.mjs", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("function persist("), source.indexOf("return Object.freeze({"));
-  assert.ok(body.indexOf("assertMaintenanceRecoveryProgress(previous.state, next)") < body.indexOf("io.openSync(temporary"));
+  assert.ok(body.indexOf("assertMaintenanceContinuationProgress(previous.state, next)") < body.indexOf("io.openSync(temporary"));
   assert.match(source, /applyUnderExistingOperationLock[\s\S]+return persist\(previous, next/);
+});
+
+function continuationStorageFixture() {
+  const f = fixture(), incident = MAINTENANCE_CONTINUATION_INCIDENT, bootId = f.bound.daemon.bootId;
+  const now = Date.parse("2026-09-12T22:00:00.000Z"), targetSha = "e".repeat(40);
+  const original = { version: 2, revision: 3, operationId: incident.operationId, targetSha: incident.originalTargetSha,
+    expectedOldSha: incident.expectedOldSha, appDir: "/srv/faolla", appName: "faolla", appPort: 3000, bootId,
+    createdAt: incident.createdAt, phase: "failed-held", runtime: { frozen: true }, ingress: { original: true }, database: { id: "c".repeat(64) },
+    publicSupabaseUrl: "https://faolla.com/", tokenHash: "d".repeat(64), candidate: null, resumed: null, launchDisk: null, launchJournal: null, finalDump: null };
+  const recoveryContext = { operationId: original.operationId, previousTargetSha: original.targetSha, targetSha: incident.previousTargetSha,
+    expectedOldSha: original.expectedOldSha, expectedRevision: original.revision, expectedDigest: createHash("sha256").update(JSON.stringify(original)).digest("hex"),
+    bootId, now: incident.createdAt + 1000, sourceDiffDigest: "1".repeat(64), migrationDigest: "2".repeat(64) };
+  const recovered = buildMaintenanceRecoveredState(original, { ...createMaintenanceRecoveryInspection(original, recoveryContext),
+    toolsSha: recoveryContext.targetSha, recoveryRunId: "34715768455", recoveryRunAttempt: 1, mainCIrunId: "34715352249",
+    historyDigest: "3".repeat(64), historyCheckedAt: incident.createdAt + 999 }, recoveryContext);
+  f.put(FILE, "file", JSON.stringify(recovered));
+  f.options.captureState = value => {
+    assert.equal(value.appName, "faolla"); assert.ok([3, 4].includes(value.version));
+    if (value.version === 3) validateMaintenanceRecoveryState(value, { bootId, now });
+    else validateMaintenanceContinuationState(value, { bootId, now });
+    return value;
+  };
+  const store = f.store(), bound = { ...f.bound, operationId: incident.operationId, targetSha,
+    release: { ...f.bound.release, path: "/srv/faolla.releases/" + targetSha.slice(0, 12) + "-20260909120000" } };
+  const prepare = async () => {
+    const snapshot = await store.readOperationUnderExistingOperationLock();
+    const context = { operationId: incident.operationId, previousTargetSha: incident.previousTargetSha, targetSha,
+      expectedOldSha: incident.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest, bootId, now,
+      sourceDiffDigest: "4".repeat(64), migrationDigest: "5".repeat(64) };
+    const evidence = { ...createMaintenanceContinuationInspection(snapshot.state, context), toolsSha: targetSha,
+      continuationRunId: "34730000000", continuationRunAttempt: 1, mainCIrunId: "34729999999", historyDigest: "6".repeat(64), historyCheckedAt: now - 1 };
+    return { snapshot, next: buildMaintenanceContinuedState(snapshot.state, evidence, context) };
+  };
+  const replace = (snapshot, next) => store.replaceOperationUnderExistingOperationLock({ expectedRevision: snapshot.revision, expectedDigest: snapshot.digest, next });
+  return { ...f, store, bound, prepare, replace };
+}
+
+test("incident continuation persists one v3 to v4 CAS and both audits survive later legitimate state bookkeeping", async () => {
+  const f = continuationStorageFixture(), { snapshot, next } = await f.prepare(), saved = await f.replace(snapshot, next);
+  assert.equal(saved.revision, 5); assert.equal(saved.state.version, 4); assert.deepEqual(saved.state.recovery, snapshot.state.recovery);
+  assert.deepEqual(saved.state.continuation, next.continuation);
+  assert.equal(saved.state.createdAt, snapshot.state.createdAt);
+  assert.ok(f.events.indexOf("sync:file") < f.events.indexOf("rename")); assert.ok(f.events.indexOf("rename") < f.events.indexOf("sync:directory"));
+  await assert.rejects(f.replace(snapshot, next), /storage_conflict$/); assert.equal(f.events.filter(v => v === "rename").length, 1);
+  const later = await f.replace(saved, { ...saved.state, revision: 6, phase: "failed-held", ingress: { original: true, retiringWorkers: [] } });
+  assert.deepEqual(later.state.recovery, saved.state.recovery); assert.deepEqual(later.state.continuation, saved.state.continuation);
+});
+test("continuation store rejects arbitrary changes and audit loss or downgrade before opening a temporary file", async () => {
+  for (const mutate of [v => { v.runtime.frozen = false; }, v => { v.createdAt++; }, v => { v.ingress = { replaced: true }; },
+    v => { v.recovery.evidence.historyDigest = "a".repeat(64); }, v => { v.continuation.evidence.stateDigest = "b".repeat(64); },
+    v => { v.phase = "candidate"; }, v => { v.revision++; }, v => { v.launchJournal = {}; }]) {
+    const f = continuationStorageFixture(), { snapshot, next } = await f.prepare(), changed = structuredClone(next);
+    mutate(changed); await assert.rejects(f.replace(snapshot, changed), safeError);
+    assert.equal(f.events.includes("write"), false); assert.equal(f.saved().version, 3);
+  }
+  for (const mutate of [v => { Reflect.deleteProperty(v, "continuation"); }, v => { v.version = 3; Reflect.deleteProperty(v, "continuation"); },
+    v => { Reflect.deleteProperty(v, "recovery"); }, v => { v.recovery.evidence.historyDigest = "a".repeat(64); },
+    v => { v.continuation.evidence.migrationDigest = "b".repeat(64); }, v => { v.targetSha = "f".repeat(40); },
+    v => { v.database = { changed: true }; }, v => { v.tokenHash = "c".repeat(64); }]) {
+    const f = continuationStorageFixture(), { snapshot, next } = await f.prepare(), saved = await f.replace(snapshot, next);
+    const changed = structuredClone(saved.state); changed.revision++; mutate(changed); f.events.length = 0;
+    await assert.rejects(f.replace(saved, changed), safeError); assert.equal(f.events.includes("write"), false);
+    assert.deepEqual(f.saved(), saved.state);
+  }
+});
+test("ambiguous continuation rename never acknowledges success and cannot replay the original snapshot", async () => {
+  const f = continuationStorageFixture(), { snapshot, next } = await f.prepare(), sync = f.io.fsyncSync;
+  f.io.fsyncSync = fd => { if (f.fds.get(fd).path === ROOT) throw new Error(SECRET); sync(fd); };
+  await assert.rejects(f.replace(snapshot, next), safeError);
+  assert.equal(f.saved().version, 4); assert.equal(f.saved().revision, 5);
+  await assert.rejects(f.replace(snapshot, next), /storage_conflict$/);
+  assert.equal(f.events.filter(v => v === "rename").length, 1);
+});
+test("v4 journal initialization and ordinary apply paths retain the immutable continuation and original recovery", async () => {
+  const f = continuationStorageFixture(), { snapshot, next } = await f.prepare(), saved = await f.replace(snapshot, next);
+  const initialized = await f.replace(saved, { ...saved.state, revision: 6, launchDisk: { path: f.bound.release.path },
+    launchJournal: createMaintenanceLaunchJournal(f.bound) });
+  const plannedState = await f.store.applyUnderExistingOperationLock({ expectedRevision: initialized.revision, expectedDigest: initialized.digest,
+    binding: f.bound, change: { type: "plan", value: planned() } });
+  const attempted = await f.store.applyUnderExistingOperationLock({ expectedRevision: plannedState.revision, expectedDigest: plannedState.digest,
+    binding: f.bound, change: attempt() });
+  assert.equal(attempted.revision, 8); assert.equal(attempted.state.launchJournal.slots["paused-web"].phase, "attempted");
+  assert.deepEqual(attempted.state.continuation, saved.state.continuation); assert.deepEqual(attempted.state.recovery, saved.state.recovery);
+  await assert.rejects(f.replace(attempted, { ...attempted.state, revision: 9, launchDisk: null, launchJournal: null }), safeError);
 });

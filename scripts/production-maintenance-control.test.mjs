@@ -6,7 +6,8 @@ import { emptyPythonLayout } from "./production-maintenance-runtime-layout.mjs";
 import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, validateMaintenanceLaunchProofBindings, maintenanceLaunchBinding, createMaintenanceLaunchCallbacks, queryMaintenanceDatabaseQuiet, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 import { SUPABASE_SCHEDULER_IMAGE } from "./maintenance-supabase-scheduler-profile.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
-import { encodeMaintenanceRecoveryEvidence } from "./production-maintenance-recovery.mjs";
+import { encodeMaintenanceRecoveryEvidence, createMaintenanceRecoveryInspection, buildMaintenanceRecoveredState } from "./production-maintenance-recovery.mjs";
+import { MAINTENANCE_CONTINUATION_INCIDENT, encodeMaintenanceContinuationEvidence } from "./production-maintenance-continuation.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -671,4 +672,123 @@ test("checkpoint cannot lose existing worker proof or invoke accessor fields", a
   let accessed = 0;
   await assert.rejects(f.callbacks.checkpoint({ get candidate() { accessed++; return f.payload.candidate; }, resumed: f.payload.resumed }), /checkpoint_invalid/);
   assert.equal(accessed, 0);
+});
+
+function continuationFixture() {
+  const f = fixture(), incident = MAINTENANCE_CONTINUATION_INCIDENT, nextTarget = "f".repeat(40);
+  let now = Date.parse("2026-09-12T22:00:00.000Z");
+  const previous = { ...f.state(), version: 2, revision: 3, operationId: incident.operationId, targetSha: incident.originalTargetSha,
+    expectedOldSha: incident.expectedOldSha, createdAt: incident.createdAt, phase: "failed-held",
+    appDir: "/www/wwwroot/merchant-space", appName: "merchant-space" };
+  const context = { operationId: previous.operationId, previousTargetSha: previous.targetSha, targetSha: incident.previousTargetSha,
+    expectedOldSha: previous.expectedOldSha, expectedRevision: previous.revision,
+    expectedDigest: createHash("sha256").update(JSON.stringify(previous)).digest("hex"), bootId: boot,
+    now: incident.createdAt + 1000, sourceDiffDigest: "1".repeat(64), migrationDigest: "2".repeat(64) };
+  const recovery = { ...createMaintenanceRecoveryInspection(previous, context), toolsSha: context.targetSha,
+    recoveryRunId: "34715768455", recoveryRunAttempt: 1, mainCIrunId: "34715352249",
+    historyDigest: "3".repeat(64), historyCheckedAt: incident.createdAt + 999 };
+  f.replace(structuredClone(buildMaintenanceRecoveredState(previous, recovery, context)));
+  const args = ["--app-dir", previous.appDir, "--app-name", previous.appName, "--app-port", "3000", "--target-sha", nextTarget,
+    "--expected-old-sha", previous.expectedOldSha, "--expected-operation-id", previous.operationId, "--previous-target-sha", incident.previousTargetSha, "--json"];
+  const inspect = parseMaintenanceRequest(["inspect-continuation", ...args]);
+  const source = { sourceDiffDigest: "4".repeat(64), sourceChangedPaths: ["scripts/production-maintenance-deploy-read.mjs"] };
+  let migrationDigest = "5".repeat(64);
+  f.ops.now = () => now;
+  f.ops.readContinuationSnapshot = () => {
+    f.events.push("readContinuation"); const state = f.ops.load();
+    return { state, revision: state.revision, digest: createHash("sha256").update(JSON.stringify(state)).digest("hex") };
+  };
+  f.ops.readContinuationSourceProof = async () => { f.events.push("readContinuationSource"); return structuredClone(source); };
+  f.ops.readContinuationMigrationProof = async () => { f.events.push("readContinuationMigrations"); return migrationDigest; };
+  f.ops.commitContinuation = async (snapshot, next) => {
+    assert.equal(snapshot.revision, f.state().revision);
+    assert.equal(snapshot.digest, createHash("sha256").update(JSON.stringify(f.state())).digest("hex"));
+    assert.equal(next.revision, snapshot.revision + 1);
+    f.events.push("commitContinuation"); f.replace(structuredClone(next)); return structuredClone(next);
+  };
+  return { ...f, inspect, args, nextTarget, source, setTime: value => { now = value; }, now: () => now,
+    setMigration: value => { migrationDigest = value; },
+    grant: inspection => ({ ...inspection, toolsSha: nextTarget, continuationRunId: "34730000000", continuationRunAttempt: 1,
+      mainCIrunId: "34729999999", historyDigest: "6".repeat(64), historyCheckedAt: now - 1 }),
+    proceed: evidence => parseMaintenanceRequest(["continue-held", ...args, "--continuation-evidence", encodeMaintenanceContinuationEvidence(evidence)]),
+  };
+}
+
+test("post-migration continuation is a separate explicit CLI; old recovery and ordinary commands reject its flags", async () => {
+  const f = continuationFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops), evidence = f.grant(inspection);
+  assert.deepEqual(f.proceed(evidence).continuationEvidence, evidence);
+  const encoded = encodeMaintenanceContinuationEvidence(evidence);
+  for (const args of [["continue-held", ...f.args], ["inspect-continuation", ...f.args, "--continuation-evidence", encoded],
+    ["continue-held", ...f.args, "--recovery-evidence", encoded], ["recover-held", ...f.args, "--continuation-evidence", encoded],
+    ["check-held", ...flags, "--expected-operation-id", operationId, "--continuation-evidence", encoded],
+    ["continue-held", ...f.args, "--continuation-evidence", "e30="], ["continue-held", ...f.args, "--continuation-evidence", "x".repeat(16385)]]) {
+    assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
+  }
+});
+test("continuation inspection writes nothing; exactly one CAS preserves U O clock recovery and all frozen proofs", async () => {
+  const f = continuationFixture(), previous = structuredClone(f.state());
+  const inspection = await runMaintenanceAction(f.inspect, f.ops);
+  assert.equal(inspection.state, "continuation-inspected"); assert.equal(inspection.revision, 4);
+  assert.equal(inspection.migrationRunId, "34721155156"); assert.deepEqual(f.state(), previous);
+  assert.deepEqual(f.events, ["readContinuation", "validateProofs", "verifyIngress", "assertStopped", "assertQuiet", "readContinuationSource", "readContinuationMigrations"]);
+  f.events.length = 0;
+  const result = await runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops);
+  assert.equal(result.state, "held"); assert.equal(result.targetSha, f.nextTarget);
+  assert.equal(f.state().version, 4); assert.equal(f.state().revision, 5);
+  for (const key of ["operationId", "expectedOldSha", "createdAt", "bootId", "runtime", "database", "ingress", "recovery", "tokenHash"]) assert.deepEqual(f.state()[key], previous[key]);
+  assert.equal(f.events.filter(v => v === "verifyIngress").length, 2);
+  assert.equal(f.events.filter(v => v === "readContinuationMigrations").length, 2);
+  assert.equal(f.events.filter(v => v === "commitContinuation").length, 1);
+  assert.equal(f.events.some(v => /^(?:save:|send:|install|restore|stop|resume|start)/.test(v)), false);
+  await assert.rejects(runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops));
+  assert.equal(f.events.filter(v => v === "commitContinuation").length, 1);
+  const normal = { ...f.inspect, action: "check-held" }; delete normal.previousTargetSha;
+  assert.equal((await runMaintenanceAction(normal, f.ops)).state, "held", "subsequent normal controls understand audited v4");
+});
+test("continuation blocks wrong incidents, launch evidence, changed source or ledger, or any failed full held check", async () => {
+  for (const mutate of [f => { f.replace({ ...f.state(), phase: "failed-held" }); }, f => { f.replace({ ...f.state(), revision: 5 }); },
+    f => { f.replace({ ...f.state(), createdAt: f.state().createdAt + 1 }); }, f => { f.replace({ ...f.state(), operationId }); },
+    ...["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"].map(key => f => { f.replace({ ...f.state(), [key]: {} }); })]) {
+    const f = continuationFixture(); mutate(f); await assert.rejects(runMaintenanceAction(f.inspect, f.ops));
+    assert.equal(f.events.includes("readContinuationSource"), false); assert.equal(f.events.includes("commitContinuation"), false);
+  }
+  for (const mutate of [f => { f.source.sourceDiffDigest = "7".repeat(64); }, f => f.setMigration("8".repeat(64)),
+    ...["verifyIngress", "assertRuntimeStopped", "assertDatabaseQuiet", "readContinuationSourceProof", "readContinuationMigrationProof"].map(key => f => {
+      f.ops[key] = () => { throw new Error("fixed-unverified"); };
+    })]) {
+    const f = continuationFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops); f.events.length = 0; mutate(f);
+    const before = structuredClone(f.state()); await assert.rejects(runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops));
+    assert.deepEqual(f.state(), before); assert.equal(f.events.includes("commitContinuation"), false);
+  }
+});
+test("final held checks revalidate digests and current grant time; uncertain CAS never triggers cleanup or a second write", async () => {
+  for (const kind of ["source", "migration", "clock"]) {
+    const f = continuationFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops), grant = f.grant(inspection);
+    let count = 0;
+    const original = f.ops.assertDatabaseQuiet;
+    f.ops.assertDatabaseQuiet = async (...args) => {
+      await original(...args); if (++count !== 2) return;
+      if (kind === "source") f.source.sourceDiffDigest = "7".repeat(64);
+      if (kind === "migration") f.setMigration("8".repeat(64));
+      if (kind === "clock") f.setTime(f.now() + 300001);
+    };
+    await assert.rejects(runMaintenanceAction(f.proceed(grant), f.ops)); assert.equal(f.events.includes("commitContinuation"), false);
+  }
+  const f = continuationFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops), grant = f.grant(inspection);
+  let writes = 0;
+  f.ops.commitContinuation = async (_snapshot, next) => { writes++; f.replace(structuredClone(next)); throw new Error("fsync-unconfirmed"); };
+  await assert.rejects(runMaintenanceAction(f.proceed(grant), f.ops), /fsync-unconfirmed/);
+  await assert.rejects(runMaintenanceAction(f.proceed(grant), f.ops));
+  assert.equal(writes, 1); assert.equal(f.state().version, 4); assert.equal(f.state().phase, "held");
+  assert.equal(f.events.some(v => /^(?:save:|send:|install|restore|stop|resume|start)/.test(v)), false);
+});
+test("real storage and probe loading scope T2 only to the separate v3 continuation action", () => {
+  const source = readFileSync(new URL("./production-maintenance-control.mjs", import.meta.url), "utf8");
+  assert.match(source, /continuation && value\.version === 3/);
+  assert.match(source, /continuation && value\.version === 4[\s\S]+value\.continuation\.evidence\.previousTargetSha/);
+  assert.match(source, /\["inspect-continuation", "continue-held"\]\.includes\(request\.action\) && loaded\.version === 3/);
+  const commit = source.slice(source.indexOf("async commitContinuation("), source.indexOf("async readRecoverySnapshot("));
+  assert.match(commit, /request\.action !== "continue-held"/); assert.match(commit, /snapshot\.state\.version !== 3 \|\| next\.version !== 4/);
+  assert.equal((commit.match(/replaceOperationUnderExistingOperationLock\(/g) || []).length, 1);
+  assert.match(commit, /poisonedStates\.add\(snapshot\.state\)/); assert.doesNotMatch(commit, /await save\(/);
 });

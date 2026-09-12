@@ -15,6 +15,10 @@ import { createMaintenanceRecoveryInspection, decodeMaintenanceRecoveryEvidence,
   validateMaintenanceRecoveryState } from "./production-maintenance-recovery.mjs";
 import { readMaintenanceRecoverySourceProof, MAINTENANCE_RECOVERY_MIGRATION_SQL,
   validateMaintenanceRecoveryMigrationProof } from "./production-maintenance-recovery-evidence.mjs";
+import { createMaintenanceContinuationInspection, decodeMaintenanceContinuationEvidence, buildMaintenanceContinuedState,
+  validateMaintenanceContinuationState } from "./production-maintenance-continuation.mjs";
+import { readMaintenanceContinuationSourceProof, MAINTENANCE_CONTINUATION_MIGRATION_SQL,
+  validateMaintenanceContinuationMigrationProof } from "./production-maintenance-continuation-evidence.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -71,13 +75,13 @@ export function validateMaintenanceLaunchProofBindings(state) {
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (flags.has(key)) failure("maintenance_arguments_invalid");
     if (key === "--json") { flags.set(key, true); continue; }
-    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence"].includes(key)) failure("maintenance_arguments_invalid");
+    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence", "--continuation-evidence"].includes(key)) failure("maintenance_arguments_invalid");
     const value = values[++index];
     if (typeof value !== "string" || value.startsWith("--")) failure("maintenance_arguments_invalid");
     flags.set(key, value);
@@ -90,6 +94,7 @@ export function parseMaintenanceRequest(argv) {
       !SHA.test(request.expectedOldSha ?? "") || request.targetSha === request.expectedOldSha ||
       (["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? request.operationId !== null : !UUID.test(request.operationId ?? ""))) failure("maintenance_arguments_invalid");
   if (["inspect-recovery", "recover-held"].includes(action)) {
+    if (flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
     request.previousTargetSha = flags.get("--previous-target-sha");
     if (!SHA.test(request.previousTargetSha ?? "") || request.previousTargetSha === request.targetSha ||
         request.previousTargetSha === request.expectedOldSha) failure("maintenance_arguments_invalid");
@@ -101,7 +106,19 @@ export function parseMaintenanceRequest(argv) {
       try { request.recoveryEvidence = decodeMaintenanceRecoveryEvidence(encoded); }
       catch { failure("maintenance_arguments_invalid"); }
     }
-  } else if (flags.has("--previous-target-sha") || flags.has("--recovery-evidence")) failure("maintenance_arguments_invalid");
+  } else if (["inspect-continuation", "continue-held"].includes(action)) {
+    request.previousTargetSha = flags.get("--previous-target-sha");
+    if (!SHA.test(request.previousTargetSha ?? "") || request.previousTargetSha === request.targetSha ||
+        request.previousTargetSha === request.expectedOldSha || flags.has("--recovery-evidence")) failure("maintenance_arguments_invalid");
+    if (action === "inspect-continuation") {
+      if (flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
+    } else {
+      const encoded = flags.get("--continuation-evidence");
+      if (typeof encoded !== "string" || encoded.length < 1 || encoded.length > 16384 || !/^[A-Za-z0-9_-]+$/.test(encoded)) failure("maintenance_arguments_invalid");
+      try { request.continuationEvidence = decodeMaintenanceContinuationEvidence(encoded); }
+      catch { failure("maintenance_arguments_invalid"); }
+    }
+  } else if (flags.has("--previous-target-sha") || flags.has("--recovery-evidence") || flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
   return request;
 }
 
@@ -125,8 +142,9 @@ export async function createPm2PeerDiagnosticReport(request, diagnose = diagnose
 export function validateMaintenanceState(state, request, bootId, now) {
   const keys = ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
   if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); }
+  if (state?.version === 4) { validateMaintenanceContinuationState(state, { bootId, now }); keys.push("recovery", "continuation"); }
   if (!exact(state, keys) ||
-      ![2, 3].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
+      ![2, 3, 4].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
       !Number.isSafeInteger(state.createdAt) || state.createdAt > now || now - state.createdAt > MAX_AGE_MS ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
@@ -291,6 +309,32 @@ export async function runMaintenanceAction(request, ops) {
     if (!verified) failure("maintenance_failure_state_unverified");
     return publicSummary(state);
   };
+
+  if (["inspect-continuation", "continue-held"].includes(request.action)) {
+    // Separate post-migration incident, never reuse the pre-migration recovery
+    // exemption. No catch may reset evidence, resume a writer, or retry this CAS.
+    const snapshot = await ops.readContinuationSnapshot();
+    const state = validateMaintenanceState(snapshot.state, { ...request, targetSha: request.previousTargetSha }, ops.bootId(), ops.now());
+    if (state.version !== 3 || state.phase !== "held" || state.revision !== 4 ||
+        ["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"].some(key => state[key] !== null)) failure("maintenance_continuation_state_invalid");
+    ops.validateProofs(state);
+    await assertHeld(state);
+    const source = await ops.readContinuationSourceProof(request);
+    const migrationDigest = await ops.readContinuationMigrationProof(state);
+    const context = { operationId: request.operationId, previousTargetSha: request.previousTargetSha, targetSha: request.targetSha,
+      expectedOldSha: request.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
+      bootId: ops.bootId(), now: ops.now(), sourceDiffDigest: source.sourceDiffDigest, migrationDigest };
+    const inspection = createMaintenanceContinuationInspection(state, context);
+    if (request.action === "inspect-continuation") return inspection;
+    await assertHeld(state);
+    const finalSource = await ops.readContinuationSourceProof(request), finalMigration = await ops.readContinuationMigrationProof(state);
+    if (!equal(finalSource, source) || finalMigration !== migrationDigest) failure("maintenance_continuation_evidence_changed");
+    const next = buildMaintenanceContinuedState(state, request.continuationEvidence, { ...context, now: ops.now() });
+    validateMaintenanceState(next, request, ops.bootId(), ops.now()); ops.validateProofs(next);
+    const saved = await ops.commitContinuation(snapshot, next);
+    if (!equal(saved, next)) failure("maintenance_continuation_write_unconfirmed");
+    return publicSummary(saved, "held");
+  }
 
   if (["inspect-recovery", "recover-held"].includes(request.action)) {
     // This branch is not a fresh plan, a launch reconciliation, or a general
@@ -600,12 +644,15 @@ async function productionOperations(request) {
     withExistingOperationLock: (action) => underExistingOperationLock(request.appName, action),
     captureState: (value) => {
       const recovery = ["inspect-recovery", "recover-held"].includes(request.action);
+      const continuation = ["inspect-continuation", "continue-held"].includes(request.action);
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
-      const targetSha = recovery && value.version === 2 ? request.previousTargetSha : request.targetSha;
+      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) ? request.previousTargetSha : request.targetSha;
       validateMaintenanceState(value, { ...request, targetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
+      if (continuation && value.version === 4 && (value.continuation.evidence.previousTargetSha !== request.previousTargetSha ||
+          value.continuation.evidence.targetSha !== request.targetSha)) failure("maintenance_continuation_state_invalid");
       validateProofs(value); return value;
     } });
   // Each loaded object keeps its OWN baseline. A later probe read must never
@@ -650,7 +697,9 @@ async function productionOperations(request) {
   };
   const privateProbeOptions = async () => {
     const loaded = await load();
-    const targetSha = ["inspect-recovery", "recover-held"].includes(request.action) && loaded.version === 2 ? request.previousTargetSha : request.targetSha;
+    const previous = (["inspect-recovery", "recover-held"].includes(request.action) && loaded.version === 2) ||
+      (["inspect-continuation", "continue-held"].includes(request.action) && loaded.version === 3);
+    const targetSha = previous ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
     if (typeof environment.anonKey !== "string" || !environment.anonKey || /[\r\n]/.test(environment.anonKey)) failure("maintenance_probe_credentials_invalid");
@@ -661,6 +710,24 @@ async function productionOperations(request) {
     installIngress: async (proof, token, options = {}) => ingress.installIngress(proof, token, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     verifyIngress: async (proof, options = {}) => ingress.verifyIngress(proof, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     restoreIngress: async (proof) => ingress.restoreIngress(proof, await privateProbeOptions()),
+    async readContinuationSnapshot() {
+      const state = await load(), previous = baselines.get(state);
+      return { state, revision: previous.revision, digest: previous.digest };
+    },
+    readContinuationSourceProof: () => readMaintenanceContinuationSourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    readContinuationMigrationProof: (state) => validateMaintenanceContinuationMigrationProof(
+      queryDatabase(state.database, MAINTENANCE_CONTINUATION_MIGRATION_SQL), state.database.databaseOid, state.createdAt,
+      { targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    async commitContinuation(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          request.action !== "continue-held" || snapshot.state.version !== 3 || next.version !== 4 || next.revision !== previous.revision + 1) failure("maintenance_continuation_write_unconfirmed");
+      try {
+        const result = await store.replaceOperationUnderExistingOperationLock({
+          expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(result.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
+    },
     async readRecoverySnapshot() {
       const state = await load(), previous = baselines.get(state);
       return { state, revision: previous.revision, digest: previous.digest };

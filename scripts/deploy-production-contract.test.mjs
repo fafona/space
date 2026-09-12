@@ -75,6 +75,7 @@ const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
   "[deploy] deploy_preflight_booking_persistence_integrity_failed",
   "[deploy] deploy_preflight_booking_persistence_invocation_failed",
   "[deploy] deploy_preflight_booking_persistence_transient_failed",
+  "[deploy] deploy_preflight_maintenance_handoff_failed",
   "[deploy] deploy_preflight_post_booking_runtime_identity_unverified",
   "[deploy] deploy_preflight_post_booking_web_identity_unverified",
   "[deploy] deploy_preflight_previous_release_evidence_unverified",
@@ -634,6 +635,9 @@ ssh() {
     large-failure-output)
       head -c 1100000 /dev/zero | tr '\0' x
       printf '%s\n' \
+        'prefix_[deploy] deploy_preflight_maintenance_handoff_failed' \
+        '[deploy] deploy_preflight_maintenance_handoff_failed_suffix' \
+        '[deploy] deploy_preflight_maintenance_handoff_failed' \
         'prefix_[deploy] deploy_rollback_failed_evidence' \
         '[deploy] deploy_rollback_failed_evidence_suffix' \
         '[deploy] deploy_rollback_failed_evidenc' \
@@ -1184,6 +1188,7 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
       expectedStatus: 37,
       sshMode: "large-failure-output",
       expectedOutput: [
+        "[deploy] deploy_preflight_maintenance_handoff_failed",
         "[deploy] deploy_rollback_failed_evidence",
         "[deploy] readiness_fence_waiter_retry_exhausted",
         "[deploy] deploy_transport_or_remote_execution_failed",
@@ -1233,9 +1238,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 57-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 57);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 57);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 58-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 58);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 58);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1243,15 +1248,15 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 57-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 57);
-  assert.equal(new Set(workflowLines).size, 57);
+  assert.equal(workflowLines.length, 58);
+  assert.equal(new Set(workflowLines).size, 58);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 57);
+  assert.equal(uniqueScriptEchoLines.length, 58);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),

@@ -1273,7 +1273,10 @@ validate_release_attestation_preflight
 # In the legacy layout APP_DIR itself is the live runtime, so reading this after
 # write_env_value would substitute the new build ID into the rollback proof.
 if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
-  load_maintenance_previous_runtime || exit 1
+  if ! load_maintenance_previous_runtime; then
+    echo "[deploy] deploy_preflight_maintenance_handoff_failed"
+    exit 1
+  fi
 else
 PREVIOUS_LINK_TARGET="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 if [ -n "$PREVIOUS_LINK_TARGET" ] && [ -d "$PREVIOUS_LINK_TARGET/.next" ]; then
