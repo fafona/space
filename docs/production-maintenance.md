@@ -145,6 +145,55 @@ revision and byte digest; they require file fsync, atomic rename, parent fsync
 and exact readback. This is not filesystem CAS against unrelated root writers,
 a power-loss acceptance result, or permission to steal a stale lock.
 
+## Explicit post-migration unlaunched continuation
+
+`continue-held` is a separate, manually confirmed incident transition. It does
+not broaden `recover-held` or reinterpret its pre-migration evidence. It exists
+for operation `eb81284a-09c4-4514-8f16-38eaf6acc1e4`, whose T2 deployment
+`34721317710`, attempt 1, failed before any candidate was launched. The diagnosed
+cause was the deploy handoff child's fixed `/usr/bin:/bin` PATH: EL8's ingress
+verification tools reside in `/usr/sbin` and `/sbin`. The corrected child uses
+the fixed `/usr/sbin:/usr/bin:/sbin:/bin`, never the caller's ambient PATH.
+A failed handoff emits only `deploy_preflight_maintenance_handoff_failed`.
+
+The action requires `CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE`, original U/O,
+previous target `b7c3d57f4739846fb45f236ef83b97b7ff21a7cf`, and a distinct T3
+which is current main with exact successful push CI. Only the original version
+3 held revision 4 is admitted; all five launch fields must remain null. The
+original T1-to-T2 recovery audit, boot, runtime, ingress, database identity,
+creation time and twelve-hour deadline remain unchanged.
+
+Under the shared production workflow lock, a read-only `inspect-continuation`
+checks the real held state and an exact deployment/controller/evidence/test/docs
+source allowlist. T2 and T3 migration Git objects must be identical. A bounded
+read-only registry transaction requires the entire exact 56-entry ordered
+registry, not just migration 048: the first 51 entries predate U, and migrations
+044 through 048 must fall within the independently verified migration run
+`34721155156` apply step, `[2026-09-12T21:52:38Z, 2026-09-12T21:52:46Z)`.
+
+The runner verifies the original signed T2 backup binding (`34715932102`) and
+readiness binding (`34721256683`) through exact GitHub workflow/source/ref
+attestation policy. Complete paginated B/M/R/D histories must contain precisely
+those known incident attempts during this maintenance window; other runs must
+have completed before U's entire creation second. Exact job outcomes and step
+timings prove migration completion and the failed deployment's pre-launch
+position. Unknown activity, reruns, missing pages or shifted identities refuse
+continuation. The five-minute grant binds these proofs, original state byte
+digest/revision, original recovery digest, registry/source digests and new CI.
+
+`continue-held` rechecks source, registry and full held evidence, then performs
+one locked compare-and-replace to version 4 held revision 5, target T3. It retains
+the immutable original recovery audit and adds a separate immutable continuation
+audit. It neither changes migration results nor launches or opens anything.
+Every subsequent launch-journal/state update must preserve both audits.
+An uncertain result requires read-only reconciliation, never a blind replay.
+
+After the confirmed transition, create a **fresh T3 backup** and **fresh T3
+readiness**, then use normal deployment and verified `end`. Do not rerun the
+already applied, unchanged migrations. Original T2 artifacts are incident
+evidence only and cannot be relabeled or used as the T3 release chain. There is
+no automatic retarget, TTL extension, new UUID, downgrade or old-runtime reopen.
+
 ## Explicit pre-migration failed-held recovery
 
 `recover-held` is a one-time, manually confirmed transition, not a retry of

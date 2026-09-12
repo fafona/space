@@ -23,8 +23,24 @@ test("maintenance is an explicit bound mode and missing old process never invoke
   assert.match(mode, /PRODUCTION_MAINTENANCE_OPERATION_ID/); assert.match(mode, /PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA/);
   assert.match(mode, /\*\).*maintenance binding is invalid/s);
   const capture = region("# Capture rollback identity", "# An enforce release");
-  assert.match(capture, /if \[ "\$PRODUCTION_MAINTENANCE_MODE" = maintenance \]; then\s+load_maintenance_previous_runtime \|\| exit 1\s+else\s+PREVIOUS_LINK_TARGET=/);
+  assert.match(capture, /if \[ "\$PRODUCTION_MAINTENANCE_MODE" = maintenance \]; then\s+if ! load_maintenance_previous_runtime; then\s+echo "\[deploy\] deploy_preflight_maintenance_handoff_failed"\s+exit 1\s+fi\s+else\s+PREVIOUS_LINK_TARGET=/);
   assert.match(capture, /\/proc\/\$PREVIOUS_WEB_PID\/cwd/);
+});
+
+test("maintenance handoff failure exits with one fixed diagnostic before any forward work", () => {
+  const capture = region("# Capture rollback identity", "# An enforce release");
+  const branch = capture.slice(capture.indexOf('if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then'), capture.indexOf("\nelse\n"));
+  for (const status of ["0", "1"]) {
+    const result = shell(`
+load_maintenance_previous_runtime() { return "$HANDOFF_STATUS"; }
+${branch}
+fi
+printf 'continued\\n'
+`, { PRODUCTION_MAINTENANCE_MODE: "maintenance", HANDOFF_STATUS: status });
+    assert.equal(result.status, Number(status), result.stderr);
+    assert.equal(result.stdout, status === "0" ? "continued\n" : "[deploy] deploy_preflight_maintenance_handoff_failed\n");
+    assert.equal(result.stderr, "");
+  }
 });
 
 test("private handoff validates every binding and frozen proof before exposing selected fields", () => {

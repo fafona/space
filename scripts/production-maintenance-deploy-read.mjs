@@ -28,7 +28,7 @@ async function readFields(argv, overrides) {
   const read = () => {
     const result = run(process.execPath, [fileURLToPath(new URL("./production-maintenance-control.mjs", import.meta.url)), ...flags], {
       encoding: "utf8", timeout: remaining(), killSignal: "SIGKILL", maxBuffer: 262144,
-      windowsHide: true, shell: false, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true, shell: false, env: { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"],
     });
     remaining();
     if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 262144) throw new Error("maintenance_deployment_read_unverified");

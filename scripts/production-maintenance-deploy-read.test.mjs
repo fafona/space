@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import test from "node:test";
 import { readMaintenanceDeploymentFields } from "./production-maintenance-deploy-read.mjs";
 
@@ -45,11 +47,55 @@ test("snapshots use one bounded direct Node control command with exact binding",
       count++; assert.equal(command, process.execPath); assert.match(values[0], /production-maintenance-control\.mjs$/);
       assert.equal(values[1], action); assert.ok(values.includes(OP)); assert.equal(options.shell, false);
       assert.equal(options.timeout <= 30000 && options.timeout > 0, true); assert.equal(options.maxBuffer, 262144);
-      assert.deepEqual(options.env, { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" });
+      assert.deepEqual(options.env, { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C", LC_ALL: "C" });
       return response(summary({ snapshot }));
     } });
     assert.equal(result, snapshot + "\n"); assert.equal(count, 1);
   }
+});
+
+test("controller environment ignores an ambient PATH and unrelated environment values", () => {
+  const program = `
+    import assert from "node:assert/strict";
+    import { readMaintenanceDeploymentFields } from ${JSON.stringify(new URL("./production-maintenance-deploy-read.mjs", import.meta.url).href)};
+    assert.equal(process.env.PATH, "/untrusted/synthetic-bin");
+    await readMaintenanceDeploymentFields(${JSON.stringify(args("snapshot-worker"))}, {
+      run(command, values, options) {
+        assert.deepEqual(options.env, { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C", LC_ALL: "C" });
+        assert.equal(Object.hasOwn(options.env, "FAOLLA_TEST_SECRET"), false);
+        return ${JSON.stringify(response(summary({ snapshot: "absent" })))};
+      }
+    });
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+    input: program, encoding: "utf8", timeout: 10_000, maxBuffer: 4096,
+    env: { ...process.env, PATH: "/untrusted/synthetic-bin", FAOLLA_TEST_SECRET: "PRIVATE_SENTINEL" },
+    windowsHide: true, shell: false,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+});
+
+test("Linux controller environment really resolves an sbin tool while the former PATH cannot", { skip: process.platform !== "linux" }, async () => {
+  // command -v only: no sysctl execution, kernel changes, namespaces or symlinks.
+  assert.ok(existsSync("/usr/sbin/sysctl") || existsSync("/sbin/sysctl"), "Linux fixture requires the stock procps sysctl binary");
+  let calls = 0;
+  const result = await readMaintenanceDeploymentFields(args("snapshot-worker"), {
+    run(command, values, options) {
+      calls++;
+      const lookup = (env) => spawnSync("/bin/sh", ["-c", "command -v sysctl"], {
+        ...options, env, timeout: 2000, maxBuffer: 4096,
+      });
+      const fixed = lookup(options.env);
+      assert.equal(fixed.status, 0, fixed.stderr);
+      assert.match(fixed.stdout.trim(), /^\/(?:usr\/)?sbin\/sysctl$/);
+      const legacy = lookup({ ...options.env, PATH: "/usr/bin:/bin" });
+      assert.notEqual(legacy.status, 0);
+      assert.equal(legacy.stdout, "");
+      return response(summary({ snapshot: "absent" }));
+    },
+  });
+  assert.equal(result, "absent\n"); assert.equal(calls, 1);
 });
 
 test("invalid arguments and rollout inputs cannot start a controller", async () => {

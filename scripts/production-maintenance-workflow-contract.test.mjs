@@ -306,7 +306,7 @@ test("all affected workflow YAML and embedded bash remain syntactically valid", 
 
 test("maintenance control is a fixed manual current-main exact-CI pinned-SSH workflow", () => {
   const source = sources["production-maintenance"];
-  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "recover-held", "check", "end"]);
+  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "recover-held", "continue-held", "check", "end"]);
   assert.deepEqual(Object.keys(workflows["production-maintenance"].on), ["workflow_dispatch"]);
   assert.match(source, /CHECK_PRODUCTION_MAINTENANCE_PLAN/);
   assert.match(source, /test "\$TARGET_SHA" = "\$GITHUB_SHA"/);
@@ -328,6 +328,42 @@ test("maintenance control is a fixed manual current-main exact-CI pinned-SSH wor
   assert.match(failed, /--state "\$failed_state" --target-sha "\$TARGET_SHA"/);
   assert.match(failed, /--old-sha "\$EXPECTED_OLD_SHA"/);
   assert.match(failed, /production_maintenance_transition_unconfirmed'\n\s+exit 1/);
+});
+
+test("migrated continuation independently verifies original signed evidence before its single explicit transition", () => {
+  const name = "production-maintenance";
+  const validation = step(name, "Validate Fixed Manual Transition").run;
+  assert.match(validation, /continue-held\)\n\s+test "\$CONFIRMATION" = CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE/);
+  for (const fixed of ["eb81284a-09c4-4514-8f16-38eaf6acc1e4", "b7c3d57f4739846fb45f236ef83b97b7ff21a7cf", "cd943076ebda758b70bf2f2270a508c774b726d6"])
+    assert.ok(validation.includes(fixed));
+  const labels = ["Inspect Migrated Unlaunched Continuation State", "Verify Original Signed Backup And Readiness Bindings",
+    "Verify Exact Continuation History Under Production Lock", "Execute Fixed Maintenance Transition"];
+  const positions = labels.map((label) => steps(name).findIndex((item) => item.name === label));
+  assert.ok(positions.every((value, index) => value >= 0 && (index === 0 || value > positions[index - 1])));
+  for (const label of labels.slice(0, 3)) assert.equal(step(name, label).if, "inputs.action == 'continue-held'");
+  const inspection = step(name, labels[0]).run;
+  assert.match(inspection, /inspect-continuation .*--previous-target-sha .*--expected-operation-id/);
+  assert.match(inspection, /StrictHostKeyChecking=yes/);
+  assert.match(inspection, /production_maintenance_continuation_inspection_unconfirmed/);
+  const bindings = step(name, labels[1]).run;
+  for (const required of ["34715932102", "34721256683", "gh attestation verify", "--signer-workflow", "--source-digest \"$PREVIOUS_TARGET_SHA\"",
+    "--source-ref refs/heads/main", "--predicate-type https://slsa.dev/provenance/v1", "--deny-self-hosted-runners", "--name \"faolla-maintenance-$phase-binding-$run_id-1\""])
+    assert.ok(bindings.includes(required), required);
+  const history = step(name, labels[2]);
+  assert.match(history.run, /production-maintenance-continuation-workflow\.mjs/);
+  assert.match(history.run, /--inspection "\$INSPECTION_DIR\/out" --prior-bindings "\$PRIOR_BINDINGS_DIR"/);
+  assert.equal(history.env.GH_TOKEN, "${{ github.token }}");
+  const transition = step(name, labels[3]);
+  assert.equal(transition.env.CONTINUATION_EVIDENCE, "${{ steps.continuation-evidence.outputs.continuation_evidence }}");
+  assert.match(transition.run, /continue-held\) command=continue-held; expected_state=held/);
+  assert.match(transition.run, /--previous-target-sha "\$PREVIOUS_TARGET_SHA" --continuation-evidence "\$CONTINUATION_EVIDENCE"/);
+  assert.match(transition.run, /test "\$\{#CONTINUATION_EVIDENCE\}" -le 16384/);
+  assert.match(transition.run, /else\n\s+test -z "\$CONTINUATION_EVIDENCE"/);
+  const cleanup = step(name, "Remove Runner Continuation Evidence");
+  assert.equal(cleanup.if, "always() && inputs.action == 'continue-held'");
+  assert.match(cleanup.run, /maintenance-continuation\.\?\?\?\?\?\?\?\?/);
+  assert.match(cleanup.run, /maintenance-prior-bindings\.\?\?\?\?\?\?\?\?/);
+  assert.doesNotMatch(cleanup.run, /rm -rf|operation\.json|maintenance\.json/);
 });
 
 test("runtime diagnostic workflow is a separately confirmed read-only action without release outputs", () => {
