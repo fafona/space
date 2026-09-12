@@ -7,6 +7,7 @@ import {
   SCHEDULER_ACCEPTANCE_PRELOADS, SCHEDULER_ACCEPTANCE_START,
   validateSchedulerAcceptanceInvocation, schedulerAcceptanceCreateArgs,
   validateSchedulerAcceptanceContainer, validateSchedulerAcceptanceInitial,
+  schedulerAcceptanceStartupDiagnostic,
   runSchedulerAcceptanceCases, runSupabaseSchedulerAcceptance,
 } from "./maintenance-supabase-scheduler-acceptance.mjs";
 import { SUPABASE_SCHEDULER_IMAGE, SUPABASE_SCHEDULER_DATABASES_SQL,
@@ -192,4 +193,27 @@ test("transport uses fixed Docker socket, private empty config, exact-ID cleanup
   assert.match(source, /validateSchedulerAcceptanceContainer\(raw, owned, state\);[\s\S]*docker\(\["rm", "--force", owned\.id\]/);
   assert.doesNotMatch(source, /docker\(\["(?:system|volume|container)", "prune"|rmSync\(|process\.env\.(?:DATABASE_URL|DOCKER_HOST|POSTGRES_PASSWORD)/);
   assert.match(source, /rmdirSync\(configDirectory\)/);
+});
+test("startup diagnostics expose only bounded owned-container state/logs and redact synthetic credentials", () => {
+  const state = { Status: "exited", ExitCode: 1, OOMKilled: false, Config: { Env: ["SECRET_SENTINEL"] }, Pid: 1234 };
+  const result = schedulerAcceptanceStartupDiagnostic(state, "initdb starting\nfaolla-ci-only-disposable-scheduler\n", "FATAL: fixture error\nPOSTGRES_PASSWORD=SECRET_SENTINEL");
+  assert.deepEqual(Object.keys(result), ["state", "exitCode", "oomKilled", "logs"]);
+  assert.equal(result.state, "exited"); assert.equal(result.exitCode, 1); assert.equal(result.oomKilled, false);
+  assert.match(result.logs, /FATAL: fixture error/); assert.match(result.logs, /\[redacted\]/);
+  assert.doesNotMatch(JSON.stringify(result), /SECRET_SENTINEL|faolla-ci-only-disposable-scheduler|1234|Config|Env/);
+  const bounded = schedulerAcceptanceStartupDiagnostic(state, ("x".repeat(200) + "\n").repeat(100), "\u001b[31m\u0000");
+  assert.ok(Buffer.byteLength(bounded.logs) <= 4096); assert.ok(bounded.logs.split("\n").length <= 40);
+  assert.doesNotMatch(bounded.logs, /\u001b|\u0000/);
+  assert.throws(() => schedulerAcceptanceStartupDiagnostic({ ...state, ExitCode: -1 }, "", ""));
+  assert.throws(() => schedulerAcceptanceStartupDiagnostic({ ...state, Status: "other" }, "", ""));
+});
+test("startup log collection requires fresh-phase ownership validation before the bounded exact-ID read", () => {
+  const at = source.indexOf('if (owned && ["start_container", "wait_postgres"].includes(stage))');
+  assert.ok(at > 0);
+  const block = source.slice(at, source.indexOf("throw error;", at));
+  const verify = block.indexOf("validateSchedulerAcceptanceContainer(raw, owned, state.Status)");
+  const read = block.indexOf('dockerResult(["logs", "--tail", "40", owned.id], undefined, 5000, 4096)');
+  assert.ok(verify >= 0 && read > verify);
+  assert.match(block, /catch \{ startupDiagnostic = null; \}/);
+  assert.doesNotMatch(block, /owned\.name|\.Config|\.Env|\.HostConfig|fixture_setup|execute\(/);
 });

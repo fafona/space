@@ -22,6 +22,7 @@ const ERROR = "supabase_scheduler_acceptance_failed";
 const fail = () => { throw new Error(ERROR); };
 const pause = ms => new Promise(resolvePause => setTimeout(resolvePause, ms));
 let stage = "opt_in";
+let startupDiagnostic = null;
 
 export const SCHEDULER_ACCEPTANCE_PRELOADS = "auto_explain,pg_tle,plan_filter,plpgsql,plpgsql_check,supabase_vault,timescaledb";
 export const SCHEDULER_ACCEPTANCE_START = `set -eu
@@ -109,6 +110,21 @@ export function validateSchedulerAcceptanceInitial(value) {
   return true;
 }
 
+// Only the owned, fresh, network-none startup container is eligible. No SQL
+// has been sent, no host path mounted, and its only password is synthetic.
+// Never project inspect Config/Env/HostConfig or logs from another container.
+export function schedulerAcceptanceStartupDiagnostic(state, stdout, stderr) {
+  if (!["created", "running", "exited"].includes(state?.Status) || !Number.isSafeInteger(state.ExitCode) ||
+      state.ExitCode < 0 || state.ExitCode > 255 || typeof state.OOMKilled !== "boolean" ||
+      typeof stdout !== "string" || typeof stderr !== "string") fail();
+  const redacted = `${stdout}\n${stderr}`.replaceAll(PASSWORD, "[redacted]")
+    .replace(/\b[0-9a-fA-F]{64}\b/g, "[redacted-digest]")
+    .split(/\r?\n/).filter(line => !/\b(?:PGPASSWORD|POSTGRES_PASSWORD|authorization|secret|token)\s*[:=]/i.test(line)).slice(-40).join("\n");
+  // ASCII projection avoids split UTF-8 and control characters/terminal escapes.
+  const logs = redacted.replace(/[^\x20-\x7e\n\t]/g, "?").slice(-4096);
+  return { state: state.Status, exitCode: state.ExitCode, oomKilled: state.OOMKilled, logs };
+}
+
 /** Real SQL in CI; injectable transport is used ONLY by local fault tests. */
 export async function runSchedulerAcceptanceCases(proof, query, write, waitSetting, timing = {}) {
   let groups = 0;
@@ -170,20 +186,22 @@ export async function runSchedulerAcceptanceCases(proof, query, write, waitSetti
 export async function runSupabaseSchedulerAcceptance(overrides = {}) {
   const environment = overrides.environment ?? process.env;
   validateSchedulerAcceptanceInvocation({ platform: overrides.platform ?? process.platform, environment, argv: overrides.argv ?? process.argv.slice(2) });
+  startupDiagnostic = null;
   const parent = realpathSync(environment.RUNNER_TEMP);
   const configDirectory = mkdtempSync(join(parent, "faolla-scheduler-docker-"));
   const directoryIdentity = lstatSync(configDirectory);
   const spawn = overrides.spawn ?? spawnSync;
   const nonce = randomUUID(), name = `faolla-scheduler-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}-${nonce.slice(0, 8)}`;
   let owned = null;
-  const docker = (args, input, timeout = 10000) => {
+  const dockerResult = (args, input, timeout = 10000, maxBuffer = 1048576) => {
     const result = spawn("/usr/bin/docker", ["--config", configDirectory, "--host", "unix:///var/run/docker.sock", ...args], {
-      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, input, encoding: "utf8", maxBuffer: 1048576,
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, input, encoding: "utf8", maxBuffer,
       timeout, killSignal: "SIGKILL", shell: false, windowsHide: true,
     });
     if (result.error || result.signal || result.status !== 0 || typeof result.stdout !== "string" || typeof result.stderr !== "string") fail();
-    return result.stdout.trim();
+    return result;
   };
+  const docker = (args, input, timeout) => dockerResult(args, input, timeout).stdout.trim();
   const inspect = state => validateSchedulerAcceptanceContainer(JSON.parse(docker(["inspect", owned.id])), owned, state);
   const execute = (database, sql, readonly = true) => {
     if (!["postgres", "_supabase"].includes(database) || typeof sql !== "string" || sql.length > 16384) fail();
@@ -230,6 +248,18 @@ export async function runSupabaseSchedulerAcceptance(overrides = {}) {
     const groups = await runSchedulerAcceptanceCases(proof, query, (db, sql) => execute(db, sql, false), waitSetting);
     return { ok: true, groups, image: SUPABASE_SCHEDULER_IMAGE, serverVersion: "15.8", network: "none",
       evidence: "real_image_synthetic_cluster_not_full_stack" };
+  } catch (error) {
+    if (owned && ["start_container", "wait_postgres"].includes(stage)) {
+      try {
+        const raw = JSON.parse(docker(["inspect", owned.id]));
+        const state = raw?.[0]?.State;
+        if (!["created", "running", "exited"].includes(state?.Status)) fail();
+        validateSchedulerAcceptanceContainer(raw, owned, state.Status);
+        const logs = dockerResult(["logs", "--tail", "40", owned.id], undefined, 5000, 4096);
+        startupDiagnostic = schedulerAcceptanceStartupDiagnostic(state, logs.stdout, logs.stderr);
+      } catch { startupDiagnostic = null; } // Ownership/limits/errors forbid logs, never fallback.
+    }
+    throw error;
   } finally {
     const prior = stage; stage = "cleanup";
     try {
@@ -254,7 +284,8 @@ export async function runSupabaseSchedulerAcceptance(overrides = {}) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try { process.stdout.write(JSON.stringify(await runSupabaseSchedulerAcceptance()) + "\n"); }
   catch (error) {
-    process.stderr.write(JSON.stringify({ error: error?.message === "supabase_scheduler_acceptance_opt_in_required" ? error.message : ERROR, stage }) + "\n");
+    process.stderr.write(JSON.stringify({ error: error?.message === "supabase_scheduler_acceptance_opt_in_required" ? error.message : ERROR,
+      stage, ...(startupDiagnostic ? { startupDiagnostic } : {}) }) + "\n");
     process.exitCode = 1;
   }
 }
