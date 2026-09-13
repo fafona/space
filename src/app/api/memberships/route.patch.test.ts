@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleMerchantMembershipsPatch, type MerchantMembershipPatchRouteDependencies } from "./route";
+import { handleMerchantMembershipsPatch, type MerchantMembershipPatchRouteDependencies } from "./route-handler";
 import { MerchantBusinessAccessError, type MerchantBusinessActor } from "@/lib/merchantBusinessActor.server";
 import { normalizeMerchantMembershipRecord, toMerchantMembershipListItem } from "@/lib/merchantMemberships";
 import { applyMerchantMembershipAccountOperation, type MerchantMembershipRedemptionCheckoutResult } from "@/lib/merchantMemberships.server";

@@ -109,7 +109,7 @@ test("only explicit supported server modes are accepted; typos never silently se
 });
 
 test("domain-binding checks actor and invalid mode before its independent page/name writes", () => {
-  const source = readFileSync(new URL("../app/api/merchant-domain-binding/route.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../app/api/merchant-domain-binding/route-handler.ts", import.meta.url), "utf8");
   const post = source.slice(source.indexOf("export async function POST("));
   const sameOrigin = post.indexOf("isTrustedSameOriginMutationRequest(request)");
   const authorize = post.indexOf("await isAuthorizedForMerchant(request, supabase, merchantId)");

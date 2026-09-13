@@ -4,7 +4,7 @@ import {
   handleMerchantChatBusinessCardGet,
   handleMerchantChatBusinessCardPost,
   type MerchantChatBusinessCardDependencies,
-} from "./route";
+} from "./route-handler";
 import { buildPlatformMerchantSnapshotSite, type PlatformMerchantSnapshotPayload } from "@/lib/platformMerchantSnapshot";
 
 const ownerId = "10000000";

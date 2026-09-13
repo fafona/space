@@ -4,7 +4,7 @@ import {
   buildMerchantLinkedOrderSummary,
   handleMerchantLinkedOrderSummaryGet,
   type MerchantLinkedOrderSummaryRouteDependencies,
-} from "@/app/api/merchant-enterprise/linked-order-summary/route";
+} from "@/app/api/merchant-enterprise/linked-order-summary/route-handler";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterprisePermission,

@@ -6,7 +6,7 @@ import {
   handleMerchantEnterpriseNotificationsPatch,
   parseMerchantEnterpriseNotificationCursor,
   type MerchantEnterpriseNotificationRouteDependencies,
-} from "@/app/api/merchant-enterprise/notifications/route";
+} from "@/app/api/merchant-enterprise/notifications/route-handler";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseNotification,

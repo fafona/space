@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   handleMerchantEnterpriseMembershipsGet,
   type MerchantEnterpriseMembershipsRouteDependencies,
-} from "@/app/api/merchant-enterprise/memberships/route";
+} from "@/app/api/merchant-enterprise/memberships/route-handler";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
 import { MERCHANT_AUTH_COOKIE } from "@/lib/merchantAuthSession";
 import {

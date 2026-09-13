@@ -5,7 +5,7 @@ import {
   handleMerchantEnterpriseWorkflowExecutionsPatch,
   handleMerchantEnterpriseWorkflowExecutionsPost,
   type MerchantEnterpriseWorkflowExecutionRouteDependencies,
-} from "@/app/api/merchant-enterprise/workflow-executions/route";
+} from "@/app/api/merchant-enterprise/workflow-executions/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import type {
   MerchantEnterpriseWorkflowAcknowledgement,

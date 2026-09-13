@@ -306,7 +306,7 @@ test("all affected workflow YAML and embedded bash remain syntactically valid", 
 
 test("maintenance control is a fixed manual current-main exact-CI pinned-SSH workflow", () => {
   const source = sources["production-maintenance"];
-  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "recover-held", "continue-held", "check", "end"]);
+  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "recover-held", "continue-held", "recover-build", "check", "end"]);
   assert.deepEqual(Object.keys(workflows["production-maintenance"].on), ["workflow_dispatch"]);
   assert.match(source, /CHECK_PRODUCTION_MAINTENANCE_PLAN/);
   assert.match(source, /test "\$TARGET_SHA" = "\$GITHUB_SHA"/);
@@ -365,6 +365,140 @@ test("migrated continuation independently verifies original signed evidence befo
   assert.match(cleanup.run, /maintenance-prior-bindings\.\?\?\?\?\?\?\?\?/);
   assert.doesNotMatch(cleanup.run, /rm -rf|operation\.json|maintenance\.json/);
 });
+
+
+test("build recovery is a separately confirmed fixed incident with no old-path target override", () => {
+  const source = step("production-maintenance", "Validate Fixed Manual Transition").run;
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  const fixed = { GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
+    GITHUB_RUN_ATTEMPT: "1", TARGET_SHA: "a".repeat(40), GITHUB_SHA: "a".repeat(40),
+    EXPECTED_OLD_SHA: "cd943076ebda758b70bf2f2270a508c774b726d6",
+    PREVIOUS_TARGET_SHA: "46f007fbd9e417f93c01e398c77cf38ec814547d",
+    MAINTENANCE_OPERATION_ID: "eb81284a-09c4-4514-8f16-38eaf6acc1e4",
+    ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z",
+    DEPLOY_RUN_ID: "", DEPLOY_RUN_ATTEMPT: "", CHECK_STATE: "held" };
+  const execute = patch => spawnSync(bash, ["-s"], { input: source,
+    env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", ...fixed, ...patch }, encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
+  assert.equal(execute({}).status, 0);
+  for (const patch of [{ CONFIRMATION: "RECOVER_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100034Z" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T120000Z" }, { CONFIRMATION: "" },
+    { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_EVENT_NAME: "schedule" }, { GITHUB_REF: "refs/heads/feature" },
+    { GITHUB_REPOSITORY: "other/space" }, { PREVIOUS_TARGET_SHA: "b".repeat(40) }, { EXPECTED_OLD_SHA: "b".repeat(40) },
+    { MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID }, { GITHUB_SHA: "b".repeat(40) },
+    { TARGET_SHA: fixed.PREVIOUS_TARGET_SHA, GITHUB_SHA: fixed.PREVIOUS_TARGET_SHA },
+    { TARGET_SHA: fixed.EXPECTED_OLD_SHA, GITHUB_SHA: fixed.EXPECTED_OLD_SHA },
+    { DEPLOY_RUN_ID: "123" }, { DEPLOY_RUN_ATTEMPT: "1" }]) {
+    const result = execute(patch); assert.notEqual(result.status, 0, JSON.stringify(patch)); assert.equal(result.stdout, "");
+  }
+  for (const [ACTION, CONFIRMATION, extra] of [
+    ["plan", "CHECK_PRODUCTION_MAINTENANCE_PLAN", { MAINTENANCE_OPERATION_ID: "" }],
+    ["prepare", "PREPARE_PRODUCTION_MAINTENANCE", { MAINTENANCE_OPERATION_ID: "" }],
+    ["check", "CHECK_PRODUCTION_MAINTENANCE", {}],
+    ["end", "END_PRODUCTION_MAINTENANCE", { DEPLOY_RUN_ID: "123", DEPLOY_RUN_ATTEMPT: "1" }],
+  ]) assert.notEqual(execute({ ACTION, CONFIRMATION, ...extra }).status, 0, ACTION);
+  const old = { ACTION: "continue-held", CONFIRMATION: "CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE",
+    PREVIOUS_TARGET_SHA: "b7c3d57f4739846fb45f236ef83b97b7ff21a7cf" };
+  assert.equal(execute(old).status, 0);
+  assert.notEqual(execute({ ...old, TARGET_SHA: old.PREVIOUS_TARGET_SHA, GITHUB_SHA: old.PREVIOUS_TARGET_SHA }).status, 0);
+});
+
+test("build recovery exposes one fixed absolute deadline and no TTL or replacement-operation input", () => {
+  const inputs = workflows["production-maintenance"].on.workflow_dispatch.inputs;
+  assert.deepEqual(Object.keys(inputs), ["action", "target_sha", "expected_old_sha", "maintenance_operation_id", "previous_target_sha",
+    "check_state", "successful_deploy_run_id", "successful_deploy_run_attempt", "confirmation"]);
+  assert.match(inputs.confirmation.description, /RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z/);
+  assert.match(inputs.confirmation.description, /absolute deadline 2026-09-13 10:00:00 UTC \/ 12:00 Europe\/Madrid/);
+  const validation = step("production-maintenance", "Validate Fixed Manual Transition").run;
+  const recovery = validation.slice(validation.indexOf("recover-build)"), validation.indexOf("check|end)"));
+  assert.match(recovery, /test "\$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4/);
+  assert.match(recovery, /test "\$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z\n/);
+  assert.doesNotMatch(sources["production-maintenance"], /inputs\.(?:ttl|deadline|expires_at|authorized_at|new_operation_id)|--(?:ttl|deadline|expires-at|new-operation-id)\b/);
+});
+
+test("build recovery inspects first, verifies exact T3 B3/R3 hosted signatures, then audits history under the shared lock", () => {
+  const name = "production-maintenance", workflow = workflows[name];
+  assert.equal(workflow.concurrency.group, "production-deploy"); assert.equal(workflow.concurrency["cancel-in-progress"], false);
+  const labels = ["Inspect Failed Unlaunched Build Recovery State", "Verify Build Incident Signed Backup And Readiness Bindings",
+    "Verify Exact Build Recovery History Under Production Lock", "Execute Fixed Maintenance Transition"];
+  const positions = labels.map(label => steps(name).findIndex(item => item.name === label));
+  assert.ok(positions.every((value, index) => value >= 0 && (index === 0 || value > positions[index - 1])));
+  for (const label of labels.slice(0, 3)) assert.equal(step(name, label).if, "inputs.action == 'recover-build'");
+  const inspection = step(name, labels[0]).run;
+  assert.match(inspection, /inspect-build-recovery .*--target-sha .*--previous-target-sha .*--expected-old-sha .*--expected-operation-id/);
+  assert.match(inspection, /umask 077/); assert.match(inspection, /StrictHostKeyChecking=yes/);
+  assert.match(inspection, /ConnectionAttempts=1/); assert.match(inspection, /600s/);
+  assert.match(inspection, /> "\$capture_dir\/out" 2> "\$capture_dir\/err" \|\| status=\$\?/);
+  assert.match(inspection, /if \[ "\$status" -ne 0 \] \|\| \[ -s "\$capture_dir\/err" \]/);
+  assert.doesNotMatch(inspection, /verify-control|--state held|cat "\$capture_dir|fail-held|restoreIngress|start-candidate/);
+  const signed = step(name, labels[1]).run;
+  for (const value of ['test "$PREVIOUS_TARGET_SHA" = 46f007fbd9e417f93c01e398c77cf38ec814547d',
+    "backup) run_id=34724943157; workflow=database-backup.yml", "readiness) run_id=34728212357; workflow=ordinary-account-cutover-readiness.yml",
+    'gh run download "$run_id" --repo "$GITHUB_REPOSITORY"', '--name "faolla-maintenance-$phase-binding-$run_id-1"',
+    'test ! -L "$binding_dir/$phase/production-maintenance-binding.json"', "gh attestation verify",
+    '--signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/$workflow"',
+    '--source-digest "$PREVIOUS_TARGET_SHA" --source-ref refs/heads/main',
+    "--predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners",
+    '--limit 10 --format json > "$binding_dir/$phase/provenance.json"']) assert.ok(signed.includes(value), value);
+  assert.doesNotMatch(signed, /--source-digest "\$TARGET_SHA"|encrypted-disaster|tar\.enc|gh workflow|gh run rerun/);
+  const history = step(name, labels[2]);
+  assert.equal(history.env.INSPECTION_DIR, "${{ steps.build-recovery-inspection.outputs.capture_dir }}");
+  assert.equal(history.env.PRIOR_BINDINGS_DIR, "${{ steps.build-recovery-prior-bindings.outputs.capture_dir }}");
+  assert.equal(history.env.GH_TOKEN, "${{ github.token }}");
+  assert.match(history.run, /node scripts\/production-maintenance-build-recovery-workflow\.mjs/);
+  assert.match(history.run, /--inspection "\$INSPECTION_DIR\/out" --prior-bindings "\$PRIOR_BINDINGS_DIR"/);
+});
+
+test("build recovery sends one bounded grant only to its explicit action and never auto-retries or cleanup-mutates it", () => {
+  const transition = step("production-maintenance", "Execute Fixed Maintenance Transition");
+  assert.equal(transition.env.BUILD_RECOVERY_EVIDENCE, "${{ steps.build-recovery-evidence.outputs.build_recovery_evidence }}");
+  assert.match(transition.run, /recover-build\) command=recover-build; expected_state=held/);
+  const endOfPrefix = transition.run.indexOf('capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-transition.');
+  assert.ok(endOfPrefix > 0);
+  const prefix = transition.run.slice(0, endOfPrefix) + '\nprintf "%s\\n" "$command" "$expected_state" "${operation_args[@]}"\n';
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  const fixed = { ACTION: "recover-build", APP_NAME: "merchant-space", APP_PORT: "3000", CHECK_STATE: "held",
+    MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID, PREVIOUS_TARGET_SHA: "a".repeat(40),
+    RECOVERY_EVIDENCE: "", CONTINUATION_EVIDENCE: "", BUILD_RECOVERY_EVIDENCE: "YQ" };
+  const execute = patch => spawnSync(bash, ["-s"], { input: prefix,
+    env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", ...fixed, ...patch }, encoding: "utf8", timeout: 5000, maxBuffer: 20480 });
+  assert.deepEqual(execute({}).stdout.trim().split("\n"), ["recover-build", "held", "--expected-operation-id",
+    fixed.MAINTENANCE_OPERATION_ID, "--previous-target-sha", fixed.PREVIOUS_TARGET_SHA, "--build-recovery-evidence", "YQ"]);
+  for (const patch of [{ BUILD_RECOVERY_EVIDENCE: "" }, { BUILD_RECOVERY_EVIDENCE: "YQ==" }, { BUILD_RECOVERY_EVIDENCE: "a".repeat(16385) },
+    { BUILD_RECOVERY_EVIDENCE: "YQ\n" }, { RECOVERY_EVIDENCE: "YQ" }, { CONTINUATION_EVIDENCE: "YQ" },
+    ...["plan", "prepare", "recover-held", "continue-held", "check", "end"].map(ACTION => ({ ACTION }))]) {
+    const result = execute(patch); assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+  }
+  assert.equal((transition.run.match(/ssh -T /g) ?? []).length, 1);
+  assert.doesNotMatch(transition.run, /while |for .*attempt|gh run rerun|restoreIngress|start-candidate/);
+  assert.equal(step("production-maintenance", "Reclose Entry And Fail Held If End Is Unconfirmed").if,
+    "always() && (failure() || cancelled()) && inputs.action == 'end' && steps.transition.outputs.attempted == 'true'");
+});
+
+test("build recovery cleanup is always scoped to its private runner captures, not operation state or another path", () => {
+  const cleanup = step("production-maintenance", "Remove Runner Build Recovery Evidence");
+  assert.equal(cleanup.if, "always() && inputs.action == 'recover-build'");
+  assert.equal(cleanup.env.INSPECTION_DIR, "${{ steps.build-recovery-inspection.outputs.capture_dir }}");
+  assert.equal(cleanup.env.PRIOR_BINDINGS_DIR, "${{ steps.build-recovery-prior-bindings.outputs.capture_dir }}");
+  for (const value of ['"$RUNNER_TEMP"/maintenance-build-recovery.????????', '"$RUNNER_TEMP"/maintenance-build-prior-bindings.????????',
+    'rm -f -- "$INSPECTION_DIR/out" "$INSPECTION_DIR/err"',
+    'rm -f -- "$PRIOR_BINDINGS_DIR/$phase/production-maintenance-binding.json" "$PRIOR_BINDINGS_DIR/$phase/provenance.json"',
+    'for phase in backup readiness', 'test ! -L "$INSPECTION_DIR"', 'test ! -L "$PRIOR_BINDINGS_DIR"'])
+    assert.ok(cleanup.run.includes(value), value);
+  assert.doesNotMatch(cleanup.run, /rm -rf|sudo|ssh |operation\.json|maintenance\.json|fail-held|--build-recovery-evidence/);
+});
+
+test("the daily scheduled backup remains off-mode and is not implicitly a maintenance backup or an ignored history exception", () => {
+  const backup = workflows["database-backup"], job = Object.values(backup.jobs)[0];
+  assert.deepEqual(backup.on.schedule, [{ cron: "17 2 * * *" }]);
+  assert.equal(backup.concurrency.group, "production-deploy");
+  assert.equal(job.if, undefined);
+  assert.equal(job.env.MAINTENANCE_MODE, "${{ inputs.maintenance_mode && 'maintenance' || 'off' }}");
+  assert.equal(job.env.MAINTENANCE_OPERATION_ID, "${{ inputs.maintenance_operation_id }}");
+  for (const name of ["Verify Held Maintenance Before Backup", "Verify Held Maintenance After Backup Capture", "Verify Held Maintenance Before Backup Attestation"])
+    assert.equal(step("database-backup", name).if, "env.MAINTENANCE_MODE == 'maintenance'");
+});
+
 
 test("runtime diagnostic workflow is a separately confirmed read-only action without release outputs", () => {
   const validation = step("production-maintenance", "Validate Fixed Manual Transition").run;

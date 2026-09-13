@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GET, pickResolvedSiteRow } from "@/app/api/site-resolve/route";
+import { GET, pickResolvedSiteRow } from "@/app/api/site-resolve/route-handler";
 
 test("pickResolvedSiteRow prefers numeric merchant ids over non-numeric placeholders", () => {
   const chosen = pickResolvedSiteRow([

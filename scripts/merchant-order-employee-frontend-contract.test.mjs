@@ -17,7 +17,7 @@ const preferencesSource = readSource(
   "src/lib/useMerchantManagerPreferences.ts",
 );
 const assetUploadRouteSource = readSource(
-  "src/app/api/assets/upload/route.ts",
+  "src/app/api/assets/upload/route-handler.ts",
 );
 const assetProcessingSource = readSource(
   "src/lib/editorAssetProcessing.ts",

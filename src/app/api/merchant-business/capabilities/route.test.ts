@@ -4,7 +4,7 @@ import {
   handleMerchantBusinessCapabilitiesGet,
   toPublicMerchantBusinessCapabilities,
   toPublicMerchantBusinessWorkspace,
-} from "@/app/api/merchant-business/capabilities/route";
+} from "@/app/api/merchant-business/capabilities/route-handler";
 import { MerchantBusinessAccessError } from "@/lib/merchantBusinessActor.server";
 
 const SITE_ID = "10000000";

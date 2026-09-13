@@ -7,7 +7,7 @@ import {
   handleMerchantEnterpriseWorkflowsPost,
   parseMerchantEnterpriseWorkflowArchiveCursor,
   type MerchantEnterpriseWorkflowRouteDependencies,
-} from "@/app/api/merchant-enterprise/workflows/route";
+} from "@/app/api/merchant-enterprise/workflows/route-handler";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseWorkflow,

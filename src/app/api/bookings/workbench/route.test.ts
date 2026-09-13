@@ -4,7 +4,7 @@ import {
   handleMerchantBookingWorkbenchGet,
   handleMerchantBookingWorkbenchPatch,
   type MerchantBookingWorkbenchRouteDependencies,
-} from "@/app/api/bookings/workbench/route";
+} from "@/app/api/bookings/workbench/route-handler";
 import {
   MerchantBusinessAccessError,
   type MerchantBusinessActor,

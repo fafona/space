@@ -7,7 +7,7 @@ import {
   createMerchantEnterpriseInvitationExchangeHandler,
   resolveMerchantEnterpriseInvitationExchangeConfig,
   type MerchantEnterpriseInvitationExchangeDependencies,
-} from "@/app/api/merchant-enterprise/invitations/exchange/route";
+} from "@/app/api/merchant-enterprise/invitations/exchange/route-handler";
 
 const siteId = "10000000";
 const employeeId = "923e4567-e89b-42d3-a456-426614174000";

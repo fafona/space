@@ -5,17 +5,17 @@ import {
   GET as getOverview,
   getMerchantEnterpriseOverviewMutationErrorResponse,
   POST as bootstrapOverview,
-} from "@/app/api/merchant-enterprise/overview/route";
+} from "@/app/api/merchant-enterprise/overview/route-handler";
 import {
   getMerchantTaskBoardErrorResponse,
   PATCH as updateBoard,
   POST as createBoard,
-} from "@/app/api/merchant-enterprise/boards/route";
+} from "@/app/api/merchant-enterprise/boards/route-handler";
 import {
   getMerchantTaskColumnErrorResponse,
   PATCH as updateColumn,
   POST as createColumn,
-} from "@/app/api/merchant-enterprise/columns/route";
+} from "@/app/api/merchant-enterprise/columns/route-handler";
 import {
   classifyMerchantEnterpriseInvitationAuthError,
   createEmployeeInvitationCooldownResponse,
@@ -31,8 +31,8 @@ import {
   POST as createEmployee,
   reserveEmployeeInvitationResend,
   toPublicMerchantEnterpriseEmployee,
-} from "@/app/api/merchant-enterprise/employees/route";
-import { POST as acceptEmployee } from "@/app/api/merchant-enterprise/employees/accept/route";
+} from "@/app/api/merchant-enterprise/employees/route-handler";
+import { POST as acceptEmployee } from "@/app/api/merchant-enterprise/employees/accept/route-handler";
 import {
   canMerchantEnterpriseActorManageRoleBusinessPermissions,
   canMerchantEnterpriseRoleRetainBusinessPermissions,
@@ -44,34 +44,34 @@ import {
   getMerchantEnterpriseRoleMutationErrorResponse,
   PATCH as updateRole,
   POST as createRole,
-} from "@/app/api/merchant-enterprise/roles/route";
+} from "@/app/api/merchant-enterprise/roles/route-handler";
 import {
   getMerchantTaskErrorResponse,
   getMerchantTaskPatchRequiredPermissions,
   PATCH as updateTask,
   POST as createTask,
-} from "@/app/api/merchant-enterprise/tasks/route";
+} from "@/app/api/merchant-enterprise/tasks/route-handler";
 import {
   handleMerchantOrderTaskPost,
   parseMerchantOrderTaskInput,
   type MerchantOrderTaskRouteDependencies,
-} from "@/app/api/merchant-enterprise/order-tasks/route";
+} from "@/app/api/merchant-enterprise/order-tasks/route-handler";
 import {
   handleMerchantOrderSourceGet,
   type MerchantOrderSourceRouteDependencies,
-} from "@/app/api/merchant-enterprise/order-sources/route";
+} from "@/app/api/merchant-enterprise/order-sources/route-handler";
 import {
   GET as getTaskEvents,
   getMerchantTaskEventErrorResponse,
   POST as createTaskComment,
   toPublicMerchantTaskEvent,
-} from "@/app/api/merchant-enterprise/task-events/route";
+} from "@/app/api/merchant-enterprise/task-events/route-handler";
 import {
   GET as getTaskChecklist,
   PATCH as updateTaskChecklistItem,
   POST as createTaskChecklistItem,
   getMerchantTaskChecklistErrorResponse,
-} from "@/app/api/merchant-enterprise/task-checklist/route";
+} from "@/app/api/merchant-enterprise/task-checklist/route-handler";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseEmployee,

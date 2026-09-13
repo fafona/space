@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   findCardImageUrlInSnapshotSites,
   normalizeCardImageRedirectUrl,
-} from "@/app/card/[card]/image/route";
+} from "@/app/card/[card]/image/route-handler";
 import { createDefaultMerchantBusinessCardDraft, type MerchantBusinessCardAsset } from "./merchantBusinessCards";
 
 function createCard(input: {

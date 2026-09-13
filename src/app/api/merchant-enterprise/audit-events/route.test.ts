@@ -5,7 +5,7 @@ import {
   handleMerchantEnterpriseAuditEventsGet,
   parseMerchantEnterpriseAuditCursor,
   type MerchantEnterpriseAuditRouteDependencies,
-} from "@/app/api/merchant-enterprise/audit-events/route";
+} from "@/app/api/merchant-enterprise/audit-events/route-handler";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseAuditEvent,

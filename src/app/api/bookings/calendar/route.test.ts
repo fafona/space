@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   handleMerchantBookingCalendarGet,
-} from "@/app/api/bookings/calendar/route";
+} from "@/app/api/bookings/calendar/route-handler";
 import {
   MerchantBusinessAccessError,
   type MerchantBusinessActor,

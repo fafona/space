@@ -34,8 +34,8 @@ function methodBody(root, name) {
 }
 
 const service = source("src/lib/merchantMemberships.server.ts");
-const route = source("src/app/api/memberships/route.ts");
-const recovery = source("src/app/api/merchant-admin/redemption-checkout/route.ts");
+const route = source("src/app/api/memberships/route-handler.ts");
+const recovery = source("src/app/api/merchant-admin/redemption-checkout/route-handler.ts");
 const cashier = source("src/components/admin/MerchantPointRedemptionCashier.tsx");
 const memberManager = source("src/components/admin/MerchantMemberManager.tsx");
 const memberRecovery = source("src/lib/merchantMemberCheckoutRecovery.ts");

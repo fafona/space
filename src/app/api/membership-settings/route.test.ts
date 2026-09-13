@@ -4,7 +4,7 @@ import {
   handleMerchantMembershipSettingsGet,
   handleMerchantMembershipSettingsPatch,
   handleMerchantMembershipSettingsPut,
-} from "@/app/api/membership-settings/route";
+} from "@/app/api/membership-settings/route-handler";
 import type { MerchantBusinessActor } from "@/lib/merchantBusinessActor.server";
 import { createEmptyMerchantMembershipSettings } from "@/lib/merchantMembershipSettings";
 import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";

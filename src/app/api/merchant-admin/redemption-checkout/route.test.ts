@@ -4,7 +4,7 @@ import {
   handleMerchantRedemptionCheckoutGet,
   handleMerchantRedemptionCheckoutPost,
   type MerchantRedemptionCheckoutRouteDependencies,
-} from "@/app/api/merchant-admin/redemption-checkout/route";
+} from "@/app/api/merchant-admin/redemption-checkout/route-handler";
 import { MerchantBusinessAccessError, type MerchantBusinessActor } from "@/lib/merchantBusinessActor.server";
 import { normalizeMerchantMembershipRecord, toMerchantMembershipListItem } from "@/lib/merchantMemberships";
 import type { MerchantRedemptionCheckoutContext, MerchantRedemptionCheckoutReceipt } from "@/lib/merchantRedemptionCheckout";

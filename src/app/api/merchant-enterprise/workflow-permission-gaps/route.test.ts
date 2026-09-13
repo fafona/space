@@ -4,7 +4,7 @@ import {
   handleMerchantEnterpriseWorkflowPermissionGapsGet,
   handleMerchantEnterpriseWorkflowPermissionGapsPost,
   type MerchantEnterpriseWorkflowPermissionGapRouteDependencies,
-} from "@/app/api/merchant-enterprise/workflow-permission-gaps/route";
+} from "@/app/api/merchant-enterprise/workflow-permission-gaps/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import type {
   MerchantEnterpriseWorkflowPermissionGap,

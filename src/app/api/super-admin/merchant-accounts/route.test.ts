@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveMerchantDeletionOwnerAuthUserId } from "./route";
+import { resolveMerchantDeletionOwnerAuthUserId } from "./route-handler";
 
 const ownerId = "10000000-0000-4000-8000-000000000001";
 

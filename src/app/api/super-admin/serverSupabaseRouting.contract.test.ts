@@ -6,7 +6,7 @@ const routePaths = [
   "./platform-merchant-snapshot/route.ts",
   "./platform-merchant-config-archive/route.ts",
   "./merchant-id-rules/route.ts",
-  "./merchant-accounts/route.ts",
+  "./merchant-accounts/route-handler.ts",
 ] as const;
 
 test("super-admin service routes use the shared internal-first Supabase client", async () => {

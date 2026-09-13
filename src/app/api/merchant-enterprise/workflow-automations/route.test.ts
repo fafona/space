@@ -5,7 +5,7 @@ import {
   handleMerchantEnterpriseWorkflowAutomationsPatch,
   handleMerchantEnterpriseWorkflowAutomationsPost,
   type MerchantEnterpriseAutomationRouteDependencies,
-} from "@/app/api/merchant-enterprise/workflow-automations/route";
+} from "@/app/api/merchant-enterprise/workflow-automations/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 
 const ids = {

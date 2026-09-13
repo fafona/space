@@ -5,7 +5,7 @@ import test from "node:test";
 import {
   createMerchantEnterpriseInitialPasswordHandler,
   type MerchantEnterpriseInitialPasswordDependencies,
-} from "@/app/api/merchant-enterprise/invitations/initial-password/route";
+} from "@/app/api/merchant-enterprise/invitations/initial-password/route-handler";
 import { hashMerchantEnterpriseInvitationToken } from "@/lib/merchantEnterpriseInvitationSecret.server";
 import {
   MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY,

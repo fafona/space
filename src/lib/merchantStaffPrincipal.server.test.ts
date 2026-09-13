@@ -106,7 +106,7 @@ test("legacy owner-only token routes apply the staff principal guard", () => {
   [
     "src/app/api/publish/route.ts",
     "src/app/api/merchant-draft/route.ts",
-    "src/app/api/merchant-domain-binding/route.ts",
+    "src/app/api/merchant-domain-binding/route-handler.ts",
   ].forEach((relativePath) => {
     const source = fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
     assert.match(
@@ -118,7 +118,7 @@ test("legacy owner-only token routes apply the staff principal guard", () => {
 });
 
 test("chat token handlers bind the real staff guard and await its acceptance before owner lookup", () => {
-  const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/merchant-chat-business-card/route.ts"), "utf8");
+  const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/merchant-chat-business-card/route-handler.ts"), "utf8");
   assert.match(source, /import \{ assertLegacyMerchantIdentityAllowed \} from "@\/lib\/merchantStaffPrincipal\.server"/);
   const defaultsStart = source.indexOf("const defaultDependencies:");
   const defaultsEnd = source.indexOf("function normalizeText(", defaultsStart);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hasConflictingMerchantSlug } from "@/app/api/merchant-domain-binding/route";
+import { hasConflictingMerchantSlug } from "@/app/api/merchant-domain-binding/route-handler";
 
 test("hasConflictingMerchantSlug ignores rows owned by the same merchant", () => {
   assert.equal(
