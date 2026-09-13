@@ -555,7 +555,7 @@ test("snapshot and handoff are exact read-only candidate inspections and never i
   for (const action of ["snapshot-web", "snapshot-worker", "candidate-handoff"]) {
     const f = fixture("candidate"); f.ops.assertDatabaseQuiet = async () => { throw new Error("fence must remain untouched"); };
     const result = await runMaintenanceAction(request(action), f.ops);
-    assert.deepEqual(f.events.slice(0, 3), ["validateProofs", "verifyIngress", "verifyCandidate"]);
+    assert.deepEqual(f.events.slice(0, 3), ["validateProofs", "verifyIngress", action === "candidate-handoff" ? "verifyCandidate" : "snapshot"]);
     assert.equal(f.events.some((event) => event.startsWith("save:") || event.startsWith("send:")), false);
     assert.equal(action === "candidate-handoff" ? typeof result.fields.CANDIDATE_WEB_PID : result.snapshot, action === "candidate-handoff" ? "string" : "absent");
   }

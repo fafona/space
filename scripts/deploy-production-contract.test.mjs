@@ -510,6 +510,19 @@ function extractShellFunction(name) {
   );
 }
 
+const bookingDiagnosticHelpers = ["booking_persistence_diagnostic", "booking_persistence_observe"].map(extractShellFunction).join("\n");
+const bookingDiagnosticStages = new Set(("current_capture current_capture_preconditions current_capture_stat current_capture_environment current_capture_build current_capture_shape current_capture_staff_mode current_capture_staff_sites current_capture_portal current_capture_rollout current_capture_final " +
+  "web_capture web_capture_preconditions web_capture_snapshot web_capture_ticks web_capture_identity web_capture_state " +
+  "state_preconditions state_worker_before state_web_before state_process_before state_environment state_build state_file_comparison state_process_environment state_environment_comparison state_current_after state_worker_after state_web_after state_process_after " +
+  "retry_deadline retry_state_before retry_remaining retry_fence_before retry_state_after_fence retry_health_before retry_state_after_health retry_reserve query retry_state_after_query retry_fence_after retry_state_final_fence retry_health_after retry_state_final_health retry_attempts retry_delay_budget retry_delay retry_exhausted").split(" "));
+function assertOnlyBookingDiagnostics(stderr) {
+  assert.ok(stderr.endsWith("\n"));
+  for (const line of stderr.slice(0, -1).split("\n")) {
+    const match = /^\[deploy\] booking_persistence_diagnostic stage=([a-z_]+) code=(start|passed|failed|hard_failed|transient|invocation_failed|integrity_failed|unexpected_status) elapsed_seconds=(0|[1-9][0-9]{0,4})$/.exec(line);
+    assert.ok(match, line); assert.ok(bookingDiagnosticStages.has(match[1]), line); assert.ok(Number(match[3]) <= 86400, line);
+  }
+}
+
 async function runDeployTransportScenario({
   statuses,
   expectedStatus,
@@ -4285,6 +4298,7 @@ test("every post-start pre-commit gate either rolls back the exact candidate or 
           "candidate_transition() {",
           transition,
           "}",
+          bookingDiagnosticHelpers,
           rollback,
           `EVENTS='${toBashPath(events)}'`,
           `FAIL_AT='${fixture.failAt}'`,
@@ -6101,6 +6115,7 @@ test("booking persistence retries only status two across fully revalidated read-
       encoding: "utf8",
       input: [
         "set +e",
+        bookingDiagnosticHelpers,
         retryState,
         "WEB_COMMITTED=0",
         "SWITCH_COMPLETED=1",
@@ -6169,7 +6184,7 @@ test("booking persistence retries only status two across fully revalidated read-
       timeout: 10_000,
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stderr, "");
+    assertOnlyBookingDiagnostics(result.stderr);
     return Number(result.stdout.trim().match(/^__state__ (\d+)$/)?.[1]);
   };
   assert.equal(runFrozenState(), 0);
@@ -6232,6 +6247,7 @@ test("booking persistence retries only status two across fully revalidated read-
       encoding: "utf8",
       input: [
         "set +e",
+        bookingDiagnosticHelpers,
         retryFunction,
         `CALLS='${toBashPath(callsPath)}'`,
         "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
@@ -6283,7 +6299,7 @@ test("booking persistence retries only status two across fully revalidated read-
       timeout: 10_000,
     });
     assert.equal(result.status, 0, `${name}\n${result.stdout}\n${result.stderr}`);
-    assert.equal(result.stderr, "", name);
+    assertOnlyBookingDiagnostics(result.stderr);
     const lines = result.stdout.trim().split("\n");
     const summary = lines.pop()?.match(/^__result__ (\d+) (\d+) (\d+)$/);
     assert.ok(summary, `${name}\n${result.stdout}`);
@@ -6441,6 +6457,7 @@ test("post-switch transient exhaustion remains transient and enters recoverable 
     encoding: "utf8",
     input: [
       "set +e",
+      bookingDiagnosticHelpers,
       extractShellFunction("verify_booking_persistence_with_bounded_retry"),
       extractShellRegion("cleanup_failed_build() {", "\ntrap cleanup_failed_build EXIT"),
       `CALLS='${toBashPath(callsPath)}'`,
@@ -6488,7 +6505,7 @@ test("post-switch transient exhaustion remains transient and enters recoverable 
   });
   try {
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
-    assert.equal(result.stderr, "");
+    assertOnlyBookingDiagnostics(result.stderr);
     assert.deepEqual(result.stdout.trim().split("\n"), [
       "[deploy] deploy_forward_booking_persistence_transient_retry",
       "[deploy] deploy_forward_booking_persistence_transient_exhausted",

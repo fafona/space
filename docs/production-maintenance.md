@@ -145,6 +145,86 @@ revision and byte digest; they require file fsync, atomic rename, parent fsync
 and exact readback. This is not filesystem CAS against unrelated root writers,
 a power-loss acceptance result, or permission to steal a stale lock.
 
+## One explicit post-launch attempt recovery
+
+`recover-attempt` is a separate, single-use transition for failed Deploy
+`34781392661`, attempt 1, against T5
+`f3104de19aa59e527c7b94a99850d151448da8cd`. Unlike the older build incident,
+this candidate was launched and its confirmed journal cannot be discarded.
+Only the exact version 5 `failed-held` revision 15 state with SHA-256
+`d8e8abb8926441caef71867c15539fdafcb7cc9dbe0f77bd84ebc9548d39a0f8`
+is eligible. Its current symlink points to the **stopped T5 release**, not O.
+The operation UUID, original creation, boot, runtime and all four prior audit
+objects remain unchanged. Neither T5 nor O may be restarted to recover it.
+
+The separately confirmed deadline is **2026-09-14 04:00 UTC / 06:00 Madrid**.
+The authorization was recorded at tool-confirmed 2026-09-13 22:15:38 UTC,
+not asserted as an exact user-message timestamp. The fixed confirmation is
+`RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z`.
+This does not renew ordinary expired v5 operations or expose configurable TTL,
+operation identity, attempt count or deadline inputs. The historical v5 audit
+is checked at its recorded observation time only as an immutable predecessor;
+every present-time inspection, transition and active v6 operation independently
+checks the real clock against the new fixed authorization.
+
+The locked workflow requires a new exact current-main SHA and successful CI,
+the allowed T5 source delta, unchanged complete SQL catalog and 56 migration
+registry entries (including the original migration execution timestamps).
+It revalidates the signed B5/R5 bindings, the separately audited historical
+scheduled backup, and the complete fixed deployment history. Downloads precede
+the private inspection so the stopped baseline and subsequent history evidence
+can remain within their five-minute freshness limits. Inspection proves both
+historical process generations stopped, no application listener, the frozen
+daemon, registry, files and exact T5 current-link identity. It never starts a
+process, changes the symlink or writes the operation state.
+
+One existing-lock, raw-byte/revision compare-and-replace appends v6. The entire
+original v5 object, including all consumed launch fields, is stored in the
+immutable `attemptRecovery.predecessor`. The flat active fields belong to
+`activeAttempt: 1`, initially with no launch; they do not erase attempt 0.
+Every writer preserves the predecessor and audits. Only the exact v5-to-v6
+builder permits this append, and v6 cannot be reset for another attempt or
+target. New nonces cannot reuse predecessor nonces. The existing durable
+planned/attempted/confirmed journal and lost-ACK handling still gate every send.
+Failures remain closed and cannot automatically authorize another attempt.
+
+Private deployment handoff retains the original O proof separately, while its
+27 `PREVIOUS_*` disk/environment fields identify the actual stopped T5 release.
+Its environment identities are T5's, never O's identities mixed with a T5 path;
+the original worker's enabled/stopped semantics remain those frozen from O.
+This is a disk baseline, not permission to restart either historical writer.
+Ordinary non-recovery handoff remains unchanged. Fresh backup, readiness and
+deployment certificates must bind the new unique, immutable target and the
+same operation; certificates for failed T5 cannot finish active attempt 1.
+The existing final worker, persisted dump, signed-deploy and public checks are
+still required before ending maintenance.
+
+The active checks also continue to exclude the stopped T5 generation after the
+new candidate and final worker start. This historical-generation observation
+does not assert an empty port: the existing candidate proof separately binds
+the new listener. Frozen T5 files, original PID generation, cwd scan and two
+stable complete registry observations must still match.
+
+If an already-authorized v6 start/end/fail-held invocation fails after its
+deadline, that same in-memory object may make **one protective reclosure** under
+its still-owned operation lock. The capability is anchored to the previously
+validated WeakMap snapshot, original ingress/runtime/token and real boot; it
+does not reload an expired state or substitute an old clock. Its once-only flag
+is consumed before the installation attempt. It cannot restore entry, start a
+process, extend authority, save expired state or certify held. An uncertain
+ordinary save must not prevent this narrowly scoped closure. This is not crash
+recovery: after SIGKILL, a lost lock or a new expired invocation, that in-memory
+capability is unavailable and independent operator recovery remains necessary.
+
+Booking verification now emits only bounded fixed stage/code/elapsed diagnostics
+to the workflow's strict filter. Raw SQL errors, environment values and process
+identities are not published. The SQL, 60-second deadline and decision order
+are unchanged. Candidate snapshots avoid the controller's duplicate candidate
+verification because the mandatory runtime snapshot reader already performs
+the complete verification and a final fresh registry read. No cross-call cache
+or "already verified" bypass is introduced. Timing diagnostics showed a real
+duplicate cost; they do not uniquely establish the previous failure's cause.
+
 ## Explicit failed-build compatibility recovery
 
 `recover-build` is a third, separate audited transition for the failed T3 build

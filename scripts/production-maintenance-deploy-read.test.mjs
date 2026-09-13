@@ -156,6 +156,32 @@ test("previous runtime handoff validates frozen proof and exactly twenty-seven f
   assert.equal(read, 2);
 });
 
+test("explicit attempt handoff routes through its strict private validator, never the legacy field producer", async () => {
+  // Transport wiring only. Actual d8e8/baseline/runtime verification is composed
+  // separately in production-maintenance-failed-candidate-inspection.test.mjs.
+  const proof = { input: { appDir: APP, appName: "faolla", appPort: 3000, expectedOldSha: OLD } };
+  const attemptRecovery = { version: 1, predecessor: { typed: "fixture" }, stoppedBaseline: { typed: "fixture" } };
+  const fields = Object.fromEntries(previousKeys.map(key => [key, "value"]));
+  let calls = 0, clock = 0;
+  const d = { now: () => clock, run: () => response(summary({ state: "held", runtime: proof, attemptRecovery })), runtime: {
+    validateRuntimeProof: value => value,
+    readDeploymentHandoffFields() { assert.fail("attempt must not fall back to O fields"); },
+  }, attemptHandoff: { async readFailedCandidateHandoffFields(runtime, report) {
+    calls++; assert.deepEqual(runtime, proof); assert.deepEqual(report, attemptRecovery); return fields;
+  } } };
+  assert.equal((await readMaintenanceDeploymentFields(args("runtime-handoff"), d)).split("\0").length, 55);
+  assert.equal(calls, 1);
+  d.attemptHandoff.readFailedCandidateHandoffFields = async () => { calls++; throw new Error("private sentinel"); };
+  await rejected(readMaintenanceDeploymentFields(args("runtime-handoff"), d)); assert.equal(calls, 2);
+  d.attemptHandoff.readFailedCandidateHandoffFields = async () => { clock = 30000; return fields; };
+  await rejected(readMaintenanceDeploymentFields(args("runtime-handoff"), d));
+  for (const action of ["candidate-handoff", "snapshot-web", "snapshot-worker"]) {
+    await rejected(readMaintenanceDeploymentFields(args(action), {
+      run: () => response(summary({ ...(action === "candidate-handoff" ? { fields: candidate() } : { snapshot: "absent" }), attemptRecovery })),
+    }));
+  }
+});
+
 test("rollout verifies both controller snapshots and stable real process/frozen environment", async () => {
   const f = rolloutFixture();
   assert.equal(await readMaintenanceDeploymentFields(f.argv, f.d), "300\n");

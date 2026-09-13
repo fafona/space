@@ -7,7 +7,7 @@ on:
         description: Fixed audited maintenance transition (never an arbitrary command)
         required: true
         type: choice
-        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, recover-held, continue-held, recover-build, check, end]
+        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, recover-held, continue-held, recover-build, recover-attempt, check, end]
       target_sha:
         description: Exact current main SHA with successful push CI
         required: true
@@ -15,10 +15,10 @@ on:
         description: Exact old build frozen by this maintenance operation
         required: true
       maintenance_operation_id:
-        description: UUID returned by prepare; required for recover-held, continue-held, recover-build, check and end
+        description: UUID returned by prepare; required for recover-held, continue-held, recover-build, recover-attempt, check and end
         required: false
       previous_target_sha:
-        description: Previous frozen target SHA; required for recover-held, continue-held or recover-build
+        description: Previous frozen target SHA; required for recover-held, continue-held, recover-build or recover-attempt
         required: false
       check_state:
         description: State to verify for the check action
@@ -32,7 +32,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: Fixed confirmation; recover-build requires RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
+        description: Fixed confirmation; recover-attempt requires RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z (2026-09-14 04:00 UTC / 06:00 Europe/Madrid); old recover-build keeps RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
         required: true
 
 concurrency:
@@ -73,7 +73,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = 1
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$TARGET_SHA" = "$GITHUB_SHA"
-          if [ "$ACTION" != recover-held ] && [ "$ACTION" != continue-held ] && [ "$ACTION" != recover-build ]; then test -z "${PREVIOUS_TARGET_SHA:-}"; fi
+          if [ "$ACTION" != recover-held ] && [ "$ACTION" != continue-held ] && [ "$ACTION" != recover-build ] && [ "$ACTION" != recover-attempt ]; then test -z "${PREVIOUS_TARGET_SHA:-}"; fi
           case "$ACTION" in
             diagnose-runtime)
               test "$CONFIRMATION" = CHECK_PRODUCTION_RUNTIME_COMPATIBILITY
@@ -116,6 +116,14 @@ jobs:
               test "$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z
               test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
               test "$PREVIOUS_TARGET_SHA" = 46f007fbd9e417f93c01e398c77cf38ec814547d
+              test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
+              test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA" && test "$TARGET_SHA" != "$EXPECTED_OLD_SHA" || exit 1
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
+            recover-attempt)
+              test "$CONFIRMATION" = RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z
+              test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
+              test "$PREVIOUS_TARGET_SHA" = f3104de19aa59e527c7b94a99850d151448da8cd
               test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
               test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA" && test "$TARGET_SHA" != "$EXPECTED_OLD_SHA" || exit 1
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
@@ -539,6 +547,129 @@ jobs:
           node scripts/production-maintenance-build-recovery-workflow.mjs \
             --inspection "$INSPECTION_DIR/out" --prior-bindings "$PRIOR_BINDINGS_DIR" --additional-backup "$ADDITIONAL_BACKUP_DIR"
 
+      - name: Verify Launched Incident Signed Backup And Readiness Bindings
+        if: inputs.action == 'recover-attempt'
+        id: attempt-recovery-prior-bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          binding_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-attempt-prior-bindings.XXXXXXXX")"
+          printf 'capture_dir=%s\n' "$binding_dir" >> "$GITHUB_OUTPUT"
+          test "$PREVIOUS_TARGET_SHA" = f3104de19aa59e527c7b94a99850d151448da8cd
+          for phase in backup readiness; do
+            case "$phase" in
+              backup) run_id=34778579797; workflow=database-backup.yml ;;
+              readiness) run_id=34781336277; workflow=ordinary-account-cutover-readiness.yml ;;
+              *) exit 1 ;;
+            esac
+            mkdir -m 700 -- "$binding_dir/$phase"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "faolla-maintenance-$phase-binding-$run_id-1" --dir "$binding_dir/$phase"
+            test -f "$binding_dir/$phase/production-maintenance-binding.json"
+            test ! -L "$binding_dir/$phase/production-maintenance-binding.json"
+            gh attestation verify "$binding_dir/$phase/production-maintenance-binding.json" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/$workflow" \
+              --source-digest "$PREVIOUS_TARGET_SHA" --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$binding_dir/$phase/provenance.json"
+          done
+
+      - name: Verify Attempt Recovery Historical Additional Backup
+        if: inputs.action == 'recover-attempt'
+        id: attempt-recovery-additional-backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-attempt-additional-backup.XXXXXXXX")"
+          printf 'capture_dir=%s\n' "$evidence_dir" >> "$GITHUB_OUTPUT"
+          test "$GITHUB_REPOSITORY" = fafona/space
+          for part in binding predicate reports; do
+            case "$part" in
+              binding) artifact=faolla-maintenance-backup-binding-34745334237-1 ;;
+              predicate) artifact=faolla-production-backup-attestation-34745334237-1 ;;
+              reports) artifact=faolla-backup-verification-reports-34745334237-1 ;;
+              *) exit 1 ;;
+            esac
+            mkdir -m 700 -- "$evidence_dir/$part"
+            gh run download 34745334237 --repo fafona/space --name "$artifact" --dir "$evidence_dir/$part"
+          done
+          for part in binding predicate; do
+            case "$part" in
+              binding) subject=production-maintenance-binding.json ;;
+              predicate) subject=production-backup-attestation.json ;;
+              *) exit 1 ;;
+            esac
+            test -f "$evidence_dir/$part/$subject" && test ! -L "$evidence_dir/$part/$subject"
+            gh attestation verify "$evidence_dir/$part/$subject" --repo fafona/space \
+              --signer-workflow github.com/fafona/space/.github/workflows/database-backup.yml \
+              --source-digest 13df917416cf06ce27fce021460b08caf50f6165 --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$evidence_dir/$part/provenance.json"
+          done
+          node --input-type=module - "$evidence_dir" <<'NODE'
+          import { readMaintenanceAttemptRecoveryAdditionalBackup, validateMaintenanceAttemptRecoveryAdditionalBackup } from './scripts/production-maintenance-attempt-recovery-workflow.mjs';
+          try { validateMaintenanceAttemptRecoveryAdditionalBackup(readMaintenanceAttemptRecoveryAdditionalBackup(process.argv[2]), Date.now()); }
+          catch { process.stderr.write('maintenance_attempt_additional_backup_unverified\n'); process.exitCode = 1; }
+          NODE
+
+      - name: Inspect Stopped Launched Candidate Recovery State
+        if: inputs.action == 'recover-attempt'
+        id: attempt-recovery-inspection
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-attempt-recovery.XXXXXXXX")"
+          printf 'capture_dir=%s\n' "$capture_dir" >> "$GITHUB_OUTPUT"
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q inspect-attempt-recovery --app-dir %q --app-name %q --app-port %q --target-sha %q --previous-target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$REMOTE_MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$PREVIOUS_TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=10s 600s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_attempt_recovery_inspection_unconfirmed'
+            exit 1
+          fi
+
+      - name: Verify Exact Single Attempt Recovery History Under Production Lock
+        if: inputs.action == 'recover-attempt'
+        id: attempt-recovery-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTION: ${{ inputs.action }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          INSPECTION_DIR: ${{ steps.attempt-recovery-inspection.outputs.capture_dir }}
+          PRIOR_BINDINGS_DIR: ${{ steps.attempt-recovery-prior-bindings.outputs.capture_dir }}
+          ADDITIONAL_BACKUP_DIR: ${{ steps.attempt-recovery-additional-backup.outputs.capture_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/production-maintenance-attempt-recovery-workflow.mjs \
+            --inspection "$INSPECTION_DIR/out" --prior-bindings "$PRIOR_BINDINGS_DIR" --additional-backup "$ADDITIONAL_BACKUP_DIR"
+
       - name: Execute Fixed Maintenance Transition
         id: transition
         env:
@@ -553,6 +684,7 @@ jobs:
           RECOVERY_EVIDENCE: ${{ steps.recovery-evidence.outputs.recovery_evidence }}
           CONTINUATION_EVIDENCE: ${{ steps.continuation-evidence.outputs.continuation_evidence }}
           BUILD_RECOVERY_EVIDENCE: ${{ steps.build-recovery-evidence.outputs.build_recovery_evidence }}
+          ATTEMPT_RECOVERY_EVIDENCE: ${{ steps.attempt-recovery-evidence.outputs.attempt_recovery_evidence }}
         shell: bash
         run: |
           set -euo pipefail
@@ -569,6 +701,7 @@ jobs:
             recover-held) command=recover-held; expected_state=held ;;
             continue-held) command=continue-held; expected_state=held ;;
             recover-build) command=recover-build; expected_state=held ;;
+            recover-attempt) command=recover-attempt; expected_state=held ;;
             check)
               case "$CHECK_STATE" in
                 held) command=check-held; expected_state=held ;;
@@ -604,6 +737,13 @@ jobs:
             operation_args+=(--previous-target-sha "$PREVIOUS_TARGET_SHA" --build-recovery-evidence "$BUILD_RECOVERY_EVIDENCE")
           else
             test -z "$BUILD_RECOVERY_EVIDENCE"
+          fi
+          if [ "$command" = recover-attempt ]; then
+            [[ "$ATTEMPT_RECOVERY_EVIDENCE" =~ ^[A-Za-z0-9_-]+$ ]]
+            test "${#ATTEMPT_RECOVERY_EVIDENCE}" -le 16384
+            operation_args+=(--previous-target-sha "$PREVIOUS_TARGET_SHA" --attempt-recovery-evidence "$ATTEMPT_RECOVERY_EVIDENCE")
+          else
+            test -z "$ATTEMPT_RECOVERY_EVIDENCE"
           fi
           capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-transition.XXXXXXXX")"
           trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
@@ -849,6 +989,56 @@ jobs:
           set -euo pipefail
           if [ -n "$ADDITIONAL_BACKUP_DIR" ]; then
             case "$ADDITIONAL_BACKUP_DIR" in "$RUNNER_TEMP"/maintenance-additional-backup.????????) ;; *) exit 1 ;; esac
+            test -d "$ADDITIONAL_BACKUP_DIR" && test ! -L "$ADDITIONAL_BACKUP_DIR"
+            for part in binding predicate reports; do
+              if [ -e "$ADDITIONAL_BACKUP_DIR/$part" ]; then
+                test -d "$ADDITIONAL_BACKUP_DIR/$part" && test ! -L "$ADDITIONAL_BACKUP_DIR/$part"
+                case "$part" in
+                  binding) rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/production-maintenance-binding.json" "$ADDITIONAL_BACKUP_DIR/$part/provenance.json" ;;
+                  predicate) rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/production-backup-attestation.json" "$ADDITIONAL_BACKUP_DIR/$part/provenance.json" ;;
+                  reports)
+                    for report in readiness create transfer verify restore; do
+                      rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/database-backup-$report-report.log"
+                    done
+                    rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/database-backup-subject.json"
+                    ;;
+                  *) exit 1 ;;
+                esac
+                rmdir -- "$ADDITIONAL_BACKUP_DIR/$part"
+              fi
+            done
+            rmdir -- "$ADDITIONAL_BACKUP_DIR"
+          fi
+
+      - name: Remove Runner Attempt Recovery Evidence
+        if: always() && inputs.action == 'recover-attempt'
+        env:
+          INSPECTION_DIR: ${{ steps.attempt-recovery-inspection.outputs.capture_dir }}
+          PRIOR_BINDINGS_DIR: ${{ steps.attempt-recovery-prior-bindings.outputs.capture_dir }}
+          ADDITIONAL_BACKUP_DIR: ${{ steps.attempt-recovery-additional-backup.outputs.capture_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$INSPECTION_DIR" ]; then
+            case "$INSPECTION_DIR" in "$RUNNER_TEMP"/maintenance-attempt-recovery.????????) ;; *) exit 1 ;; esac
+            test -d "$INSPECTION_DIR" && test ! -L "$INSPECTION_DIR"
+            rm -f -- "$INSPECTION_DIR/out" "$INSPECTION_DIR/err"
+            rmdir -- "$INSPECTION_DIR"
+          fi
+          if [ -n "$PRIOR_BINDINGS_DIR" ]; then
+            case "$PRIOR_BINDINGS_DIR" in "$RUNNER_TEMP"/maintenance-attempt-prior-bindings.????????) ;; *) exit 1 ;; esac
+            test -d "$PRIOR_BINDINGS_DIR" && test ! -L "$PRIOR_BINDINGS_DIR"
+            for phase in backup readiness; do
+              if [ -e "$PRIOR_BINDINGS_DIR/$phase" ]; then
+                test -d "$PRIOR_BINDINGS_DIR/$phase" && test ! -L "$PRIOR_BINDINGS_DIR/$phase"
+                rm -f -- "$PRIOR_BINDINGS_DIR/$phase/production-maintenance-binding.json" "$PRIOR_BINDINGS_DIR/$phase/provenance.json"
+                rmdir -- "$PRIOR_BINDINGS_DIR/$phase"
+              fi
+            done
+            rmdir -- "$PRIOR_BINDINGS_DIR"
+          fi
+          if [ -n "$ADDITIONAL_BACKUP_DIR" ]; then
+            case "$ADDITIONAL_BACKUP_DIR" in "$RUNNER_TEMP"/maintenance-attempt-additional-backup.????????) ;; *) exit 1 ;; esac
             test -d "$ADDITIONAL_BACKUP_DIR" && test ! -L "$ADDITIONAL_BACKUP_DIR"
             for part in binding predicate reports; do
               if [ -e "$ADDITIONAL_BACKUP_DIR/$part" ]; then
