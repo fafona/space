@@ -4638,8 +4638,45 @@ read_candidate_process_environment_snapshot_for_booking_retry() {
       process-snapshot "$CANDIDATE_WEB_PID" "$RELEASE_DIR" 2>/dev/null
 }
 
+# Diagnostic-only: fixed stages/codes and a bounded elapsed counter, never an
+# identity, command argument or child error. Logging cannot change a verdict.
+booking_persistence_diagnostic() {
+  local stage="$1" code="$2" started_seconds="$3" elapsed_seconds
+  case "$stage" in
+    current_capture|current_capture_preconditions|current_capture_stat|current_capture_environment|current_capture_build|current_capture_shape|current_capture_staff_mode|current_capture_staff_sites|current_capture_portal|current_capture_rollout|current_capture_final|\
+    web_capture|web_capture_preconditions|web_capture_snapshot|web_capture_ticks|web_capture_identity|web_capture_state|\
+    state_preconditions|state_worker_before|state_web_before|state_process_before|state_environment|state_build|state_file_comparison|state_process_environment|state_environment_comparison|state_current_after|state_worker_after|state_web_after|state_process_after|\
+    retry_deadline|retry_state_before|retry_remaining|retry_fence_before|retry_state_after_fence|retry_health_before|retry_state_after_health|retry_reserve|query|retry_state_after_query|retry_fence_after|retry_state_final_fence|retry_health_after|retry_state_final_health|retry_attempts|retry_delay_budget|retry_delay|retry_exhausted) ;;
+    *) return 0 ;;
+  esac
+  case "$code" in start|passed|failed|hard_failed|transient|invocation_failed|integrity_failed|unexpected_status) ;; *) return 0 ;; esac
+  [[ "$started_seconds" =~ ^(0|[1-9][0-9]{0,8})$ ]] && [[ "$SECONDS" =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 0
+  elapsed_seconds=$((SECONDS - started_seconds))
+  [ "$elapsed_seconds" -ge 0 ] && [ "$elapsed_seconds" -le 86400 ] || return 0
+  printf '[deploy] booking_persistence_diagnostic stage=%s code=%s elapsed_seconds=%s\n' \
+    "$stage" "$code" "$elapsed_seconds" >&2 || :
+  return 0
+}
+
+# Preserve command-substitution stdout and the exact original exit status.
+# Child stderr retains its existing redirections; the fixed diagnostic itself
+# is outside them, so suppressed raw helper errors do not suppress this record.
+booking_persistence_observe() {
+  local diagnostic_stage="$1" diagnostic_started="$SECONDS" diagnostic_status
+  shift
+  booking_persistence_diagnostic "$diagnostic_stage" start "$diagnostic_started"
+  if "$@"; then diagnostic_status=0; else diagnostic_status=$?; fi
+  if [ "$diagnostic_status" -eq 0 ]; then
+    booking_persistence_diagnostic "$diagnostic_stage" passed "$diagnostic_started"
+  else
+    booking_persistence_diagnostic "$diagnostic_stage" failed "$diagnostic_started"
+  fi
+  return "$diagnostic_status"
+}
+
 capture_candidate_current_identity_for_booking_retry() {
   local absolute_deadline_seconds="${1:-$((SECONDS + 15))}"
+  local diagnostic_started="$SECONDS"
   local current_link_identity
   local environment_snapshot
   local -a environment_snapshot_parts=()
@@ -4656,22 +4693,28 @@ capture_candidate_current_identity_for_booking_retry() {
     || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ -e "${CURRENT_LINK}.pending" ] \
     || [ -L "${CURRENT_LINK}.pending" ]; then
+    booking_persistence_diagnostic current_capture_preconditions failed "$diagnostic_started"
     return 1
   fi
+  booking_persistence_diagnostic current_capture_preconditions passed "$diagnostic_started"
+  diagnostic_started="$SECONDS"
   current_link_identity="$(stat -c '%d:%i:%Z' -- "$CURRENT_LINK" 2>/dev/null || true)"
   runtime_identity="$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)"
   if ! [[ "$current_link_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
     || ! [[ "$runtime_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]]; then
+    booking_persistence_diagnostic current_capture_stat failed "$diagnostic_started"
     return 1
   fi
-  environment_snapshot="$(read_candidate_environment_snapshot_for_booking_retry \
+  booking_persistence_diagnostic current_capture_stat passed "$diagnostic_started"
+  environment_snapshot="$(booking_persistence_observe current_capture_environment read_candidate_environment_snapshot_for_booking_retry \
     "$absolute_deadline_seconds")" \
     || return 1
   mapfile -t environment_snapshot_parts <<< "$environment_snapshot"
-  build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
+  build_id_snapshot="$(booking_persistence_observe current_capture_build read_candidate_build_id_snapshot_for_booking_retry \
     "$absolute_deadline_seconds")" \
     || return 1
   mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
+  diagnostic_started="$SECONDS"
   if [ "${#environment_snapshot_parts[@]}" -ne 10 ] \
     || ! [[ "${environment_snapshot_parts[0]}" =~ ^([0-9]+:){6}[0-9]+$ ]] \
     || ! [[ "${environment_snapshot_parts[1]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
@@ -4686,21 +4729,27 @@ capture_candidate_current_identity_for_booking_retry() {
     || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
     || ! [[ "${build_id_snapshot_parts[0]}" =~ ^([0-9]+:){7}[0-9]+$ ]] \
     || ! [[ "${build_id_snapshot_parts[1]}" =~ ^[0-9a-f]{64}$ ]]; then
+    booking_persistence_diagnostic current_capture_shape failed "$diagnostic_started"
     return 1
   fi
-  staff_mode="$(decode_frozen_environment_value "${environment_snapshot_parts[7]}")" \
+  booking_persistence_diagnostic current_capture_shape passed "$diagnostic_started"
+  staff_mode="$(booking_persistence_observe current_capture_staff_mode decode_frozen_environment_value "${environment_snapshot_parts[7]}")" \
     || return 1
-  staff_site_ids="$(decode_frozen_environment_value "${environment_snapshot_parts[8]}")" \
+  staff_site_ids="$(booking_persistence_observe current_capture_staff_sites decode_frozen_environment_value "${environment_snapshot_parts[8]}")" \
     || return 1
-  portal_origin="$(decode_frozen_environment_value "${environment_snapshot_parts[9]}")" \
+  portal_origin="$(booking_persistence_observe current_capture_portal decode_frozen_environment_value "${environment_snapshot_parts[9]}")" \
     || return 1
+  diagnostic_started="$SECONDS"
   if ! staff_business_rollout_values_valid \
       "$staff_mode" "$staff_site_ids" "$portal_origin" \
     || [ "$staff_mode" != "$MERCHANT_STAFF_BUSINESS_RBAC_MODE" ] \
     || [ "$staff_site_ids" != "$MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS" ] \
     || [ "$portal_origin" != "$FAOLLA_CANONICAL_PORTAL_ORIGIN" ]; then
+    booking_persistence_diagnostic current_capture_rollout failed "$diagnostic_started"
     return 1
   fi
+  booking_persistence_diagnostic current_capture_rollout passed "$diagnostic_started"
+  diagnostic_started="$SECONDS"
   if [ "$(readlink -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ "$(stat -c '%d:%i:%Z' -- "$CURRENT_LINK" 2>/dev/null || true)" != "$current_link_identity" ] \
@@ -4708,8 +4757,10 @@ capture_candidate_current_identity_for_booking_retry() {
     || [ -e "${CURRENT_LINK}.pending" ] \
     || [ -L "${CURRENT_LINK}.pending" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    booking_persistence_diagnostic current_capture_final failed "$diagnostic_started"
     return 1
   fi
+  booking_persistence_diagnostic current_capture_final passed "$diagnostic_started"
   CANDIDATE_CURRENT_LINK_IDENTITY="$current_link_identity"
   CANDIDATE_RUNTIME_IDENTITY="$runtime_identity"
   CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY="${environment_snapshot_parts[0]}"
@@ -4731,6 +4782,7 @@ capture_candidate_current_identity_for_booking_retry() {
 
 capture_candidate_web_identity_for_booking_retry() {
   local absolute_deadline_seconds="$1"
+  local diagnostic_started="$SECONDS"
   local cwd_identity
   local process_identity
   local process_pid
@@ -4743,15 +4795,22 @@ capture_candidate_web_identity_for_booking_retry() {
     || ! [[ "${CANDIDATE_WEB_PID:-}" =~ ^[1-9][0-9]*$ ]] \
     || ! [[ "${CANDIDATE_WEB_PROCESS_START_TICKS:-}" =~ ^[1-9][0-9]*$ ]] \
     || ! [[ "${CANDIDATE_WEB_PROCESS_IDENTITY:-}" =~ ^[0-9]+:[0-9]+$ ]] \
-    || ! [[ "${CANDIDATE_WEB_CWD_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
-    || ! process_snapshot="$(pm2_process_snapshot \
+    || ! [[ "${CANDIDATE_WEB_CWD_IDENTITY:-}" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]]; then
+    booking_persistence_diagnostic web_capture_preconditions failed "$diagnostic_started"
+    return 1
+  fi
+  booking_persistence_diagnostic web_capture_preconditions passed "$diagnostic_started"
+  diagnostic_started="$SECONDS"
+  if ! process_snapshot="$(booking_persistence_observe web_capture_snapshot pm2_process_snapshot \
       "$APP_NAME" "$absolute_deadline_seconds")" \
     || ! [[ "$process_snapshot" =~ ^running:([1-9][0-9]*)$ ]]; then
+    booking_persistence_diagnostic web_capture_snapshot failed "$diagnostic_started"
     return 1
   fi
   process_pid="${process_snapshot#running:}"
-  process_start_ticks="$(linux_process_start_ticks \
+  process_start_ticks="$(booking_persistence_observe web_capture_ticks linux_process_start_ticks \
     "$process_pid" "$absolute_deadline_seconds")" || return 1
+  diagnostic_started="$SECONDS"
   process_identity="$(stat -Lc '%d:%i' -- "/proc/$process_pid" 2>/dev/null || true)"
   cwd_identity="$(stat -Lc '%d:%i:%Z' -- "/proc/$process_pid/cwd" 2>/dev/null || true)"
   if ! [[ "$process_identity" =~ ^[0-9]+:[0-9]+$ ]] \
@@ -4762,13 +4821,16 @@ capture_candidate_web_identity_for_booking_retry() {
     || [ "$cwd_identity" != "$CANDIDATE_WEB_CWD_IDENTITY" ] \
     || [ "$(readlink -f -- "/proc/$process_pid/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    booking_persistence_diagnostic web_capture_identity failed "$diagnostic_started"
     return 1
   fi
-  assert_booking_persistence_retry_state "$absolute_deadline_seconds"
+  booking_persistence_diagnostic web_capture_identity passed "$diagnostic_started"
+  booking_persistence_observe web_capture_state assert_booking_persistence_retry_state "$absolute_deadline_seconds"
 }
 
 assert_booking_persistence_retry_state() {
   local absolute_deadline_seconds="$1"
+  local diagnostic_started="$SECONDS"
   local build_id_snapshot
   local -a build_id_snapshot_parts=()
   local environment_snapshot
@@ -4811,31 +4873,45 @@ assert_booking_persistence_retry_state() {
     || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$CANDIDATE_RUNTIME_IDENTITY" ] \
     || [ -e "${CURRENT_LINK}.pending" ] \
     || [ -L "${CURRENT_LINK}.pending" ]; then
+    booking_persistence_diagnostic state_preconditions failed "$diagnostic_started"
     return 1
   fi
-  if ! process_snapshot="$(pm2_process_snapshot \
+  booking_persistence_diagnostic state_preconditions passed "$diagnostic_started"
+  diagnostic_started="$SECONDS"
+  if ! process_snapshot="$(booking_persistence_observe state_worker_before pm2_process_snapshot \
       "$AUTOMATION_WORKER_NAME" "$absolute_deadline_seconds")" \
-    || [ "$process_snapshot" != "absent" ] \
-    || ! process_snapshot="$(pm2_process_snapshot \
+    || [ "$process_snapshot" != "absent" ]; then
+    booking_persistence_diagnostic state_worker_before failed "$diagnostic_started"
+    return 1
+  fi
+  diagnostic_started="$SECONDS"
+  if ! process_snapshot="$(booking_persistence_observe state_web_before pm2_process_snapshot \
       "$APP_NAME" "$absolute_deadline_seconds")" \
-    || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ] \
-    || [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
+    || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ]; then
+    booking_persistence_diagnostic state_web_before failed "$diagnostic_started"
+    return 1
+  fi
+  diagnostic_started="$SECONDS"
+  if [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
       "$absolute_deadline_seconds" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
     || [ "$(stat -Lc '%d:%i' -- "/proc/$CANDIDATE_WEB_PID" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_IDENTITY" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$CANDIDATE_WEB_CWD_IDENTITY" ] \
     || [ "$CANDIDATE_WEB_CWD_IDENTITY" != "$CANDIDATE_RUNTIME_IDENTITY" ] \
     || [ "$(readlink -f -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    booking_persistence_diagnostic state_process_before failed "$diagnostic_started"
     return 1
   fi
-  environment_snapshot="$(read_candidate_environment_snapshot_for_booking_retry \
+  booking_persistence_diagnostic state_process_before passed "$diagnostic_started"
+  environment_snapshot="$(booking_persistence_observe state_environment read_candidate_environment_snapshot_for_booking_retry \
     "$absolute_deadline_seconds")" \
     || return 1
   mapfile -t environment_snapshot_parts <<< "$environment_snapshot"
-  build_id_snapshot="$(read_candidate_build_id_snapshot_for_booking_retry \
+  build_id_snapshot="$(booking_persistence_observe state_build read_candidate_build_id_snapshot_for_booking_retry \
     "$absolute_deadline_seconds")" \
     || return 1
   mapfile -t build_id_snapshot_parts <<< "$build_id_snapshot"
+  diagnostic_started="$SECONDS"
   if [ "${#environment_snapshot_parts[@]}" -ne 10 ] \
     || [ "${environment_snapshot_parts[0]}" != "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" ] \
     || [ "${environment_snapshot_parts[1]}" != "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" ] \
@@ -4850,13 +4926,16 @@ assert_booking_persistence_retry_state() {
     || [ "${#build_id_snapshot_parts[@]}" -ne 2 ] \
     || [ "${build_id_snapshot_parts[0]}" != "$CANDIDATE_BUILD_FILE_IDENTITY" ] \
     || [ "${build_id_snapshot_parts[1]}" != "$CANDIDATE_BUILD_FILE_SHA256" ]; then
+    booking_persistence_diagnostic state_file_comparison failed "$diagnostic_started"
     return 1
   fi
+  booking_persistence_diagnostic state_file_comparison passed "$diagnostic_started"
   process_environment_snapshot="$(
-    read_candidate_process_environment_snapshot_for_booking_retry \
+    booking_persistence_observe state_process_environment read_candidate_process_environment_snapshot_for_booking_retry \
       "$absolute_deadline_seconds"
   )" || return 1
   mapfile -t process_environment_snapshot_parts <<< "$process_environment_snapshot"
+  diagnostic_started="$SECONDS"
   if [ "${#process_environment_snapshot_parts[@]}" -ne 9 ] \
     || [ "${process_environment_snapshot_parts[0]}" != "present" ] \
     || [ "${process_environment_snapshot_parts[1]}" != "present" ] \
@@ -4868,8 +4947,11 @@ assert_booking_persistence_retry_state() {
     || [ "${process_environment_snapshot_parts[7]}" != "$CANDIDATE_STAFF_SITE_IDS_B64" ] \
     || [ "${process_environment_snapshot_parts[8]}" != "$CANDIDATE_PORTAL_ORIGIN_B64" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    booking_persistence_diagnostic state_environment_comparison failed "$diagnostic_started"
     return 1
   fi
+  booking_persistence_diagnostic state_environment_comparison passed "$diagnostic_started"
+  diagnostic_started="$SECONDS"
   if [ "${WEB_COMMITTED:-0}" != "0" ] \
     || [ "${CANDIDATE_WEB_HANDOFF_STATE:-unverified}" != "exact" ] \
     || ! [[ "${CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64:-}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
@@ -4887,22 +4969,35 @@ assert_booking_persistence_retry_state() {
     || [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" != "$CANDIDATE_RUNTIME_IDENTITY" ] \
     || [ -e "${CURRENT_LINK}.pending" ] \
     || [ -L "${CURRENT_LINK}.pending" ]; then
+    booking_persistence_diagnostic state_current_after failed "$diagnostic_started"
     return 1
   fi
-  if ! process_snapshot="$(pm2_process_snapshot \
+  booking_persistence_diagnostic state_current_after passed "$diagnostic_started"
+  diagnostic_started="$SECONDS"
+  if ! process_snapshot="$(booking_persistence_observe state_worker_after pm2_process_snapshot \
       "$AUTOMATION_WORKER_NAME" "$absolute_deadline_seconds")" \
-    || [ "$process_snapshot" != "absent" ] \
-    || ! process_snapshot="$(pm2_process_snapshot \
+    || [ "$process_snapshot" != "absent" ]; then
+    booking_persistence_diagnostic state_worker_after failed "$diagnostic_started"
+    return 1
+  fi
+  diagnostic_started="$SECONDS"
+  if ! process_snapshot="$(booking_persistence_observe state_web_after pm2_process_snapshot \
       "$APP_NAME" "$absolute_deadline_seconds")" \
-    || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ] \
-    || [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
+    || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ]; then
+    booking_persistence_diagnostic state_web_after failed "$diagnostic_started"
+    return 1
+  fi
+  diagnostic_started="$SECONDS"
+  if [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
       "$absolute_deadline_seconds" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_START_TICKS" ] \
     || [ "$(stat -Lc '%d:%i' -- "/proc/$CANDIDATE_WEB_PID" 2>/dev/null || true)" != "$CANDIDATE_WEB_PROCESS_IDENTITY" ] \
     || [ "$(stat -Lc '%d:%i:%Z' -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$CANDIDATE_WEB_CWD_IDENTITY" ] \
     || [ "$(readlink -f -- "/proc/$CANDIDATE_WEB_PID/cwd" 2>/dev/null || true)" != "$RELEASE_DIR" ] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    booking_persistence_diagnostic state_process_after failed "$diagnostic_started"
     return 1
   fi
+  booking_persistence_diagnostic state_process_after passed "$diagnostic_started"
   return 0
 }
 
@@ -4934,34 +5029,45 @@ verify_booking_persistence_with_bounded_retry() {
   local maximum_attempts=2
   local persistence_status
   local remaining_seconds
+  local diagnostic_started="$SECONDS"
   if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ $((absolute_deadline_seconds - SECONDS)) \
       -gt "$BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" ]; then
+    booking_persistence_diagnostic retry_deadline failed "$diagnostic_started"
     echo "[deploy] deploy_forward_booking_persistence_state_failed"
     return 1
   fi
+  booking_persistence_diagnostic retry_deadline passed "$diagnostic_started"
   while [ "$attempt" -lt "$maximum_attempts" ]; do
     attempt=$((attempt + 1))
-    if ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
+    if ! booking_persistence_observe retry_state_before assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
       echo "[deploy] deploy_forward_booking_persistence_state_failed"
       return 1
     fi
     remaining_seconds=$((absolute_deadline_seconds - SECONDS))
-    if [ "$remaining_seconds" -le 0 ] \
-      || ! assert_readiness_fence_before_forward_operation \
+    diagnostic_started="$SECONDS"
+    if [ "$remaining_seconds" -le 0 ]; then
+      booking_persistence_diagnostic retry_remaining failed "$diagnostic_started"
+      echo "[deploy] deploy_forward_booking_persistence_state_failed"
+      return 1
+    fi
+    booking_persistence_diagnostic retry_remaining passed "$diagnostic_started"
+    if ! booking_persistence_observe retry_fence_before assert_readiness_fence_before_forward_operation \
         "$remaining_seconds" "$absolute_deadline_seconds" \
-      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
-      || ! assert_candidate_web_health "$absolute_deadline_seconds" \
-      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
+      || ! booking_persistence_observe retry_state_after_fence assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
+      || ! booking_persistence_observe retry_health_before assert_candidate_web_health "$absolute_deadline_seconds" \
+      || ! booking_persistence_observe retry_state_after_health assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
       echo "[deploy] deploy_forward_booking_persistence_state_failed"
       return 1
     fi
     remaining_seconds=$((absolute_deadline_seconds - SECONDS))
+    diagnostic_started="$SECONDS"
     if [ "$remaining_seconds" -le $((
       BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS +
       BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS
     )) ]; then
+      booking_persistence_diagnostic retry_reserve failed "$diagnostic_started"
       if [ "$attempt" -gt 1 ]; then
         echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
       else
@@ -4969,21 +5075,34 @@ verify_booking_persistence_with_bounded_retry() {
       fi
       return 1
     fi
+    booking_persistence_diagnostic retry_reserve passed "$diagnostic_started"
     if [ "$remaining_seconds" -gt "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" ]; then
       remaining_seconds="$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS"
     fi
+    diagnostic_started="$SECONDS"
+    booking_persistence_diagnostic query start "$diagnostic_started"
     if verify_booking_persistence \
       "$remaining_seconds" "$absolute_deadline_seconds" >/dev/null 2>&1; then
       persistence_status=0
     else
       persistence_status=$?
     fi
-    if ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
-      || ! assert_readiness_fence_forward_checkpoint \
+    # Keep the raw query/child channels suppressed above. Emit only its fixed
+    # status class here, before a later post-proof failure can mask that result.
+    case "$persistence_status" in
+      0) booking_persistence_diagnostic query passed "$diagnostic_started" ;;
+      1) booking_persistence_diagnostic query hard_failed "$diagnostic_started" ;;
+      2) booking_persistence_diagnostic query transient "$diagnostic_started" ;;
+      3) booking_persistence_diagnostic query invocation_failed "$diagnostic_started" ;;
+      4) booking_persistence_diagnostic query integrity_failed "$diagnostic_started" ;;
+      *) booking_persistence_diagnostic query unexpected_status "$diagnostic_started" ;;
+    esac
+    if ! booking_persistence_observe retry_state_after_query assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
+      || ! booking_persistence_observe retry_fence_after assert_readiness_fence_forward_checkpoint \
         "$absolute_deadline_seconds" \
-      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
-      || ! assert_candidate_web_health "$absolute_deadline_seconds" \
-      || ! assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
+      || ! booking_persistence_observe retry_state_final_fence assert_booking_persistence_retry_state "$absolute_deadline_seconds" \
+      || ! booking_persistence_observe retry_health_after assert_candidate_web_health "$absolute_deadline_seconds" \
+      || ! booking_persistence_observe retry_state_final_health assert_booking_persistence_retry_state "$absolute_deadline_seconds"; then
       if [ "$persistence_status" -eq 2 ] \
         && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
         echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
@@ -4999,7 +5118,9 @@ verify_booking_persistence_with_bounded_retry() {
         return 1
         ;;
       2)
+        diagnostic_started="$SECONDS"
         if [ "$attempt" -ge "$maximum_attempts" ]; then
+          booking_persistence_diagnostic retry_attempts failed "$diagnostic_started"
           echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
           return 1
         fi
@@ -5007,15 +5128,20 @@ verify_booking_persistence_with_bounded_retry() {
           BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS +
           BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS + 1
         )) ]; then
+          booking_persistence_diagnostic retry_delay_budget failed "$diagnostic_started"
           echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
           return 1
         fi
         echo "[deploy] deploy_forward_booking_persistence_transient_retry"
+        diagnostic_started="$SECONDS"
+        booking_persistence_diagnostic retry_delay start "$diagnostic_started"
         sleep 1
         if [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+          booking_persistence_diagnostic retry_delay failed "$diagnostic_started"
           echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
           return 1
         fi
+        booking_persistence_diagnostic retry_delay passed "$diagnostic_started"
         ;;
       3)
         echo "[deploy] deploy_forward_booking_persistence_invocation_failed"
@@ -5031,6 +5157,7 @@ verify_booking_persistence_with_bounded_retry() {
         ;;
     esac
   done
+  booking_persistence_diagnostic retry_exhausted failed "$diagnostic_started"
   echo "[deploy] deploy_forward_booking_persistence_transient_exhausted"
   return 1
 }
@@ -7400,7 +7527,7 @@ assert_readiness_fence_forward_checkpoint || exit 1
 assert_readiness_fence_before_forward_operation "$RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS" || exit 1
 switch_current_release "$RELEASE_DIR" || exit 1
 SWITCH_COMPLETED=1
-if ! capture_candidate_current_identity_for_booking_retry \
+if ! booking_persistence_observe current_capture capture_candidate_current_identity_for_booking_retry \
   "$((SECONDS + READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS))"; then
   echo "[deploy] deploy_forward_booking_persistence_state_failed"
   exit 1
@@ -7487,7 +7614,7 @@ DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
 BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((
   SECONDS + BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS
 ))"
-if ! capture_candidate_web_identity_for_booking_retry \
+if ! booking_persistence_observe web_capture capture_candidate_web_identity_for_booking_retry \
   "$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"; then
   echo "[deploy] deploy_forward_booking_persistence_state_failed"
   exit 1

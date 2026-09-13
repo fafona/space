@@ -33,8 +33,10 @@ async function readFields(argv, overrides) {
     remaining();
     if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 262144) throw new Error("maintenance_deployment_read_unverified");
     const report = JSON.parse(result.stdout);
+    const attemptHandoff = controlAction === "runtime-handoff" && Object.hasOwn(report ?? {}, "attemptRecovery");
     const expectedKeys = ["version", "operationId", "targetSha", "expectedOldSha", "state",
-      controlAction === "runtime-handoff" ? "runtime" : controlAction === "candidate-handoff" ? "fields" : "snapshot"].sort();
+      controlAction === "runtime-handoff" ? "runtime" : controlAction === "candidate-handoff" ? "fields" : "snapshot",
+      ...(attemptHandoff ? ["attemptRecovery"] : [])].sort();
     if (!report || typeof report !== "object" || Array.isArray(report) || Object.keys(report).sort().join(",") !== expectedKeys.join(",") || report.version !== 1 ||
         report.operationId !== operationId || report.targetSha !== targetSha || report.expectedOldSha !== expectedOldSha ||
         !["held", "candidate"].includes(report.state) || action === "runtime-handoff" && report.state !== "held" ||
@@ -77,7 +79,12 @@ async function readFields(argv, overrides) {
     const runtime = overrides.runtime ?? await import("./production-maintenance-runtime.mjs");
     const proof = runtime.validateRuntimeProof(report.runtime);
     if (["appDir", "appName", "appPort", "expectedOldSha"].some((key) => proof.input[key] !== request[key])) throw new Error("maintenance_deployment_read_unverified");
-    fields = await runtime.readDeploymentHandoffFields(proof);
+    if (Object.hasOwn(report, "attemptRecovery")) {
+      const attempt = overrides.attemptHandoff ?? await import("./production-maintenance-attempt-handoff.mjs");
+      remaining();
+      fields = await attempt.readFailedCandidateHandoffFields(proof, report.attemptRecovery);
+      remaining();
+    } else fields = await runtime.readDeploymentHandoffFields(proof);
   }
   const candidateKeys = ["CANDIDATE_WEB_PID", "CANDIDATE_WEB_PROCESS_START_TICKS", "CANDIDATE_WEB_PROCESS_IDENTITY", "CANDIDATE_WEB_CWD_IDENTITY", "CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64"];
   const previousKeys = ["PREVIOUS_LINK_TARGET", "PREVIOUS_RUNTIME_DIR", "PREVIOUS_RUNTIME_PARENT", "PREVIOUS_RELEASE_NAME", "PREVIOUS_BUILD_PREFIX",
