@@ -4,7 +4,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { validateMaintenanceBuildRecoveryInspection, encodeMaintenanceBuildRecoveryEvidence,
-  decodeMaintenanceBuildRecoveryEvidence } from "./production-maintenance-build-recovery.mjs";
+  decodeMaintenanceBuildRecoveryEvidence, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION,
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST } from "./production-maintenance-build-recovery.mjs";
 import { validateMaintenanceBuildRecoveryPriorBindings, inspectMaintenanceBuildRecoveryHistory,
   createMaintenanceBuildRecoveryWorkflowEvidence } from "./production-maintenance-build-recovery-workflow.mjs";
 import { buildProductionMaintenanceBinding } from "./production-maintenance-workflow-contract.mjs";
@@ -13,20 +14,21 @@ import { canonicalJsonBytes } from "./production-release-attestation.mjs";
 // Synthetic authenticated API responses; no GitHub, host, build, or state writes.
 const OLD = "b7c3d57f4739846fb45f236ef83b97b7ff21a7cf";
 const PREVIOUS = "46f007fbd9e417f93c01e398c77cf38ec814547d", TARGET = "a".repeat(40);
-const NOW = Date.parse("2026-09-13T02:00:00Z");
+const NOW = Date.parse("2026-09-13T07:00:00Z");
 const inspection = validateMaintenanceBuildRecoveryInspection({
   version: 1, state: "build-recovery-inspected", operationId: "eb81284a-09c4-4514-8f16-38eaf6acc1e4",
   targetSha: TARGET, previousTargetSha: PREVIOUS, expectedOldSha: "cd943076ebda758b70bf2f2270a508c774b726d6",
   revision: 7, createdAt: 1789236034129,
   stateDigest: "56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa",
   sourceDiffDigest: "c".repeat(64), migrationDigest: "d".repeat(64), recoveryDigest: "e".repeat(64), continuationDigest: "f".repeat(64),
+  deadlineExtensionDigest: MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST,
   backupRunId: "34724943157", backupRunAttempt: 1, migrationRunId: "34721155156", migrationRunAttempt: 1,
   readinessRunId: "34728212357", readinessRunAttempt: 1, failedDeployRunId: "34728263285", failedDeployRunAttempt: 1,
 });
 const env = { GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
   GITHUB_RUN_ATTEMPT: "1", GITHUB_RUN_ID: "34729000000", GITHUB_SHA: TARGET, TARGET_SHA: TARGET,
   PREVIOUS_TARGET_SHA: PREVIOUS, EXPECTED_OLD_SHA: inspection.expectedOldSha, MAINTENANCE_OPERATION_ID: inspection.operationId,
-  ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE" };
+  ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z" };
 const files = ["database-backup.yml", "database-migrate.yml", "ordinary-account-cutover-readiness.yml", "deploy.yml"];
 const names = ["Encrypted Database Backup", "Apply Production Database Migrations", "Ordinary Account Cutover Readiness", "Deploy Production"];
 const incidents = [
@@ -113,6 +115,7 @@ test("all seven exact incidents produce canonical evidence without relabelling t
   const f = fixture(), prior = bindings(), result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, prior, NOW);
   assert.equal(result.buildRecoveryRunId, env.GITHUB_RUN_ID); assert.equal(result.buildRecoveryRunAttempt, 1);
   assert.equal(result.mainCIrunId, "34728900000"); assert.equal(result.toolsSha, TARGET); assert.equal(result.historyCheckedAt, NOW);
+  assert.equal(result.deadlineExtensionDigest, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST);
   assert.match(result.historyDigest, /^[0-9a-f]{64}$/);
   assert.deepEqual(decodeMaintenanceBuildRecoveryEvidence(encodeMaintenanceBuildRecoveryEvidence(result)), result);
   assert.equal(f.calls.filter(value => value.endsWith("commits/main")).length, 2);
@@ -124,6 +127,7 @@ test("all seven exact incidents produce canonical evidence without relabelling t
 
 test("fixed action, confirmation, repository, run attempt and target binding reject before any API request", async () => {
   for (const patch of [{ ACTION: "continue-held" }, { CONFIRMATION: "CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100034Z" },
     { GITHUB_REPOSITORY: "other/space" }, { GITHUB_EVENT_NAME: "push" }, { GITHUB_REF: "refs/heads/feature" },
     { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_RUN_ID: "00" }, { GITHUB_SHA: PREVIOUS }, { TARGET_SHA: PREVIOUS },
     { PREVIOUS_TARGET_SHA: OLD }, { EXPECTED_OLD_SHA: TARGET }, { MAINTENANCE_OPERATION_ID: "invalid" }]) {
@@ -192,11 +196,41 @@ test("missing tail, duplicate, changing total, unsupported count and exhausted p
 test("foreign identity, invalid dates, future or inverted timestamps, and in-progress activity reject", async () => {
   for (const patch of [{ name: "wrong" }, { path: "wrong" }, { head_branch: "feature" }, { repository: null }, { head_repository: null },
     { head_sha: "bad" }, { id: 0 }, { run_attempt: 0 }, { created_at: "2026-02-30T00:00:00Z" },
-    { run_started_at: "2026-09-12T16:00:00Z" }, { updated_at: "2026-09-13T02:01:00Z" },
+    { run_started_at: "2026-09-12T16:00:00Z" }, { updated_at: "2026-09-13T07:01:00Z" },
     { updated_at: "2026-09-12T18:00:00Z" }, { status: "in_progress" }])
     await assert.rejects(history(changeRun(inspection.failedDeployRunId, patch)));
-  for (const now of [NaN, Infinity, 1.5, inspection.createdAt - 1, inspection.createdAt + 12 * 3600000 + 1])
+  for (const now of [NaN, Infinity, 1.5, inspection.createdAt - 1, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.authorizedAt - 1,
+    MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt])
     await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, bindings(), now));
+});
+
+test("the one authorized extension uses actual time and ends exactly at 10 UTC with zero grace", async () => {
+  const extension = MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION;
+  assert.equal(extension.authorizedAt, Date.parse("2026-09-13T05:45:22Z"));
+  assert.equal(extension.previousExpiresAt, inspection.createdAt + 12 * 3600000);
+  assert.equal(extension.expiresAt, Date.parse("2026-09-13T10:00:00.000Z"));
+  for (const now of [extension.authorizedAt, extension.previousExpiresAt + 1, extension.expiresAt - 1]) {
+    const result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, bindings(), now);
+    assert.equal(result.historyCheckedAt, now);
+    assert.equal(result.deadlineExtensionDigest, inspection.deadlineExtensionDigest);
+  }
+  for (const now of [extension.authorizedAt - 1, extension.expiresAt, extension.expiresAt + 34129]) {
+    const f = fixture();
+    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), now));
+    await assert.rejects(inspectMaintenanceBuildRecoveryHistory(inspection, f.api, now));
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("extension does not erase new scheduled activity after the original deadline or change the seven exceptions", async () => {
+  await assert.rejects(history((key, value) => key === files[0] ? { total_count: value.total_count + 1,
+    workflow_runs: [...value.workflow_runs, old(files[0], 100, { event: "schedule", created_at: "2026-09-13T06:30:00Z",
+      run_started_at: "2026-09-13T06:30:01Z", updated_at: "2026-09-13T06:30:02Z" })] } : value));
+  for (const digest of [undefined, "0".repeat(64), "bad"]) {
+    const f = fixture();
+    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence({ ...inspection, deadlineExtensionDigest: digest }, env, f.api, bindings(), NOW));
+    assert.equal(f.calls.length, 0);
+  }
 });
 
 test("all seven genuine snake-case jobs, one-job inventories and required successful guard steps are checked", async () => {

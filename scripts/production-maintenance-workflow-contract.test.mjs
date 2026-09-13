@@ -375,12 +375,14 @@ test("build recovery is a separately confirmed fixed incident with no old-path t
     EXPECTED_OLD_SHA: "cd943076ebda758b70bf2f2270a508c774b726d6",
     PREVIOUS_TARGET_SHA: "46f007fbd9e417f93c01e398c77cf38ec814547d",
     MAINTENANCE_OPERATION_ID: "eb81284a-09c4-4514-8f16-38eaf6acc1e4",
-    ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE",
+    ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z",
     DEPLOY_RUN_ID: "", DEPLOY_RUN_ATTEMPT: "", CHECK_STATE: "held" };
   const execute = patch => spawnSync(bash, ["-s"], { input: source,
     env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", ...fixed, ...patch }, encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
   assert.equal(execute({}).status, 0);
   for (const patch of [{ CONFIRMATION: "RECOVER_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100034Z" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T120000Z" }, { CONFIRMATION: "" },
     { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_EVENT_NAME: "schedule" }, { GITHUB_REF: "refs/heads/feature" },
     { GITHUB_REPOSITORY: "other/space" }, { PREVIOUS_TARGET_SHA: "b".repeat(40) }, { EXPECTED_OLD_SHA: "b".repeat(40) },
     { MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID }, { GITHUB_SHA: "b".repeat(40) },
@@ -399,6 +401,19 @@ test("build recovery is a separately confirmed fixed incident with no old-path t
     PREVIOUS_TARGET_SHA: "b7c3d57f4739846fb45f236ef83b97b7ff21a7cf" };
   assert.equal(execute(old).status, 0);
   assert.notEqual(execute({ ...old, TARGET_SHA: old.PREVIOUS_TARGET_SHA, GITHUB_SHA: old.PREVIOUS_TARGET_SHA }).status, 0);
+});
+
+test("build recovery exposes one fixed absolute deadline and no TTL or replacement-operation input", () => {
+  const inputs = workflows["production-maintenance"].on.workflow_dispatch.inputs;
+  assert.deepEqual(Object.keys(inputs), ["action", "target_sha", "expected_old_sha", "maintenance_operation_id", "previous_target_sha",
+    "check_state", "successful_deploy_run_id", "successful_deploy_run_attempt", "confirmation"]);
+  assert.match(inputs.confirmation.description, /RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z/);
+  assert.match(inputs.confirmation.description, /absolute deadline 2026-09-13 10:00:00 UTC \/ 12:00 Europe\/Madrid/);
+  const validation = step("production-maintenance", "Validate Fixed Manual Transition").run;
+  const recovery = validation.slice(validation.indexOf("recover-build)"), validation.indexOf("check|end)"));
+  assert.match(recovery, /test "\$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4/);
+  assert.match(recovery, /test "\$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z\n/);
+  assert.doesNotMatch(sources["production-maintenance"], /inputs\.(?:ttl|deadline|expires_at|authorized_at|new_operation_id)|--(?:ttl|deadline|expires-at|new-operation-id)\b/);
 });
 
 test("build recovery inspects first, verifies exact T3 B3/R3 hosted signatures, then audits history under the shared lock", () => {

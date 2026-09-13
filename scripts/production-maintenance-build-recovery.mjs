@@ -8,7 +8,8 @@ import { assertMaintenanceContinuationProgress, validateMaintenanceContinuationS
  * process control or state persistence. The controller must verify real source,
  * all registry metadata, authenticated run history and full held checks again,
  * then perform one existing-lock/raw-byte/revision CAS. These typed digests are
- * not authorization. No original deadline, audit or frozen proof is replaced.
+ * not authorization. The fixed user-authorized extension below preserves the
+ * original deadline as audit data; no creation time, audit or proof is replaced.
  */
 export const MAINTENANCE_BUILD_RECOVERY_INCIDENT = Object.freeze({
   operationId: "eb81284a-09c4-4514-8f16-38eaf6acc1e4",
@@ -25,15 +26,23 @@ export const MAINTENANCE_BUILD_RECOVERY_INCIDENT = Object.freeze({
 });
 export const MAINTENANCE_BUILD_RECOVERY_MAX_EVIDENCE_BYTES = 16 * 1024;
 export const MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS = 5 * 60 * 1000;
-const INCIDENT = MAINTENANCE_BUILD_RECOVERY_INCIDENT, MAX_AGE_MS = 12 * 60 * 60 * 1000, STATE_BYTES = 4 * 1024 * 1024;
+const INCIDENT = MAINTENANCE_BUILD_RECOVERY_INCIDENT, STATE_BYTES = 4 * 1024 * 1024;
+export const MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION = Object.freeze({
+  version: 1, operationId: INCIDENT.operationId, previousTargetSha: INCIDENT.previousTargetSha,
+  previousStateDigest: INCIDENT.stateDigest, authorizedAt: Date.parse("2026-09-13T05:45:22.000Z"),
+  previousExpiresAt: INCIDENT.createdAt + 12 * 60 * 60 * 1000, expiresAt: Date.parse("2026-09-13T10:00:00.000Z"),
+});
+export const MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST = createHash("sha256")
+  .update(JSON.stringify(MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION)).digest("hex");
+const EXTENSION = MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION;
 const SHA = /^[0-9a-f]{40}$/, HASH = /^[0-9a-f]{64}$/, BOOT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const RUN = /^[1-9][0-9]{0,19}$/;
 const RUN_KEYS = ["backupRunId", "backupRunAttempt", "migrationRunId", "migrationRunAttempt", "readinessRunId", "readinessRunAttempt", "failedDeployRunId", "failedDeployRunAttempt"];
-const INSPECTION_KEYS = ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha", "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", ...RUN_KEYS];
+const INSPECTION_KEYS = ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha", "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", "deadlineExtensionDigest", ...RUN_KEYS];
 const EVIDENCE_KEYS = [...INSPECTION_KEYS, "toolsSha", "buildRecoveryRunId", "buildRecoveryRunAttempt", "mainCIrunId", "historyDigest", "historyCheckedAt"];
 const CONTEXT_KEYS = ["operationId", "previousTargetSha", "targetSha", "expectedOldSha", "expectedRevision", "expectedDigest", "bootId", "now", "sourceDiffDigest", "migrationDigest"];
 const LAUNCH_KEYS = ["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
-const FIXED_KEYS = ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "tokenHash", "publicSupabaseUrl", "runtime", "database", "recovery", "continuation", "buildRecovery"];
+const FIXED_KEYS = ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "tokenHash", "publicSupabaseUrl", "runtime", "database", "recovery", "continuation", "buildRecovery", "deadlineExtension"];
 const PRIOR_RUNS = ["34715768455", "34715352249", "34715932102", "34721155156", "34721256683", "34721317710", "34724808528", "34724337523", "34724943157", "34728212357", "34728263285"];
 const fail = () => { throw new Error("maintenance_build_recovery_invalid"); };
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -73,6 +82,15 @@ function freeze(value) {
 function checkClock(value) {
   if (!exact(value, ["bootId", "now"]) || !matches(BOOT, value.bootId) || !time(value.now)) fail();
 }
+function checkActualClock(clock) {
+  checkClock(clock);
+  if (clock.now < EXTENSION.authorizedAt || clock.now >= EXTENSION.expiresAt) fail();
+}
+// Explicit HISTORICAL audit clock, not the current time. Only this fixed
+// incident's two existing audits are checked as of the user's authorization,
+// still within their original TTL. Real boot identity remains caller-verified;
+// all present-time checks use checkActualClock and the real supplied now.
+const historicalAuditClock = clock => ({ bootId: clock.bootId, now: EXTENSION.authorizedAt });
 function checkOriginalContinuation(state, clock) {
   try { validateMaintenanceContinuationState(state, clock); } catch { fail(); }
   const recovery = state.recovery.evidence, continuation = state.continuation.evidence;
@@ -87,6 +105,7 @@ function checkInspection(value) {
   if (!exact(value, INSPECTION_KEYS) || value.version !== 1 || value.state !== "build-recovery-inspected" ||
       value.operationId !== INCIDENT.operationId || value.previousTargetSha !== INCIDENT.previousTargetSha || value.expectedOldSha !== INCIDENT.expectedOldSha ||
       value.revision !== INCIDENT.revision || value.createdAt !== INCIDENT.createdAt || value.stateDigest !== INCIDENT.stateDigest ||
+      value.deadlineExtensionDigest !== MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST ||
       !newTarget(value.targetSha) || RUN_KEYS.some(key => value[key] !== INCIDENT[key]) ||
       ![value.sourceDiffDigest, value.migrationDigest, value.recoveryDigest, value.continuationDigest].every(item => matches(HASH, item))) fail();
   return project(value, INSPECTION_KEYS);
@@ -95,26 +114,35 @@ function checkEvidence(value) {
   if (!exact(value, EVIDENCE_KEYS)) fail(); checkInspection(project(value, INSPECTION_KEYS));
   if (value.toolsSha !== value.targetSha || !matches(RUN, value.buildRecoveryRunId) || value.buildRecoveryRunAttempt !== 1 || !matches(RUN, value.mainCIrunId) ||
       value.buildRecoveryRunId === value.mainCIrunId || PRIOR_RUNS.includes(value.buildRecoveryRunId) || PRIOR_RUNS.includes(value.mainCIrunId) ||
-      !matches(HASH, value.historyDigest) || !time(value.historyCheckedAt) || value.historyCheckedAt < INCIDENT.createdAt ||
-      value.historyCheckedAt - INCIDENT.createdAt > MAX_AGE_MS) fail();
+      !matches(HASH, value.historyDigest) || !time(value.historyCheckedAt) || value.historyCheckedAt < EXTENSION.authorizedAt ||
+      value.historyCheckedAt >= EXTENSION.expiresAt) fail();
   return project(value, EVIDENCE_KEYS);
 }
 function checkContext(value) {
   if (!exact(value, CONTEXT_KEYS) || value.operationId !== INCIDENT.operationId || value.previousTargetSha !== INCIDENT.previousTargetSha ||
       value.expectedOldSha !== INCIDENT.expectedOldSha || value.expectedRevision !== INCIDENT.revision || value.expectedDigest !== INCIDENT.stateDigest ||
       !newTarget(value.targetSha) || ![value.sourceDiffDigest, value.migrationDigest].every(item => matches(HASH, item))) fail();
-  checkClock({ bootId: value.bootId, now: value.now });
+  checkActualClock({ bootId: value.bootId, now: value.now });
 }
-function inspectionFor(state, context) {
-  checkContext(context); checkOriginalContinuation(state, { bootId: context.bootId, now: context.now });
+function checkPredecessor(state, clock) {
+  checkActualClock(clock); checkOriginalContinuation(state, historicalAuditClock(clock));
   if (state.version !== 4 || state.phase !== "failed-held" || state.revision !== INCIDENT.revision ||
       !LAUNCH_KEYS.every(key => state[key] === null) || hash(state) !== INCIDENT.stateDigest) fail();
+}
+function inspectionFor(state, context) {
+  checkContext(context); checkPredecessor(state, { bootId: context.bootId, now: context.now });
   return checkInspection({ version: 1, state: "build-recovery-inspected", operationId: state.operationId, targetSha: context.targetSha,
     previousTargetSha: state.targetSha, expectedOldSha: state.expectedOldSha, revision: state.revision, stateDigest: INCIDENT.stateDigest,
     createdAt: state.createdAt, sourceDiffDigest: context.sourceDiffDigest, migrationDigest: context.migrationDigest,
-    recoveryDigest: hash(state.recovery), continuationDigest: hash(state.continuation), ...project(INCIDENT, RUN_KEYS) });
+    recoveryDigest: hash(state.recovery), continuationDigest: hash(state.continuation),
+    deadlineExtensionDigest: MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST, ...project(INCIDENT, RUN_KEYS) });
 }
 
+/** Only the two explicit build-recovery controller actions may use this
+ * predecessor exception. Ordinary v2/v3/v4 commands retain their old TTL. */
+export function validateMaintenanceBuildRecoveryPredecessor(rawState, rawClock) {
+  const state = bounded(rawState), clock = bounded(rawClock); checkPredecessor(state, clock); return freeze(state);
+}
 export function createMaintenanceBuildRecoveryInspection(rawState, rawContext) {
   return freeze(inspectionFor(bounded(rawState), bounded(rawContext)));
 }
@@ -143,21 +171,22 @@ export function buildMaintenanceBuildRecoveredState(rawState, rawEvidence, rawCo
   if (!isDeepStrictEqual(inspection, project(evidence, INSPECTION_KEYS)) || evidence.historyCheckedAt > context.now ||
       evidence.historyCheckedAt < state.continuation.continuedAt || context.now - evidence.historyCheckedAt > MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS) fail();
   const next = { ...state, version: 5, revision: state.revision + 1, targetSha: context.targetSha, phase: "held",
-    buildRecovery: { version: 1, evidence, recoveredAt: context.now } };
+    buildRecovery: { version: 1, evidence, recoveredAt: context.now }, deadlineExtension: { ...EXTENSION } };
   return validateMaintenanceBuildRecoveryState(next, { bootId: context.bootId, now: context.now });
 }
 export function validateMaintenanceBuildRecoveryState(rawState, rawClock) {
-  const state = bounded(rawState), clock = bounded(rawClock); checkClock(clock);
+  const state = bounded(rawState), clock = bounded(rawClock); checkActualClock(clock);
   if (!record(state) || state.version !== 5 || !exact(state.buildRecovery, ["version", "evidence", "recoveredAt"]) ||
-      state.buildRecovery.version !== 1 || !time(state.buildRecovery.recoveredAt)) fail();
+      state.buildRecovery.version !== 1 || !time(state.buildRecovery.recoveredAt) || !isDeepStrictEqual(state.deadlineExtension, EXTENSION)) fail();
   const evidence = checkEvidence(state.buildRecovery.evidence), { recoveredAt } = state.buildRecovery;
   if (state.targetSha !== evidence.targetSha || !integer(state.revision) || state.revision < INCIDENT.revision + 1 || recoveredAt > clock.now ||
       recoveredAt < evidence.historyCheckedAt || recoveredAt - evidence.historyCheckedAt > MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS ||
-      recoveredAt - INCIDENT.createdAt > MAX_AGE_MS) fail();
+      recoveredAt < EXTENSION.authorizedAt || recoveredAt >= EXTENSION.expiresAt) fail();
   // A LOCAL validation view only: never return/store this T3 projection or use
   // it for runtime checks, whose true target remains the new full T4 SHA.
-  const original = { ...state, version: 4, targetSha: evidence.previousTargetSha }; delete original.buildRecovery;
-  checkOriginalContinuation(original, clock);
+  const original = { ...state, version: 4, targetSha: evidence.previousTargetSha };
+  delete original.buildRecovery; delete original.deadlineExtension;
+  checkOriginalContinuation(original, historicalAuditClock(clock));
   if (hash(state.recovery) !== evidence.recoveryDigest || hash(state.continuation) !== evidence.continuationDigest ||
       evidence.historyCheckedAt < state.continuation.continuedAt ||
       (state.revision === INCIDENT.revision + 1 && (state.phase !== "held" || !LAUNCH_KEYS.every(key => state[key] === null)))) fail();
@@ -166,7 +195,10 @@ export function validateMaintenanceBuildRecoveryState(rawState, rawClock) {
 
 /** Every existing storage writer must use this wrapper, not just recovery.
  * Old v2/v3/v4 writes retain their unchanged guard. Later v5 bookkeeping may
- * append valid ingress metadata, but cannot alter the three historical audits.
+ * append valid ingress metadata, but cannot alter the three historical audits
+ * or the fixed deadline extension. This structural storage guard cannot read
+ * actual time: the controller must validate the real clock immediately before
+ * persistence and every operational action, never reuse the audit clock.
  * The caller still enforces real clock, complete proofs, journal transitions,
  * existing operation lock and exact previous bytes/revision at persistence.
  */
@@ -174,7 +206,7 @@ export function assertMaintenanceBuildRecoveryProgress(rawPrevious, rawNext) {
   const previous = bounded(rawPrevious), next = bounded(rawNext);
   if (!record(previous) || !record(next)) fail();
   if (previous.version !== 5 && next.version !== 5) {
-    if (Object.hasOwn(previous, "buildRecovery") || Object.hasOwn(next, "buildRecovery")) fail();
+    if ([previous, next].some(state => Object.hasOwn(state, "buildRecovery") || Object.hasOwn(state, "deadlineExtension"))) fail();
     return assertMaintenanceContinuationProgress(previous, next);
   }
   if (previous.version === 4 && next.version === 5) {

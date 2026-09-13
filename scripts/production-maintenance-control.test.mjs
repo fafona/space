@@ -9,7 +9,8 @@ import { SUPABASE_SCHEDULER_IMAGE } from "./maintenance-supabase-scheduler-profi
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
 import { encodeMaintenanceRecoveryEvidence, createMaintenanceRecoveryInspection, buildMaintenanceRecoveredState } from "./production-maintenance-recovery.mjs";
 import { MAINTENANCE_CONTINUATION_INCIDENT, encodeMaintenanceContinuationEvidence, createMaintenanceContinuationInspection, buildMaintenanceContinuedState } from "./production-maintenance-continuation.mjs";
-import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as BUILD_INCIDENT, encodeMaintenanceBuildRecoveryEvidence } from "./production-maintenance-build-recovery.mjs";
+import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as BUILD_INCIDENT, encodeMaintenanceBuildRecoveryEvidence,
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION as BUILD_EXTENSION } from "./production-maintenance-build-recovery.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -823,7 +824,7 @@ test("failed-build controller integration with exact isolated synthetic digest",
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); assert.equal(crypto.createHash, originalHash); });
   function buildFixture() {
-    const f = continuationFixture(); f.replace(structuredClone(seed)); f.setTime(BUILD_INCIDENT.createdAt + 8 * 3600000);
+    const f = continuationFixture(); f.replace(structuredClone(seed)); f.setTime(BUILD_EXTENSION.authorizedAt + 1000);
     const args = f.args.map(v => v === MAINTENANCE_CONTINUATION_INCIDENT.previousTargetSha ? T3 : v);
     const inspect = parseMaintenanceRequest(["inspect-build-recovery", ...args]);
     const source = { sourceDiffDigest: "4".repeat(64), sourceChangedPaths: ["package.json", "package-lock.json"] };
@@ -856,7 +857,7 @@ test("failed-build controller integration with exact isolated synthetic digest",
       assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
     }
   });
-  await t.test("read-only inspection then one CAS retains all audits and original deadline; ordinary checks understand v5", async () => {
+  await t.test("read-only inspection then one CAS retains original audits and adds the exact deadline audit; ordinary checks understand v5", async () => {
     const f = buildFixture(), before = structuredClone(f.state());
     const inspection = await runMaintenanceAction(f.inspect, f.ops);
     assert.equal(inspection.revision, 7); assert.equal(inspection.failedDeployRunId, "34728263285");
@@ -866,6 +867,7 @@ test("failed-build controller integration with exact isolated synthetic digest",
     const result = await runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops);
     assert.equal(result.state, "held"); assert.equal(result.targetSha, f.nextTarget);
     assert.equal(f.state().version, 5); assert.equal(f.state().revision, 8);
+    assert.deepEqual(f.state().deadlineExtension, BUILD_EXTENSION);
     for (const key of Object.keys(before).filter(key => !["version", "revision", "phase", "targetSha"].includes(key))) assert.deepEqual(f.state()[key], before[key], key);
     for (const event of ["verifyIngress", "assertStopped", "assertQuiet", "readBuildSource", "readBuildMigrations"]) assert.equal(f.events.filter(v => v === event).length, 2);
     assert.equal(f.events.filter(v => v === "commitBuild").length, 1);
@@ -874,6 +876,39 @@ test("failed-build controller integration with exact isolated synthetic digest",
     assert.equal(f.events.filter(v => v === "commitBuild").length, 1);
     const normal = { ...f.inspect, action: "check-held" }; delete normal.previousTargetSha;
     assert.equal((await runMaintenanceAction(normal, f.ops)).state, "held");
+  });
+  await t.test("only explicit fixed-incident recovery crosses old TTL; v5 remains bounded by the authorized absolute deadline", async () => {
+    const f = buildFixture(); f.setTime(BUILD_EXTENSION.previousExpiresAt + 1);
+    const before = structuredClone(f.state());
+    const ordinaryOld = { ...f.inspect, action: "check-held", targetSha: T3 }; delete ordinaryOld.previousTargetSha;
+    await assert.rejects(runMaintenanceAction(ordinaryOld, f.ops));
+    assert.deepEqual(f.state(), before);
+    const inspection = await runMaintenanceAction(f.inspect, f.ops);
+    assert.equal((await runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops)).state, "held");
+    const normal = { ...f.inspect, action: "check-held" }; delete normal.previousTargetSha;
+    f.setTime(BUILD_EXTENSION.expiresAt - 1);
+    assert.equal((await runMaintenanceAction(normal, f.ops)).state, "held");
+    const saved = structuredClone(f.state());
+    for (const at of [BUILD_EXTENSION.expiresAt, BUILD_EXTENSION.expiresAt + 34129]) {
+      f.setTime(at); await assert.rejects(runMaintenanceAction(normal, f.ops));
+      assert.deepEqual(f.state(), saved);
+    }
+  });
+  await t.test("early or expired recovery and tampered extension cannot persist or run", async () => {
+    for (const at of [BUILD_EXTENSION.authorizedAt - 1, BUILD_EXTENSION.expiresAt]) {
+      const f = buildFixture(); f.setTime(at); const before = structuredClone(f.state());
+      await assert.rejects(runMaintenanceAction(f.inspect, f.ops));
+      assert.deepEqual(f.state(), before); assert(!f.events.includes("commitBuild"));
+    }
+    for (const patch of [undefined, { ...BUILD_EXTENSION, expiresAt: BUILD_EXTENSION.expiresAt + 1 },
+      { ...BUILD_EXTENSION, previousExpiresAt: BUILD_EXTENSION.previousExpiresAt + 1 }]) {
+      const f = buildFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops);
+      await runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops);
+      const state = structuredClone(f.state());
+      if (patch) state.deadlineExtension = patch; else delete state.deadlineExtension;
+      f.replace(state);
+      await assert.rejects(runMaintenanceAction({ ...f.inspect, action: "check-held" }, f.ops));
+    }
   });
   await t.test("wrong incident, altered frozen state and any launch evidence are rejected without mutation", async () => {
     for (const patch of [{ phase: "held" }, { revision: 6 }, { version: 3 }, { operationId }, { createdAt: seed.createdAt + 1 },

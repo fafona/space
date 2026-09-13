@@ -6,16 +6,18 @@ import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import { createMaintenanceRecoveryInspection, buildMaintenanceRecoveredState } from "./production-maintenance-recovery.mjs";
 import { createMaintenanceContinuationInspection, buildMaintenanceContinuedState,
-  assertMaintenanceContinuationProgress } from "./production-maintenance-continuation.mjs";
+  assertMaintenanceContinuationProgress, validateMaintenanceContinuationState } from "./production-maintenance-continuation.mjs";
 import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as INCIDENT, MAINTENANCE_BUILD_RECOVERY_MAX_EVIDENCE_BYTES,
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION as EXTENSION, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST,
   MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS, createMaintenanceBuildRecoveryInspection,
+  validateMaintenanceBuildRecoveryPredecessor,
   validateMaintenanceBuildRecoveryInspection, validateMaintenanceBuildRecoveryEvidence,
   encodeMaintenanceBuildRecoveryEvidence, decodeMaintenanceBuildRecoveryEvidence,
   buildMaintenanceBuildRecoveredState, validateMaintenanceBuildRecoveryState,
   assertMaintenanceBuildRecoveryProgress } from "./production-maintenance-build-recovery.mjs";
 
 const BOOT = "11111111-2222-4333-8444-555555555555", TARGET = "e".repeat(40);
-const NOW = INCIDENT.createdAt + 8 * 3600000, DEADLINE = INCIDENT.createdAt + 12 * 3600000;
+const NOW = Date.parse("2026-09-13T07:00:00.000Z"), DEADLINE = EXTENSION.expiresAt;
 const PIN = "56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa";
 const originalCreateHash = crypto.createHash;
 const actualHash = value => originalCreateHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -92,15 +94,26 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     assert.equal(crypto.createHash("sha512").update(mappedBytes).digest("hex"), originalCreateHash("sha512").update(mappedBytes).digest("hex"));
   });
 
+  await t.test("user extension is one immutable exact incident object with fixed absolute UTC times", () => {
+    assert(Object.isFrozen(EXTENSION));
+    assert.deepEqual(EXTENSION, { version: 1, operationId: INCIDENT.operationId, previousTargetSha: INCIDENT.previousTargetSha,
+      previousStateDigest: PIN, authorizedAt: Date.parse("2026-09-13T05:45:22.000Z"),
+      previousExpiresAt: Date.parse("2026-09-13T06:00:34.129Z"), expiresAt: Date.parse("2026-09-13T10:00:00.000Z") });
+    assert.equal(EXTENSION.previousExpiresAt, INCIDENT.createdAt + 12 * 3600000);
+    assert.equal(MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST, actualHash(EXTENSION));
+    assert(EXTENSION.authorizedAt < EXTENSION.previousExpiresAt); assert(NOW > EXTENSION.previousExpiresAt);
+  });
+
   await t.test("inspection binds both original audits and fixed B3/M/R3/D3 without exposing runtime proof", () => {
     const f = fixture();
     assert.equal(f.inspection.state, "build-recovery-inspected"); assert.equal(f.inspection.revision, 7);
     assert.equal(f.inspection.stateDigest, PIN); assert.equal(f.inspection.recoveryDigest, actualHash(f.state.recovery));
     assert.equal(f.inspection.continuationDigest, actualHash(f.state.continuation));
+    assert.equal(f.inspection.deadlineExtensionDigest, actualHash(EXTENSION));
     assert.equal(f.inspection.backupRunId, "34724943157"); assert.equal(f.inspection.migrationRunId, "34721155156");
     assert.equal(f.inspection.readinessRunId, "34728212357"); assert.equal(f.inspection.failedDeployRunId, "34728263285");
     assert.deepEqual(Object.keys(f.inspection), ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha",
-      "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest",
+      "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", "deadlineExtensionDigest",
       "backupRunId", "backupRunAttempt", "migrationRunId", "migrationRunAttempt", "readinessRunId", "readinessRunAttempt",
       "failedDeployRunId", "failedDeployRunAttempt"]); assert(Object.isFrozen(f.inspection));
     assert.deepEqual(validateMaintenanceBuildRecoveryInspection(f.inspection), f.inspection);
@@ -108,11 +121,12 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     assert.deepEqual(f.state, seed.state);
   });
 
-  await t.test("one v4 failed-held to v5 held transition preserves full audits, proof and original deadline", () => {
+  await t.test("one v4 failed-held to v5 held transition preserves full audits, proofs and creation time with separately bound extension", () => {
     const f = fixture(), before = copy(f.state), next = build(f);
     assert.equal(next.version, 5); assert.equal(next.revision, 8); assert.equal(next.phase, "held"); assert.equal(next.targetSha, TARGET);
     for (const key of Object.keys(before).filter(key => !["version", "revision", "phase", "targetSha"].includes(key))) assert.deepEqual(next[key], before[key], key);
     assert.deepEqual(next.buildRecovery, { version: 1, evidence: f.evidence, recoveredAt: NOW });
+    assert.deepEqual(next.deadlineExtension, EXTENSION); assert(Object.isFrozen(next.deadlineExtension));
     assert.equal(JSON.stringify(next.recovery), JSON.stringify(before.recovery)); assert.equal(JSON.stringify(next.continuation), JSON.stringify(before.continuation));
     assert.notEqual(next.runtime, f.state.runtime); assert(Object.isFrozen(next.runtime.generations[0]));
     assert(Object.isFrozen(next.buildRecovery.evidence)); assert.deepEqual(f.state, before);
@@ -141,6 +155,29 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
       const bad = fixture(); bad.context[key] = key === "now" || key === "expectedRevision" ? -1 : "unexpected";
       reject(() => createMaintenanceBuildRecoveryInspection(bad.state, bad.context));
     }
+  });
+
+  await t.test("explicit predecessor exception validates exact unchanged state after old expiry but does not relax ordinary v4 validation", () => {
+    const before = copy(seed.state);
+    for (const now of [EXTENSION.authorizedAt, EXTENSION.previousExpiresAt - 1, EXTENSION.previousExpiresAt,
+      EXTENSION.previousExpiresAt + 1, NOW, DEADLINE - 1]) {
+      const result = validateMaintenanceBuildRecoveryPredecessor(seed.state, clock(now));
+      assert.deepEqual(result, before); assert(Object.isFrozen(result));
+      assert.equal(result.version, 4); assert.equal(Object.hasOwn(result, "deadlineExtension"), false);
+    }
+    assert.throws(() => validateMaintenanceContinuationState(seed.state, clock(NOW)), /maintenance_continuation_invalid/);
+    assert.deepEqual(validateMaintenanceContinuationState(seed.state, clock(EXTENSION.authorizedAt)), before);
+    for (const now of [EXTENSION.authorizedAt - 1, DEADLINE, DEADLINE + 1]) {
+      reject(() => validateMaintenanceBuildRecoveryPredecessor(seed.state, clock(now)));
+    }
+    for (const mutate of [s => { s.revision++; }, s => { s.phase = "held"; }, s => { s.candidate = {}; },
+      s => { s.createdAt++; }, s => { s.runtime.synthetic = false; }, s => { s.recovery.evidence.historyDigest = "0".repeat(64); },
+      s => { s.continuation.evidence.historyDigest = "0".repeat(64); }, s => { s.deadlineExtension = EXTENSION; }]) {
+      const bad = copy(seed.state); mutate(bad); reject(() => validateMaintenanceBuildRecoveryPredecessor(bad, clock(NOW)));
+    }
+    reject(() => validateMaintenanceBuildRecoveryPredecessor(seed.state, { bootId: "aaaaaaaa-2222-4222-8222-bbbbbbbbbbbb", now: NOW }));
+    reject(() => validateMaintenanceBuildRecoveryPredecessor(seed.state, { ...clock(NOW), historicalNow: EXTENSION.authorizedAt }));
+    assert.deepEqual(seed.state, before);
   });
 
   await t.test("new target excludes O/T1/T2/T3 and canonical values never trim or coerce", () => {
@@ -176,7 +213,7 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
 
   await t.test("grant matches every inspected field, tools SHA and distinct new workflow identities", () => {
     for (const [key, value] of Object.entries({ sourceDiffDigest: "0".repeat(64), migrationDigest: "0".repeat(64), recoveryDigest: "0".repeat(64),
-      continuationDigest: "0".repeat(64), stateDigest: "0".repeat(64), revision: 8, createdAt: INCIDENT.createdAt + 1,
+      continuationDigest: "0".repeat(64), deadlineExtensionDigest: "0".repeat(64), stateDigest: "0".repeat(64), revision: 8, createdAt: INCIDENT.createdAt + 1,
       toolsSha: INCIDENT.previousTargetSha, buildRecoveryRunAttempt: 2, historyDigest: "invalid" })) {
       const f = fixture(); f.evidence[key] = value; reject(() => build(f));
     }
@@ -195,13 +232,66 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     reject(() => build(f));
   });
 
-  await t.test("the original twelve-hour TTL is never restarted by any of the three audits", () => {
-    const f = fixture(), next = buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt: DEADLINE }, { ...f.context, now: DEADLINE });
-    assert.equal(next.createdAt, INCIDENT.createdAt); assert.equal(next.buildRecovery.recoveredAt, DEADLINE);
-    reject(() => validateMaintenanceBuildRecoveryState(next, clock(DEADLINE + 1)));
-    reject(() => buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt: DEADLINE }, { ...f.context, now: DEADLINE + 1 }));
-    for (const now of [INCIDENT.createdAt - 1, Number.MAX_SAFE_INTEGER, NaN, Infinity, -0]) reject(() => createMaintenanceBuildRecoveryInspection(f.state, { ...f.context, now }));
+  await t.test("actual clock works before and after old expiry, but the new absolute cutoff is exclusive and never restarted", () => {
+    const f = fixture();
+    for (const now of [EXTENSION.authorizedAt, EXTENSION.previousExpiresAt - 1, EXTENSION.previousExpiresAt,
+      EXTENSION.previousExpiresAt + 1, NOW, DEADLINE - 1]) {
+      const next = buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt: now }, { ...f.context, now });
+      assert.equal(next.createdAt, INCIDENT.createdAt); assert.equal(next.buildRecovery.recoveredAt, now);
+      assert.deepEqual(next.deadlineExtension, EXTENSION);
+      assert.equal(validateMaintenanceBuildRecoveryState(next, clock(DEADLINE - 1)).targetSha, TARGET);
+      for (const actualNow of [DEADLINE, DEADLINE + 1]) reject(() => validateMaintenanceBuildRecoveryState(next, clock(actualNow)));
+    }
+    for (const now of [INCIDENT.createdAt - 1, EXTENSION.authorizedAt - 1, DEADLINE, DEADLINE + 1,
+      Number.MAX_SAFE_INTEGER, NaN, Infinity, -0]) {
+      reject(() => createMaintenanceBuildRecoveryInspection(f.state, { ...f.context, now }));
+      reject(() => buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt: now }, { ...f.context, now }));
+    }
+    reject(() => validateMaintenanceBuildRecoveryState(build(f), clock(NOW - 1)));
     reject(() => validateMaintenanceBuildRecoveryState(build(f), { ...clock(NOW), extra: true }));
+  });
+
+  await t.test("historical audit validation cannot disguise present-time history staleness or permit a future old audit", () => {
+    const f = fixture();
+    for (const historyCheckedAt of [EXTENSION.authorizedAt - 1, EXTENSION.authorizedAt, NOW - 300001, NOW + 1, DEADLINE]) {
+      reject(() => buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt }, f.context));
+    }
+    for (const audit of ["recovery", "continuation"]) {
+      const next = copy(build(f)), timeKey = audit === "recovery" ? "recoveredAt" : "continuedAt";
+      next[audit][timeKey] = EXTENSION.authorizedAt + 1;
+      next[audit].evidence.historyCheckedAt = EXTENSION.authorizedAt;
+      next.buildRecovery.evidence[`${audit}Digest`] = actualHash(next[audit]);
+      reject(() => validateMaintenanceBuildRecoveryState(next, clock(NOW)));
+    }
+  });
+
+  await t.test("deadline fields and digest cannot be omitted, caller-selected, extended again or nested-replaced", () => {
+    const f = fixture(), initial = build(f);
+    for (const key of Object.keys(EXTENSION)) {
+      for (const remove of [false, true]) {
+        const next = copy(initial);
+        if (remove) delete next.deadlineExtension[key];
+        else next.deadlineExtension[key] = typeof next.deadlineExtension[key] === "number" ? next.deadlineExtension[key] + 1 : "0";
+        next.buildRecovery.evidence.deadlineExtensionDigest = actualHash(next.deadlineExtension);
+        reject(() => validateMaintenanceBuildRecoveryState(next, clock(NOW)));
+      }
+    }
+    for (const replacement of [null, {}, { ...EXTENSION, extra: true }]) {
+      const next = copy(initial); next.deadlineExtension = replacement;
+      reject(() => validateMaintenanceBuildRecoveryState(next, clock(NOW)));
+    }
+    const deleted = copy(initial); delete deleted.deadlineExtension;
+    reject(() => validateMaintenanceBuildRecoveryState(deleted, clock(NOW)));
+    reject(() => createMaintenanceBuildRecoveryInspection(f.state, { ...f.context, expiresAt: DEADLINE + 1 }));
+    reject(() => buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, deadlineExtension: EXTENSION }, f.context));
+    const retry = { ...copy(initial), revision: 9, phase: "failed-held" };
+    reject(() => validateMaintenanceBuildRecoveryPredecessor(retry, clock(NOW + 1)));
+    reject(() => buildMaintenanceBuildRecoveredState(retry, f.evidence, { ...f.context, now: NOW + 1 }));
+    let accessed = 0;
+    const getter = copy(initial); Object.defineProperty(getter.deadlineExtension, "expiresAt", { enumerable: true, get() { accessed++; return DEADLINE; } });
+    reject(() => validateMaintenanceBuildRecoveryState(getter, clock(NOW)));
+    const proxy = copy(initial); proxy.deadlineExtension = new Proxy(EXTENSION, { ownKeys() { accessed++; return []; } });
+    reject(() => validateMaintenanceBuildRecoveryState(proxy, clock(NOW))); assert.equal(accessed, 0);
   });
 
   await t.test("exact bounded records refuse omitted, extra, raw-report and malformed nested members", () => {
@@ -268,11 +358,11 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
   await t.test("later v5 writes freeze every original binding and all three complete audits", () => {
     const previous = build(fixture()), next = { ...copy(previous), revision: 9, phase: "failed-held" };
     next.ingress.nginx.retiringWorkers.push({ pid: 9 }); assertMaintenanceBuildRecoveryProgress(previous, next);
-    for (const key of ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "tokenHash", "publicSupabaseUrl", "runtime", "database", "recovery", "continuation", "buildRecovery"]) {
+    for (const key of ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "tokenHash", "publicSupabaseUrl", "runtime", "database", "recovery", "continuation", "buildRecovery", "deadlineExtension"]) {
       const bad = copy(next); bad[key] = typeof bad[key] === "number" ? bad[key] + 1 : typeof bad[key] === "string" ? bad[key] + "x" : { replaced: true };
       reject(() => assertMaintenanceBuildRecoveryProgress(previous, bad));
     }
-    for (const mutate of [s => { delete s.buildRecovery; }, s => { delete s.continuation; }, s => { delete s.recovery; },
+    for (const mutate of [s => { delete s.buildRecovery; }, s => { delete s.continuation; }, s => { delete s.recovery; }, s => { delete s.deadlineExtension; },
       s => { s.version = 4; delete s.buildRecovery; }, s => { s.version = 3; delete s.buildRecovery; delete s.continuation; },
       s => { s.revision++; }, s => { s.revision--; }]) { const bad = copy(next); mutate(bad); reject(() => assertMaintenanceBuildRecoveryProgress(previous, bad)); }
   });
@@ -299,6 +389,7 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     const bad = copy(later); bad.continuation.evidence.historyDigest = "0".repeat(64);
     assert.throws(() => assertMaintenanceBuildRecoveryProgress(seed.continued, bad), /maintenance_continuation_invalid/);
     reject(() => assertMaintenanceBuildRecoveryProgress(seed.initial, { ...seed.initial, buildRecovery: null }));
+    reject(() => assertMaintenanceBuildRecoveryProgress(seed.initial, { ...seed.initial, deadlineExtension: EXTENSION }));
     reject(() => assertMaintenanceBuildRecoveryProgress(seed.recovered, build(fixture())));
   });
 

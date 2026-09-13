@@ -3,7 +3,8 @@ import { appendFileSync, lstatSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { validateMaintenanceBuildRecoveryInspection, validateMaintenanceBuildRecoveryEvidence, encodeMaintenanceBuildRecoveryEvidence } from "./production-maintenance-build-recovery.mjs";
+import { validateMaintenanceBuildRecoveryInspection, validateMaintenanceBuildRecoveryEvidence, encodeMaintenanceBuildRecoveryEvidence,
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION, MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS } from "./production-maintenance-build-recovery.mjs";
 import { validateProductionMaintenanceBinding, assertProductionMaintenanceProvenance } from "./production-maintenance-workflow-contract.mjs";
 import { canonicalJsonBytes } from "./production-release-attestation.mjs";
 
@@ -30,6 +31,12 @@ const INCIDENT_ORDER = Object.freeze(["34715932102", "34721155156", "34721256683
 const fail = () => { throw new Error("maintenance_build_recovery_workflow_unverified"); };
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const id = value => Number.isSafeInteger(value) && value > 0 ? String(value) : fail();
+// The extension authorizes this exact new grant only. Actual request/history
+// time is never replaced with the historical clock used to validate old audits.
+function checkWorkflowClock(now) {
+  if (!Number.isSafeInteger(now) || now < MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.authorizedAt ||
+      now >= MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt) fail();
+}
 function timestamp(value) {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(value)) fail();
   const result = Date.parse(value);
@@ -99,7 +106,8 @@ async function inspectIncidentJob(file, run, api) {
 
 export async function inspectMaintenanceBuildRecoveryHistory(inspection, api, now) {
   const checked = validateMaintenanceBuildRecoveryInspection(inspection);
-  if (typeof api !== "function" || !Number.isSafeInteger(now) || now < checked.createdAt) fail();
+  checkWorkflowClock(now);
+  if (typeof api !== "function") fail();
   const cutoff = Math.floor(checked.createdAt / 1000) * 1000;
   const all = [], incidents = [];
   for (const [file, name, event, allowed] of WORKFLOWS) {
@@ -144,10 +152,11 @@ export async function inspectMaintenanceBuildRecoveryHistory(inspection, api, no
 
 export async function createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, api, priorBindings, now = Date.now()) {
   const checked = validateMaintenanceBuildRecoveryInspection(inspection);
+  checkWorkflowClock(now);
   if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.GITHUB_REF !== "refs/heads/main" ||
       env.GITHUB_RUN_ATTEMPT !== "1" || !ID.test(env.GITHUB_RUN_ID ?? "") || env.GITHUB_SHA !== checked.targetSha ||
       env.TARGET_SHA !== checked.targetSha || env.PREVIOUS_TARGET_SHA !== checked.previousTargetSha || env.EXPECTED_OLD_SHA !== checked.expectedOldSha ||
-      env.MAINTENANCE_OPERATION_ID !== checked.operationId || env.ACTION !== "recover-build" || env.CONFIRMATION !== "RECOVER_BUILD_PRODUCTION_MAINTENANCE") fail();
+      env.MAINTENANCE_OPERATION_ID !== checked.operationId || env.ACTION !== "recover-build" || env.CONFIRMATION !== "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z") fail();
   const bindings = validateMaintenanceBuildRecoveryPriorBindings(checked, priorBindings);
   if ((await api(`repos/${REPOSITORY}/commits/main`))?.sha !== checked.targetSha) fail();
   const ci = await api(`repos/${REPOSITORY}/actions/workflows/ci.yml/runs?event=push&branch=main&status=success&head_sha=${checked.targetSha}&per_page=100`);
@@ -189,6 +198,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       return JSON.parse(result.stdout);
     };
     const evidence = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, process.env, api, priorBindings);
+    const completedAt = Date.now(); checkWorkflowClock(completedAt);
+    if (completedAt < evidence.historyCheckedAt || completedAt - evidence.historyCheckedAt > MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS) fail();
     appendFileSync(process.env.GITHUB_OUTPUT, `build_recovery_evidence=${encodeMaintenanceBuildRecoveryEvidence(evidence)}\n`);
     process.stdout.write("maintenance_build_recovery_history_verified\n");
   } catch { process.stderr.write("maintenance_build_recovery_workflow_unverified\n"); process.exitCode = 1; }

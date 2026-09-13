@@ -21,7 +21,8 @@ import { readMaintenanceContinuationSourceProof, MAINTENANCE_CONTINUATION_MIGRAT
   validateMaintenanceContinuationMigrationProof } from "./production-maintenance-continuation-evidence.mjs";
 
 import { createMaintenanceBuildRecoveryInspection, decodeMaintenanceBuildRecoveryEvidence, buildMaintenanceBuildRecoveredState,
-  validateMaintenanceBuildRecoveryState } from "./production-maintenance-build-recovery.mjs";
+  validateMaintenanceBuildRecoveryState, validateMaintenanceBuildRecoveryPredecessor,
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION } from "./production-maintenance-build-recovery.mjs";
 import { readMaintenanceBuildRecoverySourceProof, MAINTENANCE_BUILD_RECOVERY_MIGRATION_SQL,
   validateMaintenanceBuildRecoveryMigrationProof } from "./production-maintenance-build-recovery-evidence.mjs";
 
@@ -159,12 +160,22 @@ export async function createPm2PeerDiagnosticReport(request, diagnose = diagnose
 
 export function validateMaintenanceState(state, request, bootId, now) {
   const keys = ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
+  // Only the fixed, independently audited failed-build predecessor may use
+  // the explicitly authorized deadline. All ordinary v2/v3/v4 paths keep TTL.
+  const buildPredecessor = state?.version === 4 && ["inspect-build-recovery", "recover-build"].includes(request.action);
   if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); }
-  if (state?.version === 4) { validateMaintenanceContinuationState(state, { bootId, now }); keys.push("recovery", "continuation"); }
-  if (state?.version === 5) { validateMaintenanceBuildRecoveryState(state, { bootId, now }); keys.push("recovery", "continuation", "buildRecovery"); }
+  if (state?.version === 4) {
+    if (buildPredecessor) validateMaintenanceBuildRecoveryPredecessor(state, { bootId, now });
+    else validateMaintenanceContinuationState(state, { bootId, now });
+    keys.push("recovery", "continuation");
+  }
+  if (state?.version === 5) { validateMaintenanceBuildRecoveryState(state, { bootId, now }); keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension"); }
+  const expired = buildPredecessor || state?.version === 5
+    ? now >= MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt
+    : now - state?.createdAt > MAX_AGE_MS;
   if (!exact(state, keys) ||
       ![2, 3, 4, 5].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
-      !Number.isSafeInteger(state.createdAt) || state.createdAt > now || now - state.createdAt > MAX_AGE_MS ||
+      !Number.isSafeInteger(state.createdAt) || state.createdAt > now || expired ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
       !(state.finalDump === null || record(state.finalDump)) || !(state.launchDisk === null || record(state.launchDisk)) ||

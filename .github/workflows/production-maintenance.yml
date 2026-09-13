@@ -32,7 +32,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: Fixed confirmation; recover-build requires RECOVER_BUILD_PRODUCTION_MAINTENANCE
+        description: Fixed confirmation; recover-build requires RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z (absolute deadline 2026-09-13 10:00:00 UTC / 12:00 Europe/Madrid)
         required: true
 
 concurrency:
@@ -113,7 +113,7 @@ jobs:
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
               ;;
             recover-build)
-              test "$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE
+              test "$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z
               test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
               test "$PREVIOUS_TARGET_SHA" = 46f007fbd9e417f93c01e398c77cf38ec814547d
               test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6

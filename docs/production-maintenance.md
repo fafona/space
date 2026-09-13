@@ -167,13 +167,28 @@ manifest is restricted to `app/admin/AdminClientLoader.tsx -> ./AdminClient`;
 missing/invalid evidence is not replaced with an unrelated smaller entry. The
 legacy per-admin manifest retains its original largest-entry selection.
 
-The action requires `RECOVER_BUILD_PRODUCTION_MAINTENANCE`, original U/O,
+The action requires `RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z`, original U/O,
 previous target `46f007fbd9e417f93c01e398c77cf38ec814547d`, and a distinct T4
 which is current main with exact successful push CI. Only version 4 failed-held
 revision 7 with state digest
 `56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa`
-and five null launch fields is admitted. Boot, original twelve-hour deadline,
+and five null launch fields is admitted. Boot, original creation time,
 frozen runtime/ingress/database proofs and both previous audits remain intact.
+The user explicitly authorized an extension at `2026-09-13T05:45:22.000Z`
+until **`2026-09-13T10:00:00.000Z` (12:00 Madrid)**. The new immutable
+`deadlineExtension` records that authorization, the original deadline
+`2026-09-13T06:00:34.129Z`, U, T3 and the exact predecessor digest. It is a
+fixed incident audit, not a configurable duration or permission to renew again.
+Only the explicit build-recovery actions for this exact predecessor, and valid
+version 5 states carrying this exact audit, use the new deadline. Ordinary
+version 2/3/4 commands retain their original expiry. At the new deadline, the
+operation is expired (the comparison is exclusive, with no extra 34 seconds).
+
+The old audit chain is structurally validated with an explicitly named
+`historicalAuditClock`, fixed at the authorization time within the old validity
+window. This is not a current-health check and never replaces the real clock:
+all actual-clock/boot checks, fresh held probes, five-minute evidence freshness
+and persistence checks still use the present time and fixed new deadline.
 
 Read-only inspection and final transition each recheck the actual held ingress,
 stopped runtime, quiet database, narrow source delta and unchanged complete
@@ -188,11 +203,13 @@ attempts, jobs and step outcomes. Unknown runs, including scheduled backups,
 queued work, cancellations or reruns, cannot be ignored to satisfy this check.
 
 A five-minute grant binds that evidence, exact state bytes/revision, both prior
-audit digests and current source/registry/CI. One existing-lock compare-and-replace
-produces version 5 held revision 8 and adds an immutable `buildRecovery` audit.
-All subsequent state and launch-journal writes preserve all three audits. An
+audit digests, exact extension digest and current source/registry/CI. One existing-lock compare-and-replace
+produces version 5 held revision 8 and adds an immutable `buildRecovery` audit
+and the fixed `deadlineExtension`. All subsequent state and launch-journal
+writes preserve all four audits. An
 uncertain write is not replayed or cleaned up by guessing. No process starts and
-no ingress opens during recovery. There is no UUID replacement or TTL extension.
+no ingress opens during recovery. There is no UUID replacement, creation-time
+reset, automatic renewal or extension beyond the specifically authorized cutoff.
 
 After confirmed recovery, use a **fresh T4 backup**, **fresh T4 readiness**, normal
 deployment and signed deploy verification before explicit `end` and public smoke.
