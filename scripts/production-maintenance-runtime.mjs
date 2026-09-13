@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { posix } from "node:path";
 import { types } from "node:util";
+import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 import { captureNativeProcessProof, validateNativeProcessProof, verifyNativeProcessProof, verifyNativeFiles } from "./production-maintenance-native-proof.mjs";
 import { inspectPm2Registry, controlPm2, validatePm2Registry, capturePm2DumpTarget, persistPm2Dump, verifyPm2Dump,
   validatePm2DumpReceipt, pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
@@ -198,11 +199,12 @@ function fixedEnvironment(pid, name) {
   return matches[0].slice(name.length + 1);
 }
 async function pm2List(daemon, d) {
-  if (!equal(d.readProcess(daemon.pid), daemon)) fail();
   const bootId = d.boot();
   if (d.expectedBootId !== bootId) fail();
+  const before = d.readProcess(daemon.pid);
+  assertMaintenanceDaemonContinuity(daemon, before, bootId);
   const entries = validatePm2Registry(await d.pm2Registry(daemon, bootId));
-  if (d.boot() !== bootId || !equal(d.readProcess(daemon.pid), daemon)) fail();
+  if (d.boot() !== bootId || !equal(d.readProcess(daemon.pid), before)) fail();
   return entries;
 }
 async function managedProcess(entries, name, runtime, kind, daemon, d) {
@@ -425,14 +427,18 @@ export async function captureCandidate(rawProof, targetSha, pauseExpected = "1",
     assertFrozenDisk(proof, d);
     const first = await observe(input, d, pauseExpected, proof.disk.runtime); await d.sleep(50); const second = await observe(input, d, pauseExpected, proof.disk.runtime);
     if (!equal(first, second)) fail();
+    assertMaintenanceDaemonContinuity(proof.daemon, second.daemon, proof.bootId);
     const entries = await pm2List(proof.daemon, d); await assertWorkerStopped(proof, d, entries);
     for (const fact of proof.web.processes) {
       const current = d.readProcess(fact.pid); if (current && current.startTicks === fact.startTicks) fail();
     }
     assertNoUnfrozenRuntimeProcess(proof.disk.runtime, [], d);
     assertNoUnfrozenRuntimeProcess(second.disk.runtime, second.web.processes.map((fact) => fact.pid), d);
+    // Candidate.daemon references the original immutable supervisor proof. The
+    // two fresh observations above stay untouched and strictly equal; their
+    // historical continuity to that reference has been checked explicitly.
     return validateCandidateProof({ version: 1, targetSha, pauseExpected, disk: second.disk, environment: second.environment,
-      daemon: second.daemon, web: second.web }, proof);
+      daemon: proof.daemon, web: second.web }, proof);
   });
 }
 export async function verifyCandidate(rawProof, rawCandidate, pauseExpected = "1", overrides = {}) {
@@ -732,8 +738,9 @@ export async function verifyResumedCandidate(rawProof, rawResumed, overrides = {
     await d.sleep(50);
     const actual = await observe({ ...proof.input, expectedOldSha: candidate.targetSha }, d, "0",
       proof.worker.state === "running" ? candidate.disk.runtime : proof.disk.runtime);
+    assertMaintenanceDaemonContinuity(candidate.daemon, actual.daemon, proof.bootId);
     if (!equal(first, actual) || !equal(actual.disk, candidate.disk) || !equal(actual.environment, candidate.environment) ||
-        !equal(actual.daemon, candidate.daemon) || !equal(actual.web, candidate.web) ||
+        !equal(actual.web, candidate.web) ||
         (resumed.worker ? !equal(actual.worker.managed, resumed.worker) : actual.worker.state === "running")) fail();
     assertNoUnfrozenRuntimeProcess(proof.disk.runtime, [], d);
     assertNoUnfrozenRuntimeProcess(candidate.disk.runtime, [...candidate.web.processes, ...(resumed.worker?.processes || [])].map((fact) => fact.pid), d);

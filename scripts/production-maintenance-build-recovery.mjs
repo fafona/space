@@ -28,22 +28,34 @@ export const MAINTENANCE_BUILD_RECOVERY_MAX_EVIDENCE_BYTES = 16 * 1024;
 export const MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS = 5 * 60 * 1000;
 const INCIDENT = MAINTENANCE_BUILD_RECOVERY_INCIDENT, STATE_BYTES = 4 * 1024 * 1024;
 export const MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION = Object.freeze({
-  version: 1, operationId: INCIDENT.operationId, previousTargetSha: INCIDENT.previousTargetSha,
-  previousStateDigest: INCIDENT.stateDigest, authorizedAt: Date.parse("2026-09-13T05:45:22.000Z"),
-  previousExpiresAt: INCIDENT.createdAt + 12 * 60 * 60 * 1000, expiresAt: Date.parse("2026-09-13T10:00:00.000Z"),
+  version: 2, operationId: INCIDENT.operationId, previousTargetSha: INCIDENT.previousTargetSha,
+  previousStateDigest: INCIDENT.stateDigest, authorizedAt: Date.parse("2026-09-13T17:08:40.000Z"),
+  previousExpiresAt: INCIDENT.createdAt + 12 * 60 * 60 * 1000, expiresAt: Date.parse("2026-09-13T22:00:00.000Z"),
+  priorAuthorization: Object.freeze({ authorizedAt: Date.parse("2026-09-13T05:45:22.000Z"), expiresAt: Date.parse("2026-09-13T10:00:00.000Z") }),
 });
 export const MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST = createHash("sha256")
   .update(JSON.stringify(MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION)).digest("hex");
+// The only additionally authorized history record. This immutable metadata is
+// not a replacement maintenance backup or permission to ignore another run.
+export const MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP = Object.freeze({
+  version: 1, authorizedAt: Date.parse("2026-09-13T18:47:37.000Z"),
+  runId: "34745334237", runAttempt: 1, sourceSha: "13df917416cf06ce27fce021460b08caf50f6165",
+  workflowPath: ".github/workflows/database-backup.yml", event: "schedule", conclusion: "success", mode: "off",
+  createdAt: "2026-09-13T07:28:50Z", runStartedAt: "2026-09-13T07:28:50Z", updatedAt: "2026-09-13T08:12:22Z",
+  jobId: "103692125899", jobStartedAt: "2026-09-13T07:28:52Z", jobCompletedAt: "2026-09-13T08:12:21Z",
+});
+export const MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST = createHash("sha256")
+  .update(JSON.stringify(MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP)).digest("hex");
 const EXTENSION = MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION;
 const SHA = /^[0-9a-f]{40}$/, HASH = /^[0-9a-f]{64}$/, BOOT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const RUN = /^[1-9][0-9]{0,19}$/;
 const RUN_KEYS = ["backupRunId", "backupRunAttempt", "migrationRunId", "migrationRunAttempt", "readinessRunId", "readinessRunAttempt", "failedDeployRunId", "failedDeployRunAttempt"];
-const INSPECTION_KEYS = ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha", "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", "deadlineExtensionDigest", ...RUN_KEYS];
-const EVIDENCE_KEYS = [...INSPECTION_KEYS, "toolsSha", "buildRecoveryRunId", "buildRecoveryRunAttempt", "mainCIrunId", "historyDigest", "historyCheckedAt"];
+const INSPECTION_KEYS = ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha", "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", "deadlineExtensionDigest", "additionalBackupSpecDigest", ...RUN_KEYS];
+const EVIDENCE_KEYS = [...INSPECTION_KEYS, "toolsSha", "buildRecoveryRunId", "buildRecoveryRunAttempt", "mainCIrunId", "historyDigest", "historyCheckedAt", "additionalBackupEvidenceDigest"];
 const CONTEXT_KEYS = ["operationId", "previousTargetSha", "targetSha", "expectedOldSha", "expectedRevision", "expectedDigest", "bootId", "now", "sourceDiffDigest", "migrationDigest"];
 const LAUNCH_KEYS = ["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
 const FIXED_KEYS = ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "tokenHash", "publicSupabaseUrl", "runtime", "database", "recovery", "continuation", "buildRecovery", "deadlineExtension"];
-const PRIOR_RUNS = ["34715768455", "34715352249", "34715932102", "34721155156", "34721256683", "34721317710", "34724808528", "34724337523", "34724943157", "34728212357", "34728263285"];
+const PRIOR_RUNS = ["34715768455", "34715352249", "34715932102", "34721155156", "34721256683", "34721317710", "34724808528", "34724337523", "34724943157", "34728212357", "34728263285", "34745334237"];
 const fail = () => { throw new Error("maintenance_build_recovery_invalid"); };
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const exact = (value, keys) => record(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -87,10 +99,10 @@ function checkActualClock(clock) {
   if (clock.now < EXTENSION.authorizedAt || clock.now >= EXTENSION.expiresAt) fail();
 }
 // Explicit HISTORICAL audit clock, not the current time. Only this fixed
-// incident's two existing audits are checked as of the user's authorization,
+// incident's two existing audits are checked as of the PRIOR authorization,
 // still within their original TTL. Real boot identity remains caller-verified;
 // all present-time checks use checkActualClock and the real supplied now.
-const historicalAuditClock = clock => ({ bootId: clock.bootId, now: EXTENSION.authorizedAt });
+const historicalAuditClock = clock => ({ bootId: clock.bootId, now: EXTENSION.priorAuthorization.authorizedAt });
 function checkOriginalContinuation(state, clock) {
   try { validateMaintenanceContinuationState(state, clock); } catch { fail(); }
   const recovery = state.recovery.evidence, continuation = state.continuation.evidence;
@@ -106,6 +118,7 @@ function checkInspection(value) {
       value.operationId !== INCIDENT.operationId || value.previousTargetSha !== INCIDENT.previousTargetSha || value.expectedOldSha !== INCIDENT.expectedOldSha ||
       value.revision !== INCIDENT.revision || value.createdAt !== INCIDENT.createdAt || value.stateDigest !== INCIDENT.stateDigest ||
       value.deadlineExtensionDigest !== MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST ||
+      value.additionalBackupSpecDigest !== MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST ||
       !newTarget(value.targetSha) || RUN_KEYS.some(key => value[key] !== INCIDENT[key]) ||
       ![value.sourceDiffDigest, value.migrationDigest, value.recoveryDigest, value.continuationDigest].every(item => matches(HASH, item))) fail();
   return project(value, INSPECTION_KEYS);
@@ -114,7 +127,9 @@ function checkEvidence(value) {
   if (!exact(value, EVIDENCE_KEYS)) fail(); checkInspection(project(value, INSPECTION_KEYS));
   if (value.toolsSha !== value.targetSha || !matches(RUN, value.buildRecoveryRunId) || value.buildRecoveryRunAttempt !== 1 || !matches(RUN, value.mainCIrunId) ||
       value.buildRecoveryRunId === value.mainCIrunId || PRIOR_RUNS.includes(value.buildRecoveryRunId) || PRIOR_RUNS.includes(value.mainCIrunId) ||
-      !matches(HASH, value.historyDigest) || !time(value.historyCheckedAt) || value.historyCheckedAt < EXTENSION.authorizedAt ||
+      !matches(HASH, value.historyDigest) || !matches(HASH, value.additionalBackupEvidenceDigest) ||
+      !time(value.historyCheckedAt) || value.historyCheckedAt < MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP.authorizedAt ||
+      value.historyCheckedAt < EXTENSION.authorizedAt ||
       value.historyCheckedAt >= EXTENSION.expiresAt) fail();
   return project(value, EVIDENCE_KEYS);
 }
@@ -135,7 +150,8 @@ function inspectionFor(state, context) {
     previousTargetSha: state.targetSha, expectedOldSha: state.expectedOldSha, revision: state.revision, stateDigest: INCIDENT.stateDigest,
     createdAt: state.createdAt, sourceDiffDigest: context.sourceDiffDigest, migrationDigest: context.migrationDigest,
     recoveryDigest: hash(state.recovery), continuationDigest: hash(state.continuation),
-    deadlineExtensionDigest: MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST, ...project(INCIDENT, RUN_KEYS) });
+    deadlineExtensionDigest: MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST,
+    additionalBackupSpecDigest: MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST, ...project(INCIDENT, RUN_KEYS) });
 }
 
 /** Only the two explicit build-recovery controller actions may use this

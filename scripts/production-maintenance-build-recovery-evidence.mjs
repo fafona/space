@@ -11,6 +11,9 @@ export const MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS = Object.freeze([
   "scripts/production-maintenance-workflow-contract.test.mjs", "scripts/production-maintenance-build-compatibility.test.mjs", "scripts/prepare-next-wasm.mjs",
   "scripts/check-admin-bundle-budget.mjs", "scripts/production-maintenance-admin-bundle-compatibility.test.mjs",
   "scripts/production-maintenance-route-build-evidence.mjs", "scripts/production-maintenance-route-build-evidence.test.mjs",
+  "scripts/production-maintenance-daemon-continuity.mjs", "scripts/production-maintenance-daemon-continuity.test.mjs",
+  "scripts/production-maintenance-runtime.mjs", "scripts/production-maintenance-runtime.test.mjs",
+  "scripts/production-maintenance-pm2-adapter.mjs", "scripts/production-maintenance-pm2-adapter.test.mjs",
   ...MAINTENANCE_ROUTE_BUILD_SOURCE_PATHS,
   ...["production-maintenance-control", "production-maintenance-launch-journal-storage", "production-maintenance-build-recovery",
     "production-maintenance-build-recovery-evidence", "production-maintenance-build-recovery-workflow"]

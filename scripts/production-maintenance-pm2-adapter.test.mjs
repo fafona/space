@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { controlPm2, inspectPm2Registry, validatePm2Registry, PM2_CONTROL_BRIDGE_SOURCE,
   capturePm2DumpTarget, persistPm2Dump, verifyPm2Dump, validatePm2DumpReceipt, pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
@@ -9,6 +10,18 @@ const BOOT = "12345678-1234-1234-1234-123456789012";
 const id = "1:2:3:4:5:1:0:33261";
 const daemon = { pid: 10, parentPid: 1, uid: 0, startTicks: "123", processIdentity: id, cwd: "/", cwdIdentity: id,
   executable: "/usr/bin/node", executableIdentity: id, commandLineDigest: "a".repeat(64) };
+// Nonsecret original daemon projection; every transport test below uses real
+// adapter logic and only substitutes its host I/O, never the continuity helper.
+const PINNED_BOOT = "e6531ec9-db4a-4216-b87a-7cc858197eaa";
+const pinnedDaemon = () => ({ pid: 1932, parentPid: 1, startTicks: "655",
+  processIdentity: "5:1371412379:0:1789025006880928256:1789025006880928256:9:0:16749", uid: 0, cwd: "/",
+  cwdIdentity: "64769:2:4096:1781053826232894895:1781053826232894895:22:0:16749", executable: "/usr/bin/node",
+  executableIdentity: "64769:1490495:98927992:1772647009000000000:1773064763075191240:1:0:33261",
+  commandLineDigest: "e828d12675121dacff0dd5b122c0f135cadd6a2fe03ddbbe1e8540f9ad1e4159" });
+const changeProc = (value, index = 1) => {
+  const parts = value.processIdentity.split(":"); parts[index] = String(BigInt(parts[index]) + 1n);
+  value.processIdentity = parts.join(":");
+};
 const row = () => ({ name: "faolla", pid: 20, pm_id: 0, pm2_env: { name: "faolla", pm_id: 0, status: "online",
   created_at: 123, pm_uptime: 234, restart_time: 0, pm_cwd: "/srv/faolla.releases/aaaaaaaaaaaa-20260909000000",
   pm_exec_path: "/srv/faolla.releases/aaaaaaaaaaaa-20260909000000/node_modules/next/dist/bin/next",
@@ -29,6 +42,12 @@ function fixture() {
       f.after?.();
       return { status: 0, stderr: "", stdout: JSON.stringify(answer) };
     } };
+  return f;
+}
+function pinnedFixture() {
+  const f = fixture(); f.boot = PINNED_BOOT;
+  f.current = { ...pinnedDaemon(), commandLine: ["PM2 v6.0.14: God Daemon (/root/.pm2)"] };
+  for (const index of [1, 3, 4]) changeProc(f.current, index);
   return f;
 }
 test("registry transport freezes daemon, root cwd, boot and fixed Python without CLI", async () => {
@@ -147,5 +166,81 @@ test("lost dump save response is unknown once only; verify is strictly read-only
       : verifyPm2Dump(daemon, BOOT, [row()], receipt(), f.d),
     { message: action === "persist" ? "production_maintenance_pm2_outcome_unknown" : "production_maintenance_pm2_unverified" });
     assert.equal(calls, 1);
+  }
+});
+
+test("pinned historical drift permits one exchange while the immutable original daemon and peer tuple stay bound", async () => {
+  const frozen = pinnedDaemon(), originalBytes = JSON.stringify(frozen);
+  assert.equal(createHash("sha256").update(originalBytes).digest("hex"), "940d18ed1876a97c6523b56bc213be2c426c89348630527392d9d795dadef6c4");
+  for (const mutation of [false, true]) {
+    const f = pinnedFixture(); const expected = request(); expected.expectedProcess.bootId = PINNED_BOOT;
+    if (mutation) await controlPm2(frozen, PINNED_BOOT, expected, f.d);
+    else assert.deepEqual(await inspectPm2Registry(frozen, PINNED_BOOT, f.d), [row()]);
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(f.calls[0].payload.daemon, { pid: frozen.pid, uid: frozen.uid, startTicks: frozen.startTicks,
+      bootId: PINNED_BOOT, executable: frozen.executable, executableIdentity: frozen.executableIdentity });
+    assert.equal(Object.hasOwn(f.calls[0].payload.daemon, "processIdentity"), false);
+    assert.equal(JSON.stringify(frozen), originalBytes);
+  }
+});
+
+test("a second fresh procfs change anywhere before send is refused even for the approved daemon", async () => {
+  for (const stage of ["first-pair", "python-capture", "helper-capture", "python-verify"]) {
+    for (const index of [1, 3, 4]) {
+      const f = pinnedFixture();
+      if (stage === "first-pair") {
+        const read = f.d.readProcess; let reads = 0;
+        f.d.readProcess = (...args) => { if (++reads === 2) changeProc(f.current, index); return read(...args); };
+      } else if (stage === "python-capture") {
+        const capture = f.d.python; f.d.python = () => { changeProc(f.current, index); return capture(); };
+      } else if (stage === "helper-capture") {
+        const capture = f.d.helperProof; f.d.helperProof = () => { changeProc(f.current, index); return capture(); };
+      } else {
+        const verify = f.d.verifyPython; f.d.verifyPython = (proof) => { verify(proof); changeProc(f.current, index); };
+      }
+      await assert.rejects(controlPm2(pinnedDaemon(), PINNED_BOOT, request(), f.d), { message: "production_maintenance_pm2_unverified" });
+      assert.equal(f.calls.length, 0, stage);
+    }
+  }
+});
+
+test("post-send historical-looking procfs changes are unknown for mutations and never retried", async () => {
+  for (const mutation of [false, true]) for (const index of [1, 3, 4]) {
+    const f = pinnedFixture(); f.after = () => changeProc(f.current, index);
+    await assert.rejects(mutation ? controlPm2(pinnedDaemon(), PINNED_BOOT, request(), f.d)
+      : inspectPm2Registry(pinnedDaemon(), PINNED_BOOT, f.d),
+    { message: mutation ? "production_maintenance_pm2_outcome_unknown" : "production_maintenance_pm2_unverified" });
+    assert.equal(f.calls.length, 1);
+  }
+});
+
+test("historical exception does not relax daemon generation, home, title, boot, or private environment gates", async () => {
+  for (const change of [(f) => { f.current.pid++; }, (f) => { f.current.parentPid++; }, (f) => { f.current.startTicks = "656"; },
+    (f) => { f.current.uid++; }, (f) => { f.current.cwd = "/other"; }, (f) => { f.current.executableIdentity = id; },
+    (f) => { f.current.commandLineDigest = "f".repeat(64); }, (f) => { changeProc(f.current, 0); },
+    (f) => { f.boot = BOOT; }, (f) => { f.current.commandLine = ["PM2 v6.0.15: God Daemon (/root/.pm2)"]; },
+    (f) => { f.d.canonical = () => "/different"; }, (f) => { f.d.daemonEnvironment = () => false; }]) {
+    const f = pinnedFixture(); change(f);
+    await assert.rejects(inspectPm2Registry(pinnedDaemon(), PINNED_BOOT, f.d), { message: "production_maintenance_pm2_unverified" });
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("dump capture, persistence and verification share the same pinned continuity and strict fresh observation boundary", async () => {
+  const frozen = pinnedDaemon(), peer = { pid: frozen.pid, uid: frozen.uid, startTicks: frozen.startTicks,
+    bootId: PINNED_BOOT, executable: frozen.executable, executableIdentity: frozen.executableIdentity };
+  const dumpTarget = { ...target(), daemon: peer }, dumpReceipt = { ...receipt(), target: { ...dumpTarget, dump: receipt().target.dump } };
+  for (const action of ["capture", "persist", "verify"]) for (const drift of [false, true]) {
+    const f = pinnedFixture();
+    f.d.invokeDump = (_python, payload) => {
+      f.calls.push(payload); if (drift) changeProc(f.current);
+      return { status: 0, stderr: "", stdout: JSON.stringify(action === "capture" ? dumpTarget : action === "persist" ? dumpReceipt : true) };
+    };
+    const result = action === "capture" ? capturePm2DumpTarget(frozen, PINNED_BOOT, f.d)
+      : action === "persist" ? persistPm2Dump(frozen, PINNED_BOOT, [row()], dumpTarget, f.d)
+        : verifyPm2Dump(frozen, PINNED_BOOT, [row()], dumpReceipt, f.d);
+    if (drift) await assert.rejects(result, { message: action === "persist" ? "production_maintenance_pm2_outcome_unknown" : "production_maintenance_pm2_unverified" });
+    else assert.deepEqual(await result, action === "capture" ? dumpTarget : action === "persist" ? dumpReceipt : true);
+    assert.equal(f.calls.length, 1); assert.deepEqual(f.calls[0].daemon, peer);
   }
 });

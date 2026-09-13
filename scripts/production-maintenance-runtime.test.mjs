@@ -6,21 +6,35 @@ import { captureRuntime, validateRuntimeProof, assertRuntimeStopped, stopRuntime
   readRuntimeHandoffEnvironment, readDeploymentHandoffFields, startCandidate, reconcileMaintenanceLaunches,
   persistResumedDump, verifyResumedDump, validateResumedDumpProof } from "./production-maintenance-runtime.mjs";
 import { pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
+import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
 
 const OLD = "a".repeat(40); const TARGET = "b".repeat(40); const SECRET = "PRIVATE_DO_NOT_PERSIST";
 const BOOT = "12345678-1234-1234-1234-123456789012";
+// Nonsecret incident projection; no private fixture path or hash substitution.
+const PINNED_BOOT = "e6531ec9-db4a-4216-b87a-7cc858197eaa";
+const pinnedDaemon = () => ({ pid: 1932, parentPid: 1, startTicks: "655",
+  processIdentity: "5:1371412379:0:1789025006880928256:1789025006880928256:9:0:16749", uid: 0, cwd: "/",
+  cwdIdentity: "64769:2:4096:1781053826232894895:1781053826232894895:22:0:16749", executable: "/usr/bin/node",
+  executableIdentity: "64769:1490495:98927992:1772647009000000000:1773064763075191240:1:0:33261",
+  commandLineDigest: "e828d12675121dacff0dd5b122c0f135cadd6a2fe03ddbbe1e8540f9ad1e4159" });
+const driftPinnedDaemon = (f, index = 1) => {
+  const actual = f.facts.get(1932), parts = actual.processIdentity.split(":");
+  parts[index] = String(BigInt(parts[index]) + 1n);
+  f.facts.set(1932, { ...actual, processIdentity: parts.join(":") });
+};
 const input = () => ({ appDir: "/srv/faolla", appName: "faolla", appPort: 3000, expectedOldSha: OLD });
 const id = (number) => `1:${number}:10:20:30:1:1000:33152`;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 function fixture(options = {}) {
   const calls = []; const facts = new Map(); const disks = new Map(); const envs = new Map();
-  let entries = []; let currentBuild = OLD; let boot = BOOT; let pause = "1"; let nextPid = 301;
+  let entries = []; let currentBuild = OLD; let boot = options.bootId ?? BOOT; let pause = "1"; let nextPid = 301;
+  const daemonPid = options.daemon?.pid ?? 10;
   let journal = null; const launchEnvironments = new Map();
   const runtime = (sha) => `/srv/faolla.releases/${sha.slice(0, 12)}-20260909120000`;
-  const process = (pid, cwd, parentPid = 10) => ({ pid, parentPid, startTicks: String(pid + 100), processIdentity: id(pid),
-    uid: 1000, cwd, cwdIdentity: [...disks.values()].find((disk) => disk.runtime === cwd)?.runtimeIdentity ?? id(pid + 100), executable: "/usr/bin/node", executableIdentity: id(999), commandLineDigest: hash(String(pid)) });
-  const daemon = process(10, "/srv/pm2", 1); facts.set(10, daemon);
+  const process = (pid, cwd, parentPid = daemonPid) => ({ pid, parentPid, startTicks: String(pid + 100), processIdentity: id(pid),
+    uid: options.daemon?.uid ?? 1000, cwd, cwdIdentity: [...disks.values()].find((disk) => disk.runtime === cwd)?.runtimeIdentity ?? id(pid + 100), executable: "/usr/bin/node", executableIdentity: options.daemon?.executableIdentity ?? id(999), commandLineDigest: hash(String(pid)) });
+  const daemon = options.daemon ? structuredClone(options.daemon) : process(10, "/srv/pm2", 1); facts.set(daemonPid, daemon);
   for (const [sha, number] of [[OLD, 1], [TARGET, 2]]) {
     const disk = { runtime: runtime(sha), runtimeIdentity: id(number), environmentIdentity: id(number + 10),
       environmentDigest: hash(sha + "env"), nextBuildIdentity: id(number + 20), nextBuildDigest: hash(sha),
@@ -50,7 +64,7 @@ function fixture(options = {}) {
     FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com", FAOLLA_BACKGROUND_JOBS_PAUSED: paused, PORT: "3000", ...flags });
   const envHash = (env) => hash(JSON.stringify(Object.fromEntries(Object.keys(env).sort().map((key) => [key, env[key]]))));
   const binding = () => ({ operationId: "12345678-1234-4234-8234-123456789012", targetSha: TARGET, appName: "faolla", appPort: 3000,
-    daemon: { pid: 10, uid: 1000, startTicks: daemon.startTicks, bootId: BOOT, executable: daemon.executable, executableIdentity: daemon.executableIdentity },
+    daemon: { pid: daemonPid, uid: daemon.uid, startTicks: daemon.startTicks, bootId: boot, executable: daemon.executable, executableIdentity: daemon.executableIdentity },
     release: { path: runtime(TARGET), identity: disks.get(TARGET).runtimeIdentity, buildDigest: disks.get(TARGET).nextBuildDigest } });
   const journalOps = {
     checkpoint(value) { calls.push({ command: "journal-checkpoint", args: [structuredClone(value)] }); },
@@ -92,8 +106,8 @@ function fixture(options = {}) {
     disk(_dir, sha) { assert.equal(currentBuild, sha); return structuredClone(disks.get(sha)); },
     supervision: async () => {
       const web = entries.find((entry) => entry.name === "faolla");
-      return { healthVerified: true, ownership: { state: "owned", mode: "direct", pid: web?.pid, daemonPid: 10 },
-        listener: { state: web?.pid ? "single" : "absent", pid: web?.pid || 0, chain: web?.pid ? [facts.get(web.pid), daemon] : [] } };
+      return { healthVerified: true, ownership: { state: "owned", mode: "direct", pid: web?.pid, daemonPid },
+        listener: { state: web?.pid ? "single" : "absent", pid: web?.pid || 0, chain: web?.pid ? [facts.get(web.pid), facts.get(daemonPid)] : [] } };
     },
     readRollback(path, sha) { assert.equal(envs.get(path.slice(0, -11)).buildId, sha); return structuredClone(envs.get(path.slice(0, -11))); },
     readProcessEnvironment(pid, cwd) { return { ...structuredClone(envs.get(cwd)), status: "present", rolloutStatus: "present", startTicks: facts.get(Number(pid)).startTicks }; },
@@ -115,7 +129,9 @@ function fixture(options = {}) {
     workerFlags(path) { const e = envs.get(path.slice(0, -11)); return { identity: e.fileIdentity, hash: e.sha256, flags: { ...flags } }; },
     portEmpty: () => !entries.some((entry) => entry.name === "faolla" && entry.pid > 0),
     async pm2Registry(actualDaemon, actualBoot) {
-      assert.deepEqual(actualDaemon, facts.get(10)); assert.equal(actualBoot, boot);
+      if (options.daemon) assertMaintenanceDaemonContinuity(actualDaemon, facts.get(daemonPid), boot);
+      else assert.deepEqual(actualDaemon, facts.get(daemonPid));
+      assert.equal(actualBoot, boot);
       calls.push({ command: "adapter-inspect", args: ["jlist"] });
       return entries.map((entry) => {
         const { PRIVATE, ...env } = entry.pm2_env; assert.equal(PRIVATE, SECRET);
@@ -123,7 +139,9 @@ function fixture(options = {}) {
       });
     },
     async pm2Control(actualDaemon, actualBoot, request) {
-      assert.deepEqual(actualDaemon, facts.get(10)); assert.equal(actualBoot, boot);
+      if (options.daemon) assertMaintenanceDaemonContinuity(actualDaemon, facts.get(daemonPid), boot);
+      else assert.deepEqual(actualDaemon, facts.get(daemonPid));
+      assert.equal(actualBoot, boot);
       if (request.action === "prepare") {
         const launch = request.launch, kind = launch.role === "final-worker" ? "worker" : "web";
         assert.equal(journal.slots[kind === "worker" ? "worker" : launch.role === "candidate-web" ? "paused-web" : "resumed-web"].phase, "attempted");
@@ -133,7 +151,7 @@ function fixture(options = {}) {
       }
       assert.equal(request.action, "delete");
       const entry = entries.find((row) => row.pm_id === request.expected.pm_id); assert.ok(entry);
-      assert.equal(entry.pid, request.expectedProcess.pid); assert.equal(request.expectedProcess.bootId, BOOT);
+      assert.equal(entry.pid, request.expectedProcess.pid); assert.equal(request.expectedProcess.bootId, boot);
       calls.push({ command: "adapter-control", args: ["delete", String(entry.pm_id)], request });
       for (const fact of deps.ownedProcesses(entry.pid)) facts.delete(fact.pid);
       entries = entries.filter((item) => item !== entry);
@@ -651,18 +669,20 @@ test("unknown launch cannot adopt a foreign nonce, changed environment or restar
   }
 });
 
-async function resumedFixture() {
-  const f = fixture(), proof = await captureRuntime(input(), f.deps);
-  await stopRuntime(proof, f.deps); f.switchCandidate();
+async function resumedFixture(options = {}) {
+  const f = fixture(options), proof = await captureRuntime(input(), f.deps);
+  await stopRuntime(proof, f.deps);
+  if (options.daemon) for (const index of [1, 3, 4]) driftPinnedDaemon(f, index);
+  f.switchCandidate();
   const candidate = await startCandidate(proof, TARGET, f.deps), resumed = await resumeCandidate(proof, candidate, TARGET, f.deps);
   const target = { version: 1, socketPath: "/srv/pm2/rpc.sock",
-    daemon: { pid: proof.daemon.pid, uid: proof.daemon.uid, startTicks: proof.daemon.startTicks, bootId: BOOT,
+    daemon: { pid: proof.daemon.pid, uid: proof.daemon.uid, startTicks: proof.daemon.startTicks, bootId: proof.bootId,
       executable: proof.daemon.executable, executableIdentity: proof.daemon.executableIdentity },
     chain: [["1", "2", "16832", "1000", "1000"], ["1", "3", "16832", "1000", "1000"]], dump: null, backup: null };
   let saved = null;
   f.deps.capturePm2DumpTarget = async () => structuredClone(target);
   f.deps.persistPm2Dump = async (daemon, boot, registry, actualTarget) => {
-    assert.deepEqual(daemon, proof.daemon); assert.equal(boot, BOOT); assert.deepEqual(actualTarget, target);
+    assert.deepEqual(daemon, proof.daemon); assert.equal(boot, proof.bootId); assert.deepEqual(actualTarget, target);
     f.calls.push({ command: "dump-save", args: [] });
     saved = { version: 1, pm2Version: "6.0.14", peerVerified: true, saved: true, processCount: registry.length,
       registryHash: pm2RegistryDigest(registry), target: { ...target, dump: { identity: id(1234), sha256: hash("private dump") } } };
@@ -712,5 +732,89 @@ test("failed resume checkpoints complete evidence before cleanup; checkpoint fai
       assert.ok(calls.slice(checkpoint + 1).some((call) => call.command === "adapter-control" && call.args[0] === "delete"));
       await assertRuntimeStopped(proof, f.deps);
     }
+  }
+});
+
+test("pinned daemon historical continuity survives held, single launch, resumed verification, dump and exact cleanup without rewriting proofs", async () => {
+  assert.equal(hash(JSON.stringify(pinnedDaemon())), "940d18ed1876a97c6523b56bc213be2c426c89348630527392d9d795dadef6c4");
+  for (const worker of ["running", "absent"]) {
+    const { f, proof, resumed } = await resumedFixture({ daemon: pinnedDaemon(), bootId: PINNED_BOOT, worker });
+    const bytes = JSON.stringify(proof);
+    assert.deepEqual(proof.daemon, pinnedDaemon());
+    assert.deepEqual(resumed.candidate.daemon, proof.daemon);
+    assert.notDeepEqual(f.facts.get(1932), proof.daemon);
+    await verifyResumedCandidate(proof, resumed, f.deps);
+    const dump = await persistResumedDump(proof, resumed, f.deps);
+    assert.equal(await verifyResumedDump(proof, resumed, dump, f.deps), true);
+    assert.deepEqual(dump.resumed.candidate.daemon, proof.daemon);
+    assert.equal(f.calls.filter(call => call.command === "dump-save").length, 1);
+    const launches = f.calls.filter(call => call.args[0] === "start").length;
+    assert.equal(launches, worker === "running" ? 3 : 2);
+    await stopResumedCandidate(proof, resumed, f.deps);
+    await assertRuntimeStopped(proof, f.deps);
+    assert.equal(f.calls.filter(call => call.args[0] === "start").length, launches);
+    assert.equal(JSON.stringify(proof), bytes);
+    assert.deepEqual(f.journal().daemon, { pid: 1932, uid: 0, startTicks: "655", bootId: PINNED_BOOT,
+      executable: proof.daemon.executable, executableIdentity: proof.daemon.executableIdentity });
+  }
+});
+
+test("held registry comparison rejects a second fresh procfs change across the registry call", async () => {
+  const f = fixture({ daemon: pinnedDaemon(), bootId: PINNED_BOOT }), proof = await captureRuntime(input(), f.deps);
+  await stopRuntime(proof, f.deps); driftPinnedDaemon(f);
+  assert.equal(await assertRuntimeStopped(proof, f.deps), true);
+  const registry = f.deps.pm2Registry;
+  f.deps.pm2Registry = async (...args) => { const result = await registry(...args); driftPinnedDaemon(f, 3); return result; };
+  const mutations = f.calls.filter(call => call.command === "adapter-control").length;
+  await assert.rejects(assertRuntimeStopped(proof, f.deps), { message: "production_maintenance_runtime_unverified" });
+  assert.equal(f.calls.filter(call => call.command === "adapter-control").length, mutations);
+});
+
+test("original capture and both candidate observations remain strict even for the pinned daemon", async () => {
+  for (const stage of ["original", "candidate"]) {
+    const f = fixture({ daemon: pinnedDaemon(), bootId: PINNED_BOOT });
+    if (stage === "original") {
+      f.deps.sleep = async () => driftPinnedDaemon(f);
+      await assert.rejects(captureRuntime(input(), f.deps));
+    } else {
+      const proof = await captureRuntime(input(), f.deps); await stopRuntime(proof, f.deps);
+      driftPinnedDaemon(f); f.installCandidate();
+      const candidate = await captureCandidate(proof, TARGET, "1", f.deps);
+      assert.deepEqual(candidate.daemon, proof.daemon);
+      assert.equal(await verifyCandidate(proof, candidate, "1", f.deps), true);
+      const bytes = JSON.stringify(candidate);
+      f.deps.sleep = async () => driftPinnedDaemon(f, 4);
+      await assert.rejects(captureCandidate(proof, TARGET, "1", f.deps));
+      await assert.rejects(verifyCandidate(proof, candidate, "1", f.deps));
+      assert.equal(JSON.stringify(candidate), bytes);
+    }
+  }
+});
+
+test("resumed observations cannot use the historical exception to conceal fresh daemon or managed-process drift", async () => {
+  for (const stage of ["daemon", "web", "worker"]) {
+    const { f, proof, resumed } = await resumedFixture({ daemon: pinnedDaemon(), bootId: PINNED_BOOT });
+    const before = f.calls.filter(call => call.command === "adapter-control").length;
+    f.deps.sleep = async () => {
+      if (stage === "daemon") driftPinnedDaemon(f);
+      else {
+        const managed = stage === "web" ? resumed.candidate.web : resumed.worker;
+        const current = f.facts.get(managed.pm2.pid), parts = current.processIdentity.split(":");
+        parts[1] = String(BigInt(parts[1]) + 1n); f.facts.set(current.pid, { ...current, processIdentity: parts.join(":") });
+      }
+    };
+    await assert.rejects(verifyResumedCandidate(proof, resumed, f.deps));
+    assert.equal(f.calls.filter(call => call.command === "adapter-control").length, before);
+  }
+});
+
+test("pinned continuity cannot allow changed boot, generation or stable proc metadata before held or stop", async () => {
+  for (const change of [(f) => f.setBoot(BOOT), (f) => { f.facts.get(1932).startTicks = "656"; },
+    (f) => { f.facts.get(1932).cwdIdentity = id(123); }, (f) => { f.facts.get(1932).commandLineDigest = "f".repeat(64); },
+    (f) => driftPinnedDaemon(f, 0), (f) => driftPinnedDaemon(f, 7)]) {
+    const f = fixture({ daemon: pinnedDaemon(), bootId: PINNED_BOOT }), proof = await captureRuntime(input(), f.deps);
+    driftPinnedDaemon(f); change(f);
+    await assert.rejects(stopRuntime(proof, f.deps));
+    assert.equal(f.calls.some(call => call.command === "adapter-control"), false);
   }
 });

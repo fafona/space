@@ -167,17 +167,22 @@ manifest is restricted to `app/admin/AdminClientLoader.tsx -> ./AdminClient`;
 missing/invalid evidence is not replaced with an unrelated smaller entry. The
 legacy per-admin manifest retains its original largest-entry selection.
 
-The action requires `RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z`, original U/O,
-previous target `46f007fbd9e417f93c01e398c77cf38ec814547d`, and a distinct T4
+The action requires `RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z`, original U/O,
+previous target `46f007fbd9e417f93c01e398c77cf38ec814547d`, and a distinct T5
 which is current main with exact successful push CI. Only version 4 failed-held
 revision 7 with state digest
 `56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa`
 and five null launch fields is admitted. Boot, original creation time,
 frozen runtime/ingress/database proofs and both previous audits remain intact.
-The user explicitly authorized an extension at `2026-09-13T05:45:22.000Z`
-until **`2026-09-13T10:00:00.000Z` (12:00 Madrid)**. The new immutable
-`deadlineExtension` records that authorization, the original deadline
-`2026-09-13T06:00:34.129Z`, U, T3 and the exact predecessor digest. It is a
+Historical T4 `13df917416cf06ce27fce021460b08caf50f6165` identifies the separately
+reviewed scheduled-backup source, not the new T5 deployment target.
+The user explicitly authorized the current extension at `2026-09-13T17:08:40.000Z`
+until **`2026-09-13T22:00:00.000Z` (2026-09-14 00:00 Madrid)**. The immutable
+version 2 `deadlineExtension` also retains `priorAuthorization` with the earlier
+`2026-09-13T05:45:22.000Z` authorization and `2026-09-13T10:00:00.000Z` cutoff.
+That earlier recovery failed during read-only inspection, so its extension was
+not persisted. The original deadline `2026-09-13T06:00:34.129Z`, U, T3 and exact
+predecessor digest remain recorded without resetting `createdAt`. It is a
 fixed incident audit, not a configurable duration or permission to renew again.
 Only the explicit build-recovery actions for this exact predecessor, and valid
 version 5 states carrying this exact audit, use the new deadline. Ordinary
@@ -185,10 +190,24 @@ version 2/3/4 commands retain their original expiry. At the new deadline, the
 operation is expired (the comparison is exclusive, with no extra 34 seconds).
 
 The old audit chain is structurally validated with an explicitly named
-`historicalAuditClock`, fixed at the authorization time within the old validity
-window. This is not a current-health check and never replaces the real clock:
+`historicalAuditClock`, fixed at `priorAuthorization.authorizedAt` within the old
+validity window, not the new 17:08:40 authorization. This is not a current-health
+check and never replaces the real clock:
 all actual-clock/boot checks, fresh held probes, five-minute evidence freshness
 and persistence checks still use the present time and fixed new deadline.
+
+The PM2 compatibility exception is restricted to the original pinned boot and
+original frozen daemon digest
+`940d18ed1876a97c6523b56bc213be2c426c89348630527392d9d795dadef6c4`.
+Only the historical `/proc` virtual inode number, modification timestamp and
+change timestamp may differ. All other nine process fields and the five
+remaining procfs identity components (device, size, link count, UID and mode)
+remain exact. This comparison does not establish process-control authority:
+fresh-to-fresh identity checks, actual boot checks and the authenticated PM2 peer
+checks remain unchanged. Candidate proofs retain the original daemon proof;
+neither a new observation nor this exception refreshes the persisted proof.
+The source allowlist adds only the continuity helper, runtime and PM2 adapter
+with their corresponding tests; it does not admit adjacent process tools.
 
 Read-only inspection and final transition each recheck the actual held ingress,
 stopped runtime, quiet database, narrow source delta and unchanged complete
@@ -197,10 +216,15 @@ and one pinned WASM package; no existing dependency may change. The original
 044-048 migration run/window below remains authoritative and is not rerun.
 Under the shared production lock, the runner verifies the signed original T3
 backup (`34724943157`) and readiness (`34728212357`) bindings without retargeting
-them. Complete paginated B/M/R/D history must contain exactly the seven known
-incident runs B2/M/R2/D2/B3/R3/D3 after the original cutoff, with their fixed
-attempts, jobs and step outcomes. Unknown runs, including scheduled backups,
-queued work, cancellations or reruns, cannot be ignored to satisfy this check.
+them. Complete paginated B/M/R/D history preserves the seven known incident
+runs B2/M/R2/D2/B3/R3/D3 after the original cutoff and permits only the separately
+authorized scheduled backup `34745334237`, attempt 1, from exact T4. Its fixed
+job/timestamps, three skipped held checks, off-mode binding with null operation
+and old-SHA fields, hosted-runner signatures, live artifact metadata and eight
+hard-pinned small evidence files must agree. This exception neither replaces
+B3/R3 nor downloads the database payload. Its specification and verified
+evidence digests are retained in the immutable build-recovery audit. Every other
+new run, scheduled backup, queued work, cancellation or rerun still fails closed.
 
 A five-minute grant binds that evidence, exact state bytes/revision, both prior
 audit digests, exact extension digest and current source/registry/CI. One existing-lock compare-and-replace
@@ -211,9 +235,9 @@ uncertain write is not replayed or cleaned up by guessing. No process starts and
 no ingress opens during recovery. There is no UUID replacement, creation-time
 reset, automatic renewal or extension beyond the specifically authorized cutoff.
 
-After confirmed recovery, use a **fresh T4 backup**, **fresh T4 readiness**, normal
+After confirmed recovery, use a **fresh T5 backup**, **fresh T5 readiness**, normal
 deployment and signed deploy verification before explicit `end` and public smoke.
-The earlier artifacts remain incident evidence, not a reusable T4 release chain.
+The earlier artifacts remain incident evidence, not a reusable T5 release chain.
 
 ## Explicit post-migration unlaunched continuation
 

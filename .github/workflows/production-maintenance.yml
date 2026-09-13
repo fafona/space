@@ -32,7 +32,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: Fixed confirmation; recover-build requires RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z (absolute deadline 2026-09-13 10:00:00 UTC / 12:00 Europe/Madrid)
+        description: Fixed confirmation; recover-build requires RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
         required: true
 
 concurrency:
@@ -113,7 +113,7 @@ jobs:
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
               ;;
             recover-build)
-              test "$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z
+              test "$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z
               test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
               test "$PREVIOUS_TARGET_SHA" = 46f007fbd9e417f93c01e398c77cf38ec814547d
               test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
@@ -481,6 +481,48 @@ jobs:
               --limit 10 --format json > "$binding_dir/$phase/provenance.json"
           done
 
+      - name: Verify Fixed Additional Scheduled Backup Evidence
+        if: inputs.action == 'recover-build'
+        id: build-recovery-additional-backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-additional-backup.XXXXXXXX")"
+          printf 'capture_dir=%s\n' "$evidence_dir" >> "$GITHUB_OUTPUT"
+          test "$GITHUB_REPOSITORY" = fafona/space
+          for part in binding predicate reports; do
+            case "$part" in
+              binding) artifact=faolla-maintenance-backup-binding-34745334237-1 ;;
+              predicate) artifact=faolla-production-backup-attestation-34745334237-1 ;;
+              reports) artifact=faolla-backup-verification-reports-34745334237-1 ;;
+              *) exit 1 ;;
+            esac
+            mkdir -m 700 -- "$evidence_dir/$part"
+            gh run download 34745334237 --repo fafona/space --name "$artifact" --dir "$evidence_dir/$part"
+          done
+          for part in binding predicate; do
+            case "$part" in
+              binding) subject=production-maintenance-binding.json ;;
+              predicate) subject=production-backup-attestation.json ;;
+              *) exit 1 ;;
+            esac
+            test -f "$evidence_dir/$part/$subject" && test ! -L "$evidence_dir/$part/$subject"
+            gh attestation verify "$evidence_dir/$part/$subject" --repo fafona/space \
+              --signer-workflow github.com/fafona/space/.github/workflows/database-backup.yml \
+              --source-digest 13df917416cf06ce27fce021460b08caf50f6165 --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$evidence_dir/$part/provenance.json"
+          done
+          # The fixed loader verifies the eight exact file sizes/hashes and inventory.
+          node --input-type=module - "$evidence_dir" <<'NODE'
+          import { readMaintenanceBuildRecoveryAdditionalBackup, validateMaintenanceBuildRecoveryAdditionalBackup } from './scripts/production-maintenance-build-recovery-workflow.mjs';
+          try { validateMaintenanceBuildRecoveryAdditionalBackup(readMaintenanceBuildRecoveryAdditionalBackup(process.argv[2]), Date.now()); }
+          catch { process.stderr.write('maintenance_additional_backup_unverified\n'); process.exitCode = 1; }
+          NODE
+
       - name: Verify Exact Build Recovery History Under Production Lock
         if: inputs.action == 'recover-build'
         id: build-recovery-evidence
@@ -490,11 +532,12 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
           INSPECTION_DIR: ${{ steps.build-recovery-inspection.outputs.capture_dir }}
           PRIOR_BINDINGS_DIR: ${{ steps.build-recovery-prior-bindings.outputs.capture_dir }}
+          ADDITIONAL_BACKUP_DIR: ${{ steps.build-recovery-additional-backup.outputs.capture_dir }}
         shell: bash
         run: |
           set -euo pipefail
           node scripts/production-maintenance-build-recovery-workflow.mjs \
-            --inspection "$INSPECTION_DIR/out" --prior-bindings "$PRIOR_BINDINGS_DIR"
+            --inspection "$INSPECTION_DIR/out" --prior-bindings "$PRIOR_BINDINGS_DIR" --additional-backup "$ADDITIONAL_BACKUP_DIR"
 
       - name: Execute Fixed Maintenance Transition
         id: transition
@@ -795,6 +838,36 @@ jobs:
               fi
             done
             rmdir -- "$PRIOR_BINDINGS_DIR"
+          fi
+
+      - name: Remove Fixed Additional Scheduled Backup Evidence
+        if: always() && inputs.action == 'recover-build'
+        env:
+          ADDITIONAL_BACKUP_DIR: ${{ steps.build-recovery-additional-backup.outputs.capture_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$ADDITIONAL_BACKUP_DIR" ]; then
+            case "$ADDITIONAL_BACKUP_DIR" in "$RUNNER_TEMP"/maintenance-additional-backup.????????) ;; *) exit 1 ;; esac
+            test -d "$ADDITIONAL_BACKUP_DIR" && test ! -L "$ADDITIONAL_BACKUP_DIR"
+            for part in binding predicate reports; do
+              if [ -e "$ADDITIONAL_BACKUP_DIR/$part" ]; then
+                test -d "$ADDITIONAL_BACKUP_DIR/$part" && test ! -L "$ADDITIONAL_BACKUP_DIR/$part"
+                case "$part" in
+                  binding) rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/production-maintenance-binding.json" "$ADDITIONAL_BACKUP_DIR/$part/provenance.json" ;;
+                  predicate) rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/production-backup-attestation.json" "$ADDITIONAL_BACKUP_DIR/$part/provenance.json" ;;
+                  reports)
+                    for report in readiness create transfer verify restore; do
+                      rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/database-backup-$report-report.log"
+                    done
+                    rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/database-backup-subject.json"
+                    ;;
+                  *) exit 1 ;;
+                esac
+                rmdir -- "$ADDITIONAL_BACKUP_DIR/$part"
+              fi
+            done
+            rmdir -- "$ADDITIONAL_BACKUP_DIR"
           fi
 
       - name: Remove Runner SSH Material
