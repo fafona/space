@@ -4,7 +4,7 @@ import { POST as requestCode } from "./request-code/route";
 import {
   isLegacyPersonalRecoveryApprovalBody,
   POST as approveRecovery,
-} from "@/app/api/super-admin/legacy-personal-recovery/route";
+} from "@/app/api/super-admin/legacy-personal-recovery/route-handler";
 import {
   LEGACY_PERSONAL_RECOVERY_CASE_ENV,
   LEGACY_PERSONAL_RECOVERY_ENABLED_ENV,

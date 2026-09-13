@@ -6,7 +6,7 @@ import {
   handleMerchantOrdersGet,
   type MerchantOrderPatchRouteDependencies,
   type MerchantOrderPostRouteDependencies,
-} from "@/app/api/orders/route";
+} from "@/app/api/orders/route-handler";
 import type { Block } from "@/data/homeBlocks";
 import type { MerchantCatalog } from "@/lib/merchantCatalog";
 import { createMerchantOrder, type MerchantOrderCreateInput } from "@/lib/merchantOrders";

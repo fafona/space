@@ -5,7 +5,7 @@ import {
   handleMerchantCatalogMutation,
   verifyMerchantCatalogProductImageAssets,
   type MerchantCatalogMutationRouteDependencies,
-} from "@/app/api/orders/catalog/route";
+} from "@/app/api/orders/catalog/route-handler";
 import {
   MERCHANT_CATALOG_MAX_PRODUCT_IMAGE_BYTES,
   normalizeMerchantCatalog,

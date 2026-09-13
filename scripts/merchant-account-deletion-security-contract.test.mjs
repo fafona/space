@@ -4,7 +4,7 @@ import test from "node:test";
 
 const source = await readFile(
   new URL(
-    "../src/app/api/super-admin/merchant-accounts/route.ts",
+    "../src/app/api/super-admin/merchant-accounts/route-handler.ts",
     import.meta.url,
   ),
   "utf8",

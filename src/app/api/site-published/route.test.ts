@@ -5,7 +5,7 @@ import {
   isPublishedBlocksPayload,
   isMissingPublishedSlugColumn,
   pickPublishedPageRow,
-} from "@/app/api/site-published/route";
+} from "@/app/api/site-published/route-handler";
 import type { Block } from "@/data/homeBlocks";
 
 const demoBlocks = [{ id: "search", type: "search-bar", props: { heading: "搜索" } }] as Block[];

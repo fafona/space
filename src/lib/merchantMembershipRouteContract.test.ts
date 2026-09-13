@@ -7,7 +7,7 @@ function readSource(relativePath: string) {
 }
 
 test("personal membership join, check-in and leave remain personal-session flows", () => {
-  const source = readSource("src/app/api/memberships/route.ts");
+  const source = readSource("src/app/api/memberships/route-handler.ts");
   const post = source.slice(
     source.indexOf("export async function POST"),
     source.indexOf("export async function PATCH"),
@@ -36,7 +36,7 @@ test("personal membership join, check-in and leave remain personal-session flows
 });
 
 test("owner settings requests retain scope-less full update compatibility", () => {
-  const source = readSource("src/app/api/membership-settings/route.ts");
+  const source = readSource("src/app/api/membership-settings/route-handler.ts");
   assert.match(source, /if \(actor\.type === "employee"\) \{[\s\S]*?membership_settings_scope_required/);
   assert.match(source, /updateMerchantMembershipSettings\(\{[\s\S]*?settings: body\?\.settings,[\s\S]*?view: body\?\.view/);
   assert.match(source, /actor\.type === "employee" && scope[\s\S]*?selectMerchantMembershipSettingsForEmployeeScope[\s\S]*?: settings/);
@@ -44,7 +44,7 @@ test("owner settings requests retain scope-less full update compatibility", () =
 });
 
 test("employee membership reads never apply persistent scheduled point rules", () => {
-  const source = readSource("src/app/api/memberships/route.ts");
+  const source = readSource("src/app/api/memberships/route-handler.ts");
   assert.match(
     source,
     /applyScheduledRules:\s*session\.actor\.type === "owner"\s*&&/,

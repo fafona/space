@@ -10,7 +10,7 @@ import {
   resolveAssetUploadActorContext,
   resolveAssetUploadRequestActorContext,
   resolveProductImageUploadProcessingError,
-} from "@/app/api/assets/upload/route";
+} from "@/app/api/assets/upload/route-handler";
 
 function assertPrivateUploadResponseHeaders(response: Response) {
   assert.equal(

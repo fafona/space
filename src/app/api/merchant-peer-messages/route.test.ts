@@ -5,7 +5,7 @@ import {
   getMerchantPeerSendRequiredPermissions,
   projectMerchantPeerContactForEmployee,
   projectMerchantPeerThreadForEmployee,
-} from "@/app/api/merchant-peer-messages/route";
+} from "@/app/api/merchant-peer-messages/route-handler";
 import type { MerchantBusinessActor } from "@/lib/merchantBusinessActor.server";
 
 test("conversation actions map to the narrow business permission", () => {

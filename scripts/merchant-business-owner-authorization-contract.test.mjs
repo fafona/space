@@ -7,7 +7,7 @@ const source = await readFile(
   "utf8",
 );
 const roleRouteSource = await readFile(
-  new URL("../src/app/api/merchant-enterprise/roles/route.ts", import.meta.url),
+  new URL("../src/app/api/merchant-enterprise/roles/route-handler.ts", import.meta.url),
   "utf8",
 );
 

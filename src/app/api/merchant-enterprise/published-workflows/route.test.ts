@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   handleMerchantEnterprisePublishedWorkflowsGet,
   type MerchantEnterprisePublishedWorkflowsRouteDependencies,
-} from "@/app/api/merchant-enterprise/published-workflows/route";
+} from "@/app/api/merchant-enterprise/published-workflows/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
 

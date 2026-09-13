@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   POST as requestSignup,
   signUpNeedsEmailConfirmation,
-} from "@/app/api/auth/merchant-signup/route";
+} from "@/app/api/auth/merchant-signup/route-handler";
 import { POST as requestSignupCode } from "@/app/api/auth/merchant-signup/request-code/route";
 import { POST as verifySignupCode } from "@/app/api/auth/merchant-signup/verify-code/route";
 

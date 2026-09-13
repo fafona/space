@@ -5,7 +5,7 @@ import {
   handleMerchantEnterpriseTodosGet,
   parseMerchantEnterpriseTodoCursor,
   type MerchantEnterpriseTodoRouteDependencies,
-} from "@/app/api/merchant-enterprise/todos/route";
+} from "@/app/api/merchant-enterprise/todos/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import { MerchantEnterpriseAccessError } from "@/lib/merchantEnterpriseAuth.server";
 import {

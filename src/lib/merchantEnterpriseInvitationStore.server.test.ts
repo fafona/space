@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { merchantEmployeeInvitationAcceptError } from "@/app/api/merchant-enterprise/employees/accept/route";
+import { merchantEmployeeInvitationAcceptError } from "@/app/api/merchant-enterprise/employees/accept/route-handler";
 import {
   getMerchantEnterpriseEmployeeStatusTransitionError,
   getMerchantEnterpriseInvitationActionError,
-} from "@/app/api/merchant-enterprise/employees/route";
+} from "@/app/api/merchant-enterprise/employees/route-handler";
 import { normalizeMerchantEnterpriseEmployee } from "@/lib/merchantEnterprise";
 import {
   bindMerchantEnterpriseEmployeeInvitationAuthUser,

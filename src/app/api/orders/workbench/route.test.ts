@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   handleMerchantOrderWorkbenchGet,
   type MerchantOrderWorkbenchRouteDependencies,
-} from "@/app/api/orders/workbench/route";
+} from "@/app/api/orders/workbench/route-handler";
 
 const SITE_ID = "10000000";
 type SnapshotSite = NonNullable<

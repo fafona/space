@@ -145,6 +145,59 @@ revision and byte digest; they require file fsync, atomic rename, parent fsync
 and exact readback. This is not filesystem CAS against unrelated root writers,
 a power-loss acceptance result, or permission to steal a stale lock.
 
+## Explicit failed-build compatibility recovery
+
+`recover-build` is a third, separate audited transition for the failed T3 build
+`34728263285`, attempt 1. It does not retry or broaden either earlier recovery.
+The exact GNU SWC 16.3.4 binary requires GLIBC 2.29 and 2.30, while this EL8 host
+provides 2.28. The compatible build uses `next build --webpack` and the exact
+integrity-pinned `@next/swc-wasm-nodejs` 16.3.4 development dependency. Before
+building, `prepare-next-wasm.mjs` checks the lock and all five package file hashes
+and prepares Next's normal fallback directory. It does not patch Next, upgrade
+host libraries, disable type checking or change application authorization.
+
+Webpack also validates route-module exports. The 51 affected routes retain their
+complete original implementation byte-for-byte in sibling `route-handler.ts`
+files. Each route entry retains exactly its original configuration literals and
+HTTP method exports. The associated tests change only these fixed import/source
+paths. A separate source proof verifies every original-handler blob, exact route
+facade and fixed test mapping; this is not permission for other application edits.
+The async bundle check retains the original 1250/760 KiB limits. A Webpack global
+manifest is restricted to `app/admin/AdminClientLoader.tsx -> ./AdminClient`;
+missing/invalid evidence is not replaced with an unrelated smaller entry. The
+legacy per-admin manifest retains its original largest-entry selection.
+
+The action requires `RECOVER_BUILD_PRODUCTION_MAINTENANCE`, original U/O,
+previous target `46f007fbd9e417f93c01e398c77cf38ec814547d`, and a distinct T4
+which is current main with exact successful push CI. Only version 4 failed-held
+revision 7 with state digest
+`56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa`
+and five null launch fields is admitted. Boot, original twelve-hour deadline,
+frozen runtime/ingress/database proofs and both previous audits remain intact.
+
+Read-only inspection and final transition each recheck the actual held ingress,
+stopped runtime, quiet database, narrow source delta and unchanged complete
+56-entry migration registry. Package changes admit only the exact build command
+and one pinned WASM package; no existing dependency may change. The original
+044-048 migration run/window below remains authoritative and is not rerun.
+Under the shared production lock, the runner verifies the signed original T3
+backup (`34724943157`) and readiness (`34728212357`) bindings without retargeting
+them. Complete paginated B/M/R/D history must contain exactly the seven known
+incident runs B2/M/R2/D2/B3/R3/D3 after the original cutoff, with their fixed
+attempts, jobs and step outcomes. Unknown runs, including scheduled backups,
+queued work, cancellations or reruns, cannot be ignored to satisfy this check.
+
+A five-minute grant binds that evidence, exact state bytes/revision, both prior
+audit digests and current source/registry/CI. One existing-lock compare-and-replace
+produces version 5 held revision 8 and adds an immutable `buildRecovery` audit.
+All subsequent state and launch-journal writes preserve all three audits. An
+uncertain write is not replayed or cleaned up by guessing. No process starts and
+no ingress opens during recovery. There is no UUID replacement or TTL extension.
+
+After confirmed recovery, use a **fresh T4 backup**, **fresh T4 readiness**, normal
+deployment and signed deploy verification before explicit `end` and public smoke.
+The earlier artifacts remain incident evidence, not a reusable T4 release chain.
+
 ## Explicit post-migration unlaunched continuation
 
 `continue-held` is a separate, manually confirmed incident transition. It does

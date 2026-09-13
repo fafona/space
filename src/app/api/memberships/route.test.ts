@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   handleMerchantMembershipsGet,
   type MerchantMembershipGetRouteDependencies,
-} from "@/app/api/memberships/route";
+} from "@/app/api/memberships/route-handler";
 import {
   MerchantBusinessAccessError,
   type MerchantBusinessActor,

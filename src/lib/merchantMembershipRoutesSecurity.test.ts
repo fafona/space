@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GET as getRedemptionCashier } from "@/app/api/merchant-admin/redemption-cashier/route";
+import { GET as getRedemptionCashier } from "@/app/api/merchant-admin/redemption-cashier/route-handler";
 import {
   GET as getMemberships,
   PATCH as patchMemberships,
   POST as postMemberships,
-} from "@/app/api/memberships/route";
-import { PUT as putMembershipSettings } from "@/app/api/membership-settings/route";
+} from "@/app/api/memberships/route-handler";
+import { PUT as putMembershipSettings } from "@/app/api/membership-settings/route-handler";
 
 function assertPrivateHeaders(response: Response) {
   assert.equal(response.headers.get("cache-control"), "private, no-store");

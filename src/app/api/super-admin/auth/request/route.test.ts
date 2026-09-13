@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildSuperAdminVerificationRedirectUrl,
   POST,
-} from "@/app/api/super-admin/auth/request/route";
+} from "@/app/api/super-admin/auth/request/route-handler";
 
 function withSuperAdminAuthEnv(run: () => Promise<void>) {
   const previousAccount = process.env.SUPER_ADMIN_ACCOUNT;

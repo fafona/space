@@ -5,7 +5,7 @@ import process from "node:process";
 import { TextDecoder } from "node:util";
 import { isProxy } from "node:util/types";
 import { planMaintenanceLaunch, transitionMaintenanceLaunch, validateMaintenanceLaunchJournal } from "./production-maintenance-launch-journal.mjs";
-import { assertMaintenanceContinuationProgress } from "./production-maintenance-continuation.mjs";
+import { assertMaintenanceBuildRecoveryProgress } from "./production-maintenance-build-recovery.mjs";
 
 /** Private operation-state persistence; no process-control capability.
  * The caller MUST supply the existing operation lock, held until this callback
@@ -164,9 +164,9 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
 
   function persist(previous, next, binding, parents, operation = false) {
     // Applies to both full-state replacement and journal-only writes, before
-    // any temporary file is opened. Both audits are immutable; the continuation
+    // any temporary file is opened. All three audits are immutable; the build-recovery
     // wrapper delegates every legacy transition to the unchanged recovery guard.
-    assertMaintenanceContinuationProgress(previous.state, next);
+    assertMaintenanceBuildRecoveryProgress(previous.state, next);
     const bytes = encode(next);
     const fd = io.openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     let temporaryIdentity;

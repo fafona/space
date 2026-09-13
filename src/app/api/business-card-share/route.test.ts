@@ -5,7 +5,7 @@ import {
   isStorageObjectMissingError,
   resolveBusinessCardShareContactActionManifestFields,
   resolveBusinessCardSharePollManifestFields,
-} from "@/app/api/business-card-share/route";
+} from "@/app/api/business-card-share/route-handler";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { normalizeMerchantBusinessCardSharePayload } from "@/lib/merchantBusinessCardShare";
 import { createDefaultMerchantBusinessCardDraft } from "@/lib/merchantBusinessCards";

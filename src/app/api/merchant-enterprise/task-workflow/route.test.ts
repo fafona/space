@@ -4,7 +4,7 @@ import {
   handleMerchantTaskWorkflowGet,
   handleMerchantTaskWorkflowPost,
   type MerchantTaskWorkflowRouteDependencies,
-} from "@/app/api/merchant-enterprise/task-workflow/route";
+} from "@/app/api/merchant-enterprise/task-workflow/route-handler";
 import type { MerchantEnterpriseActor } from "@/lib/merchantEnterprise";
 import type {
   MerchantTaskWorkflowBinding,

@@ -4,7 +4,7 @@ import {
   handleMerchantRedemptionCashierGet,
   handleMerchantRedemptionCashierPost,
   type MerchantRedemptionCashierRouteDependencies,
-} from "@/app/api/merchant-admin/redemption-cashier/route";
+} from "@/app/api/merchant-admin/redemption-cashier/route-handler";
 import {
   MerchantBusinessAccessError,
   type MerchantBusinessActor,

@@ -13,13 +13,13 @@ const portalPath =
   "src/app/enterprise/[siteId]/EnterprisePortalClient.tsx";
 const portalPagePath = "src/app/enterprise/[siteId]/page.tsx";
 const acceptRoutePath =
-  "src/app/api/merchant-enterprise/employees/accept/route.ts";
+  "src/app/api/merchant-enterprise/employees/accept/route-handler.ts";
 const membershipsRoutePath =
-  "src/app/api/merchant-enterprise/memberships/route.ts";
+  "src/app/api/merchant-enterprise/memberships/route-handler.ts";
 const initialPasswordRoutePath =
-  "src/app/api/merchant-enterprise/invitations/initial-password/route.ts";
+  "src/app/api/merchant-enterprise/invitations/initial-password/route-handler.ts";
 const employeeRoutePath =
-  "src/app/api/merchant-enterprise/employees/route.ts";
+  "src/app/api/merchant-enterprise/employees/route-handler.ts";
 const invitationStorePath =
   "src/lib/merchantEnterpriseInvitationStore.server.ts";
 const invitationEmailPath =

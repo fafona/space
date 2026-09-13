@@ -4,7 +4,7 @@ import {
   handleMerchantEnterpriseWorkflowRevisionsGet,
   handleMerchantEnterpriseWorkflowRevisionsPost,
   type MerchantEnterpriseWorkflowRevisionRouteDependencies,
-} from "@/app/api/merchant-enterprise/workflow-revisions/route";
+} from "@/app/api/merchant-enterprise/workflow-revisions/route-handler";
 import type {
   MerchantEnterpriseActor,
   MerchantEnterpriseWorkflow,

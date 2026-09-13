@@ -9,7 +9,7 @@ import {
 import {
   handleMerchantCatalogPublicGet,
   type MerchantCatalogPublicRouteDependencies,
-} from "./route";
+} from "./route-handler";
 
 const SITE_ID = "12345678";
 const BLOCK_ID = "product-block";

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   POST as POSTResetPassword,
   shouldReleaseRecoveryGrantAfterAuthError,
-} from "@/app/api/auth/reset-password/route";
+} from "@/app/api/auth/reset-password/route-handler";
 import { POST as POSTResetPasswordSession } from "@/app/api/auth/reset-password/session/route";
 import { resolveRecoverySessionActivationEvidence } from "@/lib/passwordRecoveryGrant.server";
 import { RESET_PASSWORD_RECOVERY_PROOF_COOKIE } from "@/lib/resetPasswordRecoverySession";

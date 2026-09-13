@@ -4,7 +4,7 @@ import {
   handleMerchantOrderExportPost,
   type MerchantOrderExportAuditMetadata,
   type MerchantOrderExportRouteDependencies,
-} from "@/app/api/orders/export/route";
+} from "@/app/api/orders/export/route-handler";
 import { MerchantBusinessAccessError } from "@/lib/merchantBusinessActor.server";
 import { MerchantOrderExportError } from "@/lib/merchantOrderExport";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";

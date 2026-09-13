@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createHash } from "node:crypto";
+import crypto, { createHash } from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
 import { readFileSync } from "node:fs";
 import { emptyPythonLayout } from "./production-maintenance-runtime-layout.mjs";
 import { parseMaintenanceRequest, runMaintenanceAction, createRuntimeDiagnosticReport, createPm2PeerDiagnosticReport, validateMaintenanceState, validateMaintenanceSubproofBindings, validateMaintenanceLaunchProofBindings, maintenanceLaunchBinding, createMaintenanceLaunchCallbacks, queryMaintenanceDatabaseQuiet, PRODUCTION_MAINTENANCE_QUIET_SQL, PRODUCTION_MAINTENANCE_ACL_SQL } from "./production-maintenance-control.mjs";
 import { SUPABASE_SCHEDULER_IMAGE } from "./maintenance-supabase-scheduler-profile.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
 import { encodeMaintenanceRecoveryEvidence, createMaintenanceRecoveryInspection, buildMaintenanceRecoveredState } from "./production-maintenance-recovery.mjs";
-import { MAINTENANCE_CONTINUATION_INCIDENT, encodeMaintenanceContinuationEvidence } from "./production-maintenance-continuation.mjs";
+import { MAINTENANCE_CONTINUATION_INCIDENT, encodeMaintenanceContinuationEvidence, createMaintenanceContinuationInspection, buildMaintenanceContinuedState } from "./production-maintenance-continuation.mjs";
+import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as BUILD_INCIDENT, encodeMaintenanceBuildRecoveryEvidence } from "./production-maintenance-build-recovery.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -789,6 +791,139 @@ test("real storage and probe loading scope T2 only to the separate v3 continuati
   assert.match(source, /\["inspect-continuation", "continue-held"\]\.includes\(request\.action\) && loaded\.version === 3/);
   const commit = source.slice(source.indexOf("async commitContinuation("), source.indexOf("async readRecoverySnapshot("));
   assert.match(commit, /request\.action !== "continue-held"/); assert.match(commit, /snapshot\.state\.version !== 3 \|\| next\.version !== 4/);
+  assert.equal((commit.match(/replaceOperationUnderExistingOperationLock\(/g) || []).length, 1);
+  assert.match(commit, /poisonedStates\.add\(snapshot\.state\)/); assert.doesNotMatch(commit, /await save\(/);
+});
+
+test("failed-build controller integration with exact isolated synthetic digest", { concurrency: false }, async t => {
+  const initial = continuationFixture(), previous = initial.state(), T3 = BUILD_INCIDENT.previousTargetSha;
+  const context = { operationId: previous.operationId, previousTargetSha: previous.targetSha, targetSha: T3,
+    expectedOldSha: previous.expectedOldSha, expectedRevision: previous.revision,
+    expectedDigest: createHash("sha256").update(JSON.stringify(previous)).digest("hex"), bootId: boot,
+    now: BUILD_INCIDENT.createdAt + 3 * 3600000, sourceDiffDigest: "7".repeat(64), migrationDigest: "8".repeat(64) };
+  const oldEvidence = { ...createMaintenanceContinuationInspection(previous, context), toolsSha: T3,
+    continuationRunId: "34724808528", continuationRunAttempt: 1, mainCIrunId: "34724337523",
+    historyDigest: "9".repeat(64), historyCheckedAt: context.now - 1 };
+  const seed = { ...structuredClone(buildMaintenanceContinuedState(previous, oldEvidence, context)), phase: "failed-held", revision: 7 };
+  const mappedBytes = Buffer.from(JSON.stringify(seed)), originalHash = crypto.createHash;
+  const PIN = "56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa";
+  assert.equal(BUILD_INCIDENT.stateDigest, PIN);
+  assert.notEqual(originalHash("sha256").update(mappedBytes).digest("hex"), PIN);
+  // No production state or validator override. Only this one synthetic byte
+  // sequence receives the independently frozen pin; every other hash is real.
+  t.mock.method(crypto, "createHash", (algorithm, options) => {
+    const result = originalHash(algorithm, options), chunks = [], update = result.update.bind(result), digest = result.digest.bind(result);
+    result.update = (data, encoding) => { chunks.push(Buffer.from(data, encoding)); update(data, encoding); return result; };
+    result.digest = encoding => {
+      const actual = digest(encoding);
+      return algorithm === "sha256" && encoding === "hex" && Buffer.concat(chunks).equals(mappedBytes) ? PIN : actual;
+    };
+    return result;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); assert.equal(crypto.createHash, originalHash); });
+  function buildFixture() {
+    const f = continuationFixture(); f.replace(structuredClone(seed)); f.setTime(BUILD_INCIDENT.createdAt + 8 * 3600000);
+    const args = f.args.map(v => v === MAINTENANCE_CONTINUATION_INCIDENT.previousTargetSha ? T3 : v);
+    const inspect = parseMaintenanceRequest(["inspect-build-recovery", ...args]);
+    const source = { sourceDiffDigest: "4".repeat(64), sourceChangedPaths: ["package.json", "package-lock.json"] };
+    let migration = "5".repeat(64);
+    f.ops.readBuildRecoverySnapshot = () => {
+      f.events.push("readBuild"); const state = f.ops.load();
+      return { state, revision: state.revision, digest: createHash("sha256").update(JSON.stringify(state)).digest("hex") };
+    };
+    f.ops.readBuildRecoverySourceProof = async () => { f.events.push("readBuildSource"); return structuredClone(source); };
+    f.ops.readBuildRecoveryMigrationProof = async () => { f.events.push("readBuildMigrations"); return migration; };
+    f.ops.commitBuildRecovery = async (snapshot, next) => {
+      assert.equal(snapshot.revision, f.state().revision);
+      assert.equal(snapshot.digest, createHash("sha256").update(JSON.stringify(f.state())).digest("hex"));
+      assert.equal(next.revision, snapshot.revision + 1);
+      f.events.push("commitBuild"); f.replace(structuredClone(next)); return structuredClone(next);
+    };
+    return { ...f, inspect, args, source, setMigration: v => { migration = v; },
+      grant: inspection => ({ ...inspection, toolsSha: f.nextTarget, buildRecoveryRunId: "34740000001", buildRecoveryRunAttempt: 1,
+        mainCIrunId: "34740000000", historyDigest: "6".repeat(64), historyCheckedAt: f.now() - 1 }),
+      proceed: evidence => parseMaintenanceRequest(["recover-build", ...args, "--build-recovery-evidence", encodeMaintenanceBuildRecoveryEvidence(evidence)]) };
+  }
+  await t.test("only the explicit build recovery CLI admits its grant", async () => {
+    const f = buildFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops), evidence = f.grant(inspection);
+    assert.deepEqual(f.proceed(evidence).buildRecoveryEvidence, evidence);
+    const encoded = encodeMaintenanceBuildRecoveryEvidence(evidence);
+    for (const args of [["recover-build", ...f.args], ["inspect-build-recovery", ...f.args, "--build-recovery-evidence", encoded],
+      ...["recover-held", "continue-held", "check-held"].map(action => [action, ...f.args, "--build-recovery-evidence", encoded]),
+      ...["--recovery-evidence", "--continuation-evidence"].map(flag => ["recover-build", ...f.args, flag, encoded]),
+      ["recover-build", ...f.args, "--build-recovery-evidence", "e30="], ["recover-build", ...f.args, "--build-recovery-evidence", "x".repeat(16385)]]) {
+      assert.throws(() => parseMaintenanceRequest(args), /maintenance_arguments_invalid/);
+    }
+  });
+  await t.test("read-only inspection then one CAS retains all audits and original deadline; ordinary checks understand v5", async () => {
+    const f = buildFixture(), before = structuredClone(f.state());
+    const inspection = await runMaintenanceAction(f.inspect, f.ops);
+    assert.equal(inspection.revision, 7); assert.equal(inspection.failedDeployRunId, "34728263285");
+    assert.deepEqual(f.state(), before);
+    assert.deepEqual(f.events, ["readBuild", "validateProofs", "verifyIngress", "assertStopped", "assertQuiet", "readBuildSource", "readBuildMigrations"]);
+    f.events.length = 0;
+    const result = await runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops);
+    assert.equal(result.state, "held"); assert.equal(result.targetSha, f.nextTarget);
+    assert.equal(f.state().version, 5); assert.equal(f.state().revision, 8);
+    for (const key of Object.keys(before).filter(key => !["version", "revision", "phase", "targetSha"].includes(key))) assert.deepEqual(f.state()[key], before[key], key);
+    for (const event of ["verifyIngress", "assertStopped", "assertQuiet", "readBuildSource", "readBuildMigrations"]) assert.equal(f.events.filter(v => v === event).length, 2);
+    assert.equal(f.events.filter(v => v === "commitBuild").length, 1);
+    assert(!f.events.some(v => /^(?:save:|send:|install|restore|stop|resume|start)/.test(v)));
+    await assert.rejects(runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops));
+    assert.equal(f.events.filter(v => v === "commitBuild").length, 1);
+    const normal = { ...f.inspect, action: "check-held" }; delete normal.previousTargetSha;
+    assert.equal((await runMaintenanceAction(normal, f.ops)).state, "held");
+  });
+  await t.test("wrong incident, altered frozen state and any launch evidence are rejected without mutation", async () => {
+    for (const patch of [{ phase: "held" }, { revision: 6 }, { version: 3 }, { operationId }, { createdAt: seed.createdAt + 1 },
+      ...["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"].map(key => ({ [key]: {} })),
+      { ingress: { changed: true } }, { tokenHash: "f".repeat(64) }]) {
+      const f = buildFixture(); f.replace({ ...f.state(), ...patch }); const before = structuredClone(f.state());
+      await assert.rejects(runMaintenanceAction(f.inspect, f.ops));
+      assert.deepEqual(f.state(), before); assert(!f.events.includes("commitBuild"));
+    }
+  });
+  await t.test("failed full checks or changed source/migrations cannot authorize a write", async () => {
+    for (const mutate of [f => { f.source.sourceDiffDigest = "7".repeat(64); }, f => f.setMigration("8".repeat(64)),
+      ...["verifyIngress", "assertRuntimeStopped", "assertDatabaseQuiet", "readBuildRecoverySourceProof", "readBuildRecoveryMigrationProof"].map(key => f => {
+        f.ops[key] = () => { throw new Error("unverified"); };
+      })]) {
+      const f = buildFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops); f.events.length = 0; mutate(f);
+      const before = structuredClone(f.state()); await assert.rejects(runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops));
+      assert.deepEqual(f.state(), before); assert(!f.events.includes("commitBuild"));
+    }
+  });
+  await t.test("source, ledger and grant freshness are checked again after slow final host checks", async () => {
+    for (const kind of ["source", "migration", "clock"]) {
+      const f = buildFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops), grant = f.grant(inspection);
+      let count = 0; const original = f.ops.assertDatabaseQuiet;
+      f.ops.assertDatabaseQuiet = async (...args) => {
+        await original(...args); if (++count !== 2) return;
+        if (kind === "source") f.source.sourceDiffDigest = "7".repeat(64);
+        if (kind === "migration") f.setMigration("8".repeat(64));
+        if (kind === "clock") f.setTime(f.now() + 300001);
+      };
+      await assert.rejects(runMaintenanceAction(f.proceed(grant), f.ops)); assert(!f.events.includes("commitBuild"));
+    }
+  });
+  await t.test("uncertain CAS does not retry, refresh phase, clean up or launch a runtime", async () => {
+    const f = buildFixture(), inspection = await runMaintenanceAction(f.inspect, f.ops), grant = f.grant(inspection);
+    let writes = 0;
+    f.ops.commitBuildRecovery = async (_snapshot, next) => { writes++; f.replace(structuredClone(next)); throw new Error("fsync-unconfirmed"); };
+    await assert.rejects(runMaintenanceAction(f.proceed(grant), f.ops), /fsync-unconfirmed/);
+    await assert.rejects(runMaintenanceAction(f.proceed(grant), f.ops));
+    assert.equal(writes, 1); assert.equal(f.state().version, 5); assert.equal(f.state().phase, "held");
+    assert(!f.events.some(v => /^(?:save:|send:|install|restore|stop|resume|start)/.test(v)));
+  });
+});
+test("real build recovery storage and probes scope old T3 solely to explicit v4 incident commands", () => {
+  const source = readFileSync(new URL("./production-maintenance-control.mjs", import.meta.url), "utf8");
+  assert.match(source, /buildRecovery && value\.version === 4/);
+  assert.match(source, /buildRecovery && value\.version === 5[\s\S]+value\.buildRecovery\.evidence\.previousTargetSha/);
+  assert.match(source, /\["inspect-build-recovery", "recover-build"\]\.includes\(request\.action\) && loaded\.version === 4/);
+  const commit = source.slice(source.indexOf("async commitBuildRecovery("), source.indexOf("async readContinuationSnapshot("));
+  assert.match(commit, /request\.action !== "recover-build"/); assert.match(commit, /snapshot\.state\.version !== 4 \|\| next\.version !== 5/);
   assert.equal((commit.match(/replaceOperationUnderExistingOperationLock\(/g) || []).length, 1);
   assert.match(commit, /poisonedStates\.add\(snapshot\.state\)/); assert.doesNotMatch(commit, /await save\(/);
 });
