@@ -453,7 +453,7 @@ test("v4 journal initialization and ordinary apply paths retain the immutable co
 });
 
 async function buildRecoveryStorageFixture() {
-  const incident = MAINTENANCE_BUILD_RECOVERY_INCIDENT, clock = { now: Date.parse("2026-09-13T07:00:00.000Z") }, targetSha = "f".repeat(40);
+  const incident = MAINTENANCE_BUILD_RECOVERY_INCIDENT, clock = { now: Date.parse("2026-09-13T19:00:00.000Z") }, targetSha = "f".repeat(40);
   const f = continuationStorageFixture({ targetSha: incident.previousTargetSha, runId: "34724808528", mainCIrunId: "34724337523" });
   const continued = await f.prepare(), initial = { ...structuredClone(continued.next), revision: 7, phase: "failed-held" };
   f.put(FILE, "file", JSON.stringify(initial)); f.events.length = 0;
@@ -472,7 +472,8 @@ async function buildRecoveryStorageFixture() {
       expectedOldSha: incident.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
       bootId: initial.bootId, now: clock.now, sourceDiffDigest: "7".repeat(64), migrationDigest: "8".repeat(64) };
     const evidence = { ...createMaintenanceBuildRecoveryInspection(snapshot.state, context), toolsSha: targetSha,
-      buildRecoveryRunId: "34740000001", buildRecoveryRunAttempt: 1, mainCIrunId: "34740000000", historyDigest: "9".repeat(64), historyCheckedAt: clock.now - 1 };
+      buildRecoveryRunId: "34740000001", buildRecoveryRunAttempt: 1, mainCIrunId: "34740000000", historyDigest: "9".repeat(64), historyCheckedAt: clock.now - 1,
+      additionalBackupEvidenceDigest: "a".repeat(64) };
     return { snapshot, next: buildMaintenanceBuildRecoveredState(snapshot.state, evidence, context) };
   };
   const replace = (snapshot, next) => store.replaceOperationUnderExistingOperationLock({ expectedRevision: snapshot.revision, expectedDigest: snapshot.digest, next });
@@ -549,6 +550,8 @@ test("v5 storage build-recovery audit and durability contract", { concurrency: f
       v => { v.continuation.evidence.migrationDigest = "0".repeat(64); }, v => { v.targetSha = "0".repeat(40); },
       v => { v.database = { changed: true }; }, v => { v.tokenHash = "0".repeat(64); },
       v => { delete v.deadlineExtension; }, v => { v.deadlineExtension.authorizedAt++; },
+      v => { delete v.deadlineExtension.priorAuthorization; }, v => { v.deadlineExtension.priorAuthorization.expiresAt++; },
+      v => { v.buildRecovery.evidence.additionalBackupEvidenceDigest = "0".repeat(64); },
       v => { v.deadlineExtension.expiresAt++; }, v => { v.deadlineExtension.previousStateDigest = "0".repeat(64); }]) {
       const f = await buildRecoveryStorageFixture(), { snapshot, next } = await f.prepare(), saved = await f.replace(snapshot, next);
       const changed = structuredClone(saved.state); changed.revision++; mutate(changed); f.events.length = 0;

@@ -71,11 +71,26 @@ test("source allowlist is fixed to this maintenance/build delta and both executi
   assert.deepEqual(result.sourceChangedPaths, ["package-lock.json", "package.json", file,
     ...MAINTENANCE_ROUTE_BUILD_ROUTE_PATHS.flatMap(p => [p, p.replace(/route\.ts$/, "route-handler.ts")]),
     ...MAINTENANCE_ROUTE_BUILD_TEST_PATHS].sort());
-  assert.equal(MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS.length, 175); assert.ok(Object.isFrozen(MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS));
+  assert.equal(MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS.length, 181); assert.ok(Object.isFrozen(MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS));
   assert.equal(f.calls.filter(args => args[0] === "rev-parse").length, 2);
   assert.equal(f.calls.filter(args => args[0] === "status").length, 2);
   assert.deepEqual(f.calls[2], ["merge-base", "--is-ancestor", previousTargetSha, targetSha]);
   assert.ok(f.calls[3].includes("--no-ext-diff")); assert.ok(f.calls[3].includes("--no-textconv"));
+});
+test("daemon continuity permits only its six reviewed runtime, adapter and helper files, not adjacent tools", () => {
+  const accepted = ["production-maintenance-daemon-continuity", "production-maintenance-runtime", "production-maintenance-pm2-adapter"]
+    .flatMap(name => [`scripts/${name}.mjs`, `scripts/${name}.test.mjs`]);
+  for (const name of accepted) {
+    assert.ok(MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS.includes(name));
+    const result = readMaintenanceBuildRecoverySourceProof(request(), git(args => args[0] === "diff" ? diff(name) + requiredDiff() : undefined).run);
+    assert.ok(result.sourceChangedPaths.includes(name));
+  }
+  for (const name of ["scripts/production-maintenance-daemon-continuity-extra.mjs", "scripts/production-maintenance-runtime-diagnostic.mjs",
+    "scripts/production-maintenance-native-proof.mjs", "scripts/production-maintenance-pm2-peer.mjs", "scripts/production-maintenance-pm2-client.py",
+    "scripts/check-production-runtime-supervision.mjs", ".github/workflows/ci.yml"]) {
+    assert.equal(MAINTENANCE_BUILD_RECOVERY_SOURCE_PATHS.includes(name), false);
+    assert.throws(() => readMaintenanceBuildRecoverySourceProof(request(), git(args => args[0] === "diff" ? diff(name) + requiredDiff() : undefined).run), safeError);
+  }
 });
 test("source hash binds every blob but canonicalizes order; unrelated app, SQL, old recovery and CI changes are refused", () => {
   const second = "scripts/production-maintenance-build-recovery.mjs";

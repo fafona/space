@@ -5,16 +5,19 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { validateMaintenanceBuildRecoveryInspection, encodeMaintenanceBuildRecoveryEvidence,
   decodeMaintenanceBuildRecoveryEvidence, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION,
-  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST } from "./production-maintenance-build-recovery.mjs";
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST,
+  MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP as ADDITIONAL,
+  MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST } from "./production-maintenance-build-recovery.mjs";
 import { validateMaintenanceBuildRecoveryPriorBindings, inspectMaintenanceBuildRecoveryHistory,
-  createMaintenanceBuildRecoveryWorkflowEvidence } from "./production-maintenance-build-recovery-workflow.mjs";
+  createMaintenanceBuildRecoveryWorkflowEvidence, validateMaintenanceBuildRecoveryAdditionalBackup,
+  readMaintenanceBuildRecoveryAdditionalBackup, MAINTENANCE_ADDITIONAL_BACKUP_SMALL_ARTIFACTS } from "./production-maintenance-build-recovery-workflow.mjs";
 import { buildProductionMaintenanceBinding } from "./production-maintenance-workflow-contract.mjs";
 import { canonicalJsonBytes } from "./production-release-attestation.mjs";
 
 // Synthetic authenticated API responses; no GitHub, host, build, or state writes.
 const OLD = "b7c3d57f4739846fb45f236ef83b97b7ff21a7cf";
 const PREVIOUS = "46f007fbd9e417f93c01e398c77cf38ec814547d", TARGET = "a".repeat(40);
-const NOW = Date.parse("2026-09-13T07:00:00Z");
+const NOW = Date.parse("2026-09-13T19:00:00Z");
 const inspection = validateMaintenanceBuildRecoveryInspection({
   version: 1, state: "build-recovery-inspected", operationId: "eb81284a-09c4-4514-8f16-38eaf6acc1e4",
   targetSha: TARGET, previousTargetSha: PREVIOUS, expectedOldSha: "cd943076ebda758b70bf2f2270a508c774b726d6",
@@ -22,13 +25,14 @@ const inspection = validateMaintenanceBuildRecoveryInspection({
   stateDigest: "56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa",
   sourceDiffDigest: "c".repeat(64), migrationDigest: "d".repeat(64), recoveryDigest: "e".repeat(64), continuationDigest: "f".repeat(64),
   deadlineExtensionDigest: MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST,
+  additionalBackupSpecDigest: MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST,
   backupRunId: "34724943157", backupRunAttempt: 1, migrationRunId: "34721155156", migrationRunAttempt: 1,
   readinessRunId: "34728212357", readinessRunAttempt: 1, failedDeployRunId: "34728263285", failedDeployRunAttempt: 1,
 });
 const env = { GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
   GITHUB_RUN_ATTEMPT: "1", GITHUB_RUN_ID: "34729000000", GITHUB_SHA: TARGET, TARGET_SHA: TARGET,
   PREVIOUS_TARGET_SHA: PREVIOUS, EXPECTED_OLD_SHA: inspection.expectedOldSha, MAINTENANCE_OPERATION_ID: inspection.operationId,
-  ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z" };
+  ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z" };
 const files = ["database-backup.yml", "database-migrate.yml", "ordinary-account-cutover-readiness.yml", "deploy.yml"];
 const names = ["Encrypted Database Backup", "Apply Production Database Migrations", "Ordinary Account Cutover Readiness", "Deploy Production"];
 const incidents = [
@@ -77,8 +81,14 @@ function fixture(transform = (_key, value) => value) {
   const api = async endpoint => {
     calls.push(endpoint);
     if (endpoint === "repos/fafona/space/commits/main") return transform("main", { sha: TARGET }, calls);
+    if (endpoint === "repos/fafona/space/actions/runs/34745334237/artifacts?per_page=100") return transform("artifacts", { total_count: 6,
+      artifacts: MAINTENANCE_ADDITIONAL_BACKUP_SMALL_ARTIFACTS.map(artifact => ({ id: Number(artifact.id), name: artifact.name, size_in_bytes: artifact.bytes,
+        digest: "sha256:" + artifact.sha256, expired: false, workflow_run: { id: Number(ADDITIONAL.runId), head_sha: ADDITIONAL.sourceSha, head_branch: "main" } }))
+        .concat(["faolla-encrypted-backup-attestation-bundle-34745334237-1", "faolla-encrypted-disaster-recovery-34745334237-1",
+          "faolla-production-backup-attestation-bundle-34745334237-1"].map((name, index) => ({ id: 100 + index, name }))) }, calls);
     const jobs = endpoint.match(/^repos\/fafona\/space\/actions\/runs\/([0-9]+)\/attempts\/1\/jobs\?per_page=100$/);
     if (jobs) {
+      if (jobs[1] === ADDITIONAL.runId) return transform("job:" + ADDITIONAL.runId, { total_count: 1, jobs: [additionalJob()] }, calls);
       const spec = incidents.find(value => value[0] === jobs[1]); assert.ok(spec, endpoint);
       return transform("job:" + spec[0], { total_count: 1, jobs: [job(spec)] }, calls);
     }
@@ -88,9 +98,72 @@ function fixture(transform = (_key, value) => value) {
     if (file === "ci.yml") return transform(file, { workflow_runs: [{ ...run(incidents[0]), id: 34728900000, run_attempt: 1,
       name: "CI", path: ".github/workflows/ci.yml", event: "push", head_sha: TARGET }] }, calls);
     const rows = incidents.filter(spec => files[spec[1]] === file).map(spec => run(spec)).reverse();
+    if (file === files[0]) rows.unshift(additionalRun());
     return transform(file, { total_count: rows.length, workflow_runs: rows }, calls, Number(query.get("page")));
   };
   return { api, calls };
+}
+function additionalRun() {
+  return run(incidents[0], { id: Number(ADDITIONAL.runId), head_sha: ADDITIONAL.sourceSha, event: "schedule",
+    created_at: ADDITIONAL.createdAt, run_started_at: ADDITIONAL.runStartedAt, updated_at: ADDITIONAL.updatedAt });
+}
+function additionalJob() {
+  const names = ["Verify Current Main And Exact Successful Push CI", "Create Encrypted Database Backup From Exact Source", "Transfer Complete Encrypted Backup",
+    "Verify Backup Configuration From Exact Source", "Generate Backup Attestation Predicate", "Upload Canonical Backup Attestation Input",
+    "Verify Encrypted Backup", "Rehearse Isolated Restore", "Confirm Backup Is Ready For Upload", "Verify Uploaded Backup Artifact Identity",
+    "Attest Verified Encrypted Backup", "Attest Canonical Backup Attestation Input", "Upload Backup Verification And Attestation Inputs",
+    "Build Canonical Maintenance Binding", "Upload Canonical Maintenance Binding", "Attest Canonical Maintenance Binding", "Remove Temporary Backup And Exact Source"];
+  return { id: Number(ADDITIONAL.jobId), run_id: Number(ADDITIONAL.runId), head_sha: ADDITIONAL.sourceSha, status: "completed", conclusion: "success",
+    started_at: ADDITIONAL.jobStartedAt, completed_at: ADDITIONAL.jobCompletedAt,
+    steps: names.map(name => ({ name, status: "completed", conclusion: "success", started_at: ADDITIONAL.jobStartedAt, completed_at: ADDITIONAL.jobStartedAt }))
+      .concat(["Verify Held Maintenance Before Backup", "Verify Held Maintenance After Backup Capture", "Verify Held Maintenance Before Backup Attestation"]
+        .map(name => ({ name, status: "completed", conclusion: "skipped", started_at: null, completed_at: null }))) };
+}
+const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+function additionalProvenance(bytes, name) {
+  return [{ verificationResult: { statement: { _type: "https://in-toto.io/Statement/v1", predicateType: "https://slsa.dev/provenance/v1",
+    subject: [{ name, digest: { sha256: digest(bytes) } }], predicate: {
+      buildDefinition: { buildType: "https://actions.github.io/buildtypes/workflow/v1",
+        externalParameters: { workflow: { path: ADDITIONAL.workflowPath, ref: "refs/heads/main", repository: "https://github.com/fafona/space" } },
+        internalParameters: { github: { event_name: "schedule", runner_environment: "github-hosted" } },
+        resolvedDependencies: [{ digest: { gitCommit: ADDITIONAL.sourceSha }, uri: "git+https://github.com/fafona/space@refs/heads/main" }] },
+      runDetails: { builder: { id: "https://github.com/fafona/space/.github/workflows/database-backup.yml@refs/heads/main" },
+        metadata: { invocationId: "https://github.com/fafona/space/actions/runs/34745334237/attempts/1" } } } } } }];
+}
+// Entirely synthetic report bodies. Actual production bytes are independently
+// hard-pinned by readMaintenanceBuildRecoveryAdditionalBackup, not this fixture.
+function additionalRecords() {
+  const baseline = Object.fromEntries(["merchantRecordCount", "merchantAuthoritativeBindingCount", "merchantInvalidBindingCount", "personalCanonicalBindingCount",
+    "personalCanonicalOrphanCount", "personalInvalidCanonicalCount", "personalDuplicateAuthUserCount", "personalDuplicateAccountIdCount", "crossAccountTypeOverlapCount",
+    "accountIdentifierCollisionCount", "staffRegistryOverlapCount", "systemSitePrincipalOverlapCount"].map(key => [key, "0"]));
+  baseline.ordinaryIdentityContentSha256 = "1".repeat(64);
+  const database = { containerName: "supabase-db", containerId: "b".repeat(64), dbName: "postgres", dbOid: "16384", systemId: "7612345678901234567", primary: true };
+  const source = { repository: "fafona/space", sha: ADDITIONAL.sourceSha, originMainSha: ADDITIONAL.sourceSha, detached: true, treeState: "clean",
+    stability: { source: "matched_before_after", database: "matched_before_after" }, database: { baseline, recoveryContent: { synthetic: true } } };
+  const predicate = { schemaVersion: 1, kind: "faolla.production-backup.v1", repository: "fafona/space", targetSha: ADDITIONAL.sourceSha,
+    run: { id: ADDITIONAL.runId, attempt: "1", workflowPath: ADDITIONAL.workflowPath, event: "schedule", headSha: ADDITIONAL.sourceSha, headBranch: "main" },
+    remoteSource: { headSha: ADDITIONAL.sourceSha, originMainSha: ADDITIONAL.sourceSha, detached: true, cleanBefore: true, cleanAfter: true }, database, baseline,
+    backupArtifact: { id: "9001", name: "faolla-encrypted-disaster-recovery-34745334237-1", digest: "sha256:" + "c".repeat(64), sizeBytes: "2048",
+      createdAt: "2026-09-13T08:12:10.000Z", expiresAt: "2026-09-20T08:12:10.000Z", expired: false, workflowRunId: ADDITIONAL.runId, workflowRunAttempt: "1", headSha: ADDITIONAL.sourceSha,
+      file: { name: "faolla-database-backup.tar.enc", sizeBytes: "1024", sha256: "d".repeat(64) } },
+    issuedAt: "2026-09-13T08:12:11.000Z", validUntil: "2026-09-14T08:12:11.000Z" };
+  const binding = canonicalJsonBytes(buildProductionMaintenanceBinding("backup", { MAINTENANCE_MODE: "off", TARGET_SHA: ADDITIONAL.sourceSha,
+    GITHUB_RUN_ID: ADDITIONAL.runId, GITHUB_RUN_ATTEMPT: "1", BACKUP_RUN_ID: ADDITIONAL.runId, BACKUP_RUN_ATTEMPT: "1" }));
+  const reports = {
+    readiness: Buffer.from(JSON.stringify({ backupReady: true, recoveryRehearsalReady: true, blockers: [], recoveryBlockers: [] })),
+    create: Buffer.from(JSON.stringify({ schemaVersion: 2, status: "created", outputBytes: 1024, outputSha256: "d".repeat(64), source })),
+    transfer: Buffer.from("synthetic transfer report\n"),
+    verify: Buffer.from(JSON.stringify({ schemaVersion: 2, status: "verified", inputBytes: 1024, source })),
+    restore: Buffer.from(JSON.stringify({ schemaVersion: 2, status: "restored", backupStatus: "verified", inputBytes: 1024, source,
+      isolation: "ephemeral_docker_no_network", recoveryContentStatus: "verified", restoredBaseline: baseline, restoredRecoveryContent: source.database.recoveryContent })),
+  };
+  const subject = { schemaVersion: 1, backupWorkflow: { repository: "fafona/space", runId: ADDITIONAL.runId, runAttempt: "1", event: "schedule" }, source,
+    subject: { bytes: 1024, digest: "sha256:" + "d".repeat(64) },
+    reports: Object.fromEntries(Object.entries(reports).map(([key, bytes]) => [key, { bytes: bytes.length, sha256: digest(bytes) }])) };
+  reports.subject = Buffer.from(JSON.stringify(subject, null, 2));
+  const bytes = canonicalJsonBytes(predicate);
+  return { binding: { bytes: binding, provenance: additionalProvenance(binding, "production-maintenance-binding.json") },
+    predicate: { bytes, provenance: additionalProvenance(bytes, "production-backup-attestation.json") }, reports };
 }
 function record(bytes) {
   return { bytes, provenance: [{ verificationResult: { statement: { subject: [{ name: "production-maintenance-binding.json",
@@ -104,7 +177,7 @@ function bindings() {
   })))]));
 }
 const history = transform => inspectMaintenanceBuildRecoveryHistory(inspection, fixture(transform).api, NOW);
-const evidence = (transform, patch = {}, prior = bindings()) => createMaintenanceBuildRecoveryWorkflowEvidence(inspection, { ...env, ...patch }, fixture(transform).api, prior, NOW);
+const evidence = (transform, patch = {}, prior = bindings()) => createMaintenanceBuildRecoveryWorkflowEvidence(inspection, { ...env, ...patch }, fixture(transform).api, prior, NOW, additionalRecords());
 const changeRun = (id, patch) => (_key, value) => {
   if (Array.isArray(value.workflow_runs)) value.workflow_runs = value.workflow_runs.map(row => String(row.id) === id ? { ...row, ...patch } : row);
   return value;
@@ -112,14 +185,14 @@ const changeRun = (id, patch) => (_key, value) => {
 const changeJob = (id, mutate) => (key, value) => { if (key === "job:" + id) mutate(value); return value; };
 
 test("all seven exact incidents produce canonical evidence without relabelling the T3 signed subjects", async () => {
-  const f = fixture(), prior = bindings(), result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, prior, NOW);
+  const f = fixture(), prior = bindings(), result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, prior, NOW, additionalRecords());
   assert.equal(result.buildRecoveryRunId, env.GITHUB_RUN_ID); assert.equal(result.buildRecoveryRunAttempt, 1);
   assert.equal(result.mainCIrunId, "34728900000"); assert.equal(result.toolsSha, TARGET); assert.equal(result.historyCheckedAt, NOW);
   assert.equal(result.deadlineExtensionDigest, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST);
   assert.match(result.historyDigest, /^[0-9a-f]{64}$/);
   assert.deepEqual(decodeMaintenanceBuildRecoveryEvidence(encodeMaintenanceBuildRecoveryEvidence(result)), result);
   assert.equal(f.calls.filter(value => value.endsWith("commits/main")).length, 2);
-  assert.equal(f.calls.filter(value => value.includes("/attempts/1/jobs?")).length, 7);
+  assert.equal(f.calls.filter(value => value.includes("/attempts/1/jobs?")).length, 8);
   assert.deepEqual((await history()).incidents.map(value => value.id), incidents.map(value => value[0]));
   assert.equal(validateMaintenanceBuildRecoveryPriorBindings(inspection, prior).backup.binding.targetSha, PREVIOUS);
   assert.equal(validateMaintenanceBuildRecoveryPriorBindings(inspection, prior).readiness.binding.backupRunId, inspection.backupRunId);
@@ -131,7 +204,7 @@ test("fixed action, confirmation, repository, run attempt and target binding rej
     { GITHUB_REPOSITORY: "other/space" }, { GITHUB_EVENT_NAME: "push" }, { GITHUB_REF: "refs/heads/feature" },
     { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_RUN_ID: "00" }, { GITHUB_SHA: PREVIOUS }, { TARGET_SHA: PREVIOUS },
     { PREVIOUS_TARGET_SHA: OLD }, { EXPECTED_OLD_SHA: TARGET }, { MAINTENANCE_OPERATION_ID: "invalid" }]) {
-    const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, { ...env, ...patch }, f.api, bindings(), NOW));
+    const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, { ...env, ...patch }, f.api, bindings(), NOW, additionalRecords()));
     assert.equal(f.calls.length, 0);
   }
 });
@@ -175,8 +248,8 @@ test("the original creation second is still the cutoff, including old run new at
 
 test("two complete pages commit the old tail to history, not just the newest fixed incidents", async () => {
   const f = fixture((key, value, _calls, page) => key === files[0] ? { total_count: 101, workflow_runs: page === 1 ?
-    [...value.workflow_runs, ...Array.from({ length: 98 }, (_, i) => old(files[0], i + 1))] : [old(files[0], 99)] } : value);
-  const result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), NOW);
+    [...value.workflow_runs, ...Array.from({ length: 97 }, (_, i) => old(files[0], i + 1))] : [old(files[0], 98)] } : value);
+  const result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), NOW, additionalRecords());
   assert.ok(f.calls.some(value => value.endsWith("page=2")));
   assert.notEqual(result.historyDigest, (await evidence()).historyDigest);
 });
@@ -196,27 +269,27 @@ test("missing tail, duplicate, changing total, unsupported count and exhausted p
 test("foreign identity, invalid dates, future or inverted timestamps, and in-progress activity reject", async () => {
   for (const patch of [{ name: "wrong" }, { path: "wrong" }, { head_branch: "feature" }, { repository: null }, { head_repository: null },
     { head_sha: "bad" }, { id: 0 }, { run_attempt: 0 }, { created_at: "2026-02-30T00:00:00Z" },
-    { run_started_at: "2026-09-12T16:00:00Z" }, { updated_at: "2026-09-13T07:01:00Z" },
+    { run_started_at: "2026-09-12T16:00:00Z" }, { updated_at: "2026-09-13T19:01:00Z" },
     { updated_at: "2026-09-12T18:00:00Z" }, { status: "in_progress" }])
     await assert.rejects(history(changeRun(inspection.failedDeployRunId, patch)));
   for (const now of [NaN, Infinity, 1.5, inspection.createdAt - 1, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.authorizedAt - 1,
     MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt])
-    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, bindings(), now));
+    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, bindings(), now, additionalRecords()));
 });
 
-test("the one authorized extension uses actual time and ends exactly at 10 UTC with zero grace", async () => {
+test("the one authorized extension uses actual time and ends exactly at 22 UTC with zero grace", async () => {
   const extension = MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION;
-  assert.equal(extension.authorizedAt, Date.parse("2026-09-13T05:45:22Z"));
+  assert.equal(extension.authorizedAt, Date.parse("2026-09-13T17:08:40Z"));
   assert.equal(extension.previousExpiresAt, inspection.createdAt + 12 * 3600000);
-  assert.equal(extension.expiresAt, Date.parse("2026-09-13T10:00:00.000Z"));
-  for (const now of [extension.authorizedAt, extension.previousExpiresAt + 1, extension.expiresAt - 1]) {
-    const result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, bindings(), now);
+  assert.equal(extension.expiresAt, Date.parse("2026-09-13T22:00:00.000Z"));
+  for (const now of [ADDITIONAL.authorizedAt, NOW, extension.expiresAt - 1]) {
+    const result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, bindings(), now, additionalRecords());
     assert.equal(result.historyCheckedAt, now);
     assert.equal(result.deadlineExtensionDigest, inspection.deadlineExtensionDigest);
   }
-  for (const now of [extension.authorizedAt - 1, extension.expiresAt, extension.expiresAt + 34129]) {
+  for (const now of [ADDITIONAL.authorizedAt - 1, extension.authorizedAt, extension.previousExpiresAt + 1, extension.expiresAt, extension.expiresAt + 34129]) {
     const f = fixture();
-    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), now));
+    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), now, additionalRecords()));
     await assert.rejects(inspectMaintenanceBuildRecoveryHistory(inspection, f.api, now));
     assert.equal(f.calls.length, 0);
   }
@@ -228,7 +301,7 @@ test("extension does not erase new scheduled activity after the original deadlin
       run_started_at: "2026-09-13T06:30:01Z", updated_at: "2026-09-13T06:30:02Z" })] } : value));
   for (const digest of [undefined, "0".repeat(64), "bad"]) {
     const f = fixture();
-    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence({ ...inspection, deadlineExtensionDigest: digest }, env, f.api, bindings(), NOW));
+    await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence({ ...inspection, deadlineExtensionDigest: digest }, env, f.api, bindings(), NOW, additionalRecords()));
     assert.equal(f.calls.length, 0);
   }
 });
@@ -278,7 +351,7 @@ test("only signed B3/R3 subjects match; neither T2 evidence nor T4 relabelling i
     { backupRunId: "34715932102" }, { backupRunAttempt: "2" }, { readinessRunId: "34721256683" }, { readinessRunAttempt: "2" },
   ]) {
     const prior = bindings(); prior[phase] = record(canonicalJsonBytes({ ...JSON.parse(prior[phase].bytes), ...patch }));
-    const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, prior, NOW));
+    const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, prior, NOW, additionalRecords()));
     assert.equal(f.calls.length, 0);
   }
 });
@@ -297,15 +370,17 @@ test("malformed, noncanonical, oversized and missing subjects or wrong provenanc
 test("malformed fixed inspection starts zero requests and any API failure returns no grant", async () => {
   for (const patch of [{ targetSha: PREVIOUS }, { backupRunAttempt: 2 }, { migrationRunId: "123" }, { revision: 8 },
     { continuationDigest: "bad" }, { stateDigest: "0".repeat(64) }, { extra: "PRIVATE_SENTINEL" }]) {
-    const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence({ ...inspection, ...patch }, env, f.api, bindings(), NOW));
+    const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence({ ...inspection, ...patch }, env, f.api, bindings(), NOW, additionalRecords()));
     assert.equal(f.calls.length, 0);
   }
-  await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, async () => { throw new Error("offline"); }, bindings(), NOW));
+  let requests = 0;
+  await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, async () => { requests++; throw new Error("offline"); }, bindings(), NOW, additionalRecords()), /offline/);
+  assert.equal(requests, 1);
 });
 
 test("input bindings remain unchanged and original historic job details remain in the history digest", async () => {
   const prior = bindings(), before = structuredClone(inspection), backup = Buffer.from(prior.backup.bytes);
-  await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, prior, NOW);
+  await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, fixture().api, prior, NOW, additionalRecords());
   assert.deepEqual(inspection, before); assert.deepEqual(prior.backup.bytes, backup);
   const altered = await evidence(changeJob("34715932102", value => { value.jobs[0].steps[0].completed_at = value.jobs[0].steps[0].started_at; }));
   assert.notEqual(altered.historyDigest, (await evidence()).historyDigest);
@@ -316,4 +391,52 @@ test("CLI rejects invalid invocation with only the fixed error, without credenti
     encoding: "utf8", timeout: 5000, maxBuffer: 4096, env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", FAOLLA_TEST_SECRET: "PRIVATE_SENTINEL" }, windowsHide: true,
   });
   assert.equal(result.status, 1); assert.equal(result.stdout, ""); assert.equal(result.stderr, "maintenance_build_recovery_workflow_unverified\n");
+});
+
+test("the sole scheduled exception requires the exact run, job, times and all three held steps skipped", async () => {
+  assert.equal((await history()).additionalBackup.id, ADDITIONAL.runId);
+  for (const patch of [{ run_attempt: 2 }, { event: "workflow_dispatch" }, { head_sha: PREVIOUS }, { conclusion: "failure" },
+    { created_at: "2026-09-13T07:28:49Z" }, { run_started_at: "2026-09-13T07:28:51Z" }, { updated_at: "2026-09-13T08:12:23Z" }])
+    await assert.rejects(history(changeRun(ADDITIONAL.runId, patch)));
+  await assert.rejects(history((key, value) => key === files[0] ? { total_count: value.total_count - 1, workflow_runs: value.workflow_runs.filter(row => row.id !== Number(ADDITIONAL.runId)) } : value));
+  for (const mutate of [value => { value.jobs[0].id++; }, value => { value.jobs[0].started_at = ADDITIONAL.runStartedAt; },
+    value => { value.jobs[0].completed_at = ADDITIONAL.updatedAt; },
+    ...additionalJob().steps.map((_, index) => value => { value.jobs[0].steps[index].conclusion = value.jobs[0].steps[index].conclusion === "skipped" ? "success" : "skipped"; })])
+    await assert.rejects(history(changeJob(ADDITIONAL.runId, mutate)));
+});
+
+test("fixed small artifact inventory binds live IDs, names, sizes, digests and source without fetching payload bytes", async () => {
+  for (const mutate of [value => { value.total_count++; }, value => { value.artifacts.pop(); }, value => { value.artifacts[3].name = value.artifacts[0].name; },
+    value => { value.artifacts[3].id = value.artifacts[0].id; }, value => { value.artifacts[3].name = "unknown"; },
+    ...[0, 1, 2].flatMap(index => [
+      value => { value.artifacts[index].id++; }, value => { value.artifacts[index].size_in_bytes++; }, value => { value.artifacts[index].digest = "sha256:" + "0".repeat(64); },
+      value => { value.artifacts[index].expired = true; }, value => { value.artifacts[index].workflow_run.id++; },
+      value => { value.artifacts[index].workflow_run.head_sha = TARGET; }, value => { value.artifacts[index].workflow_run.head_branch = "feature"; }])])
+    await assert.rejects(evidence((key, value) => { if (key === "artifacts") mutate(value); return value; }));
+  const f = fixture(), result = await createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), NOW, additionalRecords());
+  assert.match(result.additionalBackupEvidenceDigest, /^[a-f0-9]{64}$/);
+  assert.equal(result.backupRunId, "34724943157"); assert.equal(result.readinessRunId, "34728212357");
+  assert.equal(f.calls.filter(call => call.includes("/artifacts?")).length, 1);
+  assert.ok(f.calls.every(call => !call.endsWith("/zip")));
+});
+
+test("additional off binding, hosted schedule provenance and exact report hashes must all match", async () => {
+  const summary = validateMaintenanceBuildRecoveryAdditionalBackup(additionalRecords(), NOW);
+  assert.equal(summary.specDigest, inspection.additionalBackupSpecDigest);
+  for (const mutate of [
+    value => { value.extra = true; }, value => { delete value.predicate; }, value => { value.binding.provenance = []; },
+    ...["binding", "predicate"].flatMap(key => [
+      value => { value[key].provenance[0].verificationResult.statement.subject[0].digest.sha256 = "0".repeat(64); },
+      value => { value[key].provenance[0].verificationResult.statement.predicate.runDetails.metadata.invocationId = "https://github.com/fafona/space/actions/runs/34745334237/attempts/2"; },
+      value => { value[key].provenance[0].verificationResult.statement.predicate.buildDefinition.internalParameters.github.runner_environment = "self-hosted"; },
+      value => { value[key].provenance[0].verificationResult.statement.predicate.buildDefinition.internalParameters.github.event_name = "workflow_dispatch"; },
+      value => { value[key].provenance[0].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit = TARGET; }]),
+    value => { const binding = JSON.parse(value.binding.bytes); binding.operationId = inspection.operationId;
+      value.binding.bytes = canonicalJsonBytes(binding); value.binding.provenance = additionalProvenance(value.binding.bytes, "production-maintenance-binding.json"); },
+    value => { value.reports.transfer = Buffer.from("substituted"); }, value => { value.reports.restore = Buffer.alloc(65537); },
+    value => { const subject = JSON.parse(value.reports.subject); subject.source.sha = TARGET; value.reports.subject = Buffer.from(JSON.stringify(subject)); },
+    value => { const subject = JSON.parse(value.reports.subject); subject.reports.restore.sha256 = "0".repeat(64); value.reports.subject = Buffer.from(JSON.stringify(subject)); },
+  ]) { const records = additionalRecords(); mutate(records); assert.throws(() => validateMaintenanceBuildRecoveryAdditionalBackup(records, NOW)); }
+  const f = fixture(); await assert.rejects(createMaintenanceBuildRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), NOW)); assert.equal(f.calls.length, 0);
+  assert.throws(() => readMaintenanceBuildRecoveryAdditionalBackup(fileURLToPath(new URL(".", import.meta.url))));
 });

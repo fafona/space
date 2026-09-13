@@ -9,6 +9,7 @@ import { createMaintenanceContinuationInspection, buildMaintenanceContinuedState
   assertMaintenanceContinuationProgress, validateMaintenanceContinuationState } from "./production-maintenance-continuation.mjs";
 import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as INCIDENT, MAINTENANCE_BUILD_RECOVERY_MAX_EVIDENCE_BYTES,
   MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION as EXTENSION, MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST,
+  MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP as ADDITIONAL_BACKUP, MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST,
   MAINTENANCE_BUILD_RECOVERY_HISTORY_MAX_AGE_MS, createMaintenanceBuildRecoveryInspection,
   validateMaintenanceBuildRecoveryPredecessor,
   validateMaintenanceBuildRecoveryInspection, validateMaintenanceBuildRecoveryEvidence,
@@ -17,7 +18,7 @@ import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as INCIDENT, MAINTENANCE_BUILD_RECO
   assertMaintenanceBuildRecoveryProgress } from "./production-maintenance-build-recovery.mjs";
 
 const BOOT = "11111111-2222-4333-8444-555555555555", TARGET = "e".repeat(40);
-const NOW = Date.parse("2026-09-13T07:00:00.000Z"), DEADLINE = EXTENSION.expiresAt;
+const NOW = Date.parse("2026-09-13T19:00:00.000Z"), DEADLINE = EXTENSION.expiresAt;
 const PIN = "56d5c39c287ec24ce96fb40943d283bee19a950462e7c384934b6461b42c5ffa";
 const originalCreateHash = crypto.createHash;
 const actualHash = value => originalCreateHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -79,7 +80,8 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
       now: NOW, sourceDiffDigest: "b".repeat(64), migrationDigest: "c".repeat(64) };
     const inspection = createMaintenanceBuildRecoveryInspection(state, context);
     const evidence = { ...inspection, toolsSha: TARGET, buildRecoveryRunId: "34740000001", buildRecoveryRunAttempt: 1,
-      mainCIrunId: "34740000000", historyDigest: "d".repeat(64), historyCheckedAt: NOW - 1000 };
+      mainCIrunId: "34740000000", historyDigest: "d".repeat(64), historyCheckedAt: NOW - 1000,
+      additionalBackupEvidenceDigest: "a".repeat(64) };
     return { state, context, inspection, evidence };
   };
   const build = f => buildMaintenanceBuildRecoveredState(f.state, f.evidence, f.context);
@@ -96,12 +98,15 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
 
   await t.test("user extension is one immutable exact incident object with fixed absolute UTC times", () => {
     assert(Object.isFrozen(EXTENSION));
-    assert.deepEqual(EXTENSION, { version: 1, operationId: INCIDENT.operationId, previousTargetSha: INCIDENT.previousTargetSha,
-      previousStateDigest: PIN, authorizedAt: Date.parse("2026-09-13T05:45:22.000Z"),
-      previousExpiresAt: Date.parse("2026-09-13T06:00:34.129Z"), expiresAt: Date.parse("2026-09-13T10:00:00.000Z") });
+    assert.deepEqual(EXTENSION, { version: 2, operationId: INCIDENT.operationId, previousTargetSha: INCIDENT.previousTargetSha,
+      previousStateDigest: PIN, authorizedAt: Date.parse("2026-09-13T17:08:40.000Z"),
+      previousExpiresAt: Date.parse("2026-09-13T06:00:34.129Z"), expiresAt: Date.parse("2026-09-13T22:00:00.000Z"),
+      priorAuthorization: { authorizedAt: Date.parse("2026-09-13T05:45:22.000Z"), expiresAt: Date.parse("2026-09-13T10:00:00.000Z") } });
     assert.equal(EXTENSION.previousExpiresAt, INCIDENT.createdAt + 12 * 3600000);
     assert.equal(MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION_DIGEST, actualHash(EXTENSION));
-    assert(EXTENSION.authorizedAt < EXTENSION.previousExpiresAt); assert(NOW > EXTENSION.previousExpiresAt);
+    assert(Object.isFrozen(EXTENSION.priorAuthorization));
+    assert(EXTENSION.priorAuthorization.authorizedAt < EXTENSION.previousExpiresAt);
+    assert(EXTENSION.authorizedAt > EXTENSION.priorAuthorization.expiresAt); assert(NOW > EXTENSION.authorizedAt);
   });
 
   await t.test("inspection binds both original audits and fixed B3/M/R3/D3 without exposing runtime proof", () => {
@@ -110,10 +115,11 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     assert.equal(f.inspection.stateDigest, PIN); assert.equal(f.inspection.recoveryDigest, actualHash(f.state.recovery));
     assert.equal(f.inspection.continuationDigest, actualHash(f.state.continuation));
     assert.equal(f.inspection.deadlineExtensionDigest, actualHash(EXTENSION));
+    assert.equal(f.inspection.additionalBackupSpecDigest, actualHash(ADDITIONAL_BACKUP));
     assert.equal(f.inspection.backupRunId, "34724943157"); assert.equal(f.inspection.migrationRunId, "34721155156");
     assert.equal(f.inspection.readinessRunId, "34728212357"); assert.equal(f.inspection.failedDeployRunId, "34728263285");
     assert.deepEqual(Object.keys(f.inspection), ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha",
-      "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", "deadlineExtensionDigest",
+      "revision", "stateDigest", "createdAt", "sourceDiffDigest", "migrationDigest", "recoveryDigest", "continuationDigest", "deadlineExtensionDigest", "additionalBackupSpecDigest",
       "backupRunId", "backupRunAttempt", "migrationRunId", "migrationRunAttempt", "readinessRunId", "readinessRunAttempt",
       "failedDeployRunId", "failedDeployRunAttempt"]); assert(Object.isFrozen(f.inspection));
     assert.deepEqual(validateMaintenanceBuildRecoveryInspection(f.inspection), f.inspection);
@@ -159,15 +165,15 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
 
   await t.test("explicit predecessor exception validates exact unchanged state after old expiry but does not relax ordinary v4 validation", () => {
     const before = copy(seed.state);
-    for (const now of [EXTENSION.authorizedAt, EXTENSION.previousExpiresAt - 1, EXTENSION.previousExpiresAt,
-      EXTENSION.previousExpiresAt + 1, NOW, DEADLINE - 1]) {
+    for (const now of [EXTENSION.authorizedAt, NOW, DEADLINE - 1]) {
       const result = validateMaintenanceBuildRecoveryPredecessor(seed.state, clock(now));
       assert.deepEqual(result, before); assert(Object.isFrozen(result));
       assert.equal(result.version, 4); assert.equal(Object.hasOwn(result, "deadlineExtension"), false);
     }
     assert.throws(() => validateMaintenanceContinuationState(seed.state, clock(NOW)), /maintenance_continuation_invalid/);
-    assert.deepEqual(validateMaintenanceContinuationState(seed.state, clock(EXTENSION.authorizedAt)), before);
-    for (const now of [EXTENSION.authorizedAt - 1, DEADLINE, DEADLINE + 1]) {
+    assert.deepEqual(validateMaintenanceContinuationState(seed.state, clock(EXTENSION.priorAuthorization.authorizedAt)), before);
+    for (const now of [EXTENSION.priorAuthorization.authorizedAt, EXTENSION.previousExpiresAt, EXTENSION.priorAuthorization.expiresAt,
+      EXTENSION.authorizedAt - 1, DEADLINE, DEADLINE + 1]) {
       reject(() => validateMaintenanceBuildRecoveryPredecessor(seed.state, clock(now)));
     }
     for (const mutate of [s => { s.revision++; }, s => { s.phase = "held"; }, s => { s.candidate = {}; },
@@ -213,12 +219,13 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
 
   await t.test("grant matches every inspected field, tools SHA and distinct new workflow identities", () => {
     for (const [key, value] of Object.entries({ sourceDiffDigest: "0".repeat(64), migrationDigest: "0".repeat(64), recoveryDigest: "0".repeat(64),
-      continuationDigest: "0".repeat(64), deadlineExtensionDigest: "0".repeat(64), stateDigest: "0".repeat(64), revision: 8, createdAt: INCIDENT.createdAt + 1,
+      continuationDigest: "0".repeat(64), deadlineExtensionDigest: "0".repeat(64), additionalBackupSpecDigest: "0".repeat(64),
+      additionalBackupEvidenceDigest: "invalid", stateDigest: "0".repeat(64), revision: 8, createdAt: INCIDENT.createdAt + 1,
       toolsSha: INCIDENT.previousTargetSha, buildRecoveryRunAttempt: 2, historyDigest: "invalid" })) {
       const f = fixture(); f.evidence[key] = value; reject(() => build(f));
     }
     for (const prior of ["34715768455", "34715352249", "34715932102", "34721155156", "34721256683", "34721317710",
-      "34724808528", "34724337523", "34724943157", "34728212357", "34728263285"]) {
+      "34724808528", "34724337523", "34724943157", "34728212357", "34728263285", "34745334237"]) {
       for (const key of ["buildRecoveryRunId", "mainCIrunId"]) reject(() => validateMaintenanceBuildRecoveryEvidence({ ...fixture().evidence, [key]: prior }));
     }
     const f = fixture(); f.evidence.buildRecoveryRunId = f.evidence.mainCIrunId; reject(() => build(f));
@@ -232,17 +239,16 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     reject(() => build(f));
   });
 
-  await t.test("actual clock works before and after old expiry, but the new absolute cutoff is exclusive and never restarted", () => {
+  await t.test("actual clock requires the new authorization while the absolute cutoff is exclusive and never restarted", () => {
     const f = fixture();
-    for (const now of [EXTENSION.authorizedAt, EXTENSION.previousExpiresAt - 1, EXTENSION.previousExpiresAt,
-      EXTENSION.previousExpiresAt + 1, NOW, DEADLINE - 1]) {
+    for (const now of [ADDITIONAL_BACKUP.authorizedAt, NOW, DEADLINE - 1]) {
       const next = buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt: now }, { ...f.context, now });
       assert.equal(next.createdAt, INCIDENT.createdAt); assert.equal(next.buildRecovery.recoveredAt, now);
       assert.deepEqual(next.deadlineExtension, EXTENSION);
       assert.equal(validateMaintenanceBuildRecoveryState(next, clock(DEADLINE - 1)).targetSha, TARGET);
       for (const actualNow of [DEADLINE, DEADLINE + 1]) reject(() => validateMaintenanceBuildRecoveryState(next, clock(actualNow)));
     }
-    for (const now of [INCIDENT.createdAt - 1, EXTENSION.authorizedAt - 1, DEADLINE, DEADLINE + 1,
+    for (const now of [INCIDENT.createdAt - 1, EXTENSION.priorAuthorization.expiresAt, EXTENSION.authorizedAt - 1, DEADLINE, DEADLINE + 1,
       Number.MAX_SAFE_INTEGER, NaN, Infinity, -0]) {
       reject(() => createMaintenanceBuildRecoveryInspection(f.state, { ...f.context, now }));
       reject(() => buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt: now }, { ...f.context, now }));
@@ -258,8 +264,8 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     }
     for (const audit of ["recovery", "continuation"]) {
       const next = copy(build(f)), timeKey = audit === "recovery" ? "recoveredAt" : "continuedAt";
-      next[audit][timeKey] = EXTENSION.authorizedAt + 1;
-      next[audit].evidence.historyCheckedAt = EXTENSION.authorizedAt;
+      next[audit][timeKey] = EXTENSION.priorAuthorization.authorizedAt + 1;
+      next[audit].evidence.historyCheckedAt = EXTENSION.priorAuthorization.authorizedAt;
       next.buildRecovery.evidence[`${audit}Digest`] = actualHash(next[audit]);
       reject(() => validateMaintenanceBuildRecoveryState(next, clock(NOW)));
     }
@@ -292,6 +298,50 @@ test("build-recovery pure contract (isolated exact synthetic digest fixture)", {
     reject(() => validateMaintenanceBuildRecoveryState(getter, clock(NOW)));
     const proxy = copy(initial); proxy.deadlineExtension = new Proxy(EXTENSION, { ownKeys() { accessed++; return []; } });
     reject(() => validateMaintenanceBuildRecoveryState(proxy, clock(NOW))); assert.equal(accessed, 0);
+  });
+
+  await t.test("the prior unpersisted authorization is immutable, bounded and never replaced with the new clock", () => {
+    const f = fixture(), initial = build(f);
+    for (const mutate of [v => { delete v.priorAuthorization; }, v => { v.priorAuthorization = null; },
+      v => { v.priorAuthorization = { ...v.priorAuthorization, extra: true }; },
+      v => { delete v.priorAuthorization.authorizedAt; }, v => { delete v.priorAuthorization.expiresAt; },
+      v => { v.priorAuthorization.authorizedAt++; }, v => { v.priorAuthorization.expiresAt++; },
+      v => { v.priorAuthorization.authorizedAt = v.authorizedAt; }, v => { v.priorAuthorization.expiresAt = v.expiresAt; },
+      v => { v.version = 1; delete v.priorAuthorization; }]) {
+      const next = copy(initial); mutate(next.deadlineExtension);
+      next.buildRecovery.evidence.deadlineExtensionDigest = actualHash(next.deadlineExtension);
+      reject(() => validateMaintenanceBuildRecoveryState(next, clock(NOW)));
+      reject(() => assertMaintenanceBuildRecoveryProgress(initial, { ...next, revision: 9 }));
+    }
+    let reads = 0;
+    const getter = copy(initial); Object.defineProperty(getter.deadlineExtension.priorAuthorization, "authorizedAt", {
+      enumerable: true, get() { reads++; return EXTENSION.priorAuthorization.authorizedAt; } });
+    reject(() => validateMaintenanceBuildRecoveryState(getter, clock(NOW)));
+    const proxy = copy(initial); proxy.deadlineExtension.priorAuthorization = new Proxy(EXTENSION.priorAuthorization, {
+      ownKeys() { reads++; return []; } });
+    reject(() => validateMaintenanceBuildRecoveryState(proxy, clock(NOW))); assert.equal(reads, 0);
+    assert.throws(() => validateMaintenanceContinuationState(seed.state, clock(EXTENSION.authorizedAt)));
+    assert.deepEqual(validateMaintenanceBuildRecoveryState(initial, clock(NOW)).recovery, seed.state.recovery);
+  });
+
+  await t.test("the sole additional off-mode backup has a fixed spec and freshly authorized artifact evidence", () => {
+    assert(Object.isFrozen(ADDITIONAL_BACKUP));
+    assert.deepEqual(ADDITIONAL_BACKUP, { version: 1, authorizedAt: Date.parse("2026-09-13T18:47:37.000Z"),
+      runId: "34745334237", runAttempt: 1, sourceSha: "13df917416cf06ce27fce021460b08caf50f6165",
+      workflowPath: ".github/workflows/database-backup.yml", event: "schedule", conclusion: "success", mode: "off",
+      createdAt: "2026-09-13T07:28:50Z", runStartedAt: "2026-09-13T07:28:50Z", updatedAt: "2026-09-13T08:12:22Z",
+      jobId: "103692125899", jobStartedAt: "2026-09-13T07:28:52Z", jobCompletedAt: "2026-09-13T08:12:21Z" });
+    assert.equal(MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST, actualHash(ADDITIONAL_BACKUP));
+    const f = fixture();
+    for (const value of [undefined, "", "bad", "A".repeat(64), "a".repeat(64) + "\n", { raw: "secret" }])
+      reject(() => validateMaintenanceBuildRecoveryEvidence({ ...f.evidence, additionalBackupEvidenceDigest: value }));
+    for (const value of [undefined, "0".repeat(64), actualHash({ ...ADDITIONAL_BACKUP, runAttempt: 2 })])
+      reject(() => validateMaintenanceBuildRecoveryInspection({ ...f.inspection, additionalBackupSpecDigest: value }));
+    for (const historyCheckedAt of [EXTENSION.authorizedAt, ADDITIONAL_BACKUP.authorizedAt - 1])
+      reject(() => buildMaintenanceBuildRecoveredState(f.state, { ...f.evidence, historyCheckedAt }, { ...f.context, now: historyCheckedAt }));
+    const next = build(f), changed = copy(next); changed.revision++; changed.buildRecovery.evidence.additionalBackupEvidenceDigest = "0".repeat(64);
+    reject(() => assertMaintenanceBuildRecoveryProgress(next, changed));
+    assert.equal(next.buildRecovery.evidence.additionalBackupEvidenceDigest, f.evidence.additionalBackupEvidenceDigest);
   });
 
   await t.test("exact bounded records refuse omitted, extra, raw-report and malformed nested members", () => {

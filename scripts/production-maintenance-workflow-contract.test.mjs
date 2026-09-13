@@ -375,13 +375,14 @@ test("build recovery is a separately confirmed fixed incident with no old-path t
     EXPECTED_OLD_SHA: "cd943076ebda758b70bf2f2270a508c774b726d6",
     PREVIOUS_TARGET_SHA: "46f007fbd9e417f93c01e398c77cf38ec814547d",
     MAINTENANCE_OPERATION_ID: "eb81284a-09c4-4514-8f16-38eaf6acc1e4",
-    ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z",
+    ACTION: "recover-build", CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z",
     DEPLOY_RUN_ID: "", DEPLOY_RUN_ATTEMPT: "", CHECK_STATE: "held" };
   const execute = patch => spawnSync(bash, ["-s"], { input: source,
     env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", ...fixed, ...patch }, encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
   assert.equal(execute({}).status, 0);
   for (const patch of [{ CONFIRMATION: "RECOVER_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "CONTINUE_MIGRATED_PRODUCTION_MAINTENANCE" },
-    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100034Z" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE" }, { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z" },
+    { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220034Z" },
     { CONFIRMATION: "RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T120000Z" }, { CONFIRMATION: "" },
     { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_EVENT_NAME: "schedule" }, { GITHUB_REF: "refs/heads/feature" },
     { GITHUB_REPOSITORY: "other/space" }, { PREVIOUS_TARGET_SHA: "b".repeat(40) }, { EXPECTED_OLD_SHA: "b".repeat(40) },
@@ -407,23 +408,23 @@ test("build recovery exposes one fixed absolute deadline and no TTL or replaceme
   const inputs = workflows["production-maintenance"].on.workflow_dispatch.inputs;
   assert.deepEqual(Object.keys(inputs), ["action", "target_sha", "expected_old_sha", "maintenance_operation_id", "previous_target_sha",
     "check_state", "successful_deploy_run_id", "successful_deploy_run_attempt", "confirmation"]);
-  assert.match(inputs.confirmation.description, /RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z/);
-  assert.match(inputs.confirmation.description, /absolute deadline 2026-09-13 10:00:00 UTC \/ 12:00 Europe\/Madrid/);
+  assert.match(inputs.confirmation.description, /RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z/);
+  assert.match(inputs.confirmation.description, /absolute deadline 2026-09-13 22:00:00 UTC \/ 2026-09-14 00:00 Europe\/Madrid/);
   const validation = step("production-maintenance", "Validate Fixed Manual Transition").run;
   const recovery = validation.slice(validation.indexOf("recover-build)"), validation.indexOf("check|end)"));
   assert.match(recovery, /test "\$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4/);
-  assert.match(recovery, /test "\$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T100000Z\n/);
+  assert.match(recovery, /test "\$CONFIRMATION" = RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z\n/);
   assert.doesNotMatch(sources["production-maintenance"], /inputs\.(?:ttl|deadline|expires_at|authorized_at|new_operation_id)|--(?:ttl|deadline|expires-at|new-operation-id)\b/);
 });
 
-test("build recovery inspects first, verifies exact T3 B3/R3 hosted signatures, then audits history under the shared lock", () => {
+test("build recovery inspects first, verifies exact T3 and additional T4 backup evidence, then audits history under the shared lock", () => {
   const name = "production-maintenance", workflow = workflows[name];
   assert.equal(workflow.concurrency.group, "production-deploy"); assert.equal(workflow.concurrency["cancel-in-progress"], false);
   const labels = ["Inspect Failed Unlaunched Build Recovery State", "Verify Build Incident Signed Backup And Readiness Bindings",
-    "Verify Exact Build Recovery History Under Production Lock", "Execute Fixed Maintenance Transition"];
+    "Verify Fixed Additional Scheduled Backup Evidence", "Verify Exact Build Recovery History Under Production Lock", "Execute Fixed Maintenance Transition"];
   const positions = labels.map(label => steps(name).findIndex(item => item.name === label));
   assert.ok(positions.every((value, index) => value >= 0 && (index === 0 || value > positions[index - 1])));
-  for (const label of labels.slice(0, 3)) assert.equal(step(name, label).if, "inputs.action == 'recover-build'");
+  for (const label of labels.slice(0, 4)) assert.equal(step(name, label).if, "inputs.action == 'recover-build'");
   const inspection = step(name, labels[0]).run;
   assert.match(inspection, /inspect-build-recovery .*--target-sha .*--previous-target-sha .*--expected-old-sha .*--expected-operation-id/);
   assert.match(inspection, /umask 077/); assert.match(inspection, /StrictHostKeyChecking=yes/);
@@ -441,12 +442,71 @@ test("build recovery inspects first, verifies exact T3 B3/R3 hosted signatures, 
     "--predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners",
     '--limit 10 --format json > "$binding_dir/$phase/provenance.json"']) assert.ok(signed.includes(value), value);
   assert.doesNotMatch(signed, /--source-digest "\$TARGET_SHA"|encrypted-disaster|tar\.enc|gh workflow|gh run rerun/);
-  const history = step(name, labels[2]);
+  const history = step(name, labels[3]);
   assert.equal(history.env.INSPECTION_DIR, "${{ steps.build-recovery-inspection.outputs.capture_dir }}");
   assert.equal(history.env.PRIOR_BINDINGS_DIR, "${{ steps.build-recovery-prior-bindings.outputs.capture_dir }}");
+  assert.equal(history.env.ADDITIONAL_BACKUP_DIR, "${{ steps.build-recovery-additional-backup.outputs.capture_dir }}");
   assert.equal(history.env.GH_TOKEN, "${{ github.token }}");
   assert.match(history.run, /node scripts\/production-maintenance-build-recovery-workflow\.mjs/);
-  assert.match(history.run, /--inspection "\$INSPECTION_DIR\/out" --prior-bindings "\$PRIOR_BINDINGS_DIR"/);
+  assert.match(history.run, /--inspection "\$INSPECTION_DIR\/out" --prior-bindings "\$PRIOR_BINDINGS_DIR" --additional-backup "\$ADDITIONAL_BACKUP_DIR"/);
+});
+
+test("the one additional scheduled backup downloads only fixed small evidence and verifies its exact hosted source", () => {
+  const item = step("production-maintenance", "Verify Fixed Additional Scheduled Backup Evidence");
+  assert.equal(item.id, "build-recovery-additional-backup");
+  assert.equal(item.if, "inputs.action == 'recover-build'");
+  assert.deepEqual(item.env, { GH_TOKEN: "${{ github.token }}" });
+  const source = item.run;
+  for (const value of ["set -euo pipefail", "umask 077",
+    'mktemp -d "$RUNNER_TEMP/maintenance-additional-backup.XXXXXXXX"',
+    'printf \'capture_dir=%s\\n\' "$evidence_dir" >> "$GITHUB_OUTPUT"',
+    'test "$GITHUB_REPOSITORY" = fafona/space', "for part in binding predicate reports; do",
+    "binding) artifact=faolla-maintenance-backup-binding-34745334237-1 ;;",
+    "predicate) artifact=faolla-production-backup-attestation-34745334237-1 ;;",
+    "reports) artifact=faolla-backup-verification-reports-34745334237-1 ;;",
+    'mkdir -m 700 -- "$evidence_dir/$part"',
+    'gh run download 34745334237 --repo fafona/space --name "$artifact" --dir "$evidence_dir/$part"',
+    "for part in binding predicate; do", "binding) subject=production-maintenance-binding.json ;;",
+    "predicate) subject=production-backup-attestation.json ;;",
+    'test -f "$evidence_dir/$part/$subject" && test ! -L "$evidence_dir/$part/$subject"',
+    'gh attestation verify "$evidence_dir/$part/$subject" --repo fafona/space',
+    "--signer-workflow github.com/fafona/space/.github/workflows/database-backup.yml",
+    "--source-digest 13df917416cf06ce27fce021460b08caf50f6165 --source-ref refs/heads/main",
+    "--predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners",
+    '--limit 10 --format json > "$evidence_dir/$part/provenance.json"',
+    'node --input-type=module - "$evidence_dir"',
+    "validateMaintenanceBuildRecoveryAdditionalBackup(readMaintenanceBuildRecoveryAdditionalBackup(process.argv[2]), Date.now())",
+    "maintenance_additional_backup_unverified\\n", "process.exitCode = 1"])
+    assert.ok(source.includes(value), value);
+  assert.equal((source.match(/gh run download /g) ?? []).length, 1);
+  assert.equal((source.match(/gh attestation verify /g) ?? []).length, 1);
+  assert.doesNotMatch(source, /--pattern|encrypted-disaster|tar\.enc|--source-digest "\$TARGET_SHA"|inputs\.|secrets\.|ssh |curl |gh workflow|gh run rerun|\|\| true|continue-on-error/);
+  assert.ok(source.indexOf("gh attestation verify") < source.indexOf("validateMaintenanceBuildRecoveryAdditionalBackup(read"));
+  assert.equal(item["continue-on-error"], undefined);
+});
+
+test("additional backup evidence cleanup cannot remove other captures or operation state", () => {
+  const item = step("production-maintenance", "Remove Fixed Additional Scheduled Backup Evidence");
+  assert.equal(item.if, "always() && inputs.action == 'recover-build'");
+  assert.deepEqual(item.env, { ADDITIONAL_BACKUP_DIR: "${{ steps.build-recovery-additional-backup.outputs.capture_dir }}" });
+  for (const value of ['"$RUNNER_TEMP"/maintenance-additional-backup.????????',
+    'test -d "$ADDITIONAL_BACKUP_DIR" && test ! -L "$ADDITIONAL_BACKUP_DIR"',
+    "for part in binding predicate reports; do",
+    'test -d "$ADDITIONAL_BACKUP_DIR/$part" && test ! -L "$ADDITIONAL_BACKUP_DIR/$part"',
+    'binding) rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/production-maintenance-binding.json" "$ADDITIONAL_BACKUP_DIR/$part/provenance.json"',
+    'predicate) rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/production-backup-attestation.json" "$ADDITIONAL_BACKUP_DIR/$part/provenance.json"',
+    "for report in readiness create transfer verify restore; do",
+    'rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/database-backup-$report-report.log"',
+    'rm -f -- "$ADDITIONAL_BACKUP_DIR/$part/database-backup-subject.json"',
+    'rmdir -- "$ADDITIONAL_BACKUP_DIR/$part"', 'rmdir -- "$ADDITIONAL_BACKUP_DIR"'])
+    assert.ok(item.run.includes(value), value);
+  assert.doesNotMatch(item.run, /rm -rf|sudo|ssh |operation\.json|maintenance\.json|fail-held|restoreIngress|--build-recovery-evidence/);
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  for (const value of ["/", "/private", "/private/maintenance-additional-backup.short", "/private/maintenance-build-recovery.12345678"]) {
+    const result = spawnSync(bash, ["-s"], { input: item.run, encoding: "utf8", timeout: 5000, maxBuffer: 4096,
+      env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", RUNNER_TEMP: "/private", ADDITIONAL_BACKUP_DIR: value } });
+    assert.notEqual(result.status, 0, value); assert.equal(result.stdout, ""); assert.equal(result.stderr, "");
+  }
 });
 
 test("build recovery sends one bounded grant only to its explicit action and never auto-retries or cleanup-mutates it", () => {

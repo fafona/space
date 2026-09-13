@@ -10,7 +10,8 @@ import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMainte
 import { encodeMaintenanceRecoveryEvidence, createMaintenanceRecoveryInspection, buildMaintenanceRecoveredState } from "./production-maintenance-recovery.mjs";
 import { MAINTENANCE_CONTINUATION_INCIDENT, encodeMaintenanceContinuationEvidence, createMaintenanceContinuationInspection, buildMaintenanceContinuedState } from "./production-maintenance-continuation.mjs";
 import { MAINTENANCE_BUILD_RECOVERY_INCIDENT as BUILD_INCIDENT, encodeMaintenanceBuildRecoveryEvidence,
-  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION as BUILD_EXTENSION } from "./production-maintenance-build-recovery.mjs";
+  MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION as BUILD_EXTENSION,
+  MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP as BUILD_ADDITIONAL_BACKUP } from "./production-maintenance-build-recovery.mjs";
 
 const operationId = "12345678-1234-4123-8123-123456789abc";
 const old = "a".repeat(40);
@@ -824,7 +825,7 @@ test("failed-build controller integration with exact isolated synthetic digest",
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); assert.equal(crypto.createHash, originalHash); });
   function buildFixture() {
-    const f = continuationFixture(); f.replace(structuredClone(seed)); f.setTime(BUILD_EXTENSION.authorizedAt + 1000);
+    const f = continuationFixture(); f.replace(structuredClone(seed)); f.setTime(BUILD_ADDITIONAL_BACKUP.authorizedAt + 1000);
     const args = f.args.map(v => v === MAINTENANCE_CONTINUATION_INCIDENT.previousTargetSha ? T3 : v);
     const inspect = parseMaintenanceRequest(["inspect-build-recovery", ...args]);
     const source = { sourceDiffDigest: "4".repeat(64), sourceChangedPaths: ["package.json", "package-lock.json"] };
@@ -843,7 +844,8 @@ test("failed-build controller integration with exact isolated synthetic digest",
     };
     return { ...f, inspect, args, source, setMigration: v => { migration = v; },
       grant: inspection => ({ ...inspection, toolsSha: f.nextTarget, buildRecoveryRunId: "34740000001", buildRecoveryRunAttempt: 1,
-        mainCIrunId: "34740000000", historyDigest: "6".repeat(64), historyCheckedAt: f.now() - 1 }),
+        mainCIrunId: "34740000000", historyDigest: "6".repeat(64), historyCheckedAt: f.now() - 1,
+        additionalBackupEvidenceDigest: "a".repeat(64) }),
       proceed: evidence => parseMaintenanceRequest(["recover-build", ...args, "--build-recovery-evidence", encodeMaintenanceBuildRecoveryEvidence(evidence)]) };
   }
   await t.test("only the explicit build recovery CLI admits its grant", async () => {
@@ -883,6 +885,8 @@ test("failed-build controller integration with exact isolated synthetic digest",
     const ordinaryOld = { ...f.inspect, action: "check-held", targetSha: T3 }; delete ordinaryOld.previousTargetSha;
     await assert.rejects(runMaintenanceAction(ordinaryOld, f.ops));
     assert.deepEqual(f.state(), before);
+    await assert.rejects(runMaintenanceAction(f.inspect, f.ops), "old expiry alone does not grant the later authorization");
+    f.setTime(BUILD_ADDITIONAL_BACKUP.authorizedAt + 1000);
     const inspection = await runMaintenanceAction(f.inspect, f.ops);
     assert.equal((await runMaintenanceAction(f.proceed(f.grant(inspection)), f.ops)).state, "held");
     const normal = { ...f.inspect, action: "check-held" }; delete normal.previousTargetSha;
