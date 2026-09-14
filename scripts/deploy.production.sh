@@ -1015,13 +1015,44 @@ ensure_disk_headroom() {
   disk_usage="$(disk_usage_percent)"
   disk_available="$(disk_available_mb)"
   if [ "$disk_usage" -ge "$DISK_ABORT_THRESHOLD" ]; then
+    echo "[deploy] deploy_disk_headroom_unverified"
     echo "[deploy] refusing to deploy at ${disk_usage}% disk usage; limit is ${DISK_ABORT_THRESHOLD}%"
     exit 1
   fi
   if [ "$disk_available" -lt "$MIN_FREE_DISK_MB" ]; then
+    echo "[deploy] deploy_disk_headroom_unverified"
     echo "[deploy] refusing to deploy with ${disk_available} MB free; minimum is ${MIN_FREE_DISK_MB} MB"
     exit 1
   fi
+}
+
+ensure_maintenance_build_headroom() {
+  # Extra working-space reserve, not a guarantee of the build's peak use.
+  # The incident's finished release was ~1.16 GiB and the largest observed
+  # compiler cache ~0.88 GiB; reserve 2.5 GiB above the unchanged 5 GiB floor.
+  # Ordinary releases keep their existing policy; no cleanup happens here.
+  case "$PRODUCTION_MAINTENANCE_MODE" in
+    off) return 0 ;;
+    maintenance) ;;
+    *) echo "[deploy] deploy_disk_headroom_unverified"; return 1 ;;
+  esac
+  local disk_available base_required required app_device releases_device
+  disk_available="$(disk_available_mb)" || return 1
+  base_required="$MIN_FREE_DISK_MB"
+  if ! [[ "$disk_available" =~ ^(0|[1-9][0-9]{0,9})$ ]] \
+    || ! [[ "$base_required" =~ ^[1-9][0-9]{0,9}$ ]]; then
+    echo "[deploy] deploy_disk_headroom_unverified"; return 1
+  fi
+  if [ "$base_required" -lt 5120 ]; then base_required=5120; fi
+  required=$((base_required + 2560))
+  app_device="$(stat -Lc '%d' -- "$APP_DIR")" || return 1
+  releases_device="$(stat -Lc '%d' -- "$RELEASES_DIR")" || return 1
+  if [ "$app_device" != "$releases_device" ] || [ "$disk_available" -lt "$required" ]; then
+    echo "[deploy] deploy_disk_headroom_unverified"
+    echo "[deploy] maintenance build reserve requires ${required} MB; available ${disk_available} MB"
+    return 1
+  fi
+  return 0
 }
 
 fetch_deploy_branch() {
@@ -1853,6 +1884,7 @@ report_disk_status
 cleanup_rebuildable_caches
 report_disk_status
 ensure_disk_headroom
+ensure_maintenance_build_headroom || exit 1
 
 write_env_value() {
   local key="$1"

@@ -56,6 +56,7 @@ const envCheckScript = await readFile(envCheckUrl, "utf8");
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const DEPLOY_ENVELOPE_MAGIC = "FAOLLA_DEPLOY_ENVELOPE_V2";
 const DEPLOY_SAFE_DIAGNOSTIC_LINES = Object.freeze([
+  "[deploy] deploy_disk_headroom_unverified",
   "[deploy] deploy_failed_readiness_fence_nonretryable",
   "[deploy] deploy_forward_quiescence_failed",
   "[deploy] deploy_forward_booking_persistence_hard_failed",
@@ -518,6 +519,29 @@ function extractShellFunction(name) {
     startIndex + marker.length + nextFunction.index,
   ));
 }
+
+test("maintenance reserves build working space before extraction without lowering final disk gates", () => {
+  const reserve = extractShellFunction("ensure_maintenance_build_headroom");
+  const finalGate = extractShellFunction("ensure_disk_headroom");
+  assert.match(finalGate, /disk_available.*-lt.*MIN_FREE_DISK_MB/);
+  assert.match(finalGate, /disk_usage.*-ge.*DISK_ABORT_THRESHOLD/);
+  assert.match(deployScript, /MIN_FREE_DISK_MB="\$\{MIN_FREE_DISK_MB:-5120\}"/);
+  assert.ok(deployScript.indexOf("\nensure_maintenance_build_headroom || exit 1") < deployScript.indexOf("git archive --format=tar"));
+  assert.doesNotMatch(reserve, /\b(?:rm|find|npm|cleanup_cache_dir)\b/);
+  const bash = resolveBashExecutable();
+  for (const [mode, free, minimum, device, ok] of [
+    ["off", "1", "5120", "1", true], ["maintenance", "7679", "5120", "1", false],
+    ["maintenance", "7680", "5120", "1", true], ["maintenance", "7680", "1", "1", true],
+    ["maintenance", "7679", "1", "1", false], ["maintenance", "9000", "7000", "1", false],
+    ["maintenance", "9560", "7000", "1", true], ["maintenance", "10000", "5120", "2", false],
+    ["invalid", "10000", "5120", "1", false], ["maintenance", "invalid", "5120", "1", false],
+  ]) {
+    const input = `set -e\n${reserve}\nAPP_DIR=/fixture/app\nRELEASES_DIR=/fixture/releases\nPRODUCTION_MAINTENANCE_MODE=${mode}\nMIN_FREE_DISK_MB=${minimum}\ndisk_available_mb() { echo ${free}; }\nstat() { if [ "$4" = "$APP_DIR" ]; then echo 1; else echo ${device}; fi; }\nensure_maintenance_build_headroom\n`;
+    const result = spawnSync(bash, ["-s"], { input, encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status === 0, ok, `${mode}/${free}/${minimum}/${device}: ${result.stderr}`);
+    if (!ok) assert.match(result.stdout, /\[deploy\] deploy_disk_headroom_unverified/);
+  }
+});
 
 const bookingDiagnosticHelpers = ["booking_persistence_diagnostic", "booking_persistence_observe", "booking_persistence_retry_budget_seconds"].map(extractShellFunction).join("\n");
 const bookingDiagnosticStages = new Set(("current_capture current_capture_preconditions current_capture_stat current_capture_environment current_capture_build current_capture_shape current_capture_staff_mode current_capture_staff_sites current_capture_portal current_capture_rollout current_capture_final " +
@@ -1260,9 +1284,9 @@ test("deploy keeps every config value in an integrity-checked SSH stdin envelope
   });
 });
 
-test("workflow diagnostic allowlist and deploy fixed echoes are one exact 58-code set", () => {
-  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 58);
-  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 58);
+test("workflow diagnostic allowlist and deploy fixed echoes are one exact 59-code set", () => {
+  assert.equal(DEPLOY_SAFE_DIAGNOSTIC_LINES.length, 59);
+  assert.equal(new Set(DEPLOY_SAFE_DIAGNOSTIC_LINES).size, 59);
   const allowlistStart = deployWorkflow.indexOf("for deploy_diagnostic_code in");
   const allowlistEnd = deployWorkflow.indexOf("; do", allowlistStart);
   assert.ok(allowlistStart >= 0 && allowlistEnd > allowlistStart);
@@ -1270,15 +1294,15 @@ test("workflow diagnostic allowlist and deploy fixed echoes are one exact 58-cod
   const workflowLines = [...allowlistRegion.matchAll(
     /'(\[deploy\] [a-z0-9_]+)'/g,
   )].map((match) => match[1]);
-  assert.equal(workflowLines.length, 58);
-  assert.equal(new Set(workflowLines).size, 58);
+  assert.equal(workflowLines.length, 59);
+  assert.equal(new Set(workflowLines).size, 59);
   assert.deepEqual(workflowLines, DEPLOY_SAFE_DIAGNOSTIC_LINES);
 
   const scriptEchoLines = [...deployScript.matchAll(
     /\becho "(\[deploy\] [a-z0-9_]+)"/g,
   )].map((match) => match[1]);
   const uniqueScriptEchoLines = [...new Set(scriptEchoLines)].sort();
-  assert.equal(uniqueScriptEchoLines.length, 58);
+  assert.equal(uniqueScriptEchoLines.length, 59);
   assert.deepEqual(
     uniqueScriptEchoLines,
     [...DEPLOY_SAFE_DIAGNOSTIC_LINES].sort(),

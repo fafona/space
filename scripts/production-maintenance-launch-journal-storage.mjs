@@ -10,6 +10,7 @@ import { assertMaintenanceAttemptRecoveryProgress } from "./production-maintenan
 import { assertMaintenanceSecondAttemptRecoveryProgress } from "./production-maintenance-second-attempt-recovery.mjs";
 import { assertMaintenanceBudgetRecoveryProgress } from "./production-maintenance-budget-recovery.mjs";
 import { assertMaintenanceWindowRenewalProgress } from "./production-maintenance-window-renewal.mjs";
+import { assertMaintenancePrelaunchRecoveryProgress } from "./production-maintenance-prelaunch-recovery.mjs";
 
 /** Private operation-state persistence; no process-control capability.
  * The caller MUST supply the existing operation lock, held until this callback
@@ -189,7 +190,8 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
     // Applies to both full-state replacement and journal-only writes, before
     // any temporary file is opened. All three audits are immutable; the build-recovery
     // wrapper delegates every legacy transition to the unchanged recovery guard.
-    if (previous.state.version === 9 || next.version === 9) assertMaintenanceWindowRenewalProgress(previous.state, next);
+    if (previous.state.version === 10 || next.version === 10) assertMaintenancePrelaunchRecoveryProgress(previous.state, next);
+    else if (previous.state.version === 9 || next.version === 9) assertMaintenanceWindowRenewalProgress(previous.state, next);
     else if (previous.state.version === 8 || next.version === 8) assertMaintenanceBudgetRecoveryProgress(previous.state, next);
     else if (previous.state.version === 7 || next.version === 7) assertMaintenanceSecondAttemptRecoveryProgress(previous.state, next);
     else if (previous.state.version === 6 || next.version === 6) assertMaintenanceAttemptRecoveryProgress(previous.state, next);
