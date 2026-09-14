@@ -46,7 +46,7 @@ test("fixed unused fence failure recovery preserves all history and attempt limi
   api.assertMaintenanceLeaseProgress(next, renewed);
   assert.equal(renewed.version, 13); assert.equal(renewed.activeAttempt, 3);
   assert.deepEqual(renewed.fenceRecovery, next.fenceRecovery);
-  assert.equal(api.maintenanceLeaseExpiresAt(renewed), api.maintenanceLeaseExpiresAt(next) + 1000);
+  assert.equal(api.maintenanceLeaseExpiresAt(renewed), renewContext.now + 12 * 60 * 60 * 1000);
   assert.throws(() => api.buildMaintenanceLeasedState(failed, evidence, context));
   assert.throws(() => api.validateMaintenanceLeaseState(next, { bootId: next.bootId, now: context.now - 1 }));
   for (const mutate of [s => s.activeAttempt++, s => s.phase = "candidate", s => s.fenceRecovery.authorization.maximumAdditionalAttempts++,
