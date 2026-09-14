@@ -26,7 +26,7 @@ export async function readPreflightRecoveryHandoffFields(originalRuntime, rawSta
     // any property below is used. The final repetition detects caller mutation.
     await verifyPreflightRecoveryBaseline(rawState, baseline, observations);
     const clock = { bootId: baseline.bootId, now: (observations.now ?? Date.now)() };
-    const predecessor = Object.getOwnPropertyDescriptor(rawState, "version")?.value === 9 ?
+    const predecessor = Object.getOwnPropertyDescriptor(rawState, "version")?.value === 10 ?
       validateMaintenancePreflightRecoveryPredecessor(rawState, clock) :
       reconstructMaintenancePreflightRecoveryPredecessor(rawState, clock);
     const targetSha = Object.getOwnPropertyDescriptor(rawState, "targetSha").value;
@@ -48,7 +48,7 @@ export async function readPreflightRecoveryHandoffFields(originalRuntime, rawSta
     // Reuse the exact existing 27-key validator. This local typed envelope is
     // only field validation, never emitted as a held report by this function.
     const request = { ...proof.input, operationId: predecessor.operationId, targetSha };
-    // During pre-recovery inspection targetSha is the known unused T10. The new
+    // During pre-recovery inspection targetSha is the known unused T11. The new
     // target exclusion is a controller/report concern, not a disk field check.
     const typed = validateBudgetRecoveryHandoffReport({ version: 3, operationId: request.operationId,
       targetSha: request.targetSha, expectedOldSha: request.expectedOldSha, state: "held", fields: output,

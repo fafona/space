@@ -519,7 +519,7 @@ test("build recovery sends one bounded grant only to its explicit action and nev
   const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
   const fixed = { ACTION: "recover-build", APP_NAME: "merchant-space", APP_PORT: "3000", CHECK_STATE: "held",
     MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID, PREVIOUS_TARGET_SHA: "a".repeat(40),
-    RECOVERY_EVIDENCE: "", CONTINUATION_EVIDENCE: "", BUILD_RECOVERY_EVIDENCE: "YQ", ATTEMPT_RECOVERY_EVIDENCE: "", SECOND_ATTEMPT_RECOVERY_EVIDENCE: "", BUDGET_RECOVERY_EVIDENCE: "", WINDOW_RENEWAL_EVIDENCE: "", PRELAUNCH_RECOVERY_EVIDENCE: "" };
+    RECOVERY_EVIDENCE: "", CONTINUATION_EVIDENCE: "", BUILD_RECOVERY_EVIDENCE: "YQ", ATTEMPT_RECOVERY_EVIDENCE: "", SECOND_ATTEMPT_RECOVERY_EVIDENCE: "", BUDGET_RECOVERY_EVIDENCE: "", WINDOW_RENEWAL_EVIDENCE: "", PRELAUNCH_RECOVERY_EVIDENCE: "", PREFLIGHT_RECOVERY_EVIDENCE: "" };
   const execute = patch => spawnSync(bash, ["-s"], { input: prefix,
     env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", ...fixed, ...patch }, encoding: "utf8", timeout: 5000, maxBuffer: 20480 });
   assert.deepEqual(execute({}).stdout.trim().split("\n"), ["recover-build", "held", "--expected-operation-id",
