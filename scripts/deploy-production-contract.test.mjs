@@ -494,7 +494,16 @@ function extractShellRegion(start, end) {
   const startIndex = deployScript.indexOf(start);
   const endIndex = deployScript.indexOf(end, startIndex);
   assert.ok(startIndex >= 0 && endIndex > startIndex, `missing shell region ${start}`);
-  return deployScript.slice(startIndex, endIndex);
+  return withVerdictOnlyFenceLogger(deployScript.slice(startIndex, endIndex));
+}
+
+// These existing fixtures stub host boundaries and assert the original gate,
+// SQL and stdout/stderr verdict contracts. Only their new logging seam is
+// silent; the separate readiness-fence-diagnostics suite runs the real logger
+// with the complete checkpoint chain and verifies every diagnostic branch.
+function withVerdictOnlyFenceLogger(region) {
+  return region.includes("readiness_fence_diagnostic ") && !region.includes("readiness_fence_diagnostic() {")
+    ? "readiness_fence_diagnostic() { :; }\n" + region : region;
 }
 
 function extractShellFunction(name) {
@@ -504,10 +513,10 @@ function extractShellFunction(name) {
   const remainder = deployScript.slice(startIndex + marker.length);
   const nextFunction = remainder.match(/\n[a-z][a-z0-9_]*\(\) \{/);
   assert.ok(nextFunction?.index !== undefined, `unterminated shell function ${name}`);
-  return deployScript.slice(
+  return withVerdictOnlyFenceLogger(deployScript.slice(
     startIndex,
     startIndex + marker.length + nextFunction.index,
-  );
+  ));
 }
 
 const bookingDiagnosticHelpers = ["booking_persistence_diagnostic", "booking_persistence_observe"].map(extractShellFunction).join("\n");

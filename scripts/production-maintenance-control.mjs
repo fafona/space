@@ -32,6 +32,14 @@ import { readMaintenanceAttemptRecoverySourceProof, MAINTENANCE_ATTEMPT_RECOVERY
   validateMaintenanceAttemptRecoveryMigrationProof } from "./production-maintenance-attempt-recovery-evidence.mjs";
 import { captureFailedCandidateBaseline, verifyFailedCandidateBaseline, assertFailedCandidateStopped,
   assertFailedCandidateGenerationStopped } from "./production-maintenance-failed-candidate-inspection.mjs";
+import { createMaintenanceSecondAttemptRecoveryInspection, decodeMaintenanceSecondAttemptRecoveryEvidence, buildMaintenanceSecondAttemptRecoveredState,
+  validateMaintenanceSecondAttemptRecoveryState, validateMaintenanceSecondAttemptRecoveryPredecessor,
+  MAINTENANCE_SECOND_ATTEMPT_RECOVERY_AUTHORIZATION } from "./production-maintenance-second-attempt-recovery.mjs";
+import { readMaintenanceSecondAttemptRecoverySourceProof, MAINTENANCE_SECOND_ATTEMPT_RECOVERY_MIGRATION_SQL,
+  validateMaintenanceSecondAttemptRecoveryMigrationProof } from "./production-maintenance-second-attempt-recovery-evidence.mjs";
+import { captureFailedAttemptBaseline, verifyFailedAttemptBaseline, assertFailedAttemptStopped,
+  assertFailedAttemptGenerationsStopped } from "./production-maintenance-failed-attempt-inspection.mjs";
+import { readFailedAttemptHandoffFields } from "./production-maintenance-failed-attempt-handoff.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -88,13 +96,13 @@ export function validateMaintenanceLaunchProofBindings(state) {
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "inspect-build-recovery", "recover-build", "inspect-attempt-recovery", "recover-attempt", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "inspect-build-recovery", "recover-build", "inspect-attempt-recovery", "recover-attempt", "inspect-second-attempt-recovery", "recover-second-attempt", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (flags.has(key)) failure("maintenance_arguments_invalid");
     if (key === "--json") { flags.set(key, true); continue; }
-    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence", "--continuation-evidence", "--build-recovery-evidence", "--attempt-recovery-evidence"].includes(key)) failure("maintenance_arguments_invalid");
+    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence", "--continuation-evidence", "--build-recovery-evidence", "--attempt-recovery-evidence", "--second-attempt-recovery-evidence"].includes(key)) failure("maintenance_arguments_invalid");
     const value = values[++index];
     if (typeof value !== "string" || value.startsWith("--")) failure("maintenance_arguments_invalid");
     flags.set(key, value);
@@ -108,6 +116,7 @@ export function parseMaintenanceRequest(argv) {
       (["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare"].includes(action) ? request.operationId !== null : !UUID.test(request.operationId ?? ""))) failure("maintenance_arguments_invalid");
   if (!["inspect-build-recovery", "recover-build"].includes(action) && flags.has("--build-recovery-evidence")) failure("maintenance_arguments_invalid");
   if (!["inspect-attempt-recovery", "recover-attempt"].includes(action) && flags.has("--attempt-recovery-evidence")) failure("maintenance_arguments_invalid");
+  if (!["inspect-second-attempt-recovery", "recover-second-attempt"].includes(action) && flags.has("--second-attempt-recovery-evidence")) failure("maintenance_arguments_invalid");
   if (["inspect-recovery", "recover-held"].includes(action)) {
     if (flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
     request.previousTargetSha = flags.get("--previous-target-sha");
@@ -157,6 +166,18 @@ export function parseMaintenanceRequest(argv) {
       try { request.attemptRecoveryEvidence = decodeMaintenanceAttemptRecoveryEvidence(encoded); }
       catch { failure("maintenance_arguments_invalid"); }
     }
+  } else if (["inspect-second-attempt-recovery", "recover-second-attempt"].includes(action)) {
+    request.previousTargetSha = flags.get("--previous-target-sha");
+    if (!SHA.test(request.previousTargetSha ?? "") || request.previousTargetSha === request.targetSha ||
+        request.previousTargetSha === request.expectedOldSha || flags.has("--recovery-evidence") || flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
+    if (action === "inspect-second-attempt-recovery") {
+      if (flags.has("--second-attempt-recovery-evidence")) failure("maintenance_arguments_invalid");
+    } else {
+      const encoded = flags.get("--second-attempt-recovery-evidence");
+      if (typeof encoded !== "string" || encoded.length < 1 || encoded.length > 16384 || !/^[A-Za-z0-9_-]+$/.test(encoded)) failure("maintenance_arguments_invalid");
+      try { request.secondAttemptRecoveryEvidence = decodeMaintenanceSecondAttemptRecoveryEvidence(encoded); }
+      catch { failure("maintenance_arguments_invalid"); }
+    }
   } else if (flags.has("--previous-target-sha") || flags.has("--recovery-evidence") || flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
   return request;
 }
@@ -199,13 +220,19 @@ export function validateMaintenanceState(state, request, bootId, now) {
     validateMaintenanceAttemptRecoveryState(state, { bootId, now });
     keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery");
   }
-  const expired = attemptPredecessor || state?.version === 6
+  if (state?.version === 7) {
+    validateMaintenanceSecondAttemptRecoveryState(state, { bootId, now });
+    keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery");
+  }
+  const expired = state?.version === 7
+    ? now >= MAINTENANCE_SECOND_ATTEMPT_RECOVERY_AUTHORIZATION.expiresAt
+    : attemptPredecessor || state?.version === 6
     ? now >= MAINTENANCE_ATTEMPT_RECOVERY_DEADLINE_AUTHORIZATION.expiresAt
     : buildPredecessor || state?.version === 5
     ? now >= MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt
     : now - state?.createdAt > MAX_AGE_MS;
   if (!exact(state, keys) ||
-      ![2, 3, 4, 5, 6].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
+      ![2, 3, 4, 5, 6, 7].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
       !Number.isSafeInteger(state.createdAt) || state.createdAt > now || expired ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
@@ -324,10 +351,12 @@ function needsLaunchReconciliation(state) {
 /** All effects are injected: unit tests never start a process or contact production. */
 export async function runMaintenanceAction(request, ops) {
   const assertHistoricalGenerationStopped = async (state) => {
+    if (state.version === 7) await ops.assertFailedAttemptGenerationsStopped(state.secondAttemptRecovery.predecessor.state);
     if (state.version === 6) await ops.assertFailedCandidateGenerationStopped(state.attemptRecovery.predecessor.state);
   };
   const assertAttemptStopped = async (state) => {
-    if (state.version === 6) await ops.assertFailedCandidateStopped(state.attemptRecovery.predecessor.state);
+    if (state.version === 7) await ops.assertFailedAttemptStopped(state.secondAttemptRecovery.predecessor.state);
+    else if (state.version === 6) await ops.assertFailedCandidateStopped(state.attemptRecovery.predecessor.state);
     else await ops.assertRuntimeStopped(state.runtime);
   };
   const assertHeld = async (state, requireDatabase = true) => {
@@ -350,7 +379,7 @@ export async function runMaintenanceAction(request, ops) {
   const keepFailedClosed = async (state) => {
     let verified = true;
     try {
-      state.ingress = state.version === 6
+      state.ingress = [6, 7].includes(state.version)
         ? await ops.recloseAttemptIngress(state)
         : await ops.installIngress(state.ingress, ops.readToken(state), { probeControlServices: false });
       await ops.save(state);
@@ -371,7 +400,7 @@ export async function runMaintenanceAction(request, ops) {
       ops.validateProofs(state);
       if (state.resumed) await ops.stopResumedCandidate(state.runtime, state.resumed);
       else if (state.candidate) await ops.stopCandidate(state.runtime, state.candidate);
-      else if (state.version === 6) await assertAttemptStopped(state);
+      else if ([6, 7].includes(state.version)) await assertAttemptStopped(state);
       else await ops.stopRuntime(state.runtime);
     } catch { verified = false; }
     try {
@@ -384,6 +413,40 @@ export async function runMaintenanceAction(request, ops) {
     if (!verified) failure("maintenance_failure_state_unverified");
     return publicSummary(state);
   };
+
+  if (["inspect-second-attempt-recovery", "recover-second-attempt"].includes(request.action)) {
+    // One separately authorized attempt after D6. The entire v6 predecessor,
+    // including both consumed histories, is retained by the exact pure builder.
+    const snapshot = await ops.readSecondAttemptRecoverySnapshot();
+    const state = validateMaintenanceState(snapshot.state, { ...request, targetSha: request.previousTargetSha }, ops.bootId(), ops.now());
+    validateMaintenanceSecondAttemptRecoveryPredecessor(state, { bootId: ops.bootId(), now: ops.now() });
+    ops.validateProofs(state);
+    const assertPredecessorHeld = async () => {
+      await ops.verifyIngress(state.ingress);
+      await ops.assertFailedAttemptStopped(state);
+      await ops.assertDatabaseQuiet(state.database);
+    };
+    await assertPredecessorHeld();
+    const stoppedBaseline = request.action === "recover-second-attempt"
+      ? request.secondAttemptRecoveryEvidence.stoppedBaseline : await ops.captureFailedAttemptBaseline(state);
+    await ops.verifyFailedAttemptBaseline(state, stoppedBaseline);
+    const source = await ops.readSecondAttemptRecoverySourceProof(request);
+    const migrationDigest = await ops.readSecondAttemptRecoveryMigrationProof(state);
+    const context = { operationId: request.operationId, previousTargetSha: request.previousTargetSha, targetSha: request.targetSha,
+      expectedOldSha: request.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
+      bootId: ops.bootId(), now: ops.now(), sourceDiffDigest: source.sourceDiffDigest, migrationDigest, stoppedBaseline };
+    const inspection = createMaintenanceSecondAttemptRecoveryInspection(state, context);
+    if (request.action === "inspect-second-attempt-recovery") return inspection;
+    await assertPredecessorHeld();
+    await ops.verifyFailedAttemptBaseline(state, stoppedBaseline);
+    const finalSource = await ops.readSecondAttemptRecoverySourceProof(request), finalMigration = await ops.readSecondAttemptRecoveryMigrationProof(state);
+    if (!equal(finalSource, source) || finalMigration !== migrationDigest) failure("maintenance_second_attempt_recovery_evidence_changed");
+    const next = buildMaintenanceSecondAttemptRecoveredState(state, request.secondAttemptRecoveryEvidence, { ...context, now: ops.now() });
+    validateMaintenanceState(next, request, ops.bootId(), ops.now()); ops.validateProofs(next);
+    const saved = await ops.commitSecondAttemptRecovery(snapshot, next);
+    if (!equal(saved, next)) failure("maintenance_second_attempt_recovery_write_unconfirmed");
+    return publicSummary(saved, "held");
+  }
 
   if (["inspect-attempt-recovery", "recover-attempt"].includes(request.action)) {
     // Append ONE new attempt while retaining the full consumed predecessor.
@@ -565,6 +628,14 @@ export async function runMaintenanceAction(request, ops) {
   if (["check-held", "runtime-handoff"].includes(request.action)) {
     await assertHeld(state);
     const summary = publicSummary(state, "held");
+    if (request.action === "runtime-handoff" && state.version === 7) {
+      const audit = state.secondAttemptRecovery;
+      await ops.verifyFailedAttemptBaseline(audit.predecessor.state, audit.stoppedBaseline);
+      const fields = await ops.readFailedAttemptHandoffFields(state.runtime, audit.predecessor.state, audit.stoppedBaseline);
+      return { ...summary, version: 2, fields, attemptBaseline: { version: 2,
+        predecessorStateDigest: audit.predecessor.stateDigest, previousTargetSha: audit.predecessor.state.targetSha,
+        stoppedBaseline: audit.stoppedBaseline } };
+    }
     if (request.action === "runtime-handoff" && state.version === 6) {
       await ops.verifyFailedCandidateBaseline(state.attemptRecovery.predecessor.state, state.attemptRecovery.stoppedBaseline);
       return { ...summary, runtime: state.runtime, attemptRecovery: { version: 1,
@@ -592,7 +663,7 @@ export async function runMaintenanceAction(request, ops) {
   if (request.action === "start-candidate") {
     if (state.phase !== "held") failure("maintenance_not_held");
     await ops.verifyIngress(state.ingress, { probeControlServices: false });
-    if (state.version === 6) await assertAttemptStopped(state);
+    if ([6, 7].includes(state.version)) await assertAttemptStopped(state);
     try {
       state.candidate = await ops.startCandidate(state.runtime, state.targetSha, { launchJournal: createMaintenanceLaunchCallbacks(state, ops) });
       if (state.launchJournal?.slots["paused-web"]?.phase !== "confirmed" || state.candidate?.targetSha !== state.targetSha) failure("maintenance_candidate_unverified");
@@ -770,6 +841,7 @@ async function productionOperations(request) {
   const validateProofs = (state) => {
     runtime.validateRuntimeProof(state.runtime); ingress.validateIngressProof(state.ingress);
     validateMaintenanceSubproofBindings(state);
+    if (state.version === 7) validateProofs(state.secondAttemptRecovery.predecessor.state);
     if (state.version === 6) {
       // History is independently typed and bound, never adopted as an active
       // process proof. The pure v6 validator separately pins every old byte.
@@ -794,9 +866,10 @@ async function productionOperations(request) {
       const continuation = ["inspect-continuation", "continue-held"].includes(request.action);
       const buildRecovery = ["inspect-build-recovery", "recover-build"].includes(request.action);
       const attemptRecovery = ["inspect-attempt-recovery", "recover-attempt"].includes(request.action);
+      const secondAttemptRecovery = ["inspect-second-attempt-recovery", "recover-second-attempt"].includes(request.action);
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
-      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) ? request.previousTargetSha : request.targetSha;
+      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) ? request.previousTargetSha : request.targetSha;
       validateMaintenanceState(value, { ...request, targetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
@@ -806,6 +879,8 @@ async function productionOperations(request) {
           value.buildRecovery.evidence.targetSha !== request.targetSha)) failure("maintenance_build_recovery_state_invalid");
       if (attemptRecovery && value.version === 6 && (value.attemptRecovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.attemptRecovery.evidence.targetSha !== request.targetSha)) failure("maintenance_attempt_recovery_invalid");
+      if (secondAttemptRecovery && value.version === 7 && (value.secondAttemptRecovery.evidence.previousTargetSha !== request.previousTargetSha ||
+          value.secondAttemptRecovery.evidence.targetSha !== request.targetSha)) failure("maintenance_second_attempt_recovery_invalid");
       validateProofs(value); return value;
     } });
   // Each loaded object keeps its OWN baseline. A later probe read must never
@@ -853,7 +928,8 @@ async function productionOperations(request) {
     const previous = (["inspect-recovery", "recover-held"].includes(request.action) && loaded.version === 2) ||
       (["inspect-continuation", "continue-held"].includes(request.action) && loaded.version === 3) ||
       (["inspect-build-recovery", "recover-build"].includes(request.action) && loaded.version === 4) ||
-      (["inspect-attempt-recovery", "recover-attempt"].includes(request.action) && loaded.version === 5);
+      (["inspect-attempt-recovery", "recover-attempt"].includes(request.action) && loaded.version === 5) ||
+      (["inspect-second-attempt-recovery", "recover-second-attempt"].includes(request.action) && loaded.version === 6);
     const targetSha = previous ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
@@ -863,17 +939,37 @@ async function productionOperations(request) {
   return {
     ...runtime, ...ingress, uuid: randomUUID, token: () => randomBytes(32).toString("hex"), now: Date.now, bootId, load, save,
     captureFailedCandidateBaseline, verifyFailedCandidateBaseline, assertFailedCandidateStopped, assertFailedCandidateGenerationStopped,
+    captureFailedAttemptBaseline, verifyFailedAttemptBaseline, assertFailedAttemptStopped, assertFailedAttemptGenerationsStopped,
+    readFailedAttemptHandoffFields,
     installIngress: async (proof, token, options = {}) => ingress.installIngress(proof, token, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     verifyIngress: async (proof, options = {}) => ingress.verifyIngress(proof, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     restoreIngress: async (proof) => ingress.restoreIngress(proof, await privateProbeOptions()),
+    async readSecondAttemptRecoverySnapshot() {
+      const state = await load(), previous = baselines.get(state);
+      return { state, revision: previous.revision, digest: previous.digest };
+    },
+    readSecondAttemptRecoverySourceProof: () => readMaintenanceSecondAttemptRecoverySourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    readSecondAttemptRecoveryMigrationProof: (state) => validateMaintenanceSecondAttemptRecoveryMigrationProof(
+      queryDatabase(state.database, MAINTENANCE_SECOND_ATTEMPT_RECOVERY_MIGRATION_SQL), state.database.databaseOid, state.createdAt,
+      { targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    async commitSecondAttemptRecovery(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          request.action !== "recover-second-attempt" || snapshot.state.version !== 6 || next.version !== 7 || next.revision !== previous.revision + 1) failure("maintenance_second_attempt_recovery_write_unconfirmed");
+      try {
+        const result = await store.replaceOperationUnderExistingOperationLock({
+          expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(result.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
+    },
     async recloseAttemptIngress(state) {
       // Only this already-authorized in-memory invocation can fail closed
       // after its deadline. A new expired command still cannot load state.
       // This capability grants NO save, start, restore, new lease or receipt.
       const baseline = baselines.get(state)?.state;
-      if (!baseline || baseline.version !== 6 || state.version !== 6 || attemptedReclosures.has(state) ||
+      if (!baseline || ![6, 7].includes(baseline.version) || state.version !== baseline.version || attemptedReclosures.has(state) ||
           !["start-candidate", "end", "fail-held"].includes(request.action) ||
-          ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "runtime", "tokenHash", "attemptRecovery"]
+          ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "runtime", "tokenHash", "activeAttempt", "attemptRecovery", "secondAttemptRecovery"]
             .some(key => !equal(state[key], baseline[key])) || baseline.bootId !== bootId()) failure("maintenance_attempt_reclose_unverified");
       // Consume before any effect. A lost result is never an automatic retry.
       attemptedReclosures.add(state);
