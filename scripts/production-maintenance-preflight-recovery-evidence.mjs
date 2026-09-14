@@ -29,6 +29,7 @@ export const MAINTENANCE_PREFLIGHT_RECOVERY_SOURCE_PATHS = Object.freeze([
   "scripts/test-helpers/maintenance-preflight-fixture.mjs",
   "scripts/deploy.production.sh",
   "scripts/deploy-production-contract.test.mjs",
+  "scripts/production-maintenance-deploy.test.mjs",
   "scripts/production-maintenance-workflow-contract.test.mjs",
   "scripts/production-maintenance-preflight-workflow-contract.test.mjs"
 ]);

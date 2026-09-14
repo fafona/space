@@ -31,7 +31,7 @@ const validate = (value, execute = git().run) => validateMaintenancePreflightRec
 test("source allowlist is fixed to this flat preflight-recovery delta and both executing target checks are real", () => {
   const f = git(), result = readMaintenancePreflightRecoverySourceProof(request(), f.run);
   assert.match(result.sourceDiffDigest, /^[a-f0-9]{64}$/); assert.deepEqual(result.sourceChangedPaths, [file]);
-  assert.equal(MAINTENANCE_PREFLIGHT_RECOVERY_SOURCE_PATHS.length, 24); assert.ok(Object.isFrozen(MAINTENANCE_PREFLIGHT_RECOVERY_SOURCE_PATHS));
+  assert.equal(MAINTENANCE_PREFLIGHT_RECOVERY_SOURCE_PATHS.length, 25); assert.ok(Object.isFrozen(MAINTENANCE_PREFLIGHT_RECOVERY_SOURCE_PATHS));
   assert.equal(f.calls.filter(args => args[0] === "rev-parse").length, 2);
   assert.equal(f.calls.filter(args => args[0] === "status").length, 2);
   assert.deepEqual(f.calls[2], ["merge-base", "--is-ancestor", previousTargetSha, targetSha]);
