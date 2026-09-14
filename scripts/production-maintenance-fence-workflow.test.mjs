@@ -3,7 +3,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { MAINTENANCE_FENCE_PRIOR_RUNS as SPECS, createMaintenanceFenceWorkflowEvidence } from "./production-maintenance-fence-workflow.mjs";
 import { MAINTENANCE_FENCE_RECOVERY_AUTHORIZATION as AUTH, MAINTENANCE_FENCE_RECOVERY_PREDECESSOR as PIN, validateMaintenanceLeaseInspection } from "./production-maintenance-lease.mjs";
-const NOW = Date.parse("2026-09-14T22:55:00Z"), TARGET = "a".repeat(40), SELF = "99999999999", CI = "99999999998";
+const NOW = Date.parse("2026-09-15T00:00:00Z"), TARGET = "a".repeat(40), SELF = "99999999999", CI = "99999999998";
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const repo = value => ({ ...structuredClone(value), repository: { full_name: "fafona/space" }, head_repository: { full_name: "fafona/space" } });
 const files = ["database-backup.yml", "database-migrate.yml", "ordinary-account-cutover-readiness.yml", "deploy.yml", "production-maintenance.yml"];
@@ -25,12 +25,12 @@ function fixture(mutate = (_key, value) => value) {
     db.set("artifacts:" + spec.run.id, { total_count: spec.artifacts.length, artifacts: structuredClone(spec.artifacts) });
   }
   const self = repo({ ...SPECS[3].run, id: Number(SELF), head_sha: TARGET, status: "in_progress", conclusion: null,
-    created_at: "2026-09-14T22:54:00Z", run_started_at: "2026-09-14T22:54:00Z", updated_at: "2026-09-14T22:54:01Z" });
+    created_at: "2026-09-14T23:59:00Z", run_started_at: "2026-09-14T23:59:00Z", updated_at: "2026-09-14T23:59:01Z" });
   const ci = repo({ ...SPECS[4].run, id: Number(CI), head_sha: TARGET,
-    created_at: "2026-09-14T22:30:00Z", run_started_at: "2026-09-14T22:30:00Z", updated_at: "2026-09-14T22:53:00Z" });
+    created_at: "2026-09-14T23:40:00Z", run_started_at: "2026-09-14T23:40:00Z", updated_at: "2026-09-14T23:58:00Z" });
   db.set("run:" + SELF, self); db.set("ci", { total_count: 1, workflow_runs: [ci] }); db.set("main", { sha: TARGET });
   db.set("jobs:" + CI, { total_count: 10, jobs: SPECS[4].jobs.map((j, i) => ({ ...j, id: 10000 + i, run_id: Number(CI), head_sha: TARGET,
-    started_at: "2026-09-14T22:30:05Z", completed_at: "2026-09-14T22:52:59Z" })) });
+    started_at: "2026-09-14T23:40:05Z", completed_at: "2026-09-14T23:57:59Z" })) });
   for (const file of files) { const rows = SPECS.filter(x => x.run.path === ".github/workflows/" + file).map(x => db.get("run:" + x.run.id));
     if (file === "production-maintenance.yml") rows.push(self); db.set(file, { total_count: rows.length, workflow_runs: rows }); }
   return async endpoint => {
@@ -48,6 +48,25 @@ test("fence workflow binds failed deployment as history only and exact new main 
   const result = await check(); assert.equal(result.leaseRunId, SELF); assert.equal(result.activeAttempt, 3);
   assert.equal(SPECS[2].run.conclusion, "failure"); assert.equal(SPECS[2].run.id, 34901630408);
   assert.equal(result.historyCheckedAt, NOW);
+});
+test("artifact run identity ignores object key ordering but rejects every changed or missing identity field", async () => {
+  const reordered = await check((key, value) => {
+    if (key.startsWith("artifacts:")) for (const artifact of value.artifacts)
+      artifact.workflow_run = Object.fromEntries(Object.entries(artifact.workflow_run).reverse());
+    return value;
+  });
+  assert.equal(reordered.historyDigest, (await check()).historyDigest);
+  for (const field of ["id", "repository_id", "head_repository_id", "head_branch", "head_sha"]) {
+    for (const missing of [false, true]) await assert.rejects(check((key, value) => {
+      if (key === "artifacts:" + SPECS[0].run.id) {
+        if (missing) delete value.artifacts[0].workflow_run[field];
+        else value.artifacts[0].workflow_run[field] = "changed";
+      }
+      return value;
+    }));
+  }
+  assert.equal(SPECS[5].run.id, 34909485623);
+  assert.equal(SPECS[5].jobs[0].steps.find(s => s[1] === "Execute Fixed Maintenance Transition")[2], "skipped");
 });
 test("lease refuses altered prior runs, steps, artifacts and concurrent history", async () => {
   for (const spec of SPECS) {
