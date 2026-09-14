@@ -1,5 +1,34 @@
 # Protected production maintenance
 
+## Renewable, time-only maintenance lease (2026-09-14)
+
+The operator explicitly authorized automatic maintenance-window extensions at
+19:51 UTC on 2026-09-14. Do not ask again for an equivalent time-only extension.
+This authorization does not add launch attempts, permit failed-state resets,
+change business data, bypass checks, or authorize a different maintenance operation.
+
+`renew-lease` is the fixed audited action, with confirmation
+`RENEW_PRODUCTION_MAINTENANCE_LEASE`, the current main target, original operation
+and old-build identity, and `previous_target_sha` fixed to
+`3614f5bfc85cf72d064732141a9998a0bbaec513`. Initially it carries only the exact
+unused held v11/revision39 into v12. Subsequent renewals keep the same target and
+append an audit event. Every lease lasts twelve hours from its recorded renewal;
+an operator may renew again under the standing authorization without source changes.
+
+Renewal is restricted to held state with all five active launch fields null.
+Expired held state may be inspected for renewal using fresh real-clock host
+observations; expired state cannot start, end, resume, or certify an ordinary
+held check. A failed or launched state cannot be reset by renewal. The original
+20:00 deadline, complete prior state digest, audit history, stopped T7 baseline,
+and activeAttempt3 remain immutable. All original process, ingress, database,
+source, migration, disk and compare-and-swap checks remain mandatory.
+
+Cancelled backup run 34886165604 is history only, not a valid backup. The first
+new target still requires its own verified backup, readiness, automatic deploy,
+signed binding and successful end/public checks. Later time-only renewals do
+not retarget the release or relabel backups. Monitor the lease before starting
+a long backup or release operation and renew early when needed.
+
 This protocol is for the coordinated client-write ACL cutover. It is not a
 general-purpose remote shell, a substitute for backup, or a claim that a server
 has entered maintenance merely because a workflow input was confirmed.
