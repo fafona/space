@@ -696,7 +696,29 @@ hosted signatures and T7/operation bindings; recovery `34800461043` and main
 CI `34799821827` remain explicit historical evidence. Migration evidence still
 binds to the original `34721155156` migration through 048. The one previously
 authorized scheduled backup `34745334237` remains a fixed, separately verified
-exception. No new scheduled run is ignored or authorized by this recovery.
+historical backup, not current release evidence. Its signed predicate expired
+at 2026-09-14 08:12:11 UTC. Only this exact subject, with all eight loader file
+size/hash pins and hosted-signature checks unchanged, is validated at the real
+fixed run completion, 2026-09-13 08:12:22 UTC. The audit records this as
+`validationPurpose: historical-only` and `historicalValidationAt`. Actual
+current authorization and fresh backup/readiness/deploy expiry checks are not
+changed, and no system clock or original record is rewritten.
+
+A further narrowly recorded history authorization begins at 2026-09-14
+08:24:49 UTC (the recorded tool-confirmation time). It accounts for exactly
+two failed T8 runs, both attempt 1: scheduled backup `34820083043`, whose only
+failure was the current-main CI check before SSH setup, and budget recovery
+`34821029270`, whose history verification failed while the transition, end
+check and reclose steps remained skipped. Each complete run/job/step projection,
+including names, numbers, conclusions and timestamps, and its zero-artifact
+inventory is pinned and read twice. Both records and this separate authorization
+are included in the history digest. The scheduled failure is not a successful
+backup; the failed recovery is not a consumed runtime launch. GitHub metadata
+proves the step outcomes, while unchanged host state requires the independent
+state-byte observation. Neither record creates a general exception for failed
+or scheduled runs; all unknown activity still fails the original history gate.
+The original 07:13:57 budget authorization, 10:00 UTC deadline, one-use runtime
+budget and all earlier audit objects remain unchanged.
 
 Implementation and local tests alone do not establish recovery or deployment
 success. Real paired-check performance, successful recovery, a new exact-target
