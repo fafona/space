@@ -6,6 +6,8 @@ import { isProxy } from "node:util/types";
 
 // Only this reviewed flat window-renewal task; it preserves the unused launch opportunity.
 // No application, dependency, migration, compiler, PM2 actuation or ingress-rule change.
+// The deploy shell delta is limited to a fixed maintenance-only full-proof
+// deadline; query timeouts, proof boundaries and rollback reserves stay fixed.
 export const MAINTENANCE_WINDOW_RENEWAL_SOURCE_PATHS = Object.freeze([
   ".github/workflows/production-maintenance.yml",
   "docs/production-maintenance.md",
@@ -27,6 +29,12 @@ export const MAINTENANCE_WINDOW_RENEWAL_SOURCE_PATHS = Object.freeze([
   "scripts/production-maintenance-window-workflow-contract.test.mjs",
   "scripts/production-maintenance-window-reclose.test.mjs",
   "scripts/test-helpers/maintenance-window-fixture.mjs",
+  "scripts/deploy.production.sh",
+  "scripts/deploy-production-contract.test.mjs",
+  "scripts/production-maintenance-booking-budget.test.mjs",
+  "scripts/production-maintenance-booking-diagnostics.test.mjs",
+  "scripts/production-maintenance-booking-window.test.mjs",
+  "scripts/production-maintenance-readiness-fence-diagnostics.test.mjs",
 ]);
 export const MAINTENANCE_WINDOW_RENEWAL_MIGRATION_WINDOW = Object.freeze({
   runId: "34721155156", attempt: 1, startedAt: "2026-09-12T21:52:38.000Z", endedBefore: "2026-09-12T21:52:46.000Z",

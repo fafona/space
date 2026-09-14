@@ -767,6 +767,20 @@ required; a renewal alone is not a deployment-completion claim. B8's transfer
 alone took 1h44m36s, so completion within the new window is not guaranteed and
 no deadline or verification may be bypassed to fit it.
 
+The actual-shaped read-only preflight measured about 3.7 seconds per partial
+snapshot before live-candidate I/O. Fifteen required snapshot boundaries would
+leave insufficient margin inside the former 60-second whole-proof budget.
+Maintenance mode therefore uses one fixed 120-second absolute deadline for the
+entire booking proof; ordinary mode retains 60 seconds. This is not a longer SQL
+timeout: the 10-second query timeout, 60-second per-verification cap, 20+5-second
+minimum post-proof reserve and at most two read-only query attempts remain.
+All before/after identity, fence, environment and health checks remain required.
+Before initial maintenance web capture, the same fence calculation reserves the
+full 120 seconds plus its unchanged 780-second cleanup allowance, checkpoint and
+margin. The fence still has its original 1,320-second maximum and this operation
+still expires at 16:00 UTC. A timeout or any drift fails closed; a larger bounded
+proof budget is not permission to retry a process launch or omit verification.
+
 ## Fixed Supabase 15 scheduler compatibility
 
 The exact `supabase/postgres:15.8.1.085` image uses an additional read-only

@@ -19,7 +19,7 @@ function body(name) {
   assert.ok(end > start, name);
   return source.slice(start, end + 3);
 }
-const helpers = [body("booking_persistence_diagnostic"), body("booking_persistence_observe")].join("\n");
+const helpers = [body("booking_persistence_diagnostic"), body("booking_persistence_observe"), body("booking_persistence_retry_budget_seconds")].join("\n");
 function shell(script, functions = "") {
   const result = spawnSync(bash, ["-s"], { input: "set +e\nunset SECONDS; SECONDS=0\n" + helpers + "\n" + functions + "\n" + script,
     encoding: "utf8", timeout: 5000, maxBuffer: 65536,
@@ -213,7 +213,7 @@ test("diagnostic changes leave the query supervisor byte-identical and retain it
   assert.equal(createHash("sha256").update(original).digest("hex"), "08239b7bee7bb6948889d9147ee23051d34416c1a902fe6869b6fd30f4f6c974");
   assert.match(body("verify_booking_persistence_with_bounded_retry"), /verify_booking_persistence \\\n\s+"\$remaining_seconds" "\$absolute_deadline_seconds" >\/dev\/null 2>&1; then/);
   const call = source.slice(source.indexOf('BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((\n'));
-  assert.match(call, /SECONDS \+ BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS/);
+  assert.match(call, /SECONDS \+ BOOKING_PERSISTENCE_EFFECTIVE_RETRY_TIMEOUT_SECONDS/);
   assert.match(call, /booking_persistence_observe web_capture capture_candidate_web_identity_for_booking_retry \\\n\s+"\$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"/);
   assert.match(call, /verify_booking_persistence_with_bounded_retry \\\n\s+"\$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS" \|\| exit 1/);
 });

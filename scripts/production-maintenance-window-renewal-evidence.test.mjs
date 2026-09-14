@@ -31,7 +31,7 @@ const validate = (value, execute = git().run) => validateMaintenanceWindowRenewa
 test("source allowlist is fixed to this flat window-renewal delta and both executing target checks are real", () => {
   const f = git(), result = readMaintenanceWindowRenewalSourceProof(request(), f.run);
   assert.match(result.sourceDiffDigest, /^[a-f0-9]{64}$/); assert.deepEqual(result.sourceChangedPaths, [file]);
-  assert.equal(MAINTENANCE_WINDOW_RENEWAL_SOURCE_PATHS.length, 20); assert.ok(Object.isFrozen(MAINTENANCE_WINDOW_RENEWAL_SOURCE_PATHS));
+  assert.equal(MAINTENANCE_WINDOW_RENEWAL_SOURCE_PATHS.length, 26); assert.ok(Object.isFrozen(MAINTENANCE_WINDOW_RENEWAL_SOURCE_PATHS));
   assert.equal(f.calls.filter(args => args[0] === "rev-parse").length, 2);
   assert.equal(f.calls.filter(args => args[0] === "status").length, 2);
   assert.deepEqual(f.calls[2], ["merge-base", "--is-ancestor", previousTargetSha, targetSha]);

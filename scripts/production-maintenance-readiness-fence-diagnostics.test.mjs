@@ -159,7 +159,7 @@ FAIL_IDENTITY=0; FAIL_MARKER=0; SYNTHETIC_DATABASE_RESULT=held; SYNTHETIC_DATABA
 
 test("full actual checkpoint SQL, marker plumbing, retry and observer compose without dynamic-local collisions", () => {
   const observer = region("booking_persistence_diagnostic", "capture_candidate_current_identity_for_booking_retry");
-  const booking = region("verify_booking_persistence_with_bounded_retry", "validate_readiness_fence_marker");
+  const booking = region("booking_persistence_retry_budget_seconds", "validate_readiness_fence_marker");
   const marker = region("validate_readiness_fence_marker", "readiness_fence_diagnostic");
   const process = [region("readiness_fence_process_identity_sha256", "readiness_fence_process_start_ticks"),
     region("readiness_fence_process_identity_matches", "assert_readiness_fence_held")].join("\n");

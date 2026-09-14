@@ -16,6 +16,7 @@ const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" 
 const names = [
   "booking_persistence_diagnostic",
   "booking_persistence_observe",
+  "booking_persistence_retry_budget_seconds",
   "maintenance_booking_snapshot_pair",
   "assert_booking_snapshot_pair_at_boundary",
   "capture_candidate_web_identity_for_booking_retry",
@@ -32,9 +33,10 @@ const functions = names.map(extract).join("\n");
 const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 const shellPath = (value) => value.replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 
-function run({ snapshotSeconds = 0, initialSeconds = 0, drift = "none", mode = "off" } = {}) {
-  assert.ok(Number.isSafeInteger(snapshotSeconds) && snapshotSeconds >= 0 && snapshotSeconds <= 4);
-  assert.ok(Number.isSafeInteger(initialSeconds) && initialSeconds >= 0 && initialSeconds <= 1);
+function run({ snapshotSeconds = 0, initialSeconds = 0, drift = "none", mode = "off", deadlineSeconds = 60 } = {}) {
+  assert.ok(Number.isSafeInteger(snapshotSeconds) && snapshotSeconds >= 0 && snapshotSeconds <= 8);
+  assert.ok(Number.isSafeInteger(initialSeconds) && initialSeconds >= 0 && initialSeconds <= 121);
+  assert.ok([60, 120].includes(deadlineSeconds));
   assert.ok(["none", "cwd", "process", "fence", "environment", "pair_worker", "pair_web", "pair_shape", "pair_transport",
     "pair_after_fence", "pair_after_health", "pair_after_query"].includes(drift));
   assert.ok(["off", "maintenance"].includes(mode));
@@ -53,6 +55,7 @@ CLOCK=${quote(shellPath(clockPath))}
 SNAPSHOT_SECONDS=${snapshotSeconds}
 DRIFT=${quote(drift)}
 PRODUCTION_MAINTENANCE_MODE=${quote(mode)}
+DEADLINE=${deadlineSeconds}
 PAIR_DRIFT=0
 CURRENT_LINK=${quote(shellPath(join(directory, "current")))}
 RELEASE_DIR=${quote(shellPath(join(directory, "release")))}
@@ -109,7 +112,7 @@ stat() {
   esac
 }
 pm2_process_snapshot() {
-  [ "$2" = 60 ] || return 97
+  [ "$2" = "$DEADLINE" ] || return 97
   case "$1" in
     "$APP_NAME") record snapshot:web; printf '%s\n' running:123 ;;
     "$AUTOMATION_WORKER_NAME") record snapshot:worker; printf '%s\n' absent ;;
@@ -120,8 +123,8 @@ pm2_process_snapshot() {
   printf '%s' "$(( $(<"$CLOCK") + SNAPSHOT_SECONDS ))" > "$CLOCK"
 }
 deadline_bounded_command_timeout_seconds() {
-  [ "$1" = 60 ] && [ "$2" = 30 ] && [ "$3" = 1 ] || return 97
-  local remaining=$((60 - $(<"$CLOCK") - 1))
+  [ "$1" = "$DEADLINE" ] && [ "$2" = 30 ] && [ "$3" = 1 ] || return 97
+  local remaining=$((DEADLINE - $(<"$CLOCK") - 1))
   [ "$remaining" -gt 0 ] || return 97
   [ "$remaining" -le 30 ] || remaining=30
   printf '%s\n' "$remaining"
@@ -136,9 +139,9 @@ maintenance_deployment_read() {
   if [ "$DRIFT" = pair_web ] || [ "$PAIR_DRIFT" = 1 ]; then printf '%s\n' absent running:124; return 0; fi
   printf '%s\n' absent running:123
 }
-linux_process_start_ticks() { [ "$1" = 123 ] && [ "$2" = 60 ] || return 97; printf '%s\n' 456; }
+linux_process_start_ticks() { [ "$1" = 123 ] && [ "$2" = "$DEADLINE" ] || return 97; printf '%s\n' 456; }
 read_candidate_environment_snapshot_for_booking_retry() {
-  [ "$1" = 60 ] || return 97
+  [ "$1" = "$DEADLINE" ] || return 97
   local digest="$CANDIDATE_ENVIRONMENT_SHA256"
   [ "$DRIFT" != environment ] || digest=${"c".repeat(64)}
   printf '%s\n' "$CANDIDATE_ENVIRONMENT_DIRECTORY_IDENTITY" "$CANDIDATE_ENVIRONMENT_FILE_IDENTITY" \
@@ -146,24 +149,25 @@ read_candidate_environment_snapshot_for_booking_retry() {
     "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" explicit "$CANDIDATE_STAFF_MODE_B64" - "$CANDIDATE_PORTAL_ORIGIN_B64"
 }
 read_candidate_build_id_snapshot_for_booking_retry() {
-  [ "$1" = 60 ] || return 97
+  [ "$1" = "$DEADLINE" ] || return 97
   printf '%s\n' "$CANDIDATE_BUILD_FILE_IDENTITY" "$CANDIDATE_BUILD_FILE_SHA256"
 }
 read_candidate_process_environment_snapshot_for_booking_retry() {
-  [ "$1" = 60 ] || return 97
+  [ "$1" = "$DEADLINE" ] || return 97
   printf '%s\n' present present 456 "$CANDIDATE_SUPABASE_INTERNAL_URL_B64" "$CANDIDATE_NEXT_PUBLIC_SUPABASE_URL_B64" \
     "$CANDIDATE_NEXT_PUBLIC_SUPABASE_ANON_KEY_B64" "$CANDIDATE_STAFF_MODE_B64" - "$CANDIDATE_PORTAL_ORIGIN_B64"
 }
 assert_readiness_fence_before_forward_operation() {
-  [ "$2" = 60 ] && [ "$1" -eq $((60 - SECONDS)) ] || return 97
+  [ "$2" = "$DEADLINE" ] && [ "$1" -eq $((DEADLINE - SECONDS)) ] || return 97
   record fence:before
   [ "$DRIFT" != pair_after_fence ] || PAIR_DRIFT=1
   return 0
 }
-assert_readiness_fence_forward_checkpoint() { [ "$1" = 60 ] || return 97; record fence:after; }
-assert_candidate_web_health() { [ "$1" = 60 ] || return 97; record health; [ "$DRIFT" != pair_after_health ] || PAIR_DRIFT=1; return 0; }
+assert_readiness_fence_forward_checkpoint() { [ "$1" = "$DEADLINE" ] || return 97; record fence:after; }
+assert_candidate_web_health() { [ "$1" = "$DEADLINE" ] || return 97; record health; [ "$DRIFT" != pair_after_health ] || PAIR_DRIFT=1; return 0; }
 verify_booking_persistence() {
-  [ "$2" = 60 ] && [ "$1" -eq $((60 - SECONDS)) ] || return 97
+  local expected=$((DEADLINE - SECONDS)); [ "$expected" -le 60 ] || expected=60
+  [ "$2" = "$DEADLINE" ] && [ "$1" -eq "$expected" ] || return 97
   record "query:$1"
   [ "$DRIFT" != pair_after_query ] || PAIR_DRIFT=1
   return 0
@@ -177,8 +181,8 @@ SECONDS=$(<"$CLOCK")
 set -T
 trap 'if [ "$BASH_SUBSHELL" -eq 0 ]; then SECONDS=$(<"$CLOCK"); fi' DEBUG
 status=1
-if capture_candidate_web_identity_for_booking_retry 60; then
-  if verify_booking_persistence_with_bounded_retry 60; then status=0; fi
+if capture_candidate_web_identity_for_booking_retry "$DEADLINE"; then
+  if verify_booking_persistence_with_bounded_retry "$DEADLINE"; then status=0; fi
 fi
 printf '__result__ %s %s\n' "$status" "$SECONDS"
 `;
@@ -208,7 +212,7 @@ printf '__result__ %s %s\n' "$status" "$SECONDS"
 }
 
 const snapshots = (trace) => trace.filter((item) => item.startsWith("snapshot:"));
-test("D7 query/fence SQL and retry decisions remain byte-equivalent with the fixed 60/20/5 budgets", () => {
+test("D7 query/fence SQL and retry decisions remain byte-equivalent except the explicit mode budget preamble", () => {
   // Pins were compared with real T7 Git blobs locally; CI needs no historical
   // object or private state. Line endings alone are normalized above.
   const digest = value => createHash("sha256").update(value).digest("hex");
@@ -216,10 +220,14 @@ test("D7 query/fence SQL and retry decisions remain byte-equivalent with the fix
   assert.equal(sql.length, 2);
   assert.equal(digest(JSON.stringify(sql)), "b39e1881c6358715413f31ed450c2f54054c157faf2066f82f0be2d049d02d11");
   for (const [name, pin] of [
-    ["verify_booking_persistence_with_bounded_retry", "e9bbcc8ec0db740e4a7efeb897f6a2106b1b6a421083d8e16a14ea15617dbda6"],
     ["capture_candidate_web_identity_for_booking_retry", "c7db04f7d32ba6263dcd2a8fc07fd1dc40d079786d0ffa55df1e0ed917d14685"],
     ["assert_readiness_fence_database_locks", "4b936da19f289c2cbd0f28b896debe91d880f9305bb796b4b6c36854a17db7cd"],
   ]) assert.equal(digest(extract(name)), pin);
+  const retry = extract("verify_booking_persistence_with_bounded_retry");
+  const historicalRetry = "verify_booking_persistence_with_bounded_retry() {\n" +
+    retry.slice(retry.indexOf("  local absolute_deadline_seconds="))
+      .replaceAll("effective_retry_budget_seconds", "BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS");
+  assert.equal(digest(historicalRetry), "e9bbcc8ec0db740e4a7efeb897f6a2106b1b6a421083d8e16a14ea15617dbda6");
   for (const [name, value] of [["BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS", 60],
     ["BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS", 20], ["BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS", 5]]) {
     assert.ok(source.includes(name + ":-" + value + "}"));
@@ -256,7 +264,7 @@ test("maintenance pairs only adjacent role checks: 9 complete reads before query
   assert.equal(result.trace.filter(x => x.startsWith("query:")).length, 1);
 });
 
-test("paired synthetic costs retain the real 60/25 guard; fewer reads are not production timing acceptance", () => {
+test("an explicitly shorter paired deadline retains the real 60/25 guard", () => {
   // Synthetic per-complete-read cost only. The next full recovery-shaped state,
   // its candidate fields, recursive audits, real host I/O and post-query work
   // still require independent performance acceptance; this test proves none of
@@ -268,6 +276,26 @@ test("paired synthetic costs retain the real 60/25 guard; fewer reads are not pr
   assert.equal(snapshots(rejected.trace).length, 9);
   assert.equal(rejected.trace.some(x => x.startsWith("query:")), false);
   assert.match(rejected.diagnostics, /stage=retry_reserve code=failed/);
+});
+
+test("maintenance 120-second composition retains all 15 reads and query cap while refusing exhausted windows", () => {
+  for (const snapshotSeconds of [4, 7]) {
+    const result = run({ mode: "maintenance", deadlineSeconds: 120, snapshotSeconds });
+    assert.equal(result.status, 0, result.stdout + result.diagnostics);
+    assert.equal(snapshots(result.trace).length, 15);
+    assert.equal(result.seconds, 15 * snapshotSeconds);
+    assert.deepEqual(result.trace.filter(x => x.startsWith("query:")), [snapshotSeconds === 4 ? "query:60" : "query:57"]);
+    assert.deepEqual(result.trace.filter(x => x.startsWith("fence:")), ["fence:before", "fence:after"]);
+    assert.equal(result.trace.filter(x => x === "health").length, 2);
+  }
+  for (const initialSeconds of [95, 120, 121]) {
+    const result = run({ mode: "maintenance", deadlineSeconds: 120, initialSeconds });
+    assert.equal(result.status, 1);
+    assert.equal(result.trace.some(x => x.startsWith("query:")), false);
+  }
+  const exhaustedAfter = run({ mode: "maintenance", deadlineSeconds: 120, snapshotSeconds: 8 });
+  assert.equal(exhaustedAfter.status, 1);
+  assert.equal(exhaustedAfter.trace.filter(x => x.startsWith("query:")).length, 1);
 });
 
 test("paired boundaries reject role/shape/transport drift and reobserve after fence, health and query", () => {
