@@ -48,6 +48,14 @@ import { readMaintenanceBudgetRecoverySourceProof, MAINTENANCE_BUDGET_RECOVERY_M
 import { captureBudgetRecoveryBaseline, verifyBudgetRecoveryBaseline, assertBudgetRecoveryStopped,
   assertBudgetRecoveryGenerationsStopped } from "./production-maintenance-budget-inspection.mjs";
 import { readBudgetRecoveryHandoffFields } from "./production-maintenance-budget-handoff.mjs";
+import { createMaintenanceWindowRenewalInspection, decodeMaintenanceWindowRenewalEvidence, buildMaintenanceWindowRenewedState,
+  validateMaintenanceWindowRenewalState, validateMaintenanceWindowRenewalPredecessor,
+  MAINTENANCE_WINDOW_RENEWAL_AUTHORIZATION } from "./production-maintenance-window-renewal.mjs";
+import { readMaintenanceWindowRenewalSourceProof, MAINTENANCE_WINDOW_RENEWAL_MIGRATION_SQL,
+  validateMaintenanceWindowRenewalMigrationProof } from "./production-maintenance-window-renewal-evidence.mjs";
+import { captureWindowRenewalBaseline, verifyWindowRenewalBaseline, assertWindowRenewalStopped,
+  assertWindowRenewalGenerationsStopped } from "./production-maintenance-window-inspection.mjs";
+import { readWindowRenewalHandoffFields } from "./production-maintenance-window-handoff.mjs";
 
 const ROOT = "/var/lib/faolla-maintenance";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -104,13 +112,13 @@ export function validateMaintenanceLaunchProofBindings(state) {
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "inspect-build-recovery", "recover-build", "inspect-attempt-recovery", "recover-attempt", "inspect-second-attempt-recovery", "recover-second-attempt", "inspect-budget-recovery", "recover-budget", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "snapshot-pair", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "inspect-build-recovery", "recover-build", "inspect-attempt-recovery", "recover-attempt", "inspect-second-attempt-recovery", "recover-second-attempt", "inspect-budget-recovery", "recover-budget", "inspect-window-renewal", "renew-window", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "snapshot-pair", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (flags.has(key)) failure("maintenance_arguments_invalid");
     if (key === "--json") { flags.set(key, true); continue; }
-    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence", "--continuation-evidence", "--build-recovery-evidence", "--attempt-recovery-evidence", "--second-attempt-recovery-evidence", "--budget-recovery-evidence"].includes(key)) failure("maintenance_arguments_invalid");
+    if (!["--app-dir", "--app-name", "--app-port", "--target-sha", "--expected-old-sha", "--expected-operation-id", "--previous-target-sha", "--recovery-evidence", "--continuation-evidence", "--build-recovery-evidence", "--attempt-recovery-evidence", "--second-attempt-recovery-evidence", "--budget-recovery-evidence", "--window-renewal-evidence"].includes(key)) failure("maintenance_arguments_invalid");
     const value = values[++index];
     if (typeof value !== "string" || value.startsWith("--")) failure("maintenance_arguments_invalid");
     flags.set(key, value);
@@ -126,6 +134,7 @@ export function parseMaintenanceRequest(argv) {
   if (!["inspect-attempt-recovery", "recover-attempt"].includes(action) && flags.has("--attempt-recovery-evidence")) failure("maintenance_arguments_invalid");
   if (!["inspect-second-attempt-recovery", "recover-second-attempt"].includes(action) && flags.has("--second-attempt-recovery-evidence")) failure("maintenance_arguments_invalid");
   if (!["inspect-budget-recovery", "recover-budget"].includes(action) && flags.has("--budget-recovery-evidence")) failure("maintenance_arguments_invalid");
+  if (!["inspect-window-renewal", "renew-window"].includes(action) && flags.has("--window-renewal-evidence")) failure("maintenance_arguments_invalid");
   if (["inspect-recovery", "recover-held"].includes(action)) {
     if (flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
     request.previousTargetSha = flags.get("--previous-target-sha");
@@ -199,6 +208,18 @@ export function parseMaintenanceRequest(argv) {
       try { request.budgetRecoveryEvidence = decodeMaintenanceBudgetRecoveryEvidence(encoded); }
       catch { failure("maintenance_arguments_invalid"); }
     }
+  } else if (["inspect-window-renewal", "renew-window"].includes(action)) {
+    request.previousTargetSha = flags.get("--previous-target-sha");
+    if (!SHA.test(request.previousTargetSha ?? "") || request.previousTargetSha === request.targetSha ||
+        request.previousTargetSha === request.expectedOldSha || flags.has("--recovery-evidence") || flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
+    if (action === "inspect-window-renewal") {
+      if (flags.has("--window-renewal-evidence")) failure("maintenance_arguments_invalid");
+    } else {
+      const encoded = flags.get("--window-renewal-evidence");
+      if (typeof encoded !== "string" || encoded.length < 1 || encoded.length > 16384 || !/^[A-Za-z0-9_-]+$/.test(encoded)) failure("maintenance_arguments_invalid");
+      try { request.windowRenewalEvidence = decodeMaintenanceWindowRenewalEvidence(encoded); }
+      catch { failure("maintenance_arguments_invalid"); }
+    }
   } else if (flags.has("--previous-target-sha") || flags.has("--recovery-evidence") || flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
   return request;
 }
@@ -227,6 +248,7 @@ export function validateMaintenanceState(state, request, bootId, now) {
   const buildPredecessor = state?.version === 4 && ["inspect-build-recovery", "recover-build"].includes(request.action);
   const attemptPredecessor = state?.version === 5 && ["inspect-attempt-recovery", "recover-attempt"].includes(request.action);
   const budgetPredecessor = state?.version === 7 && ["inspect-budget-recovery", "recover-budget"].includes(request.action);
+  const windowPredecessor = state?.version === 8 && ["inspect-window-renewal", "renew-window"].includes(request.action);
   if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); }
   if (state?.version === 4) {
     if (buildPredecessor) validateMaintenanceBuildRecoveryPredecessor(state, { bootId, now });
@@ -248,10 +270,17 @@ export function validateMaintenanceState(state, request, bootId, now) {
     keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery");
   }
   if (state?.version === 8) {
-    validateMaintenanceBudgetRecoveryState(state, { bootId, now });
+    if (windowPredecessor) validateMaintenanceWindowRenewalPredecessor(state, { bootId, now });
+    else validateMaintenanceBudgetRecoveryState(state, { bootId, now });
     keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery");
   }
-  const expired = budgetPredecessor || state?.version === 8
+  if (state?.version === 9) {
+    validateMaintenanceWindowRenewalState(state, { bootId, now });
+    keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal");
+  }
+  const expired = windowPredecessor || state?.version === 9
+    ? now >= MAINTENANCE_WINDOW_RENEWAL_AUTHORIZATION.expiresAt
+    : budgetPredecessor || state?.version === 8
     ? now >= MAINTENANCE_BUDGET_RECOVERY_AUTHORIZATION.expiresAt
     : state?.version === 7
     ? now >= MAINTENANCE_SECOND_ATTEMPT_RECOVERY_AUTHORIZATION.expiresAt
@@ -261,7 +290,7 @@ export function validateMaintenanceState(state, request, bootId, now) {
     ? now >= MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt
     : now - state?.createdAt > MAX_AGE_MS;
   if (!exact(state, keys) ||
-      ![2, 3, 4, 5, 6, 7, 8].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
+      ![2, 3, 4, 5, 6, 7, 8, 9].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
       !Number.isSafeInteger(state.createdAt) || state.createdAt > now || expired ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
@@ -380,12 +409,14 @@ function needsLaunchReconciliation(state) {
 /** All effects are injected: unit tests never start a process or contact production. */
 export async function runMaintenanceAction(request, ops) {
   const assertHistoricalGenerationStopped = async (state) => {
+    if (state.version === 9) await ops.assertWindowRenewalGenerationsStopped(state);
     if (state.version === 8) await ops.assertBudgetRecoveryGenerationsStopped(state.budgetRecovery.predecessor.state);
     if (state.version === 7) await ops.assertFailedAttemptGenerationsStopped(state.secondAttemptRecovery.predecessor.state);
     if (state.version === 6) await ops.assertFailedCandidateGenerationStopped(state.attemptRecovery.predecessor.state);
   };
   const assertAttemptStopped = async (state) => {
-    if (state.version === 8) await ops.assertBudgetRecoveryStopped(state.budgetRecovery.predecessor.state);
+    if (state.version === 9) await ops.assertWindowRenewalStopped(state);
+    else if (state.version === 8) await ops.assertBudgetRecoveryStopped(state.budgetRecovery.predecessor.state);
     else if (state.version === 7) await ops.assertFailedAttemptStopped(state.secondAttemptRecovery.predecessor.state);
     else if (state.version === 6) await ops.assertFailedCandidateStopped(state.attemptRecovery.predecessor.state);
     else await ops.assertRuntimeStopped(state.runtime);
@@ -410,7 +441,7 @@ export async function runMaintenanceAction(request, ops) {
   const keepFailedClosed = async (state) => {
     let verified = true;
     try {
-      state.ingress = [6, 7, 8].includes(state.version)
+      state.ingress = [6, 7, 8, 9].includes(state.version)
         ? await ops.recloseAttemptIngress(state)
         : await ops.installIngress(state.ingress, ops.readToken(state), { probeControlServices: false });
       await ops.save(state);
@@ -431,7 +462,7 @@ export async function runMaintenanceAction(request, ops) {
       ops.validateProofs(state);
       if (state.resumed) await ops.stopResumedCandidate(state.runtime, state.resumed);
       else if (state.candidate) await ops.stopCandidate(state.runtime, state.candidate);
-      else if ([6, 7, 8].includes(state.version)) await assertAttemptStopped(state);
+      else if ([6, 7, 8, 9].includes(state.version)) await assertAttemptStopped(state);
       else await ops.stopRuntime(state.runtime);
     } catch { verified = false; }
     try {
@@ -444,6 +475,40 @@ export async function runMaintenanceAction(request, ops) {
     if (!verified) failure("maintenance_failure_state_unverified");
     return publicSummary(state);
   };
+
+  if (["inspect-window-renewal", "renew-window"].includes(request.action)) {
+    // Renew only the exact unused v8 held opportunity. No process is started,
+    // no prior audit is replaced, and the active attempt remains three.
+    const snapshot = await ops.readWindowRenewalSnapshot();
+    const state = validateMaintenanceState(snapshot.state, { ...request, targetSha: request.previousTargetSha }, ops.bootId(), ops.now());
+    validateMaintenanceWindowRenewalPredecessor(state, { bootId: ops.bootId(), now: ops.now() });
+    ops.validateProofs(state);
+    const assertPredecessorHeld = async () => {
+      await ops.verifyIngress(state.ingress);
+      await ops.assertWindowRenewalStopped(state);
+      await ops.assertDatabaseQuiet(state.database);
+    };
+    await assertPredecessorHeld();
+    const stoppedBaseline = request.action === "renew-window"
+      ? request.windowRenewalEvidence.stoppedBaseline : await ops.captureWindowRenewalBaseline(state);
+    await ops.verifyWindowRenewalBaseline(state, stoppedBaseline);
+    const source = await ops.readWindowRenewalSourceProof(request);
+    const migrationDigest = await ops.readWindowRenewalMigrationProof(state);
+    const context = { operationId: request.operationId, previousTargetSha: request.previousTargetSha, targetSha: request.targetSha,
+      expectedOldSha: request.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
+      bootId: ops.bootId(), now: ops.now(), sourceDiffDigest: source.sourceDiffDigest, migrationDigest, stoppedBaseline };
+    const inspection = createMaintenanceWindowRenewalInspection(state, context);
+    if (request.action === "inspect-window-renewal") return inspection;
+    await assertPredecessorHeld();
+    await ops.verifyWindowRenewalBaseline(state, stoppedBaseline);
+    const finalSource = await ops.readWindowRenewalSourceProof(request), finalMigration = await ops.readWindowRenewalMigrationProof(state);
+    if (!equal(finalSource, source) || finalMigration !== migrationDigest) failure("maintenance_window_renewal_evidence_changed");
+    const next = buildMaintenanceWindowRenewedState(state, request.windowRenewalEvidence, { ...context, now: ops.now() });
+    validateMaintenanceState(next, request, ops.bootId(), ops.now()); ops.validateProofs(next);
+    const saved = await ops.commitWindowRenewal(snapshot, next);
+    if (!equal(saved, next)) failure("maintenance_window_renewal_write_unconfirmed");
+    return publicSummary(saved, "held");
+  }
 
   if (["inspect-budget-recovery", "recover-budget"].includes(request.action)) {
     // One separately authorized budget-fixed attempt after D7. The entire v7 predecessor,
@@ -693,6 +758,14 @@ export async function runMaintenanceAction(request, ops) {
   if (["check-held", "runtime-handoff"].includes(request.action)) {
     await assertHeld(state);
     const summary = publicSummary(state, "held");
+    if (request.action === "runtime-handoff" && state.version === 9) {
+      const audit = state.windowRenewal;
+      await ops.verifyWindowRenewalBaseline(state, audit.stoppedBaseline);
+      const fields = await ops.readWindowRenewalHandoffFields(state.runtime, state, audit.stoppedBaseline);
+      return { ...summary, version: 3, fields, budgetBaseline: { version: 3,
+        predecessorStateDigest: state.budgetRecovery.predecessor.stateDigest,
+        previousTargetSha: state.budgetRecovery.predecessor.state.targetSha, stoppedBaseline: audit.stoppedBaseline } };
+    }
     if (request.action === "runtime-handoff" && state.version === 8) {
       const audit = state.budgetRecovery;
       await ops.verifyBudgetRecoveryBaseline(audit.predecessor.state, audit.stoppedBaseline);
@@ -743,7 +816,7 @@ export async function runMaintenanceAction(request, ops) {
   if (request.action === "start-candidate") {
     if (state.phase !== "held") failure("maintenance_not_held");
     await ops.verifyIngress(state.ingress, { probeControlServices: false });
-    if ([6, 7, 8].includes(state.version)) await assertAttemptStopped(state);
+    if ([6, 7, 8, 9].includes(state.version)) await assertAttemptStopped(state);
     try {
       state.candidate = await ops.startCandidate(state.runtime, state.targetSha, { launchJournal: createMaintenanceLaunchCallbacks(state, ops) });
       if (state.launchJournal?.slots["paused-web"]?.phase !== "confirmed" || state.candidate?.targetSha !== state.targetSha) failure("maintenance_candidate_unverified");
@@ -921,7 +994,7 @@ async function productionOperations(request) {
   const validateProofs = (state) => {
     runtime.validateRuntimeProof(state.runtime); ingress.validateIngressProof(state.ingress);
     validateMaintenanceSubproofBindings(state);
-    if (state.version === 8) validateProofs(state.budgetRecovery.predecessor.state);
+    if ([8, 9].includes(state.version)) validateProofs(state.budgetRecovery.predecessor.state);
     if (state.version === 7) validateProofs(state.secondAttemptRecovery.predecessor.state);
     if (state.version === 6) {
       // History is independently typed and bound, never adopted as an active
@@ -949,9 +1022,10 @@ async function productionOperations(request) {
       const attemptRecovery = ["inspect-attempt-recovery", "recover-attempt"].includes(request.action);
       const secondAttemptRecovery = ["inspect-second-attempt-recovery", "recover-second-attempt"].includes(request.action);
       const budgetRecovery = ["inspect-budget-recovery", "recover-budget"].includes(request.action);
+      const windowRenewal = ["inspect-window-renewal", "renew-window"].includes(request.action);
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
-      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) ? request.previousTargetSha : request.targetSha;
+      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) || (windowRenewal && value.version === 8) ? request.previousTargetSha : request.targetSha;
       validateMaintenanceState(value, { ...request, targetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
@@ -965,6 +1039,8 @@ async function productionOperations(request) {
           value.secondAttemptRecovery.evidence.targetSha !== request.targetSha)) failure("maintenance_second_attempt_recovery_invalid");
       if (budgetRecovery && value.version === 8 && (value.budgetRecovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.budgetRecovery.evidence.targetSha !== request.targetSha)) failure("maintenance_budget_recovery_invalid");
+      if (windowRenewal && value.version === 9 && (value.windowRenewal.evidence.previousTargetSha !== request.previousTargetSha ||
+          value.windowRenewal.evidence.targetSha !== request.targetSha)) failure("maintenance_window_renewal_invalid");
       validateProofs(value); return value;
     } });
   // Each loaded object keeps its OWN baseline. A later probe read must never
@@ -1014,7 +1090,8 @@ async function productionOperations(request) {
       (["inspect-build-recovery", "recover-build"].includes(request.action) && loaded.version === 4) ||
       (["inspect-attempt-recovery", "recover-attempt"].includes(request.action) && loaded.version === 5) ||
       (["inspect-second-attempt-recovery", "recover-second-attempt"].includes(request.action) && loaded.version === 6) ||
-      (["inspect-budget-recovery", "recover-budget"].includes(request.action) && loaded.version === 7);
+      (["inspect-budget-recovery", "recover-budget"].includes(request.action) && loaded.version === 7) ||
+      (["inspect-window-renewal", "renew-window"].includes(request.action) && loaded.version === 8);
     const targetSha = previous ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
@@ -1028,9 +1105,30 @@ async function productionOperations(request) {
     readFailedAttemptHandoffFields,
     captureBudgetRecoveryBaseline, verifyBudgetRecoveryBaseline, assertBudgetRecoveryStopped, assertBudgetRecoveryGenerationsStopped,
     readBudgetRecoveryHandoffFields,
+    captureWindowRenewalBaseline, verifyWindowRenewalBaseline, assertWindowRenewalStopped, assertWindowRenewalGenerationsStopped,
+    readWindowRenewalHandoffFields,
     installIngress: async (proof, token, options = {}) => ingress.installIngress(proof, token, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     verifyIngress: async (proof, options = {}) => ingress.verifyIngress(proof, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     restoreIngress: async (proof) => ingress.restoreIngress(proof, await privateProbeOptions()),
+    async readWindowRenewalSnapshot() {
+      const state = await load(), previous = baselines.get(state);
+      return { state, revision: previous.revision, digest: previous.digest };
+    },
+    readWindowRenewalSourceProof: () => readMaintenanceWindowRenewalSourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    readWindowRenewalMigrationProof: (state) => validateMaintenanceWindowRenewalMigrationProof(
+      queryDatabase(state.database, MAINTENANCE_WINDOW_RENEWAL_MIGRATION_SQL), state.database.databaseOid, state.createdAt,
+      { targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    async commitWindowRenewal(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          request.action !== "renew-window" || snapshot.state.version !== 8 || next.version !== 9 || next.activeAttempt !== 3 ||
+          next.revision !== previous.revision + 1) failure("maintenance_window_renewal_write_unconfirmed");
+      try {
+        const result = await store.replaceOperationUnderExistingOperationLock({
+          expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(result.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
+    },
     async readBudgetRecoverySnapshot() {
       const state = await load(), previous = baselines.get(state);
       return { state, revision: previous.revision, digest: previous.digest };
@@ -1072,9 +1170,9 @@ async function productionOperations(request) {
       // after its deadline. A new expired command still cannot load state.
       // This capability grants NO save, start, restore, new lease or receipt.
       const baseline = baselines.get(state)?.state;
-      if (!baseline || ![6, 7, 8].includes(baseline.version) || state.version !== baseline.version || attemptedReclosures.has(state) ||
+      if (!baseline || ![6, 7, 8, 9].includes(baseline.version) || state.version !== baseline.version || attemptedReclosures.has(state) ||
           !["start-candidate", "end", "fail-held"].includes(request.action) ||
-          ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "runtime", "tokenHash", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery"]
+          ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "runtime", "tokenHash", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal"]
             .some(key => !equal(state[key], baseline[key])) || baseline.bootId !== bootId()) failure("maintenance_attempt_reclose_unverified");
       // Consume before any effect. A lost result is never an automatic retry.
       attemptedReclosures.add(state);

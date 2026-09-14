@@ -519,7 +519,7 @@ function extractShellFunction(name) {
   ));
 }
 
-const bookingDiagnosticHelpers = ["booking_persistence_diagnostic", "booking_persistence_observe"].map(extractShellFunction).join("\n");
+const bookingDiagnosticHelpers = ["booking_persistence_diagnostic", "booking_persistence_observe", "booking_persistence_retry_budget_seconds"].map(extractShellFunction).join("\n");
 const bookingDiagnosticStages = new Set(("current_capture current_capture_preconditions current_capture_stat current_capture_environment current_capture_build current_capture_shape current_capture_staff_mode current_capture_staff_sites current_capture_portal current_capture_rollout current_capture_final " +
   "web_capture web_capture_preconditions web_capture_snapshot web_capture_ticks web_capture_identity web_capture_state " +
   "state_preconditions state_pair_before state_worker_before state_web_before state_process_before state_environment state_build state_file_comparison state_process_environment state_environment_comparison state_current_after state_pair_after state_worker_after state_web_after state_process_after " +
@@ -4174,7 +4174,7 @@ test("candidate rollout environment is proven before and after HTTP health", asy
   const startIndex = deployScript.indexOf(startMarker);
   const endMarker =
     'DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"\n' +
-    'BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((';
+    'BOOKING_PERSISTENCE_EFFECTIVE_RETRY_TIMEOUT_SECONDS="$(booking_persistence_retry_budget_seconds)"';
   const endIndex = deployScript.indexOf(endMarker, startIndex + 1);
   assert.ok(startIndex >= 0 && endIndex > startIndex);
   const candidateGate = deployScript
@@ -5771,7 +5771,7 @@ test("booking persistence retries only status two across fully revalidated read-
   );
   assert.match(
     retryFunction,
-    /local absolute_deadline_seconds="\$\{1:-\$\(\([\s\S]{0,100}BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS[\s\S]{0,40}\)\)\}"/,
+    /local absolute_deadline_seconds="\$\{1:-\$\(\([\s\S]{0,100}effective_retry_budget_seconds[\s\S]{0,40}\)\)\}"/,
   );
   assert.match(
     retryFunction,

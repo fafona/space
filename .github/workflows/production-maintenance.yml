@@ -7,7 +7,7 @@ on:
         description: Fixed audited maintenance transition (never an arbitrary command)
         required: true
         type: choice
-        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, recover-held, continue-held, recover-build, recover-attempt, recover-second-attempt, recover-budget, check, end]
+        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, recover-held, continue-held, recover-build, recover-attempt, recover-second-attempt, recover-budget, renew-window, check, end]
       target_sha:
         description: Exact current main SHA with successful push CI
         required: true
@@ -18,7 +18,7 @@ on:
         description: UUID returned by prepare; required for every recovery, check and end
         required: false
       previous_target_sha:
-        description: Previous frozen target SHA; required for recover-held, continue-held, recover-build, recover-attempt or recover-second-attempt or recover-budget
+        description: Previous frozen target SHA; required for recover-held, continue-held, recover-build, recover-attempt or recover-second-attempt or recover-budget or renew-window
         required: false
       check_state:
         description: State to verify for the check action
@@ -32,7 +32,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: Fixed confirmation; recover-budget requires RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z (2026-09-14 10:00 UTC / 12:00 Europe/Madrid); recover-second-attempt requires RECOVER_SECOND_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z; recover-attempt keeps RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z (2026-09-14 04:00 UTC / 06:00 Europe/Madrid); old recover-build keeps RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
+        description: Fixed confirmation; renew-window requires RENEW_PRODUCTION_MAINTENANCE_UNTIL_20260914T160000Z (2026-09-14 16:00 UTC / 18:00 Europe/Madrid; same one unused attempt); recover-budget requires RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z (2026-09-14 10:00 UTC / 12:00 Europe/Madrid); recover-second-attempt requires RECOVER_SECOND_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z; recover-attempt keeps RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z (2026-09-14 04:00 UTC / 06:00 Europe/Madrid); old recover-build keeps RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
         required: true
 
 concurrency:
@@ -73,7 +73,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = 1
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$TARGET_SHA" = "$GITHUB_SHA"
-          if [ "$ACTION" != recover-held ] && [ "$ACTION" != continue-held ] && [ "$ACTION" != recover-build ] && [ "$ACTION" != recover-attempt ] && [ "$ACTION" != recover-second-attempt ] && [ "$ACTION" != recover-budget ]; then test -z "${PREVIOUS_TARGET_SHA:-}"; fi
+          if [ "$ACTION" != recover-held ] && [ "$ACTION" != continue-held ] && [ "$ACTION" != recover-build ] && [ "$ACTION" != recover-attempt ] && [ "$ACTION" != recover-second-attempt ] && [ "$ACTION" != recover-budget ] && [ "$ACTION" != renew-window ]; then test -z "${PREVIOUS_TARGET_SHA:-}"; fi
           case "$ACTION" in
             diagnose-runtime)
               test "$CONFIRMATION" = CHECK_PRODUCTION_RUNTIME_COMPATIBILITY
@@ -140,6 +140,14 @@ jobs:
               test "$CONFIRMATION" = RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z
               test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
               test "$PREVIOUS_TARGET_SHA" = d9de5fe689226fcdd13a1e95039901b5d0f39167
+              test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
+              test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA" && test "$TARGET_SHA" != "$EXPECTED_OLD_SHA" || exit 1
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
+            renew-window)
+              test "$CONFIRMATION" = RENEW_PRODUCTION_MAINTENANCE_UNTIL_20260914T160000Z
+              test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
+              test "$PREVIOUS_TARGET_SHA" = 3b6c55ea4397c4505e75c59bb3bb56d7dd7d1cc0
               test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
               test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA" && test "$TARGET_SHA" != "$EXPECTED_OLD_SHA" || exit 1
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
@@ -932,6 +940,55 @@ jobs:
           node scripts/production-maintenance-budget-recovery-workflow.mjs \
             --inspection "$INSPECTION_DIR/out" --prior-bindings "$PRIOR_BINDINGS_DIR" --additional-backup "$ADDITIONAL_BACKUP_DIR"
 
+      - name: Inspect Unused Window Renewal State
+        if: inputs.action == 'renew-window'
+        id: window-renewal-inspection
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          APP_NAME="${APP_NAME:-merchant-space}"
+          APP_PORT="${APP_PORT:-3000}"
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && test "$APP_PORT" -ge 1 && test "$APP_PORT" -le 65535
+          capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-window-renewal.XXXXXXXX")"
+          printf 'capture_dir=%s\n' "$capture_dir" >> "$GITHUB_OUTPUT"
+          printf -v remote_command \
+            "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q inspect-window-renewal --app-dir %q --app-name %q --app-port %q --target-sha %q --previous-target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
+            "$REMOTE_MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" \
+            "$APP_DIR" "$APP_NAME" "$APP_PORT" "$TARGET_SHA" "$PREVIOUS_TARGET_SHA" "$EXPECTED_OLD_SHA" "$MAINTENANCE_OPERATION_ID"
+          status=0
+          timeout --signal=TERM --kill-after=10s 600s \
+            ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
+              > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
+          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+            echo 'production_maintenance_window_renewal_inspection_unconfirmed'
+            exit 1
+          fi
+
+      - name: Verify Exact Window Renewal History Under Production Lock
+        if: inputs.action == 'renew-window'
+        id: window-renewal-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTION: ${{ inputs.action }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          INSPECTION_DIR: ${{ steps.window-renewal-inspection.outputs.capture_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/production-maintenance-window-renewal-workflow.mjs \
+            --inspection "$INSPECTION_DIR/out"
+
       - name: Execute Fixed Maintenance Transition
         id: transition
         env:
@@ -949,6 +1006,7 @@ jobs:
           ATTEMPT_RECOVERY_EVIDENCE: ${{ steps.attempt-recovery-evidence.outputs.attempt_recovery_evidence }}
           SECOND_ATTEMPT_RECOVERY_EVIDENCE: ${{ steps.second-attempt-recovery-evidence.outputs.second_attempt_recovery_evidence }}
           BUDGET_RECOVERY_EVIDENCE: ${{ steps.budget-recovery-evidence.outputs.budget_recovery_evidence }}
+          WINDOW_RENEWAL_EVIDENCE: ${{ steps.window-renewal-evidence.outputs.window_renewal_evidence }}
         shell: bash
         run: |
           set -euo pipefail
@@ -968,6 +1026,7 @@ jobs:
             recover-attempt) command=recover-attempt; expected_state=held ;;
             recover-second-attempt) command=recover-second-attempt; expected_state=held ;;
             recover-budget) command=recover-budget; expected_state=held ;;
+            renew-window) command=renew-window; expected_state=held ;;
             check)
               case "$CHECK_STATE" in
                 held) command=check-held; expected_state=held ;;
@@ -1024,6 +1083,13 @@ jobs:
             operation_args+=(--previous-target-sha "$PREVIOUS_TARGET_SHA" --budget-recovery-evidence "$BUDGET_RECOVERY_EVIDENCE")
           else
             test -z "$BUDGET_RECOVERY_EVIDENCE"
+          fi
+          if [ "$command" = renew-window ]; then
+            [[ "$WINDOW_RENEWAL_EVIDENCE" =~ ^[A-Za-z0-9_-]+$ ]]
+            test "${#WINDOW_RENEWAL_EVIDENCE}" -le 16384
+            operation_args+=(--previous-target-sha "$PREVIOUS_TARGET_SHA" --window-renewal-evidence "$WINDOW_RENEWAL_EVIDENCE")
+          else
+            test -z "$WINDOW_RENEWAL_EVIDENCE"
           fi
           capture_dir="$(mktemp -d "$RUNNER_TEMP/maintenance-transition.XXXXXXXX")"
           trap 'rm -f -- "$capture_dir/out" "$capture_dir/err"; rmdir -- "$capture_dir"' EXIT
@@ -1438,6 +1504,20 @@ jobs:
               fi
             done
             rmdir -- "$ADDITIONAL_BACKUP_DIR"
+          fi
+
+      - name: Remove Runner Window Renewal Evidence
+        if: always() && inputs.action == 'renew-window'
+        env:
+          INSPECTION_DIR: ${{ steps.window-renewal-inspection.outputs.capture_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$INSPECTION_DIR" ]; then
+            case "$INSPECTION_DIR" in "$RUNNER_TEMP"/maintenance-window-renewal.????????) ;; *) exit 1 ;; esac
+            test -d "$INSPECTION_DIR" && test ! -L "$INSPECTION_DIR"
+            rm -f -- "$INSPECTION_DIR/out" "$INSPECTION_DIR/err"
+            rmdir -- "$INSPECTION_DIR"
           fi
 
       - name: Remove Runner SSH Material

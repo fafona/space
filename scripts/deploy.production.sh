@@ -5057,9 +5057,23 @@ assert_candidate_web_health() {
     '
 }
 
+booking_persistence_retry_budget_seconds() {
+  case "${PRODUCTION_MAINTENANCE_MODE:-off}" in
+    off) printf '%s\n' 60 ;;
+    maintenance) printf '%s\n' 120 ;;
+    *) return 1 ;;
+  esac
+}
+
 verify_booking_persistence_with_bounded_retry() {
+  local effective_retry_budget_seconds
+  if ! effective_retry_budget_seconds="$(booking_persistence_retry_budget_seconds)"; then
+    booking_persistence_diagnostic retry_deadline failed "$SECONDS"
+    echo "[deploy] deploy_forward_booking_persistence_state_failed"
+    return 1
+  fi
   local absolute_deadline_seconds="${1:-$((
-    SECONDS + BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS
+    SECONDS + effective_retry_budget_seconds
   ))}"
   local attempt=0
   local maximum_attempts=2
@@ -5069,7 +5083,7 @@ verify_booking_persistence_with_bounded_retry() {
   if ! [[ "$absolute_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$SECONDS" -ge "$absolute_deadline_seconds" ] \
     || [ $((absolute_deadline_seconds - SECONDS)) \
-      -gt "$BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS" ]; then
+      -gt "$effective_retry_budget_seconds" ]; then
     booking_persistence_diagnostic retry_deadline failed "$diagnostic_started"
     echo "[deploy] deploy_forward_booking_persistence_state_failed"
     return 1
@@ -7741,9 +7755,15 @@ fi
 assert_readiness_fence_forward_checkpoint || exit 1
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_verification_failed"
+BOOKING_PERSISTENCE_EFFECTIVE_RETRY_TIMEOUT_SECONDS="$(booking_persistence_retry_budget_seconds)" || exit 1
 BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS="$((
-  SECONDS + BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS
+  SECONDS + BOOKING_PERSISTENCE_EFFECTIVE_RETRY_TIMEOUT_SECONDS
 ))"
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  assert_readiness_fence_before_forward_operation \
+    "$BOOKING_PERSISTENCE_EFFECTIVE_RETRY_TIMEOUT_SECONDS" \
+    "$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS" || exit 1
+fi
 if ! booking_persistence_observe web_capture capture_candidate_web_identity_for_booking_retry \
   "$BOOKING_PERSISTENCE_ABSOLUTE_DEADLINE_SECONDS"; then
   echo "[deploy] deploy_forward_booking_persistence_state_failed"
