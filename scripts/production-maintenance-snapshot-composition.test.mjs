@@ -20,9 +20,10 @@ const bindings = { ...runtime, ...journal, ...continuity, assert, createHash, pm
 const { fixture, input, TARGET, BOOT } = Function(...Object.keys(bindings),
   source.slice(start, end) + "\nreturn {fixture,input,TARGET,BOOT};")(...Object.values(bindings));
 
-async function scenario() {
-  const f = fixture();
+async function scenario(options = {}) {
+  const f = fixture(options);
   const old = await runtime.captureRuntime(input(), f.deps);
+  const originalWorker = structuredClone(f.entries().find(row => row.name === "faolla-enterprise-automation-worker"));
   await runtime.stopRuntime(old, f.deps); // Existing fixture Map changes only.
   f.installCandidate(); // Existing fixture Map changes only.
   const candidate = await runtime.captureCandidate(old, TARGET, "1", f.deps);
@@ -56,18 +57,29 @@ async function scenario() {
     },
     verifyCandidate: async (...args) => { counts.outerVerify++; return runtime.verifyCandidate(...args, d); },
     readManagedSnapshot: (...args) => { counts.snapshot++; events.push("snapshot"); return runtime.readManagedSnapshot(...args, d); },
+    readManagedSnapshotPair: (...args) => { counts.snapshot++; events.push("snapshot"); return runtime.readManagedSnapshotPair(...args, d); },
     save: forbidden, create: forbidden, startCandidate: forbidden, installIngress: forbidden, restoreIngress: forbidden,
     assertDatabaseQuiet: forbidden, assertRuntimeStopped: forbidden,
   };
   const read = (kind = "web") => runMaintenanceAction({ ...input(), operationId: state.operationId,
     targetSha: TARGET, action: "snapshot-" + kind }, ops);
-  return { f, state, d, ops, counts, events, read };
+  return { f, state, d, ops, counts, events, read, originalWorker };
 }
 
+test("runtime pair directly retains four registries and both role verdicts without the controller seam", async () => {
+  for (const options of [{}, { worker: "inactive" }]) {
+    const s = await scenario(options);
+    assert.deepEqual(await runtime.readManagedSnapshotPair(s.state.runtime, s.state.candidate, s.d),
+      { web: "running:301", worker: options.worker === "inactive" ? "inactive" : "absent" });
+    assert.deepEqual(s.counts, { ingress: 0, outerVerify: 0, snapshot: 0, registry: 4, supervision: 2, sleep50: 1 });
+  }
+});
+
 test("candidate snapshots retain ingress plus one complete reader verification and final fresh registry", async () => {
-  for (const kind of ["web", "worker"]) {
+  for (const kind of ["web", "worker", "pair"]) {
     const s = await scenario(); const report = await s.read(kind);
-    assert.equal(report.snapshot, kind === "web" ? "running:301" : "absent");
+    if (kind === "pair") assert.deepEqual(report.snapshotPair, { web: "running:301", worker: "absent" });
+    else assert.equal(report.snapshot, kind === "web" ? "running:301" : "absent");
     assert.equal(report.state, "candidate");
     assert.deepEqual(s.counts, { ingress: 1, outerVerify: 0, snapshot: 1, registry: 4, supervision: 2, sleep50: 1 });
     assert.deepEqual(s.events.slice(0, 3), ["validateProofs", "ingress", "snapshot"]);
@@ -85,6 +97,7 @@ test("separate snapshot calls never reuse prior host observations or ingress res
 });
 
 test("phase, target, private proof binding and ingress failures reject before the snapshot reader", async () => {
+  for (const kind of ["web", "pair"]) {
   for (const change of [
     s => { s.state.phase = "ended"; },
     s => { s.state.targetSha = "c".repeat(40); },
@@ -93,12 +106,14 @@ test("phase, target, private proof binding and ingress failures reject before th
     s => { s.ops.verifyIngress = async () => { throw new Error("synthetic ingress rejected"); }; },
   ]) {
     const s = await scenario(); change(s);
-    await assert.rejects(s.read());
+    await assert.rejects(s.read(kind));
     assert.equal(s.counts.snapshot, 0); assert.equal(s.counts.registry, 0); assert.equal(s.counts.outerVerify, 0);
+  }
   }
 });
 
 test("the retained runtime verifier still rejects health, pause, environment, disk, process and boot drift", async () => {
+  for (const kind of ["web", "pair"]) {
   for (const change of [
     s => { s.d.supervision = async (...args) => ({ ...await s.f.deps.supervision(...args), healthVerified: false }); },
     s => { s.f.setPause("0"); },
@@ -108,19 +123,53 @@ test("the retained runtime verifier still rejects health, pause, environment, di
     s => { s.f.setBoot("99999999-9999-4999-8999-999999999999"); },
   ]) {
     const s = await scenario(); change(s);
-    await assert.rejects(s.read(), /production_maintenance_runtime_unverified/);
+    await assert.rejects(s.read(kind), /production_maintenance_runtime_unverified/);
     assert.equal(s.counts.ingress, 1); assert.equal(s.counts.snapshot, 1); assert.equal(s.counts.outerVerify, 0);
+  }
   }
 });
 
 test("the final independent registry read still rejects replacement after both candidate observations", async () => {
+  for (const kind of ["web", "pair"]) {
   const s = await scenario(); const registry = s.d.pm2Registry;
   s.d.pm2Registry = async (...args) => {
     if (s.counts.registry === 3) s.f.entries().find(row => row.name === "faolla").pm2_env.restart_time++;
     return registry(...args);
   };
-  await assert.rejects(s.read(), /production_maintenance_runtime_unverified/);
+  await assert.rejects(s.read(kind), /production_maintenance_runtime_unverified/);
   assert.deepEqual(s.counts, { ingress: 1, outerVerify: 0, snapshot: 1, registry: 4, supervision: 2, sleep50: 1 });
+  }
+});
+
+test("paired boundaries reobserve both roles and reject a worker appearing only in the final registry", async () => {
+  const s = await scenario(); await s.read("pair"); await s.read("pair");
+  assert.deepEqual(s.counts, { ingress: 2, outerVerify: 0, snapshot: 2, registry: 8, supervision: 4, sleep50: 2 });
+  const registry = s.d.pm2Registry;
+  s.d.pm2Registry = async (...args) => {
+    if (s.counts.registry === 11) {
+      s.f.entries().push(structuredClone(s.originalWorker));
+      const fact = s.state.runtime.worker.managed.processes[0]; s.f.facts.set(fact.pid, structuredClone(fact));
+    }
+    return registry(...args);
+  };
+  await assert.rejects(s.read("pair"), /production_maintenance_runtime_unverified/);
+  assert.equal(s.counts.registry, 12);
+  const inactive = await scenario({ worker: "inactive" });
+  assert.deepEqual((await inactive.read("pair")).snapshotPair, { web: "running:301", worker: "inactive" });
+});
+
+test("paired runtime rejects missing candidate and a daemon change at the final observation", async () => {
+  const s = await scenario();
+  await assert.rejects(runtime.readManagedSnapshotPair(s.state.runtime, null, s.d), /production_maintenance_runtime_unverified/);
+  assert.equal(s.counts.registry, 0);
+  const registry = s.d.pm2Registry;
+  s.d.pm2Registry = async (...args) => {
+    const rows = await registry(...args);
+    if (s.counts.registry === 4) s.f.facts.get(s.state.runtime.daemon.pid).startTicks = "999999";
+    return rows;
+  };
+  await assert.rejects(s.read("pair"), /production_maintenance_runtime_unverified/);
+  assert.equal(s.counts.registry, 4);
 });
 
 test("candidate check commands outside the narrow snapshot path retain their full outer verifier", async () => {

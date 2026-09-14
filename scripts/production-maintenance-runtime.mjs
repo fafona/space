@@ -854,6 +854,24 @@ export async function readManagedSnapshot(rawProof, rawCandidate, kind, override
   });
 }
 
+// A fresh paired observation at ONE caller boundary, never a reusable cache.
+// Keep the full candidate/disk/environment/supervision checks and derive both
+// roles from the same final registry. This does not claim an atomic PM2 CAS.
+export async function readManagedSnapshotPair(rawProof, rawCandidate, overrides = {}) {
+  return guarded(async () => {
+    const proof = validateRuntimeProof(rawProof), candidate = validateCandidateProof(rawCandidate, proof);
+    const d = dependencies(overrides, proof.input.appPort, proof.bootId);
+    await verifyCandidate(proof, candidate, "1", overrides);
+    const entries = await pm2List(proof.daemon, d);
+    const worker = await managedProcess(entries, proof.input.appName + "-enterprise-automation-worker",
+      proof.disk.runtime, "worker", proof.daemon, d);
+    if (worker && (worker.pm2.status !== "stopped" || !equal(worker, proof.worker.managed))) fail();
+    const web = await managedProcess(entries, proof.input.appName, candidate.disk.runtime, "web", proof.daemon, d);
+    if (!web || !equal(web, candidate.web) || web.pm2.status !== "online") fail();
+    return { web: `running:${web.pm2.pid}`, worker: worker ? "inactive" : "absent" };
+  });
+}
+
 export async function readCandidateHandoffFields(rawProof, rawCandidate, overrides = {}) {
   const proof = validateRuntimeProof(rawProof), candidate = validateCandidateProof(rawCandidate, proof);
   await verifyCandidate(proof, candidate, "1", overrides);

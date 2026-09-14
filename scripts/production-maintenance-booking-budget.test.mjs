@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -15,6 +16,8 @@ const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" 
 const names = [
   "booking_persistence_diagnostic",
   "booking_persistence_observe",
+  "maintenance_booking_snapshot_pair",
+  "assert_booking_snapshot_pair_at_boundary",
   "capture_candidate_web_identity_for_booking_retry",
   "assert_booking_persistence_retry_state",
   "verify_booking_persistence_with_bounded_retry",
@@ -29,10 +32,12 @@ const functions = names.map(extract).join("\n");
 const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 const shellPath = (value) => value.replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 
-function run({ snapshotSeconds = 0, initialSeconds = 0, drift = "none" } = {}) {
+function run({ snapshotSeconds = 0, initialSeconds = 0, drift = "none", mode = "off" } = {}) {
   assert.ok(Number.isSafeInteger(snapshotSeconds) && snapshotSeconds >= 0 && snapshotSeconds <= 4);
   assert.ok(Number.isSafeInteger(initialSeconds) && initialSeconds >= 0 && initialSeconds <= 1);
-  assert.ok(["none", "cwd", "process", "fence", "environment"].includes(drift));
+  assert.ok(["none", "cwd", "process", "fence", "environment", "pair_worker", "pair_web", "pair_shape", "pair_transport",
+    "pair_after_fence", "pair_after_health", "pair_after_query"].includes(drift));
+  assert.ok(["off", "maintenance"].includes(mode));
   if (process.platform === "win32") assert.ok(existsSync(bash), "Git Bash required; do not skip composition");
   const directory = mkdtempSync(join(tmpdir(), "faolla-booking-budget-"));
   const tracePath = join(directory, "trace");
@@ -47,6 +52,8 @@ TRACE=${quote(shellPath(tracePath))}
 CLOCK=${quote(shellPath(clockPath))}
 SNAPSHOT_SECONDS=${snapshotSeconds}
 DRIFT=${quote(drift)}
+PRODUCTION_MAINTENANCE_MODE=${quote(mode)}
+PAIR_DRIFT=0
 CURRENT_LINK=${quote(shellPath(join(directory, "current")))}
 RELEASE_DIR=${quote(shellPath(join(directory, "release")))}
 APP_NAME=fixture-web
@@ -112,6 +119,23 @@ pm2_process_snapshot() {
   # There is no sleep or claim that one real snapshot costs this many seconds.
   printf '%s' "$(( $(<"$CLOCK") + SNAPSHOT_SECONDS ))" > "$CLOCK"
 }
+deadline_bounded_command_timeout_seconds() {
+  [ "$1" = 60 ] && [ "$2" = 30 ] && [ "$3" = 1 ] || return 97
+  local remaining=$((60 - $(<"$CLOCK") - 1))
+  [ "$remaining" -gt 0 ] || return 97
+  [ "$remaining" -le 30 ] || remaining=30
+  printf '%s\n' "$remaining"
+}
+maintenance_deployment_read() {
+  [ "$1" = snapshot-pair ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] && [ "$2" -le 30000 ] || return 97
+  record snapshot:pair
+  printf '%s' "$(( $(<"$CLOCK") + SNAPSHOT_SECONDS ))" > "$CLOCK"
+  [ "$DRIFT" != pair_transport ] || return 97
+  if [ "$DRIFT" = pair_shape ]; then printf '%s\n' absent running:123 extra; return 0; fi
+  if [ "$DRIFT" = pair_worker ]; then printf '%s\n' inactive running:123; return 0; fi
+  if [ "$DRIFT" = pair_web ] || [ "$PAIR_DRIFT" = 1 ]; then printf '%s\n' absent running:124; return 0; fi
+  printf '%s\n' absent running:123
+}
 linux_process_start_ticks() { [ "$1" = 123 ] && [ "$2" = 60 ] || return 97; printf '%s\n' 456; }
 read_candidate_environment_snapshot_for_booking_retry() {
   [ "$1" = 60 ] || return 97
@@ -133,12 +157,15 @@ read_candidate_process_environment_snapshot_for_booking_retry() {
 assert_readiness_fence_before_forward_operation() {
   [ "$2" = 60 ] && [ "$1" -eq $((60 - SECONDS)) ] || return 97
   record fence:before
+  [ "$DRIFT" != pair_after_fence ] || PAIR_DRIFT=1
+  return 0
 }
 assert_readiness_fence_forward_checkpoint() { [ "$1" = 60 ] || return 97; record fence:after; }
-assert_candidate_web_health() { [ "$1" = 60 ] || return 97; record health; }
+assert_candidate_web_health() { [ "$1" = 60 ] || return 97; record health; [ "$DRIFT" != pair_after_health ] || PAIR_DRIFT=1; return 0; }
 verify_booking_persistence() {
   [ "$2" = 60 ] && [ "$1" -eq $((60 - SECONDS)) ] || return 97
   record "query:$1"
+  [ "$DRIFT" != pair_after_query ] || PAIR_DRIFT=1
   return 0
 }
 
@@ -181,7 +208,26 @@ printf '__result__ %s %s\n' "$status" "$SECONDS"
 }
 
 const snapshots = (trace) => trace.filter((item) => item.startsWith("snapshot:"));
-test("actual composed capture/state/retry observes 17 snapshots before query and 29 for one success", () => {
+test("D7 query/fence SQL and retry decisions remain byte-equivalent with the fixed 60/20/5 budgets", () => {
+  // Pins were compared with real T7 Git blobs locally; CI needs no historical
+  // object or private state. Line endings alone are normalized above.
+  const digest = value => createHash("sha256").update(value).digest("hex");
+  const sql = [...source.matchAll(/<<'SQL'\n([\s\S]*?)\nSQL/g)].map(match => match[1]);
+  assert.equal(sql.length, 2);
+  assert.equal(digest(JSON.stringify(sql)), "b39e1881c6358715413f31ed450c2f54054c157faf2066f82f0be2d049d02d11");
+  for (const [name, pin] of [
+    ["verify_booking_persistence_with_bounded_retry", "e9bbcc8ec0db740e4a7efeb897f6a2106b1b6a421083d8e16a14ea15617dbda6"],
+    ["capture_candidate_web_identity_for_booking_retry", "c7db04f7d32ba6263dcd2a8fc07fd1dc40d079786d0ffa55df1e0ed917d14685"],
+    ["assert_readiness_fence_database_locks", "4b936da19f289c2cbd0f28b896debe91d880f9305bb796b4b6c36854a17db7cd"],
+  ]) assert.equal(digest(extract(name)), pin);
+  for (const [name, value] of [["BOOKING_PERSISTENCE_RETRY_TOTAL_TIMEOUT_SECONDS", 60],
+    ["BOOKING_PERSISTENCE_POST_PROOF_RESERVE_SECONDS", 20], ["BOOKING_PERSISTENCE_FD_POST_PROOF_RESERVE_SECONDS", 5]]) {
+    assert.ok(source.includes(name + ":-" + value + "}"));
+    assert.ok(source.includes('"$' + name + '" -ne ' + value));
+  }
+});
+
+test("ordinary mode retains 17 snapshots before query and 29 for one success", () => {
   const result = run();
   assert.equal(result.status, 0);
   const query = result.trace.indexOf("query:60");
@@ -192,6 +238,45 @@ test("actual composed capture/state/retry observes 17 snapshots before query and
   assert.equal(result.trace.filter((item) => item === "health").length, 2);
   assert.deepEqual(result.trace.filter((item) => item.startsWith("fence:")), ["fence:before", "fence:after"]);
   assert.equal(result.seconds, 0);
+});
+
+test("maintenance pairs only adjacent role checks: 9 complete reads before query and 15 for one success", () => {
+  const result = run({ mode: "maintenance" });
+  assert.equal(result.status, 0);
+  const query = result.trace.indexOf("query:60"); assert.ok(query >= 0);
+  assert.equal(snapshots(result.trace.slice(0, query)).length, 9);
+  assert.equal(snapshots(result.trace).length, 15);
+  assert.equal(result.trace.filter(x => x === "snapshot:web").length, 1);
+  assert.equal(result.trace.filter(x => x === "snapshot:pair").length, 14);
+  assert.equal(result.trace.includes("snapshot:worker"), false);
+  const logicalRoles = result.trace.flatMap(x => x === "snapshot:pair" ? ["worker", "web"] : x === "snapshot:web" ? ["web"] : []);
+  assert.equal(logicalRoles.length, 29, "both role decisions remain at every original before/after boundary");
+  assert.deepEqual(result.trace.filter(x => x.startsWith("fence:")), ["fence:before", "fence:after"]);
+  assert.equal(result.trace.filter(x => x === "health").length, 2);
+  assert.equal(result.trace.filter(x => x.startsWith("query:")).length, 1);
+});
+
+test("paired synthetic costs retain the real 60/25 guard; fewer reads are not production timing acceptance", () => {
+  // Synthetic per-complete-read cost only. The next full recovery-shaped state,
+  // its candidate fields, recursive audits, real host I/O and post-query work
+  // still require independent performance acceptance; this test proves none of
+  // those elapsed times and never changes production timeouts or audit bytes.
+  const fits = run({ mode: "maintenance", snapshotSeconds: 3 });
+  assert.equal(fits.status, 0); assert.ok(fits.trace.includes("query:33")); assert.equal(fits.seconds, 45);
+  const rejected = run({ mode: "maintenance", snapshotSeconds: 4 });
+  assert.equal(rejected.status, 1); assert.equal(rejected.seconds, 36);
+  assert.equal(snapshots(rejected.trace).length, 9);
+  assert.equal(rejected.trace.some(x => x.startsWith("query:")), false);
+  assert.match(rejected.diagnostics, /stage=retry_reserve code=failed/);
+});
+
+test("paired boundaries reject role/shape/transport drift and reobserve after fence, health and query", () => {
+  for (const drift of ["pair_worker", "pair_web", "pair_shape", "pair_transport", "pair_after_fence", "pair_after_health", "pair_after_query"]) {
+    const result = run({ mode: "maintenance", drift });
+    assert.equal(result.status, 1, drift);
+    assert.equal(result.trace.filter(x => x.startsWith("query:")).length, drift === "pair_after_query" ? 1 : 0, drift);
+    assert.match(result.diagnostics, /stage=(?:state_pair_before|state_web_before|state_worker_before) code=failed/, drift);
+  }
 });
 
 test("synthetic snapshot costs exercise the real 25-second pre-query reserve, not production elapsed time", () => {
@@ -212,10 +297,12 @@ test("synthetic snapshot costs exercise the real 25-second pre-query reserve, no
 });
 
 test("the composed state checks still reject synthetic cwd, process, fence and environment drift before query", () => {
+  for (const mode of ["off", "maintenance"]) {
   for (const drift of ["cwd", "process", "fence", "environment"]) {
-    const result = run({ drift });
+    const result = run({ drift, mode });
     assert.equal(result.status, 1, drift);
     assert.equal(result.trace.some((item) => item.startsWith("query:")), false, drift);
     assert.match(result.diagnostics, /code=failed/, drift);
+  }
   }
 });

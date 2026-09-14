@@ -306,7 +306,7 @@ test("all affected workflow YAML and embedded bash remain syntactically valid", 
 
 test("maintenance control is a fixed manual current-main exact-CI pinned-SSH workflow", () => {
   const source = sources["production-maintenance"];
-  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "recover-held", "continue-held", "recover-build", "recover-attempt", "recover-second-attempt", "check", "end"]);
+  assert.deepEqual(workflows["production-maintenance"].on.workflow_dispatch.inputs.action.options, ["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "recover-held", "continue-held", "recover-build", "recover-attempt", "recover-second-attempt", "recover-budget", "check", "end"]);
   assert.deepEqual(Object.keys(workflows["production-maintenance"].on), ["workflow_dispatch"]);
   assert.match(source, /CHECK_PRODUCTION_MAINTENANCE_PLAN/);
   assert.match(source, /test "\$TARGET_SHA" = "\$GITHUB_SHA"/);
@@ -519,7 +519,7 @@ test("build recovery sends one bounded grant only to its explicit action and nev
   const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
   const fixed = { ACTION: "recover-build", APP_NAME: "merchant-space", APP_PORT: "3000", CHECK_STATE: "held",
     MAINTENANCE_OPERATION_ID: env.MAINTENANCE_OPERATION_ID, PREVIOUS_TARGET_SHA: "a".repeat(40),
-    RECOVERY_EVIDENCE: "", CONTINUATION_EVIDENCE: "", BUILD_RECOVERY_EVIDENCE: "YQ", ATTEMPT_RECOVERY_EVIDENCE: "", SECOND_ATTEMPT_RECOVERY_EVIDENCE: "" };
+    RECOVERY_EVIDENCE: "", CONTINUATION_EVIDENCE: "", BUILD_RECOVERY_EVIDENCE: "YQ", ATTEMPT_RECOVERY_EVIDENCE: "", SECOND_ATTEMPT_RECOVERY_EVIDENCE: "", BUDGET_RECOVERY_EVIDENCE: "" };
   const execute = patch => spawnSync(bash, ["-s"], { input: prefix,
     env: { SystemRoot: process.env.SystemRoot ?? "", PATH: "", ...fixed, ...patch }, encoding: "utf8", timeout: 5000, maxBuffer: 20480 });
   assert.deepEqual(execute({}).stdout.trim().split("\n"), ["recover-build", "held", "--expected-operation-id",

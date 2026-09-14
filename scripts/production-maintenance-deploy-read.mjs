@@ -14,7 +14,7 @@ export async function readMaintenanceDeploymentFields(argv, overrides = {}) {
 async function readFields(argv, overrides) {
   const [action, appDir, appName, appPort, targetSha, expectedOldSha, operationId, timeoutRaw = "30000", expectedMode, expectedSiteIds, expectedOrigin] = argv;
   const rollout = action === "rollout-web";
-  if (argv.length < 7 || (rollout ? argv.length !== 11 : argv.length > 8) || !["runtime-handoff", "candidate-handoff", "snapshot-web", "snapshot-worker", "rollout-web"].includes(action) ||
+  if (argv.length < 7 || (rollout ? argv.length !== 11 : argv.length > 8) || !["runtime-handoff", "candidate-handoff", "snapshot-web", "snapshot-worker", "snapshot-pair", "rollout-web"].includes(action) ||
       !/^[1-9]\d{0,5}$/.test(timeoutRaw) || Number(timeoutRaw) < 1000 || Number(timeoutRaw) > 120000) throw new Error("maintenance_deployment_read_invalid");
   if (rollout && (expectedOrigin !== "https://launch.faolla.com" || !["off", "enforce"].includes(expectedMode) ||
       (expectedMode === "off" ? expectedSiteIds !== "" : typeof expectedSiteIds !== "string" || !/^[0-9]{8}(,[0-9]{8}){0,49}$/.test(expectedSiteIds) ||
@@ -34,18 +34,26 @@ async function readFields(argv, overrides) {
     remaining();
     if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 262144) throw new Error("maintenance_deployment_read_unverified");
     const report = JSON.parse(result.stdout);
-    if (controlAction === "runtime-handoff" && report?.version === 2) return report;
+    if (controlAction === "runtime-handoff" && [2, 3].includes(report?.version)) return report;
     const attemptHandoff = controlAction === "runtime-handoff" && Object.hasOwn(report ?? {}, "attemptRecovery");
     const expectedKeys = ["version", "operationId", "targetSha", "expectedOldSha", "state",
-      controlAction === "runtime-handoff" ? "runtime" : controlAction === "candidate-handoff" ? "fields" : "snapshot",
+      controlAction === "runtime-handoff" ? "runtime" : controlAction === "candidate-handoff" ? "fields" : controlAction === "snapshot-pair" ? "snapshotPair" : "snapshot",
       ...(attemptHandoff ? ["attemptRecovery"] : [])].sort();
     if (!report || typeof report !== "object" || Array.isArray(report) || Object.keys(report).sort().join(",") !== expectedKeys.join(",") || report.version !== 1 ||
         report.operationId !== operationId || report.targetSha !== targetSha || report.expectedOldSha !== expectedOldSha ||
         !["held", "candidate"].includes(report.state) || action === "runtime-handoff" && report.state !== "held" ||
-        action === "candidate-handoff" && report.state !== "candidate") throw new Error("maintenance_deployment_read_unverified");
+        ["candidate-handoff", "snapshot-pair"].includes(action) && report.state !== "candidate") throw new Error("maintenance_deployment_read_unverified");
     return report;
   };
   const report = read();
+  if (controlAction === "snapshot-pair") {
+    const pair = report.snapshotPair;
+    if (!pair || typeof pair !== "object" || Array.isArray(pair) || Object.keys(pair).sort().join(",") !== "web,worker" ||
+        typeof pair.web !== "string" || !/^running:[1-9]\d{0,9}$/.test(pair.web) || Number(pair.web.slice(8)) > 2147483647 ||
+        !["absent", "inactive"].includes(pair.worker)) throw new Error("maintenance_deployment_read_unverified");
+    remaining();
+    return pair.worker + "\n" + pair.web + "\n";
+  }
   if (controlAction.startsWith("snapshot-")) {
     if (typeof report.snapshot !== "string" || !/^(?:absent|inactive|running:[1-9]\d{0,9})$/.test(report.snapshot)) throw new Error("maintenance_deployment_read_unverified");
     if (rollout) {
@@ -77,7 +85,15 @@ async function readFields(argv, overrides) {
     return report.snapshot + "\n";
   }
   let fields = report.fields;
-  if (action === "runtime-handoff" && report.version === 2) {
+  if (action === "runtime-handoff" && report.version === 3) {
+    const { validateBudgetRecoveryHandoffReport } = await import("./production-maintenance-budget-handoff.mjs");
+    const before = validateBudgetRecoveryHandoffReport(report, request);
+    remaining();
+    const after = validateBudgetRecoveryHandoffReport(read(), request);
+    if (!isDeepStrictEqual(before, after)) throw new Error("maintenance_deployment_read_unverified");
+    fields = after.fields;
+    remaining();
+  } else if (action === "runtime-handoff" && report.version === 2) {
     const { validateFailedAttemptHandoffReport } = await import("./production-maintenance-failed-attempt-handoff.mjs");
     const before = validateFailedAttemptHandoffReport(report, request);
     remaining();
