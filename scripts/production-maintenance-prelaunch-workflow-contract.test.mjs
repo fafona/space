@@ -56,5 +56,3 @@ test("private cleanup stays scoped and every new shell block parses without any 
   for (const item of steps.filter(value => value.if?.includes("recover-prelaunch") || ["Execute Fixed Maintenance Transition", "Validate Fixed Manual Transition"].includes(value.name)))
     assert.equal(spawnSync(bash, ["-n"], { input: item.run, encoding: "utf8", timeout: 5000, windowsHide: true }).status, 0, item.name);
 });
-
-

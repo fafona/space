@@ -249,4 +249,3 @@ test("CLI remains GET-only, bounded, masks before output, and never downloads ba
   assert.doesNotMatch(source, /\/zip|\/logs|spawnSync\("(?:ssh|curl)"|"--method", "(?:POST|PUT|DELETE)"/);
   assert.match(source, /maintenance_prelaunch_recovery_workflow_unverified/);
 });
-

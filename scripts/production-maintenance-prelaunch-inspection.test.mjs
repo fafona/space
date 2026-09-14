@@ -180,7 +180,7 @@ function assembleV7(f) {
 
 import { createMaintenanceBudgetRecoveryInspection, buildMaintenanceBudgetRecoveredState,
   validateMaintenanceBudgetRecoveryState } from "./production-maintenance-budget-recovery.mjs";
-import { MAINTENANCE_WINDOW_RENEWAL_INCIDENT as WINDOW, 
+import { MAINTENANCE_WINDOW_RENEWAL_INCIDENT as WINDOW,
   createMaintenanceWindowRenewalInspection, buildMaintenanceWindowRenewedState } from "./production-maintenance-window-renewal.mjs";
 function assembleV8(f) {
   const seed = f.state, now = Date.parse("2026-09-14T09:07:00Z");

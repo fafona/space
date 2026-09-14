@@ -215,5 +215,3 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     process.stdout.write("maintenance_prelaunch_recovery_history_verified\n");
   } catch { process.stderr.write("maintenance_prelaunch_recovery_workflow_unverified\n"); process.exitCode = 1; }
 }
-
-
