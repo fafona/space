@@ -728,6 +728,33 @@ each is actually observed and verified. B7/R7 are historical inputs, not
 substitutes for those new release artifacts. Failure does not grant an automatic
 retry or extend the 10:00 UTC deadline.
 
+## Fixed protected-preflight recovery on 2026-09-14
+
+The user confirmed continuation after the newly failed D10 protection state;
+the tool acknowledgement was 2026-09-14 17:48:01 UTC (not the exact message time).
+`recover-preflight` is a one-time v10/revision 38 to v11 transition, bound to raw
+SHA-256 `06654f0d57a38ac823983762308a6dba2042d3b6a6b0c701116781bed4b6840c`
+and 1,923,312 bytes. It requires
+`RECOVER_PREFLIGHT_PRODUCTION_MAINTENANCE_UNTIL_20260914T200000Z`.
+The deadline remains 20:00 UTC, active attempt remains 3, and additional runtime
+attempts remain zero. All five active launch fields must be null. Original v10
+and older audits are reconstructed exactly, not replaced or relabelled.
+Fresh source/main-CI/history, disk, ingress, stopped generations and migration
+registry checks plus the existing operation lock and exact CAS are mandatory.
+A further failed v11 cannot return to held. No direct state editing is allowed.
+
+The known preflight budget defect is independently measurable: three genuine
+runtime-held CLI calls plus seven real cold probe-context reads took 18,779 ms,
+excluding the remaining fence and file checks, while the old 45-second window
+allowed only approximately 18 seconds before its query reserves. This establishes
+insufficient budget headroom, but does not reconstruct every branch of the
+historical D10 failure. Maintenance preflight gets 120 seconds; ordinary mode
+keeps 45. Query supervision remains at most 60, post-proof reserve 20 and FD
+reserve 5. The maintenance path budgets two bounded 70-second full checkpoints
+instead of stops it does not execute, totaling 1210 including the unchanged
+780-second rollback reserve, within the unchanged 1320-second fence maximum.
+No predicate, data check or authentication permission is removed.
+
 ## One unused-attempt window renewal on 2026-09-14
 
 The recorded authorization at `2026-09-14T12:31:04Z` permits the existing,

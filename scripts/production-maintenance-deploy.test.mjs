@@ -83,7 +83,22 @@ test("offline quiescence consumes real held evidence and does not fake a live li
 });
 
 test("only the active exact fence may use the runtime-only checkpoint and both fence checks are required", () => {
-  const body = fn("maintenance_preflight_checkpoint") + `
+  const body = fn("deadline_bounded_command_timeout_seconds") + fn("maintenance_preflight_checkpoint") + `
+exec 3>&1
+APP_DIR=/synthetic APP_NAME=merchant-space APP_PORT=3000
+EXPECTED_DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+PRODUCTION_MAINTENANCE_OPERATION_ID=12345678-1234-4123-8123-123456789abc
+timeout() {
+  local expected=(--signal=TERM --kill-after=5s 30s node "$APP_DIR/scripts/production-maintenance-control.mjs" check-runtime-held
+    --app-dir "$APP_DIR" --app-name "$APP_NAME" --app-port "$APP_PORT" --target-sha "$EXPECTED_DEPLOY_SHA"
+    --expected-old-sha "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" --expected-operation-id "$PRODUCTION_MAINTENANCE_OPERATION_ID" --json)
+  [ "$#" -eq "\${#expected[@]}" ] || return 1
+  local index=0 argument
+  for argument in "$@"; do [ "$argument" = "\${expected[$index]}" ] || return 1; index=$((index + 1)); done
+  printf 'control:check-runtime-held\\n' >&3
+  [ "$CONTROL_OK" = 1 ]
+}
 maintenance_control() { printf 'control:%s\\n' "$1"; [ "$CONTROL_OK" = 1 ]; }
 CHECKS=0
 assert_readiness_fence_before_process_quiescence() {

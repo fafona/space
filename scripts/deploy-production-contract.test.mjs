@@ -5588,6 +5588,42 @@ test("deadline-derived command windows reserve termination time and fail at the 
   ]);
 });
 
+test("maintenance preflight measured proof cost fits without weakening query and fence reserves", () => {
+  const functions = ["deadline_bounded_command_timeout_seconds", "run_booking_persistence_preflight"].map(extractShellFunction).join("\n");
+  const run = (mode, elapsed) => spawnSync(resolveBashExecutable(), ["-s"], {
+    encoding: "utf8", timeout: 10000,
+    input: `set -eu\n${functions}\nunset SECONDS; SECONDS=0
+PRODUCTION_MAINTENANCE_MODE=${mode}
+BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS=45
+BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60
+BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY=1:2:3:4:5:6:7
+BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY=1:2:3:4:5:6:7:8
+BOOKING_PREFLIGHT_ENVIRONMENT_SHA256=${"a".repeat(64)}
+booking_persistence_diagnostic() { :; }
+assert_readiness_fence_before_process_quiescence() { return 0; }
+previous_runtime_preflight_identity_matches() { return 0; }
+previous_runtime_recovery_identity_matches() { return 0; }
+capture_booking_persistence_preflight_identity() { SECONDS=${elapsed}; }
+assert_booking_persistence_preflight_state() { [ "$SECONDS" -lt "$1" ]; }
+verify_booking_persistence() {
+  [ "$1" -le 60 ] || return 4
+  t="$(deadline_bounded_command_timeout_seconds "$2" "$1" 20)" || return 4
+  [ "$t" -gt 5 ] || return 4
+  if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then [ "$2" = 120 ] && [ "$1" = 60 ]; else [ "$2" = 45 ]; fi
+}
+if run_booking_persistence_preflight 270; then printf 'PASS'; else printf 'BLOCKED'; fi`,
+  });
+  const ordinary = run("off", 19), maintenance = run("maintenance", 19), expired = run("maintenance", 120);
+  for (const result of [ordinary, maintenance, expired]) assert.equal(result.status, 0, result.stderr);
+  assert.match(ordinary.stdout, /integrity_failed[\s\S]*BLOCKED$/);
+  assert.equal(maintenance.stdout, "PASS");
+  assert.match(expired.stdout, /BLOCKED$/);
+  assert.equal(780 + 120 + 2 * 70 + 6 * 15 + 60 + 2 * 5 + 10, 1210);
+  assert.ok(1210 <= 1320);
+  assert.match(deployScript, /BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS.*45/);
+  assert.match(extractShellFunction("maintenance_preflight_checkpoint"), /checkpoint_deadline[\s\S]*30 5[\s\S]*check-runtime-held/);
+});
+
 test("booking preflight is single-query, pre-mutation, classified, and rollback-free", async () => {
   const preflightFunction = extractShellFunction("run_booking_persistence_preflight");
   const transition = deployScript.slice(
@@ -5625,6 +5661,8 @@ test("booking preflight is single-query, pre-mutation, classified, and rollback-
         `CALLS='${toBashPath(callsPath)}'`,
         `CHECKER_STATUS='${checkerStatus}'`,
         "BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS=45",
+        "BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS=60",
+        "booking_persistence_diagnostic() { :; }",
         "unset SECONDS; SECONDS=0",
         "WEB_COMMITTED=0",
         "SWITCH_COMPLETED=0",
