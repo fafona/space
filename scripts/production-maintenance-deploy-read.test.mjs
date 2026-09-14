@@ -4,6 +4,69 @@ import { existsSync } from "node:fs";
 import test from "node:test";
 import { readMaintenanceDeploymentFields } from "./production-maintenance-deploy-read.mjs";
 
+function compactAttemptReadFixture() {
+  const T6 = "3af8fa6ba6644593e10bef0a391389b2b34e926a", T7 = "a".repeat(40);
+  const APP = "/www/wwwroot/merchant-space", path = APP + ".releases/" + T6.slice(0, 12) + "-20260913200000";
+  const request = { appDir: APP, appName: "merchant-space", appPort: 3000, targetSha: T7,
+    expectedOldSha: "cd943076ebda758b70bf2f2270a508c774b726d6", operationId: "eb81284a-09c4-4514-8f16-38eaf6acc1e4" };
+  const pin = "785a4139be1cc78b42fd0a9e2dde619d995f0b2f1be521589ec31fd900c0db75";
+  const stoppedBaseline = { version: 2, stateDigest: pin, candidateDigest: "a".repeat(64), launchDiskDigest: "b".repeat(64),
+    launchJournalDigest: "c".repeat(64), runtimeDigest: "d".repeat(64), current: { target: path,
+      linkIdentity: "1:91:64:10:20:1:0:41471", runtimeIdentity: "1:30:64:10:20:2:0:16877" },
+    bootId: "e6531ec9-db4a-4216-b87a-7cc858197eaa", pm2RegistryDigest: "e".repeat(64), observedAt: Date.parse("2026-09-14T02:05:00Z") };
+  const fields = Object.fromEntries(previousKeys.map(key => [key, "fixture"]));
+  Object.assign(fields, { PREVIOUS_LINK_TARGET: path, PREVIOUS_RUNTIME_DIR: path, PREVIOUS_RUNTIME_PARENT: APP + ".releases",
+    PREVIOUS_RELEASE_NAME: path.split("/").at(-1), PREVIOUS_BUILD_PREFIX: T6.slice(0, 12), PREVIOUS_BUILD_ID: T6,
+    PREVIOUS_RUNTIME_IDENTITY: "1:30:0", PREVIOUS_WEB_CWD_IDENTITY: "1:30:0", PREVIOUS_WEB_PID: "301", PREVIOUS_WEB_PROCESS_START_TICKS: "401",
+    PREVIOUS_WEB_PROCESS_IDENTITY: "1:301", PREVIOUS_ENVIRONMENT_SHA256: "f".repeat(64),
+    PREVIOUS_AUTOMATION_WORKER_STATE: "running", PREVIOUS_AUTOMATION_WORKER_RUNNING: "1" });
+  for (const key of ["SUPABASE_INTERNAL_URL", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) fields["PREVIOUS_" + key + "_B64"] = Buffer.from(fields["PREVIOUS_" + key]).toString("base64");
+  const report = { version: 2, operationId: request.operationId, targetSha: T7, expectedOldSha: request.expectedOldSha, state: "held", fields,
+    attemptBaseline: { version: 2, predecessorStateDigest: pin, previousTargetSha: T6, stoppedBaseline } };
+  return { report, argv: ["runtime-handoff", APP, "merchant-space", "3000", T7, request.expectedOldSha, request.operationId, "30000"] };
+}
+
+test("v7 small handoff uses two real typed reports under the original size/time bounds, never a whole predecessor", async () => {
+  const f = compactAttemptReadFixture(), calls = [];
+  const result = await readMaintenanceDeploymentFields(f.argv, { run(command, argv, options) {
+    calls.push(options); assert.equal(command, process.execPath); assert.equal(argv[1], "runtime-handoff");
+    assert.equal(options.maxBuffer, 262144); assert.equal(options.shell, false); return response(f.report);
+  }, runtime: { validateRuntimeProof() { assert.fail("v7 must not fabricate or fall back to O report"); } } });
+  assert.equal(calls.length, 2); assert.deepEqual(result.split("\0"), [...Object.entries(f.report.fields).flat(), ""]);
+  assert(Buffer.byteLength(JSON.stringify(f.report)) < 8192);
+});
+test("v7 rejects changed second baseline or private fields and never accepts extra whole-state data", async () => {
+  for (const change of [
+    r => { r.attemptBaseline.stoppedBaseline.observedAt++; },
+    r => { r.fields.PREVIOUS_SUPABASE_INTERNAL_URL = "changed"; r.fields.PREVIOUS_SUPABASE_INTERNAL_URL_B64 = Buffer.from("changed").toString("base64"); },
+    r => { r.runtime = { private: "must not cross stdout" }; },
+    r => { r.attemptBaseline.predecessorStateDigest = "a".repeat(64); },
+    r => { r.state = "candidate"; },
+  ]) {
+    const f = compactAttemptReadFixture(); let reads = 0;
+    await rejected(readMaintenanceDeploymentFields(f.argv, { run() {
+      const r = structuredClone(f.report); if (++reads === 2) change(r); return response(r);
+    } })); assert.equal(reads, 2);
+  }
+  for (const change of [r => { r.operationId = OP; }, r => { r.targetSha = OLD; },
+    r => { r.fields.EXTRA = "SECRET"; }, r => { r.fields.PREVIOUS_WEB_PID = "0"; },
+    r => { r.fields.PREVIOUS_NEXT_PUBLIC_SUPABASE_ANON_KEY = "SECRET\n"; }]) {
+    const f = compactAttemptReadFixture(); change(f.report); let reads = 0;
+    await rejected(readMaintenanceDeploymentFields(f.argv, { run() { reads++; return response(f.report); } })); assert.equal(reads, 1);
+  }
+});
+test("v7 does not renew the deadline between reports or raise its 262144-byte cap", async () => {
+  const f = compactAttemptReadFixture(); let now = 0, reads = 0;
+  await rejected(readMaintenanceDeploymentFields(f.argv, { now: () => now, run() { reads++; now += 16000; return response(f.report); } }));
+  assert.equal(reads, 2);
+  let oversized = 0;
+  await rejected(readMaintenanceDeploymentFields(f.argv, { run() { oversized++; return { ...response(f.report), stdout: "x".repeat(262145) }; } }));
+  assert.equal(oversized, 1);
+  for (const action of ["candidate-handoff", "snapshot-web", "snapshot-worker"]) {
+    await rejected(readMaintenanceDeploymentFields(f.argv.with(0, action), { run: () => response(f.report) }));
+  }
+});
+
 const TARGET = "a".repeat(40), OLD = "b".repeat(40), OP = "11111111-1111-4111-8111-111111111111";
 const APP = "/srv/faolla", RUNTIME = `${APP}.releases/${TARGET.slice(0, 12)}-20260910000000`;
 const args = (action, ...extra) => [action, APP, "faolla", "3000", TARGET, OLD, OP, "30000", ...extra];

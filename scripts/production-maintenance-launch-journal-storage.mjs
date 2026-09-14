@@ -7,6 +7,7 @@ import { isProxy } from "node:util/types";
 import { planMaintenanceLaunch, transitionMaintenanceLaunch, validateMaintenanceLaunchJournal } from "./production-maintenance-launch-journal.mjs";
 import { assertMaintenanceBuildRecoveryProgress } from "./production-maintenance-build-recovery.mjs";
 import { assertMaintenanceAttemptRecoveryProgress } from "./production-maintenance-attempt-recovery.mjs";
+import { assertMaintenanceSecondAttemptRecoveryProgress } from "./production-maintenance-second-attempt-recovery.mjs";
 
 /** Private operation-state persistence; no process-control capability.
  * The caller MUST supply the existing operation lock, held until this callback
@@ -135,6 +136,11 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
   const confirmedSnapshot = (snapshot) => frozen({ state: snapshot.state, revision: snapshot.revision, digest: snapshot.digest });
 
   function assertJournalProgress(previous, next) {
+    if (previous.version === 6 && next.version === 7) {
+      // Exact single append only; all consumed v6/v5 slots remain immutable.
+      assertMaintenanceSecondAttemptRecoveryProgress(previous, next);
+      return;
+    }
     if (previous.version === 5 && next.version === 6) {
       // The consumed journal is not erased: the exact builder must preserve
       // the entire old state in the immutable predecessor of active attempt 1.
@@ -173,7 +179,8 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
     // Applies to both full-state replacement and journal-only writes, before
     // any temporary file is opened. All three audits are immutable; the build-recovery
     // wrapper delegates every legacy transition to the unchanged recovery guard.
-    if (previous.state.version === 6 || next.version === 6) assertMaintenanceAttemptRecoveryProgress(previous.state, next);
+    if (previous.state.version === 7 || next.version === 7) assertMaintenanceSecondAttemptRecoveryProgress(previous.state, next);
+    else if (previous.state.version === 6 || next.version === 6) assertMaintenanceAttemptRecoveryProgress(previous.state, next);
     else assertMaintenanceBuildRecoveryProgress(previous.state, next);
     const bytes = encode(next);
     const fd = io.openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);

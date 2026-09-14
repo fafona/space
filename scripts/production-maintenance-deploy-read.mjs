@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve, posix } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { parseMaintenanceRequest } from "./production-maintenance-control.mjs";
 
 // Host-only, private stdout. A real script entry point prevents the legacy
@@ -33,6 +34,7 @@ async function readFields(argv, overrides) {
     remaining();
     if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 262144) throw new Error("maintenance_deployment_read_unverified");
     const report = JSON.parse(result.stdout);
+    if (controlAction === "runtime-handoff" && report?.version === 2) return report;
     const attemptHandoff = controlAction === "runtime-handoff" && Object.hasOwn(report ?? {}, "attemptRecovery");
     const expectedKeys = ["version", "operationId", "targetSha", "expectedOldSha", "state",
       controlAction === "runtime-handoff" ? "runtime" : controlAction === "candidate-handoff" ? "fields" : "snapshot",
@@ -75,7 +77,15 @@ async function readFields(argv, overrides) {
     return report.snapshot + "\n";
   }
   let fields = report.fields;
-  if (action === "runtime-handoff") {
+  if (action === "runtime-handoff" && report.version === 2) {
+    const { validateFailedAttemptHandoffReport } = await import("./production-maintenance-failed-attempt-handoff.mjs");
+    const before = validateFailedAttemptHandoffReport(report, request);
+    remaining();
+    const after = validateFailedAttemptHandoffReport(read(), request);
+    if (!isDeepStrictEqual(before, after)) throw new Error("maintenance_deployment_read_unverified");
+    fields = after.fields;
+    remaining();
+  } else if (action === "runtime-handoff") {
     const runtime = overrides.runtime ?? await import("./production-maintenance-runtime.mjs");
     const proof = runtime.validateRuntimeProof(report.runtime);
     if (["appDir", "appName", "appPort", "expectedOldSha"].some((key) => proof.input[key] !== request[key])) throw new Error("maintenance_deployment_read_unverified");

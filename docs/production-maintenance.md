@@ -607,6 +607,50 @@ mandatory. No snapshot prevents a later privileged administrator or service
 from changing the host: configuration changes during the window are prohibited
 and invalidate the operation when detected.
 
+## Incident-bound second attempt after D6
+
+The `recover-second-attempt` action is a separate, one-use recovery for the
+exact failed v6 operation at revision 23, digest
+`785a4139be1cc78b42fd0a9e2dde619d995f0b2f1be521589ec31fd900c0db75`.
+The authorization was acknowledged at 2026-09-14 02:01:33 UTC. It permits one
+additional attempt before the unchanged 04:00 UTC deadline, not an extension.
+The fixed confirmation is
+`RECOVER_SECOND_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z`.
+
+This creates v7/revision 24/activeAttempt 2 only through one raw-byte/revision
+compare-and-swap under the existing operation lock. Its `secondAttemptRecovery`
+audit retains the complete v6 predecessor, including the original v5 history
+and both consumed launch journals. No journal is reset or hidden. The new
+active launch fields begin empty; the old fields remain immutable in the
+predecessor. All previous targets and nonces are forbidden for the new launch.
+Any uncertain persistence result forbids a send or retry. A later failed
+attempt cannot return to held or obtain another attempt through this action.
+
+Before recovery, independently verify the exact stopped T6 current pointer,
+O/T5/T6 process and disk identities, full database migration registry, original
+ingress, fresh source delta and current-main CI. Verify signed B6/R6 bindings,
+the earlier authorized scheduled-backup evidence and the complete workflow
+history from the original operation cutoff. Additional scheduled runs are not
+silently ignored or accepted by a broad history exception. Fresh backup and
+readiness evidence must bind to the new exact target before deployment; old
+B6/R6 artifacts are historical inputs only, not new-target release evidence.
+
+The new held handoff returns a bounded version-2 report containing the same
+27 typed deployment fields and a small exact baseline reference. The complete
+private state stays on the server. The reader performs two real observations
+and compares both reports; the 262144-byte limit is unchanged. Runtime checks
+continuously reject revival of O, T5 and T6 while the new candidate is running,
+including before dump, reopening ingress and confirming ended. The private
+one-use failure reclose retains original anchors and cannot authorize a late
+state write, restart, deadline extension or successful receipt.
+
+The D6 operational failure remains unconfirmed: original inner errors were
+not retained. The new fixed-stage fence diagnostics record only allowlisted
+stage/result/elapsed values, never SQL, credentials, state tokens or raw errors.
+SQL, lock policy, retry limits and deadlines are unchanged. Local simulations
+and tests do not constitute production success; only the real deployment,
+signed binding, normal maintenance end and public checks do so.
+
 ## Fixed Supabase 15 scheduler compatibility
 
 The exact `supabase/postgres:15.8.1.085` image uses an additional read-only
