@@ -37,6 +37,101 @@ const WORKFLOWS = Object.freeze([
 const INCIDENT_ORDER = Object.freeze(["34715932102", "34721155156", "34721256683", "34721317710",
   "34724943157", "34728212357", "34728263285", "34778579797", "34781336277", "34781392661", "34789894868", "34790775352", "34790827235", "34800653808", "34802075500", "34802138869"]);
 const LATEST_RUN_TIMES = Object.freeze({"34789894868":["2026-09-13T23:30:29Z","2026-09-13T23:30:29Z","2026-09-13T23:47:14Z"],"34790775352":["2026-09-13T23:48:52Z","2026-09-13T23:48:52Z","2026-09-13T23:49:59Z"],"34790827235":["2026-09-13T23:50:01Z","2026-09-13T23:50:01Z","2026-09-13T23:57:59Z"],"34800653808":["2026-09-14T02:52:25Z","2026-09-14T02:52:25Z","2026-09-14T03:15:43Z"],"34802075500":["2026-09-14T03:16:58Z","2026-09-14T03:16:58Z","2026-09-14T03:18:04Z"],"34802138869":["2026-09-14T03:18:05Z","2026-09-14T03:18:05Z","2026-09-14T03:27:36Z"]});
+
+// These two exactly observed failed runs neither produced a usable backup nor
+// executed a maintenance transition. They are history evidence only, not a
+// generic exception for schedules/failures. All projected steps are immutable.
+// Recorded confirmation time for THIS history exception, not a rewrite of the
+// original 07:13:57 budget authorization or an extension of its 10:00 deadline.
+export const MAINTENANCE_BUDGET_RECOVERY_FAILED_HISTORY_AUTHORIZATION = Object.freeze({
+  version: 1, authorizedAt: Date.parse("2026-09-14T08:24:49.000Z"),
+});
+export const MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS = Object.freeze([
+  { run: Object.freeze({"id":34820083043,"name":"Encrypted Database Backup","path":".github/workflows/database-backup.yml","event":"schedule","head_sha":"78ca8104442172baf046b62f9184cf9c7f6a9279","head_branch":"main","run_attempt":1,"status":"completed","conclusion":"failure","created_at":"2026-09-14T07:55:00Z","run_started_at":"2026-09-14T07:55:00Z","updated_at":"2026-09-14T07:55:16Z"}),
+    job: Object.freeze({"id":103899432902,"name":"backup","run_id":34820083043,"head_sha":"78ca8104442172baf046b62f9184cf9c7f6a9279","status":"completed","conclusion":"failure","started_at":"2026-09-14T07:55:02Z","completed_at":"2026-09-14T07:55:15Z"}),
+    steps: Object.freeze([
+      Object.freeze([1,"Set up job","success","2026-09-14T07:55:03Z","2026-09-14T07:55:04Z"]),
+      Object.freeze([2,"Checkout Exact Backup Source","success","2026-09-14T07:55:04Z","2026-09-14T07:55:11Z"]),
+      Object.freeze([3,"Verify Current Main And Exact Successful Push CI","failure","2026-09-14T07:55:11Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([4,"Setup Pinned SSH Host Trust","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([5,"Prepare Remote Detached Exact Source","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([6,"Verify Held Maintenance Before Backup","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([7,"Verify Backup Configuration From Exact Source","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([8,"Create Encrypted Database Backup From Exact Source","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([9,"Verify Held Maintenance After Backup Capture","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([10,"Transfer Complete Encrypted Backup","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([11,"Verify Encrypted Backup","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([12,"Rehearse Isolated Restore","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([13,"Confirm Backup Is Ready For Upload","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([14,"Upload Verified Encrypted Backup","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([15,"Verify Uploaded Backup Artifact Identity","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([16,"Generate Backup Attestation Predicate","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([17,"Upload Canonical Backup Attestation Input","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([18,"Upload Backup Verification And Attestation Inputs","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([19,"Attest Verified Encrypted Backup","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([20,"Attest Canonical Backup Attestation Input","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([21,"Upload Encrypted Backup Attestation Bundle","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([22,"Upload Canonical Backup Attestation Bundle","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([23,"Verify Held Maintenance Before Backup Attestation","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([24,"Build Canonical Maintenance Binding","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([25,"Upload Canonical Maintenance Binding","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([26,"Attest Canonical Maintenance Binding","skipped","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([27,"Upload Backup Failure Diagnostics","success","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([28,"Remove Temporary Backup And Exact Source","success","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([56,"Post Checkout Exact Backup Source","success","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+      Object.freeze([57,"Complete job","success","2026-09-14T07:55:14Z","2026-09-14T07:55:14Z"]),
+    ]),
+  },
+  { run: Object.freeze({"id":34821029270,"name":"Production Maintenance","path":".github/workflows/production-maintenance.yml","event":"workflow_dispatch","head_sha":"78ca8104442172baf046b62f9184cf9c7f6a9279","head_branch":"main","run_attempt":1,"status":"completed","conclusion":"failure","created_at":"2026-09-14T08:06:34Z","run_started_at":"2026-09-14T08:06:34Z","updated_at":"2026-09-14T08:07:28Z"}),
+    job: Object.freeze({"id":103902411547,"name":"maintenance","run_id":34821029270,"head_sha":"78ca8104442172baf046b62f9184cf9c7f6a9279","status":"completed","conclusion":"failure","started_at":"2026-09-14T08:06:38Z","completed_at":"2026-09-14T08:07:28Z"}),
+    steps: Object.freeze([
+      Object.freeze([1,"Set up job","success","2026-09-14T08:06:39Z","2026-09-14T08:06:39Z"]),
+      Object.freeze([2,"Validate Fixed Manual Transition","success","2026-09-14T08:06:39Z","2026-09-14T08:06:39Z"]),
+      Object.freeze([3,"Checkout Exact Maintenance Source","success","2026-09-14T08:06:39Z","2026-09-14T08:06:44Z"]),
+      Object.freeze([4,"Require Current Main And Exact Successful Push CI","success","2026-09-14T08:06:44Z","2026-09-14T08:06:45Z"]),
+      Object.freeze([5,"Require Exact Successful Maintenance Deploy Before End","skipped","2026-09-14T08:06:45Z","2026-09-14T08:06:45Z"]),
+      Object.freeze([6,"Verify Signed Deploy Maintenance Binding","skipped","2026-09-14T08:06:45Z","2026-09-14T08:06:45Z"]),
+      Object.freeze([7,"Setup Pinned SSH Trust","success","2026-09-14T08:06:45Z","2026-09-14T08:06:45Z"]),
+      Object.freeze([8,"Prepare Remote Detached Exact Control Source","success","2026-09-14T08:06:45Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([9,"Inspect Original Failed Held Recovery State","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([10,"Verify Complete Recovery History Under Production Lock","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([11,"Inspect Migrated Unlaunched Continuation State","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([12,"Verify Original Signed Backup And Readiness Bindings","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([13,"Verify Exact Continuation History Under Production Lock","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([14,"Inspect Failed Unlaunched Build Recovery State","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([15,"Verify Build Incident Signed Backup And Readiness Bindings","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([16,"Verify Fixed Additional Scheduled Backup Evidence","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([17,"Verify Exact Build Recovery History Under Production Lock","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([18,"Verify Launched Incident Signed Backup And Readiness Bindings","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([19,"Verify Attempt Recovery Historical Additional Backup","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([20,"Inspect Stopped Launched Candidate Recovery State","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([21,"Verify Exact Single Attempt Recovery History Under Production Lock","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([22,"Verify Second Launched Incident Signed Backup And Readiness Bindings","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([23,"Verify Second Attempt Recovery Historical Additional Backup","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([24,"Inspect Stopped Second Launched Candidate Recovery State","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([25,"Verify Exact Second Attempt Recovery History Under Production Lock","skipped","2026-09-14T08:06:50Z","2026-09-14T08:06:50Z"]),
+      Object.freeze([26,"Verify Budget Incident Signed Backup And Readiness Bindings","success","2026-09-14T08:06:50Z","2026-09-14T08:06:58Z"]),
+      Object.freeze([27,"Verify Budget Recovery Historical Additional Backup","success","2026-09-14T08:06:58Z","2026-09-14T08:07:06Z"]),
+      Object.freeze([28,"Inspect Stopped Budget Candidate Recovery State","success","2026-09-14T08:07:06Z","2026-09-14T08:07:21Z"]),
+      Object.freeze([29,"Verify Exact Budget Recovery History Under Production Lock","failure","2026-09-14T08:07:21Z","2026-09-14T08:07:24Z"]),
+      Object.freeze([30,"Execute Fixed Maintenance Transition","skipped","2026-09-14T08:07:24Z","2026-09-14T08:07:24Z"]),
+      Object.freeze([31,"Verify Real Public Release After End","skipped","2026-09-14T08:07:24Z","2026-09-14T08:07:24Z"]),
+      Object.freeze([32,"Reclose Entry And Fail Held If End Is Unconfirmed","skipped","2026-09-14T08:07:24Z","2026-09-14T08:07:24Z"]),
+      Object.freeze([33,"Remove Exact Temporary Control Source","success","2026-09-14T08:07:24Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([34,"Remove Runner Recovery Inspection","skipped","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([35,"Remove Runner Continuation Evidence","skipped","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([36,"Remove Runner Build Recovery Evidence","skipped","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([37,"Remove Fixed Additional Scheduled Backup Evidence","skipped","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([38,"Remove Runner Attempt Recovery Evidence","skipped","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([39,"Remove Runner Second Attempt Recovery Evidence","skipped","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([40,"Remove Runner Budget Recovery Evidence","success","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([41,"Remove Runner SSH Material","success","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([82,"Post Checkout Exact Maintenance Source","success","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+      Object.freeze([83,"Complete job","success","2026-09-14T08:07:26Z","2026-09-14T08:07:26Z"]),
+    ]),
+  },
+].map(Object.freeze));
+
 const fail = () => { throw new Error("maintenance_budget_recovery_workflow_unverified"); };
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const bytesHash = value => createHash("sha256").update(value).digest("hex");
@@ -65,7 +160,8 @@ const id = value => Number.isSafeInteger(value) && value > 0 ? String(value) : f
 // time is never replaced with the historical clock used to validate old audits.
 function checkWorkflowClock(now) {
   if (!Number.isSafeInteger(now) || now < MAINTENANCE_BUDGET_RECOVERY_AUTHORIZATION.authorizedAt ||
-      now >= MAINTENANCE_BUDGET_RECOVERY_AUTHORIZATION.expiresAt || now < ADDITIONAL.authorizedAt) fail();
+      now >= MAINTENANCE_BUDGET_RECOVERY_AUTHORIZATION.expiresAt || now < ADDITIONAL.authorizedAt ||
+      now < MAINTENANCE_BUDGET_RECOVERY_FAILED_HISTORY_AUTHORIZATION.authorizedAt) fail();
 }
 function timestamp(value) {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(value)) fail();
@@ -106,7 +202,13 @@ export function validateMaintenanceBudgetRecoveryAdditionalBackup(records, now) 
   const binding = validateProductionMaintenanceBinding(JSON.parse(records.binding.bytes), { phase: "backup", mode: "off", targetSha: ADDITIONAL.sourceSha,
     expectedOldSha: null, operationId: null, runId: ADDITIONAL.runId, runAttempt: "1", backupRunId: ADDITIONAL.runId, backupRunAttempt: "1", readinessRunId: null, readinessRunAttempt: null });
   if (!records.binding.bytes.equals(canonicalJsonBytes(binding))) fail();
-  const parsed = validateProductionReleaseAttestation(JSON.parse(records.predicate.bytes), { nowMs: now, expectedKind: "backup", expectedRepository: REPOSITORY,
+  // Only this hash-pinned, independently signed historical exception is audited
+  // at its real fixed run completion. It is NOT usable as a current backup.
+  // The current authorization above and all fresh B/R/D validators keep now.
+  const historicalValidationAt = timestamp(ADDITIONAL.updatedAt);
+  const historicalPredicate = JSON.parse(records.predicate.bytes), historicalIssuedAt = Date.parse(historicalPredicate?.issuedAt);
+  if (!Number.isSafeInteger(historicalIssuedAt) || historicalIssuedAt > historicalValidationAt) fail();
+  const parsed = validateProductionReleaseAttestation(historicalPredicate, { nowMs: historicalValidationAt, expectedKind: "backup", expectedRepository: REPOSITORY,
     expectedTargetSha: ADDITIONAL.sourceSha, expectedRunId: ADDITIONAL.runId, expectedRunAttempt: "1" });
   if (!parsed.valid || !records.predicate.bytes.equals(parsed.canonicalBytes) || parsed.attestation.run.event !== "schedule") fail();
   const values = {}, reportDigests = {};
@@ -132,7 +234,7 @@ export function validateMaintenanceBudgetRecoveryAdditionalBackup(records, now) 
       !canonicalJsonBytes(create.source).equals(canonicalJsonBytes(verify.source)) || !canonicalJsonBytes(create.source).equals(canonicalJsonBytes(restore.source)) ||
       hash(restore.restoredRecoveryContent) !== hash(subject.source.database?.recoveryContent) ||
       hash(restore.restoredBaseline) !== hash(subject.source.database?.baseline)) fail();
-  return { specDigest: MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST, bindingDigest: bytesHash(records.binding.bytes),
+  return { specDigest: MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST, validationPurpose: "historical-only", historicalValidationAt, bindingDigest: bytesHash(records.binding.bytes),
     predicateDigest: bytesHash(records.predicate.bytes), reports: reportDigests, provenanceDigest: hash([records.binding.provenance, records.predicate.provenance]) };
 }
 
@@ -180,6 +282,29 @@ export function validateMaintenanceBudgetRecoveryPriorBindings(inspection, recor
     result[phase] = { binding, subjectDigest: createHash("sha256").update(record.bytes).digest("hex"), provenanceDigest: hash(record.provenance) };
   }
   return result;
+}
+
+
+function fixedFailedRunProjection(value, spec, now) {
+  if (!value || value.repository?.full_name !== REPOSITORY || value.head_repository?.full_name !== REPOSITORY) fail();
+  const projected = Object.fromEntries(Object.keys(spec.run).map(key => [key, value[key]]));
+  if (hash(projected) !== hash(spec.run) || timestamp(projected.updated_at) > now) fail();
+  return projected;
+}
+async function inspectFixedFailedRun(spec, api, now, listedRun = null) {
+  const prefix = `repos/${REPOSITORY}/actions/runs/${spec.run.id}`;
+  const run = fixedFailedRunProjection(await api(prefix), spec, now);
+  if (listedRun && hash(fixedFailedRunProjection(listedRun, spec, now)) !== hash(run)) fail();
+  const response = await api(prefix + "/attempts/1/jobs?per_page=100");
+  if (response?.total_count !== 1 || !Array.isArray(response.jobs) || response.jobs.length !== 1) fail();
+  const actual = response.jobs[0], job = Object.fromEntries(Object.keys(spec.job).map(key => [key, actual?.[key]]));
+  if (hash(job) !== hash(spec.job) || !Array.isArray(actual.steps) || actual.steps.length !== spec.steps.length ||
+      actual.steps.some(step => step.status !== "completed")) fail();
+  const steps = actual.steps.map(step => [step.number, step.name, step.conclusion, step.started_at, step.completed_at]);
+  if (hash(steps) !== hash(spec.steps)) fail();
+  const artifacts = await api(prefix + "/artifacts?per_page=100");
+  if (artifacts?.total_count !== 0 || !Array.isArray(artifacts.artifacts) || artifacts.artifacts.length !== 0) fail();
+  return { run, job: { ...job, steps }, artifacts: { total_count: 0, artifacts: [] } };
 }
 
 async function inspectIncidentJob(file, run, api) {
@@ -240,7 +365,7 @@ export async function inspectMaintenanceBudgetRecoveryHistory(inspection, api, n
   checkWorkflowClock(now);
   if (typeof api !== "function") fail();
   const cutoff = Math.floor(checked.createdAt / 1000) * 1000;
-  const all = [], incidents = []; let additionalBackup = null;
+  const all = [], incidents = []; let additionalBackup = null, failedScheduledBackup = null;
   for (const [file, name, event, allowed] of WORKFLOWS) {
     const seen = new Set(); let ended = false; let total = null; const found = new Map();
     for (let page = 1; page <= LIMIT; page++) {
@@ -265,6 +390,9 @@ export async function inspectMaintenanceBudgetRecoveryHistory(inspection, api, n
           if (attempt !== "1" || run.head_sha !== allowedRun[1] || run.event !== event ||
               run.conclusion !== allowedRun[2] || created <= checked.createdAt) fail();
           found.set(runId, { ...run, created, updated, started, job: await inspectIncidentJob(file, run, api) });
+        } else if (file === "database-backup.yml" && runId === String(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[0].run.id)) {
+          if (failedScheduledBackup) fail();
+          failedScheduledBackup = await inspectFixedFailedRun(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[0], api, now, run);
         } else if (file === "database-backup.yml" && runId === ADDITIONAL.runId) {
           if (additionalBackup || attempt !== "1" || run.head_sha !== ADDITIONAL.sourceSha || run.event !== ADDITIONAL.event || run.conclusion !== "success" ||
               run.created_at !== ADDITIONAL.createdAt || run.run_started_at !== ADDITIONAL.runStartedAt || run.updated_at !== ADDITIONAL.updatedAt) fail();
@@ -285,7 +413,14 @@ export async function inspectMaintenanceBudgetRecoveryHistory(inspection, api, n
   for (let index = 1; index < incidents.length; index++) if (incidents[index].created < incidents[index - 1].updated) fail();
   all.sort((a, b) => a.workflow.localeCompare(b.workflow) || Number(a.id) - Number(b.id));
   if (!additionalBackup || additionalBackup.created < incidents[6].updated || additionalBackup.updated > incidents[7].created) fail();
-  return { all, incidents, additionalBackup };
+  if (!failedScheduledBackup) fail();
+  const failedBudgetRecovery = await inspectFixedFailedRun(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[1], api, now);
+  // Both observations remain exact and fresh; a retry, new artifact, changed
+  // conclusion, missing/extra step or any transition/remote work cannot pass.
+  if (hash(await inspectFixedFailedRun(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[0], api, now)) !== hash(failedScheduledBackup) ||
+      hash(await inspectFixedFailedRun(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[1], api, now)) !== hash(failedBudgetRecovery)) fail();
+  return { all, incidents, additionalBackup, failedHistoryAuthorization: MAINTENANCE_BUDGET_RECOVERY_FAILED_HISTORY_AUTHORIZATION,
+    failedScheduledBackup, failedBudgetRecovery };
 }
 
 // This is the prior successful CAS, not authority to replay it. Re-read its
@@ -426,7 +561,7 @@ export async function createMaintenanceBudgetRecoveryWorkflowEvidence(inspection
   const checked = validateMaintenanceBudgetRecoveryInspection(inspection);
   checkWorkflowClock(now);
   if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.GITHUB_REF !== "refs/heads/main" ||
-      env.GITHUB_RUN_ATTEMPT !== "1" || !ID.test(env.GITHUB_RUN_ID ?? "") || env.GITHUB_SHA !== checked.targetSha ||
+      env.GITHUB_RUN_ATTEMPT !== "1" || !ID.test(env.GITHUB_RUN_ID ?? "") || MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS.some(spec => String(spec.run.id) === env.GITHUB_RUN_ID) || env.GITHUB_SHA !== checked.targetSha ||
       env.TARGET_SHA !== checked.targetSha || env.PREVIOUS_TARGET_SHA !== checked.previousTargetSha || env.EXPECTED_OLD_SHA !== checked.expectedOldSha ||
       env.MAINTENANCE_OPERATION_ID !== checked.operationId || env.ACTION !== "recover-budget" || env.CONFIRMATION !== "RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z") fail();
   if (checked.stoppedBaseline.observedAt > now || now - checked.stoppedBaseline.observedAt > MAINTENANCE_BUDGET_RECOVERY_HISTORY_MAX_AGE_MS) fail();

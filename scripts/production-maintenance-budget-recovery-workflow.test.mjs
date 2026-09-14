@@ -11,7 +11,8 @@ import { MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP as ADDITIONAL,
   MAINTENANCE_BUILD_RECOVERY_ADDITIONAL_BACKUP_SPEC_DIGEST } from "./production-maintenance-build-recovery.mjs";
 import { validateMaintenanceBudgetRecoveryPriorBindings, inspectMaintenanceBudgetRecoveryHistory,
   createMaintenanceBudgetRecoveryWorkflowEvidence, validateMaintenanceBudgetRecoveryAdditionalBackup,
-  readMaintenanceBudgetRecoveryAdditionalBackup, MAINTENANCE_ADDITIONAL_BACKUP_SMALL_ARTIFACTS } from "./production-maintenance-budget-recovery-workflow.mjs";
+  readMaintenanceBudgetRecoveryAdditionalBackup, MAINTENANCE_ADDITIONAL_BACKUP_SMALL_ARTIFACTS,
+  MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS, MAINTENANCE_BUDGET_RECOVERY_FAILED_HISTORY_AUTHORIZATION } from "./production-maintenance-budget-recovery-workflow.mjs";
 import { buildProductionMaintenanceBinding } from "./production-maintenance-workflow-contract.mjs";
 import { canonicalJsonBytes } from "./production-release-attestation.mjs";
 
@@ -20,7 +21,7 @@ const OLD = "b7c3d57f4739846fb45f236ef83b97b7ff21a7cf";
 const EARLIER = "46f007fbd9e417f93c01e398c77cf38ec814547d", PREVIOUS = INCIDENT.previousTargetSha, TARGET = "a".repeat(40);
 const SECOND = "3af8fa6ba6644593e10bef0a391389b2b34e926a";
 const LAUNCHED = "f3104de19aa59e527c7b94a99850d151448da8cd";
-const NOW = Date.parse("2026-09-14T07:20:00Z");
+const NOW = Date.parse("2026-09-14T08:30:00Z");
 const baseline = { version: 3, stateDigest: INCIDENT.stateDigest, candidateDigest: "a".repeat(64), launchDiskDigest: "b".repeat(64),
   launchJournalDigest: "c".repeat(64), runtimeDigest: "d".repeat(64), current: {
     target: "/srv/faolla.releases/d9de5fe68922-20260914032500", linkIdentity: "1:2:3:4:5:1:0:41471", runtimeIdentity: "1:2:3:4:5:2:0:16877" },
@@ -34,6 +35,100 @@ const inspection = validateMaintenanceBudgetRecoveryInspection({
   ...Object.fromEntries(["backupRunId", "backupRunAttempt", "migrationRunId", "migrationRunAttempt", "readinessRunId", "readinessRunAttempt",
     "failedDeployRunId", "failedDeployRunAttempt"].map(key => [key, INCIDENT[key]])),
 });
+
+test("the two complete real failed-run projections and separate history authorization are immutable", async () => {
+  assert.equal(createHash("sha256").update(JSON.stringify(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS)).digest("hex"),
+    "ce4b662e7428878970eef8ff04899a636f10af6404e116a604857c7d96b8b6e8");
+  const auth = MAINTENANCE_BUDGET_RECOVERY_FAILED_HISTORY_AUTHORIZATION;
+  assert.deepEqual(auth, { version: 1, authorizedAt: Date.parse("2026-09-14T08:24:49Z") });
+  assert.throws(() => { MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[0].steps[3][2] = "success"; });
+  const result = await history();
+  assert.deepEqual(result.failedHistoryAuthorization, auth);
+  assert.equal(result.failedScheduledBackup.run.id, 34820083043);
+  assert.equal(result.failedBudgetRecovery.run.id, 34821029270);
+  assert.equal(result.failedScheduledBackup.job.steps.length, 30);
+  assert.equal(result.failedBudgetRecovery.job.steps.length, 43);
+  assert.deepEqual(result.failedScheduledBackup.artifacts, { total_count: 0, artifacts: [] });
+  assert.deepEqual(result.failedBudgetRecovery.artifacts, { total_count: 0, artifacts: [] });
+  assert.ok(!result.incidents.some(value => ["34820083043", "34821029270"].includes(value.id)));
+  await assert.rejects(inspectMaintenanceBudgetRecoveryHistory(inspection, fixture().api, auth.authorizedAt - 1));
+  await inspectMaintenanceBudgetRecoveryHistory(inspection, fixture().api, auth.authorizedAt);
+  for (const spec of MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS)
+    await assert.rejects(evidence(undefined, { GITHUB_RUN_ID: String(spec.run.id) }));
+});
+
+test("each failed run refuses wrong event SHA retry terminal time identity or missing history row", async () => {
+  for (let index = 0; index < 2; index++) for (const patch of [
+    { id: 1 }, { event: "push" }, { head_sha: TARGET }, { head_branch: "feature" }, { run_attempt: 2 },
+    { status: "in_progress" }, { conclusion: "success" }, { repository: null }, { head_repository: null },
+    { created_at: "2026-09-14T07:54:59Z" }, { run_started_at: "2026-09-14T07:55:01Z" },
+    { updated_at: "2026-09-14T08:07:29Z" }, { path: ".github/workflows/other.yml" },
+  ]) await assert.rejects(history((key, value) => key === "fixed-failed-" + index + "-run" ? { ...value, ...patch } : value));
+  await assert.rejects(history((key, value) => key === files[0] ? { total_count: value.total_count - 1,
+    workflow_runs: value.workflow_runs.filter(run => run.id !== 34820083043) } : value));
+  await assert.rejects(history((key, value) => key === files[0] ? { ...value,
+    workflow_runs: value.workflow_runs.map(run => run.id === 34820083043 ? { ...run, event: "workflow_dispatch" } : run) } : value));
+});
+
+test("every fixed failed-run step, especially remote and transition skips, is required exactly", async () => {
+  for (let index = 0; index < 2; index++) {
+    const keyName = "fixed-failed-" + index + "-jobs";
+    for (const mutate of [v => v.total_count++, v => v.jobs.pop(), v => v.jobs[0].id++, v => v.jobs[0].head_sha = TARGET,
+      v => v.jobs[0].started_at = "2026-09-14T07:55:00Z", v => v.jobs[0].steps.pop(),
+      v => v.jobs[0].steps.push({ ...v.jobs[0].steps[0] })])
+      await assert.rejects(history((key, value) => { if (key === keyName) mutate(value); return value; }));
+    for (let step = 0; step < MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[index].steps.length; step++) {
+      for (const mutate of [s => s.conclusion = s.conclusion === "success" ? "skipped" : "success", s => s.number++,
+        s => s.name += " altered", s => s.status = "in_progress", s => s.completed_at = "2026-09-14T08:07:29Z"])
+        await assert.rejects(history((key, value) => { if (key === keyName) mutate(value.jobs[0].steps[step]); return value; }));
+    }
+  }
+});
+
+test("zero artifacts and the second observation of both failed histories cannot be substituted", async () => {
+  for (let index = 0; index < 2; index++) {
+    for (const patch of [{ total_count: 1, artifacts: [{ id: 1 }] }, { total_count: 0, artifacts: [{ id: 1 }] },
+      { total_count: 1, artifacts: [] }, { total_count: 0, artifacts: null }])
+      await assert.rejects(history((key, value) => key === "fixed-failed-" + index + "-artifacts" ? patch : value));
+    for (const suffix of ["run", "jobs", "artifacts"]) {
+      let seen = 0;
+      await assert.rejects(history((key, value) => {
+        if (key === "fixed-failed-" + index + "-" + suffix && ++seen === 2) {
+          if (suffix === "run") value.run_attempt = 2;
+          if (suffix === "jobs") value.jobs[0].steps[0].conclusion = "failure";
+          if (suffix === "artifacts") value.artifacts.push({ id: 1 });
+        }
+        return value;
+      }));
+      assert.equal(seen, 2);
+    }
+  }
+});
+
+test("the expired fixed scheduled subject is historical only and must have been valid at actual completion", () => {
+  const records = additionalRecords(), predicate = JSON.parse(records.predicate.bytes);
+  assert.ok(Date.parse(predicate.validUntil) < NOW);
+  const result = validateMaintenanceBudgetRecoveryAdditionalBackup(records, NOW);
+  assert.equal(result.historicalValidationAt, Date.parse(ADDITIONAL.updatedAt));
+  for (const patch of [
+    { validUntil: "2026-09-13T08:12:21.000Z" },
+    { issuedAt: "2026-09-13T08:12:23.000Z" },
+  ]) {
+    const bad = additionalRecords(), value = { ...JSON.parse(bad.predicate.bytes), ...patch };
+    bad.predicate.bytes = canonicalJsonBytes(value);
+    bad.predicate.provenance = additionalProvenance(bad.predicate.bytes, "production-backup-attestation.json");
+    assert.throws(() => validateMaintenanceBudgetRecoveryAdditionalBackup(bad, NOW));
+  }
+  const bytesChanged = additionalRecords();
+  bytesChanged.predicate.bytes = Buffer.from(bytesChanged.predicate.bytes.toString().replace("08:12:11", "08:12:10"));
+  assert.throws(() => validateMaintenanceBudgetRecoveryAdditionalBackup(bytesChanged, NOW));
+  const signatureChanged = additionalRecords();
+  signatureChanged.predicate.provenance[0].verificationResult.statement.subject[0].digest.sha256 = "0".repeat(64);
+  assert.throws(() => validateMaintenanceBudgetRecoveryAdditionalBackup(signatureChanged, NOW));
+  assert.throws(() => validateMaintenanceBudgetRecoveryAdditionalBackup(records, MAINTENANCE_BUDGET_RECOVERY_FAILED_HISTORY_AUTHORIZATION.authorizedAt - 1));
+  assert.throws(() => validateMaintenanceBudgetRecoveryAdditionalBackup(records, MAINTENANCE_BUDGET_RECOVERY_AUTHORIZATION.expiresAt));
+});
+
 const env = { GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
   GITHUB_RUN_ATTEMPT: "1", GITHUB_RUN_ID: "34729000000", GITHUB_SHA: TARGET, TARGET_SHA: TARGET,
   PREVIOUS_TARGET_SHA: PREVIOUS, EXPECTED_OLD_SHA: inspection.expectedOldSha, MAINTENANCE_OPERATION_ID: inspection.operationId,
@@ -93,11 +188,23 @@ function job(spec) {
   return { id: r.id === 34790827235 ? 103814590377 : r.id + 100000000000, run_id: r.id, head_sha: r.head_sha, status: "completed", conclusion: r.conclusion,
     started_at: r.id === 34790827235 ? "2026-09-13T23:50:04Z" : r.run_started_at, completed_at: r.id === 34790827235 ? "2026-09-13T23:57:58Z" : r.updated_at, steps };
 }
+function fixedFailedFixture(index) {
+  const spec = structuredClone(MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS[index]);
+  return { run: { ...spec.run, repository: { full_name: "fafona/space" }, head_repository: { full_name: "fafona/space" } },
+    jobs: { total_count: 1, jobs: [{ ...spec.job, steps: spec.steps.map(([number, name, conclusion, started_at, completed_at]) =>
+      ({ number, name, status: "completed", conclusion, started_at, completed_at })) }] }, artifacts: { total_count: 0, artifacts: [] } };
+}
 function fixture(transform = (_key, value) => value) {
   const calls = [];
   const api = async endpoint => {
     calls.push(endpoint);
     if (endpoint === "repos/fafona/space/commits/main") return transform("main", { sha: TARGET }, calls);
+    for (let index = 0; index < MAINTENANCE_BUDGET_RECOVERY_FIXED_FAILED_RUNS.length; index++) {
+      const value = fixedFailedFixture(index), prefix = "repos/fafona/space/actions/runs/" + value.run.id, key = "fixed-failed-" + index;
+      if (endpoint === prefix) return transform(key + "-run", value.run, calls);
+      if (endpoint === prefix + "/attempts/1/jobs?per_page=100") return transform(key + "-jobs", value.jobs, calls);
+      if (endpoint === prefix + "/artifacts?per_page=100") return transform(key + "-artifacts", value.artifacts, calls);
+    }
     if (endpoint === "repos/fafona/space/actions/runs/34745334237/artifacts?per_page=100") return transform("artifacts", { total_count: 6,
       artifacts: MAINTENANCE_ADDITIONAL_BACKUP_SMALL_ARTIFACTS.map(artifact => ({ id: Number(artifact.id), name: artifact.name, size_in_bytes: artifact.bytes,
         digest: "sha256:" + artifact.sha256, expired: false, workflow_run: { id: Number(ADDITIONAL.runId), head_sha: ADDITIONAL.sourceSha, head_branch: "main" } }))
@@ -127,7 +234,7 @@ function fixture(transform = (_key, value) => value) {
     if (file === "ci.yml") return transform(file, { workflow_runs: [{ ...run(incidents[0]), id: 34728900000, run_attempt: 1,
       name: "CI", path: ".github/workflows/ci.yml", event: "push", head_sha: TARGET }] }, calls);
     const rows = incidents.filter(spec => files[spec[1]] === file).map(spec => run(spec)).reverse();
-    if (file === files[0]) rows.unshift(additionalRun());
+    if (file === files[0]) rows.unshift(fixedFailedFixture(0).run, additionalRun());
     return transform(file, { total_count: rows.length, workflow_runs: rows }, calls, Number(query.get("page")));
   };
   return { api, calls };
@@ -278,7 +385,7 @@ test("all sixteen exact incidents produce canonical evidence without relabelling
   assert.match(result.historyDigest, /^[0-9a-f]{64}$/);
   assert.deepEqual(decodeMaintenanceBudgetRecoveryEvidence(encodeMaintenanceBudgetRecoveryEvidence(result)), result);
   assert.equal(f.calls.filter(value => value.endsWith("commits/main")).length, 2);
-  assert.equal(f.calls.filter(value => value.includes("/attempts/1/jobs?")).length, 23);
+  assert.equal(f.calls.filter(value => value.includes("/attempts/1/jobs?")).length, 27);
   assert.deepEqual((await history()).incidents.map(value => value.id), incidents.map(value => value[0]));
   assert.equal(validateMaintenanceBudgetRecoveryPriorBindings(inspection, prior).backup.binding.targetSha, PREVIOUS);
   assert.equal(validateMaintenanceBudgetRecoveryPriorBindings(inspection, prior).readiness.binding.backupRunId, inspection.backupRunId);
@@ -498,7 +605,7 @@ test("fixed small artifact inventory binds live IDs, names, sizes, digests and s
   const f = fixture(), result = await createMaintenanceBudgetRecoveryWorkflowEvidence(inspection, env, f.api, bindings(), NOW, additionalRecords());
   assert.match(result.historyDigest, /^[a-f0-9]{64}$/);
   assert.equal(result.backupRunId, "34800653808"); assert.equal(result.readinessRunId, "34802075500");
-  assert.equal(f.calls.filter(call => call.includes("/artifacts?")).length, 1);
+  assert.equal(f.calls.filter(call => call.includes("/artifacts?")).length, 5);
   assert.ok(f.calls.every(call => !call.endsWith("/zip")));
 });
 
@@ -570,7 +677,7 @@ test("the budget confirmation cannot reuse an earlier grant and an unknown 02:17
   await assert.rejects(inspectMaintenanceBudgetRecoveryHistory(inspection, fixture((key, value) => key === files[0] ? {
     total_count: value.total_count + 1, workflow_runs: [...value.workflow_runs,
       old(files[0], 34799000111, { event: "schedule", created_at: "2026-09-14T02:17:00Z", run_started_at: "2026-09-14T02:17:00Z", updated_at: "2026-09-14T02:17:01Z" })],
-  } : value).api, Date.parse("2026-09-14T07:30:00Z")));
+  } : value).api, Date.parse("2026-09-14T08:30:00Z")));
   for (const patch of [{ id: 103814590378 }, { started_at: "2026-09-13T23:50:03Z" }, { completed_at: "2026-09-13T23:57:59Z" }])
     await assert.rejects(history(changeJob("34790827235", value => Object.assign(value.jobs[0], patch))));
   for (const patch of [{ started_at: "2026-09-13T23:50:25Z" }, { completed_at: "2026-09-13T23:57:58Z" }])
