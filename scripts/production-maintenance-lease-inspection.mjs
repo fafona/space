@@ -122,7 +122,7 @@ function ioOptions(raw) {
 function authorizedPredecessor(raw, now) {
   const value = bounded(raw), clock = { bootId: BOOT, now };
   if (value.version === 11) return validateMaintenanceLeasePredecessor(value, clock);
-  if (value.version === 12) return value.phase === "held" ? reconstructMaintenanceLeasePredecessor(value, clock) : maintenanceLeaseHistoricalState(value, clock);
+  if ([12, 13].includes(value.version)) return value.phase === "held" ? reconstructMaintenanceLeasePredecessor(value, clock) : maintenanceLeaseHistoricalState(value, clock);
   fail();
 }
 async function checkedState(raw, runtimeApi, now) {

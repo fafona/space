@@ -5571,7 +5571,7 @@ readiness_fence_diagnostic() {
     checkpoint_arguments|checkpoint_deadline|checkpoint_state|checkpoint_identity_before|checkpoint_marker|checkpoint_remaining|checkpoint_database|checkpoint_identity_after|checkpoint_deadline_after|database_arguments|database_budget|database_command|database_deadline|database_result|marker_file|marker_canonical|marker_binding|marker_hold_budget|marker_database|marker_locks|marker_context|marker_endpoint|marker_digest) ;;
     *) return 0 ;;
   esac
-  case "$code" in start|passed|failed|held|blocked_cancelled|quiescing|not_held|unexpected_status) ;; *) return 0 ;; esac
+  case "$code" in start|passed|failed|held|blocked_cancelled|quiescing|not_held|locks_lost|cancellation_incomplete|waiters_remaining|unexpected_status) ;; *) return 0 ;; esac
   [[ "$started_seconds" =~ ^(0|[1-9][0-9]{0,8})$ ]] && [[ "$SECONDS" =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 0
   elapsed_seconds=$((SECONDS - started_seconds))
   [ "$elapsed_seconds" -ge 0 ] && [ "$elapsed_seconds" -le 86400 ] || return 0
@@ -5754,7 +5754,7 @@ SELECT CASE
     OR lock_counts.auth_ax <> 0
     OR lock_counts.pages_ax <> 0
     OR lock_counts.registry_ax <> 1
-  THEN 'not_held'
+  THEN 'locks_lost'
   WHEN :'fence_allow_waiters'::boolean
     AND (
       :'fence_had_waiters'::boolean
@@ -5764,8 +5764,9 @@ SELECT CASE
   WHEN :'fence_allow_waiters'::boolean
   THEN 'held'
   WHEN NOT :'fence_all_cancelled'::boolean
-    OR (SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0
-  THEN 'not_held'
+  THEN 'cancellation_incomplete'
+  WHEN (SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0
+  THEN 'waiters_remaining'
   WHEN :'fence_had_waiters'::boolean THEN 'blocked_cancelled'
   ELSE 'held'
 END
@@ -5798,6 +5799,18 @@ SQL
       return 1
       ;;
     not_held) readiness_fence_diagnostic database_result not_held "$fence_diagnostic_started"; return 1 ;;
+    waiters_remaining)
+      readiness_fence_diagnostic database_result waiters_remaining "$fence_diagnostic_started"
+      # Cancellation is asynchronous and a new waiter can arrive while it is
+      # being observed. Retry only inside the existing three-check / absolute
+      # deadline envelope. No forward mutation is allowed until zero waiters.
+      if [ "$allow_waiters" = "0" ]; then return 2; fi
+      return 1
+      ;;
+    locks_lost|cancellation_incomplete)
+      readiness_fence_diagnostic database_result "$lock_state" "$fence_diagnostic_started"
+      return 1
+      ;;
     *) readiness_fence_diagnostic database_result unexpected_status "$fence_diagnostic_started"; return 1 ;;
   esac
 }

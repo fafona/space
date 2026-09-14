@@ -930,3 +930,31 @@ The review follows its Nix extension pins, not unused Docker build arguments:
 and [plpgsql_check](https://github.com/okbob/plpgsql_check/tree/7e23f9daa6b5408151aaec197c6cf6c948e23957).
 The latter hooks can perform synchronous work when explicitly invoked; they are
 not described as universally read-only or a replacement for the writer fence.
+
+## Fixed unused fence recovery (2026-09-15 local time)
+
+The operator authorized fixing the failed deployment and restoring service at
+2026-09-14 22:21:26 UTC (recorded acknowledgement, not message timestamp).
+`recover-fence` requires `RECOVER_UNUSED_FENCE_PRODUCTION_MAINTENANCE` and
+accepts only v12/revision 42, raw digest
+`76f254773bfcc1c98b23b419c2d94040a438aab2f8c1794d30e0d2528ff9859f`,
+2276109 bytes, failed-held, activeAttempt 3, all five launch fields null.
+The v13 result keeps the same unused attempt, immutable prior audits and lease
+expiry. It does not reset a journal or recover another subsequent failure.
+Fresh stopped-generation, ingress, disk, full migration registry, exact source,
+main CI and GitHub history checks precede the raw-byte/revision CAS.
+Historical B12/R12/D12 and lease/CI are pinned; B12 is not a new-target backup.
+A new exact-target backup, readiness, automatic deployment, signed receipt and
+normal END remain necessary before public access is restored.
+
+D12 stopped before switching current or launching an application. Its old
+`not_held` diagnostic conflated missing locks, unsuccessful cancellation and
+remaining waiters. A bounded production metadata-only lock rehearsal observed
+an autovacuum worker waiting on pg_database; an original-gate rehearsal cancelled
+that worker successfully. This identifies a recurring waiter source, not unique
+proof of which old failure branch fired. The updated SQL separates those three
+reasons. Only remaining waiters may consume the existing maximum three checks
+within the unchanged absolute deadline; success still requires all cancellation
+acknowledgements, intact locks and zero remaining waiters. Lost locks, failed
+cancellation and unknown responses remain immediate failures. No autovacuum
+process is exempted, no setting is disabled, and no lock is released early.
