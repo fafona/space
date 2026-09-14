@@ -37,6 +37,11 @@ export const MAINTENANCE_PREFLIGHT_RECOVERY_AUTHORIZATION = Object.freeze({
   previousActiveAttempt: 3, activeAttempt: 3, maximumAdditionalAttempts: 0, maximumRemainingAttempts: 1,
 });
 const AUTHORIZATION = MAINTENANCE_PREFLIGHT_RECOVERY_AUTHORIZATION;
+// Shared structural checks for the separately audited renewable lease. These
+// helpers perform no I/O and do not change this version's immutable deadline.
+export { bounded as captureMaintenancePreflightValue,
+  checkLaunchShape as assertMaintenancePreflightLaunchShape,
+  journalProgress as assertMaintenancePreflightJournalProgress };
 export const MAINTENANCE_PREFLIGHT_RECOVERY_AUTHORIZATION_DIGEST = createHash("sha256").update(JSON.stringify(AUTHORIZATION)).digest("hex");
 export const MAINTENANCE_PREFLIGHT_RECOVERY_MAX_EVIDENCE_BYTES = 16 * 1024;
 export const MAINTENANCE_PREFLIGHT_RECOVERY_HISTORY_MAX_AGE_MS = 5 * 60 * 1000;
