@@ -522,7 +522,7 @@ function extractShellFunction(name) {
 const bookingDiagnosticHelpers = ["booking_persistence_diagnostic", "booking_persistence_observe"].map(extractShellFunction).join("\n");
 const bookingDiagnosticStages = new Set(("current_capture current_capture_preconditions current_capture_stat current_capture_environment current_capture_build current_capture_shape current_capture_staff_mode current_capture_staff_sites current_capture_portal current_capture_rollout current_capture_final " +
   "web_capture web_capture_preconditions web_capture_snapshot web_capture_ticks web_capture_identity web_capture_state " +
-  "state_preconditions state_worker_before state_web_before state_process_before state_environment state_build state_file_comparison state_process_environment state_environment_comparison state_current_after state_worker_after state_web_after state_process_after " +
+  "state_preconditions state_pair_before state_worker_before state_web_before state_process_before state_environment state_build state_file_comparison state_process_environment state_environment_comparison state_current_after state_pair_after state_worker_after state_web_after state_process_after " +
   "retry_deadline retry_state_before retry_remaining retry_fence_before retry_state_after_fence retry_health_before retry_state_after_health retry_reserve query retry_state_after_query retry_fence_after retry_state_final_fence retry_health_after retry_state_final_health retry_attempts retry_delay_budget retry_delay retry_exhausted").split(" "));
 function assertOnlyBookingDiagnostics(stderr) {
   assert.ok(stderr.endsWith("\n"));

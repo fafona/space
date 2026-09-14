@@ -4645,7 +4645,7 @@ booking_persistence_diagnostic() {
   case "$stage" in
     current_capture|current_capture_preconditions|current_capture_stat|current_capture_environment|current_capture_build|current_capture_shape|current_capture_staff_mode|current_capture_staff_sites|current_capture_portal|current_capture_rollout|current_capture_final|\
     web_capture|web_capture_preconditions|web_capture_snapshot|web_capture_ticks|web_capture_identity|web_capture_state|\
-    state_preconditions|state_worker_before|state_web_before|state_process_before|state_environment|state_build|state_file_comparison|state_process_environment|state_environment_comparison|state_current_after|state_worker_after|state_web_after|state_process_after|\
+    state_preconditions|state_pair_before|state_pair_after|state_worker_before|state_web_before|state_process_before|state_environment|state_build|state_file_comparison|state_process_environment|state_environment_comparison|state_current_after|state_worker_after|state_web_after|state_process_after|\
     retry_deadline|retry_state_before|retry_remaining|retry_fence_before|retry_state_after_fence|retry_health_before|retry_state_after_health|retry_reserve|query|retry_state_after_query|retry_fence_after|retry_state_final_fence|retry_health_after|retry_state_final_health|retry_attempts|retry_delay_budget|retry_delay|retry_exhausted) ;;
     *) return 0 ;;
   esac
@@ -4672,6 +4672,34 @@ booking_persistence_observe() {
     booking_persistence_diagnostic "$diagnostic_stage" failed "$diagnostic_started"
   fi
   return "$diagnostic_status"
+}
+
+# Only the adjacent worker/web reads at this ONE boundary are paired. Every
+# later boundary still invokes the controller afresh with the same deadline.
+maintenance_booking_snapshot_pair() {
+  local absolute_deadline_seconds="$1" reader_timeout_seconds
+  [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ] || return 1
+  reader_timeout_seconds="$(deadline_bounded_command_timeout_seconds "$absolute_deadline_seconds" 30 1)" || return 1
+  maintenance_deployment_read snapshot-pair "$((reader_timeout_seconds * 1000))"
+}
+
+assert_booking_snapshot_pair_at_boundary() {
+  local boundary="$1" absolute_deadline_seconds="$2" pair_snapshot diagnostic_started="$SECONDS"
+  local -a pair_parts=()
+  case "$boundary" in before|after) ;; *) return 1 ;; esac
+  pair_snapshot="$(booking_persistence_observe "state_pair_$boundary" maintenance_booking_snapshot_pair "$absolute_deadline_seconds")" || return 1
+  mapfile -t pair_parts <<< "$pair_snapshot"
+  if [ "${#pair_parts[@]}" -ne 2 ]; then
+    booking_persistence_diagnostic "state_pair_$boundary" failed "$diagnostic_started"; return 1
+  fi
+  if [ "${pair_parts[0]}" != absent ]; then
+    booking_persistence_diagnostic "state_worker_$boundary" failed "$diagnostic_started"; return 1
+  fi
+  booking_persistence_diagnostic "state_worker_$boundary" passed "$diagnostic_started"
+  if [ "${pair_parts[1]}" != "running:$CANDIDATE_WEB_PID" ]; then
+    booking_persistence_diagnostic "state_web_$boundary" failed "$diagnostic_started"; return 1
+  fi
+  booking_persistence_diagnostic "state_web_$boundary" passed "$diagnostic_started"
 }
 
 capture_candidate_current_identity_for_booking_retry() {
@@ -4877,6 +4905,9 @@ assert_booking_persistence_retry_state() {
     return 1
   fi
   booking_persistence_diagnostic state_preconditions passed "$diagnostic_started"
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    assert_booking_snapshot_pair_at_boundary before "$absolute_deadline_seconds" || return 1
+  else
   diagnostic_started="$SECONDS"
   if ! process_snapshot="$(booking_persistence_observe state_worker_before pm2_process_snapshot \
       "$AUTOMATION_WORKER_NAME" "$absolute_deadline_seconds")" \
@@ -4890,6 +4921,7 @@ assert_booking_persistence_retry_state() {
     || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ]; then
     booking_persistence_diagnostic state_web_before failed "$diagnostic_started"
     return 1
+  fi
   fi
   diagnostic_started="$SECONDS"
   if [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \
@@ -4973,6 +5005,9 @@ assert_booking_persistence_retry_state() {
     return 1
   fi
   booking_persistence_diagnostic state_current_after passed "$diagnostic_started"
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    assert_booking_snapshot_pair_at_boundary after "$absolute_deadline_seconds" || return 1
+  else
   diagnostic_started="$SECONDS"
   if ! process_snapshot="$(booking_persistence_observe state_worker_after pm2_process_snapshot \
       "$AUTOMATION_WORKER_NAME" "$absolute_deadline_seconds")" \
@@ -4986,6 +5021,7 @@ assert_booking_persistence_retry_state() {
     || [ "$process_snapshot" != "running:$CANDIDATE_WEB_PID" ]; then
     booking_persistence_diagnostic state_web_after failed "$diagnostic_started"
     return 1
+  fi
   fi
   diagnostic_started="$SECONDS"
   if [ "$(linux_process_start_ticks "$CANDIDATE_WEB_PID" \

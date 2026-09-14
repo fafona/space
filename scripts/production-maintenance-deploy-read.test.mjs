@@ -26,6 +26,52 @@ function compactAttemptReadFixture() {
   return { report, argv: ["runtime-handoff", APP, "merchant-space", "3000", T7, request.expectedOldSha, request.operationId, "30000"] };
 }
 
+function compactBudgetReadFixture() {
+  const f = compactAttemptReadFixture(), previous = "d9de5fe689226fcdd13a1e95039901b5d0f39167";
+  const pin = "a7767b3e1e5a788282c16a57a91ed588821cb0b5894925fcff9d5e544e5d6003";
+  const path = "/www/wwwroot/merchant-space.releases/" + previous.slice(0, 12) + "-20260914073000";
+  f.report.version = 3;
+  const old = f.report.attemptBaseline; delete f.report.attemptBaseline;
+  f.report.budgetBaseline = { ...old, version: 3, predecessorStateDigest: pin, previousTargetSha: previous,
+    stoppedBaseline: { ...old.stoppedBaseline, version: 3, stateDigest: pin, observedAt: Date.parse("2026-09-14T08:00:00Z"),
+      current: { ...old.stoppedBaseline.current, target: path } } };
+  Object.assign(f.report.fields, { PREVIOUS_LINK_TARGET: path, PREVIOUS_RUNTIME_DIR: path,
+    PREVIOUS_RELEASE_NAME: path.split("/").at(-1), PREVIOUS_BUILD_ID: previous, PREVIOUS_BUILD_PREFIX: previous.slice(0, 12) });
+  return f;
+}
+
+test("v8 budget handoff independently validates two small v3 reports without original-state fallback", async () => {
+  const f = compactBudgetReadFixture(); let reads = 0;
+  const value = await readMaintenanceDeploymentFields(f.argv, { run(command, values, options) {
+    reads++; assert.equal(command, process.execPath); assert.equal(values[1], "runtime-handoff");
+    assert.equal(options.maxBuffer, 262144); assert.equal(options.shell, false); return response(f.report);
+  }, runtime: { validateRuntimeProof() { assert.fail("must not replace actual T7 with O"); } } });
+  assert.equal(reads, 2); assert.deepEqual(value.split("\0"), [...Object.entries(f.report.fields).flat(), ""]);
+  assert.ok(Buffer.byteLength(JSON.stringify(f.report)) < 8192);
+});
+
+test("v3 handoff rejects changed second proof, wrong history, whole-state leakage and non-handoff actions", async () => {
+  for (const change of [
+    r => { r.budgetBaseline.stoppedBaseline.observedAt++; },
+    r => { r.budgetBaseline.predecessorStateDigest = "0".repeat(64); },
+    r => { r.fields.PREVIOUS_NEXT_PUBLIC_SUPABASE_URL = "changed"; r.fields.PREVIOUS_NEXT_PUBLIC_SUPABASE_URL_B64 = Buffer.from("changed").toString("base64"); },
+    r => { r.runtime = { private: "SECRET" }; }, r => { r.state = "candidate"; }, r => { r.version = 2; },
+  ]) {
+    const f = compactBudgetReadFixture(); let reads = 0;
+    await rejected(readMaintenanceDeploymentFields(f.argv, { run() {
+      const r = structuredClone(f.report); if (++reads === 2) change(r); return response(r);
+    } })); assert.equal(reads, 2);
+  }
+  const f = compactBudgetReadFixture();
+  for (const action of ["candidate-handoff", "snapshot-web", "snapshot-worker", "snapshot-pair"]) {
+    await rejected(readMaintenanceDeploymentFields(f.argv.with(0, action), { run: () => response(f.report) }));
+  }
+  let now = 0, reads = 0;
+  await rejected(readMaintenanceDeploymentFields(f.argv, { now: () => now, run() { reads++; now += 16000; return response(f.report); } }));
+  assert.equal(reads, 2);
+  await rejected(readMaintenanceDeploymentFields(f.argv, { run: () => ({ ...response(f.report), stdout: "x".repeat(262145) }) }));
+});
+
 test("v7 small handoff uses two real typed reports under the original size/time bounds, never a whole predecessor", async () => {
   const f = compactAttemptReadFixture(), calls = [];
   const result = await readMaintenanceDeploymentFields(f.argv, { run(command, argv, options) {
@@ -115,6 +161,41 @@ test("snapshots use one bounded direct Node control command with exact binding",
     } });
     assert.equal(result, snapshot + "\n"); assert.equal(count, 1);
   }
+});
+
+test("paired snapshots use one fresh bounded command and exact ordered role framing", async () => {
+  let calls = 0;
+  const d = { run(command, values, options) {
+    calls++; assert.equal(command, process.execPath); assert.equal(values[1], "snapshot-pair");
+    assert.equal(options.maxBuffer, 262144); assert.equal(options.shell, false);
+    assert.deepEqual(options.env, { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C", LC_ALL: "C" });
+    return response(summary({ snapshotPair: { web: "running:300", worker: "absent" } }));
+  } };
+  assert.equal(await readMaintenanceDeploymentFields(args("snapshot-pair"), d), "absent\nrunning:300\n");
+  assert.equal(calls, 1);
+  assert.equal(await readMaintenanceDeploymentFields(args("snapshot-pair"), d), "absent\nrunning:300\n");
+  assert.equal(calls, 2, "a later boundary cannot reuse a previous report");
+});
+
+test("paired snapshots reject partial, extra, misbound, wrong-role and expired reports without fallback", async () => {
+  for (const snapshotPair of [null, [], { web: "running:300" }, { web: "running:300", worker: "absent", extra: "SECRET" },
+    { web: "absent", worker: "absent" }, { web: "running:0300", worker: "absent" },
+    { web: "running:2147483648", worker: "absent" }, { web: "running:300", worker: "running:301" },
+    { web: "running:300\nSECRET", worker: "absent" }, { web: 300, worker: "absent" }]) {
+    let calls = 0;
+    await rejected(readMaintenanceDeploymentFields(args("snapshot-pair"), { run() { calls++; return response(summary({ snapshotPair })); } }));
+    assert.equal(calls, 1);
+  }
+  for (const change of [{ state: "held" }, { targetSha: OLD }, { operationId: "22222222-2222-4222-8222-222222222222" },
+    { snapshot: "absent" }, { runtime: { private: "SECRET" } }]) {
+    await rejected(readMaintenanceDeploymentFields(args("snapshot-pair"), {
+      run: () => response(summary({ snapshotPair: { web: "running:300", worker: "absent" }, ...change })),
+    }));
+  }
+  let clock = 0, calls = 0;
+  await rejected(readMaintenanceDeploymentFields(args("snapshot-pair"), { now: () => clock, run() {
+    calls++; clock = 30000; return response(summary({ snapshotPair: { web: "running:300", worker: "absent" } }));
+  } })); assert.equal(calls, 1);
 });
 
 test("controller environment ignores an ambient PATH and unrelated environment values", () => {

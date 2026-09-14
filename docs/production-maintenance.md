@@ -651,6 +651,61 @@ SQL, lock policy, retry limits and deadlines are unchanged. Local simulations
 and tests do not constitute production success; only the real deployment,
 signed binding, normal maintenance end and public checks do so.
 
+## Incident-bound budget recovery after D7
+
+The separate `recover-budget` action is limited to the failed v7 operation at
+revision 31, activeAttempt 2, with predecessor digest
+`a7767b3e1e5a788282c16a57a91ed588821cb0b5894925fcff9d5e544e5d6003`
+and target T7 `d9de5fe689226fcdd13a1e95039901b5d0f39167`.
+The newly recorded authorization begins at 2026-09-14 07:13:57 UTC and expires
+at **2026-09-14 10:00:00 UTC (Madrid 12:00)**, exclusive. It permits at most
+one further deployment attempt. Its fixed confirmation is
+`RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z`.
+It does not alter any previous authorization, including the expired 04:00 UTC
+deadline, and does not make ordinary commands on the expired v7 state valid.
+
+D7 (`34802138869`, attempt 1) was rejected by the remaining-budget reserve
+check before the booking-persistence SQL ran. This is evidence of a budget
+gate failure, not a failed SQL query or database corruption. The earlier D6
+inner failure remains unconfirmed; the D7 result does not retrospectively
+identify its cause. The budget-remediation change combines the relevant Web
+and worker snapshot observations while retaining their real identity, ingress,
+generation and registry checks. It does not increase the existing deadlines,
+reduce the required reserve, skip the persistence query, or authorize reuse
+of cached host evidence. Local cost simulations are not a measurement of the
+new candidate's production execution time.
+
+Only `inspect-budget-recovery` and the explicit recovery path can validate
+this exact expired predecessor under the new authorization. Historical
+validation of the hash-pinned old audits is distinct from current authority:
+fresh host observations and persistence use the actual current clock. The
+transition creates v8/revision 32/activeAttempt 3, the fourth overall attempt,
+through one raw-byte/revision compare-and-swap under the existing operation
+lock. The `budgetRecovery` audit retains the complete v7 predecessor and its
+consumed launch journal, including all earlier audits and authorizations.
+The original operation UUID, creation time, old-runtime proof and existing
+history cutoff remain unchanged. New active launch fields start empty; no
+old journal, nonce or target becomes reusable. An uncertain save forbids a
+send, and this action cannot recover a subsequent failed v8 attempt again.
+
+Recovery requires fresh stopped-generation and disk/current-pointer evidence
+for O/T5/T6/T7, the original ingress and database proofs, the complete migration
+registry, exact allowed source delta, current-main CI and complete workflow
+history. B7 (`34800653808`) and R7 (`34802075500`) must retain their verified
+hosted signatures and T7/operation bindings; recovery `34800461043` and main
+CI `34799821827` remain explicit historical evidence. Migration evidence still
+binds to the original `34721155156` migration through 048. The one previously
+authorized scheduled backup `34745334237` remains a fixed, separately verified
+exception. No new scheduled run is ignored or authorized by this recovery.
+
+Implementation and local tests alone do not establish recovery or deployment
+success. Real paired-check performance, successful recovery, a new exact-target
+backup and readiness run, the single automatic deployment, signed deployment
+binding, normal maintenance `end`, and final public checks remain pending until
+each is actually observed and verified. B7/R7 are historical inputs, not
+substitutes for those new release artifacts. Failure does not grant an automatic
+retry or extend the 10:00 UTC deadline.
+
 ## Fixed Supabase 15 scheduler compatibility
 
 The exact `supabase/postgres:15.8.1.085` image uses an additional read-only
