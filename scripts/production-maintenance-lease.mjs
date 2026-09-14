@@ -22,6 +22,21 @@ export const MAINTENANCE_LEASE_PREDECESSOR = Object.freeze({
   recoveryRunId: "34885715614", mainCIrunId: "34882604766",
 });
 const AUTH = MAINTENANCE_LEASE_AUTHORIZATION, PIN = MAINTENANCE_LEASE_PREDECESSOR;
+// Separate explicit authorization; a time-only lease NEVER grants recovery.
+export const MAINTENANCE_FENCE_RECOVERY_AUTHORIZATION = Object.freeze({
+  version: 1, operationId: AUTH.operationId, authorizedAt: Date.parse("2026-09-14T22:21:26Z"),
+  activeAttempt: 3, maximumAdditionalAttempts: 0,
+  predecessorDigest: "76f254773bfcc1c98b23b419c2d94040a438aab2f8c1794d30e0d2528ff9859f",
+});
+export const MAINTENANCE_FENCE_RECOVERY_PREDECESSOR = Object.freeze({
+  version: 12, revision: 42, phase: "failed-held", stateBytes: 2276109,
+  stateDigest: MAINTENANCE_FENCE_RECOVERY_AUTHORIZATION.predecessorDigest,
+  targetSha: "552bfaafea802ee1371329afce0424b096b44453",
+  expectedOldSha: PIN.expectedOldSha, bootId: PIN.bootId,
+  failedDeployRunId: "34901630408", backupRunId: "34896361029", readinessRunId: "34901481955",
+  leaseRunId: "34895798474", mainCIrunId: "34892730757",
+});
+const FENCE_AUTH = MAINTENANCE_FENCE_RECOVERY_AUTHORIZATION, FENCE_PIN = MAINTENANCE_FENCE_RECOVERY_PREDECESSOR;
 const KEYS = ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump", "recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal", "prelaunchRecovery", "preflightRecovery"];
 const LAUNCH = ["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
 const INSPECTION = ["version", "state", "operationId", "targetSha", "previousTargetSha", "expectedOldSha", "revision", "stateDigest", "stateBytes", "activeAttempt", "sourceDiffDigest", "migrationDigest", "stoppedBaseline", "stoppedBaselineDigest", "authorizationDigest"];
@@ -67,12 +82,15 @@ function baseline(value, predecessor, now) {
       !equal({ ...value, observedAt: before.observedAt }, before)) fail();
 }
 function inspection(value) {
-  if (!exact(value, INSPECTION) || value.version !== 1 || value.state !== "lease-renewal-inspected" ||
+  const recovering = value?.state === "fence-recovery-inspected";
+  if (!exact(value, INSPECTION) || value.version !== 1 || !["lease-renewal-inspected", "fence-recovery-inspected"].includes(value.state) ||
       value.operationId !== AUTH.operationId || !sha(value.targetSha) || [PIN.targetSha, PIN.expectedOldSha].includes(value.targetSha) ||
-      value.previousTargetSha !== PIN.targetSha || value.expectedOldSha !== PIN.expectedOldSha || value.activeAttempt !== 3 ||
+      value.previousTargetSha !== (recovering ? FENCE_PIN.targetSha : PIN.targetSha) || value.expectedOldSha !== PIN.expectedOldSha || value.activeAttempt !== 3 ||
       !number(value.revision) || value.revision < PIN.revision || !number(value.stateBytes) || value.stateBytes < PIN.stateBytes || value.stateBytes > 4194304 ||
       ![value.stateDigest, value.sourceDiffDigest, value.migrationDigest, value.stoppedBaselineDigest].every(digest) ||
-      hash(value.stoppedBaseline) !== value.stoppedBaselineDigest || value.authorizationDigest !== hash(AUTH)) fail();
+      hash(value.stoppedBaseline) !== value.stoppedBaselineDigest || value.authorizationDigest !== hash(recovering ? FENCE_AUTH : AUTH)) fail();
+  if (recovering && (value.revision !== FENCE_PIN.revision || value.stateDigest !== FENCE_PIN.stateDigest ||
+      value.stateBytes !== FENCE_PIN.stateBytes || value.targetSha === FENCE_PIN.targetSha)) fail();
   return value;
 }
 function evidence(value) {
@@ -83,13 +101,14 @@ function evidence(value) {
   return value;
 }
 function checkState(state) {
-  if (!exact(state, [...KEYS, "leaseRenewal", "leaseExtensions"]) || state.version !== 12 || state.activeAttempt !== 3 ||
+  const recovered = state?.version === 13;
+  if (!exact(state, [...KEYS, "leaseRenewal", "leaseExtensions", ...(recovered ? ["fenceRecovery"] : [])]) || ![12, 13].includes(state.version) || state.activeAttempt !== 3 ||
       !PHASES.includes(state.phase) || !number(state.revision) || !exact(state.leaseRenewal, AUDIT) ||
       !Array.isArray(state.leaseExtensions) || state.leaseExtensions.length > 128 || state.revision < 40 + state.leaseExtensions.length) fail();
   const prior = reconstruct(state), audit = state.leaseRenewal, first = evidence(audit.evidence);
   if (audit.version !== 1 || !equal(audit.authorization, AUTH) || !number(audit.renewedAt) || audit.renewedAt < AUTH.authorizedAt ||
       audit.expiresAt !== audit.renewedAt + AUTH.maximumLeaseMilliseconds || first.revision !== PIN.revision ||
-      first.stateDigest !== PIN.stateDigest || first.stateBytes !== PIN.stateBytes || first.targetSha !== state.targetSha ||
+      first.stateDigest !== PIN.stateDigest || first.stateBytes !== PIN.stateBytes || first.targetSha !== (recovered ? FENCE_PIN.targetSha : state.targetSha) ||
       first.historyCheckedAt > audit.renewedAt || audit.renewedAt - first.historyCheckedAt > 300000 ||
       !equal(first.stoppedBaseline, audit.stoppedBaseline)) fail();
   baseline(audit.stoppedBaseline, prior, audit.renewedAt);
@@ -109,17 +128,68 @@ function checkState(state) {
   const archived = prior.budgetRecovery.predecessor.state;
   launchShape(state, [archived.launchJournal, archived.secondAttemptRecovery.predecessor.state.launchJournal, archived.attemptRecovery.predecessor.state.launchJournal]
     .flatMap(journal => Object.values(journal.slots).filter(Boolean).map(slot => slot.nonce)));
+  if (recovered) checkFenceRecoveryAudit(state);
   return { prior, expiresAt, lastTime };
+}
+function fenceOriginal(state) {
+  const compact = state.fenceRecovery?.predecessor;
+  if (!exact(compact, ["version", "revision", "phase", "targetSha", "stateDigest", "stateBytes", "ingress"]) ||
+      ["version", "revision", "phase", "targetSha", "stateDigest", "stateBytes"].some(key => compact[key] !== FENCE_PIN[key])) fail();
+  return { ...project(state, [...KEYS, "leaseRenewal", "leaseExtensions"]), version: 12, revision: 42, phase: "failed-held",
+    targetSha: FENCE_PIN.targetSha, ingress: compact.ingress, leaseExtensions: [], ...Object.fromEntries(LAUNCH.map(key => [key, null])) };
+}
+function checkFencePredecessor(state, validateHistory = true) {
+  if (state.version !== 12 || state.revision !== 42 || state.phase !== "failed-held" || state.activeAttempt !== 3 ||
+      state.targetSha !== FENCE_PIN.targetSha || hash(state) !== FENCE_PIN.stateDigest ||
+      Buffer.byteLength(JSON.stringify(state)) !== FENCE_PIN.stateBytes || LAUNCH.some(key => state[key] !== null)) fail();
+  if (validateHistory) checkState(state);
+}
+function checkFenceRecoveryAudit(state) {
+  const audit = state.fenceRecovery;
+  if (!exact(audit, ["version", "predecessor", "evidence", "recoveredAt", "stoppedBaseline", "authorization"]) ||
+      audit.version !== 1 || !equal(audit.authorization, FENCE_AUTH) || !number(audit.recoveredAt) || audit.recoveredAt < FENCE_AUTH.authorizedAt ||
+      state.revision < 43 || (state.revision === 43 && (state.phase !== "held" || LAUNCH.some(key => state[key] !== null)))) fail();
+  // checkState already verified the shared immutable history above. The raw
+  // predecessor digest additionally pins every byte; do not traverse it twice.
+  const original = fenceOriginal(state); checkFencePredecessor(original, false);
+  const item = evidence(audit.evidence);
+  if (item.state !== "fence-recovery-inspected" || item.targetSha !== state.targetSha || item.historyCheckedAt > audit.recoveredAt ||
+      item.historyCheckedAt < FENCE_AUTH.authorizedAt || audit.recoveredAt - item.historyCheckedAt > 300000 || !equal(item.stoppedBaseline, audit.stoppedBaseline) ||
+      audit.recoveredAt >= original.leaseRenewal.expiresAt || (state.revision === 43 && !equal(state.ingress, original.ingress))) fail();
+  baseline(audit.stoppedBaseline, original, audit.recoveredAt);
+}
+export function validateMaintenanceFencePredecessor(raw, rawClock) {
+  const state = capture(raw), time = capture(rawClock); clock(time); checkFencePredecessor(state);
+  if (time.now < FENCE_AUTH.authorizedAt || time.now >= maintenanceLeaseExpiresAt(state)) fail(); return freeze(state);
+}
+export function createMaintenanceFenceInspection(raw, rawContext) {
+  const context = capture(rawContext), state = validateMaintenanceFencePredecessor(raw, { bootId: context.bootId, now: context.now });
+  if (!exact(context, CONTEXT) || context.operationId !== state.operationId || context.expectedOldSha !== state.expectedOldSha ||
+      context.previousTargetSha !== FENCE_PIN.targetSha || context.expectedRevision !== state.revision || context.expectedDigest !== hash(state)) fail();
+  baseline(context.stoppedBaseline, reconstruct(state), context.now);
+  return freeze(inspection({ version: 1, state: "fence-recovery-inspected", operationId: state.operationId, targetSha: context.targetSha,
+    previousTargetSha: FENCE_PIN.targetSha, expectedOldSha: state.expectedOldSha, revision: state.revision, stateDigest: hash(state),
+    stateBytes: Buffer.byteLength(JSON.stringify(state)), activeAttempt: 3, sourceDiffDigest: context.sourceDiffDigest, migrationDigest: context.migrationDigest,
+    stoppedBaseline: context.stoppedBaseline, stoppedBaselineDigest: hash(context.stoppedBaseline), authorizationDigest: hash(FENCE_AUTH) }));
+}
+export function buildMaintenanceFenceRecoveredState(raw, rawEvidence, rawContext) {
+  const state = capture(raw), context = capture(rawContext), item = validateMaintenanceLeaseEvidence(rawEvidence);
+  const inspected = createMaintenanceFenceInspection(state, context);
+  if (!equal(inspected, project(item, INSPECTION)) || item.historyCheckedAt > context.now || context.now - item.historyCheckedAt > 300000) fail();
+  return validateMaintenanceLeaseState({ ...state, version: 13, revision: 43, phase: "held", targetSha: context.targetSha,
+    fenceRecovery: { version: 1, predecessor: { ...project(FENCE_PIN, ["version", "revision", "phase", "targetSha", "stateDigest", "stateBytes"]), ingress: state.ingress },
+      evidence: item, recoveredAt: context.now, stoppedBaseline: context.stoppedBaseline, authorization: { ...FENCE_AUTH } } },
+  { bootId: context.bootId, now: context.now });
 }
 export function maintenanceLeaseExpiresAt(raw) { return checkState(capture(raw)).expiresAt; }
 export function validateMaintenanceLeaseState(raw, rawClock) {
   const state = capture(raw), time = capture(rawClock); clock(time); const checked = checkState(state);
-  if (time.now < checked.lastTime || time.now >= checked.expiresAt) fail(); return freeze(state);
+  if (time.now < checked.lastTime || time.now >= checked.expiresAt || (state.version === 13 && time.now < state.fenceRecovery.recoveredAt)) fail(); return freeze(state);
 }
 export function validateMaintenanceLeasePredecessor(raw, rawClock) {
   const state = capture(raw), time = capture(rawClock); clock(time); unused(state);
   if (state.version === 11) original(state);
-  else if (state.version === 12) { const checked = checkState(state); if (time.now < checked.lastTime) fail(); }
+  else if ([12, 13].includes(state.version)) { const checked = checkState(state); if (time.now < checked.lastTime) fail(); }
   else fail();
   return freeze(state);
 }
@@ -134,7 +204,7 @@ export function createMaintenanceLeaseInspection(raw, rawContext) {
   const state = validateMaintenanceLeasePredecessor(raw, { bootId: rawContext?.bootId, now: rawContext?.now }), context = capture(rawContext);
   if (!exact(context, CONTEXT) || context.operationId !== state.operationId || context.expectedOldSha !== state.expectedOldSha ||
       context.previousTargetSha !== PIN.targetSha || context.expectedRevision !== state.revision || context.expectedDigest !== hash(state) ||
-      (state.version === 12 && context.targetSha !== state.targetSha)) fail();
+      ([12, 13].includes(state.version) && context.targetSha !== state.targetSha)) fail();
   baseline(context.stoppedBaseline, state.version === 11 ? state : reconstruct(state), context.now);
   return freeze(inspection({ version: 1, state: "lease-renewal-inspected", operationId: state.operationId, targetSha: context.targetSha,
     previousTargetSha: PIN.targetSha, expectedOldSha: state.expectedOldSha, revision: state.revision, stateDigest: hash(state),
@@ -161,18 +231,26 @@ export function buildMaintenanceLeasedState(raw, rawEvidence, rawContext) {
 }
 export function assertMaintenanceLeaseProgress(rawPrevious, rawNext) {
   const previous = capture(rawPrevious), next = capture(rawNext);
-  if (previous.version !== 12 && next.version !== 12) {
+  if (previous.version === 12 && next.version === 13) {
+    const audit = next.fenceRecovery, item = audit?.evidence; if (!item) fail();
+    const expected = buildMaintenanceFenceRecoveredState(previous, item, { operationId: item.operationId, targetSha: item.targetSha,
+      previousTargetSha: item.previousTargetSha, expectedOldSha: item.expectedOldSha, expectedRevision: item.revision, expectedDigest: item.stateDigest,
+      bootId: previous.bootId, now: audit.recoveredAt, sourceDiffDigest: item.sourceDiffDigest, migrationDigest: item.migrationDigest, stoppedBaseline: item.stoppedBaseline });
+    if (!equal(next, expected)) fail(); return;
+  }
+  if (![12, 13].includes(previous.version) && ![12, 13].includes(next.version)) {
     if ([previous, next].some(state => Object.hasOwn(state, "leaseRenewal") || Object.hasOwn(state, "leaseExtensions"))) fail();
     return assertMaintenancePreflightRecoveryProgress(previous, next);
   }
-  if ((previous.version === 11 && next.version === 12) || (previous.version === 12 && next.version === 12 && !equal(previous.leaseExtensions, next.leaseExtensions))) {
+  if ((previous.version === 11 && next.version === 12) || ([12, 13].includes(previous.version) && previous.version === next.version && !equal(previous.leaseExtensions, next.leaseExtensions))) {
     const event = previous.version === 11 ? next.leaseRenewal : next.leaseExtensions?.at(-1), item = event?.evidence;
     if (!item) fail(); const expected = buildMaintenanceLeasedState(previous, item, { operationId: item.operationId, targetSha: item.targetSha,
       previousTargetSha: item.previousTargetSha, expectedOldSha: item.expectedOldSha, expectedRevision: item.revision, expectedDigest: item.stateDigest,
       bootId: previous.bootId, now: event.renewedAt, sourceDiffDigest: item.sourceDiffDigest, migrationDigest: item.migrationDigest, stoppedBaseline: item.stoppedBaseline });
     if (!equal(next, expected)) fail(); return;
   }
-  if (previous.version !== 12 || next.version !== 12 || !number(previous.revision) || next.revision !== previous.revision + 1 ||
+  if (![12, 13].includes(previous.version) || next.version !== previous.version || !number(previous.revision) || next.revision !== previous.revision + 1 ||
+      !equal(previous.fenceRecovery, next.fenceRecovery) ||
       [...KEYS.filter(key => !["revision", "phase", "ingress", ...LAUNCH].includes(key)), "leaseRenewal", "leaseExtensions"].some(key => !equal(previous[key], next[key])) ||
       !({ held: ["held", "candidate", "failed-held", "failed-unknown"], candidate: ["candidate", "resuming", "failed-held", "failed-unknown"],
         resuming: ["resuming", "ended", "failed-held", "failed-unknown"], ended: ["ended", "failed-held", "failed-unknown"],

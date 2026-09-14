@@ -7,7 +7,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./deploy.production.sh", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
 const stages = "checkpoint_arguments checkpoint_deadline checkpoint_state checkpoint_identity_before checkpoint_marker checkpoint_remaining checkpoint_database checkpoint_identity_after checkpoint_deadline_after database_arguments database_budget database_command database_deadline database_result marker_file marker_canonical marker_binding marker_hold_budget marker_database marker_locks marker_context marker_endpoint marker_digest".split(" ");
-const codes = "start passed failed held blocked_cancelled quiescing not_held unexpected_status".split(" ");
+const codes = "start passed failed held blocked_cancelled quiescing not_held locks_lost cancellation_incomplete waiters_remaining unexpected_status".split(" ");
 function region(start, end) {
   const a = source.indexOf(start + "() {"), b = source.indexOf("\n" + end + "() {", a);
   assert(a >= 0 && b > a, start); return source.slice(a, b);
@@ -100,6 +100,8 @@ test("real database shell preserves all output/status mappings and never copies 
     ["held", 0, 0, "held"], ["held", 1, 0, "held"], ["quiescing", 1, 2, "quiescing"], ["quiescing", 0, 1, "quiescing"],
     ["blocked_cancelled", 0, 2, "blocked_cancelled"], ["blocked_cancelled", 1, 1, "blocked_cancelled"],
     ["not_held", 0, 1, "not_held"], ["SECRET/private", 0, 1, "unexpected_status"], ["", 0, 1, "unexpected_status"],
+    ...["locks_lost", "cancellation_incomplete"].flatMap(code => [0, 1].map(allow => [code, allow, 1, code])),
+    ["waiters_remaining", 0, 2, "waiters_remaining"], ["waiters_remaining", 1, 1, "waiters_remaining"],
   ]) {
     const result = run(databaseBoundary + `\nSYNTHETIC_DATABASE_RESULT='${value}'\n` + verdict(`assert_readiness_fence_database_locks ${allow} 15 15`), database);
     assert.equal(result.stdout, `RESULT ${status} 0 0 0\n`); has(result, "database_result", code);
@@ -124,6 +126,27 @@ test("database argument and budget failures still prevent command execution", ()
   // clock immediately after the synthetic command, before the original gate.
   const expired = run(databaseBoundary + `\nset -T\ntrap 'if [[ "$BASH_COMMAND" == "readiness_fence_diagnostic database_command passed "* ]]; then SECONDS=7; fi' DEBUG\n` + verdict("assert_readiness_fence_database_locks 0 1 7"), database);
   assert.equal(expired.stdout, "RESULT 1 0 0 0\n"); has(expired, "database_deadline", "failed");
+});
+
+test("remaining waiters never permit forward progress and cannot exceed existing retry envelope", () => {
+  for (const [transientCount, expected, count] of [[1, 0, 2], [3, 1, 3]]) {
+    const result = run(`
+assert_readiness_fence_database_locks() {
+  database_calls=$((database_calls+1))
+  if [ "$database_calls" -le ${transientCount} ]; then return 2; fi
+  return 0
+}
+if assert_readiness_fence_held_with_bounded_retry 795 15; then status=0; else status=$?; fi
+printf 'RESULT %s %s\\n' "$status" "$database_calls"
+`, [held, retry].join("\n"));
+    assert.match(result.stdout, new RegExp(`RESULT ${expected} ${count}\\n$`));
+  }
+  for (const value of ["locks_lost", "cancellation_incomplete"]) {
+    const result = run(databaseBoundary + `\nSYNTHETIC_DATABASE_RESULT=${value}\n` +
+      verdict("assert_readiness_fence_held_with_bounded_retry 795 15"), [database, held, retry].join("\n"));
+    assert.match(result.stdout, /deploy_failed_readiness_fence_nonretryable/);
+    assert.equal(result.diagnostics.filter(row => row.stage === "database_result").length, 1);
+  }
 });
 
 test("real and no-op logger fault matrix preserves exact commands, counts, stdout and status", () => {
@@ -193,10 +216,13 @@ printf 'RESULT %s %s %s %s %s\\n' "$prior" "$status" "$query_calls" "$state_call
   assert.equal(result.diagnostics.filter(row => row.stage === "database_result" && row.code === "held").length, 3);
 });
 
-test("SQL bytes, checkpoint retry policy and cleanup behavior are unchanged", () => {
+test("SQL failure reasons preserve the original gate, checkpoint retry and cleanup", () => {
   const sql = database.slice(database.indexOf("<<'SQL'\n") + 8, database.indexOf("\nSQL\n"));
-  assert.equal(Buffer.byteLength(sql), 4786);
-  assert.equal(createHash("sha256").update(sql).digest("hex"), "6554b9d57438d986e88e43e0df3b4f5a4dc0a1d14216dec2ef9e20ee9023fb06");
+  const originalSql = sql.replace("THEN 'locks_lost'", "THEN 'not_held'")
+    .replace("  THEN 'cancellation_incomplete'\n  WHEN (SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0\n  THEN 'waiters_remaining'",
+      "    OR (SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0\n  THEN 'not_held'");
+  assert.equal(Buffer.byteLength(originalSql), 4786);
+  assert.equal(createHash("sha256").update(originalSql).digest("hex"), "6554b9d57438d986e88e43e0df3b4f5a4dc0a1d14216dec2ef9e20ee9023fb06");
   assert.match(retry, /local maximum_attempts=3/);
   assert.match(retry, /2\)[\s\S]*readiness_fence_waiter_cancelled_retry[\s\S]*sleep 1/);
   assert.match(forward, /READINESS_FENCE_ROLLBACK_RESERVE_SECONDS \+[\s\S]*READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS \+[\s\S]*operation_timeout_seconds \+[\s\S]*READINESS_FENCE_OPERATION_MARGIN_SECONDS/);
