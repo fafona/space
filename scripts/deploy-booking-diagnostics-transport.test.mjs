@@ -28,6 +28,14 @@ const stages = [
 const codes = ["start", "passed", "failed", "hard_failed", "transient", "invocation_failed", "integrity_failed", "unexpected_status"];
 const line = (stage = "retry_reserve", code = "failed", seconds = 35) =>
   `[deploy] booking_persistence_diagnostic stage=${stage} code=${code} elapsed_seconds=${seconds}`;
+const fenceStages = ["checkpoint_arguments", "checkpoint_deadline", "checkpoint_state",
+  "checkpoint_identity_before", "checkpoint_marker", "checkpoint_remaining", "checkpoint_database",
+  "checkpoint_identity_after", "checkpoint_deadline_after", "database_arguments", "database_budget",
+  "database_command", "database_deadline", "database_result", "marker_file", "marker_canonical", "marker_binding",
+  "marker_hold_budget", "marker_database", "marker_locks", "marker_context", "marker_endpoint", "marker_digest"];
+const fenceCodes = ["start", "passed", "failed", "held", "blocked_cancelled", "quiescing", "not_held", "unexpected_status"];
+const fenceLine = (stage = "checkpoint_database", code = "failed", seconds = 1) =>
+  `[deploy] readiness_fence_diagnostic stage=${stage} code=${code} elapsed_seconds=${seconds}`;
 const bash = (process.platform === "win32"
   ? ["C:/Program Files/Git/bin/bash.exe", "C:/Program Files/Git/usr/bin/bash.exe"]
   : ["bash"]).find((path) => spawnSync(path, ["--version"], { stdio: "ignore", windowsHide: true }).status === 0);
@@ -86,6 +94,36 @@ test("workflow rejects malformed, secret-bearing, binary, and workflow-command d
     "::error::PRIVATE", "::add-mask::PRIVATE", "PRIVATE_DO_NOT_PRINT", "x".repeat(200000),
   ];
   assert.equal(await emit(invalid.join("\n") + "\n" + valid + "\n"), valid + "\n");
+});
+
+test("workflow preserves every fixed fence stage and code interleaved with booking observations", async () => {
+  for (let offset = 0; offset < fenceStages.length; offset += 14) {
+    const rows = [line("retry_fence_before", "start", 0),
+      ...fenceStages.slice(offset, offset + 14).flatMap((stage) => fenceCodes.map((code) => fenceLine(stage, code, 1))),
+      fenceLine("checkpoint_marker", "failed", 86400), line("retry_fence_before", "failed", 1)];
+    assert.equal(await emit(rows.join("\n") + "\n"), rows.join("\n") + "\n");
+    assert.equal(await emit("", rows.join("\n") + "\n"), "", "details must only come from stderr");
+  }
+});
+
+test("fence transport rejects arbitrary values and noncanonical lines without masking the saved failure", async () => {
+  const valid = fenceLine();
+  const invalid = [fenceLine("secret"), fenceLine("checkpoint_database", "secret"),
+    fenceLine("query"), fenceLine("database_command", "hard_failed"),
+    ...["-1", "01", "86401", "100000", "NaN", "Infinity", "1.5", "+1", "1e3", ""].map(
+      (seconds) => fenceLine("database_command", "failed", seconds)),
+    `prefix ${valid}`, `${valid} token=PRIVATE`, `${valid}\r`, `${valid}\0`,
+    `\u001b[31m${valid}`, `::error::${valid}`, `\0${valid}`];
+  assert.equal(await emit(invalid.join("\n") + "\n" + valid + "\n"), valid + "\n");
+  assert.equal(await emit(valid + "\n", "", {
+    verdict: { ssh: 23, frame: 0 }, expectedStatus: 23,
+  }), valid + "\n[deploy] deploy_transport_or_remote_execution_failed\n");
+});
+
+test("mixed fence and booking diagnostics share the final-128 chronological limit", async () => {
+  const rows = Array.from({ length: 200 }, (_, i) => i % 2
+    ? fenceLine("checkpoint_marker", "passed", i) : line("retry_fence_before", "start", i));
+  assert.equal(await emit(rows.join("\n") + "\n"), rows.slice(-128).join("\n") + "\n");
 });
 
 test("workflow preserves repeated observation order and retains the final 128 valid lines", async () => {

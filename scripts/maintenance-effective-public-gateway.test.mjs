@@ -66,7 +66,7 @@ const deploy = readFileSync(new URL("./deploy.production.sh", import.meta.url), 
 const start = deploy.indexOf('let publicBase = process.env.FAOLLA_NEXT_PUBLIC_SUPABASE_URL ?? "";');
 const end = deploy.indexOf("const expectedProbes = [", start);
 assert.ok(start > 0 && end > start);
-const consumer = deploy.slice(start, end).replaceAll("await import(", "await importModule(") + "\nreturn {publicBase,publicBaseSha};";
+const consumer = "let diagnosticStage;\n" + deploy.slice(start, end).replaceAll("await import(", "await importModule(") + "\nreturn {publicBase,publicBaseSha};";
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const executeConsumer = new AsyncFunction("process", "realpathSync", "pathToFileURL", "importModule", "fail", "sha256", "normalizeBase", consumer);
 async function marker(rawPublic, mode, context) {
@@ -98,9 +98,12 @@ test("the actual deployment marker consumer uses the same active gateway selecti
 });
 
 test("the deployment marker rejects missing context, mismatched gateway and invalid mode", async () => {
-  await assert.rejects(marker(raw, "maintenance", null), /marker_rejected/);
-  await assert.rejects(marker(raw, "maintenance", { publicSupabaseUrl: "https://other.example/" }), /maintenance_public_gateway_unverified/);
-  await assert.rejects(marker(raw, "invalid", null), /marker_rejected/);
+  // The deployment boundary now reports the fixed marker_context diagnostic
+  // and rejects, rather than exposing the private context/gateway exception.
+  // Direct gateway rejection remains independently covered above.
+  await assert.rejects(marker(raw, "maintenance", null), { message: "marker_rejected" });
+  await assert.rejects(marker(raw, "maintenance", { publicSupabaseUrl: "https://other.example/" }), { message: "marker_rejected" });
+  await assert.rejects(marker(raw, "invalid", null), { message: "marker_rejected" });
 });
 
 test("Bash binds source path and mode while preserving marker argv and raw runtime identities", () => {

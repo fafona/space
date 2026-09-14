@@ -5231,11 +5231,21 @@ validate_readiness_fence_marker() {
       node --input-type=module - \
       "$READINESS_FENCE_MARKER" "$READINESS_FENCE_RELEASE_REQUEST" \
       "$PRODUCTION_MAINTENANCE_MODE" "$APP_DIR/scripts" <<'NODE'
-import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, writeSync } from "node:fs";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const fail = () => process.exit(1);
+let diagnosticStage = "marker_file";
+const diagnosticStarted = performance.now();
+const fail = () => {
+  try {
+    const elapsed = Math.floor((performance.now() - diagnosticStarted) / 1000);
+    if (Number.isSafeInteger(elapsed) && elapsed >= 0 && elapsed <= 86400) {
+      writeSync(2, `[deploy] readiness_fence_diagnostic stage=${diagnosticStage} code=failed elapsed_seconds=${elapsed}\n`);
+    }
+  } catch { /* Diagnostics cannot replace the existing exit status. */ }
+  process.exit(1);
+};
 const markerPath = process.argv[2];
 const releaseRequestPath = process.argv[3];
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -5284,9 +5294,11 @@ try {
 } finally {
   if (descriptor !== undefined) closeSync(descriptor);
 }
+diagnosticStage = "marker_canonical";
 let marker;
 try { marker = JSON.parse(bytes.toString("utf8")); } catch { fail(); }
 if (!bytes.equals(canonicalBytes(marker))) fail();
+diagnosticStage = "marker_binding";
 exact(marker, [
   "schemaVersion", "kind", "targetSha", "readinessRunId", "readinessRunAttempt",
   "readinessArtifactId", "readinessArtifactDigest", "attestationSha256", "database",
@@ -5321,7 +5333,10 @@ if (
   !timingSafeEqual(expectedToken, actualToken) ||
   !hex.test(marker.releaseTokenSha256 ?? "") ||
   marker.releaseTokenSha256 !== sha256(actualToken) ||
-  marker.releaseRequestPathSha256 !== sha256(Buffer.from(releaseRequestPath, "utf8")) ||
+  marker.releaseRequestPathSha256 !== sha256(Buffer.from(releaseRequestPath, "utf8"))
+) fail();
+diagnosticStage = "marker_hold_budget";
+if (
   Number.isNaN(startedAtMilliseconds) || Number.isNaN(validUntilMilliseconds) ||
   new Date(startedAtMilliseconds).toISOString() !== marker.startedAt ||
   new Date(validUntilMilliseconds).toISOString() !== marker.validUntil ||
@@ -5330,6 +5345,7 @@ if (
   startedAtMilliseconds > nowMilliseconds + 5_000 ||
   startedAtMilliseconds + maximumHoldSeconds * 1000 - nowMilliseconds < minimumHoldRemainingSeconds * 1000
 ) fail();
+diagnosticStage = "marker_database";
 const database = exact(marker.database, ["containerName", "containerId", "dbName", "dbOid", "systemId", "primary"]);
 if (
   database.containerName !== process.env.FAOLLA_EXPECTED_DATABASE_CONTAINER_NAME ||
@@ -5338,6 +5354,7 @@ if (
   typeof database.dbName !== "string" || database.dbName.length === 0 ||
   !decimal.test(database.systemId ?? "") || database.primary !== true
 ) fail();
+diagnosticStage = "marker_locks";
 const holdLocks = exact(marker.holdLocks, [
   "authShareLockCount", "authAccessExclusiveLockCount",
   "pagesAccessExclusiveLockCount", "registryAccessExclusiveLockCount",
@@ -5348,6 +5365,7 @@ if (
   holdLocks.pagesAccessExclusiveLockCount !== "0" ||
   holdLocks.registryAccessExclusiveLockCount !== "1"
 ) fail();
+diagnosticStage = "marker_endpoint";
 if (!Array.isArray(marker.endpointEvidence) || marker.endpointEvidence.length !== 4) fail();
 const normalizeBase = (raw) => {
   let value;
@@ -5358,6 +5376,8 @@ const normalizeBase = (raw) => {
 const internalBaseSha = sha256(Buffer.from(normalizeBase(process.env.FAOLLA_SUPABASE_INTERNAL_URL ?? ""), "utf8"));
 let publicBase = process.env.FAOLLA_NEXT_PUBLIC_SUPABASE_URL ?? "";
 const maintenanceMode = process.argv[4] ?? "off";
+diagnosticStage = "marker_context";
+try {
 if (maintenanceMode === "maintenance") {
   const scripts = process.argv[5];
   if (typeof scripts !== "string" || !/^\/[A-Za-z0-9._/-]+\/scripts$/.test(scripts) || realpathSync(scripts) !== scripts) fail();
@@ -5367,6 +5387,8 @@ if (maintenanceMode === "maintenance") {
   if (context === null) fail();
   publicBase = bindMaintenancePublicSupabaseUrl(publicBase, context.publicSupabaseUrl);
 } else if (maintenanceMode !== "off") fail();
+} catch { fail(); }
+diagnosticStage = "marker_endpoint";
 const publicBaseSha = sha256(Buffer.from(normalizeBase(publicBase), "utf8"));
 const expectedProbes = [
   ["internalRest", "public", "pages", internalBaseSha],
@@ -5393,6 +5415,7 @@ marker.endpointEvidence.forEach((entry, index) => {
     entry.blockingPids[0] !== marker.backendPid
   ) fail();
 });
+diagnosticStage = "marker_digest";
 const markerSha256 = sha256(bytes);
 const expectedMarkerSha256 = process.env.FAOLLA_EXPECTED_MARKER_SHA256 ?? "";
 if (expectedMarkerSha256 && markerSha256 !== expectedMarkerSha256) fail();
@@ -5422,6 +5445,23 @@ NODE
   READINESS_FENCE_MARKER_SHA256="$candidate_marker_sha256"
 }
 
+# Diagnostic-only: no child process, raw command/result or identity. A logging
+# failure must never replace the original checkpoint verdict or stdout protocol.
+readiness_fence_diagnostic() {
+  local stage="$1" code="$2" started_seconds="$3" elapsed_seconds
+  case "$stage" in
+    checkpoint_arguments|checkpoint_deadline|checkpoint_state|checkpoint_identity_before|checkpoint_marker|checkpoint_remaining|checkpoint_database|checkpoint_identity_after|checkpoint_deadline_after|database_arguments|database_budget|database_command|database_deadline|database_result|marker_file|marker_canonical|marker_binding|marker_hold_budget|marker_database|marker_locks|marker_context|marker_endpoint|marker_digest) ;;
+    *) return 0 ;;
+  esac
+  case "$code" in start|passed|failed|held|blocked_cancelled|quiescing|not_held|unexpected_status) ;; *) return 0 ;; esac
+  [[ "$started_seconds" =~ ^(0|[1-9][0-9]{0,8})$ ]] && [[ "$SECONDS" =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 0
+  elapsed_seconds=$((SECONDS - started_seconds))
+  [ "$elapsed_seconds" -ge 0 ] && [ "$elapsed_seconds" -le 86400 ] || return 0
+  printf '[deploy] readiness_fence_diagnostic stage=%s code=%s elapsed_seconds=%s\n' \
+    "$stage" "$code" "$elapsed_seconds" >&2 || :
+  return 0
+}
+
 assert_readiness_fence_database_locks() {
   local allow_waiters="${1:-0}"
   local query_timeout_seconds="${2:-$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS}"
@@ -5429,21 +5469,32 @@ assert_readiness_fence_database_locks() {
   local command_timeout_seconds
   local lock_state
   local statement_timeout_milliseconds
+  local fence_diagnostic_started="$SECONDS"
   case "$allow_waiters" in
     0|1) ;;
-    *) return 1 ;;
+    *) readiness_fence_diagnostic database_arguments failed "$fence_diagnostic_started"; return 1 ;;
   esac
   if ! [[ "$query_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
+    readiness_fence_diagnostic database_arguments failed "$fence_diagnostic_started"
     return 1
   fi
+  readiness_fence_diagnostic database_arguments passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
   command_timeout_seconds="$query_timeout_seconds"
   if [ -n "$absolute_deadline_seconds" ]; then
     command_timeout_seconds="$(deadline_bounded_command_timeout_seconds \
-      "$absolute_deadline_seconds" "$query_timeout_seconds" 5)" || return 1
+      "$absolute_deadline_seconds" "$query_timeout_seconds" 5)" || {
+        readiness_fence_diagnostic database_budget failed "$fence_diagnostic_started"; return 1;
+      }
   fi
   statement_timeout_milliseconds=$((command_timeout_seconds * 1000 - 1))
-  if [ "$statement_timeout_milliseconds" -le 0 ]; then return 1; fi
+  if [ "$statement_timeout_milliseconds" -le 0 ]; then
+    readiness_fence_diagnostic database_budget failed "$fence_diagnostic_started"; return 1
+  fi
+  readiness_fence_diagnostic database_budget passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
+  readiness_fence_diagnostic database_command start "$fence_diagnostic_started"
   if ! lock_state="$(
     timeout --signal=TERM --kill-after=5s \
       "${command_timeout_seconds}s" \
@@ -5603,25 +5654,33 @@ END
 FROM lock_counts;
 SQL
   )"; then
+    readiness_fence_diagnostic database_command failed "$fence_diagnostic_started"
     return 1
   fi
+  readiness_fence_diagnostic database_command passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
   if [ -n "$absolute_deadline_seconds" ] \
     && [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+    readiness_fence_diagnostic database_deadline failed "$fence_diagnostic_started"
     return 1
   fi
+  readiness_fence_diagnostic database_deadline passed "$fence_diagnostic_started"
   case "$lock_state" in
-    held) return 0 ;;
+    held) readiness_fence_diagnostic database_result held "$fence_diagnostic_started"; return 0 ;;
     quiescing)
+      readiness_fence_diagnostic database_result quiescing "$fence_diagnostic_started"
       if [ "$allow_waiters" = "1" ]; then return 2; fi
       return 1
       ;;
     blocked_cancelled)
+      readiness_fence_diagnostic database_result blocked_cancelled "$fence_diagnostic_started"
       if [ "$allow_waiters" = "0" ]; then
         return 2
       fi
       return 1
       ;;
-    *) return 1 ;;
+    not_held) readiness_fence_diagnostic database_result not_held "$fence_diagnostic_started"; return 1 ;;
+    *) readiness_fence_diagnostic database_result unexpected_status "$fence_diagnostic_started"; return 1 ;;
   esac
 }
 
@@ -5738,29 +5797,56 @@ assert_readiness_fence_held() {
   local outer_deadline_seconds="${3:-}"
   local deadline
   local database_status
+  local fence_diagnostic_started="$SECONDS"
   if ! [[ "$query_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
     || [ "$query_timeout_seconds" -gt "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" ]; then
+    readiness_fence_diagnostic checkpoint_arguments failed "$fence_diagnostic_started"
     return 1
   fi
+  readiness_fence_diagnostic checkpoint_arguments passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
   deadline=$((SECONDS + query_timeout_seconds))
   if [ -n "$outer_deadline_seconds" ]; then
     if ! [[ "$outer_deadline_seconds" =~ ^[1-9][0-9]*$ ]] \
       || [ "$SECONDS" -ge "$outer_deadline_seconds" ]; then
+      readiness_fence_diagnostic checkpoint_deadline failed "$fence_diagnostic_started"
       return 1
     fi
     if [ "$outer_deadline_seconds" -lt "$deadline" ]; then
       deadline="$outer_deadline_seconds"
     fi
   fi
+  readiness_fence_diagnostic checkpoint_deadline passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
   if [ "${READINESS_FENCE_ACTIVE:-0}" != "1" ] \
-    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ] \
-    || ! readiness_fence_process_identity_matches "$deadline" \
-    || ! validate_readiness_fence_marker \
-      "$minimum_hold_remaining_seconds" "$deadline"; then
+    || [ "${READINESS_FENCE_RELEASED:-0}" != "0" ]; then
+    readiness_fence_diagnostic checkpoint_state failed "$fence_diagnostic_started"
     return 1
   fi
+  readiness_fence_diagnostic checkpoint_state passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
+  readiness_fence_diagnostic checkpoint_identity_before start "$fence_diagnostic_started"
+  if ! readiness_fence_process_identity_matches "$deadline"; then
+    readiness_fence_diagnostic checkpoint_identity_before failed "$fence_diagnostic_started"
+    return 1
+  fi
+  readiness_fence_diagnostic checkpoint_identity_before passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
+  readiness_fence_diagnostic checkpoint_marker start "$fence_diagnostic_started"
+  if ! validate_readiness_fence_marker \
+      "$minimum_hold_remaining_seconds" "$deadline"; then
+    readiness_fence_diagnostic checkpoint_marker failed "$fence_diagnostic_started"
+    return 1
+  fi
+  readiness_fence_diagnostic checkpoint_marker passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
   query_timeout_seconds=$((deadline - SECONDS))
-  if [ "$query_timeout_seconds" -le 0 ]; then return 1; fi
+  if [ "$query_timeout_seconds" -le 0 ]; then
+    readiness_fence_diagnostic checkpoint_remaining failed "$fence_diagnostic_started"; return 1
+  fi
+  readiness_fence_diagnostic checkpoint_remaining passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
+  readiness_fence_diagnostic checkpoint_database start "$fence_diagnostic_started"
   if assert_readiness_fence_database_locks \
     0 "$query_timeout_seconds" "$deadline"; then
     database_status=0
@@ -5768,13 +5854,21 @@ assert_readiness_fence_held() {
     database_status=$?
   fi
   case "$database_status" in
-    0|2) ;;
-    *) return 1 ;;
+    0|2) readiness_fence_diagnostic checkpoint_database passed "$fence_diagnostic_started" ;;
+    *) readiness_fence_diagnostic checkpoint_database failed "$fence_diagnostic_started"; return 1 ;;
   esac
-  if ! readiness_fence_process_identity_matches "$deadline" \
-    || [ "$SECONDS" -ge "$deadline" ]; then
+  fence_diagnostic_started="$SECONDS"
+  readiness_fence_diagnostic checkpoint_identity_after start "$fence_diagnostic_started"
+  if ! readiness_fence_process_identity_matches "$deadline"; then
+    readiness_fence_diagnostic checkpoint_identity_after failed "$fence_diagnostic_started"
     return 1
   fi
+  readiness_fence_diagnostic checkpoint_identity_after passed "$fence_diagnostic_started"
+  fence_diagnostic_started="$SECONDS"
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    readiness_fence_diagnostic checkpoint_deadline_after failed "$fence_diagnostic_started"; return 1
+  fi
+  readiness_fence_diagnostic checkpoint_deadline_after passed "$fence_diagnostic_started"
   return "$database_status"
 }
 
