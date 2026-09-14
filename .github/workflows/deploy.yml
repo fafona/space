@@ -1097,6 +1097,7 @@ jobs:
           emit_safe_deploy_diagnostics() {
             local deploy_diagnostic_code
             for deploy_diagnostic_code in \
+              '[deploy] deploy_disk_headroom_unverified' \
               '[deploy] deploy_failed_readiness_fence_nonretryable' \
               '[deploy] deploy_forward_quiescence_failed' \
               '[deploy] deploy_forward_booking_persistence_hard_failed' \

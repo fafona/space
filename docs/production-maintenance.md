@@ -781,6 +781,52 @@ margin. The fence still has its original 1,320-second maximum and this operation
 still expires at 16:00 UTC. A timeout or any drift fails closed; a larger bounded
 proof budget is not permission to retry a process launch or omit verification.
 
+## One prelaunch recovery after D9 on 2026-09-14
+
+The recorded authorization at `2026-09-14T15:00:32Z` extends only the same
+unused active attempt 3 until `2026-09-14T20:00:00Z` (22:00 Madrid).
+`recover-prelaunch` requires the fixed confirmation
+`RECOVER_PRELAUNCH_PRODUCTION_MAINTENANCE_UNTIL_20260914T200000Z`, the same
+operation and original build, previous target T10
+`67ddb91bf618e9716b79df6bf97f08d3865919b7`, and a new exact main target T11
+with all ten successful push-CI jobs. It adds no runtime attempt and does not
+change or reinterpret the previous 16:00 authorization.
+
+The only accepted predecessor is failed-held v9/revision 35, active attempt 3,
+all five launch fields null, 1,746,788 bytes and SHA256
+`0a2a2e989e9da7e914a181ae27c3468d2f2a455f78404d8b546824ca3346f70c`.
+The flat v10 audit reconstructs those complete predecessor bytes and preserves
+every earlier audit. Fresh stopped-generation, ingress, complete 56-row database
+registry and exact source checks remain mandatory; publication uses the existing
+operation lock and raw-byte/revision CAS. A GitHub failure conclusion alone
+does not prove that no process was launched.
+
+The workflow binds successful window renewal `34852190872/1`, its exact T10 CI
+`34850320013/1`, successful B9 `34852696974/1`, successful R9 `34855754738/1`,
+and failed D9 `34855913697/1`. Every fixed run/job/step tuple and the complete
+artifact inventories are re-read, including D9's zero artifacts and skipped
+candidate/binding steps. These records are historical only: D9 is not a
+successful deploy, and B9/R9 must not be relabeled as evidence for T11. History
+enumerates all pages of the five production workflows twice from the prior
+renewal's fixed creation time, retaining earlier immutable history through the
+predecessor hash. Unknown activity, retries, changed totals, missing records,
+future clocks or altered metadata fail closed. No backup payload or raw log is
+downloaded to grant recovery. Fresh T11 backup, readiness, deployment and a
+successful independent end are still required within the new window.
+
+D9 reported release-finalization failure before candidate launch. The disk
+preflight checked current free space, not the complete build's future peak;
+the later 5 GiB gate remains mandatory. Disk reclamation is a separate operation,
+not implied by recovery: preserve O/T5/T6/T7 runtime baselines, current/state
+proofs, shared runtime data, uploads, databases and backups. Only independently
+identified unused disposable build artifacts or rebuildable caches may be
+considered, after recording necessary evidence and checking exact paths and
+references. Never enable the ordinary mtime-based release pruner during this
+maintenance operation: it protects current only, not all historical baselines.
+No cleanup or reduced threshold may substitute for a successful controlled
+deployment. Recovery, new CI, fresh artifacts and public availability remain
+pending until actually observed; the new window is not a completion guarantee.
+
 ## Fixed Supabase 15 scheduler compatibility
 
 The exact `supabase/postgres:15.8.1.085` image uses an additional read-only
