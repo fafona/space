@@ -16,6 +16,7 @@ export const MAINTENANCE_FENCE_SOURCE_PATHS = Object.freeze([
   "scripts/production-maintenance-lease-inspection.mjs",
   "scripts/production-maintenance-preflight-disk.mjs",
   "scripts/production-maintenance-readiness-fence-diagnostics.test.mjs",
+  "scripts/production-maintenance-booking-budget.test.mjs",
   "scripts/production-maintenance-fence-recovery.test.mjs",
   "scripts/production-maintenance-fence-evidence.mjs",
   "scripts/production-maintenance-fence-workflow.mjs",

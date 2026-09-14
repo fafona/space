@@ -212,17 +212,36 @@ printf '__result__ %s %s\n' "$status" "$SECONDS"
 }
 
 const snapshots = (trace) => trace.filter((item) => item.startsWith("snapshot:"));
-test("D7 query/fence SQL and retry decisions remain byte-equivalent except the explicit mode budget preamble", () => {
+test("D7 query/fence protections retain their bytes apart from audited reason codes and residual-waiter recheck", () => {
   // Pins were compared with real T7 Git blobs locally; CI needs no historical
   // object or private state. Line endings alone are normalized above.
   const digest = value => createHash("sha256").update(value).digest("hex");
-  const sql = [...source.matchAll(/<<'SQL'\n([\s\S]*?)\nSQL/g)].map(match => match[1]);
+  // Reverse only the separately tested fence delta, never repin changed locks,
+  // cancellation predicates, query bytes, or absolute retry budgets.
+  const historicalSql = value => value
+    .replace("THEN 'locks_lost'", "THEN 'not_held'")
+    .replace("  THEN 'cancellation_incomplete'\n  WHEN (SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0\n  THEN 'waiters_remaining'",
+      "    OR (SELECT pg_catalog.count(*) FROM blocked_waiters) <> 0\n  THEN 'not_held'");
+  const historicalFence = value => historicalSql(value).replace(`    waiters_remaining)
+      readiness_fence_diagnostic database_result waiters_remaining "$fence_diagnostic_started"
+      # Cancellation is asynchronous and a new waiter can arrive while it is
+      # being observed. Retry only inside the existing three-check / absolute
+      # deadline envelope. No forward mutation is allowed until zero waiters.
+      if [ "$allow_waiters" = "0" ]; then return 2; fi
+      return 1
+      ;;
+    locks_lost|cancellation_incomplete)
+      readiness_fence_diagnostic database_result "$lock_state" "$fence_diagnostic_started"
+      return 1
+      ;;
+`, "");
+  const sql = [...source.matchAll(/<<'SQL'\n([\s\S]*?)\nSQL/g)].map(match => historicalSql(match[1]));
   assert.equal(sql.length, 2);
   assert.equal(digest(JSON.stringify(sql)), "b39e1881c6358715413f31ed450c2f54054c157faf2066f82f0be2d049d02d11");
   for (const [name, pin] of [
     ["capture_candidate_web_identity_for_booking_retry", "c7db04f7d32ba6263dcd2a8fc07fd1dc40d079786d0ffa55df1e0ed917d14685"],
     ["assert_readiness_fence_database_locks", "4b936da19f289c2cbd0f28b896debe91d880f9305bb796b4b6c36854a17db7cd"],
-  ]) assert.equal(digest(extract(name)), pin);
+  ]) assert.equal(digest(name === "assert_readiness_fence_database_locks" ? historicalFence(extract(name)) : extract(name)), pin);
   const retry = extract("verify_booking_persistence_with_bounded_retry");
   const historicalRetry = "verify_booking_persistence_with_bounded_retry() {\n" +
     retry.slice(retry.indexOf("  local absolute_deadline_seconds="))
