@@ -838,6 +838,15 @@ validate_disk_thresholds() {
     echo "[deploy] NGINX_RUNTIME_USER must match the production nginx worker identity"
     exit 1
   fi
+  # Maintenance has already stopped the old web and worker. Its real path uses
+  # two full held checkpoints instead of the ordinary stop/port-release work.
+  # Bound each checkpoint to 70s (15 + 30 + 5 kill + 15 + 5 margin), retain the
+  # 780s rollback reserve and the unchanged 1320s total fence maximum.
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ] \
+    && [ $((READINESS_FENCE_ROLLBACK_RESERVE_SECONDS + 120 + 2 * 70 + 6 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS + 2 * PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS + READINESS_FENCE_OPERATION_MARGIN_SECONDS)) -gt "$READINESS_FENCE_MAXIMUM_HOLD_SECONDS" ]; then
+    echo "[deploy] release evidence TTL does not cover maintenance preflight and rollback budgets"
+    exit 1
+  fi
   case "$MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED" in
     true|false) ;;
     *)
@@ -4466,13 +4475,22 @@ NODE
 }
 
 maintenance_preflight_checkpoint() {
+  local checkpoint_deadline="${MAINTENANCE_PREFLIGHT_DEADLINE_SECONDS:-$((SECONDS + 70))}"
+  local reader_timeout
   if [ "${READINESS_FENCE_ACTIVE:-0}" = 1 ]; then
     # The exact readiness fence owns its own long database transaction here.
     # Do not misreport that as a globally idle database or exempt other writers.
     # Pair the runtime/ingress-only proof with the existing strict fence checks.
-    assert_readiness_fence_before_process_quiescence 125 \
-      && maintenance_control check-runtime-held \
-      && assert_readiness_fence_before_process_quiescence 1
+    assert_readiness_fence_before_process_quiescence 125 "$checkpoint_deadline" || return 1
+    reader_timeout="$(deadline_bounded_command_timeout_seconds "$checkpoint_deadline" 30 5)" || return 1
+    timeout --signal=TERM --kill-after=5s "${reader_timeout}s" \
+      node "$APP_DIR/scripts/production-maintenance-control.mjs" check-runtime-held \
+      --app-dir "$APP_DIR" --app-name "$APP_NAME" --app-port "$APP_PORT" \
+      --target-sha "$EXPECTED_DEPLOY_SHA" --expected-old-sha "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" \
+      --expected-operation-id "$PRODUCTION_MAINTENANCE_OPERATION_ID" --json >/dev/null 2>&1 || return 1
+    [ "$SECONDS" -lt "$checkpoint_deadline" ] \
+      && assert_readiness_fence_before_process_quiescence 1 "$checkpoint_deadline" \
+      && [ "$SECONDS" -lt "$checkpoint_deadline" ]
   else
     maintenance_control check-held
   fi
@@ -4614,24 +4632,34 @@ capture_booking_persistence_preflight_identity() {
 
 run_booking_persistence_preflight() {
   local protected_quiescence_budget_seconds="$1"
+  local effective_preflight_seconds="$BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS"
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then effective_preflight_seconds=120; fi
   local absolute_deadline_seconds="$((
-    SECONDS + BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS
+    SECONDS + effective_preflight_seconds
   ))"
+  local MAINTENANCE_PREFLIGHT_DEADLINE_SECONDS="$absolute_deadline_seconds"
   local persistence_status=4
+  local preflight_started_seconds="$SECONDS"
   local remaining_seconds
+  local query_budget_seconds
   if [[ "$protected_quiescence_budget_seconds" =~ ^[1-9][0-9]*$ ]] \
     && assert_readiness_fence_before_process_quiescence "$((
-      BOOKING_PERSISTENCE_PREFLIGHT_TOTAL_TIMEOUT_SECONDS +
+      effective_preflight_seconds +
       protected_quiescence_budget_seconds
-    ))" \
+    ))" "$absolute_deadline_seconds" \
     && previous_runtime_preflight_identity_matches \
     && previous_runtime_recovery_identity_matches \
     && capture_booking_persistence_preflight_identity \
       "$absolute_deadline_seconds"; then
     remaining_seconds=$((absolute_deadline_seconds - SECONDS))
+    booking_persistence_diagnostic preflight_before_query passed "$preflight_started_seconds"
     if [ "$remaining_seconds" -gt 0 ]; then
+      query_budget_seconds="$remaining_seconds"
+      if [ "$query_budget_seconds" -gt "$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS" ]; then
+        query_budget_seconds="$BOOKING_PERSISTENCE_TOTAL_TIMEOUT_SECONDS"
+      fi
       if verify_booking_persistence \
-        "$remaining_seconds" "$absolute_deadline_seconds" \
+        "$query_budget_seconds" "$absolute_deadline_seconds" \
         "$BOOKING_PREFLIGHT_ENVIRONMENT_DIRECTORY_IDENTITY" \
         "$BOOKING_PREFLIGHT_ENVIRONMENT_FILE_IDENTITY" \
         "$BOOKING_PREFLIGHT_ENVIRONMENT_SHA256" >/dev/null 2>&1; then
@@ -4639,13 +4667,20 @@ run_booking_persistence_preflight() {
       else
         persistence_status=$?
       fi
+      if [ "$persistence_status" -eq 0 ]; then
+        booking_persistence_diagnostic preflight_query passed "$preflight_started_seconds"
+      else
+        booking_persistence_diagnostic preflight_query failed "$preflight_started_seconds"
+      fi
     fi
     if ! assert_booking_persistence_preflight_state \
         "$absolute_deadline_seconds" \
       || ! previous_runtime_preflight_identity_matches \
       || ! previous_runtime_recovery_identity_matches \
       || ! assert_readiness_fence_before_process_quiescence \
-        "$protected_quiescence_budget_seconds"; then
+        "$protected_quiescence_budget_seconds" "$absolute_deadline_seconds" \
+      || [ "$SECONDS" -ge "$absolute_deadline_seconds" ]; then
+      booking_persistence_diagnostic preflight_post failed "$preflight_started_seconds"
       persistence_status=4
     fi
   fi
@@ -4675,6 +4710,7 @@ read_candidate_process_environment_snapshot_for_booking_retry() {
 booking_persistence_diagnostic() {
   local stage="$1" code="$2" started_seconds="$3" elapsed_seconds
   case "$stage" in
+    preflight_before_query|preflight_query|preflight_post) ;;
     current_capture|current_capture_preconditions|current_capture_stat|current_capture_environment|current_capture_build|current_capture_shape|current_capture_staff_mode|current_capture_staff_sites|current_capture_portal|current_capture_rollout|current_capture_final|\
     web_capture|web_capture_preconditions|web_capture_snapshot|web_capture_ticks|web_capture_identity|web_capture_state|\
     state_preconditions|state_pair_before|state_pair_after|state_worker_before|state_web_before|state_process_before|state_environment|state_build|state_file_comparison|state_process_environment|state_environment_comparison|state_current_after|state_worker_after|state_web_after|state_process_after|\
@@ -6090,6 +6126,7 @@ assert_readiness_fence_before_forward_operation() {
 
 assert_readiness_fence_before_process_quiescence() {
   local operation_timeout_seconds="$1"
+  local absolute_deadline_seconds="${2:-}"
   local checkpoint_status
   if ! [[ "$operation_timeout_seconds" =~ ^[0-9]+$ ]]; then return 1; fi
   if readiness_fence_process_quiescence_checkpoint "$((
@@ -6097,7 +6134,7 @@ assert_readiness_fence_before_process_quiescence() {
     READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS +
     operation_timeout_seconds +
     READINESS_FENCE_OPERATION_MARGIN_SECONDS
-  ))"; then
+  ))" "$READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS" "$absolute_deadline_seconds"; then
     checkpoint_status=0
   else
     checkpoint_status=$?
@@ -7671,6 +7708,13 @@ PROTECTED_QUIESCENCE_BUDGET_SECONDS="$((
   PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
   4 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS
 ))"
+if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
+  PROTECTED_QUIESCENCE_BUDGET_SECONDS="$((
+    2 * 70 + RUNTIME_FILESYSTEM_MUTATION_TIMEOUT_SECONDS +
+    2 * PREVIOUS_RUNTIME_RECOVERY_IDENTITY_TIMEOUT_SECONDS +
+    4 * READINESS_FENCE_CHECKPOINT_TIMEOUT_SECONDS
+  ))"
+fi
 run_booking_persistence_preflight \
   "$PROTECTED_QUIESCENCE_BUDGET_SECONDS" || exit 1
 if ! previous_runtime_preflight_identity_matches; then
