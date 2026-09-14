@@ -728,6 +728,45 @@ each is actually observed and verified. B7/R7 are historical inputs, not
 substitutes for those new release artifacts. Failure does not grant an automatic
 retry or extend the 10:00 UTC deadline.
 
+## One unused-attempt window renewal on 2026-09-14
+
+The recorded authorization at `2026-09-14T12:31:04Z` permits the existing,
+unused active attempt 3 only until `2026-09-14T16:00:00Z` (18:00 Madrid).
+It does not add an attempt, reset a launch journal, or rewrite the expired
+10:00 authorization. `renew-window` requires the fixed confirmation
+`RENEW_PRODUCTION_MAINTENANCE_UNTIL_20260914T160000Z`, the same operation and
+original build, previous target T9 `3b6c55ea4397c4505e75c59bb3bb56d7dd7d1cc0`,
+and a new exact main commit with all ten successful push-CI jobs.
+
+The predecessor must be the exact initial held v8/revision 32, all five launch
+fields null, 1,570,550 bytes and SHA256
+`333658652c3dc9e244b7c30848abb716c133f3b5bf0220ea9deab255e696667e`.
+The flat v9 audit reconstructs those entire predecessor bytes and retains all
+earlier authorizations and evidence; it does not nest another full state copy.
+Actual stopped-generation, ingress and database checks, fresh bounded evidence,
+the existing operation lock and raw-byte/revision CAS remain required.
+
+Historical recovery `34825984301/1` and its main CI `34824742841/1` are checked
+again, including every recovery step and all ten CI jobs. Backup
+`34826545330/1` transferred its encrypted payload, verified it and passed an
+isolated restore, but failed the final held-maintenance check after 10:00;
+its three maintenance-binding steps were skipped. Its exact thirty steps and
+six-artifact inventory are historical failure evidence, **not a valid new
+deployment backup**. No encrypted payload is downloaded by renewal verification.
+The current host state is established by separate read-only checks, not inferred
+from GitHub job conclusions.
+
+The renewal history chains from the fixed successful v8 recovery at 09:04:41 UTC.
+It enumerates every page of backup, migration, readiness, deploy and maintenance
+activity twice. Unknown activity, an older run updated or retried across this
+anchor, missing pages, changed totals or altered fixed records fail closed.
+Only the exact currently running renewal workflow may be in progress. Earlier
+history remains authenticated by the complete immutable predecessor hash.
+Fresh backup, readiness, the one unused deployment and successful end are still
+required; a renewal alone is not a deployment-completion claim. B8's transfer
+alone took 1h44m36s, so completion within the new window is not guaranteed and
+no deadline or verification may be bypassed to fit it.
+
 ## Fixed Supabase 15 scheduler compatibility
 
 The exact `supabase/postgres:15.8.1.085` image uses an additional read-only
