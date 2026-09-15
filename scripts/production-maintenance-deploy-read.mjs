@@ -34,7 +34,7 @@ async function readFields(argv, overrides) {
     remaining();
     if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 262144) throw new Error("maintenance_deployment_read_unverified");
     const report = JSON.parse(result.stdout);
-    if (controlAction === "runtime-handoff" && [2, 3].includes(report?.version)) return report;
+    if (controlAction === "runtime-handoff" && [2, 3, 4].includes(report?.version)) return report;
     const attemptHandoff = controlAction === "runtime-handoff" && Object.hasOwn(report ?? {}, "attemptRecovery");
     const expectedKeys = ["version", "operationId", "targetSha", "expectedOldSha", "state",
       controlAction === "runtime-handoff" ? "runtime" : controlAction === "candidate-handoff" ? "fields" : controlAction === "snapshot-pair" ? "snapshotPair" : "snapshot",
@@ -85,7 +85,13 @@ async function readFields(argv, overrides) {
     return report.snapshot + "\n";
   }
   let fields = report.fields;
-  if (action === "runtime-handoff" && report.version === 3) {
+  if (action === "runtime-handoff" && report.version === 4) {
+    const { validateStartupHandoffReport } = await import("./production-maintenance-startup-handoff.mjs");
+    const before = validateStartupHandoffReport(report, request); remaining();
+    const after = validateStartupHandoffReport(read(), request);
+    if (!isDeepStrictEqual(before, after)) throw new Error("maintenance_deployment_read_unverified");
+    fields = after.fields; remaining();
+  } else if (action === "runtime-handoff" && report.version === 3) {
     const { validateBudgetRecoveryHandoffReport } = await import("./production-maintenance-budget-handoff.mjs");
     const before = validateBudgetRecoveryHandoffReport(report, request);
     remaining();

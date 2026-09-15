@@ -14,7 +14,7 @@ export function validatePreflightDiskHeadroom(stat) {
   return true;
 }
 export function assertPreflightDiskHeadroom(state) {
-  if (state?.appDir !== APP || ![10, 11, 12, 13].includes(state.version)) fail();
+  if (state?.appDir !== APP || ![10, 11, 12, 13, 14].includes(state.version)) fail();
   for (const target of [APP, APP + ".releases"]) {
     const before = lstatSync(target, { bigint: true });
     if (!before.isDirectory() || before.isSymbolicLink() || before.uid !== 0n || (before.mode & 0o022n) !== 0n || realpathSync(target) !== target) fail();

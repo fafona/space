@@ -13,7 +13,7 @@ export async function withFenceFixture(t, action) {
     const failed = { ...f.copy(leased), revision: 42, phase: "failed-held" };
     f.mappings.set(JSON.stringify(failed), PIN.stateDigest);
     const source = readFileSync(new URL("./production-maintenance-lease.mjs", import.meta.url), "utf8")
-      .replace('from "./production-maintenance-preflight-recovery.mjs"', `from ${JSON.stringify(new URL("./production-maintenance-preflight-recovery.mjs", import.meta.url).href)}`)
+      .replaceAll(/from "(\.\/[^"\n]+)"/g, (_all, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`)
       .replace("stateBytes: 2099829", `stateBytes: ${Buffer.byteLength(JSON.stringify(f.previous))}`)
       .replace("stateBytes: 2276109", `stateBytes: ${Buffer.byteLength(JSON.stringify(failed))}`);
     const apiUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64") + "#" + Math.random();

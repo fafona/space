@@ -7,7 +7,7 @@ on:
         description: Fixed audited maintenance transition (never an arbitrary command)
         required: true
         type: choice
-        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, recover-held, continue-held, recover-build, recover-attempt, recover-second-attempt, recover-budget, renew-window, recover-prelaunch, recover-preflight, renew-lease, recover-fence, check, end]
+        options: [diagnose-runtime, diagnose-pm2-peer, plan, prepare, recover-held, continue-held, recover-build, recover-attempt, recover-second-attempt, recover-budget, renew-window, recover-prelaunch, recover-preflight, renew-lease, recover-fence, recover-startup, check, end]
       target_sha:
         description: Exact current main SHA with successful push CI
         required: true
@@ -32,7 +32,7 @@ on:
         description: Exact successful deploy attempt required for end
         required: false
       confirmation:
-        description: Fixed confirmation; recover-fence requires RECOVER_UNUSED_FENCE_PRODUCTION_MAINTENANCE (same unused attempt, original backup and failure audit retained); renew-lease requires RENEW_PRODUCTION_MAINTENANCE_LEASE (automatic 12-hour time-only renewal, no extra launch); recover-preflight requires RECOVER_PREFLIGHT_PRODUCTION_MAINTENANCE_UNTIL_20260914T200000Z (same unused attempt and unchanged deadline); recover-prelaunch requires RECOVER_PRELAUNCH_PRODUCTION_MAINTENANCE_UNTIL_20260914T200000Z (2026-09-14 20:00 UTC / 22:00 Europe/Madrid; same one unused attempt); renew-window requires RENEW_PRODUCTION_MAINTENANCE_UNTIL_20260914T160000Z (2026-09-14 16:00 UTC / 18:00 Europe/Madrid; same one unused attempt); recover-budget requires RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z (2026-09-14 10:00 UTC / 12:00 Europe/Madrid); recover-second-attempt requires RECOVER_SECOND_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z; recover-attempt keeps RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z (2026-09-14 04:00 UTC / 06:00 Europe/Madrid); old recover-build keeps RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
+        description: Fixed confirmation; recover-startup requires RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE (one additional audited attempt retaining the consumed T15 launch); recover-fence requires RECOVER_UNUSED_FENCE_PRODUCTION_MAINTENANCE (same unused attempt, original backup and failure audit retained); renew-lease requires RENEW_PRODUCTION_MAINTENANCE_LEASE (automatic 12-hour time-only renewal, no extra launch); recover-preflight requires RECOVER_PREFLIGHT_PRODUCTION_MAINTENANCE_UNTIL_20260914T200000Z (same unused attempt and unchanged deadline); recover-prelaunch requires RECOVER_PRELAUNCH_PRODUCTION_MAINTENANCE_UNTIL_20260914T200000Z (2026-09-14 20:00 UTC / 22:00 Europe/Madrid; same one unused attempt); renew-window requires RENEW_PRODUCTION_MAINTENANCE_UNTIL_20260914T160000Z (2026-09-14 16:00 UTC / 18:00 Europe/Madrid; same one unused attempt); recover-budget requires RECOVER_BUDGET_PRODUCTION_MAINTENANCE_UNTIL_20260914T100000Z (2026-09-14 10:00 UTC / 12:00 Europe/Madrid); recover-second-attempt requires RECOVER_SECOND_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z; recover-attempt keeps RECOVER_ATTEMPT_PRODUCTION_MAINTENANCE_UNTIL_20260914T040000Z (2026-09-14 04:00 UTC / 06:00 Europe/Madrid); old recover-build keeps RECOVER_BUILD_PRODUCTION_MAINTENANCE_UNTIL_20260913T220000Z (absolute deadline 2026-09-13 22:00:00 UTC / 2026-09-14 00:00 Europe/Madrid)
         required: true
 
 concurrency:
@@ -73,7 +73,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = 1
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_OLD_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$TARGET_SHA" = "$GITHUB_SHA"
-          if [ "$ACTION" != recover-fence ] && [ "$ACTION" != renew-lease ] && [ "$ACTION" != recover-preflight ] && [ "$ACTION" != recover-held ] && [ "$ACTION" != continue-held ] && [ "$ACTION" != recover-build ] && [ "$ACTION" != recover-attempt ] && [ "$ACTION" != recover-second-attempt ] && [ "$ACTION" != recover-budget ] && [ "$ACTION" != renew-window ] && [ "$ACTION" != recover-prelaunch ]; then test -z "${PREVIOUS_TARGET_SHA:-}"; fi
+          if [ "$ACTION" != recover-startup ] && [ "$ACTION" != recover-fence ] && [ "$ACTION" != renew-lease ] && [ "$ACTION" != recover-preflight ] && [ "$ACTION" != recover-held ] && [ "$ACTION" != continue-held ] && [ "$ACTION" != recover-build ] && [ "$ACTION" != recover-attempt ] && [ "$ACTION" != recover-second-attempt ] && [ "$ACTION" != recover-budget ] && [ "$ACTION" != renew-window ] && [ "$ACTION" != recover-prelaunch ]; then test -z "${PREVIOUS_TARGET_SHA:-}"; fi
           case "$ACTION" in
             diagnose-runtime)
               test "$CONFIRMATION" = CHECK_PRODUCTION_RUNTIME_COMPATIBILITY
@@ -150,6 +150,14 @@ jobs:
               test "$PREVIOUS_TARGET_SHA" = 3b6c55ea4397c4505e75c59bb3bb56d7dd7d1cc0
               test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
               test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA" && test "$TARGET_SHA" != "$EXPECTED_OLD_SHA" || exit 1
+              test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
+              ;;
+            recover-startup)
+              test "$CONFIRMATION" = RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE
+              test "$PREVIOUS_TARGET_SHA" = e83c91abbf8e0d327708bd0b04c3a33ed423ab91
+              test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
+              test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
+              test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA"
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
               ;;
             recover-fence)
@@ -1022,7 +1030,7 @@ jobs:
             --inspection "$INSPECTION_DIR/out"
 
       - name: Inspect Unused Maintenance Lease State
-        if: inputs.action == 'renew-lease' || inputs.action == 'recover-fence'
+        if: inputs.action == 'renew-lease' || inputs.action == 'recover-fence' || inputs.action == 'recover-startup'
         id: lease-inspection
         env:
           ACTION: ${{ inputs.action }}
@@ -1044,6 +1052,7 @@ jobs:
           printf 'capture_dir=%s\n' "$capture_dir" >> "$GITHUB_OUTPUT"
           inspect_command=inspect-lease-renewal
           if [ "$ACTION" = recover-fence ]; then inspect_command=inspect-fence-recovery; fi
+          if [ "$ACTION" = recover-startup ]; then inspect_command=inspect-startup-recovery; fi
           printf -v remote_command \
             "NODE_OPTIONS='' NODE_PATH='' npm_config_node_options='' NPM_CONFIG_NODE_OPTIONS='' node %q %q --app-dir %q --app-name %q --app-port %q --target-sha %q --previous-target-sha %q --expected-old-sha %q --expected-operation-id %q --json" \
             "$REMOTE_MAINTENANCE_WORKTREE/scripts/production-maintenance-control.mjs" "$inspect_command" \
@@ -1060,7 +1069,7 @@ jobs:
           fi
 
       - name: Verify Exact Lease Renewal History Under Production Lock
-        if: inputs.action == 'renew-lease' || inputs.action == 'recover-fence'
+        if: inputs.action == 'renew-lease' || inputs.action == 'recover-fence' || inputs.action == 'recover-startup'
         id: lease-evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1070,7 +1079,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$ACTION" = recover-fence ] || [ "$TARGET_SHA" != 552bfaafea802ee1371329afce0424b096b44453 ]; then
+          if [ "$ACTION" = recover-startup ]; then
+            node scripts/production-maintenance-startup-workflow.mjs --inspection "$INSPECTION_DIR/out"
+          elif [ "$ACTION" = recover-fence ] || [ "$TARGET_SHA" != 552bfaafea802ee1371329afce0424b096b44453 ]; then
             node scripts/production-maintenance-fence-workflow.mjs --inspection "$INSPECTION_DIR/out"
           else
             node scripts/production-maintenance-lease-workflow.mjs --inspection "$INSPECTION_DIR/out"
@@ -1218,6 +1229,7 @@ jobs:
             recover-prelaunch) command=recover-prelaunch; expected_state=held ;;
             renew-lease) command=renew-lease; expected_state=held ;;
             recover-fence) command=recover-fence; expected_state=held ;;
+            recover-startup) command=recover-startup; expected_state=held ;;
             recover-preflight) command=recover-preflight; expected_state=held ;;
             check)
               case "$CHECK_STATE" in
@@ -1283,7 +1295,7 @@ jobs:
           else
             test -z "$WINDOW_RENEWAL_EVIDENCE"
           fi
-          if [ "$command" = renew-lease ] || [ "$command" = recover-fence ]; then
+          if [ "$command" = renew-lease ] || [ "$command" = recover-fence ] || [ "$command" = recover-startup ]; then
             [[ "$LEASE_EVIDENCE" =~ ^[A-Za-z0-9_-]+$ ]]
             test "${#LEASE_EVIDENCE}" -le 22000
             operation_args+=(--previous-target-sha "$PREVIOUS_TARGET_SHA" --lease-evidence "$LEASE_EVIDENCE")
@@ -1734,7 +1746,7 @@ jobs:
           fi
 
       - name: Remove Runner Lease Renewal Evidence
-        if: always() && (inputs.action == 'renew-lease' || inputs.action == 'recover-fence')
+        if: always() && (inputs.action == 'renew-lease' || inputs.action == 'recover-fence' || inputs.action == 'recover-startup')
         env:
           INSPECTION_DIR: ${{ steps.lease-inspection.outputs.capture_dir }}
         shell: bash

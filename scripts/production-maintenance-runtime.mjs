@@ -4,6 +4,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { posix } from "node:path";
 import { types } from "node:util";
 import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
+import { startupDiagnostic } from "./production-maintenance-startup-diagnostic.mjs";
 import { captureNativeProcessProof, validateNativeProcessProof, verifyNativeProcessProof, verifyNativeFiles } from "./production-maintenance-native-proof.mjs";
 import { inspectPm2Registry, controlPm2, validatePm2Registry, capturePm2DumpTarget, persistPm2Dump, verifyPm2Dump,
   validatePm2DumpReceipt, pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
@@ -599,15 +600,25 @@ async function waitForStartedCandidate(proof, candidate, d, overrides, launch) {
     return d.run(command, args, env, Math.min(max, remaining));
   } };
   for (let attempt = 0; attempt < 240; attempt++) {
-    await assertLaunch();
-    const observation = await bounded(() => d.supervision(proof.input.appName, candidate.disk, proof.input.appPort, candidate.targetSha));
+    await startupDiagnostic("launch_identity", assertLaunch);
+    const observation = await startupDiagnostic("launch_supervision", () => bounded(() => d.supervision(proof.input.appName, candidate.disk, proof.input.appPort, candidate.targetSha)));
     await assertLaunch();
     if (observation.listener.state !== "absent" &&
         (observation.listener.state !== "single" || observation.listener.pid !== launched.pm2.pid ||
           observation.ownership.state !== "owned" || observation.ownership.mode !== "direct")) fail();
     if (observation.healthVerified && observation.listener.state === "single") {
-      const result = await bounded(() => captureCandidate(proof, candidate.targetSha, launch.role === "paused-web" ? "1" : "0", readOverrides));
-      await assertLaunch(); await confirmLaunched(launch.role, launch.slot, result.web, d); return result;
+      let result;
+      try { result = await startupDiagnostic("candidate_capture", () => bounded(() => captureCandidate(proof, candidate.targetSha, launch.role === "paused-web" ? "1" : "0", readOverrides))); }
+      catch {
+        // Startup observations can straddle Next's process-title transition.
+        // Re-observe ONLY this same immutable launch within the original budget.
+        // Persistent disk/env/ownership failures never become a success, and
+        // no send or confirmation happens until the complete capture passes.
+        await assertLaunch();
+        if (deadline - d.now() < 250) fail();
+        await d.sleep(250); continue;
+      }
+      await assertLaunch(); await startupDiagnostic("launch_confirm", () => confirmLaunched(launch.role, launch.slot, result.web, d)); return result;
     }
     if (deadline - d.now() < 250) fail();
     await d.sleep(250);
@@ -619,11 +630,13 @@ export async function startCandidate(rawProof, targetSha, overrides = {}) {
     const proof = validateRuntimeProof(rawProof), d = dependencies(overrides, proof.input.appPort, proof.bootId);
     if (!SHA.test(targetSha) || targetSha === proof.input.expectedOldSha) fail();
     launchAuthority(d);
-    const disk = pick(d.disk(proof.input.appDir, targetSha), DISK_KEYS), descriptor = launchDescriptor(proof, disk, targetSha, d);
+    const descriptor = await startupDiagnostic("runtime_disk", () => {
+      const disk = pick(d.disk(proof.input.appDir, targetSha), DISK_KEYS); return launchDescriptor(proof, disk, targetSha, d);
+    });
     const slot = await d.launchJournal.read("paused-web");
-    if (!slot || slot.phase === "planned") await assertRuntimeStopped(proof, overrides);
-    const launch = await launchOnce(proof, descriptor, "paused-web", d);
-    return waitForStartedCandidate(proof, descriptor, d, overrides, launch);
+    if (!slot || slot.phase === "planned") await startupDiagnostic("runtime_stopped", () => assertRuntimeStopped(proof, overrides));
+    const launch = await startupDiagnostic("runtime_launch", () => launchOnce(proof, descriptor, "paused-web", d));
+    return startupDiagnostic("runtime_settle", () => waitForStartedCandidate(proof, descriptor, d, overrides, launch));
   });
 }
 export function validateResumedCandidateProof(value, rawProof) {

@@ -16,7 +16,7 @@ export async function withLeaseFixture(t, action) {
     const previous = buildMaintenancePreflightRecoveredState(f.state, evidence, context);
     base.mappings.set(JSON.stringify(previous), PIN.stateDigest);
     const source = readFileSync(new URL("./production-maintenance-lease.mjs", import.meta.url), "utf8")
-      .replace('from "./production-maintenance-preflight-recovery.mjs"', `from ${JSON.stringify(new URL("./production-maintenance-preflight-recovery.mjs", import.meta.url).href)}`)
+      .replaceAll(/from "(\.\/[^"\n]+)"/g, (_all, path) => `from ${JSON.stringify(new URL(path, import.meta.url).href)}`)
       .replace("stateBytes: 2099829", `stateBytes: ${Buffer.byteLength(JSON.stringify(previous))}`);
     const apiUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64") + "#" + Math.random();
     const api = await import(apiUrl);

@@ -500,7 +500,9 @@ maintenance_control() {
     node "$APP_DIR/scripts/production-maintenance-control.mjs" "$operation" \
       --app-dir "$APP_DIR" --app-name "$APP_NAME" --app-port "$APP_PORT" \
       --target-sha "$EXPECTED_DEPLOY_SHA" --expected-old-sha "$PRODUCTION_MAINTENANCE_EXPECTED_OLD_SHA" \
-      --expected-operation-id "$PRODUCTION_MAINTENANCE_OPERATION_ID" --json >/dev/null 2>&1
+      --expected-operation-id "$PRODUCTION_MAINTENANCE_OPERATION_ID" --json >/dev/null 2> >(
+        LC_ALL=C awk '/^\[deploy\] maintenance_start_diagnostic stage=[a-z_]+ code=(start|passed|failed) elapsed_seconds=[0-9]+$/ { print }' >&2
+      )
 }
 
 maintenance_deployment_read() {

@@ -1168,6 +1168,7 @@ jobs:
           import { readFileSync, statSync } from 'node:fs';
           const allowed = /^\[deploy\] booking_persistence_diagnostic stage=(preflight_before_query|preflight_query|preflight_post|current_capture|current_capture_preconditions|current_capture_stat|current_capture_environment|current_capture_build|current_capture_shape|current_capture_staff_mode|current_capture_staff_sites|current_capture_portal|current_capture_rollout|current_capture_final|web_capture|web_capture_preconditions|web_capture_snapshot|web_capture_ticks|web_capture_identity|web_capture_state|state_preconditions|state_pair_before|state_worker_before|state_web_before|state_process_before|state_environment|state_build|state_file_comparison|state_process_environment|state_environment_comparison|state_current_after|state_pair_after|state_worker_after|state_web_after|state_process_after|retry_deadline|retry_state_before|retry_remaining|retry_fence_before|retry_state_after_fence|retry_health_before|retry_state_after_health|retry_reserve|query|retry_state_after_query|retry_fence_after|retry_state_final_fence|retry_health_after|retry_state_final_health|retry_attempts|retry_delay_budget|retry_delay|retry_exhausted) code=(start|passed|failed|hard_failed|transient|invocation_failed|integrity_failed|unexpected_status) elapsed_seconds=(0|[1-9][0-9]{0,4})$/;
           const fenceAllowed = /^\[deploy\] readiness_fence_diagnostic stage=(checkpoint_arguments|checkpoint_deadline|checkpoint_state|checkpoint_identity_before|checkpoint_marker|checkpoint_remaining|checkpoint_database|checkpoint_identity_after|checkpoint_deadline_after|database_arguments|database_budget|database_command|database_deadline|database_result|marker_file|marker_canonical|marker_binding|marker_hold_budget|marker_database|marker_locks|marker_context|marker_endpoint|marker_digest) code=(start|passed|failed|held|blocked_cancelled|quiescing|not_held|unexpected_status) elapsed_seconds=(0|[1-9][0-9]{0,4})$/;
+          const startupAllowed = /^\[deploy\] maintenance_start_diagnostic stage=(controller_ingress|controller_stopped|controller_start|controller_verify|controller_save|controller_accept|runtime_disk|runtime_stopped|runtime_launch|runtime_settle|launch_identity|launch_supervision|candidate_capture|launch_confirm) code=(start|passed|failed) elapsed_seconds=(0|[1-9][0-9]{0,4})$/;
           try {
             const path = process.argv[2];
             const metadata = statSync(path);
@@ -1176,7 +1177,7 @@ jobs:
             if (bytes.length > 1048576) process.exit(0);
             const retained = [];
             for (const line of bytes.toString('utf8').split('\n')) {
-              const match = allowed.exec(line) ?? fenceAllowed.exec(line);
+              const match = allowed.exec(line) ?? fenceAllowed.exec(line) ?? startupAllowed.exec(line);
               // Do not normalize CR, NUL, ANSI sequences, or extra whitespace.
               if (!match || match[0] !== line || Number(match[3]) > 86400) continue;
               retained.push(line);

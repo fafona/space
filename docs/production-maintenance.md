@@ -1,5 +1,32 @@
 # Protected production maintenance
 
+## Audited T15 startup recovery (2026-09-15)
+
+The explicitly authorized `recover-startup` action applies only to the exact
+v13/revision51 failed-held T15 state pinned in
+`production-maintenance-startup-recovery.mjs`. It preserves the consumed paused
+launch, its process identity and nonce, all prior audits, the original runtime,
+and database identity. It appends one attempt4 and a 12-hour recovery window;
+it cannot erase/retry an existing launch or open public ingress.
+
+The action requires current main and its ten successful CI jobs, the exact
+B13/R13/D13 and recovery history, unchanged 56-migration registry, reviewed
+deployment-only source delta, twice-observed stopped historical generations
+including T15, unchanged current symlink, database quiet and private-state CAS.
+Its confirmation is `RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE`.
+
+After recovery, obtain a fresh target-bound encrypted backup with isolated
+restore rehearsal, readiness, automatic deployment and signed deployment
+binding. Only the normal verified `end` action may resume background workers
+and restore public ingress. A failed attempt remains held and cannot rearm.
+
+Startup diagnostics expose only fixed stage/status/duration tokens. Read-only
+capture can settle under the original 60-second startup deadline, always
+rechecking the same PID, nonce, environment, disk and ownership. There is no
+extra process-start send. Historical recursive validation is memoized only
+after the exact immutable canonical digest matches on every invocation; no
+live check, current-state validation or CAS is cached.
+
 ## Renewable, time-only maintenance lease (2026-09-14)
 
 The operator explicitly authorized automatic maintenance-window extensions at
