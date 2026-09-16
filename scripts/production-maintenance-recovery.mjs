@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { isProxy } from "node:util/types";
+import { validateDaemonRepairState, assertDaemonRepairProgress } from "./production-maintenance-daemon-repair.mjs";
 
 /** Pure, one-time recovery protocol. No filesystem, network, clock, process or
  * service operation is performed here. Callers MUST authenticate CI/history,
@@ -157,6 +158,13 @@ export function buildMaintenanceRecoveredState(rawState, rawEvidence, rawContext
 
 export function validateMaintenanceRecoveryState(rawState, rawClock) {
   const state = bounded(rawState), clock = bounded(rawClock);
+  if (Object.hasOwn(state, "daemonRepair")) {
+    validateDaemonRepairState(state, clock);
+    const original = { ...state, targetSha: state.daemonRepair.predecessor.targetSha };
+    delete original.daemonRepair;
+    validateMaintenanceRecoveryState(original, clock);
+    return freeze(state);
+  }
   checkStateBase(state, 3, clock);
   const audit = state.recovery;
   if (!exact(audit, ["version", "evidence", "recoveredAt"]) || audit.version !== 1 || !time(audit.recoveredAt)) fail();
@@ -177,6 +185,12 @@ export function validateMaintenanceRecoveryState(rawState, rawClock) {
 export function assertMaintenanceRecoveryProgress(rawPrevious, rawNext) {
   const previous = bounded(rawPrevious), next = bounded(rawNext);
   if (!record(previous) || !record(next)) fail();
+  if (Object.hasOwn(previous, "daemonRepair") || Object.hasOwn(next, "daemonRepair")) {
+    assertDaemonRepairProgress(previous, next);
+    const clock = { bootId: next.bootId, now: next.daemonRepair.repairedAt };
+    validateMaintenanceRecoveryState(previous, clock); validateMaintenanceRecoveryState(next, clock);
+    return;
+  }
   if (previous.version === 2 && next.version === 2) {
     if (Object.hasOwn(previous, "recovery") || Object.hasOwn(next, "recovery")) fail();
     return;

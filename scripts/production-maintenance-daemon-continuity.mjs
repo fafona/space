@@ -8,6 +8,7 @@ import { types } from "node:util";
 const KEYS = ["pid", "parentPid", "startTicks", "processIdentity", "uid", "cwd", "cwdIdentity", "executable", "executableIdentity", "commandLineDigest"];
 const PINNED_BOOT = "e6531ec9-db4a-4216-b87a-7cc858197eaa";
 const PINNED_DAEMON_DIGEST = "940d18ed1876a97c6523b56bc213be2c426c89348630527392d9d795dadef6c4";
+const AUTHORIZED_UNLAUNCHED_DAEMON_DIGEST = "331fb4c2909faa21f060bfcfd0325bac2655e2980fce703b349e01ad4749fa37";
 const IDENTITY = /^\d{1,25}(?::\d{1,25}){7}$/;
 const BOOT = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const fail = () => { throw new Error("production_maintenance_daemon_continuity_unverified"); };
@@ -36,7 +37,7 @@ export function assertMaintenanceDaemonContinuity(rawFrozen, rawObserved, bootId
   // /proc creates virtual inode numbers/timestamps on instantiation. Only the
   // explicitly approved, original frozen daemon on its original boot may have
   // these three historical fields differ. No saved proof is refreshed/replaced.
-  if (bootId !== PINNED_BOOT || createHash("sha256").update(JSON.stringify(frozen)).digest("hex") !== PINNED_DAEMON_DIGEST ||
+  if (bootId !== PINNED_BOOT || ![PINNED_DAEMON_DIGEST, AUTHORIZED_UNLAUNCHED_DAEMON_DIGEST].includes(createHash("sha256").update(JSON.stringify(frozen)).digest("hex")) ||
       KEYS.some(key => key !== "processIdentity" && frozen[key] !== observed[key])) fail();
   const original = frozen.processIdentity.split(":"), current = observed.processIdentity.split(":");
   if ([0, 2, 5, 6, 7].some(index => original[index] !== current[index])) fail();

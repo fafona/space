@@ -23,6 +23,22 @@ const changeIdentity = (value, index) => {
   return { ...value, processIdentity: parts.join(":") };
 };
 
+test("second explicitly authorized frozen tuple keeps the same boot and stable identity checks", () => {
+  const original = { ...pinned(), processIdentity: "5:1455626046:0:1789549976568704851:1789549976568704851:9:0:16749" };
+  assert.equal(digest(original), "331fb4c2909faa21f060bfcfd0325bac2655e2980fce703b349e01ad4749fa37");
+  const bytes = JSON.stringify(original);
+  for (const index of [1, 3, 4]) {
+    const observed = changeIdentity(original, index);
+    assert.equal(assertMaintenanceDaemonContinuity(original, observed, PINNED_BOOT), undefined);
+    assert.throws(() => assertMaintenanceDaemonContinuity(original, observed, BOOT), ERROR);
+    assert.throws(() => assertMaintenanceDaemonContinuity(observed, original, PINNED_BOOT), ERROR);
+    for (const field of [0, 2, 5, 6, 7]) assert.throws(() => assertMaintenanceDaemonContinuity(original, changeIdentity(observed, field), PINNED_BOOT), ERROR);
+    for (const patch of [{ pid: 1933 }, { startTicks: "656" }, { executable: "/usr/local/bin/node" }, { uid: 1 }, { cwd: "/other" }])
+      assert.throws(() => assertMaintenanceDaemonContinuity(original, { ...observed, ...patch }, PINNED_BOOT), ERROR);
+  }
+  assert.equal(JSON.stringify(original), bytes);
+});
+
 test("unchanged ordinary daemon stays valid without the incident pin or object-order assumptions", () => {
   const frozen = fixture(), observed = Object.fromEntries(Object.entries(frozen).reverse());
   const before = digest(frozen);
