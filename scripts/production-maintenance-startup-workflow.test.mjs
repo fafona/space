@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { MAINTENANCE_STARTUP_PRIOR_RUNS as SPECS, createMaintenanceStartupWorkflowEvidence } from "./production-maintenance-startup-workflow.mjs";
 import { validateMaintenanceLeaseInspection } from "./production-maintenance-lease.mjs";
 import { MAINTENANCE_STARTUP_AUTHORIZATION as AUTH, MAINTENANCE_STARTUP_PREDECESSOR as PIN } from "./production-maintenance-startup-recovery.mjs";
-const NOW = Date.parse("2026-09-15T02:30:00Z"), TARGET = "a".repeat(40), SELF = "99999999999", CI = "99999999998";
+const NOW = Date.parse("2026-09-16T02:30:00Z"), TARGET = "a".repeat(40), SELF = "99999999999", CI = "99999999998";
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const repo = value => ({ ...structuredClone(value), repository: { full_name: "fafona/space" }, head_repository: { full_name: "fafona/space" } });
 const files = ["database-backup.yml", "database-migrate.yml", "ordinary-account-cutover-readiness.yml", "deploy.yml", "production-maintenance.yml"];
@@ -68,6 +68,24 @@ test("artifact run identity ignores object key ordering but rejects every change
       return value;
     }));
   }
+});
+
+test("historical expiry is accepted only after the pinned deadline and never changes artifact identity", async () => {
+  const expire = (key, value) => {
+    if (key.startsWith("artifacts:")) for (const artifact of value.artifacts)
+      if (Date.parse(artifact.expires_at) <= NOW) artifact.expired = true;
+    return value;
+  };
+  await check(expire);
+  await assert.rejects(check((key, value) => {
+    if (key === "artifacts:" + SPECS[0].run.id) value.artifacts[0].expired = true;
+    return value;
+  }));
+  await assert.rejects(check((key, value) => {
+    expire(key, value);
+    if (key === "artifacts:" + SPECS[1].run.id) value.artifacts[0].digest += "x";
+    return value;
+  }));
 });
 test("lease refuses altered prior runs, steps, artifacts and concurrent history", async () => {
   for (const spec of SPECS) {

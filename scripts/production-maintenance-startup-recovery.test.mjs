@@ -35,7 +35,7 @@ export async function withStartupFixture(t, action) {
       .replaceAll(/from "(\.\/[^"\n]+)"/g, (_all,path) => `from ${JSON.stringify(path === "./production-maintenance-lease.mjs" ? f.apiUrl : new URL(path,import.meta.url).href)}`)
       .replace("stateBytes: 2457712", `stateBytes: ${Buffer.byteLength(JSON.stringify(failed))}`);
     const apiUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64") + "#" + Math.random(), api = await import(apiUrl);
-    const now = Date.parse("2026-09-15T02:00:00Z"), targetSha = "7".repeat(40), hash = v => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+    const now = Date.parse("2026-09-16T02:00:00Z"), targetSha = "7".repeat(40), hash = v => createHash("sha256").update(JSON.stringify(v)).digest("hex");
     const baseline = { version: 4, stateDigest: PIN.stateDigest, candidateDigest: hash(candidate), launchDiskDigest: hash(failed.launchDisk),
       launchJournalDigest: hash(journal), runtimeDigest: hash(failed.runtime), current: { target: runtime, linkIdentity: "1:2:60:1:1:1:0:41471",
         runtimeIdentity: candidate.disk.runtimeIdentity }, bootId: PIN.bootId, pm2RegistryDigest: "e".repeat(64), observedAt: now - 1000 };
@@ -53,6 +53,9 @@ export async function withStartupFixture(t, action) {
   });
 }
 test("startup recovery preserves the consumed launch and every historical audit", { concurrency: false }, async t => withStartupFixture(t, async f => {
+  const lease = await import(f.controllerLeaseApiUrl);
+  assert.throws(() => lease.validateMaintenanceLeaseState(f.failed, { bootId: PIN.bootId, now: f.now }));
+  assert.deepEqual(f.api.validateMaintenanceStartupPredecessor(f.failed, { bootId: PIN.bootId, now: f.now }), f.failed);
   const next = f.api.buildMaintenanceStartupRecoveredState(f.failed, f.evidence, f.context);
   assert.equal(next.version, 14); assert.equal(next.revision, 52); assert.equal(next.activeAttempt, 4); assert.equal(next.phase, "held");
   for (const key of ["candidate","resumed","launchDisk","launchJournal","finalDump"]) assert.equal(next[key],null);

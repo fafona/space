@@ -125,8 +125,8 @@ function authorizedPredecessor(raw, now) {
   if ([12, 13, 14].includes(value.version)) return value.phase === "held" ? reconstructMaintenanceLeasePredecessor(value, clock) : maintenanceLeaseHistoricalState(value, clock);
   fail();
 }
-async function checkedState(raw, runtimeApi, now) {
-  const authorityState = bounded(raw), predecessor = authorizedPredecessor(authorityState, now);
+async function checkedState(raw, runtimeApi, now, authorize = authorizedPredecessor) {
+  const authorityState = bounded(raw), predecessor = authorize(authorityState, now);
   // This exact T7 substate has already passed the complete immutable history.
   // It is observation input only, not a restored active state or authority.
   const state = predecessor.budgetRecovery.predecessor.state;
@@ -160,18 +160,18 @@ async function checkedState(raw, runtimeApi, now) {
   const projections = candidates.map(typed => ({ version: 1, input: { ...proof.input, expectedOldSha: typed.targetSha }, bootId: BOOT,
     disk: typed.disk, environment: typed.environment, daemon: typed.daemon, web: typed.web,
     worker: { state: "absent", managed: null } }));
-  return { state, authorityState, proof, candidate, projections };
+  return { state, authorityState, proof, candidate, projections, authorize };
 }
-async function prepare(rawState, overrides) {
+async function prepare(rawState, overrides, authorize = authorizedPredecessor) {
   const io = ioOptions(overrides);
   // runtime imports an old supervision executable that treats stdin as main.
   // Never load that graph from a stdin/eval invocation; the real caller uses
   // its checked file CLI. Importing THIS module alone has no such side effect.
   if (!process.argv[1] || process.argv[1] === "-") fail();
   const runtimeApi = await import("./production-maintenance-runtime.mjs");
-  return { io, runtimeApi, ...await checkedState(rawState, runtimeApi, io.now()) };
+  return { io, runtimeApi, ...await checkedState(rawState, runtimeApi, io.now(), authorize) };
 }
-async function assertAllStopped({ io, runtimeApi, authorityState, proof, projections }) {
+async function assertAllStopped({ io, runtimeApi, authorityState, proof, projections, authorize }) {
   const boot = io.runtime.boot ?? (() => readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim());
   if (boot() !== BOOT) fail();
   const observed = [], inspect = io.runtime.pm2Registry ?? inspectPm2Registry;
@@ -185,12 +185,27 @@ async function assertAllStopped({ io, runtimeApi, authorityState, proof, project
     if (await runtimeApi.assertRuntimeStopped(frozen, runtimeIo) !== true) fail();
   }
   if (boot() !== BOOT || observed.length < 4 || observed.some(value => value !== observed[0])) fail();
-  authorizedPredecessor(authorityState, io.now());
+  authorize(authorityState, io.now());
   return observed[0];
 }
 export async function assertLeaseStopped(rawState, overrides = {}) {
   try { await assertAllStopped(await prepare(rawState, overrides)); return true; }
   catch { fail(); }
+}
+/** Read-only recovery inspection of the one byte-pinned consumed predecessor.
+ * Its expired lease is historical evidence, never live actuator authority.
+ * Every filesystem/process/daemon observation still uses the actual clock.
+ * Ordinary lease APIs retain their expiry checks without any override. */
+export async function assertStartupPredecessorGenerationsStopped(rawState, overrides = {}) {
+  try {
+    const { validateMaintenanceStartupPredecessor } = await import("./production-maintenance-startup-recovery.mjs");
+    const authorize = (raw, now) => {
+      const pinned = validateMaintenanceStartupPredecessor(raw, { bootId: BOOT, now });
+      return maintenanceLeaseHistoricalState(pinned, { bootId: BOOT, now: Date.parse("2026-09-15T00:52:00Z") });
+    };
+    await assertAllStopped(await prepare(rawState, overrides, authorize));
+    return true;
+  } catch { fail(); }
 }
 /** Fresh historical-generation observations while the new candidate owns its
  * listener. Never requires an empty port or changes the current symlink. */

@@ -1,7 +1,7 @@
 import { lstatSync, readlinkSync, realpathSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual as equal, types } from "node:util";
-import { assertLeaseStopped, assertLeaseGenerationsStopped } from "./production-maintenance-lease-inspection.mjs";
+import { assertLeaseStopped, assertLeaseGenerationsStopped, assertStartupPredecessorGenerationsStopped } from "./production-maintenance-lease-inspection.mjs";
 import { inspectPm2Registry, pm2RegistryDigest, validatePm2Registry } from "./production-maintenance-pm2-adapter.mjs";
 import { validateMaintenanceStartupPredecessor, maintenanceStartupHistoricalState, validateMaintenanceStartupBaseline,
   MAINTENANCE_STARTUP_PREDECESSOR as PIN } from "./production-maintenance-startup-recovery.mjs";
@@ -39,7 +39,8 @@ async function prepare(raw,overrides){
 async function stopped(p){
   const registries=[],inspect=p.io.runtime.pm2Registry??inspectPm2Registry;
   const runtime={...p.io.runtime,pm2Registry:async(...args)=>{const value=validatePm2Registry(await inspect(...args));registries.push(pm2RegistryDigest(value));return value;}};
-  await assertLeaseStopped(p.authority,{runtime,now:p.io.now});
+  const assertHistoricalStopped=p.authority.version===13?assertStartupPredecessorGenerationsStopped:assertLeaseStopped;
+  await assertHistoricalStopped(p.authority,{runtime,now:p.io.now});
   if(await p.api.assertRuntimeStopped(p.projection,runtime)!==true||registries.length<5||registries.some(d=>d!==registries[0]))fail();
   if(p.authority.version===14)maintenanceStartupHistoricalState(p.authority,{bootId:PIN.bootId,now:p.io.now()});
   return registries[0];

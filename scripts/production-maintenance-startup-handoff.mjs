@@ -66,5 +66,3 @@ export function validateStartupHandoffReport(raw, request) {
     return Object.freeze(value);
   } catch { fail(); }
 }
-
-
