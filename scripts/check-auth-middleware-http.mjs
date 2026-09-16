@@ -24,7 +24,9 @@ for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => 
 const exited = once(child, "exit");
 const request = (host, path, method = "GET") => fetch(`http://127.0.0.1:${port}${path}`, {
   method, redirect: "manual", signal: AbortSignal.timeout(12000),
-  headers: { host, "x-forwarded-proto": "https" },
+  // Match the production reverse proxy / release-smoke transport. Node fetch
+  // may discard Host overrides, so loopback requests also need the public host.
+  headers: { host, "x-forwarded-host": host, "x-forwarded-proto": "https" },
 });
 try {
   let ready = false;
@@ -32,7 +34,7 @@ try {
     if (child.exitCode !== null) throw new Error("auth_http_server_exited");
     try {
       const response = await request("launch.faolla.com", "/api/app-web-version");
-      await response.body?.cancel();
+      await response.arrayBuffer();
       if (response.status === 200) { ready = true; break; }
     } catch { /* bounded startup retry */ }
     await delay(400);
@@ -50,21 +52,21 @@ try {
       assert.equal(response.status, 308);
       assert.equal(response.headers.get("location"), `https://launch.faolla.com${path}`);
       assert.match(response.headers.get("cache-control") ?? "", /no-store/);
-      await response.body?.cancel();
+      await response.arrayBuffer();
       count++;
     }
     const rejected = await request(host, "/api/auth/merchant-session", "POST");
     assert.equal(rejected.status, 421);
     assert.equal(rejected.headers.get("location"), null);
-    await rejected.body?.cancel();
+    await rejected.arrayBuffer();
     count++;
   }
   for (const path of ["/login", "/enterprise"]) {
     const response = await request("launch.faolla.com", path);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, `canonical ${path}: status=${response.status}, location=${response.headers.get("location")}`);
     assert.equal(response.headers.get("location"), null);
     assert.match(response.headers.get("cache-control") ?? "", /no-store/);
-    await response.body?.cancel();
+    await response.arrayBuffer();
     count++;
   }
   console.log(`[auth-http] ${count} production-build checks passed`);

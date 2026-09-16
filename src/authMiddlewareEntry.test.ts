@@ -31,6 +31,20 @@ test("Next-discovered auth entry preserves OAuth return and portal isolation", a
     assert.equal(rejected.headers.get("location"), null);
     const accepted = await middleware(new NextRequest("https://launch.faolla.com/api/auth/merchant-session", { method: "POST" }));
     assert.equal(accepted.headers.get("x-middleware-next"), "1");
+    // Real reverse-proxy transport can use a loopback URL and Host header.
+    // The forwarded public hostname must preserve canonical-origin behavior.
+    for (const host of ["faolla.com", "www.faolla.com", "launch.faolla.com"]) {
+      const result = await middleware(new NextRequest("http://127.0.0.1:3229/login", {
+        headers: { host: "127.0.0.1:3229", "x-forwarded-host": host, "x-forwarded-proto": "https" },
+      }));
+      assert.equal(result.headers.get("location"), host === "launch.faolla.com" ? null : "https://launch.faolla.com/login");
+      if (host === "launch.faolla.com") assert.equal(result.headers.get("x-middleware-next"), "1");
+    }
+    const conflictingHost = await middleware(new NextRequest("http://127.0.0.1:3229/api/auth/merchant-session", {
+      method: "POST",
+      headers: { host: "faolla.com", "x-forwarded-host": "launch.faolla.com", "x-forwarded-proto": "https" },
+    }));
+    assert.equal(conflictingHost.status, 421, "a nonlocal Host must take precedence over forwarded host");
   } finally {
     if (previous === undefined) delete process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
     else process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = previous;
