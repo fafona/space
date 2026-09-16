@@ -20,7 +20,7 @@ test("exactly seven paths; only keepalive and exports touch existing implementat
   for (const change of [deploy + "\n", deploy.replace("CountMax=10", "CountMax=100"), deploy.replace("StrictHostKeyChecking=yes", "StrictHostKeyChecking=no")])
     assert.throws(() => validateTransportRepairEdits(".github/workflows/deploy.yml", before, change));
   const control = read("scripts/production-maintenance-control.mjs");
-  const original = control.replace("export async function withPrivateOperationLock(", "async function withPrivateOperationLock(").replace("export async function productionOperations(", "async function productionOperations(");
+  const original = control.replace("\nexport { withPrivateOperationLock, productionOperations };\n", "");
   validateTransportRepairEdits("scripts/production-maintenance-control.mjs", original, control);
   assert.throws(() => validateTransportRepairEdits("scripts/production-maintenance-control.mjs", original, control + "\n"));
   assert.throws(() => validateTransportRepairEdits("src/proxy.ts", "", "changed"));
