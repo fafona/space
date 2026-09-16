@@ -6,6 +6,10 @@ import { readLeaseHandoffFields } from "./production-maintenance-lease-handoff.m
 import { readMaintenanceLeaseSourceProof, validateMaintenanceLeaseMigrationProof, MAINTENANCE_LEASE_MIGRATION_SQL } from "./production-maintenance-lease-evidence.mjs";
 import { readMaintenanceFenceSourceProof, validateMaintenanceFenceMigrationProof, MAINTENANCE_FENCE_MIGRATION_SQL } from "./production-maintenance-fence-evidence.mjs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { startupDiagnostic } from "./production-maintenance-startup-diagnostic.mjs";
+import { validateMaintenanceStartupPredecessor, createMaintenanceStartupInspection, buildMaintenanceStartupRecoveredState } from "./production-maintenance-startup-recovery.mjs";
+import { captureStartupBaseline, verifyStartupBaseline, assertStartupStopped, assertStartupGenerationsStopped, readStartupHandoffFields } from "./production-maintenance-startup-inspection.mjs";
+import { readMaintenanceStartupSourceProof, validateMaintenanceStartupMigrationProof, MAINTENANCE_STARTUP_MIGRATION_SQL } from "./production-maintenance-startup-evidence.mjs";
 import { spawnSync } from "node:child_process";
 import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -137,7 +141,7 @@ export function validateMaintenanceLaunchProofBindings(state) {
 
 export function parseMaintenanceRequest(argv) {
   const [action, ...values] = argv;
-  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "inspect-build-recovery", "recover-build", "inspect-attempt-recovery", "recover-attempt", "inspect-second-attempt-recovery", "recover-second-attempt", "inspect-budget-recovery", "recover-budget", "inspect-window-renewal", "renew-window", "inspect-prelaunch-recovery", "recover-prelaunch", "inspect-preflight-recovery", "recover-preflight", "inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "snapshot-pair", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
+  if (!["diagnose-runtime", "diagnose-pm2-peer", "plan", "prepare", "inspect-recovery", "recover-held", "inspect-continuation", "continue-held", "inspect-build-recovery", "recover-build", "inspect-attempt-recovery", "recover-attempt", "inspect-second-attempt-recovery", "recover-second-attempt", "inspect-budget-recovery", "recover-budget", "inspect-window-renewal", "renew-window", "inspect-prelaunch-recovery", "recover-prelaunch", "inspect-preflight-recovery", "recover-preflight", "inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup", "check-held", "check-runtime-held", "runtime-handoff", "start-candidate", "candidate-handoff", "snapshot-web", "snapshot-worker", "snapshot-pair", "register-candidate", "check-candidate", "end", "fail-held"].includes(action)) failure("maintenance_arguments_invalid");
   const flags = new Map();
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
@@ -161,7 +165,7 @@ export function parseMaintenanceRequest(argv) {
   if (!["inspect-budget-recovery", "recover-budget"].includes(action) && flags.has("--budget-recovery-evidence")) failure("maintenance_arguments_invalid");
   if (!["inspect-window-renewal", "renew-window"].includes(action) && flags.has("--window-renewal-evidence")) failure("maintenance_arguments_invalid");
   if (!["inspect-prelaunch-recovery", "recover-prelaunch"].includes(action) && flags.has("--prelaunch-recovery-evidence")) failure("maintenance_arguments_invalid");
-  if (!["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence"].includes(action) && flags.has("--lease-evidence")) failure("maintenance_arguments_invalid");
+  if (!["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(action) && flags.has("--lease-evidence")) failure("maintenance_arguments_invalid");
   if (!["inspect-preflight-recovery", "recover-preflight"].includes(action) && flags.has("--preflight-recovery-evidence")) failure("maintenance_arguments_invalid");
   if (["inspect-recovery", "recover-held"].includes(action)) {
     if (flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
@@ -248,11 +252,11 @@ export function parseMaintenanceRequest(argv) {
       try { request.windowRenewalEvidence = decodeMaintenanceWindowRenewalEvidence(encoded); }
       catch { failure("maintenance_arguments_invalid"); }
     }
-  } else if (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence"].includes(action)) {
+  } else if (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(action)) {
     request.previousTargetSha = flags.get("--previous-target-sha");
     if (!SHA.test(request.previousTargetSha ?? "") || request.previousTargetSha === request.targetSha ||
         request.previousTargetSha === request.expectedOldSha || flags.has("--recovery-evidence") || flags.has("--continuation-evidence")) failure("maintenance_arguments_invalid");
-    if (["inspect-lease-renewal", "inspect-fence-recovery"].includes(action)) {
+    if (["inspect-lease-renewal", "inspect-fence-recovery", "inspect-startup-recovery"].includes(action)) {
       if (flags.has("--lease-evidence")) failure("maintenance_arguments_invalid");
     } else {
       const encoded = flags.get("--lease-evidence");
@@ -313,7 +317,7 @@ export function validateMaintenanceState(state, request, bootId, now) {
   const attemptPredecessor = state?.version === 5 && ["inspect-attempt-recovery", "recover-attempt"].includes(request.action);
   const budgetPredecessor = state?.version === 7 && ["inspect-budget-recovery", "recover-budget"].includes(request.action);
   const windowPredecessor = state?.version === 8 && ["inspect-window-renewal", "renew-window"].includes(request.action);
-  const leasePredecessor = [11, 12, 13].includes(state?.version) && ["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence"].includes(request.action);
+  const leasePredecessor = [11, 12, 13].includes(state?.version) && ["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action);
   const prelaunchPredecessor = state?.version === 9 && ["inspect-prelaunch-recovery", "recover-prelaunch"].includes(request.action);
   if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); }
   if (state?.version === 4) {
@@ -354,14 +358,16 @@ export function validateMaintenanceState(state, request, bootId, now) {
     else validateMaintenancePreflightRecoveryState(state, { bootId, now });
     keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal", "prelaunchRecovery", "preflightRecovery");
   }
-  if ([12, 13].includes(state?.version)) {
-    if (["inspect-fence-recovery", "recover-fence"].includes(request.action) && state.version === 12) validateMaintenanceFencePredecessor(state, { bootId, now });
+  if ([12, 13, 14].includes(state?.version)) {
+    if (["inspect-startup-recovery", "recover-startup"].includes(request.action) && state.version === 13) validateMaintenanceStartupPredecessor(state, { bootId, now });
+    else if (["inspect-fence-recovery", "recover-fence"].includes(request.action) && state.version === 12) validateMaintenanceFencePredecessor(state, { bootId, now });
     else if (leasePredecessor) validateMaintenanceLeasePredecessor(state, { bootId, now });
     else validateMaintenanceLeaseState(state, { bootId, now });
     keys.push("recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal", "prelaunchRecovery", "preflightRecovery", "leaseRenewal", "leaseExtensions");
-    if (state.version === 13) keys.push("fenceRecovery");
+    if ([13, 14].includes(state.version)) keys.push("fenceRecovery");
+    if (state.version === 14) keys.push("startupRecovery");
   }
-  const expired = leasePredecessor ? false : [12, 13].includes(state?.version) ? now >= maintenanceLeaseExpiresAt(state)
+  const expired = leasePredecessor ? false : [12, 13, 14].includes(state?.version) ? now >= maintenanceLeaseExpiresAt(state)
     : state?.version === 11 ? now >= MAINTENANCE_PREFLIGHT_RECOVERY_AUTHORIZATION.expiresAt
     : prelaunchPredecessor || state?.version === 10
     ? now >= MAINTENANCE_PRELAUNCH_RECOVERY_AUTHORIZATION.expiresAt
@@ -377,7 +383,7 @@ export function validateMaintenanceState(state, request, bootId, now) {
     ? now >= MAINTENANCE_BUILD_RECOVERY_DEADLINE_EXTENSION.expiresAt
     : now - state?.createdAt > MAX_AGE_MS;
   if (!exact(state, keys) ||
-      ![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
+      ![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(state.version) || !Number.isSafeInteger(state.revision) || state.revision < 0 || !UUID.test(state.operationId) || !PHASES.includes(state.phase) || state.bootId !== bootId ||
       !Number.isSafeInteger(state.createdAt) || state.createdAt > now || expired ||
       !/^[0-9a-f]{64}$/.test(state.tokenHash) || typeof state.publicSupabaseUrl !== "string" || !record(state.runtime) || !record(state.ingress) || !record(state.database) ||
       !(state.candidate === null || record(state.candidate)) || !(state.resumed === null || record(state.resumed)) ||
@@ -496,7 +502,8 @@ function needsLaunchReconciliation(state) {
 /** All effects are injected: unit tests never start a process or contact production. */
 export async function runMaintenanceAction(request, ops) {
   const assertHistoricalGenerationStopped = async (state) => {
-    if ([12, 13].includes(state.version)) await ops.assertLeaseGenerationsStopped(state);
+    if (state.version === 14) await ops.assertStartupGenerationsStopped(state);
+    else if ([12, 13].includes(state.version)) await ops.assertLeaseGenerationsStopped(state);
     if (state.version === 11) await ops.assertPreflightRecoveryGenerationsStopped(state);
     if (state.version === 10) await ops.assertPrelaunchRecoveryGenerationsStopped(state);
     if (state.version === 9) await ops.assertWindowRenewalGenerationsStopped(state);
@@ -505,7 +512,8 @@ export async function runMaintenanceAction(request, ops) {
     if (state.version === 6) await ops.assertFailedCandidateGenerationStopped(state.attemptRecovery.predecessor.state);
   };
   const assertAttemptStopped = async (state) => {
-    if ([12, 13].includes(state.version)) await ops.assertLeaseStopped(state);
+    if (state.version === 14) await ops.assertStartupStopped(state);
+    else if ([12, 13].includes(state.version)) await ops.assertLeaseStopped(state);
     else if (state.version === 11) await ops.assertPreflightRecoveryStopped(state);
     else if (state.version === 10) await ops.assertPrelaunchRecoveryStopped(state);
     else if (state.version === 9) await ops.assertWindowRenewalStopped(state);
@@ -534,7 +542,7 @@ export async function runMaintenanceAction(request, ops) {
   const keepFailedClosed = async (state) => {
     let verified = true;
     try {
-      state.ingress = [6, 7, 8, 9, 10, 11, 12, 13].includes(state.version)
+      state.ingress = [6, 7, 8, 9, 10, 11, 12, 13, 14].includes(state.version)
         ? await ops.recloseAttemptIngress(state)
         : await ops.installIngress(state.ingress, ops.readToken(state), { probeControlServices: false });
       await ops.save(state);
@@ -555,7 +563,7 @@ export async function runMaintenanceAction(request, ops) {
       ops.validateProofs(state);
       if (state.resumed) await ops.stopResumedCandidate(state.runtime, state.resumed);
       else if (state.candidate) await ops.stopCandidate(state.runtime, state.candidate);
-      else if ([6, 7, 8, 9, 10, 11, 12, 13].includes(state.version)) await assertAttemptStopped(state);
+      else if ([6, 7, 8, 9, 10, 11, 12, 13, 14].includes(state.version)) await assertAttemptStopped(state);
       else await ops.stopRuntime(state.runtime);
     } catch { verified = false; }
     try {
@@ -569,6 +577,31 @@ export async function runMaintenanceAction(request, ops) {
     return publicSummary(state);
   };
 
+  if (["inspect-startup-recovery", "recover-startup"].includes(request.action)) {
+    const snapshot = await ops.readLeaseSnapshot();
+    const state = validateMaintenanceState(snapshot.state, { ...request, targetSha: request.previousTargetSha }, ops.bootId(), ops.now());
+    validateMaintenanceStartupPredecessor(state, { bootId: ops.bootId(), now: ops.now() });
+    ops.validateProofs(state);
+    const assertSafe = async () => {
+      await ops.assertPreflightDiskHeadroom(state); await ops.verifyIngress(state.ingress);
+      await ops.assertStartupStopped(state); await ops.assertDatabaseQuiet(state.database);
+    };
+    await assertSafe();
+    const stoppedBaseline = request.action === "recover-startup" ? request.leaseEvidence.stoppedBaseline : await ops.captureStartupBaseline(state);
+    await ops.verifyStartupBaseline(state, stoppedBaseline);
+    const source = await ops.readStartupSourceProof(), migrationDigest = await ops.readStartupMigrationProof(state);
+    const context = { operationId: request.operationId, previousTargetSha: request.previousTargetSha, targetSha: request.targetSha,
+      expectedOldSha: request.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
+      bootId: ops.bootId(), now: ops.now(), sourceDiffDigest: source.sourceDiffDigest, migrationDigest, stoppedBaseline };
+    const inspection = createMaintenanceStartupInspection(state, context);
+    if (request.action === "inspect-startup-recovery") return inspection;
+    await assertSafe(); await ops.verifyStartupBaseline(state, stoppedBaseline);
+    if (!equal(source, await ops.readStartupSourceProof()) || migrationDigest !== await ops.readStartupMigrationProof(state)) failure("maintenance_startup_evidence_changed");
+    const next = buildMaintenanceStartupRecoveredState(state, request.leaseEvidence, { ...context, now: ops.now() });
+    validateMaintenanceState(next, request, ops.bootId(), ops.now()); ops.validateProofs(next);
+    const saved = await ops.commitStartup(snapshot, next); if (!equal(saved, next)) failure("maintenance_startup_write_unconfirmed");
+    return publicSummary(saved, "held");
+  }
   if (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence"].includes(request.action)) {
     // Initial held v11 -> renewable v12, or time-only renewal of held v12.
     // Same unused attempt, all original records and live safety checks retained.
@@ -594,7 +627,7 @@ export async function runMaintenanceAction(request, ops) {
       expectedOldSha: request.expectedOldSha, expectedRevision: snapshot.revision, expectedDigest: snapshot.digest,
       bootId: ops.bootId(), now: ops.now(), sourceDiffDigest: source.sourceDiffDigest, migrationDigest, stoppedBaseline };
     const inspection = (recovering ? createMaintenanceFenceInspection : createMaintenanceLeaseInspection)(state, context);
-    if (["inspect-lease-renewal", "inspect-fence-recovery"].includes(request.action)) return inspection;
+    if (["inspect-lease-renewal", "inspect-fence-recovery", "inspect-startup-recovery"].includes(request.action)) return inspection;
     await assertPredecessorHeld();
     await ops.verifyLeaseBaseline(state, stoppedBaseline);
     const finalSource = await ops.readLeaseSourceProof(request, state), finalMigration = await ops.readLeaseMigrationProof(state);
@@ -958,6 +991,13 @@ export async function runMaintenanceAction(request, ops) {
   if (["check-held", "runtime-handoff"].includes(request.action)) {
     await assertHeld(state);
     const summary = publicSummary(state, "held");
+    if (request.action === "runtime-handoff" && state.version === 14) {
+      const baseline = state.startupRecovery.stoppedBaseline;
+      await ops.verifyStartupBaseline(state, baseline);
+      const fields = await ops.readStartupHandoffFields(state.runtime, state, baseline);
+      return { ...summary, version: 4, fields, budgetBaseline: { version: 4,
+        predecessorStateDigest: baseline.stateDigest, previousTargetSha: state.startupRecovery.predecessor.targetSha, stoppedBaseline: baseline } };
+    }
     if (request.action === "runtime-handoff" && [12, 13].includes(state.version)) {
       const audit = state.leaseExtensions.at(-1)?.evidence ?? state.fenceRecovery ?? state.leaseRenewal;
       await ops.verifyLeaseBaseline(state, audit.stoppedBaseline);
@@ -1039,14 +1079,14 @@ export async function runMaintenanceAction(request, ops) {
   }
   if (request.action === "start-candidate") {
     if (state.phase !== "held") failure("maintenance_not_held");
-    await ops.verifyIngress(state.ingress, { probeControlServices: false });
-    if ([6, 7, 8, 9, 10, 11, 12, 13].includes(state.version)) await assertAttemptStopped(state);
+    await startupDiagnostic("controller_ingress", () => ops.verifyIngress(state.ingress, { probeControlServices: false }));
+    if ([6, 7, 8, 9, 10, 11, 12, 13, 14].includes(state.version)) await startupDiagnostic("controller_stopped", () => assertAttemptStopped(state));
     try {
-      state.candidate = await ops.startCandidate(state.runtime, state.targetSha, { launchJournal: createMaintenanceLaunchCallbacks(state, ops) });
+      state.candidate = await startupDiagnostic("controller_start", () => ops.startCandidate(state.runtime, state.targetSha, { launchJournal: createMaintenanceLaunchCallbacks(state, ops) }));
       if (state.launchJournal?.slots["paused-web"]?.phase !== "confirmed" || state.candidate?.targetSha !== state.targetSha) failure("maintenance_candidate_unverified");
-      await ops.verifyCandidate(state.runtime, state.candidate, "1");
-      state.phase = "candidate"; await ops.save(state);
-      await assertCandidate(state); return publicSummary(state);
+      await startupDiagnostic("controller_verify", () => ops.verifyCandidate(state.runtime, state.candidate, "1"));
+      state.phase = "candidate"; await startupDiagnostic("controller_save", () => ops.save(state));
+      await startupDiagnostic("controller_accept", () => assertCandidate(state)); return publicSummary(state);
     } catch {
       await keepFailedClosed(state); failure("maintenance_candidate_start_failed_held");
     }
@@ -1218,7 +1258,7 @@ async function productionOperations(request) {
   const validateProofs = (state) => {
     runtime.validateRuntimeProof(state.runtime); ingress.validateIngressProof(state.ingress);
     validateMaintenanceSubproofBindings(state);
-    if ([8, 9, 10, 11, 12, 13].includes(state.version)) validateProofs(state.budgetRecovery.predecessor.state);
+    if ([8, 9, 10, 11, 12, 13, 14].includes(state.version)) validateProofs(state.budgetRecovery.predecessor.state);
     if (state.version === 7) validateProofs(state.secondAttemptRecovery.predecessor.state);
     if (state.version === 6) {
       // History is independently typed and bound, never adopted as an active
@@ -1249,11 +1289,12 @@ async function productionOperations(request) {
       const windowRenewal = ["inspect-window-renewal", "renew-window"].includes(request.action);
       const prelaunchRecovery = ["inspect-prelaunch-recovery", "recover-prelaunch"].includes(request.action);
       const preflightRecovery = ["inspect-preflight-recovery", "recover-preflight"].includes(request.action);
-      const leaseRenewal = ["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence"].includes(request.action);
+      const leaseRenewal = ["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action);
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
-      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) || (windowRenewal && value.version === 8) || (prelaunchRecovery && value.version === 9) || (preflightRecovery && value.version === 10) || (leaseRenewal && value.version === 11) || (["inspect-fence-recovery", "recover-fence"].includes(request.action) && value.version === 12) ? request.previousTargetSha : request.targetSha;
-      validateMaintenanceState(value, { ...request, targetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
+      const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) || (windowRenewal && value.version === 8) || (prelaunchRecovery && value.version === 9) || (preflightRecovery && value.version === 10) || (leaseRenewal && value.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && value.version === 12) ? request.previousTargetSha : request.targetSha;
+      const boundTargetSha = ["inspect-startup-recovery", "recover-startup"].includes(request.action) && value.version === 13 ? request.previousTargetSha : targetSha;
+      validateMaintenanceState(value, { ...request, targetSha: boundTargetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
       if (continuation && value.version === 4 && (value.continuation.evidence.previousTargetSha !== request.previousTargetSha ||
@@ -1325,7 +1366,8 @@ async function productionOperations(request) {
       (["inspect-window-renewal", "renew-window"].includes(request.action) && loaded.version === 8) ||
       (["inspect-prelaunch-recovery", "recover-prelaunch"].includes(request.action) && loaded.version === 9) ||
       (["inspect-preflight-recovery", "recover-preflight"].includes(request.action) && loaded.version === 10) ||
-      (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence"].includes(request.action) && loaded.version === 11) || (["inspect-fence-recovery", "recover-fence"].includes(request.action) && loaded.version === 12);
+      (["inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 13) ||
+      (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 12);
     const targetSha = previous ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
@@ -1346,6 +1388,18 @@ async function productionOperations(request) {
     capturePreflightRecoveryBaseline, verifyPreflightRecoveryBaseline, assertPreflightRecoveryStopped, assertPreflightRecoveryGenerationsStopped,
     readPreflightRecoveryHandoffFields, assertPreflightDiskHeadroom,
     captureLeaseBaseline, verifyLeaseBaseline, assertLeaseStopped, assertLeaseGenerationsStopped, readLeaseHandoffFields,
+    captureStartupBaseline, verifyStartupBaseline, assertStartupStopped, assertStartupGenerationsStopped, readStartupHandoffFields,
+    readStartupSourceProof: () => readMaintenanceStartupSourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    readStartupMigrationProof: state => validateMaintenanceStartupMigrationProof(queryDatabase(state.database, MAINTENANCE_STARTUP_MIGRATION_SQL),
+      state.database.databaseOid, state.createdAt, { targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    async commitStartup(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          request.action !== "recover-startup" || snapshot.state.version !== 13 || next.version !== 14 || next.activeAttempt !== 4 || next.revision !== previous.revision + 1) failure("maintenance_startup_write_unconfirmed");
+      try { const result = await store.replaceOperationUnderExistingOperationLock({ expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(result.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
+    },
     installIngress: async (proof, token, options = {}) => ingress.installIngress(proof, token, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     verifyIngress: async (proof, options = {}) => ingress.verifyIngress(proof, { ...await privateProbeOptions(), probeControlServices: options.probeControlServices !== false }),
     restoreIngress: async (proof) => ingress.restoreIngress(proof, await privateProbeOptions()),
@@ -1474,9 +1528,9 @@ async function productionOperations(request) {
       // after its deadline. A new expired command still cannot load state.
       // This capability grants NO save, start, restore, new lease or receipt.
       const baseline = baselines.get(state)?.state;
-      if (!baseline || ![6, 7, 8, 9, 10, 11, 12, 13].includes(baseline.version) || state.version !== baseline.version || attemptedReclosures.has(state) ||
+      if (!baseline || ![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(baseline.version) || state.version !== baseline.version || attemptedReclosures.has(state) ||
           !["start-candidate", "end", "fail-held"].includes(request.action) ||
-          ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "runtime", "tokenHash", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal", "prelaunchRecovery", "preflightRecovery", "leaseRenewal", "leaseExtensions", "fenceRecovery"]
+          ["operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "runtime", "tokenHash", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal", "prelaunchRecovery", "preflightRecovery", "leaseRenewal", "leaseExtensions", "fenceRecovery", "startupRecovery"]
             .some(key => !equal(state[key], baseline[key])) || baseline.bootId !== bootId()) failure("maintenance_attempt_reclose_unverified");
       // Consume before any effect. A lost result is never an automatic retry.
       attemptedReclosures.add(state);

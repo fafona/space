@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { validateMaintenanceStartupState, maintenanceStartupExpiresAt, maintenanceStartupHistoricalState,
+  validateMaintenanceStartupInspection, validateMaintenanceStartupEvidence, assertMaintenanceStartupProgress } from "./production-maintenance-startup-recovery.mjs";
 import { validateMaintenancePreflightRecoveryState, assertMaintenancePreflightRecoveryProgress,
   captureMaintenancePreflightValue as capture, assertMaintenancePreflightLaunchShape as launchShape,
   assertMaintenancePreflightJournalProgress as journalProgress } from "./production-maintenance-preflight-recovery.mjs";
@@ -59,6 +61,7 @@ function clock(value) {
   if (!exact(value, ["bootId", "now"]) || value.bootId !== PIN.bootId || !number(value.now) || value.now < AUTH.authorizedAt) fail();
 }
 function unused(state) { if (state.phase !== "held" || state.activeAttempt !== 3 || LAUNCH.some(key => state[key] !== null)) fail(); }
+let pinnedOriginalValidated = false;
 function original(state) {
   if (!exact(state, KEYS) || state.version !== 11 || state.revision !== PIN.revision || state.targetSha !== PIN.targetSha ||
       state.expectedOldSha !== PIN.expectedOldSha || state.bootId !== PIN.bootId || state.operationId !== AUTH.operationId ||
@@ -66,7 +69,13 @@ function original(state) {
   unused(state);
   // Only immutable, byte-pinned history uses this historical audit time.
   // Every actual filesystem/process/database observation uses the real clock.
-  validateMaintenancePreflightRecoveryState(state, { bootId: PIN.bootId, now: AUTH.authorizedAt });
+  // Recheck the complete canonical digest and shape above on EVERY call. The
+  // byte-identical historical document needs its recursive type walk only once
+  // per process; live state, CAS, ingress, disk and process checks are not cached.
+  if (!pinnedOriginalValidated) {
+    validateMaintenancePreflightRecoveryState(state, { bootId: PIN.bootId, now: AUTH.authorizedAt });
+    pinnedOriginalValidated = true;
+  }
   return state;
 }
 function reconstruct(state) {
@@ -181,12 +190,18 @@ export function buildMaintenanceFenceRecoveredState(raw, rawEvidence, rawContext
       evidence: item, recoveredAt: context.now, stoppedBaseline: context.stoppedBaseline, authorization: { ...FENCE_AUTH } } },
   { bootId: context.bootId, now: context.now });
 }
-export function maintenanceLeaseExpiresAt(raw) { return checkState(capture(raw)).expiresAt; }
+export function maintenanceLeaseExpiresAt(raw) { return raw?.version === 14 ? maintenanceStartupExpiresAt(raw) : checkState(capture(raw)).expiresAt; }
 export function validateMaintenanceLeaseState(raw, rawClock) {
+  if (raw?.version === 14) return validateMaintenanceStartupState(raw, rawClock);
   const state = capture(raw), time = capture(rawClock); clock(time); const checked = checkState(state);
   if (time.now < checked.lastTime || time.now >= checked.expiresAt || (state.version === 13 && time.now < state.fenceRecovery.recoveredAt)) fail(); return freeze(state);
 }
 export function validateMaintenanceLeasePredecessor(raw, rawClock) {
+  if (raw?.version === 14) {
+    const state = validateMaintenanceStartupState(raw, rawClock);
+    if (state.phase !== "held" || state.activeAttempt !== 4 || LAUNCH.some(key => state[key] !== null)) fail();
+    return state;
+  }
   const state = capture(raw), time = capture(rawClock); clock(time); unused(state);
   if (state.version === 11) original(state);
   else if ([12, 13].includes(state.version)) { const checked = checkState(state); if (time.now < checked.lastTime) fail(); }
@@ -195,10 +210,12 @@ export function validateMaintenanceLeasePredecessor(raw, rawClock) {
 }
 export function reconstructMaintenanceLeasePredecessor(raw, rawClock) {
   const state = validateMaintenanceLeasePredecessor(raw, rawClock);
+  if (state.version === 14) return freeze(reconstruct(maintenanceStartupHistoricalState(state, rawClock)));
   return freeze(state.version === 11 ? state : reconstruct(state));
 }
 export function maintenanceLeaseHistoricalState(raw, rawClock) {
-  const state = validateMaintenanceLeaseState(raw, rawClock); return freeze(reconstruct(state));
+  const state = validateMaintenanceLeaseState(raw, rawClock);
+  return freeze(reconstruct(state.version === 14 ? maintenanceStartupHistoricalState(state, rawClock) : state));
 }
 export function createMaintenanceLeaseInspection(raw, rawContext) {
   const state = validateMaintenanceLeasePredecessor(raw, { bootId: rawContext?.bootId, now: rawContext?.now }), context = capture(rawContext);
@@ -211,8 +228,8 @@ export function createMaintenanceLeaseInspection(raw, rawContext) {
     stateBytes: Buffer.byteLength(JSON.stringify(state)), activeAttempt: 3, sourceDiffDigest: context.sourceDiffDigest, migrationDigest: context.migrationDigest,
     stoppedBaseline: context.stoppedBaseline, stoppedBaselineDigest: hash(context.stoppedBaseline), authorizationDigest: hash(AUTH) }));
 }
-export function validateMaintenanceLeaseInspection(raw) { return freeze(inspection(capture(raw, 16384))); }
-export function validateMaintenanceLeaseEvidence(raw) { return freeze(evidence(capture(raw, 16384))); }
+export function validateMaintenanceLeaseInspection(raw) { return raw?.state === "startup-recovery-inspected" ? validateMaintenanceStartupInspection(raw) : freeze(inspection(capture(raw, 16384))); }
+export function validateMaintenanceLeaseEvidence(raw) { return raw?.state === "startup-recovery-inspected" ? validateMaintenanceStartupEvidence(raw) : freeze(evidence(capture(raw, 16384))); }
 export function encodeMaintenanceLeaseEvidence(raw) { const result = Buffer.from(JSON.stringify(validateMaintenanceLeaseEvidence(raw))).toString("base64url"); if (result.length > 22000) fail(); return result; }
 export function decodeMaintenanceLeaseEvidence(raw) {
   if (typeof raw !== "string" || !/^[A-Za-z0-9_-]{1,22000}$/.test(raw)) fail();
@@ -230,6 +247,7 @@ export function buildMaintenanceLeasedState(raw, rawEvidence, rawContext) {
   return validateMaintenanceLeaseState(next, { bootId: context.bootId, now: context.now });
 }
 export function assertMaintenanceLeaseProgress(rawPrevious, rawNext) {
+  if (rawPrevious?.version === 14 || rawNext?.version === 14) return assertMaintenanceStartupProgress(rawPrevious, rawNext);
   const previous = capture(rawPrevious), next = capture(rawNext);
   if (previous.version === 12 && next.version === 13) {
     const audit = next.fenceRecovery, item = audit?.evidence; if (!item) fail();

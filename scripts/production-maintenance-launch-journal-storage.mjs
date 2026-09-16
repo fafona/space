@@ -141,6 +141,10 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
   const confirmedSnapshot = (snapshot) => frozen({ state: snapshot.state, revision: snapshot.revision, digest: snapshot.digest });
 
   function assertJournalProgress(previous, next) {
+    if (previous.version === 13 && next.version === 14) {
+      assertMaintenanceLeaseProgress(previous, next);
+      return;
+    }
     if (previous.version === 8 && next.version === 9) {
       assertMaintenanceWindowRenewalProgress(previous, next);
       return;
@@ -192,7 +196,7 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
     // Applies to both full-state replacement and journal-only writes, before
     // any temporary file is opened. All three audits are immutable; the build-recovery
     // wrapper delegates every legacy transition to the unchanged recovery guard.
-    if ([12, 13].includes(previous.state.version) || [12, 13].includes(next.version)) assertMaintenanceLeaseProgress(previous.state, next);
+    if ([12, 13, 14].includes(previous.state.version) || [12, 13, 14].includes(next.version)) assertMaintenanceLeaseProgress(previous.state, next);
     else if (previous.state.version === 11 || next.version === 11) assertMaintenancePreflightRecoveryProgress(previous.state, next);
     else if (previous.state.version === 10 || next.version === 10) assertMaintenancePrelaunchRecoveryProgress(previous.state, next);
     else if (previous.state.version === 9 || next.version === 9) assertMaintenanceWindowRenewalProgress(previous.state, next);
