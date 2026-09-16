@@ -5,12 +5,14 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CANDIDATE_RECOVERY as P, validateCandidateRecoveryReceipt } from "./recover-maintenance-candidate.mjs";
 import { validateProductionReleaseAttestation } from "./production-release-attestation.mjs";
+import { validateRestorationReceipt } from "./restore-reclosed-candidate.mjs";
 
 const fail = () => { throw new Error("candidate_recovery_workflow_unverified"); };
 export const RECOVERY_SOURCE_PATHS = Object.freeze([
   ".github/workflows/recover-maintenance-candidate.yml", "docs/production-maintenance.md", "scripts/deploy.production.sh",
   "scripts/deploy-production-contract.test.mjs", "scripts/deploy-production-maintenance-contract.test.mjs", "scripts/deploy-static-route-path.test.mjs",
   "scripts/recover-maintenance-candidate.mjs", "scripts/recover-maintenance-candidate-workflow.mjs", "scripts/recover-maintenance-candidate.test.mjs",
+  ".github/workflows/restore-reclosed-candidate.yml", "scripts/restore-reclosed-candidate.mjs", "scripts/restore-reclosed-candidate.test.mjs",
 ]);
 export function validateRecoveryRun(value, expected) {
   if (!value || value.id !== Number(expected.id) || value.run_attempt !== 1 || value.head_sha !== expected.sha || value.head_branch !== "main" ||
@@ -61,7 +63,7 @@ function originalPredicate(phase, runId, file, provenance) {
       String(artifacts[0].size_in_bytes) !== expected.sizeBytes || artifacts[0].workflow_run?.head_sha !== P.targetSha) fail();
   }
 }
-function metadata(sha, runId) {
+function metadata(sha, runId, restoration = false) {
   if (!/^[a-f0-9]{40}$/.test(sha) || !/^[1-9][0-9]{0,15}$/.test(runId) || process.env.GITHUB_REPOSITORY !== "fafona/space" ||
     process.env.GITHUB_REF !== "refs/heads/main" || process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
     process.env.GITHUB_RUN_ATTEMPT !== "1" || process.env.GITHUB_SHA !== sha || process.env.GITHUB_RUN_ID !== runId ||
@@ -72,6 +74,15 @@ function metadata(sha, runId) {
   const cis = api(`actions/workflows/ci.yml/runs?head_sha=${sha}&event=push&per_page=100`);
   if (cis.total_count !== 1 || cis.workflow_runs.length !== 1) fail();
   checkCi(cis.workflow_runs[0].id, sha); checkCi("35053895750", P.targetSha);
+  if (restoration) {
+    checkCi("35066789740", "f176148fd0a014dbb5985c922b7e1a3fa67a008e");
+    validateRecoveryRun(api("actions/runs/35069590176"), { id: "35069590176", sha: "f176148fd0a014dbb5985c922b7e1a3fa67a008e", event: "workflow_dispatch", name: "Recover Verified Maintenance Candidate", file: "recover-maintenance-candidate.yml", conclusion: "failure" });
+    const old = api("actions/runs/35069590176/jobs?per_page=100");
+    if (old.total_count !== 1 || old.jobs.length !== 1 || old.jobs[0].steps.filter(s => s.conclusion === "failure").length !== 1 ||
+      !old.jobs[0].steps.some(s => s.name === "Revalidate And Resume Through Original Controller" && s.conclusion === "failure") ||
+      !old.jobs[0].steps.some(s => s.name === "Verify Hosted Signature Before Resume" && s.conclusion === "success") ||
+      !old.jobs[0].steps.some(s => s.name === "Reclose On Unconfirmed Resume" && s.conclusion === "success")) fail();
+  }
   const history = [[P.backupRunId, "Encrypted Database Backup", "database-backup.yml", "workflow_dispatch", "success"],
     [P.readinessRunId, "Ordinary Account Cutover Readiness", "ordinary-account-cutover-readiness.yml", "workflow_dispatch", "success"],
     [P.failedDeployRunId, "Deploy Production", "deploy.yml", "workflow_run", "failure"]];
@@ -85,8 +96,9 @@ function metadata(sha, runId) {
   }
   const current = api("actions/runs/" + runId);
   if (current.head_sha !== sha || current.event !== "workflow_dispatch" || current.run_attempt !== 1 || current.head_branch !== "main" ||
-    current.path !== ".github/workflows/recover-maintenance-candidate.yml" || current.name !== "Recover Verified Maintenance Candidate") fail();
-  for (const file of ["deploy.yml", "production-maintenance.yml", "database-migrate.yml", "database-backup.yml", "ordinary-account-cutover-readiness.yml", "recover-maintenance-candidate.yml"]) {
+    current.path !== (restoration ? ".github/workflows/restore-reclosed-candidate.yml" : ".github/workflows/recover-maintenance-candidate.yml") ||
+    current.name !== (restoration ? "Restore Reclosed Verified Candidate" : "Recover Verified Maintenance Candidate")) fail();
+  for (const file of ["deploy.yml", "production-maintenance.yml", "database-migrate.yml", "database-backup.yml", "ordinary-account-cutover-readiness.yml", "recover-maintenance-candidate.yml", ...(restoration ? ["restore-reclosed-candidate.yml"] : [])]) {
     const runs = api(`actions/workflows/${file}/runs?per_page=100`);
     if (runs.workflow_runs.some(r => String(r.id) !== runId && r.status !== "completed")) fail();
   }
@@ -96,11 +108,17 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   try {
     const [action, sha, runId, receiptFile, provenanceFile] = process.argv.slice(2);
     if (action === "metadata") metadata(sha, runId);
+    else if (action === "restoration-metadata") metadata(sha, runId, true);
     else if (action === "original-predicate") originalPredicate(sha, runId, receiptFile, provenanceFile);
     else if (action === "signed-receipt") {
       const bytes = readFileSync(receiptFile); if (bytes.length > 4096) fail();
       validateCandidateRecoveryReceipt(JSON.parse(bytes), sha, runId);
       validateRecoveryProvenance(bytes, JSON.parse(readFileSync(provenanceFile)));
+    } else if (action === "signed-restoration") {
+      const bytes = readFileSync(receiptFile); if (bytes.length > 4096) fail();
+      validateRestorationReceipt(JSON.parse(bytes), sha, runId);
+      const results = JSON.parse(readFileSync(provenanceFile)), subjects = results?.[0]?.verificationResult?.statement?.subject;
+      if (!Array.isArray(results) || results.length !== 1 || subjects?.length !== 1 || subjects[0].name !== "restoration-receipt.json" || subjects[0].digest?.sha256 !== createHash("sha256").update(bytes).digest("hex")) fail();
     } else fail();
   } catch { process.stderr.write("candidate_recovery_workflow_unverified\n"); process.exitCode = 1; }
 }

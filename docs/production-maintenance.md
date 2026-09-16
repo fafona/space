@@ -1038,3 +1038,27 @@ Reconstructing the complete predecessor must match its original hash and length.
 The workflow validates all old history plus exact T16 recovery/CI/B14/R14/D14
 metadata twice, exact new-main CI, unchanged migrations and deployment-only source.
 Normal fresh backup/readiness/deploy and signed END gates remain required.
+
+### Restoration after diagnostic-only END rejection (2026-09-16)
+
+Recovery run `35069590176` completed the original controller END, including the
+resumed web/worker and persisted dump, but its wrapper rejected normal startup
+diagnostics on stderr. Its protective reclosure then stopped that generation.
+The run remains failed. Never replay the consumed launch slots or change its
+old state to claim success. The wrapper now accepts only the fixed successful
+diagnostic grammar, while still requiring exit zero and the exact END report.
+
+`restore-reclosed-candidate.yml` is an incident-specific, separately signed
+restoration of the same T17 build, gated by all ten current CI jobs, original
+hosted backup and readiness baseline, and exact failed-run metadata. Inspection
+pins v14/revision70 and its digest, verifies every old generation stopped and
+runs fresh read-only database readiness and ACL checks. The new operation UUID
+has its own exclusive private directory and durable, fsynced one-send launch
+journal. It never replaces the old journal, reruns migrations or rebuilds code.
+
+The original typed runtime and ingress modules perform paused launch, health,
+booking persistence, all static assets, resumed launch, worker verification,
+saved PM2 dump and public smoke. Failure recloses the exact ingress. Only after
+all checks pass is the unchanged old incident directory moved to the explicit
+archive path; its failed history and consumed slots remain intact. An existing
+restoration directory, uncertain launch or changed predecessor prohibits replay.

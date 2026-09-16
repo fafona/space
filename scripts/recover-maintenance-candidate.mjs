@@ -47,12 +47,21 @@ function command(file, args, options = {}) {
   if (result.status !== 0 || result.signal || result.error) fail("command_failed");
   return result;
 }
+export function validateControllerDiagnostics(stderr) {
+  if (typeof stderr !== "string" || stderr.length > 32768) fail("controller_stderr");
+  const stages = "controller_ingress|controller_stopped|controller_start|controller_verify|controller_save|controller_accept|runtime_disk|runtime_stopped|runtime_launch|runtime_settle|launch_identity|launch_supervision|candidate_capture|launch_confirm";
+  const line = new RegExp(`^\\[deploy\\] maintenance_start_diagnostic stage=(${stages}) code=(start|passed) elapsed_seconds=(0|[1-9][0-9]{0,4})$`);
+  for (const value of stderr.split("\n").filter(Boolean)) {
+    const match = value.match(line);
+    if (!match || Number(match[3]) > 86400) fail("controller_stderr");
+  }
+}
 function controller(action) {
   if (!["check-candidate", "end", "fail-held"].includes(action)) fail("action_invalid");
   const r = command("/usr/bin/node", [P.appDir + "/scripts/production-maintenance-control.mjs", action,
     "--app-dir", P.appDir, "--app-name", P.appName, "--app-port", String(P.appPort), "--target-sha", P.targetSha,
     "--expected-old-sha", P.expectedOldSha, "--expected-operation-id", P.operationId, "--json"], { timeout: action === "end" ? 900000 : 180000 });
-  if (r.stderr) fail("controller_stderr");
+  validateControllerDiagnostics(r.stderr);
   const report = JSON.parse(r.stdout);
   if (!isDeepStrictEqual(report, { version: 1, operationId: P.operationId, targetSha: P.targetSha, expectedOldSha: P.expectedOldSha,
     state: action === "end" ? "ended" : action === "fail-held" ? "failed-held" : "candidate" })) fail("controller_report");
