@@ -3,13 +3,19 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { CANDIDATE_RECOVERY as P, RECOVERY_CHECKS, validateCandidateRecoveryReceipt, extractRecoveryShellFunction } from "./recover-maintenance-candidate.mjs";
+import { CANDIDATE_RECOVERY as P, RECOVERY_CHECKS, validateCandidateRecoveryReceipt, extractRecoveryShellFunction, validateControllerDiagnostics } from "./recover-maintenance-candidate.mjs";
 import { validateRecoveryRun, validateRecoveryProvenance, RECOVERY_SOURCE_PATHS } from "./recover-maintenance-candidate-workflow.mjs";
 
 const sha = "a".repeat(40), runId = "12345", now = P.expiresAt - 3600000;
 const receipt = () => ({ version: 1, kind: "faolla-existing-candidate-verification",
   ...Object.fromEntries(["targetSha", "expectedOldSha", "operationId", "stateDigest", "failedDeployRunId", "backupRunId", "readinessRunId"].map(k => [k, P[k]])),
   recoverySha: sha, runId, runAttempt: "1", checkedAt: now, validUntil: now + 1800000, checks: [...RECOVERY_CHECKS] });
+
+test("successful controller startup diagnostics are not a failure, but unknown or failed output is rejected", () => {
+  validateControllerDiagnostics("");
+  validateControllerDiagnostics("[deploy] maintenance_start_diagnostic stage=launch_identity code=start elapsed_seconds=0\n[deploy] maintenance_start_diagnostic stage=launch_identity code=passed elapsed_seconds=1\n");
+  for (const value of ["warning", "[deploy] maintenance_start_diagnostic stage=launch_identity code=failed elapsed_seconds=1\n", "[deploy] maintenance_start_diagnostic stage=unknown code=passed elapsed_seconds=0\n", "[deploy] maintenance_start_diagnostic stage=launch_identity code=passed elapsed_seconds=86401\n", " ", null]) assert.throws(() => validateControllerDiagnostics(value));
+});
 
 test("continuation receipt binds fixed failed history, same candidate, all checks and finite lease", () => {
   assert.deepEqual(validateCandidateRecoveryReceipt(receipt(), sha, runId, now), receipt());
