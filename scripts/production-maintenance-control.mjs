@@ -1203,7 +1203,7 @@ async function underExistingOperationLock(appName, action) {
   };
   check(); const result = await action(); check(); return result;
 }
-async function withPrivateOperationLock(request, action) {
+export async function withPrivateOperationLock(request, action) {
   if (request.action === "plan") return action();
   secureDirectory(ROOT, true);
   const directory = `${ROOT}/${request.appName}`;
@@ -1245,7 +1245,7 @@ export function queryMaintenanceDatabaseQuiet(proof, query) {
   return query("postgres", QUIET_SQL);
 }
 
-async function productionOperations(request) {
+export async function productionOperations(request) {
   if (process.platform !== "linux" || process.getuid?.() !== 0) failure("maintenance_host_authority_unavailable");
   if (realpathSync(request.appDir) !== request.appDir) failure("maintenance_app_path_invalid");
   const runtime = await import("./production-maintenance-runtime.mjs");
