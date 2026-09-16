@@ -1219,6 +1219,7 @@ jobs:
             printf '%s\n' "$DEPLOY_SCRIPT_SHA256"
             cat scripts/deploy.production.sh
           ) 2>/dev/null | ssh -T -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o TCPKeepAlive=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$REMOTE_DEPLOY_COMMAND" \
