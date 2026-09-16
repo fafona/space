@@ -43,13 +43,8 @@ export function validateTransportRepairEdits(file, before, after) {
     const line = "            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o TCPKeepAlive=yes \\\n";
     if (after.split(line).length !== 2 || after.replace(line, "") !== before) fail();
   } else if (file === "scripts/production-maintenance-control.mjs") {
-    let original = after;
-    for (const name of ["withPrivateOperationLock", "productionOperations"]) {
-      const exported = `export async function ${name}(`;
-      if (original.split(exported).length !== 2) fail();
-      original = original.replace(exported, `async function ${name}(`);
-    }
-    if (original !== before) fail();
+    const exported = "\nexport { withPrivateOperationLock, productionOperations };\n";
+    if (after.split(exported).length !== 2 || after.replace(exported, "") !== before) fail();
   } else if (!TRANSPORT_REPAIR_PATHS.includes(file) || before !== "") fail();
 }
 export function readTransportRepairSource(sha, git = args => command("/usr/bin/git", args)) {
