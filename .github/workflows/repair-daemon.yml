@@ -1,0 +1,172 @@
+name: Repair Unlaunched Daemon Identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Recover only unlaunched failure 35156337705; keep ingress closed
+        required: true
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  attestations: write
+  id-token: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ github.token }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      REPAIR_DIR: /var/lib/faolla-maintenance-code/daemon-${{ github.run_id }}
+      EVIDENCE_DIR: /var/lib/faolla-daemon-${{ github.run_id }}
+      PREVIOUS_TARGET: c4a88cfeba5a27baaa346193330a75aa753be4dd
+      OLD_SHA: a06a5921e2fad5797e58304b828dfcf16b7ec43b
+      OPERATION_ID: 78124069-9a5c-4eb5-aaaf-fe80ef1db2b1
+    steps:
+      - name: Checkout Reviewed Repair
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Require Exact Confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = REPAIR_DAEMON_35156337705
+          node --test scripts/repair-daemon.test.mjs
+      - name: Verify Original Signed Maintenance Bindings
+        run: |
+          set -euo pipefail
+          umask 077
+          for phase in backup readiness; do
+            if [ "$phase" = backup ]; then id=35148085536; workflow=database-backup.yml;
+            else id=35156235371; workflow=ordinary-account-cutover-readiness.yml; fi
+            mkdir "$RUNNER_TEMP/daemon-$phase"
+            gh run download "$id" --repo fafona/space \
+              --name "faolla-maintenance-$phase-binding-$id-1" --dir "$RUNNER_TEMP/daemon-$phase"
+            file="$RUNNER_TEMP/daemon-$phase/production-maintenance-binding.json"
+            gh attestation verify "$file" --repo fafona/space \
+              --signer-workflow "github.com/fafona/space/.github/workflows/$workflow" \
+              --source-digest "$PREVIOUS_TARGET" --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$RUNNER_TEMP/daemon-$phase/provenance.json"
+            node scripts/production-maintenance-workflow-contract.mjs verify \
+              --file "$file" --provenance "$RUNNER_TEMP/daemon-$phase/provenance.json" \
+              --phase "$phase" --target-sha "$PREVIOUS_TARGET" --run-id "$id" --run-attempt 1 \
+              --backup-run-id 35148085536 --backup-run-attempt 1 \
+              --mode maintenance --operation-id "$OPERATION_ID" --old-sha "$OLD_SHA" --github-output "$GITHUB_OUTPUT"
+          done
+      - name: Install Pinned SSH Trust
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
+          test "$SSH_USER" = root
+          [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]]
+          test "${SSH_PORT:-22}" -ge 1 && test "${SSH_PORT:-22}" -le 65535
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+      - name: Stage Clean Private Reviewed Worktree
+        run: |
+          set -euo pipefail
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o StrictHostKeyChecking=yes \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "bash -s -- '$REPAIR_DIR' '$EVIDENCE_DIR' '$GITHUB_SHA'" <<'REMOTE'
+          set -euo pipefail
+          worktree="$1"; evidence="$2"; target="$3"
+          [[ "$worktree" =~ ^/var/lib/faolla-maintenance-code/daemon-[1-9][0-9]*$ ]]
+          [[ "$evidence" =~ ^/var/lib/faolla-daemon-[1-9][0-9]*$ ]]
+          [[ "$target" =~ ^[a-f0-9]{40}$ ]]
+          test "$(id -u)" = 0
+          umask 077
+          for dir in / /var /var/lib /var/lib/faolla-maintenance-code; do
+            test -d "$dir" && test ! -L "$dir"
+            test "$(readlink -f "$dir")" = "$dir"
+            test "$(stat -c '%u' "$dir")" = 0
+            mode="$(stat -c '%a' "$dir")"
+            (( (8#$mode & 8#22) == 0 ))
+          done
+          test "$(stat -c '%a' /var/lib/faolla-maintenance-code)" = 700
+          test ! -e "$worktree" && test ! -L "$worktree"
+          test ! -e "$evidence" && test ! -L "$evidence"
+          git -C /www/wwwroot/merchant-space fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          test "$(git -C /www/wwwroot/merchant-space rev-parse refs/remotes/origin/main)" = "$target"
+          git -C /www/wwwroot/merchant-space worktree add --detach "$worktree" "$target"
+          test "$(stat -c '%a:%u' "$worktree")" = 700:0
+          test -z "$(git -C "$worktree" status --porcelain --untracked-files=all)"
+          mkdir -m 700 "$evidence"
+          REMOTE
+      - name: Authenticate CI History And Source
+        run: |
+          set -euo pipefail
+          node scripts/repair-daemon-workflow.mjs authority "$GITHUB_SHA" "$GITHUB_RUN_ID" "$RUNNER_TEMP/daemon-authority.json"
+      - name: Sign Hosted Repair Authority
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ runner.temp }}/daemon-authority.json
+      - name: Verify Fresh Hosted Authority
+        run: |
+          set -euo pipefail
+          gh attestation verify "$RUNNER_TEMP/daemon-authority.json" --repo fafona/space \
+            --signer-workflow github.com/fafona/space/.github/workflows/repair-daemon.yml \
+            --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+            --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+            --limit 10 --format json > "$RUNNER_TEMP/daemon-provenance.json"
+          node scripts/repair-daemon-workflow.mjs verify "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            "$RUNNER_TEMP/daemon-authority.json" "$RUNNER_TEMP/daemon-provenance.json"
+      - name: Reverify Held State And Commit Under Original Locks
+        run: |
+          set -euo pipefail
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -P "${SSH_PORT:-22}" "$RUNNER_TEMP/daemon-authority.json" "$SSH_USER@$SSH_HOST:$EVIDENCE_DIR/"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o StrictHostKeyChecking=yes \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "bash -s -- '$REPAIR_DIR' '$EVIDENCE_DIR' '$GITHUB_SHA' '$GITHUB_RUN_ID'" <<'REMOTE' > "$RUNNER_TEMP/daemon-repaired.json"
+          set -euo pipefail
+          worktree="$1"; evidence="$2"; target="$3"; run_id="$4"
+          lock=/www/wwwroot/merchant-space.deploy.lock
+          test -f "$lock" && test ! -L "$lock"
+          test "$(stat -c '%u:%a:%h' "$lock")" = 0:600:1
+          identity="$(stat -c '%d:%i' "$lock")"
+          exec 9<>"$lock"
+          flock -n 9
+          test "$(stat -Lc '%d:%i' /proc/$$/fd/9)" = "$identity"
+          test "$(stat -c '%d:%i' "$lock")" = "$identity"
+          chmod 600 "$evidence/daemon-authority.json"
+          NODE_OPTIONS='' NODE_PATH='' /usr/bin/node "$worktree/scripts/repair-daemon.mjs" repair "$target" "$run_id" "$evidence/daemon-authority.json"
+          REMOTE
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file "$RUNNER_TEMP/daemon-repaired.json" --state held --target-sha "$GITHUB_SHA" --old-sha "$OLD_SHA" --operation-id "$OPERATION_ID"
+      - name: Retain Repair Audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-daemon-repair-${{ github.run_id }}-1
+          path: |
+            ${{ runner.temp }}/daemon-authority.json
+            ${{ runner.temp }}/daemon-provenance.json
+            ${{ runner.temp }}/daemon-repaired.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -319,7 +319,7 @@ export function validateMaintenanceState(state, request, bootId, now) {
   const windowPredecessor = state?.version === 8 && ["inspect-window-renewal", "renew-window"].includes(request.action);
   const leasePredecessor = [11, 12, 13].includes(state?.version) && ["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action);
   const prelaunchPredecessor = state?.version === 9 && ["inspect-prelaunch-recovery", "recover-prelaunch"].includes(request.action);
-  if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); }
+  if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); if (Object.hasOwn(state, "daemonRepair")) keys.push("daemonRepair"); }
   if (state?.version === 4) {
     if (buildPredecessor) validateMaintenanceBuildRecoveryPredecessor(state, { bootId, now });
     else validateMaintenanceContinuationState(state, { bootId, now });
@@ -1293,7 +1293,7 @@ async function productionOperations(request) {
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
       const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) || (windowRenewal && value.version === 8) || (prelaunchRecovery && value.version === 9) || (preflightRecovery && value.version === 10) || (leaseRenewal && value.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && value.version === 12) ? request.previousTargetSha : request.targetSha;
-      const boundTargetSha = ["inspect-startup-recovery", "recover-startup"].includes(request.action) && (value.version === 13 || value.version === 14 && !value.startupRecovery.retarget) ? request.previousTargetSha : targetSha;
+      const boundTargetSha = request.action === "repair-daemon" && !Object.hasOwn(value, "daemonRepair") ? request.previousTargetSha : ["inspect-startup-recovery", "recover-startup"].includes(request.action) && (value.version === 13 || value.version === 14 && !value.startupRecovery.retarget) ? request.previousTargetSha : targetSha;
       validateMaintenanceState(value, { ...request, targetSha: boundTargetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
@@ -1368,7 +1368,7 @@ async function productionOperations(request) {
       (["inspect-preflight-recovery", "recover-preflight"].includes(request.action) && loaded.version === 10) ||
       (["inspect-startup-recovery", "recover-startup"].includes(request.action) && (loaded.version === 13 || loaded.version === 14 && !loaded.startupRecovery.retarget)) ||
       (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 12);
-    const targetSha = previous ? request.previousTargetSha : request.targetSha;
+    const targetSha = previous || request.action === "repair-daemon" && !Object.hasOwn(loaded, "daemonRepair") ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
     if (typeof environment.anonKey !== "string" || !environment.anonKey || /[\r\n]/.test(environment.anonKey)) failure("maintenance_probe_credentials_invalid");
@@ -1607,6 +1607,17 @@ async function productionOperations(request) {
     async readRecoverySnapshot() {
       const state = await load(), previous = baselines.get(state);
       return { state, revision: previous.revision, digest: previous.digest };
+    },
+    async commitDaemonRepair(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || request.action !== "repair-daemon" ||
+          snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          Object.hasOwn(snapshot.state, "daemonRepair") || !Object.hasOwn(next, "daemonRepair") || next.revision !== previous.revision + 1)
+        failure("maintenance_daemon_repair_write_unconfirmed");
+      try {
+        const saved = await store.replaceOperationUnderExistingOperationLock({ expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(saved.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
     },
     readRecoverySourceProof: () => readMaintenanceRecoverySourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
     readRecoveryMigrationProof: (state) => validateMaintenanceRecoveryMigrationProof(
