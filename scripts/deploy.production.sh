@@ -3493,8 +3493,15 @@ candidate_web_is_provably_absent() {
 }
 
 capture_candidate_web_listener_handoff_identity() {
+  local default_identity_timeout_seconds="$PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS"
+  # Maintenance verifies durable history and managed-process evidence, unlike
+  # the ten-second direct-process probe. Keep a finite, separately reserved
+  # budget; an explicitly supplied earlier deadline must never be extended.
+  if [ "${PRODUCTION_MAINTENANCE_MODE:-off}" = maintenance ]; then
+    default_identity_timeout_seconds=120
+  fi
   local absolute_deadline_seconds="${1:-$((
-    SECONDS + PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS
+    SECONDS + default_identity_timeout_seconds
   ))}"
   local process_snapshot=""
   local process_pid
@@ -3525,7 +3532,7 @@ capture_candidate_web_listener_handoff_identity() {
     local -A seen=()
     [ "$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)" = "$RELEASE_DIR" ] \
       && [ "$(stat -Lc '%d:%i:%Z' -- "$RELEASE_DIR" 2>/dev/null || true)" = "$PREVIOUS_RUNTIME_IDENTITY" ] || return 1
-    reader_timeout_seconds="$(deadline_bounded_command_timeout_seconds "$absolute_deadline_seconds" 30 1)" || return 1
+    reader_timeout_seconds="$(deadline_bounded_command_timeout_seconds "$absolute_deadline_seconds" 115 1)" || return 1
     while IFS= read -r -d '' key && IFS= read -r -d '' value; do
       case "$key" in
         CANDIDATE_WEB_PID|CANDIDATE_WEB_PROCESS_START_TICKS|CANDIDATE_WEB_PROCESS_IDENTITY|CANDIDATE_WEB_CWD_IDENTITY|CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64)
@@ -4128,17 +4135,21 @@ verify_nginx_release_static_access() {
         while IFS= read -r relative_path; do
           test -n "$relative_path"
           case "$relative_path" in
-            /*|*..*|*[!A-Za-z0-9._/-]*) exit 1 ;;
+            /*|../*|*/../*|*/..|..|./*|*/./*|*/.|.|*//*|*/|*[!A-Za-z0-9._/\[\]-]*) exit 1 ;;
           esac
+          # Next dynamic-route chunks legitimately contain brackets and
+          # catch-all ellipses. Reject dot segments, not dots inside a name.
+          request_path="${relative_path//\[/%5B}"
+          request_path="${request_path//\]/%5D}"
           runuser -u "$FAOLLA_NGINX_RUNTIME_USER" -- \
             test -r "$static_root/$relative_path"
-          curl --fail --silent --show-error --insecure \
+          curl --fail --silent --show-error --insecure --globoff \
             --noproxy "*" \
             --connect-timeout 3 --max-time 8 \
             --resolve "www.faolla.com:443:127.0.0.1" \
             --header "Cache-Control: no-cache" \
             --output /dev/null \
-            "https://www.faolla.com/_next/static/$relative_path?__faollaNginxGate=$FAOLLA_NGINX_EXPECTED_BUILD"
+            "https://www.faolla.com/_next/static/$request_path?__faollaNginxGate=$FAOLLA_NGINX_EXPECTED_BUILD"
           checked=$((checked + 1))
         done < "$manifest"
         test "$checked" -gt 0
@@ -7771,12 +7782,14 @@ assert_readiness_fence_forward_checkpoint || exit 1
 
 DEPLOY_PRIMARY_FAILURE_CODE="deploy_stage_candidate_start_failed"
 CANDIDATE_WEB_START_RESERVE_SECONDS="$RELEASE_PROCESS_START_TIMEOUT_SECONDS"
+CANDIDATE_WEB_HANDOFF_RESERVE_SECONDS="$PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS"
 if [ "$PRODUCTION_MAINTENANCE_MODE" = maintenance ]; then
   CANDIDATE_WEB_START_RESERVE_SECONDS=120
+  CANDIDATE_WEB_HANDOFF_RESERVE_SECONDS=120
 fi
 assert_readiness_fence_before_forward_operation "$((
   CANDIDATE_WEB_START_RESERVE_SECONDS +
-  PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS +
+  CANDIDATE_WEB_HANDOFF_RESERVE_SECONDS +
   READINESS_FENCE_OPERATION_MARGIN_SECONDS
 ))" || exit 1
 CANDIDATE_WEB_START_ATTEMPTED=1

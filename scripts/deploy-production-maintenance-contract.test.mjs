@@ -134,10 +134,38 @@ printf verified
 });
 
 test("maintenance start reserves its actual control budget without enlarging the fence deadline", () => {
-  assert.match(source, /CANDIDATE_WEB_START_RESERVE_SECONDS="\$RELEASE_PROCESS_START_TIMEOUT_SECONDS"\nif \[ "\$PRODUCTION_MAINTENANCE_MODE" = maintenance \]; then\n  CANDIDATE_WEB_START_RESERVE_SECONDS=120\nfi\nassert_readiness_fence_before_forward_operation "\$\(\(\n  CANDIDATE_WEB_START_RESERVE_SECONDS \+/);
+  assert.match(source, /CANDIDATE_WEB_START_RESERVE_SECONDS="\$RELEASE_PROCESS_START_TIMEOUT_SECONDS"\nCANDIDATE_WEB_HANDOFF_RESERVE_SECONDS="\$PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS"\nif \[ "\$PRODUCTION_MAINTENANCE_MODE" = maintenance \]; then\n  CANDIDATE_WEB_START_RESERVE_SECONDS=120\n  CANDIDATE_WEB_HANDOFF_RESERVE_SECONDS=120\nfi\nassert_readiness_fence_before_forward_operation "\$\(\(\n  CANDIDATE_WEB_START_RESERVE_SECONDS \+/);
   const control = shellFunction("maintenance_control");
   assert.match(control, /timeout --signal=TERM --kill-after=5s 120s/);
   assert.match(control, /start-candidate/);
+});
+
+test("maintenance candidate handoff reserves 120 seconds and honors an earlier explicit deadline", () => {
+  for (const explicit of [false, true]) {
+    assert.equal(execute(["capture_candidate_web_listener_handoff_identity"], `
+PREVIOUS_WEB_PROCESS_IDENTITY_TOTAL_TIMEOUT_SECONDS=10
+RELEASE_DIR=/srv/faolla.releases/synthetic
+CURRENT_LINK=/srv/faolla.current
+CANDIDATE_RUNTIME_IDENTITY=3:4:5
+CANDIDATE_WEB_START_ATTEMPTED=1
+SWITCH_COMPLETED=1
+SECONDS=0
+readlink() { printf '%s' "$RELEASE_DIR"; }
+stat() { printf '3:4:5'; }
+deadline_bounded_command_timeout_seconds() {
+  [ "$1:$2:$3" = '${explicit ? "5" : "120"}:115:1' ] || return 1
+  printf '${explicit ? "4" : "115"}'
+}
+maintenance_deployment_read() {
+  [ "$1:$2" = candidate-handoff:${explicit ? "4000" : "115000"} ] || return 1
+  printf '%s\\0%s\\0' CANDIDATE_WEB_PID 300 CANDIDATE_WEB_PROCESS_START_TICKS 400 CANDIDATE_WEB_PROCESS_IDENTITY 1:2 CANDIDATE_WEB_CWD_IDENTITY 3:4:5 CANDIDATE_WEB_LISTENER_HANDOFF_PROOF_B64 eA==
+}
+capture_candidate_web_listener_handoff_identity ${explicit ? "5" : ""}
+[ "$CANDIDATE_WEB_HANDOFF_STATE" = exact ]
+if capture_candidate_web_listener_handoff_identity 0; then exit 90; fi
+printf verified
+`), "verified");
+  }
 });
 
 test("maintenance failure releases only its own fence before controller cleanup", () => {
