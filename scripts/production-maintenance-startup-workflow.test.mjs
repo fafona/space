@@ -3,6 +3,8 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { MAINTENANCE_STARTUP_PRIOR_RUNS as SPECS, createMaintenanceStartupWorkflowEvidence } from "./production-maintenance-startup-workflow.mjs";
 import { validateMaintenanceLeaseInspection } from "./production-maintenance-lease.mjs";
+import { STARTUP_RETARGET_PRIOR_RUNS } from "./production-maintenance-startup-retarget-history.mjs";
+import { MAINTENANCE_STARTUP_UNUSED } from "./production-maintenance-startup-recovery.mjs";
 import { MAINTENANCE_STARTUP_AUTHORIZATION as AUTH, MAINTENANCE_STARTUP_PREDECESSOR as PIN } from "./production-maintenance-startup-recovery.mjs";
 const NOW = Date.parse("2026-09-16T02:30:00Z"), TARGET = "a".repeat(40), SELF = "99999999999", CI = "99999999998";
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -19,9 +21,9 @@ function inspected() {
 const env = () => ({ GITHUB_REPOSITORY: "fafona/space", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
   GITHUB_RUN_ATTEMPT: "1", GITHUB_RUN_ID: SELF, GITHUB_SHA: TARGET, TARGET_SHA: TARGET, PREVIOUS_TARGET_SHA: PIN.targetSha,
   EXPECTED_OLD_SHA: PIN.expectedOldSha, MAINTENANCE_OPERATION_ID: AUTH.operationId, ACTION: "recover-startup", CONFIRMATION: "RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE" });
-function fixture(mutate = (_key, value) => value) {
+function fixture(mutate = (_key, value) => value, specs = SPECS) {
   const db = new Map(), calls = new Map();
-  for (const spec of SPECS) {
+  for (const spec of specs) {
     db.set("run:" + spec.run.id, repo(spec.run));
     db.set("jobs:" + spec.run.id, { total_count: spec.jobs.length, jobs: spec.jobs.map(j => ({ ...structuredClone(j), ...(j.steps ? {
       steps: j.steps.map(([number, name, conclusion, started_at, completed_at]) => ({ number, name, conclusion, started_at, completed_at, status: "completed" })) } : {}) })) });
@@ -34,7 +36,7 @@ function fixture(mutate = (_key, value) => value) {
   db.set("run:" + SELF, self); db.set("ci", { total_count: 1, workflow_runs: [ci] }); db.set("main", { sha: TARGET });
   db.set("jobs:" + CI, { total_count: 10, jobs: SPECS[4].jobs.map((j, i) => ({ ...j, id: 10000 + i, run_id: Number(CI), head_sha: TARGET,
     started_at: "2026-09-15T02:10:05Z", completed_at: "2026-09-15T02:27:59Z" })) });
-  for (const file of files) { const rows = SPECS.filter(x => x.run.path === ".github/workflows/" + file).map(x => db.get("run:" + x.run.id));
+  for (const file of files) { const rows = specs.filter(x => x.run.path === ".github/workflows/" + file).map(x => db.get("run:" + x.run.id));
     if (file === "production-maintenance.yml") rows.push(self); db.set(file, { total_count: rows.length, workflow_runs: rows }); }
   return async endpoint => {
     let key;
@@ -47,6 +49,21 @@ function fixture(mutate = (_key, value) => value) {
   };
 }
 const check = (mutate, patch = {}, now = NOW, clock = () => NOW) => createMaintenanceStartupWorkflowEvidence(inspected(), { ...env(), ...patch }, fixture(mutate), now, clock);
+test("unused correction requires all original and new failed-chain history without reusing backup authority",async()=>{
+  const now=Date.parse("2026-09-16T04:00:00Z"),pin=MAINTENANCE_STARTUP_UNUSED;
+  const inspection={...inspected(),revision:52,previousTargetSha:pin.targetSha,stateDigest:pin.stateDigest,stateBytes:pin.stateBytes};
+  inspection.stoppedBaseline={...inspection.stoppedBaseline,observedAt:now-1000};inspection.stoppedBaselineDigest=hash(inspection.stoppedBaseline);
+  const environment={...env(),PREVIOUS_TARGET_SHA:pin.targetSha,CONFIRMATION:"RETARGET_UNUSED_STARTUP_PRODUCTION_MAINTENANCE"};
+  const run=(mutate,patch={})=>createMaintenanceStartupWorkflowEvidence(inspection,{...environment,...patch},fixture(mutate,[...SPECS,...STARTUP_RETARGET_PRIOR_RUNS]),now,()=>now);
+  assert.equal((await run()).revision,52);
+  await assert.rejects(run(undefined,{CONFIRMATION:"RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE"}));
+  for(const spec of STARTUP_RETARGET_PRIOR_RUNS){
+    await assert.rejects(run((k,v)=>k==="run:"+spec.run.id?{...v,run_attempt:2}:v));
+    await assert.rejects(run((k,v)=>{if(k==="jobs:"+spec.run.id)v.jobs[0].conclusion="success-but-changed";return v;}));
+  }
+  await assert.rejects(run((k,v)=>{if(k==="artifacts:35051258854")v.artifacts[0].digest="changed";return v;}));
+  await assert.rejects(run((k,v)=>{if(k==="deploy.yml"){v.workflow_runs.push({...v.workflow_runs[0],id:999,created_at:"2026-09-16T03:55:00Z",run_started_at:"2026-09-16T03:55:00Z",updated_at:"2026-09-16T03:56:00Z"});v.total_count++;}return v;}));
+});
 test("startup workflow binds failed deployment as history only and exact new main CI", async () => {
   const result = await check(); assert.equal(result.leaseRunId, SELF); assert.equal(result.activeAttempt, 4);
   assert.equal(SPECS[2].run.conclusion, "failure"); assert.equal(SPECS[2].run.id, 34914073158);

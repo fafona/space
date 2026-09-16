@@ -26,6 +26,8 @@ export const MAINTENANCE_STARTUP_SOURCE_PATHS = Object.freeze([
   "scripts/production-maintenance-startup-handoff.mjs",
   "scripts/production-maintenance-startup-evidence.mjs",
   "scripts/production-maintenance-startup-workflow.mjs",
+  "scripts/production-maintenance-startup-retarget-history.mjs",
+  "scripts/production-maintenance-startup-retarget.test.mjs",
   "scripts/production-maintenance-startup-workflow.test.mjs",
   "scripts/production-maintenance-startup-recovery.test.mjs",
   "scripts/production-maintenance-startup-diagnostics.test.mjs",

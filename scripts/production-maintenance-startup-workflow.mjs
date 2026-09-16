@@ -6,9 +6,10 @@ import {
   validateMaintenanceLeaseInspection, validateMaintenanceLeaseEvidence, encodeMaintenanceLeaseEvidence,
 } from "./production-maintenance-lease.mjs";
 import { MAINTENANCE_STARTUP_AUTHORIZATION as AUTHORIZATION } from "./production-maintenance-startup-recovery.mjs";
+import { STARTUP_RETARGET_PRIOR_RUNS } from "./production-maintenance-startup-retarget-history.mjs";
 
 const MAX_AGE = 300000;
-const REPOSITORY = "fafona/space", PRIOR = "e83c91abbf8e0d327708bd0b04c3a33ed423ab91";
+const REPOSITORY = "fafona/space";
 const SHA = /^[a-f0-9]{40}$/, ID = /^[1-9][0-9]*$/;
 const fail = () => { throw new Error("maintenance_startup_workflow_unverified"); };
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -104,6 +105,7 @@ function checkCurrent(run, checked, currentRunId, now) {
   return project(value, RUN_KEYS.filter(key => key !== "updated_at"));
 }
 async function scan(checked, api, now, currentRunId, observedClock) {
+  const specs=checked.revision===52?[...MAINTENANCE_STARTUP_PRIOR_RUNS,...STARTUP_RETARGET_PRIOR_RUNS]:MAINTENANCE_STARTUP_PRIOR_RUNS;
   const rows = [];
   const foundFixed = new Set(); let foundCurrent = false;
   for (const [file, name] of WORKFLOWS) {
@@ -127,7 +129,7 @@ async function scan(checked, api, now, currentRunId, observedClock) {
         if (created > started || started > updated || updated > now || run.status !== "completed" ||
             !["success", "failure", "cancelled", "skipped", "timed_out", "neutral", "action_required", "stale", "startup_failure"].includes(run.conclusion)) fail();
         id(run.run_attempt);
-        const expected = MAINTENANCE_STARTUP_PRIOR_RUNS.filter(spec => spec.run.name !== "CI").find(spec => String(spec.run.id) === runId);
+        const expected = specs.filter(spec => spec.run.name !== "CI").find(spec => String(spec.run.id) === runId);
         if (expected) {
           if (hash(run) !== hash(expected.run)) fail();
           foundFixed.add(runId);
@@ -138,20 +140,21 @@ async function scan(checked, api, now, currentRunId, observedClock) {
     }
     if (!ended) fail();
   }
-  if (foundFixed.size !== MAINTENANCE_STARTUP_PRIOR_RUNS.length - 1 || !foundCurrent) fail();
+  if (foundFixed.size !== specs.filter(spec=>spec.run.name!=="CI").length || !foundCurrent) fail();
   return rows.sort((a, b) => a.file.localeCompare(b.file) || a.run.id - b.run.id);
 }
 export async function inspectMaintenanceStartupHistory(inspection, api, now, currentRunId, observedClock = Date.now) {
   const checked = validateMaintenanceLeaseInspection(inspection); clock(now);
+  const specs=checked.revision===52?[...MAINTENANCE_STARTUP_PRIOR_RUNS,...STARTUP_RETARGET_PRIOR_RUNS]:MAINTENANCE_STARTUP_PRIOR_RUNS;
   observedClock = orderedClock(now, observedClock);
-  if (typeof api !== "function" || !ID.test(currentRunId ?? "") || MAINTENANCE_STARTUP_PRIOR_RUNS.some(spec => String(spec.run.id) === currentRunId)) fail();
+  if (typeof api !== "function" || !ID.test(currentRunId ?? "") || specs.some(spec => String(spec.run.id) === currentRunId)) fail();
   const first = await scan(checked, api, now, currentRunId, observedClock);
   const records = [];
-  for (const spec of MAINTENANCE_STARTUP_PRIOR_RUNS) records.push(await fixedRun(spec, api, now));
+  for (const spec of specs) records.push(await fixedRun(spec, api, now));
   const second = await scan(checked, api, now, currentRunId, observedClock);
   if (hash(first) !== hash(second)) fail();
   for (let index = 0; index < records.length; index++)
-    if (hash(await fixedRun(MAINTENANCE_STARTUP_PRIOR_RUNS[index], api, now)) !== hash(records[index])) fail();
+    if (hash(await fixedRun(specs[index], api, now)) !== hash(records[index])) fail();
   observationTime(now, observedClock);
   return { predecessorStateDigest: checked.stateDigest, cutoff: CUTOFF, historyPurpose: "fixed-consumed-startup-recovery",
     historicalBackupPurpose: "previous-target-only-not-new-deployment-evidence", rows: first, records };
@@ -178,9 +181,9 @@ export async function createMaintenanceStartupWorkflowEvidence(inspection, env, 
   observedClock = orderedClock(now, observedClock);
   if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.GITHUB_REF !== "refs/heads/main" ||
       env.GITHUB_RUN_ATTEMPT !== "1" || !ID.test(env.GITHUB_RUN_ID ?? "") || env.GITHUB_SHA !== checked.targetSha ||
-      env.TARGET_SHA !== checked.targetSha || env.PREVIOUS_TARGET_SHA !== PRIOR || env.PREVIOUS_TARGET_SHA !== checked.previousTargetSha ||
+      env.TARGET_SHA !== checked.targetSha || env.PREVIOUS_TARGET_SHA !== checked.previousTargetSha ||
       env.EXPECTED_OLD_SHA !== checked.expectedOldSha || env.MAINTENANCE_OPERATION_ID !== checked.operationId ||
-      !(env.ACTION === "recover-startup" && env.CONFIRMATION === "RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE" && checked.state === "startup-recovery-inspected")) fail();
+      !(env.ACTION === "recover-startup" && env.CONFIRMATION === (checked.revision===52?"RETARGET_UNUSED_STARTUP_PRODUCTION_MAINTENANCE":"RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE") && checked.state === "startup-recovery-inspected")) fail();
   if (checked.stoppedBaseline.observedAt > now || now - checked.stoppedBaseline.observedAt > MAX_AGE) fail();
   if ((await api(`repos/${REPOSITORY}/commits/main`))?.sha !== checked.targetSha) fail();
   const ci = await currentCI(checked, api, now);

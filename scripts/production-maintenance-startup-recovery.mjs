@@ -16,6 +16,9 @@ export const MAINTENANCE_STARTUP_PREDECESSOR = Object.freeze({ version: 13, revi
   bootId: "e6531ec9-db4a-4216-b87a-7cc858197eaa", expectedOldSha: "cd943076ebda758b70bf2f2270a508c774b726d6",
 });
 const AUTH = MAINTENANCE_STARTUP_AUTHORIZATION, PIN = MAINTENANCE_STARTUP_PREDECESSOR;
+export const MAINTENANCE_STARTUP_UNUSED = Object.freeze({targetSha:"dd592af21cefc76824fbaf58746a1edd72428626",
+  stateDigest:"2624679ed3914d9f818b9e04268f209f1f8708416aa83135d89884bc98bde646",stateBytes:2634610,revision:52});
+const UNUSED = MAINTENANCE_STARTUP_UNUSED;
 const KEYS = ["version", "revision", "operationId", "targetSha", "expectedOldSha", "appDir", "appName", "appPort", "bootId", "createdAt", "phase", "runtime", "ingress", "database", "publicSupabaseUrl", "tokenHash", "candidate", "resumed", "launchDisk", "launchJournal", "finalDump", "recovery", "continuation", "buildRecovery", "deadlineExtension", "activeAttempt", "attemptRecovery", "secondAttemptRecovery", "budgetRecovery", "windowRenewal", "prelaunchRecovery", "preflightRecovery", "leaseRenewal", "leaseExtensions", "fenceRecovery"];
 const LAUNCH = ["candidate", "resumed", "launchDisk", "launchJournal", "finalDump"];
 const COMPACT = ["version", "revision", "phase", "targetSha", "activeAttempt", "ingress", ...LAUNCH];
@@ -76,10 +79,11 @@ function baseline(value, old, now) {
 }
 export function validateMaintenanceStartupInspection(raw) {
   const value = capture(raw);
+  const pin=value.revision===52?UNUSED:PIN;
   if (!exact(value, INSPECTION) || value.version !== 1 || value.state !== "startup-recovery-inspected" || value.operationId !== AUTH.operationId ||
-      !sha(value.targetSha) || [PIN.targetSha,PIN.expectedOldSha].includes(value.targetSha) || value.previousTargetSha !== PIN.targetSha ||
-      value.expectedOldSha !== PIN.expectedOldSha || value.revision !== PIN.revision || value.stateDigest !== PIN.stateDigest ||
-      value.stateBytes !== PIN.stateBytes || value.activeAttempt !== 4 || ![value.sourceDiffDigest,value.migrationDigest,value.stoppedBaselineDigest].every(digest) ||
+      !sha(value.targetSha) || [PIN.targetSha,PIN.expectedOldSha,...(value.revision===52?[UNUSED.targetSha]:[])].includes(value.targetSha) || value.previousTargetSha !== pin.targetSha ||
+      value.expectedOldSha !== PIN.expectedOldSha || value.revision !== pin.revision || value.stateDigest !== pin.stateDigest ||
+      value.stateBytes !== pin.stateBytes || value.activeAttempt !== 4 || ![value.sourceDiffDigest,value.migrationDigest,value.stoppedBaselineDigest].every(digest) ||
       value.authorizationDigest !== hash(AUTH) || value.stoppedBaselineDigest !== hash(value.stoppedBaseline)) fail();
   validateMaintenanceStartupBaseline(value.stoppedBaseline); return freeze(value);
 }
@@ -89,32 +93,52 @@ export function validateMaintenanceStartupEvidence(raw) {
       !digest(value.historyDigest) || !number(value.historyCheckedAt) || value.historyCheckedAt < AUTH.authorizedAt) fail(); return freeze(value);
 }
 export function validateMaintenanceStartupPredecessor(raw, rawClock) {
-  const state=capture(raw), time=capture(rawClock);clock(time);predecessor(state);return freeze(state);
+  const state=capture(raw), time=capture(rawClock);clock(time);
+  if(state.version===14){
+    validateMaintenanceStartupState(state,time);
+    if(state.revision!==52||state.targetSha!==UNUSED.targetSha||state.phase!=="held"||LAUNCH.some(k=>state[k]!==null)||
+      state.startupRecovery.retarget||hash(state)!==UNUSED.stateDigest||Buffer.byteLength(JSON.stringify(state))!==UNUSED.stateBytes)fail();
+  }else predecessor(state);
+  return freeze(state);
 }
 export function createMaintenanceStartupInspection(raw, rawContext) {
   const context=capture(rawContext);if(!exact(context,CONTEXT))fail();
   const old=validateMaintenanceStartupPredecessor(raw,{bootId:context.bootId,now:context.now});
-  if(context.operationId!==old.operationId||context.previousTargetSha!==PIN.targetSha||context.expectedOldSha!==old.expectedOldSha||context.expectedRevision!==old.revision||context.expectedDigest!==PIN.stateDigest)fail();
-  baseline(context.stoppedBaseline,old,context.now);
+  const pin=old.version===14?UNUSED:PIN;
+  if(context.operationId!==old.operationId||context.previousTargetSha!==pin.targetSha||context.expectedOldSha!==old.expectedOldSha||context.expectedRevision!==old.revision||context.expectedDigest!==pin.stateDigest)fail();
+  baseline(context.stoppedBaseline,old.version===14?original(old):old,context.now);
   return validateMaintenanceStartupInspection({version:1,state:"startup-recovery-inspected",operationId:old.operationId,targetSha:context.targetSha,
-    previousTargetSha:PIN.targetSha,expectedOldSha:old.expectedOldSha,revision:old.revision,stateDigest:PIN.stateDigest,stateBytes:PIN.stateBytes,activeAttempt:4,
+    previousTargetSha:pin.targetSha,expectedOldSha:old.expectedOldSha,revision:old.revision,stateDigest:pin.stateDigest,stateBytes:pin.stateBytes,activeAttempt:4,
     sourceDiffDigest:context.sourceDiffDigest,migrationDigest:context.migrationDigest,stoppedBaseline:context.stoppedBaseline,
     stoppedBaselineDigest:hash(context.stoppedBaseline),authorizationDigest:hash(AUTH)});
 }
 function checkState(state) {
   if(!exact(state,[...KEYS,"startupRecovery"])||state.version!==14||state.activeAttempt!==4||!number(state.revision)||state.revision<52||!Object.hasOwn(PHASES,state.phase))fail();
   const audit=state.startupRecovery;
-  if(!exact(audit,["version","predecessor","evidence","recoveredAt","expiresAt","stoppedBaseline","authorization"])||audit.version!==1||!equal(audit.authorization,AUTH)||
+  if(!exact(audit,["version","predecessor","evidence","recoveredAt","expiresAt","stoppedBaseline","authorization",...(Object.hasOwn(audit,"retarget")?["retarget"]:[])])||audit.version!==1||!equal(audit.authorization,AUTH)||
      !number(audit.recoveredAt)||audit.recoveredAt<AUTH.authorizedAt||audit.expiresAt!==audit.recoveredAt+AUTH.maximumLeaseMilliseconds)fail();
   const old=original(state), item=validateMaintenanceStartupEvidence(audit.evidence);
-  if(item.targetSha!==state.targetSha||item.historyCheckedAt>audit.recoveredAt||audit.recoveredAt-item.historyCheckedAt>300000||!equal(item.stoppedBaseline,audit.stoppedBaseline))fail();
+  if(item.targetSha!==(audit.retarget?UNUSED.targetSha:state.targetSha)||item.revision!==51||item.historyCheckedAt>audit.recoveredAt||audit.recoveredAt-item.historyCheckedAt>300000||!equal(item.stoppedBaseline,audit.stoppedBaseline))fail();
+  let lastTime=audit.recoveredAt;
+  if(audit.retarget){
+    const r=audit.retarget;
+    if(!exact(r,["evidence","retargetedAt"])||!number(r.retargetedAt)||r.retargetedAt<audit.recoveredAt||r.retargetedAt>=audit.expiresAt||state.revision<53)fail();
+    const receipt=validateMaintenanceStartupEvidence(r.evidence);
+    if(receipt.revision!==52||receipt.targetSha!==state.targetSha||receipt.historyCheckedAt>r.retargetedAt||r.retargetedAt-receipt.historyCheckedAt>300000)fail();
+    baseline(receipt.stoppedBaseline,old,r.retargetedAt);
+    const previous={...state,revision:52,phase:"held",targetSha:UNUSED.targetSha,ingress:old.ingress,...Object.fromEntries(LAUNCH.map(k=>[k,null])),startupRecovery:{...audit}};
+    delete previous.startupRecovery.retarget;
+    if(hash(previous)!==UNUSED.stateDigest||Buffer.byteLength(JSON.stringify(previous))!==UNUSED.stateBytes)fail();
+    if(state.revision===53&&(state.phase!=="held"||LAUNCH.some(k=>state[k]!==null)||!equal(state.ingress,old.ingress)))fail();
+    lastTime=r.retargetedAt;
+  }
   baseline(audit.stoppedBaseline,old,audit.recoveredAt);
   if(state.revision===52&&(state.phase!=="held"||LAUNCH.some(k=>state[k]!==null)||!equal(state.ingress,old.ingress)))fail();
   if((["candidate","resuming","ended"].includes(state.phase)&&state.candidate===null)||(state.phase==="ended"&&state.finalDump===null))fail();
   const historical=old.budgetRecovery.predecessor.state;
   const journals=[old.launchJournal,historical.launchJournal,historical.secondAttemptRecovery.predecessor.state.launchJournal,historical.attemptRecovery.predecessor.state.launchJournal];
   launchShape(state,journals.flatMap(j=>Object.values(j.slots).filter(Boolean).map(s=>s.nonce)));
-  return {old,expiresAt:audit.expiresAt,lastTime:audit.recoveredAt};
+  return {old,expiresAt:audit.expiresAt,lastTime};
 }
 export function validateMaintenanceStartupState(raw,rawClock){const state=capture(raw),time=capture(rawClock);clock(time);const checked=checkState(state);if(time.now<checked.lastTime||time.now>=checked.expiresAt)fail();return freeze(state);}
 export function maintenanceStartupExpiresAt(raw){return checkState(capture(raw)).expiresAt;}
@@ -122,12 +146,20 @@ export function maintenanceStartupHistoricalState(raw,rawClock){const state=vali
 export function buildMaintenanceStartupRecoveredState(raw,rawEvidence,rawContext){
   const old=capture(raw),item=validateMaintenanceStartupEvidence(rawEvidence),context=capture(rawContext),inspection=createMaintenanceStartupInspection(old,context);
   if(!equal(inspection,project(item,INSPECTION))||item.historyCheckedAt>context.now||context.now-item.historyCheckedAt>300000)fail();
+  if(old.version===14)return validateMaintenanceStartupState({...old,revision:53,targetSha:context.targetSha,
+    startupRecovery:{...old.startupRecovery,retarget:{evidence:item,retargetedAt:context.now}}},{bootId:context.bootId,now:context.now});
   return validateMaintenanceStartupState({...old,version:14,revision:52,phase:"held",activeAttempt:4,targetSha:context.targetSha,...Object.fromEntries(LAUNCH.map(k=>[k,null])),
     startupRecovery:{version:1,predecessor:project(old,COMPACT),evidence:item,recoveredAt:context.now,expiresAt:context.now+AUTH.maximumLeaseMilliseconds,
       stoppedBaseline:context.stoppedBaseline,authorization:{...AUTH}}},{bootId:context.bootId,now:context.now});
 }
 export function assertMaintenanceStartupProgress(rawPrevious,rawNext){
   const previous=capture(rawPrevious),next=capture(rawNext);
+  if(previous.version===14&&previous.revision===52&&next.version===14&&next.revision===53&&next.startupRecovery?.retarget){
+    const r=next.startupRecovery.retarget,item=r.evidence;
+    const expected=buildMaintenanceStartupRecoveredState(previous,item,{operationId:item.operationId,targetSha:item.targetSha,previousTargetSha:item.previousTargetSha,
+      expectedOldSha:item.expectedOldSha,expectedRevision:item.revision,expectedDigest:item.stateDigest,bootId:previous.bootId,now:r.retargetedAt,
+      sourceDiffDigest:item.sourceDiffDigest,migrationDigest:item.migrationDigest,stoppedBaseline:item.stoppedBaseline});if(!equal(expected,next))fail();return;
+  }
   if(previous.version===13&&next.version===14){const audit=next.startupRecovery,item=audit?.evidence;if(!item)fail();
     const expected=buildMaintenanceStartupRecoveredState(previous,item,{operationId:item.operationId,targetSha:item.targetSha,previousTargetSha:item.previousTargetSha,
       expectedOldSha:item.expectedOldSha,expectedRevision:item.revision,expectedDigest:item.stateDigest,bootId:previous.bootId,now:audit.recoveredAt,

@@ -56,7 +56,7 @@ export function validateStartupHandoffReport(raw, request) {
     }
     if (value.version !== 4 || value.state !== "held" || value.operationId !== OPERATION || value.expectedOldSha !== OLD ||
         value.operationId !== request.operationId || value.targetSha !== request.targetSha || value.expectedOldSha !== request.expectedOldSha ||
-        request.appDir !== APP || request.appName !== "merchant-space" || request.appPort !== 4000 ||
+        request.appDir !== APP || request.appName !== "merchant-space" || request.appPort !== 3000 ||
         typeof value.targetSha !== "string" || !/^[a-f0-9]{40}$/.test(value.targetSha) || HISTORICAL_TARGETS.includes(value.targetSha)) fail();
     const reference = object(value.budgetBaseline, ["version", "predecessorStateDigest", "previousTargetSha", "stoppedBaseline"]);
     if (reference.version !== 4 || reference.predecessorStateDigest !== PIN || reference.previousTargetSha !== T15) fail();

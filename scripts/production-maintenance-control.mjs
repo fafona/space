@@ -1293,7 +1293,7 @@ async function productionOperations(request) {
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
       const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) || (windowRenewal && value.version === 8) || (prelaunchRecovery && value.version === 9) || (preflightRecovery && value.version === 10) || (leaseRenewal && value.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && value.version === 12) ? request.previousTargetSha : request.targetSha;
-      const boundTargetSha = ["inspect-startup-recovery", "recover-startup"].includes(request.action) && value.version === 13 ? request.previousTargetSha : targetSha;
+      const boundTargetSha = ["inspect-startup-recovery", "recover-startup"].includes(request.action) && (value.version === 13 || value.version === 14 && !value.startupRecovery.retarget) ? request.previousTargetSha : targetSha;
       validateMaintenanceState(value, { ...request, targetSha: boundTargetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
@@ -1366,7 +1366,7 @@ async function productionOperations(request) {
       (["inspect-window-renewal", "renew-window"].includes(request.action) && loaded.version === 8) ||
       (["inspect-prelaunch-recovery", "recover-prelaunch"].includes(request.action) && loaded.version === 9) ||
       (["inspect-preflight-recovery", "recover-preflight"].includes(request.action) && loaded.version === 10) ||
-      (["inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 13) ||
+      (["inspect-startup-recovery", "recover-startup"].includes(request.action) && (loaded.version === 13 || loaded.version === 14 && !loaded.startupRecovery.retarget)) ||
       (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 12);
     const targetSha = previous ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
@@ -1389,13 +1389,13 @@ async function productionOperations(request) {
     readPreflightRecoveryHandoffFields, assertPreflightDiskHeadroom,
     captureLeaseBaseline, verifyLeaseBaseline, assertLeaseStopped, assertLeaseGenerationsStopped, readLeaseHandoffFields,
     captureStartupBaseline, verifyStartupBaseline, assertStartupStopped, assertStartupGenerationsStopped, readStartupHandoffFields,
-    readStartupSourceProof: () => readMaintenanceStartupSourceProof({ targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+    readStartupSourceProof: () => readMaintenanceStartupSourceProof({ targetSha: request.targetSha, previousTargetSha: "e83c91abbf8e0d327708bd0b04c3a33ed423ab91" }),
     readStartupMigrationProof: state => validateMaintenanceStartupMigrationProof(queryDatabase(state.database, MAINTENANCE_STARTUP_MIGRATION_SQL),
-      state.database.databaseOid, state.createdAt, { targetSha: request.targetSha, previousTargetSha: request.previousTargetSha }),
+      state.database.databaseOid, state.createdAt, { targetSha: request.targetSha, previousTargetSha: "e83c91abbf8e0d327708bd0b04c3a33ed423ab91" }),
     async commitStartup(snapshot, next) {
       const previous = baselines.get(snapshot.state);
       if (!previous || poisonedStates.has(snapshot.state) || snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
-          request.action !== "recover-startup" || snapshot.state.version !== 13 || next.version !== 14 || next.activeAttempt !== 4 || next.revision !== previous.revision + 1) failure("maintenance_startup_write_unconfirmed");
+          request.action !== "recover-startup" || ![13,14].includes(snapshot.state.version) || next.version !== 14 || next.activeAttempt !== 4 || next.revision !== previous.revision + 1) failure("maintenance_startup_write_unconfirmed");
       try { const result = await store.replaceOperationUnderExistingOperationLock({ expectedRevision: previous.revision, expectedDigest: previous.digest, next });
         poisonedStates.add(snapshot.state); return clone(result.state);
       } catch (error) { poisonedStates.add(snapshot.state); throw error; }
