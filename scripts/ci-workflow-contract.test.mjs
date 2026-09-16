@@ -28,6 +28,13 @@ function assertSharedEnvironment(job) {
   assert.match(job, /NEXT_PUBLIC_SUPABASE_ANON_KEY:\s*dummy-anon-key/);
 }
 
+test("production-build authentication acceptance runs after build in Linux CI", () => {
+  const quality = jobBlock("quality");
+  assert.ok(quality.indexOf("name: Authentication Build And HTTP Acceptance") > quality.indexOf("name: Build"));
+  assert.match(quality, /run: node scripts\/check-auth-middleware-build\.mjs && node scripts\/check-auth-middleware-http\.mjs/);
+  assert.doesNotMatch(quality, /continue-on-error/);
+});
+
 test("CI keeps quality checks independent from browser system packages", () => {
   const quality = jobBlock("quality");
 

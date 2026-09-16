@@ -57,6 +57,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Authentication Build And HTTP Acceptance
+        timeout-minutes: 3
+        run: node scripts/check-auth-middleware-build.mjs && node scripts/check-auth-middleware-http.mjs
+
   browser:
     name: Enterprise Browser Journeys
     needs: quality
