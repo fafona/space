@@ -153,8 +153,12 @@ jobs:
               test -z "$DEPLOY_RUN_ID" && test -z "$DEPLOY_RUN_ATTEMPT"
               ;;
             recover-startup)
-              test "$CONFIRMATION" = RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE
-              test "$PREVIOUS_TARGET_SHA" = e83c91abbf8e0d327708bd0b04c3a33ed423ab91
+              if [ "$PREVIOUS_TARGET_SHA" = dd592af21cefc76824fbaf58746a1edd72428626 ]; then
+                test "$CONFIRMATION" = RETARGET_UNUSED_STARTUP_PRODUCTION_MAINTENANCE
+              else
+                test "$CONFIRMATION" = RECOVER_STOPPED_STARTUP_PRODUCTION_MAINTENANCE
+                test "$PREVIOUS_TARGET_SHA" = e83c91abbf8e0d327708bd0b04c3a33ed423ab91
+              fi
               test "$MAINTENANCE_OPERATION_ID" = eb81284a-09c4-4514-8f16-38eaf6acc1e4
               test "$EXPECTED_OLD_SHA" = cd943076ebda758b70bf2f2270a508c774b726d6
               test "$TARGET_SHA" != "$PREVIOUS_TARGET_SHA"

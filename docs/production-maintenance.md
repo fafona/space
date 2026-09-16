@@ -985,3 +985,19 @@ within the unchanged absolute deadline; success still requires all cancellation
 acknowledgements, intact locks and zero remaining waiters. Lost locks, failed
 cancellation and unknown responses remain immediate failures. No autovacuum
 process is exempted, no setting is disabled, and no lock is released early.
+
+### Unused startup target correction (2026-09-16)
+
+D14 `35052643785` failed before release creation or application launch. A private
+read-only host rehearsal verified the 27 fields and unchanged v14/revision 52
+state: the new handoff validator incorrectly required port 4000 rather than the
+actual frozen production port 3000. Correct only that port and retain all checks.
+
+`recover-startup` additionally accepts the exact untouched T16 predecessor with
+confirmation `RETARGET_UNUSED_STARTUP_PRODUCTION_MAINTENANCE`. This advances the
+revision to 53 and appends a retarget receipt; it does not reset launch slots,
+grant another attempt, extend expiry, change ingress, or replace any old audit.
+Reconstructing the complete predecessor must match its original hash and length.
+The workflow validates all old history plus exact T16 recovery/CI/B14/R14/D14
+metadata twice, exact new-main CI, unchanged migrations and deployment-only source.
+Normal fresh backup/readiness/deploy and signed END gates remain required.
