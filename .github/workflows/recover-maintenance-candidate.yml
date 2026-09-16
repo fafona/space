@@ -1,0 +1,202 @@
+name: Recover Verified Maintenance Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Incident-specific T17 continuation; no rebuild, migration, or failed-run rewriting
+        required: true
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  attestations: write
+  id-token: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ github.token }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      RECOVERY_DIR: /var/lib/faolla-candidate-verification-${{ github.run_id }}
+      TARGET_SHA: a06a5921e2fad5797e58304b828dfcf16b7ec43b
+      OLD_SHA: cd943076ebda758b70bf2f2270a508c774b726d6
+      OPERATION_ID: eb81284a-09c4-4514-8f16-38eaf6acc1e4
+    steps:
+      - name: Checkout Reviewed Recovery Source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Require Exact Confirmation And Successful CI
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = RESUME_VERIFIED_T17_CANDIDATE
+          node scripts/recover-maintenance-candidate-workflow.mjs metadata "$GITHUB_SHA" "$GITHUB_RUN_ID"
+
+      - name: Verify Original Signed Backup And Readiness Bindings
+        run: |
+          set -euo pipefail
+          umask 077
+          for phase in backup readiness; do
+            if [ "$phase" = backup ]; then
+              id=35056280602
+              workflow=database-backup.yml
+            else
+              id=35060275125
+              workflow=ordinary-account-cutover-readiness.yml
+            fi
+            mkdir "$RUNNER_TEMP/candidate-$phase"
+            gh run download "$id" --repo fafona/space \
+              --name "faolla-maintenance-$phase-binding-$id-1" --dir "$RUNNER_TEMP/candidate-$phase"
+            file="$RUNNER_TEMP/candidate-$phase/production-maintenance-binding.json"
+            gh attestation verify "$file" --repo fafona/space \
+              --signer-workflow "github.com/fafona/space/.github/workflows/$workflow" \
+              --source-digest "$TARGET_SHA" --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$RUNNER_TEMP/candidate-$phase/provenance.json"
+            node scripts/production-maintenance-workflow-contract.mjs verify \
+              --file "$file" --provenance "$RUNNER_TEMP/candidate-$phase/provenance.json" \
+              --phase "$phase" --target-sha "$TARGET_SHA" --run-id "$id" --run-attempt 1 \
+              --backup-run-id 35056280602 --backup-run-attempt 1 \
+              --mode maintenance --operation-id "$OPERATION_ID" --old-sha "$OLD_SHA" \
+              --github-output "$GITHUB_OUTPUT"
+            gh run download "$id" --repo fafona/space \
+              --name "faolla-production-$phase-attestation-$id-1" --dir "$RUNNER_TEMP/candidate-$phase"
+            predicate="$RUNNER_TEMP/candidate-$phase/production-$phase-attestation.json"
+            gh attestation verify "$predicate" --repo fafona/space \
+              --signer-workflow "github.com/fafona/space/.github/workflows/$workflow" \
+              --source-digest "$TARGET_SHA" --source-ref refs/heads/main \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$RUNNER_TEMP/candidate-$phase/predicate-provenance.json"
+            node scripts/recover-maintenance-candidate-workflow.mjs original-predicate \
+              "$phase" "$id" "$predicate" "$RUNNER_TEMP/candidate-$phase/predicate-provenance.json"
+          done
+
+      - name: Install Pinned SSH Trust
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]]
+          test "${SSH_PORT:-22}" -ge 1 && test "${SSH_PORT:-22}" -le 65535
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+
+      - name: Transfer Private Verification Code Only
+        run: |
+          set -euo pipefail
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -m 700 '$RECOVERY_DIR'"
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
+            -P "${SSH_PORT:-22}" scripts/recover-maintenance-candidate.mjs scripts/deploy.production.sh \
+            "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
+            -P "${SSH_PORT:-22}" "$RUNNER_TEMP/candidate-readiness/production-readiness-attestation.json" \
+            "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          for file in recover-maintenance-candidate.mjs deploy.production.sh; do
+            expected="$(sha256sum "scripts/$file" | cut -d ' ' -f1)"
+            actual="$(ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "sha256sum '$RECOVERY_DIR/$file'" | cut -d ' ' -f1)"
+            test "$actual" = "$expected"
+          done
+
+      - name: Verify Existing Candidate Without Mutation
+        run: |
+          set -euo pipefail
+          umask 077
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/recover-maintenance-candidate.mjs' verify '$GITHUB_SHA' '$GITHUB_RUN_ID'" \
+            > candidate-verification.json
+          node scripts/recover-maintenance-candidate.mjs validate-receipt "$GITHUB_SHA" "$GITHUB_RUN_ID" candidate-verification.json
+
+      - name: Upload Independent Verification Receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-candidate-verification-${{ github.run_id }}-1
+          path: candidate-verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Sign Independent Verification Receipt
+        uses: actions/attest@v4
+        with:
+          subject-path: candidate-verification.json
+
+      - name: Verify Hosted Signature Before Resume
+        run: |
+          set -euo pipefail
+          gh attestation verify candidate-verification.json --repo fafona/space \
+            --signer-workflow github.com/fafona/space/.github/workflows/recover-maintenance-candidate.yml \
+            --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+            --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+            --limit 10 --format json > recovery-provenance.json
+          node scripts/recover-maintenance-candidate-workflow.mjs signed-receipt \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" candidate-verification.json recovery-provenance.json
+          node scripts/recover-maintenance-candidate-workflow.mjs metadata "$GITHUB_SHA" "$GITHUB_RUN_ID"
+
+      - name: Revalidate And Resume Through Original Controller
+        id: resume
+        run: |
+          set -euo pipefail
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -P "${SSH_PORT:-22}" candidate-verification.json "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          echo 'attempted=true' >> "$GITHUB_OUTPUT"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/recover-maintenance-candidate.mjs' resume '$GITHUB_SHA' '$GITHUB_RUN_ID' '$RECOVERY_DIR/candidate-verification.json' RESUME_VERIFIED_T17_CANDIDATE" \
+            > recovery-ended.json
+          node scripts/production-maintenance-workflow-contract.mjs verify-control \
+            --file recovery-ended.json --state ended --target-sha "$TARGET_SHA" --old-sha "$OLD_SHA" --operation-id "$OPERATION_ID"
+
+      - name: Verify Actual Public Pages And Assets
+        run: |
+          set -euo pipefail
+          node scripts/check-production-smoke.mjs --origin https://faolla.com \
+            --paths /,/login,/10909094,/admin,/enterprise/login --expected-build "$TARGET_SHA" \
+            --attempts 5 --delay-ms 2000 --timeout-ms 12000
+
+      - name: Retain Completed Recovery Record
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-candidate-recovery-ended-${{ github.run_id }}-1
+          path: |
+            candidate-verification.json
+            recovery-provenance.json
+            recovery-ended.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Reclose On Unconfirmed Resume
+        if: always() && (failure() || cancelled()) && steps.resume.outputs.attempted == 'true'
+        run: |
+          set -euo pipefail
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
+            -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/recover-maintenance-candidate.mjs' reclose '$GITHUB_SHA' '$GITHUB_RUN_ID'"

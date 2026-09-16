@@ -1,5 +1,42 @@
 # Protected production maintenance
 
+## Audited existing-candidate continuation (2026-09-16)
+
+The operator authorized continuation after D15 `35060368701` started T17
+`a06a5921e2fad5797e58304b828dfcf16b7ec43b` but its ten-second post-start
+handoff reader timed out. The stopped reader's empty operation lock was
+independently identified, proved unused, and archived with explicit operator
+approval; no state, launch slot, or old failure record was reset.
+
+`Recover Verified Maintenance Candidate` is a separate, narrowly pinned
+workflow, not an override of the ordinary deploy/end success requirement.
+It accepts only the exact v14/revision58 candidate bytes and current release,
+unchanged operation, boot, attempt, and lease. Recovery code must have successful
+main push CI, and its diff from T17 may contain only the enumerated operational
+files. The original application and original typed END controller are unchanged.
+
+The workflow verifies B15/R15 hosted signatures, exact attestation bytes, the
+still-valid restored backup and live artifact, and D15's actual **failure**.
+R15's old short-lived readiness grant is not renewed or reused as current
+authority: it supplies only the authenticated baseline for a fresh complete
+read-only readiness query. The continuation checks the candidate twice, handoff,
+live/frozen environment, fresh database readiness, descriptor-bound booking
+persistence, all smoke pages, and all current static assets. It refuses any
+state drift. A new hosted signature binds this independent ten-check receipt
+to the recovery code/run and candidate. The same full verification runs again
+before the original controller's END action. No migration or paused launch is
+replayed. Only that controller may resume the exact app/worker, prove client
+write ACLs, persist verified PM2 state, and restore ingress. Failed/unconfirmed
+END or public smoke invokes the original fail-closed controller. Evidence and
+private recovery code are retained for audit, not silently removed.
+
+Two deployment-check defects are also corrected for future deployments:
+maintenance handoff gets a separately reserved finite 120-second budget
+(explicit earlier deadlines remain binding), and the static gate accepts and
+URL-encodes legitimate bracket/catch-all chunk names while rejecting traversal,
+URL metacharacters, and curl glob expansion. This does not loosen application
+authorization or public file permissions.
+
 ## Audited T15 startup recovery (2026-09-15)
 
 The explicitly authorized `recover-startup` action applies only to the exact
