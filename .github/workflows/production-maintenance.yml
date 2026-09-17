@@ -1344,7 +1344,20 @@ jobs:
               -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
               -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
               > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
-          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+          # END resumes the verified runtime and emits fixed progress on stderr.
+          # Those diagnostics never replace exit status or the exact control proof.
+          diagnostics_status=0
+          if [ "$ACTION" = end ]; then
+            node --input-type=module - "$capture_dir/err" <<'NODE' || diagnostics_status=$?
+          import { readFileSync } from "node:fs";
+          import { validateSuccessfulStartupDiagnostics } from "./scripts/production-maintenance-startup-diagnostic.mjs";
+          try { validateSuccessfulStartupDiagnostics(readFileSync(process.argv[2], "utf8")); }
+          catch { process.exitCode = 1; }
+          NODE
+          elif [ -s "$capture_dir/err" ]; then
+            diagnostics_status=1
+          fi
+          if [ "$status" -ne 0 ] || [ "$diagnostics_status" -ne 0 ]; then
             if [ "$ACTION" = plan ]; then
               if plan_diagnostic="$(node --input-type=module - "$capture_dir/err" 2>/dev/null <<'NODE'
           import { readFileSync } from "node:fs";
