@@ -13,6 +13,7 @@ import { assertMaintenanceWindowRenewalProgress } from "./production-maintenance
 import { assertMaintenancePrelaunchRecoveryProgress } from "./production-maintenance-prelaunch-recovery.mjs";
 import { assertMaintenancePreflightRecoveryProgress } from "./production-maintenance-preflight-recovery.mjs";
 import { assertMaintenanceLeaseProgress } from "./production-maintenance-lease.mjs";
+import { assertStartupRepairProgress } from "./production-maintenance-startup-repair.mjs";
 
 /** Private operation-state persistence; no process-control capability.
  * The caller MUST supply the existing operation lock, held until this callback
@@ -141,6 +142,12 @@ export function createMaintenanceLaunchJournalStorage(options, io = filesystem) 
   const confirmedSnapshot = (snapshot) => frozen({ state: snapshot.state, revision: snapshot.revision, digest: snapshot.digest });
 
   function assertJournalProgress(previous, next) {
+    if (Object.hasOwn(previous, "startupRepair") || Object.hasOwn(next, "startupRepair")) {
+      assertStartupRepairProgress(previous, next);
+      // Only the exact initial recovery can retire the consumed journal into
+      // its immutable predecessor. Later writes still use ALL normal guards.
+      if (!Object.hasOwn(previous, "startupRepair")) return;
+    }
     if (previous.version === 13 && next.version === 14) {
       assertMaintenanceLeaseProgress(previous, next);
       return;

@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { STARTUP_REPAIR as P } from "./production-maintenance-startup-repair.mjs";
+import { STARTUP_REPAIR as P, STARTUP_COMPLETION as C } from "./production-maintenance-startup-repair.mjs";
 import { readStartupRepairSource, validateStartupRepairAuthority } from "./repair-startup.mjs";
 
 const fail = () => { throw new Error("startup_workflow_unverified"); };
@@ -33,13 +33,13 @@ export function validateStartupProvenance(bytes, results) {
 export function validateStartupHistoryRun(r, currentRunId) {
   if (String(r.id) === currentRunId) return;
   if (r.status !== "completed" || !Number.isFinite(Date.parse(r.created_at))) fail();
-  if (Date.parse(r.created_at) >= P.createdAt && ![P.failedRunId, P.backupRunId, P.readinessRunId, "35129584317", "35132895108", "35131822753", "35129762971", "35131689002", "35145761968", "35146223181", "35156337705", "35148085536", "35156235371", "35162980806", "35163248067"].includes(String(r.id))) fail();
+  if (Date.parse(r.created_at) >= P.createdAt && ![C.failedRunId,P.failedRunId, P.backupRunId, P.readinessRunId, "35129584317", "35132895108", "35131822753", "35129762971", "35131689002", "35145761968", "35146223181", "35156337705", "35148085536", "35156235371", "35162980806", "35163248067"].includes(String(r.id))) fail();
 }
 export function startupMetadata(sha, runId, read = api, now = Date.now()) {
   if (!/^[a-f0-9]{40}$/.test(sha) || !/^[1-9][0-9]{0,15}$/.test(runId) || process.env.GITHUB_REPOSITORY !== "fafona/space" ||
       process.env.GITHUB_REF !== "refs/heads/main" || process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" || process.env.GITHUB_RUN_ATTEMPT !== "1" ||
       process.env.GITHUB_SHA !== sha || process.env.GITHUB_RUN_ID !== runId || read("git/ref/heads/main").object.sha !== sha ||
-      now < P.createdAt || now >= P.createdAt + 43200000 - 1200000) fail();
+      now < C.authorizedAfter || now >= C.expiresAt - 1200000) fail();
   const history = [];
   const ci = (id, target) => {
     const r = read("actions/runs/" + id);
@@ -51,6 +51,15 @@ export function startupMetadata(sha, runId, read = api, now = Date.now()) {
   if (cis.total_count !== 1 || cis.workflow_runs.length !== 1) fail();
   const mainCIrunId = String(cis.workflow_runs[0].id);
   ci(mainCIrunId, sha); ci("35160575874", P.previousTargetSha);
+  ci("35172553547",C.sourceSha);
+  const partial=read("actions/runs/"+C.failedRunId);
+  validateStartupRun(partial,{id:C.failedRunId,sha:C.sourceSha,event:"workflow_dispatch",file:"repair-startup.yml",conclusion:"failure"});
+  const partialJobs=read(`actions/runs/${C.failedRunId}/jobs?per_page=100`);
+  if(partialJobs.total_count!==1||partialJobs.jobs.length!==1||partialJobs.jobs[0].conclusion!=="failure")fail();
+  const partialFailed=partialJobs.jobs[0].steps.filter(s=>s.conclusion==="failure");
+  if(partialFailed.length!==1||partialFailed[0].name!=="Reverify Held State And Commit Under Original Locks"||
+    !partialJobs.jobs[0].steps.some(s=>s.name==="Verify Fresh Hosted Authority"&&s.conclusion==="success"))fail();
+  history.push({id:partial.id,sha:partial.head_sha,conclusion:partial.conclusion,attempt:partial.run_attempt});
   for (const [id, file, event, conclusion] of [[P.backupRunId, "database-backup.yml", "workflow_dispatch", "success"],
     [P.readinessRunId, "ordinary-account-cutover-readiness.yml", "workflow_dispatch", "success"], [P.failedRunId, "deploy.yml", "workflow_run", "failure"]]) {
     const r = read("actions/runs/" + id);
@@ -81,13 +90,20 @@ export function startupMetadata(sha, runId, read = api, now = Date.now()) {
     }
     if (!complete) fail();
   }
-  return validateStartupRepairAuthority({ version: 1, kind: "faolla-startup-repair", targetSha: sha, runId, runAttempt: 1,
-    operationId: P.operationId, failedRunId: P.failedRunId, mainCIrunId, historyDigest: hash(JSON.stringify(history)), checkedAt: now }, sha, runId, now);
+  return validateStartupRepairAuthority({ version: 2, kind: "faolla-startup-completion", targetSha: sha, runId, runAttempt: 1,
+    operationId: P.operationId, failedRunId: C.failedRunId, previousAuthorityDigest:C.authorityDigest,expiresAt:C.expiresAt,
+    mainCIrunId, historyDigest: hash(JSON.stringify(history)), checkedAt: now }, sha, runId, now);
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
     const [action, sha, runId, file, provenance] = process.argv.slice(2);
-    if (action === "authority") {
+    if(action==="verify-prior"){
+      const bytes=readFileSync(file);
+      if(bytes.length>8192||hash(bytes)!==C.authorityDigest)fail();
+      validateStartupProvenance(bytes,JSON.parse(readFileSync(provenance)));
+      const a=JSON.parse(bytes);validateStartupRepairAuthority(a,C.sourceSha,C.failedRunId,a.checkedAt);
+      if(a.checkedAt>=C.historicalAt||a.checkedAt<P.createdAt)fail();
+    } else if (action === "authority") {
       readStartupRepairSource(sha);
       const value = startupMetadata(sha, runId);
       writeFileSync(file, JSON.stringify(value), { flag: "wx", mode: 0o600 });
@@ -100,4 +116,3 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     } else fail();
   } catch { process.stderr.write("startup_workflow_unverified\n"); process.exitCode = 1; }
 }
-

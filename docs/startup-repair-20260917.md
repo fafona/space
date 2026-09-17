@@ -1,5 +1,23 @@
 # Startup attribution repair — 2026-09-17
 
+## Completing partial repair 35174658032
+
+The signed repair archived both files and restored the stopped old current link,
+but durable storage rejected the retirement of the consumed journal. The exact
+revision-17 state remained unchanged. Completion MUST NOT replay the link switch
+or overwrite its archives. It verifies the original signed authority digest,
+uses fresh hosted authority and all ten CI jobs, and requires native isolated
+storage acceptance against the actual predecessor before any production commit.
+The storage adapter now permits only the exact audited initial transition;
+ordinary later writes retain all existing journal and immutable-audit checks.
+
+The user's renewed recovery instruction and standing maintenance-extension
+authorization are represented explicitly by the version-2 completion audit and
+fixed expiry 2026-09-17 17:40:13.188 UTC. Original creation time and all predecessor
+bytes remain untouched. Historical audit validation uses the observed partial
+failure time; live host checks, fresh signed authority and expiry use real time.
+No expired original authority is reused. No runtime starts during completion.
+
 Authorized incident: deploy 35165126333, attempt 1, operation
 78124069-9a5c-4eb5-aaaf-fe80ef1db2b1. The exact predecessor is v3/revision 17,
 failed-held, digest bc0bad0e702c17a544cbbffc8e16682b839abecf73b001d25971bc8dfdecce73.

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { STARTUP_REPAIR as P, validateStartupRepairPredecessor, buildStartupRepairedState } from "./production-maintenance-startup-repair.mjs";
+import { STARTUP_REPAIR as P, STARTUP_COMPLETION as C, validateStartupRepairPredecessor, validateStartupCompletionPredecessor, buildStartupRepairedState } from "./production-maintenance-startup-repair.mjs";
 import { validateMaintenanceRecoveryState, assertMaintenanceRecoveryProgress } from "./production-maintenance-recovery.mjs";
 import { validateStartupRepairAuthority, readStartupRepairSource, STARTUP_REPAIR_PATHS, runStartupRepair } from "./repair-startup.mjs";
 import { validateStartupHistoryRun, validateStartupCiJobs, validateStartupRun, validateStartupProvenance, STARTUP_CI_JOBS } from "./repair-startup-workflow.mjs";
@@ -84,11 +84,34 @@ test("source proof accepts exact reviewed files and rejects dirty or executable 
 });
 test("workflow preserves original locks, signed evidence, independent backup and no runtime launch", () => {
   const y = readFileSync(new URL("../.github/workflows/repair-startup.yml", import.meta.url), "utf8");
-  for (const required of ["REPAIR_STARTUP_35165126333", "group: production-deploy", "flock -n 9", "StrictHostKeyChecking=yes",
+  for (const required of ["COMPLETE_STARTUP_35174658032", "group: production-deploy", "flock -n 9", "StrictHostKeyChecking=yes",
     "actions/attest@v4", "--deny-self-hosted-runners", "35163641695", "35165044304", "--mode maintenance", "--state held"])
     assert(y.includes(required), required);
   assert(!/pm2 start|start-candidate|restoreIngress|rm -rf/.test(y));
   const code = readFileSync(new URL("./repair-startup.mjs", import.meta.url), "utf8");
   assert(code.includes("await verify();")); assert(code.includes("await ops.commitStartupRepair(snapshot, next)"));
   assert(code.includes('constants.O_EXCL | constants.O_NOFOLLOW')); assert(!code.includes("ops.save("));
+});
+
+test("completion authority independently binds partial repair, exact renewed deadline and fresh reviewed source",()=>{
+ const n=C.authorizedAfter+1000,a={version:2,kind:"faolla-startup-completion",targetSha:sha,runId,runAttempt:1,operationId:P.operationId,failedRunId:C.failedRunId,mainCIrunId:"35159000000",historyDigest:"a".repeat(64),checkedAt:n,previousAuthorityDigest:C.authorityDigest,expiresAt:C.expiresAt};
+ assert.deepEqual(validateStartupRepairAuthority(a,sha,runId,n),a);
+ for(const patch of [{version:1},{expiresAt:C.expiresAt+1},{previousAuthorityDigest:"a".repeat(64)},{failedRunId:P.failedRunId},{checkedAt:C.authorizedAfter-1},{runAttempt:2}])assert.throws(()=>validateStartupRepairAuthority({...a,...patch},sha,runId,n));
+ assert.throws(()=>validateStartupRepairAuthority(a,sha,runId,n+300001));
+ assert.throws(()=>validateStartupRepairAuthority({...a,checkedAt:C.expiresAt},sha,runId,C.expiresAt));
+ for(const now of [C.authorizedAfter-1,C.expiresAt,NaN])assert.throws(()=>validateStartupCompletionPredecessor({}, {bootId:P.bootId,now}));
+});
+
+test("completion never replays old link switch or overwrites partial archives; native durability acceptance is mandatory",()=>{
+ const source=readFileSync(new URL("./repair-startup.mjs",import.meta.url),"utf8");
+ assert(source.includes('if(completion)await ops.verifyPartialStartup(state);\n  else await ops.restoreStoppedCurrent(state);'));
+ assert(source.includes('startup-completion-35174658032.predecessor.json'));
+ const workflow=readFileSync(new URL("../.github/workflows/repair-startup.yml",import.meta.url),"utf8");
+ assert(workflow.includes("Verify Archived Partial Repair Authority")&&workflow.includes("verify-prior")&&workflow.includes("--source-digest "+C.sourceSha));
+ assert(workflow.indexOf('startup-completion-storage-acceptance.mjs')<workflow.indexOf('repair-startup.mjs" complete'));
+ const storage=readFileSync(new URL("./production-maintenance-launch-journal-storage.mjs",import.meta.url),"utf8");
+ assert(storage.includes('assertStartupRepairProgress(previous, next);'));
+ assert(storage.includes('if (!Object.hasOwn(previous, "startupRepair")) return;'));
+ const acceptance=readFileSync(new URL("./startup-completion-storage-acceptance.mjs",import.meta.url),"utf8");
+ for(const token of ['createMaintenanceLaunchJournalStorage','replaceOperationUnderExistingOperationLock','readOperationUnderExistingOperationLock','sync-dir','staleReplayRejected','productionStateUnchanged'])assert(acceptance.includes(token));
 });
