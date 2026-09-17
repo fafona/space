@@ -1,4 +1,5 @@
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { readBusinessCardStorageObject } from "./merchantBusinessCardStorage";
 import {
   MERCHANT_BUSINESS_CARD_CONTACT_ONLY_FIELD_KEYS,
   MERCHANT_BUSINESS_CARD_INTRO_IMAGE_DEFAULT_DURATION_SECONDS,
@@ -27,7 +28,6 @@ const MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_LEGACY_FOLDER = `${MERCHANT_BUSINE
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_SLUG_MAX_LENGTH = 18;
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH = 6;
 const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
-const BUSINESS_CARD_SHARE_STORAGE_FETCH_TIMEOUT_MS = 3500;
 const BUSINESS_CARD_SHARE_MANIFEST_FAST_WAIT_MS = 900;
 
 type SearchParamValue = string | string[] | undefined;
@@ -835,31 +835,6 @@ function buildPublicStorageObjectUrls(objectPath: string, preferredOrigin?: stri
   );
 }
 
-function buildStorageNoStoreUrl(value: string) {
-  const normalized = normalizeText(value);
-  if (!normalized) return "";
-  try {
-    const url = new URL(normalized);
-    url.searchParams.set("_ts", `${Date.now()}`);
-    return url.toString();
-  } catch {
-    return normalized;
-  }
-}
-
-async function fetchBusinessCardStorageUrl(url: string, init: RequestInit = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), BUSINESS_CARD_SHARE_STORAGE_FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 export function buildMerchantBusinessCardShareManifestPublicUrls(key: string, preferredOrigin?: string | null) {
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(key);
   return buildPublicStorageObjectUrls(objectPath, preferredOrigin);
@@ -1048,11 +1023,8 @@ export async function isMerchantBusinessCardShareRevoked(input: {
   const checks = Array.from(new Set(objectPaths)).flatMap((objectPath) =>
     buildPublicStorageObjectUrls(objectPath, input.preferredOrigin).map(async (url) => {
       try {
-        const response = await fetchBusinessCardStorageUrl(buildStorageNoStoreUrl(url), {
-          cache: "no-store",
-          next: { revalidate: 0 },
-        });
-        return response.ok;
+        const response = await readBusinessCardStorageObject(url, true);
+        return response.exists;
       } catch {
         return false;
       }
@@ -1725,12 +1697,6 @@ function choosePreferredSharePayload(candidates: MerchantBusinessCardSharePayloa
   return latest ?? candidates[0] ?? null;
 }
 
-function timeoutNull(timeoutMs: number) {
-  return new Promise<null>((resolve) => {
-    setTimeout(() => resolve(null), Math.max(0, timeoutMs));
-  });
-}
-
 async function collectFastSharePayloads(
   tasks: Array<Promise<MerchantBusinessCardSharePayload | null>>,
   timeoutMs: number,
@@ -1743,7 +1709,15 @@ async function collectFastSharePayloads(
       })
       .catch(() => {}),
   );
-  await Promise.race([Promise.allSettled(collectors), timeoutNull(timeoutMs)]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(collectors),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, Math.max(0, timeoutMs)); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
   return payloads;
 }
 
@@ -1756,12 +1730,9 @@ export async function loadMerchantBusinessCardSharePayloadByKey(
 
   const payloadTasks = buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin).map(async (url) => {
     try {
-      const response = await fetchBusinessCardStorageUrl(buildStorageNoStoreUrl(url), {
-        cache: "no-store",
-        next: { revalidate: 0 },
-      });
-      if (!response.ok) return null;
-      const json = (await response.json().catch(() => null)) as MerchantBusinessCardSharePayload | null;
+      const response = await readBusinessCardStorageObject(url);
+      if (!response.exists) return null;
+      const json = response.payload as MerchantBusinessCardSharePayload | null;
       return normalizeSharePayload(json ?? {}, preferredOrigin);
     } catch {
       return null;

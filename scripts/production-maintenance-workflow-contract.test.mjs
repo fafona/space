@@ -612,7 +612,7 @@ test("PM2 peer workflow requires its fixed confirmation and bypasses maintenance
 
 test("plan failure prints only one exact allowlisted stage code and always fails", () => {
   const control = step("production-maintenance", "Execute Fixed Maintenance Transition").run;
-  const start = control.indexOf('if [ "$status" -ne 0 ]');
+  const start = control.indexOf('diagnostics_status=0');
   const end = control.indexOf('\nnode scripts/production-maintenance-workflow-contract.mjs verify-control', start);
   assert.ok(start >= 0 && end > start);
   const failed = control.slice(start, end);
@@ -669,6 +669,72 @@ test("plan failure prints only one exact allowlisted stage code and always fails
     assert.equal(unconfirmed.status, 1);
     assert.equal(unconfirmed.stdout, code + "\n");
     assert.equal(unconfirmed.stderr, "");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("actual END workflow accepts real successful progress only with zero exit and exact ended proof", () => {
+  // Execute the actual transition's decision tail, not a regex over another step.
+  const control = step("production-maintenance", "Execute Fixed Maintenance Transition").run;
+  const start = control.indexOf("diagnostics_status=0");
+  assert.ok(start >= 0);
+  const tail = control.slice(start);
+  assert.match(tail, /verify-control/);
+  const directory = mkdtempSync(join(tmpdir(), "faolla-maintenance-end-diagnostics-"));
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "/bin/bash";
+  const report = { version: 1, operationId: env.MAINTENANCE_OPERATION_ID,
+    targetSha: env.TARGET_SHA, expectedOldSha: env.EXPECTED_OLD_SHA, state: "ended" };
+  const emitted = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import { startupDiagnostic } from "./scripts/production-maintenance-startup-diagnostic.mjs";
+    for (const stage of ["runtime_disk", "runtime_launch", "launch_identity", "launch_supervision", "candidate_capture", "launch_confirm"])
+      await startupDiagnostic(stage, async () => true);
+  `], { encoding: "utf8" });
+  assert.equal(emitted.status, 0, emitted.stderr);
+  assert.ok(emitted.stderr.includes("code=passed"));
+  const execute = ({ stderr = emitted.stderr, stdout = JSON.stringify(report), status = "0", action = "end" } = {}) => {
+    writeFileSync(join(directory, "err"), stderr);
+    writeFileSync(join(directory, "out"), stdout);
+    return spawnSync(bash, ["-s"], {
+      input: `set -euo pipefail\nnode() { "$NODE_BINARY" "$@"; }\nlocal_operation_args=(--operation-id "$MAINTENANCE_OPERATION_ID")\n${tail}\n`,
+      encoding: "utf8",
+      env: { ...env, SystemRoot: process.env.SystemRoot ?? "", PATH: process.env.PATH ?? "",
+        NODE_BINARY: process.execPath.replaceAll("\\", "/"), capture_dir: directory.replaceAll("\\", "/"),
+        GITHUB_STEP_SUMMARY: join(directory, "summary").replaceAll("\\", "/"),
+        ACTION: action, command: action, expected_state: "ended", status },
+    });
+  };
+  try {
+    for (const stderr of ["", emitted.stderr]) {
+      const result = execute({ stderr });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), report);
+    }
+    for (const patch of [
+      { status: "1" }, { status: "124" }, { status: "255" },
+      { stderr: emitted.stderr.replace("code=passed", "code=failed") },
+      { stderr: emitted.stderr + "unexpected-private-value\n" },
+      { stderr: emitted.stderr.replace("runtime_disk", "unknown_stage") },
+      { stderr: emitted.stderr.slice(0, -1) }, { stderr: "x".repeat(262145) },
+      { stdout: "" }, { stdout: "not-json" },
+      { stdout: JSON.stringify({ ...report, state: "failed-held" }) },
+      { stdout: JSON.stringify({ ...report, state: "candidate" }) },
+      { stdout: JSON.stringify({ ...report, targetSha: env.EXPECTED_OLD_SHA }) },
+      { stdout: JSON.stringify({ ...report, operationId: "87654321-1234-4123-8123-123456789abc" }) },
+      ...["plan", "prepare", "check", "recover-held", "diagnose-runtime"].map(action => ({ action })),
+    ]) {
+      const result = execute(patch);
+      assert.notEqual(result.status, 0, JSON.stringify(patch));
+      assert.ok(!result.stdout.includes('"state":"ended"'));
+      assert.ok(!result.stdout.includes("unexpected-private-value"));
+    }
+    // Reproduce the old branch on the same successful real diagnostics.
+    const legacyTail = tail.slice(tail.indexOf('if [ "$status" -ne 0 ]'))
+      .replace('[ "$diagnostics_status" -ne 0 ]', '[ -s "$capture_dir/err" ]');
+    writeFileSync(join(directory, "err"), emitted.stderr);
+    writeFileSync(join(directory, "out"), JSON.stringify(report));
+    const legacy = spawnSync(bash, ["-s"], { input: `set -euo pipefail\n${legacyTail}\n`, encoding: "utf8",
+      env: { SystemRoot: process.env.SystemRoot ?? "", capture_dir: directory.replaceAll("\\", "/"), status: "0", ACTION: "end" } });
+    assert.equal(legacy.status, 1);
+    assert.equal(legacy.stdout, "production_maintenance_transition_unconfirmed\n");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
