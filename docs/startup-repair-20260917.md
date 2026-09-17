@@ -23,6 +23,15 @@ multiple owners, restart/generation changes, and expired budgets still fail.
 An unattributed socket never satisfies steady-state supervision, capture or
 confirmation. Synthetic negative tests and real Next startup CI are mandatory.
 
+The first main CI exposed a harness ownership mismatch: hosted checkouts are
+runner-owned, while the actual production adapter requires root-owned helper
+files and every ancestor. The mandatory acceptance now uses a fresh private
+root-owned copy of scripts, installed dependencies and the same Node binary on
+the disposable hosted runner. It does not change checkout ownership, override
+helper proofs or weaken the production adapter. Its opt-in also requires the
+hosted-runner marker and root identity. Production state was not changed by
+this failed CI.
+
 ## Recovery boundaries
 
 One hosted, signed repair is bound to the exact failed run, source delta, all ten
