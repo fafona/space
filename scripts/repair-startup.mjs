@@ -29,7 +29,7 @@ const REVIEWED_CORE = Object.freeze({
   "scripts/check-production-runtime-supervision.test.mjs": "843adc950afb8e14e4d15cf038ff6f1c0b3f406497eb0ad7bf63e421eb2fc573",
   "scripts/production-maintenance-runtime.mjs": "0463a519d696429cbcc95add9d3f7029aa3cc241a49dbb2e92c754bffda0561e",
   "scripts/production-maintenance-runtime.test.mjs": "99785a3029358c738569fc304e777718f7d76c15b2e9216a07f805f4bc22f3e6",
-  ".github/workflows/ci.yml": "495dbd5835901b0c2e15d7606aefb97e849eb025de6669483f88e20b95ce030f",
+  ".github/workflows/ci.yml": "2cf8fc582b8b0e44d432ba257b8b635f264bf251a4a47a1b4ff3debcce12b5bd",
   "scripts/repair-daemon.test.mjs": "4993590329f25f7c05bc74195ce8eea6564bceb279996db86dc12bdfa73bdcc6"
 });
 export const STARTUP_REPAIR_PATHS = Object.freeze([

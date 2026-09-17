@@ -29,8 +29,10 @@ const build=spawnSync(realpathSync(process.execPath),[release+'/node_modules/nex
 console.log(JSON.stringify({fixtureBuild:build.status===0,fixturePath:fixture,output:build.status===0?undefined:build.stdout.slice(-4000),error:build.status===0?undefined:build.stderr.slice(-2000)}));
 if(build.status!==0)throw Error('isolated_build_failed');
 const env={HOME:homedir(),PATH:'/usr/bin:/bin',PM2_HOME:home,NODE_OPTIONS:'',NODE_PATH:'',PM2_NODE_OPTIONS:''};
-const install=spawnSync('npm',['install','--prefix',fixture+'/dependencies','--cache',fixture+'/cache','--registry=https://registry.npmjs.org','--ignore-scripts','--no-audit','--no-fund','pm2@6.0.14'],{env:{...env,PATH:dirname(process.execPath)+':/usr/bin:/bin'},cwd:fixture,encoding:'utf8',timeout:180000});
-if(install.status!==0)throw Error('isolated_pm2_install_failed');
+const npmCli=join(dirname(scripts.slice(0,-1)),'npm/bin/npm-cli.js');
+if(!existsSync(npmCli))throw Error('isolated_npm_cli_missing');
+const install=spawnSync(realpathSync(process.execPath),[npmCli,'install','--prefix',fixture+'/dependencies','--cache',fixture+'/cache','--registry=https://registry.npmjs.org','--ignore-scripts','--no-audit','--no-fund','pm2@6.0.14'],{env:{...env,PATH:dirname(process.execPath)+':/usr/bin:/bin'},cwd:fixture,encoding:'utf8',timeout:180000});
+if(install.status!==0){console.log(JSON.stringify({fixtureInstall:false,status:install.status,errorCode:install.error?.code??null,signal:install.signal}));throw Error('isolated_pm2_install_failed');}
 const cli=args=>spawnSync(realpathSync(process.execPath),[fixture+'/dependencies/node_modules/pm2/bin/pm2',...args],{env,cwd:fixture,encoding:'utf8',timeout:20000,maxBuffer:100000});
 const boot=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();const keys=['pid','parentPid','startTicks','processIdentity','uid','cwd','cwdIdentity','executable','executableIdentity','commandLineDigest'];
 const fact=pid=>Object.fromEntries(keys.map(k=>[k,captureProcessFact(pid)[k]]));
