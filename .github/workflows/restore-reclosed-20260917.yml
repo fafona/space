@@ -1,0 +1,136 @@
+name: Restore Reclosed Release 20260917
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: New journaled restoration of the exact reclosed 0d17 release; preserve old operation
+        required: true
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  attestations: write
+  id-token: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ github.token }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      RECOVERY_DIR: /var/lib/faolla-restoration-code-${{ github.run_id }}
+      TARGET_SHA: 0d17d3830bc4cc69a53147d04488f5f18f79ddb7
+    steps:
+      - name: Checkout Reviewed Restoration Source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Require Confirmation And Exact CI And Failed History
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = RESTORE_VERIFIED_RECLOSED_20260917
+          node scripts/restore-reclosed-20260917-workflow.mjs restoration-metadata "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Verify Original Hosted Backup And Readiness Baseline
+        run: |
+          set -euo pipefail
+          umask 077
+          for phase in backup readiness; do
+            if [ "$phase" = backup ]; then id=35189706736; workflow=database-backup.yml; else id=35199245307; workflow=ordinary-account-cutover-readiness.yml; fi
+            mkdir "$RUNNER_TEMP/restore-$phase"
+            gh run download "$id" --repo fafona/space --name "faolla-production-$phase-attestation-$id-1" --dir "$RUNNER_TEMP/restore-$phase"
+            predicate="$RUNNER_TEMP/restore-$phase/production-$phase-attestation.json"
+            gh attestation verify "$predicate" --repo fafona/space --signer-workflow "github.com/fafona/space/.github/workflows/$workflow" \
+              --source-digest "$TARGET_SHA" --source-ref refs/heads/main --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$RUNNER_TEMP/restore-$phase/provenance.json"
+            node scripts/restore-reclosed-20260917-workflow.mjs original-predicate "$phase" "$id" "$predicate" "$RUNNER_TEMP/restore-$phase/provenance.json"
+          done
+      - name: Install Pinned SSH Trust
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]]
+          test "${SSH_PORT:-22}" -ge 1 && test "${SSH_PORT:-22}" -le 65535
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+      - name: Transfer Private Restoration Code
+        run: |
+          set -euo pipefail
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -m 700 '$RECOVERY_DIR'"
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -P "${SSH_PORT:-22}" \
+            scripts/restore-reclosed-20260917.mjs scripts/recover-maintenance-candidate.mjs scripts/deploy.production.sh \
+            "$RUNNER_TEMP/restore-readiness/production-readiness-attestation.json" "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "chmod 600 '$RECOVERY_DIR/production-readiness-attestation.json'"
+          for file in restore-reclosed-20260917.mjs recover-maintenance-candidate.mjs deploy.production.sh; do
+            expected="$(sha256sum "scripts/$file" | cut -d ' ' -f1)"
+            actual="$(ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "sha256sum '$RECOVERY_DIR/$file'" | cut -d ' ' -f1)"
+            test "$actual" = "$expected"
+          done
+      - name: Inspect Reclosed Predecessor Without Mutation
+        run: |
+          set -euo pipefail
+          umask 077
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/restore-reclosed-20260917.mjs' inspect '$GITHUB_SHA' '$GITHUB_RUN_ID'" > restoration-receipt.json
+          node scripts/restore-reclosed-20260917.mjs validate "$GITHUB_SHA" "$GITHUB_RUN_ID" restoration-receipt.json
+      - name: Retain Restoration Inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-restoration-inspection-${{ github.run_id }}-1
+          path: restoration-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Sign Restoration Inspection
+        uses: actions/attest@v4
+        with:
+          subject-path: restoration-receipt.json
+      - name: Verify Hosted Signature And Recheck Workflow Authority
+        run: |
+          set -euo pipefail
+          gh attestation verify restoration-receipt.json --repo fafona/space \
+            --signer-workflow github.com/fafona/space/.github/workflows/restore-reclosed-20260917.yml \
+            --source-digest "$GITHUB_SHA" --source-ref refs/heads/main --predicate-type https://slsa.dev/provenance/v1 \
+            --deny-self-hosted-runners --limit 10 --format json > restoration-provenance.json
+          node scripts/restore-reclosed-20260917-workflow.mjs signed-restoration "$GITHUB_SHA" "$GITHUB_RUN_ID" restoration-receipt.json restoration-provenance.json
+          node scripts/restore-reclosed-20260917-workflow.mjs restoration-metadata "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Restore With New Durable Journal And Full Public Checks
+        run: |
+          set -euo pipefail
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -P "${SSH_PORT:-22}" restoration-receipt.json "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/restore-reclosed-20260917.mjs' restore '$GITHUB_SHA' '$GITHUB_RUN_ID' '$RECOVERY_DIR/restoration-receipt.json' RESTORE_VERIFIED_RECLOSED_20260917" > restoration-ended.json
+          node scripts/restore-reclosed-20260917.mjs validate-ended "$GITHUB_SHA" "$GITHUB_RUN_ID" restoration-ended.json
+      - name: Retain Completed Restoration Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-restoration-ended-${{ github.run_id }}-1
+          path: |
+            restoration-receipt.json
+            restoration-provenance.json
+            restoration-ended.json
+          if-no-files-found: error
+          retention-days: 30
