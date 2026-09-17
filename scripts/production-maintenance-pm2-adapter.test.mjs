@@ -169,6 +169,20 @@ test("lost dump save response is unknown once only; verify is strictly read-only
   }
 });
 
+test("ordinary daemon historical proc instantiation changes preserve exact authenticated peer on any bound boot", async () => {
+  for (const mutation of [false, true]) {
+    const f = fixture(); changeProc(f.current, 1); changeProc(f.current, 3); changeProc(f.current, 4);
+    const original = JSON.stringify(daemon);
+    if (mutation) await controlPm2(daemon, BOOT, request(), f.d);
+    else assert.deepEqual(await inspectPm2Registry(daemon, BOOT, f.d), [row()]);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].payload.daemon.pid, daemon.pid);
+    assert.equal(f.calls[0].payload.daemon.startTicks, daemon.startTicks);
+    assert.equal(f.calls[0].payload.daemon.bootId, BOOT);
+    assert.equal(JSON.stringify(daemon), original);
+  }
+});
+
 test("pinned historical drift permits one exchange while the immutable original daemon and peer tuple stay bound", async () => {
   const frozen = pinnedDaemon(), originalBytes = JSON.stringify(frozen);
   assert.equal(createHash("sha256").update(originalBytes).digest("hex"), "940d18ed1876a97c6523b56bc213be2c426c89348630527392d9d795dadef6c4");

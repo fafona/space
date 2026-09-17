@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
+import { assertMaintenanceDaemonContinuity, assertBoundMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 
 const BOOT = "12345678-1234-1234-1234-123456789012";
 const ERROR = { message: "production_maintenance_daemon_continuity_unverified" };
@@ -22,6 +22,29 @@ const changeIdentity = (value, index) => {
   const parts = value.processIdentity.split(":"); parts[index] = String(BigInt(parts[index]) + 1n);
   return { ...value, processIdentity: parts.join(":") };
 };
+
+test("new maintenance operations tolerate only virtual procfs metadata with explicit same-boot binding", () => {
+  for (const original of [fixture(), pinned(), {...pinned(),processIdentity:"5:1500000000:0:1789660000000000000:1789660000000000000:9:0:16749"}]) {
+    const before = JSON.stringify(original);
+    for (let mask=0; mask<8; mask++) {
+      let observed = structuredClone(original);
+      for (const [bit,index] of [1,3,4].entries()) if(mask & (1 << bit)) observed=changeIdentity(observed,index);
+      assert.equal(assertBoundMaintenanceDaemonContinuity(original,observed,BOOT,BOOT),undefined);
+      for (const different of [PINNED_BOOT,undefined,null,""]) assert.throws(()=>assertBoundMaintenanceDaemonContinuity(original,observed,BOOT,different),ERROR);
+      for (const index of [0,2,5,6,7]) assert.throws(()=>assertBoundMaintenanceDaemonContinuity(original,changeIdentity(observed,index),BOOT,BOOT),ERROR);
+      for (const patch of [{pid:99},{parentPid:99},{startTicks:"999"},{uid:99},{cwd:"/other"},{cwdIdentity:"1:2:3:4:5:6:7:8"},{executable:"/other"},{executableIdentity:"1:2:3:4:5:6:7:8"},{commandLineDigest:"f".repeat(64)}])
+        assert.throws(()=>assertBoundMaintenanceDaemonContinuity(original,{...observed,...patch},BOOT,BOOT),ERROR);
+    }
+    assert.equal(JSON.stringify(original),before);
+  }
+});
+
+test("new continuity rejects malformed equal proofs and missing boot before equality",()=>{
+  for(const patch of [{pid:0},{startTicks:"0"},{uid:-1},{extra:1},{processIdentity:"1:2"}]) {
+    const bad={...fixture(),...patch};assert.throws(()=>assertBoundMaintenanceDaemonContinuity(bad,bad,BOOT,BOOT),ERROR);
+  }
+  for(const bad of [undefined,null,"", "not-a-boot"]) assert.throws(()=>assertBoundMaintenanceDaemonContinuity(fixture(),fixture(),bad,bad),ERROR);
+});
 
 test("second explicitly authorized frozen tuple keeps the same boot and stable identity checks", () => {
   const original = { ...pinned(), processIdentity: "5:1455626046:0:1789549976568704851:1789549976568704851:9:0:16749" };

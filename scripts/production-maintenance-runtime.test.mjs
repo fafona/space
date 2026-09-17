@@ -6,7 +6,7 @@ import { captureRuntime, validateRuntimeProof, assertRuntimeStopped, stopRuntime
   readRuntimeHandoffEnvironment, readDeploymentHandoffFields, startCandidate, reconcileMaintenanceLaunches,
   persistResumedDump, verifyResumedDump, validateResumedDumpProof, assertRetiredCandidateStopped } from "./production-maintenance-runtime.mjs";
 import { pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
-import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
+import { assertBoundMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
 
 const OLD = "a".repeat(40); const TARGET = "b".repeat(40); const SECRET = "PRIVATE_DO_NOT_PERSIST";
@@ -129,7 +129,7 @@ function fixture(options = {}) {
     workerFlags(path) { const e = envs.get(path.slice(0, -11)); return { identity: e.fileIdentity, hash: e.sha256, flags: { ...flags } }; },
     portEmpty: () => !entries.some((entry) => entry.name === "faolla" && entry.pid > 0),
     async pm2Registry(actualDaemon, actualBoot) {
-      if (options.daemon) assertMaintenanceDaemonContinuity(actualDaemon, facts.get(daemonPid), boot);
+      if (options.daemon) assertBoundMaintenanceDaemonContinuity(actualDaemon, facts.get(daemonPid), options.bootId ?? BOOT, boot);
       else assert.deepEqual(actualDaemon, facts.get(daemonPid));
       assert.equal(actualBoot, boot);
       calls.push({ command: "adapter-inspect", args: ["jlist"] });
@@ -139,7 +139,7 @@ function fixture(options = {}) {
       });
     },
     async pm2Control(actualDaemon, actualBoot, request) {
-      if (options.daemon) assertMaintenanceDaemonContinuity(actualDaemon, facts.get(daemonPid), boot);
+      if (options.daemon) assertBoundMaintenanceDaemonContinuity(actualDaemon, facts.get(daemonPid), options.bootId ?? BOOT, boot);
       else assert.deepEqual(actualDaemon, facts.get(daemonPid));
       assert.equal(actualBoot, boot);
       if (request.action === "prepare") {
@@ -776,6 +776,22 @@ test("failed resume checkpoints complete evidence before cleanup; checkpoint fai
       assert.ok(calls.slice(checkpoint + 1).some((call) => call.command === "adapter-control" && call.args[0] === "delete"));
       await assertRuntimeStopped(proof, f.deps);
     }
+  }
+});
+
+test("ordinary unpinned daemon on another boot survives launch, resume, dump and exact cleanup", async () => {
+  for (const worker of ["running", "absent"]) {
+    const daemon = { ...pinnedDaemon(), startTicks: "999" };
+    const { f, proof, resumed } = await resumedFixture({ daemon, bootId: BOOT, worker });
+    const original = JSON.stringify(proof);
+    await verifyResumedCandidate(proof, resumed, f.deps);
+    const dump = await persistResumedDump(proof, resumed, f.deps);
+    await verifyResumedDump(proof, resumed, dump, f.deps);
+    assert.deepEqual(resumed.candidate.daemon, daemon);
+    assert.equal(f.calls.filter(call => call.args[0] === "start").length, worker === "running" ? 3 : 2);
+    await stopResumedCandidate(proof, resumed, f.deps);
+    await assertRuntimeStopped(proof, f.deps);
+    assert.equal(JSON.stringify(proof), original);
   }
 });
 
