@@ -392,7 +392,14 @@ jobs:
               -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
               -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$remote_command" \
               > "$capture_dir/out" 2> "$capture_dir/err" || status=$?
-          if [ "$status" -ne 0 ] || [ -s "$capture_dir/err" ]; then
+          diagnostics_status=0
+          node --input-type=module - "$capture_dir/err" <<'NODE' || diagnostics_status=$?
+          import { readFileSync } from "node:fs";
+          import { validateSuccessfulStartupDiagnostics } from "./scripts/production-maintenance-startup-diagnostic.mjs";
+          try { validateSuccessfulStartupDiagnostics(readFileSync(process.argv[2], "utf8")); }
+          catch { process.exitCode = 1; }
+          NODE
+          if [ "$status" -ne 0 ] || [ "$diagnostics_status" -ne 0 ]; then
             echo 'production_maintenance_recovery_inspection_unconfirmed'
             exit 1
           fi

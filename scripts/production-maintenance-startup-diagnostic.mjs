@@ -16,3 +16,16 @@ export function createStartupDiagnostic({ now = Date.now, write = line => proces
   };
 }
 export const startupDiagnostic = createStartupDiagnostic();
+
+// Diagnostics are not the control result. Accept only bounded, fixed successful
+// progress records; exit status and the exact stdout control proof remain gates.
+export function validateSuccessfulStartupDiagnostics(value) {
+  if (typeof value !== "string" || Buffer.byteLength(value) > 262144) throw new Error("maintenance_diagnostics_invalid");
+  if (value === "") return true;
+  if (!value.endsWith("\n")) throw new Error("maintenance_diagnostics_invalid");
+  for (const line of value.slice(0, -1).split("\n")) {
+    const match = /^\[deploy\] maintenance_start_diagnostic stage=([a-z_]+) code=(start|passed) elapsed_seconds=(0|[1-9][0-9]{0,4})$/.exec(line);
+    if (!match || !STAGES.has(match[1]) || Number(match[3]) > 86400) throw new Error("maintenance_diagnostics_invalid");
+  }
+  return true;
+}
