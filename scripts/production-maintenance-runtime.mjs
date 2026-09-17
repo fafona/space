@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { posix } from "node:path";
 import { types } from "node:util";
-import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
+import { assertBoundMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 import { startupDiagnostic } from "./production-maintenance-startup-diagnostic.mjs";
 import { captureNativeProcessProof, validateNativeProcessProof, verifyNativeProcessProof, verifyNativeFiles } from "./production-maintenance-native-proof.mjs";
 import { inspectPm2Registry, controlPm2, validatePm2Registry, capturePm2DumpTarget, persistPm2Dump, verifyPm2Dump,
@@ -203,7 +203,7 @@ async function pm2List(daemon, d) {
   const bootId = d.boot();
   if (d.expectedBootId !== bootId) fail();
   const before = d.readProcess(daemon.pid);
-  assertMaintenanceDaemonContinuity(daemon, before, bootId);
+  assertBoundMaintenanceDaemonContinuity(daemon, before, d.expectedBootId, bootId);
   const entries = validatePm2Registry(await d.pm2Registry(daemon, bootId));
   if (d.boot() !== bootId || !equal(d.readProcess(daemon.pid), before)) fail();
   return entries;
@@ -446,7 +446,7 @@ export async function captureCandidate(rawProof, targetSha, pauseExpected = "1",
     assertFrozenDisk(proof, d);
     const first = await observe(input, d, pauseExpected, proof.disk.runtime); await d.sleep(50); const second = await observe(input, d, pauseExpected, proof.disk.runtime);
     if (!equal(first, second)) fail();
-    assertMaintenanceDaemonContinuity(proof.daemon, second.daemon, proof.bootId);
+    assertBoundMaintenanceDaemonContinuity(proof.daemon, second.daemon, proof.bootId, d.boot());
     const entries = await pm2List(proof.daemon, d); await assertWorkerStopped(proof, d, entries);
     for (const fact of proof.web.processes) {
       const current = d.readProcess(fact.pid); if (current && current.startTicks === fact.startTicks) fail();
@@ -772,7 +772,7 @@ export async function verifyResumedCandidate(rawProof, rawResumed, overrides = {
     await d.sleep(50);
     const actual = await observe({ ...proof.input, expectedOldSha: candidate.targetSha }, d, "0",
       proof.worker.state === "running" ? candidate.disk.runtime : proof.disk.runtime);
-    assertMaintenanceDaemonContinuity(candidate.daemon, actual.daemon, proof.bootId);
+    assertBoundMaintenanceDaemonContinuity(candidate.daemon, actual.daemon, proof.bootId, d.boot());
     if (!equal(first, actual) || !equal(actual.disk, candidate.disk) || !equal(actual.environment, candidate.environment) ||
         !equal(actual.web, candidate.web) ||
         (resumed.worker ? !equal(actual.worker.managed, resumed.worker) : actual.worker.state === "running")) fail();

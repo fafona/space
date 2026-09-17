@@ -4,7 +4,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { types } from "node:util";
-import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
+import { assertBoundMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 import { captureTrustedPython, verifyTrustedPython } from "./production-maintenance-trusted-python.mjs";
 
 // Connect-only transport, not maintenance authority. The caller owns the lock,
@@ -229,7 +229,7 @@ async function exchange(rawDaemon, bootId, rawRequest, overrides, dump = false) 
       const current = plain(d.readProcess(daemon.pid));
       if (!exact(current, [...PROCESS_KEYS, "commandLine"])) fail();
       const fact = pick(current, PROCESS_KEYS);
-      assertMaintenanceDaemonContinuity(daemon, fact, bootId);
+      assertBoundMaintenanceDaemonContinuity(daemon, fact, bootId, d.boot());
       // Historical procfs metadata may differ from the frozen audit, but every
       // fresh sample across this complete exchange must still match exactly.
       if (observation !== null && !equal(fact, observation)) fail();

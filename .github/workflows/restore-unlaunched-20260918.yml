@@ -1,0 +1,138 @@
+name: Complete Unlaunched Release 20260918
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Complete the built 1aab release once using new journal; preserve failed operation
+        required: true
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  attestations: write
+  id-token: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ github.token }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      RECOVERY_DIR: /var/lib/faolla-unlaunched-code-${{ github.run_id }}/source/scripts
+      TARGET_SHA: 1aab7b9beb10d0f86f5354b873d8a56c85cae576
+    steps:
+      - name: Checkout Reviewed Restoration Source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Require Confirmation And Exact CI And Failed History
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = RESTORE_VERIFIED_UNLAUNCHED_20260918
+          node scripts/restore-unlaunched-20260918-workflow.mjs restoration-metadata "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Verify Original Hosted Backup And Readiness Baseline
+        run: |
+          set -euo pipefail
+          umask 077
+          for phase in backup readiness; do
+            if [ "$phase" = backup ]; then id=35271745728; workflow=database-backup.yml; else id=35284198746; workflow=ordinary-account-cutover-readiness.yml; fi
+            mkdir "$RUNNER_TEMP/restore-$phase"
+            gh run download "$id" --repo fafona/space --name "faolla-production-$phase-attestation-$id-1" --dir "$RUNNER_TEMP/restore-$phase"
+            predicate="$RUNNER_TEMP/restore-$phase/production-$phase-attestation.json"
+            gh attestation verify "$predicate" --repo fafona/space --signer-workflow "github.com/fafona/space/.github/workflows/$workflow" \
+              --source-digest "$TARGET_SHA" --source-ref refs/heads/main --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+              --limit 10 --format json > "$RUNNER_TEMP/restore-$phase/provenance.json"
+            node scripts/restore-unlaunched-20260918-workflow.mjs original-predicate "$phase" "$id" "$predicate" "$RUNNER_TEMP/restore-$phase/provenance.json"
+          done
+      - name: Install Pinned SSH Trust
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "${SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]]
+          test "${SSH_PORT:-22}" -ge 1 && test "${SSH_PORT:-22}" -le 65535
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+      - name: Transfer Private Restoration Code
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          # A new private parent, never an existing or historical worktree.
+          parent="/var/lib/faolla-unlaunched-code-$GITHUB_RUN_ID"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "set -eu; umask 077; mkdir -m 700 '$parent'; git -C /www/wwwroot/merchant-space fetch origin main; git -C /www/wwwroot/merchant-space worktree add --detach '$parent/source' '$GITHUB_SHA'; test \"\$(git -C '$parent/source' rev-parse HEAD)\" = '$GITHUB_SHA'; test -z \"\$(git -C '$parent/source' status --porcelain)\""
+          # Verify every transferred operational module against the hosted checkout.
+          (cd scripts; find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$RUNNER_TEMP/restoration-code.sha256"
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -P "${SSH_PORT:-22}" \
+            "$RUNNER_TEMP/restoration-code.sha256" "$RUNNER_TEMP/restore-readiness/production-readiness-attestation.json" "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "set -eu; cd '$RECOVERY_DIR'; sha256sum --quiet -c restoration-code.sha256; chmod 600 production-readiness-attestation.json"
+      - name: Inspect Unlaunched Predecessor Without Mutation
+        run: |
+          set -euo pipefail
+          umask 077
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/restore-unlaunched-20260918.mjs' inspect '$GITHUB_SHA' '$GITHUB_RUN_ID'" > restoration-receipt.json
+          node scripts/restore-unlaunched-20260918.mjs validate "$GITHUB_SHA" "$GITHUB_RUN_ID" restoration-receipt.json
+      - name: Retain Restoration Inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-restoration-inspection-${{ github.run_id }}-1
+          path: restoration-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Sign Restoration Inspection
+        uses: actions/attest@v4
+        with:
+          subject-path: restoration-receipt.json
+      - name: Verify Hosted Signature And Recheck Workflow Authority
+        run: |
+          set -euo pipefail
+          gh attestation verify restoration-receipt.json --repo fafona/space \
+            --signer-workflow github.com/fafona/space/.github/workflows/restore-unlaunched-20260918.yml \
+            --source-digest "$GITHUB_SHA" --source-ref refs/heads/main --predicate-type https://slsa.dev/provenance/v1 \
+            --deny-self-hosted-runners --limit 10 --format json > restoration-provenance.json
+          node scripts/restore-unlaunched-20260918-workflow.mjs signed-restoration "$GITHUB_SHA" "$GITHUB_RUN_ID" restoration-receipt.json restoration-provenance.json
+          node scripts/restore-unlaunched-20260918-workflow.mjs restoration-metadata "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Restore With New Durable Journal And Full Public Checks
+        run: |
+          set -euo pipefail
+          scp -q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -P "${SSH_PORT:-22}" restoration-receipt.json "$SSH_USER@$SSH_HOST:$RECOVERY_DIR/"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "NODE_OPTIONS='' NODE_PATH='' /usr/bin/node '$RECOVERY_DIR/restore-unlaunched-20260918.mjs' restore '$GITHUB_SHA' '$GITHUB_RUN_ID' '$RECOVERY_DIR/restoration-receipt.json' RESTORE_VERIFIED_UNLAUNCHED_20260918" > restoration-ended.json
+          node scripts/restore-unlaunched-20260918.mjs validate-ended "$GITHUB_SHA" "$GITHUB_RUN_ID" restoration-ended.json
+      - name: Retain Completed Restoration Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: faolla-restoration-ended-${{ github.run_id }}-1
+          path: |
+            restoration-receipt.json
+            restoration-provenance.json
+            restoration-ended.json
+          if-no-files-found: error
+          retention-days: 30

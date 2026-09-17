@@ -42,3 +42,17 @@ export function assertMaintenanceDaemonContinuity(rawFrozen, rawObserved, bootId
   const original = frozen.processIdentity.split(":"), current = observed.processIdentity.split(":");
   if ([0, 2, 5, 6, 7].some(index => original[index] !== current[index])) fail();
 }
+
+// Normal-operation continuity is bound to the boot recorded in the immutable
+// runtime proof, not to one incident's digest. procfs inode/mtime/ctime describe
+// a virtual inode's instantiation, not process lifetime. PID + startTicks + boot
+// and ALL other identity fields remain exact. This is only the historical
+// comparison: callers retain exact fresh samples and SO_PEERCRED authentication.
+export function assertBoundMaintenanceDaemonContinuity(rawFrozen, rawObserved, frozenBootId, observedBootId) {
+  const frozen = capture(rawFrozen), observed = capture(rawObserved);
+  if (typeof frozenBootId !== "string" || !BOOT.test(frozenBootId) ||
+      typeof observedBootId !== "string" || observedBootId !== frozenBootId ||
+      KEYS.some(key => key !== "processIdentity" && frozen[key] !== observed[key])) fail();
+  const original = frozen.processIdentity.split(":"), current = observed.processIdentity.split(":");
+  if ([0, 2, 5, 6, 7].some(index => original[index] !== current[index])) fail();
+}
