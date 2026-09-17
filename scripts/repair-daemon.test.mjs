@@ -55,7 +55,7 @@ test("all ten main CI jobs and exact signed authority bytes required", () => {
   assert.throws(() => validateDaemonProvenance(bytes + " ", result));
   assert.throws(() => validateDaemonProvenance(bytes, [...result, ...result]));
 });
-test("source proof rejects dirty, unrelated and executable changes", () => {
+test("historical daemon repair source pins reject later startup repair changes as well as dirty or executable changes", () => {
   const git = args => {
     if (args[0] === "rev-parse") return sha + "\n";
     if (args[0] === "status" || args[0] === "merge-base") return "";
@@ -64,7 +64,9 @@ test("source proof rejects dirty, unrelated and executable changes", () => {
     if (args[0] === "ls-tree") return args[1] === P.previousTargetSha ? "" : "100644 blob " + "f".repeat(40) + "\t" + args.at(-1) + "\n";
     throw Error("unexpected");
   };
-  assert.match(readDaemonRepairSource(sha, git), /^[a-f0-9]{64}$/);
+  // Current controller/recovery are no longer the exact historical repair.
+  // Its old authority must NOT be reusable against the newer startup repair.
+  assert.throws(() => readDaemonRepairSource(sha, git));
   for (const [command, output] of [["status", " M file\n"], ["diff", "src/proxy.ts\n"], ["rev-parse", "b".repeat(40)], ["ls-tree", "100755 blob a\tfile\n"]])
     assert.throws(() => readDaemonRepairSource(sha, args => args[0] === command ? output : git(args)));
 });

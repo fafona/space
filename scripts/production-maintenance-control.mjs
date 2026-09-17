@@ -502,6 +502,7 @@ function needsLaunchReconciliation(state) {
 /** All effects are injected: unit tests never start a process or contact production. */
 export async function runMaintenanceAction(request, ops) {
   const assertHistoricalGenerationStopped = async (state) => {
+    if (state.startupRepair) await ops.assertRetiredCandidateStopped(state.runtime, state.startupRepair.predecessor.candidate);
     if (state.version === 14) await ops.assertStartupGenerationsStopped(state);
     else if ([12, 13].includes(state.version)) await ops.assertLeaseGenerationsStopped(state);
     if (state.version === 11) await ops.assertPreflightRecoveryGenerationsStopped(state);
@@ -512,6 +513,7 @@ export async function runMaintenanceAction(request, ops) {
     if (state.version === 6) await ops.assertFailedCandidateGenerationStopped(state.attemptRecovery.predecessor.state);
   };
   const assertAttemptStopped = async (state) => {
+    if (state.startupRepair) await ops.assertRetiredCandidateStopped(state.runtime, state.startupRepair.predecessor.candidate);
     if (state.version === 14) await ops.assertStartupStopped(state);
     else if ([12, 13].includes(state.version)) await ops.assertLeaseStopped(state);
     else if (state.version === 11) await ops.assertPreflightRecoveryStopped(state);
@@ -1080,7 +1082,7 @@ export async function runMaintenanceAction(request, ops) {
   if (request.action === "start-candidate") {
     if (state.phase !== "held") failure("maintenance_not_held");
     await startupDiagnostic("controller_ingress", () => ops.verifyIngress(state.ingress, { probeControlServices: false }));
-    if ([6, 7, 8, 9, 10, 11, 12, 13, 14].includes(state.version)) await startupDiagnostic("controller_stopped", () => assertAttemptStopped(state));
+    if (state.startupRepair || [6, 7, 8, 9, 10, 11, 12, 13, 14].includes(state.version)) await startupDiagnostic("controller_stopped", () => assertAttemptStopped(state));
     try {
       state.candidate = await startupDiagnostic("controller_start", () => ops.startCandidate(state.runtime, state.targetSha, { launchJournal: createMaintenanceLaunchCallbacks(state, ops) }));
       if (state.launchJournal?.slots["paused-web"]?.phase !== "confirmed" || state.candidate?.targetSha !== state.targetSha) failure("maintenance_candidate_unverified");
@@ -1293,7 +1295,7 @@ async function productionOperations(request) {
       // Reading T1 and acknowledging T2 are separately bound; ordinary callers
       // never inherit this compatibility branch from the contents of a file.
       const targetSha = (recovery && value.version === 2) || (continuation && value.version === 3) || (buildRecovery && value.version === 4) || (attemptRecovery && value.version === 5) || (secondAttemptRecovery && value.version === 6) || (budgetRecovery && value.version === 7) || (windowRenewal && value.version === 8) || (prelaunchRecovery && value.version === 9) || (preflightRecovery && value.version === 10) || (leaseRenewal && value.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && value.version === 12) ? request.previousTargetSha : request.targetSha;
-      const boundTargetSha = request.action === "repair-daemon" && !Object.hasOwn(value, "daemonRepair") ? request.previousTargetSha : ["inspect-startup-recovery", "recover-startup"].includes(request.action) && (value.version === 13 || value.version === 14 && !value.startupRecovery.retarget) ? request.previousTargetSha : targetSha;
+      const boundTargetSha = request.action === "repair-startup" && !Object.hasOwn(value, "startupRepair") ? request.previousTargetSha : request.action === "repair-daemon" && !Object.hasOwn(value, "daemonRepair") ? request.previousTargetSha : ["inspect-startup-recovery", "recover-startup"].includes(request.action) && (value.version === 13 || value.version === 14 && !value.startupRecovery.retarget) ? request.previousTargetSha : targetSha;
       validateMaintenanceState(value, { ...request, targetSha: boundTargetSha, operationId: request.operationId ?? value.operationId }, bootId(), Date.now());
       if (recovery && value.version === 3 && (value.recovery.evidence.previousTargetSha !== request.previousTargetSha ||
           value.recovery.evidence.targetSha !== request.targetSha)) failure("maintenance_recovery_state_invalid");
@@ -1368,7 +1370,7 @@ async function productionOperations(request) {
       (["inspect-preflight-recovery", "recover-preflight"].includes(request.action) && loaded.version === 10) ||
       (["inspect-startup-recovery", "recover-startup"].includes(request.action) && (loaded.version === 13 || loaded.version === 14 && !loaded.startupRecovery.retarget)) ||
       (["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 11) || (["inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action) && loaded.version === 12);
-    const targetSha = previous || request.action === "repair-daemon" && !Object.hasOwn(loaded, "daemonRepair") ? request.previousTargetSha : request.targetSha;
+    const targetSha = previous || request.action === "repair-startup" && !Object.hasOwn(loaded, "startupRepair") || request.action === "repair-daemon" && !Object.hasOwn(loaded, "daemonRepair") ? request.previousTargetSha : request.targetSha;
     const state = validateMaintenanceState(loaded, { ...request, targetSha, operationId: request.operationId ?? loaded.operationId }, bootId(), Date.now());
     const environment = await runtime.readRuntimeHandoffEnvironment(state.runtime);
     if (typeof environment.anonKey !== "string" || !environment.anonKey || /[\r\n]/.test(environment.anonKey)) failure("maintenance_probe_credentials_invalid");
@@ -1614,6 +1616,17 @@ async function productionOperations(request) {
           snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
           Object.hasOwn(snapshot.state, "daemonRepair") || !Object.hasOwn(next, "daemonRepair") || next.revision !== previous.revision + 1)
         failure("maintenance_daemon_repair_write_unconfirmed");
+      try {
+        const saved = await store.replaceOperationUnderExistingOperationLock({ expectedRevision: previous.revision, expectedDigest: previous.digest, next });
+        poisonedStates.add(snapshot.state); return clone(saved.state);
+      } catch (error) { poisonedStates.add(snapshot.state); throw error; }
+    },
+    async commitStartupRepair(snapshot, next) {
+      const previous = baselines.get(snapshot.state);
+      if (!previous || poisonedStates.has(snapshot.state) || request.action !== "repair-startup" ||
+          snapshot.revision !== previous.revision || snapshot.digest !== previous.digest ||
+          Object.hasOwn(snapshot.state, "startupRepair") || !Object.hasOwn(next, "startupRepair") || next.revision !== previous.revision + 1)
+        failure("maintenance_startup_repair_write_unconfirmed");
       try {
         const saved = await store.replaceOperationUnderExistingOperationLock({ expectedRevision: previous.revision, expectedDigest: previous.digest, next });
         poisonedStates.add(snapshot.state); return clone(saved.state);

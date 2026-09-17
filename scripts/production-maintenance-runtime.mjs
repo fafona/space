@@ -388,6 +388,24 @@ export async function assertRuntimeStopped(rawProof, overrides = {}) {
     assertFrozenDisk(proof, d); return true;
   });
 }
+// A retired failed candidate must never reappear, even while the NEW candidate
+// legitimately occupies the same app name/PM2 numeric id and listening port.
+export async function assertRetiredCandidateStopped(rawProof, rawCandidate, overrides = {}) {
+  return guarded(async () => {
+    const proof=validateRuntimeProof(rawProof),candidate=validateCandidateProof(rawCandidate,proof);
+    const d=dependencies(overrides,proof.input.appPort,proof.bootId);
+    const diskProof={...proof,input:{...proof.input,expectedOldSha:candidate.targetSha},disk:candidate.disk,environment:candidate.environment};
+    for(let i=0;i<2;i++){
+      assertFrozenDisk(diskProof,d);
+      const entries=await pm2List(proof.daemon,d);
+      if(entries.some(e=>e.pm2_env.pm_cwd===candidate.disk.runtime||e.pm2_env.pm_exec_path.startsWith(candidate.disk.runtime+"/")||
+        e.pm_id===candidate.web.pm2.pmId&&e.pm2_env.created_at===candidate.web.pm2.createdAt))fail();
+      for(const fact of candidate.web.processes){const actual=d.readProcess(fact.pid);if(actual&&actual.startTicks===fact.startTicks)fail();}
+      assertNoUnfrozenRuntimeProcess(candidate.disk.runtime,[],d);assertFrozenDisk(diskProof,d);
+    }
+    return true;
+  });
+}
 async function deleteExact(managed, kind, daemon, runtime, d) {
   if (!managed || managed.pm2.status === "stopped") return;
   const entries = await pm2List(daemon, d);
@@ -603,7 +621,10 @@ async function waitForStartedCandidate(proof, candidate, d, overrides, launch) {
     await startupDiagnostic("launch_identity", assertLaunch);
     const observation = await startupDiagnostic("launch_supervision", () => bounded(() => d.supervision(proof.input.appName, candidate.disk, proof.input.appPort, candidate.targetSha)));
     await assertLaunch();
-    if (observation.listener.state !== "absent" &&
+    // Only absent/unattributed startup observations may wait, within the SAME
+    // launch and original deadline. Known foreign/multiple owners fail closed.
+    // Neither state can reach capture/confirmation without a later owned PID.
+    if (!["absent", "unattributed"].includes(observation.listener.state) &&
         (observation.listener.state !== "single" || observation.listener.pid !== launched.pm2.pid ||
           observation.ownership.state !== "owned" || observation.ownership.mode !== "direct")) fail();
     if (observation.healthVerified && observation.listener.state === "single") {

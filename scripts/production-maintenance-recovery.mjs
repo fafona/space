@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { isProxy } from "node:util/types";
 import { validateDaemonRepairState, assertDaemonRepairProgress } from "./production-maintenance-daemon-repair.mjs";
+import { validateStartupRepairState, assertStartupRepairProgress } from "./production-maintenance-startup-repair.mjs";
 
 /** Pure, one-time recovery protocol. No filesystem, network, clock, process or
  * service operation is performed here. Callers MUST authenticate CI/history,
@@ -158,6 +159,14 @@ export function buildMaintenanceRecoveredState(rawState, rawEvidence, rawContext
 
 export function validateMaintenanceRecoveryState(rawState, rawClock) {
   const state = bounded(rawState), clock = bounded(rawClock);
+  if (Object.hasOwn(state, "startupRepair")) {
+    validateStartupRepairState(state, clock);
+    validateMaintenanceRecoveryState(state.startupRepair.predecessor, clock);
+    const original = { ...state, targetSha: state.startupRepair.predecessor.targetSha };
+    delete original.startupRepair;
+    validateMaintenanceRecoveryState(original, clock);
+    return freeze(state);
+  }
   if (Object.hasOwn(state, "daemonRepair")) {
     validateDaemonRepairState(state, clock);
     const original = { ...state, targetSha: state.daemonRepair.predecessor.targetSha };
@@ -185,6 +194,12 @@ export function validateMaintenanceRecoveryState(rawState, rawClock) {
 export function assertMaintenanceRecoveryProgress(rawPrevious, rawNext) {
   const previous = bounded(rawPrevious), next = bounded(rawNext);
   if (!record(previous) || !record(next)) fail();
+  if (Object.hasOwn(previous, "startupRepair") || Object.hasOwn(next, "startupRepair")) {
+    assertStartupRepairProgress(previous, next);
+    const clock = { bootId: next.bootId, now: next.startupRepair.repairedAt };
+    validateMaintenanceRecoveryState(previous, clock); validateMaintenanceRecoveryState(next, clock);
+    return;
+  }
   if (Object.hasOwn(previous, "daemonRepair") || Object.hasOwn(next, "daemonRepair")) {
     assertDaemonRepairProgress(previous, next);
     const clock = { bootId: next.bootId, now: next.daemonRepair.repairedAt };

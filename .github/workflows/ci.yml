@@ -51,6 +51,12 @@ jobs:
       - name: Lint
         run: npm run lint -- --quiet
 
+      - name: Isolated Real Next Startup Attribution Acceptance
+        timeout-minutes: 7
+        env:
+          FAOLLA_NEXT_STARTUP_ACCEPTANCE: "1"
+        run: node scripts/production-maintenance-next-startup-acceptance.mjs
+
       - name: Tests
         run: npm test
 
