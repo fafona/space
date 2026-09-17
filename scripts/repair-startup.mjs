@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { constants, openSync, closeSync, fsyncSync, writeFileSync, readFileSync, readlinkSync, lstatSync, realpathSync, symlinkSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { STARTUP_REPAIR as P, validateStartupRepairPredecessor, buildStartupRepairedState } from "./production-maintenance-startup-repair.mjs";
+import { STARTUP_REPAIR as P, STARTUP_COMPLETION as C, validateStartupRepairPredecessor, validateStartupCompletionPredecessor, buildStartupRepairedState } from "./production-maintenance-startup-repair.mjs";
 import { validateTransportRepairLedger } from "./repair-unlaunched-transport.mjs";
 import { assertMaintenanceRecoveryProgress } from "./production-maintenance-recovery.mjs";
 import { productionOperations, withPrivateOperationLock, validateMaintenanceState, validateMaintenanceSubproofBindings } from "./production-maintenance-control.mjs";
@@ -23,8 +23,10 @@ const command = (file, args, input) => {
   return result.stdout;
 };
 const REVIEWED_CORE = Object.freeze({
-  "scripts/production-maintenance-control.mjs": "0dab2e6f567b0030fdb0861086a9bc3f6b00d8cbe66c1386d6deb17f82fbed08",
-  "scripts/production-maintenance-recovery.mjs": "326951222d35dc04d11144fbc85efff47223ca35428e6214029c30c694697a65",
+  "scripts/production-maintenance-control.mjs": "285722a376532431f103eb1a2388464a304ad7d4fc491e7b38d4cadd016611e4",
+  "scripts/production-maintenance-recovery.mjs": "f9910d4e66415eae282b2331620ab1b9b130fbba43d95b86b5b5b6f46cd149c0",
+  "scripts/production-maintenance-launch-journal-storage.mjs": "d0cd8596994f10a67e1e8ebf64565bab03f019b0f55e531db063d1b4a6aeabe2",
+  "scripts/production-maintenance-launch-journal-storage.test.mjs": "0859fb444090578f409484e58529a76fdde50e486d2d3d4a3b49fff1a110d87d",
   "scripts/check-production-runtime-supervision.mjs": "dae80654e87692425f820d051362a02c8a62875a6f929933ca6ede52c37cabc4",
   "scripts/check-production-runtime-supervision.test.mjs": "843adc950afb8e14e4d15cf038ff6f1c0b3f406497eb0ad7bf63e421eb2fc573",
   "scripts/production-maintenance-runtime.mjs": "0463a519d696429cbcc95add9d3f7029aa3cc241a49dbb2e92c754bffda0561e",
@@ -33,6 +35,9 @@ const REVIEWED_CORE = Object.freeze({
   "scripts/repair-daemon.test.mjs": "4993590329f25f7c05bc74195ce8eea6564bceb279996db86dc12bdfa73bdcc6"
 });
 export const STARTUP_REPAIR_PATHS = Object.freeze([
+  "scripts/production-maintenance-launch-journal-storage.mjs",
+  "scripts/production-maintenance-launch-journal-storage.test.mjs",
+  "scripts/startup-completion-storage-acceptance.mjs",
   "scripts/check-production-runtime-supervision.mjs",
   "scripts/check-production-runtime-supervision.test.mjs",
   "scripts/production-maintenance-runtime.mjs",
@@ -68,12 +73,28 @@ export function readStartupRepairSource(sha, git = args => command("/usr/bin/git
   check(); return hash(changes);
 }
 export function validateStartupRepairAuthority(value, sha, runId, now = Date.now()) {
+  if(value?.kind==="faolla-startup-completion"){
+    if(!exact(value,["version","kind","targetSha","runId","runAttempt","operationId","failedRunId","mainCIrunId","historyDigest","checkedAt","previousAuthorityDigest","expiresAt"])||
+      value.version!==2||!SHA.test(sha)||value.targetSha!==sha||!ID.test(runId)||value.runId!==runId||runId===C.failedRunId||value.runAttempt!==1||
+      value.operationId!==P.operationId||value.failedRunId!==C.failedRunId||value.previousAuthorityDigest!==C.authorityDigest||value.expiresAt!==C.expiresAt||
+      !ID.test(value.mainCIrunId)||!HASH.test(value.historyDigest)||!Number.isSafeInteger(value.checkedAt)||value.checkedAt<C.authorizedAfter||
+      value.checkedAt>now||now-value.checkedAt>300000||now>=C.expiresAt)fail();
+    return value;
+  }
   if (!exact(value, ["version", "kind", "targetSha", "runId", "runAttempt", "operationId", "failedRunId", "mainCIrunId", "historyDigest", "checkedAt"]) ||
       value.version !== 1 || value.kind !== "faolla-startup-repair" || !SHA.test(sha) || value.targetSha !== sha || !ID.test(runId) ||
       value.runId !== runId || value.runAttempt !== 1 || value.operationId !== P.operationId || value.failedRunId !== P.failedRunId ||
       !ID.test(value.mainCIrunId) || !HASH.test(value.historyDigest) || !Number.isSafeInteger(value.checkedAt) ||
       value.checkedAt > now || now - value.checkedAt > 300000) fail();
   return value;
+}
+export function verifyPartialStartup(state) {
+  const directory="/var/lib/faolla-maintenance/merchant-space";
+  for(const [name,digest] of [["predecessor",P.stateDigest],["authority",C.authorityDigest]]){
+    const file=directory+"/startup-35165126333."+name+".json",s=lstatSync(file);
+    if(!s.isFile()||s.isSymbolicLink()||s.uid!==0||s.nlink!==1||(s.mode&0o077)!==0||s.size>4194304||hash(readFileSync(file))!==digest)fail();
+  }
+  if(hash(state)!==P.stateDigest||readlinkSync(P.appDir+".current")!==P.stableRelease||realpathSync(P.appDir+".current")!==P.stableRelease)fail();
 }
 function createPrivate(file, bytes) {
   const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -106,12 +127,15 @@ function ledger(state) {
   return validateTransportRepairLedger(rows, db.databaseOid, catalog, P.createdAt);
 }
 export async function runStartupRepair(action, sha, runId, authority, ops, sourceDigest, request) {
-  if (!["inspect", "repair"].includes(action)) fail();
+  if (!["inspect", "repair", "complete"].includes(action)) fail();
+  const completion=action==="complete";
   validateStartupRepairAuthority(authority, sha, runId, ops.now());
+  if(completion&&authority.kind!=="faolla-startup-completion")fail();
   const snapshot = await ops.readRecoverySnapshot();
-  const state = validateStartupRepairPredecessor(snapshot.state, { bootId: ops.bootId(), now: ops.now() });
+  const state = (completion?validateStartupCompletionPredecessor:validateStartupRepairPredecessor)(snapshot.state, { bootId: ops.bootId(), now: ops.now() });
   if (snapshot.digest !== P.stateDigest || snapshot.revision !== P.revision) fail();
   ops.validateProofs(state);
+  if(completion)await ops.verifyPartialStartup(state);
   const verify = async () => { await ops.verifyIngress(state.ingress); await ops.assertRuntimeStopped(state.runtime); await ops.assertRetiredCandidateStopped(state.runtime, state.candidate); await ops.assertDatabaseQuiet(state.database); };
   await verify();
   const migrationDigest = await ops.readStartupLedger(state);
@@ -120,7 +144,7 @@ export async function runStartupRepair(action, sha, runId, authority, ops, sourc
   if (await ops.readStartupLedger(state) !== migrationDigest) fail();
   validateStartupRepairAuthority(authority, sha, runId, ops.now());
   const repairedAt = ops.now();
-  const next = buildStartupRepairedState(state, { version: 1, predecessor: state, targetSha: sha, repairedAt, runId,
+  const next = buildStartupRepairedState(state, { version: completion?2:1, ...(completion?{completion:C}:{}), predecessor: state, targetSha: sha, repairedAt, runId,
     mainCIrunId: authority.mainCIrunId, sourceDigest, historyDigest: authority.historyDigest, historyCheckedAt: authority.checkedAt, migrationDigest },
     { bootId: ops.bootId(), now: repairedAt });
   validateMaintenanceState(next, request, ops.bootId(), ops.now()); validateMaintenanceSubproofBindings(next); ops.validateProofs(next);
@@ -137,7 +161,8 @@ export async function runStartupRepair(action, sha, runId, authority, ops, sourc
   }
   if (action === "inspect") return { state: "startup-inspected", operationId: P.operationId, priorLaunchPreserved: true };
   await ops.archiveStartupPredecessor(state, authority);
-  await ops.restoreStoppedCurrent(state);
+  if(completion)await ops.verifyPartialStartup(state);
+  else await ops.restoreStoppedCurrent(state);
   await verify();
   const saved = await ops.commitStartupRepair(snapshot, next);
   if (JSON.stringify(saved) !== JSON.stringify(next)) fail();
@@ -147,23 +172,24 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   let stage = "arguments";
   try {
     const [action, sha, runId, file] = process.argv.slice(2);
-    if (process.platform !== "linux" || process.getuid?.() !== 0 || readlinkSync(P.appDir + ".current") !== P.release) fail();
+    if (action!=="complete"||process.platform !== "linux" || process.getuid?.() !== 0 || readlinkSync(P.appDir + ".current") !== P.stableRelease) fail();
     stage = "authority";
     const meta = lstatSync(file);
     if (!meta.isFile() || meta.isSymbolicLink() || meta.uid !== 0 || meta.nlink !== 1 || (meta.mode & 0o077) || meta.size > 8192) fail();
     const authority = validateStartupRepairAuthority(JSON.parse(readFileSync(file)), sha, runId);
     stage = "source";
     const sourceDigest = readStartupRepairSource(sha);
-    const request = { action: "repair-startup", appDir: P.appDir, appName: P.appName, appPort: P.appPort,
+    const request = { action: "complete-startup", appDir: P.appDir, appName: P.appName, appPort: P.appPort,
       targetSha: sha, previousTargetSha: P.previousTargetSha, expectedOldSha: P.expectedOldSha, operationId: P.operationId };
     stage = "operations";
     const ops = await productionOperations(request);
     ops.restoreStoppedCurrent = restoreStoppedCurrent;
+    ops.verifyPartialStartup = verifyPartialStartup;
     ops.readStartupLedger = ledger;
     ops.archiveStartupPredecessor = (state, auth) => {
       const directory = "/var/lib/faolla-maintenance/merchant-space";
-      createPrivate(directory + "/startup-35165126333.predecessor.json", JSON.stringify(state));
-      createPrivate(directory + "/startup-35165126333.authority.json", JSON.stringify(auth));
+      createPrivate(directory + "/startup-completion-35174658032.predecessor.json", JSON.stringify(state));
+      createPrivate(directory + "/startup-completion-35174658032.authority.json", JSON.stringify(auth));
     };
     stage = "held-verification-and-cas";
     const result = await withPrivateOperationLock(request, () => runStartupRepair(action, sha, runId, authority, ops, sourceDigest, request));

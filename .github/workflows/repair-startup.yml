@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Recover only confirmed stopped failure 35165126333; keep ingress closed
+        description: Complete partial repair 35174658032 with archived authority and audited maintenance renewal; keep ingress closed
         required: true
 
 concurrency:
@@ -46,7 +46,7 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
-          test "$CONFIRMATION" = REPAIR_STARTUP_35165126333
+          test "$CONFIRMATION" = COMPLETE_STARTUP_35174658032
           node --test scripts/repair-startup.test.mjs
       - name: Verify Original Signed Maintenance Bindings
         run: |
@@ -70,6 +70,19 @@ jobs:
               --backup-run-id 35163641695 --backup-run-attempt 1 \
               --mode maintenance --operation-id "$OPERATION_ID" --old-sha "$OLD_SHA" --github-output "$GITHUB_OUTPUT"
           done
+      - name: Verify Archived Partial Repair Authority
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/partial-repair"
+          gh run download 35174658032 --repo fafona/space --name faolla-startup-repair-35174658032-1 --dir "$RUNNER_TEMP/partial-repair"
+          file="$RUNNER_TEMP/partial-repair/startup-authority.json"
+          gh attestation verify "$file" --repo fafona/space \
+            --signer-workflow github.com/fafona/space/.github/workflows/repair-startup.yml \
+            --source-digest cf0515b58e8c7998e57e2725b83c5ae7ea8333e8 --source-ref refs/heads/main \
+            --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners \
+            --limit 10 --format json > "$RUNNER_TEMP/partial-repair/verified.json"
+          node scripts/repair-startup-workflow.mjs verify-prior cf0515b58e8c7998e57e2725b83c5ae7ea8333e8 35174658032 \
+            "$file" "$RUNNER_TEMP/partial-repair/verified.json"
       - name: Install Pinned SSH Trust
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -155,7 +168,8 @@ jobs:
           test "$(stat -Lc '%d:%i' /proc/$$/fd/9)" = "$identity"
           test "$(stat -c '%d:%i' "$lock")" = "$identity"
           chmod 600 "$evidence/startup-authority.json"
-          NODE_OPTIONS='' NODE_PATH='' /usr/bin/node "$worktree/scripts/repair-startup.mjs" repair "$target" "$run_id" "$evidence/startup-authority.json"
+          FAOLLA_STARTUP_STORAGE_ACCEPTANCE=1 NODE_OPTIONS='' NODE_PATH='' /usr/bin/node "$worktree/scripts/startup-completion-storage-acceptance.mjs" >&2
+          NODE_OPTIONS='' NODE_PATH='' /usr/bin/node "$worktree/scripts/repair-startup.mjs" complete "$target" "$run_id" "$evidence/startup-authority.json"
           REMOTE
           node scripts/production-maintenance-workflow-contract.mjs verify-control \
             --file "$RUNNER_TEMP/startup-repaired.json" --state held --target-sha "$GITHUB_SHA" --old-sha "$OLD_SHA" --operation-id "$OPERATION_ID"
@@ -170,5 +184,3 @@ jobs:
             ${{ runner.temp }}/startup-repaired.json
           if-no-files-found: warn
           retention-days: 30
-
-

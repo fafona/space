@@ -4,7 +4,7 @@ import { posix } from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { isProxy } from "node:util/types";
 import { validateDaemonRepairState, assertDaemonRepairProgress } from "./production-maintenance-daemon-repair.mjs";
-import { validateStartupRepairState, assertStartupRepairProgress } from "./production-maintenance-startup-repair.mjs";
+import { validateStartupRepairState, assertStartupRepairProgress, startupRepairHistoricalClock } from "./production-maintenance-startup-repair.mjs";
 
 /** Pure, one-time recovery protocol. No filesystem, network, clock, process or
  * service operation is performed here. Callers MUST authenticate CI/history,
@@ -161,10 +161,11 @@ export function validateMaintenanceRecoveryState(rawState, rawClock) {
   const state = bounded(rawState), clock = bounded(rawClock);
   if (Object.hasOwn(state, "startupRepair")) {
     validateStartupRepairState(state, clock);
-    validateMaintenanceRecoveryState(state.startupRepair.predecessor, clock);
+    const historicalClock = startupRepairHistoricalClock(state, clock);
+    validateMaintenanceRecoveryState(state.startupRepair.predecessor, historicalClock);
     const original = { ...state, targetSha: state.startupRepair.predecessor.targetSha };
     delete original.startupRepair;
-    validateMaintenanceRecoveryState(original, clock);
+    validateMaintenanceRecoveryState(original, historicalClock);
     return freeze(state);
   }
   if (Object.hasOwn(state, "daemonRepair")) {
@@ -197,7 +198,7 @@ export function assertMaintenanceRecoveryProgress(rawPrevious, rawNext) {
   if (Object.hasOwn(previous, "startupRepair") || Object.hasOwn(next, "startupRepair")) {
     assertStartupRepairProgress(previous, next);
     const clock = { bootId: next.bootId, now: next.startupRepair.repairedAt };
-    validateMaintenanceRecoveryState(previous, clock); validateMaintenanceRecoveryState(next, clock);
+    validateMaintenanceRecoveryState(previous, previous.startupRepair ? clock : startupRepairHistoricalClock(next, clock)); validateMaintenanceRecoveryState(next, clock);
     return;
   }
   if (Object.hasOwn(previous, "daemonRepair") || Object.hasOwn(next, "daemonRepair")) {

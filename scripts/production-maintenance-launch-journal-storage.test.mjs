@@ -89,6 +89,16 @@ test("one existing state is CAS-updated only after file sync, rename, parent syn
   assert.equal(f.events.at(-1), "unlock");
 });
 
+test("a fabricated startup repair cannot clear an existing consumed journal",async()=>{
+ const f=fixture("unknown"),store=f.store(),before=await store.readUnderExistingOperationLock(f.bound);
+ for(const version of [1,2]){
+  const next={...before.state,appName:"faolla",revision:before.revision+1,launchJournal:null,startupRepair:{version,predecessor:before.state}};
+  f.events.length=0;
+  await assert.rejects(store.replaceOperationUnderExistingOperationLock({expectedRevision:before.revision,expectedDigest:before.digest,next}));
+  assert(!f.events.includes("write")&&!f.events.includes("rename"));assert(!f.files.has(TEMP));
+ }
+});
+
 test("concurrent callers using one real expected revision and digest have exactly one successful CAS", async () => {
   const f = fixture(); const request = f.request(); const store = f.store(); let sends = 0;
   const results = await Promise.allSettled([1, 2].map(async () => { await store.applyUnderExistingOperationLock(request); sends++; }));
