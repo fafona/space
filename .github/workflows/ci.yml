@@ -35,6 +35,34 @@ jobs:
       - name: Encoding Check (Strict)
         run: npm run check:encoding:strict
 
+      - name: Isolated Real Next Startup Attribution Acceptance
+        timeout-minutes: 7
+        env:
+          FAOLLA_NEXT_STARTUP_ACCEPTANCE: "1"
+        # Exercise the unchanged root-owned production helper trust boundary in
+        # a new private copy on the disposable hosted runner, never the checkout.
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          source_root="$(pwd -P)"
+          node_binary="$(readlink -f "$(command -v node)")"
+          npm_cli="$(readlink -f "$(command -v npm)")"
+          npm_package="$(dirname "$(dirname "$npm_cli")")"
+          test "$npm_cli" = "$npm_package/bin/npm-cli.js"
+          test -f "$npm_package/package.json"
+          fixture_root="$(sudo -n mktemp -d /root/.faolla-next-acceptance.XXXXXXXX)"
+          [[ "$fixture_root" =~ ^/root/\.faolla-next-acceptance\.[A-Za-z0-9]{8}$ ]]
+          test "$(sudo -n realpath "$fixture_root")" = "$fixture_root"
+          test "$(sudo -n stat -c '%u:%a' "$fixture_root")" = 0:700
+          sudo -n cp -R --no-preserve=ownership "$source_root/scripts" "$source_root/node_modules" "$fixture_root/"
+          sudo -n cp --no-preserve=ownership "$node_binary" "$fixture_root/node"
+          sudo -n cp -R --no-preserve=ownership "$npm_package" "$fixture_root/npm"
+          sudo -n chmod -R go-w "$fixture_root"
+          sudo -n env -i HOME=/root PATH="$fixture_root:/usr/bin:/bin" GITHUB_ACTIONS=true \
+            RUNNER_ENVIRONMENT=github-hosted FAOLLA_NEXT_STARTUP_ACCEPTANCE=1 \
+            "$fixture_root/node" "$fixture_root/scripts/production-maintenance-next-startup-acceptance.mjs"
+
       - name: Maintenance Topology Diagnostic Tests
         run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs scripts/check-production-maintenance-capabilities.test.mjs
 
@@ -50,29 +78,6 @@ jobs:
 
       - name: Lint
         run: npm run lint -- --quiet
-
-      - name: Isolated Real Next Startup Attribution Acceptance
-        timeout-minutes: 7
-        env:
-          FAOLLA_NEXT_STARTUP_ACCEPTANCE: "1"
-        # Exercise the unchanged root-owned production helper trust boundary in
-        # a new private copy on the disposable hosted runner, never the checkout.
-        run: |
-          set -euo pipefail
-          test "$GITHUB_ACTIONS" = true
-          test "$RUNNER_ENVIRONMENT" = github-hosted
-          source_root="$(pwd -P)"
-          node_binary="$(readlink -f "$(command -v node)")"
-          fixture_root="$(sudo -n mktemp -d /root/.faolla-next-acceptance.XXXXXXXX)"
-          [[ "$fixture_root" =~ ^/root/\.faolla-next-acceptance\.[A-Za-z0-9]{8}$ ]]
-          test "$(sudo -n realpath "$fixture_root")" = "$fixture_root"
-          test "$(sudo -n stat -c '%u:%a' "$fixture_root")" = 0:700
-          sudo -n cp -R --no-preserve=ownership "$source_root/scripts" "$source_root/node_modules" "$fixture_root/"
-          sudo -n cp --no-preserve=ownership "$node_binary" "$fixture_root/node"
-          sudo -n chmod -R go-w "$fixture_root"
-          sudo -n env -i HOME=/root PATH="$fixture_root:/usr/bin:/bin" GITHUB_ACTIONS=true \
-            RUNNER_ENVIRONMENT=github-hosted FAOLLA_NEXT_STARTUP_ACCEPTANCE=1 \
-            "$fixture_root/node" "$fixture_root/scripts/production-maintenance-next-startup-acceptance.mjs"
 
       - name: Tests
         run: npm test

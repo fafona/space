@@ -31,6 +31,9 @@ the disposable hosted runner. It does not change checkout ownership, override
 helper proofs or weaken the production adapter. Its opt-in also requires the
 hosted-runner marker and root identity. Production state was not changed by
 this failed CI.
+The private toolchain copy includes npm, invoked explicitly with the copied Node
+binary rather than relying on the runner's PATH. This acceptance runs before the
+long maintenance regression, while all existing checks remain mandatory.
 
 ## Recovery boundaries
 
