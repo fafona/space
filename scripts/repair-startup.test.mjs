@@ -12,6 +12,17 @@ const authority = () => ({ version: 1, kind: "faolla-startup-repair", targetSha:
   operationId: P.operationId, failedRunId: P.failedRunId, mainCIrunId: "35159000000", historyDigest: "a".repeat(64), checkedAt: now });
 const digest = b => createHash("sha256").update(b).digest("hex");
 
+test("real Next acceptance preserves root helper trust in a private hosted-runner copy", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const section = workflow.slice(workflow.indexOf("name: Isolated Real Next Startup Attribution Acceptance"), workflow.indexOf("- name: Tests"));
+  for (const token of ['test "$RUNNER_ENVIRONMENT" = github-hosted', 'sudo -n mktemp -d /root/.faolla-next-acceptance.XXXXXXXX',
+    'sudo -n cp -R --no-preserve=ownership', 'sudo -n chmod -R go-w "$fixture_root"', 'sudo -n env -i', '0:700']) assert(section.includes(token), token);
+  assert(!section.includes('chown') && !section.includes('rm -rf') && !section.includes('continue-on-error'));
+  const fixture = readFileSync(new URL("./production-maintenance-next-startup-acceptance.mjs", import.meta.url), "utf8");
+  assert(fixture.includes("process.getuid?.()!==0") && fixture.includes("RUNNER_ENVIRONMENT!=='github-hosted'"));
+  assert(fixture.includes("await controlPm2(daemon,boot,") && !fixture.includes("helperProof:"));
+});
+
 test("only exact hosted authority and fresh target/run bindings pass", () => {
   assert.deepEqual(validateStartupRepairAuthority(authority(), sha, runId, now), authority());
   for (const patch of [{ kind: "faolla-unlaunched-transport-repair" }, { targetSha: "b".repeat(40) }, { runId: "35160000001" },
@@ -78,5 +89,4 @@ test("workflow preserves original locks, signed evidence, independent backup and
   assert(code.includes("await verify();")); assert(code.includes("await ops.commitStartupRepair(snapshot, next)"));
   assert(code.includes('constants.O_EXCL | constants.O_NOFOLLOW')); assert(!code.includes("ops.save("));
 });
-
 

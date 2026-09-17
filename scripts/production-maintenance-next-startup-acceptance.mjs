@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {homedir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-if(process.platform!=='linux'||process.env.GITHUB_ACTIONS!=='true'||process.env.FAOLLA_NEXT_STARTUP_ACCEPTANCE!=='1')throw Error('isolated_next_opt_in_required');
+if(process.platform!=='linux'||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_NEXT_STARTUP_ACCEPTANCE!=='1'||process.getuid?.()!==0)throw Error('isolated_next_opt_in_required');
 const scripts=dirname(fileURLToPath(import.meta.url))+'/';
 const {captureProcessFact,captureSupervisionSnapshot}=await import(scripts+'check-production-runtime-supervision.mjs');
 const {controlPm2,inspectPm2Registry}=await import(scripts+'production-maintenance-pm2-adapter.mjs');
