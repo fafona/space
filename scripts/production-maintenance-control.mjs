@@ -319,7 +319,11 @@ export function validateMaintenanceState(state, request, bootId, now) {
   const windowPredecessor = state?.version === 8 && ["inspect-window-renewal", "renew-window"].includes(request.action);
   const leasePredecessor = [11, 12, 13].includes(state?.version) && ["inspect-lease-renewal", "renew-lease", "inspect-fence-recovery", "recover-fence", "inspect-startup-recovery", "recover-startup"].includes(request.action);
   const prelaunchPredecessor = state?.version === 9 && ["inspect-prelaunch-recovery", "recover-prelaunch"].includes(request.action);
-  if (state?.version === 3) { validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery"); if (Object.hasOwn(state, "daemonRepair")) keys.push("daemonRepair"); }
+  if (state?.version === 3) {
+    validateMaintenanceRecoveryState(state, { bootId, now }); keys.push("recovery");
+    if (Object.hasOwn(state, "daemonRepair")) keys.push("daemonRepair");
+    if (Object.hasOwn(state, "startupRepair")) keys.push("startupRepair");
+  }
   if (state?.version === 4) {
     if (buildPredecessor) validateMaintenanceBuildRecoveryPredecessor(state, { bootId, now });
     else validateMaintenanceContinuationState(state, { bootId, now });

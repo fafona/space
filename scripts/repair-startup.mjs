@@ -23,7 +23,7 @@ const command = (file, args, input) => {
   return result.stdout;
 };
 const REVIEWED_CORE = Object.freeze({
-  "scripts/production-maintenance-control.mjs": "c14f08281a4bc10db603a2976e2d63554099e01950f6e75cc9130acc1cec751d",
+  "scripts/production-maintenance-control.mjs": "0dab2e6f567b0030fdb0861086a9bc3f6b00d8cbe66c1386d6deb17f82fbed08",
   "scripts/production-maintenance-recovery.mjs": "326951222d35dc04d11144fbc85efff47223ca35428e6214029c30c694697a65",
   "scripts/check-production-runtime-supervision.mjs": "dae80654e87692425f820d051362a02c8a62875a6f929933ca6ede52c37cabc4",
   "scripts/check-production-runtime-supervision.test.mjs": "843adc950afb8e14e4d15cf038ff6f1c0b3f406497eb0ad7bf63e421eb2fc573",
