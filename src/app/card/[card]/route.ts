@@ -2470,7 +2470,14 @@ async function repairShareManifestFromSnapshot(input: {
   return repaired;
 }
 
-async function hasExistingShareManifestObject(shareKey: string, preferredOrigin: string) {
+async function hasExistingShareManifestObject(
+  shareKey: string,
+  preferredOrigin: string,
+  pendingPayload: Promise<MerchantBusinessCardSharePayload | null>,
+) {
+  // A snapshot may win the page-render race while its manifest GET is still
+  // running. Reuse that result before sending another four existence probes.
+  if (await pendingPayload.catch(() => null)) return true;
   const urls = buildMerchantBusinessCardShareManifestPublicUrls(shareKey, preferredOrigin);
   const results = await Promise.all(
     urls.map(async (url) => {
@@ -4430,7 +4437,7 @@ export async function GET(
   }
   writeCachedContactCardPayload(shareKey, payload, requestOrigin);
   if (!storedPayload && snapshotPayload) {
-    void withContactCardTimeout(hasExistingShareManifestObject(shareKey, requestOrigin), true, 1200).then((exists) => {
+    void withContactCardTimeout(hasExistingShareManifestObject(shareKey, requestOrigin, storedPayloadPromise), true, 1200).then((exists) => {
       if (exists) return;
       void repairShareManifestFromSnapshot({
         shareKey,
