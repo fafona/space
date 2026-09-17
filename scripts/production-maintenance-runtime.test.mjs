@@ -4,7 +4,7 @@ import test from "node:test";
 import { captureRuntime, validateRuntimeProof, assertRuntimeStopped, stopRuntime, captureCandidate,
   verifyCandidate, stopCandidate, resumeCandidate, verifyResumedCandidate, stopResumedCandidate,
   readRuntimeHandoffEnvironment, readDeploymentHandoffFields, startCandidate, reconcileMaintenanceLaunches,
-  persistResumedDump, verifyResumedDump, validateResumedDumpProof } from "./production-maintenance-runtime.mjs";
+  persistResumedDump, verifyResumedDump, validateResumedDumpProof, assertRetiredCandidateStopped } from "./production-maintenance-runtime.mjs";
 import { pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
 import { assertMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 import { createMaintenanceLaunchJournal, planMaintenanceLaunch, transitionMaintenanceLaunch } from "./production-maintenance-launch-journal.mjs";
@@ -623,6 +623,50 @@ test("candidate launch requires a persisted attempted slot and repeats only read
   assert.equal(sends[0].environment.FAOLLA_BACKGROUND_JOBS_PAUSED, "1");
   assert.deepEqual(await startCandidate(proof, TARGET, f.deps), candidate);
   assert.equal(f.calls.filter((call) => call.args[0] === "start").length, 1);
+});
+test("retired candidate checks reject its generation or directory but allow a genuinely new same-name instance", async () => {
+  const f=fixture({worker:"absent"}),proof=await captureRuntime(input(),f.deps);
+  await stopRuntime(proof,f.deps);f.installCandidate();const c=await captureCandidate(proof,TARGET,"1",f.deps);
+  const entry=structuredClone(f.entries()[0]);await stopCandidate(proof,c,f.deps);
+  assert.equal(await assertRetiredCandidateStopped(proof,c,f.deps),true);
+  f.facts.set(c.web.pm2.pid,structuredClone(c.web.processes[0]));
+  await assert.rejects(assertRetiredCandidateStopped(proof,c,f.deps));f.facts.delete(c.web.pm2.pid);
+  f.entries().push(entry);await assert.rejects(assertRetiredCandidateStopped(proof,c,f.deps));
+  const current=f.entries()[0];current.pm2_env.pm_cwd=f.runtime(OLD);current.pm2_env.pm_exec_path=f.runtime(OLD)+"/node_modules/next/dist/bin/next";
+  await assert.rejects(assertRetiredCandidateStopped(proof,c,f.deps));
+  current.pm2_env.created_at++;current.pid=999;
+  assert.equal(await assertRetiredCandidateStopped(proof,c,f.deps),true);
+});
+
+test("candidate waits for ss attribution on the same launch, never confirms an unattributed socket", async () => {
+  for (const pendingState of ["absent", "unattributed"]) {
+    const f=fixture({worker:"absent"}), proof=await captureRuntime(input(),f.deps);
+    await stopRuntime(proof,f.deps);f.switchCandidate();
+    const original=f.deps.supervision;let remaining=3,elapsed=0;
+    f.deps.now=()=>elapsed;f.deps.sleep=async ms=>{elapsed+=ms;};
+    f.deps.supervision=async (...args)=>remaining-->0
+      ? {listener:{state:pendingState,pid:0,chain:[]},ownership:{state:"unknown",mode:"unknown",pid:0},healthVerified:true}
+      : original(...args);
+    await startCandidate(proof,TARGET,f.deps);
+    assert.ok(elapsed>=750);assert.equal(f.journal().slots["paused-web"].phase,"confirmed");
+    assert.equal(f.calls.filter(c=>c.args[0]==="start").length,1);
+  }
+});
+test("unattributed startup stays bounded and rejects replacement, foreign and multiple owners", async () => {
+  for (const mode of ["timeout","foreign","multiple","replaced"]) {
+    const f=fixture({worker:"absent"}), proof=await captureRuntime(input(),f.deps);
+    await stopRuntime(proof,f.deps);f.switchCandidate();let elapsed=0;
+    f.deps.now=()=>elapsed;f.deps.sleep=async ms=>{elapsed+=ms;};
+    f.deps.supervision=async()=>{
+      const row=f.entries().find(e=>e.name==="faolla");
+      if(mode==="replaced")row.pm2_env.restart_time++;
+      return {listener:{state:mode==="multiple"?"mismatch":mode==="foreign"?"single":"unattributed",pid:mode==="foreign"?987:0,chain:[]},ownership:{state:"owned",mode:"direct",pid:987},healthVerified:true};
+    };
+    await assert.rejects(startCandidate(proof,TARGET,f.deps));
+    assert.ok(elapsed<=60000);assert.notEqual(f.journal().slots["paused-web"].phase,"confirmed");
+    assert.equal(f.calls.filter(c=>c.args[0]==="start").length,1);
+    if(mode!=="timeout")assert.equal(elapsed,0);
+  }
 });
 
 test("failed journal persistence or missing authority prevents every new launch", async () => {

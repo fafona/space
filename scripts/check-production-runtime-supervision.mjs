@@ -559,17 +559,23 @@ function capturePm2Ownership(chain, appName, runtime, port, nextPath) {
   };
 }
 
-function captureListener(port) {
-  const output = runCaptured("ss", ["-H", "-ltnp", `( sport = :${port} )`]);
+export function parseListenerObservation(output, captureChain = captureProcessChain) {
+  if (typeof output !== "string" || Buffer.byteLength(output) > MAX_CAPTURE_BYTES) throw new Error("listener_observation_invalid");
   if (output.trim() === "") return { state: "absent", pid: 0, chain: [] };
   const pids = [...output.matchAll(/\bpid=([1-9][0-9]*)\b/g)].map((match) => Number(match[1]));
   const unique = [...new Set(pids)];
+  // ss can see a newly bound socket before its process attribution is visible.
+  // This is never ownership evidence: steady-state checks still reject it.
+  if (unique.length === 0) return { state: "unattributed", pid: 0, chain: [] };
   if (unique.length !== 1) return { state: "mismatch", pid: 0, chain: [] };
   return {
     state: "single",
     pid: unique[0],
-    chain: captureProcessChain(unique[0]),
+    chain: captureChain(unique[0]),
   };
+}
+function captureListener(port) {
+  return parseListenerObservation(runCaptured("ss", ["-H", "-ltnp", `( sport = :${port} )`]));
 }
 
 async function captureHealth(port, expectedBuildId) {

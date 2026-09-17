@@ -20,12 +20,23 @@ import { fileURLToPath } from "node:url";
 
 import {
   classifyRuntimeSupervision,
+  parseListenerObservation,
   classifyRuntimeStartWindow,
   RUNTIME_START_WINDOW_CODES,
   RUNTIME_SUPERVISION_CODES,
 } from "./check-production-runtime-supervision.mjs";
 
 const runtime = "/srv/faolla/releases/aaaaaaaaaaaa-20260823120000";
+test("newly bound socket without PID is unattributed, never verified ownership", () => {
+  const capture = pid => [{pid}];
+  assert.deepEqual(parseListenerObservation("", capture), {state:"absent",pid:0,chain:[]});
+  const pending = parseListenerObservation("LISTEN 0 511 *:3000 *:*", capture);
+  assert.deepEqual(pending, {state:"unattributed",pid:0,chain:[]});
+  assert.equal(classifyRuntimeSupervision({stable:true,runtime,listener:pending,ownership:{state:"unknown"},healthVerified:true}), RUNTIME_SUPERVISION_CODES.mismatch);
+  assert.deepEqual(parseListenerObservation('LISTEN 0 511 *:3000 *:* users:(("next",pid=123,fd=20))',capture), {state:"single",pid:123,chain:[{pid:123}]});
+  assert.equal(parseListenerObservation('pid=123 pid=456',capture).state, "mismatch");
+  assert.throws(()=>parseListenerObservation(null));
+});
 const probePath = fileURLToPath(
   new URL("./check-production-runtime-supervision.mjs", import.meta.url),
 );
