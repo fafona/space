@@ -158,11 +158,19 @@ test("package bytes are bounded, unique JSON and bind both names, versions and e
 
 test("live verification rejects replacement of every process generation field and boot", async () => {
   for (const change of [(f) => { f.fact.startTicks = "999"; }, (f) => { f.fact.parentPid++; },
-    (f) => { f.fact.processIdentity = f.fact.processIdentity.replace(":4:5:", ":6:7:"); },
+    (f) => { f.fact.processIdentity = '99:' + f.fact.processIdentity.split(':').slice(1).join(':'); },
     (f) => { f.fact.commandLineDigest = "f".repeat(64); }, (f) => { f.boot = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"; }]) {
     const f = fixture(), proof = await captureNativeProcessProof(f.input(), f.d); change(f);
     await assert.rejects(verifyNativeProcessProof(proof, f.c, f.d), safeFailure);
   }
+});
+
+test('native historical procfs inode and times may age but fresh observations remain exact', async()=>{
+  const f=fixture(),proof=await captureNativeProcessProof(f.input(),f.d),original=JSON.stringify(proof);
+  const parts=f.fact.processIdentity.split(':');for(const i of [1,3,4])parts[i]=String(BigInt(parts[i])+100n);f.fact.processIdentity=parts.join(':');
+  assert.equal(await verifyNativeProcessProof(proof,f.c,f.d),true);assert.equal(JSON.stringify(proof),original);
+  f.beforeProcess=()=>{const p=f.fact.processIdentity.split(':');p[1]=String(BigInt(p[1])+1n);f.fact.processIdentity=p.join(':');};
+  await assert.rejects(verifyNativeProcessProof(proof,f.c,f.d),safeFailure);
 });
 
 test("files-only verification never reads boot or a process, and is not a stop acknowledgement", async () => {
