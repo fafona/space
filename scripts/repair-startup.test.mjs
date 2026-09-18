@@ -70,15 +70,22 @@ test("all ten main CI jobs and exact signed authority bytes required", () => {
   assert.throws(() => validateStartupProvenance(bytes, [...result, ...result]));
 });
 test("source proof accepts exact reviewed files and rejects dirty or executable changes", () => {
+  // This retired incident authorizes immutable historical bytes, not today's
+  // runtime. Keep its production hashes frozen as the live runtime evolves.
+  const reviewed = JSON.parse(readFileSync(new URL("./test-helpers/startup-reviewed-runtime-20260917.json", import.meta.url), "utf8"));
   const git = args => {
     if (args[0] === "rev-parse") return sha + "\n";
     if (args[0] === "status" || args[0] === "merge-base") return "";
     if (args[0] === "diff") return STARTUP_REPAIR_PATHS.join("\n") + "\n";
-    if (args[0] === "show") return readFileSync(new URL("../" + args[1].slice(41), import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    if (args[0] === "show") return reviewed[args[1].slice(41)] ?? readFileSync(new URL("../" + args[1].slice(41), import.meta.url), "utf8").replace(/\r\n/g, "\n");
     if (args[0] === "ls-tree") return args[1] === P.previousTargetSha ? "" : "100644 blob " + "f".repeat(40) + "\t" + args.at(-1) + "\n";
     throw Error("unexpected");
   };
   assert.match(readStartupRepairSource(sha, git), /^[a-f0-9]{64}$/);
+  for (const file of Object.keys(reviewed)) {
+    const changed = reviewed[file] + "\n// Not part of the historical reviewed source.\n";
+    assert.throws(() => readStartupRepairSource(sha, args => args[0] === "show" && args[1] === sha + ":" + file ? changed : git(args)));
+  }
   for (const [command, output] of [["status", " M file\n"], ["diff", "src/proxy.ts\n"], ["rev-parse", "b".repeat(40)], ["ls-tree", "100755 blob a\tfile\n"]])
     assert.throws(() => readStartupRepairSource(sha, args => args[0] === command ? output : git(args)));
 });
