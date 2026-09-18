@@ -16,6 +16,7 @@ export const RECOVERY_SOURCE_PATHS = Object.freeze([
   "scripts/production-maintenance-daemon-continuity.mjs", "scripts/production-maintenance-daemon-continuity.test.mjs",
   "scripts/production-maintenance-runtime.mjs", "scripts/production-maintenance-pm2-adapter.mjs",
   "scripts/production-maintenance-runtime.test.mjs", "scripts/production-maintenance-pm2-adapter.test.mjs",
+  "scripts/repair-startup.test.mjs", "scripts/test-helpers/startup-reviewed-runtime-20260917.json",
 ]);
 export function validateRecoveryRun(value, expected) {
   if (!value || value.id !== Number(expected.id) || value.run_attempt !== 1 || value.head_sha !== expected.sha || value.head_branch !== "main" ||
