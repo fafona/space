@@ -5,7 +5,7 @@ import os from "node:os";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { ADMIN_CHUNK_BUDGET_KB, ADMIN_TOTAL_BUDGET_KB, WEBPACK_ADMIN_ENTRY, measureAdminBundle } from "./check-admin-bundle-budget.mjs";
+import { ADMIN_CHUNK_BUDGET_KB, ADMIN_TOTAL_BUDGET_KB, WEBPACK_ADMIN_ENTRY, measureAdminBundle, selectWebpackAdminEntry } from "./check-admin-bundle-budget.mjs";
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "faolla-admin-bundle-"));
@@ -17,6 +17,28 @@ function fixture(t) {
 }
 const entry = (files) => ({ id: 54889, files });
 test("fixed budget defaults remain 1250/760 KiB", () => { assert.equal(ADMIN_TOTAL_BUDGET_KB, 1250); assert.equal(ADMIN_CHUNK_BUDGET_KB, 760); });
+
+test("Windows exact entry is supported without widening Linux selection", () => {
+  const windowsKey = "app\\admin\\AdminClientLoader.tsx -> ./AdminClient";
+  const admin = entry(["static/chunks/admin.js"]);
+  assert.deepEqual(selectWebpackAdminEntry({ [windowsKey]: admin }, "win32"), [admin]);
+  assert.deepEqual(selectWebpackAdminEntry({ [WEBPACK_ADMIN_ENTRY]: admin }, "win32"), [admin]);
+  assert.deepEqual(selectWebpackAdminEntry({ [windowsKey]: admin }, "linux"), []);
+  assert.deepEqual(selectWebpackAdminEntry({ [WEBPACK_ADMIN_ENTRY]: admin }, "linux"), [admin]);
+  assert.throws(() => selectWebpackAdminEntry({ [windowsKey]: admin, [WEBPACK_ADMIN_ENTRY]: admin }, "win32"), /admin_bundle_entry_ambiguous/);
+  for (const key of ["other\\admin\\AdminClientLoader.tsx -> ./AdminClient", "app\\admin\\AdminClientLoader.tsx -> ./OtherClient", "app\\[merchantEntry]\\MerchantNumericEntryPageClient.tsx -> @/app/admin/AdminClient"]) {
+    assert.deepEqual(selectWebpackAdminEntry({ [key]: admin }, "win32"), []);
+  }
+});
+
+test("Windows manifest still enforces the normal size limits", { skip: process.platform !== "win32" }, (t) => {
+  const f = fixture(t);
+  f.chunk("admin", 761 * 1024);
+  f.manifest({ "app\\admin\\AdminClientLoader.tsx -> ./AdminClient": entry(["static/chunks/admin.js"]) });
+  const result = measureAdminBundle(f.root);
+  assert.equal(result.totalBytes, 761 * 1024);
+  assert.equal(result.withinBudget, false);
+});
 test("webpack selects exact AdminClientLoader and ignores unrelated global imports", (t) => {
   const f = fixture(t); f.chunk("admin", 500); f.manifest({ unrelated: entry(["static/chunks/missing.js"]), [WEBPACK_ADMIN_ENTRY]: entry(["static/chunks/admin.js"]) });
   const result = measureAdminBundle(f.root); assert.equal(result.manifestKind, "webpack-global"); assert.equal(result.totalBytes, 500); assert.equal(result.withinBudget, true);

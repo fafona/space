@@ -15,6 +15,8 @@ import {
   type TouchEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
+import { canShowMerchantWorkspaceBeforeEditor } from "@/lib/merchantWorkspaceLoading";
 import {
   AccountSwitcherDialog,
   BlockRenderer,
@@ -4049,6 +4051,7 @@ export default function AdminClient({
   const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
+  const [merchantWorkspaceEditorPending, setMerchantWorkspaceEditorPending] = useState(false);
   const checkingAuthRef = useRef(startInLoadingState);
   const [hasEditorContent, setHasEditorContent] = useState(true);
   const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(
@@ -6538,6 +6541,8 @@ export default function AdminClient({
   useEffect(() => {
     let mounted = true;
     let uiReleased = false;
+    let editorHydrationFinished = false;
+    setMerchantWorkspaceEditorPending(false);
     const clearJustSignedInFlagFromUrl = () => {
       if (typeof window === "undefined") return;
       try {
@@ -7019,6 +7024,23 @@ export default function AdminClient({
             return;
           }
 
+          // Keep the existing draft/published hydration running: booking rules
+          // depend on it. Other desktop business panels can become usable once
+          // the authenticated site's profile and menu permissions are available.
+          void currentMerchantProfileTask.then((result) => {
+            if (!mounted || uiReleased || editorHydrationFinished) return;
+            if (!canShowMerchantWorkspaceBeforeEditor({
+              desktopWorkspace: !isPlatformEditor && !merchantEditorOnly &&
+                (forceDesktopEditorSidebar || isDesktopEditorSidebarRef.current),
+              authenticated: merchantPayload?.authenticated === true,
+              merchantId: currentMerchantSiteId,
+              authorizedMerchantIds: merchantIds,
+              profile: result?.profile,
+            })) return;
+            setMerchantWorkspaceEditorPending(true);
+            releaseCheckingScreen({ notice: null });
+          }).catch(() => undefined);
+
           const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
           if (!mounted) return;
           if (remoteDraft) {
@@ -7418,6 +7440,9 @@ export default function AdminClient({
         releaseCheckingScreen({
           notice: isPlatformEditor ? BACKEND_UNAVAILABLE_NOTICE : "当前内容加载失败，请重新登录后重试。",
         });
+      } finally {
+        editorHydrationFinished = true;
+        if (mounted) setMerchantWorkspaceEditorPending(false);
       }
     })();
 
@@ -7431,9 +7456,11 @@ export default function AdminClient({
   }, [
     defaultEditorBlocks,
     explicitFaollaSectionEntry,
+    forceDesktopEditorSidebar,
     isMobileMerchantSupportOnlyMode,
     isPlatformEditor,
     justSignedIn,
+    merchantEditorOnly,
     platformSeedBlocks,
     readFreshMerchantSessionIdentity,
     setMerchantDesktopSection,
@@ -10675,7 +10702,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       <div className="pointer-events-none absolute left-4 top-[calc(var(--faolla-mobile-safe-top)+0.75rem)] z-10">
         <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
       </div>
-      <iframe
+      <DeferredFaollaFrame
+        active={supportMobileFaollaActive}
         ref={supportMobileFaollaFrameRef}
         title="Faolla.com"
         src={supportFaollaFrameTargetHref}
@@ -16137,7 +16165,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     [editingSiteId, scheduleMerchantChatBusinessCardSync],
   );
 
-  if (checkingAuth) {
+  // The desktop workspace starts with the editor sentinel, then its effect resolves
+  // the permitted landing section. Keep the loading surface until that happens;
+  // otherwise one frame mounts the website background and deferred block editors.
+  // Explicit editorOnly and platform-editor entries are not desktop workspaces.
+  const awaitingMerchantWorkspaceLanding =
+    isDesktopMerchantWorkspace && merchantDesktopSection === "editor" &&
+    !merchantDesktopDefaultSectionSiteRef.current;
+  const awaitingMerchantBookingConfiguration = merchantWorkspaceEditorPending && (
+    merchantBookingManagerOpen ||
+    (isDesktopMerchantWorkspace && merchantDesktopSection === "booking") ||
+    (isMobileMerchantSupportOnlyMode && supportMobileHomeTab === "business" && supportMobileBusinessSection === "booking")
+  );
+
+  if (checkingAuth || awaitingMerchantWorkspaceLanding || awaitingMerchantBookingConfiguration) {
     if (!isPlatformEditor) {
       return (
         <LoadingProgressScreen
@@ -19902,7 +19943,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <div className="pointer-events-none absolute left-4 top-4 z-10">
                 <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
               </div>
-              <iframe
+              <DeferredFaollaFrame
+                active={supportDesktopFaollaActive}
                 ref={supportDesktopFaollaFrameRef}
                 title="Faolla"
                 src={supportFaollaFrameTargetHref}

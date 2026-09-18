@@ -7,6 +7,16 @@ export const ADMIN_TOTAL_BUDGET_KB = 1250;
 export const ADMIN_CHUNK_BUDGET_KB = 760;
 
 const fail = (code) => { throw new Error(code); };
+export function selectWebpackAdminEntry(manifest, platform = process.platform) {
+  // Windows webpack records the source path with backslashes, while asset URLs
+  // still use forward slashes. Accept only this exact equivalent source entry;
+  // keep Linux release selection unchanged and reject ambiguous manifests.
+  const windowsEntry = "app\\admin\\AdminClientLoader.tsx -> ./AdminClient";
+  const keys = platform === "win32" ? [WEBPACK_ADMIN_ENTRY, windowsEntry] : [WEBPACK_ADMIN_ENTRY];
+  const matches = keys.filter((key) => Object.hasOwn(manifest, key));
+  if (matches.length > 1) fail("admin_bundle_entry_ambiguous");
+  return matches.map((key) => manifest[key]);
+}
 function regularFile(filePath, maxBytes, missingCode) {
   let stat;
   try { stat = fs.lstatSync(filePath); } catch (error) {
@@ -39,7 +49,7 @@ export function measureAdminBundle(rootDir, {
   // same admin async entry, never a smaller unrelated global entry.
   const selected = scoped
     ? Object.values(manifest).filter((entry) => entry && Array.isArray(entry.files) && entry.files.length > 0)
-    : Object.hasOwn(manifest, WEBPACK_ADMIN_ENTRY) ? [manifest[WEBPACK_ADMIN_ENTRY]] : [];
+    : selectWebpackAdminEntry(manifest);
   if (selected.length === 0) fail("admin_bundle_entry_missing");
   const entries = selected.map((entry) => {
     if (!entry || !Array.isArray(entry.files) || entry.files.length < 1 || entry.files.length > 1000 || new Set(entry.files).size !== entry.files.length) fail("admin_bundle_entry_unverified");
