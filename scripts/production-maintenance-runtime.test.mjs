@@ -329,6 +329,41 @@ test("native file witnesses remain required after PID exit, including repeated s
   }
 });
 
+test('worker and native historical procfs churn retains exact lifetime and permits authorized stop',async()=>{
+  const f=nativeFixture(),proof=await captureRuntime(input(),f.deps),before=JSON.stringify(proof);
+  for(const pid of [101,201,202]){
+    const row=f.facts.get(pid),parts=row.processIdentity.split(':');for(const i of [1,3,4])parts[i]=String(BigInt(parts[i])+100n);
+    row.processIdentity=parts.join(':');if(f.fullFacts.has(pid))f.fullFacts.get(pid).processIdentity=row.processIdentity;
+  }
+  await stopRuntime(proof,f.deps);assert.equal(await assertRuntimeStopped(proof,f.deps),true);assert.equal(JSON.stringify(proof),before);
+});
+
+test('managed continuity never accepts stable proc changes, PM2 restart, or fresh observation drift',async()=>{
+  for(const mode of ['device','size','links','owner','mode','restart','fresh']){
+    const f=nativeFixture(),proof=await captureRuntime(input(),f.deps);
+    const index={device:0,size:2,links:5,owner:6,mode:7}[mode];
+    if(index!==undefined){const p=f.facts.get(201).processIdentity.split(':');p[index]=String(BigInt(p[index])+1n);f.facts.get(201).processIdentity=p.join(':');}
+    if(mode==='restart')f.entries().find(e=>e.pid===201).pm2_env.restart_time++;
+    if(mode==='fresh') {const owned=f.deps.ownedProcesses;f.deps.ownedProcesses=pid=>{const value=owned(pid);if(pid===201){const p=f.facts.get(pid).processIdentity.split(':');p[1]=String(BigInt(p[1])+1n);f.facts.get(pid).processIdentity=p.join(':');}return value;};}
+    await assert.rejects(stopRuntime(proof,f.deps));assert.equal(f.calls.some(c=>c.command==='adapter-control'),false);
+  }
+});
+
+test('resumed worker and web historical proc metadata is tolerated without altering saved proofs',async()=>{
+  const f=fixture(),proof=await captureRuntime(input(),f.deps);await stopRuntime(proof,f.deps);f.switchCandidate();
+  const candidate=await startCandidate(proof,TARGET,f.deps),resumed=await resumeCandidate(proof,candidate,TARGET,f.deps),saved=JSON.stringify(resumed);
+  for(const managed of [resumed.candidate.web,resumed.worker])for(const fact of managed.processes){const row=f.facts.get(fact.pid),p=row.processIdentity.split(':');for(const i of [1,3,4])p[i]=String(BigInt(p[i])+100n);row.processIdentity=p.join(':');}
+  assert.equal(await verifyResumedCandidate(proof,resumed,f.deps),true);assert.equal(JSON.stringify(resumed),saved);
+});
+
+test('confirmed paused generation may age before resume without rewriting its journal',async()=>{
+  const f=fixture(),proof=await captureRuntime(input(),f.deps);await stopRuntime(proof,f.deps);f.switchCandidate();
+  const candidate=await startCandidate(proof,TARGET,f.deps),saved=JSON.stringify(f.journal().slots['paused-web']);
+  const row=f.facts.get(candidate.web.pm2.pid),p=row.processIdentity.split(':');for(const i of [1,3,4])p[i]=String(BigInt(p[i])+100n);row.processIdentity=p.join(':');
+  const resumed=await resumeCandidate(proof,candidate,TARGET,f.deps);assert.equal(await verifyResumedCandidate(proof,resumed,f.deps),true);
+  assert.equal(JSON.stringify(f.journal().slots['paused-web']),saved);
+});
+
 test("native changes between whole-runtime observations invalidate capture without mutations", async () => {
   const f = nativeFixture(); f.deps.sleep = async () => f.change(f.wrapper + "/bin/esbuild", { ino: 999 });
   await assert.rejects(captureRuntime(input(), f.deps)); assert.equal(f.calls.some((c) => c.args[0] === "delete"), false);

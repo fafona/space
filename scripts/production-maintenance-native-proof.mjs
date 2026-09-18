@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 import { TextDecoder, types } from "node:util";
+import { assertBoundMaintenanceDaemonContinuity } from "./production-maintenance-daemon-continuity.mjs";
 
 // Private, read-only evidence. The caller supplies an independently authorized
 // runtime/owner and must bind ancestry, operation and boot before any stop.
@@ -290,8 +291,14 @@ export async function captureNativeProcessProof(rawInput, overrides) {
 export async function verifyNativeProcessProof(rawProof, rawContext, overrides) {
   try {
     const proof = captureProof(rawProof, rawContext), d = dependencies(overrides);
-    const first = await captureLive(proof.context, proof.process, d), second = await captureLive(proof.context, proof.process, d);
-    if (!equal(proof, first) || !equal(first, second)) fail(); return true;
+    const observed = fact(await d.readProcess(proof.process.pid), proof.context);
+    const processFields = value => Object.fromEntries(FACT_KEYS.filter(key => key !== "commandLine").map(key => [key, value[key]]));
+    assertBoundMaintenanceDaemonContinuity(processFields(proof.process), processFields(observed), proof.bootId, d.boot());
+    const first = await captureLive(proof.context, observed, d), second = await captureLive(proof.context, observed, d);
+    // Retain exact fresh observations and all historical file/package/command
+    // evidence. Do not refresh the persisted proof or ignore PID reuse.
+    const historical = { ...first, process: { ...first.process, processIdentity: proof.process.processIdentity } };
+    if (!equal(proof, historical) || !equal(first, second)) fail(); return true;
   } catch { fail(); }
 }
 export async function verifyNativeFiles(rawProof, rawContext, overrides) {

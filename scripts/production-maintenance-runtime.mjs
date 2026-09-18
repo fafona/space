@@ -247,6 +247,28 @@ async function managedProcess(entries, name, runtime, kind, daemon, d) {
 function nativeDependencies(d) {
   return { ...d.nativeFilesystem, readProcess: d.readNativeProcess, boot: d.boot };
 }
+// Compare an immutable historical observation to a freshly validated managed
+// tree. Only procfs inode instantiation metadata can age; process lifetime,
+// ancestry, files, PM2 instance metadata and native package proofs stay bound.
+// Never use this comparison between two fresh observations.
+function historicalManagedMatches(frozen, observed, d) {
+  try {
+    if (!frozen || !observed || frozen.processes.length !== observed.processes.length) return false;
+    const comparable = structuredClone(observed);
+    for (let i = 0; i < frozen.processes.length; i++) {
+      assertBoundMaintenanceDaemonContinuity(frozen.processes[i], observed.processes[i], d.expectedBootId, d.boot());
+      comparable.processes[i].processIdentity = frozen.processes[i].processIdentity;
+    }
+    if ((frozen.nativeProofs?.length ?? 0) !== (observed.nativeProofs?.length ?? 0)) return false;
+    for (let i = 0; i < (frozen.nativeProofs?.length ?? 0); i++) {
+      const before = frozen.nativeProofs[i], after = observed.nativeProofs[i];
+      if (before.bootId !== d.expectedBootId || after.bootId !== d.expectedBootId) return false;
+      assertBoundMaintenanceDaemonContinuity(pick(before.process, PROCESS_KEYS), pick(after.process, PROCESS_KEYS), before.bootId, d.boot());
+      comparable.nativeProofs[i].process.processIdentity = before.process.processIdentity;
+    }
+    return equal(frozen, comparable);
+  } catch { return false; }
+}
 async function verifyManagedNative(managed, d, live) {
   for (const native of managed?.nativeProofs ?? []) {
     if (d.boot() !== native.bootId || d.architecture !== native.context.architecture) fail();
@@ -410,9 +432,9 @@ async function deleteExact(managed, kind, daemon, runtime, d) {
   if (!managed || managed.pm2.status === "stopped") return;
   const entries = await pm2List(daemon, d);
   const actual = await managedProcess(entries, managed.pm2.name, runtime, kind, daemon, d);
-  if (!equal(actual, managed)) fail();
+  if (!historicalManagedMatches(managed, actual, d)) fail();
   await verifyManagedNative(managed, d, true);
-  if (!equal(d.ownedProcesses(managed.pm2.pid), managed.processes)) fail();
+  if (!equal(d.ownedProcesses(managed.pm2.pid), actual.processes)) fail();
   // Only the frozen PM2 numeric instance is addressed. No name fallback, restart,
   // broad process signal, or automatic repeat after an uncertain acknowledgement.
   const matches = entries.filter((row) => row.pm_id === managed.pm2.pmId && row.name === managed.pm2.name && row.pid === managed.pm2.pid);
@@ -464,7 +486,8 @@ export async function verifyCandidate(rawProof, rawCandidate, pauseExpected = "1
   return guarded(async () => {
     const proof = validateRuntimeProof(rawProof); const candidate = validateCandidateProof(rawCandidate, proof);
     const actual = await captureCandidate(proof, candidate.targetSha, pauseExpected, overrides);
-    if (!equal(actual, candidate)) fail(); return true;
+    const d = dependencies(overrides, proof.input.appPort, proof.bootId);
+    if (!historicalManagedMatches(candidate.web, actual.web, d) || !equal({ ...actual, web: candidate.web }, candidate)) fail(); return true;
   });
 }
 export async function stopCandidate(rawProof, rawCandidate, overrides = {}) {
@@ -528,6 +551,10 @@ function journalInstance(managed) {
     "executable", "executableIdentity", "commandLineDigest"]), pmId: managed.pm2.pmId, createdAt: managed.pm2.createdAt,
   pmUptime: managed.pm2.pmUptime, restartTime: managed.pm2.restartTime, metadataDigest: managed.pm2.metadataHash };
 }
+function assertHistoricalJournalInstance(frozen, observed, d) {
+  assertBoundMaintenanceDaemonContinuity(pick(frozen ?? {}, PROCESS_KEYS), pick(observed, PROCESS_KEYS), d.expectedBootId, d.boot());
+  if (Object.keys(observed).some(key => key !== "processIdentity" && observed[key] !== frozen?.[key])) fail();
+}
 async function readLaunched(proof, descriptor, role, slot, d) {
   if (!LAUNCH_ROLES.includes(role) || !slot || slot.role !== role || !["attempted", "unknown", "confirmed"].includes(slot.phase) ||
       typeof slot.nonce !== "string" || !LAUNCH_NONCE.test(slot.nonce) || !DIGEST.test(slot.environmentDigest)) fail();
@@ -546,12 +573,13 @@ async function readLaunched(proof, descriptor, role, slot, d) {
     // Idempotent confirmation compares the already frozen generation, including
     // its settled command line. It cannot adopt a later automatic restart.
     const actual = journalInstance(managed);
-    if (Object.keys(actual).some((key) => actual[key] !== slot.instance?.[key])) fail();
+    assertHistoricalJournalInstance(slot.instance, actual, d);
   }
   assertCandidateDisk(proof, descriptor, d);
   return managed;
 }
 async function confirmLaunched(role, slot, managed, d) {
+  if (slot.phase === "confirmed") { assertHistoricalJournalInstance(slot.instance, journalInstance(managed), d); return; }
   await launchAuthority(d).confirm(role, { observedNonce: slot.nonce, environmentDigest: slot.environmentDigest, instance: journalInstance(managed) });
 }
 async function launchOnce(proof, descriptor, role, d) {
@@ -676,7 +704,7 @@ export async function resumeCandidate(rawProof, rawCandidate, targetSha, overrid
     const journal = launchAuthority(d);
     await verifyCandidate(proof, candidate, "1", overrides);
     const paused = await journal.read("paused-web");
-    if (!paused || paused.phase !== "confirmed" || !equal(await readLaunched(proof, candidate, "paused-web", paused, d), candidate.web)) fail();
+    if (!paused || paused.phase !== "confirmed" || !historicalManagedMatches(candidate.web, await readLaunched(proof, candidate, "paused-web", paused, d), d)) fail();
     // No stop may precede the durable launch authority/configuration checks.
     startEnvironment(candidate, d);
     await deleteExact(candidate.web, "web", candidate.daemon, candidate.disk.runtime, d);
@@ -774,8 +802,8 @@ export async function verifyResumedCandidate(rawProof, rawResumed, overrides = {
       proof.worker.state === "running" ? candidate.disk.runtime : proof.disk.runtime);
     assertBoundMaintenanceDaemonContinuity(candidate.daemon, actual.daemon, proof.bootId, d.boot());
     if (!equal(first, actual) || !equal(actual.disk, candidate.disk) || !equal(actual.environment, candidate.environment) ||
-        !equal(actual.web, candidate.web) ||
-        (resumed.worker ? !equal(actual.worker.managed, resumed.worker) : actual.worker.state === "running")) fail();
+        !historicalManagedMatches(candidate.web, actual.web, d) ||
+        (resumed.worker ? !historicalManagedMatches(resumed.worker, actual.worker.managed, d) : actual.worker.state === "running")) fail();
     assertNoUnfrozenRuntimeProcess(proof.disk.runtime, [], d);
     assertNoUnfrozenRuntimeProcess(candidate.disk.runtime, [...candidate.web.processes, ...(resumed.worker?.processes || [])].map((fact) => fact.pid), d);
     return true;
@@ -877,7 +905,7 @@ export async function readManagedSnapshot(rawProof, rawCandidate, kind, override
     const name = proof.input.appName + (kind === "worker" ? "-enterprise-automation-worker" : "");
     const managed = await managedProcess(await pm2List(proof.daemon, d), name,
       kind === "web" && candidate ? candidate.disk.runtime : proof.disk.runtime, kind, proof.daemon, d);
-    if (kind === "web" && candidate && !equal(managed, candidate.web)) fail();
+    if (kind === "web" && candidate && !historicalManagedMatches(candidate.web, managed, d)) fail();
     if (!managed) return "absent";
     if (managed.pm2.status === "stopped") {
       if (kind !== "worker" || !equal(managed, proof.worker.managed)) fail();
@@ -901,7 +929,7 @@ export async function readManagedSnapshotPair(rawProof, rawCandidate, overrides 
       proof.disk.runtime, "worker", proof.daemon, d);
     if (worker && (worker.pm2.status !== "stopped" || !equal(worker, proof.worker.managed))) fail();
     const web = await managedProcess(entries, proof.input.appName, candidate.disk.runtime, "web", proof.daemon, d);
-    if (!web || !equal(web, candidate.web) || web.pm2.status !== "online") fail();
+    if (!web || !historicalManagedMatches(candidate.web, web, d) || web.pm2.status !== "online") fail();
     return { web: `running:${web.pm2.pid}`, worker: worker ? "inactive" : "absent" };
   });
 }
