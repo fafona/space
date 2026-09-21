@@ -1562,7 +1562,6 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
   const structuredAddress = parseStructuredAddress(contact?.address || "");
   const noteLines = [
     contact?.note || "",
-    contact?.googleReview ? `Google: ${contact.googleReview}` : "",
     contact?.invoiceName ? `开票名称: ${contact.invoiceName}` : "",
     contact?.invoiceTaxNumber ? `税号: ${contact.invoiceTaxNumber}` : "",
     contact?.invoiceAddress ? `开票地址: ${contact.invoiceAddress}` : "",

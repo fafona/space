@@ -841,3 +841,56 @@ test("business card contact helpers build downloadable vcard links and content",
   assert.ok(vcard.includes("URL:https://fafona.faolla.com/"));
   assert.ok(vcard.includes("NOTE:WhatsApp: felix"));
 });
+
+test("vcard export omits Google review links without changing contact details or shared card data", () => {
+  for (const googleReview of [
+    "https://g.page/r/example/review",
+    "https://www.google.com/search?client=mobilesearchapp&q=supermarket+reviews#lkt=LocalPoiReviews",
+  ]) {
+    const payload = {
+      name: "Example Market",
+      imageUrl: "https://faolla.com/card.png",
+      targetUrl: "https://example.faolla.com/",
+      contact: {
+        displayName: "Contact",
+        phone: "600000001",
+        phones: ["600000001", "600000002"],
+        email: "contact@example.com",
+        address: "Example Street / 41007 / Sevilla / Sevilla / Spain",
+        websiteUrl: "https://example.faolla.com/",
+        note: "WhatsApp: example\nWeChat: example",
+        invoiceName: "Example Company",
+        invoiceTaxNumber: "TEST-123",
+        invoiceAddress: "Example Street",
+        googleReview,
+      },
+    };
+    const before = structuredClone(payload);
+    const { googleReview: omitted, ...contactWithoutGoogle } = payload.contact;
+    assert.equal(omitted, googleReview);
+    const exported = buildMerchantBusinessCardVCard(payload);
+
+    assert.equal(exported, buildMerchantBusinessCardVCard({ ...payload, contact: contactWithoutGoogle }));
+    assert.doesNotMatch(exported, /Google:|https:\/\/(?:www\.google\.com|g\.page)/);
+    assert.ok(exported.includes("TEL;TYPE=CELL:600000001"));
+    assert.ok(exported.includes("EMAIL;TYPE=INTERNET:contact@example.com"));
+    assert.ok(exported.includes("URL:https://example.faolla.com/"));
+    assert.ok(exported.includes("NOTE:WhatsApp: example\\nWeChat: example"));
+    assert.ok(exported.includes("TEST-123"));
+    assert.deepEqual(payload, before);
+    assert.equal(normalizeMerchantBusinessCardShareContact(payload.contact, payload.targetUrl)?.googleReview, googleReview);
+  }
+});
+
+test("a Google review link alone does not create a vcard note", () => {
+  const exported = buildMerchantBusinessCardVCard({
+    name: "Example Market",
+    imageUrl: "https://faolla.com/card.png",
+    targetUrl: "https://example.faolla.com/",
+    contact: { googleReview: "https://g.page/r/example/review" },
+  });
+
+  assert.doesNotMatch(exported, /(?:^|\r\n)NOTE:/);
+  assert.doesNotMatch(exported, /g\.page|Google:/);
+  assert.ok(exported.endsWith("END:VCARD"));
+});
