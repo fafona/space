@@ -45,6 +45,9 @@ import {
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
 import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
+import { BusinessCardQrControls } from "@/components/admin/BusinessCardQrControls";
+import { isBusinessCardQrColorReadable, businessCardQrAspectRatio, normalizeBusinessCardQrBackground } from "@/lib/merchantBusinessCardQr";
+import { businessCardQrSvgDataUrl, createBusinessCardQrSvg } from "@/lib/merchantBusinessCardQrRender";
 import {
   buildMerchantBusinessCardShareUrl,
   createMerchantBusinessCardShareKey,
@@ -1255,10 +1258,10 @@ function CardSurface({
                   left: `${draft.qr.x}px`,
                   top: `${draft.qr.y}px`,
                   width: `${draft.qr.size}px`,
-                  height: `${draft.qr.size}px`,
+                  height: `${20 + (draft.qr.size - 20) * businessCardQrAspectRatio(draft.qr)}px`,
                   padding: "10px",
                   borderRadius: "18px",
-                  background: "#fff",
+                  background: normalizeBusinessCardQrBackground(draft.qr.backgroundColor),
                   boxShadow: "0 16px 36px rgba(15,23,42,.18)",
                 }}
               >
@@ -2030,7 +2033,7 @@ export default function MerchantBusinessCardManager({
   const [tip, setTip] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDraftSaving, setIsDraftSaving] = useState(false);
-  const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [qrPreview, setQrPreview] = useState({ key: "", url: "" });
   const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
   const [selectedFieldKeys, setSelectedFieldKeys] = useState<string[]>(["merchantName"]);
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
@@ -2187,7 +2190,6 @@ export default function MerchantBusinessCardManager({
   const normalizedCardLimit = useMemo(() => Math.max(1, Math.min(100, Math.round(Number(cardLimit) || 1))), [cardLimit]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
-  const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
   const selectedChatDisplayCard = useMemo(
     () => resolveMerchantBusinessCardForChatDisplay(normalizedCards),
     [normalizedCards],
@@ -2305,6 +2307,9 @@ export default function MerchantBusinessCardManager({
     normalizedMerchantId,
   ]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
+  const qrPreviewKey = JSON.stringify([qrTargetUrl, draft.qr.style, draft.qr.color, draft.qr.backgroundColor, draft.qr.showCaption, draft.qr.caption]);
+  const qrCodeUrl = qrPreview.key === qrPreviewKey ? qrPreview.url : "";
+  const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
 
   useEffect(() => {
     clearNumberInputDraft(TYPOGRAPHY_FONT_SIZE_INPUT_KEY);
@@ -2319,28 +2324,21 @@ export default function MerchantBusinessCardManager({
 
   useEffect(() => {
     let cancelled = false;
-    if (!editorOpen || !qrTargetUrl) {
-      setQrCodeUrl("");
+    if (!editorOpen || !qrTargetUrl || !isBusinessCardQrColorReadable(draft.qr.color || "#000000", draft.qr.backgroundColor)) {
+      setQrPreview({ key: "", url: "" });
       return;
     }
-    void import("qrcode")
-      .then(({ default: QRCode }) =>
-        QRCode.toDataURL(qrTargetUrl, {
-          width: clamp(draft.qr.size * 2, 96, 1200),
-          margin: 1,
-          errorCorrectionLevel: "M",
-        }),
-      )
-      .then((url) => {
-        if (!cancelled) setQrCodeUrl(url);
+    void createBusinessCardQrSvg(qrTargetUrl, { style: draft.qr.style, color: draft.qr.color, backgroundColor: draft.qr.backgroundColor, showCaption: draft.qr.showCaption, caption: draft.qr.caption })
+      .then((svg) => {
+        if (!cancelled) setQrPreview({ key: qrPreviewKey, url: businessCardQrSvgDataUrl(svg) });
       })
       .catch(() => {
-        if (!cancelled) setQrCodeUrl("");
+        if (!cancelled) setQrPreview({ key: "", url: "" });
       });
     return () => {
       cancelled = true;
     };
-  }, [draft.qr.size, editorOpen, qrTargetUrl]);
+  }, [draft.qr.style, draft.qr.color, draft.qr.backgroundColor, draft.qr.showCaption, draft.qr.caption, editorOpen, qrTargetUrl, qrPreviewKey]);
 
   useEffect(() => {
     const validSelectionKeys = new Set<string>([
@@ -4430,6 +4428,16 @@ export default function MerchantBusinessCardManager({
                           </div>
                         </div>
                       </div>
+                      <BusinessCardQrControls
+                        targetUrl={qrTargetUrl}
+                        style={draft.qr.style}
+                        color={draft.qr.color}
+                        backgroundColor={draft.qr.backgroundColor}
+                        showCaption={draft.qr.showCaption}
+                        caption={draft.qr.caption}
+                        onChange={(patch) => applyDraft((current) => ({ ...current, qr: { ...current.qr, ...patch } }))}
+                        exportDisabledReason={draft.mode === "link" && !editingCard?.shareKey ? "请先生成并保存联系卡，确保二维码链接生效后再导出。" : ""}
+                      />
                     </div>
                   </BusinessCardEditorSection>
                   <BusinessCardEditorSection title="联系方式" className="xl:col-span-2">
@@ -6494,4 +6502,3 @@ function getCustomTextLabel(text: string, index: number) {
   const normalized = normalizeText(text);
   return normalized ? normalized.slice(0, 12) : `自定义文本 ${index + 1}`;
 }
-

@@ -8,6 +8,7 @@ import { readPlatformAdminDataBackupFromBlocks } from "@/lib/platformAdminDataBa
 import { readPlatformMerchantConfigArchiveFromBlocks } from "@/lib/platformMerchantConfigArchive";
 import { normalizePlatformMerchantSnapshotPayload } from "@/lib/platformMerchantSnapshot";
 import { readPlatformSupportInboxFromBlocks } from "@/lib/platformSupportInbox";
+import { BUSINESS_CARD_QR_STYLES, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH } from "@/lib/merchantBusinessCardQr";
 
 /**
  * Backup-only raw validation. Normalizers run AFTER these checks and are never
@@ -28,6 +29,8 @@ const text: Check = (value) => { if (typeof value !== "string") fail(); };
 const identity: Check = (value) => { text(value); if (!(value as string).trim()) fail(); };
 const merchantId: Check = (value) => { identity(value); if (!/^\d{8}$/.test((value as string).trim())) fail(); };
 const bool: Check = (value) => { if (typeof value !== "boolean") fail(); };
+const qrColor: Check = (value) => { if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) fail(); };
+const qrCaption: Check = (value) => { if (typeof value !== "string" || Array.from(value).length > BUSINESS_CARD_QR_CAPTION_MAX_LENGTH) fail(); };
 function number(min = -Number.MAX_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER, integer = false): Check {
   return (value) => { if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max ||
     (integer && !Number.isSafeInteger(value))) fail(); };
@@ -156,7 +159,9 @@ Object.assign(cardFields, {
   typography: object(Object.fromEntries(Object.keys(cardDraft.typography).map((key) => [key, typography]))),
   fieldTypography: object(Object.fromEntries(Object.keys(cardDraft.fieldTypography).map((key) => [key, typography]))),
   textLayout: object(Object.fromEntries(Object.keys(cardDraft.textLayout).map((key) => [key, object({ x: number(0, 2000, true), y: number(0, 2000, true) })]))),
-  qr: object({ x: number(0, 2000, true), y: number(0, 2000,  true), size: number(48, 600, true) }),
+  qr: object({ x: number(0, 2000, true), y: number(0, 2000, true), size: number(48, 600, true),
+    style: oneOf(BUSINESS_CARD_QR_STYLES.map((item) => item.id)), color: qrColor, backgroundColor: qrColor,
+    showCaption: bool, caption: qrCaption }),
   width: number(320, 1600, true), height: number(180, 1600, true), contactIntroImageDurationSeconds: number(1, 15, true),
   contactPageImageHeight: number(120, 1200, true),
   ...fields("contactPageImageX contactPageImageY backgroundImageX backgroundImageY", number(-5000, 5000, true)),

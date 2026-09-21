@@ -81,7 +81,7 @@
     "test:ordinary-auth-cutover": "node --test scripts/ordinary-account-authorization-cutover-migration-contract.test.mjs",
     "test:auth": "tsx --test src/app/api/auth/reset-password/route.test.ts src/lib/authCredentialValidation.test.ts src/lib/serverSupabaseUrl.test.ts src/lib/merchantStaffPrincipal.server.test.ts src/lib/ordinaryAccountAuthorization.server.test.ts src/lib/platformAccountIdentity.test.ts src/lib/legacyPersonalRecovery.server.test.ts src/lib/legacyPersonalRecoverySupabase.server.test.ts src/app/api/auth/merchant-login/route.test.ts src/app/api/auth/merchant-signup/route.test.ts src/app/api/auth/legacy-personal-recovery/route.test.ts src/app/login/page.contract.test.ts",
     "test:platform-snapshot": "tsx --test src/lib/platformMerchantSnapshot.test.ts src/lib/platformMerchantSnapshotFetch.test.ts src/lib/platformMerchantSnapshotStore.test.ts src/app/api/super-admin/platform-merchant-snapshot/route.contract.test.ts src/app/api/super-admin/serverSupabaseRouting.contract.test.ts src/app/super-admin/SuperAdminClient.contract.test.ts",
-    "test:card-image": "tsx --test src/lib/merchantBusinessCardImageRoute.test.ts src/lib/merchantBusinessCardStorage.test.ts",
+    "test:card-image": "tsx --test src/lib/merchantBusinessCardImageRoute.test.ts src/lib/merchantBusinessCardStorage.test.ts src/lib/merchantBusinessCardQr.test.ts",
     "test:booking-store": "tsx --test src/lib/merchantBookingPersistenceStore.test.ts && node --test scripts/check-booking-persistence.test.mjs",
     "test:editor-colors": "tsx --test src/lib/editorColors.test.ts",
     "test:editor-drafts": "node --test scripts/editor-draft-restore-contract.test.mjs && tsx --test src/data/blockStore.test.ts",

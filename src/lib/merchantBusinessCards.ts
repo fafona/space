@@ -1,5 +1,6 @@
 import type { TypographyEditableProps } from "@/data/homeBlocks";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, type BusinessCardQrStyle } from "@/lib/merchantBusinessCardQr";
 
 export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
   { id: "85:54", label: "名片横版", width: 85, height: 54 },
@@ -221,6 +222,11 @@ export type MerchantBusinessCardDraft = {
     x: number;
     y: number;
     size: number;
+    style?: BusinessCardQrStyle;
+    color?: string;
+    backgroundColor?: string;
+    showCaption?: boolean;
+    caption?: string;
   };
   typography: MerchantBusinessCardTypographyMap;
   fieldTypography: MerchantBusinessCardFieldTypographyMap;
@@ -700,6 +706,11 @@ export function createDefaultMerchantBusinessCardDraft(
       x: 508,
       y: 126,
       size: 136,
+      style: "classic",
+      color: "#000000",
+      backgroundColor: "#ffffff",
+      showCaption: false,
+      caption: "扫码了解更多",
     },
     typography,
     fieldTypography: {
@@ -966,6 +977,11 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       x: clampInt(source.qr?.x, fallback.qr.x, 0, 2000),
       y: clampInt(source.qr?.y, fallback.qr.y, 0, 2000),
       size: clampInt(source.qr?.size, fallback.qr.size, 48, 600),
+      style: normalizeBusinessCardQrStyle(source.qr?.style),
+      color: normalizeBusinessCardQrColor(source.qr?.color),
+      backgroundColor: normalizeBusinessCardQrBackground(source.qr?.backgroundColor),
+      showCaption: source.qr?.showCaption === true,
+      caption: normalizeBusinessCardQrCaption(source.qr?.caption),
     },
     typography: {
       name: normalizeTypographyStyle(typographySource.name, fallback.typography.name),
