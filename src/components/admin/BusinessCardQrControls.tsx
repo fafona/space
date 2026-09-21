@@ -2,15 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { ColorOrGradientPicker, ColorSwatchPalette } from "./ColorOrGradientPicker";
+import { BusinessCardQrDecorationControls } from "./BusinessCardQrDecorationControls";
+import { normalizeBusinessCardQrDecoration } from "@/lib/merchantBusinessCardQrDecorations";
 import {
   BUSINESS_CARD_QR_COLORS, BUSINESS_CARD_QR_STYLES, isBusinessCardQrColorReadable,
   normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, renderBusinessCardQrSvg,
   BUSINESS_CARD_QR_BACKGROUNDS, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH, businessCardQrAspectRatio,
   normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, type BusinessCardQrAppearance,
 } from "@/lib/merchantBusinessCardQr";
-import { businessCardQrPng, businessCardQrSvgDataUrl, createBusinessCardQrSvg } from "@/lib/merchantBusinessCardQrRender";
+import { businessCardQrPng, businessCardQrSvgDataUrl, createBusinessCardQrSvg, verifyBusinessCardQrSvg } from "@/lib/merchantBusinessCardQrRender";
 
-export function BusinessCardQrControls({ targetUrl, style, color, backgroundColor, showCaption, caption, onChange, exportDisabledReason = "" }: BusinessCardQrAppearance & {
+export function BusinessCardQrControls({ targetUrl, style, color, backgroundColor, showCaption, caption, onChange, exportDisabledReason = "", ...decorationOptions }: BusinessCardQrAppearance & {
   targetUrl: string;
   onChange: (patch: BusinessCardQrAppearance) => void;
   exportDisabledReason?: string;
@@ -19,7 +21,8 @@ export function BusinessCardQrControls({ targetUrl, style, color, backgroundColo
   const selectedColor = normalizeBusinessCardQrColor(color);
   const selectedBackground = normalizeBusinessCardQrBackground(backgroundColor);
   const captionValue = caption ?? "扫码了解更多";
-  const ratio = businessCardQrAspectRatio({ showCaption, caption });
+  const decoration = normalizeBusinessCardQrDecoration(decorationOptions);
+  const ratio = businessCardQrAspectRatio({ showCaption, caption, ...decoration });
   const [open, setOpen] = useState(false);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [format, setFormat] = useState<"2048" | "4096" | "svg">("2048");
@@ -65,12 +68,16 @@ export function BusinessCardQrControls({ targetUrl, style, color, backgroundColo
     setMessage("");
     try {
       const size = format === "2048" ? 2048 : 4096;
-      const svg = await createBusinessCardQrSvg(targetUrl, { style: selectedStyle, color: selectedColor, backgroundColor: selectedBackground, showCaption, caption, size });
+      const svg = await createBusinessCardQrSvg(targetUrl, { style: selectedStyle, color: selectedColor, backgroundColor: selectedBackground, showCaption, caption, ...decoration, size });
+      if ((decoration.icon !== "none" || decoration.frame !== "none") && !await verifyBusinessCardQrSvg(svg, targetUrl)) {
+        setMessage("当前组合未通过扫码校验，请改用经典码点、调整颜色，或减少装饰后重试。未导出文件。");
+        return;
+      }
       const blob = format === "svg" ? new Blob([svg], { type: "image/svg+xml;charset=utf-8" }) : await businessCardQrPng(svg, size);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `faolla-qr-${selectedStyle}-${format === "svg" ? "vector.svg" : `${size}.png`}`;
+      anchor.download = `faolla-qr-${selectedStyle}-${decoration.icon}-${decoration.frame}-${format === "svg" ? "vector.svg" : `${size}.png`}`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -118,6 +125,7 @@ export function BusinessCardQrControls({ targetUrl, style, color, backgroundColo
           <p className="mt-2 text-xs text-slate-500">以上为样式示意；实际二维码内容以名片实时预览和导出文件为准。</p>
         </div>
       )}
+      <BusinessCardQrDecorationControls appearance={{ style: selectedStyle, color: selectedColor, backgroundColor: selectedBackground, ...decoration }} onChange={onChange} />
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-3"><span className="text-xs font-semibold text-slate-700">二维码颜色</span><ColorOrGradientPicker value={selectedColor} onChange={pickColor} allowGradient={false} /></div>
         <ColorSwatchPalette colors={BUSINESS_CARD_QR_COLORS} selectedValue={selectedColor} onPick={pickColor} />
@@ -128,12 +136,12 @@ export function BusinessCardQrControls({ targetUrl, style, color, backgroundColo
         <p className="text-xs text-slate-500">采用深色码、浅色底，保留完整扫码留白。背景色会同步应用到预览和导出。</p>
       </div>
       <div className="space-y-2 rounded-lg border border-slate-200 p-3">
-        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={showCaption === true} onChange={(event) => onChange({ showCaption: event.target.checked })} />在二维码下方显示文字</label>
-        {showCaption && <label className="block text-xs text-slate-600">二维码下方文字
+        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={showCaption === true} onChange={(event) => onChange({ showCaption: event.target.checked })} />{decoration.frame === "none" ? "在二维码下方显示文字" : "显示外框引导文字"}</label>
+        {showCaption && <label className="block text-xs text-slate-600">二维码引导文字
           <input type="text" value={captionValue} onChange={(event) => onChange({ caption: Array.from(event.target.value).slice(0, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH).join("") })} onBlur={() => onChange({ caption: normalizeBusinessCardQrCaption(captionValue) })} placeholder="例如：扫码了解更多" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
-          <span className="mt-1 block">最多 {BUSINESS_CARD_QR_CAPTION_MAX_LENGTH} 个字符；文字居中显示，颜色与二维码一致。</span>
+          <span className="mt-1 block">最多 {BUSINESS_CARD_QR_CAPTION_MAX_LENGTH} 个字符；{decoration.frame === "none" ? "文字居中显示，颜色与二维码一致。" : "按外框设计放置文字，自动使用清晰的文字颜色。"}</span>
         </label>}
-        <p className="text-xs text-slate-500">添加文字会向下增加图片高度，不缩小二维码；导出尺寸独立于名片显示大小。</p>
+        <p className="text-xs text-slate-500">{decoration.frame === "none" ? "添加文字会向下增加图片高度，不缩小二维码；导出尺寸独立于名片显示大小。" : "外框内已预留文字位置；隐藏文字不会清空内容，也不会改变二维码大小。"}</p>
       </div>
       {(exportDisabledReason || !targetUrl || !readable) && <p className="text-xs text-amber-700">{exportDisabledReason || (!targetUrl ? "请先填写网址，再导出二维码。" : "二维码与背景对比度不足，请调整颜色后导出。")}</p>}
       {message && <p role="status" className="text-xs leading-5 text-slate-700">{message}</p>}

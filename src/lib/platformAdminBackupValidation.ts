@@ -9,6 +9,7 @@ import { readPlatformMerchantConfigArchiveFromBlocks } from "@/lib/platformMerch
 import { normalizePlatformMerchantSnapshotPayload } from "@/lib/platformMerchantSnapshot";
 import { readPlatformSupportInboxFromBlocks } from "@/lib/platformSupportInbox";
 import { BUSINESS_CARD_QR_STYLES, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH } from "@/lib/merchantBusinessCardQr";
+import { BUSINESS_CARD_QR_ICONS, BUSINESS_CARD_QR_FRAMES } from "@/lib/merchantBusinessCardQrDecorations";
 
 /**
  * Backup-only raw validation. Normalizers run AFTER these checks and are never
@@ -160,6 +161,9 @@ Object.assign(cardFields, {
   fieldTypography: object(Object.fromEntries(Object.keys(cardDraft.fieldTypography).map((key) => [key, typography]))),
   textLayout: object(Object.fromEntries(Object.keys(cardDraft.textLayout).map((key) => [key, object({ x: number(0, 2000, true), y: number(0, 2000, true) })]))),
   qr: object({ x: number(0, 2000, true), y: number(0, 2000, true), size: number(48, 600, true),
+    icon: oneOf(["none", ...BUSINESS_CARD_QR_ICONS.map(i => i.id)]), iconColor: qrColor, iconFollowColor: bool,
+    frame: oneOf(["none", ...BUSINESS_CARD_QR_FRAMES.map(i => i.id)]), frameColor: qrColor, frameBackgroundColor: qrColor,
+    frameWidth: number(1, 4, true), framePadding: number(8, 32, true),
     style: oneOf(BUSINESS_CARD_QR_STYLES.map((item) => item.id)), color: qrColor, backgroundColor: qrColor,
     showCaption: bool, caption: qrCaption }),
   width: number(320, 1600, true), height: number(180, 1600, true), contactIntroImageDurationSeconds: number(1, 15, true),

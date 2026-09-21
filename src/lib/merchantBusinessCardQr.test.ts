@@ -9,11 +9,12 @@ import {
   normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, renderBusinessCardQrSvg,
 } from "./merchantBusinessCardQr";
 import { createBusinessCardQrSvg } from "./merchantBusinessCardQrRender";
+import { normalizeBusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
 import { createBlankMerchantBusinessCardDraft, normalizeMerchantBusinessCardDraft } from "./merchantBusinessCards";
 
 test("QR settings preserve old cards and survive save/reopen normalization", () => {
   const old = normalizeMerchantBusinessCardDraft({ qr: { x: 6, y: 1, size: 300 } });
-  assert.deepEqual(old.qr, { x: 6, y: 1, size: 300, style: "classic", color: "#000000", backgroundColor: "#ffffff", showCaption: false, caption: "扫码了解更多" });
+  assert.deepEqual(old.qr, { ...normalizeBusinessCardQrDecoration(), x: 6, y: 1, size: 300, style: "classic", color: "#000000", backgroundColor: "#ffffff", showCaption: false, caption: "扫码了解更多" });
   for (const style of BUSINESS_CARD_QR_STYLES) {
     const draft = createBlankMerchantBusinessCardDraft();
     draft.qr = { ...draft.qr, style: style.id, color: "#1D4ED8", backgroundColor: "#FFF7ED", showCaption: true, caption: "扫码进入官网" };

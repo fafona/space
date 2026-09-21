@@ -1,6 +1,7 @@
 import type { TypographyEditableProps } from "@/data/homeBlocks";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, type BusinessCardQrStyle } from "@/lib/merchantBusinessCardQr";
+import { normalizeBusinessCardQrDecoration, type BusinessCardQrDecoration } from "@/lib/merchantBusinessCardQrDecorations";
 
 export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
   { id: "85:54", label: "名片横版", width: 85, height: 54 },
@@ -218,7 +219,7 @@ export type MerchantBusinessCardDraft = {
   contactDisplayFields: MerchantBusinessCardContactDisplayFields;
   customTexts: MerchantBusinessCardCustomText[];
   textLayout: MerchantBusinessCardTextLayout;
-  qr: {
+  qr: BusinessCardQrDecoration & {
     x: number;
     y: number;
     size: number;
@@ -703,6 +704,7 @@ export function createDefaultMerchantBusinessCardDraft(
     customTexts: [],
     textLayout,
     qr: {
+      ...normalizeBusinessCardQrDecoration(),
       x: 508,
       y: 126,
       size: 136,
@@ -974,6 +976,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       googleReview: resolveTextLayoutEntry("googleReview", textLayoutSource, textLayoutFallback),
     },
     qr: {
+      ...normalizeBusinessCardQrDecoration(source.qr),
       x: clampInt(source.qr?.x, fallback.qr.x, 0, 2000),
       y: clampInt(source.qr?.y, fallback.qr.y, 0, 2000),
       size: clampInt(source.qr?.size, fallback.qr.size, 48, 600),

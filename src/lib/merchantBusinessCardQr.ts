@@ -1,3 +1,5 @@
+import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame, renderBusinessCardQrFrame, renderBusinessCardQrIcon, type BusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
+
 export const BUSINESS_CARD_QR_STYLES = [
   { id: "classic", label: "经典方格" },
   { id: "soft", label: "柔和方格" },
@@ -15,7 +17,7 @@ export type BusinessCardQrStyle = (typeof BUSINESS_CARD_QR_STYLES)[number]["id"]
 export const BUSINESS_CARD_QR_COLORS = ["#000000", "#0f172a", "#334155", "#1e3a8a", "#1d4ed8", "#075985", "#115e59", "#166534", "#713f12", "#9f1239", "#7e22ce", "#581c87"];
 export const BUSINESS_CARD_QR_BACKGROUNDS = ["#ffffff", "#f8fafc", "#e2e8f0", "#eff6ff", "#dbeafe", "#ecfeff", "#f0fdfa", "#f0fdf4", "#fefce8", "#fff7ed", "#fff1f2", "#faf5ff"];
 export const BUSINESS_CARD_QR_CAPTION_MAX_LENGTH = 24;
-export type BusinessCardQrAppearance = { style?: BusinessCardQrStyle; color?: string; backgroundColor?: string; showCaption?: boolean; caption?: string };
+export type BusinessCardQrAppearance = BusinessCardQrDecoration & { style?: BusinessCardQrStyle; color?: string; backgroundColor?: string; showCaption?: boolean; caption?: string };
 
 export function normalizeBusinessCardQrBackground(value: unknown): string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#ffffff";
@@ -26,6 +28,7 @@ export function normalizeBusinessCardQrCaption(value: unknown): string {
 }
 
 export function businessCardQrAspectRatio(options: BusinessCardQrAppearance): number {
+  if (normalizeBusinessCardQrFrame(options.frame) !== "none") return 1.14;
   return options.showCaption && normalizeBusinessCardQrCaption(options.caption) ? 1.16 : 1;
 }
 
@@ -56,6 +59,27 @@ export type BusinessCardQrMatrix = {
   isReserved: (row: number, col: number) => number;
 };
 
+// Small H-level logo badge, never covering a functional module (including central alignment).
+// Dense versions may need a slight offset. Only a fixed built-in vector is permitted inside.
+export function businessCardQrIconBox(matrix: BusinessCardQrMatrix): { row: number; col: number; size: number } | null {
+  for (let size = Math.min(11, Math.floor(matrix.size * 0.18)) | 1; size >= 3; size -= 2) {
+    let best: { row: number; col: number; size: number; distance: number } | undefined;
+    const center = (matrix.size - size) / 2;
+    const reach = Math.ceil(matrix.size * 0.2);
+    for (let row = Math.max(8, Math.floor(center - reach)); row <= Math.min(matrix.size - size - 8, Math.ceil(center + reach)); row++) {
+      for (let col = Math.max(8, Math.floor(center - reach)); col <= Math.min(matrix.size - size - 8, Math.ceil(center + reach)); col++) {
+        const distance = (row - center) ** 2 + (col - center) ** 2;
+        if (best && distance >= best.distance) continue;
+        let safe = true;
+        for (let y = row; y < row + size && safe; y++) for (let x = col; x < col + size; x++) if (matrix.isReserved(y, x)) { safe = false; break; }
+        if (safe) best = { row, col, size, distance };
+      }
+    }
+    if (best) return { row: best.row, col: best.col, size: best.size };
+  }
+  return null;
+}
+
 // Keep all structural modules intact, including finders, alignment, timing and format bits.
 // Styling applies only to data modules; every output retains an opaque four-module quiet zone.
 export function renderBusinessCardQrSvg(
@@ -63,10 +87,11 @@ export function renderBusinessCardQrSvg(
   options: BusinessCardQrAppearance & { size?: number } = {},
 ): string {
   const style = normalizeBusinessCardQrStyle(options.style);
+  const decoration = normalizeBusinessCardQrDecoration(options);
   const color = normalizeBusinessCardQrColor(options.color);
   const background = normalizeBusinessCardQrBackground(options.backgroundColor);
   const caption = options.showCaption ? normalizeBusinessCardQrCaption(options.caption) : "";
-  const ratio = businessCardQrAspectRatio(options);
+  const ratio = businessCardQrAspectRatio({ ...options, frame: "none" });
   const size = Math.round(Math.max(64, Math.min(4096, options.size || 1024)));
   const extent = matrix.size + 8;
   const height = Math.round(size * ratio);
@@ -108,5 +133,24 @@ export function renderBusinessCardQrSvg(
   const escapedCaption = caption.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   // Caption sits below the full four-module quiet zone; it never covers QR modules.
   const captionSvg = caption ? `<text x="${extent / 2}" y="${extent * 1.08}" text-anchor="middle" dominant-baseline="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize}" fill="${color}">${escapedCaption}</text>` : "";
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${height}" viewBox="0 0 ${extent} ${viewHeight}" preserveAspectRatio="none"><rect width="${extent}" height="${viewHeight}" fill="${background}"/><g fill="${color}"><path d="${squarePaths.join("")}"/>${shapes.join("")}</g>${captionSvg}</svg>`;
+  const badge = decoration.icon !== "none" ? businessCardQrIconBox(matrix) : null;
+  const iconColor = decoration.iconFollowColor ? color : decoration.iconColor;
+  const iconSvg = badge ? `<g data-qr-icon="${decoration.icon}"><rect x="${badge.col + 4}" y="${badge.row + 4}" width="${badge.size}" height="${badge.size}" fill="${background}"/>${renderBusinessCardQrIcon(decoration.icon, iconColor).replace('<svg ', `<svg x="${badge.col + 4.45}" y="${badge.row + 4.45}" width="${badge.size - 0.9}" height="${badge.size - 0.9}" `)}</g>` : "";
+  const modulesSvg = `<g fill="${color}"><path d="${squarePaths.join("")}"/>${shapes.join("")}</g>${iconSvg}`;
+  if (decoration.frame === "none") return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${height}" viewBox="0 0 ${extent} ${viewHeight}" preserveAspectRatio="none"><rect width="${extent}" height="${viewHeight}" fill="${background}"/>${modulesSvg}${captionSvg}</svg>`;
+  const geometry = businessCardQrFrameGeometry(decoration.framePadding);
+  const frame = renderBusinessCardQrFrame(decoration);
+  const frameFont = Math.min(36, 480 / Math.max(1, textUnits));
+  const darkText = isBusinessCardQrColorReadable(decoration.frameColor, decoration.frameBackgroundColor) ? decoration.frameColor : luminance(decoration.frameBackgroundColor) > 0.4 ? "#000000" : "#ffffff";
+  const barText = luminance(decoration.frameColor) > 0.4 ? "#000000" : "#ffffff";
+  const text = (y: number, fill: string) => `<text x="500" y="${y}" text-anchor="middle" dominant-baseline="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${frameFont}" fill="${fill}">${escapedCaption}</text>`;
+  let frameCaption = "";
+  if (caption) {
+    if (decoration.frame === "ring") frameCaption = `<defs><path id="qr-caption-arc" d="M180 200Q500 10 820 200"/></defs><text font-family="Arial, Microsoft YaHei, sans-serif" font-size="${frameFont}" fill="${darkText}" text-anchor="middle"><textPath href="#qr-caption-arc" startOffset="50%">${escapedCaption}</textPath></text>`;
+    else {
+      if (["top", "both"].includes(decoration.frame)) frameCaption += text(155, barText);
+      if (decoration.frame !== "top") frameCaption += text(932, ["bottom", "both", "business", "ribbon", "car", "phone"].includes(decoration.frame) ? barText : darkText);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size * 1.14)}" viewBox="0 0 1000 1140" preserveAspectRatio="none"><rect width="1000" height="1140" fill="${background}"/>${frame}<svg x="${geometry.x}" y="${geometry.y}" width="${geometry.side}" height="${geometry.side}" viewBox="0 0 ${extent} ${extent}"><rect width="${extent}" height="${extent}" fill="${background}"/>${modulesSvg}</svg>${frameCaption}</svg>`;
 }
