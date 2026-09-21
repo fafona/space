@@ -47,6 +47,7 @@ import {
 import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
 import { BusinessCardQrControls } from "@/components/admin/BusinessCardQrControls";
 import { isBusinessCardQrColorReadable, businessCardQrAspectRatio, normalizeBusinessCardQrBackground } from "@/lib/merchantBusinessCardQr";
+import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame } from "@/lib/merchantBusinessCardQrDecorations";
 import { businessCardQrSvgDataUrl, createBusinessCardQrSvg } from "@/lib/merchantBusinessCardQrRender";
 import {
   buildMerchantBusinessCardShareUrl,
@@ -1258,11 +1259,11 @@ function CardSurface({
                   left: `${draft.qr.x}px`,
                   top: `${draft.qr.y}px`,
                   width: `${draft.qr.size}px`,
-                  height: `${20 + (draft.qr.size - 20) * businessCardQrAspectRatio(draft.qr)}px`,
-                  padding: "10px",
-                  borderRadius: "18px",
+                  height: `${normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? 20 + (draft.qr.size - 20) * businessCardQrAspectRatio(draft.qr) : draft.qr.size * businessCardQrAspectRatio(draft.qr)}px`,
+                  padding: normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? "10px" : "0",
+                  borderRadius: normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? "18px" : "0",
                   background: normalizeBusinessCardQrBackground(draft.qr.backgroundColor),
-                  boxShadow: "0 16px 36px rgba(15,23,42,.18)",
+                  boxShadow: normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? "0 16px 36px rgba(15,23,42,.18)" : "none",
                 }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2189,7 +2190,8 @@ export default function MerchantBusinessCardManager({
   );
   const normalizedCardLimit = useMemo(() => Math.max(1, Math.min(100, Math.round(Number(cardLimit) || 1))), [cardLimit]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
-  const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
+  const qrMinimumSize = normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? QR_MIN_READABLE_SIZE : Math.ceil(QR_MIN_READABLE_SIZE * 1000 / businessCardQrFrameGeometry(normalizeBusinessCardQrDecoration(draft.qr).framePadding).side);
+  const qrMayBeUnreadable = draft.qr.size < qrMinimumSize;
   const selectedChatDisplayCard = useMemo(
     () => resolveMerchantBusinessCardForChatDisplay(normalizedCards),
     [normalizedCards],
@@ -2307,7 +2309,7 @@ export default function MerchantBusinessCardManager({
     normalizedMerchantId,
   ]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
-  const qrPreviewKey = JSON.stringify([qrTargetUrl, draft.qr.style, draft.qr.color, draft.qr.backgroundColor, draft.qr.showCaption, draft.qr.caption]);
+  const qrPreviewKey = JSON.stringify([qrTargetUrl, { style: draft.qr.style, color: draft.qr.color, backgroundColor: draft.qr.backgroundColor, showCaption: draft.qr.showCaption, caption: draft.qr.caption, ...normalizeBusinessCardQrDecoration(draft.qr) }]);
   const qrCodeUrl = qrPreview.key === qrPreviewKey ? qrPreview.url : "";
   const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
 
@@ -2324,11 +2326,12 @@ export default function MerchantBusinessCardManager({
 
   useEffect(() => {
     let cancelled = false;
-    if (!editorOpen || !qrTargetUrl || !isBusinessCardQrColorReadable(draft.qr.color || "#000000", draft.qr.backgroundColor)) {
+    const [target, appearance] = JSON.parse(qrPreviewKey) as [string, import("@/lib/merchantBusinessCardQr").BusinessCardQrAppearance];
+    if (!editorOpen || !target || !isBusinessCardQrColorReadable(appearance.color || "#000000", appearance.backgroundColor)) {
       setQrPreview({ key: "", url: "" });
       return;
     }
-    void createBusinessCardQrSvg(qrTargetUrl, { style: draft.qr.style, color: draft.qr.color, backgroundColor: draft.qr.backgroundColor, showCaption: draft.qr.showCaption, caption: draft.qr.caption })
+    void createBusinessCardQrSvg(target, appearance)
       .then((svg) => {
         if (!cancelled) setQrPreview({ key: qrPreviewKey, url: businessCardQrSvgDataUrl(svg) });
       })
@@ -2338,7 +2341,7 @@ export default function MerchantBusinessCardManager({
     return () => {
       cancelled = true;
     };
-  }, [draft.qr.style, draft.qr.color, draft.qr.backgroundColor, draft.qr.showCaption, draft.qr.caption, editorOpen, qrTargetUrl, qrPreviewKey]);
+  }, [editorOpen, qrPreviewKey]);
 
   useEffect(() => {
     const validSelectionKeys = new Set<string>([
@@ -4422,7 +4425,7 @@ export default function MerchantBusinessCardManager({
                           <div className={`rounded border px-3 py-2 text-xs ${draft.showQr && qrMayBeUnreadable ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
                             {draft.showQr
                               ? qrMayBeUnreadable
-                                ? `当前二维码尺寸偏小，可能无法识别，建议至少保持在 ${QR_MIN_READABLE_SIZE}px。`
+                                ? `当前二维码尺寸偏小，可能无法识别，建议至少保持在 ${qrMinimumSize}px${normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? "。" : "（含外框）；印刷前请试扫。"}`
                                 : "二维码只在右侧实时预览里显示，左侧不再重复占位置。"
                               : "已隐藏二维码；生成和预览都会同步隐藏。"}
                           </div>
@@ -4430,11 +4433,7 @@ export default function MerchantBusinessCardManager({
                       </div>
                       <BusinessCardQrControls
                         targetUrl={qrTargetUrl}
-                        style={draft.qr.style}
-                        color={draft.qr.color}
-                        backgroundColor={draft.qr.backgroundColor}
-                        showCaption={draft.qr.showCaption}
-                        caption={draft.qr.caption}
+                        {...draft.qr}
                         onChange={(patch) => applyDraft((current) => ({ ...current, qr: { ...current.qr, ...patch } }))}
                         exportDisabledReason={draft.mode === "link" && !editingCard?.shareKey ? "请先生成并保存联系卡，确保二维码链接生效后再导出。" : ""}
                       />

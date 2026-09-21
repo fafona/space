@@ -4,6 +4,7 @@ import { createDefaultMerchantContactVisibility, createDefaultMerchantPermission
   createDefaultMerchantSortConfig, loadPlatformState, normalizePlatformState } from "@/data/platformControlStore";
 import { createDefaultMerchantBusinessCardDraft } from "@/lib/merchantBusinessCards";
 import { BUSINESS_CARD_QR_STYLES } from "@/lib/merchantBusinessCardQr";
+import { BUSINESS_CARD_QR_FRAMES, BUSINESS_CARD_QR_ICONS, normalizeBusinessCardQrDecoration } from "@/lib/merchantBusinessCardQrDecorations";
 import { buildPlatformAdminDataBackupBlocks, createPlatformAdminDataBackupEntry,
   PLATFORM_ADMIN_DATA_BACKUP_SLUG, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG } from "./platformAdminDataBackup";
 import { buildPlatformMerchantConfigArchiveBlocks, PLATFORM_MERCHANT_CONFIG_ARCHIVE_SLUG,
@@ -75,16 +76,29 @@ test("backup preserves each QR design and accepts legacy QR settings without new
     const qr = { x: 6, y: 1, size: 300, style: style.id, color: "#1d4ed8", backgroundColor: "#fff7ed", showCaption: true, caption: "扫码进入官网" };
     setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr", qr);
     const restored = readPlatformAdminDataBackupBlocksValidated(buildPlatformAdminDataBackupBlocks({ backups: [f.entry] }));
-    assert.deepEqual(getAt(restored.backups[0].snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr"), qr);
+    assert.deepEqual(getAt(restored.backups[0].snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr"), { ...normalizeBusinessCardQrDecoration(), ...qr });
   }
   const legacy = fixture();
   setAt(legacy.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr", { x: 6, y: 1, size: 300 });
   assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(legacy.entry.snapshot));
 });
 
+test("backup round-trips every new QR frame and icon through strict validation", () => {
+  for (const [index, frame] of BUSINESS_CARD_QR_FRAMES.entries()) {
+    const f = fixture();
+    const qr = { x: 6, y: 1, size: 300, style: "classic", color: "#000000", backgroundColor: "#ffffff", showCaption: false, caption: "扫码了解更多",
+      ...normalizeBusinessCardQrDecoration({ frame: frame.id, icon: BUSINESS_CARD_QR_ICONS[index % 36].id, iconFollowColor: false, iconColor: "#166534", frameColor: "#9f1239", frameBackgroundColor: "#fff7ed", frameWidth: 4, framePadding: 32 }) };
+    setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr", qr);
+    assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot));
+    const restored = readPlatformAdminDataBackupBlocksValidated(buildPlatformAdminDataBackupBlocks({ backups: [f.entry] }));
+    assert.deepEqual(getAt(restored.backups[0].snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr"), qr);
+  }
+});
+
 test("backup rejects malformed or unknown QR fields instead of silently normalizing them", () => {
   for (const patch of [{ style: "unknown" }, { color: "red" }, { backgroundColor: '#fff\"/><script/>' },
-    { showCaption: "false" }, { caption: 123 }, { caption: "a".repeat(25) }, { extraPermission: true }]) {
+    { showCaption: "false" }, { caption: 123 }, { caption: "a".repeat(25) }, { extraPermission: true },
+    { icon: "unknown" }, { frame: "unknown" }, { iconFollowColor: "false" }, { iconColor: "red" }, { frameColor: '"/><script/>' }, { frameBackgroundColor: "url(bad)" }, { frameWidth: 0 }, { frameWidth: 1.5 }, { framePadding: 100 }]) {
     const f = fixture();
     const qr = getAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr") as Raw;
     Object.assign(qr, patch);
