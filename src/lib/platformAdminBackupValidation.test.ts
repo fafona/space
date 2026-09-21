@@ -3,6 +3,7 @@ import test from "node:test";
 import { createDefaultMerchantContactVisibility, createDefaultMerchantPermissionConfig,
   createDefaultMerchantSortConfig, loadPlatformState, normalizePlatformState } from "@/data/platformControlStore";
 import { createDefaultMerchantBusinessCardDraft } from "@/lib/merchantBusinessCards";
+import { BUSINESS_CARD_QR_STYLES } from "@/lib/merchantBusinessCardQr";
 import { buildPlatformAdminDataBackupBlocks, createPlatformAdminDataBackupEntry,
   PLATFORM_ADMIN_DATA_BACKUP_SLUG, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG } from "./platformAdminDataBackup";
 import { buildPlatformMerchantConfigArchiveBlocks, PLATFORM_MERCHANT_CONFIG_ARCHIVE_SLUG,
@@ -66,6 +67,29 @@ test("all current builders and complete built-in platform state pass without dro
   assert.equal(readPlatformMerchantSnapshotBlocksValidated(f.snapshotBlocks)?.snapshot.length, 1);
   assert.equal(readPlatformMerchantConfigArchiveBlocksValidated(f.archiveBlocks).audits.length, 1);
   assert.equal(readPlatformSupportInboxBlocksValidated(f.supportBlocks).threads[0]?.messages.length, 1);
+});
+
+test("backup preserves each QR design and accepts legacy QR settings without new fields", () => {
+  for (const style of BUSINESS_CARD_QR_STYLES) {
+    const f = fixture();
+    const qr = { x: 6, y: 1, size: 300, style: style.id, color: "#1d4ed8", backgroundColor: "#fff7ed", showCaption: true, caption: "扫码进入官网" };
+    setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr", qr);
+    const restored = readPlatformAdminDataBackupBlocksValidated(buildPlatformAdminDataBackupBlocks({ backups: [f.entry] }));
+    assert.deepEqual(getAt(restored.backups[0].snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr"), qr);
+  }
+  const legacy = fixture();
+  setAt(legacy.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr", { x: 6, y: 1, size: 300 });
+  assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(legacy.entry.snapshot));
+});
+
+test("backup rejects malformed or unknown QR fields instead of silently normalizing them", () => {
+  for (const patch of [{ style: "unknown" }, { color: "red" }, { backgroundColor: '#fff\"/><script/>' },
+    { showCaption: "false" }, { caption: 123 }, { caption: "a".repeat(25) }, { extraPermission: true }]) {
+    const f = fixture();
+    const qr = getAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.qr") as Raw;
+    Object.assign(qr, patch);
+    assert.throws(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot), failure);
+  }
 });
 
 test("summary bytes and visit counters greater than one million remain legitimate", () => {
