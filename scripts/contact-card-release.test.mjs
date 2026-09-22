@@ -47,6 +47,8 @@ test('full release and maintenance fail before pausing the base when overlay is 
   const deploy=readFileSync(new URL('./deploy.production.sh',import.meta.url),'utf8');
   const maintenance=readFileSync(new URL('./production-maintenance-control.mjs',import.meta.url),'utf8');
   assert.ok(deploy.indexOf('active contact-card release requires explicit rollback')<deploy.indexOf('\nload_deploy_payload\n'));
+  const locked=deploy.slice(deploy.indexOf('acquire_deploy_lock()'),deploy.indexOf('\ndisk_usage_percent()'));
+  assert.ok(locked.indexOf('active contact-card release requires explicit rollback')>locked.indexOf('flock -w'));
   const locking=maintenance.slice(maintenance.indexOf('async function withPrivateOperationLock'));
   assert.ok(locking.indexOf('maintenance_active_contact_release_requires_rollback')<locking.indexOf('secureDirectory(ROOT, true)'));
 });
