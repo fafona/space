@@ -53,7 +53,23 @@ test("real short-card HTML uses the custom website for both browser and WeChat c
   assert.ok(html.includes(`href="${custom}" data-open-target-url="${custom}"`));
   assert.ok(!html.includes(`class="button secondary" href="${fast}"`));
   // The GET route must supply the manifest's website field to this renderer.
-  assert.match(route, /openTargetUrl: fastOpenTargetUrl,\s+websiteUrl: payload\.contact\?\.websiteUrl,/);
+  assert.match(route, /openTargetUrl: fastOpenTargetUrl,\s+websiteUrl,/);
+});
+
+test("late legacy manifests and cached HTML cannot replace an explicit saved website", () => {
+  for (const stored of [assigned, undefined, "https://old.example.com/"]) {
+    assert.equal(destination.resolveBusinessCardContactWebsite({ websiteAddress: custom }, assigned, stored), custom);
+    assert.equal(destination.resolveBusinessCardContactWebsite({ websiteAddress: "" }, assigned, stored), assigned);
+  }
+  assert.equal(destination.resolveBusinessCardContactWebsite(undefined, assigned, custom), custom);
+  assert.equal(destination.resolveBusinessCardContactWebsite({}, assigned, custom), custom);
+  assert.equal(destination.resolveBusinessCardContactWebsite({ websiteAddress: "javascript:alert(1)" }, assigned, custom), "");
+  assert.match(route, /resolveContactCardSnapshotMatch\(shareKey, payload\.ownerMerchantId \|\| snapshotMatch\?\.siteId\)/);
+  assert.match(route, /readCachedContactCardHtml\(shareKey, requestOrigin, htmlVersion\)/);
+  assert.match(route, /writeCachedContactCardHtml\(shareKey, requestOrigin, htmlVersion, html\)/);
+  assert.match(route, /website:\$\{websiteUrl\}/);
+  assert.match(downloadRoute, /resolveBusinessCardContactWebsite\(currentCard, payload\.targetUrl, payload\.contact\?\.websiteUrl\)/);
+  assert.match(downloadRoute, /buildMerchantBusinessCardVCard\(downloadPayload\)/);
 });
 
 test("legacy, blank and canonical assigned URLs retain the existing fast merchant navigation", () => {

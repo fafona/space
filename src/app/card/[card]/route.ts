@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveBusinessCardWebsiteAddress, resolveBusinessCardWebsiteNavigation } from "@/lib/merchantBusinessCardDestination";
+import { resolveBusinessCardWebsiteAddress, resolveBusinessCardWebsiteNavigation, resolveBusinessCardContactWebsite } from "@/lib/merchantBusinessCardDestination";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardShareManifestObjectPath,
@@ -4465,9 +4465,19 @@ export async function GET(
     return withTiming(response);
   }
 
+  // A fast/late legacy manifest must not replace an explicit saved website.
+  // Read the owner's current card before using the HTML cache, even when the
+  // payload came from the manifest cache. Other presentation fields stay intact.
+  const websiteSnapshot = await withContactCardTimeout(
+    resolveContactCardSnapshotMatch(shareKey, payload.ownerMerchantId || snapshotMatch?.siteId).catch(() => null),
+    null,
+    2_500,
+  ) ?? snapshotMatch;
+  const websiteUrl = resolveBusinessCardContactWebsite(websiteSnapshot?.card, payload.targetUrl, payload.contact?.websiteUrl);
+  const htmlVersion = `${payload.updatedAt ?? ""}|website:${websiteUrl}`;
   const cachedHtml = introDebug
     ? ""
-    : readCachedContactCardHtml(shareKey, requestOrigin, payload.updatedAt);
+    : readCachedContactCardHtml(shareKey, requestOrigin, htmlVersion);
   if (cachedHtml) {
     timing.add("html_cache", 0, "hit");
     return withTiming(new NextResponse(cachedHtml, {
@@ -4653,14 +4663,14 @@ export async function GET(
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
       openTargetUrl: fastOpenTargetUrl,
-      websiteUrl: payload.contact?.websiteUrl,
+      websiteUrl,
       shareUrl,
       contactUrl,
       couponsHtml: buildContactCouponsHtml(contactCoupons),
       introDebug,
     }),
   );
-  if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, payload.updatedAt, html);
+  if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, htmlVersion, html);
 
   return withTiming(new NextResponse(
     html,
