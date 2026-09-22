@@ -96,7 +96,7 @@ try {
       MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0', MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0', PORT:String(port) };
     const envText = read(`${baseDirectory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(key=>line.startsWith(`${key}=`))).join('\n');
     writeFileSync(`${state.directory}/.env.local`,`${envText}\n${Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')}\n`,{mode:0o600,flag:'wx'});
-    Object.assign(env,changes,{NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});
+    Object.assign(env,changes,{HOME:'/root',PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});
     console.log('contact_release_build_started');
     run('nice',['-n','10','npm','run','build'],{cwd:state.directory,env,timeout:900_000,stdio:'inherit'});
     if (!existsSync(`${state.directory}/.next/BUILD_ID`)) fail('build_missing');
