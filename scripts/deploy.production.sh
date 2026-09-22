@@ -979,6 +979,13 @@ acquire_deploy_lock() {
     echo "[deploy] deploy lock verification or permission normalization failed"
     exit 1
   fi
+  # Recheck under the shared lock: a route release may have activated while
+  # this full deployment was waiting for the lock.
+  if [ -e /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ] \
+    || [ -L /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ]; then
+    echo "[deploy] active contact-card release requires explicit rollback before full deployment"
+    exit 1
+  fi
   echo "[deploy] acquired exclusive deployment lock"
 }
 
