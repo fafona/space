@@ -22,6 +22,7 @@ test('candidate cannot run background jobs or bind a public interface',()=>{
   assert.match(source,/FAOLLA_BACKGROUND_JOBS_PAUSED:'1'/);
   assert.match(source,/MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0'/);
   assert.match(source,/'start','-H','127\.0\.0\.1','-p'/);
+  assert.match(source,/HOME:'\/root',PM2_HOME:'\/root\/\.pm2'/);
   assert.doesNotMatch(source,/\['(?:delete|stop|restart|reload)',.*merchant-space/);
 });
 test('scope, baseline and dependency validation precede candidate creation',()=>{
