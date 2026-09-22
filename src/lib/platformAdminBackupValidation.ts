@@ -10,6 +10,7 @@ import { normalizePlatformMerchantSnapshotPayload } from "@/lib/platformMerchant
 import { readPlatformSupportInboxFromBlocks } from "@/lib/platformSupportInbox";
 import { BUSINESS_CARD_QR_STYLES, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH } from "@/lib/merchantBusinessCardQr";
 import { BUSINESS_CARD_QR_ICONS, BUSINESS_CARD_QR_FRAMES } from "@/lib/merchantBusinessCardQrDecorations";
+import { BUSINESS_CARD_QR_TEXT_FONTS } from "@/lib/merchantBusinessCardQrText";
 
 /**
  * Backup-only raw validation. Normalizers run AFTER these checks and are never
@@ -152,6 +153,7 @@ const cardFields: Fields = Object.fromEntries(Object.entries(cardDraft).map(([ke
 Object.assign(cardFields, {
   id: identity, createdAt: timestamp, ...fields("imageUrl targetUrl shareImageUrl contactPagePublicImageUrl shareKey"),
   showInChat: bool, chatDisplayDisabled: bool, mode: oneOf(["image", "link"]), cornerMode: oneOf(["rounded", "square"]),
+  websiteAddress: text,
   ratioMode: oneOf(["custom", ...MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.map((item) => item.id)]),
   contactFieldOrder: uniqueStrings(oneOf(MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS)),
   contactPageSectionOrder: uniqueStrings(oneOf(MERCHANT_BUSINESS_CARD_CONTACT_SECTION_KEYS)),
@@ -165,7 +167,9 @@ Object.assign(cardFields, {
     frame: oneOf(["none", ...BUSINESS_CARD_QR_FRAMES.map(i => i.id)]), frameColor: qrColor, frameBackgroundColor: qrColor,
     frameWidth: number(1, 4, true), framePadding: number(8, 32, true),
     style: oneOf(BUSINESS_CARD_QR_STYLES.map((item) => item.id)), color: qrColor, backgroundColor: qrColor,
-    showCaption: bool, caption: qrCaption }),
+    showCaption: bool, caption: qrCaption,
+    topText: object({ enabled: bool, text: qrCaption, font: oneOf(BUSINESS_CARD_QR_TEXT_FONTS.map(f => f.id)), fontSize: number(12, 64, true), color: qrColor }),
+    bottomText: object({ enabled: bool, text: qrCaption, font: oneOf(BUSINESS_CARD_QR_TEXT_FONTS.map(f => f.id)), fontSize: number(12, 64, true), color: qrColor }) }),
   width: number(320, 1600, true), height: number(180, 1600, true), contactIntroImageDurationSeconds: number(1, 15, true),
   contactPageImageHeight: number(120, 1200, true),
   ...fields("contactPageImageX contactPageImageY backgroundImageX backgroundImageY", number(-5000, 5000, true)),

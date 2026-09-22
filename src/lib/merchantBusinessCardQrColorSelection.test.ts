@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { businessCardQrColorPatch, businessCardQrTargetColor, type BusinessCardQrColorTarget } from "./merchantBusinessCardQrColorSelection";
+import { businessCardQrColorPatch, businessCardQrTargetColor, businessCardQrBackgroundPatch, businessCardQrBackgroundTargetColor, type BusinessCardQrColorTarget, type BusinessCardQrBackgroundTarget } from "./merchantBusinessCardQrColorSelection";
 import { normalizeMerchantBusinessCardDraft } from "./merchantBusinessCards";
 import { businessCardQrIconBox } from "./merchantBusinessCardQr";
 import QRCode from "qrcode";
@@ -30,6 +30,36 @@ test("low contrast is rejected atomically only when QR is selected", () => {
   assert.deepEqual(businessCardQrColorPatch(value, ["icon", "frame"], "#DC7D90").patch, { iconColor: "#dc7d90", iconFollowColor: false, frameColor: "#dc7d90" });
   assert.ok(businessCardQrColorPatch(value, [], "#000000").error);
   assert.ok(businessCardQrColorPatch(value, ["frame"], 'url("bad")').error);
+});
+
+test("background palette changes only selected backgrounds and survives save/reopen", () => {
+  const value = { color: "#000000", backgroundColor: "#ffffff", frameBackgroundColor: "#ecfeff", frameColor: "#1d4ed8", iconColor: "#9f1239" };
+  const targets: BusinessCardQrBackgroundTarget[] = ["background", "frameBackground"];
+  for (let mask = 1; mask < 4; mask++) {
+    const selected = targets.filter((_, index) => mask & (1 << index));
+    const result = businessCardQrBackgroundPatch(value, selected, "#FFF7ED");
+    assert.equal(result.error, undefined);
+    const next = { ...value, ...result.patch };
+    const saved = normalizeMerchantBusinessCardDraft(JSON.parse(JSON.stringify({ qr: next }))).qr;
+    for (const target of targets) {
+      assert.equal(businessCardQrBackgroundTargetColor(saved, target), selected.includes(target) ? "#fff7ed" : businessCardQrBackgroundTargetColor(value, target));
+    }
+    assert.equal(next.color, value.color);
+    assert.equal(next.frameColor, value.frameColor);
+    assert.equal(next.iconColor, value.iconColor);
+  }
+});
+
+test("background multi-selection rejects unreadable colors atomically, frame-only remains independent", () => {
+  const value = { color: "#000000", backgroundColor: "#ffffff" };
+  for (const targets of [["background"], ["background", "frameBackground"]] as BusinessCardQrBackgroundTarget[][]) {
+    const result = businessCardQrBackgroundPatch(value, targets, "#000000");
+    assert.ok(result.error);
+    assert.equal(result.patch, undefined);
+  }
+  assert.deepEqual(businessCardQrBackgroundPatch(value, ["frameBackground"], "#000000").patch, { frameBackgroundColor: "#000000" });
+  assert.ok(businessCardQrBackgroundPatch(value, [], "#ffffff").error);
+  assert.ok(businessCardQrBackgroundPatch(value, ["background"], 'url("bad")').error);
 });
 
 test("larger new badges avoid all reserved modules in versions 1 to 40", () => {

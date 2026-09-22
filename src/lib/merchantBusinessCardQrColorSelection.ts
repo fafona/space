@@ -1,7 +1,23 @@
-import { isBusinessCardQrColorReadable, normalizeBusinessCardQrColor, type BusinessCardQrAppearance } from "./merchantBusinessCardQr";
+import { isBusinessCardQrColorReadable, normalizeBusinessCardQrColor, normalizeBusinessCardQrBackground, type BusinessCardQrAppearance } from "./merchantBusinessCardQr";
 import { normalizeBusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
 
 export type BusinessCardQrColorTarget = "qr" | "icon" | "frame";
+export type BusinessCardQrBackgroundTarget = "background" | "frameBackground";
+
+export function businessCardQrBackgroundTargetColor(value: BusinessCardQrAppearance, target: BusinessCardQrBackgroundTarget): string {
+  return target === "background" ? normalizeBusinessCardQrBackground(value.backgroundColor) : normalizeBusinessCardQrDecoration(value).frameBackgroundColor;
+}
+
+export function businessCardQrBackgroundPatch(value: BusinessCardQrAppearance, targets: readonly BusinessCardQrBackgroundTarget[], color: string): { patch: BusinessCardQrAppearance; error?: never } | { error: string; patch?: never } {
+  if (!targets.length) return { error: "请先选择要设置底色的项目。" };
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return { error: "请选择有效的六位颜色值。" };
+  const next = color.toLowerCase();
+  if (targets.includes("background") && !isBusinessCardQrColorReadable(normalizeBusinessCardQrColor(value.color), next)) return { error: "背景色与二维码的对比度不足，本次选择的项目均未更改。请选择更浅的颜色。" };
+  return { patch: {
+    ...(targets.includes("background") ? { backgroundColor: next } : {}),
+    ...(targets.includes("frameBackground") ? { frameBackgroundColor: next } : {}),
+  } };
+}
 export function businessCardQrTargetColor(value: BusinessCardQrAppearance, target: BusinessCardQrColorTarget): string {
   const decoration = normalizeBusinessCardQrDecoration(value);
   if (target === "frame") return decoration.frameColor;

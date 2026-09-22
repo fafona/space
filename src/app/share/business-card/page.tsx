@@ -339,7 +339,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
             ) : null}
             {showContactWebsiteButton ? (
               <a
-                href={payload.targetUrl}
+                href={payload.contact?.websiteUrl || payload.targetUrl}
                 className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
               >
                 进入官网

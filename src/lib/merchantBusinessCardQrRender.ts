@@ -1,9 +1,13 @@
 import { renderBusinessCardQrSvg, type BusinessCardQrAppearance } from "./merchantBusinessCardQr";
+import { hasBusinessCardQrText } from "./merchantBusinessCardQrText";
 
 export async function createBusinessCardQrSvg(target: string, options: BusinessCardQrAppearance & { size?: number } = {}) {
   const { default: QRCode } = await import("qrcode");
   const code = QRCode.create(target, { errorCorrectionLevel: "H" });
-  return renderBusinessCardQrSvg(code.modules, options);
+  const svg = renderBusinessCardQrSvg(code.modules, options);
+  if (!hasBusinessCardQrText(options)) return svg;
+  const { embedBusinessCardQrTextPaths } = await import("./merchantBusinessCardQrTextPaths");
+  return embedBusinessCardQrTextPaths(svg, options);
 }
 
 export function businessCardQrSvgDataUrl(svg: string) {
