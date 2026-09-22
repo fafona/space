@@ -7,17 +7,17 @@ import { BUSINESS_CARD_QR_STYLES, businessCardQrIconBox, businessCardQrAspectRat
 import { BUSINESS_CARD_QR_ICONS, BUSINESS_CARD_QR_FRAMES, normalizeBusinessCardQrDecoration, renderBusinessCardQrIcon, renderBusinessCardQrFrame } from "./merchantBusinessCardQrDecorations";
 import { normalizeMerchantBusinessCardDraft } from "./merchantBusinessCards";
 
-test("36 unique vector icons and 40 distinct frames; safe bounded persistent settings", () => {
-  assert.equal(BUSINESS_CARD_QR_ICONS.length, 36);
-  assert.equal(BUSINESS_CARD_QR_FRAMES.length, 40);
-  assert.equal(new Set(BUSINESS_CARD_QR_ICONS.map(i => i.id)).size, 36);
-  assert.equal(new Set(BUSINESS_CARD_QR_ICONS.map(i => renderBusinessCardQrIcon(i.id, "#000000"))).size, 36);
-  assert.equal(new Set(BUSINESS_CARD_QR_FRAMES.map(i => renderBusinessCardQrFrame(normalizeBusinessCardQrDecoration({ frame: i.id })))).size, 40);
+test("200+ unique vector icons and frames; safe bounded persistent settings", () => {
+  assert.ok(BUSINESS_CARD_QR_ICONS.length > 200);
+  assert.ok(BUSINESS_CARD_QR_FRAMES.length > 200);
+  assert.equal(new Set(BUSINESS_CARD_QR_ICONS.map(i => i.id)).size, BUSINESS_CARD_QR_ICONS.length);
+  assert.equal(new Set(BUSINESS_CARD_QR_ICONS.map(i => renderBusinessCardQrIcon(i.id, "#000000"))).size, BUSINESS_CARD_QR_ICONS.length);
+  assert.equal(new Set(BUSINESS_CARD_QR_FRAMES.map(i => renderBusinessCardQrFrame(normalizeBusinessCardQrDecoration({ frame: i.id })))).size, BUSINESS_CARD_QR_FRAMES.length);
   const bad = normalizeBusinessCardQrDecoration({ icon: "<script>" as never, frame: "arbitrary" as never, iconColor: 'red"/>', frameColor: "url(https://bad)", frameWidth: Infinity, framePadding: -100 });
   assert.equal(bad.icon, "none"); assert.equal(bad.frame, "none"); assert.equal(bad.iconColor, "#000000"); assert.equal(bad.frameColor, "#1e3a8a"); assert.equal(bad.frameWidth, 2); assert.equal(bad.framePadding, 8);
   assert.equal(normalizeBusinessCardQrDecoration(null).frame, "none");
   for (const [i, frame] of BUSINESS_CARD_QR_FRAMES.entries()) {
-    const settings = normalizeBusinessCardQrDecoration({ icon: BUSINESS_CARD_QR_ICONS[i % 36].id, frame: frame.id, iconFollowColor: false, iconColor: "#9F1239", frameColor: "#166534", frameBackgroundColor: "#FFF7ED", frameWidth: 4, framePadding: 32 });
+    const settings = normalizeBusinessCardQrDecoration({ icon: BUSINESS_CARD_QR_ICONS[i % BUSINESS_CARD_QR_ICONS.length].id, frame: frame.id, iconFollowColor: false, iconColor: "#9F1239", frameColor: "#166534", frameBackgroundColor: "#FFF7ED", frameWidth: 4, framePadding: 32 });
     const qr = normalizeMerchantBusinessCardDraft({ qr: settings }).qr;
     for (const key of Object.keys(settings) as (keyof typeof settings)[]) assert.equal(qr[key], settings[key]);
     assert.deepEqual(normalizeMerchantBusinessCardDraft(JSON.parse(JSON.stringify({ qr }))).qr, qr);
@@ -56,18 +56,18 @@ test("decorated SVG escapes captions and colors, keeps bounded geometry", () => 
 });
 
 for (const [index, frame] of BUSINESS_CARD_QR_FRAMES.entries()) {
-  test(`frame ${frame.id}: all 10 styles plus rotating industry icons decode`, async () => {
+  test(`frame ${frame.id}: all styles plus rotating industry icons decode`, async () => {
     for (const [styleIndex, style] of BUSINESS_CARD_QR_STYLES.entries()) {
       const target = styleIndex % 3 === 0 ? `https://faolla.com/card/example?ref=${"safe".repeat(35)}` : "https://haoyouduo.faolla.com/";
       const matrix = QRCode.create(target, { errorCorrectionLevel: "H" }).modules;
-      const svg = renderBusinessCardQrSvg(matrix, { frame: frame.id, icon: BUSINESS_CARD_QR_ICONS[(index + styleIndex) % 36].id, style: style.id, color: "#1e3a8a", backgroundColor: "#fff7ed", frameColor: "#9f1239", frameBackgroundColor: "#f0fdf4", iconFollowColor: false, iconColor: "#166534", showCaption: true, caption: "扫码了解更多", framePadding: styleIndex % 2 ? 8 : 32, size: 2048 });
+      const svg = renderBusinessCardQrSvg(matrix, { frame: frame.id, icon: BUSINESS_CARD_QR_ICONS[(index + styleIndex) % BUSINESS_CARD_QR_ICONS.length].id, style: style.id, color: "#1e3a8a", backgroundColor: "#fff7ed", frameColor: "#9f1239", frameBackgroundColor: "#f0fdf4", iconFollowColor: false, iconColor: "#166534", showCaption: true, caption: "扫码了解更多", framePadding: styleIndex % 2 ? 8 : 32, size: 2048 });
       const { data, info } = await sharp(Buffer.from(svg)).resize({ width: 768 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
       assert.equal(jsQR(new Uint8ClampedArray(data), info.width, info.height)?.data, target, `${frame.id} / ${style.id}`);
     }
   });
 }
 
-test("all 36 icons decode without a frame at small preview size", async () => {
+test("all icons decode without a frame at small preview size", async () => {
   for (const icon of BUSINESS_CARD_QR_ICONS) {
     const target = "https://haoyouduo.faolla.com/";
     const matrix = QRCode.create(target, { errorCorrectionLevel: "H" }).modules;
