@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveBusinessCardWebsiteAddress } from "@/lib/merchantBusinessCardDestination";
+import { resolveBusinessCardWebsiteAddress, resolveBusinessCardContactWebsite } from "@/lib/merchantBusinessCardDestination";
 import {
   buildMerchantBusinessCardVCard,
   buildMerchantBusinessCardVCardFileName,
@@ -10,7 +10,7 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
-import { loadCurrentMerchantSnapshotSites, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
+import { loadCurrentMerchantSnapshotSites, loadCurrentMerchantSnapshotSiteBySiteId, loadPublishedMerchantSnapshotSites } from "@/lib/publishedMerchantService";
 import { createServerTiming } from "@/lib/serverTiming";
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { buildOriginScopedCacheKey, resolveConfiguredPublicRequestOrigin } from "@/lib/requestOrigin";
@@ -267,7 +267,17 @@ export async function GET(
   }
   writeCachedContactDownloadPayload(shareKey, payloadOrigin, payload);
 
-  const vcard = await timing.time("render_vcard", async () => buildMerchantBusinessCardVCard(payload));
+  const currentSites = await withContactDownloadTimeout(
+    payload.ownerMerchantId
+      ? loadCurrentMerchantSnapshotSiteBySiteId(payload.ownerMerchantId).then(site => site ? [site] : []).catch(() => [])
+      : loadCurrentMerchantSnapshotSites().catch(() => []),
+    [],
+    2_500,
+  );
+  const currentCard = findContactDownloadSnapshotCard(currentSites, shareKey)?.card;
+  const websiteUrl = resolveBusinessCardContactWebsite(currentCard, payload.targetUrl, payload.contact?.websiteUrl);
+  const downloadPayload = { ...payload, contact: { ...payload.contact, websiteUrl } };
+  const vcard = await timing.time("render_vcard", async () => buildMerchantBusinessCardVCard(downloadPayload));
   const fileName = buildMerchantBusinessCardVCardFileName(payload);
   return withTiming(new NextResponse(vcard, {
     status: 200,
