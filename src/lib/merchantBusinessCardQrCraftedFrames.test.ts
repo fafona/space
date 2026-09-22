@@ -62,6 +62,13 @@ test("camera and record keep the entire QR quiet-zone square inside their circul
   }
 });
 
+test("compact illustrated frames retain caption separation at minimum padding", () => {
+  for (const id of ["crafted-camera", "crafted-mirror", "crafted-rocket"]) {
+    assert.deepEqual(businessCardQrCraftedFrameGeometry(id, 8), businessCardQrCraftedFrameGeometry(id, 12));
+    assert.notDeepEqual(businessCardQrCraftedFrameGeometry(id, 12), businessCardQrCraftedFrameGeometry(id, 16));
+  }
+});
+
 test("record long-link QR survives export resampling and all supported padding presets", async () => {
   const target = `https://faolla.com/card/example?ref=${"safe".repeat(35)}`;
   const matrix = QRCode.create(target, { errorCorrectionLevel: "H" }).modules;

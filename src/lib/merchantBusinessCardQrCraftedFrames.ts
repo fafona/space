@@ -59,7 +59,11 @@ export const BUSINESS_CARD_QR_CRAFTED_FRAMES: readonly Frame[] = [
 export function businessCardQrCraftedFrameGeometry(id: string, padding: number) {
   const f = BUSINESS_CARD_QR_CRAFTED_FRAMES.find(f => f.id === id);
   if (!f) return null;
-  const inset = (padding - 16) * 2;
+  // Compact lens/mirror/rocket insets need extra separation from the caption:
+  // at padding 8, the captioned soft-style QR fails Linux raster/scan tests
+  // after export resampling. Preserve larger requested gaps.
+  const safePadding = ["crafted-camera", "crafted-mirror", "crafted-rocket"].includes(id) ? Math.max(12, padding) : padding;
+  const inset = (safePadding - 16) * 2;
   return { x: f.qr.x + inset, y: f.qr.y + inset, side: f.qr.side - inset * 2, width: 1000, height: 1140, captionX: f.caption.x, captionY: f.caption.y, captionWidth: 360 };
 }
 export function businessCardQrCraftedSelection(id: string) {
