@@ -2190,7 +2190,7 @@ export default function MerchantBusinessCardManager({
   );
   const normalizedCardLimit = useMemo(() => Math.max(1, Math.min(100, Math.round(Number(cardLimit) || 1))), [cardLimit]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
-  const qrMinimumSize = normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? QR_MIN_READABLE_SIZE : Math.ceil(QR_MIN_READABLE_SIZE * 1000 / businessCardQrFrameGeometry(normalizeBusinessCardQrDecoration(draft.qr).framePadding).side);
+  const qrMinimumSize = normalizeBusinessCardQrFrame(draft.qr.frame) === "none" ? QR_MIN_READABLE_SIZE : Math.ceil(QR_MIN_READABLE_SIZE * 1000 / businessCardQrFrameGeometry(normalizeBusinessCardQrDecoration(draft.qr).framePadding, normalizeBusinessCardQrFrame(draft.qr.frame)).side);
   const qrMayBeUnreadable = draft.qr.size < qrMinimumSize;
   const selectedChatDisplayCard = useMemo(
     () => resolveMerchantBusinessCardForChatDisplay(normalizedCards),

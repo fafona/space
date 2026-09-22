@@ -1,5 +1,7 @@
-// Hand-authored vector presets. No remote images, uploaded SVG, or executable markup.
-export const BUSINESS_CARD_QR_ICONS = [
+import { BUSINESS_CARD_QR_INDUSTRY_ICONS } from "./merchantBusinessCardQrIndustry";
+import { BUSINESS_CARD_QR_EXPANDED_FRAMES, businessCardQrStudioFrameGeometry, renderBusinessCardQrExpandedFrame } from "./merchantBusinessCardQrExpandedFrames";
+// Legacy IDs and their renderer stay stable. New artwork uses separate IDs.
+const LEGACY_BUSINESS_CARD_QR_ICONS = [
   { id: "restaurant", label: "餐厅", group: "餐饮食品", path: "M5 3v6m3-6v6m-6-6v6q0 3 3 3v9M17 3v18m0-18q6 5 0 10" },
   { id: "coffee", label: "咖啡", group: "餐饮食品", path: "M3 9h14v7q0 4-7 4t-7-4ZM17 10h2a3 3 0 0 1 0 6h-2M6 3v3m4-3v3m4-3v3M2 22h17" },
   { id: "tea", label: "奶茶", group: "餐饮食品", path: "M5 7h14l-2 15H7ZM4 7h16M12 7l2-6h4M9 16h.1m4 2h.1m2-5h.1" },
@@ -38,7 +40,8 @@ export const BUSINESS_CARD_QR_ICONS = [
   { id: "games", label: "娱乐", group: "商务文娱", path: "M7 6h10q5 0 6 13-1 5-7-2H8q-6 7-7 2Q2 6 7 6ZM7 9v6m-3-3h6m7-2h.1m2 4h.1" },
 ] as const;
 
-export const BUSINESS_CARD_QR_FRAMES = [
+export const BUSINESS_CARD_QR_ICONS = [...BUSINESS_CARD_QR_INDUSTRY_ICONS, ...LEGACY_BUSINESS_CARD_QR_ICONS];
+const LEGACY_BUSINESS_CARD_QR_FRAMES = [
   { id: "thin", label: "细线方框", group: "简约通用" }, { id: "round", label: "圆角方框", group: "简约通用" },
   { id: "double", label: "双线边框", group: "简约通用" }, { id: "corners", label: "四角定位框", group: "简约通用" }, { id: "card", label: "无边线底卡", group: "简约通用" },
   { id: "business", label: "深色商务框", group: "商务质感" }, { id: "gold", label: "金色细边框", group: "商务质感" }, { id: "layers", label: "双层卡片框", group: "商务质感" }, { id: "tech", label: "切角科技框", group: "商务质感" }, { id: "stripe", label: "侧边品牌色框", group: "商务质感" },
@@ -49,6 +52,7 @@ export const BUSINESS_CARD_QR_FRAMES = [
   { id: "house", label: "房屋外框", group: "行业特色" }, { id: "bag", label: "购物袋外框", group: "行业特色" }, { id: "phone", label: "手机外框", group: "行业特色" }, { id: "car", label: "汽车轮廓框", group: "行业特色" }, { id: "gift", label: "礼盒外框", group: "行业特色" },
   { id: "heart", label: "爱心外框", group: "活动情感" }, { id: "shield", label: "盾牌徽章框", group: "活动情感" }, { id: "medal", label: "奖章外框", group: "活动情感" }, { id: "polaroid", label: "拍立得相框", group: "活动情感" }, { id: "confetti", label: "节庆彩带框", group: "活动情感" },
 ] as const;
+export const BUSINESS_CARD_QR_FRAMES = [...BUSINESS_CARD_QR_EXPANDED_FRAMES, ...LEGACY_BUSINESS_CARD_QR_FRAMES];
 export type BusinessCardQrIcon = "none" | (typeof BUSINESS_CARD_QR_ICONS)[number]["id"];
 export type BusinessCardQrFrame = "none" | (typeof BUSINESS_CARD_QR_FRAMES)[number]["id"];
 export type BusinessCardQrDecoration = {
@@ -69,16 +73,21 @@ export function normalizeBusinessCardQrDecoration(input: BusinessCardQrDecoratio
 
 export function renderBusinessCardQrIcon(icon: BusinessCardQrIcon, color: string): string {
   const preset = BUSINESS_CARD_QR_ICONS.find(i => i.id === icon);
+  if (preset && "body" in preset) return `<svg viewBox="0 0 ${preset.viewBox} ${preset.viewBox}" xmlns="http://www.w3.org/2000/svg" fill="${hex(color, "#000000")}" color="${hex(color, "#000000")}">${preset.body}</svg>`;
   return preset ? `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="${preset.path}" fill="none" stroke="${hex(color, "#000000")}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>` : "";
 }
 
 // All frames reserve the same full QR rectangle. Decorations never enter its quiet zone.
-export function businessCardQrFrameGeometry(padding: number) {
+export function businessCardQrFrameGeometry(padding: number, frame = "none") {
+  const studio = businessCardQrStudioFrameGeometry(frame, padding);
+  if (studio) return studio;
   return { x: 172 + padding, y: 222 + padding, side: 656 - 2 * padding, width: 1000, height: 1140 };
 }
 
 export function renderBusinessCardQrFrame(options: Required<BusinessCardQrDecoration>): string {
   const { frame: f, frameColor: c, frameBackgroundColor: b, frameWidth } = options;
+  const expanded = renderBusinessCardQrExpandedFrame(f, c, b, frameWidth);
+  if (expanded !== null) return expanded;
   const w = frameWidth * 3;
   const path = (d: string, fill = b, stroke = c) => `<path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"/>`;
   const rect = (x = 150, y = 195, width = 700, height = 770, rx = 0, fill = b, stroke = c) => `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${w}"/>`;

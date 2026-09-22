@@ -30,8 +30,8 @@ test("QR settings preserve old cards and survive save/reopen normalization", () 
 });
 
 test("QR options are bounded and cannot inject SVG markup", () => {
-  assert.equal(BUSINESS_CARD_QR_STYLES.length, 10);
-  assert.equal(new Set(BUSINESS_CARD_QR_STYLES.map((style) => style.id)).size, 10);
+  assert.equal(BUSINESS_CARD_QR_STYLES.length, 16);
+  assert.equal(new Set(BUSINESS_CARD_QR_STYLES.map((style) => style.id)).size, BUSINESS_CARD_QR_STYLES.length);
   assert.equal(normalizeBusinessCardQrStyle("unknown"), "classic");
   assert.equal(normalizeBusinessCardQrColor('red\"/><script/>'), "#000000");
   assert.equal(isBusinessCardQrColorReadable("#ffffff"), false);
@@ -64,7 +64,7 @@ test("QR structural modules remain square for every style", () => {
   }
   const dataMatrix = QRCode.create("https://faolla.com").modules;
   const designs = BUSINESS_CARD_QR_STYLES.map((style) => renderBusinessCardQrSvg(dataMatrix, { style: style.id }));
-  assert.equal(new Set(designs).size, 10);
+  assert.equal(new Set(designs).size, BUSINESS_CARD_QR_STYLES.length);
 });
 
 test("QR backgrounds and captions enforce contrast, safe text and stable dimensions", async () => {
