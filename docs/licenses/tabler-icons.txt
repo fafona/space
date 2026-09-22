@@ -23,4 +23,3 @@ SOFTWARE.
 Source: https://github.com/tabler/tabler-icons
 Package: @tabler/icons 3.47.0
 Only selected filled paths are included; no runtime network dependency.
-

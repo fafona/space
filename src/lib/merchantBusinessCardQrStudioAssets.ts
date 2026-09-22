@@ -97,4 +97,3 @@ export const BUSINESS_CARD_QR_STUDIO_FRAMES = [
     "color": "#b3842d"
   }
 ] as const;
-
