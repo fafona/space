@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {assertWebPresentationReleaseScope,webPresentationProxy,WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
+import {assertWebPresentationReleaseScope,webPresentationProxy,webReleaseRuntimeEnvironment,WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
 const source=readFileSync(new URL('./web-presentation-release.mjs',import.meta.url),'utf8');
+test('fresh processes keep app configuration but never inherit PM2 IPC descriptors',()=>{
+ const result=webReleaseRuntimeEnvironment('NODE_ENV=production\0APP_URL=https://example.test/?a=b\0NODE_CHANNEL_FD=3\0NODE_CHANNEL_SERIALIZATION_MODE=json\0NODE_UNIQUE_ID=1\0NODE_APP_INSTANCE=0\0PM2_USAGE=CLI\0lowercase=private\0');
+ assert.deepEqual(result,{NODE_ENV:'production',APP_URL:'https://example.test/?a=b'});
+});
 test('only reviewed presentation files and predecessor card fixes are eligible',()=>{
  assert.doesNotThrow(()=>assertWebPresentationReleaseScope(['src/components/admin/BusinessCardQrTextControls.tsx','src/lib/platformMerchantSnapshot.ts','src/app/card/[card]/route.ts']));
  for(const file of ['package.json','package-lock.json','src/middleware.ts','src/instrumentation.ts','src/app/api/auth/route.ts','scripts/supabase-migrations/one.sql','src/lib/merchantBookings.server.ts'])assert.throws(()=>assertWebPresentationReleaseScope([file]));

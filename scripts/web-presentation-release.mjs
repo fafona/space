@@ -2,13 +2,13 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,openSync,closeSync,unlinkSync,readdirSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {assertWebPresentationReleaseScope,webPresentationProxy,WEB_RELEASE_FILES,WEB_RELEASE_ROOT as root,WEB_RELEASE_MARKER as marker,WEB_RELEASE_PROXY as proxy} from './web-presentation-release-policy.mjs';
+import {assertWebPresentationReleaseScope,webPresentationProxy,webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_ROOT as root,WEB_RELEASE_MARKER as marker,WEB_RELEASE_PROXY as proxy} from './web-presentation-release-policy.mjs';
 const app='/www/wwwroot/merchant-space', name='merchant-space-web-live', port=3102, nginx='/www/server/nginx/sbin/nginx';
 const [action,target,baseline]=process.argv.slice(2), stateFile=`${root}/state.json`;
 const envBase={...process.env,HOME:'/root',PM2_HOME:'/root/.pm2'};
 const read=p=>readFileSync(p,'utf8'), hash=v=>createHash('sha256').update(v).digest('hex');
 const fail=m=>{throw Error(m);};
-function run(command,args,options={}) { const r=spawnSync(command,args,{encoding:'utf8',env:envBase,timeout:60000,maxBuffer:4*1024*1024,...options});if(r.status!==0)fail(`web_release_command_failed:${command}:${r.status}`);return r.stdout; }
+function run(command,args,options={}) { const r=spawnSync(command,args,{encoding:'utf8',env:envBase,timeout:60000,maxBuffer:4*1024*1024,...options});if(r.status!==0)fail(`web_release_command_failed:${command}:${r.status}:${r.signal??r.error?.code??'exit'}`);return r.stdout; }
 function atomic(path,value){const tmp=`${path}.${process.pid}.tmp`;writeFileSync(tmp,value,{mode:0o600,flag:'wx'});renameSync(tmp,path);}
 const save=s=>atomic(stateFile,JSON.stringify(s,null,2));
 const pm=()=>JSON.parse(run('pm2',['jlist']));
@@ -79,7 +79,8 @@ try {
   try{run('git',['archive','--format=tar',target],{cwd:app,stdio:['ignore',fd,'pipe']});}finally{closeSync(fd);}
   run('tar',['--no-same-owner','--no-same-permissions','-xf',archive,'-C',state.directory]);unlinkSync(archive);
   run('cp',['-a','--reflink=auto',`${baseDirectory}/node_modules`,`${state.directory}/node_modules`],{timeout:180000});
-  const env=Object.fromEntries(read(`/proc/${base.pid}/environ`).split('\0').filter(Boolean).map(s=>{const i=s.indexOf('=');return[s.slice(0,i),s.slice(i+1)];}).filter(([k])=>/^[A-Z][A-Z0-9_]*$/.test(k)&&!['NODE_APP_INSTANCE','PM2_USAGE'].includes(k)));
+  // Runtime IPC descriptors belong to the original PM2 child, not tests/builds.
+  const env=webReleaseRuntimeEnvironment(read(`/proc/${base.pid}/environ`));
   const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',PORT:String(port)};
   const envText=read(`${baseDirectory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');writeFileSync(`${state.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{HOME:'/root',PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});
