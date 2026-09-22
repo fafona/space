@@ -46,6 +46,8 @@ import {
 } from "@/lib/merchantBusinessCards";
 import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
 import { BusinessCardQrControls } from "@/components/admin/BusinessCardQrControls";
+import { BusinessCardDestinationFields } from "@/components/admin/BusinessCardDestinationFields";
+import { businessCardUsesContactPage, resolveBusinessCardWebsiteAddress, resolveBusinessCardScanTarget } from "@/lib/merchantBusinessCardDestination";
 import { isBusinessCardQrColorReadable, businessCardQrAspectRatio, normalizeBusinessCardQrBackground } from "@/lib/merchantBusinessCardQr";
 import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame } from "@/lib/merchantBusinessCardQrDecorations";
 import { businessCardQrSvgDataUrl, createBusinessCardQrSvg } from "@/lib/merchantBusinessCardQrRender";
@@ -195,7 +197,7 @@ const INVOICE_FIELDS = [
 const TEXT_LAYOUT_FIELDS: Array<{ key: MerchantBusinessCardFieldKey; label: string }> = [
   { key: "merchantName", label: "商户名称" },
   { key: "title", label: "职位" },
-  { key: "website", label: "网站说明" },
+  { key: "website", label: "网站地址" },
   ...CONTACT_FIELDS,
 ];
 
@@ -415,7 +417,7 @@ function getCardModeLabel(mode: MerchantBusinessCardMode) {
 }
 
 function resolveCardShortLink(card: MerchantBusinessCardAsset | null | undefined) {
-  if (!card || card.mode !== "link") return "";
+  if (!card || !businessCardUsesContactPage(card)) return "";
   return buildMerchantBusinessCardShareUrl({
     shareKey: normalizeText(card.shareKey),
     name: normalizeText(card.name),
@@ -1131,7 +1133,7 @@ function CardSurface({
   }).filter((item): item is { key: MerchantBusinessCardEditableContactFieldKey; label: string; value: string } => !!item);
   const websiteText = [
     normalizeText(draft.websiteLabel),
-    draft.showWebsiteUrl ? websiteUrl.replace(/^https?:\/\//i, "") : "",
+    draft.showWebsiteUrl ? resolveBusinessCardWebsiteAddress(draft, websiteUrl).replace(/^https?:\/\//i, "") : "",
   ]
     .map((item) => item.trim())
     .filter(Boolean)
@@ -1608,6 +1610,7 @@ function MediaAudioPreview({
 function ContactCardSurface({
   name,
   targetUrl,
+  websiteUrl,
   contacts,
   invoice,
   contactFieldOrder,
@@ -1638,6 +1641,7 @@ function ContactCardSurface({
 }: {
   name: string;
   targetUrl: string;
+  websiteUrl?: string;
   contacts: MerchantBusinessCardDraft["contacts"];
   invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
@@ -1836,6 +1840,7 @@ function ContactCardSurface({
           {showContactWebsiteButton ? (
             <button
               type="button"
+              title={websiteUrl || targetUrl}
               className="rounded-full border border-slate-300 bg-white px-5 py-3 text-base font-medium text-slate-900"
             >
               进入官网
@@ -2236,9 +2241,13 @@ export default function MerchantBusinessCardManager({
       ) ?? null,
     [draft.contactPagePollBlockId, draft.contactPagePollId, normalizedPollOptions],
   );
-  const canUseDraftLinkMode = allowLinkMode || editingCard?.mode === "link";
+  const canUseDraftLinkMode = allowLinkMode || !!(editingCard && businessCardUsesContactPage(editingCard));
+  const usesContactPage = businessCardUsesContactPage(draft);
+  const draftWebsiteAddress = resolveBusinessCardWebsiteAddress(draft, websiteUrl);
+  const invalidWebsiteAddress = !!draft.websiteAddress?.trim() && !draftWebsiteAddress;
+  const scanTargetChanged = !!editingCard && (businessCardUsesContactPage(editingCard) !== usesContactPage || resolveBusinessCardWebsiteAddress(editingCard, websiteUrl) !== draftWebsiteAddress);
   const activeLinkShareKey = useMemo(() => {
-    if (draft.mode !== "link") return "";
+    if (!usesContactPage) return "";
     return (
       normalizeText(editingCard?.shareKey) ||
       createMerchantBusinessCardShareKey({
@@ -2248,9 +2257,9 @@ export default function MerchantBusinessCardManager({
         code: draftShareCode,
       })
     );
-  }, [draft.contacts.contactName, draft.mode, draft.name, draftShareCode, editingCard, websiteUrl]);
+  }, [draft.contacts.contactName, usesContactPage, draft.name, draftShareCode, editingCard, websiteUrl]);
   const draftLinkUrl = useMemo(() => {
-    if (draft.mode !== "link" || !websiteUrl) return "";
+    if (!usesContactPage || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, websiteUrl),
       shareKey: activeLinkShareKey,
@@ -2278,6 +2287,7 @@ export default function MerchantBusinessCardManager({
         contactFieldOrder: draft.contactFieldOrder,
         contactDisplayFields: draft.contactDisplayFields,
         customContactLinks: draft.customContactLinks,
+        websiteAddress: draft.websiteAddress,
         targetUrl: websiteUrl,
       }),
     });
@@ -2297,9 +2307,10 @@ export default function MerchantBusinessCardManager({
     draft.contactPagePollBlockId,
     draft.contactPagePollId,
     draft.contacts,
+    draft.websiteAddress,
     draft.customContactLinks,
     draft.invoice,
-    draft.mode,
+    usesContactPage,
     draft.name,
     draft.showContactSaveButton,
     draft.showContactPoll,
@@ -2308,10 +2319,10 @@ export default function MerchantBusinessCardManager({
     websiteUrl,
     normalizedMerchantId,
   ]);
-  const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
-  const qrPreviewKey = JSON.stringify([qrTargetUrl, { style: draft.qr.style, color: draft.qr.color, backgroundColor: draft.qr.backgroundColor, showCaption: draft.qr.showCaption, caption: draft.qr.caption, ...normalizeBusinessCardQrDecoration(draft.qr) }]);
+  const qrTargetUrl = resolveBusinessCardScanTarget(draft, websiteUrl, draftLinkUrl);
+  const qrPreviewKey = JSON.stringify([qrTargetUrl, { style: draft.qr.style, color: draft.qr.color, backgroundColor: draft.qr.backgroundColor, showCaption: draft.qr.showCaption, caption: draft.qr.caption, topText: draft.qr.topText, bottomText: draft.qr.bottomText, ...normalizeBusinessCardQrDecoration(draft.qr) }]);
   const qrCodeUrl = qrPreview.key === qrPreviewKey ? qrPreview.url : "";
-  const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
+  const qrReadyForCurrentDraft = !invalidWebsiteAddress && (!draft.showQr || !!qrCodeUrl);
 
   useEffect(() => {
     clearNumberInputDraft(TYPOGRAPHY_FONT_SIZE_INPUT_KEY);
@@ -2331,15 +2342,19 @@ export default function MerchantBusinessCardManager({
       setQrPreview({ key: "", url: "" });
       return;
     }
-    void createBusinessCardQrSvg(target, appearance)
+    const timer = window.setTimeout(() => { void createBusinessCardQrSvg(target, appearance)
       .then((svg) => {
         if (!cancelled) setQrPreview({ key: qrPreviewKey, url: businessCardQrSvgDataUrl(svg) });
       })
-      .catch(() => {
-        if (!cancelled) setQrPreview({ key: "", url: "" });
-      });
+      .catch((error) => {
+        if (!cancelled) {
+          setQrPreview({ key: "", url: "" });
+          setTip(error instanceof Error && /字体/.test(error.message) ? error.message : "二维码预览生成失败，请调整设置后重试。");
+        }
+      }); }, 180);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [editorOpen, qrPreviewKey]);
 
@@ -2355,11 +2370,11 @@ export default function MerchantBusinessCardManager({
   }, [draft.customTexts]);
 
   useEffect(() => {
-    if (canUseDraftLinkMode || draft.mode !== "link") return;
+    if (canUseDraftLinkMode || !usesContactPage) return;
     draftRevisionRef.current += 1;
     setDraft((current) => normalizeMerchantBusinessCardDraft({ ...current, mode: "image" }));
     setPreviewAsset(null);
-  }, [canUseDraftLinkMode, draft.mode]);
+  }, [canUseDraftLinkMode, usesContactPage]);
 
   useEffect(() => {
     if (normalizedCards.length === 0) return;
@@ -2553,6 +2568,9 @@ export default function MerchantBusinessCardManager({
   };
 
   const handleSaveDraft = async () => {
+    if (invalidWebsiteAddress) { setTip("请先填写有效的网站地址"); return; }
+    if (!qrReadyForCurrentDraft) { setTip("二维码或字体尚未就绪，请等待预览完成后再保存"); return; }
+    if (scanTargetChanged && draft.backgroundImageSnapshotOnly) { setTip("旧名片使用的是成品底图，请先清除或重新上传背景图，再修改扫码去向"); return; }
     if (isContactMediaProcessing) {
       setTip("联系卡媒体还在处理中，请完成后再保存");
       return;
@@ -2560,7 +2578,9 @@ export default function MerchantBusinessCardManager({
     setIsDraftSaving(true);
     try {
       writeSavedBusinessCardDraft(draftStorageKey, draft);
-      const savedExistingCard = editingCardId
+      const savedExistingCard = editingCardId && scanTargetChanged
+        ? await saveCurrentDraftToFolder()
+        : editingCardId
         ? await saveCurrentDraftSettingsToExistingCard({
             deferShareSync: true,
             refreshFrontImage: Boolean(websiteUrl && qrReadyForCurrentDraft),
@@ -2568,7 +2588,7 @@ export default function MerchantBusinessCardManager({
         : null;
       setTip(
         savedExistingCard
-          ? savedExistingCard.mode === "link"
+          ? businessCardUsesContactPage(savedExistingCard) && !scanTargetChanged
             ? "名片设置已保存，联系卡后台同步中"
             : "名片设置已保存"
           : "名片草稿已保存",
@@ -3160,7 +3180,7 @@ export default function MerchantBusinessCardManager({
 
   function buildLegacySharePayload(card: MerchantBusinessCardAsset) {
     const targetUrl = normalizeText(card.targetUrl);
-    if (card.mode !== "link" || !targetUrl) {
+    if (!businessCardUsesContactPage(card) || !targetUrl) {
       return null;
     }
 
@@ -3198,6 +3218,7 @@ export default function MerchantBusinessCardManager({
         contactFieldOrder: card.contactFieldOrder,
         contactDisplayFields: card.contactDisplayFields,
         customContactLinks: card.customContactLinks,
+        websiteAddress: card.websiteAddress,
         targetUrl,
       }),
     };
@@ -3206,7 +3227,7 @@ export default function MerchantBusinessCardManager({
   async function deleteCardShare(card: MerchantBusinessCardAsset) {
     const shareKey = normalizeText(card.shareKey);
     const legacyPayload = buildLegacySharePayload(card);
-    if (card.mode !== "link" && !shareKey) {
+    if (!businessCardUsesContactPage(card) && !shareKey) {
       return;
     }
     if (!shareKey && !legacyPayload) {
@@ -3904,7 +3925,7 @@ export default function MerchantBusinessCardManager({
                           <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
                         </div>
                       </div>
-                      {draft.mode === "link" ? (
+                      {usesContactPage ? (
                         <div className="mt-4 border-t border-slate-200 pt-4">
                           <div className="text-xs font-semibold text-slate-700">联系卡背景音乐</div>
                           <div className="mt-1 text-[11px] leading-5 text-slate-400">
@@ -3940,7 +3961,7 @@ export default function MerchantBusinessCardManager({
                         </div>
                       ) : null}
                     </div>
-                    {draft.mode === "link" ? (
+                    {usesContactPage ? (
                       <div className="space-y-4 rounded-xl border bg-white px-3 py-3">
                         <div>
                           <div className="text-xs font-semibold text-slate-700">联系卡开场</div>
@@ -4092,7 +4113,7 @@ export default function MerchantBusinessCardManager({
                         </div>
                       </div>
                     ) : null}
-                    {draft.mode === "link" ? (
+                    {usesContactPage ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
                         <div className="text-xs font-semibold text-slate-700">联系卡中间展示图</div>
                         <div className="mt-1 text-xs leading-5 text-slate-500">这里可以单独上传一张图片给收到名片的人看。不上传时，联系卡页面会默认展示姓名、电话、邮箱这些名片信息。右侧名片预览下方会同步显示联系卡图片预览。</div>
@@ -4250,7 +4271,7 @@ export default function MerchantBusinessCardManager({
                         ) : null}
                       </div>
                     ) : null}
-                    {draft.mode === "link" ? (
+                    {usesContactPage ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
                         <div className="text-xs font-semibold text-slate-700">联系卡展示设置</div>
                         <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -4377,15 +4398,19 @@ export default function MerchantBusinessCardManager({
                     ) : null}
                     <div className="rounded-xl border bg-white px-3 py-3">
                       <div className="text-xs font-semibold text-slate-700">网址与二维码</div>
-                      <div className="mt-1 text-xs leading-5 text-slate-500">网站说明、网址显示和二维码都在右侧实时预览中查看，这里只保留设置，不再重复预览。</div>
+                      <div className="mt-1 text-xs leading-5 text-slate-500">网站地址、网址显示和二维码都在右侧实时预览中查看，这里只保留设置，不再重复预览。</div>
                       <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
                         <div className="space-y-3">
-                          <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSingleSelectedField("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
+                          <BusinessCardDestinationFields
+                            settings={draft} assignedWebsite={websiteUrl}
+                            onFocus={() => setSingleSelectedField("website")}
+                            onChange={(patch) => applyDraft((current) => ({ ...current, ...patch, ...(Object.hasOwn(patch, "websiteAddress") ? { websiteLabel: "" } : {}) }))}
+                          />
                           <div className="grid gap-3 sm:grid-cols-2">
                             <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={draft.showWebsiteUrl} onChange={(event) => applyDraft((current) => ({ ...current, showWebsiteUrl: event.target.checked }))} />显示域名</label>
                             <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={draft.showQr} onChange={(event) => applyDraft((current) => ({ ...current, showQr: event.target.checked }))} />显示二维码</label>
                           </div>
-                          <div className="rounded border bg-slate-50 px-3 py-2 text-xs text-slate-500 break-all">{`当前网址：${websiteUrl || "请先填写域名前缀"}`}</div>
+                          <div className="rounded border bg-slate-50 px-3 py-2 text-xs text-slate-500 break-all">{`扫码去向：${usesContactPage ? "联系卡（生成并保存后生效）" : draftWebsiteAddress || "请填写有效网站地址"}`}</div>
                         </div>
                         <div className="space-y-3">
                           <div className="grid gap-3 sm:grid-cols-3">
@@ -4435,7 +4460,7 @@ export default function MerchantBusinessCardManager({
                         targetUrl={qrTargetUrl}
                         {...draft.qr}
                         onChange={(patch) => applyDraft((current) => ({ ...current, qr: { ...current.qr, ...patch } }))}
-                        exportDisabledReason={draft.mode === "link" && !editingCard?.shareKey ? "请先生成并保存联系卡，确保二维码链接生效后再导出。" : ""}
+                        exportDisabledReason={invalidWebsiteAddress ? "请先填写有效的网站地址。" : usesContactPage && (!editingCard?.shareKey || !businessCardUsesContactPage(editingCard) || scanTargetChanged) ? "请先生成并保存联系卡，确保二维码链接生效后再导出。" : ""}
                       />
                     </div>
                   </BusinessCardEditorSection>
@@ -4970,13 +4995,14 @@ export default function MerchantBusinessCardManager({
                       当前使用旧名片成品图作为预览底图，文字和二维码不会重复叠加。需要重新排版时，请清除或重新上传背景图。
                     </div>
                   ) : null}
-                  {draft.mode === "link" ? (
+                  {usesContactPage ? (
                     <div className="overflow-hidden rounded-2xl border bg-white p-3">
                       <div className="mb-2 text-xs font-semibold text-slate-700">联系卡预览</div>
                       <div className="flex justify-center rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <ContactCardSurface
                           name={normalizeText(draft.name)}
                           targetUrl={websiteUrl}
+                          websiteUrl={draftWebsiteAddress}
                           contacts={draft.contacts}
                           invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
@@ -5019,7 +5045,7 @@ export default function MerchantBusinessCardManager({
                     </div>
                   ) : null}
                   <div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">
-                    {draft.mode === "link"
+                    {usesContactPage
                       ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。"
                       : "当前为图片模式：生成后可保存或复制名片图片。"}
                   </div>
@@ -5089,6 +5115,7 @@ export default function MerchantBusinessCardManager({
                       <ContactCardSurface
                         name={previewCardName}
                         targetUrl={previewTargetUrl}
+                        websiteUrl={resolveBusinessCardWebsiteAddress(previewAsset ?? draft, previewTargetUrl)}
                         contacts={previewContacts}
                         invoice={previewAsset?.invoice || draft.invoice}
                         contactFieldOrder={previewContactFieldOrder}
@@ -5917,6 +5944,7 @@ export default function MerchantBusinessCardManager({
       contactFieldOrder: source.contactFieldOrder,
       contactDisplayFields: source.contactDisplayFields,
       customContactLinks: source.customContactLinks,
+      websiteAddress: source.websiteAddress,
       targetUrl,
     });
   }
@@ -5974,7 +6002,7 @@ export default function MerchantBusinessCardManager({
       }
     }
 
-    if (asset.mode === "link") {
+    if (businessCardUsesContactPage(asset)) {
       try {
         if (!isCurrentBusinessCardBackgroundSync(asset.id, input.syncGeneration)) return;
         const shareContactPayload = buildDraftShareContactPayload(asset, asset.targetUrl);
@@ -6095,7 +6123,7 @@ export default function MerchantBusinessCardManager({
         return renderCurrentDraftExportImage();
       })());
     const resolvedShareKey =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? normalizeText(existingCard?.shareKey) ||
           createMerchantBusinessCardShareKey({
             contactName: nextDraft.contacts.contactName,
@@ -6105,14 +6133,14 @@ export default function MerchantBusinessCardManager({
           })
         : "";
     const shareContactPayload =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? buildDraftShareContactPayload(nextDraft, websiteUrl)
         : undefined;
-    if (nextDraft.mode === "link") {
+    if (businessCardUsesContactPage(nextDraft)) {
       setTip("正在同步联系卡短链...");
     }
     const shareBundle =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? await buildShareBundle({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
@@ -6151,12 +6179,12 @@ export default function MerchantBusinessCardManager({
             shareRequestTimeoutMs: 12_000,
           })
         : null;
-    if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
+    if (businessCardUsesContactPage(nextDraft) && !normalizeText(shareBundle?.shareKey)) {
       throw new Error("share_link_unavailable");
     }
     if (
       existingCard &&
-      nextDraft.mode !== "link" &&
+      !businessCardUsesContactPage(nextDraft) &&
       (existingCard.mode === "link" || Boolean(normalizeText(existingCard.shareKey)))
     ) {
       setTip("正在停用原联系卡短链...");
@@ -6167,19 +6195,19 @@ export default function MerchantBusinessCardManager({
       id: existingCard?.id ?? createId("business-card"),
       createdAt: existingCard?.createdAt ?? new Date().toISOString(),
       imageUrl,
-      ...(nextDraft.mode === "link" && (shareBundle?.shareImageUrl || existingCard?.shareImageUrl)
+      ...(businessCardUsesContactPage(nextDraft) && (shareBundle?.shareImageUrl || existingCard?.shareImageUrl)
         ? { shareImageUrl: shareBundle?.shareImageUrl || existingCard?.shareImageUrl }
         : {}),
-      ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl)
+      ...(businessCardUsesContactPage(nextDraft) && (shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl)
         ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl }
         : {}),
-      ...(nextDraft.mode === "link" && normalizeText(shareBundle?.shareKey) ? { shareKey: normalizeText(shareBundle?.shareKey) } : {}),
+      ...(businessCardUsesContactPage(nextDraft) && normalizeText(shareBundle?.shareKey) ? { shareKey: normalizeText(shareBundle?.shareKey) } : {}),
       targetUrl: websiteUrl,
       ...(existingCard?.showInChat ? { showInChat: true } : {}),
       ...(existingCard?.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
     const asset =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? assetWithPossibleShareMetadata
         : stripMerchantBusinessCardShareMetadata(assetWithPossibleShareMetadata);
 
@@ -6213,7 +6241,7 @@ export default function MerchantBusinessCardManager({
         : nextDraftBase;
     const syncGeneration = beginBusinessCardBackgroundSync(existingCard.id);
     const resolvedShareKey =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? normalizeText(existingCard.shareKey) ||
           createMerchantBusinessCardShareKey({
             contactName: nextDraft.contacts.contactName,
@@ -6223,14 +6251,14 @@ export default function MerchantBusinessCardManager({
           })
         : "";
     const shareContactPayload =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? buildDraftShareContactPayload(nextDraft, websiteUrl)
         : undefined;
-    if (nextDraft.mode === "link" && !options?.deferShareSync) {
+    if (businessCardUsesContactPage(nextDraft) && !options?.deferShareSync) {
       setTip("正在同步联系卡短链...");
     }
     const shareBundle =
-      nextDraft.mode === "link" && !options?.deferShareSync
+      businessCardUsesContactPage(nextDraft) && !options?.deferShareSync
         ? await buildShareBundle({
             targetUrl: websiteUrl,
             cardName: normalizeText(nextDraft.name),
@@ -6268,11 +6296,11 @@ export default function MerchantBusinessCardManager({
             shareRequestTimeoutMs: 12_000,
           })
         : null;
-    if (nextDraft.mode === "link" && !options?.deferShareSync && !normalizeText(shareBundle?.shareKey)) {
+    if (businessCardUsesContactPage(nextDraft) && !options?.deferShareSync && !normalizeText(shareBundle?.shareKey)) {
       throw new Error("share_link_unavailable");
     }
     if (
-      nextDraft.mode !== "link" &&
+      !businessCardUsesContactPage(nextDraft) &&
       (existingCard.mode === "link" || Boolean(normalizeText(existingCard.shareKey)))
     ) {
       setTip("正在停用原联系卡短链...");
@@ -6290,19 +6318,19 @@ export default function MerchantBusinessCardManager({
       id: existingCard.id,
       createdAt: existingCard.createdAt,
       imageUrl: existingCard.imageUrl,
-      ...(nextDraft.mode === "link" && (shareBundle?.shareImageUrl || existingCard.shareImageUrl)
+      ...(businessCardUsesContactPage(nextDraft) && (shareBundle?.shareImageUrl || existingCard.shareImageUrl)
         ? { shareImageUrl: shareBundle?.shareImageUrl || existingCard.shareImageUrl }
         : {}),
-      ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl)
+      ...(businessCardUsesContactPage(nextDraft) && (shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl)
         ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard.contactPagePublicImageUrl }
         : {}),
-      ...(nextDraft.mode === "link" && savedShareKey ? { shareKey: savedShareKey } : {}),
+      ...(businessCardUsesContactPage(nextDraft) && savedShareKey ? { shareKey: savedShareKey } : {}),
       targetUrl: websiteUrl,
       ...(existingCard.showInChat ? { showInChat: true } : {}),
       ...(existingCard.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
     const asset =
-      nextDraft.mode === "link"
+      businessCardUsesContactPage(nextDraft)
         ? assetWithPossibleShareMetadata
         : stripMerchantBusinessCardShareMetadata(assetWithPossibleShareMetadata);
     const nextCards = currentCards.map((card) => (card.id === existingCard.id ? asset : card));
@@ -6390,6 +6418,7 @@ export default function MerchantBusinessCardManager({
           contactFieldOrder: card.contactFieldOrder,
           contactDisplayFields: card.contactDisplayFields,
           customContactLinks: card.customContactLinks,
+          websiteAddress: card.websiteAddress,
           targetUrl,
         }),
       });
@@ -6423,6 +6452,7 @@ export default function MerchantBusinessCardManager({
     contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
     contactDisplayFields: MerchantBusinessCardDraft["contactDisplayFields"];
     customContactLinks?: MerchantBusinessCardCustomContactLink[];
+    websiteAddress?: string;
     targetUrl: string;
   }) {
     const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(input.contactFieldOrder);
@@ -6482,7 +6512,7 @@ export default function MerchantBusinessCardManager({
       customLinks: input.customContactLinks ?? [],
       ...(Object.keys(contactOnlyFields).length > 0 ? { contactOnlyFields } : {}),
       contactDisplayFields: input.contactDisplayFields,
-      websiteUrl: normalizeText(input.targetUrl),
+      websiteUrl: resolveBusinessCardWebsiteAddress(input, input.targetUrl),
       note: [...extraPhoneLines, ...socialLines].join("\n"),
     };
   }

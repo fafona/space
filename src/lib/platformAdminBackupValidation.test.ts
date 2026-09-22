@@ -61,6 +61,39 @@ function getAt(value: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((current, key) => (current as Raw)[key], value);
 }
 
+test("business-card website addresses survive strict snapshot backup validation", () => {
+  for (const mode of ["image", "link"]) {
+    const f = fixture();
+    setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.mode", mode);
+    setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.websiteAddress", "https://example.com/offer");
+    assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot));
+    const restored = readPlatformAdminDataBackupBlocksValidated(buildPlatformAdminDataBackupBlocks({ backups: [f.entry] }));
+    assert.equal(getAt(restored.backups[0].snapshot, "merchantSnapshot.snapshot.0.businessCards.0.mode"), mode);
+    assert.equal(getAt(restored.backups[0].snapshot, "merchantSnapshot.snapshot.0.businessCards.0.websiteAddress"), "https://example.com/offer");
+  }
+  const f = fixture();
+  setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0.websiteAddress", 123);
+  assert.throws(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot));
+});
+
+test("independent QR text settings survive strict backup validation and reject unsafe font/color data", () => {
+  const f = fixture();
+  const path = "merchantSnapshot.snapshot.0.businessCards.0.qr";
+  const topText = { enabled: true, text: "欢迎光临", font: "mashan", fontSize: 36, color: "#9f1239" };
+  const bottomText = { enabled: false, text: "扫码了解更多", font: "kuaile", fontSize: 18, color: "#1d4ed8" };
+  setAt(f.entry.snapshot, `${path}.topText`, topText);
+  setAt(f.entry.snapshot, `${path}.bottomText`, bottomText);
+  assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot));
+  const restored = readPlatformAdminDataBackupBlocksValidated(buildPlatformAdminDataBackupBlocks({ backups: [f.entry] }));
+  assert.deepEqual(getAt(restored.backups[0].snapshot, `${path}.topText`), topText);
+  assert.deepEqual(getAt(restored.backups[0].snapshot, `${path}.bottomText`), bottomText);
+  for (const [key, value] of [["font", "untrusted"], ["fontSize", 1000], ["color", 'red"/>'], ["text", "字".repeat(25)]]) {
+    const invalid = stored(f.entry.snapshot);
+    setAt(invalid, `${path}.topText.${key}`, value);
+    assert.throws(() => assertPlatformAdminBackupSnapshot(invalid), failure);
+  }
+});
+
 test("all current builders and complete built-in platform state pass without dropping records", () => {
   const f = fixture(); assertPlatformAdminBackupPlatformState(normalizePlatformState({}));
   assertPlatformAdminBackupPlatformState(loadPlatformState()); assertPlatformAdminBackupSnapshot(f.entry.snapshot);

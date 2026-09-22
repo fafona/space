@@ -1,6 +1,7 @@
 import type { TypographyEditableProps } from "@/data/homeBlocks";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, type BusinessCardQrStyle } from "@/lib/merchantBusinessCardQr";
+import { normalizeBusinessCardQrText, type BusinessCardQrText } from "@/lib/merchantBusinessCardQrText";
 import { normalizeBusinessCardQrDecoration, type BusinessCardQrDecoration } from "@/lib/merchantBusinessCardQrDecorations";
 
 export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
@@ -210,6 +211,8 @@ export type MerchantBusinessCardDraft = {
   ratioMode: MerchantBusinessCardRatioOptionId;
   title: string;
   websiteLabel: string;
+  // Optional for legacy cards: absent/empty address follows the assigned site.
+  websiteAddress?: string;
   showWebsiteUrl: boolean;
   showQr: boolean;
   contacts: MerchantBusinessCardContacts;
@@ -228,6 +231,8 @@ export type MerchantBusinessCardDraft = {
     backgroundColor?: string;
     showCaption?: boolean;
     caption?: string;
+    topText?: BusinessCardQrText;
+    bottomText?: BusinessCardQrText;
   };
   typography: MerchantBusinessCardTypographyMap;
   fieldTypography: MerchantBusinessCardFieldTypographyMap;
@@ -916,6 +921,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
         ? ratioMode
         : fallback.ratioMode,
     title: normalizeText(source.title),
+    ...(typeof source.websiteAddress === "string" ? { websiteAddress: source.websiteAddress.trim().slice(0, 2048) } : {}),
     websiteLabel:
       typeof source.websiteLabel === "string" &&
       source.websiteLabel.trim() &&
@@ -985,6 +991,8 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       backgroundColor: normalizeBusinessCardQrBackground(source.qr?.backgroundColor),
       showCaption: source.qr?.showCaption === true,
       caption: normalizeBusinessCardQrCaption(source.qr?.caption),
+      ...(source.qr?.topText !== undefined ? { topText: normalizeBusinessCardQrText(source.qr.topText) } : {}),
+      ...(source.qr?.bottomText !== undefined ? { bottomText: normalizeBusinessCardQrText(source.qr.bottomText) } : {}),
     },
     typography: {
       name: normalizeTypographyStyle(typographySource.name, fallback.typography.name),

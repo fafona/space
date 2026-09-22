@@ -1,4 +1,5 @@
 import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame, renderBusinessCardQrFrame, renderBusinessCardQrIcon, type BusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
+import { businessCardQrTextBand, escapeBusinessCardQrText, hasBusinessCardQrText, normalizeBusinessCardQrText, type BusinessCardQrTextOptions } from "./merchantBusinessCardQrText";
 
 export const BUSINESS_CARD_QR_STYLES = [
   { id: "classic", label: "经典方格" },
@@ -23,7 +24,7 @@ export type BusinessCardQrStyle = (typeof BUSINESS_CARD_QR_STYLES)[number]["id"]
 export const BUSINESS_CARD_QR_COLORS = ["#000000", "#0f172a", "#334155", "#1e3a8a", "#1d4ed8", "#075985", "#115e59", "#166534", "#713f12", "#9f1239", "#7e22ce", "#581c87"];
 export const BUSINESS_CARD_QR_BACKGROUNDS = ["#ffffff", "#f8fafc", "#e2e8f0", "#eff6ff", "#dbeafe", "#ecfeff", "#f0fdfa", "#f0fdf4", "#fefce8", "#fff7ed", "#fff1f2", "#faf5ff"];
 export const BUSINESS_CARD_QR_CAPTION_MAX_LENGTH = 24;
-export type BusinessCardQrAppearance = BusinessCardQrDecoration & { style?: BusinessCardQrStyle; color?: string; backgroundColor?: string; showCaption?: boolean; caption?: string };
+export type BusinessCardQrAppearance = BusinessCardQrDecoration & BusinessCardQrTextOptions & { style?: BusinessCardQrStyle; color?: string; backgroundColor?: string; showCaption?: boolean; caption?: string };
 
 export function normalizeBusinessCardQrBackground(value: unknown): string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#ffffff";
@@ -34,6 +35,7 @@ export function normalizeBusinessCardQrCaption(value: unknown): string {
 }
 
 export function businessCardQrAspectRatio(options: BusinessCardQrAppearance): number {
+  if (hasBusinessCardQrText(options)) return (normalizeBusinessCardQrFrame(options.frame) !== "none" ? 1.14 : 1) + (businessCardQrTextBand(options.topText) + businessCardQrTextBand(options.bottomText)) / 1000;
   if (normalizeBusinessCardQrFrame(options.frame) !== "none") return 1.14;
   return options.showCaption && normalizeBusinessCardQrCaption(options.caption) ? 1.16 : 1;
 }
@@ -92,6 +94,22 @@ export function renderBusinessCardQrSvg(
   matrix: BusinessCardQrMatrix,
   options: BusinessCardQrAppearance & { size?: number } = {},
 ): string {
+  if (hasBusinessCardQrText(options)) {
+    const size = Math.round(Math.max(64, Math.min(4096, options.size || 1024)));
+    const baseHeight = normalizeBusinessCardQrFrame(options.frame) === "none" ? 1000 : 1140;
+    const top = businessCardQrTextBand(options.topText);
+    const bottom = businessCardQrTextBand(options.bottomText);
+    const height = baseHeight + top + bottom;
+    const core = renderBusinessCardQrSvg(matrix, { ...options, topText: undefined, bottomText: undefined, showCaption: false, size: 1000 });
+    const text = (position: "top" | "bottom", band: number, center: number) => {
+      if (!band) return "";
+      const value = normalizeBusinessCardQrText(position === "top" ? options.topText : options.bottomText);
+      const units = Array.from(value.text).reduce((sum, char) => sum + (/[^\x00-\x7f]/.test(char) ? 1 : .65), 0);
+      const fontSize = Math.min(value.fontSize * 1000 / 300, 880 / Math.max(1, units));
+      return `<text data-qr-text="${position}" x="500" y="${center}" dominant-baseline="middle" text-anchor="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize}" fill="${value.color}">${escapeBusinessCardQrText(value.text)}</text>`;
+    };
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size * height / 1000)}" viewBox="0 0 1000 ${height}"><rect width="1000" height="${height}" fill="${normalizeBusinessCardQrBackground(options.backgroundColor)}"/><g transform="translate(0 ${top})">${core}</g>${text("top", top, top / 2)}${text("bottom", bottom, top + baseHeight + bottom / 2)}</svg>`;
+  }
   const requestedStyle = normalizeBusinessCardQrStyle(options.style);
   const roundedFinder = requestedStyle.startsWith("finder-") && matrix.size >= 21;
   const style = ({ "finder-soft": "classic", "finder-rounded": "rounded", "finder-dots": "dots", "finder-pill": "horizontal-pill", "finder-soft-ring": "soft", "finder-tiles": "tiles" } as Record<string, string>)[requestedStyle] ?? requestedStyle;

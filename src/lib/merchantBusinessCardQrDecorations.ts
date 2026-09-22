@@ -1,4 +1,5 @@
 import { BUSINESS_CARD_QR_INDUSTRY_ICONS } from "./merchantBusinessCardQrIndustry";
+import { BUSINESS_CARD_QR_CRAFTED_FRAMES, businessCardQrCraftedFrameGeometry, renderBusinessCardQrCraftedFrame } from "./merchantBusinessCardQrCraftedFrames";
 import { BUSINESS_CARD_QR_EXPANDED_FRAMES, businessCardQrStudioFrameGeometry, renderBusinessCardQrExpandedFrame } from "./merchantBusinessCardQrExpandedFrames";
 // Legacy IDs and their renderer stay stable. New artwork uses separate IDs.
 const LEGACY_BUSINESS_CARD_QR_ICONS = [
@@ -52,7 +53,7 @@ const LEGACY_BUSINESS_CARD_QR_FRAMES = [
   { id: "house", label: "房屋外框", group: "行业特色" }, { id: "bag", label: "购物袋外框", group: "行业特色" }, { id: "phone", label: "手机外框", group: "行业特色" }, { id: "car", label: "汽车轮廓框", group: "行业特色" }, { id: "gift", label: "礼盒外框", group: "行业特色" },
   { id: "heart", label: "爱心外框", group: "活动情感" }, { id: "shield", label: "盾牌徽章框", group: "活动情感" }, { id: "medal", label: "奖章外框", group: "活动情感" }, { id: "polaroid", label: "拍立得相框", group: "活动情感" }, { id: "confetti", label: "节庆彩带框", group: "活动情感" },
 ] as const;
-export const BUSINESS_CARD_QR_FRAMES = [...BUSINESS_CARD_QR_EXPANDED_FRAMES, ...LEGACY_BUSINESS_CARD_QR_FRAMES];
+export const BUSINESS_CARD_QR_FRAMES = [...BUSINESS_CARD_QR_CRAFTED_FRAMES, ...BUSINESS_CARD_QR_EXPANDED_FRAMES, ...LEGACY_BUSINESS_CARD_QR_FRAMES];
 export type BusinessCardQrIcon = "none" | (typeof BUSINESS_CARD_QR_ICONS)[number]["id"];
 export type BusinessCardQrFrame = "none" | (typeof BUSINESS_CARD_QR_FRAMES)[number]["id"];
 export type BusinessCardQrDecoration = {
@@ -79,6 +80,8 @@ export function renderBusinessCardQrIcon(icon: BusinessCardQrIcon, color: string
 
 // All frames reserve the same full QR rectangle. Decorations never enter its quiet zone.
 export function businessCardQrFrameGeometry(padding: number, frame = "none") {
+  const crafted = businessCardQrCraftedFrameGeometry(frame, padding);
+  if (crafted) return crafted;
   const studio = businessCardQrStudioFrameGeometry(frame, padding);
   if (studio) return studio;
   return { x: 172 + padding, y: 222 + padding, side: 656 - 2 * padding, width: 1000, height: 1140 };
@@ -86,6 +89,8 @@ export function businessCardQrFrameGeometry(padding: number, frame = "none") {
 
 export function renderBusinessCardQrFrame(options: Required<BusinessCardQrDecoration>): string {
   const { frame: f, frameColor: c, frameBackgroundColor: b, frameWidth } = options;
+  const crafted = renderBusinessCardQrCraftedFrame(f, c, b, frameWidth);
+  if (crafted !== null) return crafted;
   const expanded = renderBusinessCardQrExpandedFrame(f, c, b, frameWidth);
   if (expanded !== null) return expanded;
   const w = frameWidth * 3;
