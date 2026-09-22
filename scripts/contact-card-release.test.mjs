@@ -30,6 +30,11 @@ test('scope, baseline and dependency validation precede candidate creation',()=>
   assert.match(source,/state\.basePid/);
   assert.match(source,/maintenance\.phase !== 'ended'/);
 });
+test('large source archives stream to a private file instead of a bounded stdout buffer',()=>{
+  assert.match(source,/openSync\(archive,'wx',0o600\)/);
+  assert.match(source,/stdio:\['ignore',archiveFd,'pipe'\]/);
+  assert.doesNotMatch(source,/maxBuffer:128\*1024\*1024/);
+});
 test('activation requires actual website HTML and reload failure has bounded rollback',()=>{
   assert.ok(source.indexOf("fail('candidate_website_mismatch')")<source.indexOf('writeFileSync(config,content'));
   assert.match(source,/hash\(read\(config\)\) !== state\.configHash/);

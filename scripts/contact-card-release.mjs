@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmdirSync, realpathSync, lstatSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmdirSync, realpathSync, lstatSync, openSync, closeSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { assertContactReleaseScope, contactReleaseConfig, CONTACT_RELEASE_CONFIG as config, CONTACT_RELEASE_ROOT as root } from './contact-card-release-policy.mjs';
 
@@ -79,8 +79,13 @@ try {
     state.directory = `${app}.route-releases/${target.slice(0,12)}-${Date.now()}`;
     mkdirSync(state.directory, { recursive: true, mode: 0o700 });
     save(state);
-    const archive = run('git',['archive','--format=tar',target],{cwd:app,encoding:null,maxBuffer:128*1024*1024});
-    run('tar',['--no-same-owner','--no-same-permissions','-xf','-','-C',state.directory],{input:archive});
+    // The repository includes large media files; never buffer its archive in RAM.
+    const archive = `${state.directory}/.release-source.tar`;
+    const archiveFd = openSync(archive,'wx',0o600);
+    try { run('git',['archive','--format=tar',target],{cwd:app,stdio:['ignore',archiveFd,'pipe']}); }
+    finally { closeSync(archiveFd); }
+    run('tar',['--no-same-owner','--no-same-permissions','-xf',archive,'-C',state.directory]);
+    unlinkSync(archive);
     run('cp',['-a','--reflink=auto',`${baseDirectory}/node_modules`,`${state.directory}/node_modules`],{timeout:180_000});
     // Existing task credentials remain on the server. Never emit environment values.
     const env = Object.fromEntries(read(`/proc/${p.pid}/environ`).split('\0').filter(Boolean).map(item=>{
