@@ -4,6 +4,10 @@ import { assertContactReleaseScope } from './contact-card-release-policy.mjs';
 export const WEB_RELEASE_ROOT = '/var/lib/faolla-web-presentation-release';
 export const WEB_RELEASE_MARKER = '/www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf';
 export const WEB_RELEASE_PROXY = '/www/server/panel/vhost/nginx/proxy/www.faolla.com';
+export function webReleaseRuntimeEnvironment(text) {
+  const excluded = new Set(['NODE_APP_INSTANCE','NODE_CHANNEL_FD','NODE_CHANNEL_SERIALIZATION_MODE','NODE_UNIQUE_ID','PM2_USAGE']);
+  return Object.fromEntries(text.split('\0').filter(Boolean).map(s=>{const i=s.indexOf('=');return[s.slice(0,i),s.slice(i+1)];}).filter(([k])=>/^[A-Z][A-Z0-9_]*$/.test(k)&&!excluded.has(k)));
+}
 export const WEB_RELEASE_FILES = [
   'e6718553d7a03bef1e991fe6b6898cab_www.faolla.com.conf',
   'no_store_entries_www.faolla.com.conf', 'faolla_contact_card_release.conf',

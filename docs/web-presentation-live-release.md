@@ -36,3 +36,8 @@ public `/api/app-web-version` identifies the live web release. Future releases
 must review this explicit topology rather than treating `.current` as public web.
 This first implementation refuses an existing state rather than blindly replacing
 another release. Subsequent reuse/cleanup requires an ownership-checked handoff.
+
+After users save new text-offset or background-source metadata, do not blindly
+roll back to an older strict snapshot validator. Review data compatibility first;
+prefer rolling forward. The immediate activation recovery is for failed cutover,
+not proof that arbitrary later application/data rollback is compatible.
