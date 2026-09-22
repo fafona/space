@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveBusinessCardWebsiteAddress, resolveBusinessCardWebsiteNavigation } from "@/lib/merchantBusinessCardDestination";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardShareManifestObjectPath,
@@ -2424,7 +2425,7 @@ function buildSharePayloadFromSnapshotMatch(
         customLinks: card.customContactLinks,
         contactOnlyFields: card.contactOnlyFields,
         contactDisplayFields: card.contactDisplayFields,
-        websiteUrl: targetUrl,
+        websiteUrl: resolveBusinessCardWebsiteAddress(card, targetUrl),
       },
     },
     preferredOrigin,
@@ -2851,6 +2852,7 @@ function buildShareCardHtml(input: {
   imageHeight?: number;
   targetUrl: string;
   openTargetUrl?: string;
+  websiteUrl?: string;
   shareUrl: string;
   contactUrl?: string;
   couponsHtml?: string;
@@ -2870,8 +2872,8 @@ function buildShareCardHtml(input: {
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const normalizedOpenTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.openTargetUrl) || normalizedTargetUrl;
-  const targetUrl = escapeHtml(normalizedTargetUrl);
   const openTargetUrl = escapeHtml(normalizedOpenTargetUrl);
+  const websiteTargetUrl = escapeHtml(resolveBusinessCardWebsiteNavigation(input.websiteUrl, normalizedTargetUrl, normalizedOpenTargetUrl));
   const contentImageLinkUrl = escapeHtml(
     normalizeMerchantBusinessCardShareTargetUrl(input.contentImageLinkUrl) ||
       normalizedOpenTargetUrl,
@@ -3023,8 +3025,8 @@ function buildShareCardHtml(input: {
     showContactSaveButton && input.contactUrl
       ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
       : "",
-    showContactWebsiteButton
-      ? `<a class="button secondary" href="${openTargetUrl}" data-open-target-url="${openTargetUrl}" data-original-target-url="${targetUrl}">进入官网</a>`
+    showContactWebsiteButton && websiteTargetUrl
+      ? `<a class="button secondary" href="${websiteTargetUrl}" data-open-target-url="${websiteTargetUrl}" data-original-target-url="${websiteTargetUrl}">进入官网</a>`
       : "",
   ].filter(Boolean).join("");
 
@@ -4651,6 +4653,7 @@ export async function GET(
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
       openTargetUrl: fastOpenTargetUrl,
+      websiteUrl: payload.contact?.websiteUrl,
       shareUrl,
       contactUrl,
       couponsHtml: buildContactCouponsHtml(contactCoupons),

@@ -475,6 +475,12 @@ NODE
   fi
 }
 
+# Route-only releases must not be left publicly active during a full release.
+if [ -e /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ] \
+  || [ -L /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ]; then
+  echo "[deploy] active contact-card release requires explicit rollback before full deployment"
+  exit 1
+fi
 load_deploy_payload
 cleanup_initial_release_evidence() {
   rm -f -- "$DEPLOY_ATTESTATION_FILE" "$DEPLOY_RELEASE_BINDING_FILE"

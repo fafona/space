@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveBusinessCardWebsiteAddress } from "@/lib/merchantBusinessCardDestination";
 import {
   buildMerchantBusinessCardVCard,
   buildMerchantBusinessCardVCardFileName,
@@ -110,7 +111,7 @@ function buildContactDownloadPayloadFromSnapshot(
         douyin: normalizeText(contacts?.douyin),
         xiaohongshu: normalizeText(contacts?.xiaohongshu),
         googleReview: normalizeText(contacts?.googleReview),
-        websiteUrl: targetUrl,
+        websiteUrl: resolveBusinessCardWebsiteAddress(card, targetUrl),
         contactFieldOrder: card.contactFieldOrder,
         contactOnlyFields: card.contactOnlyFields,
         contactDisplayFields: card.contactDisplayFields,
