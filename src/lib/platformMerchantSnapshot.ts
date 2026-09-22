@@ -248,8 +248,11 @@ function compactSnapshotBusinessCard(
     shareImageUrl: shareImageUrl || undefined,
     contactPageImageUrl: "",
     contactPagePublicImageUrl: contactPagePublicImageUrl || undefined,
-    backgroundImageUrl: "",
-    backgroundImageSnapshotOnly: false,
+    // The editor consumes this snapshot too. The flattened front image cannot
+    // replace its editable background source. Retain the source and transforms.
+    backgroundImageUrl: card.backgroundImageUrl,
+    backgroundImageSourceKnown: card.backgroundImageSourceKnown,
+    backgroundImageSnapshotOnly: card.backgroundImageSnapshotOnly,
   };
 }
 

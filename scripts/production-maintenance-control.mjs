@@ -1214,6 +1214,10 @@ async function underExistingOperationLock(appName, action) {
   check(); const result = await action(); check(); return result;
 }
 async function withPrivateOperationLock(request, action) {
+  try {
+    lstatSync('/www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf');
+    failure('maintenance_active_web_release_requires_rollback');
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   // A route-only release remains live independently of the primary web process.
   // It must be explicitly rolled back before any maintenance can pause writes.
   try {

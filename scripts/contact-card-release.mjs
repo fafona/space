@@ -66,6 +66,7 @@ if (lstatSync(root).isSymbolicLink() || (lstatSync(root).mode & 0o077)) fail('un
 const operationLock = '/var/lib/faolla-maintenance/merchant-space/operation.lock';
 mkdirSync(operationLock, { mode: 0o700 });
 try {
+  if (existsSync('/www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf')) fail('active_web_release_requires_rollback');
   if (action === 'stage') {
     if (!/^[a-f0-9]{40}$/.test(target ?? '') || !/^[a-f0-9]{40}$/.test(baseline ?? '')) fail('invalid_commit');
     if (existsSync(config) || existsSync(stateFile) || pm().some(p => p.name === processName)) fail('existing_contact_release_requires_review');

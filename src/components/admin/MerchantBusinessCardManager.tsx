@@ -1893,7 +1893,7 @@ function buildEditableBusinessCardDraftFromAsset(card: MerchantBusinessCardAsset
     isSameAssetUrl(currentBackgroundImageUrl, renderedImageUrl) ||
     isSameAssetUrl(currentBackgroundImageUrl, renderedShareImageUrl);
 
-  if (!currentBackgroundImageUrl && fallbackSnapshotImageUrl && draft.backgroundImageSnapshotOnly) {
+  if (!currentBackgroundImageUrl && fallbackSnapshotImageUrl && (draft.backgroundImageSnapshotOnly || !draft.backgroundImageSourceKnown)) {
     draft = normalizeMerchantBusinessCardDraft({
       ...draft,
       backgroundImageUrl: fallbackSnapshotImageUrl,
@@ -2536,6 +2536,7 @@ export default function MerchantBusinessCardManager({
       applyDraft((current) => ({
         ...current,
         backgroundImageUrl: optimized.dataUrl,
+        backgroundImageSourceKnown: true,
         backgroundImageSnapshotOnly: false,
         backgroundImageX: 0,
         backgroundImageY: 0,
@@ -2560,6 +2561,7 @@ export default function MerchantBusinessCardManager({
     applyDraft((current) => ({
       ...current,
       backgroundImageUrl: "",
+      backgroundImageSourceKnown: true,
       backgroundImageSnapshotOnly: false,
       backgroundImageX: 0,
       backgroundImageY: 0,
@@ -4992,7 +4994,7 @@ export default function MerchantBusinessCardManager({
                   </div>
                   {draft.backgroundImageSnapshotOnly ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                      当前使用旧名片成品图作为预览底图，文字和二维码不会重复叠加。需要重新排版时，请清除或重新上传背景图。
+                      这张旧名片缺少独立背景原图，现保留成品图预览，文字和二维码不会重复叠加。重新排版需要上传原始背景图；清除后可重新设计。未恢复原图前，修改联系卡内容不会改变名片成品图。
                     </div>
                   ) : null}
                   {usesContactPage ? (
@@ -6309,6 +6311,7 @@ export default function MerchantBusinessCardManager({
     const savedShareKey = normalizeText(shareBundle?.shareKey) || resolvedShareKey;
     const shouldRefreshFrontImage =
       Boolean(options?.refreshFrontImage) &&
+      !nextDraft.backgroundImageSnapshotOnly &&
       Boolean(normalizeText(existingCard.imageUrl) || normalizeText(existingCard.shareImageUrl)) &&
       buildBusinessCardFrontRenderSignature(existingCard) !== buildBusinessCardFrontRenderSignature(nextDraft);
 
