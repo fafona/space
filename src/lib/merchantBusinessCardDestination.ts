@@ -34,3 +34,12 @@ export function resolveBusinessCardWebsiteAddress(settings: BusinessCardDestinat
 export function resolveBusinessCardScanTarget(settings: BusinessCardDestinationSettings, assignedWebsite: string, contactPageUrl: string): string {
   return businessCardUsesContactPage(settings) ? contactPageUrl : resolveBusinessCardWebsiteAddress(settings, assignedWebsite);
 }
+
+// Keep the existing fast merchant route only for the assigned website. A custom
+// website (including a different path on the same host) must open as entered.
+export function resolveBusinessCardWebsiteNavigation(websiteUrl: string | undefined, assignedWebsite: string, defaultOpenTarget = assignedWebsite): string {
+  const assigned = normalizeBusinessCardWebsiteAddress(assignedWebsite);
+  const website = websiteUrl?.trim() ? normalizeBusinessCardWebsiteAddress(websiteUrl) : assigned;
+  if (!website) return "";
+  return website === assigned ? normalizeBusinessCardWebsiteAddress(defaultOpenTarget) || assigned : website;
+}
