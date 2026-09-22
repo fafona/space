@@ -1,5 +1,5 @@
 import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame, renderBusinessCardQrFrame, renderBusinessCardQrIcon, type BusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
-import { businessCardQrTextBand, escapeBusinessCardQrText, hasBusinessCardQrText, normalizeBusinessCardQrText, type BusinessCardQrTextOptions } from "./merchantBusinessCardQrText";
+import { businessCardQrTextLayout, escapeBusinessCardQrText, hasBusinessCardQrText, normalizeBusinessCardQrText, type BusinessCardQrTextOptions } from "./merchantBusinessCardQrText";
 
 export const BUSINESS_CARD_QR_STYLES = [
   { id: "classic", label: "经典方格" },
@@ -35,7 +35,7 @@ export function normalizeBusinessCardQrCaption(value: unknown): string {
 }
 
 export function businessCardQrAspectRatio(options: BusinessCardQrAppearance): number {
-  if (hasBusinessCardQrText(options)) return (normalizeBusinessCardQrFrame(options.frame) !== "none" ? 1.14 : 1) + (businessCardQrTextBand(options.topText) + businessCardQrTextBand(options.bottomText)) / 1000;
+  if (hasBusinessCardQrText(options)) return businessCardQrTextLayout(options, normalizeBusinessCardQrFrame(options.frame) !== "none" ? 1140 : 1000).height / 1000;
   if (normalizeBusinessCardQrFrame(options.frame) !== "none") return 1.14;
   return options.showCaption && normalizeBusinessCardQrCaption(options.caption) ? 1.16 : 1;
 }
@@ -97,18 +97,18 @@ export function renderBusinessCardQrSvg(
   if (hasBusinessCardQrText(options)) {
     const size = Math.round(Math.max(64, Math.min(4096, options.size || 1024)));
     const baseHeight = normalizeBusinessCardQrFrame(options.frame) === "none" ? 1000 : 1140;
-    const top = businessCardQrTextBand(options.topText);
-    const bottom = businessCardQrTextBand(options.bottomText);
-    const height = baseHeight + top + bottom;
+    const layout = businessCardQrTextLayout(options, baseHeight);
+    const { top, bottom, height } = layout;
     const core = renderBusinessCardQrSvg(matrix, { ...options, topText: undefined, bottomText: undefined, showCaption: false, size: 1000 });
-    const text = (position: "top" | "bottom", band: number, center: number) => {
+    const text = (position: "top" | "bottom", band: number, centerX: number, center: number) => {
       if (!band) return "";
       const value = normalizeBusinessCardQrText(position === "top" ? options.topText : options.bottomText);
       const units = Array.from(value.text).reduce((sum, char) => sum + (/[^\x00-\x7f]/.test(char) ? 1 : .65), 0);
-      const fontSize = Math.min(value.fontSize * 1000 / 300, 880 / Math.max(1, units));
-      return `<text data-qr-text="${position}" x="500" y="${center}" dominant-baseline="middle" text-anchor="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize}" fill="${value.color}">${escapeBusinessCardQrText(value.text)}</text>`;
+      const availableWidth = Math.min(880, 2 * Math.min(centerX, 1000 - centerX) - 40);
+      const fontSize = Math.min(value.fontSize * 1000 / 300, availableWidth / Math.max(1, units));
+      return `<text data-qr-text="${position}" x="${centerX}" y="${center}" dominant-baseline="middle" text-anchor="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize}" fill="${value.color}">${escapeBusinessCardQrText(value.text)}</text>`;
     };
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size * height / 1000)}" viewBox="0 0 1000 ${height}"><rect width="1000" height="${height}" fill="${normalizeBusinessCardQrBackground(options.backgroundColor)}"/><g transform="translate(0 ${top})">${core}</g>${text("top", top, top / 2)}${text("bottom", bottom, top + baseHeight + bottom / 2)}</svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size * height / 1000)}" viewBox="0 0 1000 ${height}"><rect width="1000" height="${height}" fill="${normalizeBusinessCardQrBackground(options.backgroundColor)}"/><g transform="translate(0 ${layout.coreY})">${core}</g>${text("top", top, layout.topX, layout.topY)}${text("bottom", bottom, layout.bottomX, layout.bottomY)}</svg>`;
   }
   const requestedStyle = normalizeBusinessCardQrStyle(options.style);
   const roundedFinder = requestedStyle.startsWith("finder-") && matrix.size >= 21;

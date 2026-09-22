@@ -476,6 +476,11 @@ NODE
 }
 
 # Route-only releases must not be left publicly active during a full release.
+if [ -e /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf ] \
+  || [ -L /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf ]; then
+  echo "[deploy] active web presentation release requires explicit rollback before full deployment"
+  exit 1
+fi
 if [ -e /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ] \
   || [ -L /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ]; then
   echo "[deploy] active contact-card release requires explicit rollback before full deployment"
@@ -981,6 +986,11 @@ acquire_deploy_lock() {
   fi
   # Recheck under the shared lock: a route release may have activated while
   # this full deployment was waiting for the lock.
+  if [ -e /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf ] \
+    || [ -L /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf ]; then
+    echo "[deploy] active web presentation release requires explicit rollback before full deployment"
+    exit 1
+  fi
   if [ -e /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ] \
     || [ -L /www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_contact_card_release.conf ]; then
     echo "[deploy] active contact-card release requires explicit rollback before full deployment"

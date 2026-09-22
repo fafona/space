@@ -308,10 +308,11 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
   assert.equal(payload.snapshot[0]?.status, "maintenance");
   assert.equal(payload.snapshot[0]?.serviceExpiresAt, "2026-04-30T00:00:00.000Z");
   assert.equal(payload.snapshot[0]?.businessCards?.[0]?.imageUrl, "https://example.com/share-card.webp");
-  assert.equal(payload.snapshot[0]?.businessCards?.[0]?.backgroundImageUrl, "");
+  assert.equal(payload.snapshot[0]?.businessCards?.[0]?.backgroundImageUrl, "data:image/png;base64,bbb");
+  assert.equal(payload.snapshot[0]?.businessCards?.[0]?.backgroundImageSourceKnown, true);
   assert.equal(payload.snapshot[0]?.businessCards?.[0]?.contactPageImageUrl, "");
   assert.equal(payload.snapshot[0]?.chatBusinessCard?.imageUrl, "https://example.com/share-card.webp");
-  assert.equal(payload.snapshot[0]?.chatBusinessCard?.backgroundImageUrl, "");
+  assert.equal(payload.snapshot[0]?.chatBusinessCard?.backgroundImageUrl, "data:image/png;base64,bbb");
   assert.equal(payload.snapshot[0]?.chatBusinessCard?.contactPageImageUrl, "");
   assert.equal(payload.snapshot[0]?.chatBusinessCard?.contactPagePublicImageUrl, "https://example.com/contact-card.webp");
   assert.equal(payload.merchantConfigHistoryBySiteId["10000000"]?.length, 1);

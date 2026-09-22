@@ -79,15 +79,15 @@ test("business-card website addresses survive strict snapshot backup validation"
 test("independent QR text settings survive strict backup validation and reject unsafe font/color data", () => {
   const f = fixture();
   const path = "merchantSnapshot.snapshot.0.businessCards.0.qr";
-  const topText = { enabled: true, text: "欢迎光临", font: "mashan", fontSize: 36, color: "#9f1239" };
-  const bottomText = { enabled: false, text: "扫码了解更多", font: "kuaile", fontSize: 18, color: "#1d4ed8" };
+  const topText = { enabled: true, text: "欢迎光临", font: "mashan", fontSize: 36, color: "#9f1239", offsetX: -35, offsetY: 24 };
+  const bottomText = { enabled: false, text: "扫码了解更多", font: "kuaile", fontSize: 18, color: "#1d4ed8", offsetX: 40, offsetY: -18 };
   setAt(f.entry.snapshot, `${path}.topText`, topText);
   setAt(f.entry.snapshot, `${path}.bottomText`, bottomText);
   assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot));
   const restored = readPlatformAdminDataBackupBlocksValidated(buildPlatformAdminDataBackupBlocks({ backups: [f.entry] }));
   assert.deepEqual(getAt(restored.backups[0].snapshot, `${path}.topText`), topText);
   assert.deepEqual(getAt(restored.backups[0].snapshot, `${path}.bottomText`), bottomText);
-  for (const [key, value] of [["font", "untrusted"], ["fontSize", 1000], ["color", 'red"/>'], ["text", "字".repeat(25)]]) {
+  for (const [key, value] of [["font", "untrusted"], ["fontSize", 1000], ["color", 'red"/>'], ["text", "字".repeat(25)], ["offsetX", 121], ["offsetY", -301], ["offsetX", "20"], ["offsetY", 2.5]]) {
     const invalid = stored(f.entry.snapshot);
     setAt(invalid, `${path}.topText.${key}`, value);
     assert.throws(() => assertPlatformAdminBackupSnapshot(invalid), failure);

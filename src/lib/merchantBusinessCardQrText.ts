@@ -10,7 +10,7 @@ export const BUSINESS_CARD_QR_TEXT_FONTS = [
   { id: "greatvibes", label: "Great Vibes · 西文花体", file: "GreatVibes-Regular.ttf" },
 ] as const;
 export type BusinessCardQrTextFont = typeof BUSINESS_CARD_QR_TEXT_FONTS[number]["id"];
-export type BusinessCardQrText = { enabled: boolean; text: string; font: BusinessCardQrTextFont; fontSize: number; color: string };
+export type BusinessCardQrText = { enabled: boolean; text: string; font: BusinessCardQrTextFont; fontSize: number; color: string; offsetX?: number; offsetY?: number };
 export type BusinessCardQrTextOptions = { topText?: BusinessCardQrText; bottomText?: BusinessCardQrText };
 
 export function normalizeBusinessCardQrText(value: unknown, defaults: Partial<BusinessCardQrText> = {}): BusinessCardQrText {
@@ -22,7 +22,30 @@ export function normalizeBusinessCardQrText(value: unknown, defaults: Partial<Bu
     font: BUSINESS_CARD_QR_TEXT_FONTS.find(f => f.id === source.font)?.id ?? defaults.font ?? "kuaile",
     fontSize: Number.isFinite(fontSize) ? Math.max(12, Math.min(64, Math.round(fontSize))) : 22,
     color: typeof source.color === "string" && /^#[0-9a-f]{6}$/i.test(source.color) ? source.color.toLowerCase() : defaults.color ?? "#000000",
+    ...(source.offsetX !== undefined || defaults.offsetX !== undefined ? { offsetX: normalizeOffset(source.offsetX ?? defaults.offsetX, 120) } : {}),
+    ...(source.offsetY !== undefined || defaults.offsetY !== undefined ? { offsetY: normalizeOffset(source.offsetY ?? defaults.offsetY, 300) } : {}),
   };
+}
+
+function normalizeOffset(value: unknown, limit: number): number {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? Math.max(-limit, Math.min(limit, Math.round(number))) : 0;
+}
+
+// Coordinates use a 300px QR width, just like font size. Expand vertically so
+// shifted text is never clipped; leave the QR/frame geometry itself unchanged.
+export function businessCardQrTextLayout(options: BusinessCardQrTextOptions, baseHeight: number) {
+  const top = businessCardQrTextBand(options.topText);
+  const bottom = businessCardQrTextBand(options.bottomText);
+  const topText = normalizeBusinessCardQrText(options.topText);
+  const bottomText = normalizeBusinessCardQrText(options.bottomText);
+  const topY = top / 2 + (topText.offsetY ?? 0) * 1000 / 300;
+  const bottomY = top + baseHeight + bottom / 2 + (bottomText.offsetY ?? 0) * 1000 / 300;
+  const start = Math.min(0, top ? topY - top / 2 : 0, bottom ? bottomY - bottom / 2 : 0);
+  const end = Math.max(top + baseHeight + bottom, top ? topY + top / 2 : 0, bottom ? bottomY + bottom / 2 : 0);
+  return { top, bottom, height: end - start, coreY: top - start,
+    topX: 500 + (topText.offsetX ?? 0) * 1000 / 300, topY: topY - start,
+    bottomX: 500 + (bottomText.offsetX ?? 0) * 1000 / 300, bottomY: bottomY - start };
 }
 
 export function businessCardQrTextBand(value: BusinessCardQrText | undefined): number {

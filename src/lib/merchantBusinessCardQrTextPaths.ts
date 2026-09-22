@@ -31,6 +31,7 @@ export async function embedBusinessCardQrTextPaths(svg: string, options: Busines
     const marker = svg.match(pattern)?.[0];
     if (!marker) continue;
     const centerY = Number(marker.match(/ y="([\d.]+)"/)?.[1]);
+    const centerX = Number(marker.match(/ x="([\d.]+)"/)?.[1]);
     const font = await loadFont(value.font, loader);
     const needsFallback = Array.from(value.text).some(char => !font.charToGlyphIndex(char));
     const fallback = needsFallback ? await loadFont("kuaile", loader) : font;
@@ -55,8 +56,9 @@ export async function embedBusinessCardQrTextPaths(svg: string, options: Busines
     const right = Math.max(...bounds.map(b => b.x2));
     const top = Math.min(...bounds.map(b => b.y1));
     const bottom = Math.max(...bounds.map(b => b.y2));
-    const scale = Math.min(1, 880 / Math.max(1, right - left), fontSize * 1.3 / Math.max(1, bottom - top));
-    const transform = `translate(${500 - (left + right) * scale / 2} ${centerY - (top + bottom) * scale / 2}) scale(${scale})`;
+    const availableWidth = Math.min(880, 2 * Math.min(centerX, 1000 - centerX) - 40);
+    const scale = Math.min(1, availableWidth / Math.max(1, right - left), fontSize * 1.3 / Math.max(1, bottom - top));
+    const transform = `translate(${centerX - (left + right) * scale / 2} ${centerY - (top + bottom) * scale / 2}) scale(${scale})`;
     const paths = pieces.map(piece => `<path d="${piece.path.toPathData(3)}"/>`).join("");
     svg = svg.replace(pattern, `<g data-qr-text="${position}" data-font="${value.font}" fill="${value.color}" transform="${transform}">${paths}</g>`);
   }

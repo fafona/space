@@ -197,6 +197,9 @@ export type MerchantBusinessCardDraft = {
   showContactWebsiteButton: boolean;
   customContactLinks: MerchantBusinessCardCustomContactLink[];
   backgroundImageUrl: string;
+  // True also records an intentional empty background; older compact snapshots
+  // cannot distinguish that choice from a discarded source image.
+  backgroundImageSourceKnown?: boolean;
   backgroundImageSnapshotOnly: boolean;
   backgroundImageX: number;
   backgroundImageY: number;
@@ -662,6 +665,7 @@ export function createDefaultMerchantBusinessCardDraft(
     showContactWebsiteButton: true,
     customContactLinks: [],
     backgroundImageUrl: "",
+    backgroundImageSourceKnown: true,
     backgroundImageSnapshotOnly: false,
     backgroundImageX: 0,
     backgroundImageY: 0,
@@ -892,6 +896,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       (source as { customContactLinks?: unknown }).customContactLinks,
     ),
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
+    backgroundImageSourceKnown: !source.backgroundImageSnapshotOnly && (source.backgroundImageSourceKnown === true || Boolean(normalizeText(source.backgroundImageUrl))),
     backgroundImageSnapshotOnly: normalizeBoolean(
       (source as { backgroundImageSnapshotOnly?: unknown }).backgroundImageSnapshotOnly,
       fallback.backgroundImageSnapshotOnly,
@@ -1205,6 +1210,11 @@ export function mergeMerchantBusinessCardAssets(
   const preferred = preferPrimary ? primaryCard : secondaryCard;
   const fallback = preferPrimary ? secondaryCard : primaryCard;
   const preferredHasBackground = Boolean(normalizeText(preferred.backgroundImageUrl));
+  const backgroundSource = preferred.backgroundImageSourceKnown
+    ? preferred
+    : fallback.backgroundImageSourceKnown
+      ? fallback
+      : preferredHasBackground ? preferred : fallback;
   const preferredHasContactImage = Boolean(normalizeText(preferred.contactPageImageUrl));
   const preferredIntroVideoUrl = normalizeText(preferred.contactIntroVideoUrl);
   const preferredIntroImageUrl = preferredIntroVideoUrl ? "" : normalizeText(preferred.contactIntroImageUrl);
@@ -1214,12 +1224,13 @@ export function mergeMerchantBusinessCardAssets(
   const merged = {
     ...fallback,
     ...preferred,
-    backgroundImageUrl: normalizeText(preferred.backgroundImageUrl) || normalizeText(fallback.backgroundImageUrl),
-    backgroundImageSnapshotOnly: preferred.backgroundImageSnapshotOnly || fallback.backgroundImageSnapshotOnly,
-    backgroundImageX: preferredHasBackground ? preferred.backgroundImageX : fallback.backgroundImageX,
-    backgroundImageY: preferredHasBackground ? preferred.backgroundImageY : fallback.backgroundImageY,
-    backgroundImageScale: preferredHasBackground ? preferred.backgroundImageScale : fallback.backgroundImageScale,
-    backgroundImageOpacity: preferredHasBackground ? preferred.backgroundImageOpacity : fallback.backgroundImageOpacity,
+    backgroundImageUrl: normalizeText(backgroundSource.backgroundImageUrl),
+    backgroundImageSourceKnown: backgroundSource.backgroundImageSourceKnown,
+    backgroundImageSnapshotOnly: backgroundSource.backgroundImageSnapshotOnly,
+    backgroundImageX: backgroundSource.backgroundImageX,
+    backgroundImageY: backgroundSource.backgroundImageY,
+    backgroundImageScale: backgroundSource.backgroundImageScale,
+    backgroundImageOpacity: backgroundSource.backgroundImageOpacity,
     contactPageImageUrl: normalizeText(preferred.contactPageImageUrl) || normalizeText(fallback.contactPageImageUrl),
     contactPageImageHeight: preferredHasContactImage ? preferred.contactPageImageHeight : fallback.contactPageImageHeight,
     contactPageImageLinkUrl:
