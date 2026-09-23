@@ -12,9 +12,16 @@ const request = () => ({ targetSha, previousTargetSha }), createdAt = 1789236034
 const file = "scripts/production-maintenance-control.mjs";
 const diff = (name = file, oldBlob = "a".repeat(40)) => `:100644 100644 ${oldBlob} ${"b".repeat(40)} M\0${name}\0`;
 // Names are the actual local checked-in directory, not a hand-made partial ledger.
-const files = readdirSync(new URL("./supabase-migrations/", import.meta.url)).sort();
+// This fixture models the historical incident through 048, not today's schema.
+// Production validators still reject extra/new registrations and changed trees.
+const files = readdirSync(new URL("./supabase-migrations/", import.meta.url))
+  .filter(name => name === "README.md" || name.slice(0, 12) <= "202609090048").sort();
 const catalog = files.filter(name => name.endsWith(".sql")).map(name => ({ version: name.slice(0, 12), name: name.slice(13, -4) }));
 const tree = files.map(name => `100644 blob ${"c".repeat(40)}\t${name}\0`).join("");
+test("historical recovery still rejects post-048 migration trees", () => {
+  const futureTree = tree + `100644 blob ${"d".repeat(40)}\t202609230049_account_traffic_analytics.sql\0`;
+  assert.throws(() => validate(ledger(), git(args => args[0] === "ls-tree" ? futureTree : undefined).run), safeError);
+});
 const nextPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const nextLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
 const oldPackage = structuredClone(nextPackage), oldLock = structuredClone(nextLock);
