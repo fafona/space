@@ -312,7 +312,7 @@ export default function BlockRenderer({
         );
         break;
       case "coupon":
-        content = <CouponBlock {...b.props} runtimeSiteId={bookingSiteId} />;
+        content = <CouponBlock {...b.props} runtimeSiteId={bookingSiteId} runtimeBlockId={b.id} />;
         break;
       case "google-reviews":
         content = <GoogleReviewsBlock {...b.props} runtimeSiteId={bookingSiteId} />;

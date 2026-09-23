@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent } from "react";
 import { createPortal } from "react-dom";
+import { usePublicTraffic, usePublicTrafficExposure } from "@/components/PublicTrafficProvider";
 import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
 import {
@@ -762,6 +763,7 @@ function readRuntimeOperatingCatalog(value: unknown): RuntimeOperatingCatalog | 
 }
 
 export default function ProductBlock(props: ProductBlockProps) {
+  const traffic = usePublicTraffic();
   const openedView = props.runtimeOpenedView === true;
   const openedToolbarTargetId = typeof props.runtimeOpenedToolbarTargetId === "string" ? props.runtimeOpenedToolbarTargetId : "";
   const openedCartTargetId = typeof props.runtimeOpenedCartTargetId === "string" ? props.runtimeOpenedCartTargetId : "";
@@ -998,6 +1000,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [cartFlyItems, setCartFlyItems] = useState<ProductCartFlyItem[]>([]);
   const [cartPulse, setCartPulse] = useState(false);
   const rootRef = useRef<HTMLElement | null>(null);
+  usePublicTrafficExposure(rootRef, "product", runtimeBlockId);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const cartCustomerNameRef = useRef<HTMLInputElement | null>(null);
   const cartButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1507,6 +1510,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       return;
     }
     triggerAddToCartAnimation(item, sourceElement);
+    traffic?.("product", `${runtimeBlockId}/${item.id}`, "add_to_cart");
     updateCartItems((current) => {
       const nextIndex = current.findIndex((entry) => entry.productId === item.id);
       if (nextIndex < 0) {
@@ -1741,7 +1745,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       nameTextStyle: productNameTextStyle,
       descriptionTextStyle: productDescriptionTextStyle,
       priceTextStyle: productPriceTextStyle,
-      onOpen: setActiveProductId,
+      onOpen: (id) => { traffic?.("product", `${runtimeBlockId}/${id}`, "view"); setActiveProductId(id); },
       cartEnabled: cartEnabled && productAvailabilityById.get(item.id) !== "sold_out",
       availability: productAvailabilityById.get(item.id) ?? "available",
       cartQuantityMode,

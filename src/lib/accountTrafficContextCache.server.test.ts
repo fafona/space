@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createTrafficContextCache } from "./accountTrafficContextCache.server";
+import type { TrafficResource } from "./accountTraffic";
+const resource: TrafficResource = { siteId: "10000000", module: "website", objectId: "home", label: "首页" };
+test("public metadata requests coalesce, expire, and stay scoped to site/page/viewport", async () => {
+  let clock = 0; let calls = 0;
+  const cache = createTrafficContextCache(() => clock);
+  const load = async () => { calls++; return [resource]; };
+  await Promise.all([cache("10000000:desktop:home", load), cache("10000000:desktop:home", load)]);
+  assert.equal(calls, 1);
+  await cache("20000000:desktop:home", load);
+  await cache("10000000:mobile:home", load);
+  assert.equal(calls, 3);
+  clock = 30001;
+  await cache("10000000:desktop:home", load);
+  assert.equal(calls, 4);
+});
+test("failures are not cached and capacity/large catalogs cannot grow retained memory indefinitely", async () => {
+  let calls = 0;
+  const cache = createTrafficContextCache(Date.now, 2);
+  const load = async () => { calls++; return [resource]; };
+  await assert.rejects(cache("failed", async () => { throw new Error("offline"); }));
+  await cache("failed", load);
+  await cache("second", load);
+  await cache("third", load);
+  await cache("failed", load);
+  assert.equal(calls, 4);
+  const large = async () => { calls++; return Array(2001).fill(resource); };
+  assert.equal((await cache("large", large)).length, 2001);
+  await cache("large", large);
+  assert.equal(calls, 6);
+});

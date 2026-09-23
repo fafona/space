@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
+import { recordTrafficOutcome } from "@/lib/accountTrafficOutcome.server";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import {
   buildPollSnapshot,
@@ -468,6 +469,8 @@ export async function POST(request: Request) {
     }
 
     const ballot = normalizeStoredPollBallot(insertResult.data);
+    if (ballot) void recordTrafficOutcome(request, { siteId, module: "poll", recordId: ballot.id,
+      objectId: `${publishedPoll.blockId}/${config.pollId}`, occurredAt: ballot.createdAt });
     let summary = null;
     if (config.showResultsAfterSubmit) {
       const ballots = await loadPollBallots(siteId, identity.aliases);

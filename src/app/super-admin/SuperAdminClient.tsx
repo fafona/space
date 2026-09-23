@@ -179,6 +179,7 @@ function getRestoreJournalStorage(): Storage | null {
   catch { return null; }
 }
 
+const AccountTrafficPanel = dynamic(() => import("@/components/admin/AccountTrafficPanel"), { ssr: false });
 const ChatBusinessCardDialog = dynamic(() => import("@/components/admin/ChatBusinessCardDialog"), {
   ssr: false,
   loading: () => null,
@@ -2220,6 +2221,7 @@ export default function SuperAdminClient() {
   const [userKeyword, setUserKeyword] = useState("");
   const [merchantDetailSiteId, setMerchantDetailSiteId] = useState("");
   const [userPanelMode, setUserPanelMode] = useState<"detail" | "config" | "history" | "backup">("detail");
+  const [trafficPanelSiteId, setTrafficPanelSiteId] = useState("");
   const [configExpireDate, setConfigExpireDate] = useState("");
   const [configPlanLimit, setConfigPlanLimit] = useState("1");
   const [configPageLimit, setConfigPageLimit] = useState("3");
@@ -8784,7 +8786,7 @@ export default function SuperAdminClient() {
                             </th>
                             <th className="px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
-                                <span>月访量</span>
+                                <span>近 30 日访问</span>
                                 {renderMerchantSortToggle("monthlyViews")}
                               </div>
                             </th>
@@ -9799,12 +9801,15 @@ export default function SuperAdminClient() {
                                 <div>{formatOptionalBytes(selectedMerchantRow.sizeBytes, selectedMerchantRow.sizeKnown)}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
-                                <div className="text-slate-500">访问量</div>
+                                <div className="text-slate-500">历史网站访问量（今日按马德里时区；7／30 日为滚动范围）</div>
                                 <div>
                                   {selectedMerchantRow.visitsKnown
                                     ? `今日 ${selectedMerchantRow.visits.today} / 7日 ${selectedMerchantRow.visits.day7} / 30日 ${selectedMerchantRow.visits.day30} / 总 ${selectedMerchantRow.visits.total}`
                                     : "-"}
                                 </div>
+                                {/^\d{8}$/.test(selectedMerchantRow.merchantId) && <button type="button" className="mt-2 rounded border border-blue-200 bg-blue-50 px-3 py-1 text-blue-800" onClick={() => setTrafficPanelSiteId(trafficPanelSiteId === selectedMerchantRow.merchantId ? "" : selectedMerchantRow.merchantId)}>
+                                  {trafficPanelSiteId === selectedMerchantRow.merchantId ? "收起访问分析" : "访问分析"}
+                                </button>}
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">注册时间</div>
@@ -9815,6 +9820,7 @@ export default function SuperAdminClient() {
                                 <div>{fmt(selectedMerchantRow.expireAt)}</div>
                               </div>
                             </div>
+                            {trafficPanelSiteId === selectedMerchantRow.merchantId && <AccountTrafficPanel key={selectedMerchantRow.merchantId} siteId={selectedMerchantRow.merchantId} />}
                           </div>
                         ) : !selectedMerchantSite ? (
                           <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -11017,7 +11023,7 @@ export default function SuperAdminClient() {
                                   <div className="rounded border bg-white px-3 py-2">
                                     <div className="text-slate-500">链接模式</div>
                                     <div className="mt-1 font-medium text-slate-900">
-                                      {selectedPersonalServiceConfig.allowBusinessCardLinkMode ? "开启" : "关闭"}
+                                    {selectedPersonalServiceConfig.allowBusinessCardLinkMode ? "开启" : "关闭"}
                                     </div>
                                   </div>
                                   <div className="rounded border bg-white px-3 py-2">
@@ -11034,6 +11040,10 @@ export default function SuperAdminClient() {
                                   </div>
                                 </div>
                               </div>
+                              {selectedPersonalAccount.accountId && /^\d{8}$/.test(selectedPersonalAccount.accountId) && <>
+                                <button type="button" className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-blue-800" onClick={() => setTrafficPanelSiteId(trafficPanelSiteId === selectedPersonalAccount.accountId ? "" : selectedPersonalAccount.accountId)}>个人名片访问分析</button>
+                                {trafficPanelSiteId === selectedPersonalAccount.accountId && <AccountTrafficPanel key={selectedPersonalAccount.accountId} siteId={selectedPersonalAccount.accountId}/>}
+                              </>}
                             </>
                           ) : (
                             <>

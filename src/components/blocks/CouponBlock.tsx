@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CouponProps } from "@/data/homeBlocks";
+import { usePublicTraffic, usePublicTrafficExposure } from "@/components/PublicTrafficProvider";
 import {
   getMerchantCouponDisplayDescription,
   getMerchantCouponDisplayBoxColor,
@@ -27,6 +28,7 @@ import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobil
 
 type CouponBlockRuntimeProps = CouponProps & {
   runtimeSiteId?: string;
+  runtimeBlockId?: string;
   runtimePricePrefix?: string;
   previewCoupons?: MerchantCouponRecord[];
   interactive?: boolean;
@@ -206,11 +208,15 @@ export default function CouponBlock({
   couponSelectedIds = [],
   couponEmptyText = "暂无可领取优惠券",
   runtimeSiteId = "",
+  runtimeBlockId = "",
   runtimePricePrefix = "",
   previewCoupons,
   interactive = true,
   ...backgroundProps
 }: CouponBlockRuntimeProps) {
+  const traffic = usePublicTraffic();
+  const trafficRef = useRef<HTMLElement>(null);
+  usePublicTrafficExposure(trafficRef, "coupon", runtimeBlockId);
   const [loadedCoupons, setLoadedCoupons] = useState<MerchantCouponRecord[]>([]);
   const [copiedCode, setCopiedCode] = useState("");
   const [claimedCounts, setClaimedCounts] = useState<Record<string, number>>({});
@@ -290,6 +296,7 @@ export default function CouponBlock({
 
   const copyCouponCode = async (code: string) => {
     if (!interactive || effectiveCouponActionMode !== "copy") return;
+    traffic?.("coupon", runtimeBlockId, "copy_attempt");
     try {
       await navigator.clipboard?.writeText(code);
       setCopiedCode(code);
@@ -311,6 +318,7 @@ export default function CouponBlock({
 
   const claimCoupon = async (coupon: MerchantCouponRecord) => {
     if (!interactive || effectiveCouponActionMode !== "claim") return;
+    traffic?.("coupon", runtimeBlockId, "claim_attempt");
     setClaimErrorCouponId("");
     const claimCode = (claimCodeByCouponId[coupon.id] ?? "").trim();
     if (merchantCouponRequiresClaimCode(coupon) && !claimCode) {
@@ -414,6 +422,7 @@ export default function CouponBlock({
 
   return (
     <section
+      ref={trafficRef}
       className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", backgroundProps.mobileFitScreenWidth === true)}
       style={offsetStyle}
     >

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { forwardTrafficTags } from "@/lib/accountTraffic";
+import { addCardTrafficScript, resolvePersonalCardTraffic } from "@/lib/accountTrafficCard.server";
 import { resolveBusinessCardWebsiteAddress, resolveBusinessCardWebsiteNavigation, resolveBusinessCardContactWebsite } from "@/lib/merchantBusinessCardDestination";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
@@ -3023,10 +3025,10 @@ function buildShareCardHtml(input: {
   const showContactWebsiteButton = input.showContactWebsiteButton !== false;
   const actionItemsHtml = [
     showContactSaveButton && input.contactUrl
-      ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
+      ? `<a class="button" data-traffic-action="contact_download_click" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
       : "",
     showContactWebsiteButton && websiteTargetUrl
-      ? `<a class="button secondary" href="${websiteTargetUrl}" data-open-target-url="${websiteTargetUrl}" data-original-target-url="${websiteTargetUrl}">进入官网</a>`
+      ? `<a class="button secondary" data-traffic-action="website_click" href="${websiteTargetUrl}" data-open-target-url="${websiteTargetUrl}" data-original-target-url="${websiteTargetUrl}">进入官网</a>`
       : "",
   ].filter(Boolean).join("");
 
@@ -4309,7 +4311,7 @@ export async function GET(
   const cachedPayload = readCachedContactCardPayload(shareKey, requestOrigin);
   if (cachedPayload?.showContactPoll && cachedPayload.contactPagePollId && cachedPayload.ownerMerchantId) {
     const contactCardUrl = buildContactPollRedirectUrl(shareKey, requestOrigin, cachedPayload.targetUrl);
-    const response = NextResponse.redirect(contactCardUrl, 307);
+    const response = NextResponse.redirect(forwardTrafficTags(contactCardUrl, requestUrl), 307);
     response.headers.set("cache-control", "no-store, max-age=0");
     return withTiming(response);
   }
@@ -4460,7 +4462,7 @@ export async function GET(
 
   if (payload.showContactPoll && payload.contactPagePollId && payload.ownerMerchantId) {
     const contactCardUrl = buildContactPollRedirectUrl(shareKey, requestOrigin, payload.targetUrl);
-    const response = NextResponse.redirect(contactCardUrl, 307);
+    const response = NextResponse.redirect(forwardTrafficTags(contactCardUrl, requestUrl), 307);
     response.headers.set("cache-control", "no-store, max-age=0");
     return withTiming(response);
   }
@@ -4474,13 +4476,15 @@ export async function GET(
     2_500,
   ) ?? snapshotMatch;
   const websiteUrl = resolveBusinessCardContactWebsite(websiteSnapshot?.card, payload.targetUrl, payload.contact?.websiteUrl);
+  const trafficResource = introDebug ? null : websiteSnapshot ? { siteId: websiteSnapshot.siteId, cardId: websiteSnapshot.card.id, name: payload.name }
+    : await resolvePersonalCardTraffic(payload.ownerMerchantId, shareKey);
   const htmlVersion = `${payload.updatedAt ?? ""}|website:${websiteUrl}`;
   const cachedHtml = introDebug
     ? ""
     : readCachedContactCardHtml(shareKey, requestOrigin, htmlVersion);
   if (cachedHtml) {
     timing.add("html_cache", 0, "hit");
-    return withTiming(new NextResponse(cachedHtml, {
+    return withTiming(new NextResponse(addCardTrafficScript(cachedHtml, trafficResource), {
       status: 200,
       headers: {
         "content-type": "text/html; charset=utf-8",
@@ -4673,7 +4677,7 @@ export async function GET(
   if (!introDebug) writeCachedContactCardHtml(shareKey, requestOrigin, htmlVersion, html);
 
   return withTiming(new NextResponse(
-    html,
+    addCardTrafficScript(html, trafficResource),
     {
       status: 200,
       headers: {

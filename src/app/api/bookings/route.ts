@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordTrafficOutcome } from "@/lib/accountTrafficOutcome.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBookingPushNotification } from "@/lib/merchantPushEvents";
 import {
@@ -247,6 +248,8 @@ export async function POST(request: Request) {
       customerGuestHash: personalSession || personalProof ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
     });
 
+    void recordTrafficOutcome(request, { siteId, module: "booking", recordId: created.booking.id,
+      objectId: created.booking.bookingBlockId || "booking-legacy", occurredAt: created.booking.createdAt });
     const supabase = createServerSupabaseServiceClient();
     if (supabase) {
       const notification = buildMerchantBookingPushNotification({
