@@ -121,7 +121,9 @@ try{
    atomic(`${operation}/migration-preview.json`,JSON.stringify(preview));
    if(preview.pending.length){
     console.log('online_encrypted_backup_started');const passphrase=randomBytes(48).toString('base64url');writeFileSync(`${operation}/backup.key`,passphrase,{mode:0o600,flag:'wx'});
-    const backup=await createProductionDatabaseBackup({outputPath:`${operation}/database.tar.enc`,passphrase,appDirectory:s.oldDirectory,sourceDirectory:s.directory,sourceRepository:'fafona/space',sourceSha:target});
+    const backupSource=fileURLToPath(new URL('..',import.meta.url));
+    const backupSha=run('git',['rev-parse','HEAD'],{cwd:backupSource}).trim();
+    const backup=await createProductionDatabaseBackup({outputPath:`${operation}/database.tar.enc`,passphrase,appDirectory:s.oldDirectory,sourceDirectory:backupSource,sourceRepository:'fafona/space',sourceSha:backupSha});
     const checked=await verifyProductionDatabaseBackup({inputPath:`${operation}/database.tar.enc`,passphrase});atomic(`${operation}/backup-report.json`,JSON.stringify({backup,checked}));
     await verifyBase(s);configUnchanged(s);console.log('online_additive_migrations_started');
     const report=await applyProductionDatabaseMigrations({rootDir:s.directory,through:'202609230051',apply:true});atomic(`${operation}/migration-report.json`,JSON.stringify(report));
