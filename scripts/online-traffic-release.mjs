@@ -3,7 +3,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
-import {ONLINE_ROOT as root,assertOnlineTrafficScope,assertPendingTrafficMigrations,onlineProxy} from './online-traffic-release-policy.mjs';
+import {ONLINE_ROOT as root,assertOnlineTrafficScope,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
@@ -48,7 +48,7 @@ async function smoke(s,publicMode=false){
  if((await(await request(`${origin}/api/app-web-version?release=${s.target}`)).json()).buildId!==s.target)fail('candidate_version_mismatch');
  for(const path of ['/','/login','/admin','/super-admin'])await request(origin+path,[200,301,302,303,307,308]);
  const card=await(await request(`${origin}/card/luis-gpyv6u`)).text();
- if(!card.includes('class="button secondary" href="https://www.haoyouduosevilla.com/"'))fail('card_website_regression');
+ if(!hasExpectedCardWebsite(card))fail('card_website_regression');
  if(!(await(await request(`${origin}/card/luis-gpyv6u/contact`)).text()).includes('URL:https://www.haoyouduosevilla.com/'))fail('vcard_website_regression');
  await request(`${origin}/traffic-card-v1.js`);
  await request(`${origin}/api/super-admin/platform-merchant-snapshot`,[401]);
@@ -66,7 +66,7 @@ function restoreConfigs(s){
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
 function candidateEnvironment(s){return JSON.parse(safeFile(`${operation}/runtime.json`));}
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','database','activate','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','database','activate','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(!process.env.FAOLLA_ONLINE_RELEASE_LOCKED){
  const lock=`${app}.deploy.lock`;if(existsSync(lock)&&lstatSync(lock).isSymbolicLink())fail('unsafe_deploy_lock');
  const r=spawnSync('flock',['--nonblock',lock,process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit',env:{...envBase,FAOLLA_ONLINE_RELEASE_LOCKED:'1'}});process.exit(r.status??1);
@@ -108,7 +108,14 @@ try{
   verifyCandidate(s);s.status='staged';save(s);
  }else{
   const s=JSON.parse(safeFile(stateFile));await verifyBase(s);
-  if(action==='database'){
+  if(action==='finish-stage'){
+   // Re-run acceptance on the exact already-built candidate after a probe-only
+   // controller correction. Never rewrite build identity or mark it ready blind.
+   if(s.status!=='preparing'||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('resume_candidate_source_changed');
+   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('resume_build_missing');
+   run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});
+   configUnchanged(s);verifyCandidate(s);await smoke(s);s.status='staged';save(s);
+  }else if(action==='database'){
    if(s.status!=='staged')fail('database_not_staged');configUnchanged(s);verifyCandidate(s);
    const preview=await applyProductionDatabaseMigrations({rootDir:s.directory,through:'202609230051',dryRun:true});assertPendingTrafficMigrations(preview.pending);
    atomic(`${operation}/migration-preview.json`,JSON.stringify(preview));
