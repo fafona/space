@@ -37,3 +37,6 @@ export function onlineProxy(original, oldPort, newPort, sha) {
 export function assertPendingTrafficMigrations(pending) {
   if (pending.some(item => !TRAFFIC_MIGRATIONS.includes(String(item.version)))) throw Error('unapproved_pending_migration');
 }
+export function hasExpectedCardWebsite(html) {
+  return (html.match(/<a\b[^>]*>/g)||[]).some(anchor=>/\sclass="button secondary"/.test(anchor)&&/\shref="https:\/\/www\.haoyouduosevilla\.com\/"/.test(anchor));
+}
