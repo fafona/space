@@ -555,41 +555,16 @@ function buildPublishedSiteInfoByMerchantId(rows: PageRow[]) {
   return map;
 }
 
-function normalizeEventString(record: Record<string, unknown>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value !== "string") continue;
-    const normalized = value.trim();
-    if (normalized) return normalized;
-  }
-  return "";
-}
-
-function daysBetweenNow(isoDate: string, nowMs: number) {
-  const at = new Date(isoDate).getTime();
-  if (!Number.isFinite(at)) return Number.POSITIVE_INFINITY;
-  return (nowMs - at) / 86400_000;
-}
-
-function buildMerchantVisitsByMerchantId(rows: unknown[], nowMs: number) {
+export function buildMerchantVisitsByMerchantId(rows: unknown[]) {
   const map = new Map<string, MerchantVisitSummary>();
   rows.forEach((item) => {
     if (!item || typeof item !== "object") return;
     const record = item as Record<string, unknown>;
-    const eventType = normalizeEventString(record, "event_type", "type", "event").toLowerCase();
-    if (eventType !== "page_view") return;
-    const channel = normalizeEventString(record, "channel", "page_path").toLowerCase();
-    const merchantId = channel.match(/^site:(\d+):/i)?.[1] ?? "";
-    if (!merchantId) return;
-    const at = normalizeEventString(record, "created_at", "at", "timestamp");
-    if (!at) return;
-    const current = map.get(merchantId) ?? { today: 0, day7: 0, day30: 0, total: 0 };
-    current.total += 1;
-    const diff = daysBetweenNow(at, nowMs);
-    if (diff < 1) current.today += 1;
-    if (diff < 7) current.day7 += 1;
-    if (diff < 30) current.day30 += 1;
-    map.set(merchantId, current);
+    const merchantId = String(record.site_id ?? "");
+    if (!isNumericMerchantId(merchantId)) return;
+    const counts = [record.today, record.day7, record.day30, record.total].map(Number);
+    if (counts.some((count) => !Number.isSafeInteger(count) || count < 0)) return;
+    map.set(merchantId, { today: counts[0], day7: counts[1], day30: counts[2], total: counts[3] });
   });
   return map;
 }
@@ -977,10 +952,8 @@ export async function GET(request: Request) {
             withSoftTimeout(
               runSupabaseQueryWithRetry(() =>
                 supabase
-                  .from("page_events")
-                  .select("*")
-                  .order("created_at", { ascending: false })
-                  .limit(1000),
+                  .rpc("faolla_legacy_merchant_visits", { p_site_ids: merchantIds })
+                  .abortSignal(AbortSignal.timeout(PAGE_EVENTS_TIMEOUT_MS)),
               ).catch((error) => ({ data: null, error })),
               PAGE_EVENTS_TIMEOUT_MS,
               { data: null, error: new Error("page_events_timeout") },
@@ -999,7 +972,7 @@ export async function GET(request: Request) {
         >();
     const visitsByMerchantId =
       !pageEventsResult.error && Array.isArray(pageEventsResult.data)
-        ? buildMerchantVisitsByMerchantId(pageEventsResult.data, Date.now())
+        ? buildMerchantVisitsByMerchantId(pageEventsResult.data)
         : new Map<string, MerchantVisitSummary>();
     const visitsKnown = !pageEventsResult.error && Array.isArray(pageEventsResult.data);
 

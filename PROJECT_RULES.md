@@ -14,4 +14,10 @@
    - Do not guess and patch blindly.
    - Do not touch logic or features that are already working successfully unless the root-cause analysis proves they are part of the problem.
    - If an existing successful logic path might be affected, stop first, explain the risk clearly, and get the user's approval before changing it.
+
+5. Default to no-maintenance releases (user instruction, 2026-09-23).
+   - Build and validate a separate candidate while the existing application remains online; switch traffic only after checks pass.
+   - Keep an ownership-checked rollback target, preserve old immutable assets and existing background workers, and verify public routes after switching.
+   - Database changes must be additive/backward-compatible for online publication. Do not enable maintenance, bypass release guards, clear release state, or perform destructive cleanup automatically.
+   - If a change cannot safely follow this policy, explain the incompatibility and obtain approval for an alternative before affecting production.
    - Before saying a problem is fixed, confirm which specific root cause was addressed.

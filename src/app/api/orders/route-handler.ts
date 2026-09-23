@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordTrafficOutcome } from "@/lib/accountTrafficOutcome.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import { buildMerchantOrderPushNotification } from "@/lib/merchantPushEvents";
@@ -576,6 +577,7 @@ export async function handleMerchantOrderPost(
       items: quote.items,
     });
 
+    void recordTrafficOutcome(request, { siteId, module: "order", recordId: order.id, objectId: quote.blockId, occurredAt: order.createdAt });
     await dependencies.notifyOrderCreated(siteId, order);
 
     return privateOrderJson({ ok: true, order });

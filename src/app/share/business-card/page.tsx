@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import PollBlock from "@/components/blocks/PollBlock";
+import { SignedPublicTrafficProvider } from "@/components/PublicTrafficProvider";
+import { signTrafficResource, trafficEnabled } from "@/lib/accountTraffic.server";
+import { resolvePersonalCardTraffic } from "@/lib/accountTrafficCard.server";
+import { trafficResourceKey, type TrafficResource } from "@/lib/accountTraffic";
 import BusinessCardMediaExperience from "@/components/business-card/BusinessCardMediaExperience";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
@@ -302,7 +306,24 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     .map((sectionKey) => ({ sectionKey, section: contactSectionMap[sectionKey] }))
     .filter((item) => item.section);
 
+  // Analytics needs a stored ownership binding, never a card ID from query data.
+  // This extra read is entirely disabled until granular analytics is enabled.
+  const trafficSite = trafficEnabled() && payload.ownerMerchantId && shareKey
+    ? snapshotSite ?? await loadCurrentMerchantSnapshotSiteBySiteId(payload.ownerMerchantId).catch(() => null)
+    : null;
+  const trafficCard = trafficSite?.businessCards?.find((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === shareKey);
+  const trafficResources: TrafficResource[] = trafficSite && trafficCard
+    ? [{ siteId: trafficSite.id, module: "card", objectId: trafficCard.id, label: trafficCard.name }]
+    : [];
+  const personalTraffic = trafficResources.length ? null : await resolvePersonalCardTraffic(payload.ownerMerchantId, shareKey);
+  if (personalTraffic) trafficResources.push({ siteId: personalTraffic.siteId, module: "card", objectId: personalTraffic.cardId, label: personalTraffic.name });
+  if (trafficSite && trafficCard && selectedPollMatch && selectedPollBlock) {
+    trafficResources.push({ siteId: trafficSite.id, module: "poll", objectId: `${selectedPollBlock.id}/${selectedPollMatch.config.pollId}`, label: selectedPollMatch.config.heading });
+  }
+  const trafficTokens = trafficResources.map((resource) => ({ key: trafficResourceKey(resource.module, resource.objectId), token: signTrafficResource(resource) }));
+
   return (
+    <SignedPublicTrafficProvider key={trafficCard?.id ?? personalTraffic?.cardId ?? shareKey} tokens={trafficTokens} cardId={trafficCard?.id ?? personalTraffic?.cardId ?? ""}>
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-5 pb-6 pt-0 text-slate-900 sm:px-6 sm:pb-10 sm:pt-4">
       <BusinessCardMediaExperience
         introVideoUrl={payload.introVideoUrl}
@@ -332,6 +353,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
             {showContactSaveButton && contactUrl ? (
               <a
                 href={contactUrl}
+                data-traffic-action="contact_download_click"
                 className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
               >
                 一键保存到通讯录
@@ -340,6 +362,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
             {showContactWebsiteButton ? (
               <a
                 href={payload.contact?.websiteUrl || payload.targetUrl}
+                data-traffic-action="website_click"
                 className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
               >
                 进入官网
@@ -355,5 +378,6 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
         ) : null}
       </section>
     </main>
+    </SignedPublicTrafficProvider>
   );
 }

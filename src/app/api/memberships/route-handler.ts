@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordTrafficOutcome } from "@/lib/accountTrafficOutcome.server";
 import {
   authorizeMerchantBusinessRequest,
   MerchantBusinessAccessError,
@@ -636,6 +637,8 @@ export async function POST(request: Request) {
     }
     const siteName = await resolveSiteName(siteId, trimText(body?.siteName, 120));
     const membership = await joinMerchantMembership({ siteId, siteName, session, profile: body?.profile });
+    void recordTrafficOutcome(request, { siteId, module: "membership", recordId: membership.id,
+      objectId: "membership-entry", occurredAt: membership.joinedAt });
     return privateJson({
       ok: true,
       membership: toPersonalMembershipCard(membership),

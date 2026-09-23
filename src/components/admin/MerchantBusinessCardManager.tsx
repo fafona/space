@@ -48,9 +48,9 @@ import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/Co
 import { BusinessCardQrControls } from "@/components/admin/BusinessCardQrControls";
 import { BusinessCardDestinationFields } from "@/components/admin/BusinessCardDestinationFields";
 import { businessCardUsesContactPage, resolveBusinessCardWebsiteAddress, resolveBusinessCardScanTarget } from "@/lib/merchantBusinessCardDestination";
-import { isBusinessCardQrColorReadable, businessCardQrAspectRatio, normalizeBusinessCardQrBackground } from "@/lib/merchantBusinessCardQr";
+import { businessCardQrAspectRatio, normalizeBusinessCardQrBackground } from "@/lib/merchantBusinessCardQr";
 import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame } from "@/lib/merchantBusinessCardQrDecorations";
-import { businessCardQrSvgDataUrl, createBusinessCardQrSvg } from "@/lib/merchantBusinessCardQrRender";
+import { useBusinessCardQrPreview } from "@/components/admin/useBusinessCardQrPreview";
 import {
   buildMerchantBusinessCardShareUrl,
   createMerchantBusinessCardShareKey,
@@ -2039,7 +2039,6 @@ export default function MerchantBusinessCardManager({
   const [tip, setTip] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDraftSaving, setIsDraftSaving] = useState(false);
-  const [qrPreview, setQrPreview] = useState({ key: "", url: "" });
   const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
   const [selectedFieldKeys, setSelectedFieldKeys] = useState<string[]>(["merchantName"]);
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
@@ -2321,7 +2320,10 @@ export default function MerchantBusinessCardManager({
   ]);
   const qrTargetUrl = resolveBusinessCardScanTarget(draft, websiteUrl, draftLinkUrl);
   const qrPreviewKey = JSON.stringify([qrTargetUrl, { style: draft.qr.style, color: draft.qr.color, backgroundColor: draft.qr.backgroundColor, showCaption: draft.qr.showCaption, caption: draft.qr.caption, topText: draft.qr.topText, bottomText: draft.qr.bottomText, ...normalizeBusinessCardQrDecoration(draft.qr) }]);
-  const qrCodeUrl = qrPreview.key === qrPreviewKey ? qrPreview.url : "";
+  const { currentUrl: qrCodeUrl, display: qrDisplayPreview } = useBusinessCardQrPreview(qrPreviewKey, editorOpen && !invalidWebsiteAddress, `${normalizedMerchantId}:${editingCardId ?? "draft"}`, setTip);
+  // Keep image and its frame geometry together until the new SVG is decoded.
+  // QR position/size and all non-QR edits still respond immediately.
+  const qrDisplayDraft = qrDisplayPreview ? { ...draft, qr: { ...draft.qr, ...qrDisplayPreview.appearance } } : draft;
   const qrReadyForCurrentDraft = !invalidWebsiteAddress && (!draft.showQr || !!qrCodeUrl);
 
   useEffect(() => {
@@ -2334,29 +2336,6 @@ export default function MerchantBusinessCardManager({
     const timer = window.setTimeout(() => setTip(""), 3000);
     return () => window.clearTimeout(timer);
   }, [tip]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const [target, appearance] = JSON.parse(qrPreviewKey) as [string, import("@/lib/merchantBusinessCardQr").BusinessCardQrAppearance];
-    if (!editorOpen || !target || !isBusinessCardQrColorReadable(appearance.color || "#000000", appearance.backgroundColor)) {
-      setQrPreview({ key: "", url: "" });
-      return;
-    }
-    const timer = window.setTimeout(() => { void createBusinessCardQrSvg(target, appearance)
-      .then((svg) => {
-        if (!cancelled) setQrPreview({ key: qrPreviewKey, url: businessCardQrSvgDataUrl(svg) });
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setQrPreview({ key: "", url: "" });
-          setTip(error instanceof Error && /字体/.test(error.message) ? error.message : "二维码预览生成失败，请调整设置后重试。");
-        }
-      }); }, 180);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [editorOpen, qrPreviewKey]);
 
   useEffect(() => {
     const validSelectionKeys = new Set<string>([
@@ -4982,9 +4961,9 @@ export default function MerchantBusinessCardManager({
                   <div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-3">
                     <div className="flex justify-center">
                       <CardSurface
-                        draft={draft}
+                        draft={qrDisplayDraft}
                         websiteUrl={websiteUrl}
-                        qrCodeUrl={qrCodeUrl}
+                        qrCodeUrl={qrDisplayPreview?.url ?? ""}
                         scale={scale}
                         onBackgroundPointerDown={handleBackgroundPointerDown}
                         onBackgroundPointerMove={handleBackgroundPointerMove}

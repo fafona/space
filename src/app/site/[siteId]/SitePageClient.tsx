@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import PublicTrafficProvider from "@/components/PublicTrafficProvider";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
@@ -472,17 +473,18 @@ export function SitePageClient({
     : false;
   const orderManagementEnabled =
     remoteOrderManagementEnabled === null ? localOrderManagementEnabled : remoteOrderManagementEnabled;
+  const legacyAnalyticsSiteId = site?.id ?? "";
   useEffect(() => {
-    if (!hydrated || !site || !resolvedPageId) return;
+    if (!hydrated || !legacyAnalyticsSiteId || !resolvedPageId) return;
     const timer = setTimeout(() => {
       void import("@/lib/analytics")
         .then(({ trackPageView }) => {
-          trackPageView(`site:${site.id}:${resolvedPageId}`);
+          trackPageView(`site:${legacyAnalyticsSiteId}:${resolvedPageId}`);
         })
         .catch(() => undefined);
     }, 900);
     return () => clearTimeout(timer);
-  }, [hydrated, site, resolvedPageId]);
+  }, [hydrated, legacyAnalyticsSiteId, resolvedPageId]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -746,6 +748,7 @@ export function SitePageClient({
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
 
   return (
+    <PublicTrafficProvider siteId={site?.id ?? siteId} pageId={resolvedPageId} viewport={isMobileViewport ? "mobile" : "desktop"}>
     <main
       {...faollaPullRefreshBind}
       className="faolla-public-site-shell min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
@@ -790,6 +793,7 @@ export function SitePageClient({
         />
       </div>
     </main>
+    </PublicTrafficProvider>
   );
 }
 

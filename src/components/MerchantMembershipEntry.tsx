@@ -9,6 +9,7 @@ import {
 } from "@/lib/merchantMemberships";
 import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
 import { buildPersonalLoginHref } from "@/lib/personalLoginNavigation";
+import { usePublicTraffic } from "@/components/PublicTrafficProvider";
 
 type MerchantMembershipEntryProps = {
   siteId: string;
@@ -228,6 +229,7 @@ function notifyMembershipChanged(membership: PersonalMembershipCard) {
 }
 
 export default function MerchantMembershipEntry({ siteId, siteName = "", className = "" }: MerchantMembershipEntryProps) {
+  const traffic = usePublicTraffic();
   const [resolved, setResolved] = useState(false);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [membership, setMembership] = useState<PersonalMembershipCard | null>(null);
@@ -335,6 +337,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
 
   async function openJoinDialog() {
     if (!joinable || busy || active || authenticated !== true) return;
+    traffic?.("membership", "membership-entry", "view");
     setMessage("");
     setProfileDraft(personalProfile);
     setBirthdayFullBackup(personalProfile.birthdayMonthDayOnly ? "" : normalizeFullDate(personalProfile.birthday));
@@ -343,6 +346,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
 
   async function handleJoin() {
     if (!joinable || busy || active) return;
+    traffic?.("membership", "membership-entry", "join_attempt");
     setBusy(true);
     setMessage("");
     try {
@@ -427,6 +431,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
           aria-busy={!resolved || busy}
           title={active ? "已是会员" : undefined}
           onClick={() => {
+            traffic?.("membership", "membership-entry", "entry_click");
             void openJoinDialog();
           }}
           disabled={busy || active}
@@ -451,6 +456,7 @@ export default function MerchantMembershipEntry({ siteId, siteName = "", classNa
       {dialogOpen ? (
         <div className="fixed inset-0 z-[2147483200] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
           <form
+            onChangeCapture={() => traffic?.("membership", "membership-entry", "form_start", true)}
             className="w-full max-w-xl overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)]"
             onSubmit={(event) => {
               event.preventDefault();

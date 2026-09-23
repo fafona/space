@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePublicTraffic, usePublicTrafficExposure } from "@/components/PublicTrafficProvider";
 import type { PollProps } from "@/data/homeBlocks";
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import {
@@ -108,6 +109,10 @@ export default function PollBlock({
   ...props
 }: PollBlockRuntimeProps) {
   const config = useMemo(() => normalizePollConfig(props, runtimeBlockId || "poll"), [props, runtimeBlockId]);
+  const traffic = usePublicTraffic();
+  const trafficRef = useRef<HTMLElement>(null);
+  const trafficObjectId = `${runtimeBlockId}/${config.pollId}`;
+  usePublicTrafficExposure(trafficRef, "poll", trafficObjectId);
   const configurationIssue = getPollConfigurationIssue(config);
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, PollAnswerDraft>>({});
   const [participantName, setParticipantName] = useState("");
@@ -181,6 +186,7 @@ export default function PollBlock({
 
   const submitPoll = async () => {
     if (!interactive || submitting || submitted) return;
+    traffic?.("poll", trafficObjectId, "submit_attempt");
     if (!isMerchantNumericId(runtimeSiteId)) {
       setError("投票仅在发布后可以提交。");
       return;
@@ -284,6 +290,7 @@ export default function PollBlock({
 
   return (
     <section
+      ref={trafficRef}
       className={resolveMobileFitCardClass(
         resolveMobileFitSectionClass(
           `box-border mx-auto min-w-0 max-w-6xl overflow-x-hidden rounded-lg p-5 shadow-sm ${borderClass}`,
@@ -319,6 +326,7 @@ export default function PollBlock({
           </div>
         ) : (
           <form
+            onChangeCapture={() => { if (interactive) traffic?.("poll", trafficObjectId, "form_start", true); }}
             className="mt-5 grid min-w-0 max-w-full gap-5"
             onSubmit={(event) => {
               event.preventDefault();

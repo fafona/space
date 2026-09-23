@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePublicTraffic, usePublicTrafficExposure } from "@/components/PublicTrafficProvider";
 import { useSearchParams } from "next/navigation";
 import type { BookingProps } from "@/data/homeBlocks";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
@@ -178,6 +179,9 @@ export default function BookingBlock({
   runtimeViewport = "desktop",
   ...props
 }: BookingBlockComponentProps) {
+  const traffic = usePublicTraffic();
+  const trafficRef = useRef<HTMLElement>(null);
+  usePublicTrafficExposure(trafficRef, "booking", runtimeBlockId);
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const searchParams = useSearchParams();
@@ -502,6 +506,7 @@ export default function BookingBlock({
       : undefined;
 
   const handleFieldChange = (key: keyof typeof draft, value: string) => {
+    traffic?.("booking", runtimeBlockId, "form_start", true);
     const nextValue =
       key === "customerName"
         ? normalizeMerchantBookingCustomerNameInput(value)
@@ -519,6 +524,7 @@ export default function BookingBlock({
 
   const submitBooking = async () => {
     if (!isLiveBooking) return;
+    traffic?.("booking", runtimeBlockId, "submit_attempt");
     setSubmitting(true);
     setError("");
     try {
@@ -670,6 +676,7 @@ export default function BookingBlock({
 
   return (
     <section
+      ref={trafficRef}
       className={resolveMobileFitCardClass(
         resolveMobileFitSectionClass(`mx-auto max-w-6xl rounded-2xl p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth),
         mobileFitScreenWidth,
