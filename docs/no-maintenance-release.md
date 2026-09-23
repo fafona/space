@@ -26,3 +26,19 @@ source from reviewed current main. Do not use the historical full deploy script.
   incompatible data changes require a separate plan, never automatic maintenance.
 
 Until activation and public checks finish, do not call the feature deployed.
+
+## Export-only QR UI lane (2026-09-23)
+
+The requested standalone QR export is a separate exact file allowlist selected
+by `onlineReleaseLane`. It admits the four client feature/test files, its notes,
+this controller and previously merged historical test-fixture corrections only.
+API, authentication, merchant permissions, migrations and dependency changes are
+rejected. The source remains reviewed current main.
+
+Use `stage SHA BASELINE`, then `activate SHA`: stage runs QR-focused tests and the
+production build and marks `ready-no-database` only after candidate smoke passes.
+`database` explicitly refuses this lane. Existing analytics configuration and
+signing secret are inherited unchanged; no backup/migration or candidate restart
+is needed for a UI-only release. All original ownership, maintenance-state,
+process-identity, nginx hash, asset collision, public smoke and rollback checks
+remain mandatory. No live workers are stopped or restarted.
