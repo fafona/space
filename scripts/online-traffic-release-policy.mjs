@@ -28,6 +28,30 @@ export function assertOnlineTrafficScope(files) {
     /^scripts\/supabase-migrations\/2026092300(?:49|50|51)_account_traffic_[a-z_]+\.sql$/,
   ].some(pattern => pattern.test(file)))) throw Error('online_release_scope_rejected');
 }
+// User-requested export-only UI release. This is a distinct, exact allowlist:
+// no migration, API, auth, entitlement, worker or dependency changes are admitted.
+const qrExportFiles = new Set([
+  'src/components/admin/MerchantBusinessCardManager.tsx',
+  'src/components/admin/BusinessCardQrExportDialog.tsx',
+  'src/lib/merchantBusinessCardQrExport.ts',
+  'src/lib/merchantBusinessCardQrExport.test.ts',
+  'docs/business-card-qr-export-2026-09-23.md',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+  // Already merged historical-fixture corrections between the live release
+  // and main; no production behavior or migration is changed by these tests.
+  ...['attempt','budget','build','preflight','prelaunch','second-attempt'].map(name => `scripts/production-maintenance-${name}-recovery-evidence.test.mjs`),
+  'scripts/production-maintenance-continuation-evidence.test.mjs',
+  'scripts/production-maintenance-window-renewal-evidence.test.mjs',
+]);
+export function onlineReleaseLane(files) {
+  if (files.includes('src/lib/merchantBusinessCardQrExport.ts')) {
+    if (files.some(file => !qrExportFiles.has(file))) throw Error('qr_export_release_scope_rejected');
+    return 'qr-export';
+  }
+  assertOnlineTrafficScope(files);
+  return 'traffic';
+}
 export function onlineProxy(original, oldPort, newPort, sha) {
   if (!Number.isInteger(oldPort) || oldPort < 3102 || oldPort > 3110 || !Number.isInteger(newPort) || newPort < 3102 || newPort > 3110 || oldPort === newPort || !/^[a-f0-9]{40}$/.test(sha)) throw Error('online_proxy_identity_invalid');
   const prior=`proxy_pass http://127.0.0.1:${oldPort};`;

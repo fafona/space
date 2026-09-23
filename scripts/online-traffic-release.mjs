@@ -3,7 +3,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
-import {ONLINE_ROOT as root,assertOnlineTrafficScope,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+import {ONLINE_ROOT as root,onlineReleaseLane,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
@@ -78,7 +78,7 @@ try{
   if(!/^[a-f0-9]{40}$/.test(baseline??'')||existsSync(stateFile))fail('existing_or_invalid_stage');
   if(run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
-  assertOnlineTrafficScope(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
+  const lane=onlineReleaseLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   const previousActive=existsSync(activeFile)?JSON.parse(safeFile(activeFile)):null;
   const legacy=JSON.parse(safeFile('/var/lib/faolla-web-presentation-release/state.json'));
   const old=previousActive??{...legacy,port:3102,name:'merchant-space-web-live'};
@@ -91,21 +91,25 @@ try{
   const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),processes:all.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd})),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
+  s.lane=lane;
   save(s);run('git',['worktree','add','--detach',s.directory,target],{cwd:app});
   run('cp',['-a','--reflink=auto',`${old.directory}/node_modules`,`${s.directory}/node_modules`],{timeout:180000});
   const env=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
-  const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url'),PORT:String(port)};
+  if(lane==='qr-export'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('qr_export_analytics_baseline_invalid');
+  const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
   console.log('online_focused_tests');
-  const tests=run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n');
-  run('node',['--import','tsx','--test',...tests,'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  const tests=lane==='qr-export'
+   ? ['src/lib/merchantBusinessCardQrExport.test.ts','src/lib/merchantBusinessCardDestination.test.ts','src/lib/merchantBusinessCardQrColorSelection.test.ts','src/lib/merchantBusinessCardQrText.test.ts']
+   : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
+  run('node',['--import','tsx','--test',...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
   console.log('online_build_started');run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
   run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(port)],{env});
   let ready=false;for(let i=0;i<25;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('candidate_not_ready');
-  verifyCandidate(s);s.status='staged';save(s);
+  verifyCandidate(s);s.status=lane==='qr-export'?'ready-no-database':'staged';save(s);
  }else{
   const s=JSON.parse(safeFile(stateFile));await verifyBase(s);
   if(action==='finish-stage'){
@@ -114,8 +118,9 @@ try{
    if(s.status!=='preparing'||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('resume_candidate_source_changed');
    if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('resume_build_missing');
    run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});
-   configUnchanged(s);verifyCandidate(s);await smoke(s);s.status='staged';save(s);
+   configUnchanged(s);verifyCandidate(s);await smoke(s);s.status=s.lane==='qr-export'?'ready-no-database':'staged';save(s);
   }else if(action==='database'){
+   if(s.lane==='qr-export')fail('qr_export_database_forbidden');
    if(s.status!=='staged')fail('database_not_staged');configUnchanged(s);verifyCandidate(s);
    const preview=await applyProductionDatabaseMigrations({rootDir:s.directory,through:'202609230051',dryRun:true});assertPendingTrafficMigrations(preview.pending);
    atomic(`${operation}/migration-preview.json`,JSON.stringify(preview));
@@ -136,7 +141,7 @@ try{
    let ready=false;for(let i=0;i<20;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('enabled_candidate_not_ready');
    verifyCandidate(s);s.status='database-ready';save(s);
   }else if(action==='activate'){
-   if(s.status!=='database-ready')fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
+   if(s.lane==='qr-export'?s.status!=='ready-no-database':s.status!=='database-ready')fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
    const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
    s.status='activating';save(s);
    try{

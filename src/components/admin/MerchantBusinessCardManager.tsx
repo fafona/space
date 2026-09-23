@@ -46,6 +46,8 @@ import {
 } from "@/lib/merchantBusinessCards";
 import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
 import { BusinessCardQrControls } from "@/components/admin/BusinessCardQrControls";
+import { BusinessCardQrExportDialog } from "@/components/admin/BusinessCardQrExportDialog";
+import { createBusinessCardQrExportSession, type BusinessCardQrExportSession } from "@/lib/merchantBusinessCardQrExport";
 import { BusinessCardDestinationFields } from "@/components/admin/BusinessCardDestinationFields";
 import { businessCardUsesContactPage, resolveBusinessCardWebsiteAddress, resolveBusinessCardScanTarget } from "@/lib/merchantBusinessCardDestination";
 import { businessCardQrAspectRatio, normalizeBusinessCardQrBackground } from "@/lib/merchantBusinessCardQr";
@@ -2030,6 +2032,7 @@ export default function MerchantBusinessCardManager({
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareCode, setDraftShareCode] = useState(() => createMerchantBusinessCardShareKeyCode());
   const [editorOpen, setEditorOpen] = useState(false);
+  const [qrExportSession, setQrExportSession] = useState<BusinessCardQrExportSession | null>(null);
   const [folderOpen, setFolderOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<MerchantBusinessCardAsset | null>(null);
@@ -3598,6 +3601,13 @@ export default function MerchantBusinessCardManager({
                     </button>
                   </div>
                 )}
+                <button
+                  type="button"
+                  className="w-full rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
+                  onClick={() => setQrExportSession(createBusinessCardQrExportSession(card, websiteUrl, resolveCardShortLink(card)))}
+                >
+                  二维码
+                </button>
               </div>
             </article>
           ))}
@@ -3669,6 +3679,7 @@ export default function MerchantBusinessCardManager({
       {isPageFolderView ? folderPageSurface : null}
       <div className="pointer-events-none fixed left-[-20000px] top-0"><div ref={hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={1} renderMode="export" /></div></div>
 
+      {qrExportSession ? <BusinessCardQrExportDialog session={qrExportSession} onClose={() => setQrExportSession(null)} /> : null}
       {editorOpen ? overlay(
         <div
           className="fixed inset-0 z-[2147482900] bg-black/45 p-4"

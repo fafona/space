@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {assertOnlineTrafficScope,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+import {assertOnlineTrafficScope,onlineReleaseLane,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+
+test('QR export lane admits only the requested client feature and exact release tooling',()=>{
+ const feature=['src/lib/merchantBusinessCardQrExport.ts','src/lib/merchantBusinessCardQrExport.test.ts','src/components/admin/BusinessCardQrExportDialog.tsx','src/components/admin/MerchantBusinessCardManager.tsx'];
+ assert.equal(onlineReleaseLane(feature),'qr-export');
+ assert.equal(onlineReleaseLane(['src/lib/accountTrafficCampaign.server.ts']),'traffic');
+ for(const file of ['src/app/api/polls/route.ts','src/lib/superAdminVerification.ts','src/lib/merchantBusinessCards.ts','src/data/platformControlStore.ts','package-lock.json','scripts/supabase-migrations/202609230049_account_traffic_events.sql','scripts/production-maintenance-attempt-recovery-evidence.mjs'])assert.throws(()=>onlineReleaseLane([...feature,file]));
+ assert.equal(onlineReleaseLane([...feature,'scripts/production-maintenance-attempt-recovery-evidence.test.mjs']),'qr-export');
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.match(code,/if\(s.lane==='qr-export'\)fail\('qr_export_database_forbidden'\)/);
+ assert.match(code,/s.status=lane==='qr-export'\?'ready-no-database':'staged'/);
+ assert.match(code,/lane==='traffic'\?\{FAOLLA_TRAFFIC_ENABLED:'0'/);
+ assert.match(code,/qr_export_analytics_baseline_invalid/);
+});
 test('scope accepts analytics only, rejects auth, workers, dependencies and unrelated data migrations',()=>{
  for(const file of ['src/lib/accountTrafficCampaign.server.ts','src/app/api/traffic/collect/route-handler.ts','src/app/api/super-admin/traffic/campaign/route.test.ts','scripts/supabase-migrations/202609230051_account_traffic_outcomes_campaigns_export.sql'])assert.doesNotThrow(()=>assertOnlineTrafficScope([file]));
  for(const file of ['src/app/api/auth/signin/route.ts','package-lock.json','scripts/deploy.production.sh','src/lib/merchantEnterpriseAutomation.server.ts','scripts/supabase-migrations/202609230052_delete.sql'])assert.throws(()=>assertOnlineTrafficScope([file]));
