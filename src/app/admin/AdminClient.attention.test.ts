@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { parseMerchantOrderAttentionSummary } from "@/lib/merchantOrderAttention";
 
 const source = readFileSync(new URL("./AdminClient.tsx", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("AdminClient.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -53,6 +54,7 @@ function mount(kind: "booking" | "order", options: {
     setMerchantOrderAttentionSummary: (value: unknown) => { summaries.push(value); },
     summarizeMerchantBookingAttention: (rows: unknown[]) => ({ count: rows.length, latest: null }),
     summarizeMerchantOrderAttention: (rows: unknown[]) => ({ count: rows.length, latest: null }),
+    parseMerchantOrderAttentionSummary,
     setMerchantBusinessAttentionHydrationState: () => {},
     startVisiblePolling: (config: PollingOptions) => { polling = config; return () => {}; },
     scheduleAdminIdleTask: (_callback: () => void, config: unknown) => { idleOptions.push(config); return () => {}; },
@@ -77,7 +79,7 @@ for (const kind of ["booking", "order"] as const) {
     } });
     const controller = new AbortController();
     await mounted.polling!.refresh(controller.signal);
-    assert.equal(request?.input, `/api/${field}?siteId=10000000`);
+    assert.equal(request?.input, `/api/${field}?siteId=10000000${kind === "order" ? "&attention=1" : ""}`);
     assert.equal(request?.init.signal, controller.signal);
     assert.equal(request?.init.cache, "no-store");
     if (kind === "order") assert.equal(request?.init.credentials, "same-origin");
@@ -130,6 +132,42 @@ test("order attention still clears its badge on forbidden responses without cach
   const mounted = mount("order", { fetch: async () => ({ ok: false, status: 403, json: async () => ({ ok: false }) }) });
   await assert.rejects(mounted.polling!.refresh(new AbortController().signal), /order_attention_failed/);
   assert.equal((mounted.summaries[0] as { count: number }).count, 0);
+  assert.deepEqual(mounted.writes, []);
+});
+
+test("order summary response updates the badge without poisoning the full order cache", async () => {
+  for (const attention of [
+    { count: 0, latest: null },
+    { count: 3, latest: { key: "order:synthetic", title: "新订单 - 客户", body: "商品 · 10.00",
+      url: "/10000000?mobileTab=business&businessSection=orders&appShell=faolla", createdAt: "2026-09-24T10:00:00.000Z" } },
+  ]) {
+    const mounted = mount("order", { fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, attention }) }) });
+    await mounted.polling!.refresh(new AbortController().signal);
+    assert.deepEqual(mounted.summaries, [attention]);
+    assert.deepEqual(mounted.writes, []);
+  }
+});
+
+test("malformed or cross-merchant summaries never clear the badge or update cache", async () => {
+  for (const attention of [{ count: 2, latest: null }, { count: -1, latest: null }, { count: 0, latest: null, orders: [] }]) {
+    const mounted = mount("order", { fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, attention }) }) });
+    await assert.rejects(mounted.polling!.refresh(new AbortController().signal), /order_attention_failed/);
+    assert.deepEqual(mounted.summaries, []);
+    assert.deepEqual(mounted.writes, []);
+  }
+});
+
+test("late summary body results are ignored after the workspace is cancelled", async () => {
+  let resolveBody!: (value: unknown) => void;
+  const body = new Promise((resolve) => { resolveBody = resolve; });
+  const mounted = mount("order", { fetch: async () => ({ ok: true, status: 200, json: () => body }) });
+  const controller = new AbortController();
+  const pending = mounted.polling!.refresh(controller.signal);
+  await Promise.resolve();
+  controller.abort();
+  resolveBody({ ok: true, attention: { count: 0, latest: null } });
+  await pending;
+  assert.deepEqual(mounted.summaries, []);
   assert.deepEqual(mounted.writes, []);
 });
 

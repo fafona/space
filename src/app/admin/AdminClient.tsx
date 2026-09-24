@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { parseMerchantOrderAttentionSummary } from "@/lib/merchantOrderAttention";
 import {
   useCallback,
   useEffect,
@@ -9923,15 +9924,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         scheduleAdminIdleTask(refresh, { timeoutMs: 2400, fallbackDelayMs: 1000 }),
       timeoutMs: 20000,
       refresh: async (signal) => {
-        const response = await fetch(`/api/orders?siteId=${encodeURIComponent(editingSiteId)}`, {
+        const response = await fetch(`/api/orders?siteId=${encodeURIComponent(editingSiteId)}&attention=1`, {
           cache: "no-store",
           credentials: "same-origin",
           signal,
         });
         const json = (await response.json().catch(() => null)) as
-          | { ok?: boolean; orders?: MerchantOrderRecord[] }
+          | { ok?: boolean; orders?: MerchantOrderRecord[]; attention?: unknown }
           | null;
         if (signal.aborted) return;
+        const attention = response.ok && json?.ok
+          ? parseMerchantOrderAttentionSummary(json.attention, editingSiteId) : null;
+        if (attention) {
+          // A summary is not an order list: never overwrite the workbench's
+          // full-record cache with a partial or empty collection.
+          setMerchantOrderAttentionSummary(attention);
+          setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+          return;
+        }
         if (!response.ok || !json?.ok || !Array.isArray(json.orders)) {
           if (response.status === 403) {
             setMerchantOrderAttentionSummary({ count: 0, latest: null });

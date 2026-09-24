@@ -77,3 +77,48 @@ the exact current main source, dependency equality, owned baseline and all
 process/configuration hashes, maintenance state, immutable assets, public smoke
 and ownership-checked rollback. Status and rollback remain available; no legacy
 state, old process, asset or saved record is removed.
+
+## Fafona owner order-attention pilot lane (2026-09-24)
+
+The user separately approved the derived owner order-attention summary for
+merchant `10000000` only. `order-attention` has its own exact file allowlist,
+selected by migration 052 or `merchantOrderAttention.server.ts` before the
+shared admin-performance anchor. Other migrations, auth/permissions, the old
+order/membership writer, booking automation, customer stores, dependencies and
+unrelated files remain rejected. None of the three existing lanes is expanded.
+
+Use `stage SHA BASELINE`, `database SHA`, then `activate SHA`:
+
+- Stage retains every original source/process/proxy/maintenance guard, focused
+  regression tests and the production build. The new candidate has
+  `FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID=0`, background jobs paused, and unchanged
+  analytics settings and signing secret. It is only `staged`, not DB-ready.
+- Database requires the exact 052 version, name and filename; any earlier or
+  other pending migration is refused. The existing encrypted backup and backup
+  verification run before applying a pending migration. No source order,
+  membership, history or V1 data is migrated. The trigger and derived singleton
+  start disabled, and rerunning the migration retires prior projection tokens.
+- The pinned candidate CLI `order-attention-pilot.ts enable` performs bounded
+  source/projection reconciliation. The controller validates its exact JSON
+  proof (merchant, enabled state, UUID epoch, lossless generation, bounded
+  counts/bytes and hashes) before changing the candidate-only flag to
+  `10000000` and restarting only that paused candidate. The operation target
+  environment variable is passed to this CLI invocation only, never persisted.
+- After candidate smoke, `database-ready` is recorded. Activate runs the CLI
+  `verify` again before publishing static files or switching upstreams. A
+  failed or malformed proof stops publication; exit status alone is not proof.
+
+Owned-proxy rollback restores public traffic first, then clears this candidate's
+flag and restarts only the candidate. It does not depend on database disable
+succeeding. The prior web release never reads the pilot; all additive objects,
+source data and old workers remain intact. No destructive DB rollback occurs.
+
+Capture runs at transaction commit, so read/publish and reset/reconciliation
+must be separate transactions, never mixed into an order source-write
+transaction. A source write and its invalidation commit or roll back together;
+capture errors are not swallowed into stale ready summaries. Privileged trigger
+disable/re-enable or database restore requires explicit epoch reset and fresh
+reconciliation before re-enabling. A current trigger-catalog check cannot prove
+that no past capture interval was missed. Ordinary web rollback does not remove
+capture; a capture-object fault needs an operator to repair the derived objects,
+not overwrite or restore business rows.

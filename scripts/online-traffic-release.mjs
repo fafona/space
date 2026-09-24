@@ -3,7 +3,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
-import {ONLINE_ROOT as root,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+import {ONLINE_ROOT as root,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
@@ -35,7 +35,7 @@ async function verifyBase(s){
  if((await(await request(`http://127.0.0.1:${s.oldPort}/api/app-web-version`)).json()).buildId!==s.baseline)fail('baseline_version_changed');
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
-function verifyCandidate(s){const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');return p;}
+function verifyCandidate(s){const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');if(s.lane==='order-attention'&&p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==(s.orderAttentionEnabled?'10000000':'0'))fail('order_attention_candidate_flag_invalid');return p;}
 function publishStatic(source,destination){
  const files=[];function walk(dir,rel=''){for(const e of readdirSync(dir,{withFileTypes:true})){const key=rel?`${rel}/${e.name}`:e.name;if(e.isSymbolicLink())fail('static_symlink');if(e.isDirectory())walk(`${dir}/${e.name}`,key);else if(e.isFile())files.push(key);else fail('static_type_invalid');}}
  walk(source);
@@ -66,6 +66,34 @@ function restoreConfigs(s){
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
 function candidateEnvironment(s){return JSON.parse(safeFile(`${operation}/runtime.json`));}
+function verifyOrderAttentionSource(s){
+ if(s.lane!=='order-attention')return;
+ if(run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('order_attention_candidate_source_changed');
+}
+function verifyOrderAttention(s,command){
+ if(s.lane!=='order-attention')return;
+ verifyOrderAttentionSource(s);
+ const output=run('node',['--import','tsx','scripts/order-attention-pilot.ts',command],{cwd:s.directory,env:{...candidateEnvironment(s),FAOLLA_ORDER_ATTENTION_OPERATION_TARGET:s.target},timeout:180000});
+ let proof;try{proof=assertOrderAttentionReleaseProof(JSON.parse(output),command);}catch{fail('order_attention_verification_invalid');}
+ atomic(`${operation}/order-attention-${command}-proof.json`,JSON.stringify(proof));return proof;
+}
+function setOrderAttentionCandidateFlag(s,value){
+ if(s.lane!=='order-attention'||!['0','10000000'].includes(value))fail('order_attention_candidate_flag_invalid');
+ verifyCandidate(s);
+ const env=candidateEnvironment(s),content=safeFile(`${s.directory}/.env.local`);
+ if((content.match(/^FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID=(?:0|10000000)$/gm)||[]).length!==1)fail('order_attention_candidate_env_invalid');
+ env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID=value;
+ atomic(`${operation}/runtime.json`,JSON.stringify(env));
+ atomic(`${s.directory}/.env.local`,content.replace(/^FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID=(?:0|10000000)$/m,`FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID=${value}`));
+ s.orderAttentionEnabled=value==='10000000';save(s);
+ run('pm2',['restart',s.name,'--update-env'],{env});
+}
+function restoreOrderAttentionConfigs(s){
+ // Public traffic returns to the owned baseline before any optional candidate
+ // restart. A database/CLI fault must never prevent this web rollback.
+ restoreConfigs(s);
+ if(s.lane==='order-attention')setOrderAttentionCandidateFlag(s,'0');
+}
 if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','database','activate','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(!process.env.FAOLLA_ONLINE_RELEASE_LOCKED){
  const lock=`${app}.deploy.lock`;if(existsSync(lock)&&lstatSync(lock).isSymbolicLink())fail('unsafe_deploy_lock');
@@ -97,13 +125,16 @@ try{
   const env=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
   if(lane==='qr-export'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('qr_export_analytics_baseline_invalid');
   if(lane==='performance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('performance_analytics_baseline_invalid');
-  const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
+  if(lane==='order-attention'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('order_attention_analytics_baseline_invalid');
+  const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='order-attention'?{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'}:{}),...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
   console.log('online_focused_tests');
   const tests=lane==='qr-export'
    ? ['src/lib/merchantBusinessCardQrExport.test.ts','src/lib/merchantBusinessCardDestination.test.ts','src/lib/merchantBusinessCardQrColorSelection.test.ts','src/lib/merchantBusinessCardQrText.test.ts']
+   : lane==='order-attention'
+   ? ['src/lib/merchantOrderAttention.test.ts','src/lib/merchantOrderAttentionProjection.test.ts','src/lib/merchantOrderAttention.server.test.ts','src/app/api/orders/route.attention.test.ts','src/app/api/orders/route.test.ts','src/app/admin/AdminClient.attention.test.ts','scripts/order-attention-pilot.test.ts','scripts/order-attention-pilot-migration-contract.test.mjs','scripts/order-attention-integration/run.test.mjs','scripts/ci-workflow-contract.test.mjs']
    : lane==='performance'
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
@@ -125,7 +156,9 @@ try{
   }else if(action==='database'){
    assertOnlineReleaseDatabaseAllowed(s.lane);
    if(s.status!=='staged')fail('database_not_staged');configUnchanged(s);verifyCandidate(s);
-   const preview=await applyProductionDatabaseMigrations({rootDir:s.directory,through:'202609230051',dryRun:true});assertPendingTrafficMigrations(preview.pending);
+   verifyOrderAttentionSource(s);
+   const through=onlineReleaseMigrationTarget(s.lane);
+   const preview=await applyProductionDatabaseMigrations({rootDir:s.directory,through,dryRun:true});assertPendingOnlineReleaseMigrations(s.lane,preview.pending);
    atomic(`${operation}/migration-preview.json`,JSON.stringify(preview));
    if(preview.pending.length){
     console.log('online_encrypted_backup_started');const passphrase=randomBytes(48).toString('base64url');writeFileSync(`${operation}/backup.key`,passphrase,{mode:0o600,flag:'wx'});
@@ -134,17 +167,22 @@ try{
     const backup=await createProductionDatabaseBackup({outputPath:`${operation}/database.tar.enc`,passphrase,appDirectory:s.oldDirectory,sourceDirectory:backupSource,sourceRepository:'fafona/space',sourceSha:backupSha});
     const checked=await verifyProductionDatabaseBackup({inputPath:`${operation}/database.tar.enc`,passphrase});atomic(`${operation}/backup-report.json`,JSON.stringify({backup,checked}));
     await verifyBase(s);configUnchanged(s);console.log('online_additive_migrations_started');
-    const report=await applyProductionDatabaseMigrations({rootDir:s.directory,through:'202609230051',apply:true});atomic(`${operation}/migration-report.json`,JSON.stringify(report));
+    const report=await applyProductionDatabaseMigrations({rootDir:s.directory,through,apply:true});atomic(`${operation}/migration-report.json`,JSON.stringify(report));
    }
-   const after=await applyProductionDatabaseMigrations({rootDir:s.directory,through:'202609230051',dryRun:true});if(after.pending.length)fail('migration_incomplete');
+   const after=await applyProductionDatabaseMigrations({rootDir:s.directory,through,dryRun:true});if(after.pending.length)fail('migration_incomplete');
    // Enable only the non-public candidate after all compatible migrations succeed.
-   const env=candidateEnvironment(s);env.FAOLLA_TRAFFIC_ENABLED='1';atomic(`${operation}/runtime.json`,JSON.stringify(env));
-   atomic(`${s.directory}/.env.local`,safeFile(`${s.directory}/.env.local`).replace(/^FAOLLA_TRAFFIC_ENABLED=0$/m,'FAOLLA_TRAFFIC_ENABLED=1'));
-   run('pm2',['restart',s.name,'--update-env'],{env});
+   if(s.lane==='order-attention'){
+    verifyOrderAttention(s,'enable');setOrderAttentionCandidateFlag(s,'10000000');
+   }else{
+    const env=candidateEnvironment(s);env.FAOLLA_TRAFFIC_ENABLED='1';atomic(`${operation}/runtime.json`,JSON.stringify(env));
+    atomic(`${s.directory}/.env.local`,safeFile(`${s.directory}/.env.local`).replace(/^FAOLLA_TRAFFIC_ENABLED=0$/m,'FAOLLA_TRAFFIC_ENABLED=1'));
+    run('pm2',['restart',s.name,'--update-env'],{env});
+   }
    let ready=false;for(let i=0;i<20;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('enabled_candidate_not_ready');
    verifyCandidate(s);s.status='database-ready';save(s);
   }else if(action==='activate'){
    if(s.status!==onlineReleaseActivationStatus(s.lane))fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
+   verifyOrderAttention(s,'verify');
    const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
    s.status='activating';save(s);
    try{
@@ -152,9 +190,9 @@ try{
     let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch{await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
     await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
     s.status='active';s.activatedAt=new Date().toISOString();save(s);atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
-   }catch(error){restoreConfigs(s);throw error;}
+   }catch(error){if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);throw error;}
   }else if(action==='rollback'){
-   if(!['active','activating'].includes(s.status)||!existsSync(activeFile)||JSON.parse(safeFile(activeFile)).target!==s.target)fail('rollback_not_current');configUnchanged(s,true);restoreConfigs(s);
+   if(!['active','activating'].includes(s.status)||!existsSync(activeFile)||JSON.parse(safeFile(activeFile)).target!==s.target)fail('rollback_not_current');configUnchanged(s,true);if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);
   }
  }
  const result=JSON.parse(safeFile(stateFile));console.log(JSON.stringify({status:result.status,target:result.target,port:result.port,directory:result.directory}));
