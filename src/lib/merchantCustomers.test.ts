@@ -298,3 +298,72 @@ test("directory aggregation preserves every activity for a customer with many or
   assert.deepEqual(customers[0]?.activity.orderTotals, [{ label: "EUR", amount: 71_000 }]);
   assert.equal(createHash("sha256").update(JSON.stringify(customers)).digest("hex"), "1c1f128c17a2531c43148b684d85bee715ff7d284da6ed81e5ae81d0f29878a8");
 });
+
+test("single-token customer groups retain the exact recursive-find result", () => {
+  const orders = Array.from({ length: 37 }, (_, index) => createOrder({
+    id: `single-token-${index}`,
+    customer: { name: "Single identity", phone: "", email: "single@example.test", note: "Same note" },
+  }));
+  const customers = buildMerchantCustomerDirectory({ siteId: SITE_ID, orders });
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0]?.activity.orderCount, 37);
+  // Recorded before replacing recursive find, covering profile/alias order,
+  // derived ID, stable same-timestamp ordering and the complete activity shape.
+  assert.equal(createHash("sha256").update(JSON.stringify(customers)).digest("hex"), "461f4a63159d8851d459efaa537a7256f0472a9b45ef3c3ebd48d96e04c99a65");
+});
+
+test("customer identity lookup handles a 20000-activity single-token chain without stack growth", () => {
+  const orders = Array.from({ length: 20_000 }, (_, index) => createOrder({
+    id: `single-token-${index}`,
+    customer: { name: "Single identity", phone: "", email: "single@example.test", note: "Same note" },
+  }));
+  const input = { siteId: SITE_ID, orders };
+  const inputHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  const [smallCustomer] = buildMerchantCustomerDirectory({ siteId: SITE_ID, orders: orders.slice(0, 37) });
+  const customers = buildMerchantCustomerDirectory(input);
+  assert.deepEqual(customers, [{
+    ...smallCustomer,
+    activity: {
+      ...smallCustomer.activity,
+      orderCount: 20_000,
+      orderTotals: [{ label: "EUR", amount: 710_000 }],
+    },
+  }]);
+  assert.equal(createHash("sha256").update(JSON.stringify(input)).digest("hex"), inputHash);
+});
+
+test("iterative identity lookup preserves transitive multi-token merges and excludes foreign bridges", () => {
+  const stored = {
+    ...createEmptyMerchantCustomerProfile(SITE_ID),
+    id: "stored-transitive",
+    displayName: "Manual transitive customer",
+    email: "beta@example.test",
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+  const input = {
+    siteId: SITE_ID,
+    storedCustomers: [stored],
+    memberships: [createMembership({ email: "alpha@example.test" })],
+    orders: [
+      createOrder({ id: "alpha", customer: { name: "Alpha", email: "alpha@example.test", phone: "", note: "Alpha note" } }),
+      createOrder({ id: "beta", customer: { name: "Beta", email: "beta@example.test", phone: "", note: "Beta note" } }),
+      createOrder({ id: "bridge-alpha", customer: { name: "Bridge alpha", email: "alpha@example.test", phone: "+34 601 111 111", note: "" } }),
+      createOrder({ id: "bridge-beta", customer: { name: "Bridge beta", email: "beta@example.test", phone: "0034 601 111 111", note: "" } }),
+      createOrder({ id: "isolated-a", customer: { name: "Isolated A", email: "isolated-a@example.test", phone: "+34 602 222 222", note: "" } }),
+      createOrder({ id: "isolated-b", customer: { name: "Isolated B", email: "isolated-b@example.test", phone: "+34 603 333 333", note: "" } }),
+      createOrder({ id: "foreign-bridge", siteId: "20000000", customer: { name: "Foreign", email: "isolated-a@example.test", phone: "+34 603 333 333", note: "" } }),
+    ],
+    bookings: [createBooking({ email: "beta@example.test", phone: "", customerName: "Booking name" })],
+  };
+  const before = structuredClone(input);
+  const customers = buildMerchantCustomerDirectory(input);
+  assert.equal(customers.length, 3);
+  const merged = customers.find((customer) => customer.id === "stored-transitive")!;
+  assert.equal(merged.displayName, "Manual transitive customer");
+  assert.equal(merged.activity.orderCount, 4);
+  assert.equal(merged.activity.bookingCount, 1);
+  assert.deepEqual(input, before);
+  // Full output fingerprint taken from recursive find before this correction.
+  assert.equal(createHash("sha256").update(JSON.stringify(customers)).digest("hex"), "c18a38e6ff8b401d46499c60354292303aa1cf7c7429d0070815f6ce0b087583");
+});

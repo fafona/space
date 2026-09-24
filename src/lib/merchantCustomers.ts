@@ -700,8 +700,16 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
 
   const parent = candidates.map((_, index) => index);
   const find = (index: number): number => {
-    if (parent[index] !== index) parent[index] = find(parent[index]!);
-    return parent[index]!;
+    // A frequently returning customer can form a long parent chain. Find the
+    // same root and compress the same path without one stack frame per visit.
+    let root = index;
+    while (parent[root] !== root) root = parent[root]!;
+    while (parent[index] !== index) {
+      const next = parent[index]!;
+      parent[index] = root;
+      index = next;
+    }
+    return root;
   };
   const union = (left: number, right: number) => {
     const leftRoot = find(left);
