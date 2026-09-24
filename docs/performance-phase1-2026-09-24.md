@@ -142,3 +142,55 @@ summaries, genuine server-side customer/product pagination, indexed personal
 orders, incremental customer aggregation, bounded order transactions, independent
 booking scheduling, end-to-end experience baselines and scale validation remain
 separate stages requiring their own correctness and publication review.
+
+## Phase 1 production verification
+
+- PR #161: all ten CI jobs passed on `173f5fe70999f7c6480c935baef115713f8b787b`
+  ([run 36033644353](https://github.com/fafona/space/actions/runs/36033644353)).
+- Squash main `eb55ee14ccac47f9573e8491516bd1c598c7eb32` was verified to have
+  exactly the same source tree. Server-focused regressions passed 116/116;
+  guarded build, private candidate smoke and public acceptance all passed.
+- Activated at `2026-09-24T18:06:22.464Z`. Independent recheck at
+  `2026-09-24T18:07:48.728Z` found the exact public build, HTTP 200 on merchant
+  and console login, maintenance still `ended`, and every original PM2 process
+  PID/cwd/status preserved. The controller checked 25 public static assets.
+- The `database` action was not used. No saved data, schema, worker, old release
+  or asset cleanup was performed. Approximately 56 GiB remained available.
+- Admin async entry was 1,077.9 KiB before and 1,078.9 KiB after; both pass the
+  existing budget. This is not a smaller admin entry bundle: the intended
+  savings are avoided unsolicited lazy downloads, background work and repeated
+  customer processing. No production latency percentage or capacity claim is
+  inferred from these bytes.
+- The actual webpack customer-manager async entry changed from 442,641 bytes
+  across two files to 34,008 bytes in one file. The new explicit spreadsheet
+  import entry is 415,662 bytes across two files. These are uncompressed build
+  artifact sizes from the two retained releases, not measured transfer bytes
+  or whole-page latency. Browser acceptance separately verified that ordinary
+  customer-list use and opening the import dialog do not request the workbook.
+
+## Follow-up: deep customer identity chains
+
+Offline synthetic growth testing after phase 1 found a pre-existing recursive
+union-find stack overflow for a single customer with 10,000 order records.
+It reproduces in both the original baseline and phase 1. This is not evidence
+that production currently has such a customer or has lost data.
+
+The follow-up scope is confined to iterative two-pass root lookup/path
+compression in `merchantCustomers.ts`, its existing test file and these notes.
+Union direction, identity tokens, profile precedence, stable ordering, totals
+and input immutability must remain unchanged. No API, write path, customer
+record, permission, database object or configuration is changed. The existing
+exact performance no-database release lane covers these same files.
+
+Publication of this follow-up is separate from the already deployed phase 1;
+tests and new release evidence are required before claiming the overflow fixed
+in production. This correction still does not provide server-side pagination
+or remove full-history reads.
+
+The 20,000-activity single-token regression failed with `RangeError` before the
+correction and passed after it. It checks all result fields against the original
+37-activity fingerprint (adjusting only counts/totals) and verifies unchanged
+input bytes. Transitive multi-token grouping, foreign-merchant bridge exclusion,
+stable ties and existing full-output fingerprints also pass. The root reran the
+complete candidate-focused suite: 119/119 passed, zero skips/failures. Full-project
+TypeScript, focused ESLint, strict encoding and `git diff --check` passed.
