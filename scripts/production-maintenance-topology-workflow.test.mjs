@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { partitionCiTests } from "./run-ci-tests.mjs";
+import { discoverLocalTests } from "./run-local-tests.mjs";
 
 const workflow = readFileSync(new URL("../.github/workflows/production-maintenance-topology.yml", import.meta.url), "utf8");
 const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -91,8 +94,28 @@ test("only explicit temporary files and runner SSH material are removed", () => 
 });
 
 test("diagnostic tests are wired into CI", () => {
-  assert.match(ci, /node --test scripts\/check-production-maintenance-topology\.test\.mjs scripts\/production-maintenance-topology-workflow\.test\.mjs/);
-  assert.match(ci, /scripts\/check-production-maintenance-capabilities\.test\.mjs/);
+  function mandatoryStep(name) {
+    const marker = `      - name: ${name}\n`;
+    const normalized = ci.replaceAll("\r\n", "\n");
+    assert.equal(normalized.split(marker).length, 2, `exactly one ${name} step`);
+    const rest = normalized.slice(normalized.indexOf(marker) + marker.length);
+    const next = rest.indexOf("\n      - name:");
+    const step = next < 0 ? rest : rest.slice(0, next);
+    assert.doesNotMatch(step, /continue-on-error|\bif:|--test-skip-pattern|--test-name-pattern|\|\|\s*true/);
+    return step.match(/^        run: (.+)$/m)?.[1];
+  }
+  assert.equal(mandatoryStep("Maintenance Topology Diagnostic Tests"),
+    "node --test scripts/check-production-maintenance-topology.test.mjs scripts/check-production-maintenance-capabilities.test.mjs");
+  assert.equal(mandatoryStep("Maintenance Control and Pages ACL Contract Tests"),
+    "node --test --test-concurrency=1 scripts/production-maintenance-*.test.mjs scripts/maintenance-control-probe-headers.test.mjs scripts/pages-client-write-acl-migration-contract.test.mjs scripts/pages-acl-integration/run.test.mjs");
+  const groups = partitionCiTests(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))));
+  for (const [file, owner] of [
+    ["scripts/check-production-maintenance-topology.test.mjs", "topology"],
+    ["scripts/check-production-maintenance-capabilities.test.mjs", "topology"],
+    ["scripts/production-maintenance-topology-workflow.test.mjs", "maintenance"],
+  ]) {
+    assert.deepEqual(Object.keys(groups).filter((name) => groups[name].includes(file)), [owner], file);
+  }
   assert.match(block("Require Current Main And Successful Push CI"), /test -f scripts\/check-production-maintenance-capabilities\.mjs/);
   assert.match(block("Inspect Runtime Configuration"), /node scripts\/check-production-maintenance-capabilities\.mjs/);
 });

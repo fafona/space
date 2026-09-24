@@ -110,6 +110,7 @@ const boundedListFiles=[
  'src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomerPagination.test.ts',
  'src/lib/merchantOrdersStore.ts','src/lib/merchantOrdersStore.test.ts','src/lib/merchantOrdersStore.metadata.test.ts',
  '.github/workflows/ci.yml','scripts/ci-workflow-contract.test.mjs','scripts/run-ci-tests.mjs','scripts/run-ci-tests.test.mjs',
+ 'scripts/production-maintenance-topology-workflow.test.mjs',
  'scripts/performance-bounded-lists-browser-harness.mjs','scripts/fixtures/performance-bounded-lists-browser.tsx',
  'docs/performance-bounded-lists-2026-09-25.md','scripts/online-traffic-release-policy.mjs',
  'scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',

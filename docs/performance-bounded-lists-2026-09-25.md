@@ -47,6 +47,15 @@ limit, schema checks, real database/startup/ingress/browser acceptance, encoding
 lint and guarded production build remain required. No skip switch or timeout
 increase was introduced. New exact-head CI evidence is required before release.
 
+First phase CI (`36068237488`, head `35bfe0a3`) stopped on one stale assertion
+in `production-maintenance-topology-workflow.test.mjs`: it still required the
+topology workflow test in the earlier diagnostic command, although it already
+belonged to the mandatory serial maintenance group. That group completed in
+10m36s (1389 passed, one failed, one platform skip), not a timeout. Update this
+test-only contract to verify both exact mandatory commands and unique partition
+membership; do not remove coverage or retry the unchanged failing head. The
+remaining 511-file local suite completed in 13 batches with zero failed batches.
+
 ## Scope and limits
 
 No migration, saved configuration/data changes, source writes, permission/auth,

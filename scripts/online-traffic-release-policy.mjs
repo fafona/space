@@ -113,6 +113,7 @@ const boundedListFiles = new Set([
   'src/lib/merchantOrdersStore.metadata.test.ts',
   '.github/workflows/ci.yml', 'scripts/ci-workflow-contract.test.mjs',
   'scripts/run-ci-tests.mjs', 'scripts/run-ci-tests.test.mjs',
+  'scripts/production-maintenance-topology-workflow.test.mjs',
   'scripts/performance-bounded-lists-browser-harness.mjs',
   'scripts/fixtures/performance-bounded-lists-browser.tsx',
   'docs/performance-bounded-lists-2026-09-25.md',
