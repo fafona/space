@@ -17,6 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
 import { canShowMerchantWorkspaceBeforeEditor } from "@/lib/merchantWorkspaceLoading";
+import { startVisiblePolling } from "@/lib/visiblePolling";
 import {
   AccountSwitcherDialog,
   BlockRenderer,
@@ -9870,47 +9871,36 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
       return;
     }
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
     const bookingCacheKey = buildMerchantAdminDataCacheKey("bookings", editingSiteId);
     const cachedBookings = readMerchantAdminDataCacheSnapshot<MerchantBookingRecord[]>(bookingCacheKey);
     if (Array.isArray(cachedBookings?.data)) {
       setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(cachedBookings.data));
       setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
     }
-    const loadMerchantBookingAttention = async () => {
-      try {
+    return startVisiblePolling({
+      intervalMs: 60000,
+      initialDelayMs: cachedBookings?.fresh ? 60000 : 0,
+      scheduleInitial: cachedBookings?.fresh ? undefined : (refresh) =>
+        scheduleAdminIdleTask(refresh, { timeoutMs: 2400, fallbackDelayMs: 1000 }),
+      timeoutMs: 20000,
+      refresh: async (signal) => {
         const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(editingSiteId)}`, {
           cache: "no-store",
+          signal,
         });
         const json = (await response.json().catch(() => null)) as
           | { ok?: boolean; bookings?: MerchantBookingRecord[] }
           | null;
+        // A closed/hidden/changed workspace must not publish a late response.
+        if (signal.aborted) return;
         if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
           throw new Error("booking_attention_failed");
         }
         writeMerchantAdminDataCache(bookingCacheKey, json.bookings);
-        if (!cancelled) {
-          setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(json.bookings));
-          setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
-        }
-      } catch {
-        // Keep the last known badge count when the lightweight refresh fails.
-      }
-    };
-    const cancelInitialRefresh = cachedBookings?.fresh
-      ? () => {}
-      : scheduleAdminIdleTask(() => {
-          void loadMerchantBookingAttention();
-        }, { timeoutMs: 2400, fallbackDelayMs: 1000 });
-    timer = setInterval(() => {
-      void loadMerchantBookingAttention();
-    }, 60000);
-    return () => {
-      cancelled = true;
-      cancelInitialRefresh();
-      if (timer) clearInterval(timer);
-    };
+        setMerchantBookingAttentionSummary(summarizeMerchantBookingAttention(json.bookings));
+        setMerchantBusinessAttentionHydrationState((current) => (current.booking ? current : { ...current, booking: true }));
+      },
+    });
   }, [checkingAuth, editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantBookingAttention]);
 
   useEffect(() => {
@@ -9920,52 +9910,40 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
       return;
     }
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
     const orderCacheKey = buildMerchantAdminDataCacheKey("orders", editingSiteId);
     const cachedOrders = readMerchantAdminDataCacheSnapshot<MerchantOrderRecord[]>(orderCacheKey);
     if (Array.isArray(cachedOrders?.data)) {
       setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(cachedOrders.data));
       setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
     }
-    const loadMerchantOrderAttention = async () => {
-      try {
+    return startVisiblePolling({
+      intervalMs: 60000,
+      initialDelayMs: cachedOrders?.fresh ? 60000 : 0,
+      scheduleInitial: cachedOrders?.fresh ? undefined : (refresh) =>
+        scheduleAdminIdleTask(refresh, { timeoutMs: 2400, fallbackDelayMs: 1000 }),
+      timeoutMs: 20000,
+      refresh: async (signal) => {
         const response = await fetch(`/api/orders?siteId=${encodeURIComponent(editingSiteId)}`, {
           cache: "no-store",
           credentials: "same-origin",
+          signal,
         });
         const json = (await response.json().catch(() => null)) as
           | { ok?: boolean; orders?: MerchantOrderRecord[] }
           | null;
+        if (signal.aborted) return;
         if (!response.ok || !json?.ok || !Array.isArray(json.orders)) {
-          if (response.status === 403 && !cancelled) {
+          if (response.status === 403) {
             setMerchantOrderAttentionSummary({ count: 0, latest: null });
             setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
           }
           throw new Error("order_attention_failed");
         }
         writeMerchantAdminDataCache(orderCacheKey, json.orders);
-        if (!cancelled) {
-          setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(json.orders));
-          setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
-        }
-      } catch {
-        // Keep the last known badge count when the lightweight refresh fails.
-      }
-    };
-    const cancelInitialRefresh = cachedOrders?.fresh
-      ? () => {}
-      : scheduleAdminIdleTask(() => {
-          void loadMerchantOrderAttention();
-        }, { timeoutMs: 2400, fallbackDelayMs: 1000 });
-    timer = setInterval(() => {
-      void loadMerchantOrderAttention();
-    }, 60000);
-    return () => {
-      cancelled = true;
-      cancelInitialRefresh();
-      if (timer) clearInterval(timer);
-    };
+        setMerchantOrderAttentionSummary(summarizeMerchantOrderAttention(json.orders));
+        setMerchantBusinessAttentionHydrationState((current) => (current.orders ? current : { ...current, orders: true }));
+      },
+    });
   }, [checkingAuth, editingSiteId, explicitFaollaSectionEntry, isPlatformEditor, summarizeMerchantOrderAttention]);
 
   useEffect(() => {
@@ -15971,35 +15949,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     setMerchantDesktopSection,
     storeScope,
   ]);
-  useEffect(() => {
-    if (
-      checkingAuth ||
-      !isDesktopMerchantWorkspace ||
-      merchantEditorOnly ||
-      typeof window === "undefined"
-    ) {
-      return;
-    }
-
-    let cancelIdleTask = () => {};
-    const preloadDelayId = window.setTimeout(() => {
-      cancelIdleTask = scheduleAdminIdleTask(
-        () => {
-          void loadMerchantBusinessCardManager()
-            .catch(() => undefined)
-            .finally(() => {
-              void loadMerchantPrintSettingsPanel().catch(() => undefined);
-            });
-        },
-        { timeoutMs: 4000, fallbackDelayMs: 900 },
-      );
-    }, 2600);
-
-    return () => {
-      window.clearTimeout(preloadDelayId);
-      cancelIdleTask();
-    };
-  }, [checkingAuth, isDesktopMerchantWorkspace, merchantEditorOnly]);
   useEffect(() => {
     if (!isDesktopMerchantWorkspace || merchantEditorOnly) return;
     if (merchantDesktopPointRedemptionCenterActive && !canUsePointsRedemption) {

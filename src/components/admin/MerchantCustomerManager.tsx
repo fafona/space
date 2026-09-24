@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ChangeEvent,
 } from "react";
 import {
@@ -16,12 +17,14 @@ import {
   type MerchantCustomerProfile,
   type MerchantCustomerSource,
 } from "@/lib/merchantCustomers";
+import type { ParsedMerchantCustomerImport } from "@/lib/merchantCustomerImport";
 import {
-  buildMerchantCustomerImportTemplate,
-  parseMerchantCustomerWorkbook,
-  type ParsedMerchantCustomerImport,
-} from "@/lib/merchantCustomerImport";
+  getMerchantCustomerDesktopSnapshot,
+  getMerchantCustomerServerSnapshot,
+  subscribeMerchantCustomerViewport,
+} from "@/lib/merchantCustomerListViewport";
 import { showGlobalToast } from "@/lib/globalToast";
+import { fetchJsonWithAdminPerformance } from "@/lib/performanceTelemetry";
 import { runWithMerchantOperationContext } from "@/lib/merchantOperationContext";
 
 type MerchantCustomerManagerProps = {
@@ -47,6 +50,11 @@ type CustomerMutationPayload = {
   version?: unknown;
   error?: unknown;
   message?: unknown;
+};
+
+type CustomerImportPreparation = {
+  siteId: string;
+  kind: "file" | "template";
 };
 
 const SOURCE_OPTIONS: Array<{
@@ -426,6 +434,7 @@ function CustomerImportDialog({
   parsed,
   fileName,
   busy,
+  busyLabel,
   onChooseFile,
   onDownloadTemplate,
   onClose,
@@ -434,6 +443,7 @@ function CustomerImportDialog({
   parsed: ParsedMerchantCustomerImport | null;
   fileName: string;
   busy: boolean;
+  busyLabel: string;
   onChooseFile: () => void;
   onDownloadTemplate: () => void;
   onClose: () => void;
@@ -486,6 +496,7 @@ function CustomerImportDialog({
               下载模板
             </button>
             <span className="text-sm text-slate-500">{fileName || "尚未选择文件"}</span>
+            {busy ? <span role="status" className="text-sm text-slate-500">{busyLabel}</span> : null}
           </div>
 
           {parsed ? (
@@ -559,7 +570,7 @@ function CustomerImportDialog({
             onClick={onImport}
             disabled={busy || !parsed?.customers.length}
           >
-            {busy ? "导入中..." : `确认导入${parsed?.customers.length ? ` ${parsed.customers.length} 条` : ""}`}
+            {busy ? busyLabel : `确认导入${parsed?.customers.length ? ` ${parsed.customers.length} 条` : ""}`}
           </button>
         </footer>
       </section>
@@ -587,8 +598,37 @@ export default function MerchantCustomerManager({
   const [importParsed, setImportParsed] = useState<ParsedMerchantCustomerImport | null>(null);
   const [importFileName, setImportFileName] = useState("");
   const [importing, setImporting] = useState(false);
+  const [preparingImport, setPreparingImport] = useState<CustomerImportPreparation | null>(null);
+  const importPreparationRef = useRef<CustomerImportPreparation | null>(null);
+  const importActionRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const requestSequenceRef = useRef(0);
+  const desktopList = useSyncExternalStore(
+    subscribeMerchantCustomerViewport,
+    getMerchantCustomerDesktopSnapshot,
+    getMerchantCustomerServerSnapshot,
+  );
+  const activePreparation = preparingImport?.siteId === siteId ? preparingImport : null;
+  const importBusy = importing || activePreparation !== null;
+  const importBusyLabel = activePreparation?.kind === "file"
+    ? "读取文件中..."
+    : activePreparation?.kind === "template"
+      ? "准备模板中..."
+      : "导入中...";
+
+  useEffect(() => () => {
+    // A lazy chunk/file may finish after the manager has closed or switched
+    // merchants. Only invalidate preparation; an already sent import POST
+    // retains its existing completion behavior.
+    const preparation = importPreparationRef.current;
+    if (preparation?.siteId === siteId) {
+      importPreparationRef.current = null;
+      importActionRef.current = false;
+      // Clearing only the ref would leave cancelled UI state behind: returning
+      // to this merchant could otherwise revive a permanently disabled dialog.
+      setPreparingImport((current) => current === preparation ? null : current);
+    }
+  }, [siteId]);
 
   const loadCustomers = useCallback(
     async (options: { quiet?: boolean } = {}) => {
@@ -605,14 +645,14 @@ export default function MerchantCustomerManager({
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 25_000);
       try {
-        const response = await fetch(
+        const { response, data: payload } = await fetchJsonWithAdminPerformance<CustomerListPayload>(
           `/api/merchant-customers?siteId=${encodeURIComponent(normalizedSiteId)}`,
           {
             cache: "no-store",
             signal: controller.signal,
           },
+          { jsonErrorFallback: null },
         );
-        const payload = (await response.json().catch(() => null)) as CustomerListPayload | null;
         if (!response.ok || !Array.isArray(payload?.customers)) {
           throw new Error(getErrorMessage(payload));
         }
@@ -702,34 +742,71 @@ export default function MerchantCustomerManager({
   const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!file || importActionRef.current) return;
+    importActionRef.current = true;
+    const preparation: CustomerImportPreparation = { siteId, kind: "file" };
+    importPreparationRef.current = preparation;
+    setPreparingImport(preparation);
+    setImportParsed(null);
     setImportFileName(file.name);
     try {
-      const parsed = parseMerchantCustomerWorkbook(await file.arrayBuffer());
+      const [importTools, buffer] = await Promise.all([
+        import("@/lib/merchantCustomerImport"),
+        file.arrayBuffer(),
+      ]);
+      if (importPreparationRef.current !== preparation) return;
+      const parsed = importTools.parseMerchantCustomerWorkbook(buffer);
       setImportParsed(parsed);
       if (!parsed.customers.length) {
         showGlobalToast("文件中没有可导入的客户资料", { tone: "error" });
       }
     } catch {
+      if (importPreparationRef.current !== preparation) return;
       setImportParsed(null);
       showGlobalToast("无法读取该文件，请检查格式后重试", { tone: "error" });
+    } finally {
+      if (importPreparationRef.current === preparation) {
+        importPreparationRef.current = null;
+        importActionRef.current = false;
+        setPreparingImport(null);
+      }
     }
   };
 
-  const handleDownloadTemplate = () => {
-    const blob = new Blob([buildMerchantCustomerImportTemplate()], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const href = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = "FAOLLA-客户导入模板.xlsx";
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(href), 0);
+  const handleDownloadTemplate = async () => {
+    if (importActionRef.current) return;
+    importActionRef.current = true;
+    const preparation: CustomerImportPreparation = { siteId, kind: "template" };
+    importPreparationRef.current = preparation;
+    setPreparingImport(preparation);
+    let href = "";
+    try {
+      const { buildMerchantCustomerImportTemplate } = await import("@/lib/merchantCustomerImport");
+      if (importPreparationRef.current !== preparation) return;
+      const blob = new Blob([buildMerchantCustomerImportTemplate()], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = "FAOLLA-客户导入模板.xlsx";
+      anchor.click();
+    } catch {
+      if (importPreparationRef.current !== preparation) return;
+      showGlobalToast("模板下载失败，请稍后重试", { tone: "error" });
+    } finally {
+      if (href) window.setTimeout(() => URL.revokeObjectURL(href), 0);
+      if (importPreparationRef.current === preparation) {
+        importPreparationRef.current = null;
+        importActionRef.current = false;
+        setPreparingImport(null);
+      }
+    }
   };
 
   const handleImport = async () => {
-    if (importing || !importParsed?.customers.length) return;
+    if (importActionRef.current || !importParsed?.customers.length) return;
+    importActionRef.current = true;
     setImporting(true);
     try {
       const response = await runWithMerchantOperationContext(
@@ -772,6 +849,7 @@ export default function MerchantCustomerManager({
         { tone: "error" },
       );
     } finally {
+      importActionRef.current = false;
       setImporting(false);
     }
   };
@@ -888,7 +966,8 @@ export default function MerchantCustomerManager({
           </div>
         ) : null}
 
-        <div className="hidden overflow-x-auto lg:block">
+        {desktopList ? (
+        <div className="overflow-x-auto" data-customer-list-layout="desktop">
           <table className="min-w-full table-fixed text-left text-sm">
             <thead className="bg-slate-50 text-xs text-slate-500">
               <tr>
@@ -968,8 +1047,8 @@ export default function MerchantCustomerManager({
             </tbody>
           </table>
         </div>
-
-        <div className="divide-y divide-slate-100 lg:hidden">
+        ) : (
+        <div className="divide-y divide-slate-100" data-customer-list-layout="mobile">
           {filteredCustomers.map((customer) => (
             <article key={customer.id} className="px-4 py-4">
               <div className="flex items-start justify-between gap-3">
@@ -1007,6 +1086,7 @@ export default function MerchantCustomerManager({
             </article>
           ))}
         </div>
+        )}
 
         {!loading && filteredCustomers.length === 0 ? (
           <div className="flex min-h-56 items-center justify-center px-4 py-12 text-center text-sm text-slate-500">
@@ -1032,6 +1112,7 @@ export default function MerchantCustomerManager({
         className="hidden"
         type="file"
         accept=".xlsx,.xls,.csv"
+        disabled={importBusy}
         onChange={(event) => void handleImportFile(event)}
       />
 
@@ -1047,11 +1128,14 @@ export default function MerchantCustomerManager({
         <CustomerImportDialog
           parsed={importParsed}
           fileName={importFileName}
-          busy={importing}
-          onChooseFile={() => fileInputRef.current?.click()}
-          onDownloadTemplate={handleDownloadTemplate}
+          busy={importBusy}
+          busyLabel={importBusyLabel}
+          onChooseFile={() => {
+            if (!importActionRef.current) fileInputRef.current?.click();
+          }}
+          onDownloadTemplate={() => void handleDownloadTemplate()}
           onClose={() => {
-            if (importing) return;
+            if (importActionRef.current) return;
             setImportOpen(false);
           }}
           onImport={() => void handleImport()}

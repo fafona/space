@@ -44,13 +44,64 @@ const qrExportFiles = new Set([
   'scripts/production-maintenance-continuation-evidence.test.mjs',
   'scripts/production-maintenance-window-renewal-evidence.test.mjs',
 ]);
+// Authorized performance phase 1 (2026-09-24): exact runtime and local
+// acceptance files only. This does not extend either existing release lane.
+const performanceRuntimeFiles = new Set([
+  'src/app/admin/AdminClient.tsx',
+  'src/components/admin/MerchantCustomerManager.tsx',
+  'src/lib/merchantCustomers.ts',
+  'src/lib/merchantCustomerListViewport.ts',
+  'src/lib/performanceTelemetry.ts',
+  'src/lib/visiblePolling.ts',
+]);
+const performanceFiles = new Set([
+  ...performanceRuntimeFiles,
+  'src/app/admin/AdminClient.attention.test.ts',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts',
+  'src/components/admin/MerchantCustomerManager.contract.test.ts',
+  'src/lib/merchantCustomers.test.ts',
+  'src/lib/merchantCustomerListViewport.test.ts',
+  'src/lib/performanceTelemetry.test.ts',
+  'src/lib/visiblePolling.test.ts',
+  'scripts/performance-phase1-browser-harness.mjs',
+  'scripts/fixtures/performance-phase1-browser.tsx',
+  'docs/performance-phase1-2026-09-24.md',
+  // Reviewed historical CI fixture/HTML-attribute assertions only. Their
+  // production guard and route implementations remain outside this lane.
+  'scripts/repair-unlaunched-transport.test.mjs',
+  'src/lib/merchantBusinessCardWebsiteRoute.test.ts',
+  'scripts/online-traffic-release-policy.mjs',
+  'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs',
+  'docs/no-maintenance-release.md',
+]);
 export function onlineReleaseLane(files) {
+  if (files.some(file => performanceRuntimeFiles.has(file))) {
+    if (files.some(file => !performanceFiles.has(file))) throw Error('performance_release_scope_rejected');
+    return 'performance';
+  }
   if (files.includes('src/lib/merchantBusinessCardQrExport.ts')) {
     if (files.some(file => !qrExportFiles.has(file))) throw Error('qr_export_release_scope_rejected');
     return 'qr-export';
   }
   assertOnlineTrafficScope(files);
   return 'traffic';
+}
+function isNoDatabaseLane(lane) {
+  if (lane === 'qr-export' || lane === 'performance') return true;
+  if (lane === 'traffic') return false;
+  throw Error('unknown_online_release_lane');
+}
+export function onlineReleaseStageStatus(lane) {
+  return isNoDatabaseLane(lane) ? 'ready-no-database' : 'staged';
+}
+export function onlineReleaseActivationStatus(lane) {
+  return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
+}
+export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'qr-export') throw Error('qr_export_database_forbidden');
+  if (lane === 'performance') throw Error('performance_database_forbidden');
+  if (lane !== 'traffic') throw Error('unknown_online_release_lane');
 }
 export function onlineProxy(original, oldPort, newPort, sha) {
   if (!Number.isInteger(oldPort) || oldPort < 3102 || oldPort > 3110 || !Number.isInteger(newPort) || newPort < 3102 || newPort > 3110 || oldPort === newPort || !/^[a-f0-9]{40}$/.test(sha)) throw Error('online_proxy_identity_invalid');

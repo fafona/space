@@ -42,3 +42,38 @@ signing secret are inherited unchanged; no backup/migration or candidate restart
 is needed for a UI-only release. All original ownership, maintenance-state,
 process-identity, nginx hash, asset collision, public smoke and rollback checks
 remain mandatory. No live workers are stopped or restarted.
+
+## Performance phase 1 no-database lane (2026-09-24)
+
+After the exact narrow performance publication scope was explained, the user
+authorized continuing until optimization is complete. This lane covers only
+the phase 1 admin attention polling, telemetry sampling metadata, customer
+aggregation/list rendering and deferred spreadsheet loading, their exact tests,
+local browser fixture/harness and the phase 1/release notes.
+Two separately reviewed historical CI corrections are also admitted by exact
+test filename: `repair-unlaunched-transport.test.mjs` freezes the original
+migration-era fixture, and `merchantBusinessCardWebsiteRoute.test.ts` checks the
+actual destination independently of analytics attribute ordering. Neither
+production implementation is admitted by this exception.
+
+`onlineReleaseLane` detects this lane from six explicit runtime file anchors and
+checks a separate exact file allowlist. Mixing in even a file admitted by the
+analytics or QR lane is rejected. API routes, authentication, permissions,
+database schema/migrations, transaction stores, dependencies, workers and
+arbitrary new files remain outside its authorization. Later optimization stages
+need their own reviewed scope; this is not a generic performance wildcard.
+
+Use `stage SHA BASELINE`, then `activate SHA`. The stage runs focused phase 1
+tests plus existing customer and admin regressions, the unchanged guarded
+production build and candidate smoke, then enters `ready-no-database`.
+`database` fails before any migration, backup or database operation for this
+lane. Existing analytics settings and signing secret are inherited unchanged;
+the candidate must match the enabled analytics baseline. There is no secret
+rotation, business data backfill, retention cleanup or worker restart.
+
+The browser harness is an isolated local/mock acceptance tool, not a production
+route or a command run by the release controller. Production still verifies
+the exact current main source, dependency equality, owned baseline and all
+process/configuration hashes, maintenance state, immutable assets, public smoke
+and ownership-checked rollback. Status and rollback remain available; no legacy
+state, old process, asset or saved record is removed.

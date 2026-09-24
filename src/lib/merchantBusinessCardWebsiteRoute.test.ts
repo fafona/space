@@ -48,10 +48,24 @@ function render(websiteUrl?: string, extra = {}) {
   }));
 }
 
+function assertWebsiteAction(html: string, expectedUrl: string) {
+  // Analytics added an attribute between class and href; attribute order is not
+  // navigation behavior. Assert all actual destinations and the tracking marker
+  // on the one website action instead of weakening the destination checks.
+  const actions = [...html.matchAll(/<a\b[^>]*>/g)].map(([tag]) =>
+    Object.fromEntries([...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, key, value]) => [key, value])),
+  ).filter(attributes => attributes.class === "button secondary");
+  assert.equal(actions.length, 1);
+  const expected = expectedUrl.replaceAll("&", "&amp;");
+  assert.equal(actions[0].href, expected);
+  assert.equal(actions[0]["data-open-target-url"], expected);
+  assert.equal(actions[0]["data-original-target-url"], expected);
+  assert.equal(actions[0]["data-traffic-action"], "website_click");
+}
+
 test("real short-card HTML uses the custom website for both browser and WeChat click targets", () => {
   const html = render(custom);
-  assert.ok(html.includes(`href="${custom}" data-open-target-url="${custom}"`));
-  assert.ok(!html.includes(`class="button secondary" href="${fast}"`));
+  assertWebsiteAction(html, custom);
   // The GET route must supply the manifest's website field to this renderer.
   assert.match(route, /openTargetUrl: fastOpenTargetUrl,\s+websiteUrl,/);
 });
@@ -74,14 +88,13 @@ test("late legacy manifests and cached HTML cannot replace an explicit saved web
 
 test("legacy, blank and canonical assigned URLs retain the existing fast merchant navigation", () => {
   for (const website of [undefined, "", assigned, assigned.slice(0, -1)]) {
-    assert.ok(render(website).includes(`class="button secondary" href="${fast}"`));
+    assertWebsiteAction(render(website), fast);
   }
 });
 
 test("custom paths, queries and fragments are not replaced by the merchant root", () => {
   const website = `${assigned}offers?a=1&b=2#today`;
-  const escaped = website.replaceAll("&", "&amp;");
-  assert.ok(render(website).includes(`href="${escaped}" data-open-target-url="${escaped}"`));
+  assertWebsiteAction(render(website), website);
   assert.equal(destination.resolveBusinessCardWebsiteNavigation("haoyouduosevilla.com", assigned, fast), "https://haoyouduosevilla.com/");
 });
 
@@ -108,7 +121,7 @@ test("snapshot fallback and vCard download both preserve custom website without 
       assert.equal(payload.ownerMerchantId, "12345678");
       assert.equal(payload.contact?.websiteUrl, websiteAddress || assigned);
       assert.ok(share.buildMerchantBusinessCardVCard(payload).includes(`URL:${websiteAddress || assigned}`));
-      assert.ok(render(payload.contact?.websiteUrl).includes(`class="button secondary" href="${websiteAddress || fast}"`));
+      assertWebsiteAction(render(payload.contact?.websiteUrl), websiteAddress || fast);
     }
   }
 });
