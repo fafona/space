@@ -410,7 +410,14 @@ test("exact legacy order reads use serialized tenant-scoped JSON containment and
       ["like", "slug", "__merchant_orders__:10000000%"],
       ["contains", "blocks", JSON.stringify([{ id: orderId }])],
     ],
+    [
+      ["like", "slug", "__merchant_orders__:10000000%"],
+      ["eq", "merchant_id", "10000000"],
+    ],
   ]);
+  assert.deepEqual(calls.map((call) => call.ranges), [[[0, 999]], [], [[1, 1000]]]);
+  assert.deepEqual(calls[0]?.orders, [["slug", true], ["id", true]]);
+  assert.deepEqual(calls[2]?.orders, [["slug", true], ["id", true]]);
 });
 
 test("exact legacy order reads do not revive stale legacy rows when chunk storage exists", async () => {

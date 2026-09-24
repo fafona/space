@@ -26,8 +26,9 @@ test("customer manager constructs exactly one responsive list and keeps edit sta
       assert.doesNotMatch(desktop, /data-customer-list-layout="mobile"/);
       assert.match(mobile, /data-customer-list-layout="mobile"/);
       assert.doesNotMatch(mobile, /data-customer-list-layout="desktop"/);
-      assert.equal((desktop.match(/filteredCustomers\.map/g) ?? []).length, 1);
-      assert.equal((mobile.match(/filteredCustomers\.map/g) ?? []).length, 1);
+      assert.equal((desktop.match(/visibleCustomers\.map/g) ?? []).length, 1);
+      assert.equal((mobile.match(/visibleCustomers\.map/g) ?? []).length, 1);
+      assert.doesNotMatch(desktop + mobile, /filteredCustomers\.map/);
       assert.doesNotMatch(desktop + mobile, /<CustomerDialog/);
     }
     ts.forEachChild(node, visit);

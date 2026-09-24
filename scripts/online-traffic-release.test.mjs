@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,statSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
 
@@ -79,7 +79,7 @@ test('stage and activation readiness remain lane-specific and fail closed for un
  assert.match(code,/await smoke\(s\);s.status=onlineReleaseStageStatus\(s.lane\);save\(s\)/);
  assert.match(code,/if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\)/);
 });
-test('actual database branch refuses performance and QR before invoking backup, migrations or candidate operations',async()=>{
+test('actual database branch refuses every no-database lane before backup, migrations or candidate operations',async()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const start=code.indexOf("}else if(action==='database'){");
  const end=code.indexOf("}else if(action==='activate'){",start);
@@ -87,19 +87,144 @@ test('actual database branch refuses performance and QR before invoking backup, 
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
  const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
- for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden']]){
+ for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
    s:{lane,status:'staged'},assertOnlineReleaseDatabaseAllowed,controllerModuleUrl:import.meta.url,
-   configUnchanged:denied('config'),verifyCandidate:denied('candidate'),
+   configUnchanged:denied('config'),verifyCandidate:denied('candidate'),verifyOrderAttentionSource:denied('source'),
    applyProductionDatabaseMigrations:denied('migration'),createProductionDatabaseBackup:denied('backup'),
    verifyProductionDatabaseBackup:denied('verify_backup'),run:denied('command'),atomic:denied('state'),
+   verifyOrderAttention:denied('pilot_operation'),setOrderAttentionCandidateFlag:denied('pilot_flag'),
    fail:(message)=>{throw Error(message);},
   });
   await assert.rejects(task,new RegExp(`^Error: ${error}$`));
   assert.deepEqual(calls,[]);
  }
+});
+
+const boundedListFiles=[
+ 'src/components/admin/MerchantCatalogProductList.tsx','src/lib/merchantCustomerPagination.ts',
+ 'src/components/admin/MerchantCatalogProductList.test.ts','src/components/admin/MerchantCatalogManagerPanel.tsx',
+ 'src/components/admin/MerchantCustomerManager.tsx','src/components/admin/MerchantCustomerManager.behavior.test.ts',
+ 'src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomerPagination.test.ts',
+ 'src/lib/merchantOrdersStore.ts','src/lib/merchantOrdersStore.test.ts','src/lib/merchantOrdersStore.metadata.test.ts',
+ '.github/workflows/ci.yml','scripts/ci-workflow-contract.test.mjs','scripts/run-ci-tests.mjs','scripts/run-ci-tests.test.mjs',
+ 'scripts/production-maintenance-topology-workflow.test.mjs',
+ 'scripts/performance-bounded-lists-browser-harness.mjs','scripts/fixtures/performance-bounded-lists-browser.tsx',
+ 'docs/performance-bounded-lists-2026-09-25.md','scripts/online-traffic-release-policy.mjs',
+ 'scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',
+];
+
+test('bounded lists has exact runtime anchors and cannot inherit another lane or arbitrary matching files',()=>{
+ assert.equal(onlineReleaseLane(boundedListFiles),'bounded-lists');
+ for(const anchor of boundedListFiles.slice(0,2)){
+  assert.equal(onlineReleaseLane([anchor]),'bounded-lists');
+  assert.equal(onlineReleaseLane(['src/components/admin/MerchantCustomerManager.tsx',anchor]),'bounded-lists');
+  for(const file of [
+   'src/app/admin/AdminClient.tsx','src/lib/visiblePolling.ts','src/lib/performanceTelemetry.ts',
+   'src/lib/merchantCustomerDirectoryStore.ts','src/lib/merchantCustomers.ts',
+   'src/lib/merchantOrdersAtomic.server.ts','src/lib/merchantOrdersV1Read.server.ts','src/lib/merchantOrders.server.ts',
+   'src/lib/merchantOrderMembershipTransaction.server.ts','src/app/api/orders/route-handler.ts',
+   'src/app/api/merchant-customers/route.ts','src/app/api/bookings/route.ts','src/lib/merchantBookings.server.ts',
+   'src/app/api/auth/signin/route.ts','src/lib/merchantBusinessOrderPermissions.ts','src/lib/superAdminVerification.ts',
+   'src/lib/accountTrafficCampaign.server.ts','src/lib/merchantBusinessCardQrExport.ts',
+   'src/lib/merchantOrderAttention.server.ts','scripts/order-attention-pilot.ts',
+   'scripts/supabase-migrations/202609240052_order_attention_pilot.sql',
+   'scripts/supabase-migrations/202609250053_bounded_lists.sql',
+   'scripts/apply-production-database-migrations.mjs','scripts/create-production-database-backup.mjs',
+   'scripts/production-maintenance-runtime.mjs','scripts/deploy.production.sh',
+   'package.json','package-lock.json','.env.local','.env.example',
+   'src/lib/merchantCustomerPaginationExtra.ts','src/components/admin/MerchantCatalogProductListExtra.tsx',
+   'scripts/run-ci-tests-extra.mjs','scripts/run-local-tests.mjs','docs/performance-other-2026-09-25.md',
+   './src/lib/merchantCustomerPagination.ts','src/lib/../lib/merchantCustomerPagination.ts','src/lib\\merchantCustomerPagination.ts',
+  ])for(const files of [[anchor,file],[file,anchor]])assert.throws(()=>onlineReleaseLane(files),/release_scope_rejected/,file);
+ }
+ for(const file of ['src/lib/merchantOrdersStore.ts','scripts/run-ci-tests.mjs','src/lib/merchantCustomerPagination.test.ts']){
+  assert.throws(()=>onlineReleaseLane([file]),/online_release_scope_rejected/);
+  assert.throws(()=>onlineReleaseLane(['src/lib/visiblePolling.ts',file]),/performance_release_scope_rejected/);
+ }
+ assert.equal(onlineReleaseLane(performanceRuntimeFiles),'performance');
+ assert.equal(onlineReleaseLane(['src/lib/merchantBusinessCardQrExport.ts']),'qr-export');
+ assert.equal(onlineReleaseLane(['src/lib/merchantOrderAttention.server.ts']),'order-attention');
+ assert.equal(onlineReleaseLane(['src/lib/accountTrafficCampaign.server.ts']),'traffic');
+});
+
+test('bounded lists permits stage and activate only and rejects all database helper entrypoints',()=>{
+ assert.equal(onlineReleaseStageStatus('bounded-lists'),'ready-no-database');
+ assert.equal(onlineReleaseActivationStatus('bounded-lists'),'ready-no-database');
+ for(const check of [assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget])assert.throws(()=>check('bounded-lists'),/bounded_lists_database_forbidden/);
+ for(const pending of [[],null,[{version:'202609240052'}]])assert.throws(()=>assertPendingOnlineReleaseMigrations('bounded-lists',pending),/bounded_lists_database_forbidden/);
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyOrderAttentionSource('),code.indexOf('function setOrderAttentionCandidateFlag('));
+ const calls=[];
+ for(const command of ['enable','verify'])runInNewContext(`${verifier}verifyOrderAttention(s,command)`,{
+  s:{lane:'bounded-lists'},command,
+  run:()=>{calls.push('operation');throw Error('unexpected_operation');},
+  atomic:()=>{calls.push('write');throw Error('unexpected_write');},
+ });
+ assert.deepEqual(calls,[]);
+ assert.doesNotMatch(code,/\['restart','merchant-space'|unlinkSync\(marker|maintenance.*prepare|reset.*--hard/);
+ assert.match(code,/JSON.parse\(read\('\/var\/lib\/faolla-maintenance\/merchant-space\/state.json'\)\).phase!=='ended'/);
+});
+
+test('bounded lists preserves enabled pilot and analytics credentials without secret rotation or worker activation',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const changes='),end=code.indexOf('const envText=',start);
+ const env={FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:'existing-synthetic-secret'};
+ const changes=runInNewContext(`${code.slice(start,end)}changes`,{lane:'bounded-lists',target:'a'.repeat(40),port:3105,env,
+  randomBytes:()=>{throw Error('secret_rotation_forbidden');}});
+ for(const field of Object.keys(env))assert.equal(Object.hasOwn(changes,field),false,field);
+ const effective={...env,...changes};
+ for(const [key,value] of Object.entries(env))assert.equal(effective[key],value);
+ assert.equal(effective.FAOLLA_BACKGROUND_JOBS_PAUSED,'1');
+ assert.equal(effective.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,'0');
+ assert.equal(effective.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED,'0');
+ assert.equal(Object.hasOwn(changes,'FAOLLA_ORDER_ATTENTION_OPERATION_TARGET'),false);
+ const guard=code.split(/\r?\n/).find(line=>line.includes("if(lane==='bounded-lists'"));
+ assert.ok(guard);
+ const evaluate=(value)=>runInNewContext(guard,{lane:'bounded-lists',env:value,fail:message=>{throw Error(message);}});
+ assert.doesNotThrow(()=>evaluate(env));
+ for(const patch of [{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'20000000'},
+  {FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:undefined},{FAOLLA_TRAFFIC_ENABLED:'0'},
+  {FAOLLA_TRAFFIC_SIGNING_SECRET:''},{FAOLLA_TRAFFIC_SIGNING_SECRET:undefined}]){
+  assert.throws(()=>evaluate({...env,...patch}),/bounded_lists_baseline_features_invalid/);
+ }
+});
+
+test('actual bounded-list candidate identity check rejects pilot, analytics and inherited secret drift',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyCandidate('),code.indexOf('function publishStatic('));
+ const env={status:'online',pm_cwd:'/candidate',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',
+  FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'unchanged'};
+ const check=(patch={})=>runInNewContext(`${verifier}verifyCandidate(s)`,{
+  s:{lane:'bounded-lists',name:'candidate',directory:'/candidate'},pm:()=>[{name:'candidate',pm2_env:{...env,...patch}}],
+  candidateEnvironment:()=>({FAOLLA_TRAFFIC_SIGNING_SECRET:'unchanged'}),fail:message=>{throw Error(message);},
+ });
+ assert.doesNotThrow(()=>check());
+ for(const patch of [{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:undefined},
+  {FAOLLA_TRAFFIC_ENABLED:'0'},{FAOLLA_TRAFFIC_SIGNING_SECRET:'rotated'},{FAOLLA_TRAFFIC_SIGNING_SECRET:undefined},
+  {FAOLLA_BACKGROUND_JOBS_PAUSED:'0'},{pm_cwd:'/old'},{status:'stopped'}])assert.throws(()=>check(patch),/changed|invalid/);
+});
+
+test('bounded-list candidate tests exist and run before the unchanged guarded build and smoke gates',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const tests='),end=code.indexOf("run('node',['--import','tsx','--test'",start);
+ const tests=Array.from(runInNewContext(`${code.slice(start,end)}tests`,{lane:'bounded-lists',run:()=>{throw Error('unexpected_discovery');}}));
+ assert.equal(new Set(tests).size,tests.length);
+ for(const file of tests)assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
+ for(const file of ['src/components/admin/MerchantCatalogProductList.test.ts','src/lib/merchantCustomerPagination.test.ts',
+  'src/lib/merchantOrdersStore.metadata.test.ts','src/lib/merchantOrdersV1Read.server.test.ts',
+  'src/lib/merchantOrdersAtomic.server.test.ts','src/lib/merchantOrderAttention.server.test.ts',
+  'scripts/run-ci-tests.test.mjs','scripts/ci-workflow-contract.test.mjs'])assert.ok(tests.includes(file),file);
+ const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
+ const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
+ assert.ok(start>0&&end>start&&build>end&&ready>build);
+ assert.ok(code.indexOf("fail('dependencies_changed')")<start);
+ assert.ok(code.indexOf("fail('candidate_not_ready')",build)<ready);
+ const scripts=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).scripts;
+ for(const gate of ['check:env:strict','check:v1-deploy-config','next build --webpack','check:bundle:admin'])assert.ok(scripts.build.includes(gate),gate);
+ assert.doesNotMatch(code,/run\([^\n]*performance-bounded-lists-browser/);
 });
 test('actual performance candidate overrides never change analytics settings or generate secrets',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');

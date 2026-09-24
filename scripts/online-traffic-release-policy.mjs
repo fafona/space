@@ -96,10 +96,38 @@ const orderAttentionFiles = new Set([
   'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
   'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
 ]);
+// 2026-09-25: bounded list views and complete order metadata reads only.
+// No API, authorization, source write path, dependency or migration changes.
+const boundedListAnchors = new Set([
+  'src/components/admin/MerchantCatalogProductList.tsx', 'src/lib/merchantCustomerPagination.ts',
+]);
+const boundedListFiles = new Set([
+  ...boundedListAnchors,
+  'src/components/admin/MerchantCatalogProductList.test.ts',
+  'src/components/admin/MerchantCatalogManagerPanel.tsx',
+  'src/components/admin/MerchantCustomerManager.tsx',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts',
+  'src/components/admin/MerchantCustomerManager.contract.test.ts',
+  'src/lib/merchantCustomerPagination.test.ts',
+  'src/lib/merchantOrdersStore.ts', 'src/lib/merchantOrdersStore.test.ts',
+  'src/lib/merchantOrdersStore.metadata.test.ts',
+  '.github/workflows/ci.yml', 'scripts/ci-workflow-contract.test.mjs',
+  'scripts/run-ci-tests.mjs', 'scripts/run-ci-tests.test.mjs',
+  'scripts/production-maintenance-topology-workflow.test.mjs',
+  'scripts/performance-bounded-lists-browser-harness.mjs',
+  'scripts/fixtures/performance-bounded-lists-browser.tsx',
+  'docs/performance-bounded-lists-2026-09-25.md',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+]);
 export function onlineReleaseLane(files) {
   if (files.includes(orderAttentionMigrationFile) || files.includes('src/lib/merchantOrderAttention.server.ts')) {
     if (files.some(file => !orderAttentionFiles.has(file))) throw Error('order_attention_release_scope_rejected');
     return 'order-attention';
+  }
+  if (files.some(file => boundedListAnchors.has(file))) {
+    if (files.some(file => !boundedListFiles.has(file))) throw Error('bounded_lists_release_scope_rejected');
+    return 'bounded-lists';
   }
   if (files.some(file => performanceRuntimeFiles.has(file))) {
     if (files.some(file => !performanceFiles.has(file))) throw Error('performance_release_scope_rejected');
@@ -113,7 +141,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
-  if (lane === 'qr-export' || lane === 'performance') return true;
+  if (lane === 'qr-export' || lane === 'performance' || lane === 'bounded-lists') return true;
   if (lane === 'traffic' || lane === 'order-attention') return false;
   throw Error('unknown_online_release_lane');
 }
@@ -124,6 +152,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'bounded-lists') throw Error('bounded_lists_database_forbidden');
   if (lane === 'qr-export') throw Error('qr_export_database_forbidden');
   if (lane === 'performance') throw Error('performance_database_forbidden');
   if (lane !== 'traffic' && lane !== 'order-attention') throw Error('unknown_online_release_lane');

@@ -35,6 +35,7 @@ import {
   type MerchantCatalogTarget,
 } from "@/lib/merchantCatalog";
 import type { ProductItemInput } from "@/lib/productBlock";
+import MerchantCatalogProductList, { filterCatalogProductList } from "./MerchantCatalogProductList";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import type {
   MerchantBusinessApiClient,
@@ -1964,13 +1965,7 @@ export default function MerchantCatalogManagerPanel({
 
   const filteredProducts = useMemo(() => {
     if (!catalog) return [];
-    const query = productSearch.trim().toLocaleLowerCase();
-    if (!query) return catalog.products;
-    return catalog.products.filter((product) =>
-      [product.name, product.code, product.id, product.tag, product.description].some((value) =>
-        value.toLocaleLowerCase().includes(query),
-      ),
-    );
+    return filterCatalogProductList(catalog.products, productSearch);
   }, [catalog, productSearch]);
 
   const productImageImportMatchedRows = productImageImportDraft?.plan.rows.filter(
@@ -2666,7 +2661,8 @@ export default function MerchantCatalogManagerPanel({
             <div className={`rounded-2xl border px-4 py-3 text-xs ${surfaceClassName}`}>
               共 {catalog.products.length} 个商品 · 修订版 {catalog.revision}
             </div>
-            {catalog.products.map((product) => (
+            <MerchantCatalogProductList key={`${siteId}:readonly`} products={catalog.products} label="只读商品" searchable darkMode={darkMode} className="space-y-3">
+            {(product) => (
               <article
                 key={product.id}
                 className={`rounded-2xl border px-4 py-3 ${surfaceClassName}`}
@@ -2687,7 +2683,8 @@ export default function MerchantCatalogManagerPanel({
                   </div>
                 </div>
               </article>
-            ))}
+            )}
+            </MerchantCatalogProductList>
           </div>
         ) : null}
       </div>
@@ -3419,8 +3416,8 @@ export default function MerchantCatalogManagerPanel({
                 <fieldset className="mt-4">
                   <legend className="text-xs font-semibold">该区块展示的商品</legend>
                   {catalog.products.length > 0 ? (
-                    <div className={`mt-2 grid max-h-56 gap-2 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-200 bg-white"}`}>
-                      {catalog.products.map((product) => {
+                    <MerchantCatalogProductList key={`${siteId}:collection:${collectionDraft.id}`} products={catalog.products} label="区块商品" searchable darkMode={darkMode} className={`grid grid-cols-1 max-h-56 gap-2 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-200 bg-white"}`}>
+                      {(product) => {
                         const checked = collectionDraft.productIds.includes(product.id);
                         return (
                           <label key={product.id} className="flex cursor-pointer items-center gap-2 text-xs">
@@ -3443,8 +3440,8 @@ export default function MerchantCatalogManagerPanel({
                             </span>
                           </label>
                         );
-                      })}
-                    </div>
+                      }}
+                    </MerchantCatalogProductList>
                   ) : (
                     <p className={`mt-2 rounded-xl border border-dashed px-3 py-3 text-xs ${mutedTextClassName}`}>
                       目录中还没有商品。可以先保存空绑定，再到“商品”区域新增并选择投放范围。
@@ -4070,8 +4067,8 @@ export default function MerchantCatalogManagerPanel({
             </div>
 
             {filteredProducts.length > 0 ? (
-              <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                {filteredProducts.map((product) => {
+              <MerchantCatalogProductList key={`${siteId}:products:${productSearch}`} products={filteredProducts} label="商品目录" darkMode={darkMode} className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {(product) => {
                   const isProductActing = actingKey.includes(product.id);
                   const placementCount = catalog.collections.filter((collection) =>
                     collection.productIds.includes(product.id),
@@ -4116,8 +4113,8 @@ export default function MerchantCatalogManagerPanel({
                       </div>
                     </article>
                   );
-                })}
-              </div>
+                }}
+              </MerchantCatalogProductList>
             ) : (
               <p className={`mt-4 rounded-xl border border-dashed px-4 py-10 text-center text-sm ${darkMode ? "border-slate-700" : "border-slate-200"} ${mutedTextClassName}`}>
                 {catalog.products.length > 0 ? "没有匹配的商品" : "目录中还没有商品，可以直接在工作台新增"}
@@ -4150,8 +4147,8 @@ export default function MerchantCatalogManagerPanel({
                 <fieldset className="mt-4">
                   <legend className="text-xs font-semibold">包含的商品</legend>
                   {catalog.products.length > 0 ? (
-                    <div className={`mt-2 grid max-h-48 gap-2 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-200 bg-white"}`}>
-                      {catalog.products.map((product) => {
+                    <MerchantCatalogProductList key={`${siteId}:category:${categoryDraft.id}`} products={catalog.products} label="分类商品" searchable darkMode={darkMode} className={`grid grid-cols-1 max-h-48 gap-2 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2 ${darkMode ? "border-slate-700 bg-slate-950/50" : "border-slate-200 bg-white"}`}>
+                      {(product) => {
                         const checked = categoryDraft.productIds.includes(product.id);
                         return (
                           <label key={product.id} className="flex cursor-pointer items-center gap-2 text-xs">
@@ -4169,8 +4166,8 @@ export default function MerchantCatalogManagerPanel({
                             <span className="truncate">{product.name || product.id}</span>
                           </label>
                         );
-                      })}
-                    </div>
+                      }}
+                    </MerchantCatalogProductList>
                   ) : <p className={`mt-2 text-xs ${mutedTextClassName}`}>暂无商品，可先创建空分类。</p>}
                 </fieldset>
                 <div className="mt-4 flex justify-end"><button type="submit" disabled={Boolean(actingKey)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-sky-700 disabled:opacity-50">{actingKey.startsWith("category:") ? <RefreshIcon spinning /> : <CheckIcon />}{actingKey.startsWith("category:") ? "保存中" : "保存分类"}</button></div>

@@ -18,6 +18,7 @@ import {
   type MerchantCustomerSource,
 } from "@/lib/merchantCustomers";
 import type { ParsedMerchantCustomerImport } from "@/lib/merchantCustomerImport";
+import { getMerchantCustomerPageWindow } from "@/lib/merchantCustomerPagination";
 import {
   getMerchantCustomerDesktopSnapshot,
   getMerchantCustomerServerSnapshot,
@@ -592,6 +593,7 @@ export default function MerchantCustomerManager({
   const deferredQuery = useDeferredValue(query);
   const [source, setSource] = useState<MerchantCustomerSource | "all">("all");
   const [status, setStatus] = useState<"all" | "active" | "archived">("active");
+  const [customerPage, setCustomerPage] = useState({ scope: "", pageIndex: 0 });
   const [editingCustomer, setEditingCustomer] = useState<MerchantCustomerProfile | null>(null);
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -694,6 +696,27 @@ export default function MerchantCustomerManager({
       }),
     [customers, deferredQuery, source, status],
   );
+  // Both query versions participate: immediately leave an old page while a
+  // deferred search is pending, and start the completed result on its first page.
+  // Breakpoint changes do not reset paging or the separately held edit draft.
+  const customerPageScope = JSON.stringify([siteId, query, deferredQuery, source, status]);
+  const customerPageWindow = getMerchantCustomerPageWindow(
+    filteredCustomers.length,
+    customerPage.scope === customerPageScope ? customerPage.pageIndex : 0,
+  );
+  if (customerPage.scope !== customerPageScope || customerPage.pageIndex !== customerPageWindow.pageIndex) {
+    // Reconcile this component's display state before rendering children. This
+    // also prevents A -> B -> A filters/sites or shrinking then growing data
+    // from reviving a cancelled/out-of-range page on a later render.
+    setCustomerPage({ scope: customerPageScope, pageIndex: customerPageWindow.pageIndex });
+  }
+  const visibleCustomers = filteredCustomers.slice(customerPageWindow.start, customerPageWindow.end);
+  const changeCustomerPage = (pageIndex: number) => {
+    setCustomerPage({
+      scope: customerPageScope,
+      pageIndex: getMerchantCustomerPageWindow(filteredCustomers.length, pageIndex).pageIndex,
+    });
+  };
   const stats = useMemo(
     () => ({
       total: customers.length,
@@ -980,7 +1003,7 @@ export default function MerchantCustomerManager({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredCustomers.map((customer) => (
+              {visibleCustomers.map((customer) => (
                 <tr key={customer.id} className="align-top hover:bg-slate-50/70">
                   <td className="px-4 py-3">
                     <div className="font-semibold text-slate-950">
@@ -1049,7 +1072,7 @@ export default function MerchantCustomerManager({
         </div>
         ) : (
         <div className="divide-y divide-slate-100" data-customer-list-layout="mobile">
-          {filteredCustomers.map((customer) => (
+          {visibleCustomers.map((customer) => (
             <article key={customer.id} className="px-4 py-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -1101,9 +1124,32 @@ export default function MerchantCustomerManager({
           </div>
         ) : null}
 
-        <footer className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
-          <span>共 {filteredCustomers.length} 位客户</span>
-          <span>订单与预约客户自动更新</span>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
+          <span aria-live="polite">
+            共 {filteredCustomers.length} 位客户
+            {filteredCustomers.length > 0 ? ` · 当前显示 ${customerPageWindow.start + 1}–${customerPageWindow.end}` : ""}
+          </span>
+          {customerPageWindow.pageCount > 1 ? (
+            <nav aria-label="客户列表分页" className="flex flex-wrap items-center gap-2">
+              <span>第 {customerPageWindow.pageIndex + 1} / {customerPageWindow.pageCount} 页</span>
+              {[
+                { label: "首页", pageIndex: 0, disabled: customerPageWindow.pageIndex === 0 },
+                { label: "上一页", pageIndex: customerPageWindow.pageIndex - 1, disabled: customerPageWindow.pageIndex === 0 },
+                { label: "下一页", pageIndex: customerPageWindow.pageIndex + 1, disabled: customerPageWindow.pageIndex === customerPageWindow.pageCount - 1 },
+                { label: "末页", pageIndex: customerPageWindow.pageCount - 1, disabled: customerPageWindow.pageIndex === customerPageWindow.pageCount - 1 },
+              ].map((button) => (
+                <button
+                  key={button.label}
+                  type="button"
+                  className="h-8 rounded border border-slate-200 bg-white px-3 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={button.disabled || loading}
+                  onClick={() => changeCustomerPage(button.pageIndex)}
+                >
+                  {button.label}
+                </button>
+              ))}
+            </nav>
+          ) : <span>订单与预约客户自动更新</span>}
         </footer>
       </div>
 
