@@ -114,6 +114,13 @@ must not be hidden by periodic repair or an automatic zero badge.
   creates a fixed fresh disposable PG15 database for the actual 045+052 SQL.
   It tests deferred capture, ACLs, old writers, races, rollback, replica mode,
   source limits and epoch resets. Static tests alone are not its acceptance.
+  This self-contained job now runs alongside Quality for early SQL feedback;
+  all ten jobs must still succeed before publication. No test is removed.
+- The standalone production CLI loads the exact candidate's checked, private
+  configuration after verifying its identity, using Next production precedence
+  without logging credentials. Service configuration is checked before SQL
+  changes. Synthetic subprocess tests cover file-only configuration and process
+  environment precedence; Linux CI also checks file permissions and links.
 - `scripts/order-attention-benchmark.ts` is network-free and compares full JSON
   output with the actual old AdminClient reducer plus store merge. Synthetic
   100/1k/10k/20k cases use 12 timed samples after warmup. It reports p50/p95/p99,

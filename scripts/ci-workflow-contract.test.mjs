@@ -200,7 +200,7 @@ test("QR atomic acceptance is a required CI job against a fresh PostgreSQL servi
 
 test("order membership atomic acceptance uses an independent disposable PostgreSQL CI service", () => {
   const transaction = jobBlock("transaction-database");
-  assert.match(transaction, /needs:\s*quality/);
+  assert.doesNotMatch(transaction, /\bneeds:|\bif:|continue-on-error|\|\|\s*true/);
   assert.match(transaction, /image:\s*postgres:15/);
   assert.match(transaction, /POSTGRES_DB:\s*faolla_transaction_test/);
   assert.match(transaction, /POSTGRES_HOST_AUTH_METHOD:\s*trust/);

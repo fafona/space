@@ -159,7 +159,8 @@ jobs:
 
   transaction-database:
     name: Order Membership PostgreSQL Acceptance
-    needs: quality
+    # Independent disposable SQL acceptance: fail early while Quality runs.
+    # Both jobs remain mandatory; neither consumes artifacts from the other.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:

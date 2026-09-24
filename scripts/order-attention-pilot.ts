@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEnvConfig } from "@next/env";
 import { buildMerchantOrderAttentionProjection } from "../src/lib/merchantOrderAttentionProjection";
 import { parseMerchantOrderAttentionSummary } from "../src/lib/merchantOrderAttention";
 import { readMerchantOrderAttentionSummary } from "../src/lib/merchantOrderAttention.server";
@@ -127,6 +128,31 @@ export function validateOrderAttentionOperation(input: { platform: string; uid: 
   return input.args[0] as PilotAction;
 }
 
+/** Called only after the CLI has verified the exact root-owned release/HEAD. */
+export function loadOrderAttentionOperationEnvironment(directory: string) {
+  if (process.env.NODE_ENV !== "production") return fail("environment_not_production");
+  // Match Next's production precedence, without accepting links, FIFOs or
+  // credentials writable/readable by other users. No env contents are logged.
+  const names = [".env.production.local", ".env.local", ".env.production", ".env"];
+  const expected = new Set<string>();
+  for (const name of names) {
+    let stat;
+    try { stat = lstatSync(path.join(directory, name)); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && name !== ".env.local") continue;
+      return fail("environment_file_unavailable");
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
+      || (process.platform !== "win32" && (stat.uid !== process.getuid?.() || (stat.mode & 0o077)))) {
+      return fail("unsafe_environment_file");
+    }
+    expected.add(name);
+  }
+  let loadFailed = false;
+  const result = loadEnvConfig(directory, false, { info: () => undefined, error: () => { loadFailed = true; } }, true);
+  if (loadFailed || result.loadedEnvFiles.length !== expected.size
+    || result.loadedEnvFiles.some((file) => !expected.has(file.path))) return fail("environment_load_failed");
+}
+
 async function main() {
   const cwd = process.cwd();
   const target = process.env.FAOLLA_ORDER_ATTENTION_OPERATION_TARGET ?? "";
@@ -135,6 +161,12 @@ async function main() {
   if (realpathSync(cwd) !== cwd || stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o022)) return fail("unsafe_candidate_directory");
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8", timeout: 5000 });
   if (head.status !== 0 || head.stdout.trim() !== target) return fail("candidate_identity_changed");
+  loadOrderAttentionOperationEnvironment(cwd);
+  // Construction is local (no request). Fail before any SQL mutation if the
+  // configured application transport is unavailable; disable remains SQL-only.
+  if ((action === "enable" || action === "verify") && !createServerSupabaseServiceClient()) {
+    return fail("service_transport_unavailable");
+  }
   const inspect = spawnSync("docker", ["inspect", "--format", "{{json .}}", "supabase-db"], { encoding: "utf8", timeout: 5000 });
   if (inspect.status !== 0) return fail("database_identity_unavailable");
   const container = JSON.parse(inspect.stdout);
