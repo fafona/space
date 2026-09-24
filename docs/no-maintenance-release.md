@@ -122,3 +122,20 @@ reconciliation before re-enabling. A current trigger-catalog check cannot prove
 that no past capture interval was missed. Ordinary web rollback does not remove
 capture; a capture-object fault needs an operator to repair the derived objects,
 not overwrite or restore business rows.
+
+## Bounded list lane (2026-09-25)
+
+`bounded-lists` is a separate exact allowlist for customer/catalog display
+pagination, complete order chunk reads, their focused tests, the isolated local
+browser harness, and the exact CI inventory partition. It is selected only by
+the new catalog list component or customer pagination helper. APIs, permissions,
+source writers, migrations, dependencies and workers are not admitted.
+
+Use `stage SHA BASELINE`, then `activate SHA`; never `database`. All database
+entrypoints reject this lane before any backup, migration or pilot operation.
+Stage requires the existing enabled analytics and fafona-only pilot; it inherits
+their values without rotating keys or re-enabling/backfilling the projection.
+Candidate verification checks pilot/analytics continuity. Only background jobs
+in the new web candidate are paused. Focused read/UI tests, guarded build,
+candidate/public smoke, existing process/configuration/maintenance ownership,
+immutable asset collision protection and owned rollback remain unchanged.

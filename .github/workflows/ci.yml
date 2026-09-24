@@ -64,7 +64,8 @@ jobs:
             "$fixture_root/node" "$fixture_root/scripts/production-maintenance-next-startup-acceptance.mjs"
 
       - name: Maintenance Topology Diagnostic Tests
-        run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/production-maintenance-topology-workflow.test.mjs scripts/check-production-maintenance-capabilities.test.mjs
+        # The topology workflow contract belongs to the serial maintenance group.
+        run: node --test scripts/check-production-maintenance-topology.test.mjs scripts/check-production-maintenance-capabilities.test.mjs
 
       - name: Maintenance Control and Pages ACL Contract Tests
         # Full-ancestor filesystem proofs must not overlap sibling fixture creation.
@@ -80,7 +81,10 @@ jobs:
         run: npm run lint -- --quiet
 
       - name: Tests
-        run: npm test
+        # Exact, contract-checked complement of the required explicit test steps.
+        # npm test remains the complete local entrypoint; do not repeat the
+        # native maintenance proofs concurrently after their serial CI pass.
+        run: node scripts/run-ci-tests.mjs remaining && npm run check:db-migrations
 
       - name: Build
         run: npm run build

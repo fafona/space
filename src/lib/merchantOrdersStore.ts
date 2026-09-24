@@ -287,46 +287,91 @@ async function listStoredMerchantOrdersRows(supabase: MerchantOrdersStoreClient,
   }
 }
 
-async function listStoredMerchantOrdersRowMetadata(supabase: MerchantOrdersStoreClient, siteId: string) {
+async function listStoredMerchantOrdersPagedRows(
+  supabase: MerchantOrdersStoreClient,
+  siteId: string,
+  input: { kind: "metadata" } | { kind: "chunks"; slugs: string[] },
+) {
   const normalizedSiteId = normalizeSiteId(siteId);
   if (!normalizedSiteId) return [] as StoredMerchantOrdersRow[];
   const slugPrefix = `${buildOrdersSlug(normalizedSiteId)}%`;
 
-  const runQuery = async (selectFields: string, includeMerchantId: boolean) => {
-    const query = supabase.from("pages").select(selectFields).like("slug", slugPrefix);
-    return includeMerchantId ? query.eq("merchant_id", normalizedSiteId) : query;
+  const readAllPages = async (includeMerchantId: boolean, includeUpdatedAt: boolean) => {
+    const rows: StoredMerchantOrdersRow[] = [];
+    const seenRowKeys = new Set<string>();
+    let offset = 0;
+
+    // Metadata and selected chunk reads must both exhaust server-capped partial
+    // batches. Match the full reader's safety bound, with an overflow probe.
+    while (offset <= MERCHANT_ORDER_FULL_READ_MAX_ROWS) {
+      const remainingCapacity = MERCHANT_ORDER_FULL_READ_MAX_ROWS - offset;
+      const requestedSize = Math.max(
+        1,
+        Math.min(MERCHANT_ORDER_FULL_READ_PAGE_SIZE, remainingCapacity || 1),
+      );
+      const baseFields = input.kind === "metadata" ? "id,slug" : "id,slug,blocks";
+      let query = supabase.from("pages").select(includeUpdatedAt ? `${baseFields},updated_at` : baseFields);
+      query = input.kind === "metadata"
+        ? query.like("slug", slugPrefix)
+        : query.in("slug", input.slugs);
+      if (includeMerchantId) query = query.eq("merchant_id", normalizedSiteId);
+      if (typeof query.order !== "function" || typeof query.range !== "function") {
+        throw new Error("merchant_orders_read_failed:pagination_unsupported");
+      }
+      const result = await query
+        .order("slug", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + requestedSize - 1);
+      if (result.error) throw result.error;
+      if (!Array.isArray(result.data)) {
+        throw new Error("merchant_orders_read_failed:invalid_response");
+      }
+      const page = result.data as StoredMerchantOrdersRow[];
+      if (page.length > requestedSize) {
+        throw new Error("merchant_orders_read_failed:pagination_unsupported");
+      }
+      if (page.length === 0) return rows;
+      if (rows.length + page.length > MERCHANT_ORDER_FULL_READ_MAX_ROWS) {
+        throw new Error("merchant_orders_read_failed:row_limit_exceeded");
+      }
+      for (const row of page) {
+        const rowKey = `${normalizeText(row.slug)}\u0000${String(row.id ?? "").trim()}`;
+        if (seenRowKeys.has(rowKey)) {
+          throw new Error("merchant_orders_read_failed:pagination_unstable");
+        }
+        seenRowKeys.add(rowKey);
+      }
+      rows.push(...page);
+      offset += page.length;
+    }
+
+    throw new Error("merchant_orders_read_failed:row_limit_exceeded");
   };
 
-  let query = await runQuery("id,slug,updated_at", true);
-  let data = (query.data ?? []) as StoredMerchantOrdersRow[];
-  let error = query.error;
-
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingMerchantIdColumn(message)) {
-      query = await runQuery("id,slug,updated_at", false);
-      data = (query.data ?? []) as StoredMerchantOrdersRow[];
-      error = query.error;
-    } else if (isMissingUpdatedAtColumn(message)) {
-      query = await runQuery("id,slug", true);
-      data = (query.data ?? []) as StoredMerchantOrdersRow[];
-      error = query.error;
-    } else if (isMissingSlugColumn(message)) {
-      return [];
+  let includeMerchantId = true;
+  let includeUpdatedAt = true;
+  while (true) {
+    try {
+      return await readAllPages(includeMerchantId, includeUpdatedAt);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      if (isMissingSlugColumn(message)) return [];
+      if (includeMerchantId && isMissingMerchantIdColumn(message)) {
+        includeMerchantId = false;
+        continue;
+      }
+      if (includeUpdatedAt && isMissingUpdatedAtColumn(message)) {
+        includeUpdatedAt = false;
+        continue;
+      }
+      if (message.startsWith("merchant_orders_read_failed:")) throw error;
+      throwOrdersStoreQueryError(error);
     }
   }
+}
 
-  if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
-    const fallback = await runQuery("id,slug", false);
-    data = (fallback.data ?? []) as StoredMerchantOrdersRow[];
-    error = fallback.error;
-  }
-
-  if (error) {
-    if (isMissingSlugColumn(toErrorMessage(error))) return [];
-    throwOrdersStoreQueryError(error);
-  }
-  return Array.isArray(data) ? data : [];
+async function listStoredMerchantOrdersRowMetadata(supabase: MerchantOrdersStoreClient, siteId: string) {
+  return listStoredMerchantOrdersPagedRows(supabase, siteId, { kind: "metadata" });
 }
 
 async function listStoredMerchantOrdersRowsBySlugs(
@@ -338,41 +383,16 @@ async function listStoredMerchantOrdersRowsBySlugs(
   const normalizedSlugs = [...new Set(slugs.map(normalizeText).filter(Boolean))];
   if (!normalizedSiteId || normalizedSlugs.length === 0) return [] as StoredMerchantOrdersRow[];
 
-  const runQuery = async (selectFields: string, includeMerchantId: boolean) => {
-    const query = supabase.from("pages").select(selectFields).in("slug", normalizedSlugs);
-    return includeMerchantId ? query.eq("merchant_id", normalizedSiteId) : query;
-  };
-
-  let query = await runQuery("id,slug,blocks,updated_at", true);
-  let data = (query.data ?? []) as StoredMerchantOrdersRow[];
-  let error = query.error;
-
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingMerchantIdColumn(message)) {
-      query = await runQuery("id,slug,blocks,updated_at", false);
-      data = (query.data ?? []) as StoredMerchantOrdersRow[];
-      error = query.error;
-    } else if (isMissingUpdatedAtColumn(message)) {
-      query = await runQuery("id,slug,blocks", true);
-      data = (query.data ?? []) as StoredMerchantOrdersRow[];
-      error = query.error;
-    } else if (isMissingSlugColumn(message)) {
-      return [];
-    }
+  const rows = await listStoredMerchantOrdersPagedRows(supabase, normalizedSiteId, {
+    kind: "chunks", slugs: normalizedSlugs,
+  });
+  const foundSlugs = new Set(rows.map((row) => normalizeText(row.slug)));
+  if (normalizedSlugs.some((slug) => !foundSlugs.has(slug))) {
+    // A chunk present in metadata may have disappeared during a concurrent
+    // rewrite. Do not present the remaining rows as a complete order window.
+    throw new Error("merchant_orders_read_failed:chunk_missing");
   }
-
-  if (error && isMissingUpdatedAtColumn(toErrorMessage(error))) {
-    const fallback = await runQuery("id,slug,blocks", false);
-    data = (fallback.data ?? []) as StoredMerchantOrdersRow[];
-    error = fallback.error;
-  }
-
-  if (error) {
-    if (isMissingSlugColumn(toErrorMessage(error))) return [];
-    throwOrdersStoreQueryError(error);
-  }
-  return Array.isArray(data) ? data : [];
+  return rows;
 }
 
 async function listStoredMerchantOrderRows(

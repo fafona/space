@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createLocalTestBatches, discoverLocalTests } from "./run-local-tests.mjs";
+import { partitionCiTests } from "./run-ci-tests.mjs";
 
 const workflow = readFileSync(
   new URL("../.github/workflows/ci.yml", import.meta.url),
@@ -40,7 +41,7 @@ test("CI keeps quality checks independent from browser system packages", () => {
 
   assert.match(quality, /name:\s*Quality/);
   assert.match(quality, /runs-on:\s*ubuntu-latest/);
-  assert.match(quality, /timeout-minutes:\s*[1-9][0-9]*/);
+  assert.match(quality, /timeout-minutes:\s*45\b/);
   assertSharedEnvironment(quality);
   assert.match(quality, /node --test scripts\/ci-workflow-contract\.test\.mjs/);
   assert.match(quality, /actions\/checkout@v5/);
@@ -49,7 +50,8 @@ test("CI keeps quality checks independent from browser system packages", () => {
   assert.match(quality, /run:\s*npm run check:encoding:strict/);
   assert.match(quality, /run:\s*npm run lint -- --quiet/);
   assert.doesNotMatch(quality, /continue-on-error/);
-  assert.match(quality, /run:\s*npm test/);
+  assert.match(quality, /run: node scripts\/run-ci-tests\.mjs remaining && npm run check:db-migrations/);
+  assert.doesNotMatch(quality, /run:\s*npm test/);
   assert.match(quality, /run:\s*npm run build/);
   assert.doesNotMatch(quality, /playwright install|test:enterprise-browser|apt-get/);
 });
@@ -84,7 +86,7 @@ test("real Supabase scheduler acceptance is a required independent job without w
   assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/maintenance-supabase-scheduler-acceptance.mjs"), false);
 });
 
-test("both CI test entrypoints retain native filesystem coverage without concurrent sibling fixtures", () => {
+test("CI runs native filesystem proofs once, serially, and full local testing retains exclusive coverage", () => {
   const quality = jobBlock("quality");
   const start = quality.indexOf("name: Maintenance Control and Pages ACL Contract Tests");
   const end = quality.indexOf("name: Isolated PM2 6.0.14 Maintenance Transport Acceptance");
@@ -98,6 +100,52 @@ test("both CI test entrypoints retain native filesystem coverage without concurr
   const batches = createLocalTestBatches(files, ["--test", "--test-concurrency=4"]);
   assert.deepEqual(batches.flat(), files);
   assert.deepEqual(batches.filter((batch) => batch.includes(native)), [[native]]);
+  const groups = partitionCiTests(files);
+  assert.ok(groups.maintenance.includes(native));
+  assert.equal(groups.remaining.includes(native), false);
+});
+
+test("mandatory CI test commands cover the entire discovery exactly once with no skipped groups", () => {
+  const quality = jobBlock("quality");
+  const scheduler = jobBlock("maintenance-supabase-scheduler");
+  const files = discoverLocalTests(fileURLToPath(new URL("../", import.meta.url)));
+  const groups = partitionCiTests(files);
+  function stepRun(job, name) {
+    const start = job.indexOf(`name: ${name}\n`);
+    assert.ok(start >= 0, `missing mandatory step ${name}`);
+    const rest = job.slice(start);
+    const next = rest.indexOf("\n      - name:");
+    const block = next < 0 ? rest : rest.slice(0, next);
+    assert.doesNotMatch(block, /continue-on-error|\bif:|--test-skip-pattern|--test-name-pattern|\|\|\s*true/);
+    return block.match(/\n\s*run: ([^\n]+)/)?.[1];
+  }
+  const explicit = [
+    ["workflow", quality, "CI Workflow Contract"],
+    ["topology", quality, "Maintenance Topology Diagnostic Tests"],
+    ["maintenance", quality, "Maintenance Control and Pages ACL Contract Tests"],
+    ["scheduler", scheduler, "Scheduler Acceptance Safety Contracts"],
+  ];
+  const executed = [];
+  for (const [group, job, name] of explicit) {
+    const command = stepRun(job, name);
+    assert.ok(command?.startsWith("node --test "));
+    if (group === "maintenance") assert.ok(command.includes("--test-concurrency=1"));
+    const members = command.split(/\s+/).filter((part) => part.startsWith("scripts/")).flatMap((part) => {
+      if (part === "scripts/production-maintenance-*.test.mjs") {
+        return files.filter((file) => file.startsWith("scripts/production-maintenance-")
+          && !file.slice("scripts/".length).includes("/") && file.endsWith(".test.mjs"));
+      }
+      assert.ok(!part.includes("*") && files.includes(part), `uncovered CI test: ${part}`);
+      return [part];
+    });
+    assert.deepEqual(members.sort(), groups[group]);
+    executed.push(...members);
+  }
+  assert.equal(stepRun(quality, "Tests"), "node scripts/run-ci-tests.mjs remaining && npm run check:db-migrations");
+  executed.push(...groups.remaining);
+  assert.equal(new Set(executed).size, executed.length);
+  assert.deepEqual(executed.sort(), files);
+  assert.doesNotMatch(quality, /run:\s*npm test|continue-on-error/);
 });
 
 test("real ingress acceptance is an opt-in isolated job and package installation cannot start nginx", () => {
