@@ -147,7 +147,7 @@ export PGPASSWORD="$POSTGRES_PASSWORD"
 export PGCONNECT_TIMEOUT=3
 export PGPASSFILE=/dev/null
 export PGSSLMODE=disable
-export PGOPTIONS='-c statement_timeout=5s -c lock_timeout=1s'
+export PGOPTIONS='-c statement_timeout=5s -c lock_timeout=1s -c standard_conforming_strings=on'
 exec psql --host=127.0.0.1 --port=5432 --username=supabase_admin --dbname=postgres --no-password --no-psqlrc --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate --quiet --tuples-only --no-align`;
   const deadline = Date.now() + 60000;
   const query: Query = async (sql) => {

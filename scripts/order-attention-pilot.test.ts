@@ -108,7 +108,7 @@ test("production operation requires exact root-owned candidate identity and one 
   }
   const source = readFileSync(new URL("./order-attention-pilot.ts", import.meta.url), "utf8");
   assert.match(source, /supabase\/postgres:15\.8\.1\.085/);
-  assert.match(source, /PGOPTIONS='-c statement_timeout=5s -c lock_timeout=1s'/);
+  assert.match(source, /PGOPTIONS='-c statement_timeout=5s -c lock_timeout=1s -c standard_conforming_strings=on'/);
   assert.match(source, /head\.stdout\.trim\(\) !== target/);
   assert.match(source, /test "\$POSTGRES_DB" = postgres/);
   assert.match(source, /unset PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS PGPASSWORD/);
