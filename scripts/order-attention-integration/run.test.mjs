@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { DATABASE, extractBaselineDdl, resolveOrderAttentionIntegrationConfig } from "./run.mjs";
+import { DATABASE, createOrderAttentionMutationSnapshot, extractBaselineDdl, resolveOrderAttentionIntegrationConfig } from "./run.mjs";
 import { discoverLocalTests } from "../run-local-tests.mjs";
 
 const containerId = "a".repeat(64);
@@ -63,6 +63,40 @@ test("integration uses actual baseline pages DDL and refuses incomplete fixtures
   assert.match(ddl, /create trigger set_pages_updated_at/);
   assert.doesNotMatch(ddl, /page_events|grant |policy /);
   assert.throws(() => extractBaselineDdl("create table public.pages(id text);"), /baseline DDL missing/);
+});
+
+test("editing next order/customer/items/membership cannot mutate CAS witnesses or original snapshots", () => {
+  const rows = [{ id: "row", slug: "__merchant_orders__:10000000:chunk:0", updated_at: "2026-09-24T10:00:00.000Z",
+    blocks: [{ id: "order", status: "pending", customer: { note: "original", address: { city: "original" } },
+      items: [{ name: "original", options: { labels: ["original"] } }] }] }];
+  const member = { updated_at: "2026-09-24T10:00:00.000Z", blocks: [{ id: "member", pointBalance: 100,
+    profile: { name: "original" }, transactions: [{ id: "original", metadata: { tags: ["original"] } }] }] };
+  const originalRows = structuredClone(rows);
+  const originalMember = structuredClone(member);
+  const first = createOrderAttentionMutationSnapshot(rows, member);
+  const second = createOrderAttentionMutationSnapshot(rows, member);
+  first.orders.next[0].status = "confirmed";
+  first.orders.next[0].customer.note = "changed";
+  first.orders.next[0].customer.address.city = "changed";
+  first.orders.next[0].items[0].name = "changed";
+  first.orders.next[0].items[0].options.labels.push("changed");
+  first.memberships.next[0].pointBalance += 10;
+  first.memberships.next[0].profile.name = "changed";
+  first.memberships.next[0].transactions[0].metadata.tags.push("changed");
+  first.memberships.next.push({ id: "new-member" });
+  assert.deepEqual(first.orders.expectedRows, originalRows);
+  assert.equal(first.memberships.expectedUpdatedAt, originalMember.updated_at);
+  assert.deepEqual(rows, originalRows);
+  assert.deepEqual(member, originalMember);
+  assert.deepEqual(second, createOrderAttentionMutationSnapshot(originalRows, originalMember));
+  rows[0].blocks[0].customer.note = "later-input-change";
+  member.blocks[0].transactions[0].id = "later-input-change";
+  assert.deepEqual(second.orders.expectedRows, originalRows);
+  assert.deepEqual(second.orders.next, originalRows[0].blocks);
+  assert.deepEqual(second.memberships.next, originalMember.blocks);
+  assert.deepEqual(createOrderAttentionMutationSnapshot([], null), {
+    orders: { expectedRows: [], next: [] }, memberships: { expectedUpdatedAt: null, next: [] },
+  });
 });
 
 test("real runner proves identity before create, refuses reuse and never drops/reset databases or patches 045", () => {

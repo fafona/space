@@ -42,6 +42,16 @@ export function extractBaselineDdl(init) {
   ].map((pattern) => { const ddl = init.match(pattern)?.[0]; assert.ok(ddl, "actual baseline DDL missing"); return ddl; }).join("\n");
 }
 
+// A candidate mutation must never edit its CAS witness through shared nested
+// order/item/customer references. Keep both witnesses and candidates detached
+// from the input snapshot, exactly as the existing transaction runner does.
+export function createOrderAttentionMutationSnapshot(rows, member) {
+  return {
+    orders: { expectedRows: structuredClone(rows), next: structuredClone(rows.flatMap((row) => row.blocks)) },
+    memberships: { expectedUpdatedAt: member?.updated_at ?? null, next: structuredClone(member?.blocks ?? []) },
+  };
+}
+
 const sqlText = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const jsonSql = (value) => `${sqlText(JSON.stringify(value))}::jsonb`;
 const readSql = (source = false, site = SITE) => `select public.faolla_read_order_attention_v1(${sqlText(site)},${source});`;
@@ -134,8 +144,7 @@ export async function runOrderAttentionIntegration(environment = process.env, ar
     const rows = await json(`select coalesce(jsonb_agg(jsonb_build_object('id',id,'slug',slug,'blocks',blocks,'updated_at',updated_at) order by slug,id),'[]'::jsonb)
       from public.pages where merchant_id='${SITE}' and (slug='${PREFIX}' or starts_with(slug,'${PREFIX}:chunk:'));`);
     const member = await json(`select coalesce((select jsonb_build_object('blocks',blocks,'updated_at',updated_at) from public.pages where merchant_id='${SITE}' and slug='__merchant_memberships__:${SITE}'),'null'::jsonb);`);
-    return { orders: { expectedRows: rows, next: rows.flatMap((row) => row.blocks) },
-      memberships: { expectedUpdatedAt: member?.updated_at ?? null, next: member?.blocks ?? [] } };
+    return createOrderAttentionMutationSnapshot(rows, member);
   }
   async function waitBlocked(applicationName) {
     const until = Date.now() + 5000;
