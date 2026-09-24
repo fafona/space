@@ -9,7 +9,66 @@ const sha = "c".repeat(40), runId = "35140000000", now = P.createdAt + 3600000;
 const read = name => readFileSync(new URL("../" + name, import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const authority = () => ({ version: 1, kind: "faolla-unlaunched-transport-repair", targetSha: sha, runId, runAttempt: 1,
   operationId: P.operationId, failedRunId: P.failedRunId, mainCIrunId: "35139999999", historyDigest: "e".repeat(64), checkedAt: now });
-const catalog = readdirSync(new URL("./supabase-migrations/", import.meta.url)).filter(n => /^\d{12}_.*\.sql$/.test(n)).sort();
+// Exact predecessor catalog from TRANSPORT_REPAIR.previousTargetSha
+// b342b2e1f794d58cda81c44541fabc2e4738e2e3, matching the runtime's git ls-tree.
+// This historical one-operation guard must not inherit later application
+// migrations or have its required ledger count relaxed as the repository grows.
+const catalog = `202607250001_core_transaction_foundation.sql
+202607250002_order_shadow_write_rpc.sql
+202607250003_membership_ledger_shadow_write_rpc.sql
+202607250004_booking_shadow_write_rpc.sql
+202607250005_coupon_shadow_write_rpc.sql
+202607250006_conversation_shadow_write_rpc.sql
+202607250007_reliable_outbox_runtime.sql
+202607250008_scoped_outbox_claim.sql
+202607310001_merchant_enterprise_foundation.sql
+202607310002_merchant_enterprise_board_workflows.sql
+202607310003_merchant_enterprise_invitation_lifecycle.sql
+202607310004_merchant_enterprise_bootstrap_permission_array_fix.sql
+202607310005_merchant_enterprise_task_reordering.sql
+202607310006_merchant_enterprise_task_comments.sql
+202607310007_merchant_enterprise_invitation_removal.sql
+202607310008_merchant_enterprise_task_checklists.sql
+202607310009_merchant_enterprise_board_access_scopes.sql
+202607310010_merchant_enterprise_employee_offboarding.sql
+202607310011_merchant_enterprise_employee_role_transition.sql
+202607310012_merchant_order_task_link.sql
+202608010013_merchant_enterprise_role_atomic_authorization.sql
+202608010014_merchant_enterprise_linked_order_summary.sql
+202608020015_merchant_enterprise_task_atomic_authorization.sql
+202608020016_merchant_enterprise_structure_atomic_authorization.sql
+202608020017_merchant_enterprise_employee_atomic_authorization.sql
+202608020018_merchant_enterprise_notifications.sql
+202608020019_merchant_enterprise_audit.sql
+202608030020_merchant_enterprise_workflows.sql
+202608030021_merchant_enterprise_workflow_archive_pagination.sql
+202608040022_merchant_enterprise_workflow_execution.sql
+202608040023_merchant_enterprise_workflow_revisions.sql
+202608040024_merchant_enterprise_published_choices_and_task_binding.sql
+202608040025_merchant_enterprise_todos.sql
+202608040026_merchant_enterprise_workflow_automations.sql
+202608060027_merchant_poll_ballots.sql
+202608070028_merchant_poll_ballot_deletion.sql
+202608070029_merchant_poll_registered_participants.sql
+202608070030_merchant_poll_payload_capacity.sql
+202608090031_merchant_poll_identity_and_invalidation.sql
+202608180032_merchant_enterprise_audit_query_security.sql
+202608190033_merchant_enterprise_invitation_delivery_outbox.sql
+202608190034_merchant_enterprise_current_operations.sql
+202608190035_ordinary_account_authorization_foundation.sql
+202608190036_ordinary_account_authorization_bootstrap.sql
+202608190037_ordinary_account_system_site_principal_isolation.sql
+202608190038_ordinary_account_recovery_observer.sql
+202608190039_runtime_rpc_execute_acl_hardening.sql
+202608190040_merchant_acl_contract_hardening.sql
+202608280041_merchant_staff_business_permissions.sql
+202608300042_merchant_enterprise_pgcrypto_schema_repair.sql
+202608310043_merchant_employee_initial_password_setup.sql
+202609080044_qr_token_atomic_mutation.sql
+202609080045_order_membership_atomic_mutation.sql
+202609080046_redemption_atomic_mutation.sql
+202609080047_redemption_checkout_context.sql
+202609090048_pages_client_write_acl.sql`.split("\n");
 const ledger = () => ({ readOnly: true, databaseOid: 5, rows: catalog.map(n => ({ version: n.slice(0, 12), name: n.slice(13, -4), appliedAt: "2026-09-16T16:00:00.000000Z" })) });
 test("exactly seven paths; only keepalive and exports touch existing implementation", () => {
   assert.equal(TRANSPORT_REPAIR_PATHS.length, 7);
@@ -41,6 +100,19 @@ test("ledger requires all 56 exact pre-operation entries, including previously a
     v => v.rows[1] = v.rows[0]]) {
     const changed = structuredClone(value); modify(changed); assert.throws(() => validateTransportRepairLedger(changed, 5, catalog));
   }
+});
+test("later application migrations cannot widen the historical repair ledger", () => {
+  assert.equal(P.previousTargetSha, "b342b2e1f794d58cda81c44541fabc2e4738e2e3");
+  const current = readdirSync(new URL("./supabase-migrations/", import.meta.url)).filter(n => /^\d{12}_.*\.sql$/.test(n)).sort();
+  assert.deepEqual(current.filter(n => n <= catalog.at(-1)), catalog);
+  const later = current.filter(n => !catalog.includes(n));
+  assert(later.includes("202609230049_account_traffic_analytics.sql"));
+  const expanded = { ...ledger(), rows: current.map(n => ({
+    version: n.slice(0, 12), name: n.slice(13, -4), appliedAt: "2026-09-16T16:00:00.000000Z",
+  })) };
+  assert.throws(() => validateTransportRepairLedger(expanded, 5, current), /unlaunched_transport_repair_unverified/);
+  assert.throws(() => validateTransportRepairLedger(ledger(), 5, current), /unlaunched_transport_repair_unverified/);
+  assert.throws(() => validateTransportRepairLedger(expanded, 5, catalog), /unlaunched_transport_repair_unverified/);
 });
 test("unrecognized predecessor and replay cannot reach verification or writes", async () => {
   const state = { version: 2, revision: P.revision, operationId: P.operationId, targetSha: P.previousTargetSha,

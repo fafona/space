@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { MerchantBookingRecord } from "@/lib/merchantBookings";
 import type { MerchantMembershipRecord } from "@/lib/merchantMemberships";
@@ -240,4 +241,60 @@ test("manual replacement can clear editable fields and lists", () => {
   assert.equal(result.customers[0]?.address.line1, "");
   assert.deepEqual(result.customers[0]?.tags, []);
   assert.deepEqual(result.customers[0]?.allergens, []);
+});
+
+test("directory grouping preserves the full legacy result for mixed identities and equal timestamps", () => {
+  const stored = {
+    ...createEmptyMerchantCustomerProfile(SITE_ID),
+    id: "stored-nana",
+    displayName: "Manually maintained name",
+    email: "updated@example.com",
+    identityAliases: ["email:nana@example.com"],
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+  const input = {
+    siteId: SITE_ID,
+    storedCustomers: [stored],
+    memberships: [createMembership()],
+    orders: [
+      ...Array.from({ length: 80 }, (_, index) => createOrder({
+        id: `order-${index}`,
+        totalAmount: index / 10,
+        pricePrefix: index % 2 === 0 ? "EUR" : "USD",
+        customer: {
+          name: `Order name ${index}`,
+          email: index % 2 === 0 ? "NANA@example.com" : "",
+          phone: index % 3 === 0 ? "+34 600 000 001" : "0034 600 000 001",
+          note: `Stable tie ${index}`,
+        },
+      })),
+      createOrder({ id: "anonymous-a", customer: { name: "Guest", phone: "", email: "", note: "" } }),
+      createOrder({ id: "anonymous-b", customer: { name: "Guest", phone: "", email: "", note: "" } }),
+      createOrder({ id: "foreign-order", siteId: "20000000" }),
+    ],
+    bookings: [createBooking(), createBooking({ id: "booking-2", email: "updated@example.com" })],
+  };
+  const before = structuredClone(input);
+  const customers = buildMerchantCustomerDirectory(input);
+
+  assert.deepEqual(input, before, "aggregation must not mutate source records");
+  assert.equal(customers.length, 3);
+  const merged = customers.find((customer) => customer.id === "stored-nana")!;
+  assert.equal(merged.displayName, "Manually maintained name");
+  assert.equal(merged.activity.orderCount, 80);
+  assert.equal(merged.activity.bookingCount, 2);
+  // Fingerprint captured from the pre-optimization implementation, including
+  // stable tie ordering, aliases, source priority, totals and derived IDs.
+  assert.equal(createHash("sha256").update(JSON.stringify(customers)).digest("hex"), "eaa7e194929135e2bcca5499612534fb454caee0c3a02927d77cc8e8eeb1b94b");
+});
+
+test("directory aggregation preserves every activity for a customer with many orders", () => {
+  const orders = Array.from({ length: 2_000 }, (_, index) => createOrder({ id: `repeat-${index}` }));
+  const customers = buildMerchantCustomerDirectory({ siteId: SITE_ID, orders });
+
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0]?.activity.orderCount, orders.length);
+  assert.deepEqual(customers[0]?.activity.orderTotals, [{ label: "EUR", amount: 71_000 }]);
+  assert.equal(createHash("sha256").update(JSON.stringify(customers)).digest("hex"), "1c1f128c17a2531c43148b684d85bee715ff7d284da6ed81e5ae81d0f29878a8");
 });

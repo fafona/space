@@ -720,7 +720,11 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
   const groups = new Map<number, CustomerCandidate[]>();
   candidates.forEach((candidate, index) => {
     const root = find(index);
-    groups.set(root, [...(groups.get(root) ?? []), candidate]);
+    const group = groups.get(root);
+    // These arrays are local to this aggregation. Append in the original
+    // candidate order without copying the growing group for every activity.
+    if (group) group.push(candidate);
+    else groups.set(root, [candidate]);
   });
 
   return Array.from(groups.values())
