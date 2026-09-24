@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { loadMerchantOrderAttentionSummary } from "@/lib/merchantOrderAttention.server";
 import { recordTrafficOutcome } from "@/lib/accountTrafficOutcome.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
@@ -78,6 +79,7 @@ export type MerchantOrdersGetRouteDependencies = {
   isManagementEnabled: (siteId: string) => Promise<boolean>;
   getOrder: typeof getMerchantOrderBySite;
   listOrders: typeof listMerchantOrders;
+  loadAttentionSummary: typeof loadMerchantOrderAttentionSummary;
   listOrdersWindow: typeof listMerchantOrdersWindow;
   resolvePersonalSession: typeof resolvePersonalAccountSessionFromRequest;
   listPersonalOrders: typeof listPersonalMerchantOrders;
@@ -159,6 +161,7 @@ const DEFAULT_GET_DEPENDENCIES: MerchantOrdersGetRouteDependencies = {
   isManagementEnabled: isOrderManagementEnabled,
   getOrder: getMerchantOrderBySite,
   listOrders: listMerchantOrders,
+  loadAttentionSummary: loadMerchantOrderAttentionSummary,
   listOrdersWindow: listMerchantOrdersWindow,
   resolvePersonalSession: resolvePersonalAccountSessionFromRequest,
   listPersonalOrders: listPersonalMerchantOrders,
@@ -348,6 +351,14 @@ export async function handleMerchantOrdersGet(
         limit: windowedOrders?.limit ?? normalizeOrderListLimit(searchParams.get("limit")),
         hasMore: Boolean(windowedOrders?.hasMore),
       });
+    }
+    // Owner-only pilot. Keep personal, employee/redacted, detail and paginated
+    // reads exactly as before. Old web ignores this opt-in query parameter.
+    if (searchParams.getAll("attention").length === 1 && searchParams.get("attention") === "1"
+      && session.actor?.type === "owner" && session.actor.siteId === siteId && session.merchantId === siteId) {
+      const attention = await dependencies.loadAttentionSummary(siteId, request.signal);
+      if (attention) return privateOrderJson({ ok: true, attention });
+      if (request.signal.aborted) return privateOrderJson({ error: "order_list_cancelled" }, 503);
     }
     const orders = await dependencies.listOrders(siteId);
     return privateOrderJson({

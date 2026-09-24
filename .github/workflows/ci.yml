@@ -159,7 +159,8 @@ jobs:
 
   transaction-database:
     name: Order Membership PostgreSQL Acceptance
-    needs: quality
+    # Independent disposable SQL acceptance: fail early while Quality runs.
+    # Both jobs remain mandatory; neither consumes artifacts from the other.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -193,6 +194,17 @@ jobs:
         run: psql --version
       - name: Run order membership atomic database acceptance
         run: node scripts/transaction-integration/run.mjs
+
+      - name: Bind order attention PostgreSQL service identity
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/ci-postgres-service-identity.mjs
+
+      - name: Run order attention projection database acceptance
+        env:
+          ORDER_ATTENTION_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: node scripts/order-attention-integration/run.mjs
 
   redemption-database:
     name: Redemption PostgreSQL Acceptance

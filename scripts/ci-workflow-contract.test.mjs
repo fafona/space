@@ -200,7 +200,7 @@ test("QR atomic acceptance is a required CI job against a fresh PostgreSQL servi
 
 test("order membership atomic acceptance uses an independent disposable PostgreSQL CI service", () => {
   const transaction = jobBlock("transaction-database");
-  assert.match(transaction, /needs:\s*quality/);
+  assert.doesNotMatch(transaction, /\bneeds:|\bif:|continue-on-error|\|\|\s*true/);
   assert.match(transaction, /image:\s*postgres:15/);
   assert.match(transaction, /POSTGRES_DB:\s*faolla_transaction_test/);
   assert.match(transaction, /POSTGRES_HOST_AUTH_METHOD:\s*trust/);
@@ -224,6 +224,19 @@ test("transaction database acceptance is opt-in and excluded from automatic unit
   assert.match(result.stderr, /Set TRANSACTION_INTEGRATION_ALLOW_DISPOSABLE_DATABASE=1/);
   assert.doesNotMatch(result.stderr, /ENOENT|spawn must-not-start/);
   assert.doesNotMatch(result.stdout, /\[transaction-postgres\]/);
+});
+
+test("order attention is an additional mandatory acceptance on the existing transaction service", () => {
+  const transaction = jobBlock("transaction-database");
+  const previous = transaction.indexOf("run: node scripts/transaction-integration/run.mjs");
+  const bind = transaction.indexOf("run: node scripts/ci-postgres-service-identity.mjs");
+  const current = transaction.indexOf("run: node scripts/order-attention-integration/run.mjs");
+  assert.ok(previous >= 0 && bind > previous && current > bind);
+  assert.match(transaction, /ORDER_ATTENTION_INTEGRATION_ALLOW_DISPOSABLE_DATABASE:\s*"1"/);
+  assert.equal((transaction.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, 2);
+  assert.match(transaction, /image:\s*postgres:15/);
+  assert.match(transaction, /POSTGRES_DB:\s*faolla_transaction_test/);
+  assert.doesNotMatch(transaction, /continue-on-error|\bif:|\|\|\s*true|secrets\.|DATABASE_URL|\.env\.local|FAOLLA_CI_POSTGRES_SERVER_IPV4:\s*\S/);
 });
 
 test("redemption atomic acceptance uses an independent disposable PostgreSQL CI service", () => {

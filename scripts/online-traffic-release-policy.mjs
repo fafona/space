@@ -75,7 +75,32 @@ const performanceFiles = new Set([
   'scripts/online-traffic-release.test.mjs',
   'docs/no-maintenance-release.md',
 ]);
+// Separately approved owner-only order badge pilot for fafona (10000000).
+// This lane cannot inherit files or database authority from any older lane.
+export const ORDER_ATTENTION_MIGRATION = '202609240052';
+const orderAttentionMigrationFile = 'scripts/supabase-migrations/202609240052_order_attention_pilot.sql';
+const orderAttentionFiles = new Set([
+  orderAttentionMigrationFile,
+  'src/lib/merchantOrderAttention.ts', 'src/lib/merchantOrderAttention.test.ts',
+  'src/lib/merchantOrderAttention.server.ts', 'src/lib/merchantOrderAttention.server.test.ts',
+  'src/lib/merchantOrderAttentionProjection.ts', 'src/lib/merchantOrderAttentionProjection.test.ts',
+  'src/app/admin/AdminClient.tsx', 'src/app/admin/AdminClient.attention.test.ts',
+  'src/app/api/orders/route-handler.ts', 'src/app/api/orders/route.attention.test.ts',
+  'scripts/order-attention-pilot.ts', 'scripts/order-attention-pilot.test.ts',
+  'scripts/order-attention-benchmark.ts',
+  'scripts/order-attention-pilot-migration-contract.test.mjs',
+  'scripts/order-attention-integration/run.mjs', 'scripts/order-attention-integration/run.test.mjs',
+  'scripts/order-attention-integration/README.md',
+  '.github/workflows/ci.yml', 'scripts/ci-workflow-contract.test.mjs',
+  'docs/order-attention-pilot-2026-09-24.md',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+]);
 export function onlineReleaseLane(files) {
+  if (files.includes(orderAttentionMigrationFile) || files.includes('src/lib/merchantOrderAttention.server.ts')) {
+    if (files.some(file => !orderAttentionFiles.has(file))) throw Error('order_attention_release_scope_rejected');
+    return 'order-attention';
+  }
   if (files.some(file => performanceRuntimeFiles.has(file))) {
     if (files.some(file => !performanceFiles.has(file))) throw Error('performance_release_scope_rejected');
     return 'performance';
@@ -89,7 +114,7 @@ export function onlineReleaseLane(files) {
 }
 function isNoDatabaseLane(lane) {
   if (lane === 'qr-export' || lane === 'performance') return true;
-  if (lane === 'traffic') return false;
+  if (lane === 'traffic' || lane === 'order-attention') return false;
   throw Error('unknown_online_release_lane');
 }
 export function onlineReleaseStageStatus(lane) {
@@ -101,7 +126,33 @@ export function onlineReleaseActivationStatus(lane) {
 export function assertOnlineReleaseDatabaseAllowed(lane) {
   if (lane === 'qr-export') throw Error('qr_export_database_forbidden');
   if (lane === 'performance') throw Error('performance_database_forbidden');
-  if (lane !== 'traffic') throw Error('unknown_online_release_lane');
+  if (lane !== 'traffic' && lane !== 'order-attention') throw Error('unknown_online_release_lane');
+}
+export function onlineReleaseMigrationTarget(lane) {
+  assertOnlineReleaseDatabaseAllowed(lane);
+  return lane === 'order-attention' ? ORDER_ATTENTION_MIGRATION : '202609230051';
+}
+export function assertPendingOnlineReleaseMigrations(lane, pending) {
+  assertOnlineReleaseDatabaseAllowed(lane);
+  if (lane === 'traffic') return assertPendingTrafficMigrations(pending);
+  if (!Array.isArray(pending) || pending.length > 1 || pending.some(item =>
+    item?.version !== ORDER_ATTENTION_MIGRATION || item?.name !== 'order_attention_pilot' ||
+    item?.fileName !== '202609240052_order_attention_pilot.sql')) throw Error('unapproved_order_attention_migration');
+}
+export function assertOrderAttentionReleaseProof(value, action) {
+  const fields = ['action','verified','siteId','epoch','generation','enabled','sourceRows','sourceBytes','attentionCount','sourceSha256','summarySha256'];
+  if (!['enable','verify'].includes(action) || !value || Array.isArray(value) || typeof value !== 'object' ||
+    Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key)) ||
+    value.action !== action || value.verified !== true || value.siteId !== '10000000' || value.enabled !== true ||
+    typeof value.epoch !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value.epoch) ||
+    typeof value.generation !== 'string' || !/^(?:0|[1-9][0-9]{0,18})$/.test(value.generation) ||
+    BigInt(value.generation) > 9223372036854775807n ||
+    !Number.isInteger(value.sourceRows) || value.sourceRows < 0 || value.sourceRows > 512 ||
+    !Number.isInteger(value.sourceBytes) || value.sourceBytes < 0 || value.sourceBytes > 8388608 ||
+    !Number.isInteger(value.attentionCount) || value.attentionCount < 0 || value.attentionCount > 1000000 ||
+    typeof value.sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.sourceSha256) ||
+    typeof value.summarySha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.summarySha256)) throw Error('order_attention_verification_invalid');
+  return value;
 }
 export function onlineProxy(original, oldPort, newPort, sha) {
   if (!Number.isInteger(oldPort) || oldPort < 3102 || oldPort > 3110 || !Number.isInteger(newPort) || newPort < 3102 || newPort > 3110 || oldPort === newPort || !/^[a-f0-9]{40}$/.test(sha)) throw Error('online_proxy_identity_invalid');

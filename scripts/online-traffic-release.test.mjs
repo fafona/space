@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
-import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
 
 test('QR export lane admits only the requested client feature and exact release tooling',()=>{
  const feature=['src/lib/merchantBusinessCardQrExport.ts','src/lib/merchantBusinessCardQrExport.test.ts','src/components/admin/BusinessCardQrExportDialog.tsx','src/components/admin/MerchantBusinessCardManager.tsx'];
@@ -161,8 +161,165 @@ test('website probe checks actual destination, independent of analytics attribut
 });
 test('controller preserves legacy state, workers and assets; backup precedes apply and switch has rollback',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- assert.ok(code.indexOf('verifyProductionDatabaseBackup({')<code.indexOf("through:'202609230051',apply:true"));
+ assert.ok(code.indexOf('verifyProductionDatabaseBackup({')<code.indexOf('through,apply:true'));
  assert.match(code,/COPYFILE_EXCL/);assert.match(code,/static_collision/);assert.match(code,/maintenance_state_changed/);
- assert.match(code,/catch\(error\)\{restoreConfigs\(s\);throw error;\}/);
+ assert.match(code,/catch\(error\)\{if\(s.lane==='order-attention'\)restoreOrderAttentionConfigs\(s\);else restoreConfigs\(s\);throw error;\}/);
  assert.doesNotMatch(code,/\['restart','merchant-space'|unlinkSync\(marker|maintenance.*prepare|reset.*--hard/);
+});
+
+const orderAttentionMigration={version:'202609240052',name:'order_attention_pilot',fileName:'202609240052_order_attention_pilot.sql'};
+const orderAttentionFiles=[
+ 'scripts/supabase-migrations/202609240052_order_attention_pilot.sql',
+ 'src/lib/merchantOrderAttention.ts','src/lib/merchantOrderAttention.test.ts',
+ 'src/lib/merchantOrderAttention.server.ts','src/lib/merchantOrderAttention.server.test.ts',
+ 'src/lib/merchantOrderAttentionProjection.ts','src/lib/merchantOrderAttentionProjection.test.ts',
+ 'src/app/admin/AdminClient.tsx','src/app/admin/AdminClient.attention.test.ts',
+ 'src/app/api/orders/route-handler.ts','src/app/api/orders/route.attention.test.ts',
+ 'scripts/order-attention-pilot.ts','scripts/order-attention-pilot.test.ts',
+ 'scripts/order-attention-benchmark.ts',
+ 'scripts/order-attention-pilot-migration-contract.test.mjs',
+ 'scripts/order-attention-integration/run.mjs','scripts/order-attention-integration/run.test.mjs',
+ 'scripts/order-attention-integration/README.md','.github/workflows/ci.yml',
+ 'scripts/ci-workflow-contract.test.mjs','docs/order-attention-pilot-2026-09-24.md',
+ 'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.mjs',
+ 'scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',
+];
+test('order attention pilot is an exact separate lane selected before its shared admin performance anchor',()=>{
+ assert.equal(onlineReleaseLane(orderAttentionFiles),'order-attention');
+ for(const anchor of [orderAttentionFiles[0],'src/lib/merchantOrderAttention.server.ts']){
+  assert.equal(onlineReleaseLane([anchor]),'order-attention');
+  assert.equal(onlineReleaseLane(['src/app/admin/AdminClient.tsx',anchor]),'order-attention');
+  for(const file of [
+   'src/lib/merchantOrderAttentionOther.ts','src/lib/merchantOrdersStore.ts','src/lib/merchantOrders.server.ts',
+   'src/lib/merchantOrderMembershipTransaction.server.ts','src/lib/merchantBookings.server.ts',
+   'src/app/api/bookings/route.ts','src/lib/merchantBusinessOrderPermissions.ts',
+   'src/lib/superAdminVerification.ts','src/app/api/auth/signin/route.ts',
+   'src/lib/merchantCustomers.ts','src/lib/visiblePolling.ts','src/lib/accountTrafficCampaign.server.ts',
+   'src/lib/merchantBusinessCardQrExport.ts','src/lib/merchantEnterpriseAutomation.server.ts',
+   'scripts/supabase-migrations/202609230049_account_traffic_analytics.sql',
+   'scripts/supabase-migrations/202609240053_order_attention_pilot.sql',
+   'scripts/supabase-migrations/202609240052_order_attention_other.sql',
+   'scripts/apply-production-database-migrations.mjs','scripts/create-production-database-backup.mjs',
+   'scripts/deploy.production.sh','package.json','package-lock.json','.env.example',
+   'src/lib/../lib/merchantOrderAttention.ts','./src/lib/merchantOrderAttention.ts',
+   'src/lib\\merchantOrderAttention.ts',
+  ])assert.throws(()=>onlineReleaseLane([anchor,file]),/order_attention_release_scope_rejected/,file);
+ }
+ assert.throws(()=>onlineReleaseLane(['src/lib/merchantOrderAttentionProjection.ts']),/online_release_scope_rejected/);
+ assert.throws(()=>assertOnlineTrafficScope([orderAttentionFiles[0]]),/online_release_scope_rejected/);
+ assert.equal(onlineReleaseLane(['src/app/admin/AdminClient.tsx']),'performance');
+});
+test('order attention migration authority is exactly 052, never earlier pending migrations or another filename',()=>{
+ assert.equal(onlineReleaseStageStatus('order-attention'),'staged');
+ assert.equal(onlineReleaseActivationStatus('order-attention'),'database-ready');
+ assert.equal(onlineReleaseMigrationTarget('order-attention'),'202609240052');
+ assert.equal(onlineReleaseMigrationTarget('traffic'),'202609230051');
+ assert.doesNotThrow(()=>assertPendingOnlineReleaseMigrations('order-attention',[orderAttentionMigration]));
+ assert.doesNotThrow(()=>assertPendingOnlineReleaseMigrations('order-attention',[]));
+ for(const pending of [null,{},[orderAttentionMigration,orderAttentionMigration],
+  [{version:'202609230051'}],[{...orderAttentionMigration,version:202609240052}],
+  [{...orderAttentionMigration,name:'other'}],[{...orderAttentionMigration,fileName:'other.sql'}],
+  [orderAttentionMigration,{version:'202609240053'}],
+ ])assert.throws(()=>assertPendingOnlineReleaseMigrations('order-attention',pending),/unapproved_order_attention_migration/);
+ assert.throws(()=>assertPendingOnlineReleaseMigrations('traffic',[orderAttentionMigration]),/unapproved_pending_migration/);
+ for(const lane of ['performance','qr-export',undefined,'other']){
+  assert.throws(()=>onlineReleaseMigrationTarget(lane));
+  assert.throws(()=>assertPendingOnlineReleaseMigrations(lane,[]));
+ }
+});
+function orderAttentionProof(action='enable'){
+ return {action,verified:true,siteId:'10000000',epoch:'00000000-0000-4000-8000-000000000001',
+  generation:'9007199254740993',enabled:true,sourceRows:1,sourceBytes:3178,attentionCount:1,
+  sourceSha256:'a'.repeat(64),summarySha256:'b'.repeat(64)};
+}
+test('pilot release requires an explicit exact verified owner-scope proof with bounded counts and lossless version',()=>{
+ for(const action of ['enable','verify'])assert.deepEqual(assertOrderAttentionReleaseProof(orderAttentionProof(action),action),orderAttentionProof(action));
+ for(const value of [null,[],{}, {...orderAttentionProof(),action:'prepare'},
+  {...orderAttentionProof(),verified:false},{...orderAttentionProof(),siteId:'22222222'},
+  {...orderAttentionProof(),enabled:false},{...orderAttentionProof(),generation:12},
+  {...orderAttentionProof(),generation:'01'},{...orderAttentionProof(),generation:'9223372036854775808'},
+  {...orderAttentionProof(),epoch:'invalid'},{...orderAttentionProof(),sourceRows:513},
+  {...orderAttentionProof(),sourceBytes:8388609},{...orderAttentionProof(),attentionCount:-1},
+  {...orderAttentionProof(),sourceSha256:'x'.repeat(64)},
+  {...orderAttentionProof(),orders:[{customer:'must not be in a release proof'}]},
+ ])assert.throws(()=>assertOrderAttentionReleaseProof(value,'enable'),/order_attention_verification_invalid/);
+});
+test('pilot candidate starts disabled with all workers paused and analytics credentials unchanged',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const changes='),end=code.indexOf('const envText=',start);
+ const changes=runInNewContext(`${code.slice(start,end)}changes`,{lane:'order-attention',target:'a'.repeat(40),port:3105,
+  env:{FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'original'},randomBytes:()=>{throw Error('secret_rotation_forbidden');}});
+ assert.equal(changes.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID,'0');
+ assert.equal(changes.FAOLLA_BACKGROUND_JOBS_PAUSED,'1');
+ assert.equal(changes.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,'0');
+ assert.equal(changes.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED,'0');
+ for(const field of ['FAOLLA_TRAFFIC_ENABLED','FAOLLA_TRAFFIC_RETENTION_ENABLED','FAOLLA_TRAFFIC_SIGNING_SECRET','FAOLLA_ORDER_ATTENTION_OPERATION_TARGET'])assert.equal(Object.hasOwn(changes,field),false);
+ assert.match(code,/order_attention_analytics_baseline_invalid/);
+ assert.match(code,/FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==\(s.orderAttentionEnabled\?'10000000':'0'\)/);
+});
+test('pilot operational verifier executes the pinned candidate with invocation-only target and rejects unverified output',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyOrderAttentionSource('),code.indexOf('function setOrderAttentionCandidateFlag('));
+ const state={lane:'order-attention',target:'c'.repeat(40),directory:'/owned-candidate'};
+ for(const valid of [true,false]){
+  const env={FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'};const writes=[];const calls=[];
+  const context={s:state,command:'enable',operation:'/private-operation',assertOrderAttentionReleaseProof,
+   candidateEnvironment:()=>env,fail:message=>{throw Error(message);},atomic:(...args)=>writes.push(args),
+   run:(command,args,options)=>{
+    if(command==='git')return args[0]==='rev-parse'?state.target:'';
+    calls.push({command,args:Array.from(args),cwd:options.cwd,target:options.env.FAOLLA_ORDER_ATTENTION_OPERATION_TARGET});
+    return JSON.stringify({...orderAttentionProof(),verified:valid});
+   }};
+  if(valid)runInNewContext(`${verifier}verifyOrderAttention(s,command)`,context);
+  else assert.throws(()=>runInNewContext(`${verifier}verifyOrderAttention(s,command)`,context),/order_attention_verification_invalid/);
+  assert.deepEqual(calls,[{command:'node',args:['--import','tsx','scripts/order-attention-pilot.ts','enable'],cwd:state.directory,target:state.target}]);
+  assert.equal(Object.hasOwn(env,'FAOLLA_ORDER_ATTENTION_OPERATION_TARGET'),false);
+  assert.equal(writes.length,valid?1:0);
+ }
+});
+test('actual pilot database branch backs up before exactly 052 and requires enable proof before candidate restart',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf("}else if(action==='database'){")+"}else if(action==='database'){".length;
+ const end=code.indexOf("}else if(action==='activate'){",start);
+ const branch=code.slice(start,end).replaceAll('import.meta.url','controllerModuleUrl');
+ for(const proofValid of [true,false]){
+  const calls=[];let migrated=false;
+  const s={lane:'order-attention',status:'staged',directory:'/candidate',oldDirectory:'/old',name:'candidate'};
+  const task=runInNewContext(`(async()=>{${branch}})()`,{
+   s,operation:'/operation',controllerModuleUrl:import.meta.url,URL,
+   assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,
+   configUnchanged:()=>calls.push('config'),verifyCandidate:()=>calls.push('candidate'),verifyBase:async()=>calls.push('baseline'),
+   verifyOrderAttentionSource:()=>calls.push('source'),
+   applyProductionDatabaseMigrations:async input=>{calls.push(input.apply?'apply':'dry');assert.equal(input.through,'202609240052');if(input.apply)migrated=true;return {pending:migrated?[]:[orderAttentionMigration]};},
+   createProductionDatabaseBackup:async()=>{calls.push('backup');return {};},
+   verifyProductionDatabaseBackup:async()=>{calls.push('verify-backup');return {};},
+   verifyOrderAttention:()=>{calls.push('enable-proof');if(!proofValid)throw Error('proof_failed');return orderAttentionProof();},
+   setOrderAttentionCandidateFlag:(_,flag)=>{assert.equal(flag,'10000000');calls.push('candidate-enable');},
+   smoke:async()=>calls.push('smoke'),save:()=>calls.push('save'),atomic:()=>{},writeFileSync:()=>{},
+   fileURLToPath:()=>'/controller',randomBytes:()=>({toString:()=> 'private-backup-key'}),
+   run:(command,args)=>{assert.equal(command,'git');assert.deepEqual(Array.from(args),['rev-parse','HEAD']);return 'd'.repeat(40);},
+   fail:message=>{throw Error(message);},console:{log:()=>{}},
+  });
+  if(proofValid){await task;assert.equal(s.status,'database-ready');}
+  else {await assert.rejects(task,/proof_failed/);assert.equal(s.status,'staged');assert.equal(calls.includes('candidate-enable'),false);}
+  assert.ok(calls.indexOf('verify-backup')>calls.indexOf('backup'));
+  assert.ok(calls.indexOf('apply')>calls.indexOf('verify-backup'));
+  assert.ok(calls.indexOf('enable-proof')>calls.indexOf('apply'));
+  if(proofValid)assert.ok(calls.indexOf('candidate-enable')>calls.indexOf('enable-proof'));
+ }
+});
+test('pilot re-verifies before static publication and restores web traffic before disabling only its candidate',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const activate=code.indexOf("}else if(action==='activate'){");
+ assert.ok(code.indexOf("verifyOrderAttention(s,'verify')",activate)<code.indexOf('publishStatic(',activate));
+ const start=code.indexOf('function restoreOrderAttentionConfigs('),end=code.indexOf("if(process.platform",start);
+ const calls=[];
+ runInNewContext(`${code.slice(start,end)}restoreOrderAttentionConfigs({lane:'order-attention'})`,{
+  restoreConfigs:()=>calls.push('restore-owned-web'),
+  setOrderAttentionCandidateFlag:(_,flag)=>calls.push(`candidate:${flag}`),
+ });
+ assert.deepEqual(calls,['restore-owned-web','candidate:0']);
+ const flag=code.slice(code.indexOf('function setOrderAttentionCandidateFlag('),start);
+ assert.match(flag,/run\('pm2',\['restart',s.name,'--update-env'\]/);
+ assert.doesNotMatch(flag,/faolla_order_attention|disable'|merchant-space'/);
 });
