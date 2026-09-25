@@ -3,7 +3,7 @@
 import {
   useCallback,
   useDeferredValue,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -57,6 +57,14 @@ type CustomerImportPreparation = {
   siteId: string;
   kind: "file" | "template";
 };
+
+type CustomerReadPending = {
+  controller: AbortController;
+  timeout: number;
+  timedOut: boolean;
+  promise: Promise<void>;
+};
+type CustomerReadScope = { active: boolean; pending: CustomerReadPending | null };
 
 const SOURCE_OPTIONS: Array<{
   value: MerchantCustomerSource | "all";
@@ -604,7 +612,10 @@ export default function MerchantCustomerManager({
   const importPreparationRef = useRef<CustomerImportPreparation | null>(null);
   const importActionRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const requestSequenceRef = useRef(0);
+  // A new owner for every rendered site incarnation (including A -> B -> A).
+  // Each effect setup also creates a distinct scope for Strict Mode/reconnect.
+  const requestOwner = useMemo(() => ({ current: null as CustomerReadScope | null }), [siteId]);
+  const [refreshing, setRefreshing] = useState(false);
   const desktopList = useSyncExternalStore(
     subscribeMerchantCustomerViewport,
     getMerchantCustomerDesktopSnapshot,
@@ -618,22 +629,35 @@ export default function MerchantCustomerManager({
       ? "准备模板中..."
       : "导入中...";
 
-  useEffect(() => () => {
-    // A lazy chunk/file may finish after the manager has closed or switched
-    // merchants. Only invalidate preparation; an already sent import POST
-    // retains its existing completion behavior.
-    const preparation = importPreparationRef.current;
-    if (preparation?.siteId === siteId) {
-      importPreparationRef.current = null;
-      importActionRef.current = false;
-      // Clearing only the ref would leave cancelled UI state behind: returning
-      // to this merchant could otherwise revive a permanently disabled dialog.
-      setPreparingImport((current) => current === preparation ? null : current);
-    }
+  useLayoutEffect(() => {
+    // Reset display state on the next setup, never from unmount cleanup; an
+    // A -> B -> A return must not revive an invalidated preparation's busy UI.
+    setPreparingImport(null);
+    return () => {
+      // A lazy chunk/file can settle before passive cleanup. Invalidate at the
+      // commit boundary, without setState, downloads or toasts on unmount.
+      // Already sent import POSTs still finish under their original scope.
+      const preparation = importPreparationRef.current;
+      if (preparation?.siteId === siteId) {
+        importPreparationRef.current = null;
+        importActionRef.current = false;
+      }
+    };
   }, [siteId]);
 
   const loadCustomers = useCallback(
-    async (options: { quiet?: boolean } = {}) => {
+    async (options: { quiet?: boolean; fresh?: boolean } = {}) => {
+      const scope = requestOwner.current;
+      if (!scope?.active) return;
+      if (scope.pending) {
+        if (!options.fresh) return scope.pending.promise;
+        // A successful write/conflict requires a read begun after the write.
+        // Aborting here cannot roll back server work already in progress.
+        const previous = scope.pending;
+        scope.pending = null;
+        window.clearTimeout(previous.timeout);
+        previous.controller.abort();
+      }
       const normalizedSiteId = trimText(siteId, 80);
       if (!normalizedSiteId) {
         setCustomers([]);
@@ -641,51 +665,89 @@ export default function MerchantCustomerManager({
         setError("当前商户尚未准备好客户资料");
         return;
       }
-      const requestSequence = ++requestSequenceRef.current;
       if (!options.quiet) setLoading(true);
+      setRefreshing(true);
       setError("");
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 25_000);
-      try {
-        const { response, data: payload } = await fetchJsonWithAdminPerformance<CustomerListPayload>(
-          `/api/merchant-customers?siteId=${encodeURIComponent(normalizedSiteId)}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          },
-          { jsonErrorFallback: null },
-        );
-        if (!response.ok || !Array.isArray(payload?.customers)) {
-          throw new Error(getErrorMessage(payload));
+      const pending = { controller, timeout: 0, timedOut: false, promise: Promise.resolve() };
+      scope.pending = pending;
+      const ownsRequest = () => scope.active && requestOwner.current === scope && scope.pending === pending;
+      pending.timeout = window.setTimeout(() => {
+        pending.timedOut = true;
+        controller.abort();
+      }, 25_000);
+      pending.promise = (async () => {
+        try {
+          const { response, data: payload } = await fetchJsonWithAdminPerformance<CustomerListPayload>(
+            `/api/merchant-customers?siteId=${encodeURIComponent(normalizedSiteId)}`,
+            {
+              cache: "no-store",
+              signal: controller.signal,
+            },
+            { jsonErrorFallback: null },
+          );
+          if (!ownsRequest()) return;
+          if (pending.timedOut) throw new Error("客户资料加载超时，请稍后重试");
+          if (!response.ok || !Array.isArray(payload?.customers)) {
+            throw new Error(getErrorMessage(payload));
+          }
+          setCustomers(payload.customers);
+          setVersion(trimText(payload.version, 64));
+          setWarnings(
+            Array.isArray(payload.warnings)
+              ? payload.warnings.map((item) => trimText(item, 80)).filter(Boolean)
+              : [],
+          );
+        } catch (loadError) {
+          if (!ownsRequest()) return;
+          const message =
+            pending.timedOut
+              ? "客户资料加载超时，请稍后重试"
+              : loadError instanceof Error
+                ? loadError.message
+                : "客户资料加载失败";
+          setError(message);
+        } finally {
+          window.clearTimeout(pending.timeout);
+          if (ownsRequest()) {
+            scope.pending = null;
+            setLoading(false);
+            setRefreshing(false);
+          }
         }
-        if (requestSequence !== requestSequenceRef.current) return;
-        setCustomers(payload.customers);
-        setVersion(trimText(payload.version, 64));
-        setWarnings(
-          Array.isArray(payload.warnings)
-            ? payload.warnings.map((item) => trimText(item, 80)).filter(Boolean)
-            : [],
-        );
-      } catch (loadError) {
-        if (requestSequence !== requestSequenceRef.current) return;
-        const message =
-          loadError instanceof DOMException && loadError.name === "AbortError"
-            ? "客户资料加载超时，请稍后重试"
-            : loadError instanceof Error
-              ? loadError.message
-              : "客户资料加载失败";
-        setError(message);
-      } finally {
-        window.clearTimeout(timeout);
-        if (requestSequence === requestSequenceRef.current) setLoading(false);
-      }
+      })();
+      return pending.promise;
     },
-    [siteId],
+    [siteId, requestOwner],
   );
 
-  useEffect(() => {
+  // Commit-time cleanup prevents an old response from updating the new site
+  // between a commit and passive effects; reset tenant-specific UI before paint.
+  useLayoutEffect(() => {
+    const scope: CustomerReadScope = { active: true, pending: null };
+    requestOwner.current = scope;
+    setCustomers([]);
+    setVersion("");
+    setWarnings([]);
+    setLoading(false);
+    setRefreshing(false);
+    setEditingCustomer(null);
+    setSaving(false);
+    setImportParsed(null);
+    setImportFileName("");
+    setImporting(false);
+    importActionRef.current = false;
     void loadCustomers();
-  }, [loadCustomers]);
+    return () => {
+      scope.active = false;
+      if (requestOwner.current === scope) requestOwner.current = null;
+      if (scope.pending) {
+        window.clearTimeout(scope.pending.timeout);
+        scope.pending.controller.abort();
+        scope.pending = null;
+      }
+    };
+  }, [loadCustomers, requestOwner]);
 
   const filteredCustomers = useMemo(
     () =>
@@ -728,7 +790,9 @@ export default function MerchantCustomerManager({
   );
 
   const handleSave = async (customer: MerchantCustomerProfile) => {
-    if (saving) return;
+    const scope = requestOwner.current;
+    if (saving || !scope?.active) return;
+    const isCurrent = () => scope.active && requestOwner.current === scope;
     setSaving(true);
     try {
       const response = await runWithMerchantOperationContext(
@@ -745,20 +809,22 @@ export default function MerchantCustomerManager({
           }),
       );
       const payload = (await response.json().catch(() => null)) as CustomerMutationPayload | null;
+      if (!isCurrent()) return;
       if (!response.ok) {
-        if (response.status === 409) void loadCustomers({ quiet: true });
+        if (response.status === 409) void loadCustomers({ quiet: true, fresh: true });
         throw new Error(getErrorMessage(payload));
       }
       setEditingCustomer(null);
       showGlobalToast("客户资料已保存", { tone: "success" });
-      await loadCustomers({ quiet: true });
+      await loadCustomers({ quiet: true, fresh: true });
     } catch (saveError) {
+      if (!isCurrent()) return;
       showGlobalToast(
         saveError instanceof Error ? saveError.message : "客户资料保存失败",
         { tone: "error" },
       );
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 
@@ -828,6 +894,9 @@ export default function MerchantCustomerManager({
   };
 
   const handleImport = async () => {
+    const scope = requestOwner.current;
+    if (!scope?.active) return;
+    const isCurrent = () => scope.active && requestOwner.current === scope;
     if (importActionRef.current || !importParsed?.customers.length) return;
     importActionRef.current = true;
     setImporting(true);
@@ -851,8 +920,9 @@ export default function MerchantCustomerManager({
           }),
       );
       const payload = (await response.json().catch(() => null)) as CustomerMutationPayload | null;
+      if (!isCurrent()) return;
       if (!response.ok) {
-        if (response.status === 409) void loadCustomers({ quiet: true });
+        if (response.status === 409) void loadCustomers({ quiet: true, fresh: true });
         throw new Error(getErrorMessage(payload));
       }
       const created = Number(payload?.created ?? 0);
@@ -865,15 +935,18 @@ export default function MerchantCustomerManager({
       setImportOpen(false);
       setImportParsed(null);
       setImportFileName("");
-      await loadCustomers({ quiet: true });
+      await loadCustomers({ quiet: true, fresh: true });
     } catch (importError) {
+      if (!isCurrent()) return;
       showGlobalToast(
         importError instanceof Error ? importError.message : "客户导入失败",
         { tone: "error" },
       );
     } finally {
-      importActionRef.current = false;
-      setImporting(false);
+      if (isCurrent()) {
+        importActionRef.current = false;
+        setImporting(false);
+      }
     }
   };
 
@@ -904,9 +977,9 @@ export default function MerchantCustomerManager({
             type="button"
             className="h-10 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void loadCustomers()}
-            disabled={loading}
+            disabled={refreshing}
           >
-            {loading ? "刷新中..." : "刷新"}
+            {refreshing ? "刷新中..." : "刷新"}
           </button>
           <button
             type="button"
