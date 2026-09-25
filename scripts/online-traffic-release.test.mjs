@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext} from 'node:vm';
-import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
 
 test('QR export lane admits only the requested client feature and exact release tooling',()=>{
  const feature=['src/lib/merchantBusinessCardQrExport.ts','src/lib/merchantBusinessCardQrExport.test.ts','src/components/admin/BusinessCardQrExportDialog.tsx','src/components/admin/MerchantBusinessCardManager.tsx'];
@@ -740,9 +740,10 @@ test('actual pilot database branch backs up before exactly 052 and requires enab
 });
 test('pilot re-verifies before static publication and restores web traffic before disabling only its candidate',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const activate=code.indexOf("}else if(action==='activate'){");
+ const activate=code.indexOf('async function activateCandidate(');
  assert.ok(code.indexOf("verifyOrderAttention(s,'verify')",activate)<code.indexOf('publishStatic(',activate));
- const start=code.indexOf('function restoreOrderAttentionConfigs('),end=code.indexOf("if(process.platform",start);
+ assert.match(code,/else if\(action==='activate'\)\{\s*if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\);\s*await activateCandidate\(s\);/);
+ const start=code.indexOf('function restoreOrderAttentionConfigs('),end=code.indexOf('function recoveryToolIdentity(',start);
  const calls=[];
  runInNewContext(`${code.slice(start,end)}restoreOrderAttentionConfigs({lane:'order-attention'})`,{
   restoreConfigs:()=>calls.push('restore-owned-web'),
@@ -752,4 +753,120 @@ test('pilot re-verifies before static publication and restores web traffic befor
  const flag=code.slice(code.indexOf('function setOrderAttentionCandidateFlag('),start);
  assert.match(flag,/run\('pm2',\['restart',s.name,'--update-env'\]/);
  assert.doesNotMatch(flag,/faolla_order_attention|disable'|merchant-space'/);
+});
+
+function staticIncident(){
+ const target='1740b254851c11302b6c7fef536cf9ef92d75637',baseline='28c136d27d6f235683cb2eadbf2a5f1fceb34bac';
+ const directory='/www/wwwroot/merchant-space.web-releases/';
+ const active={target:baseline,port:3109,directory:`${directory}28c136d27d6f-online`,name:'merchant-space-online-28c136d27d6f'};
+ const s={target,baseline,status:'rolled-back',lane:'public-catalog-batch',port:3110,oldPort:3109,
+  directory:`${directory}1740b254851c-online`,name:'merchant-space-online-1740b254851c',
+  oldDirectory:active.directory,oldName:active.name,previousActive:{...active},staticFiles:323,
+  startedAt:'2026-09-25T08:33:33.264Z',rolledBackAt:'2026-09-25T08:37:03.614Z',
+  baseDirectory:'/www/wwwroot/merchant-space.releases/base',
+  processes:Array.from({length:11},(_,i)=>({cwd:`${directory}old${i}`,name:`old${i}`,pid:i+1})),
+  configs:{'test.conf':{oldHash:'old',newHash:'new'}},
+ };
+ return {s,active,target,baseline};
+}
+test('static recovery tooling admits exactly six operational files, never application or authority changes',()=>{
+ assert.equal(STATIC_RECOVERY_TOOL_FILES.length,6);
+ assert.doesNotThrow(()=>assertStaticRecoveryToolScope(STATIC_RECOVERY_TOOL_FILES));
+ for(const files of [[],null,['scripts/online-traffic-release.mjs'],
+  [...STATIC_RECOVERY_TOOL_FILES,'src/lib/merchantCatalogStore.ts'],
+  [...STATIC_RECOVERY_TOOL_FILES,'scripts/deploy.production.sh'],
+  [...STATIC_RECOVERY_TOOL_FILES,'package-lock.json'],
+  [...STATIC_RECOVERY_TOOL_FILES,'.github/workflows/ci.yml'],
+  [...STATIC_RECOVERY_TOOL_FILES,'scripts/online-static-recovery-extra.mjs']]){
+  assert.throws(()=>assertStaticRecoveryToolScope(files),/static_recovery_tool_scope_rejected/);
+ }
+ // No application stage lane inherits the recovery tool's authority.
+ assert.throws(()=>onlineReleaseLane(STATIC_RECOVERY_TOOL_FILES));
+ assert.throws(()=>onlineReleaseLane([...publicCatalogBatchFiles,'scripts/online-static-recovery.mjs']));
+});
+test('static retry is pinned to the explicit rolled-back incident and still-owned live baseline',()=>{
+ const {s,active,target,baseline}=staticIncident();
+ assert.doesNotThrow(()=>assertCatalogStaticRecoveryState(s,active,target,baseline));
+ for(const patch of [{target:'a'.repeat(40)},{baseline:'b'.repeat(40)},{status:'ready-no-database'},
+  {status:'active'},{status:'preparing'},{lane:'traffic'},{lane:'order-attention'},{port:3109},{oldPort:3108},
+  {directory:'/other'},{oldDirectory:'/other'},{name:'other'},{oldName:'other'},
+  {startedAt:'2026-09-25T08:32:33.264Z'},{rolledBackAt:'2026-09-25T08:38:03.614Z'},
+  {staticFiles:322},{processes:[]},{previousActive:null},{previousActive:{...active,name:'other'}}]){
+  assert.throws(()=>assertCatalogStaticRecoveryState({...s,...patch},active,target,baseline),/static_recovery_incident_not_owned/);
+ }
+ for(const patch of [{target:'a'.repeat(40)},{port:3110},{directory:'/other'},{name:'other'}]){
+  assert.throws(()=>assertCatalogStaticRecoveryState(s,{...active,...patch},target,baseline),/static_recovery_incident_not_owned/);
+ }
+ assert.throws(()=>assertCatalogStaticRecoveryState(s,active,target,undefined));
+ assert.throws(()=>assertCatalogStaticRecoveryState(s,active,'c'.repeat(40),baseline));
+});
+test('build umask is restored on both success and failure, without widening private file modes',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf("console.log('online_build_started')"),end=code.indexOf("if(!existsSync(`${s.directory}/.next/BUILD_ID`))",start);
+ for(const shouldFail of [false,true]){
+  let mask=0o077;const calls=[];
+  const execute=()=>runInNewContext(code.slice(start,end),{
+   s:{directory:'/candidate'},env:{},console:{log(){}},
+   process:{umask(next){const before=mask;mask=next;calls.push(next);return before;}},
+   run(command,args){assert.equal(command,'nice');assert.equal(mask,0o022);assert.deepEqual(Array.from(args),['-n','10','npm','run','build']);if(shouldFail)throw Error('build_failed');},
+  });
+  if(shouldFail)assert.throws(execute,/build_failed/);else execute();
+  assert.equal(mask,0o077);assert.deepEqual(calls,[0o022,0o077]);
+ }
+ assert.match(code,/writeFileSync\(`\$\{s.directory\}\/\.env.local`[^\n]+mode:0o600,flag:'wx'/);
+});
+test('actual static recovery revalidates source, tests, metadata and public bytes before allowing activation',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const implementation=code.slice(code.indexOf('async function recoverStaticPermissions('),code.indexOf('async function activateCandidate('));
+ for(const stop of [null,'baseline','config','candidate','tool','tests','plan','public']){
+  const {s,active,target,baseline}=staticIncident();const calls=[];
+  const gate=name=>{calls.push(name);if(stop===name)throw Error(`failed_${name}`);};
+  const context={s,target,baseline,app:'/www/wwwroot/merchant-space',operation:'/operation',activeFile:'/active',Buffer,
+   assertCatalogStaticRecoveryState,WEB_RELEASE_FILES:['test.conf'],
+   safeFile:path=>path==='/active'?JSON.stringify(active):path.includes('/after-')?'new':path.includes('/before-')?'old':'lock',
+   hash:value=>String(value),readFileSync:()=>Buffer.from('private'),
+   lstatSync:()=>({isSymbolicLink:()=>false,isFile:()=>true,uid:0,mode:0o100600}),
+   verifyBase:async()=>gate('baseline'),configUnchanged:()=>gate('config'),verifyCandidate:()=>gate('candidate'),
+   recoveryToolIdentity:()=>{gate('tool');return {revision:'b'.repeat(40),directory:'/tool'};},
+   candidateEnvironment:()=>({}),existsSync:()=>true,
+   realpathSync:path=>path==='/www/wwwroot/merchant-space/.next/static'?`${s.baseDirectory}/.next/static`:path,
+   run:(command,args)=>{
+    if(command==='git')return args[0]==='status'?'':args[0]==='show'?'lock':args[1]==='HEAD^{tree}'?'a0ba91eb5fd76ab6fe33805baf403eaaac4dddf4':s.target;
+    assert.equal(command,'node');assert.equal(args.includes('build'),false);gate('tests');return '';
+   },
+   smoke:async()=>gate('smoke'),writeFileSync:(_path,_text,options)=>{assert.equal(options.mode,0o600);assert.equal(options.flag,'wx');gate('audit');},
+   planStaticPermissionRecovery:()=>{gate('plan');return {manifest:{directories:[],files:Array.from({length:191},(_,i)=>({relativePath:`chunks/${i}.js`,sha256:'asset'}))},apply:()=>{gate('repair');return {ok:true};}};},
+   request:async()=>{gate('public');return {arrayBuffer:async()=>Buffer.from('asset')};},
+   save:()=>gate('save'),fail:message=>{throw Error(message);},
+  };
+  const task=runInNewContext(`${implementation}recoverStaticPermissions(s)`,context);
+  if(stop){await assert.rejects(task,new RegExp(`failed_${stop}`));assert.equal(calls.includes('save'),false);if(stop!=='public')assert.equal(calls.includes('repair'),false);}
+  else {await task;assert.equal(calls.filter(x=>x==='public').length,191);assert.ok(calls.indexOf('audit')<calls.indexOf('repair'));assert.ok(calls.indexOf('repair')<calls.indexOf('public'));assert.equal(calls.at(-1),'save');}
+  assert.equal(s.status,'rolled-back','recovery must not pretend the application is ready or active');
+ }
+ assert.match(code,/else if\(action==='retry-static'\)\{\s*await recoverStaticPermissions\(s\);await activateCandidate\(s\);/);
+ assert.doesNotMatch(implementation,/worktree','add|\['restart'|\['start'|applyProductionDatabaseMigrations|createProductionDatabaseBackup|s.status=/);
+});
+test('shared activation preserves normal cutover, all public checks and owned rollback on retry failure',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const implementation=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('if(process.platform'));
+ for(const failedSmoke of [false,true]){
+  const {s}=staticIncident();const calls=[];
+  const task=runInNewContext(`${implementation}activateCandidate(s)`,{
+   s,app:'/www/wwwroot/merchant-space',proxy:'/proxy',operation:'/operation',activeFile:'/active',nginx:'/nginx',WEB_RELEASE_FILES:['test.conf'],
+   verifyOrderAttention:()=>calls.push('pilot-guard'),realpathSync:()=>'/www/wwwroot/merchant-space.releases/base/.next/static',
+   publishStatic:()=>{calls.push('static');return 323;},save:()=>calls.push(`state:${s.status}`),
+   atomic:(path)=>calls.push(path==='/active'?'active-record':'proxy-write'),safeFile:()=> 'owned-config',
+   run:(command,args)=>{calls.push(command==='/nginx'?`nginx:${args.join(',')}`:`pm2:${args.join(',')}`);},
+   smoke:async(_s,publicMode)=>{assert.equal(publicMode,true);calls.push('public-smoke');if(failedSmoke)throw Error('expected_public_failure');return 25;},
+   request:async url=>{assert.equal(url,'https://launch.faolla.com/login');calls.push('launch');},
+   verifyBase:async()=>calls.push('baseline'),verifyCandidate:()=>calls.push('candidate'),configUnchanged:()=>calls.push('config'),
+   restoreConfigs:()=>{calls.push('owned-rollback');s.status='rolled-back';},restoreOrderAttentionConfigs:()=>{throw Error('unexpected_pilot_write');},
+   setTimeout:callback=>callback(),console:{error(){}},fail:message=>{throw Error(message);},
+  });
+  if(failedSmoke){await assert.rejects(task,/public_verification_failed/);assert.equal(calls.filter(x=>x==='public-smoke').length,8);assert.equal(calls.at(-1),'owned-rollback');assert.equal(calls.includes('pm2:save'),false);assert.equal(calls.includes('active-record'),false);}
+  else {await task;assert.equal(s.status,'active');assert.ok(calls.indexOf('launch')>calls.indexOf('public-smoke'));assert.ok(calls.indexOf('state:active')>calls.indexOf('config'));assert.equal(calls.at(-1),'active-record');}
+  assert.ok(calls.indexOf('pilot-guard')<calls.indexOf('static'));assert.ok(calls.indexOf('static')<calls.indexOf('proxy-write'));
+  assert.ok(calls.indexOf('nginx:-t')<calls.indexOf('nginx:-s,reload'));
+ }
 });
