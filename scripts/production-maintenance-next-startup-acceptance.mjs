@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {homedir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {STARTUP_PROCESS_FACT_KEYS as keys,captureStartupFixtureProcessFact} from './test-helpers/startup-process-fact.mjs';
 if(process.platform!=='linux'||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_NEXT_STARTUP_ACCEPTANCE!=='1'||process.getuid?.()!==0)throw Error('isolated_next_opt_in_required');
 const scripts=dirname(fileURLToPath(import.meta.url))+'/';
 const {captureProcessFact,captureSupervisionSnapshot}=await import(scripts+'check-production-runtime-supervision.mjs');
@@ -34,8 +35,8 @@ if(!existsSync(npmCli))throw Error('isolated_npm_cli_missing');
 const install=spawnSync(realpathSync(process.execPath),[npmCli,'install','--prefix',fixture+'/dependencies','--cache',fixture+'/cache','--registry=https://registry.npmjs.org','--ignore-scripts','--no-audit','--no-fund','pm2@6.0.14'],{env:{...env,PATH:dirname(process.execPath)+':/usr/bin:/bin'},cwd:fixture,encoding:'utf8',timeout:180000});
 if(install.status!==0){console.log(JSON.stringify({fixtureInstall:false,status:install.status,errorCode:install.error?.code??null,signal:install.signal}));throw Error('isolated_pm2_install_failed');}
 const cli=args=>spawnSync(realpathSync(process.execPath),[fixture+'/dependencies/node_modules/pm2/bin/pm2',...args],{env,cwd:fixture,encoding:'utf8',timeout:20000,maxBuffer:100000});
-const boot=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();const keys=['pid','parentPid','startTicks','processIdentity','uid','cwd','cwdIdentity','executable','executableIdentity','commandLineDigest'];
-const fact=pid=>Object.fromEntries(keys.map(k=>[k,captureProcessFact(pid)[k]]));
+const boot=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
+const fact=pid=>captureStartupFixtureProcessFact(pid,captureProcessFact);
 let daemon,initial;
 try{
 const b=cli(['ping']);if(b.status!==0)throw Error('fixture_bootstrap');daemon=fact(Number(readFileSync(home+'/pm2.pid','utf8')));
