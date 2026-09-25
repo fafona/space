@@ -785,6 +785,8 @@ export function SitePageClient({
           bookingSiteId={site?.id ?? siteId}
           bookingSiteName={effectiveMerchantName}
           productCartEnabled={orderManagementEnabled}
+          productCatalogBatchEnabled
+          productCatalogPlanId={activePlan?.id}
           bookingInteractive
           bookingViewport={isMobileViewport ? "mobile" : "desktop"}
           onNavigatePage={(pageId) => {

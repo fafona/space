@@ -164,3 +164,32 @@ The existing guarded build, exact main/ancestor/dependency checks, original
 process identities, maintenance-state and proxy hashes, immutable asset
 collision rules, public smoke and owned web rollback remain mandatory. No port
 range, retention policy or cleanup authority changes in this lane.
+
+## Public catalog batching lane (2026-09-25)
+
+`public-catalog-batch` is a distinct exact allowlist selected only by
+`src/app/api/orders/catalog/public/batch-route-handler.ts`. It admits the public
+read POST, explicit public-page integration, protocol/coordinator/hook and their
+tests, order-authority regression tests, the isolated browser harness and phase
+notes, four release files, and the four already-reviewed startup fixture files
+merged since the live baseline. It does not expand an older lane. The existing
+GET route facade and handler, order writers, stores, permission logic, workflows, dependencies,
+migrations and arbitrary neighboring paths remain excluded.
+
+Use the actual owned live baseline, not an undeployed main commit. Run `stage`
+then `activate`; successful staging enters `ready-no-database`, which activation
+requires. Every database entrypoint
+rejects this lane before backup, migration or pilot operations. Analytics must
+remain enabled with its existing nonempty signing secret, and the existing
+`10000000` attention pilot must remain enabled. Recheck those values against the
+candidate runtime configuration. Do not alter retention or restart existing
+workers; pause background work only in the new web candidate.
+
+Stage runs batch/GET/protocol/coordinator/hook regressions, orders and product
+catalog compatibility, read-index, startup helper unit tests and the unchanged
+historical build/route evidence suites, followed
+by the existing three QR-preview/origin/release safety tests. The real startup
+acceptance fixture is not run on production. Existing guarded build, exact main
+and dependency checks, process/configuration/maintenance ownership, candidate
+and public smoke, immutable assets and owned rollback stay mandatory. This lane
+does not extend the port range or authorize cleanup.

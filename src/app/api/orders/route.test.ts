@@ -341,6 +341,68 @@ test("POST rejects when an operating collection is unbound before persistence", 
   await assertFreshCatalogRejected(response, harness);
 });
 
+for (const availability of ["sold_out", "hidden"] as const) {
+  test(`POST rejects when an operating product becomes ${availability} before persistence without a revision change`, async () => {
+    const latestCatalog = operatingCatalog(3);
+    latestCatalog.products[0]!.availability = availability;
+    const harness = scenarioDependencies({
+      snapshots: [snapshotSite(), snapshotSite()],
+      catalogs: [operatingCatalog(3), latestCatalog],
+      publishedSites: [publishedSite(), publishedSite()],
+    });
+
+    const response = await handleMerchantOrderPost(
+      orderRequest({ operating: true }),
+      harness.dependencies,
+    );
+
+    await assertFreshCatalogRejected(response, harness);
+  });
+}
+
+const changedPublicationScenarios: Array<{ name: string; latest: PublishedSite | null }> = [
+  { name: "the published site disappears", latest: null },
+  {
+    name: "the requested product block is removed from an otherwise published site",
+    latest: {
+      ...publishedSite(),
+      blocks: [{ ...productBlock(), id: "another-product-block" }],
+    },
+  },
+  {
+    name: "the requested product block remains published only for mobile",
+    latest: {
+      ...publishedSite(),
+      blocks: [{
+        id: "mobile-plan-carrier",
+        type: "common",
+        props: {
+          pagePlanConfigMobile: {
+            plans: [{ pages: [{ blocks: [productBlock()] }] }],
+          },
+        },
+      } as unknown as Block],
+    },
+  },
+];
+
+for (const scenario of changedPublicationScenarios) {
+  test(`POST rejects before persistence when ${scenario.name}`, async () => {
+    const harness = scenarioDependencies({
+      snapshots: [snapshotSite(), snapshotSite()],
+      catalogs: [operatingCatalog(3), operatingCatalog(3)],
+      publishedSites: [publishedSite(), scenario.latest],
+    });
+
+    const response = await handleMerchantOrderPost(
+      orderRequest({ operating: true }),
+      harness.dependencies,
+    );
+
+    await assertFreshCatalogRejected(response, harness);
+  });
+}
+
 test("POST rejects a legacy quote when the block migrates to the operating catalog", async () => {
   const harness = scenarioDependencies({
     snapshots: [snapshotSite(), snapshotSite()],
@@ -388,6 +450,46 @@ test("POST rechecks entitlement and rejects when order permission is revoked", a
   assert.equal(harness.calls.personalSessions, 1);
   assert.equal(harness.calls.createOrders, 0);
   assert.equal(harness.calls.notifications, 0);
+  assert.deepEqual(harness.calls.events, [
+    "snapshot:0",
+    "catalog:0",
+    "published:0",
+    "personal-session",
+    "snapshot:1",
+    "catalog:1",
+    "published:1",
+  ]);
+});
+
+test("POST rejects when only order permission is revoked while product display remains enabled", async () => {
+  const latestSnapshot = snapshotSite();
+  assert(latestSnapshot.permissionConfig);
+  latestSnapshot.permissionConfig.allowOrderManagement = false;
+  assert.equal(latestSnapshot.permissionConfig.allowProductBlock, true);
+  const harness = scenarioDependencies({
+    snapshots: [snapshotSite(), latestSnapshot],
+    catalogs: [operatingCatalog(3), operatingCatalog(3)],
+    publishedSites: [publishedSite(), publishedSite()],
+  });
+
+  const response = await handleMerchantOrderPost(
+    orderRequest({ operating: true }),
+    harness.dependencies,
+  );
+
+  assert.equal(response.status, 403);
+  assertPrivateOrderHeaders(response);
+  assert.deepEqual(await response.json(), {
+    error: "order_create_failed",
+    message: "当前商户未启用订单管理功能，暂时无法查看或提交订单。",
+  });
+  assert.equal(harness.calls.snapshots, 2);
+  assert.equal(harness.calls.catalogs, 2);
+  assert.equal(harness.calls.publishedSites, 2);
+  assert.equal(harness.calls.personalSessions, 1);
+  assert.equal(harness.calls.createOrders, 0);
+  assert.equal(harness.calls.notifications, 0);
+  assert.deepEqual(harness.createdInputs, []);
   assert.deepEqual(harness.calls.events, [
     "snapshot:0",
     "catalog:0",
