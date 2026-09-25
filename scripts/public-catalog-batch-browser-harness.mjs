@@ -80,7 +80,8 @@ const server = createServer(async (request, response) => {
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   const send = (status, type, body) => response.writeHead(status, { 'Content-Type': type }).end(body);
-  if (url.pathname === '/api/orders/catalog/public' && ['GET', 'POST'].includes(request.method)) {
+  if ((url.pathname === '/api/orders/catalog/public' && request.method === 'GET') ||
+      (url.pathname === '/api/orders/catalog/public/batch' && request.method === 'POST')) {
     try {
       const chunks = []; let bytes = 0;
       for await (const chunk of request) { bytes += chunk.length; if (bytes > 65536) return send(413, 'application/json', '{"error":"qa_body_limit"}'); chunks.push(chunk); }

@@ -75,7 +75,7 @@ export function createPublicCatalogCoordinator({
   async function run(batch: Batch) {
     const blockIds = batch.entries.map((entry) => entry.blockId);
     try {
-      const response = await fetcher("/api/orders/catalog/public", {
+      const response = await fetcher("/api/orders/catalog/public/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",

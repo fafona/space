@@ -14,7 +14,7 @@ const nativeFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
   if (url.origin !== location.origin) throw new Error("QA outbound browser request forbidden");
-  const catalog = url.pathname === "/api/orders/catalog/public";
+  const catalog = url.pathname === "/api/orders/catalog/public" || url.pathname === "/api/orders/catalog/public/batch";
   const note: RequestNote = { method: init?.method ?? "GET", request: typeof init?.body === "string" ? init.body : url.search };
   if (catalog) { notes.push(note); notify(); }
   const response = await nativeFetch(input, { ...init, credentials: "omit" });

@@ -8,6 +8,7 @@ import { handleMerchantCatalogPublicPost, MAX_PUBLIC_CATALOG_BATCH_BODY_BYTES } 
 
 const siteId = "12345678";
 const url = "https://example.test/api/orders/catalog/public";
+const batchUrl = `${url}/batch`;
 const blockIds = ["one", "two", "empty", "wrong-viewport", "unpublished", "legacy"];
 function fixture(): MerchantCatalog {
   return {
@@ -47,7 +48,7 @@ function setup(catalog: MerchantCatalog | null = fixture(), allowed = true) {
   return { calls, dependencies };
 }
 function request(body: unknown) {
-  return new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return new Request(batchUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
 for (const viewport of ["desktop", "mobile"] as const) {
@@ -190,7 +191,7 @@ test("streamed body limit is enforced without content-length and cancels at the 
     },
     cancel() { cancelled = true; },
   });
-  const req = new Request(url, { method: "POST", body: oversized, duplex: "half" } as RequestInit);
+  const req = new Request(batchUrl, { method: "POST", body: oversized, duplex: "half" } as RequestInit);
   const response = await handleMerchantCatalogPublicPost(req, context.dependencies);
   assert.equal(response.status, 413);
   assert.equal(cancelled, true);
@@ -199,7 +200,7 @@ test("streamed body limit is enforced without content-length and cancels at the 
 
 test("body limit counts bytes rather than characters and rejects forged small content-length", async () => {
   const context = setup();
-  const req = new Request(url, {
+  const req = new Request(batchUrl, {
     method: "POST", headers: { "Content-Length": "1" },
     body: JSON.stringify({ siteId, viewport: "desktop", blockIds: ["one"], padding: "界".repeat(23000) }),
   });
@@ -211,11 +212,11 @@ test("body limit counts bytes rather than characters and rejects forged small co
 test("exact byte boundary succeeds and one byte over fails; malformed JSON/UTF-8 fail closed", async () => {
   const body = JSON.stringify({ siteId, viewport: "desktop", blockIds: ["one"] });
   const boundary = body.padEnd(MAX_PUBLIC_CATALOG_BATCH_BODY_BYTES, " ");
-  assert.equal((await handleMerchantCatalogPublicPost(new Request(url, { method: "POST", body: boundary }), setup().dependencies)).status, 200);
-  assert.equal((await handleMerchantCatalogPublicPost(new Request(url, { method: "POST", body: boundary + " " }), setup().dependencies)).status, 413);
+  assert.equal((await handleMerchantCatalogPublicPost(new Request(batchUrl, { method: "POST", body: boundary }), setup().dependencies)).status, 200);
+  assert.equal((await handleMerchantCatalogPublicPost(new Request(batchUrl, { method: "POST", body: boundary + " " }), setup().dependencies)).status, 413);
   for (const invalid of ["{", "", new Uint8Array([0xff])]) {
     const context = setup();
-    const response = await handleMerchantCatalogPublicPost(new Request(url, { method: "POST", body: invalid }), context.dependencies);
+    const response = await handleMerchantCatalogPublicPost(new Request(batchUrl, { method: "POST", body: invalid }), context.dependencies);
     assert.equal(response.status, 400);
     assert.deepEqual(context.calls, { snapshot: 0, catalog: 0, published: 0 });
   }

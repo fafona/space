@@ -98,7 +98,7 @@ test("one bounded POST batches trimmed IDs, and stable/reordered rerenders never
   h.coordinator.setBlocks([" a ", "b", "a"]);
   assert.equal(h.requests.length, 1);
   assert.deepEqual(h.requests[0].body, { siteId: SITE_ID, viewport: "desktop", blockIds: ["a", "b"] });
-  assert.equal(h.requests[0].url, "/api/orders/catalog/public");
+  assert.equal(h.requests[0].url, "/api/orders/catalog/public/batch");
   assert.equal(h.requests[0].init.method, "POST");
   assert.equal(h.requests[0].init.cache, "no-store");
   assert.deepEqual(h.requests[0].init.headers, { "Content-Type": "application/json" });

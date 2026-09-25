@@ -107,7 +107,7 @@ test('actual database branch refuses every no-database lane before backup, migra
 
 const publicCatalogBatchFiles=[
  'src/app/api/orders/catalog/public/batch-route-handler.ts',
- 'src/app/api/orders/catalog/public/route.ts','src/app/api/orders/catalog/public/batch-route.test.ts',
+ 'src/app/api/orders/catalog/public/batch/route.ts','src/app/api/orders/catalog/public/batch-route.test.ts',
  'src/app/api/orders/route.test.ts','src/app/site/[siteId]/SitePageClient.tsx',
  'src/components/blocks/BlockRenderer.tsx','src/components/blocks/ProductBlock.tsx',
  'src/lib/merchantPublicCatalog.ts','src/lib/merchantPublicCatalog.test.ts',
@@ -144,7 +144,7 @@ test('public catalog batch admits exactly 24 files and requires its distinct bat
 test('public catalog batch cannot admit old handlers, writers, guards or authority from another lane',()=>{
  const anchor=publicCatalogBatchFiles[0];
  for(const file of [
-  'src/app/api/orders/catalog/public/route-handler.ts','src/app/api/orders/catalog/public/route.test.ts',
+  'src/app/api/orders/catalog/public/route.ts','src/app/api/orders/catalog/public/route-handler.ts','src/app/api/orders/catalog/public/route.test.ts',
   'src/app/api/orders/catalog/route-handler.ts','src/app/api/orders/route-handler.ts',
   'src/app/api/bookings/route.ts','src/app/api/auth/signin/route.ts',
   'src/lib/merchantCatalog.ts','src/lib/merchantCatalogStore.ts','src/lib/merchantOrderCatalog.ts',
@@ -257,6 +257,7 @@ test('public catalog batch stage runs its exact regressions before the guarded b
   'src/lib/merchantCatalogReadIndex.test.ts','src/lib/merchantCatalog.test.ts',
   'src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts',
   'scripts/production-maintenance-next-startup-acceptance.test.mjs',
+  'scripts/production-maintenance-build-recovery-evidence.test.mjs','scripts/production-maintenance-route-build-evidence.test.mjs',
  ]);
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,tests.length+fixed.length);

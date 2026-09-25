@@ -136,7 +136,7 @@ const readIndexFiles = new Set([
 const publicCatalogBatchAnchor = 'src/app/api/orders/catalog/public/batch-route-handler.ts';
 const publicCatalogBatchFiles = new Set([
   publicCatalogBatchAnchor,
-  'src/app/api/orders/catalog/public/route.ts', 'src/app/api/orders/catalog/public/batch-route.test.ts',
+  'src/app/api/orders/catalog/public/batch/route.ts', 'src/app/api/orders/catalog/public/batch-route.test.ts',
   'src/app/api/orders/route.test.ts',
   'src/app/site/[siteId]/SitePageClient.tsx',
   'src/components/blocks/BlockRenderer.tsx', 'src/components/blocks/ProductBlock.tsx',

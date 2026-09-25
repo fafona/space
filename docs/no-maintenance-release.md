@@ -173,7 +173,7 @@ read POST, explicit public-page integration, protocol/coordinator/hook and their
 tests, order-authority regression tests, the isolated browser harness and phase
 notes, four release files, and the four already-reviewed startup fixture files
 merged since the live baseline. It does not expand an older lane. The existing
-GET handler, order writers, stores, permission logic, workflows, dependencies,
+GET route facade and handler, order writers, stores, permission logic, workflows, dependencies,
 migrations and arbitrary neighboring paths remain excluded.
 
 Use the actual owned live baseline, not an undeployed main commit. Run `stage`
@@ -186,7 +186,8 @@ candidate runtime configuration. Do not alter retention or restart existing
 workers; pause background work only in the new web candidate.
 
 Stage runs batch/GET/protocol/coordinator/hook regressions, orders and product
-catalog compatibility, read-index, and the startup helper unit tests, followed
+catalog compatibility, read-index, startup helper unit tests and the unchanged
+historical build/route evidence suites, followed
 by the existing three QR-preview/origin/release safety tests. The real startup
 acceptance fixture is not run on production. Existing guarded build, exact main
 and dependency checks, process/configuration/maintenance ownership, candidate
