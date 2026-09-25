@@ -5,6 +5,7 @@ import { Script } from "node:vm";
 import ts from "typescript";
 import * as customerTools from "@/lib/merchantCustomers";
 import * as customerPagination from "@/lib/merchantCustomerPagination";
+import * as customerSearch from "@/lib/merchantCustomerSearch";
 
 // Exercise the actual component handlers with a minimal hook/JSX harness. No
 // browser, production API, authentication session or real spreadsheet is used.
@@ -39,6 +40,7 @@ function harness() {
   let templateCalls = 0;
   let writes = 0;
   let reads = 0;
+  let searchCorpora = 0;
   let stateUpdatesAfterUnmount = 0;
   let stateUpdates = 0;
   let workbookError = false;
@@ -126,6 +128,12 @@ function harness() {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "@/lib/merchantCustomers") return customerTools;
       if (name === "@/lib/merchantCustomerPagination") return customerPagination;
+      if (name === "@/lib/merchantCustomerSearch") return {
+        compileMerchantCustomerSearch: (rows: customerTools.MerchantCustomerDirectoryItem[]) => {
+          searchCorpora += 1;
+          return customerSearch.compileMerchantCustomerSearch(rows);
+        },
+      };
       if (name === "@/lib/merchantCustomerListViewport") return {};
       if (name === "@/lib/performanceTelemetry") return {
         fetchJsonWithAdminPerformance: async (url: string, options?: { method?: string; signal?: AbortSignal }) => {
@@ -187,7 +195,7 @@ function harness() {
   }
   return {
     render, find, dialog, openImport, chooseFile, action, toasts, downloads, mutations, requests,
-    counts: () => ({ workbookLoads, parseCalls, templateCalls, writes, reads, stateUpdatesAfterUnmount, stateUpdates }),
+    counts: () => ({ workbookLoads, parseCalls, templateCalls, writes, reads, searchCorpora, stateUpdatesAfterUnmount, stateUpdates }),
     setWorkbookError: (value: boolean) => { workbookError = value; },
     delayWorkbook: (value: Promise<unknown>) => { workbookDelay = value; },
     setDesktop: (value: boolean) => { desktop = value; },
@@ -840,4 +848,74 @@ test("pending PATCH and POST are allowed to finish after unmount without UI upda
     assert.equal(app.readTimerCount(), 0);
     assert.deepEqual(app.toasts, []);
   }
+});
+
+test("actual customer search materializes once per queried row, then rebuilds only for a new GET array or site", async () => {
+  const { app, customers } = await loadedCustomerApp(3);
+  const otherSite = fixtureCustomers(2, "20000000");
+  app.setCustomerRows(otherSite, "20000000");
+  app.render();
+  const initialCorpora = app.counts().searchCorpora;
+  const originalNormalize = String.prototype.normalize;
+  let normalizations = 0;
+  String.prototype.normalize = function (this: string, form?: string) {
+    normalizations += 1;
+    return originalNormalize.call(this, form);
+  };
+  const query = (value: string) => {
+    const field = app.find(app.render(), (item) => item.type === "input" && item.props.placeholder === "名称 / 电话 / 邮箱 / 地址 / 税号 / 编号")!;
+    app.action(field, "onChange", { target: { value } });
+    app.render();
+  };
+  try {
+    query("c");
+    assert.equal(normalizations, 1 + 3 * 17);
+    query("cu");
+    query("customer");
+    assert.equal(normalizations, 3 + 3 * 17, "later keystrokes only normalize their query");
+    assert.equal(app.counts().searchCorpora, initialCorpora);
+    assert.equal(app.counts().reads, 1);
+    app.setDesktop(false); app.render();
+    assert.equal(normalizations, 3 + 3 * 17, "breakpoints do not rebuild or rerun search");
+    app.setCustomerRows([...customers]);
+    app.action(refreshButton(app), "onClick");
+    await flush();
+    app.render();
+    assert.equal(app.counts().searchCorpora, initialCorpora + 1);
+    assert.equal(normalizations, 4 + 6 * 17, "new array invalidates even when customer IDs/objects are equal");
+    query("customer 0");
+    assert.equal(normalizations, 5 + 6 * 17);
+    app.switchSite("20000000");
+    await flush();
+    app.render();
+    assert.equal(app.counts().searchCorpora, initialCorpora + 2);
+    assert.equal(normalizations, 6 + 8 * 17);
+    assert.equal(visibleCustomerRows(app).length, 2);
+    query("customer 00");
+    assert.equal(normalizations, 7 + 8 * 17);
+    assert.equal(app.counts().reads, 3);
+    assert.equal(app.counts().writes, 0);
+  } finally { String.prototype.normalize = originalNormalize; }
+});
+
+test("actual empty customer query only normalizes query text while source/status filters stay lazy", async () => {
+  const { app } = await loadedCustomerApp(5);
+  app.render();
+  const originalNormalize = String.prototype.normalize;
+  let normalizations = 0;
+  String.prototype.normalize = function (this: string, form?: string) {
+    normalizations += 1;
+    return originalNormalize.call(this, form);
+  };
+  try {
+    const source = app.find(app.render(), (item) => item.type === "select" && textContent(item).includes("全部来源"))!;
+    app.action(source, "onChange", { target: { value: "booking" } });
+    app.render();
+    const status = app.find(app.render(), (item) => item.type === "select" && textContent(item).includes("已归档"))!;
+    app.action(status, "onChange", { target: { value: "all" } });
+    app.render();
+    assert.equal(normalizations, 2, "no searchable customer field was normalized");
+    assert.equal(visibleCustomerRows(app).length, 2);
+    assert.equal(app.counts().reads, 1);
+  } finally { String.prototype.normalize = originalNormalize; }
 });

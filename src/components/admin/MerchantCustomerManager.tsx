@@ -12,13 +12,13 @@ import {
 } from "react";
 import {
   createEmptyMerchantCustomerProfile,
-  filterMerchantCustomerDirectory,
   type MerchantCustomerDirectoryItem,
   type MerchantCustomerProfile,
   type MerchantCustomerSource,
 } from "@/lib/merchantCustomers";
 import type { ParsedMerchantCustomerImport } from "@/lib/merchantCustomerImport";
 import { getMerchantCustomerPageWindow } from "@/lib/merchantCustomerPagination";
+import { compileMerchantCustomerSearch } from "@/lib/merchantCustomerSearch";
 import {
   getMerchantCustomerDesktopSnapshot,
   getMerchantCustomerServerSnapshot,
@@ -749,14 +749,15 @@ export default function MerchantCustomerManager({
     };
   }, [loadCustomers, requestOwner]);
 
+  const customerSearch = useMemo(() => compileMerchantCustomerSearch(customers), [customers]);
   const filteredCustomers = useMemo(
     () =>
-      filterMerchantCustomerDirectory(customers, {
+      customerSearch.filter({
         query: deferredQuery,
         source,
         status,
       }),
-    [customers, deferredQuery, source, status],
+    [customerSearch, deferredQuery, source, status],
   );
   // Both query versions participate: immediately leave an old page while a
   // deferred search is pending, and start the completed result on its first page.
