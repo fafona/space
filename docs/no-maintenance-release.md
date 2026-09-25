@@ -193,3 +193,49 @@ acceptance fixture is not run on production. Existing guarded build, exact main
 and dependency checks, process/configuration/maintenance ownership, candidate
 and public smoke, immutable assets and owned rollback stay mandatory. This lane
 does not extend the port range or authorize cleanup.
+
+## Explicit static permission incident recovery (2026-09-25)
+
+The user approved a narrow retry after candidate `1740b254851c11302b6c7fef536cf9ef92d75637`
+passed its build, 250 focused tests and candidate smoke, but public verification
+automatically rolled back to `28c136d27d6f235683cb2eadbf2a5f1fceb34bac`.
+The setup wrapper had leaked umask 077 into the build. The newly copied public
+assets were root-owned 0600, so nginx returned 403. No application or data defect
+was identified. This does not authorize bypassing the ordinary ready-state guard.
+
+`retry-static TARGET BASELINE` is a separate, one-incident command. Use the
+reviewed current-main recovery controller from a clean detached worktree at
+`/var/lib/faolla-online-code/TOOL_SHA`, under the existing root-only parent.
+It preserves the same deploy/operation locks and rejects any target, baseline,
+lane, process identity, rollback timestamp or original resource count other than
+the recorded incident. The current main tool revision must descend from the
+already-built application target with only six exact operational file changes;
+candidate source and tree remain unchanged. The tool and application identities
+are recorded separately. No application rebuild or candidate restart is needed.
+
+Before touching file permissions, the command rechecks the still-owned old active
+release, source/dependencies, all prior processes, maintenance/marker/link hashes,
+saved and current proxy hashes, candidate environment, complete focused tests,
+recovery tool tests, bundle budget and candidate smoke. It then builds a readonly
+manifest of exact file paths, content hashes, birth/ctime window, ownership, mode,
+inode, device and link count. The 191 private public assets must match candidate
+bytes, be newly created during this incident, and be absent from every other
+retained static root. All roots/ancestors are checked without following symlinks.
+Unknown/unowned entries, hardlinks, mismatches and writable directories fail closed.
+
+For this incident, the public directories are already 0755: the controller
+requires zero directory changes and permits only those 191 ordinary public files
+to change 0600 to 0644. The helper revalidates the entire manifest, pins all target
+descriptors with O_NOFOLLOW, then changes only their modes. It never changes file
+bytes, owner, old assets, candidate source, environment or credential permissions.
+Before/after evidence is saved in root-only files; the original rollback remains
+recorded. There is no manual state rewrite, reset, cleanup or transition to a fake
+ready status.
+
+Every repaired asset is fetched publicly and its bytes verified while old traffic
+is still live. All original candidate/ownership checks then run again, followed
+by the same normal activation and owned automatic rollback implementation.
+Any new failure stops the attempt; do not broaden the manifest or bypass a guard.
+The successful application build remains TARGET, not the newer operational tool
+commit. Future builds explicitly scope umask 022 to the synchronous build child
+and restore the caller's umask afterwards; all private files retain explicit 0600.

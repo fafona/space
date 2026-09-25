@@ -238,3 +238,31 @@ export function assertPendingTrafficMigrations(pending) {
 export function hasExpectedCardWebsite(html) {
   return (html.match(/<a\b[^>]*>/g)||[]).some(anchor=>/\sclass="button secondary"/.test(anchor)&&/\shref="https:\/\/www\.haoyouduosevilla\.com\/"/.test(anchor));
 }
+
+// Explicit one-incident recovery authorized on 2026-09-25. This is NOT an
+// application release lane and does not widen any existing stage allowlist.
+export const STATIC_RECOVERY_TOOL_FILES = [
+  'scripts/online-static-recovery.mjs', 'scripts/online-static-recovery.test.mjs',
+  'scripts/online-traffic-release.mjs', 'scripts/online-traffic-release-policy.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+];
+export function assertStaticRecoveryToolScope(files) {
+  if (!Array.isArray(files) || !files.includes('scripts/online-static-recovery.mjs') ||
+      !files.includes('scripts/online-traffic-release.mjs') ||
+      files.some(file=>!STATIC_RECOVERY_TOOL_FILES.includes(file))) throw Error('static_recovery_tool_scope_rejected');
+}
+export function assertCatalogStaticRecoveryState(s,active,target,baseline) {
+  const expectedTarget='1740b254851c11302b6c7fef536cf9ef92d75637';
+  const expectedBase='28c136d27d6f235683cb2eadbf2a5f1fceb34bac';
+  const directory='/www/wwwroot/merchant-space.web-releases/';
+  if (target!==expectedTarget || baseline!==expectedBase || s?.target!==target || s?.baseline!==baseline ||
+      s.status!=='rolled-back' || s.lane!=='public-catalog-batch' || s.port!==3110 || s.oldPort!==3109 ||
+      s.directory!==`${directory}1740b254851c-online` || s.name!=='merchant-space-online-1740b254851c' ||
+      s.oldDirectory!==`${directory}28c136d27d6f-online` || s.oldName!=='merchant-space-online-28c136d27d6f' ||
+      s.startedAt!=='2026-09-25T08:33:33.264Z' || s.rolledBackAt!=='2026-09-25T08:37:03.614Z' ||
+      s.staticFiles!==323 || !Array.isArray(s.processes) || s.processes.length!==11 ||
+      active?.target!==baseline || active.port!==s.oldPort || active.directory!==s.oldDirectory || active.name!==s.oldName ||
+      !s.previousActive || ['target','port','directory','name'].some(key=>s.previousActive[key]!==active[key])) {
+    throw Error('static_recovery_incident_not_owned');
+  }
+}

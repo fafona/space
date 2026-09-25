@@ -3,7 +3,8 @@ import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
-import {ONLINE_ROOT as root,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite} from './online-traffic-release-policy.mjs';
+import {ONLINE_ROOT as root,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+import {planStaticPermissionRecovery} from './online-static-recovery.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
@@ -101,7 +102,73 @@ function restoreOrderAttentionConfigs(s){
  restoreConfigs(s);
  if(s.lane==='order-attention')setOrderAttentionCandidateFlag(s,'0');
 }
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','database','activate','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+function recoveryToolIdentity(s){
+ const revision=run('git',['rev-parse','origin/main'],{cwd:app}).trim();
+ if(!/^[a-f0-9]{40}$/.test(revision)||revision===s.target)fail('static_recovery_tool_not_main');
+ const directory=fileURLToPath(new URL('..',import.meta.url)).replace(/\/$/,'');
+ if(directory!==`/var/lib/faolla-online-code/${revision}`||realpathSync(directory)!==directory)fail('static_recovery_tool_directory_invalid');
+ if(run('git',['rev-parse','HEAD'],{cwd:directory}).trim()!==revision||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:directory}).trim())fail('static_recovery_tool_worktree_changed');
+ run('git',['merge-base','--is-ancestor',s.target,revision],{cwd:app});
+ assertStaticRecoveryToolScope(run('git',['diff','--name-only',s.target,revision],{cwd:app}).trim().split('\n'));
+ for(const file of STATIC_RECOVERY_TOOL_FILES)if(hash(safeFile(`${directory}/${file}`))!==hash(run('git',['show',`${revision}:${file}`],{cwd:app})))fail('static_recovery_tool_source_changed');
+ return {revision,directory};
+}
+async function recoverStaticPermissions(s){
+ assertCatalogStaticRecoveryState(s,JSON.parse(safeFile(activeFile)),target,baseline);
+ await verifyBase(s);configUnchanged(s);verifyCandidate(s);
+ for(const file of WEB_RELEASE_FILES)for(const phase of ['before','after'])if(hash(safeFile(`${operation}/${phase}-${file}`))!==s.configs[file][phase==='before'?'oldHash':'newHash'])fail('static_recovery_saved_proxy_changed');
+ if(run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('static_recovery_candidate_source_changed');
+ if(run('git',['rev-parse','HEAD^{tree}'],{cwd:s.directory}).trim()!=='a0ba91eb5fd76ab6fe33805baf403eaaac4dddf4'||!existsSync(`${s.directory}/.next/BUILD_ID`))fail('static_recovery_build_changed');
+ if(hash(run('git',['show',`${s.target}:package-lock.json`],{cwd:app}))!==hash(safeFile(`${s.directory}/package-lock.json`)))fail('static_recovery_dependencies_changed');
+ const tool=recoveryToolIdentity(s);
+ const env=candidateEnvironment(s);
+ const privateFiles=[`${operation}/runtime.json`,`${s.directory}/.env.local`];
+ const privateProof=privateFiles.map(path=>{const st=lstatSync(path);if(st.isSymbolicLink()||!st.isFile()||st.uid!==0||(st.mode&0o777)!==0o600)fail('static_recovery_private_mode_invalid');return {path,hash:hash(readFileSync(path)),mode:st.mode};});
+ const recoveryTests=['src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts','src/lib/merchantPublicCatalog.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','src/lib/merchantCatalogReadIndex.test.ts','src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts','scripts/production-maintenance-next-startup-acceptance.test.mjs','scripts/production-maintenance-build-recovery-evidence.test.mjs','scripts/production-maintenance-route-build-evidence.test.mjs','src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
+ run('node',['--import','tsx','--test',...recoveryTests],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+ run('node',['--test','scripts/online-static-recovery.test.mjs','scripts/online-traffic-release.test.mjs'],{cwd:tool.directory,timeout:180000,stdio:'inherit'});
+ run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});
+ await smoke(s);
+ const destinationRoot=realpathSync(`${app}/.next/static`);
+ if(destinationRoot!==`${s.baseDirectory}/.next/static`)fail('static_recovery_destination_changed');
+ const previousRoots=[...new Set(s.processes.map(p=>{
+  if(!p.cwd.startsWith(`${app}.`)||realpathSync(p.cwd)!==p.cwd)fail('static_recovery_previous_path_invalid');
+  const path=`${p.cwd}/.next/static`;if(!existsSync(path))fail('static_recovery_previous_assets_missing');
+  if(realpathSync(path)!==path)fail('static_recovery_previous_symlink');return path;
+ }).filter(path=>path!==destinationRoot))];
+ const plan=planStaticPermissionRecovery({sourceRoot:`${s.directory}/.next/static`,destinationRoot,previousRoots,startedAt:s.startedAt,rolledBackAt:s.rolledBackAt});
+ if(plan.manifest.files.length!==191||plan.manifest.directories.length!==0)fail('static_recovery_file_inventory_changed');
+ const audit=`${operation}/static-permission-retry-${Date.now()}`;
+ writeFileSync(`${audit}-before.json`,JSON.stringify({toolRevision:tool.revision,applicationTarget:s.target,previousRollback:s.rolledBackAt,manifest:plan.manifest}),{flag:'wx',mode:0o600});
+ let repaired;
+ try{repaired=plan.apply();}catch(error){
+  writeFileSync(`${audit}-failure.json`,JSON.stringify({error:error.message,changedPaths:error.changedPaths??[],failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});
+  throw error;
+ }
+ writeFileSync(`${audit}-repair.json`,JSON.stringify(repaired),{flag:'wx',mode:0o600});
+ for(const proof of privateProof)if(hash(readFileSync(proof.path))!==proof.hash||lstatSync(proof.path).mode!==proof.mode)fail('static_recovery_private_file_changed');
+ // Verify every repaired asset through nginx while the previous app is still live.
+ for(const file of plan.manifest.files){
+  const path=file.relativePath.split('/').map(encodeURIComponent).join('/');
+  const response=await request(`https://www.faolla.com/_next/static/${path}`);
+  if(hash(Buffer.from(await response.arrayBuffer()))!==file.sha256)fail('static_recovery_public_asset_mismatch');
+ }
+ await verifyBase(s);configUnchanged(s);verifyCandidate(s);await smoke(s);
+ assertCatalogStaticRecoveryState(s,JSON.parse(safeFile(activeFile)),target,baseline);
+ s.staticPermissionRetry={toolRevision:tool.revision,audit,previousRollback:s.rolledBackAt,acceptedAt:new Date().toISOString()};save(s);
+}
+async function activateCandidate(s){
+ verifyOrderAttention(s,'verify');
+ const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
+ s.status='activating';save(s);
+ try{
+  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
+  let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch(error){console.error(`online_public_probe_failed:${error.message}`);await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
+  await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
+  s.status='active';s.activatedAt=new Date().toISOString();save(s);atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
+ }catch(error){if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);throw error;}
+}
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(!process.env.FAOLLA_ONLINE_RELEASE_LOCKED){
  const lock=`${app}.deploy.lock`;if(existsSync(lock)&&lstatSync(lock).isSymbolicLink())fail('unsafe_deploy_lock');
  const r=spawnSync('flock',['--nonblock',lock,process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit',env:{...envBase,FAOLLA_ONLINE_RELEASE_LOCKED:'1'}});process.exit(r.status??1);
@@ -155,7 +222,8 @@ try{
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
   run('node',['--import','tsx','--test',...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
-  console.log('online_build_started');run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});
+  console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
+  try{run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
   run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(port)],{env});
   let ready=false;for(let i=0;i<25;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('candidate_not_ready');
@@ -198,15 +266,9 @@ try{
    verifyCandidate(s);s.status='database-ready';save(s);
   }else if(action==='activate'){
    if(s.status!==onlineReleaseActivationStatus(s.lane))fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
-   verifyOrderAttention(s,'verify');
-   const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
-   s.status='activating';save(s);
-   try{
-    for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
-    let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch{await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
-    await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
-    s.status='active';s.activatedAt=new Date().toISOString();save(s);atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
-   }catch(error){if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);throw error;}
+   await activateCandidate(s);
+  }else if(action==='retry-static'){
+   await recoverStaticPermissions(s);await activateCandidate(s);
   }else if(action==='rollback'){
    if(!['active','activating'].includes(s.status)||!existsSync(activeFile)||JSON.parse(safeFile(activeFile)).target!==s.target)fail('rollback_not_current');configUnchanged(s,true);if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);
   }
