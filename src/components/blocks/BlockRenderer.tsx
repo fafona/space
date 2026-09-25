@@ -17,6 +17,7 @@ import { buildPublicBlockId } from "@/lib/blockPublicId";
 import type { ButtonJumpBlock } from "@/lib/buttonBlock";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
+import { usePublicCatalogBlocks } from "@/lib/usePublicCatalogBlocks";
 
 const GalleryBlock = dynamic(() => import("./GalleryBlock"), { ssr: false, loading: () => null });
 const ChartBlock = dynamic(() => import("./ChartBlock"), { ssr: false, loading: () => null });
@@ -82,6 +83,8 @@ export default function BlockRenderer({
   bookingSiteId,
   bookingSiteName,
   productCartEnabled = false,
+  productCatalogBatchEnabled = false,
+  productCatalogPlanId = "",
   bookingInteractive = true,
   bookingViewport,
 }: {
@@ -94,6 +97,8 @@ export default function BlockRenderer({
   bookingSiteId?: string;
   bookingSiteName?: string;
   productCartEnabled?: boolean;
+  productCatalogBatchEnabled?: boolean;
+  productCatalogPlanId?: string;
   bookingInteractive?: boolean;
   bookingViewport?: MerchantBookingRuleViewport;
 }) {
@@ -128,6 +133,18 @@ export default function BlockRenderer({
       title: resolveOpenBlockTitle(block, publicBlockId),
     };
   }, [safeBlocks, currentPageIndex, openedBlockId]);
+
+  const catalogViewport = bookingViewport ?? (forceMobileViewport ? "mobile" : "desktop");
+  const catalogBlockIds = safeBlocks
+    .filter((block) => block.type === "product" && (!isButtonOpenedBlock(block) || block === openedBlockEntry?.block))
+    .map((block) => block.id);
+  const getPublicCatalogState = usePublicCatalogBlocks({
+    enabled: productCatalogBatchEnabled && bookingInteractive && Boolean(bookingSiteId),
+    siteId: bookingSiteId?.trim() ?? "",
+    viewport: catalogViewport,
+    scopeKey: JSON.stringify([productCatalogPlanId, currentPageId ?? "", currentPageIndex]),
+    blockIds: catalogBlockIds,
+  });
 
   const openBlock = useCallback(
     (blockId: string) => {
@@ -297,7 +314,8 @@ export default function BlockRenderer({
             runtimeSiteId={bookingSiteId}
             runtimeSiteName={bookingSiteName}
             runtimeBlockId={b.id}
-            runtimeCatalogViewport={bookingViewport ?? (forceMobileViewport ? "mobile" : "desktop")}
+            runtimeCatalogViewport={catalogViewport}
+            runtimeCatalogOverride={getPublicCatalogState(b.id)}
             runtimeUseOperatingCatalog={bookingInteractive}
             runtimeOrderManagementEnabled={productCartEnabled}
             runtimeInteractiveOverlayWithinBlock={forceMobileViewport || options.openedView === true}

@@ -58,6 +58,7 @@ import {
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import type { MerchantCatalogBrowsingRules } from "@/lib/merchantCatalog";
+import type { PublicCatalogState } from "@/lib/merchantPublicCatalog";
 import type { PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 
@@ -113,6 +114,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeSiteName?: string;
     runtimeBlockId?: string;
     runtimeCatalogViewport?: "desktop" | "mobile";
+    runtimeCatalogOverride?: PublicCatalogState;
     runtimeUseOperatingCatalog?: boolean;
     runtimeOrderManagementEnabled?: boolean;
     runtimeInteractiveOverlayWithinBlock?: boolean;
@@ -783,13 +785,24 @@ export default function ProductBlock(props: ProductBlockProps) {
   const runtimeCatalogKey = runtimeUseOperatingCatalog && runtimeSiteId && runtimeBlockId
     ? `${runtimeSiteId}\u0001${runtimeBlockId}\u0001${runtimeCatalogViewport}`
     : "";
-  const [runtimeCatalogState, setRuntimeCatalogState] = useState<RuntimeCatalogState>({
+  const [localRuntimeCatalogState, setRuntimeCatalogState] = useState<RuntimeCatalogState>({
     key: "",
     status: "idle",
     catalog: null,
   });
+  const usesBatchCatalog = props.runtimeCatalogOverride !== undefined;
+  const batchOperatingCatalog = useMemo(
+    () => props.runtimeCatalogOverride?.status === "ready"
+      ? readRuntimeOperatingCatalog(props.runtimeCatalogOverride.catalog)
+      : null,
+    [props.runtimeCatalogOverride],
+  );
+  const runtimeCatalogState: RuntimeCatalogState = props.runtimeCatalogOverride
+    ? { key: runtimeCatalogKey, status: props.runtimeCatalogOverride.status, catalog: batchOperatingCatalog }
+    : localRuntimeCatalogState;
 
   useEffect(() => {
+    if (usesBatchCatalog) return;
     if (!runtimeCatalogKey) {
       setRuntimeCatalogState((current) =>
         current.status === "idle" && !current.key && current.catalog === null
@@ -823,7 +836,7 @@ export default function ProductBlock(props: ProductBlockProps) {
         setRuntimeCatalogState({ key: runtimeCatalogKey, status: "error", catalog: null });
       });
     return () => controller.abort();
-  }, [runtimeBlockId, runtimeCatalogKey, runtimeCatalogViewport, runtimeSiteId]);
+  }, [runtimeBlockId, runtimeCatalogKey, runtimeCatalogViewport, runtimeSiteId, usesBatchCatalog]);
 
   const operatingCatalog =
     runtimeCatalogState.key === runtimeCatalogKey && runtimeCatalogState.status === "ready"

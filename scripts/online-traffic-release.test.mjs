@@ -89,7 +89,7 @@ test('actual database branch refuses every no-database lane before backup, migra
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
  const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
- for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden']]){
+ for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
@@ -103,6 +103,175 @@ test('actual database branch refuses every no-database lane before backup, migra
   await assert.rejects(task,new RegExp(`^Error: ${error}$`));
   assert.deepEqual(calls,[]);
  }
+});
+
+const publicCatalogBatchFiles=[
+ 'src/app/api/orders/catalog/public/batch-route-handler.ts',
+ 'src/app/api/orders/catalog/public/route.ts','src/app/api/orders/catalog/public/batch-route.test.ts',
+ 'src/app/api/orders/route.test.ts','src/app/site/[siteId]/SitePageClient.tsx',
+ 'src/components/blocks/BlockRenderer.tsx','src/components/blocks/ProductBlock.tsx',
+ 'src/lib/merchantPublicCatalog.ts','src/lib/merchantPublicCatalog.test.ts',
+ 'src/lib/publicCatalogCoordinator.ts','src/lib/publicCatalogCoordinator.test.ts',
+ 'src/lib/usePublicCatalogBlocks.ts','src/lib/usePublicCatalogBlocks.test.ts',
+ 'scripts/public-catalog-batch-browser-harness.mjs','scripts/fixtures/public-catalog-batch-browser.tsx',
+ 'docs/performance-public-catalog-batch-2026-09-25.md',
+ 'docs/ci-startup-single-snapshot-2026-09-25.md',
+ 'scripts/production-maintenance-next-startup-acceptance.mjs',
+ 'scripts/production-maintenance-next-startup-acceptance.test.mjs','scripts/test-helpers/startup-process-fact.mjs',
+ 'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.mjs',
+ 'scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',
+];
+
+test('public catalog batch admits exactly 24 files and requires its distinct batch-handler anchor',()=>{
+ const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
+ const start=policy.indexOf('const publicCatalogBatchAnchor =');
+ const end=policy.indexOf(']);',start)+3;
+ assert.ok(start>0&&end>start);
+ const actual=Array.from(runInNewContext(`${policy.slice(start,end)}Array.from(publicCatalogBatchFiles)`));
+ assert.equal(publicCatalogBatchFiles.length,24);
+ assert.equal(new Set(publicCatalogBatchFiles).size,24);
+ assert.deepEqual(actual.sort(),[...publicCatalogBatchFiles].sort());
+ assert.equal(onlineReleaseLane(publicCatalogBatchFiles),'public-catalog-batch');
+ assert.equal(onlineReleaseLane([publicCatalogBatchFiles[0]]),'public-catalog-batch');
+ for(const file of publicCatalogBatchFiles.slice(1)){
+  try { assert.notEqual(onlineReleaseLane([file]),'public-catalog-batch',file); }
+  catch(error) { assert.match(error.message,/online_release_scope_rejected/); }
+ }
+ assert.throws(()=>assertOnlineTrafficScope([publicCatalogBatchFiles[0]]),/online_release_scope_rejected/);
+ assert.throws(()=>onlineReleaseLane(publicCatalogBatchFiles.slice(16,20)),/online_release_scope_rejected/);
+});
+
+test('public catalog batch cannot admit old handlers, writers, guards or authority from another lane',()=>{
+ const anchor=publicCatalogBatchFiles[0];
+ for(const file of [
+  'src/app/api/orders/catalog/public/route-handler.ts','src/app/api/orders/catalog/public/route.test.ts',
+  'src/app/api/orders/catalog/route-handler.ts','src/app/api/orders/route-handler.ts',
+  'src/app/api/bookings/route.ts','src/app/api/auth/signin/route.ts',
+  'src/lib/merchantCatalog.ts','src/lib/merchantCatalogStore.ts','src/lib/merchantOrderCatalog.ts',
+  'src/lib/merchantOrdersStore.ts','src/lib/merchantOrdersAtomic.server.ts',
+  'src/lib/merchantBusinessOrderPermissions.ts','src/data/platformControlStore.ts',
+  'src/lib/superAdminVerification.ts','src/lib/merchantEnterpriseAutomation.server.ts',
+  'src/lib/merchantCatalogReadIndex.ts','src/lib/accountTrafficResources.server.ts',
+  'src/lib/accountTrafficCampaign.server.ts','src/lib/merchantBusinessCardQrExport.ts',
+  'src/lib/visiblePolling.ts','src/app/admin/AdminClient.tsx',
+  'src/components/admin/MerchantCatalogProductList.tsx','src/lib/merchantCustomerPagination.ts',
+  'src/lib/merchantOrderAttention.server.ts','scripts/order-attention-pilot.ts',
+  'scripts/supabase-migrations/202609240052_order_attention_pilot.sql',
+  'scripts/supabase-migrations/202609250053_public_catalog_batch.sql',
+  'scripts/apply-production-database-migrations.mjs','scripts/create-production-database-backup.mjs',
+  'scripts/check-production-runtime-supervision.mjs','scripts/production-maintenance-runtime.mjs',
+  'scripts/production-maintenance-next-startup-acceptance-extra.mjs','scripts/test-helpers/startup-process-extra.mjs',
+  'scripts/deploy.production.sh','package.json','package-lock.json','.env.example','.github/workflows/ci.yml',
+  'src/app/api/orders/catalog/public/batch-route-handler-extra.ts','src/lib/merchantPublicCatalogExtra.ts',
+  'src/lib/publicCatalogCoordinatorExtra.ts','src/lib/usePublicCatalogBlocksExtra.ts',
+  'scripts/fixtures/public-catalog-batch-other.tsx','docs/performance-public-catalog-other-2026-09-25.md',
+  './src/app/api/orders/catalog/public/batch-route-handler.ts',
+  'src/app/api/orders/catalog/public/../public/batch-route-handler.ts',
+  'src\\app\\api\\orders\\catalog\\public\\batch-route-handler.ts',
+ ])for(const files of [[anchor,file],[file,anchor]])assert.throws(()=>onlineReleaseLane(files),/public_catalog_batch_release_scope_rejected/,file);
+ assert.equal(onlineReleaseLane(['src/lib/merchantCatalogReadIndex.ts']),'read-index');
+ assert.equal(onlineReleaseLane(['src/lib/accountTrafficResources.server.ts']),'traffic');
+ assert.equal(onlineReleaseLane(['src/lib/visiblePolling.ts']),'performance');
+ assert.equal(onlineReleaseLane(['src/lib/merchantOrderAttention.server.ts']),'order-attention');
+});
+
+test('public catalog batch is ready without a database and cannot invoke any migration or pilot helper',()=>{
+ assert.equal(onlineReleaseStageStatus('public-catalog-batch'),'ready-no-database');
+ assert.equal(onlineReleaseActivationStatus('public-catalog-batch'),'ready-no-database');
+ for(const check of [assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget]){
+  assert.throws(()=>check('public-catalog-batch'),/public_catalog_batch_database_forbidden/);
+ }
+ for(const pending of [[],null,[{version:'202609240052'}]]){
+  assert.throws(()=>assertPendingOnlineReleaseMigrations('public-catalog-batch',pending),/public_catalog_batch_database_forbidden/);
+ }
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyOrderAttentionSource('),code.indexOf('function setOrderAttentionCandidateFlag('));
+ const denied=()=>{throw Error('unexpected_pilot_operation');};
+ for(const command of ['prepare','enable','verify','disable'])runInNewContext(`${verifier}verifyOrderAttention(s,command)`,{
+  s:{lane:'public-catalog-batch'},command,run:denied,atomic:denied,candidateEnvironment:denied,
+ });
+ const flag=code.slice(code.indexOf('function setOrderAttentionCandidateFlag('),code.indexOf('function restoreOrderAttentionConfigs('));
+ assert.throws(()=>runInNewContext(`${flag}setOrderAttentionCandidateFlag(s,'10000000')`,{
+  s:{lane:'public-catalog-batch'},fail:message=>{throw Error(message);},verifyCandidate:denied,candidateEnvironment:denied,
+ }),/order_attention_candidate_flag_invalid/);
+});
+
+test('public catalog batch preserves enabled analytics, pilot, retention and signing secret in candidate overrides',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const changes='),end=code.indexOf('const envText=',start);
+ assert.ok(start>0&&end>start);
+ const env={FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-original-secret'};
+ const changes=runInNewContext(`${code.slice(start,end)}changes`,{lane:'public-catalog-batch',target:'a'.repeat(40),port:3109,env,
+  randomBytes:()=>{throw Error('secret_rotation_forbidden');}});
+ for(const field of Object.keys(env))assert.equal(Object.hasOwn(changes,field),false,field);
+ const effective={...env,...changes};
+ for(const [field,value] of Object.entries(env))assert.equal(effective[field],value);
+ assert.equal(effective.FAOLLA_BACKGROUND_JOBS_PAUSED,'1');
+ assert.equal(effective.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,'0');
+ assert.equal(effective.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED,'0');
+ assert.equal(effective.FAOLLA_SUPER_ADMIN_ORIGIN,'https://console.faolla.com');
+ assert.equal(Object.hasOwn(changes,'FAOLLA_ORDER_ATTENTION_OPERATION_TARGET'),false);
+ const guard=code.split(/\r?\n/).find(line=>line.includes("if(lane==='public-catalog-batch'"));
+ assert.ok(guard);
+ const check=(patch={})=>runInNewContext(guard,{lane:'public-catalog-batch',env:{...env,...patch},fail:message=>{throw Error(message);}});
+ assert.doesNotThrow(()=>check());
+ for(const patch of [{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'20000000'},
+  {FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:undefined},{FAOLLA_TRAFFIC_ENABLED:'0'},{FAOLLA_TRAFFIC_ENABLED:undefined},
+  {FAOLLA_TRAFFIC_SIGNING_SECRET:''},{FAOLLA_TRAFFIC_SIGNING_SECRET:undefined}]){
+  assert.throws(()=>check(patch),/public_catalog_batch_baseline_features_invalid/);
+ }
+});
+
+test('public catalog batch candidate rejects missing identity and baseline feature drift',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyCandidate('),code.indexOf('function publishStatic('));
+ const env={status:'online',pm_cwd:'/candidate',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',
+  FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'unchanged'};
+ const check=(patch={},expected='unchanged',present=true)=>runInNewContext(`${verifier}verifyCandidate(s)`,{
+  s:{lane:'public-catalog-batch',name:'candidate',directory:'/candidate'},pm:()=>present?[{name:'candidate',pm2_env:{...env,...patch}}]:[],
+  candidateEnvironment:()=>({FAOLLA_TRAFFIC_SIGNING_SECRET:expected}),fail:message=>{throw Error(message);},
+ });
+ assert.doesNotThrow(()=>check());
+ for(const patch of [{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'20000000'},
+  {FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:undefined},{FAOLLA_TRAFFIC_ENABLED:'0'},{FAOLLA_TRAFFIC_ENABLED:undefined},
+  {FAOLLA_TRAFFIC_SIGNING_SECRET:'rotated'},{FAOLLA_TRAFFIC_SIGNING_SECRET:undefined},{FAOLLA_TRAFFIC_SIGNING_SECRET:''},
+  {FAOLLA_BACKGROUND_JOBS_PAUSED:'0'},{FAOLLA_SUPER_ADMIN_ORIGIN:'https://other.invalid'},
+  {pm_cwd:'/old'},{status:'stopped'}]){
+  assert.throws(()=>check(patch),/candidate_identity_invalid|public_catalog_batch_baseline_features_changed/);
+ }
+ assert.throws(()=>check({},'unchanged',false),/candidate_identity_invalid/);
+ assert.throws(()=>check({FAOLLA_TRAFFIC_SIGNING_SECRET:''},''),/public_catalog_batch_baseline_features_changed/);
+});
+
+test('public catalog batch stage runs its exact regressions before the guarded build and normal smoke readiness',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const tests='),end=code.indexOf("run('node',['--import','tsx','--test'",start);
+ assert.ok(start>0&&end>start);
+ const tests=Array.from(runInNewContext(`${code.slice(start,end)}tests`,{
+  lane:'public-catalog-batch',run:()=>{throw Error('unexpected_test_discovery');},
+ }));
+ assert.deepEqual(tests,[
+  'src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts',
+  'src/app/api/orders/route.test.ts','src/lib/merchantPublicCatalog.test.ts',
+  'src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts',
+  'src/lib/merchantCatalogReadIndex.test.ts','src/lib/merchantCatalog.test.ts',
+  'src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts',
+  'scripts/production-maintenance-next-startup-acceptance.test.mjs',
+ ]);
+ const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
+ assert.equal(new Set([...tests,...fixed]).size,tests.length+fixed.length);
+ for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
+ const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
+ assert.ok(build>end&&ready>build);
+ assert.ok(code.indexOf("fail('dependencies_changed')")<start);
+ assert.ok(code.indexOf("fail('candidate_not_ready')",build)<ready);
+ assert.match(code,/await smoke\(s\);s.status=onlineReleaseStageStatus\(s.lane\);save\(s\)/);
+ assert.match(code,/if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\)/);
+ const scripts=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).scripts;
+ for(const gate of ['check:env:strict','check:v1-deploy-config','next build --webpack','check:bundle:admin'])assert.ok(scripts.build.includes(gate),gate);
+ assert.doesNotMatch(code,/run\([^\n]*(?:public-catalog-batch-browser|production-maintenance-next-startup-acceptance\.mjs)/);
 });
 
 const readIndexFiles=[

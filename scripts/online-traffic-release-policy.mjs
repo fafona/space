@@ -130,7 +130,33 @@ const readIndexFiles = new Set([
   'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
   'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
 ]);
+// 2026-09-25: approved public catalog request coalescing, with no database,
+// order writer, permission, dependency or GET handler change. CI-only files
+// are included because that already-reviewed correction is not deployed yet.
+const publicCatalogBatchAnchor = 'src/app/api/orders/catalog/public/batch-route-handler.ts';
+const publicCatalogBatchFiles = new Set([
+  publicCatalogBatchAnchor,
+  'src/app/api/orders/catalog/public/route.ts', 'src/app/api/orders/catalog/public/batch-route.test.ts',
+  'src/app/api/orders/route.test.ts',
+  'src/app/site/[siteId]/SitePageClient.tsx',
+  'src/components/blocks/BlockRenderer.tsx', 'src/components/blocks/ProductBlock.tsx',
+  'src/lib/merchantPublicCatalog.ts', 'src/lib/merchantPublicCatalog.test.ts',
+  'src/lib/publicCatalogCoordinator.ts', 'src/lib/publicCatalogCoordinator.test.ts',
+  'src/lib/usePublicCatalogBlocks.ts', 'src/lib/usePublicCatalogBlocks.test.ts',
+  'scripts/public-catalog-batch-browser-harness.mjs', 'scripts/fixtures/public-catalog-batch-browser.tsx',
+  'docs/performance-public-catalog-batch-2026-09-25.md',
+  'docs/ci-startup-single-snapshot-2026-09-25.md',
+  'scripts/production-maintenance-next-startup-acceptance.mjs',
+  'scripts/production-maintenance-next-startup-acceptance.test.mjs',
+  'scripts/test-helpers/startup-process-fact.mjs',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+]);
 export function onlineReleaseLane(files) {
+  if (files.includes(publicCatalogBatchAnchor)) {
+    if (files.some(file => !publicCatalogBatchFiles.has(file))) throw Error('public_catalog_batch_release_scope_rejected');
+    return 'public-catalog-batch';
+  }
   if (files.includes(readIndexAnchor)) {
     if (files.some(file => !readIndexFiles.has(file))) throw Error('read_index_release_scope_rejected');
     return 'read-index';
@@ -155,6 +181,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if (lane === 'public-catalog-batch') return true;
   if (lane === 'qr-export' || lane === 'performance' || lane === 'bounded-lists' || lane === 'read-index') return true;
   if (lane === 'traffic' || lane === 'order-attention') return false;
   throw Error('unknown_online_release_lane');
@@ -166,6 +193,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'public-catalog-batch') throw Error('public_catalog_batch_database_forbidden');
   if (lane === 'read-index') throw Error('read_index_database_forbidden');
   if (lane === 'bounded-lists') throw Error('bounded_lists_database_forbidden');
   if (lane === 'qr-export') throw Error('qr_export_database_forbidden');
