@@ -35,7 +35,13 @@ async function verifyBase(s){
  if((await(await request(`http://127.0.0.1:${s.oldPort}/api/app-web-version`)).json()).buildId!==s.baseline)fail('baseline_version_changed');
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
-function verifyCandidate(s){const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');if(s.lane==='order-attention'&&p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==(s.orderAttentionEnabled?'10000000':'0'))fail('order_attention_candidate_flag_invalid');if(s.lane==='bounded-lists'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('bounded_lists_baseline_features_changed');return p;}
+function verifyCandidate(s){
+ const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
+ if(s.lane==='order-attention'&&p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==(s.orderAttentionEnabled?'10000000':'0'))fail('order_attention_candidate_flag_invalid');
+ if(s.lane==='bounded-lists'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('bounded_lists_baseline_features_changed');
+ if(s.lane==='read-index'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('read_index_baseline_features_changed');
+ return p;
+}
 function publishStatic(source,destination){
  const files=[];function walk(dir,rel=''){for(const e of readdirSync(dir,{withFileTypes:true})){const key=rel?`${rel}/${e.name}`:e.name;if(e.isSymbolicLink())fail('static_symlink');if(e.isDirectory())walk(`${dir}/${e.name}`,key);else if(e.isFile())files.push(key);else fail('static_type_invalid');}}
  walk(source);
@@ -127,6 +133,7 @@ try{
   if(lane==='performance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('performance_analytics_baseline_invalid');
   if(lane==='order-attention'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('order_attention_analytics_baseline_invalid');
   if(lane==='bounded-lists'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('bounded_lists_baseline_features_invalid');
+  if(lane==='read-index'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('read_index_baseline_features_invalid');
   const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='order-attention'?{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'}:{}),...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
@@ -134,6 +141,8 @@ try{
   console.log('online_focused_tests');
   const tests=lane==='qr-export'
    ? ['src/lib/merchantBusinessCardQrExport.test.ts','src/lib/merchantBusinessCardDestination.test.ts','src/lib/merchantBusinessCardQrColorSelection.test.ts','src/lib/merchantBusinessCardQrText.test.ts']
+   : lane==='read-index'
+   ? [...new Set(['src/lib/merchantCatalogReadIndex.test.ts','src/lib/accountTrafficResources.server.test.ts',...run('git',['ls-files','src/lib/accountTraffic*.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/app/api/orders/catalog/public/route.test.ts'])]
    : lane==='bounded-lists'
    ? ['src/components/admin/MerchantCatalogProductList.test.ts','src/components/admin/MerchantCatalogManagerPanel.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomerPagination.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantOrdersStore.test.ts','src/lib/merchantOrdersStore.metadata.test.ts','src/lib/merchantOrdersV1Read.server.test.ts','src/lib/merchantOrdersAtomic.server.test.ts','src/lib/merchantOrderAttention.server.test.ts','src/app/api/orders/route.test.ts','src/app/api/orders/workbench/route.test.ts','src/app/api/orders/export/route.test.ts','scripts/run-ci-tests.test.mjs','scripts/ci-workflow-contract.test.mjs']
    : lane==='order-attention'
