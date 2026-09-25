@@ -1,7 +1,8 @@
 import type { Block } from "@/data/homeBlocks";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { normalizeProductItems } from "@/lib/productBlock";
-import { resolveMerchantCatalogCollection, type MerchantCatalog } from "@/lib/merchantCatalog";
+import type { MerchantCatalog } from "@/lib/merchantCatalog";
+import { createMerchantCatalogCollectionResolver } from "@/lib/merchantCatalogReadIndex";
 import type { TrafficResource } from "@/lib/accountTraffic";
 import { normalizePollConfig } from "@/lib/merchantPolls";
 
@@ -23,6 +24,9 @@ export function resolveTrafficResources(input: { siteId: string; blocks: Block[]
     { siteId: input.siteId, module: "website", objectId: page.id, label: page.name || "网站页面" },
     { siteId: input.siteId, module: "membership", objectId: "membership-entry", label: "会员入口" },
   ];
+  // Prepare only for an actual product resource, and only for this invocation.
+  // Retaining an index across calls could hide a later catalog change.
+  let resolveCollection: ReturnType<typeof createMerchantCatalogCollectionResolver> | undefined;
   for (const block of page.blocks) {
     if (block.type !== "product" && block.type !== "booking" && block.type !== "coupon" && block.type !== "poll") continue;
     const heading = (block.props as { heading?: string }).heading;
@@ -30,9 +34,11 @@ export function resolveTrafficResources(input: { siteId: string; blocks: Block[]
     const defaults = { product: "产品模块", booking: "预约模块", coupon: "优惠券模块", poll: "投票模块" };
     result.push({ siteId: input.siteId, module: block.type, objectId, label: heading || defaults[block.type] });
     if (block.type !== "product") continue;
-    const collection = input.catalog && resolveMerchantCatalogCollection(input.catalog, block.id, input.viewport);
-    const products = collection && input.catalog
-      ? input.catalog.products.filter((item) => collection.productIds.includes(item.id) && item.availability !== "hidden")
+    const collection = input.catalog &&
+      (resolveCollection ??= createMerchantCatalogCollectionResolver(input.catalog))(block.id, input.viewport);
+    const collectionProductIds = collection ? new Set(collection.productIds) : null;
+    const products = collectionProductIds && input.catalog
+      ? input.catalog.products.filter((item) => collectionProductIds.has(item.id) && item.availability !== "hidden")
       : normalizeProductItems(block.props.products);
     for (const product of products) {
       // Namespace legacy products by block: independent blocks can reuse IDs.

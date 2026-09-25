@@ -139,3 +139,28 @@ Candidate verification checks pilot/analytics continuity. Only background jobs
 in the new web candidate are paused. Focused read/UI tests, guarded build,
 candidate/public smoke, existing process/configuration/maintenance ownership,
 immutable asset collision protection and owned rollback remain unchanged.
+
+## Read-only catalog resource index lane (2026-09-25)
+
+`read-index` is selected only by `src/lib/merchantCatalogReadIndex.ts` and admits
+ten exact files: this request-local helper and its test, the traffic resource
+reader and its test, the synthetic benchmark, the phase notes, and the four
+release policy/controller/test/documentation files. No old lane is expanded.
+Source catalog normalization, source writers, stores, APIs, authorization,
+dependencies, migrations and arbitrary neighboring files remain excluded.
+
+Use `stage SHA BASELINE`, then `activate SHA`, with `ready-no-database` required.
+Every database helper and the actual database action reject this lane before
+backup, migration or pilot operations. Neither activation nor rollback invokes
+the pilot CLI, resets its epoch, backfills data or restarts any original worker.
+Stage requires enabled analytics, its existing nonempty signing secret, and the
+existing `10000000` pilot flag; these are inherited unchanged and rechecked on
+the candidate. Background work is paused only in the new candidate.
+
+Focused acceptance includes the two new tests, every tracked `accountTraffic`
+test, catalog/catalog-store/order-catalog and public-catalog regressions, plus
+the three existing QR-preview, canonical-origin and release safety contracts.
+The existing guarded build, exact main/ancestor/dependency checks, original
+process identities, maintenance-state and proxy hashes, immutable asset
+collision rules, public smoke and owned web rollback remain mandatory. No port
+range, retention policy or cleanup authority changes in this lane.

@@ -120,7 +120,21 @@ const boundedListFiles = new Set([
   'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
   'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
 ]);
+// 2026-09-25: request-local catalog lookup for the read-only traffic resource list.
+// Source catalog normalization, stores, APIs and every database action stay out.
+const readIndexAnchor = 'src/lib/merchantCatalogReadIndex.ts';
+const readIndexFiles = new Set([
+  readIndexAnchor, 'src/lib/merchantCatalogReadIndex.test.ts',
+  'src/lib/accountTrafficResources.server.ts', 'src/lib/accountTrafficResources.server.test.ts',
+  'scripts/benchmark-catalog-read-index.mjs', 'docs/performance-read-index-2026-09-25.md',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+]);
 export function onlineReleaseLane(files) {
+  if (files.includes(readIndexAnchor)) {
+    if (files.some(file => !readIndexFiles.has(file))) throw Error('read_index_release_scope_rejected');
+    return 'read-index';
+  }
   if (files.includes(orderAttentionMigrationFile) || files.includes('src/lib/merchantOrderAttention.server.ts')) {
     if (files.some(file => !orderAttentionFiles.has(file))) throw Error('order_attention_release_scope_rejected');
     return 'order-attention';
@@ -141,7 +155,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
-  if (lane === 'qr-export' || lane === 'performance' || lane === 'bounded-lists') return true;
+  if (lane === 'qr-export' || lane === 'performance' || lane === 'bounded-lists' || lane === 'read-index') return true;
   if (lane === 'traffic' || lane === 'order-attention') return false;
   throw Error('unknown_online_release_lane');
 }
@@ -152,6 +166,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'read-index') throw Error('read_index_database_forbidden');
   if (lane === 'bounded-lists') throw Error('bounded_lists_database_forbidden');
   if (lane === 'qr-export') throw Error('qr_export_database_forbidden');
   if (lane === 'performance') throw Error('performance_database_forbidden');
