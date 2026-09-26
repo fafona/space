@@ -429,8 +429,11 @@ export function SitePageClient({
   const sourceBlocks = dbBlocks ?? (hasScopedLocalBlocks ? effectiveScopedPublishedBlocks : EMPTY_BLOCKS);
   const hasRenderableBlocks = sourceBlocks.length > 0;
 
-  const desktopPlanConfig = getPagePlanConfigFromBlocks(sourceBlocks);
-  const mobilePlanConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
+  // Published loads replace the array; gesture/loading state does not change it.
+  // Keep the existing defensive clones, but do not repeat the full plan graph
+  // normalization on every pull-to-refresh frame or unrelated state update.
+  const desktopPlanConfig = useMemo(() => getPagePlanConfigFromBlocks(sourceBlocks), [sourceBlocks]);
+  const mobilePlanConfig = useMemo(() => getEmbeddedMobilePlanConfig(sourceBlocks), [sourceBlocks]);
   const planConfig = isMobileViewport && mobilePlanConfig ? mobilePlanConfig : desktopPlanConfig;
   const activePlan = planConfig.plans.find((plan) => plan.id === planConfig.activePlanId) ?? planConfig.plans[0];
   const [currentPageId, setCurrentPageId] = useState<string>(getInitialVisiblePageId(activePlan));
@@ -691,7 +694,14 @@ export function SitePageClient({
   const shouldHoldForHydration = (!hydrated || isInitialLoading) && !hasInitialPublishedBlocks;
   const waitingForPublicGuestShell =
     publicGuestShellRouteCandidate && publicGuestShellCheckedSiteId !== siteId;
-  if (shouldHoldForHydration || waitingForPublishedSync || waitingForPublicGuestShell) {
+  const shouldShowLoading = shouldHoldForHydration || waitingForPublishedSync || waitingForPublicGuestShell;
+  const canRenderActiveBlocks = hasRenderableBlocks && !shouldShowLoading;
+  const activePageBlocks = activePage?.blocks ?? activePlan?.blocks ?? sourceBlocks;
+  const activeBlocks = useMemo(
+    () => canRenderActiveBlocks ? cloneBlocks(activePageBlocks) : EMPTY_BLOCKS,
+    [activePageBlocks, canRenderActiveBlocks],
+  );
+  if (shouldShowLoading) {
     return <LoadingProgressScreen message="正在加载站点..." />;
   }
 
@@ -721,7 +731,6 @@ export function SitePageClient({
     );
   }
 
-  const activeBlocks = cloneBlocks(activePage?.blocks ?? activePlan?.blocks ?? sourceBlocks);
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
     imageUrl: pageBackgroundSource?.pageBgImageUrl,
