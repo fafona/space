@@ -106,8 +106,8 @@ build, retained/source/config/environment checks and normal smoke; activation
 remains a separate owned action. This note is not evidence that recovery or
 activation has completed.
 
-The recovery change adds nine local controller/policy contracts. The same five
-release/retention suites now pass **302/302** tests; scoped lint reports no
+The recovery change added nine local controller/policy contracts. At that
+checkpoint the five release/retention suites passed **302/302** tests; scoped lint reported no
 errors (the original unused parameter warning remains), and strict encoding and
 diff checks pass. Tests cover the exact incident/tool scope, unchanged complete
 26-suite serial invocation, original private byte proofs, ordinary versus
@@ -115,3 +115,64 @@ escaping dependency links, missing/changed artifacts, occupied process/port,
 test/build failure isolation and the real controller's ready-state ordering.
 They use injected I/O and do not substitute for the actual recovery build or
 public activation acceptance. The old `finish-stage` branch remains unchanged.
+
+## Pre-build probe failure and separately authorized continuation
+
+The first recovery, using tool
+`3d73d081beacdd1856c9170a08294e5a1507be25`, passed the original candidate's 387
+focused tests, 229 retirement tests and the newer tool's 73 tests. It then failed
+with `fetch failed` at `2026-09-27T21:32:51.679Z` in the second baseline check,
+before build. The original state, runtime/environment, tree, dependency and
+history hashes remained unchanged; `.next` and the candidate PM2 registration
+were absent. Read-only checks found the live baseline healthy, with unchanged
+PIDs/restart counts and no OOM evidence. No traffic switch occurred.
+
+Fresh-Node, read-only loopback diagnostics reproduced a stale pooled-socket
+failure after consuming a response, yielding once to let the connection enter
+the idle pool, then blocking the controller for nine seconds while the server
+advertised a five-second keep-alive timeout. The next default fetch failed with
+`UND_ERR_SOCKET`; a separate fresh process using `Connection: close` throughout
+returned 200, as did a default process allowed to handle socket events after
+the blocking interval. This reproduces the failure mechanism, but the original
+receipt recorded only `fetch failed`: its precise historical cause cannot be
+proved retrospectively. No diagnostic resumed stage, built or started a process.
+
+The approved correction forces `Connection: close` on each controller request,
+without an automatic network retry or changes to Host, redirect, status or
+timeout checks. New fetch-failure messages retain only a pathname and bounded
+safe error identifiers. Original exception text, URL queries, headers, bodies
+and environment values are not logged.
+
+The separately authorized `resume-booking-probe-stage` preserves the old
+one-attempt guard and uses a new exclusive audit pair. Its additional incident
+pins are:
+
+- Prior before receipt SHA-256:
+  `b3a6bc00f6a5d632a207953a13e326e29bf962c1210d75e7e1701cae9214586a`.
+- Prior failure receipt SHA-256:
+  `c27dc12d4fd8213a830389159732c95c6ff590428c5dd29d5782669a78810f65`.
+- Prior tool: `3d73d081beacdd1856c9170a08294e5a1507be25`.
+
+The new tool must be clean current main and descend from the prior tool with
+only the same five operational paths changed. Both old receipts must retain
+their exact raw bytes, private ownership/mode/link properties and incident
+fields before the new audit, after tests, after build and before ready. The
+original candidate and every original gate remain unchanged. This addition
+does not delete evidence, reset state, stop another process, weaken
+`finish-stage` or establish production recovery/activation success.
+
+The probe correction and additional continuation passed **307/307** tests in
+the same five local suites (zero failures or skips):
+
+```powershell
+node --test --test-concurrency=1 scripts/online-traffic-release.test.mjs scripts/online-release-retirement-policy.test.mjs scripts/online-release-retirement.test.mjs scripts/online-release-rolling-policy.test.mjs scripts/online-release-rolling.test.mjs
+```
+
+The request test uses the actual controller function and an owned loopback HTTP
+child, with real fetch and synchronous child-process delays. It verifies fresh
+connections, explicit closure, status rejection and manual redirects. Separate
+injected-I/O contracts check timeout/Host/header preservation, safe single-fetch
+failure diagnostics, exact prior receipts/tool ancestry and failure isolation
+at each continuation gate. This is not production PM2/nginx/build acceptance.
+Both scripts pass syntax checks; scoped lint has zero errors and only the
+pre-existing unused-parameter warning. Strict encoding and diff checks pass.

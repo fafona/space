@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
@@ -8,8 +8,116 @@ import {runInNewContext} from 'node:vm';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {assertRollingRetainedProcesses,assertRollingStateHistory,rollingHash,ROLLING_BASE_NAMES} from './online-release-rolling-policy.mjs';
-import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
+import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+
+function releaseRequestSource(){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ return code.slice(code.indexOf('async function request('),code.indexOf('async function verifyBase('));
+}
+
+async function isolatedProbeServer(){
+ // The server must keep running while this test's client event loop is blocked,
+ // just as the existing web process keeps running during synchronous release gates.
+ const child=spawn(process.execPath,['--input-type=module','-e',`
+  import http from 'node:http';
+  let nextConnection=0;
+  const server=http.createServer((req,res)=>{
+   if(req.url==='/disconnect'){req.socket.destroy();return;}
+   if(req.url==='/redirect'){res.writeHead(307,{Location:'/wrong-destination'});res.end();return;}
+   const status=req.url==='/unavailable'?503:req.url==='/unauthorized'?401:req.url==='/wrong-destination'?500:200;
+   res.writeHead(status,{'Content-Type':'application/json'});
+   res.end(JSON.stringify({connectionId:req.socket.probeId,host:req.headers.host,connection:req.headers.connection,buildId:'synthetic-booking-build'}));
+  });
+  server.on('connection',socket=>{socket.probeId=++nextConnection;});
+  server.keepAliveTimeout=50;
+  if('keepAliveTimeoutBuffer' in server)server.keepAliveTimeoutBuffer=0;
+  server.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({port:server.address().port})));
+  process.stdin.resume();
+  process.stdin.on('end',()=>{server.close();server.closeAllConnections();});
+ `],{stdio:['pipe','pipe','pipe'],windowsHide:true});
+ const exited=new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));
+ let diagnostic='';child.stderr.on('data',chunk=>{diagnostic+=chunk;});
+ const close=async()=>{
+  child.stdin.end();
+  let timer;const timeout=new Promise(resolve=>{timer=setTimeout(()=>{child.kill();resolve(null);},3000);});
+  try{await Promise.race([exited,timeout]);}finally{clearTimeout(timer);}
+  await exited;
+ };
+ try{
+  const port=await new Promise((resolve,reject)=>{
+   let pending='';const timeout=setTimeout(()=>reject(Error('probe_fixture_start_timeout')),5000);
+   const cleanup=()=>clearTimeout(timeout);
+   child.once('error',error=>{cleanup();reject(error);});
+   child.once('exit',()=>{cleanup();reject(Error(`probe_fixture_early_exit:${diagnostic}`));});
+   child.stdout.on('data',chunk=>{
+    pending+=chunk;
+    if(!pending.includes('\n'))return;
+    try{const value=JSON.parse(pending.split('\n')[0]);assert.ok(Number.isInteger(value.port)&&value.port>0);cleanup();resolve(value.port);}catch(error){cleanup();reject(error);}
+   });
+  });
+  return {origin:`http://127.0.0.1:${port}`,close};
+ }catch(error){await close();throw error;}
+}
+
+test('real release probes use fresh connections after synchronous work while preserving status, host and manual redirects',async()=>{
+ const fixture=await isolatedProbeServer();
+ try{
+  const request=runInNewContext(`${releaseRequestSource()}request`,{fetch,AbortSignal,Headers,URL,fail:message=>{throw Error(message);}});
+  const connectionIds=new Set();
+  for(let i=0;i<3;i++){
+   const response=await request(`${fixture.origin}/version`,[200],'www.faolla.com');
+   const body=await response.json();
+   assert.equal(body.buildId,'synthetic-booking-build');
+   // Native fetch versions differ on whether an explicit Host is normalized to
+   // the URL authority. The controller's supplied header is covered below.
+   assert.ok(['www.faolla.com',new URL(fixture.origin).host].includes(body.host));
+   assert.equal(body.connection,'close');assert.equal(response.headers.get('connection'),'close');
+   assert.equal(connectionIds.has(body.connectionId),false);connectionIds.add(body.connectionId);
+   if(i<2){
+    await new Promise(resolve=>setImmediate(resolve));
+    execFileSync(process.execPath,['-e','Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,180)'],{timeout:5000,windowsHide:true});
+   }
+  }
+  assert.equal((await request(`${fixture.origin}/unauthorized`,[401],'console.faolla.com')).status,401);
+  await assert.rejects(request(`${fixture.origin}/unavailable`),/online_http:503:\/unavailable/);
+  const redirect=await request(`${fixture.origin}/redirect`,[307]);
+  assert.equal(redirect.status,307);assert.equal(redirect.headers.get('location'),'/wrong-destination');
+  await assert.rejects(request(`${fixture.origin}/disconnect`),/online_fetch_failed/);
+ }finally{await fixture.close();}
+});
+
+test('probe transport enforces connection closure and retains timeout, host, headers and single-attempt HTTP acceptance',async()=>{
+ const source=releaseRequestSource(),calls=[],timeouts=[];
+ const make=(fetcher)=>runInNewContext(`${source}request`,{fetch:fetcher,Headers,URL,
+  AbortSignal:{timeout:milliseconds=>{timeouts.push(milliseconds);return 'timeout-sentinel';}},fail:message=>{throw Error(message);},
+ });
+ const request=make(async(url,options)=>{calls.push({url,options});return {status:200};});
+ for(const extra of [{},{connection:'keep-alive'},{Connection:'keep-alive'},{CONNECTION:'keep-alive'}]){
+  await request('https://example.test/check?private=value',[200],'console.faolla.com',{'X-Probe':'synthetic',...extra});
+  const {url,options}=calls.at(-1),headers=new Headers(options.headers);
+  assert.equal(url,'https://example.test/check?private=value');assert.equal(options.redirect,'manual');
+  assert.equal(headers.get('host'),'console.faolla.com');assert.equal(headers.get('x-probe'),'synthetic');
+  assert.equal(headers.get('connection'),'close');assert.equal(options.signal,'timeout-sentinel');
+ }
+ assert.deepEqual(timeouts,[20000,20000,20000,20000]);
+ for(const [status,allowed,pass] of [[401,[401],true],[401,[200],false],[503,[200],false],[307,[307],true]]){
+  let count=0;const check=make(async()=>{count++;return {status};});
+  const pending=check('https://example.test/check?secret=hidden',allowed);
+  if(pass)assert.equal((await pending).status,status);else await assert.rejects(pending,new RegExp(`online_http:${status}:/check`));
+  assert.equal(count,1);
+ }
+ for(const cause of [{code:'UND_ERR_SOCKET',message:'secret-token'}, {code:'ECONNRESET'}, {code:'injected\nsecret-token'}, undefined]){
+  let count=0;const check=make(async()=>{count++;throw Object.assign(new TypeError('secret-token'),{cause});});
+  await assert.rejects(check('https://example.test/check?secret=hidden'),error=>{
+   assert.match(error.message,/online_fetch_failed/);assert.match(error.message,/\/check/);
+   assert.doesNotMatch(error.message,/secret-token|secret=hidden|injected/);
+   if(cause?.code==='UND_ERR_SOCKET'||cause?.code==='ECONNRESET')assert.ok(error.message.includes(cause.code));
+   return true;
+  });
+  assert.equal(count,1);
+ }
+});
 
 function retainedProcessHarness(){
  const sha=x=>x.repeat(40),name=x=>`merchant-space-online-${x.repeat(12)}`,cwd=x=>`/www/wwwroot/merchant-space.web-releases/${x.repeat(12)}-online`;
@@ -336,6 +444,114 @@ test('actual resume runs all original suites serially, then the guarded real bui
  assert.match(code,/else if\(action==='resume-booking-stage'\)\{\s*await resumeBookingStage\(s\);/);
  assert.match(code,/if\(!existsSync\(`\$\{s.directory\}\/\.next\/BUILD_ID`\)\)fail\('resume_build_missing'\)/);
  assert.doesNotMatch(source,/activateCandidate|restoreConfigs|worktree|\['stop'|\['restart'|rmSync|s\.target\s*=/);
+});
+
+test('probe recovery requires the exact unchanged private receipts from the failed first attempt',()=>{
+ const source=bookingResumeFunction('function bookingProbeResumePriorProof(', 'function bookingResumeDependencies(');
+ const p=BOOKING_STAGE_RESUME,q=BOOKING_STAGE_PROBE_RESUME,s=bookingResumeIncident();
+ const originalBefore={toolRevision:q.priorToolRevision,applicationTarget:p.target,originalStateSha256:p.stateSha256,
+  historyHead:p.historyHead,dependencySha256:p.dependencySha256,startedAt:'2026-09-27T21:32:20.000Z'};
+ const originalFailure={toolRevision:q.priorToolRevision,error:'fetch failed',failedAt:q.priorFailureAt};
+ const check=({before=originalBefore,failure=originalFailure,state=s,badHash=false,badMode=false,badOwner=false,missing=false}={})=>{
+  const values=[Buffer.from(JSON.stringify(before)),Buffer.from(JSON.stringify(failure))],reads=[],owned=[];
+  const result=runInNewContext(`${source}bookingProbeResumePriorProof(s)`,{s:state,operation:'/operation',BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,
+   bookingResumeOwnedPath:(path,file)=>{owned.push([path,file]);if(badOwner)throw Error('unowned');},
+   readFileSync:path=>{if(missing)throw Object.assign(Error('missing'),{code:'ENOENT'});reads.push(path);return values[path.endsWith('-before.json')?0:1];},
+   lstatSync:()=>({mode:badMode?0o100644:0o100600}),hash:bytes=>badHash?'changed':bytes===values[0]?q.priorBeforeSha256:q.priorFailureSha256,
+   fail:message=>{throw Error(message);},
+  });
+  assert.deepEqual(reads,['/operation/booking-stage-resume-before.json','/operation/booking-stage-resume-failure.json']);
+  assert.deepEqual(owned,reads.map(path=>[path,true]));
+  return JSON.parse(JSON.stringify(result));
+ };
+ assert.deepEqual(check(),{priorToolRevision:q.priorToolRevision,priorBeforeSha256:q.priorBeforeSha256,priorFailureSha256:q.priorFailureSha256});
+ for(const options of [{badHash:true},{badMode:true},{badOwner:true},{missing:true},
+  {state:{...s,target:'a'.repeat(40)}},{state:{...s,baseline:'a'.repeat(40)}}])assert.throws(()=>check(options));
+ for(const patch of [{toolRevision:'a'.repeat(40)},{applicationTarget:'a'.repeat(40)},{originalStateSha256:'a'.repeat(64)},
+  {historyHead:'a'.repeat(64)},{dependencySha256:'a'.repeat(64)},{startedAt:'invalid'},{startedAt:'2027-01-01T00:00:00.000Z'},
+  {extra:'field'}])assert.throws(()=>check({before:{...originalBefore,...patch}}),/prior_receipt_invalid/);
+ for(const patch of [{toolRevision:'a'.repeat(40)},{error:'different failure'},{failedAt:'2027-01-01T00:00:00.000Z'},
+  {extra:'field'}])assert.throws(()=>check({failure:{...originalFailure,...patch}}),/prior_receipt_invalid/);
+ for(const value of [[],null,{},'receipt']){
+  assert.throws(()=>check({before:value}),/prior_receipt_invalid/);
+  assert.throws(()=>check({failure:value}),/prior_receipt_invalid/);
+ }
+});
+
+test('probe continuation tool must descend from the failed tool as well as the original app and remain ops-only',()=>{
+ const source=bookingResumeFunction('function bookingResumeToolIdentity(', 'function bookingResumePrivateProof(').replaceAll('import.meta.url','controllerModuleUrl');
+ const s=bookingResumeIncident(),q=BOOKING_STAGE_PROBE_RESUME;
+ const check=failure=>{
+  const revision=failure==='old-tool'?q.priorToolRevision:'a'.repeat(40),directory=`/var/lib/faolla-online-code/${revision}`,calls=[];
+  const result=runInNewContext(`${source}bookingResumeToolIdentity(s,true)`,{s,app:'/app',URL,fileURLToPath:url=>url.pathname,
+   controllerModuleUrl:`file://${directory}/scripts/online-traffic-release.mjs`,BOOKING_STAGE_RESUME_TOOL_FILES,BOOKING_STAGE_PROBE_RESUME,
+   assertBookingStageResumeToolScope,realpathSync:path=>path,bookingResumeOwnedPath:()=>{},safeFile:()=> 'original',hash:String,
+   fail:message=>{throw Error(message);},run:(_command,args)=>{
+    calls.push(Array.from(args));
+    if(args[0]==='merge-base'){if(failure==='prior-ancestry'&&args[2]===q.priorToolRevision)throw Error('not_descendant');return '';}
+    if(args[0]==='diff')return [...BOOKING_STAGE_RESUME_TOOL_FILES,...(failure==='prior-scope'&&args[2]===q.priorToolRevision?['src/changed.ts']:[])].join('\n');
+    if(args[0]==='status')return '';
+    if(args[0]==='show')return 'original';
+    return revision;
+   },
+  });
+  assert.equal(result.revision,revision);
+  assert.deepEqual(calls.filter(args=>args[0]==='merge-base').map(args=>args[2]),[s.target,q.priorToolRevision]);
+  assert.deepEqual(calls.filter(args=>args[0]==='diff').map(args=>args[2]),[s.target,q.priorToolRevision]);
+ };
+ assert.doesNotThrow(()=>check());
+ for(const failure of ['old-tool','prior-ancestry','prior-scope'])assert.throws(()=>check(failure));
+});
+
+test('authorized probe continuation has one separate audit and preserves all original gates and receipts across every failure phase',async()=>{
+ const source=bookingResumeFunction('async function resumeBookingStage(', 'if(process.platform');
+ const prior={priorToolRevision:BOOKING_STAGE_PROBE_RESUME.priorToolRevision,priorBeforeSha256:BOOKING_STAGE_PROBE_RESUME.priorBeforeSha256,priorFailureSha256:BOOKING_STAGE_PROBE_RESUME.priorFailureSha256};
+ for(const failure of [null,'preflight','proof-1','already-audit','create-audit','focused','retirement','tooltests','recheck','proof-2','build','postbuild','proof-3','start','smoke','finalproof','candidate','proof-4']){
+  const s=bookingResumeIncident(),calls=[],writes=[],commands=[],toolModes=[];let verified=0,proofReads=0,privateReads=0,mask=0o077;
+  const gate=name=>{calls.push(name);if(name===failure)throw Error(`failed_${name}`);};
+  const task=runInNewContext(`${source}resumeBookingStage(s,true)`,{s,operation:'/operation',BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_MERGE_CPU_FOCUSED_TESTS,
+   bookingResumeToolIdentity:(_s,mode)=>{toolModes.push(mode);return {revision:'a'.repeat(40),directory:'/new-tool'};},
+   verifyBookingStageResume:async(_s,digest,built)=>{gate(built?'postbuild':++verified===1?'preflight':'recheck');return digest??'digest';},
+   bookingProbeResumePriorProof:()=>{gate(`proof-${++proofReads}`);return prior;},
+   bookingResumeEntryExists:path=>path.includes('/booking-stage-resume-')||(failure==='already-audit'&&path.includes('/booking-stage-probe-resume-')),
+   bookingResumePrivateProof:()=>{if(++privateReads>1)gate('finalproof');return {original:'environment'};},
+   writeFileSync:(path,bytes,options)=>{
+    assert.equal(options.flag,'wx');assert.equal(options.mode,0o600);
+    assert.ok(path.startsWith('/operation/booking-stage-probe-resume-'));
+    if(path.endsWith('-before.json'))gate('create-audit');
+    writes.push({path,value:JSON.parse(bytes)});
+   },
+   run:(command,args,options)=>{
+    commands.push([command,Array.from(args),options]);
+    if(command==='node')gate(args.includes('scripts/online-release-rolling.test.mjs')?'retirement':options.cwd==='/new-tool'?'tooltests':'focused');
+    else gate(command==='nice'?'build':'start');
+   },process:{execPath:'/node',umask:value=>{const old=mask;mask=value;return old;}},
+   smoke:async()=>gate('smoke'),setTimeout:callback=>callback(),verifyBase:async()=>gate('base'),configUnchanged:()=>gate('config'),
+   readRuntimePerformanceSavedConfigs:()=>gate('saved'),verifyCandidate:()=>gate('candidate'),onlineReleaseStageStatus,
+   save:()=>gate('save'),fail:message=>{throw Error(message);},
+  });
+  if(failure){await assert.rejects(task);assert.equal(calls.includes('save'),false);assert.equal(s.status,'preparing');}
+  else{
+   await task;assert.equal(s.status,'ready-no-database');assert.equal(calls.at(-1),'save');assert.equal(proofReads,4);
+   assert.deepEqual(commands[0][1],['--import','tsx','--test','--test-concurrency=1',...BOOKING_MERGE_CPU_FOCUSED_TESTS]);
+   assert.equal(commands[0][2].cwd,s.directory);assert.equal(commands[0][2].env.original,'environment');
+   assert.equal(commands[1][2].cwd,s.directory);assert.equal(commands[2][2].cwd,'/new-tool');
+   assert.equal(commands[3][0],'nice');assert.equal(commands[4][0],'pm2');assert.equal(commands[4][1][0],'start');
+   assert.ok(calls.indexOf('proof-2')<calls.indexOf('build'));assert.ok(calls.indexOf('proof-3')<calls.indexOf('start'));
+   assert.ok(calls.indexOf('candidate')<calls.indexOf('proof-4'));assert.ok(calls.indexOf('proof-4')<calls.indexOf('save'));
+   for(const [key,value] of Object.entries(prior)){assert.equal(writes[0].value[key],value);assert.equal(s.stageResume[key],value);}
+   assert.equal(writes.length,1);
+  }
+  assert.equal(mask,0o077);assert.ok(toolModes.every(mode=>mode===true));
+  if(['preflight','proof-1','already-audit','create-audit'].includes(failure))assert.deepEqual(writes,[]);
+  else if(failure){assert.equal(writes.length,2);assert.ok(writes[1].path.endsWith('-failure.json'));}
+  if(['preflight','proof-1','already-audit','create-audit','focused','retirement','tooltests','recheck','proof-2','build','postbuild','proof-3'].includes(failure))assert.equal(calls.includes('start'),false);
+  assert.equal(commands.some(([command,args])=>command==='pm2'&&args[0]!=='start'),false);
+ }
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.match(code,/else if\(action==='resume-booking-probe-stage'\)\{\s*await resumeBookingStage\(s,true\);/);
+ assert.match(code,/else if\(action==='resume-booking-stage'\)\{\s*await resumeBookingStage\(s\);/);
+ assert.doesNotMatch(source,/unlink|rmSync|renameSync|restoreConfigs|activateCandidate|\['stop'|\['restart'/);
 });
 
 test('booking CPU lane is exactly the approved 19-path live-to-target closure and requires its own anchor',()=>{

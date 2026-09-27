@@ -353,6 +353,41 @@ are reused without generating new timestamps or secrets. There is no traffic
 switch in this action. Any failure leaves evidence and blocks automatic reentry;
 no cleanup, false ready state or `retry-static` substitution is permitted.
 
+### One additional booking probe-failure continuation
+
+The first `resume-booking-stage` attempt passed its tests but failed a baseline
+HTTP probe before build. Its original `booking-stage-resume-before.json` and
+`booking-stage-resume-failure.json` remain immutable; the original action still
+rejects reentry. The separately approved `resume-booking-probe-stage TARGET
+BASELINE` permits one additional attempt for the same application `57dbac3a`
+and baseline `0004c202`, not an arbitrary failed release.
+
+The new tool must be clean current main, descend from both the application and
+prior tool `3d73d081beacdd1856c9170a08294e5a1507be25`, and satisfy the same exact
+five operational-file scope. Before writing its own receipt, it verifies both
+original receipts' pinned raw-byte hashes, root ownership, 0600 mode, single
+links and exact incident fields. The original failure must be `fetch failed`
+at `2026-09-27T21:32:51.679Z`. The original state, environment, dependencies,
+candidate source, retained-history head and owned proxy checks still apply.
+
+The fixed new receipt names are `booking-stage-probe-resume-before.json` and
+`booking-stage-probe-resume-failure.json`; creation is exclusive and either
+existing path blocks another attempt. Old receipts are rechecked after tests,
+after the real build and immediately before saving ready state. No original
+receipt, candidate source, preparing timestamp or certificate is rewritten.
+All original suites, build, vacant-port/process checks, smoke and ready gates
+remain mandatory. There is no additional stop, automatic retry or traffic
+switch, and the ordinary `finish-stage` build requirement is unchanged.
+
+Every controller HTTP probe now explicitly sends `Connection: close`, including
+when caller headers use another capitalization. This avoids reusing an idle
+connection across long synchronous test/build children. Host, manual redirects,
+allowed status checks and the 20-second timeout remain unchanged. A failed
+fetch is not retried by the request helper; its diagnostic contains only the
+pathname and bounded identifier-shaped error code/name, never the query,
+headers, body, environment or original exception message. Existing outer
+candidate/public smoke polling is unchanged.
+
 ## Explicit static permission incident recovery (2026-09-25)
 
 The user approved a narrow retry after candidate `1740b254851c11302b6c7fef536cf9ef92d75637`
