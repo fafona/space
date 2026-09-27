@@ -1,10 +1,64 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext} from 'node:vm';
+import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+
+function retainedProcessHarness(){
+ const sha=x=>x.repeat(40),name=x=>`merchant-space-online-${x.repeat(12)}`,cwd=x=>`/www/wwwroot/merchant-space.web-releases/${x.repeat(12)}-online`;
+ const raw=(x,id,port)=>({name:name(x),pm_id:id,pid:id+100,pm2_env:{pm_cwd:cwd(x),status:'online',PORT:String(port),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0'}});
+ const original=[raw('a',1,3110),raw('b',2,3109),raw('c',3,3103)];
+ const certificate={version:1,status:'completed',victim:{target:sha('c'),name:name('c'),pmId:3,pid:103,cwd:cwd('c'),port:3103},activeTarget:sha('a'),rollbackTarget:sha('b'),nextTarget:sha('d'),allowedActiveTargets:[sha('a'),sha('b'),sha('d')],beforeSha256:'1'.repeat(64),afterSha256:'2'.repeat(64),completedAt:'2026-09-27T18:00:00.000Z'};
+ const current=structuredClone(original);current[2].pid=0;current[2].pm2_env.status='stopped';
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const helpers=source.slice(source.indexOf('const protectedBaseProcesses='),source.indexOf('async function request('));
+ const saved=original.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd}));
+ const s={target:sha('a'),name:name('a'),oldName:name('b'),processes:saved};
+ const normalize=p=>({name:p.name,pmId:p.pm_id,pid:p.pid,cwd:p.pm2_env.pm_cwd,status:p.pm2_env.status,port:Number(p.pm2_env.PORT),backgroundPaused:p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED,automationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,invitationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED});
+ certificate.stoppedProcess=normalize(current[2]);
+ const execute=(expression,{certificates=[certificate],all=current,state=s}={})=>runInNewContext(`${helpers}${expression}`,{s:state,all,releaseTarget:sha('d'),oldName:name('a'),readOnlineRetirementCertificates:()=>certificates,normalizeRetirementProcess:normalize,assertRetainedOnlineProcesses,fail:m=>{throw Error(m);}});
+ return {sha,name,cwd,original,current,certificate,s,execute,source};
+}
+
+test('historical process checks retain original strict behavior without a retirement certificate',()=>{
+ const h=retainedProcessHarness();
+ assert.doesNotThrow(()=>h.execute('verifyRetainedProcesses(s,all)',{certificates:[],all:h.original}));
+ assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{certificates:[]}),/existing_process_changed/);
+ assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{certificates:[],all:h.original.slice(0,2)}),/existing_process_changed/);
+});
+
+test('one certified stopped entry supports new-to-current-to-previous rollback without rewriting old snapshots',()=>{
+ const h=retainedProcessHarness(),before=structuredClone(h.s);
+ for(const target of ['a','b','d'])assert.doesNotThrow(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,target:h.sha(target)}}));
+ assert.deepEqual(h.s,before);
+ const next=JSON.parse(JSON.stringify(h.execute('snapshotRetainedProcesses(all,releaseTarget,oldName)')));
+ assert.deepEqual(next,h.s.processes.slice(0,2));
+ assert.doesNotThrow(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,target:h.sha('d'),processes:next}}));
+ assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,target:h.sha('e')}}),/certificate_anchor_rejected/);
+ for(const key of ['name','oldName'])assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,[key]:h.name('c')}}),/certificate_anchor_rejected/);
+});
+
+test('retirement cannot mask absent restarted replaced or unrelated stopped processes during stage or rollback',()=>{
+ const h=retainedProcessHarness();
+ const changes=[all=>all.pop(),all=>{all[2].pid=103;all[2].pm2_env.status='online';},all=>{all[2].pm_id=9;},all=>{all[2].pm2_env.pm_cwd='/replacement';},all=>{all[1].pid=0;all[1].pm2_env.status='stopped';}];
+ for(const change of changes){const all=structuredClone(h.current);change(all);
+  assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{all}),/online_retirement_/);
+  assert.throws(()=>h.execute('snapshotRetainedProcesses(all,releaseTarget,oldName)',{all}),/online_retirement_/);
+ }
+});
+
+test('retirement wiring precedes baseline HTTP acceptance and persists only a verified new snapshot',()=>{
+ const {source}=retainedProcessHarness();
+ const verify=source.slice(source.indexOf('async function verifyBase('),source.indexOf('function configUnchanged('));
+ assert.ok(verify.indexOf('verifyRetainedProcesses(s,pm())')<verify.indexOf('baseline_version_changed'));
+ assert.match(source,/processes:snapshotRetainedProcesses\(all,target,old.name\)/);
+ assert.match(source,/if\(lane==='runtime-performance'\)run\('node',\['--test','scripts\/online-release-retirement-policy.test.mjs','scripts\/online-release-retirement.test.mjs'\]/);
+ assert.doesNotMatch(source,/pm2.*\['(?:stop|delete)'/);
+});
 
 test('QR export lane admits only the requested client feature and exact release tooling',()=>{
  const feature=['src/lib/merchantBusinessCardQrExport.ts','src/lib/merchantBusinessCardQrExport.test.ts','src/components/admin/BusinessCardQrExportDialog.tsx','src/components/admin/MerchantBusinessCardManager.tsx'];
@@ -89,7 +143,7 @@ test('actual database branch refuses every no-database lane before backup, migra
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
  const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
- for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden']]){
+ for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
@@ -102,6 +156,310 @@ test('actual database branch refuses every no-database lane before backup, migra
   });
   await assert.rejects(task,new RegExp(`^Error: ${error}$`));
   assert.deepEqual(calls,[]);
+ }
+});
+
+const runtimePerformanceFiles=[
+ 'src/lib/merchantCustomerSearch.ts','src/lib/merchantCustomerSearch.test.ts',
+ 'src/components/admin/MerchantCustomerManager.tsx','src/components/admin/MerchantCustomerManager.behavior.test.ts',
+ 'src/app/site/[siteId]/SitePageClient.tsx','src/components/SitePageClient.behavior.test.ts',
+ 'src/components/blocks/ProductBlock.tsx','src/components/blocks/ProductBlock.behavior.test.ts',
+ 'docs/customer-request-lifecycle-2026-09-25.md','docs/customer-search-corpus-2026-09-25.md',
+ 'docs/performance-public-render-2026-09-26.md','docs/performance-runtime-release-2026-09-27.md',
+ 'scripts/online-static-recovery.mjs','scripts/online-static-recovery.test.mjs',
+ 'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.mjs',
+ 'scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',
+ 'scripts/online-release-retirement-policy.mjs','scripts/online-release-retirement-policy.test.mjs',
+ 'scripts/online-release-retirement.mjs','scripts/online-release-retirement.test.mjs',
+];
+
+test('runtime performance admits exactly the curated 22 paths and needs its unique search anchor',()=>{
+ const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
+ const start=policy.indexOf('const runtimePerformanceAnchor ='),end=policy.indexOf('export function onlineReleaseLane(');
+ assert.ok(start>0&&end>start);
+ const actual=Array.from(runInNewContext(`${policy.slice(start,end)}Array.from(runtimePerformanceFiles)`));
+ assert.deepEqual(actual,runtimePerformanceFiles);
+ assert.equal(new Set(actual).size,22);
+ assert.equal(onlineReleaseLane(runtimePerformanceFiles),'runtime-performance');
+ assert.equal(onlineReleaseLane([runtimePerformanceFiles[0]]),'runtime-performance');
+ for(const file of runtimePerformanceFiles.slice(1)){
+  try { assert.notEqual(onlineReleaseLane([file]),'runtime-performance',file); }
+  catch(error) { assert.match(error.message,/online_release_scope_rejected/); }
+ }
+ assert.equal(onlineReleaseLane(['src/components/admin/MerchantCustomerManager.tsx']),'performance');
+ assert.throws(()=>assertOnlineTrafficScope([runtimePerformanceFiles[0]]),/online_release_scope_rejected/);
+ assert.throws(()=>onlineReleaseLane(runtimePerformanceFiles.filter(file=>file!==runtimePerformanceFiles[0])));
+ assert.throws(()=>onlineReleaseLane(STATIC_RECOVERY_TOOL_FILES));
+});
+
+test('runtime performance rejects API, auth, writer, worker, schema, dependencies and every other lane in either order',()=>{
+ const anchor=runtimePerformanceFiles[0];
+ const rejected=[
+  'src/app/api/merchant-customers/route.ts','src/app/api/bookings/route.ts','src/app/api/publish/route.ts',
+  'src/app/api/orders/route-handler.ts','src/app/api/orders/catalog/public/batch-route-handler.ts',
+  'src/app/api/auth/signin/route.ts','src/lib/personalAccountSession.server.ts','src/lib/superAdminVerification.ts',
+  'src/lib/merchantBusinessOrderPermissions.ts','src/lib/merchantBusinessActor.server.ts',
+  'src/lib/merchantCustomers.ts','src/lib/merchantCustomerDirectoryStore.ts','src/data/platformControlStore.ts',
+  'src/lib/merchantBookings.server.ts','src/lib/merchantBookingRulesStore.ts','src/lib/merchantBookingWorkbenchStore.ts',
+  'src/lib/merchantOrdersStore.ts','src/lib/merchantEnterpriseAutomation.server.ts','src/lib/webPush.ts',
+  'src/lib/webPushTopic.server.ts','src/lib/merchantCustomerReadProjection.shadow.ts',
+  'src/lib/merchantBookingPolicyPreparationCandidate.server.ts',
+  'src/lib/accountTrafficCampaign.server.ts','src/lib/merchantBusinessCardQrExport.ts',
+  'src/app/admin/AdminClient.tsx','src/lib/visiblePolling.ts','src/lib/merchantCustomerListViewport.ts',
+  'src/lib/merchantCatalogReadIndex.ts','src/components/admin/MerchantCatalogProductList.tsx',
+  'src/lib/merchantCustomerPagination.ts','src/lib/merchantOrderAttention.server.ts',
+  'scripts/order-attention-pilot.ts','scripts/apply-production-database-migrations.mjs',
+  'scripts/create-production-database-backup.mjs','scripts/deploy.production.sh',
+  'scripts/booking-policy-admission-integration/candidate.sql','scripts/booking-policy-admission-integration/verify-preparation.ts',
+  'scripts/supabase-migrations/202609230049_account_traffic_events.sql',
+  'scripts/supabase-migrations/202609240052_order_attention_pilot.sql',
+  'scripts/supabase-migrations/202609250053_customer_query_shadow.sql',
+  'scripts/supabase-migrations/202609250054_customer_source_observation.sql',
+  'scripts/supabase-migrations/202609250055_booking_dispatch_shadow.sql',
+  'scripts/supabase-migrations/202609250056_booking_dispatch_shadow_evidence.sql',
+  'scripts/supabase-migrations/202609260057_booking_authority_records.sql',
+  'scripts/supabase-migrations/202609260058_booking_create_operations.sql',
+  'scripts/supabase-migrations/202609260059_booking_policy_current_sources.sql',
+  'package.json','package-lock.json','.env.example','.github/workflows/ci.yml','PROJECT_RULES.md',
+  'src/lib/merchantCustomerSearchExtra.ts','src/lib/merchantCustomerSearch.server.ts',
+  'docs/performance-runtime-release-other.md','scripts/online-static-recovery-extra.mjs',
+  './src/lib/merchantCustomerSearch.ts','src/lib/../lib/merchantCustomerSearch.ts','src/lib\\merchantCustomerSearch.ts',
+ ];
+ for(const file of rejected)for(const files of [[anchor,file],[file,anchor]]){
+  assert.throws(()=>onlineReleaseLane(files),/runtime_performance_release_scope_rejected/,file);
+ }
+ // The new acceptance/source files do not widen any old lane either.
+ for(const oldAnchor of ['src/lib/visiblePolling.ts','src/lib/merchantCatalogReadIndex.ts',
+  'src/lib/merchantCustomerPagination.ts','src/lib/merchantOrderAttention.server.ts',
+  'src/lib/merchantBusinessCardQrExport.ts','src/app/api/orders/catalog/public/batch-route-handler.ts',
+  'src/lib/accountTrafficCampaign.server.ts']){
+  assert.throws(()=>onlineReleaseLane([oldAnchor,'src/lib/merchantCustomerSearch.test.ts']));
+ }
+});
+
+test('runtime performance is ready without a database and cannot migrate, prepare or toggle the pilot',()=>{
+ assert.equal(onlineReleaseStageStatus('runtime-performance'),'ready-no-database');
+ assert.equal(onlineReleaseActivationStatus('runtime-performance'),'ready-no-database');
+ for(const check of [assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget]){
+  assert.throws(()=>check('runtime-performance'),/runtime_performance_database_forbidden/);
+ }
+ for(const pending of [null,[],[{version:'202609240052'}]]){
+  assert.throws(()=>assertPendingOnlineReleaseMigrations('runtime-performance',pending),/runtime_performance_database_forbidden/);
+ }
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyOrderAttentionSource('),code.indexOf('function setOrderAttentionCandidateFlag('));
+ const denied=()=>{throw Error('unexpected_pilot_operation');};
+ for(const command of ['prepare','enable','verify','disable'])runInNewContext(`${verifier}verifyOrderAttention(s,command)`,{
+  s:{lane:'runtime-performance'},command,run:denied,atomic:denied,candidateEnvironment:denied,
+ });
+ const flag=code.slice(code.indexOf('function setOrderAttentionCandidateFlag('),code.indexOf('function restoreOrderAttentionConfigs('));
+ assert.throws(()=>runInNewContext(`${flag}setOrderAttentionCandidateFlag(s,'10000000')`,{
+  s:{lane:'runtime-performance'},fail:message=>{throw Error(message);},verifyCandidate:denied,candidateEnvironment:denied,
+ }),/order_attention_candidate_flag_invalid/);
+});
+
+test('runtime performance inherits analytics, retention, pilot and signing secret while only pausing candidate jobs',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const changes='),end=code.indexOf('const envText=',start);
+ const env={FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-original-secret'};
+ const changes=runInNewContext(`${code.slice(start,end)}changes`,{lane:'runtime-performance',target:'a'.repeat(40),port:3109,env,
+  randomBytes:()=>{throw Error('secret_rotation_forbidden');}});
+ for(const field of Object.keys(env))assert.equal(Object.hasOwn(changes,field),false,field);
+ const effective={...env,...changes};
+ for(const [field,value] of Object.entries(env))assert.equal(effective[field],value);
+ assert.equal(effective.FAOLLA_BACKGROUND_JOBS_PAUSED,'1');
+ assert.equal(effective.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,'0');
+ assert.equal(effective.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED,'0');
+ assert.equal(effective.FAOLLA_SUPER_ADMIN_ORIGIN,'https://console.faolla.com');
+ assert.equal(Object.hasOwn(changes,'FAOLLA_ORDER_ATTENTION_OPERATION_TARGET'),false);
+ const guard=code.split(/\r?\n/).find(line=>line.includes("if(lane==='runtime-performance'"));
+ assert.ok(guard);
+ const check=(patch={})=>runInNewContext(guard,{lane:'runtime-performance',env:{...env,...patch},fail:message=>{throw Error(message);}});
+ assert.doesNotThrow(()=>check());
+ for(const patch of [{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'20000000'},
+  {FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:undefined},{FAOLLA_TRAFFIC_ENABLED:'0'},{FAOLLA_TRAFFIC_ENABLED:undefined},
+  {FAOLLA_TRAFFIC_SIGNING_SECRET:''},{FAOLLA_TRAFFIC_SIGNING_SECRET:undefined}]){
+  assert.throws(()=>check(patch),/runtime_performance_baseline_features_invalid/);
+ }
+});
+
+test('runtime performance source verification pins HEAD and the complete clean tree without affecting old lanes',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const source=code.slice(code.indexOf('function verifyRuntimePerformanceSource('),code.indexOf('function publishStatic('));
+ const s={lane:'runtime-performance',target:'a'.repeat(40),directory:'/owned-candidate'};
+ for(const [head,status] of [[s.target,''],['b'.repeat(40),''],[s.target,' M src/lib/merchantCustomerSearch.ts'],[s.target,'?? unexpected.txt']]){
+  const calls=[];
+  const check=()=>runInNewContext(`${source}verifyRuntimePerformanceSource(s)`,{s,
+   run:(command,args,options)=>{
+    assert.equal(command,'git');assert.equal(options.cwd,s.directory);calls.push(Array.from(args));
+    if(args[0]==='rev-parse'){assert.deepEqual(Array.from(args),['rev-parse','HEAD']);return head+'\n';}
+    assert.deepEqual(Array.from(args),['status','--porcelain=v1','--untracked-files=all']);return status;
+   },fail:message=>{throw Error(message);},
+  });
+  if(head===s.target&&!status)assert.doesNotThrow(check);
+  else assert.throws(check,/runtime_performance_candidate_source_changed/);
+  assert.equal(calls.length,head===s.target?2:1);
+ }
+ for(const lane of ['traffic','qr-export','performance','bounded-lists','read-index','public-catalog-batch','order-attention']){
+  runInNewContext(`${source}verifyRuntimePerformanceSource(s)`,{s:{lane},run:()=>{throw Error('old_lane_changed');}});
+ }
+});
+
+test('runtime performance candidate refuses source, analytics, pilot, process and paused-state drift',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const verifier=code.slice(code.indexOf('function verifyCandidate('),code.indexOf('function publishStatic('));
+ const env={status:'online',pm_cwd:'/candidate',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',
+  FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'unchanged'};
+ const target='a'.repeat(40);
+ const check=(patch={},expected='unchanged',head=target,status='')=>runInNewContext(`${verifier}verifyCandidate(s)`,{
+  s:{lane:'runtime-performance',target,name:'candidate',directory:'/candidate'},pm:()=>[{name:'candidate',pm2_env:{...env,...patch}}],
+  candidateEnvironment:()=>({FAOLLA_TRAFFIC_SIGNING_SECRET:expected}),fail:message=>{throw Error(message);},
+  run:(_command,args)=>args[0]==='rev-parse'?head:status,
+ });
+ assert.doesNotThrow(()=>check());
+ for(const patch of [{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'20000000'},
+  {FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:undefined},{FAOLLA_TRAFFIC_ENABLED:'0'},{FAOLLA_TRAFFIC_ENABLED:undefined},
+  {FAOLLA_TRAFFIC_SIGNING_SECRET:'rotated'},{FAOLLA_TRAFFIC_SIGNING_SECRET:undefined},{FAOLLA_TRAFFIC_SIGNING_SECRET:''},
+  {FAOLLA_BACKGROUND_JOBS_PAUSED:'0'},{FAOLLA_SUPER_ADMIN_ORIGIN:'https://other.invalid'},
+  {pm_cwd:'/old'},{status:'stopped'}])assert.throws(()=>check(patch),/changed|invalid/);
+ assert.throws(()=>check({FAOLLA_TRAFFIC_SIGNING_SECRET:''},''),/runtime_performance_baseline_features_changed/);
+ assert.throws(()=>check({},'unchanged','b'.repeat(40)),/runtime_performance_candidate_source_changed/);
+ assert.throws(()=>check({},'unchanged',target,'?? unknown'),/runtime_performance_candidate_source_changed/);
+});
+
+test('runtime performance stage runs its exact suites between source gates before the unchanged build and readiness guards',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const tests='),end=code.indexOf("run('node',['--import','tsx','--test'",start);
+ const tests=Array.from(runInNewContext(`${code.slice(start,end)}tests`,{lane:'runtime-performance',run:()=>{throw Error('unexpected_discovery');}}));
+ assert.deepEqual(tests,[
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts','src/lib/merchantCustomerSearch.test.ts',
+  'src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts',
+  'src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomers.test.ts',
+  'src/lib/merchantCustomerPagination.test.ts','src/lib/merchantCustomerListViewport.test.ts',
+  'src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts',
+  'src/app/api/merchant-customers/route.test.ts','src/app/api/orders/catalog/public/batch-route.test.ts',
+  'src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts',
+  'src/lib/merchantPublicCatalog.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts',
+  'src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts',
+  'src/lib/productBlock.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs',
+ ]);
+ const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
+ assert.equal(new Set([...tests,...fixed]).size,26);
+ for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ const stage=code.indexOf("if(action==='stage'){");
+ const before=code.indexOf('verifyRuntimePerformanceSource(s);',stage);
+ const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
+ const after=code.indexOf('verifyRuntimePerformanceSource(s);',build);
+ const launch=code.indexOf("run('pm2',['start'",after);
+ const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',launch);
+ assert.ok(stage<before&&before<start&&end<build&&build<after&&after<launch&&launch<ready);
+ assert.ok(code.indexOf("fail('target_not_main')",stage)<before);
+ assert.ok(code.indexOf("fail('dependencies_changed')",stage)<before);
+ assert.ok(code.indexOf("fail('candidate_not_ready')",launch)<ready);
+ assert.match(code,/const port=\[3103,3104,3105,3106,3107,3108,3109,3110\]\.find/);
+ assert.match(code,/if\(!port\)fail\('no_candidate_port'\)/);
+ assert.match(code,/if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\)/);
+ const scripts=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).scripts;
+ for(const gate of ['check:env:strict','check:v1-deploy-config','next build --webpack','check:bundle:admin'])assert.ok(scripts.build.includes(gate),gate);
+ assert.equal(tests.some(file=>file.includes('booking-policy')||file.includes('shadow')||file.includes('browser-harness')),false);
+});
+
+function runtimePerformanceProxyHarness(){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const saved=code.slice(code.indexOf('function readRuntimePerformanceSavedConfigs('),code.indexOf('function verifyCandidate('));
+ const restore=code.slice(code.indexOf('function restoreConfigs('),code.indexOf('function candidateEnvironment('));
+ const activate=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('if(process.platform'));
+ const unchanged=code.slice(code.indexOf('function configUnchanged('),code.indexOf('function readRuntimePerformanceSavedConfigs('));
+ const names=['first.conf','second.conf','last.conf'];
+ const files=new Map(),reads=[],effects=[],hooks={beforeStatic:null,beforeWrite:null,failPublic:false};
+ const digest=value=>createHash('sha256').update(value).digest('hex');
+ const s={lane:'runtime-performance',target:'a'.repeat(40),baseline:'b'.repeat(40),
+  status:'ready-no-database',directory:'/candidate',port:3110,oldPort:3109,name:'candidate',configs:{}};
+ for(const file of names){
+  const before=`# original ${file}\nupstream previous;\n`,after=`# candidate ${file}\nupstream next;\n`;
+  files.set(`/operation/before-${file}`,before);files.set(`/operation/after-${file}`,after);files.set(`/proxy/${file}`,before);
+  s.configs[file]={oldHash:digest(before),newHash:digest(after)};
+ }
+ const api=runInNewContext(`${unchanged}${saved}${restore}${activate}({activateCandidate,restoreConfigs,readRuntimePerformanceSavedConfigs})`,{
+  WEB_RELEASE_FILES:names,operation:'/operation',proxy:'/proxy',app:'/www/wwwroot/merchant-space',
+  activeFile:'/active',nginx:'/nginx',hash:digest,
+  safeFile:path=>{reads.push(path);if(!files.has(path))throw Error('missing_fixture_file');return files.get(path);},
+  atomic:(path,value)=>{hooks.beforeWrite?.(path);effects.push(`write:${path}`);files.set(path,value);},
+  realpathSync:()=>'/www/wwwroot/merchant-space.releases/base/.next/static',
+  publishStatic:()=>{hooks.beforeStatic?.();effects.push('static');return 4;},
+  run:(command,args)=>effects.push(`${command}:${Array.from(args).join(',')}`),
+  save:()=>effects.push(`state:${s.status}`),existsSync:()=>false,
+  verifyOrderAttention:()=>{},verifyBase:async()=>{},verifyCandidate:()=>{},
+  smoke:async()=>{if(hooks.failPublic)throw Error('synthetic_public_failure');return 4;},request:async()=>{},
+  setTimeout:callback=>callback(),console:{error(){}},fail:message=>{throw Error(message);},
+ });
+ return {api,s,names,files,reads,effects,hooks};
+}
+
+test('runtime activation validates all saved before and after files before any static or cutover side effect',async()=>{
+ for(const side of ['before','after'])for(const missing of [false,true]){
+  const h=runtimePerformanceProxyHarness(),path=`/operation/${side}-last.conf`;
+  if(missing)h.files.delete(path);else h.files.set(path,'# valid-looking but unowned upstream configuration');
+  await assert.rejects(h.api.activateCandidate(h.s),missing?/missing_fixture_file/:/runtime_performance_saved_proxy_changed/);
+  assert.deepEqual(h.effects,[],`${side} drift on the last file must not publish static files, write state/proxies or reload`);
+  assert.equal(h.s.status,'ready-no-database');
+  assert.ok(h.reads.includes('/operation/before-first.conf'));
+  assert.ok(h.reads.includes(path));
+ }
+});
+
+test('runtime rollback validates every saved before target before any write without relaxing current ownership',()=>{
+ for(const invalid of ['saved-drift','saved-missing','current-drift']){
+  const h=runtimePerformanceProxyHarness();h.s.status='active';
+  for(const file of h.names)h.files.set(`/proxy/${file}`,h.files.get(`/operation/after-${file}`));
+  if(invalid==='saved-drift')h.files.set('/operation/before-last.conf','unowned rollback target');
+  if(invalid==='saved-missing')h.files.delete('/operation/before-last.conf');
+  if(invalid==='current-drift')h.files.set('/proxy/last.conf','unowned current proxy');
+  const error=invalid==='current-drift'?/rollback_proxy_not_owned/:invalid==='saved-missing'?/missing_fixture_file/:/runtime_performance_saved_proxy_changed/;
+  assert.throws(()=>h.api.restoreConfigs(h.s),error);
+  assert.deepEqual(h.effects,[],`${invalid} on the final file must not partially restore or reload`);
+  assert.equal(h.s.status,'active');
+  assert.equal(h.reads.some(path=>path.startsWith('/operation/after-')),false,'rollback does not need a saved after file');
+ }
+});
+
+test('runtime activation and rollback write their validated snapshots rather than rereading a later changed saved file',async()=>{
+ const activate=runtimePerformanceProxyHarness();
+ const expectedAfter=activate.names.map(file=>activate.files.get(`/operation/after-${file}`));
+ activate.hooks.beforeStatic=()=>{for(const file of activate.names)activate.files.set(`/operation/after-${file}`,'late saved-file drift');};
+ await activate.api.activateCandidate(activate.s);
+ assert.equal(activate.s.status,'active');
+ assert.deepEqual(activate.names.map(file=>activate.files.get(`/proxy/${file}`)),expectedAfter);
+ for(const file of activate.names)assert.equal(activate.reads.filter(path=>path===`/operation/after-${file}`).length,1);
+ const restore=runtimePerformanceProxyHarness();restore.s.status='active';
+ const expectedBefore=restore.names.map(file=>restore.files.get(`/operation/before-${file}`));
+ for(const file of restore.names)restore.files.set(`/proxy/${file}`,restore.files.get(`/operation/after-${file}`));
+ restore.hooks.beforeWrite=()=>{for(const file of restore.names)restore.files.set(`/operation/before-${file}`,'late rollback snapshot drift');};
+ restore.api.restoreConfigs(restore.s);
+ assert.equal(restore.s.status,'rolled-back');
+ assert.deepEqual(restore.names.map(file=>restore.files.get(`/proxy/${file}`)),expectedBefore);
+ for(const file of restore.names)assert.equal(restore.reads.filter(path=>path===`/operation/before-${file}`).length,1);
+});
+
+test('runtime public failure uses the verified all-file rollback and neither explicit path bypasses the gates',async()=>{
+ const h=runtimePerformanceProxyHarness(),expected=h.names.map(file=>h.files.get(`/proxy/${file}`));
+ h.hooks.failPublic=true;
+ await assert.rejects(h.api.activateCandidate(h.s),/public_verification_failed/);
+ assert.equal(h.s.status,'rolled-back');
+ assert.deepEqual(h.names.map(file=>h.files.get(`/proxy/${file}`)),expected);
+ assert.equal(h.effects.filter(effect=>effect==='/nginx:-s,reload').length,2);
+ assert.equal(h.effects.includes('write:/active'),false);
+ assert.equal(h.effects.includes('pm2:save'),false);
+ for(const file of h.names)assert.equal(h.reads.filter(path=>path===`/operation/before-${file}`).length,2,'activation and rollback each validate all targets');
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.match(code,/else if\(action==='activate'\)\{[^}]*await activateCandidate\(s\);/);
+ assert.match(code,/else if\(action==='rollback'\)\{[^}]*configUnchanged\(s,true\);if\(s.lane==='order-attention'\)restoreOrderAttentionConfigs\(s\);else restoreConfigs\(s\);/);
+ assert.throws(()=>assertCatalogStaticRecoveryState({...staticIncident().s,lane:'runtime-performance'},staticIncident().active,staticIncident().target,staticIncident().baseline),/static_recovery_incident_not_owned/);
+ for(const lane of ['traffic','performance','read-index','public-catalog-batch','order-attention']){
+  const legacy=runtimePerformanceProxyHarness();
+  assert.equal(legacy.api.readRuntimePerformanceSavedConfigs({...legacy.s,lane},true),null);
+  assert.deepEqual(legacy.reads,[],'other lanes do not inherit this new snapshot check');
  }
 });
 

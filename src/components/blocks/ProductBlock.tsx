@@ -1039,13 +1039,27 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [openedToolbarTarget, setOpenedToolbarTarget] = useState<HTMLElement | null>(null);
   const [openedCartTarget, setOpenedCartTarget] = useState<HTMLElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
-  const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
-  const filteredProducts =
-    tagHideUnselected && selectedTag ? searchMatchedProducts.filter((item) => item.tag === selectedTag) : searchMatchedProducts;
+  const searchMatchedProducts = useMemo(
+    () => productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts,
+    [arrangedProducts, productSearchEnabled, searchKeyword],
+  );
+  const filteredProducts = useMemo(
+    () => tagHideUnselected && selectedTag ? searchMatchedProducts.filter((item) => item.tag === selectedTag) : searchMatchedProducts,
+    [searchMatchedProducts, selectedTag, tagHideUnselected],
+  );
   const totalPages = containerMode === "paged" ? Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage)) : 1;
   const normalizedPageIndex = Math.min(pageIndex, Math.max(0, totalPages - 1));
   const pageStart = normalizedPageIndex * itemsPerPage;
-  const pagedProducts = containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts;
+  const pagedProducts = useMemo(
+    () => containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts,
+    [containerMode, filteredProducts, itemsPerPage, pageStart],
+  );
+  const productGroups = useMemo(
+    () => !runtimeCatalogLoading && !runtimeCatalogError && filteredProducts.length > 0 && groupedByTag
+      ? groupArrangedProductItemsByTag(pagedProducts)
+      : [],
+    [filteredProducts.length, groupedByTag, pagedProducts, runtimeCatalogError, runtimeCatalogLoading],
+  );
   const eagerProductImageIds = new Set(
     pagedProducts.slice(0, PRODUCT_INITIAL_EAGER_IMAGE_LIMIT).map((item) => item.id),
   );
@@ -1976,11 +1990,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
 
     if (groupedByTag) {
-      const groups = groupArrangedProductItemsByTag(pagedProducts);
       return (
         <>
           <div className={productGroupListClassName}>
-            {groups.map((group, index) => (
+            {productGroups.map((group, index) => (
               <div key={`${group.tag || "untagged"}-${index}`} className={productGroupItemClassName}>
                 {renderProductGroupHeading(group.tag, `product-group-${group.tag || "untagged"}-${index}`)}
                 {renderProductCollection(group.items, {

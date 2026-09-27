@@ -152,7 +152,31 @@ const publicCatalogBatchFiles = new Set([
   'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
   'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
 ]);
+// 2026-09-27: the curated customer lifecycle/search and public render slice.
+// This exact no-database lane does not inherit phase 1, catalog API, shadow,
+// authentication, writer, worker or dependency authority from any other lane.
+const runtimePerformanceAnchor = 'src/lib/merchantCustomerSearch.ts';
+const runtimePerformanceFiles = new Set([
+  runtimePerformanceAnchor, 'src/lib/merchantCustomerSearch.test.ts',
+  'src/components/admin/MerchantCustomerManager.tsx',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts',
+  'src/app/site/[siteId]/SitePageClient.tsx', 'src/components/SitePageClient.behavior.test.ts',
+  'src/components/blocks/ProductBlock.tsx', 'src/components/blocks/ProductBlock.behavior.test.ts',
+  'docs/customer-request-lifecycle-2026-09-25.md', 'docs/customer-search-corpus-2026-09-25.md',
+  'docs/performance-public-render-2026-09-26.md', 'docs/performance-runtime-release-2026-09-27.md',
+  // Reviewed operational-only changes between the live application 1740b254
+  // and main 975935b4; admitting these files does not authorize retry-static.
+  'scripts/online-static-recovery.mjs', 'scripts/online-static-recovery.test.mjs',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+  'scripts/online-release-retirement-policy.mjs', 'scripts/online-release-retirement-policy.test.mjs',
+  'scripts/online-release-retirement.mjs', 'scripts/online-release-retirement.test.mjs',
+]);
 export function onlineReleaseLane(files) {
+  if (files.includes(runtimePerformanceAnchor)) {
+    if (files.some(file => !runtimePerformanceFiles.has(file))) throw Error('runtime_performance_release_scope_rejected');
+    return 'runtime-performance';
+  }
   if (files.includes(publicCatalogBatchAnchor)) {
     if (files.some(file => !publicCatalogBatchFiles.has(file))) throw Error('public_catalog_batch_release_scope_rejected');
     return 'public-catalog-batch';
@@ -181,6 +205,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if (lane === 'runtime-performance') return true;
   if (lane === 'public-catalog-batch') return true;
   if (lane === 'qr-export' || lane === 'performance' || lane === 'bounded-lists' || lane === 'read-index') return true;
   if (lane === 'traffic' || lane === 'order-attention') return false;
@@ -193,6 +218,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'runtime-performance') throw Error('runtime_performance_database_forbidden');
   if (lane === 'public-catalog-batch') throw Error('public_catalog_batch_database_forbidden');
   if (lane === 'read-index') throw Error('read_index_database_forbidden');
   if (lane === 'bounded-lists') throw Error('bounded_lists_database_forbidden');

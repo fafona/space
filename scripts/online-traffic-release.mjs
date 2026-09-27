@@ -8,6 +8,8 @@ import {planStaticPermissionRecovery} from './online-static-recovery.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
+import {normalizeRetirementProcess,readOnlineRetirementCertificates} from './online-release-retirement.mjs';
+import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const [action,target,baseline]=process.argv.slice(2);
@@ -24,6 +26,24 @@ function atomic(path,value){const tmp=`${path}.${process.pid}.tmp`;writeFileSync
 const pm=()=>JSON.parse(run('pm2',['jlist']));
 const operation=`${root}/${target}`,stateFile=`${operation}/state.json`,activeFile=`${root}/active.json`;
 const save=s=>atomic(stateFile,JSON.stringify(s,null,2));
+const protectedBaseProcesses=['merchant-space','merchant-space-enterprise-automation-worker','merchant-space-contact-card','merchant-space-web-live'];
+function verifyRetainedProcesses(s,all){
+ const certificates=readOnlineRetirementCertificates();
+ if(!certificates.length){
+  for(const saved of s.processes){const p=all.find(p=>p.name===saved.name);if(!p||p.pid!==saved.pid||p.pm2_env.pm_cwd!==saved.cwd||p.pm2_env.status!=='online')fail('existing_process_changed');}
+  return;
+ }
+ assertRetainedOnlineProcesses({saved:s.processes,current:all.map(normalizeRetirementProcess),certificates,activeTarget:s.target,
+  protectedNames:[...protectedBaseProcesses,s.name,s.oldName].filter(Boolean)});
+}
+function snapshotRetainedProcesses(all,releaseTarget,oldName){
+ const certificates=readOnlineRetirementCertificates();
+ if(!certificates.length)return all.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd}));
+ const saved=all.filter(p=>p.pm2_env.status==='online').map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd}));
+ assertRetainedOnlineProcesses({saved,current:all.map(normalizeRetirementProcess),certificates,activeTarget:releaseTarget,
+  protectedNames:[...protectedBaseProcesses,oldName,`merchant-space-online-${releaseTarget.slice(0,12)}`]});
+ return saved;
+}
 async function request(url,statuses=[200],host='www.faolla.com',headers={}){
  const r=await fetch(url,{redirect:'manual',headers:{Host:host,...headers},signal:AbortSignal.timeout(20000)});
  if(!statuses.includes(r.status))fail(`online_http:${r.status}:${new URL(url).pathname}`);return r;
@@ -32,17 +52,35 @@ async function verifyBase(s){
  if(hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json'))!==s.maintenanceHash||JSON.parse(read('/var/lib/faolla-maintenance/merchant-space/state.json')).phase!=='ended')fail('maintenance_state_changed');
  if(hash(safeFile(marker))!==s.markerHash)fail('legacy_guard_changed');
  if(realpathSync(`${app}.current`)!==s.baseDirectory)fail('baseline_link_changed');
- const all=pm();for(const saved of s.processes){const p=all.find(p=>p.name===saved.name);if(!p||p.pid!==saved.pid||p.pm2_env.pm_cwd!==saved.cwd||p.pm2_env.status!=='online')fail('existing_process_changed');}
+ verifyRetainedProcesses(s,pm());
  if((await(await request(`http://127.0.0.1:${s.oldPort}/api/app-web-version`)).json()).buildId!==s.baseline)fail('baseline_version_changed');
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
+function readRuntimePerformanceSavedConfigs(s,includeAfter){
+ if(s.lane!=='runtime-performance')return null;
+ const saved=new Map();
+ for(const file of WEB_RELEASE_FILES){
+  const before=safeFile(`${operation}/before-${file}`);
+  if(hash(before)!==s.configs[file]?.oldHash)fail('runtime_performance_saved_proxy_changed');
+  const after=includeAfter?safeFile(`${operation}/after-${file}`):null;
+  if(includeAfter&&hash(after)!==s.configs[file]?.newHash)fail('runtime_performance_saved_proxy_changed');
+  saved.set(file,{before,after});
+ }
+ return saved;
+}
 function verifyCandidate(s){
+ verifyRuntimePerformanceSource(s);
  const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
  if(s.lane==='order-attention'&&p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==(s.orderAttentionEnabled?'10000000':'0'))fail('order_attention_candidate_flag_invalid');
  if(s.lane==='bounded-lists'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('bounded_lists_baseline_features_changed');
  if(s.lane==='read-index'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('read_index_baseline_features_changed');
+ if(s.lane==='runtime-performance'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('runtime_performance_baseline_features_changed');
  if(s.lane==='public-catalog-batch'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('public_catalog_batch_baseline_features_changed');
  return p;
+}
+function verifyRuntimePerformanceSource(s){
+ if(s.lane!=='runtime-performance')return;
+ if(run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('runtime_performance_candidate_source_changed');
 }
 function publishStatic(source,destination){
  const files=[];function walk(dir,rel=''){for(const e of readdirSync(dir,{withFileTypes:true})){const key=rel?`${rel}/${e.name}`:e.name;if(e.isSymbolicLink())fail('static_symlink');if(e.isDirectory())walk(`${dir}/${e.name}`,key);else if(e.isFile())files.push(key);else fail('static_type_invalid');}}
@@ -67,7 +105,8 @@ async function smoke(s,publicMode=false){
 }
 function restoreConfigs(s){
  for(const file of WEB_RELEASE_FILES){const h=hash(safeFile(`${proxy}/${file}`));if(h!==s.configs[file].oldHash&&h!==s.configs[file].newHash)fail('rollback_proxy_not_owned');}
- for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,safeFile(`${operation}/before-${file}`));
+ const saved=s.lane==='runtime-performance'?readRuntimePerformanceSavedConfigs(s,false):null;
+ for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).before:safeFile(`${operation}/before-${file}`));
  run(nginx,['-t']);run(nginx,['-s','reload']);
  s.status='rolled-back';s.rolledBackAt=new Date().toISOString();save(s);
  // Preserve all schema/data, background processes, marker and candidate artifacts.
@@ -158,11 +197,12 @@ async function recoverStaticPermissions(s){
  s.staticPermissionRetry={toolRevision:tool.revision,audit,previousRollback:s.rolledBackAt,acceptedAt:new Date().toISOString()};save(s);
 }
 async function activateCandidate(s){
+ const saved=s.lane==='runtime-performance'?readRuntimePerformanceSavedConfigs(s,true):null;
  verifyOrderAttention(s,'verify');
  const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
  s.status='activating';save(s);
  try{
-  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
+  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).after:safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
   let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch(error){console.error(`online_public_probe_failed:${error.message}`);await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
   await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
   s.status='active';s.activatedAt=new Date().toISOString();save(s);atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
@@ -190,7 +230,7 @@ try{
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
   const sockets=run('ss',['-ltnH']);const port=[3103,3104,3105,3106,3107,3108,3109,3110].find(p=>!sockets.includes(`:${p} `));if(!port)fail('no_candidate_port');
   privateDirectory(operation);
-  const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),processes:all.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd})),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
+  const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),processes:snapshotRetainedProcesses(all,target,old.name),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
@@ -202,13 +242,17 @@ try{
   if(lane==='order-attention'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('order_attention_analytics_baseline_invalid');
   if(lane==='bounded-lists'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('bounded_lists_baseline_features_invalid');
   if(lane==='read-index'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('read_index_baseline_features_invalid');
+  if(lane==='runtime-performance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('runtime_performance_baseline_features_invalid');
   if(lane==='public-catalog-batch'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('public_catalog_batch_baseline_features_invalid');
   const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='order-attention'?{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'}:{}),...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
   console.log('online_focused_tests');
-  const tests=lane==='qr-export'
+  verifyRuntimePerformanceSource(s);
+  const tests=lane==='runtime-performance'
+   ? ['src/components/admin/MerchantCustomerManager.behavior.test.ts','src/lib/merchantCustomerSearch.test.ts','src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerPagination.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts','src/lib/merchantPublicCatalog.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs']
+   : lane==='qr-export'
    ? ['src/lib/merchantBusinessCardQrExport.test.ts','src/lib/merchantBusinessCardDestination.test.ts','src/lib/merchantBusinessCardQrColorSelection.test.ts','src/lib/merchantBusinessCardQrText.test.ts']
    : lane==='public-catalog-batch'
    ? ['src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts','src/lib/merchantPublicCatalog.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','src/lib/merchantCatalogReadIndex.test.ts','src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts','scripts/production-maintenance-next-startup-acceptance.test.mjs','scripts/production-maintenance-build-recovery-evidence.test.mjs','scripts/production-maintenance-route-build-evidence.test.mjs']
@@ -222,9 +266,11 @@ try{
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
   run('node',['--import','tsx','--test',...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  if(lane==='runtime-performance')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
   try{run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
+  verifyRuntimePerformanceSource(s);
   run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(port)],{env});
   let ready=false;for(let i=0;i<25;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('candidate_not_ready');
   verifyCandidate(s);s.status=onlineReleaseStageStatus(lane);save(s);
