@@ -8,6 +8,7 @@ import {runInNewContext} from 'node:vm';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {assertRollingRetainedProcesses,assertRollingStateHistory,rollingHash,ROLLING_BASE_NAMES} from './online-release-rolling-policy.mjs';
+import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
 
 function retainedProcessHarness(){
@@ -170,6 +171,172 @@ const bookingMergeCpuFiles=[
  'scripts/online-release-rolling-policy.mjs','scripts/online-release-rolling-policy.test.mjs',
  'scripts/online-release-rolling.mjs','scripts/online-release-rolling.test.mjs','docs/booking-merge-release-2026-09-27.md',
 ];
+
+function bookingResumeIncident(){
+ const p=BOOKING_STAGE_RESUME,directory='/www/wwwroot/merchant-space.web-releases/';
+ const active={target:p.baseline,port:p.oldPort,directory:`${directory}${p.baseline.slice(0,12)}-online`,name:`merchant-space-online-${p.baseline.slice(0,12)}`};
+ return {target:p.target,baseline:p.baseline,status:'preparing',lane:'booking-merge-cpu',port:p.port,oldPort:p.oldPort,
+  directory:`${directory}${p.target.slice(0,12)}-online`,name:`merchant-space-online-${p.target.slice(0,12)}`,
+  oldDirectory:active.directory,oldName:active.name,previousActive:active,rollingRetentionHeadSha256:p.historyHead};
+}
+function bookingResumeFunction(name,next){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ return code.slice(code.indexOf(name),code.indexOf(next,code.indexOf(name)));
+}
+
+test('pre-build resume pins one incident and an exact five-file operational tool scope, without opening any other lane',()=>{
+ const s=bookingResumeIncident();
+ assert.doesNotThrow(()=>assertBookingStageResumeState(s,s.previousActive,s.target,s.baseline));
+ for(const patch of [{target:'a'.repeat(40)},{baseline:'a'.repeat(40)},{status:'active'},{status:'rolled-back'},
+  {lane:'runtime-performance'},{port:3105},{oldPort:3102},{directory:'/other'},{name:'other'},
+  {oldDirectory:'/other'},{oldName:'other'},{rollingRetentionHeadSha256:'a'.repeat(64)},{previousActive:null}]){
+  assert.throws(()=>assertBookingStageResumeState({...s,...patch},s.previousActive,s.target,s.baseline),/incident_not_owned/);
+ }
+ assert.throws(()=>assertBookingStageResumeState(s,{...s.previousActive,port:3104},s.target,s.baseline),/incident_not_owned/);
+ assert.throws(()=>assertBookingStageResumeState(s,s.previousActive,'a'.repeat(40),s.baseline),/incident_not_owned/);
+ assert.equal(new Set(BOOKING_STAGE_RESUME_TOOL_FILES).size,5);
+ assert.doesNotThrow(()=>assertBookingStageResumeToolScope([...BOOKING_STAGE_RESUME_TOOL_FILES]));
+ for(const path of ['src/lib/merchantBookingPersistenceStore.ts','.github/workflows/ci.yml','package-lock.json',
+  'scripts/online-release-rolling.mjs','scripts/online-release-rolling-policy.mjs','scripts/online-release-retirement.mjs',
+  'scripts/online-static-recovery.mjs','scripts/run-local-tests.mjs','scripts/new.sql','docs/other.md']){
+  assert.throws(()=>assertBookingStageResumeToolScope([...BOOKING_STAGE_RESUME_TOOL_FILES,path]),/scope_rejected/);
+ }
+ assert.throws(()=>assertBookingStageResumeToolScope([]),/scope_rejected/);
+});
+
+test('only booking stage serializes the same full 26-suite invocation without relaxing discovery or any old lane',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const tests='),call=code.indexOf("run('node',['--import','tsx','--test'",start),end=code.indexOf('\n',call);
+ for(const lane of ['booking-merge-cpu','runtime-performance','qr-export','public-catalog-batch','bounded-lists','order-attention','performance']){
+  const calls=[];
+  runInNewContext(code.slice(start,end),{lane,BOOKING_MERGE_CPU_FOCUSED_TESTS,s:{directory:'/original-candidate'},env:{original:true},run:(...args)=>calls.push(args)});
+  assert.equal(calls.length,1);const [command,args,options]=calls[0];
+  assert.equal(command,'node');assert.equal(options.cwd,'/original-candidate');assert.equal(options.env.original,true);
+  assert.equal(args.filter(x=>x==='--test-concurrency=1').length,lane==='booking-merge-cpu'?1:0);
+  if(lane==='booking-merge-cpu')assert.deepEqual(Array.from(args.slice(4)),Array.from(BOOKING_MERGE_CPU_FOCUSED_TESTS));
+ }
+ assert.equal(new Set(BOOKING_MERGE_CPU_FOCUSED_TESTS).size,26);
+});
+
+test('resume tool verifies exact current main, ancestry, clean root-owned source and operational-only bytes',()=>{
+ const source=bookingResumeFunction('function bookingResumeToolIdentity(', 'function bookingResumePrivateProof(').replaceAll('import.meta.url','controllerModuleUrl');
+ const s=bookingResumeIncident(),revision='a'.repeat(40),directory=`/var/lib/faolla-online-code/${revision}`;
+ const check=(failure)=>runInNewContext(`${source}bookingResumeToolIdentity(s)`,{s,app:'/app',URL,fileURLToPath:url=>url.pathname,
+  controllerModuleUrl:`file://${directory}/scripts/online-traffic-release.mjs`,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,
+  realpathSync:path=>failure==='symlink'?'/elsewhere':path,bookingResumeOwnedPath:()=>{if(failure==='owner')throw Error('owner');},
+  safeFile:()=>failure==='bytes'?'changed':'original',hash:String,fail:m=>{throw Error(m);},
+  run:(_command,args)=>{
+   if(args[0]==='merge-base'){if(failure==='ancestor')throw Error('ancestor');return '';}
+   if(args[0]==='diff')return [...BOOKING_STAGE_RESUME_TOOL_FILES,...(failure==='scope'?['src/changed.ts']:[])].join('\n');
+   if(args[0]==='status')return failure==='dirty'?'?? draft':'';
+   if(args[0]==='show')return 'original';
+   return failure==='main'&&args[1]==='origin/main'?s.target:failure==='head'&&args[1]==='HEAD'?'b'.repeat(40):revision;
+  },
+ });
+ assert.equal(check().revision,revision);
+ for(const failure of ['main','head','dirty','symlink','owner','ancestor','scope','bytes'])assert.throws(()=>check(failure));
+});
+
+test('resume private proof rejects any original state/runtime/environment drift and returns only its checked runtime bytes',()=>{
+ const source=bookingResumeFunction('function bookingResumePrivateProof(', 'function bookingResumeDependencies('),s=bookingResumeIncident();
+ const paths=['/operation/state.json','/operation/runtime.json',`${s.directory}/.env.local`];
+ for(const failAt of [null,...paths]){
+  const reads=[],expected=[BOOKING_STAGE_RESUME.stateSha256,BOOKING_STAGE_RESUME.runtimeSha256,BOOKING_STAGE_RESUME.environmentSha256];
+  const invoke=()=>runInNewContext(`${source}bookingResumePrivateProof(s)`,{s,stateFile:paths[0],operation:'/operation',BOOKING_STAGE_RESUME,
+   bookingResumeOwnedPath:()=>{},lstatSync:()=>({mode:0o100600}),safeFile:path=>{reads.push(path);return path===paths[1]?'{}':path;},
+   hash:value=>{const path=value==='{}'?paths[1]:value;return path===failAt?'changed':expected[paths.indexOf(path)];},fail:m=>{throw Error(m);},
+  });
+  if(failAt)assert.throws(invoke,/private_proof_changed/);else {assert.deepEqual(JSON.parse(JSON.stringify(invoke())),{});assert.deepEqual(reads,paths);}
+ }
+});
+
+test('resume dependency comparison accepts ordinary internal bin symlinks and rejects escaping or changed dependency trees',()=>{
+ const source=bookingResumeFunction('function bookingResumeDependencies(', 'function bookingResumeVacant(');
+ const run=(patch={})=>runInNewContext(`${source}bookingResumeDependencies('/deps')`,{
+  bookingResumeOwnedPath:()=>{},createHash,hash:v=>createHash('sha256').update(v).digest('hex'),
+  readdirSync:path=>path==='/deps'?['pkg','.bin']:path==='/deps/pkg'?['cli.js']:['command'],
+  lstatSync:path=>({uid:patch.owner??0,mode:path.endsWith('command')?0o120777:path.endsWith('cli.js')?(patch.mode??0o100644):0o40755,
+   isSymbolicLink:()=>path.endsWith('command'),isDirectory:()=>['/deps/pkg','/deps/.bin'].includes(path),isFile:()=>path.endsWith('cli.js')}),
+  realpathSync:()=>patch.escape?'/outside/cli.js':'/deps/pkg/cli.js',readlinkSync:()=> '../pkg/cli.js',readFileSync:()=>patch.contents??'original',fail:m=>{throw Error(m);},
+ });
+ assert.match(run(),/^[a-f0-9]{64}$/);assert.notEqual(run({contents:'changed'}),run());
+ for(const patch of [{owner:1000},{mode:0o100666},{escape:true}])assert.throws(()=>run(patch),/booking_stage_resume_dependency_/);
+});
+
+test('actual preflight rejects source, original proof, proxy/history, artifacts, dependencies and occupied slot before any mutation',async()=>{
+ const source=bookingResumeFunction('async function verifyBookingStageResume(', 'async function resumeBookingStage(');
+ for(const failure of [null,'state','private','owned','base','config','saved','source','tree','lock','artifact','dependency','slot']){
+  const s=bookingResumeIncident(),calls=[];if(failure==='state')s.status='active';
+  const gate=name=>{calls.push(name);if(name===failure)throw Error(`failed_${name}`);};
+  const task=runInNewContext(`${source}verifyBookingStageResume(s,undefined,false)`,{s,target:BOOKING_STAGE_RESUME.target,baseline:BOOKING_STAGE_RESUME.baseline,
+   BOOKING_STAGE_RESUME:{...BOOKING_STAGE_RESUME,dependencySha256:'digest'},assertBookingStageResumeState,activeFile:'/active',app:'/app',
+   safeFile:path=>path==='/active'?JSON.stringify(s.previousActive):failure==='lock'?'different':'lock',hash:String,
+   bookingResumePrivateProof:()=>gate('private'),bookingResumeOwnedPath:()=>gate('owned'),verifyBase:async()=>gate('base'),
+   configUnchanged:()=>gate('config'),readRuntimePerformanceSavedConfigs:()=>gate('saved'),verifyRuntimePerformanceSource:()=>gate('source'),
+   run:(_c,args)=>args[0]==='show'?'lock':failure==='tree'?'bad':BOOKING_STAGE_RESUME.tree,
+   bookingResumeEntryExists:()=>failure==='artifact',bookingResumeDependencies:path=>failure==='dependency'&&path.startsWith(s.directory)?'bad':'digest',
+   bookingResumeVacant:()=>gate('slot'),fail:m=>{throw Error(m);},
+  });
+  if(failure)await assert.rejects(task);else assert.equal(await task,'digest');
+  assert.equal(calls.includes('build'),false);
+ }
+});
+
+test('reserved PM2 identity and listening port are checked independently, including IPv6 listeners',()=>{
+ const source=bookingResumeFunction('function bookingResumeVacant(', 'async function verifyBookingStageResume('),s=bookingResumeIncident();
+ const check=(processes=[],sockets='')=>runInNewContext(`${source}bookingResumeVacant(s)`,{s,pm:()=>processes,run:()=>sockets,fail:m=>{throw Error(m);}});
+ assert.doesNotThrow(()=>check());
+ for(const p of [{name:s.name},{name:'alias',pm2_env:{pm_cwd:s.directory}}])assert.throws(()=>check([p]),/candidate_exists/);
+ for(const endpoint of ['127.0.0.1:3104','[::]:3104','*:3104'])assert.throws(()=>check([],`LISTEN 0 511 ${endpoint} *:*`),/port_occupied/);
+ assert.doesNotThrow(()=>check([],'LISTEN 0 511 127.0.0.1:13104 *:*'));
+});
+
+test('resume treats dangling artifact links as existing and never mistakes permission failures for absence',()=>{
+ const source=bookingResumeFunction('function bookingResumeEntryExists(', 'function bookingResumeVacant(');
+ const check=kind=>runInNewContext(`${source}bookingResumeEntryExists('/candidate/.next')`,{lstatSync:()=>{
+  if(kind==='link')return {isSymbolicLink:()=>true};
+  throw Object.assign(Error(kind),{code:kind});
+ }});
+ assert.equal(check('link'),true);assert.equal(check('ENOENT'),false);assert.throws(()=>check('EACCES'),/EACCES/);
+});
+
+test('actual resume runs all original suites serially, then the guarded real build/start/smoke; failures never fabricate ready',async()=>{
+ const source=bookingResumeFunction('async function resumeBookingStage(', 'if(process.platform');
+ for(const failure of [null,'preflight','prior-attempt','focused','retirement','tooltests','recheck','build','postbuild','start','smoke','finalproof','candidate']){
+  const s=bookingResumeIncident(),calls=[],writes=[],commands=[];let verified=0,privateReads=0,mask=0o077;
+  const gate=name=>{calls.push(name);if(name===failure)throw Error(`failed_${name}`);};
+  const task=runInNewContext(`${source}resumeBookingStage(s)`,{s,operation:'/operation',BOOKING_STAGE_RESUME,BOOKING_MERGE_CPU_FOCUSED_TESTS,
+   bookingResumeToolIdentity:()=>({revision:'a'.repeat(40),directory:'/new-tool'}),verifyBookingStageResume:async(_s,digest,built)=>{gate(built?'postbuild':++verified===1?'preflight':'recheck');return digest??'digest';},
+   bookingResumeEntryExists:()=>failure==='prior-attempt',bookingResumePrivateProof:()=>{if(++privateReads>1)gate('finalproof');return {original:'environment'};},
+   writeFileSync:(path,_bytes,options)=>{assert.equal(options.flag,'wx');assert.equal(options.mode,0o600);writes.push(path);},
+   run:(command,args,options)=>{
+    commands.push([command,Array.from(args),options]);
+    if(command==='node')gate(args.includes('scripts/online-release-rolling.test.mjs')?'retirement':options.cwd==='/new-tool'?'tooltests':'focused');
+    else gate(command==='nice'?'build':'start');
+   },process:{execPath:'/node',umask:value=>{const old=mask;mask=value;return old;}},
+   smoke:async()=>gate('smoke'),setTimeout:callback=>callback(),verifyBase:async()=>gate('base'),configUnchanged:()=>gate('config'),
+   readRuntimePerformanceSavedConfigs:()=>gate('saved'),verifyCandidate:()=>gate('candidate'),onlineReleaseStageStatus,
+   save:()=>gate('save'),fail:m=>{throw Error(m);},
+  });
+  if(failure){await assert.rejects(task);assert.equal(calls.includes('save'),false);assert.equal(s.status,'preparing');}
+  else {
+   await task;assert.equal(s.status,'ready-no-database');assert.equal(calls.at(-1),'save');
+   assert.deepEqual(commands[0][1],['--import','tsx','--test','--test-concurrency=1',...BOOKING_MERGE_CPU_FOCUSED_TESTS]);
+   assert.equal(commands[0][2].cwd,s.directory);assert.equal(commands[0][2].env.original,'environment');
+   assert.deepEqual(commands[1][1],['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs']);
+   assert.equal(commands[1][2].cwd,s.directory);assert.equal(commands[2][2].cwd,'/new-tool');
+   assert.ok(calls.indexOf('postbuild')<calls.indexOf('start'));assert.ok(calls.indexOf('candidate')<calls.indexOf('save'));
+  }
+  assert.equal(mask,0o077);
+  if(['preflight','prior-attempt'].includes(failure))assert.deepEqual(writes,[]);
+  if(['preflight','prior-attempt','focused','retirement','tooltests','recheck','build','postbuild'].includes(failure))assert.equal(calls.includes('start'),false);
+  assert.equal(commands.some(([command,args])=>command==='pm2'&&args[0]!=='start'),false);
+ }
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.match(code,/else if\(action==='resume-booking-stage'\)\{\s*await resumeBookingStage\(s\);/);
+ assert.match(code,/if\(!existsSync\(`\$\{s.directory\}\/\.next\/BUILD_ID`\)\)fail\('resume_build_missing'\)/);
+ assert.doesNotMatch(source,/activateCandidate|restoreConfigs|worktree|\['stop'|\['restart'|rmSync|s\.target\s*=/);
+});
 
 test('booking CPU lane is exactly the approved 19-path live-to-target closure and requires its own anchor',()=>{
  const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
@@ -335,7 +502,7 @@ test('booking CPU candidate preserves analytics retention and pilot, pauses only
 test('booking CPU stage mandates all seven CPU suites plus public auth static CI and separate rolling guards before build',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const start=code.indexOf('const tests='),end=code.indexOf("run('node',['--import','tsx','--test'",start);
- const tests=Array.from(runInNewContext(`${code.slice(start,end)}tests`,{lane:'booking-merge-cpu',run:()=>{throw Error('no_dynamic_discovery');}}));
+ const tests=Array.from(runInNewContext(`${code.slice(start,end)}tests`,{lane:'booking-merge-cpu',BOOKING_MERGE_CPU_FOCUSED_TESTS,run:()=>{throw Error('no_dynamic_discovery');}}));
  assert.deepEqual(tests,[
   'src/lib/merchantBookingPersistenceStore.test.ts','src/lib/merchantBookingMergeParity.test.ts','src/app/api/merchant-customers/route.booking-merge.test.ts',
   'src/app/api/merchant-customers/route.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/lib/merchantBookings.test.ts',
@@ -575,7 +742,7 @@ test('runtime performance stage runs its exact suites between source gates befor
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,26);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const stage=code.indexOf("if(action==='stage'){");
  const before=code.indexOf('verifyRuntimePerformanceSource(s);',stage);
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
@@ -598,7 +765,7 @@ function runtimePerformanceProxyHarness(lane='runtime-performance'){
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const saved=code.slice(code.indexOf('function readRuntimePerformanceSavedConfigs('),code.indexOf('function verifyCandidate('));
  const restore=code.slice(code.indexOf('function restoreConfigs('),code.indexOf('function candidateEnvironment('));
- const activate=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('if(process.platform'));
+ const activate=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('function bookingResumeOwnedPath('));
  const unchanged=code.slice(code.indexOf('function configUnchanged('),code.indexOf('function readRuntimePerformanceSavedConfigs('));
  const names=['first.conf','second.conf','last.conf'];
  const files=new Map(),reads=[],effects=[],hooks={beforeStatic:null,beforeWrite:null,failPublic:false};
@@ -849,7 +1016,7 @@ test('public catalog batch stage runs its exact regressions before the guarded b
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,tests.length+fixed.length);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(build>end&&ready>build);
@@ -984,7 +1151,7 @@ test('read-index stage includes all tracked traffic regressions once plus catalo
  assert.equal(new Set(tests).size,tests.length);
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(start>0&&end>start&&build>end&&ready>build);
@@ -1436,7 +1603,7 @@ test('actual static recovery revalidates source, tests, metadata and public byte
 });
 test('shared activation preserves normal cutover, all public checks and owned rollback on retry failure',async()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const implementation=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('if(process.platform'));
+ const implementation=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('function bookingResumeOwnedPath('));
  for(const failedSmoke of [false,true]){
   const {s}=staticIncident();const calls=[];
   const task=runInNewContext(`${implementation}activateCandidate(s)`,{

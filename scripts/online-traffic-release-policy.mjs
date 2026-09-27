@@ -287,6 +287,46 @@ export function hasExpectedCardWebsite(html) {
   return (html.match(/<a\b[^>]*>/g)||[]).some(anchor=>/\sclass="button secondary"/.test(anchor)&&/\shref="https:\/\/www\.haoyouduosevilla\.com\/"/.test(anchor));
 }
 
+export const BOOKING_MERGE_CPU_FOCUSED_TESTS = Object.freeze([
+  'src/lib/merchantBookingPersistenceStore.test.ts','src/lib/merchantBookingMergeParity.test.ts','src/app/api/merchant-customers/route.booking-merge.test.ts',
+  'src/app/api/merchant-customers/route.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/lib/merchantBookings.test.ts',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomerSearch.test.ts',
+  'src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts',
+  'src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts',
+  'src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs',
+  'scripts/run-ci-tests.test.mjs','scripts/ci-workflow-contract.test.mjs','scripts/production-maintenance-pm2-connection.test.mjs','scripts/repair-startup.test.mjs',
+  'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs',
+]);
+// This one failed pre-build attempt retains its original application identity.
+// These are read-only incident observations, not caller-issued recovery authority.
+export const BOOKING_STAGE_RESUME = Object.freeze({
+  target:'57dbac3ab07899fcca03a17d149c3c717b805d63',baseline:'0004c202f1c75bce4241c4185aeb16eb1724b177',
+  stateSha256:'84a9523ef6ffa9a9038d554fdfb345047e88bd435907279194c2048fadf65798',
+  runtimeSha256:'9895668c59d4987ec4f5232c4637154db2dd617cd2697997264b194c460e851e',
+  environmentSha256:'1b5de1855c2b91aeb7697cd9794e245240a37515f776f9a7deb4fba47a5fc3ad',
+  historyHead:'fb5b966a6f5b15267b1e9b8f5ff028cb29522a681fb0d5f1391964254e9eee07',
+  dependencySha256:'f12f24a40f70ac0f5c55821268303873826ece213856cb0b8e84f871cd58428e',
+  tree:'2e071ce133bcf1a66a6b41ca56e1a90bb2c95011',port:3104,oldPort:3103,
+});
+export const BOOKING_STAGE_RESUME_TOOL_FILES = Object.freeze([
+  'scripts/online-traffic-release.mjs','scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.test.mjs',
+  'docs/no-maintenance-release.md','docs/booking-merge-release-2026-09-27.md',
+]);
+export function assertBookingStageResumeToolScope(files) {
+  if (!Array.isArray(files) || !files.includes('scripts/online-traffic-release.mjs') ||
+      files.some(file=>!BOOKING_STAGE_RESUME_TOOL_FILES.includes(file))) throw Error('booking_stage_resume_tool_scope_rejected');
+}
+export function assertBookingStageResumeState(s,active,target,baseline) {
+  const p=BOOKING_STAGE_RESUME,base='/www/wwwroot/merchant-space.web-releases/';
+  if (target!==p.target || baseline!==p.baseline || s?.target!==target || s?.baseline!==baseline ||
+      s.status!=='preparing' || s.lane!=='booking-merge-cpu' || s.port!==p.port || s.oldPort!==p.oldPort ||
+      s.directory!==`${base}${target.slice(0,12)}-online` || s.name!==`merchant-space-online-${target.slice(0,12)}` ||
+      s.oldDirectory!==`${base}${baseline.slice(0,12)}-online` || s.oldName!==`merchant-space-online-${baseline.slice(0,12)}` ||
+      s.rollingRetentionHeadSha256!==p.historyHead || active?.target!==baseline || active.port!==s.oldPort ||
+      active.directory!==s.oldDirectory || active.name!==s.oldName || !s.previousActive ||
+      ['target','port','directory','name'].some(key=>s.previousActive[key]!==active[key])) throw Error('booking_stage_resume_incident_not_owned');
+}
+
 // Explicit one-incident recovery authorized on 2026-09-25. This is NOT an
 // application release lane and does not widen any existing stage allowlist.
 export const STATIC_RECOVERY_TOOL_FILES = [

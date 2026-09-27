@@ -319,6 +319,40 @@ rollback steps before the new candidate has switched traffic.
 
 See [the scoped booking release evidence](booking-merge-release-2026-09-27.md).
 
+### Exact pre-build booking-stage recovery
+
+The first `57dbac3ab07899fcca03a17d149c3c717b805d63` stage stopped during focused
+tests, before building or starting a candidate. A Linux PM2 fixture creates a
+temporary `scripts/pm2-fake-*/alias.sock` symlink; concurrently running test
+discovery correctly rejected it. The booking lane now runs its unchanged 26
+focused test files with `--test-concurrency=1`. Discovery restrictions, tests,
+other lanes and the existing `finish-stage` missing-build rejection are unchanged.
+
+`resume-booking-stage TARGET BASELINE` is a separate, one-attempt recovery for
+that original candidate and live baseline
+`0004c202f1c75bce4241c4185aeb16eb1724b177`. It must run from a clean, root-owned
+current-main tool worktree under `/var/lib/faolla-online-code/TOOL_SHA`. The tool
+must descend from the original candidate with changes restricted to the three
+online release scripts and two existing release notes. It is not a new
+application target, does not rewrite candidate source or historical certificates,
+does not retire another process and does not reset the original preparing state.
+
+Read-only incident hashes pin the original state (including start time), private
+runtime/environment files, retained-history head, candidate tree and complete
+dependency contents. Ordinary internal `node_modules/.bin` links remain valid;
+escaping links, wrong owners/modes, unexpected artifacts or dependency changes
+fail. All old/live and saved before/after proxy checks apply. Candidate identity
+and its reserved port must be absent before build and again before start.
+
+Only after preflight does the tool write a new private attempt receipt, run the
+original candidate's 26 focused and four retirement suites serially, and test
+the newer tool in its own worktree. It rechecks all proofs, performs the real
+guarded build with umask 022, rechecks proofs and tool authority, then follows the
+existing candidate start/smoke/ready gates. Original private environment bytes
+are reused without generating new timestamps or secrets. There is no traffic
+switch in this action. Any failure leaves evidence and blocks automatic reentry;
+no cleanup, false ready state or `retry-static` substitution is permitted.
+
 ## Explicit static permission incident recovery (2026-09-25)
 
 The user approved a narrow retry after candidate `1740b254851c11302b6c7fef536cf9ef92d75637`
