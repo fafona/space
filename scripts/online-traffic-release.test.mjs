@@ -6,6 +6,8 @@ import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext} from 'node:vm';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
+import {normalizeRetirementProcess} from './online-release-retirement.mjs';
+import {assertRollingRetainedProcesses,assertRollingStateHistory,rollingHash,ROLLING_BASE_NAMES} from './online-release-rolling-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
 
 function retainedProcessHarness(){
@@ -20,8 +22,8 @@ function retainedProcessHarness(){
  const s={target:sha('a'),name:name('a'),oldName:name('b'),processes:saved};
  const normalize=p=>({name:p.name,pmId:p.pm_id,pid:p.pid,cwd:p.pm2_env.pm_cwd,status:p.pm2_env.status,port:Number(p.pm2_env.PORT),backgroundPaused:p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED,automationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,invitationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED});
  certificate.stoppedProcess=normalize(current[2]);
- const execute=(expression,{certificates=[certificate],all=current,state=s}={})=>runInNewContext(`${helpers}${expression}`,{s:state,all,releaseTarget:sha('d'),oldName:name('a'),readOnlineRetirementCertificates:()=>certificates,normalizeRetirementProcess:normalize,assertRetainedOnlineProcesses,fail:m=>{throw Error(m);}});
- return {sha,name,cwd,original,current,certificate,s,execute,source};
+ const execute=(expression,{certificates=[certificate],all=current,state=s,history={version:1,entries:[],headSha256:null},rollingCheck=()=>{throw Error('unexpected_rolling_check');},action='stage',stateHistoryCheck=()=>{throw Error('unexpected_rolling_state_check');}}={})=>runInNewContext(`${helpers}${expression}`,{s:state,all,action,releaseTarget:sha('d'),oldName:name('a'),readOnlineRetirementCertificates:()=>certificates,readOnlineRollingRetentions:()=>history,assertRollingRetainedProcesses:rollingCheck,assertRollingStateHistory:stateHistoryCheck,normalizeRetirementProcess:normalize,assertRetainedOnlineProcesses,fail:m=>{throw Error(m);}});
+ return {sha,name,cwd,original,current,certificate,s,execute,source,normalize};
 }
 
 test('historical process checks retain original strict behavior without a retirement certificate',()=>{
@@ -55,7 +57,7 @@ test('retirement wiring precedes baseline HTTP acceptance and persists only a ve
  const {source}=retainedProcessHarness();
  const verify=source.slice(source.indexOf('async function verifyBase('),source.indexOf('function configUnchanged('));
  assert.ok(verify.indexOf('verifyRetainedProcesses(s,pm())')<verify.indexOf('baseline_version_changed'));
- assert.match(source,/processes:snapshotRetainedProcesses\(all,target,old.name\)/);
+ assert.match(source,/\.\.\.snapshotOnlineRetention\(all,target,old.name\)/);
  assert.match(source,/if\(lane==='runtime-performance'\)run\('node',\['--test','scripts\/online-release-retirement-policy.test.mjs','scripts\/online-release-retirement.test.mjs'\]/);
  assert.doesNotMatch(source,/pm2.*\['(?:stop|delete)'/);
 });
@@ -143,7 +145,7 @@ test('actual database branch refuses every no-database lane before backup, migra
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
  const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
- for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden']]){
+ for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
@@ -157,6 +159,233 @@ test('actual database branch refuses every no-database lane before backup, migra
   await assert.rejects(task,new RegExp(`^Error: ${error}$`));
   assert.deepEqual(calls,[]);
  }
+});
+
+const bookingMergeCpuFiles=[
+ 'src/lib/merchantBookingPersistenceStore.ts','src/lib/merchantBookingMergeParity.test.ts',
+ 'src/app/api/merchant-customers/route.booking-merge.test.ts','docs/booking-merge-cpu-2026-09-27.md',
+ '.github/workflows/ci.yml','scripts/run-ci-tests.mjs','scripts/ci-workflow-contract.test.mjs',
+ 'scripts/production-maintenance-pm2-connection.test.mjs','scripts/repair-startup.test.mjs','docs/performance-ci-parallel-2026-09-27.md',
+ 'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',
+ 'scripts/online-release-rolling-policy.mjs','scripts/online-release-rolling-policy.test.mjs',
+ 'scripts/online-release-rolling.mjs','scripts/online-release-rolling.test.mjs','docs/booking-merge-release-2026-09-27.md',
+];
+
+test('booking CPU lane is exactly the approved 19-path live-to-target closure and requires its own anchor',()=>{
+ const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
+ const section=policy.slice(policy.indexOf('const bookingMergeCpuAnchor ='),policy.indexOf('const runtimePerformanceAnchor ='));
+ assert.deepEqual(Array.from(runInNewContext(`${section}Array.from(bookingMergeCpuFiles)`)),bookingMergeCpuFiles);
+ assert.equal(new Set(bookingMergeCpuFiles).size,19);
+ assert.equal(onlineReleaseLane(bookingMergeCpuFiles),'booking-merge-cpu');
+ assert.equal(onlineReleaseLane([bookingMergeCpuFiles[0]]),'booking-merge-cpu');
+ assert.throws(()=>onlineReleaseLane(bookingMergeCpuFiles.slice(1)));
+ assert.throws(()=>assertOnlineTrafficScope(bookingMergeCpuFiles),/online_release_scope_rejected/);
+ for(const file of [
+  'src/lib/merchantBookings.server.ts','src/lib/merchantBookings.ts','src/lib/merchantBookingCreation.server.ts',
+  'src/lib/merchantBookingAdmission.ts','src/lib/merchantBookingPolicyPreparationCandidate.server.ts',
+  'src/lib/merchantCustomers.ts','src/app/api/merchant-customers/route.ts','src/app/api/bookings/route.ts',
+  'src/lib/personalAccountSession.ts','src/lib/personalGuestSession.ts','src/lib/merchantCustomerSearch.ts',
+  'src/lib/merchantOrdersStore.ts','src/lib/merchantEnterpriseAutomation.server.ts','src/lib/superAdminVerification.ts',
+  'scripts/supabase-migrations/202609260058_booking_create_operations.sql','scripts/new.sql',
+  'scripts/online-release-retirement.mjs','scripts/online-release-retirement-policy.mjs',
+  'scripts/online-release-retirement.test.mjs','scripts/online-release-retirement-policy.test.mjs',
+  'package.json','package-lock.json','.env.example','scripts/deploy.production.sh',
+  './src/lib/merchantBookingPersistenceStore.ts','src/lib/../lib/merchantBookingPersistenceStore.ts',
+  'src/lib\\merchantBookingPersistenceStore.ts','docs/booking-merge-extra.md',
+ ])for(const files of [[bookingMergeCpuFiles[0],file],[file,bookingMergeCpuFiles[0]]]){
+  assert.throws(()=>onlineReleaseLane(files),/booking_merge_cpu_release_scope_rejected/,file);
+ }
+ assert.equal(onlineReleaseStageStatus('booking-merge-cpu'),'ready-no-database');
+ assert.equal(onlineReleaseActivationStatus('booking-merge-cpu'),'ready-no-database');
+ for(const check of [assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,lane=>assertPendingOnlineReleaseMigrations(lane,[])]){
+  assert.throws(()=>check('booking-merge-cpu'),/booking_merge_cpu_database_forbidden/);
+ }
+});
+
+test('completed rolling history snapshot pins one head and retains complete process identities; empty history is legacy',()=>{
+ const h=retainedProcessHarness(),history={version:1,entries:[{status:'completed',nextTarget:h.sha('d')}],headSha256:'f'.repeat(64)},calls=[];
+ const rollingCheck=value=>calls.push(value);
+ const snapshot=JSON.parse(JSON.stringify(h.execute('snapshotOnlineRetention(all,releaseTarget,oldName)',{history,rollingCheck})));
+ assert.deepEqual(snapshot,{processes:h.current.slice(0,2).map(h.normalize),rollingRetentionHeadSha256:history.headSha256});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].history,history);
+ assert.equal(calls[0].activeTarget,h.sha('d'));
+ assert.ok(calls[0].protectedNames.includes(h.name('a')));
+ assert.ok(calls[0].protectedNames.includes(h.name('d')));
+ const s={...h.s,...snapshot,target:h.sha('d')};
+ h.execute('verifyRetainedProcesses(s,all)',{history,rollingCheck,state:s});
+ assert.equal(calls.length,2);
+ assert.equal(calls[1].history,history);
+ const legacy=JSON.parse(JSON.stringify(h.execute('snapshotOnlineRetention(all,releaseTarget,oldName)')));
+ assert.deepEqual(legacy,{processes:h.s.processes.slice(0,2)});
+ assert.throws(()=>h.execute('snapshotOnlineRetention(all,releaseTarget,oldName)',{history:{...history,entries:[{...history.entries[0],nextTarget:h.sha('a')}]},rollingCheck}),/rolling_retention_stage_target_invalid/);
+});
+
+test('rolling stage head cannot disappear, advance or become authorized by a different history during any verification',()=>{
+ const h=retainedProcessHarness(),history={version:1,entries:[{status:'completed'}],headSha256:'f'.repeat(64)};
+ for(const [state,loaded] of [
+  [h.s,history],
+  [{...h.s,rollingRetentionHeadSha256:'e'.repeat(64)},history],
+  [{...h.s,rollingRetentionHeadSha256:history.headSha256},{version:1,entries:[],headSha256:null}],
+ ])assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{state,history:loaded}),/rolling_retention_history_changed/);
+ // The adapter does not swallow a history reader error or fall back after a
+ // partially-written/unverified history; the reader owns filesystem validation.
+ const helpers=h.source.slice(h.source.indexOf('const protectedBaseProcesses='),h.source.indexOf('async function request('));
+ for(const expression of ['verifyRetainedProcesses(s,all)','snapshotOnlineRetention(all,releaseTarget,oldName)']){
+  assert.throws(()=>runInNewContext(`${helpers}${expression}`,{
+   s:h.s,all:h.current,releaseTarget:h.sha('d'),oldName:h.name('a'),
+   readOnlineRollingRetentions:()=>{throw Error('incomplete_rolling_history');},
+   readOnlineRetirementCertificates:()=>{throw Error('legacy_fallback_forbidden');},
+  }),/incomplete_rolling_history/);
+ }
+});
+
+function rollingReleaseHistoryHarness(){
+ const sha=x=>x.repeat(40),name=x=>`merchant-space-online-${x.repeat(12)}`,cwd=x=>`/www/wwwroot/merchant-space.web-releases/${x.repeat(12)}-online`;
+ const raw=(x,id,port)=>({name:name(x),pm_id:id,pid:100+id,pm2_env:{pm_cwd:cwd(x),pm_exec_path:`${cwd(x)}/node_modules/next/dist/bin/next`,status:'online',PORT:String(port),args:['start','-H','127.0.0.1','-p',String(port)],exec_interpreter:'/usr/bin/node',exec_mode:'fork_mode',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0'}});
+ const base=ROLLING_BASE_NAMES.map((name,index)=>({name,pm_id:20+index,pid:200+index,pm2_env:{pm_cwd:'/www/wwwroot/base',pm_exec_path:'/www/wwwroot/base/server.js',status:'online'}}));
+ const initial=[...base,raw('a',1,3110),raw('b',2,3109),raw('c',3,3103),raw('d',4,3103),raw('e',5,3104),raw('f',6,3105)];
+ const stopped=p=>({...normalizeRetirementProcess(p),pid:0,status:'stopped'});
+ const identity=p=>({target:sha(p.name.at(-1)),name:p.name,pmId:p.pm_id,pid:p.pid,cwd:p.pm2_env.pm_cwd,port:Number(p.pm2_env.PORT)});
+ const anchor=x=>{const p=initial.find(item=>item.name===name(x));return {target:sha(x),name:name(x),directory:cwd(x),port:Number(p.pm2_env.PORT),process:normalizeRetirementProcess(p)};};
+ const legacy={version:1,status:'completed',victim:identity(initial[6]),stoppedProcess:stopped(initial[6]),activeTarget:sha('a'),rollbackTarget:sha('b'),nextTarget:sha('d'),allowedActiveTargets:[sha('a'),sha('b'),sha('d')],beforeSha256:'1'.repeat(64),afterSha256:'2'.repeat(64),completedAt:'2026-09-27T18:00:00.000Z'};
+ const history={version:1,legacyCertificates:[legacy],legacyProcesses:initial.filter(p=>p.name!==name('d')).map(p=>p.name===name('c')?stopped(p):normalizeRetirementProcess(p)),legacySha256:'3'.repeat(64),entries:[],headSha256:null};
+ const certify=(next,victim,anchors)=>{
+  const p=initial.find(item=>item.name===name(victim)),entry={version:1,policy:'rolling-v1',status:'completed',sequence:history.entries.length+1,nextTarget:sha(next),victim:identity(p),stoppedProcess:stopped(p),protectedAnchors:anchors.map(anchor),allowedActiveTargets:[next,...anchors].map(sha),legacySha256:history.legacySha256,previousSha256:history.headSha256,beforeSha256:'4'.repeat(64),afterSha256:'5'.repeat(64),preparedSha256:'6'.repeat(64),recoverySha256:'7'.repeat(64),completedAt:'2026-09-27T19:00:00.000Z'};
+  history.entries.push(entry);history.headSha256=rollingHash(entry);
+ };
+ certify('7','e',['d','a','b']);
+ const first=structuredClone(history),newFirst=raw('7',7,3104);initial.push(newFirst);
+ const allFor=h=>initial.map(p=>h.legacyCertificates.concat(h.entries).some(cert=>cert.victim.name===p.name)?{...p,pid:0,pm2_env:{...p.pm2_env,status:'stopped'}}:structuredClone(p));
+ const firstCurrent=allFor(first);
+ certify('8','f',['7','d','a']);
+ const second=structuredClone(history);initial.push(raw('8',8,3105));
+ const secondCurrent=allFor(second);
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const helpers=source.slice(source.indexOf('const protectedBaseProcesses='),source.indexOf('async function request('));
+ const state=(from,to,pin)=>({target:sha(from),baseline:sha(to),name:name(from),oldName:name(to),status:'active',
+  // New snapshots keep every normalized field and omit only already-certified
+  // stopped registrations; actual historical snapshots used only name/PID/cwd.
+  processes:pin?(from==='8'?secondCurrent:firstCurrent).filter(p=>p.name!==name(from)&&p.pm2_env.status==='online').map(normalizeRetirementProcess)
+   :initial.filter(p=>!['d','7','8',...(from==='d'?['c']:[])].includes(p.name.at(-1))).map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd})),
+  ...(pin?{rollingRetentionHeadSha256:pin}:{})});
+ const execute=(s,h,all,action='rollback')=>runInNewContext(`${helpers}verifyRetainedProcesses(s,all)`,{s,all,action,normalizeRetirementProcess,
+  readOnlineRollingRetentions:()=>h,assertRollingRetainedProcesses,assertRollingStateHistory,readOnlineRetirementCertificates:()=>{throw Error('no_legacy_scope_upgrade');},fail:m=>{throw Error(m);}});
+ return {sha,name,state,execute,first,second,firstCurrent,secondCurrent};
+}
+
+test('real rolling policy plus actual release adapter preserves adjacent owned rollback through two releases without state rewrites',()=>{
+ const h=rollingReleaseHistoryHarness();
+ const firstStates=[h.state('7','d',h.first.headSha256),h.state('d','a'),h.state('a','b')];
+ const before=structuredClone(firstStates);
+ for(const state of firstStates)assert.doesNotThrow(()=>h.execute(state,h.first,h.firstCurrent));
+ assert.deepEqual(firstStates,before);
+ const secondStates=[h.state('8','7',h.second.headSha256),h.state('7','d',h.first.headSha256),h.state('d','a')];
+ for(const state of secondStates)assert.doesNotThrow(()=>h.execute(state,h.second,h.secondCurrent));
+ for(const [state,history,all] of [[h.state('b','9'),h.first,h.firstCurrent],[h.state('a','b'),h.second,h.secondCurrent],
+  [h.state('8','d',h.second.headSha256),h.second,h.secondCurrent],[h.state('d','7'),h.second,h.secondCurrent]]){
+  assert.throws(()=>h.execute(state,history,all),/online_rolling_(?:state_|rollback_)/);
+ }
+ for(const action of ['stage','finish-stage','activate','status'])assert.throws(()=>h.execute(secondStates[1],h.second,h.secondCurrent,action),/rolling_retention_history_changed/);
+ assert.throws(()=>h.execute({...secondStates[1],status:'ready-no-database'},h.second,h.secondCurrent),/rolling_retention_history_changed/);
+ assert.throws(()=>h.execute(h.state('8','7',h.first.headSha256),h.second,h.secondCurrent),/online_rolling_state_birth_pin_invalid/);
+ assert.throws(()=>h.execute(h.state('7','d'),h.second,h.secondCurrent),/online_rolling_state_birth_pin_missing/);
+});
+
+test('real rolling adapter protects the third pre-switch anchor and all normalized retained fields after cutover',()=>{
+ const h=rollingReleaseHistoryHarness();
+ for(const [history,all,from,to,third] of [[h.first,h.firstCurrent,'7','d','b'],[h.second,h.secondCurrent,'8','7','a']]){
+  for(const mutate of [p=>{p.pid+=1000;},p=>{p.pm2_env.PORT='3108';},p=>{p.pm2_env.status='stopped';p.pid=0;},p=>{p.pm2_env.exec_interpreter='/changed/node';}]){
+   const changed=structuredClone(all);mutate(changed.find(p=>p.name===h.name(third)));
+   assert.throws(()=>h.execute(h.state(from,to,history.headSha256),history,changed),/online_rolling_protected_anchor_changed/);
+  }
+ }
+ const changed=structuredClone(h.secondCurrent);changed[0].pm2_env.args=['different'];
+ assert.throws(()=>h.execute(h.state('8','7',h.second.headSha256),h.second,changed),/online_rolling_existing_process_changed/);
+});
+
+test('booking CPU candidate preserves analytics retention and pilot, pauses only candidate jobs, and rejects drift',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const original={FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-secret'};
+ const start=code.indexOf('const changes='),end=code.indexOf('const envText=',start);
+ const changes=runInNewContext(`${code.slice(start,end)}changes`,{lane:'booking-merge-cpu',target:'a'.repeat(40),port:3104,env:original,randomBytes:()=>{throw Error('no_secret_rotation');}});
+ for(const key of Object.keys(original))assert.equal(Object.hasOwn(changes,key),false);
+ const env={...original,...changes,status:'online',pm_cwd:'/candidate'};
+ for(const [key,value] of [['FAOLLA_BACKGROUND_JOBS_PAUSED','1'],['MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED','0'],['MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED','0']])assert.equal(env[key],value);
+ const guard=code.split(/\r?\n/).find(line=>line.includes("if(lane==='booking-merge-cpu'"));
+ const baseline=(patch={})=>runInNewContext(guard,{lane:'booking-merge-cpu',env:{...original,...patch},fail:m=>{throw Error(m);}});
+ assert.doesNotThrow(()=>baseline());
+ for(const patch of [{FAOLLA_TRAFFIC_ENABLED:'0'},{FAOLLA_TRAFFIC_SIGNING_SECRET:''},{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'}])assert.throws(()=>baseline(patch),/booking_merge_cpu_baseline_features_invalid/);
+ const verifier=code.slice(code.indexOf('function verifyCandidate('),code.indexOf('function publishStatic(')),target='a'.repeat(40),calls=[];
+ const check=(patch={},head=target,status='')=>runInNewContext(`${verifier}verifyCandidate(s)`,{
+  s:{lane:'booking-merge-cpu',target,name:'candidate',directory:'/candidate'},pm:()=>[{name:'candidate',pm2_env:{...env,...patch}}],
+  candidateEnvironment:()=>original,fail:m=>{throw Error(m);},run:(command,args,options)=>{
+   calls.push([command,Array.from(args),options.cwd]);return args[0]==='rev-parse'?head:status;
+  },
+ });
+ assert.doesNotThrow(()=>check());
+ assert.deepEqual(calls,[['git',['rev-parse','HEAD'],'/candidate'],['git',['status','--porcelain=v1','--untracked-files=all'],'/candidate']]);
+ for(const key of Object.keys(original))for(const value of ['',undefined,'changed'])assert.throws(()=>check({[key]:value}),/booking_merge_cpu_baseline_features_changed/);
+ for(const key of ['MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED','MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED'])assert.throws(()=>check({[key]:'1'}),/booking_merge_cpu_baseline_features_changed/);
+ assert.throws(()=>check({FAOLLA_BACKGROUND_JOBS_PAUSED:'0'}),/candidate_identity_invalid/);
+ assert.throws(()=>check({},'b'.repeat(40)),/booking_merge_cpu_candidate_source_changed/);
+ for(const status of [' M src/lib/merchantBookingPersistenceStore.ts','?? unexpected.txt'])assert.throws(()=>check({},target,status),/booking_merge_cpu_candidate_source_changed/);
+});
+
+test('booking CPU stage mandates all seven CPU suites plus public auth static CI and separate rolling guards before build',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const tests='),end=code.indexOf("run('node',['--import','tsx','--test'",start);
+ const tests=Array.from(runInNewContext(`${code.slice(start,end)}tests`,{lane:'booking-merge-cpu',run:()=>{throw Error('no_dynamic_discovery');}}));
+ assert.deepEqual(tests,[
+  'src/lib/merchantBookingPersistenceStore.test.ts','src/lib/merchantBookingMergeParity.test.ts','src/app/api/merchant-customers/route.booking-merge.test.ts',
+  'src/app/api/merchant-customers/route.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/lib/merchantBookings.test.ts',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomerSearch.test.ts',
+  'src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts',
+  'src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts',
+  'src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs',
+  'scripts/run-ci-tests.test.mjs','scripts/ci-workflow-contract.test.mjs','scripts/production-maintenance-pm2-connection.test.mjs','scripts/repair-startup.test.mjs',
+ ]);
+ for(const file of tests)assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
+ const rolling="if(lane==='booking-merge-cpu')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs']";
+ assert.ok(code.indexOf(rolling,end)>end);
+ assert.ok(code.indexOf(rolling,end)<code.indexOf("run('nice',['-n','10','npm','run','build']",end));
+ assert.doesNotMatch(code,/pm2.*\['(?:stop|delete)'/);
+ const common=code.slice(end,code.indexOf('console.log(\'online_build_started\')',end));
+ for(const file of ['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'])assert.ok(common.includes(file));
+});
+
+test('booking CPU activation and rollback validate all saved proxy files with owned rollback and snapshot writes',async()=>{
+ for(const side of ['before','after'])for(const missing of [false,true]){
+  const h=runtimePerformanceProxyHarness('booking-merge-cpu'),path=`/operation/${side}-last.conf`;
+  if(missing)h.files.delete(path);else h.files.set(path,'unowned saved config');
+  await assert.rejects(h.api.activateCandidate(h.s),missing?/missing_fixture_file/:/booking_merge_cpu_saved_proxy_changed/);
+  assert.deepEqual(h.effects,[]);
+ }
+ for(const invalid of ['saved-drift','saved-missing','current-drift']){
+  const h=runtimePerformanceProxyHarness('booking-merge-cpu');h.s.status='active';
+  for(const file of h.names)h.files.set(`/proxy/${file}`,h.files.get(`/operation/after-${file}`));
+  if(invalid==='saved-drift')h.files.set('/operation/before-last.conf','unowned');
+  if(invalid==='saved-missing')h.files.delete('/operation/before-last.conf');
+  if(invalid==='current-drift')h.files.set('/proxy/last.conf','unowned');
+  assert.throws(()=>h.api.restoreConfigs(h.s),invalid==='current-drift'?/rollback_proxy_not_owned/:invalid==='saved-missing'?/missing_fixture_file/:/booking_merge_cpu_saved_proxy_changed/);
+  assert.deepEqual(h.effects,[]);
+ }
+ const h=runtimePerformanceProxyHarness('booking-merge-cpu'),before=h.names.map(file=>h.files.get(`/proxy/${file}`));
+ h.hooks.failPublic=true;
+ await assert.rejects(h.api.activateCandidate(h.s),/public_verification_failed/);
+ assert.equal(h.s.status,'rolled-back');
+ assert.deepEqual(h.names.map(file=>h.files.get(`/proxy/${file}`)),before);
+ assert.equal(h.effects.includes('pm2:save'),false);
+ const a=runtimePerformanceProxyHarness('booking-merge-cpu'),after=a.names.map(file=>a.files.get(`/operation/after-${file}`));
+ a.hooks.beforeStatic=()=>{for(const file of a.names)a.files.set(`/operation/after-${file}`,'late drift');};
+ await a.api.activateCandidate(a.s);
+ assert.deepEqual(a.names.map(file=>a.files.get(`/proxy/${file}`)),after);
+ for(const file of a.names)assert.equal(a.reads.filter(path=>path===`/operation/after-${file}`).length,1);
+ const r=runtimePerformanceProxyHarness('booking-merge-cpu'),prior=r.names.map(file=>r.files.get(`/operation/before-${file}`));
+ r.hooks.beforeWrite=()=>{for(const file of r.names)r.files.set(`/operation/before-${file}`,'late drift');};
+ r.api.restoreConfigs(r.s);
+ assert.deepEqual(r.names.map(file=>r.files.get(`/proxy/${file}`)),prior);
+ for(const file of r.names)assert.equal(r.reads.filter(path=>path===`/operation/before-${file}`).length,1);
 });
 
 const runtimePerformanceFiles=[
@@ -365,7 +594,7 @@ test('runtime performance stage runs its exact suites between source gates befor
  assert.equal(tests.some(file=>file.includes('booking-policy')||file.includes('shadow')||file.includes('browser-harness')),false);
 });
 
-function runtimePerformanceProxyHarness(){
+function runtimePerformanceProxyHarness(lane='runtime-performance'){
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const saved=code.slice(code.indexOf('function readRuntimePerformanceSavedConfigs('),code.indexOf('function verifyCandidate('));
  const restore=code.slice(code.indexOf('function restoreConfigs('),code.indexOf('function candidateEnvironment('));
@@ -374,7 +603,7 @@ function runtimePerformanceProxyHarness(){
  const names=['first.conf','second.conf','last.conf'];
  const files=new Map(),reads=[],effects=[],hooks={beforeStatic:null,beforeWrite:null,failPublic:false};
  const digest=value=>createHash('sha256').update(value).digest('hex');
- const s={lane:'runtime-performance',target:'a'.repeat(40),baseline:'b'.repeat(40),
+ const s={lane,target:'a'.repeat(40),baseline:'b'.repeat(40),
   status:'ready-no-database',directory:'/candidate',port:3110,oldPort:3109,name:'candidate',configs:{}};
  for(const file of names){
   const before=`# original ${file}\nupstream previous;\n`,after=`# candidate ${file}\nupstream next;\n`;

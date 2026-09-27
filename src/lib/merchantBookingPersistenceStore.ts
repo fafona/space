@@ -33,9 +33,24 @@ function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function persistedRecordTimestamp(record: { updatedAt?: unknown; createdAt?: unknown }) {
-  const timestamp = Date.parse(normalizeText(record.updatedAt) || normalizeText(record.createdAt));
-  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+const MAX_MERGE_TIMESTAMP_CACHE_ENTRIES = 16_384;
+const MAX_CACHED_MERGE_TIMESTAMP_LENGTH = 128;
+
+function persistedRecordTimestamp(
+  record: { updatedAt?: unknown; createdAt?: unknown },
+  timestamps: Map<string, number>,
+) {
+  const text = normalizeText(record.updatedAt) || normalizeText(record.createdAt);
+  const cached = timestamps.get(text);
+  if (cached !== undefined) return cached;
+  const timestamp = Date.parse(text);
+  const normalized = Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+  // Bound extra retained cache memory even for large or malformed historical
+  // stores. This is not an input limit: uncached dates keep the old parse path.
+  if (timestamps.size < MAX_MERGE_TIMESTAMP_CACHE_ENTRIES && text.length <= MAX_CACHED_MERGE_TIMESTAMP_LENGTH) {
+    timestamps.set(text, normalized);
+  }
+  return normalized;
 }
 
 export function merchantBookingPersistenceValuesEqual(left: unknown, right: unknown) {
@@ -45,6 +60,11 @@ export function merchantBookingPersistenceValuesEqual(left: unknown, right: unkn
 export function mergeMerchantBookingPersistenceRecords<
   T extends { id?: unknown; updatedAt?: unknown; createdAt?: unknown },
 >(localRecords: T[], remoteRecords: T[]) {
+  // A store merge compares the same dates many times during deduplication and
+  // sorting. Cache only parsed strings for this call, not records or winners:
+  // every comparison still reads the current fields, and later merges cannot
+  // reuse stale state. Keep parsing lazy (a singleton need not have a date).
+  const timestamps = new Map<string, number>();
   const merged = new Map<string, T>();
   const recordsWithoutId: T[] = [];
   const mergeRecord = (record: T) => {
@@ -56,14 +76,14 @@ export function mergeMerchantBookingPersistenceRecords<
       return;
     }
     const current = merged.get(id);
-    if (!current || persistedRecordTimestamp(record) >= persistedRecordTimestamp(current)) {
+    if (!current || persistedRecordTimestamp(record, timestamps) >= persistedRecordTimestamp(current, timestamps)) {
       merged.set(id, record);
     }
   };
   localRecords.forEach(mergeRecord);
   remoteRecords.forEach(mergeRecord);
   return [...merged.values(), ...recordsWithoutId].sort(
-    (left, right) => persistedRecordTimestamp(right) - persistedRecordTimestamp(left),
+    (left, right) => persistedRecordTimestamp(right, timestamps) - persistedRecordTimestamp(left, timestamps),
   );
 }
 
