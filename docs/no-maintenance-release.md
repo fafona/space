@@ -270,6 +270,55 @@ stopped record must have watch/cron disabled so saving/restoring PM2 cannot
 silently start it on a reassigned port. This first receipt does not authorize a
 second retirement or silently broaden its target scope for a later release.
 
+## Booking merge CPU no-database lane and bounded rolling retention (2026-09-27)
+
+`booking-merge-cpu` is selected only by
+`src/lib/merchantBookingPersistenceStore.ts`. Its exact 19-path closure contains
+the four CPU implementation/test/evidence files, six already-reviewed CI files
+between live `0004c202` and CPU candidate `82a9c13e`, these four release-policy
+files, four new rolling-policy/controller/test files and the booking release
+note. Stage still checks the actual current-main target and live baseline: these
+historical revisions are evidence, not permission to stage a different diff.
+Adjacent booking capacity, writes, authentication, APIs, migrations/SQL, workers,
+dependencies and the original retirement modules are not in this allowlist.
+
+The lane runs the exact seven CPU/customer suites (78 tests at the CPU checkpoint),
+customer/public compatibility, CI contracts, auth/QR/static safety and both old
+and new retirement suites before the actual guarded production build. Required
+CI is not replaced by these focused tests. Exact clean source HEAD checks run
+before tests, after build and during later candidate verification. Ignored build
+output is not an untracked-source failure. Stage and activation use
+`ready-no-database`; all database entrypoints reject this lane before backup,
+migration or pilot operations. Analytics, retention, signing secret and existing
+pilot are inherited; only the candidate's background jobs are paused. Candidate
+checks reject drift in these settings. Saved before/after proxy hashes, immutable
+assets, public smoke and ownership-checked rollback use the same protected path
+as the runtime-performance lane.
+
+The separately approved `online-release-rolling.mjs` controller may stop one
+explicitly vetted historical web process per new release, while preserving the
+current and two preceding rollback processes, base services, background jobs,
+all data, registrations, source trees and assets. It is never invoked implicitly
+by stage. No available port remains a stage blocker until a separate approved
+retirement has completed. The original single-slot policy and its certificates
+are unchanged; their allowed release contexts are never extended.
+
+Only complete, privately owned and hash-bound rolling history is accepted.
+Partial attempts block instead of falling back to older history. Each new stage
+records the selected history head and every normalized retained process field;
+in-progress stage/finish/activation cannot adopt a later head. Completed active
+historical states may be used only for explicit, owned rollback with their
+original birth head (or the initial legacy contexts), verified ancestry and the
+latest allowed rollback edge. Historical state files are not rewritten. Every
+certified stopped registration and all three pre-switch anchors remain exact,
+including the third anchor after cutover; later retirement requires a new full
+proof. Rollback may follow only the actual adjacent baseline edges within the
+new release and three recorded pre-switch anchors. Skipping/reversing that chain
+or reaching any older release is rejected. This also preserves both existing
+rollback steps before the new candidate has switched traffic.
+
+See [the scoped booking release evidence](booking-merge-release-2026-09-27.md).
+
 ## Explicit static permission incident recovery (2026-09-25)
 
 The user approved a narrow retry after candidate `1740b254851c11302b6c7fef536cf9ef92d75637`

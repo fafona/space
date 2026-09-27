@@ -152,6 +152,22 @@ const publicCatalogBatchFiles = new Set([
   'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
   'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
 ]);
+// 2026-09-27: date-parse memoization only; no adjacent capacity, writer,
+// authentication, migration or dependency changes are admitted by this lane.
+const bookingMergeCpuAnchor = 'src/lib/merchantBookingPersistenceStore.ts';
+const bookingMergeCpuFiles = new Set([
+  bookingMergeCpuAnchor, 'src/lib/merchantBookingMergeParity.test.ts',
+  'src/app/api/merchant-customers/route.booking-merge.test.ts',
+  'docs/booking-merge-cpu-2026-09-27.md',
+  '.github/workflows/ci.yml', 'scripts/run-ci-tests.mjs',
+  'scripts/ci-workflow-contract.test.mjs', 'scripts/production-maintenance-pm2-connection.test.mjs',
+  'scripts/repair-startup.test.mjs', 'docs/performance-ci-parallel-2026-09-27.md',
+  'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+  'scripts/online-release-rolling-policy.mjs', 'scripts/online-release-rolling-policy.test.mjs',
+  'scripts/online-release-rolling.mjs', 'scripts/online-release-rolling.test.mjs',
+  'docs/booking-merge-release-2026-09-27.md',
+]);
 // 2026-09-27: the curated customer lifecycle/search and public render slice.
 // This exact no-database lane does not inherit phase 1, catalog API, shadow,
 // authentication, writer, worker or dependency authority from any other lane.
@@ -173,6 +189,10 @@ const runtimePerformanceFiles = new Set([
   'scripts/online-release-retirement.mjs', 'scripts/online-release-retirement.test.mjs',
 ]);
 export function onlineReleaseLane(files) {
+  if (files.includes(bookingMergeCpuAnchor)) {
+    if (files.some(file => !bookingMergeCpuFiles.has(file))) throw Error('booking_merge_cpu_release_scope_rejected');
+    return 'booking-merge-cpu';
+  }
   if (files.includes(runtimePerformanceAnchor)) {
     if (files.some(file => !runtimePerformanceFiles.has(file))) throw Error('runtime_performance_release_scope_rejected');
     return 'runtime-performance';
@@ -205,6 +225,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if (lane === 'booking-merge-cpu') return true;
   if (lane === 'runtime-performance') return true;
   if (lane === 'public-catalog-batch') return true;
   if (lane === 'qr-export' || lane === 'performance' || lane === 'bounded-lists' || lane === 'read-index') return true;
@@ -218,6 +239,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'booking-merge-cpu') throw Error('booking_merge_cpu_database_forbidden');
   if (lane === 'runtime-performance') throw Error('runtime_performance_database_forbidden');
   if (lane === 'public-catalog-batch') throw Error('public_catalog_batch_database_forbidden');
   if (lane === 'read-index') throw Error('read_index_database_forbidden');
