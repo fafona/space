@@ -61,7 +61,7 @@ export async function main(arguments_ = process.argv.slice(2), options = {}) {
     return 0;
   }
   stdout.write(`[ci-tests] exact mandatory partitions ${JSON.stringify(counts)}\n`);
-  // Native maintenance proofs already ran serially in their mandatory step;
+  // Native maintenance proofs run serially in their separate mandatory CI job;
   // never repeat those fixtures in the ordinary concurrent TypeScript batches.
   const result = await (options.runTests ?? runLocalTests)({ rootDirectory, stdout,
     files: groups.remaining, concurrency: 4, batchSize: 40 });
