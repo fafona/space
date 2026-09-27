@@ -308,6 +308,14 @@ export const BOOKING_STAGE_RESUME = Object.freeze({
   dependencySha256:'f12f24a40f70ac0f5c55821268303873826ece213856cb0b8e84f871cd58428e',
   tree:'2e071ce133bcf1a66a6b41ca56e1a90bb2c95011',port:3104,oldPort:3103,
 });
+// Separately authorized one-attempt continuation after the first recovery's
+// pre-build probe failure. Original receipts remain immutable prerequisites.
+export const BOOKING_STAGE_PROBE_RESUME = Object.freeze({
+  priorToolRevision:'3d73d081beacdd1856c9170a08294e5a1507be25',
+  priorBeforeSha256:'b3a6bc00f6a5d632a207953a13e326e29bf962c1210d75e7e1701cae9214586a',
+  priorFailureSha256:'c27dc12d4fd8213a830389159732c95c6ff590428c5dd29d5782669a78810f65',
+  priorFailureAt:'2026-09-27T21:32:51.679Z',
+});
 export const BOOKING_STAGE_RESUME_TOOL_FILES = Object.freeze([
   'scripts/online-traffic-release.mjs','scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.test.mjs',
   'docs/no-maintenance-release.md','docs/booking-merge-release-2026-09-27.md',
