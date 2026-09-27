@@ -1,6 +1,6 @@
 import {spawnSync} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
-import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,copyFileSync,constants,statfsSync} from 'node:fs';
+import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,readlinkSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
 import {ONLINE_ROOT as root,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
@@ -11,6 +11,7 @@ import {verifyProductionDatabaseBackup} from './verify-production-database-backu
 import {normalizeRetirementProcess,readOnlineRetirementCertificates} from './online-release-retirement.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {readOnlineRollingRetentions,assertRollingRetainedProcesses,assertRollingStateHistory} from './online-release-rolling.mjs';
+import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const [action,target,baseline]=process.argv.slice(2);
@@ -235,7 +236,94 @@ async function activateCandidate(s){
   s.status='active';s.activatedAt=new Date().toISOString();save(s);atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
  }catch(error){if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);throw error;}
 }
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+function bookingResumeOwnedPath(path,file=false){
+ const parts=path.split('/').filter(Boolean);let current='';
+ for(let i=0;i<parts.length;i++){
+  current+=`/${parts[i]}`;const st=lstatSync(current),leaf=file&&i===parts.length-1;
+  if(st.isSymbolicLink()||st.uid!==0||(st.mode&0o022)||!(leaf?st.isFile():st.isDirectory())||(leaf&&st.nlink!==1))fail('booking_stage_resume_path_not_owned');
+ }
+}
+function bookingResumeToolIdentity(s){
+ const revision=run('git',['rev-parse','origin/main'],{cwd:app}).trim();
+ if(!/^[a-f0-9]{40}$/.test(revision)||revision===s.target)fail('booking_stage_resume_tool_not_main');
+ const directory=fileURLToPath(new URL('..',import.meta.url)).replace(/\/$/,'');
+ if(directory!==`/var/lib/faolla-online-code/${revision}`||realpathSync(directory)!==directory)fail('booking_stage_resume_tool_directory_invalid');
+ bookingResumeOwnedPath(directory);
+ if(run('git',['rev-parse','HEAD'],{cwd:directory}).trim()!==revision||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:directory}).trim())fail('booking_stage_resume_tool_worktree_changed');
+ run('git',['merge-base','--is-ancestor',s.target,revision],{cwd:app});
+ assertBookingStageResumeToolScope(run('git',['diff','--name-only',s.target,revision],{cwd:app}).trim().split('\n'));
+ for(const file of BOOKING_STAGE_RESUME_TOOL_FILES){bookingResumeOwnedPath(`${directory}/${file}`,true);if(hash(safeFile(`${directory}/${file}`))!==hash(run('git',['show',`${revision}:${file}`],{cwd:app})))fail('booking_stage_resume_tool_source_changed');}
+ return {revision,directory};
+}
+function bookingResumePrivateProof(s){
+ const p=BOOKING_STAGE_RESUME,expected=[[stateFile,p.stateSha256],[`${operation}/runtime.json`,p.runtimeSha256],[`${s.directory}/.env.local`,p.environmentSha256]];
+ let runtime;
+ for(const [path,digest] of expected){bookingResumeOwnedPath(path,true);const contents=safeFile(path);if((lstatSync(path).mode&0o777)!==0o600||hash(contents)!==digest)fail('booking_stage_resume_private_proof_changed');if(path===`${operation}/runtime.json`)runtime=contents;}
+ return JSON.parse(runtime);
+}
+function bookingResumeDependencies(directory){
+ bookingResumeOwnedPath(directory);const digest=createHash('sha256');
+ function walk(path,relative=''){
+  for(const name of readdirSync(path).sort()){
+   const full=`${path}/${name}`,key=relative?`${relative}/${name}`:name,st=lstatSync(full);
+   if(st.uid!==0)fail('booking_stage_resume_dependency_owner_changed');
+   if(st.isSymbolicLink()){
+    if(!realpathSync(full).startsWith(`${directory}/`))fail('booking_stage_resume_dependency_link_escaped');
+    digest.update(JSON.stringify([key,'link',readlinkSync(full)]));
+   }else{
+    if(st.mode&0o022)fail('booking_stage_resume_dependency_writable');
+    if(st.isDirectory()){digest.update(JSON.stringify([key,'directory',st.mode&0o777]));walk(full,key);}
+    else if(st.isFile())digest.update(JSON.stringify([key,'file',st.mode&0o777,hash(readFileSync(full))]));
+    else fail('booking_stage_resume_dependency_type_invalid');
+   }
+  }
+ }
+ walk(directory);return digest.digest('hex');
+}
+function bookingResumeEntryExists(path){
+ try{lstatSync(path);return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}
+}
+function bookingResumeVacant(s){
+ if(pm().some(p=>p.name===s.name||p.pm2_env?.pm_cwd===s.directory))fail('booking_stage_resume_candidate_exists');
+ if(run('ss',['-ltnH']).split('\n').some(line=>line.trim().split(/\s+/).some(field=>field.endsWith(`:${s.port}`))))fail('booking_stage_resume_port_occupied');
+}
+async function verifyBookingStageResume(s,dependencyDigest,allowBuild=false){
+ assertBookingStageResumeState(s,JSON.parse(safeFile(activeFile)),target,baseline);
+ bookingResumePrivateProof(s);bookingResumeOwnedPath(s.directory);bookingResumeOwnedPath(s.oldDirectory);
+ await verifyBase(s);configUnchanged(s);readRuntimePerformanceSavedConfigs(s,true);verifyRuntimePerformanceSource(s);
+ if(run('git',['rev-parse','HEAD^{tree}'],{cwd:s.directory}).trim()!==BOOKING_STAGE_RESUME.tree)fail('booking_stage_resume_tree_changed');
+ const lock=hash(run('git',['show',`${s.target}:package-lock.json`],{cwd:app}));
+ if(hash(safeFile(`${s.directory}/package-lock.json`))!==lock||hash(safeFile(`${s.oldDirectory}/package-lock.json`))!==lock)fail('booking_stage_resume_dependencies_changed');
+ if(!allowBuild&&bookingResumeEntryExists(`${s.directory}/.next`))fail('booking_stage_resume_build_artifact_exists');
+ if(allowBuild){bookingResumeOwnedPath(`${s.directory}/.next/BUILD_ID`,true);if(!safeFile(`${s.directory}/.next/BUILD_ID`).trim())fail('booking_stage_resume_build_identity_changed');}
+ const original=bookingResumeDependencies(`${s.oldDirectory}/node_modules`),candidate=bookingResumeDependencies(`${s.directory}/node_modules`);
+ if(original!==candidate||candidate!==BOOKING_STAGE_RESUME.dependencySha256||(dependencyDigest!==undefined&&candidate!==dependencyDigest))fail('booking_stage_resume_dependencies_changed');
+ bookingResumeVacant(s);return candidate;
+}
+async function resumeBookingStage(s){
+ const tool=bookingResumeToolIdentity(s),digest=await verifyBookingStageResume(s);
+ const audit=`${operation}/booking-stage-resume`;
+ if(bookingResumeEntryExists(`${audit}-before.json`)||bookingResumeEntryExists(`${audit}-failure.json`))fail('booking_stage_resume_attempt_exists');
+ const env=bookingResumePrivateProof(s);
+ writeFileSync(`${audit}-before.json`,JSON.stringify({toolRevision:tool.revision,applicationTarget:s.target,originalStateSha256:BOOKING_STAGE_RESUME.stateSha256,historyHead:BOOKING_STAGE_RESUME.historyHead,dependencySha256:digest,startedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});
+ try{
+  run('node',['--import','tsx','--test','--test-concurrency=1',...BOOKING_MERGE_CPU_FOCUSED_TESTS],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
+  run('node',['--test','--test-concurrency=1','scripts/online-traffic-release.test.mjs'],{cwd:tool.directory,timeout:180000,stdio:'inherit'});
+  await verifyBookingStageResume(s,digest);
+  if(bookingResumeToolIdentity(s).revision!==tool.revision)fail('booking_stage_resume_tool_changed');
+  const priorBuildUmask=process.umask(0o022);
+  try{run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
+  await verifyBookingStageResume(s,digest,true);
+  if(bookingResumeToolIdentity(s).revision!==tool.revision)fail('booking_stage_resume_tool_changed');
+  run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(s.port)],{env});
+  let ready=false;for(let i=0;i<25;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('candidate_not_ready');
+  bookingResumePrivateProof(s);await verifyBase(s);configUnchanged(s);readRuntimePerformanceSavedConfigs(s,true);verifyCandidate(s);
+  s.stageResume={toolRevision:tool.revision,originalStateSha256:BOOKING_STAGE_RESUME.stateSha256,completedAt:new Date().toISOString()};
+  s.status=onlineReleaseStageStatus(s.lane);save(s);
+ }catch(error){writeFileSync(`${audit}-failure.json`,JSON.stringify({toolRevision:tool.revision,error:error.message,failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});throw error;}
+}
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','resume-booking-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(!process.env.FAOLLA_ONLINE_RELEASE_LOCKED){
  const lock=`${app}.deploy.lock`;if(existsSync(lock)&&lstatSync(lock).isSymbolicLink())fail('unsafe_deploy_lock');
  const r=spawnSync('flock',['--nonblock',lock,process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit',env:{...envBase,FAOLLA_ONLINE_RELEASE_LOCKED:'1'}});process.exit(r.status??1);
@@ -279,7 +367,7 @@ try{
   console.log('online_focused_tests');
   verifyRuntimePerformanceSource(s);
   const tests=lane==='booking-merge-cpu'
-   ? ['src/lib/merchantBookingPersistenceStore.test.ts','src/lib/merchantBookingMergeParity.test.ts','src/app/api/merchant-customers/route.booking-merge.test.ts','src/app/api/merchant-customers/route.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/lib/merchantBookings.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomerSearch.test.ts','src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts','src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs','scripts/run-ci-tests.test.mjs','scripts/ci-workflow-contract.test.mjs','scripts/production-maintenance-pm2-connection.test.mjs','scripts/repair-startup.test.mjs']
+   ? BOOKING_MERGE_CPU_FOCUSED_TESTS.slice(0,-3)
    : lane==='runtime-performance'
    ? ['src/components/admin/MerchantCustomerManager.behavior.test.ts','src/lib/merchantCustomerSearch.test.ts','src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerPagination.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts','src/lib/merchantPublicCatalog.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs']
    : lane==='qr-export'
@@ -295,7 +383,7 @@ try{
    : lane==='performance'
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
-  run('node',['--import','tsx','--test',...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
   if(lane==='runtime-performance')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   if(lane==='booking-merge-cpu')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
@@ -314,6 +402,8 @@ try{
    if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('resume_build_missing');
    run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});
    configUnchanged(s);verifyCandidate(s);await smoke(s);s.status=onlineReleaseStageStatus(s.lane);save(s);
+  }else if(action==='resume-booking-stage'){
+   await resumeBookingStage(s);
   }else if(action==='database'){
    assertOnlineReleaseDatabaseAllowed(s.lane);
    if(s.status!=='staged')fail('database_not_staged');configUnchanged(s);verifyCandidate(s);

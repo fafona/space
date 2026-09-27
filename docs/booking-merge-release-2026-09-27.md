@@ -6,7 +6,8 @@ proxy was touched during local implementation/testing.
 
 ## Local release-policy evidence
 
-The final five release/retention suites passed **293/293** tests:
+Before the later pre-build recovery addition, the five release/retention suites
+passed **293/293** tests:
 
 ```powershell
 node --test scripts/online-traffic-release.test.mjs scripts/online-release-retirement-policy.test.mjs scripts/online-release-retirement.test.mjs scripts/online-release-rolling-policy.test.mjs scripts/online-release-rolling.test.mjs
@@ -70,3 +71,47 @@ historical rollback may use a verified ancestral birth pin and exact allowed
 rollback edge. Current plus two rollback builds, older immutable assets, data
 and background jobs remain protected. No maintenance, automatic cleanup or
 port-range expansion is authorized.
+
+## Failed pre-build stage and exact recovery
+
+The first production stage of application
+`57dbac3ab07899fcca03a17d149c3c717b805d63` failed during focused tests: 377 passed
+and 10 failed when concurrent CI discovery encountered the Linux PM2 test
+fixture's temporary symlink. No build or candidate process was created; live
+`0004c202f1c75bce4241c4185aeb16eb1724b177` and public traffic stayed unchanged.
+The separately completed historical-process retirement receipt remains intact.
+
+A subsequent diagnostic on the original clean candidate, with its original
+runtime environment and only `--test-concurrency=1` added, passed all 387 tests
+in 20.1239 seconds with no skips. This was a test-only diagnosis: it did not alter
+stage state, create `.next`, start a candidate or authorize activation. The
+recovery entrypoint still reruns every gate and test before building.
+
+The incident-only `resume-booking-stage` pins the original state, runtime, local
+environment, retained-history head and candidate tree hashes in
+`BOOKING_STAGE_RESUME`. Read-only dependency comparison also found identical
+31,303-file inventories, digest
+`f12f24a40f70ac0f5c55821268303873826ece213856cb0b8e84f871cd58428e`;
+the already-present, pinned Next WASM fallback avoids a first-build dependency
+installation. Recovery verifies this same dependency digest and legitimate
+internal symlinks before and after build; it neither recopies nor repairs them.
+
+The new current-main tool is allowed to differ from the original application
+only in the three release scripts and these two release notes. It runs original
+candidate tests/build in the original candidate directory and its own tests in
+the tool directory. It adds private attempt/failure evidence but never resets
+old state, rewrites candidate source/certificates, stops another process or
+silently retries. A successful candidate becomes ready only after the actual
+build, retained/source/config/environment checks and normal smoke; activation
+remains a separate owned action. This note is not evidence that recovery or
+activation has completed.
+
+The recovery change adds nine local controller/policy contracts. The same five
+release/retention suites now pass **302/302** tests; scoped lint reports no
+errors (the original unused parameter warning remains), and strict encoding and
+diff checks pass. Tests cover the exact incident/tool scope, unchanged complete
+26-suite serial invocation, original private byte proofs, ordinary versus
+escaping dependency links, missing/changed artifacts, occupied process/port,
+test/build failure isolation and the real controller's ready-state ordering.
+They use injected I/O and do not substitute for the actual recovery build or
+public activation acceptance. The old `finish-stage` branch remains unchanged.
