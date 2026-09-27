@@ -25,7 +25,13 @@ test("connect-only PM2 protocol and isolated peer-credential tests run without a
 });
 
 test("connection tests remain mandatory in the Linux maintenance CI suite", () => {
-  const source = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(source, /runs-on: ubuntu-latest/);
-  assert.match(source, /node --test --test-concurrency=1 scripts\/production-maintenance-\*\.test\.mjs/);
+  const source = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const start = source.indexOf("  maintenance-contracts:\n");
+  assert.ok(start >= 0);
+  const rest = source.slice(start + "  maintenance-contracts:\n".length);
+  const nextJob = rest.search(/\n  [a-zA-Z0-9_-]+:\n/);
+  const job = nextJob < 0 ? rest : rest.slice(0, nextJob);
+  assert.match(job, /runs-on: ubuntu-latest/);
+  assert.match(job, /node --test --test-concurrency=1 scripts\/production-maintenance-\*\.test\.mjs/);
+  assert.doesNotMatch(job, /continue-on-error|\bif:|\bneeds:/);
 });

@@ -13,8 +13,16 @@ const authority = () => ({ version: 1, kind: "faolla-startup-repair", targetSha:
 const digest = b => createHash("sha256").update(b).digest("hex");
 
 test("real Next acceptance preserves root helper trust in a private hosted-runner copy", () => {
-  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const section = workflow.slice(workflow.indexOf("name: Isolated Real Next Startup Attribution Acceptance"), workflow.indexOf("- name: Tests"));
+  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const start = workflow.indexOf("  maintenance-contracts:\n");
+  assert(start >= 0);
+  const rest = workflow.slice(start + "  maintenance-contracts:\n".length);
+  const nextJob = rest.search(/\n  [a-zA-Z0-9_-]+:\n/);
+  const job = nextJob < 0 ? rest : rest.slice(0, nextJob);
+  const stepStart = job.indexOf("      - name: Isolated Real Next Startup Attribution Acceptance\n");
+  assert(stepStart >= 0);
+  const nextStep = job.indexOf("\n      - name:", stepStart + 1);
+  const section = nextStep < 0 ? job.slice(stepStart) : job.slice(stepStart, nextStep);
   for (const token of ['test "$RUNNER_ENVIRONMENT" = github-hosted', 'sudo -n mktemp -d /root/.faolla-next-acceptance.XXXXXXXX',
     'sudo -n cp -R --no-preserve=ownership', 'sudo -n chmod -R go-w "$fixture_root"', 'sudo -n env -i', '0:700',
     '"$npm_package" "$fixture_root/npm"']) assert(section.includes(token), token);
@@ -23,7 +31,7 @@ test("real Next acceptance preserves root helper trust in a private hosted-runne
   assert(fixture.includes("process.getuid?.()!==0") && fixture.includes("RUNNER_ENVIRONMENT!=='github-hosted'"));
   assert(fixture.includes("await controlPm2(daemon,boot,") && !fixture.includes("helperProof:"));
   assert(fixture.includes("npm/bin/npm-cli.js") && fixture.includes("spawnSync(realpathSync(process.execPath),[npmCli,"));
-  assert(workflow.indexOf("name: Isolated Real Next Startup Attribution Acceptance") < workflow.indexOf("name: Maintenance Control and Pages ACL Contract Tests"));
+  assert(job.indexOf("name: Isolated Real Next Startup Attribution Acceptance") < job.indexOf("name: Maintenance Control and Pages ACL Contract Tests"));
 });
 
 test("only exact hosted authority and fresh target/run bindings pass", () => {

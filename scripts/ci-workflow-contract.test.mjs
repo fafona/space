@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createLocalTestBatches, discoverLocalTests } from "./run-local-tests.mjs";
@@ -29,17 +30,63 @@ function assertSharedEnvironment(job) {
   assert.match(job, /NEXT_PUBLIC_SUPABASE_ANON_KEY:\s*dummy-anon-key/);
 }
 
-test("production-build authentication acceptance runs after build in Linux CI", () => {
+function stepBlock(job, name) {
+  const marker = `      - name: ${name}\n`;
+  const start = job.indexOf(marker);
+  assert.ok(start >= 0, `missing mandatory step ${name}`);
+  const rest = job.slice(start);
+  const next = rest.indexOf("\n      - name:", marker.length);
+  return (next < 0 ? rest : rest.slice(0, next)).trimEnd() + "\n";
+}
+
+test("Quality preserves its required name and rejects every non-success partition result", () => {
   const quality = jobBlock("quality");
+  assert.match(quality, /name: Quality\n/);
+  assert.match(quality, /needs: \[quality-core, maintenance-contracts\]/);
+  assert.match(quality, /if: \$\{\{ always\(\) \}\}/);
+  assert.match(quality, /timeout-minutes: 3\n/);
+  assert.match(quality, /shell: bash\n/);
+  assert.match(quality, /CORE_RESULT: \$\{\{ needs\['quality-core'\]\.result \}\}/);
+  assert.match(quality, /MAINTENANCE_RESULT: \$\{\{ needs\['maintenance-contracts'\]\.result \}\}/);
+  assert.equal((quality.match(/- name:/g) || []).length, 1);
+  assert.doesNotMatch(quality, /continue-on-error|uses:|secrets\.|checkout|download-artifact|\|\|\s*true/);
+  const script = quality.split("        run: |\n")[1]?.trimEnd().split("\n")
+    .map((line) => line.replace(/^          /, "")).join("\n");
+  assert.equal(script, 'set -euo pipefail\ntest "$CORE_RESULT" = success\ntest "$MAINTENANCE_RESULT" = success');
+});
+
+const gateBash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "bash";
+test("actual Quality shell fails on failed, cancelled, skipped, missing or malformed results", {
+  skip: process.platform === "win32" && !existsSync(gateBash),
+}, () => {
+  const script = jobBlock("quality").split("        run: |\n")[1].trimEnd().split("\n")
+    .map((line) => line.replace(/^          /, "")).join("\n");
+  const outcomes = ["success", "failure", "cancelled", "skipped", "", undefined, "neutral", "timed_out", "success\n"];
+  for (const core of outcomes) for (const maintenance of outcomes) {
+    const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", script], {
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+        ...(core === undefined ? {} : { CORE_RESULT: core }),
+        ...(maintenance === undefined ? {} : { MAINTENANCE_RESULT: maintenance }) },
+      encoding: "utf8", timeout: 5000, windowsHide: true,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.equal(result.status === 0, core === "success" && maintenance === "success",
+      JSON.stringify({ core, maintenance, stderr: result.stderr }));
+  }
+});
+
+test("production-build authentication acceptance runs after build in Linux CI", () => {
+  const quality = jobBlock("quality-core");
   assert.ok(quality.indexOf("name: Authentication Build And HTTP Acceptance") > quality.indexOf("name: Build"));
   assert.match(quality, /run: node scripts\/check-auth-middleware-build\.mjs && node scripts\/check-auth-middleware-http\.mjs/);
   assert.doesNotMatch(quality, /continue-on-error/);
 });
 
 test("CI keeps quality checks independent from browser system packages", () => {
-  const quality = jobBlock("quality");
+  const quality = jobBlock("quality-core");
 
-  assert.match(quality, /name:\s*Quality/);
+  assert.match(quality, /name:\s*Code, Tests and Build/);
   assert.match(quality, /runs-on:\s*ubuntu-latest/);
   assert.match(quality, /timeout-minutes:\s*45\b/);
   assertSharedEnvironment(quality);
@@ -49,27 +96,61 @@ test("CI keeps quality checks independent from browser system packages", () => {
   assert.match(quality, /run:\s*npm ci/);
   assert.match(quality, /run:\s*npm run check:encoding:strict/);
   assert.match(quality, /run:\s*npm run lint -- --quiet/);
-  assert.doesNotMatch(quality, /continue-on-error/);
+  assert.doesNotMatch(quality, /continue-on-error|\bneeds:|\bif:/);
   assert.match(quality, /run: node scripts\/run-ci-tests\.mjs remaining && npm run check:db-migrations/);
   assert.doesNotMatch(quality, /run:\s*npm test/);
   assert.match(quality, /run:\s*npm run build/);
   assert.doesNotMatch(quality, /playwright install|test:enterprise-browser|apt-get/);
 });
 
-test("real PM2 transport acceptance is mandatory inside Quality without adding or weakening approval jobs", () => {
-  const quality = jobBlock("quality");
+test("real PM2 acceptance follows the unchanged serial proofs in an independent mandatory runner", () => {
+  const quality = jobBlock("maintenance-contracts");
+  assertSharedEnvironment(quality);
+  assert.match(quality, /runs-on: ubuntu-latest/);
+  assert.match(quality, /timeout-minutes: 45/);
+  assert.match(quality, /actions\/checkout@v5/);
+  assert.match(quality, /actions\/setup-node@v5/);
+  assert.match(quality, /node-version: 20/);
+  assert.match(quality, /run: npm ci/);
+  assert.doesNotMatch(quality, /\bneeds:|continue-on-error|\bif:|secrets\.|services:|self-hosted/);
+  const startupAt = quality.indexOf("name: Isolated Real Next Startup Attribution Acceptance");
+  const topologyAt = quality.indexOf("name: Maintenance Topology Diagnostic Tests");
   const contractAt = quality.indexOf("name: Maintenance Control and Pages ACL Contract Tests");
   const acceptanceAt = quality.indexOf("name: Isolated PM2 6.0.14 Maintenance Transport Acceptance");
-  const lintAt = quality.indexOf("name: Lint");
-  assert.ok(contractAt >= 0 && acceptanceAt > contractAt && lintAt > acceptanceAt);
-  const step = quality.slice(acceptanceAt, lintAt);
+  assert.ok(startupAt >= 0 && topologyAt > startupAt && contractAt > topologyAt && acceptanceAt > contractAt);
+  const step = stepBlock(quality, "Isolated PM2 6.0.14 Maintenance Transport Acceptance");
   assert.match(step, /timeout-minutes:\s*7/);
   assert.match(step, /FAOLLA_PM2_REAL_ACCEPTANCE:\s*"1"/);
   assert.match(step, /run:\s*node scripts\/production-maintenance-pm2-acceptance\.mjs/);
   assert.doesNotMatch(step, /continue-on-error|\bif:|secrets\.|PM2_HOME:|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
   const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
-  assert.deepEqual(jobs, ["quality", "browser", "qr-database", "transaction-database", "redemption-database",
+  assert.deepEqual(jobs, ["quality", "maintenance-contracts", "quality-core", "browser", "qr-database", "transaction-database", "redemption-database",
     "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress", "maintenance-supabase-scheduler"]);
+});
+
+test("moving maintenance to its own runner preserves all four reviewed step bodies byte for byte", () => {
+  // Captured from deployed main 0004c202, LF normalized and trailing whitespace removed.
+  // Do not rebase these hashes to accommodate a changed command or isolation guard.
+  const before = {
+    "Isolated Real Next Startup Attribution Acceptance": "fff1633bf28f875d47087dd714e2813bbe5e0c554f0e1ba7ff37b7e74abc15b6",
+    "Maintenance Topology Diagnostic Tests": "7c313de719b37c3e393800e0244e65faedab65c087ba711267c617bd94d450cc",
+    "Maintenance Control and Pages ACL Contract Tests": "72c9ca3514c9b7f89da9d5d27abc9164d7c53572705c9795783464c467288616",
+    "Isolated PM2 6.0.14 Maintenance Transport Acceptance": "ae818e6ead972d70a6433f1304bdab3a75394c643c6c441671375fa62325ca33",
+  };
+  for (const [name, expected] of Object.entries(before)) {
+    assert.equal(createHash("sha256").update(stepBlock(jobBlock("maintenance-contracts"), name)).digest("hex"), expected, name);
+    assert.equal(workflow.split(`- name: ${name}\n`).length - 1, 1, `duplicated ${name}`);
+    assert.equal(jobBlock("quality-core").includes(`name: ${name}`), false);
+  }
+});
+
+test("independent jobs have no artifact dependency, optional condition or failure suppression", () => {
+  for (const name of ["quality-core", "maintenance-contracts", "browser", "qr-database", "transaction-database",
+    "redemption-database", "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress",
+    "maintenance-supabase-scheduler"]) {
+    assert.doesNotMatch(jobBlock(name), /\bneeds:|\bif:|continue-on-error|download-artifact|self-hosted/, name);
+  }
+  assert.doesNotMatch(workflow, /cancel-in-progress|fail-fast|test-skip-pattern|test-name-pattern/);
 });
 
 test("real Supabase scheduler acceptance is a required independent job without weakening the previous nine", () => {
@@ -87,7 +168,7 @@ test("real Supabase scheduler acceptance is a required independent job without w
 });
 
 test("CI runs native filesystem proofs once, serially, and full local testing retains exclusive coverage", () => {
-  const quality = jobBlock("quality");
+  const quality = jobBlock("maintenance-contracts");
   const start = quality.indexOf("name: Maintenance Control and Pages ACL Contract Tests");
   const end = quality.indexOf("name: Isolated PM2 6.0.14 Maintenance Transport Acceptance");
   assert.ok(start >= 0 && end > start);
@@ -106,7 +187,8 @@ test("CI runs native filesystem proofs once, serially, and full local testing re
 });
 
 test("mandatory CI test commands cover the entire discovery exactly once with no skipped groups", () => {
-  const quality = jobBlock("quality");
+  const quality = jobBlock("quality-core");
+  const maintenance = jobBlock("maintenance-contracts");
   const scheduler = jobBlock("maintenance-supabase-scheduler");
   const files = discoverLocalTests(fileURLToPath(new URL("../", import.meta.url)));
   const groups = partitionCiTests(files);
@@ -121,8 +203,8 @@ test("mandatory CI test commands cover the entire discovery exactly once with no
   }
   const explicit = [
     ["workflow", quality, "CI Workflow Contract"],
-    ["topology", quality, "Maintenance Topology Diagnostic Tests"],
-    ["maintenance", quality, "Maintenance Control and Pages ACL Contract Tests"],
+    ["topology", maintenance, "Maintenance Topology Diagnostic Tests"],
+    ["maintenance", maintenance, "Maintenance Control and Pages ACL Contract Tests"],
     ["scheduler", scheduler, "Scheduler Acceptance Safety Contracts"],
   ];
   const executed = [];
@@ -217,7 +299,7 @@ test("browser journeys use the lockfile-matched official Playwright image", () =
   assert.equal(typeof lockedVersion, "string");
   assert.equal(imageVersion, lockedVersion);
   assert.match(browser, /name:\s*Enterprise Browser Journeys/);
-  assert.match(browser, /needs:\s*quality/);
+  assert.doesNotMatch(browser, /\bneeds:|\bif:/);
   assert.match(browser, /runs-on:\s*ubuntu-latest/);
   assert.match(browser, /timeout-minutes:\s*[1-9][0-9]*/);
   assert.match(browser, /options:\s*--user 1001/);
@@ -236,7 +318,7 @@ test("browser journeys use the lockfile-matched official Playwright image", () =
 
 test("QR atomic acceptance is a required CI job against a fresh PostgreSQL service", () => {
   const qr = jobBlock("qr-database");
-  assert.match(qr, /needs:\s*quality/);
+  assert.doesNotMatch(qr, /\bneeds:|\bif:/);
   assert.match(qr, /image:\s*postgres:15/);
   assert.match(qr, /POSTGRES_DB:\s*faolla_qr_test/);
   assert.match(qr, /POSTGRES_HOST_AUTH_METHOD:\s*trust/);
@@ -289,7 +371,7 @@ test("order attention is an additional mandatory acceptance on the existing tran
 
 test("redemption atomic acceptance uses an independent disposable PostgreSQL CI service", () => {
   const redemption = jobBlock("redemption-database");
-  assert.match(redemption, /needs:\s*quality/);
+  assert.doesNotMatch(redemption, /\bneeds:|\bif:/);
   assert.match(redemption, /image:\s*postgres:15/);
   assert.match(redemption, /POSTGRES_DB:\s*faolla_redemption_test/);
   assert.match(redemption, /POSTGRES_HOST_AUTH_METHOD:\s*trust/);
@@ -317,7 +399,7 @@ test("redemption database acceptance cannot run implicitly or without disposable
 
 test("checkout context acceptance has an independent fresh PostgreSQL CI service", () => {
   const checkout = jobBlock("checkout-database");
-  assert.match(checkout, /needs:\s*quality/);
+  assert.doesNotMatch(checkout, /\bneeds:|\bif:/);
   assert.match(checkout, /image:\s*postgres:15/);
   assert.match(checkout, /POSTGRES_DB:\s*faolla_checkout_test/);
   assert.match(checkout, /POSTGRES_HOST_AUTH_METHOD:\s*trust/);
@@ -358,7 +440,7 @@ test("checkout runner rejects another local integration port before starting a c
 
 test("recovery acceptance uses isolated source and restore databases with explicit opt-in", () => {
   const recovery = jobBlock("recovery-database");
-  assert.match(recovery, /needs:\s*quality/);
+  assert.doesNotMatch(recovery, /\bneeds:|\bif:/);
   assert.match(recovery, /image:\s*postgres:15/);
   assert.match(recovery, /runs-on:\s*ubuntu-24\.04/);
   assert.match(recovery, /RECOVERY_TEST_PG_DUMP:\s*\/usr\/lib\/postgresql\/16\/bin\/pg_dump/);
@@ -390,7 +472,7 @@ test("recovery runner cannot start a client by default or against another test p
 
 test("pages ACL acceptance uses isolated PostgreSQL 15 with bound identity and no application credentials", () => {
   const acl = jobBlock("pages-acl-database");
-  assert.match(acl, /needs:\s*quality/);
+  assert.doesNotMatch(acl, /\bneeds:|\bif:/);
   assert.match(acl, /image:\s*postgres:15/);
   assert.match(acl, /POSTGRES_DB:\s*faolla_pages_acl_test/);
   assert.match(acl, /PAGES_ACL_INTEGRATION_ALLOW_DISPOSABLE_DATABASE:\s*"1"/);

@@ -10,6 +10,25 @@ on:
 jobs:
   quality:
     name: Quality
+    # Preserve the existing required check. Neither a skipped nor cancelled
+    # partition can become a green aggregate through dependency skipping.
+    needs: [quality-core, maintenance-contracts]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Require Both Quality Partitions
+        shell: bash
+        env:
+          CORE_RESULT: ${{ needs['quality-core'].result }}
+          MAINTENANCE_RESULT: ${{ needs['maintenance-contracts'].result }}
+        run: |
+          set -euo pipefail
+          test "$CORE_RESULT" = success
+          test "$MAINTENANCE_RESULT" = success
+
+  maintenance-contracts:
+    name: Isolated Maintenance Contract Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -28,12 +47,6 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci
-
-      - name: CI Workflow Contract
-        run: node --test scripts/ci-workflow-contract.test.mjs
-
-      - name: Encoding Check (Strict)
-        run: npm run check:encoding:strict
 
       - name: Isolated Real Next Startup Attribution Acceptance
         timeout-minutes: 7
@@ -77,13 +90,40 @@ jobs:
           FAOLLA_PM2_REAL_ACCEPTANCE: "1"
         run: node scripts/production-maintenance-pm2-acceptance.mjs
 
+  quality-core:
+    name: Code, Tests and Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy-anon-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: CI Workflow Contract
+        run: node --test scripts/ci-workflow-contract.test.mjs
+
+      - name: Encoding Check (Strict)
+        run: npm run check:encoding:strict
+
       - name: Lint
         run: npm run lint -- --quiet
 
       - name: Tests
         # Exact, contract-checked complement of the required explicit test steps.
         # npm test remains the complete local entrypoint; do not repeat the
-        # native maintenance proofs concurrently after their serial CI pass.
+        # native maintenance proofs owned by the separate serial CI job.
         run: node scripts/run-ci-tests.mjs remaining && npm run check:db-migrations
 
       - name: Build
@@ -95,7 +135,7 @@ jobs:
 
   browser:
     name: Enterprise Browser Journeys
-    needs: quality
+    # Independent build and disposable fixtures; no Quality artifacts consumed.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -126,7 +166,6 @@ jobs:
 
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
-    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -212,7 +251,6 @@ jobs:
 
   redemption-database:
     name: Redemption PostgreSQL Acceptance
-    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -249,7 +287,6 @@ jobs:
 
   checkout-database:
     name: Checkout Context PostgreSQL Acceptance
-    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -295,7 +332,6 @@ jobs:
 
   pages-acl-database:
     name: Pages Client Write ACL PostgreSQL Acceptance
-    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -336,7 +372,6 @@ jobs:
 
   recovery-database:
     name: Recovery Content PostgreSQL Acceptance
-    needs: quality
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:
