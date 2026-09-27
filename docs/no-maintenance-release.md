@@ -194,6 +194,49 @@ and dependency checks, process/configuration/maintenance ownership, candidate
 and public smoke, immutable assets and owned rollback stay mandatory. This lane
 does not extend the port range or authorize cleanup.
 
+## Curated runtime-performance no-database lane (2026-09-27)
+
+`runtime-performance` is a separate exact 18-file allowlist, selected only by
+`src/lib/merchantCustomerSearch.ts`, before the older performance lane. Its
+application scope is customer request lifecycle, bounded lazy customer search,
+and public page/product render reuse: four runtime files, four acceptance files
+and three original notes. The release note plus six already-reviewed static
+recovery/tool files complete the closure from live application `1740b254` through
+main `975935b4`. Neither revision is a substitute for rechecking the actual live
+baseline and reviewed current-main target when staging.
+
+No API, authentication, source store, booking authority, shadow schema, worker,
+dependency or Web Push change is admitted. Other lanes keep their existing
+allowlists. The static recovery files are present because of the live-to-main
+diff, not permission to rerun the historical `retry-static` incident.
+
+Use `stage TARGET LIVE_BASELINE`, then `activate TARGET` after
+`ready-no-database`. The database action, migration target and pending-migration
+helpers reject this lane before backup, migrations or pilot operations. Existing
+analytics, retention and signing secret are inherited without rotation, and the
+existing `10000000` order-attention pilot is preserved. Stage and candidate
+verification fail closed on missing/changed required analytics or pilot state.
+Only the new web candidate pauses background jobs; retained workers are untouched.
+
+Stage runs the four new actual component/search suites, existing customer and
+public-catalog compatibility, release-baseline/static-recovery tests and the
+unchanged three release safety suites. It checks the exact candidate HEAD and
+clean worktree before tests and again after the real production build, before
+starting the candidate. Later candidate verification repeats the source check.
+Environment/build guards, bundle budget, process/configuration ownership, public
+smoke, additive immutable assets and owned rollback all remain in force.
+Before publishing any static asset or changing an upstream, this lane checks
+every saved before/after proxy file against the recorded old/new hashes. Its
+rollback checks every saved before file before writing any proxy configuration,
+in addition to the unchanged current-proxy ownership guard. Each phase writes
+the exact contents it just validated, without rereading the saved files between
+validation and writing. A missing or drifted snapshot fails without partial proxy
+writes or nginx reload; older lanes keep their original behavior.
+
+This lane neither expands the existing candidate port range nor authorizes
+cleanup or stopping a retained process. No free approved port is a release
+blocker, not grounds for a fallback deployment or automatic maintenance.
+
 ## Explicit static permission incident recovery (2026-09-25)
 
 The user approved a narrow retry after candidate `1740b254851c11302b6c7fef536cf9ef92d75637`
