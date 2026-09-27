@@ -13,10 +13,11 @@ group / page reuse. No API, saved business data, dependency, database migration,
 booking authority, authentication or background worker is changed. Web Push and
 the unfinished database-authority candidates are deliberately excluded.
 
-The independent `runtime-performance` release lane admits exactly 18 paths:
+The independent `runtime-performance` release lane initially admitted 18 paths:
 the eleven curated application/test/original-note paths, this note, and the six
 already-reviewed operational files between the actual live build and main.
-Old lanes retain their scopes. This is not permission to publish the full
+Four subsequently approved retirement policy/controller/test paths bring the
+exact scope to 22. Old lanes retain their scopes. This is not permission to publish the full
 customer-read-shadow branch or replay historical static recovery.
 
 ## Local acceptance
@@ -56,10 +57,11 @@ The release controller would reject staging with `no_candidate_port`.
 
 No deployment controller was run, no remote file/configuration was changed,
 no process was stopped/restarted, and no data or release files were deleted.
-The existing policy explicitly forbids automatic retained-process cleanup or
-port-range expansion. Publication therefore requires approval of a safe slot
-reuse/retirement policy, followed by ownership/traffic/rollback checks, not a
-fallback to maintenance or the historical full-deploy workflow.
+The user subsequently approved the explained bounded slot-retirement policy:
+initially stop one checked historical web process, preserving current/predecessor
+web, original services, jobs, all data and files. The separate controller and
+additive receipt must pass ownership/traffic/rollback checks before publication;
+this is not fallback maintenance, cleanup or the historical full-deploy workflow.
 
 Independent review also reproduced a pre-existing ordinary-activation gap:
 saved nginx after-config drift could be applied before a failed public probe,

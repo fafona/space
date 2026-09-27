@@ -196,13 +196,14 @@ does not extend the port range or authorize cleanup.
 
 ## Curated runtime-performance no-database lane (2026-09-27)
 
-`runtime-performance` is a separate exact 18-file allowlist, selected only by
+`runtime-performance` is a separate exact 22-file allowlist, selected only by
 `src/lib/merchantCustomerSearch.ts`, before the older performance lane. Its
 application scope is customer request lifecycle, bounded lazy customer search,
 and public page/product render reuse: four runtime files, four acceptance files
 and three original notes. The release note plus six already-reviewed static
 recovery/tool files complete the closure from live application `1740b254` through
-main `975935b4`. Neither revision is a substitute for rechecking the actual live
+main `975935b4`. Four retirement controller/policy/test files implement the
+subsequently approved single-slot lifecycle below. Neither revision is a substitute for rechecking the actual live
 baseline and reviewed current-main target when staging.
 
 No API, authentication, source store, booking authority, shadow schema, worker,
@@ -233,9 +234,41 @@ the exact contents it just validated, without rereading the saved files between
 validation and writing. A missing or drifted snapshot fails without partial proxy
 writes or nginx reload; older lanes keep their original behavior.
 
-This lane neither expands the existing candidate port range nor authorizes
-cleanup or stopping a retained process. No free approved port is a release
-blocker, not grounds for a fallback deployment or automatic maintenance.
+This lane does not automatically stop any process or expand the port range.
+An unavailable port remains a blocker unless the separate, approved retirement
+controller has completed its checks and issued the exact single-slot receipt.
+
+### Approved first historical-web retirement (2026-09-27)
+
+The user approved the explained scope: initially stop **one** vetted historical
+web process, preserve current web, preceding rollback web, original base/card/web
+services and background jobs, and retain all business data and files. This is
+not permission for batch cleanup, file deletion, maintenance or new public ports.
+
+`online-release-retirement.mjs inspect|retire CODE_SHA LIVE_SHA VICTIM_SHA`
+runs from exact reviewed current-main source. Retirement shares the deployment
+and maintenance operation locks. It requires canonical process/source identities,
+paused background jobs, no PM2 watch/cron restart, normal Next signal handling,
+no effective nginx references and repeated observations without connections.
+It saves private recovery/evidence records before stopping only the selected
+PM2 ID, preserves the stopped registration, and checks every other process,
+listener, protected application version and PM2 persistence before issuing a
+completed receipt. A partial attempt blocks automatic retry; it is not success.
+
+The receipt authorizes only the exact original process identity in three named
+release contexts: current web, its predecessor and the one new target. Historical
+release snapshots are not rewritten. Missing/replaced/restarted processes and
+unrelated stopped processes still fail. New snapshots omit only the certified
+stopped entry, so its port can be reused while its source/assets remain intact.
+Use the new reviewed controller for rollback: new target to current, then current
+to its retained predecessor. Old immutable controllers deliberately retain their
+strict checks; this is no promise of arbitrary rollback into the retired version.
+
+PM2 uses its already configured termination timeout, not a guessed stop-command
+flag. No active connection or task may be sacrificed to force a slot free. The
+stopped record must have watch/cron disabled so saving/restoring PM2 cannot
+silently start it on a reassigned port. This first receipt does not authorize a
+second retirement or silently broaden its target scope for a later release.
 
 ## Explicit static permission incident recovery (2026-09-25)
 

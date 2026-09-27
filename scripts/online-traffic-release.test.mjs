@@ -5,7 +5,60 @@ import {createHash} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext} from 'node:vm';
+import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+
+function retainedProcessHarness(){
+ const sha=x=>x.repeat(40),name=x=>`merchant-space-online-${x.repeat(12)}`,cwd=x=>`/www/wwwroot/merchant-space.web-releases/${x.repeat(12)}-online`;
+ const raw=(x,id,port)=>({name:name(x),pm_id:id,pid:id+100,pm2_env:{pm_cwd:cwd(x),status:'online',PORT:String(port),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0'}});
+ const original=[raw('a',1,3110),raw('b',2,3109),raw('c',3,3103)];
+ const certificate={version:1,status:'completed',victim:{target:sha('c'),name:name('c'),pmId:3,pid:103,cwd:cwd('c'),port:3103},activeTarget:sha('a'),rollbackTarget:sha('b'),nextTarget:sha('d'),allowedActiveTargets:[sha('a'),sha('b'),sha('d')],beforeSha256:'1'.repeat(64),afterSha256:'2'.repeat(64),completedAt:'2026-09-27T18:00:00.000Z'};
+ const current=structuredClone(original);current[2].pid=0;current[2].pm2_env.status='stopped';
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const helpers=source.slice(source.indexOf('const protectedBaseProcesses='),source.indexOf('async function request('));
+ const saved=original.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd}));
+ const s={target:sha('a'),name:name('a'),oldName:name('b'),processes:saved};
+ const normalize=p=>({name:p.name,pmId:p.pm_id,pid:p.pid,cwd:p.pm2_env.pm_cwd,status:p.pm2_env.status,port:Number(p.pm2_env.PORT),backgroundPaused:p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED,automationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,invitationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED});
+ certificate.stoppedProcess=normalize(current[2]);
+ const execute=(expression,{certificates=[certificate],all=current,state=s}={})=>runInNewContext(`${helpers}${expression}`,{s:state,all,releaseTarget:sha('d'),oldName:name('a'),readOnlineRetirementCertificates:()=>certificates,normalizeRetirementProcess:normalize,assertRetainedOnlineProcesses,fail:m=>{throw Error(m);}});
+ return {sha,name,cwd,original,current,certificate,s,execute,source};
+}
+
+test('historical process checks retain original strict behavior without a retirement certificate',()=>{
+ const h=retainedProcessHarness();
+ assert.doesNotThrow(()=>h.execute('verifyRetainedProcesses(s,all)',{certificates:[],all:h.original}));
+ assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{certificates:[]}),/existing_process_changed/);
+ assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{certificates:[],all:h.original.slice(0,2)}),/existing_process_changed/);
+});
+
+test('one certified stopped entry supports new-to-current-to-previous rollback without rewriting old snapshots',()=>{
+ const h=retainedProcessHarness(),before=structuredClone(h.s);
+ for(const target of ['a','b','d'])assert.doesNotThrow(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,target:h.sha(target)}}));
+ assert.deepEqual(h.s,before);
+ const next=JSON.parse(JSON.stringify(h.execute('snapshotRetainedProcesses(all,releaseTarget,oldName)')));
+ assert.deepEqual(next,h.s.processes.slice(0,2));
+ assert.doesNotThrow(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,target:h.sha('d'),processes:next}}));
+ assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,target:h.sha('e')}}),/certificate_anchor_rejected/);
+ for(const key of ['name','oldName'])assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{state:{...h.s,[key]:h.name('c')}}),/certificate_anchor_rejected/);
+});
+
+test('retirement cannot mask absent restarted replaced or unrelated stopped processes during stage or rollback',()=>{
+ const h=retainedProcessHarness();
+ const changes=[all=>all.pop(),all=>{all[2].pid=103;all[2].pm2_env.status='online';},all=>{all[2].pm_id=9;},all=>{all[2].pm2_env.pm_cwd='/replacement';},all=>{all[1].pid=0;all[1].pm2_env.status='stopped';}];
+ for(const change of changes){const all=structuredClone(h.current);change(all);
+  assert.throws(()=>h.execute('verifyRetainedProcesses(s,all)',{all}),/online_retirement_/);
+  assert.throws(()=>h.execute('snapshotRetainedProcesses(all,releaseTarget,oldName)',{all}),/online_retirement_/);
+ }
+});
+
+test('retirement wiring precedes baseline HTTP acceptance and persists only a verified new snapshot',()=>{
+ const {source}=retainedProcessHarness();
+ const verify=source.slice(source.indexOf('async function verifyBase('),source.indexOf('function configUnchanged('));
+ assert.ok(verify.indexOf('verifyRetainedProcesses(s,pm())')<verify.indexOf('baseline_version_changed'));
+ assert.match(source,/processes:snapshotRetainedProcesses\(all,target,old.name\)/);
+ assert.match(source,/if\(lane==='runtime-performance'\)run\('node',\['--test','scripts\/online-release-retirement-policy.test.mjs','scripts\/online-release-retirement.test.mjs'\]/);
+ assert.doesNotMatch(source,/pm2.*\['(?:stop|delete)'/);
+});
 
 test('QR export lane admits only the requested client feature and exact release tooling',()=>{
  const feature=['src/lib/merchantBusinessCardQrExport.ts','src/lib/merchantBusinessCardQrExport.test.ts','src/components/admin/BusinessCardQrExportDialog.tsx','src/components/admin/MerchantBusinessCardManager.tsx'];
@@ -116,15 +169,17 @@ const runtimePerformanceFiles=[
  'scripts/online-static-recovery.mjs','scripts/online-static-recovery.test.mjs',
  'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-release.mjs',
  'scripts/online-traffic-release.test.mjs','docs/no-maintenance-release.md',
+ 'scripts/online-release-retirement-policy.mjs','scripts/online-release-retirement-policy.test.mjs',
+ 'scripts/online-release-retirement.mjs','scripts/online-release-retirement.test.mjs',
 ];
 
-test('runtime performance admits exactly the curated 18 paths and needs its unique search anchor',()=>{
+test('runtime performance admits exactly the curated 22 paths and needs its unique search anchor',()=>{
  const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
  const start=policy.indexOf('const runtimePerformanceAnchor ='),end=policy.indexOf('export function onlineReleaseLane(');
  assert.ok(start>0&&end>start);
  const actual=Array.from(runInNewContext(`${policy.slice(start,end)}Array.from(runtimePerformanceFiles)`));
  assert.deepEqual(actual,runtimePerformanceFiles);
- assert.equal(new Set(actual).size,18);
+ assert.equal(new Set(actual).size,22);
  assert.equal(onlineReleaseLane(runtimePerformanceFiles),'runtime-performance');
  assert.equal(onlineReleaseLane([runtimePerformanceFiles[0]]),'runtime-performance');
  for(const file of runtimePerformanceFiles.slice(1)){

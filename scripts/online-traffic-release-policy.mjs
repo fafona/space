@@ -169,6 +169,8 @@ const runtimePerformanceFiles = new Set([
   'scripts/online-static-recovery.mjs', 'scripts/online-static-recovery.test.mjs',
   'scripts/online-traffic-release-policy.mjs', 'scripts/online-traffic-release.mjs',
   'scripts/online-traffic-release.test.mjs', 'docs/no-maintenance-release.md',
+  'scripts/online-release-retirement-policy.mjs', 'scripts/online-release-retirement-policy.test.mjs',
+  'scripts/online-release-retirement.mjs', 'scripts/online-release-retirement.test.mjs',
 ]);
 export function onlineReleaseLane(files) {
   if (files.includes(runtimePerformanceAnchor)) {

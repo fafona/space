@@ -8,6 +8,8 @@ import {planStaticPermissionRecovery} from './online-static-recovery.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
+import {normalizeRetirementProcess,readOnlineRetirementCertificates} from './online-release-retirement.mjs';
+import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const [action,target,baseline]=process.argv.slice(2);
@@ -24,6 +26,24 @@ function atomic(path,value){const tmp=`${path}.${process.pid}.tmp`;writeFileSync
 const pm=()=>JSON.parse(run('pm2',['jlist']));
 const operation=`${root}/${target}`,stateFile=`${operation}/state.json`,activeFile=`${root}/active.json`;
 const save=s=>atomic(stateFile,JSON.stringify(s,null,2));
+const protectedBaseProcesses=['merchant-space','merchant-space-enterprise-automation-worker','merchant-space-contact-card','merchant-space-web-live'];
+function verifyRetainedProcesses(s,all){
+ const certificates=readOnlineRetirementCertificates();
+ if(!certificates.length){
+  for(const saved of s.processes){const p=all.find(p=>p.name===saved.name);if(!p||p.pid!==saved.pid||p.pm2_env.pm_cwd!==saved.cwd||p.pm2_env.status!=='online')fail('existing_process_changed');}
+  return;
+ }
+ assertRetainedOnlineProcesses({saved:s.processes,current:all.map(normalizeRetirementProcess),certificates,activeTarget:s.target,
+  protectedNames:[...protectedBaseProcesses,s.name,s.oldName].filter(Boolean)});
+}
+function snapshotRetainedProcesses(all,releaseTarget,oldName){
+ const certificates=readOnlineRetirementCertificates();
+ if(!certificates.length)return all.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd}));
+ const saved=all.filter(p=>p.pm2_env.status==='online').map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd}));
+ assertRetainedOnlineProcesses({saved,current:all.map(normalizeRetirementProcess),certificates,activeTarget:releaseTarget,
+  protectedNames:[...protectedBaseProcesses,oldName,`merchant-space-online-${releaseTarget.slice(0,12)}`]});
+ return saved;
+}
 async function request(url,statuses=[200],host='www.faolla.com',headers={}){
  const r=await fetch(url,{redirect:'manual',headers:{Host:host,...headers},signal:AbortSignal.timeout(20000)});
  if(!statuses.includes(r.status))fail(`online_http:${r.status}:${new URL(url).pathname}`);return r;
@@ -32,7 +52,7 @@ async function verifyBase(s){
  if(hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json'))!==s.maintenanceHash||JSON.parse(read('/var/lib/faolla-maintenance/merchant-space/state.json')).phase!=='ended')fail('maintenance_state_changed');
  if(hash(safeFile(marker))!==s.markerHash)fail('legacy_guard_changed');
  if(realpathSync(`${app}.current`)!==s.baseDirectory)fail('baseline_link_changed');
- const all=pm();for(const saved of s.processes){const p=all.find(p=>p.name===saved.name);if(!p||p.pid!==saved.pid||p.pm2_env.pm_cwd!==saved.cwd||p.pm2_env.status!=='online')fail('existing_process_changed');}
+ verifyRetainedProcesses(s,pm());
  if((await(await request(`http://127.0.0.1:${s.oldPort}/api/app-web-version`)).json()).buildId!==s.baseline)fail('baseline_version_changed');
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
@@ -210,7 +230,7 @@ try{
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
   const sockets=run('ss',['-ltnH']);const port=[3103,3104,3105,3106,3107,3108,3109,3110].find(p=>!sockets.includes(`:${p} `));if(!port)fail('no_candidate_port');
   privateDirectory(operation);
-  const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),processes:all.map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd})),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
+  const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),processes:snapshotRetainedProcesses(all,target,old.name),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
@@ -246,6 +266,7 @@ try{
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
   run('node',['--import','tsx','--test',...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  if(lane==='runtime-performance')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
   try{run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
