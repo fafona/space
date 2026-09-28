@@ -188,7 +188,76 @@ const runtimePerformanceFiles = new Set([
   'scripts/online-release-retirement-policy.mjs', 'scripts/online-release-retirement-policy.test.mjs',
   'scripts/online-release-retirement.mjs', 'scripts/online-release-retirement.test.mjs',
 ]);
+// 2026-09-28: separately authorized customer code-only performance release.
+// Exact live 57dbac3a -> reviewed 426dd705 closure plus this lane's own tests/docs.
+// The 060 SQL file is inert source here: no database action or projection enable
+// authority is granted, and none of the older lane allowlists is widened.
+const customerCodePerformanceAnchor = 'src/lib/merchantCustomerListView.ts';
+export const CUSTOMER_CODE_PERFORMANCE_FILES = Object.freeze([
+  '.env.example',
+  'docs/benchmarks/customer-get-baseline-20260928.json',
+  'docs/benchmarks/customer-manager-payload-20260928.json',
+  'docs/benchmarks/customer-membership-profile-read-20260928.json',
+  'docs/benchmarks/customer-order-normalization-reuse-20260928.json',
+  'docs/benchmarks/customer-reducer-optimization-20260928.json',
+  'docs/benchmarks/customer-token-reuse-get-20260928.json',
+  'docs/benchmarks/customer-token-reuse-pure-20260928.json',
+  'docs/benchmarks/membership-profile-db-projection-20260928.json',
+  'docs/booking-merge-release-2026-09-27.md',
+  'docs/customer-code-release-2026-09-28.md',
+  'docs/customer-get-scale-baseline-2026-09-28.md',
+  'docs/customer-manager-payload-2026-09-28.md',
+  'docs/customer-membership-profile-read-2026-09-28.md',
+  'docs/customer-reducer-optimization-2026-09-28.md',
+  'docs/customer-token-reuse-2026-09-28.md',
+  'docs/membership-profile-db-projection-2026-09-28.md',
+  'docs/no-maintenance-release.md',
+  'docs/order-normalization-reuse-2026-09-28.md',
+  'scripts/benchmark-merchant-customer-get.mjs',
+  'scripts/benchmark-merchant-customer-get.test.mjs',
+  'scripts/benchmark-merchant-customer-membership-profile.mjs',
+  'scripts/benchmark-merchant-customer-membership-profile.test.mjs',
+  'scripts/benchmark-merchant-customer-order-normalization.mjs',
+  'scripts/benchmark-merchant-customer-order-normalization.test.mjs',
+  'scripts/benchmark-merchant-customer-reducer.mjs',
+  'scripts/benchmark-merchant-customer-reducer.test.mjs',
+  'scripts/customer-code-release-policy.test.mjs',
+  'scripts/customer-membership-profile-projection-migration.test.mjs',
+  'scripts/customer-membership-profile-projection-native.mjs',
+  'scripts/customer-membership-profile-projection-native.unit.test.mjs',
+  'scripts/fixtures/merchantCustomerGetBaselineHarness.test.ts',
+  'scripts/fixtures/merchantCustomerGetBaselineHarness.ts',
+  'scripts/fixtures/merchantCustomersReference.ts',
+  'scripts/fixtures/merchantOrdersMergeReference.ts',
+  'scripts/online-traffic-release-policy.mjs',
+  'scripts/online-traffic-release.mjs',
+  'scripts/online-traffic-release.test.mjs',
+  'scripts/supabase-migrations/202609280060_customer_membership_profile_projection.sql',
+  'src/app/api/merchant-customers/route.test.ts',
+  'src/app/api/merchant-customers/route.ts',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts',
+  'src/components/admin/MerchantCustomerManager.tsx',
+  'src/lib/merchantCustomerListView.test.ts',
+  'src/lib/merchantCustomerListView.ts',
+  'src/lib/merchantCustomerMembershipProfiles.test.ts',
+  'src/lib/merchantCustomerSearch.test.ts',
+  'src/lib/merchantCustomerSearch.ts',
+  'src/lib/merchantCustomers.optimization.test.ts',
+  'src/lib/merchantCustomers.token-reuse.test.ts',
+  'src/lib/merchantCustomers.ts',
+  'src/lib/merchantMembershipProfileProjection.server.test.ts',
+  'src/lib/merchantMembershipProfileProjection.server.ts',
+  'src/lib/merchantMembershipsStore.ts',
+  'src/lib/merchantOrdersNormalizationReuse.test.ts',
+  'src/lib/merchantOrdersStore.ts',
+  'src/lib/merchantOrdersV1Read.server.test.ts',
+]);
+const customerCodePerformanceFiles = new Set(CUSTOMER_CODE_PERFORMANCE_FILES);
 export function onlineReleaseLane(files) {
+  if (files.includes(customerCodePerformanceAnchor)) {
+    if (files.some(file => !customerCodePerformanceFiles.has(file))) throw Error('customer_code_performance_release_scope_rejected');
+    return 'customer-code-performance';
+  }
   if (files.includes(bookingMergeCpuAnchor)) {
     if (files.some(file => !bookingMergeCpuFiles.has(file))) throw Error('booking_merge_cpu_release_scope_rejected');
     return 'booking-merge-cpu';
@@ -225,6 +294,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if (lane === 'customer-code-performance') return true;
   if (lane === 'booking-merge-cpu') return true;
   if (lane === 'runtime-performance') return true;
   if (lane === 'public-catalog-batch') return true;
@@ -239,6 +309,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if (lane === 'customer-code-performance') throw Error('customer_code_performance_database_forbidden');
   if (lane === 'booking-merge-cpu') throw Error('booking_merge_cpu_database_forbidden');
   if (lane === 'runtime-performance') throw Error('runtime_performance_database_forbidden');
   if (lane === 'public-catalog-batch') throw Error('public_catalog_batch_database_forbidden');
@@ -296,6 +367,92 @@ export const BOOKING_MERGE_CPU_FOCUSED_TESTS = Object.freeze([
   'src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs',
   'scripts/run-ci-tests.test.mjs','scripts/ci-workflow-contract.test.mjs','scripts/production-maintenance-pm2-connection.test.mjs','scripts/repair-startup.test.mjs',
   'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs',
+]);
+// Pinned application/compatibility and pure tooling tests. The controller must
+// execute this list with --test-concurrency=1. The native unit test imports only
+// guarded pure helpers; the PostgreSQL runner itself is NEVER an executable gate.
+export const CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS = Object.freeze([
+  'src/lib/merchantCustomerDirectoryStore.test.ts',
+  'src/lib/merchantCustomerImport.test.ts',
+  'src/lib/merchantCustomerListView.test.ts',
+  'src/lib/merchantCustomerListViewport.test.ts',
+  'src/lib/merchantCustomerMembershipProfiles.test.ts',
+  'src/lib/merchantCustomerPagination.test.ts',
+  'src/lib/merchantCustomerSearch.test.ts',
+  'src/lib/merchantCustomers.optimization.test.ts',
+  'src/lib/merchantCustomers.test.ts',
+  'src/lib/merchantCustomers.token-reuse.test.ts',
+  'src/lib/merchantOrderAttention.server.test.ts',
+  'src/lib/merchantOrderAttention.test.ts',
+  'src/lib/merchantOrderAttentionProjection.test.ts',
+  'src/lib/merchantOrderBackfill.server.test.ts',
+  'src/lib/merchantOrderCatalog.test.ts',
+  'src/lib/merchantOrderDualWrite.server.test.ts',
+  'src/lib/merchantOrderEnterprise.test.ts',
+  'src/lib/merchantOrderExport.test.ts',
+  'src/lib/merchantOrderFrontendAccess.test.ts',
+  'src/lib/merchantOrderManagerPreferences.test.ts',
+  'src/lib/merchantOrderMembershipTransaction.server.test.ts',
+  'src/lib/merchantOrderPoints.test.ts',
+  'src/lib/merchantOrderPrint.test.ts',
+  'src/lib/merchantOrderReconciliation.test.ts',
+  'src/lib/merchantOrderV1DeploymentApproval.server.test.ts',
+  'src/lib/merchantOrderV1DeploymentGuard.test.ts',
+  'src/lib/merchantOrderV1PrimaryCanaryAudit.test.ts',
+  'src/lib/merchantOrderV1PrimaryCanaryWatch.test.ts',
+  'src/lib/merchantOrderV1PrimaryCanaryWatchHealth.test.ts',
+  'src/lib/merchantOrderV1ReadCircuitBreaker.test.ts',
+  'src/lib/merchantOrderWorkbench.test.ts',
+  'src/lib/merchantOrders.test.ts',
+  'src/lib/merchantOrdersAtomic.server.test.ts',
+  'src/lib/merchantOrdersNormalizationReuse.test.ts',
+  'src/lib/merchantOrdersStore.metadata.test.ts',
+  'src/lib/merchantOrdersStore.test.ts',
+  'src/lib/merchantOrdersV1.test.ts',
+  'src/lib/merchantOrdersV1Read.server.test.ts',
+  'src/lib/merchantMembershipAuthorizationLock.test.ts',
+  'src/lib/merchantMembershipBusinessPermissions.test.ts',
+  'src/lib/merchantMembershipFrontendAccess.test.ts',
+  'src/lib/merchantMembershipLedger.test.ts',
+  'src/lib/merchantMembershipLedgerBackfill.server.test.ts',
+  'src/lib/merchantMembershipLedgerDualWrite.server.test.ts',
+  'src/lib/merchantMembershipLedgerReconciliation.test.ts',
+  'src/lib/merchantMembershipLedgerV1Read.server.test.ts',
+  'src/lib/merchantMembershipOrderPointsPreparation.test.ts',
+  'src/lib/merchantMembershipProfileProjection.server.test.ts',
+  'src/lib/merchantMembershipRedemptionCheckout.test.ts',
+  'src/lib/merchantMembershipRouteContract.test.ts',
+  'src/lib/merchantMembershipRoutesSecurity.test.ts',
+  'src/lib/merchantMembershipSettings.server.test.ts',
+  'src/lib/merchantMembershipSettingsStore.test.ts',
+  'src/lib/merchantMemberships.test.ts',
+  'src/lib/merchantMembershipsStore.test.ts',
+  'src/lib/merchantBookings.test.ts',
+  'src/lib/merchantBookingsV1.test.ts',
+  'src/lib/merchantBookingsV1Read.server.test.ts',
+  'src/lib/merchantBookingPersistenceStore.test.ts',
+  'src/lib/merchantBookingMergeParity.test.ts',
+  'src/app/api/merchant-customers/route.test.ts',
+  'src/app/api/merchant-customers/route.booking-merge.test.ts',
+  'src/app/api/orders/route.test.ts',
+  'src/app/api/orders/catalog/route.test.ts',
+  'src/app/api/orders/export/route.test.ts',
+  'src/components/admin/MerchantCustomerManager.behavior.test.ts',
+  'src/components/admin/MerchantCustomerManager.contract.test.ts',
+  'scripts/fixtures/merchantCustomerGetBaselineHarness.test.ts',
+  'scripts/benchmark-merchant-customer-get.test.mjs',
+  'scripts/benchmark-merchant-customer-reducer.test.mjs',
+  'scripts/benchmark-merchant-customer-membership-profile.test.mjs',
+  'scripts/benchmark-merchant-customer-order-normalization.test.mjs',
+  'scripts/customer-membership-profile-projection-migration.test.mjs',
+  'scripts/customer-membership-profile-projection-native.unit.test.mjs',
+  'scripts/check-release-baseline.test.mjs',
+  'scripts/online-static-recovery.test.mjs',
+  'scripts/run-ci-tests.test.mjs',
+  'scripts/ci-workflow-contract.test.mjs',
+  'scripts/production-maintenance-pm2-connection.test.mjs',
+  'scripts/repair-startup.test.mjs',
+  'scripts/customer-code-release-policy.test.mjs',
 ]);
 // This one failed pre-build attempt retains its original application identity.
 // These are read-only incident observations, not caller-issued recovery authority.

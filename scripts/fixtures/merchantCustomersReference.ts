@@ -1,3 +1,8 @@
+// Frozen full pre-optimization reference; test fixture only, never production.
+// Source: b4a7b77a9f93d08cb9640da3d0b33ae2abe092d1:src/lib/merchantCustomers.ts
+// Original UTF-8 SHA-256: 1a44b96f9f901b2e7edab8f7faae24ea0745fa8312ef5815418e54a35fa420e4
+// Everything after the following marker is the unmodified Git source.
+// BEGIN FROZEN SOURCE
 import type { MerchantBookingRecord } from "@/lib/merchantBookings";
 import type { MerchantMembershipRecord } from "@/lib/merchantMemberships";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
@@ -79,7 +84,7 @@ export type MerchantCustomerDirectoryInput = {
   storedCustomers?: unknown;
   orders?: MerchantOrderRecord[];
   bookings?: MerchantBookingRecord[];
-  memberships?: Omit<MerchantMembershipRecord, "transactions">[];
+  memberships?: MerchantMembershipRecord[];
 };
 
 type CustomerCandidate = {
@@ -370,7 +375,7 @@ function mergeTaxProfile(
 function mergeProfiles(
   preferred: MerchantCustomerProfile,
   fallback: MerchantCustomerProfile,
-  options: { replaceEmpty?: boolean; mergeIdentityAliases?: boolean } = {},
+  options: { replaceEmpty?: boolean } = {},
 ): MerchantCustomerProfile {
   const replace = options.replaceEmpty === true;
   const choose = (nextValue: string, previousValue: string) => (replace ? nextValue : nextValue || previousValue);
@@ -401,16 +406,14 @@ function mergeProfiles(
     customFields: replace
       ? preferred.customFields
       : { ...fallback.customFields, ...preferred.customFields },
-    identityAliases: options.mergeIdentityAliases === false
-      ? preferred.identityAliases
-      : Array.from(
-          new Set([
-            ...fallback.identityAliases,
-            ...preferred.identityAliases,
-            ...getMerchantCustomerIdentityTokens(fallback),
-            ...getMerchantCustomerIdentityTokens(preferred),
-          ]),
-        ).slice(0, MAX_IDENTITY_ALIASES),
+    identityAliases: Array.from(
+      new Set([
+        ...fallback.identityAliases,
+        ...preferred.identityAliases,
+        ...getMerchantCustomerIdentityTokens(fallback),
+        ...getMerchantCustomerIdentityTokens(preferred),
+      ]),
+    ).slice(0, MAX_IDENTITY_ALIASES),
     sources: Array.from(new Set([...preferred.sources, ...fallback.sources])),
     createdAt: earlierTimestamp(preferred.createdAt, fallback.createdAt) || preferred.createdAt,
     updatedAt: laterTimestamp(preferred.updatedAt, fallback.updatedAt) || preferred.updatedAt,
@@ -509,7 +512,7 @@ function candidateFromStored(profile: MerchantCustomerProfile): CustomerCandidat
   };
 }
 
-function candidateFromMembership(siteId: string, membership: Omit<MerchantMembershipRecord, "transactions">): CustomerCandidate | null {
+function candidateFromMembership(siteId: string, membership: MerchantMembershipRecord): CustomerCandidate | null {
   const profile = normalizeMerchantCustomerProfile(
     {
       id: `membership-${membership.id}`,
@@ -720,13 +723,7 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
   };
   const tokenOwner = new Map<string, number>();
   candidates.forEach((candidate, index) => {
-    // Every candidate owns a freshly normalized profile. Reuse its alias slot
-    // for the capped identity tokens needed by both joining and final aliases;
-    // directory merges below never recompute tokens from intermediate profiles.
-    // Caller profiles and the shared upsert path are not modified.
-    const tokens = getMerchantCustomerIdentityTokens(candidate.profile);
-    candidate.profile.identityAliases = tokens;
-    tokens.forEach((token) => {
+    getMerchantCustomerIdentityTokens(candidate.profile).forEach((token) => {
       const owner = tokenOwner.get(token);
       if (owner === undefined) tokenOwner.set(token, index);
       else union(index, owner);
@@ -751,21 +748,12 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
         return Date.parse(right.profile.updatedAt) - Date.parse(left.profile.updatedAt);
       });
       const stored = ordered.find((candidate) => candidate.priority === 100);
-      const groupTokens = new Set<string>();
-      for (const candidate of ordered) {
-        const tokens = candidate.profile.identityAliases;
-        for (const token of tokens) groupTokens.add(token);
-        // Both consumers have finished with this candidate's private tokens.
-        // Release their references before merging the remaining profile fields;
-        // final aliases below come from the independent group token array.
-        tokens.length = 0;
-      }
-      const allTokens = Array.from(groupTokens);
+      const allTokens = Array.from(
+        new Set(ordered.flatMap((candidate) => getMerchantCustomerIdentityTokens(candidate.profile))),
+      );
       let profile = ordered[ordered.length - 1]!.profile;
       for (let index = ordered.length - 2; index >= 0; index -= 1) {
-        // Directory aliases come from the original candidates below, not the
-        // intermediate merged profiles. Keep upsert's alias merging unchanged.
-        profile = mergeProfiles(ordered[index]!.profile, profile, { mergeIdentityAliases: false });
+        profile = mergeProfiles(ordered[index]!.profile, profile);
       }
       const id =
         stored?.profile.id ||

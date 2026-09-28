@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { MerchantOrderRecord } from "@/lib/merchantOrders";
+import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/merchantOrders";
+import { mergeStoredMerchantOrdersRows } from "@/lib/merchantOrdersStore";
 import { buildMerchantOrderShadowMutation } from "@/lib/merchantOrderDualWrite.server";
 import {
   MerchantOrderV1ReadCircuitBreaker,
@@ -256,6 +257,49 @@ test("verify mode observes parity but always returns the legacy envelope", async
   assert.equal(events[0]?.reason, "parity");
   assert.match(events[0]?.observedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(Number.isInteger(events[0]?.durationMs), true);
+});
+
+test("merged normalized records preserve complete V1 parity and mismatch detection", async () => {
+  for (const truncated of [false, true]) {
+    const raw = createOrder();
+    raw.items[0].description = truncated ? "x".repeat(3999) + "\u3000tail" : "Full product description";
+    raw.items[0].imageUrl = "https://example.test/product.png";
+    raw.items[0].tag = "Display-only tag";
+    raw.customer.note = truncated ? "n".repeat(1999) + "\u00a0tail" : "Customer note";
+    raw.items[0].unitPrice = 2.675;
+    raw.items[0].quantity = 3;
+    raw.totalAmount = 999999; // Never trust the stored summary instead of items.
+    const legacy = mergeStoredMerchantOrdersRows(raw.siteId, [{
+      id: "page-1", slug: "__merchant_orders__:" + raw.siteId + ":chunk:0",
+      blocks: [raw], updated_at: "2026-07-25T10:06:00.000Z",
+    }]);
+    assert.ok(legacy);
+    const previous = normalizeMerchantOrderRecords(normalizeMerchantOrderRecords([raw]));
+    assert.deepEqual(legacy.orders, previous);
+    assert.equal(JSON.stringify(legacy.orders), JSON.stringify(previous));
+    for (const mode of ["off", "verify", "primary"] as const) {
+      for (const mismatch of [false, true]) {
+        const events: MerchantOrderV1ReadEvent[] = [];
+        const v1: StoredMerchantOrders = structuredClone(legacy);
+        if (mismatch) v1.orders[0].items[0].imageUrl += "?changed=1";
+        let v1Calls = 0;
+        const result: StoredMerchantOrders | null = await readMerchantOrdersWithV1Fallback<StoredMerchantOrders>({
+          siteId: raw.siteId,
+          loadLegacy: async () => legacy,
+          loadV1: async () => { v1Calls++; return v1; },
+          config: { mode, siteIds: [raw.siteId], timeoutMs: 2500 },
+          circuitBreaker: new MerchantOrderV1ReadCircuitBreaker(),
+          logger: (event) => events.push(event),
+        });
+        assert.equal(v1Calls, mode === "off" ? 0 : 1);
+        assert.deepEqual(result, legacy);
+        if (mode !== "primary" || mismatch) assert.equal(result, legacy);
+        else assert.notEqual(result, legacy);
+        assert.deepEqual(events.map((event) => event.reason), mode === "off" ? []
+          : [mismatch ? "order_content_mismatch" : "parity"]);
+      }
+    }
+  }
 });
 
 test("primary mode uses V1 order objects only after exact parity", async () => {

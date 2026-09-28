@@ -5,10 +5,11 @@ import {createHash} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext} from 'node:vm';
+import {webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {assertRollingRetainedProcesses,assertRollingStateHistory,rollingHash,ROLLING_BASE_NAMES} from './online-release-rolling-policy.mjs';
-import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
+import {BOOKING_MERGE_CPU_FOCUSED_TESTS,CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
 
 function releaseRequestSource(){
@@ -254,7 +255,7 @@ test('actual database branch refuses every no-database lane before backup, migra
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
  const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
- for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden']]){
+ for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden'],['customer-code-performance','customer_code_performance_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
@@ -312,16 +313,23 @@ test('pre-build resume pins one incident and an exact five-file operational tool
  assert.throws(()=>assertBookingStageResumeToolScope([]),/scope_rejected/);
 });
 
-test('only booking stage serializes the same full 26-suite invocation without relaxing discovery or any old lane',()=>{
+test('booking and customer stages alone serialize their exact suites without relaxing discovery or any old lane',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const start=code.indexOf('const tests='),call=code.indexOf("run('node',['--import','tsx','--test'",start),end=code.indexOf('\n',call);
- for(const lane of ['booking-merge-cpu','runtime-performance','qr-export','public-catalog-batch','bounded-lists','order-attention','performance']){
+ for(const lane of ['booking-merge-cpu','customer-code-performance','runtime-performance','qr-export','public-catalog-batch','bounded-lists','order-attention','performance']){
   const calls=[];
-  runInNewContext(code.slice(start,end),{lane,BOOKING_MERGE_CPU_FOCUSED_TESTS,s:{directory:'/original-candidate'},env:{original:true},run:(...args)=>calls.push(args)});
+  runInNewContext(code.slice(start,end),{lane,BOOKING_MERGE_CPU_FOCUSED_TESTS,CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,s:{directory:'/original-candidate'},env:{original:true},run:(...args)=>calls.push(args)});
   assert.equal(calls.length,1);const [command,args,options]=calls[0];
   assert.equal(command,'node');assert.equal(options.cwd,'/original-candidate');assert.equal(options.env.original,true);
-  assert.equal(args.filter(x=>x==='--test-concurrency=1').length,lane==='booking-merge-cpu'?1:0);
+  assert.equal(args.filter(x=>x==='--test-concurrency=1').length,['booking-merge-cpu','customer-code-performance'].includes(lane)?1:0);
   if(lane==='booking-merge-cpu')assert.deepEqual(Array.from(args.slice(4)),Array.from(BOOKING_MERGE_CPU_FOCUSED_TESTS));
+  if(lane==='customer-code-performance'){
+   const expected=[...CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
+   assert.deepEqual(Array.from(args.slice(4)),expected);
+   assert.equal(expected.length,84);assert.equal(new Set(expected).size,84);
+   for(const file of expected){assert.match(file,/\.(?:test|spec)\.[cm]?[jt]sx?$/);assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);}
+   assert.equal(expected.includes('scripts/customer-membership-profile-projection-native.mjs'),false);
+  }
  }
  assert.equal(new Set(BOOKING_MERGE_CPU_FOCUSED_TESTS).size,26);
 });
@@ -787,7 +795,7 @@ const runtimePerformanceFiles=[
 
 test('runtime performance admits exactly the curated 22 paths and needs its unique search anchor',()=>{
  const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
- const start=policy.indexOf('const runtimePerformanceAnchor ='),end=policy.indexOf('export function onlineReleaseLane(');
+ const start=policy.indexOf('const runtimePerformanceAnchor ='),end=policy.indexOf(']);',start)+3;
  assert.ok(start>0&&end>start);
  const actual=Array.from(runInNewContext(`${policy.slice(start,end)}Array.from(runtimePerformanceFiles)`));
  assert.deepEqual(actual,runtimePerformanceFiles);
@@ -958,7 +966,7 @@ test('runtime performance stage runs its exact suites between source gates befor
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,26);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const stage=code.indexOf("if(action==='stage'){");
  const before=code.indexOf('verifyRuntimePerformanceSource(s);',stage);
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
@@ -1232,7 +1240,7 @@ test('public catalog batch stage runs its exact regressions before the guarded b
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,tests.length+fixed.length);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(build>end&&ready>build);
@@ -1255,7 +1263,9 @@ const readIndexFiles=[
 
 test('read index admits exactly ten files with one anchor and no inherited traffic authority',()=>{
  const policy=readFileSync(new URL('./online-traffic-release-policy.mjs',import.meta.url),'utf8');
- const declaration=policy.slice(policy.indexOf('const readIndexAnchor ='),policy.indexOf('export function onlineReleaseLane('));
+ const start=policy.indexOf('const readIndexAnchor ='),end=policy.indexOf(']);',start)+3;
+ assert.ok(start>0&&end>start);
+ const declaration=policy.slice(start,end);
  assert.deepEqual(Array.from(runInNewContext(`${declaration}Array.from(readIndexFiles)`)),readIndexFiles);
  assert.equal(readIndexFiles.length,10);
  assert.equal(onlineReleaseLane(readIndexFiles),'read-index');
@@ -1367,7 +1377,7 @@ test('read-index stage includes all tracked traffic regressions once plus catalo
  assert.equal(new Set(tests).size,tests.length);
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(start>0&&end>start&&build>end&&ready>build);
@@ -1838,5 +1848,331 @@ test('shared activation preserves normal cutover, all public checks and owned ro
   else {await task;assert.equal(s.status,'active');assert.ok(calls.indexOf('launch')>calls.indexOf('public-smoke'));assert.ok(calls.indexOf('state:active')>calls.indexOf('config'));assert.equal(calls.at(-1),'active-record');}
   assert.ok(calls.indexOf('pilot-guard')<calls.indexOf('static'));assert.ok(calls.indexOf('static')<calls.indexOf('proxy-write'));
   assert.ok(calls.indexOf('nginx:-t')<calls.indexOf('nginx:-s,reload'));
+ }
+});
+
+const customerProjectionEnabled='MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED';
+const customerProjectionSites='MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS';
+const customerProjectionOff={[customerProjectionEnabled]:'0',[customerProjectionSites]:''};
+const customerProjectionFile=`${customerProjectionEnabled}=0\n${customerProjectionSites}=\n`;
+function customerCodeSettingsSource(){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('function assertCustomerCodeProjectionOff('),end=code.indexOf('function verifyOrderAttentionSource(',start);
+ assert.ok(start>0&&end>start);
+ return code.slice(start,end);
+}
+function customerCodeSettingsApi(overrides={}){
+ return runInNewContext(`${customerCodeSettingsSource()}({assertCustomerCodeProjectionOff,assertCustomerCodeProjectionFile,verifyCustomerCodeCandidateSettings})`,{
+  fail:message=>{throw Error(message);},...overrides,
+ });
+}
+function customerCodeCandidateHarness(){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const source=code.slice(code.indexOf('function verifyCandidate('),code.indexOf('function publishStatic('));
+ const candidateEnv=code.slice(code.indexOf('function candidateEnvironment('),code.indexOf('function assertCustomerCodeProjectionOff('));
+ const env={...customerProjectionOff,FAOLLA_BACKGROUND_JOBS_PAUSED:'1',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',
+  FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-unchanged-secret',
+  FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0'};
+ const s={lane:'customer-code-performance',target:'a'.repeat(40),directory:'/candidate',name:'candidate'};
+ const files=new Map([['/operation/runtime.json',JSON.stringify(env)],['/candidate/.env.local',customerProjectionFile]]);
+ const p={name:'candidate',pid:3210,pm2_env:{...env,status:'online',pm_cwd:s.directory}};
+ const actual={...env},reads=[],commands=[],hooks={head:s.target,status:'',process:p};
+ const api=runInNewContext(`${candidateEnv}${customerCodeSettingsSource()}${source}({verifyCandidate,verifyCustomerCodeCandidateSettings})`,{
+  operation:'/operation',webReleaseRuntimeEnvironment,
+  safeFile:path=>{reads.push(path);if(!files.has(path))throw Error('missing_candidate_file');return files.get(path);},
+  read:path=>{reads.push(path);assert.equal(path,'/proc/3210/environ');return Object.entries(actual).filter(([,value])=>value!==undefined).map(([key,value])=>`${key}=${value}`).join('\0')+'\0';},
+  pm:()=>hooks.process?[hooks.process]:[],
+  run:(command,args,options)=>{commands.push([command,Array.from(args),options.cwd]);return args[0]==='rev-parse'?hooks.head:hooks.status;},
+  fail:message=>{throw Error(message);},
+ });
+ return {api,s,env,files,p,actual,reads,commands,hooks};
+}
+
+test('customer code flags require explicit candidate off values and permit only absent or off baseline settings',()=>{
+ const api=customerCodeSettingsApi();
+ assert.doesNotThrow(()=>api.assertCustomerCodeProjectionOff(customerProjectionOff));
+ for(const values of [{},{[customerProjectionEnabled]:'0'},{[customerProjectionSites]:''},customerProjectionOff]){
+  assert.doesNotThrow(()=>api.assertCustomerCodeProjectionOff(values,true));
+ }
+ for(const [key,values] of [[customerProjectionEnabled,[undefined,null,'','1','false',' 0','0 ',0,false,{}]],
+  [customerProjectionSites,[undefined,null,'10000000','10000000,20000000',' ','invalid',0,false,[]]]]){
+  for(const value of values){
+   const candidate={...customerProjectionOff,[key]:value};
+   assert.throws(()=>api.assertCustomerCodeProjectionOff(candidate),/customer_code_projection_must_remain_off/);
+   if(value!==undefined)assert.throws(()=>api.assertCustomerCodeProjectionOff(candidate,true),/customer_code_projection_must_remain_off/);
+  }
+ }
+});
+
+test('customer code dotenv proof rejects duplicates and ambiguous assignments rather than silently overriding baseline intent',()=>{
+ const api=customerCodeSettingsApi(),check=(text,allowAbsent=false)=>api.assertCustomerCodeProjectionFile(text,allowAbsent);
+ for(const text of [customerProjectionFile,customerProjectionFile.replaceAll('\n','\r\n'),`# ${customerProjectionEnabled}=1\n  # ${customerProjectionSites}=10000000\n${customerProjectionFile}`])assert.doesNotThrow(()=>check(text));
+ for(const text of ['',`OTHER_VALUE=unchanged\n# ${customerProjectionEnabled}=1\n`,`${customerProjectionEnabled}=0\n`,`${customerProjectionSites}=\n`]){
+  assert.doesNotThrow(()=>check(text,true));assert.throws(()=>check(text),/customer_code_projection_env_file_invalid/);
+ }
+ for(const [key,value] of [[customerProjectionEnabled,'0'],[customerProjectionSites,'']]){
+  for(const invalid of [` ${key}=${value}`,`export ${key}=${value}`,`${key} =${value}`,`${key}= ${value}`,`${key}="${value}"`,
+   `${key}='${value}'`,`${key}=${value} # off`,`${key}=1`,`${key}=10000000`]){
+   const other=customerProjectionFile.split('\n').filter(line=>!line.startsWith(`${key}=`)).join('\n');
+   for(const allowAbsent of [false,true])assert.throws(()=>check(`${other}\n${invalid}\n`,allowAbsent),/customer_code_projection_env_file_invalid/);
+  }
+  for(const allowAbsent of [false,true])assert.throws(()=>check(`${customerProjectionFile}${key}=${value}\n`,allowAbsent),/customer_code_projection_env_file_invalid/);
+ }
+});
+
+test('customer code source flags are refused before creating operation state or candidate files',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const stage=code.indexOf("if(action==='stage'){");
+ const start=code.indexOf("if(lane==='customer-code-performance'){",stage),end=code.indexOf("if(hash(run('git'",start);
+ const operation=code.indexOf('privateDirectory(operation)',stage);
+ assert.ok(stage<start&&start<end&&end<operation);
+ for(const side of ['pm2','proc','file','status','pid','analytics'])for(const invalid of [false,true]){
+  const api=customerCodeSettingsApi(),prior={pid:3210,pm2_env:{status:'online',...customerProjectionOff}},old={directory:'/baseline'};
+  const env={...customerProjectionOff,FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-secret',FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000'};
+  let file=customerProjectionFile;
+  if(invalid){
+   if(side==='pm2')prior.pm2_env[customerProjectionEnabled]='1';
+   if(side==='proc')env[customerProjectionSites]='10000000';
+   if(side==='file')file=customerProjectionFile.replace('=0','=1');
+   if(side==='status')prior.pm2_env.status='stopped';
+   if(side==='pid')prior.pid=0;
+   if(side==='analytics')env.FAOLLA_TRAFFIC_SIGNING_SECRET='';
+  }
+  const checks=[];
+  const invoke=()=>runInNewContext(code.slice(start,end),{lane:'customer-code-performance',prior,old,...api,webReleaseRuntimeEnvironment,
+   read:path=>{checks.push(path);assert.equal(path,'/proc/3210/environ');return Object.entries(env).map(([key,value])=>`${key}=${value}`).join('\0');},
+   safeFile:path=>{checks.push(path);assert.equal(path,'/baseline/.env.local');return file;},fail:message=>{throw Error(message);},
+  });
+  if(invalid)assert.throws(invoke,/customer_code_/);else {assert.doesNotThrow(invoke);assert.deepEqual(checks,['/proc/3210/environ','/baseline/.env.local']);}
+ }
+ const repeat=code.indexOf('assertCustomerCodeProjectionOff(env,true)',end),changes=code.indexOf('const changes=',end);
+ assert.ok(operation<repeat&&repeat<changes,'a fresh source environment read must be checked again before candidate overrides');
+ assert.match(code.slice(repeat,changes),/assertCustomerCodeProjectionFile\(safeFile\(`\$\{old.directory\}\/\.env.local`\),true\)/);
+});
+
+test('customer code overrides affect only the new candidate and preserve analytics pilot and retention',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf('const changes='),end=code.indexOf('const envText=',start);
+ const env={FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-secret',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000'};
+ const before=structuredClone(env);
+ const execute=lane=>runInNewContext(`${code.slice(start,end)}changes`,{lane,target:'a'.repeat(40),port:3110,env,randomBytes:()=>{throw Error('secret_rotation_forbidden');}});
+ const changes=execute('customer-code-performance');
+ for(const [key,value] of Object.entries(customerProjectionOff))assert.equal(changes[key],value);
+ for(const key of Object.keys(env))assert.equal(Object.hasOwn(changes,key),false);
+ for(const lane of ['booking-merge-cpu','runtime-performance','qr-export','performance','bounded-lists','read-index','public-catalog-batch','order-attention']){
+  const old=execute(lane);for(const key of Object.keys(customerProjectionOff))assert.equal(Object.hasOwn(old,key),false,`${lane}:${key}`);
+ }
+ assert.deepEqual(env,before,'candidate construction must not alter the live inherited environment');
+ assert.equal(changes.FAOLLA_BACKGROUND_JOBS_PAUSED,'1');assert.equal(changes.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,'0');
+ assert.equal(changes.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED,'0');assert.equal(changes.PORT,'3110');
+});
+
+test('customer candidate validates off flags independently in saved JSON dotenv PM2 and the actual process environment',()=>{
+ const good=customerCodeCandidateHarness();assert.equal(good.api.verifyCandidate(good.s).pid,3210);
+ assert.deepEqual(good.reads,['/operation/runtime.json','/candidate/.env.local','/proc/3210/environ']);
+ assert.deepEqual(good.commands,[['git',['rev-parse','HEAD'],'/candidate'],['git',['status','--porcelain=v1','--untracked-files=all'],'/candidate']]);
+ for(const side of ['saved','file','pm2','actual'])for(const key of Object.keys(customerProjectionOff))for(const value of [undefined,'1','10000000',' ']){
+  const h=customerCodeCandidateHarness();
+  if(side==='saved')h.files.set('/operation/runtime.json',JSON.stringify({...h.env,[key]:value}));
+  else if(side==='file')h.files.set('/candidate/.env.local',customerProjectionFile.split('\n').filter(line=>!line.startsWith(`${key}=`)).join('\n')+(value===undefined?'':`\n${key}=${value}\n`));
+  else if(side==='pm2')h.p.pm2_env[key]=value;
+  else h.actual[key]=value;
+  assert.throws(()=>h.api.verifyCandidate(h.s),/customer_code_projection_/,`${side}:${key}:${String(value)}`);
+ }
+ for(const path of ['/operation/runtime.json','/candidate/.env.local']){
+  const h=customerCodeCandidateHarness();h.files.delete(path);assert.throws(()=>h.api.verifyCandidate(h.s),/missing_candidate_file/);
+ }
+ for(const lane of ['booking-merge-cpu','runtime-performance','traffic','qr-export']){
+  const h=customerCodeCandidateHarness();h.s.lane=lane;
+  assert.equal(h.api.verifyCustomerCodeCandidateSettings(h.s),null);assert.deepEqual(h.reads,[]);
+ }
+});
+
+test('customer candidate inherits immutable source and actual analytics retention pilot and paused worker checks',()=>{
+ for(const side of ['saved','pm2','actual'])for(const [key,value] of [
+  ['FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID','0'],['FAOLLA_TRAFFIC_ENABLED','0'],['FAOLLA_TRAFFIC_SIGNING_SECRET',''],
+  ['MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED','1'],['MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED','1'],['FAOLLA_BACKGROUND_JOBS_PAUSED','0'],
+ ]){
+  const h=customerCodeCandidateHarness();
+  if(side==='saved')h.files.set('/operation/runtime.json',JSON.stringify({...h.env,[key]:value}));
+  else if(side==='pm2')h.p.pm2_env[key]=value;else h.actual[key]=value;
+  assert.throws(()=>h.api.verifyCandidate(h.s),/customer_code_performance_|candidate_identity_invalid/,`${side}:${key}`);
+ }
+ for(const side of ['pm2','actual'])for(const key of ['FAOLLA_TRAFFIC_RETENTION_ENABLED','FAOLLA_TRAFFIC_SIGNING_SECRET']){
+  const h=customerCodeCandidateHarness();(side==='pm2'?h.p.pm2_env:h.actual)[key]='changed';
+  assert.throws(()=>h.api.verifyCandidate(h.s),/customer_code_performance_baseline_features_changed/);
+ }
+ for(const [field,value] of [['head','b'.repeat(40)],['status','?? unexpected.txt'],['status',' M src/lib/merchantCustomers.ts']]){
+  const h=customerCodeCandidateHarness();h.hooks[field]=value;
+  assert.throws(()=>h.api.verifyCandidate(h.s),/customer_code_performance_candidate_source_changed/);assert.deepEqual(h.reads,[]);
+ }
+ for(const patch of [{status:'stopped'},{pm_cwd:'/different'},{FAOLLA_SUPER_ADMIN_ORIGIN:'https://different.invalid'}]){
+  const h=customerCodeCandidateHarness();Object.assign(h.p.pm2_env,patch);assert.throws(()=>h.api.verifyCandidate(h.s),/candidate_identity_invalid/);
+ }
+ const missing=customerCodeCandidateHarness();missing.hooks.process=null;assert.throws(()=>missing.api.verifyCandidate(missing.s),/candidate_identity_invalid/);
+});
+
+test('customer activation and rollback inherit all-file snapshot ownership and never partially apply invalid saved proxies',async()=>{
+ for(const side of ['before','after'])for(const missing of [false,true]){
+  const h=runtimePerformanceProxyHarness('customer-code-performance');
+  if(missing)h.files.delete(`/operation/${side}-last.conf`);else h.files.set(`/operation/${side}-last.conf`,'unowned');
+  await assert.rejects(h.api.activateCandidate(h.s),missing?/missing_fixture_file/:/customer_code_performance_saved_proxy_changed/);
+  assert.deepEqual(h.effects,[]);assert.equal(h.s.status,'ready-no-database');
+ }
+ for(const invalid of ['saved-drift','saved-missing','current-drift']){
+  const h=runtimePerformanceProxyHarness('customer-code-performance');h.s.status='active';
+  for(const name of h.names)h.files.set(`/proxy/${name}`,h.files.get(`/operation/after-${name}`));
+  if(invalid==='saved-drift')h.files.set('/operation/before-last.conf','unowned');
+  if(invalid==='saved-missing')h.files.delete('/operation/before-last.conf');
+  if(invalid==='current-drift')h.files.set('/proxy/last.conf','unowned');
+  assert.throws(()=>h.api.restoreConfigs(h.s),invalid==='current-drift'?/rollback_proxy_not_owned/:invalid==='saved-missing'?/missing_fixture_file/:/customer_code_performance_saved_proxy_changed/);
+  assert.deepEqual(h.effects,[]);assert.equal(h.s.status,'active');
+ }
+ const a=runtimePerformanceProxyHarness('customer-code-performance'),after=a.names.map(name=>a.files.get(`/operation/after-${name}`));
+ a.hooks.beforeStatic=()=>{for(const name of a.names)a.files.set(`/operation/after-${name}`,'late drift');};
+ await a.api.activateCandidate(a.s);assert.equal(a.s.status,'active');assert.deepEqual(a.names.map(name=>a.files.get(`/proxy/${name}`)),after);
+ const r=runtimePerformanceProxyHarness('customer-code-performance'),before=r.names.map(name=>r.files.get(`/operation/before-${name}`));
+ r.hooks.beforeWrite=()=>{for(const name of r.names)r.files.set(`/operation/before-${name}`,'late drift');};
+ r.api.restoreConfigs(r.s);assert.equal(r.s.status,'rolled-back');assert.deepEqual(r.names.map(name=>r.files.get(`/proxy/${name}`)),before);
+ const failed=runtimePerformanceProxyHarness('customer-code-performance'),original=failed.names.map(name=>failed.files.get(`/proxy/${name}`));
+ failed.hooks.failPublic=true;await assert.rejects(failed.api.activateCandidate(failed.s),/public_verification_failed/);
+ assert.deepEqual(failed.names.map(name=>failed.files.get(`/proxy/${name}`)),original);assert.equal(failed.s.status,'rolled-back');
+ assert.equal(failed.effects.includes('pm2:save'),false);assert.equal(failed.effects.includes('write:/active'),false);
+});
+
+test('customer stage serializes focused and retention proofs and rechecks disabled settings around the real build before readiness',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf("console.log('online_focused_tests')"),end=code.indexOf('\n }else{',start);
+ assert.ok(start>0&&end>start);
+ const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
+ for(const failure of [null,'focused','rolling','build','missing-build','settings-before','settings-after-tests','settings-after-build','baseline','config','source-after-build','candidate']){
+  const h=customerCodeCandidateHarness(),calls=[],commands=[];let settings=0,sources=0,mask=0o077;
+  h.s.status='preparing';h.s.port=3110;
+  const gate=name=>{calls.push(name);if(failure===name)throw Error(`failed_${name}`);};
+  const mutate=()=>h.files.set('/operation/runtime.json',JSON.stringify({...h.env,[customerProjectionEnabled]:'1'}));
+  if(failure==='settings-before')mutate();
+  const task=runInNewContext(`(async()=>{${code.slice(start,end)}})()`,{
+   lane:h.s.lane,s:h.s,env:h.env,port:3110,CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,BOOKING_MERGE_CPU_FOCUSED_TESTS,
+   console:{log(){}},process:{execPath:'/node',umask(next){const prior=mask;mask=next;return prior;}},
+   verifyRuntimePerformanceSource:()=>gate(++sources===1?'source-before':'source-after-build'),
+   verifyCustomerCodeCandidateSettings:s=>{calls.push(`settings-${++settings}`);return h.api.verifyCustomerCodeCandidateSettings(s);},
+   run:(command,args,options)=>{
+    commands.push([command,Array.from(args),options]);if(command!=='pm2')assert.equal(options.cwd,'/candidate');
+    if(command==='node'){
+     const phase=args.includes('--import')?'focused':'rolling';gate(phase);
+     assert.equal(args.filter(value=>value==='--test-concurrency=1').length,1);
+     if(phase==='focused'){
+      assert.deepEqual(Array.from(args),['--import','tsx','--test','--test-concurrency=1',...CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,...fixed]);
+      assert.equal(options.env,h.env);if(failure==='settings-after-tests')mutate();
+     }else assert.deepEqual(Array.from(args),['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs']);
+    }else if(command==='nice'){
+     assert.deepEqual(Array.from(args),['-n','10','npm','run','build']);assert.equal(mask,0o022);assert.equal(options.env,h.env);gate('build');
+     if(failure==='settings-after-build')mutate();
+    }else {assert.equal(command,'pm2');assert.equal(args[0],'start');assert.equal(args.includes('stop'),false);assert.equal(options.env,h.env);gate('start');}
+   },
+   existsSync:path=>{assert.equal(path,'/candidate/.next/BUILD_ID');return failure!=='missing-build';},
+   verifyBase:async()=>gate('baseline'),configUnchanged:()=>gate('config'),smoke:async()=>gate('smoke'),
+   verifyCandidate:s=>{gate('candidate');return h.api.verifyCandidate(s);},onlineReleaseStageStatus,
+   save:()=>gate('save'),setTimeout:callback=>callback(),fail:message=>{throw Error(message);},
+  });
+  if(failure){
+   await assert.rejects(task,/failed_|customer_code_projection_must_remain_off|build_missing/);
+   assert.equal(calls.includes('save'),false);assert.equal(h.s.status,'preparing');
+   if(failure!=='candidate')assert.equal(calls.includes('start'),false);
+   if(['settings-before','focused','rolling','settings-after-tests'].includes(failure))assert.equal(calls.includes('build'),false);
+  }else{
+   await task;assert.equal(h.s.status,'ready-no-database');
+   assert.deepEqual(calls,['source-before','settings-1','focused','rolling','settings-2','build','baseline','config','source-after-build','settings-3','start','smoke','candidate','save']);
+   assert.deepEqual(commands.map(([command])=>command),['node','node','nice','pm2']);
+  }
+  assert.equal(mask,0o077,'build failure or success must restore the private original umask');
+ }
+});
+
+test('customer finish-stage cannot bless missing builds dirty source wrong status or invalid actual projection settings',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const marker="if(action==='finish-stage'){",start=code.indexOf(marker)+marker.length,end=code.indexOf("}else if(action==='resume-booking-stage'){",start);
+ assert.ok(start>marker.length&&end>start);
+ assert.match(code.slice(start-100,start),/const s=JSON.parse\(safeFile\(stateFile\)\);await verifyBase\(s\);/);
+ for(const failure of [null,'status','head','dirty','build','budget','config','actual-projection','smoke']){
+  const h=customerCodeCandidateHarness(),calls=[];h.s.status=failure==='status'?'staged':'preparing';
+  if(failure==='actual-projection')h.actual[customerProjectionEnabled]='1';
+  const gate=name=>{calls.push(name);if(failure===name)throw Error(`failed_${name}`);};
+  const task=runInNewContext(`(async()=>{${code.slice(start,end)}})()`,{
+   s:h.s,onlineReleaseStageStatus,
+   run:(command,args,options)=>{
+    assert.equal(options.cwd,'/candidate');
+    if(command==='git'){calls.push(args[0]);return args[0]==='rev-parse'?(failure==='head'?'b'.repeat(40):h.s.target):(failure==='dirty'?'?? untracked':'');}
+    assert.equal(command,'node');assert.deepEqual(Array.from(args),['scripts/check-admin-bundle-budget.mjs']);gate('budget');
+   },
+   existsSync:path=>{assert.equal(path,'/candidate/.next/BUILD_ID');return failure!=='build';},configUnchanged:()=>gate('config'),
+   verifyCandidate:s=>{calls.push('candidate');return h.api.verifyCandidate(s);},smoke:async()=>gate('smoke'),save:()=>gate('save'),fail:message=>{throw Error(message);},
+  });
+  if(failure){await assert.rejects(task,/resume_|failed_|customer_code_projection_must_remain_off/);assert.equal(calls.includes('save'),false);}
+  else {await task;assert.equal(h.s.status,'ready-no-database');assert.deepEqual(calls,['rev-parse','status','budget','config','candidate','smoke','save']);}
+ }
+});
+
+test('customer activate requires ready exact candidate and owned proxy while rollback remains available without a healthy candidate',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const marker="}else if(action==='activate'){",start=code.indexOf(marker)+marker.length,end=code.indexOf("}else if(action==='retry-static'){",start);
+ for(const failure of [null,'status','actual-projection','config','smoke']){
+  const h=customerCodeCandidateHarness(),calls=[];h.s.status=failure==='status'?'preparing':'ready-no-database';
+  if(failure==='actual-projection')h.actual[customerProjectionSites]='10000000';
+  const gate=name=>{calls.push(name);if(failure===name)throw Error(`failed_${name}`);};
+  const task=runInNewContext(`(async()=>{${code.slice(start,end)}})()`,{
+   s:h.s,onlineReleaseActivationStatus,verifyCandidate:s=>{calls.push('candidate');return h.api.verifyCandidate(s);},
+   configUnchanged:()=>gate('config'),smoke:async()=>gate('smoke'),activateCandidate:async()=>gate('activate'),fail:message=>{throw Error(message);},
+  });
+  if(failure){await assert.rejects(task,/not_ready|customer_code_projection_must_remain_off|failed_/);assert.equal(calls.includes('activate'),false);}
+  else {await task;assert.deepEqual(calls,['candidate','config','smoke','activate']);}
+ }
+ const rollbackStart=code.indexOf("}else if(action==='rollback'){")+"}else if(action==='rollback'){".length;
+ const rollbackEnd=code.indexOf('\n  }',rollbackStart),branch=code.slice(rollbackStart,rollbackEnd);
+ for(const failure of [null,'status','missing-active','wrong-active','config']){
+  const calls=[],s={lane:'customer-code-performance',status:failure==='status'?'ready-no-database':'active',target:'a'.repeat(40)};
+  const execute=()=>runInNewContext(branch,{s,activeFile:'/active',existsSync:()=>failure!=='missing-active',safeFile:()=>JSON.stringify({target:failure==='wrong-active'?'b'.repeat(40):s.target}),
+   configUnchanged:(_s,active)=>{assert.equal(active,true);calls.push('config');if(failure==='config')throw Error('failed_config');},
+   restoreConfigs:()=>calls.push('restore'),verifyCandidate:()=>{throw Error('must_not_block_recovery_on_bad_candidate');},
+   fail:message=>{throw Error(message);},
+  });
+  if(failure){assert.throws(execute,/rollback_not_current|failed_config/);assert.equal(calls.includes('restore'),false);}
+  else {execute();assert.deepEqual(calls,['config','restore']);}
+ }
+});
+
+test('customer private and public smoke require unauthenticated full and manager views to reject access without weakening old probes',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const source=code.slice(code.indexOf('async function smoke('),code.indexOf('function restoreConfigs('));
+ const views=['/api/merchant-customers?siteId=10000000','/api/merchant-customers?siteId=10000000&view=manager-v1'];
+ for(const publicMode of [false,true])for(const failure of [null,...views]){
+  const calls=[],s={lane:'customer-code-performance',target:'a'.repeat(40),port:3110};
+  const origin=publicMode?'https://www.faolla.com':'http://127.0.0.1:3110';
+  const smoke=runInNewContext(`${releaseRequestSource()}${source}smoke`,{
+   Headers,AbortSignal,URL,hasExpectedCardWebsite,fail:message=>{throw Error(message);},
+   fetch:async(url,options)=>{
+    const parsed=new URL(url),path=parsed.pathname+parsed.search;calls.push({url,path,options});
+    assert.equal(options.redirect,'manual');assert.equal(options.headers.get('Connection'),'close');
+    assert.equal(options.headers.has('Authorization'),false);assert.equal(options.headers.has('Cookie'),false);
+    const protectedRoute=views.includes(path)||parsed.pathname.startsWith('/api/super-admin/');
+    return {status:path===failure?200:protectedRoute?401:200,json:async()=>({buildId:s.target}),text:async()=>{
+     if(path==='/card/luis-gpyv6u')return '<a class="button secondary" href="https://www.haoyouduosevilla.com/">Website</a>';
+     if(path==='/card/luis-gpyv6u/contact')return 'URL:https://www.haoyouduosevilla.com/';
+     return '<script src="/_next/static/chunks/exact.js"></script>';
+    }};
+   },
+  });
+  if(failure)await assert.rejects(smoke(s,publicMode),/^Error: online_http:200:\/api\/merchant-customers$/);
+  else {
+   assert.equal(await smoke(s,publicMode),1);
+   for(const path of views)assert.equal(calls.filter(call=>call.url===origin+path).length,1);
+   for(const path of ['/login','/admin','/super-admin','/card/luis-gpyv6u','/card/luis-gpyv6u/contact','/traffic-card-v1.js',
+    '/api/super-admin/platform-merchant-snapshot','/_next/static/chunks/exact.js'])assert.ok(calls.some(call=>call.url===origin+path),path);
+   const consoleProbe=calls.find(call=>call.path==='/api/super-admin/traffic?siteId=10000000');
+   assert.equal(consoleProbe.url,(publicMode?'https://console.faolla.com':origin)+consoleProbe.path);
+   assert.equal(consoleProbe.options.headers.get('Host'),'console.faolla.com');
+  }
+  const callsBefore=calls.length;await smoke({...s,lane:'booking-merge-cpu'},publicMode);
+  assert.equal(calls.slice(callsBefore).some(call=>views.includes(call.path)),false,'legacy lanes must not gain new probe behavior');
  }
 });

@@ -12,8 +12,9 @@ import {
 } from "@/lib/merchantCustomerDirectoryStore";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { listMerchantBookings } from "@/lib/merchantBookings.server";
-import { loadStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
+import { loadStoredMerchantMembershipProfiles } from "@/lib/merchantMembershipsStore";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
+import { toMerchantCustomerListItem } from "@/lib/merchantCustomerListView";
 import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
@@ -79,7 +80,7 @@ async function loadCustomerDirectory(siteId: string) {
         includeCustomerEmailLogs: false,
         includeTimeline: false,
       }),
-      loadStoredMerchantMemberships(store, siteId),
+      loadStoredMerchantMembershipProfiles(store, siteId),
     ]);
 
   if (storedResult.status === "rejected") throw storedResult.reason;
@@ -115,7 +116,9 @@ export async function GET(request: Request) {
     const result = await loadCustomerDirectory(siteId);
     return NextResponse.json({
       ok: true,
-      customers: result.customers,
+      customers: url.searchParams.get("view") === "manager-v1"
+        ? result.customers.map(toMerchantCustomerListItem)
+        : result.customers,
       total: result.customers.length,
       version: result.stored?.updatedAt ?? "",
       warnings: result.warnings,

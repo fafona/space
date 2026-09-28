@@ -1,0 +1,519 @@
+{
+  "schema": "faolla-membership-profile-native-projection-v1",
+  "node": "v24.13.1",
+  "platform": "win32",
+  "cluster": {
+    "directory": "D:\\codex-membership-profile-projection-native-20260928-8OebvE",
+    "dataDirectory": "D:\\codex-membership-profile-projection-native-20260928-8OebvE\\data",
+    "port": 56642,
+    "database": "faolla_membership_profile_projection_native",
+    "major": 15,
+    "dataPreserved": true,
+    "stopped": true
+  },
+  "sourceHashes": {
+    "src/lib/merchantMembershipsStore.ts": "45a239cc0ac0bcce8fe6828024fee2dff78ca0d561bcc9ec3159b64cd4268690",
+    "src/lib/merchantMemberships.ts": "651a498af8f73179e3339833b848556bb7b552a12d94f101c03afceddbc878ca",
+    "src/lib/mutationOperationId.ts": "18a79107bc2958b5a7cdd8f360ade3805305d3dc750456fff219325777903657",
+    "src/lib/merchantMembershipProfileProjection.server.ts": "c692e64bb278a29d1ad180214bee919118aae217ec6f34cde0af4b9f1648eb40",
+    "src/lib/merchantCustomers.ts": "5e30da83ecd5e9874507afbe8f7a559d4778b749ecf96bda85ce7ec57beb1d7f",
+    "scripts/supabase-init.sql": "6a8780c33abaf5b1792b05e396a7736a3f10832bf77e3f4251bc8a85c6061dfd",
+    "scripts/supabase-migrations/202609280060_customer_membership_profile_projection.sql": "d35881d9ec3b8b9c4a70459da09b4019b8475297b88e39a158b8fe3f1414f1c1"
+  },
+  "scriptSha256": "86d8136deea8dda63db8badab9062d5516a2a42d2dba6d825156d52eef51caf1",
+  "checks": [
+    "fresh owned PG15 cluster; actual pages DDL; additive migration and replay preserve raw rows/registry",
+    "service-only invoker/stable RPC; browser calls denied; replay removes unexpected grants without data changes",
+    "foreign-only fallback",
+    "no-row fallback",
+    "eligibility, conservative money guards, invalid shapes/dates, ordinal preservation and actual TypeScript result/error parity"
+  ],
+  "contractCases": [
+    {
+      "label": "unique-owned-exact-slug",
+      "status": "projected",
+      "profileSha256": "9ebd6c648687bde47ac2dfa1b2a7a0ed1ea9dfa72683c0061366ae5244a03809",
+      "customerDirectorySha256": "0a9fe2031f489fc7d3c349a43e2be63f22d5a898f9e30e0ad6817d2013d70502",
+      "expectedCount": 2,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 1778
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 919
+        }
+      ],
+      "rawTableSha256": "fa7573c7dbe8aca71ffd69e226135da06368ed443573a82755437b3ab4903c45"
+    },
+    {
+      "label": "global-duplicate-foreign-owner",
+      "status": "fallback",
+      "profileSha256": "9ebd6c648687bde47ac2dfa1b2a7a0ed1ea9dfa72683c0061366ae5244a03809",
+      "customerDirectorySha256": "0a9fe2031f489fc7d3c349a43e2be63f22d5a898f9e30e0ad6817d2013d70502",
+      "expectedCount": 2,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 1778
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 1778
+        }
+      ],
+      "rawTableSha256": "dfd607ba78b0a38cad102989ecdf7dd5b6285583a9901360ee0a83c8da962335"
+    },
+    {
+      "label": "global-duplicate-null-owner",
+      "status": "fallback",
+      "profileSha256": "9ebd6c648687bde47ac2dfa1b2a7a0ed1ea9dfa72683c0061366ae5244a03809",
+      "customerDirectorySha256": "0a9fe2031f489fc7d3c349a43e2be63f22d5a898f9e30e0ad6817d2013d70502",
+      "expectedCount": 2,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 1778
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 1778
+        }
+      ],
+      "rawTableSha256": "c9cc20f342201fb30c60ccae3cccdbe9325037c67dcbf54a1670f6f4d21368a4"
+    },
+    {
+      "label": "non-array-blocks",
+      "status": "fallback",
+      "profileSha256": "fa6358fd8360a3bd074e9f800bcfac2e54da0cd63d78a14868d62a158a60108a",
+      "customerDirectorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "expectedCount": 0,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 167
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 167
+        }
+      ],
+      "rawTableSha256": "8213243d42e59fb99ed141f4a7302be58d78b2048b5c3e933da07ef3cc20f187"
+    },
+    {
+      "label": "balanceDelta-array",
+      "status": "fallback",
+      "profileSha256": "2231b748576e5091a3f63706b99ea9b66a4cd246533b3f2a9b7550d35ba56b9b",
+      "customerDirectorySha256": "ffa0273e12a9318bb37fec94743c3341e22b6b69c77f5159ebb5b9c687c2a350",
+      "expectedCount": 1,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 733
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 733
+        }
+      ],
+      "rawTableSha256": "4b604c59947c60e7a94ad829217fe19b677e1a78e34acbc1b4eb87dc806db4ef"
+    },
+    {
+      "label": "balanceDelta-object",
+      "status": "fallback",
+      "profileSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "customerDirectorySha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "expectedCount": 1,
+      "expectedError": "TypeError",
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot convert object to primitive value"
+      },
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 746
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 746
+        }
+      ],
+      "rawTableSha256": "8bd920f53343cbbdb32d3b04cd4b9362d29ba7d0da33a66a7869dbe21c6f9835"
+    },
+    {
+      "label": "growthDelta-array",
+      "status": "fallback",
+      "profileSha256": "2231b748576e5091a3f63706b99ea9b66a4cd246533b3f2a9b7550d35ba56b9b",
+      "customerDirectorySha256": "ffa0273e12a9318bb37fec94743c3341e22b6b69c77f5159ebb5b9c687c2a350",
+      "expectedCount": 1,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 732
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 732
+        }
+      ],
+      "rawTableSha256": "5b7cc15d842f216d4c814d0084765faf4887c6d2954ed16b6bd407217c41a704"
+    },
+    {
+      "label": "growthDelta-object",
+      "status": "fallback",
+      "profileSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "customerDirectorySha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "expectedCount": 1,
+      "expectedError": "TypeError",
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot convert object to primitive value"
+      },
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 745
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 58
+        },
+        {
+          "kind": "select",
+          "bytes": 745
+        }
+      ],
+      "rawTableSha256": "a28ec5c8e6be2f725201318b04b6e747ef16e5f510581399ff26195351e73b91"
+    },
+    {
+      "label": "non-array-history-and-invalid-dates-ordinal",
+      "status": "projected",
+      "profileSha256": "2231b748576e5091a3f63706b99ea9b66a4cd246533b3f2a9b7550d35ba56b9b",
+      "customerDirectorySha256": "ffa0273e12a9318bb37fec94743c3341e22b6b69c77f5159ebb5b9c687c2a350",
+      "expectedCount": 1,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 963
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 926
+        }
+      ],
+      "rawTableSha256": "f39666a69cc2b82cd9bf120b5ad070b2411dcade299ebb429cfc5598d8fb42cf"
+    }
+  ],
+  "results": [
+    {
+      "count": 100,
+      "transactionsPerMembership": 0,
+      "byteCounts": {
+        "legacy": {
+          "nativeSqlJsonBytes": 35790,
+          "compactJsonBytes": 33384
+        },
+        "projected": {
+          "nativeSqlJsonBytes": 35859,
+          "compactJsonBytes": 33446
+        }
+      },
+      "payloadHashes": {
+        "legacy": "6806bc5d62a4b606b9692602a8d348df5c98cb2a3e0b285d45437136879b185d",
+        "projected": "2ee7529e1becce2684ccbca4e60f88d9b5f2fca8c778f115c67bde233dbdc66a"
+      },
+      "samples": [
+        {
+          "legacy": {
+            "serverWallMs": 2.188,
+            "psqlWallMs": 47.75510000000031,
+            "explainExecutionMs": 0.048,
+            "explainPlanningMs": 0.402
+          },
+          "projected": {
+            "serverWallMs": 4.051,
+            "psqlWallMs": 50.397399999999834,
+            "explainExecutionMs": 4.638,
+            "explainPlanningMs": 0.062
+          }
+        },
+        {
+          "projected": {
+            "serverWallMs": 4.779,
+            "psqlWallMs": 49.61199999999917,
+            "explainExecutionMs": 4.604,
+            "explainPlanningMs": 0.066
+          },
+          "legacy": {
+            "serverWallMs": 2.479,
+            "psqlWallMs": 49.83020000000033,
+            "explainExecutionMs": 0.048,
+            "explainPlanningMs": 0.414
+          }
+        },
+        {
+          "legacy": {
+            "serverWallMs": 2.473,
+            "psqlWallMs": 49.96090000000004,
+            "explainExecutionMs": 0.052,
+            "explainPlanningMs": 0.457
+          },
+          "projected": {
+            "serverWallMs": 3.437,
+            "psqlWallMs": 50.354199999999764,
+            "explainExecutionMs": 4.128,
+            "explainPlanningMs": 0.061
+          }
+        }
+      ],
+      "profileSha256": "a1099490abb38f56c34e31bfe62101841aa6fd35bf0f210fe72de76e49d5200c",
+      "customerDirectorySha256": "ba90e3c27c9c8c428d5d4fd18bb0231205589546a8ddf037ea57d491c0932324",
+      "expectedCount": 100,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 35790
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 35859
+        }
+      ],
+      "rawTableSha256": "21698cb766269f47e1796d42f129fe1bc09c232489535e1d5d31298ba6fdebef"
+    },
+    {
+      "count": 1000,
+      "transactionsPerMembership": 20,
+      "byteCounts": {
+        "legacy": {
+          "nativeSqlJsonBytes": 5078291,
+          "compactJsonBytes": 4695285
+        },
+        "projected": {
+          "nativeSqlJsonBytes": 362560,
+          "compactJsonBytes": 338547
+        }
+      },
+      "payloadHashes": {
+        "legacy": "0f0796fd990854329ae37b06b62280b21ef45d8296e9c5459ff2b0d14d04086d",
+        "projected": "6640fde0dcf48a6a3e68ee3e1e8ede82177e42764c6d09e144e1031acffa0526"
+      },
+      "samples": [
+        {
+          "legacy": {
+            "serverWallMs": 115.87,
+            "psqlWallMs": 292.34339999999975,
+            "explainExecutionMs": 0.095,
+            "explainPlanningMs": 0.711
+          },
+          "projected": {
+            "serverWallMs": 48.076,
+            "psqlWallMs": 100.41970000000038,
+            "explainExecutionMs": 47.897,
+            "explainPlanningMs": 0.052
+          }
+        },
+        {
+          "projected": {
+            "serverWallMs": 44.889,
+            "psqlWallMs": 87.02219999999943,
+            "explainExecutionMs": 45.906,
+            "explainPlanningMs": 0.055
+          },
+          "legacy": {
+            "serverWallMs": 92.253,
+            "psqlWallMs": 228.15229999999974,
+            "explainExecutionMs": 0.043,
+            "explainPlanningMs": 0.37
+          }
+        },
+        {
+          "legacy": {
+            "serverWallMs": 107.159,
+            "psqlWallMs": 250.38290000000052,
+            "explainExecutionMs": 0.05,
+            "explainPlanningMs": 0.408
+          },
+          "projected": {
+            "serverWallMs": 43.455,
+            "psqlWallMs": 86.72250000000167,
+            "explainExecutionMs": 49.325,
+            "explainPlanningMs": 0.056
+          }
+        }
+      ],
+      "profileSha256": "886c170ab9be00e90b3f3f81db64918c6df3a87797914634e612203700c69b46",
+      "customerDirectorySha256": "886a7f7beb963c18a8ae1bd267357f90965554c4cbe749abae820c7dbf6e8b12",
+      "expectedCount": 1000,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 5078291
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 362560
+        }
+      ],
+      "rawTableSha256": "1696615535f5b56ee723d3e3ac165c7a11470b79053700b28e3431e9c0d4eeaa"
+    },
+    {
+      "count": 10,
+      "transactionsPerMembership": 5000,
+      "byteCounts": {
+        "legacy": {
+          "nativeSqlJsonBytes": 11931439,
+          "compactJsonBytes": 11031203
+        },
+        "projected": {
+          "nativeSqlJsonBytes": 3728,
+          "compactJsonBytes": 3475
+        }
+      },
+      "payloadHashes": {
+        "legacy": "a663da4a2c8621cb8738946821e77bbcf81219ef1084ef2a817b10aba1225c5f",
+        "projected": "b4518093eb4943c6bed7cde04c619a68daac9c956c5026483809f0cde0fe786f"
+      },
+      "samples": [
+        {
+          "legacy": {
+            "serverWallMs": 225.052,
+            "psqlWallMs": 515.9681999999993,
+            "explainExecutionMs": 0.042,
+            "explainPlanningMs": 0.367
+          },
+          "projected": {
+            "serverWallMs": 107.547,
+            "psqlWallMs": 144.45319999999992,
+            "explainExecutionMs": 108.68,
+            "explainPlanningMs": 0.06
+          }
+        },
+        {
+          "projected": {
+            "serverWallMs": 105.601,
+            "psqlWallMs": 244.78399999999965,
+            "explainExecutionMs": 106.211,
+            "explainPlanningMs": 0.055
+          },
+          "legacy": {
+            "serverWallMs": 217.886,
+            "psqlWallMs": 488.6365999999998,
+            "explainExecutionMs": 0.043,
+            "explainPlanningMs": 0.385
+          }
+        },
+        {
+          "legacy": {
+            "serverWallMs": 223.45,
+            "psqlWallMs": 498.1794000000009,
+            "explainExecutionMs": 0.045,
+            "explainPlanningMs": 0.392
+          },
+          "projected": {
+            "serverWallMs": 106.443,
+            "psqlWallMs": 143.35310000000027,
+            "explainExecutionMs": 105.296,
+            "explainPlanningMs": 0.058
+          }
+        }
+      ],
+      "profileSha256": "20a4cf46dcd07093e8df3c9003f1e5d3dfe7992663196224e4c20bd52a6023b2",
+      "customerDirectorySha256": "dc40e7e4a800097febf1abd81924ead485a0876c71d4e94dfe927f5d583dbbd6",
+      "expectedCount": 10,
+      "expectedError": null,
+      "error": null,
+      "legacyCalls": [
+        {
+          "kind": "select",
+          "bytes": 11931439
+        }
+      ],
+      "projectedCalls": [
+        {
+          "kind": "rpc",
+          "bytes": 3728
+        }
+      ],
+      "rawTableSha256": "a3da5fb5f80aafb4fa2926aad0874ab94618e1cdcb54ec1adf538ca9c4ae3fcb"
+    }
+  ],
+  "boundaries": {
+    "syntheticDatabaseOnly": true,
+    "productionTraffic": false,
+    "realPostgreSql": true,
+    "realPostgrest": false,
+    "realNetworkTransferMeasurement": false,
+    "actualTypeScriptLoader": true,
+    "privateInputs": false,
+    "bytes": "Native PostgreSQL JSON text octets and separately compact parsed JSON bytes, not HTTP transfer or PostgreSQL disk-read reduction.",
+    "timing": "Three descriptive native SQL wall samples measured with clock_timestamp inside a synthetic JSON wrapper; psqlWallMs additionally includes process/connection/serialization overhead. Separate EXPLAIN ANALYZE TIMING OFF measures the actual RPC SELECT versus unwrapped legacy SELECT. Not production latency or a GET/browser measurement; projection may cost additional DB CPU.",
+    "loader": "Actual TypeScript modules execute in a fixed-clock isolated VM; RPC and fallback SELECT use only this owned PostgreSQL database. Writers/network and inherited application environment are unavailable."
+  }
+}

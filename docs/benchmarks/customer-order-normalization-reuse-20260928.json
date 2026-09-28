@@ -1,0 +1,1449 @@
+{
+  "schema": "faolla-customer-order-normalization-v1",
+  "mode": "synthetic-offline",
+  "node": "v24.13.1",
+  "platform": "win32",
+  "sourceHashes": {
+    "src/app/api/merchant-customers/route.ts": "e48c85e2a7c6ba4e0b5dde14c192fba06b676c6636fe6d783bac33500781ed07",
+    "src/lib/merchantCustomers.ts": "5e30da83ecd5e9874507afbe8f7a559d4778b749ecf96bda85ce7ec57beb1d7f",
+    "src/lib/merchantCustomerDirectoryStore.ts": "e55637aa9e7429bcc3059d589c329cb77fc2e0e5a59871b6c3dc489745aef580",
+    "src/lib/merchantIdentity.ts": "cd27123a7b7e5c831a0e3e36c94ba88ccad9c776aa51b4b546509630f0d87da2",
+    "src/lib/merchantIdRules.ts": "b8c5039f3e596847256656da4f29d2b08d2d6f6a69dc3c3b7d55efd66d9e8e43",
+    "src/lib/merchantBookings.server.ts": "c8fee30e2d3a0e7da6e0b8f018cb0e9f75188d16d9a49758872334c0da7af744",
+    "src/lib/merchantBookings.ts": "7af070d6684beb82cdf9b95c3e9c15bb045040fd80076b07bf6e92e1dfc1ce86",
+    "src/lib/merchantProfileBinding.ts": "1b8fda5c17fe0e43c5a056b5178f2a0a42a357f28920d80231c805019f58b785",
+    "src/lib/siteRouting.ts": "c8c9aa7a1a618069d8840816417065ee245cc86ecdcd7499005e7ea0aec78c37",
+    "src/lib/merchantBookingWorkbench.ts": "7769e8a78808751d45d05f2d061a151181d39987de72b2bc57b54467bf826882",
+    "src/lib/i18n.ts": "be5265ca5cac9da47e1868a1116b23a37ae020340e863b8c0178c12b5de1ce4a",
+    "src/lib/merchantBookingWorkbenchStore.ts": "729448dac0479a697906560416f17d7b3a0d47056d05448e3efdf99ca18103e6",
+    "src/lib/merchantBookingPersistenceStore.ts": "0025fd4e91b9441ffedca0e979d909551856b9b071447ddfcc9a0d231a4e5a27",
+    "src/lib/merchantBookingCustomerEmail.ts": "845e33499c1ddeac5c9ee4e7c2f5a1f46ca7281641af48e6ae1783fb447e6765",
+    "src/lib/merchantBookingSelfService.ts": "471ea66ecc7a74e91985c1a2c228dba18c57028cff509061389bb43f9e24cecd",
+    "src/lib/merchantPushEvents.ts": "95320b78d40211782fbcb23acce8011ccfcd5cdf704353a77661bda8acebcb05",
+    "src/lib/merchantOrders.ts": "3ff94f360e90d581a0fd069de8c4da8428d64d8f2acdadf3c32a3e6957feced6",
+    "src/lib/merchantBookingRules.ts": "dfa893233fe5926725ba8413ba96116953ae22defdb9eae5315903b540c50877",
+    "src/lib/pagePlans.ts": "266282bc8ec8632d236a81a820fc2b718d32eb42d900c4605f219494a2dbc499",
+    "src/data/homeBlocks.ts": "40218c802963094dc8ba3efb9693ef2bce0feb2f3938a6926ca4847639dd0085",
+    "src/data/faollaHomeLayout.ts": "b24d50e9d59e48fa117daa7eab5420cba3aad7f67936791f0a8c8d4a518e0eb3",
+    "src/lib/blocksSchema.ts": "a9c22d2dec0aea7242611cab8fad449e89b6b8bbe43fc7d3743a59e7a80002d3",
+    "src/lib/planTemplateRuntime.ts": "85e0eacfdc82e20b237618da8d1fba7cdcbcf900fd0660c520c9807515c4b594",
+    "src/lib/editorSystemDefaults.ts": "5a68149ce53909afc8fc4a3549e2781539db66c4183e72b46fb74c55205ae850",
+    "src/lib/domTranslations.ts": "1f0fa66b594d30e27d7510ce752b433a1e2f6219cd6fba71b682bf7a5dc6f779",
+    "src/lib/uiGlossary.ts": "a2fb41d3bfb3c17c4b7f05992e5325678e98ec9eff158db17300206e5bf1d51d",
+    "src/lib/merchantBookingRulesStore.ts": "ffae2c66a855429a345d587a06517a700070e2f72d8657264e832147998445fb",
+    "src/lib/merchantBookingsV1Read.server.ts": "e865bb4c0e0b49e91adb5348b9c428ead00fb3105494de348a4b58a34fe7aff3",
+    "src/lib/merchantMembershipsStore.ts": "4f83fc0877ecd24aabccc63d46b2872cfa35ede30eaaa1c2552e1f4c4e94c572",
+    "src/lib/merchantMemberships.ts": "651a498af8f73179e3339833b848556bb7b552a12d94f101c03afceddbc878ca",
+    "src/lib/mutationOperationId.ts": "18a79107bc2958b5a7cdd8f360ade3805305d3dc750456fff219325777903657",
+    "src/lib/merchantOrders.server.ts": "ede4eddc8989a8f41bb41760333609a2035592fb003049e9c90dd530f5cb95c5",
+    "src/lib/merchantOrdersStore.ts": "ceec59c762b900ff97ddfd992dc8a16dfff5b04c14f562d64aa32abf7ee8f44b",
+    "src/lib/merchantOrdersV1Read.server.ts": "d25e1c4e3a3e1cefeb71a11af4e001060a8b7e5c3a09369faf37a0aadd355e3c",
+    "src/lib/merchantOrdersV1.ts": "ee946a2e7aebdf39a6130dd9c9e8c115f86be5c82e02ded73b5f198b7006cb02",
+    "src/lib/merchantOrderV1ReadCircuitBreaker.ts": "2b67773686a965067178446f01f0da7cdb100638c7a78fa1223065aff81fd4ed",
+    "src/lib/merchantCustomerListView.ts": "0d79f5f48659dbbfb648aa9c5e3788d84d3032f7ec4fe6f010d07bdd2f51181a",
+    "src/lib/requestMutationGuard.ts": "2c0d69965a1cd4ca1423e3e941e418d1a8fa03ba2e6844cf4e197d43c093ecde",
+    "src/lib/requestOrigin.ts": "438271dde26cdecbbd0533b8b0c652142aba80b162f8fbf49aaafe39a042f781"
+  },
+  "executedOrderStoreSha256": {
+    "reuse": "ceec59c762b900ff97ddfd992dc8a16dfff5b04c14f562d64aa32abf7ee8f44b",
+    "legacy": "64dcc9541d8d88f8a5c6b49bc9ba60750ceb5f4024732eaffabd650df54dd341"
+  },
+  "measurementSources": {
+    "scriptSha256": "4c7387da5a051c03fe52977bbadeac682be7d2bf3e89982155576a0b90d9622e",
+    "harnessSha256": "c4b8ed76f1fd8908930a68303c99c12cb0295cccf97aef3412c5be28d2fc6eee",
+    "referenceFixtureSha256": "24f2dfa0cd291c16286d9b3b7e3cef993c455ae6ca19089bab42a66be3cff5f9"
+  },
+  "results": [
+    {
+      "name": "100-customers-1-item",
+      "fixture": {
+        "storedCustomers": 100,
+        "orders": 100,
+        "bookings": 100,
+        "memberships": 100,
+        "distinctCustomers": 100,
+        "orderItemsPerOrder": 1
+      },
+      "invariant": {
+        "status": 200,
+        "customerCount": 100,
+        "warnings": [],
+        "outcomes": {
+          "orderCount": 100,
+          "bookingCount": 100,
+          "customersBySource": {
+            "manual": 100,
+            "membership": 100,
+            "order": 100,
+            "booking": 100
+          }
+        },
+        "responseBytes": 111988,
+        "responseSha256": "1994d0f8cf8792a0e3da16fa6991c63e6e13d18f0fc89db4600332d2c4cb2d72",
+        "effectsSha256": "85b994ea3b7dddf404b8c4790cfbdc4e332f4e66162cfa954b368648af091af7",
+        "inputBytes": {
+          "local": 57838,
+          "remote": 161205,
+          "total": 219043
+        },
+        "io": {
+          "sessionResolutions": 1,
+          "snapshotReads": 2,
+          "localReads": 3,
+          "localWrites": 0,
+          "pageSelects": 7,
+          "pageUpdates": 0,
+          "pageInserts": 0,
+          "readBytes": 219048,
+          "writeBytes": 0,
+          "forbiddenCalls": 0
+        },
+        "phaseOrder": [
+          "storedRead:start",
+          "ordersRead:start",
+          "bookingsRead:start",
+          "membershipsRead:start",
+          "storedRead:end",
+          "membershipsRead:end",
+          "ordersRead:end",
+          "bookingsRead:end",
+          "customerReducer:start",
+          "customerReducer:end",
+          "jsonSerialization:start",
+          "jsonSerialization:end"
+        ]
+      },
+      "responseIoEffectsParity": true,
+      "orders": [
+        {
+          "executionOrder": [
+            "reuse",
+            "legacy"
+          ],
+          "first": {
+            "reuse": {
+              "getWallMs": 29.62090000000012,
+              "phases": {
+                "storedRead": 10.023100000000113,
+                "ordersRead": 13.376300000000128,
+                "bookingsRead": 14.397199999999884,
+                "membershipsRead": 9.573100000000068,
+                "customerReducer": 12.286399999999958,
+                "jsonSerialization": 1.7875000000001364
+              }
+            },
+            "legacy": {
+              "getWallMs": 19.236799999999903,
+              "phases": {
+                "storedRead": 6.118199999999888,
+                "ordersRead": 9.240999999999985,
+                "bookingsRead": 9.552199999999857,
+                "membershipsRead": 6.324399999999969,
+                "customerReducer": 8.44970000000012,
+                "jsonSerialization": 0.7618999999999687
+              }
+            }
+          },
+          "repeated": [
+            {
+              "reuse": {
+                "getWallMs": 16.987300000000005,
+                "phases": {
+                  "storedRead": 5.067199999999957,
+                  "ordersRead": 6.993799999999965,
+                  "bookingsRead": 7.316400000000158,
+                  "membershipsRead": 5.476200000000063,
+                  "customerReducer": 8.44809999999984,
+                  "jsonSerialization": 0.8860000000001946
+                }
+              },
+              "legacy": {
+                "getWallMs": 17.83719999999994,
+                "phases": {
+                  "storedRead": 5.566000000000031,
+                  "ordersRead": 7.892900000000054,
+                  "bookingsRead": 8.344899999999825,
+                  "membershipsRead": 6.094100000000026,
+                  "customerReducer": 8.554800000000114,
+                  "jsonSerialization": 0.6711999999999989
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 24.27299999999991,
+                "phases": {
+                  "storedRead": 5.4746000000000095,
+                  "ordersRead": 7.210100000000011,
+                  "bookingsRead": 7.693399999999883,
+                  "membershipsRead": 5.901499999999942,
+                  "customerReducer": 15.273400000000038,
+                  "jsonSerialization": 1.0064000000002125
+                }
+              },
+              "legacy": {
+                "getWallMs": 14.351900000000114,
+                "phases": {
+                  "storedRead": 4.703099999999949,
+                  "ordersRead": 6.761500000000069,
+                  "bookingsRead": 7.1848999999999705,
+                  "membershipsRead": 5.16150000000016,
+                  "customerReducer": 6.42670000000021,
+                  "jsonSerialization": 0.552599999999984
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 15.379500000000007,
+                "phases": {
+                  "storedRead": 5.570299999999861,
+                  "ordersRead": 7.351999999999862,
+                  "bookingsRead": 8.041200000000117,
+                  "membershipsRead": 5.990499999999884,
+                  "customerReducer": 6.667399999999816,
+                  "jsonSerialization": 0.5104999999998654
+                }
+              },
+              "legacy": {
+                "getWallMs": 14.584900000000061,
+                "phases": {
+                  "storedRead": 4.863100000000031,
+                  "ordersRead": 6.640699999999924,
+                  "bookingsRead": 7.14409999999998,
+                  "membershipsRead": 5.257100000000037,
+                  "customerReducer": 6.796800000000076,
+                  "jsonSerialization": 0.46649999999999636
+                }
+              }
+            }
+          ],
+          "summary": {
+            "reuse": {
+              "get": {
+                "count": 3,
+                "minMs": 15.38,
+                "medianMs": 16.987,
+                "maxMs": 24.273
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 5.067,
+                  "medianMs": 5.475,
+                  "maxMs": 5.57
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 6.994,
+                  "medianMs": 7.21,
+                  "maxMs": 7.352
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 7.316,
+                  "medianMs": 7.693,
+                  "maxMs": 8.041
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 5.476,
+                  "medianMs": 5.901,
+                  "maxMs": 5.99
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 6.667,
+                  "medianMs": 8.448,
+                  "maxMs": 15.273
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 0.51,
+                  "medianMs": 0.886,
+                  "maxMs": 1.006
+                }
+              }
+            },
+            "legacy": {
+              "get": {
+                "count": 3,
+                "minMs": 14.352,
+                "medianMs": 14.585,
+                "maxMs": 17.837
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 4.703,
+                  "medianMs": 4.863,
+                  "maxMs": 5.566
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 6.641,
+                  "medianMs": 6.762,
+                  "maxMs": 7.893
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 7.144,
+                  "medianMs": 7.185,
+                  "maxMs": 8.345
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 5.162,
+                  "medianMs": 5.257,
+                  "maxMs": 6.094
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 6.427,
+                  "medianMs": 6.797,
+                  "maxMs": 8.555
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 0.466,
+                  "medianMs": 0.553,
+                  "maxMs": 0.671
+                }
+              }
+            }
+          }
+        },
+        {
+          "executionOrder": [
+            "legacy",
+            "reuse"
+          ],
+          "first": {
+            "reuse": {
+              "getWallMs": 20.749900000000025,
+              "phases": {
+                "storedRead": 7.023599999999988,
+                "ordersRead": 10.117099999999937,
+                "bookingsRead": 10.852300000000014,
+                "membershipsRead": 7.7241999999998825,
+                "customerReducer": 9.063700000000154,
+                "jsonSerialization": 0.5779999999999745
+              }
+            },
+            "legacy": {
+              "getWallMs": 19.577400000000125,
+              "phases": {
+                "storedRead": 5.0931000000000495,
+                "ordersRead": 8.69640000000004,
+                "bookingsRead": 9.170199999999795,
+                "membershipsRead": 5.523000000000138,
+                "customerReducer": 9.393699999999853,
+                "jsonSerialization": 0.7059000000001561
+              }
+            }
+          },
+          "repeated": [
+            {
+              "reuse": {
+                "getWallMs": 20.86889999999994,
+                "phases": {
+                  "storedRead": 9.318399999999883,
+                  "ordersRead": 11.3433,
+                  "bookingsRead": 11.926200000000108,
+                  "membershipsRead": 9.791100000000142,
+                  "customerReducer": 8.219900000000052,
+                  "jsonSerialization": 0.5128999999999451
+                }
+              },
+              "legacy": {
+                "getWallMs": 23.72550000000001,
+                "phases": {
+                  "storedRead": 5.842499999999973,
+                  "ordersRead": 7.866800000000012,
+                  "bookingsRead": 8.251399999999876,
+                  "membershipsRead": 6.290399999999863,
+                  "customerReducer": 9.207999999999856,
+                  "jsonSerialization": 6.067999999999984
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 16.460900000000038,
+                "phases": {
+                  "storedRead": 6.1650999999999385,
+                  "ordersRead": 7.798599999999851,
+                  "bookingsRead": 8.194400000000087,
+                  "membershipsRead": 6.569800000000214,
+                  "customerReducer": 7.405999999999949,
+                  "jsonSerialization": 0.54099999999994
+                }
+              },
+              "legacy": {
+                "getWallMs": 15.416799999999967,
+                "phases": {
+                  "storedRead": 4.9003999999999905,
+                  "ordersRead": 6.996200000000044,
+                  "bookingsRead": 7.380899999999883,
+                  "membershipsRead": 5.3577000000000226,
+                  "customerReducer": 6.990099999999984,
+                  "jsonSerialization": 0.8287000000000262
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 15.637300000000096,
+                "phases": {
+                  "storedRead": 4.724799999999959,
+                  "ordersRead": 6.3577000000000226,
+                  "bookingsRead": 6.956300000000056,
+                  "membershipsRead": 5.223199999999906,
+                  "customerReducer": 7.901599999999917,
+                  "jsonSerialization": 0.5722000000000662
+                }
+              },
+              "legacy": {
+                "getWallMs": 14.6083000000001,
+                "phases": {
+                  "storedRead": 4.591499999999996,
+                  "ordersRead": 6.495400000000018,
+                  "bookingsRead": 6.9042000000001735,
+                  "membershipsRead": 5.076000000000022,
+                  "customerReducer": 6.785100000000057,
+                  "jsonSerialization": 0.6782000000000608
+                }
+              }
+            }
+          ],
+          "summary": {
+            "reuse": {
+              "get": {
+                "count": 3,
+                "minMs": 15.637,
+                "medianMs": 16.461,
+                "maxMs": 20.869
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 4.725,
+                  "medianMs": 6.165,
+                  "maxMs": 9.318
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 6.358,
+                  "medianMs": 7.799,
+                  "maxMs": 11.343
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 6.956,
+                  "medianMs": 8.194,
+                  "maxMs": 11.926
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 5.223,
+                  "medianMs": 6.57,
+                  "maxMs": 9.791
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 7.406,
+                  "medianMs": 7.902,
+                  "maxMs": 8.22
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 0.513,
+                  "medianMs": 0.541,
+                  "maxMs": 0.572
+                }
+              }
+            },
+            "legacy": {
+              "get": {
+                "count": 3,
+                "minMs": 14.608,
+                "medianMs": 15.417,
+                "maxMs": 23.726
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 4.591,
+                  "medianMs": 4.9,
+                  "maxMs": 5.842
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 6.495,
+                  "medianMs": 6.996,
+                  "maxMs": 7.867
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 6.904,
+                  "medianMs": 7.381,
+                  "maxMs": 8.251
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 5.076,
+                  "medianMs": 5.358,
+                  "maxMs": 6.29
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 6.785,
+                  "medianMs": 6.99,
+                  "maxMs": 9.208
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 0.678,
+                  "medianMs": 0.829,
+                  "maxMs": 6.068
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1000-customers-20-items",
+      "fixture": {
+        "storedCustomers": 1000,
+        "orders": 1000,
+        "bookings": 1000,
+        "memberships": 1000,
+        "distinctCustomers": 1000,
+        "orderItemsPerOrder": 20
+      },
+      "invariant": {
+        "status": 200,
+        "customerCount": 1000,
+        "warnings": [],
+        "outcomes": {
+          "orderCount": 1000,
+          "bookingCount": 1000,
+          "customersBySource": {
+            "manual": 1000,
+            "membership": 1000,
+            "order": 1000,
+            "booking": 1000
+          }
+        },
+        "responseBytes": 1129989,
+        "responseSha256": "b2d9cbf16ac7af1a6516fd1b79ac1727988782fcd9caff927f316fb76f6fad24",
+        "effectsSha256": "adec9067af9d1651c91ac1006cd8c964c4ca5bdac05b45e0a0e1c93a927a6305",
+        "inputBytes": {
+          "local": 582538,
+          "remote": 3238166,
+          "total": 3820704
+        },
+        "io": {
+          "sessionResolutions": 1,
+          "snapshotReads": 2,
+          "localReads": 3,
+          "localWrites": 0,
+          "pageSelects": 7,
+          "pageUpdates": 0,
+          "pageInserts": 0,
+          "readBytes": 3820484,
+          "writeBytes": 0,
+          "forbiddenCalls": 0
+        },
+        "phaseOrder": [
+          "storedRead:start",
+          "ordersRead:start",
+          "bookingsRead:start",
+          "membershipsRead:start",
+          "storedRead:end",
+          "membershipsRead:end",
+          "ordersRead:end",
+          "bookingsRead:end",
+          "customerReducer:start",
+          "customerReducer:end",
+          "jsonSerialization:start",
+          "jsonSerialization:end"
+        ]
+      },
+      "responseIoEffectsParity": true,
+      "orders": [
+        {
+          "executionOrder": [
+            "reuse",
+            "legacy"
+          ],
+          "first": {
+            "reuse": {
+              "getWallMs": 237.7382,
+              "phases": {
+                "storedRead": 74.14639999999986,
+                "ordersRead": 142.02300000000014,
+                "bookingsRead": 147.06539999999995,
+                "membershipsRead": 79.91699999999992,
+                "customerReducer": 79.95190000000002,
+                "jsonSerialization": 4.891599999999926
+              }
+            },
+            "legacy": {
+              "getWallMs": 271.5363,
+              "phases": {
+                "storedRead": 65.39370000000008,
+                "ordersRead": 175.6316999999999,
+                "bookingsRead": 178.75119999999993,
+                "membershipsRead": 70.57809999999995,
+                "customerReducer": 87.16219999999998,
+                "jsonSerialization": 5.045800000000099
+              }
+            }
+          },
+          "repeated": [
+            {
+              "reuse": {
+                "getWallMs": 216.81439999999998,
+                "phases": {
+                  "storedRead": 63.23129999999969,
+                  "ordersRead": 127.69209999999998,
+                  "bookingsRead": 131.45789999999988,
+                  "membershipsRead": 68.63900000000012,
+                  "customerReducer": 79.32109999999966,
+                  "jsonSerialization": 5.45490000000018
+                }
+              },
+              "legacy": {
+                "getWallMs": 250.98600000000033,
+                "phases": {
+                  "storedRead": 64.14969999999994,
+                  "ordersRead": 166.55279999999993,
+                  "bookingsRead": 169.3386999999998,
+                  "membershipsRead": 69.15080000000034,
+                  "customerReducer": 76.57070000000022,
+                  "jsonSerialization": 4.51260000000002
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 217.82159999999976,
+                "phases": {
+                  "storedRead": 65.60800000000017,
+                  "ordersRead": 127.49879999999985,
+                  "bookingsRead": 136.21770000000015,
+                  "membershipsRead": 72.48630000000003,
+                  "customerReducer": 75.83480000000009,
+                  "jsonSerialization": 5.163000000000011
+                }
+              },
+              "legacy": {
+                "getWallMs": 296.98109999999997,
+                "phases": {
+                  "storedRead": 64.81320000000005,
+                  "ordersRead": 177.9693000000002,
+                  "bookingsRead": 180.8690999999999,
+                  "membershipsRead": 70.2801999999997,
+                  "customerReducer": 107.28940000000011,
+                  "jsonSerialization": 8.02410000000009
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 342.6640000000002,
+                "phases": {
+                  "storedRead": 111.00849999999991,
+                  "ordersRead": 205.49220000000014,
+                  "bookingsRead": 210.9906000000001,
+                  "membershipsRead": 119.58770000000004,
+                  "customerReducer": 123.49579999999969,
+                  "jsonSerialization": 7.3718000000003485
+                }
+              },
+              "legacy": {
+                "getWallMs": 403.10679999999957,
+                "phases": {
+                  "storedRead": 110.92360000000008,
+                  "ordersRead": 267.00850000000037,
+                  "bookingsRead": 271.77700000000004,
+                  "membershipsRead": 119.13300000000027,
+                  "customerReducer": 122.26989999999978,
+                  "jsonSerialization": 8.222699999999804
+                }
+              }
+            }
+          ],
+          "summary": {
+            "reuse": {
+              "get": {
+                "count": 3,
+                "minMs": 216.814,
+                "medianMs": 217.822,
+                "maxMs": 342.664
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 63.231,
+                  "medianMs": 65.608,
+                  "maxMs": 111.008
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 127.499,
+                  "medianMs": 127.692,
+                  "maxMs": 205.492
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 131.458,
+                  "medianMs": 136.218,
+                  "maxMs": 210.991
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 68.639,
+                  "medianMs": 72.486,
+                  "maxMs": 119.588
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 75.835,
+                  "medianMs": 79.321,
+                  "maxMs": 123.496
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 5.163,
+                  "medianMs": 5.455,
+                  "maxMs": 7.372
+                }
+              }
+            },
+            "legacy": {
+              "get": {
+                "count": 3,
+                "minMs": 250.986,
+                "medianMs": 296.981,
+                "maxMs": 403.107
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 64.15,
+                  "medianMs": 64.813,
+                  "maxMs": 110.924
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 166.553,
+                  "medianMs": 177.969,
+                  "maxMs": 267.009
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 169.339,
+                  "medianMs": 180.869,
+                  "maxMs": 271.777
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 69.151,
+                  "medianMs": 70.28,
+                  "maxMs": 119.133
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 76.571,
+                  "medianMs": 107.289,
+                  "maxMs": 122.27
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 4.513,
+                  "medianMs": 8.024,
+                  "maxMs": 8.223
+                }
+              }
+            }
+          }
+        },
+        {
+          "executionOrder": [
+            "legacy",
+            "reuse"
+          ],
+          "first": {
+            "reuse": {
+              "getWallMs": 361.3184000000001,
+              "phases": {
+                "storedRead": 109.32099999999991,
+                "ordersRead": 208.64980000000014,
+                "bookingsRead": 214.14320000000043,
+                "membershipsRead": 117.42380000000048,
+                "customerReducer": 137.65260000000035,
+                "jsonSerialization": 8.447500000000218
+              }
+            },
+            "legacy": {
+              "getWallMs": 429.37969999999996,
+              "phases": {
+                "storedRead": 109.40160000000014,
+                "ordersRead": 276.6147000000001,
+                "bookingsRead": 282.5585000000001,
+                "membershipsRead": 117.39510000000018,
+                "customerReducer": 138.32920000000013,
+                "jsonSerialization": 7.605299999999261
+              }
+            }
+          },
+          "repeated": [
+            {
+              "reuse": {
+                "getWallMs": 345.1862999999994,
+                "phases": {
+                  "storedRead": 111.99990000000071,
+                  "ordersRead": 211.34670000000006,
+                  "bookingsRead": 216.65470000000005,
+                  "membershipsRead": 120.30289999999968,
+                  "customerReducer": 119.89660000000003,
+                  "jsonSerialization": 7.891200000000026
+                }
+              },
+              "legacy": {
+                "getWallMs": 407.9971000000005,
+                "phases": {
+                  "storedRead": 104.64169999999922,
+                  "ordersRead": 272.1244999999999,
+                  "bookingsRead": 277.3940999999995,
+                  "membershipsRead": 112.89199999999983,
+                  "customerReducer": 121.9373999999998,
+                  "jsonSerialization": 7.775900000000547
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 347.6704,
+                "phases": {
+                  "storedRead": 107.21239999999943,
+                  "ordersRead": 207.60130000000026,
+                  "bookingsRead": 212.67559999999958,
+                  "membershipsRead": 116.66610000000037,
+                  "customerReducer": 125.26609999999982,
+                  "jsonSerialization": 8.64009999999962
+                }
+              },
+              "legacy": {
+                "getWallMs": 421.6760999999997,
+                "phases": {
+                  "storedRead": 115.56950000000052,
+                  "ordersRead": 277.0627000000004,
+                  "bookingsRead": 282.3882000000003,
+                  "membershipsRead": 124.25500000000011,
+                  "customerReducer": 128.89759999999933,
+                  "jsonSerialization": 9.333300000000236
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 350.1292999999996,
+                "phases": {
+                  "storedRead": 103.0609999999997,
+                  "ordersRead": 202.1895000000004,
+                  "bookingsRead": 207.52530000000024,
+                  "membershipsRead": 112.15170000000035,
+                  "customerReducer": 135.01599999999962,
+                  "jsonSerialization": 6.810599999999795
+                }
+              },
+              "legacy": {
+                "getWallMs": 422.5522000000001,
+                "phases": {
+                  "storedRead": 117.04040000000077,
+                  "ordersRead": 280.0483000000004,
+                  "bookingsRead": 285.3616000000002,
+                  "membershipsRead": 126.29140000000007,
+                  "customerReducer": 129.63739999999962,
+                  "jsonSerialization": 6.849099999999453
+                }
+              }
+            }
+          ],
+          "summary": {
+            "reuse": {
+              "get": {
+                "count": 3,
+                "minMs": 345.186,
+                "medianMs": 347.67,
+                "maxMs": 350.129
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 103.061,
+                  "medianMs": 107.212,
+                  "maxMs": 112
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 202.19,
+                  "medianMs": 207.601,
+                  "maxMs": 211.347
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 207.525,
+                  "medianMs": 212.676,
+                  "maxMs": 216.655
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 112.152,
+                  "medianMs": 116.666,
+                  "maxMs": 120.303
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 119.897,
+                  "medianMs": 125.266,
+                  "maxMs": 135.016
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 6.811,
+                  "medianMs": 7.891,
+                  "maxMs": 8.64
+                }
+              }
+            },
+            "legacy": {
+              "get": {
+                "count": 3,
+                "minMs": 407.997,
+                "medianMs": 421.676,
+                "maxMs": 422.552
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 104.642,
+                  "medianMs": 115.57,
+                  "maxMs": 117.04
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 272.124,
+                  "medianMs": 277.063,
+                  "maxMs": 280.048
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 277.394,
+                  "medianMs": 282.388,
+                  "maxMs": 285.362
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 112.892,
+                  "medianMs": 124.255,
+                  "maxMs": 126.291
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 121.937,
+                  "medianMs": 128.898,
+                  "maxMs": 129.637
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 6.849,
+                  "medianMs": 7.776,
+                  "maxMs": 9.333
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10000-customers-1-item",
+      "fixture": {
+        "storedCustomers": 10000,
+        "orders": 10000,
+        "bookings": 10000,
+        "memberships": 10000,
+        "distinctCustomers": 10000,
+        "orderItemsPerOrder": 1
+      },
+      "invariant": {
+        "status": 200,
+        "customerCount": 10000,
+        "warnings": [],
+        "outcomes": {
+          "orderCount": 10000,
+          "bookingCount": 10000,
+          "customersBySource": {
+            "manual": 10000,
+            "membership": 10000,
+            "order": 10000,
+            "booking": 10000
+          }
+        },
+        "responseBytes": 11388990,
+        "responseSha256": "eccbf718c920fea4c11138b121080ee477ab9747e1639a3e3f5a78d0564a27bd",
+        "effectsSha256": "687a6db383b9e0a12d37bc210e951dd785f16a1cda08efd0da7a6c6ad0309d20",
+        "inputBytes": {
+          "local": 5874538,
+          "remote": 16413947,
+          "total": 22288485
+        },
+        "io": {
+          "sessionResolutions": 1,
+          "snapshotReads": 2,
+          "localReads": 3,
+          "localWrites": 0,
+          "pageSelects": 7,
+          "pageUpdates": 0,
+          "pageInserts": 0,
+          "readBytes": 22286015,
+          "writeBytes": 0,
+          "forbiddenCalls": 0
+        },
+        "phaseOrder": [
+          "storedRead:start",
+          "ordersRead:start",
+          "bookingsRead:start",
+          "membershipsRead:start",
+          "storedRead:end",
+          "membershipsRead:end",
+          "ordersRead:end",
+          "bookingsRead:end",
+          "customerReducer:start",
+          "customerReducer:end",
+          "jsonSerialization:start",
+          "jsonSerialization:end"
+        ]
+      },
+      "responseIoEffectsParity": true,
+      "orders": [
+        {
+          "executionOrder": [
+            "reuse",
+            "legacy"
+          ],
+          "first": {
+            "reuse": {
+              "getWallMs": 2504.3619,
+              "phases": {
+                "storedRead": 911.8746000000001,
+                "ordersRead": 1191.2258999999995,
+                "bookingsRead": 1246.1473000000005,
+                "membershipsRead": 992.4178000000002,
+                "customerReducer": 1182.589,
+                "jsonSerialization": 70.21619999999893
+              }
+            },
+            "legacy": {
+              "getWallMs": 2583.09,
+              "phases": {
+                "storedRead": 893.4436000000005,
+                "ordersRead": 1243.4591999999993,
+                "bookingsRead": 1290.8117000000002,
+                "membershipsRead": 974.1061000000009,
+                "customerReducer": 1220.1125999999986,
+                "jsonSerialization": 68.12389999999868
+              }
+            }
+          },
+          "repeated": [
+            {
+              "reuse": {
+                "getWallMs": 2482.2675,
+                "phases": {
+                  "storedRead": 897.1387999999988,
+                  "ordersRead": 1176.2528000000002,
+                  "bookingsRead": 1222.264799999999,
+                  "membershipsRead": 978.1006000000016,
+                  "customerReducer": 1186.652,
+                  "jsonSerialization": 68.88789999999972
+                }
+              },
+              "legacy": {
+                "getWallMs": 2557.3096000000005,
+                "phases": {
+                  "storedRead": 904.8760000000002,
+                  "ordersRead": 1240.9197000000004,
+                  "bookingsRead": 1297.0323999999982,
+                  "membershipsRead": 986.2849999999999,
+                  "customerReducer": 1188.9663,
+                  "jsonSerialization": 66.79650000000038
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 2458.6427000000003,
+                "phases": {
+                  "storedRead": 885.0100999999995,
+                  "ordersRead": 1171.1008000000002,
+                  "bookingsRead": 1217.4229999999989,
+                  "membershipsRead": 966.9484999999986,
+                  "customerReducer": 1171.0118000000002,
+                  "jsonSerialization": 66.9416999999994
+                }
+              },
+              "legacy": {
+                "getWallMs": 2499.5198999999993,
+                "phases": {
+                  "storedRead": 884.8407000000007,
+                  "ordersRead": 1204.600400000003,
+                  "bookingsRead": 1258.7582000000002,
+                  "membershipsRead": 965.2506999999969,
+                  "customerReducer": 1170.3194000000003,
+                  "jsonSerialization": 67.29119999999966
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 2517.5234999999993,
+                "phases": {
+                  "storedRead": 944.1025999999983,
+                  "ordersRead": 1225.6251999999986,
+                  "bookingsRead": 1271.0627000000022,
+                  "membershipsRead": 1026.920399999999,
+                  "customerReducer": 1177.3119000000006,
+                  "jsonSerialization": 66.40679999999702
+                }
+              },
+              "legacy": {
+                "getWallMs": 2488.2045,
+                "phases": {
+                  "storedRead": 884.798899999998,
+                  "ordersRead": 1205.4709999999977,
+                  "bookingsRead": 1261.499499999998,
+                  "membershipsRead": 963.8343000000023,
+                  "customerReducer": 1153.8332999999984,
+                  "jsonSerialization": 68.15399999999863
+                }
+              }
+            }
+          ],
+          "summary": {
+            "reuse": {
+              "get": {
+                "count": 3,
+                "minMs": 2458.643,
+                "medianMs": 2482.267,
+                "maxMs": 2517.523
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 885.01,
+                  "medianMs": 897.139,
+                  "maxMs": 944.103
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 1171.101,
+                  "medianMs": 1176.253,
+                  "maxMs": 1225.625
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 1217.423,
+                  "medianMs": 1222.265,
+                  "maxMs": 1271.063
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 966.948,
+                  "medianMs": 978.101,
+                  "maxMs": 1026.92
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 1171.012,
+                  "medianMs": 1177.312,
+                  "maxMs": 1186.652
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 66.407,
+                  "medianMs": 66.942,
+                  "maxMs": 68.888
+                }
+              }
+            },
+            "legacy": {
+              "get": {
+                "count": 3,
+                "minMs": 2488.204,
+                "medianMs": 2499.52,
+                "maxMs": 2557.31
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 884.799,
+                  "medianMs": 884.841,
+                  "maxMs": 904.876
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 1204.6,
+                  "medianMs": 1205.471,
+                  "maxMs": 1240.92
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 1258.758,
+                  "medianMs": 1261.499,
+                  "maxMs": 1297.032
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 963.834,
+                  "medianMs": 965.251,
+                  "maxMs": 986.285
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 1153.833,
+                  "medianMs": 1170.319,
+                  "maxMs": 1188.966
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 66.797,
+                  "medianMs": 67.291,
+                  "maxMs": 68.154
+                }
+              }
+            }
+          }
+        },
+        {
+          "executionOrder": [
+            "legacy",
+            "reuse"
+          ],
+          "first": {
+            "reuse": {
+              "getWallMs": 2546.474699999999,
+              "phases": {
+                "storedRead": 899.0456999999951,
+                "ordersRead": 1197.7638000000006,
+                "bookingsRead": 1243.163099999998,
+                "membershipsRead": 980.0263999999952,
+                "customerReducer": 1226.001599999996,
+                "jsonSerialization": 72.95889999999781
+              }
+            },
+            "legacy": {
+              "getWallMs": 2673.9553000000014,
+              "phases": {
+                "storedRead": 925.7718000000023,
+                "ordersRead": 1274.9748,
+                "bookingsRead": 1321.7587999999996,
+                "membershipsRead": 1006.6297999999988,
+                "customerReducer": 1279.3960000000006,
+                "jsonSerialization": 69.1768000000011
+              }
+            }
+          },
+          "repeated": [
+            {
+              "reuse": {
+                "getWallMs": 2524.012999999999,
+                "phases": {
+                  "storedRead": 913.7186000000002,
+                  "ordersRead": 1206.886099999996,
+                  "bookingsRead": 1252.4994000000006,
+                  "membershipsRead": 997.3801999999996,
+                  "customerReducer": 1201.1028000000006,
+                  "jsonSerialization": 67.61560000000463
+                }
+              },
+              "legacy": {
+                "getWallMs": 2564.2127000000037,
+                "phases": {
+                  "storedRead": 909.7760999999955,
+                  "ordersRead": 1254.2730999999985,
+                  "bookingsRead": 1310.4423000000024,
+                  "membershipsRead": 991.7494000000006,
+                  "customerReducer": 1183.2114000000001,
+                  "jsonSerialization": 67.4169000000038
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 2417.4218000000037,
+                "phases": {
+                  "storedRead": 876.0488000000041,
+                  "ordersRead": 1151.105300000003,
+                  "bookingsRead": 1193.476800000004,
+                  "membershipsRead": 956.0347000000038,
+                  "customerReducer": 1153.9435000000012,
+                  "jsonSerialization": 65.45750000000407
+                }
+              },
+              "legacy": {
+                "getWallMs": 2570.835100000004,
+                "phases": {
+                  "storedRead": 931.9685000000027,
+                  "ordersRead": 1276.2324000000008,
+                  "bookingsRead": 1321.2920000000013,
+                  "membershipsRead": 1015.7292000000016,
+                  "customerReducer": 1181.5039000000033,
+                  "jsonSerialization": 65.19689999999537
+                }
+              }
+            },
+            {
+              "reuse": {
+                "getWallMs": 2472.800900000002,
+                "phases": {
+                  "storedRead": 891.3317999999999,
+                  "ordersRead": 1172.5732000000062,
+                  "bookingsRead": 1219.410299999996,
+                  "membershipsRead": 973.0517000000036,
+                  "customerReducer": 1181.1007000000027,
+                  "jsonSerialization": 67.52390000000014
+                }
+              },
+              "legacy": {
+                "getWallMs": 2558.6860000000015,
+                "phases": {
+                  "storedRead": 916.6333999999988,
+                  "ordersRead": 1242.9184000000023,
+                  "bookingsRead": 1290.9277000000002,
+                  "membershipsRead": 997.8347999999969,
+                  "customerReducer": 1196.506300000001,
+                  "jsonSerialization": 67.41259999999602
+                }
+              }
+            }
+          ],
+          "summary": {
+            "reuse": {
+              "get": {
+                "count": 3,
+                "minMs": 2417.422,
+                "medianMs": 2472.801,
+                "maxMs": 2524.013
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 876.049,
+                  "medianMs": 891.332,
+                  "maxMs": 913.719
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 1151.105,
+                  "medianMs": 1172.573,
+                  "maxMs": 1206.886
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 1193.477,
+                  "medianMs": 1219.41,
+                  "maxMs": 1252.499
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 956.035,
+                  "medianMs": 973.052,
+                  "maxMs": 997.38
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 1153.944,
+                  "medianMs": 1181.101,
+                  "maxMs": 1201.103
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 65.458,
+                  "medianMs": 67.524,
+                  "maxMs": 67.616
+                }
+              }
+            },
+            "legacy": {
+              "get": {
+                "count": 3,
+                "minMs": 2558.686,
+                "medianMs": 2564.213,
+                "maxMs": 2570.835
+              },
+              "phases": {
+                "storedRead": {
+                  "count": 3,
+                  "minMs": 909.776,
+                  "medianMs": 916.633,
+                  "maxMs": 931.969
+                },
+                "ordersRead": {
+                  "count": 3,
+                  "minMs": 1242.918,
+                  "medianMs": 1254.273,
+                  "maxMs": 1276.232
+                },
+                "bookingsRead": {
+                  "count": 3,
+                  "minMs": 1290.928,
+                  "medianMs": 1310.442,
+                  "maxMs": 1321.292
+                },
+                "membershipsRead": {
+                  "count": 3,
+                  "minMs": 991.749,
+                  "medianMs": 997.835,
+                  "maxMs": 1015.729
+                },
+                "customerReducer": {
+                  "count": 3,
+                  "minMs": 1181.504,
+                  "medianMs": 1183.211,
+                  "maxMs": 1196.506
+                },
+                "jsonSerialization": {
+                  "count": 3,
+                  "minMs": 65.197,
+                  "medianMs": 67.413,
+                  "maxMs": 67.417
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "boundaries": {
+    "actualRouteAndStoreFunctions": true,
+    "realAuthentication": false,
+    "realNetwork": false,
+    "realDatabase": false,
+    "productionTraffic": false,
+    "realBrowser": false,
+    "view": "manager-v1",
+    "reference": "legacyOrderMerge restores only the real order store to its pinned complete prior source; all other application modules execute identically. Compilation is keyed by executed source hash.",
+    "hashes": "sourceHashes identifies on-disk candidate files. executedOrderStoreSha256 explicitly distinguishes candidate and legacy executed stores; every other executed source matches disk.",
+    "timing": "First plus three repeated GETs in both in-process request/construction orders. Not cold process, production latency, CPU-exclusive time, p95 or throughput. Compilation/fixture preparation/final hashes excluded; synthetic IO cloning/accounting/event hashing included. Overlapping source phases must not be summed.",
+    "bytes": "Paired response and simulated read bytes must be identical. No database-read or HTTP-transfer reduction claim.",
+    "conditions": "Fixed synthetic time, shared identities, cancelled bookings, V1 modes off; no private or production inputs."
+  }
+}

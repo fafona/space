@@ -11,6 +11,7 @@ import {
   MERCHANT_CUSTOMER_SEARCH_CACHE_CODE_UNITS,
   type MerchantCustomerSearchFilter,
 } from "@/lib/merchantCustomerSearch";
+import { toMerchantCustomerListItem } from "@/lib/merchantCustomerListView";
 
 function customer(overrides: Partial<MerchantCustomerDirectoryItem> = {}): MerchantCustomerDirectoryItem {
   return {
@@ -25,12 +26,18 @@ function customer(overrides: Partial<MerchantCustomerDirectoryItem> = {}): Merch
 function parity(rows: MerchantCustomerDirectoryItem[], inputs: MerchantCustomerSearchFilter[]) {
   const before = JSON.stringify(rows);
   const corpus = compileMerchantCustomerSearch(rows);
+  const listRows = rows.map(toMerchantCustomerListItem);
+  const listCorpus = compileMerchantCustomerSearch(listRows);
   for (const input of inputs) {
     const expected = filterMerchantCustomerDirectory(rows, input);
     const actual = corpus.filter(input);
     assert.deepEqual(actual, expected, JSON.stringify(input));
     actual.forEach((row, ordinal) => assert.equal(row, expected[ordinal], "preserve original object references"));
     assert.notEqual(actual, rows, "return a new filtered array even without a query");
+    const listMatches = listCorpus.filter(input);
+    assert.deepEqual(listMatches, expected.map(toMerchantCustomerListItem), "list view searches all the same profile fields");
+    assert.deepEqual(listMatches, listRows.filter((row, index) => expected.includes(rows[index])), "preserve occurrence order");
+    listMatches.forEach((row) => assert.ok(listRows.includes(row), "list search returns the original row references"));
   }
   assert.equal(JSON.stringify(rows), before, "search never mutates its loaded snapshot");
 }
