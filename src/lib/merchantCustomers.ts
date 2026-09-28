@@ -720,7 +720,13 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
   };
   const tokenOwner = new Map<string, number>();
   candidates.forEach((candidate, index) => {
-    getMerchantCustomerIdentityTokens(candidate.profile).forEach((token) => {
+    // Every candidate owns a freshly normalized profile. Reuse its alias slot
+    // for the capped identity tokens needed by both joining and final aliases;
+    // directory merges below never recompute tokens from intermediate profiles.
+    // Caller profiles and the shared upsert path are not modified.
+    const tokens = getMerchantCustomerIdentityTokens(candidate.profile);
+    candidate.profile.identityAliases = tokens;
+    tokens.forEach((token) => {
       const owner = tokenOwner.get(token);
       if (owner === undefined) tokenOwner.set(token, index);
       else union(index, owner);
@@ -745,9 +751,16 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
         return Date.parse(right.profile.updatedAt) - Date.parse(left.profile.updatedAt);
       });
       const stored = ordered.find((candidate) => candidate.priority === 100);
-      const allTokens = Array.from(
-        new Set(ordered.flatMap((candidate) => getMerchantCustomerIdentityTokens(candidate.profile))),
-      );
+      const groupTokens = new Set<string>();
+      for (const candidate of ordered) {
+        const tokens = candidate.profile.identityAliases;
+        for (const token of tokens) groupTokens.add(token);
+        // Both consumers have finished with this candidate's private tokens.
+        // Release their references before merging the remaining profile fields;
+        // final aliases below come from the independent group token array.
+        tokens.length = 0;
+      }
+      const allTokens = Array.from(groupTokens);
       let profile = ordered[ordered.length - 1]!.profile;
       for (let index = ordered.length - 2; index >= 0; index -= 1) {
         // Directory aliases come from the original candidates below, not the
