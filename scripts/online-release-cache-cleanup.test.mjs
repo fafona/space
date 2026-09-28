@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {executeCacheCleanup, releaseMountReferences} from './online-release-cache-cleanup.mjs';
+import {executeCacheCleanup, releaseMountReferences, selectPm2CacheProtection} from './online-release-cache-cleanup.mjs';
 import {planReleaseCacheCleanup} from './online-release-cache-policy.mjs';
+import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 
 // Execute the real orchestration and its real production-path eligibility
 // policy. All observations, cache I/O and audit writes below are in-memory ports;
@@ -85,7 +86,7 @@ test('invalid plan envelope is rejected before observation or audit writes', () 
   }
 });
 
-for (const field of ['activeSha256', 'historyHead', 'pm2', 'stateHashes', 'protectedDirectories']) {
+for (const field of ['activeSha256', 'historyHead', 'pm2', 'stateHashes', 'protectedDirectories', 'certifiedStoppedDirectories']) {
   test(`initial ${field} observation drift rejects before capture or deletion`, () => {
     const f = fixture(), observe = f.operations.observe;
     f.operations.observe = () => {
@@ -279,4 +280,123 @@ test('malformed, relative and control-containing mount lines fail closed', () =>
     mountLine(1, 'relative/path'), mountLine(1, `${directories[0]}/bad\\011tab`),
     mountLine(1, `${directories[0]}/bad\\012newline`), mountLine(1, `${directories[0]}/bad\\000nul`)])
     assert.throws(() => releaseMountReferences(text), /release_cache_mountinfo_invalid/);
+});
+
+function stoppedFixture() {
+  const target = 'a'.repeat(40), cwd = directories[0], name = 'merchant-space-online-aaaaaaaaaaaa';
+  const row = normalizeRetirementProcess({name, pm_id: 7, pid: 0, pm2_env: {
+    pm_cwd: cwd, status: 'stopped', PORT: '3104', pm_exec_path: `${cwd}/node_modules/next/dist/bin/next`,
+    exec_interpreter: '/usr/bin/node', args: ['start', '-H', '127.0.0.1', '-p', '3104'], node_args: [],
+    exec_mode: 'fork_mode', autorestart: true, watch: false, cron_restart: null,
+    FAOLLA_BACKGROUND_JOBS_PAUSED: '1', MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: '0',
+    MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: '0', restart_time: 0, created_at: 1234,
+    env: {PORT: '3104', SYNTHETIC_PRIVATE: 'not-returned'},
+  }});
+  // Only fields consumed by the selector are populated. These are synthetic
+  // already-validated-history ports, not a substitute for the real disk reader's
+  // five-file hash, ownership and full certificate-chain verification.
+  const certificate = {status: 'completed', victim: {target, cwd, name, pmId: 7, port: 3104, pid: 777},
+    stoppedProcess: clone(row)};
+  const history = {legacyCertificates: [certificate], entries: []};
+  return {row, certificate, history};
+}
+
+test('only exact certified stopped rows become cache candidates across legacy and rolling history', () => {
+  const f = stoppedFixture();
+  for (const history of [f.history, {legacyCertificates: [], entries: [f.certificate]}]) {
+    const input = freeze({pm2: [clone(f.row), {...clone(f.row), status: 'online', pid: 456, cwd: live}], history: clone(history)});
+    const before = JSON.stringify(input), result = selectPm2CacheProtection(input);
+    assert.deepEqual(result, {protectedDirectories: [live], certifiedStoppedDirectories: [directories[0]]});
+    assert.ok(Object.isFrozen(result) && Object.isFrozen(result.protectedDirectories) && Object.isFrozen(result.certifiedStoppedDirectories));
+    assert.equal(JSON.stringify(input), before);
+    assert.equal(JSON.stringify(result).includes('SYNTHETIC_PRIVATE'), false);
+    assert.deepEqual(planReleaseCacheCleanup({releaseDirectories: [directories[0], live],
+      protectedDirectories: result.protectedDirectories}).eligible.map(item => item.releaseDirectory), [directories[0]]);
+  }
+});
+
+for (const [name, change] of [
+  ['no certificate', f => {f.history.legacyCertificates = [];}],
+  ['incomplete certificate', f => {f.certificate.status = 'prepared';}],
+  ['duplicate matching certificates', f => {f.history.entries.push(clone(f.certificate));}],
+  ['nonzero pid', f => {f.row.pid = 777; f.certificate.stoppedProcess.pid = 777;}],
+  ['watch true', f => {f.row.watch = true; f.certificate.stoppedProcess.watch = true;}],
+  ['watch missing', f => {delete f.row.watch; delete f.certificate.stoppedProcess.watch;}],
+  ['watch numeric false', f => {f.row.watch = 0; f.certificate.stoppedProcess.watch = 0;}],
+  ['cron false not null', f => {f.row.cronRestart = false; f.certificate.stoppedProcess.cronRestart = false;}],
+  ['cron schedule', f => {f.row.cronRestart = '0 * * * *'; f.certificate.stoppedProcess.cronRestart = '0 * * * *';}],
+  ['cron missing', f => {delete f.row.cronRestart; delete f.certificate.stoppedProcess.cronRestart;}],
+  ['different process environment hash', f => {f.row.environmentSha256 = 'f'.repeat(64);}],
+  ['different executable', f => {f.row.executable += '-changed';}],
+  ['different arguments', f => {f.row.args.push('--changed');}],
+  ['different restart count', f => {f.row.restartCount++;}],
+  ['extra normalized field', f => {f.row.extra = true;}],
+  ['missing normalized field', f => {delete f.row.autorestart;}],
+  ['victim cwd mismatch', f => {f.certificate.victim.cwd = live;}],
+  ['victim directory is not cwd', f => {f.certificate.victim.directory = f.certificate.victim.cwd; delete f.certificate.victim.cwd;}],
+  ['victim name mismatch', f => {f.certificate.victim.name += '-other';}],
+  ['victim pmId mismatch', f => {f.certificate.victim.pmId++;}],
+  ['victim port mismatch', f => {f.certificate.victim.port++;}],
+  ['victim short SHA', f => {f.certificate.victim.target = 'a'.repeat(12);}],
+  ['victim uppercase SHA', f => {f.certificate.victim.target = 'A'.repeat(40);}],
+  ['victim newline SHA', f => {f.certificate.victim.target += '\n';}],
+  ['victim canonical target mismatch', f => {f.certificate.victim.target = 'b'.repeat(40);}],
+  ['missing stopped snapshot', f => {delete f.certificate.stoppedProcess;}],
+]) {
+  test(`PM2 protection remains for ${name}`, () => {
+    const f = stoppedFixture(); change(f);
+    assert.deepEqual(selectPm2CacheProtection({pm2: [f.row], history: f.history}),
+      {protectedDirectories: [directories[0]], certifiedStoppedDirectories: []});
+  });
+}
+
+test('matching noncanonical names or timestamp release roots cannot qualify through a forged matching row', () => {
+  for (const transform of [
+    f => {f.row.name = f.certificate.victim.name = 'arbitrary-name';},
+    f => {f.row.cwd = f.certificate.victim.cwd = directories[1];},
+    f => {f.row.cwd = f.certificate.victim.cwd = directories[0].replace('-online', '-1234567890123');},
+  ]) {
+    const f = stoppedFixture(); transform(f); f.certificate.stoppedProcess = clone(f.row);
+    assert.deepEqual(selectPm2CacheProtection({pm2: [f.row], history: f.history}),
+      {protectedDirectories: [f.row.cwd], certifiedStoppedDirectories: []});
+  }
+});
+
+test('online rows always stay protected and unknown process statuses fail closed', () => {
+  const f = stoppedFixture();
+  const online = {...f.row, status: 'online', pid: 0};
+  f.certificate.stoppedProcess = clone(online);
+  assert.deepEqual(selectPm2CacheProtection({pm2: [online], history: f.history}),
+    {protectedDirectories: [directories[0]], certifiedStoppedDirectories: []});
+  for (const status of ['launching', 'stopping', 'errored', 'waiting restart', '', undefined])
+    assert.throws(() => selectPm2CacheProtection({pm2: [{...f.row, status}], history: f.history}), /process_transition_pending/);
+});
+
+test('all registered directories stay protected without completed history', () => {
+  const f = stoppedFixture(), base = {...f.row, status: 'online', pid: 42, cwd: '/www/wwwroot/merchant-space'};
+  assert.deepEqual(selectPm2CacheProtection({pm2: [f.row, base], history: {legacyCertificates: [], entries: []}}),
+    {protectedDirectories: ['/www/wwwroot/merchant-space', directories[0]].sort(), certifiedStoppedDirectories: []});
+});
+
+test('rollback, pending, process and mount protection overrides a certified stopped cache', () => {
+  const f = stoppedFixture(), selection = selectPm2CacheProtection({pm2: [f.row], history: f.history});
+  for (const additional of [directories[0], `${directories[0]}/.next/static`, `${directories[0]}/.next/cache/webpack/bind`,
+    `${directories[0]}/node_modules/next/dist/bin/next`]) {
+    const plan = planReleaseCacheCleanup({releaseDirectories: [directories[0]],
+      protectedDirectories: [...selection.protectedDirectories, additional]});
+    assert.deepEqual(plan.eligible, []);
+    assert.deepEqual(plan.excluded, [{releaseDirectory: directories[0], reason: 'protected_directory'}]);
+  }
+  const conflicting = selectPm2CacheProtection({pm2: [f.row, {...f.row, name: 'second-registration', status: 'online', pid: 123}], history: f.history});
+  assert.deepEqual(conflicting.certifiedStoppedDirectories, [directories[0]]);
+  assert.deepEqual(planReleaseCacheCleanup({releaseDirectories: [directories[0]],
+    protectedDirectories: conflicting.protectedDirectories}).eligible, []);
+});
+
+test('malformed protection inputs fail closed instead of weakening registered-directory protection', () => {
+  const f = stoppedFixture();
+  for (const input of [{pm2: null, history: f.history}, {pm2: [], history: {}},
+    {pm2: [{...f.row, cwd: 'relative'}], history: f.history},
+    {pm2: [{...f.row, cwd: '/www/../other'}], history: f.history}])
+    assert.throws(() => selectPm2CacheProtection(input), /pm2_protection_invalid/);
 });

@@ -61,10 +61,15 @@ index bit, directory ownership and ignored-artifact absence is verified.
 
 An existing complete slim tool is verified and reused. An existing full/dirty/
 partial directory is rejected and left intact, not repaired or overwritten.
-For first installation, stage that same fixed sparse checkout under the shared
-deploy/operation locks from reviewed Git objects; release locks, then invoke
-the helper from that checkout to verify it. Do not modify the live base checkout
-to bootstrap a tool, and do not create a second full checkout for convenience.
+For first installation or a changed helper, use a clean root-owned temporary
+helper-only sparse worktree from reviewed Git objects. Invoke its exact verified
+helper to prepare the final tool through the shared locks. Git 2.27 requires the
+non-cone setting to be saved explicitly, which the helper now does. After success,
+verify the temporary worktree's exact path, identity and clean status before normal
+`git worktree remove` (without force); its source remains recoverable from Git.
+Do not modify the live base checkout or create a second full source copy merely
+to bootstrap a tool. An incomplete final tool still requires diagnosis, not an
+automatic overwrite or deletion.
 The next application lane must explicitly account for these exact already-reviewed
 operational files in its base-to-target diff. Do not hide them with a generic
 `scripts/**` exclusion or widen an existing lane without its own scope review.
@@ -84,6 +89,14 @@ It deletes nothing. It excludes current/live paths, resolved static and `.curren
 roots, immediate rollback anchors, pending/failed release references, scheduled
 references and additional mounts inside release roots. It validates the immutable
 rolling history rather than inferring safety from an old `status: active` file.
+
+PM2 registrations are protected by default. The only cache-only exception is a
+stopped registration with PID zero, no watch or scheduled restart, and an exact
+full match to the stopped-process record in a completed, fully validated legacy
+or rolling retirement certificate. Its victim identity must match the canonical
+release, name, PM2 id and port. All other reference protections still take
+precedence. The observation explicitly records these certified stopped paths;
+neither the registration, recovery records nor restartable runtime are removed.
 
 `apply` requires the exact plan digest, same tool/host/boot/reference observation,
 unchanged candidates and a plan less than 24 hours old. It holds the **existing**

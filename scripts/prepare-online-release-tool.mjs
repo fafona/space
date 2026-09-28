@@ -151,6 +151,8 @@ export function executeOnlineReleaseToolPlan(plan, ports = {}) {
   checkPath(plan.directory);
   // Git 2.27 has sparse-checkout but predates the --no-sparse-index option.
   git(plan.directory, ['-c', 'index.sparse=false', 'sparse-checkout', 'set', '--no-cone', '--stdin'], TOOL_SPARSE_PATTERNS);
+  // That version also leaves --no-cone implicit; persist it for strict verify.
+  git(plan.directory, ['config', '--worktree', 'core.sparseCheckoutCone', 'false']);
   git(plan.directory, ['config', '--worktree', 'index.sparse', 'false']);
   // --no-checkout starts with an empty index. Materialize HEAD only after the
   // exclusion is installed; never populate downloads even transiently.
