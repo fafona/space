@@ -150,6 +150,16 @@ export function isPreservedLegacyFile(entry) {
   return entry.type === 'file' && !under(entry.relativePath, 'node_modules') &&
     (!under(entry.relativePath, '.next') || under(entry.relativePath, '.next/static'));
 }
+export function inspectLegacyCandidate(directory, capture = captureLegacyReleaseTree) {
+  try {return {tree: capture(directory)};} catch (error) {
+    // Unsupported filesystem layouts are not made eligible by changing their
+    // permissions or links. Exclude that entire tree; drifting/IO proofs still
+    // abort inspection rather than producing an incomplete snapshot.
+    if (/^legacy_release_tree_(?:unsafe_ownership|hardlink_rejected|link_rejected|runtime_directory_rejected|special_file|device_changed|entry_name_rejected)$/.test(error.message))
+      return {excluded: {directory, reason: error.message}};
+    throw error;
+  }
+}
 function hashFile(filename, checkPath = owned) {
   checkPath(filename, 'file');
   const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW), hash = createHash('sha256');
@@ -263,7 +273,9 @@ export function legacyReleaseCleanupMain(args = process.argv.slice(2)) {
       syncDirectory(location);
       const trees = [], blobs = new Map();
       for (const directory of eligible) {
-        const tree = captureLegacyReleaseTree(directory), bytes = json(tree), manifest = path.basename(directory) + '.json';
+        const candidate = inspectLegacyCandidate(directory);
+        if (candidate.excluded) {excluded.push(candidate.excluded); continue;}
+        const tree = candidate.tree, bytes = json(tree), manifest = path.basename(directory) + '.json';
         preserveLegacySource(tree, `${location}/preserved`, blobs);
         privateWrite(`${location}/manifests/${manifest}`, bytes);
         trees.push({directory, manifest, sha256: digest(bytes), bytes: tree.totalBytes, files: tree.fileCount});

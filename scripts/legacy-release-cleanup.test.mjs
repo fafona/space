@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-import {legacyReferences, savedPm2References, isLegacyReleaseDirectory, planLegacyReleaseCleanup, isPreservedLegacyFile,
+import {legacyReferences, savedPm2References, isLegacyReleaseDirectory, planLegacyReleaseCleanup, isPreservedLegacyFile, inspectLegacyCandidate,
   assertLegacyObservationUnchanged, executeLegacyReleaseCleanup} from './legacy-release-cleanup.mjs';
 
 const root = '/www/wwwroot/merchant-space.releases';
@@ -72,6 +72,12 @@ test('preserve all source/config/static files, not generated runtime/dependencie
     assert.equal(isPreservedLegacyFile({relativePath, type: 'file'}), false);
   assert.equal(isPreservedLegacyFile({relativePath: '.runtime', type: 'symlink'}), false);
   assert.equal(isPreservedLegacyFile({relativePath: 'public', type: 'directory'}), false);
+});
+test('unsupported tree is explicitly excluded without weakening filesystem proofs', () => {
+  const reason = 'legacy_release_tree_unsafe_ownership';
+  assert.deepEqual(inspectLegacyCandidate(first, () => {throw Error(reason);}), {excluded: {directory: first, reason}});
+  for (const code of ['legacy_release_tree_file_changed', 'legacy_release_tree_filesystem_failure', 'unexpected'])
+    assert.throws(() => inspectLegacyCandidate(first, () => {throw Error(code);}), new RegExp(code));
 });
 test('removal accounts only for exact declared directory inventory changes', () => {
   const before = observation(), after = observation(); after.base.releaseDirectories = [second, current];

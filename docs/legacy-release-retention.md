@@ -20,6 +20,12 @@ failed operation is closed only by its exact immutable restoration/abort proof;
 its records are never rewritten or deleted. Unknown or changing evidence fails
 closed. Dates alone never authorize deletion.
 
+Unsupported ownership, permissions or link layouts exclude the whole tree; the
+tool never repairs permissions to make a tree eligible. The only accepted
+multi-link files are the two fixed generated esbuild binary paths, proven to be
+the same inode with exactly two in-tree names. Unlinking one must produce the
+precise one-link metadata transition before the other can be removed.
+
 Inspection writes a private plan under `/var/lib/faolla-legacy-release-audit`.
 Before any deletion, all regular files other than generated `node_modules` and
 `.next` runtime output are preserved in a content-addressed, deduplicated archive.

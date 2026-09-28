@@ -7,6 +7,7 @@ import {isDeepStrictEqual} from 'node:util';
 // certificate. The caller must prove eligibility, reject mount references,
 // acquire deployment locks and preserve an approved private audit beforehand.
 const DEFAULT_ROOT = '/www/wwwroot';
+const ESBUILD_LINK_PATHS = ['node_modules/@esbuild/linux-x64/bin/esbuild', 'node_modules/esbuild/bin/esbuild'];
 const fail = code => {throw Error(`legacy_release_tree_${code}`);};
 const freeze = value => {
   if (value && typeof value === 'object') {Object.values(value).forEach(freeze); Object.freeze(value);}
@@ -37,14 +38,15 @@ function validateLocation(directory, root) {
       parts[1].length !== 27 || !/^[a-f0-9]{12}-[0-9]{14}$/.test(parts[1]) ||
       directory !== path.join(root, ...parts)) fail('path_not_allowed');
 }
-function statOf(io, filename, owner, device) {
+function statOf(io, filename, owner, device, permittedLinks = 1) {
   const stat = io.lstatSync(filename, {bigint: true});
   const type = stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : null;
   if (!type) fail('special_file');
   // POSIX symlinks normally have mode 0777; their parent, owner and exact link
   // target are the authority boundaries. Never chmod or dereference a link.
   if (stat.uid !== BigInt(owner) || (type !== 'symlink' && (stat.mode & 0o022n) !== 0n)) fail('unsafe_ownership');
-  if (type !== 'directory' && stat.nlink !== 1n) fail('hardlink_rejected');
+  if (type !== 'directory' && stat.nlink !== 1n &&
+      !(type === 'file' && permittedLinks === 2 && stat.nlink === 2n)) fail('hardlink_rejected');
   if (device !== undefined && stat.dev.toString() !== device) fail('device_changed');
   if (stat.size < 0n || stat.size > BigInt(Number.MAX_SAFE_INTEGER)) fail('size_invalid');
   return {type, dev: stat.dev.toString(), ino: stat.ino.toString(), mode: Number(stat.mode), uid: Number(stat.uid),
@@ -72,7 +74,7 @@ function fileHash(io, filename, expected, owner) {
   const fd = io.openSync(filename, nodeFs.constants.O_RDONLY | (nodeFs.constants.O_NOFOLLOW ?? 0));
   try {
     const descriptorIo = {...io, lstatSync: () => io.fstatSync(fd, {bigint: true})};
-    equal(statOf(descriptorIo, filename, owner, expected.dev), expected, 'file_changed');
+    equal(statOf(descriptorIo, filename, owner, expected.dev, expected.nlink), expected, 'file_changed');
     const hash = createHash('sha256'), buffer = Buffer.allocUnsafe(64 * 1024);
     let bytes = 0, count;
     while ((count = io.readSync(fd, buffer, 0, buffer.length, null)) !== 0) {
@@ -81,10 +83,24 @@ function fileHash(io, filename, expected, owner) {
       hash.update(buffer.subarray(0, count));
     }
     if (bytes !== expected.size) fail('file_changed');
-    equal(statOf(descriptorIo, filename, owner, expected.dev), expected, 'file_changed');
-    equal(statOf(io, filename, owner, expected.dev), expected, 'file_changed');
+    equal(statOf(descriptorIo, filename, owner, expected.dev, expected.nlink), expected, 'file_changed');
+    equal(statOf(io, filename, owner, expected.dev, expected.nlink), expected, 'file_changed');
     return hash.digest('hex');
   } finally {io.closeSync(fd);}
+}
+function metadataOf(item) {
+  const {relativePath, sha256, target, ...metadata} = item;
+  void relativePath; void sha256; void target;
+  return metadata;
+}
+function esbuildLinkPair(entries) {
+  const linked = entries.filter(item => item.type === 'file' && item.nlink !== 1);
+  if (!linked.length) return [];
+  if (linked.length !== 2 || linked.some(item => item.nlink !== 2 || !ESBUILD_LINK_PATHS.includes(item.relativePath)) ||
+      new Set(linked.map(item => item.relativePath)).size !== 2) fail('hardlink_set_not_closed');
+  equal(metadataOf(linked[0]), metadataOf(linked[1]), 'hardlink_set_not_closed');
+  equal(linked[0].sha256, linked[1].sha256, 'hardlink_set_not_closed');
+  return linked;
 }
 function linkTarget(io, filename, relativePath, directory, root) {
   const target = io.readlinkSync(filename);
@@ -112,7 +128,7 @@ export function captureLegacyReleaseTree(directory, testOptions = {}) {
     const first = directoryStat(io, directory, owner), entries = [];
     let fileCount = 0, directoryCount = 0, symlinkCount = 0, totalBytes = 0;
     function walk(filename, relativePath) {
-      const before = statOf(io, filename, owner, first.dev);
+      const before = statOf(io, filename, owner, first.dev, ESBUILD_LINK_PATHS.includes(relativePath) ? 2 : 1);
       if (path.posix.basename(relativePath) === '.runtime' && (relativePath !== '.runtime' || before.type !== 'symlink'))
         fail('runtime_directory_rejected');
       if (before.type === 'file') {
@@ -134,6 +150,12 @@ export function captureLegacyReleaseTree(directory, testOptions = {}) {
       }
     }
     walk(directory, '');
+    // Generated esbuild binaries may be one inode with exactly these two names.
+    // No other in-tree or external alias is permitted; never follow either name.
+    for (const item of esbuildLinkPair(entries)) {
+      const filename = path.join(directory, ...item.relativePath.split('/'));
+      equal(fileHash(io, filename, metadataOf(item), owner), item.sha256, 'file_changed');
+    }
     for (const item of ancestors) equal(identity(directoryStat(io, item.path, owner)), identity(item), 'ancestor_changed');
     return freeze({version: 1, kind: 'legacy-release-tree', directory, ancestors, entries,
       fileCount, directoryCount, symlinkCount, totalBytes});
@@ -150,7 +172,8 @@ export function applyLegacyReleaseTreeCleanup(manifest, testOptions = {}) {
     if (!manifest || manifest.kind !== 'legacy-release-tree') fail('manifest_invalid');
     const fresh = captureLegacyReleaseTree(manifest.directory, testOptions);
     equal(fresh, manifest, 'manifest_changed'); // Entire tree before first deletion.
-    const entries = new Map(manifest.entries.map(item => [item.relativePath, item]));
+    const entries = new Map(manifest.entries.map(item => [item.relativePath, {...item}]));
+    const linkedPaths = esbuildLinkPair(manifest.entries).map(item => item.relativePath);
     const children = new Map(manifest.entries.filter(item => item.type === 'directory').map(item => [item.relativePath, []]));
     for (const item of manifest.entries) if (item.relativePath) {
       const parent = path.posix.dirname(item.relativePath);
@@ -175,6 +198,51 @@ export function applyLegacyReleaseTreeCleanup(manifest, testOptions = {}) {
       equal(namesOf(io, absolute(relativePath)), expectedNames, 'tree_changed');
     }
     let removedFiles = 0, removedSymlinks = 0, removedDirectories = 0, removedBytes = 0;
+    function unlinkClosedPair(child) {
+      const item = entries.get(child), filename = absolute(child), expected = metadataOf(item);
+      const remaining = linkedPaths.filter(name => !removed.has(name));
+      // Recheck the complete remaining alias set immediately before each unlink.
+      for (const name of remaining) {
+        const peer = entries.get(name), parent = path.posix.dirname(name);
+        checkDirectory(parent === '.' ? '' : parent);
+        equal(fileHash(io, absolute(name), metadataOf(peer), owner), peer.sha256, 'file_changed');
+      }
+      if (expected.nlink !== remaining.length) fail('hardlink_set_not_closed');
+      if (remaining.length === 1) {
+        io.unlinkSync(filename); removed.add(child);
+        try {io.lstatSync(filename); fail('hardlink_not_removed');}
+        catch (error) {if (error?.code !== 'ENOENT') throw error;}
+        return;
+      }
+      const fd = io.openSync(filename, nodeFs.constants.O_RDONLY | (nodeFs.constants.O_NOFOLLOW ?? 0));
+      const peer = entries.get(remaining.find(name => name !== child));
+      const parent = path.posix.dirname(peer.relativePath);
+      let after;
+      try {
+        const descriptorIo = {...io, lstatSync: () => io.fstatSync(fd, {bigint: true})};
+        equal(statOf(descriptorIo, filename, owner, item.dev, 2), expected, 'file_changed');
+        io.unlinkSync(filename); removed.add(child);
+        after = statOf(descriptorIo, filename, owner, item.dev);
+        // Our unlink must account for exactly one link. Only ctime may change;
+        // capture that precise new value and require the surviving path to match.
+        if (BigInt(after.ctimeNs) < BigInt(expected.ctimeNs)) fail('hardlink_transition_changed');
+        equal(after, {...expected, nlink: 1, ctimeNs: after.ctimeNs}, 'hardlink_transition_changed');
+        checkDirectory(parent === '.' ? '' : parent);
+        equal(statOf(io, absolute(peer.relativePath), owner, peer.dev), after, 'hardlink_transition_changed');
+        equal(fileHash(io, absolute(peer.relativePath), after, owner), peer.sha256, 'file_changed');
+        try {io.lstatSync(filename); fail('hardlink_not_removed');}
+        catch (error) {if (error?.code !== 'ENOENT') throw error;}
+      } finally {io.closeSync(fd);}
+      // Windows can finalize unlink's ctime on closing its last open handle.
+      // Settle this one operation before recording the survivor's exact metadata;
+      // identities, content, mtime and the 2 -> 1 link count remain mandatory.
+      checkDirectory(parent === '.' ? '' : parent);
+      const settled = statOf(io, absolute(peer.relativePath), owner, peer.dev);
+      if (BigInt(settled.ctimeNs) < BigInt(after.ctimeNs)) fail('hardlink_transition_changed');
+      equal(settled, {...after, ctimeNs: settled.ctimeNs}, 'hardlink_transition_changed');
+      equal(fileHash(io, absolute(peer.relativePath), settled, owner), peer.sha256, 'file_changed');
+      entries.set(peer.relativePath, {...peer, nlink: 1, ctimeNs: settled.ctimeNs});
+    }
     function removeDirectory(relativePath) {
       checkDirectory(relativePath);
       for (const child of children.get(relativePath)) {
@@ -184,14 +252,15 @@ export function applyLegacyReleaseTreeCleanup(manifest, testOptions = {}) {
         else {
           const {relativePath: ignored, sha256, target, ...expected} = item;
           void ignored;
-          equal(statOf(io, filename, owner, item.dev), expected, 'entry_changed');
+          equal(statOf(io, filename, owner, item.dev, expected.nlink), expected, 'entry_changed');
           if (item.type === 'file') equal(fileHash(io, filename, expected, owner), sha256, 'file_changed');
           else {
             equal(linkTarget(io, filename, child, manifest.directory, root), target, 'link_changed');
             equal(statOf(io, filename, owner, item.dev), expected, 'link_changed');
           }
           checkDirectory(relativePath);
-          io.unlinkSync(filename); removed.add(child);
+          if (linkedPaths.includes(child)) unlinkClosedPair(child);
+          else {io.unlinkSync(filename); removed.add(child);}
           if (item.type === 'file') {removedFiles++; removedBytes += item.size;} else removedSymlinks++;
         }
       }

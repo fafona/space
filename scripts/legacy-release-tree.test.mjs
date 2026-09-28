@@ -60,6 +60,13 @@ function syntheticLink(f, relativePath, target) {
   return filename;
 }
 const denyMutation = f => {f.io.unlinkSync = f.io.rmdirSync = () => assert.fail('preflight must delete nothing');};
+const esbuildPaths = ['node_modules/@esbuild/linux-x64/bin/esbuild', 'node_modules/esbuild/bin/esbuild'];
+function esbuildPair(f) {
+  const names = esbuildPaths.map(name => path.join(f.directory, ...name.split('/')));
+  for (const filename of names) fs.mkdirSync(path.dirname(filename), {recursive: true, mode: 0o755});
+  fs.writeFileSync(names[0], 'synthetic-esbuild-binary', {mode: 0o755}); fs.linkSync(names[0], names[1]);
+  return names;
+}
 
 test('only the exact legacy 12hex-14digit release root is accepted before any filesystem read', () => {
   const root = path.resolve(os.tmpdir(), 'legacy-root'), io = {lstatSync() {assert.fail('no filesystem read');}};
@@ -234,6 +241,98 @@ test('hardlinks, special files, cross-device descendants and writable/foreign-ow
   const f = fixture(t);
   fs.linkSync(path.join(f.shared, 'keep.json'), path.join(f.directory, 'hardlinked.json'));
   assert.throws(f.capture, /hardlink_rejected/);
+});
+
+test('only the closed generated esbuild pair is captured and both names are safely unlinked', t => {
+  const f = fixture(t), names = esbuildPair(f), manifest = f.capture();
+  const linked = manifest.entries.filter(item => item.nlink === 2 && item.type === 'file');
+  assert.deepEqual(linked.map(item => item.relativePath), esbuildPaths);
+  assert.equal(linked[0].ino, linked[1].ino); assert.equal(linked[0].dev, linked[1].dev);
+  assert.equal(linked[0].sha256, digest('synthetic-esbuild-binary'));
+  const unlink = f.io.unlinkSync, events = [];
+  f.io.unlinkSync = filename => {
+    if (names.includes(filename)) events.push([filename, fs.lstatSync(filename).nlink]);
+    unlink(filename);
+  };
+  const result = applyLegacyReleaseTreeCleanup(manifest, f.options);
+  assert.deepEqual(events, [[names[0], 2], [names[1], 1]]);
+  assert.equal(result.removedFiles, 8); assert.equal(result.releaseRootRemoved, true);
+  assert.equal(result.removedBytes, manifest.totalBytes); // logical lengths, not reclaimed blocks
+  assert.equal(fs.readFileSync(path.join(f.shared, 'keep.json'), 'utf8'), '{"business":"never-read-or-delete"}');
+});
+
+test('esbuild independent single-link files preserve the original ordinary-file behavior', t => {
+  const f = fixture(t), names = esbuildPair(f);
+  fs.unlinkSync(names[1]); fs.writeFileSync(names[1], 'independent-copy', {mode: 0o755});
+  const manifest = f.capture();
+  assert.ok(manifest.entries.filter(item => item.type === 'file').every(item => item.nlink === 1));
+  assert.equal(applyLegacyReleaseTreeCleanup(manifest, f.options).releaseRootRemoved, true);
+});
+
+for (const variant of ['external-third', 'in-tree-third', 'only-one-name', 'different-inodes']) {
+  test(`esbuild ${variant} cannot qualify as the closed two-name set`, t => {
+    const f = fixture(t), names = esbuildPair(f);
+    if (variant === 'external-third') fs.linkSync(names[0], path.join(f.shared, 'external-esbuild'));
+    if (variant === 'in-tree-third') fs.linkSync(names[0], path.join(f.directory, 'extra-esbuild'));
+    if (variant === 'only-one-name') fs.renameSync(names[1], path.join(f.shared, 'external-esbuild'));
+    if (variant === 'different-inodes') {
+      fs.unlinkSync(names[1]); fs.writeFileSync(names[1], 'synthetic-esbuild-binary', {mode: 0o755});
+      names.forEach((filename, index) => fs.linkSync(filename, path.join(f.shared, `external-${index}`)));
+    }
+    denyMutation(f);
+    assert.throws(f.capture, /hardlink_(rejected|set_not_closed)/);
+  });
+}
+
+test('changed esbuild alias set after capture causes zero deletion in apply preflight', t => {
+  const f = fixture(t), names = esbuildPair(f), manifest = f.capture();
+  fs.linkSync(names[0], path.join(f.shared, 'external-esbuild'));
+  denyMutation(f); assert.throws(() => applyLegacyReleaseTreeCleanup(manifest, f.options), /hardlink_rejected/);
+  assert.ok(names.every(filename => fs.existsSync(filename)));
+});
+
+test('a late extra alias before either esbuild unlink is refused with both binary names intact', t => {
+  const f = fixture(t), names = esbuildPair(f), manifest = f.capture(), unlink = f.io.unlinkSync;
+  let changed = false, binaryDeletes = 0;
+  f.io.unlinkSync = filename => {
+    if (names.includes(filename)) binaryDeletes++;
+    unlink(filename);
+    if (!changed) {changed = true; fs.linkSync(names[0], path.join(f.shared, 'external-esbuild'));}
+  };
+  assert.throws(() => applyLegacyReleaseTreeCleanup(manifest, f.options), /hardlink_rejected/);
+  assert.equal(binaryDeletes, 0); assert.ok(names.every(filename => fs.existsSync(filename)));
+});
+
+for (const variant of ['extra-alias', 'content-change', 'replaced-survivor', 'skipped-unlink']) {
+  test(`first esbuild unlink ${variant} does not silently update remaining expected metadata`, t => {
+    const f = fixture(t), names = esbuildPair(f), manifest = f.capture(), unlink = f.io.unlinkSync;
+    let binaryDeletes = 0;
+    f.io.unlinkSync = filename => {
+      if (names.includes(filename)) binaryDeletes++;
+      if (filename !== names[0]) return unlink(filename);
+      if (variant === 'skipped-unlink') return;
+      unlink(filename);
+      if (variant === 'extra-alias') fs.linkSync(names[1], path.join(f.shared, 'late-esbuild'));
+      if (variant === 'content-change') fs.writeFileSync(names[1], 'changed-esbuild');
+      if (variant === 'replaced-survivor') {
+        fs.unlinkSync(names[1]); fs.writeFileSync(names[1], 'synthetic-esbuild-binary', {mode: 0o755});
+      }
+    };
+    assert.throws(() => applyLegacyReleaseTreeCleanup(manifest, f.options), /legacy_release_tree_/);
+    assert.equal(binaryDeletes, 1); assert.ok(fs.existsSync(names[1]));
+  });
+}
+
+test('surviving esbuild ctime drift after the accounted first unlink is still rejected', t => {
+  const f = fixture(t), names = esbuildPair(f), manifest = f.capture(), rmdir = f.io.rmdirSync, stat = f.io.lstatSync;
+  let changed = false;
+  f.io.rmdirSync = filename => {rmdir(filename); if (filename === path.dirname(names[0])) changed = true;};
+  f.io.lstatSync = (filename, options) => {
+    const value = stat(filename, options);
+    return changed && filename === names[1] ? changedStat(value, {ctimeNs: value.ctimeNs + 1n}) : value;
+  };
+  assert.throws(() => applyLegacyReleaseTreeCleanup(manifest, f.options), /entry_changed/);
+  assert.equal(fs.existsSync(names[0]), false); assert.equal(fs.existsSync(names[1]), true);
 });
 
 test('opened descriptor replacement and files growing during streaming hash reject capture', t => {
