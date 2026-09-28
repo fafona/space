@@ -84,8 +84,13 @@ export function dockerEvidenceLine(line, expectedId) {
       !value[0].startsWith(expectedId) || !Array.isArray(value[1]) ||
       value[1].some(item => !object(item) || ['Type', 'Source', 'Destination'].some(key => typeof item[key] !== 'string')) ||
       value.slice(2).some(item => item !== null && typeof item !== 'string')) fail('container_evidence_invalid');
-  const canonical = item => Array.isArray(item) ? item.map(canonical) : object(item)
-    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, canonical(item[key])])) : item;
+  const canonical = item => {
+    // Mount evidence is strings/booleans/null. Do not silently round an unknown
+    // future numeric field (including JSON overflow/underflow) into another value.
+    if (typeof item === 'number') fail('container_evidence_invalid');
+    return Array.isArray(item) ? item.map(canonical) : object(item)
+      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, canonical(item[key])])) : item;
+  };
   const mounts = value[1].map(item => JSON.stringify(canonical(item))).sort().map(item => JSON.parse(item));
   return {id: value[0], sha256: digest(JSON.stringify([value[0], mounts, ...value.slice(2)])), references: legacyReferences(value)};
 }

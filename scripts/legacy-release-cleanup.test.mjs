@@ -45,14 +45,14 @@ test('saved PM2 references decode JSON escapes and reject corrupt non-array dump
 const containerId = 'a'.repeat(64);
 const containerFixture = () => [containerId, [
   {Type: 'bind', Source: first, Destination: '/app', RW: true, Mode: 'rw', Propagation: 'rprivate'},
-  {Type: 'volume', Source: '/var/lib/docker/volumes/test/_data', Destination: '/data', RW: false, Name: 'test', Driver: 'local', Extra: {b: 2, a: ['x', 'y']}},
+  {Type: 'volume', Source: '/var/lib/docker/volumes/test/_data', Destination: '/data', RW: false, Name: 'test', Driver: 'local', Extra: {b: 'two', a: ['x', 'y']}},
 ], '/compose', '/compose/docker-compose.yml'];
 const evidence = value => dockerEvidenceLine(JSON.stringify(value), containerId.slice(0, 12));
 test('Docker mount set and object-key ordering are not reference changes', () => {
   const value = containerFixture(), reordered = structuredClone(value);
   reordered[1].reverse();
   reordered[1] = reordered[1].map(item => Object.fromEntries(Object.entries(item).reverse()));
-  reordered[1][0].Extra = {a: ['x', 'y'], b: 2};
+  reordered[1][0].Extra = {a: ['x', 'y'], b: 'two'};
   assert.deepEqual(evidence(reordered), evidence(value));
   assert.deepEqual(evidence(value).references, [first]);
   assert.deepEqual(dockerEvidenceLine(JSON.stringify(value).replaceAll('/', '\\u002f'), containerId), evidence(value));
@@ -83,6 +83,10 @@ test('Docker malformed data and unexpected identity fail closed', () => {
   assert.throws(() => dockerEvidenceLine('{broken', containerId), /container_evidence_invalid/);
   for (const expected of ['', null, 'a'.repeat(11), 'A'.repeat(12), containerId + 'a'])
     assert.throws(() => dockerEvidenceLine(JSON.stringify(containerFixture()), expected), /container_evidence_invalid/);
+  for (const token of ['1e400', '1e-400', '9007199254740993', '0.123456789012345678901', '42']) {
+    const line = JSON.stringify(containerFixture()).replace('"two"', token);
+    assert.throws(() => dockerEvidenceLine(line, containerId), /container_evidence_invalid/);
+  }
 });
 test('ordinary observation leaves two legacy candidates', () => {
   assert.deepEqual(planLegacyReleaseCleanup(observation()), {eligible: [first, second], excluded: [{directory: current, reason: 'referenced'}]});
