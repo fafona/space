@@ -77,11 +77,15 @@ test('real Git creates detached sparse source-only checkout with all other sourc
   assert.deepEqual(f.calls.find(call => call.args[0] === 'worktree').args, ['worktree', 'add', '--detach', '--no-checkout', f.plan.directory, f.target]);
   assert.deepEqual(f.calls.find(call => call.args.includes('sparse-checkout')).args, ['-c', 'index.sparse=false', 'sparse-checkout', 'set', '--no-cone', '--stdin']);
   assert.equal(f.calls.find(call => call.args.includes('sparse-checkout')).input, TOOL_SPARSE_PATTERNS);
-  assert.deepEqual(f.calls.find(call => call.args[0] === 'config' && !call.args.includes('--get')).args, ['config', '--worktree', 'index.sparse', 'false']);
+  const configWrites = f.calls.filter(call => call.args[0] === 'config' && !call.args.includes('--get'));
+  assert.deepEqual(configWrites.map(call => call.args), [
+    ['config', '--worktree', 'core.sparseCheckoutCone', 'false'],
+    ['config', '--worktree', 'index.sparse', 'false'],
+  ]);
   assert.equal(f.calls.some(call => call.args.includes('--no-sparse-index')), false);
   assert.deepEqual(f.calls.find(call => call.args[0] === 'read-tree').args, ['read-tree', '-mu', 'HEAD']);
-  assert.ok(f.calls.findIndex(call => call.args[0] === 'read-tree') > f.calls.findIndex(call => call.args[0] === 'config' && !call.args.includes('--get')));
-  assert.ok(f.calls.findIndex(call => call.args[0] === 'config' && !call.args.includes('--get')) > f.calls.findIndex(call => call.args.includes('sparse-checkout')));
+  assert.ok(f.calls.findIndex(call => call.args[0] === 'read-tree') > f.calls.indexOf(configWrites[1]));
+  assert.ok(f.calls.indexOf(configWrites[0]) > f.calls.findIndex(call => call.args.includes('sparse-checkout')));
   assert.equal(f.calls.some(call => call.args.some(arg => ['--force', 'fetch', 'reset', 'clean'].includes(arg))), false);
 });
 
@@ -106,7 +110,7 @@ test('wrong origin/main fails before a target directory is created', t => {
   assert.equal(fs.existsSync(f.plan.directory), false);
 });
 
-for (const mutation of ['dirty', 'pattern', 'ignored', 'omitted-source', 'download-resurrection']) {
+for (const mutation of ['dirty', 'pattern', 'ignored', 'omitted-source', 'download-resurrection', 'missing-cone']) {
   test(`existing tool rejects ${mutation} and never repairs it`, t => {
     const f = fixture(t); executeOnlineReleaseToolPlan(f.plan, f.ports);
     if (mutation === 'dirty') fs.appendFileSync(path.join(f.plan.directory, 'src/nested/source.ts'), 'changed');
@@ -116,8 +120,10 @@ for (const mutation of ['dirty', 'pattern', 'ignored', 'omitted-source', 'downlo
       fixtureGit(f.plan.directory, ['update-index', '--skip-worktree', 'src/nested/source.ts']); fs.unlinkSync(path.join(f.plan.directory, 'src/nested/source.ts'));
     }
     if (mutation === 'download-resurrection') fs.mkdirSync(path.join(f.plan.directory, 'public/downloads'));
+    if (mutation === 'missing-cone') fixtureGit(f.plan.directory, ['config', '--worktree', '--unset', 'core.sparseCheckoutCone']);
     f.calls.length = 0; assert.throws(() => executeOnlineReleaseToolPlan(f.plan, f.ports));
     assert.equal(f.calls.some(call => call.args[0] === 'worktree' || call.args.includes('sparse-checkout')), false);
+    assert.equal(f.calls.some(call => call.args[0] === 'config' && !call.args.includes('--get')), false);
   });
 }
 
