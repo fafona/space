@@ -41,6 +41,9 @@ function restoreOriginalStore() {
   assert.equal(added.length, addedNames.size, "only the five additive declarations are removed");
   let restored = storeSource;
   for (const node of [...added].reverse()) restored = restored.slice(0, node.getFullStart()) + restored.slice(node.end);
+  const projectionImport = 'import { isMembershipProfileProjectionEnabled, tryLoadMembershipProfileProjection } from "@/lib/merchantMembershipProfileProjection.server";\n';
+  assert.equal(restored.split(projectionImport).length, 2);
+  restored = restored.replace(projectionImport, "");
   assert.equal(createHash("sha256").update(restored).digest("hex"),
     "39b076bfcfc4605961bf6c32170a3df9730b7aef4d292550845f697058cc4c74",
     "complete 1ede92a3 store: full query/merge/load/save/mirroring and imports are unchanged");
@@ -66,7 +69,7 @@ function instrumentNormalizers() {
 
 const instrumentedSource = instrumentNormalizers();
 const compiled = new Map<string, string>();
-function runtime(legacy = false) {
+function runtime(legacy = false, projectionEnabled = false) {
   const counts = { transactionEntries: 0, membershipRecords: 0 };
   const mutations: unknown[] = [];
   const forbidden = (name: string) => () => { throw new Error("forbidden_test_dependency:" + name); };
@@ -75,6 +78,8 @@ function runtime(legacy = false) {
     static now() { return Date.parse(now); }
   }
   const context = createContext({ Date: FixedDate, __counts: counts, fetch: forbidden("network"),
+    process: { env: projectionEnabled ? { MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED: "1",
+      MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS: siteId } : {} }, AbortController, setTimeout, clearTimeout,
     console: { log: forbidden("log"), error: forbidden("log"), warn: forbidden("log") } });
   const modules = new Map<string, { exports: Record<string, unknown> }>();
   const injected: Record<string, unknown> = {
@@ -88,7 +93,7 @@ function runtime(legacy = false) {
     const name = specifier.replace(/^@\/lib\//, "");
     if (Object.hasOwn(injected, name)) return injected[name];
     if (modules.has(name)) return modules.get(name)!.exports;
-    assert.ok(["merchantMembershipsStore", "merchantMemberships", "mutationOperationId"].includes(name), name);
+    assert.ok(["merchantMembershipsStore", "merchantMemberships", "mutationOperationId", "merchantMembershipProfileProjection.server"].includes(name), name);
     const source = name === "merchantMembershipsStore" ? (legacy ? restoreOriginalStore() : storeSource)
       : name === "merchantMemberships" ? instrumentedSource : read(name + ".ts");
     const key = name + ":" + source;
@@ -367,4 +372,79 @@ test("unchanged full save still submits complete history to the existing atomic 
   assert.equal(commits.length, 1);
   assert.equal(commits[0]!.mutation.memberships.next[0]!.transactions.length, 620);
   assert.equal(commits[0]!.mutation.memberships.expectedUpdatedAt, now);
+});
+
+test("eligible database projection still uses both original profile passes and never reads full pages", async () => {
+  const raw = [member("safe", { transactions: Array.from({ length: 50 }, (_, index) => transaction(index)) }),
+    member("same", { name: "first" }), member("same", { name: "last" }),
+    member("foreign", { siteId: "99990002" }), null, "invalid", []];
+  const projected = raw.map((value) => value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value, transactions: [] } : value);
+  const response = { version: 1, status: "projected", siteId, rows: [row(projected)] };
+  freezeDeep(response);
+  const oldReader = reader([{ data: [row(raw)], error: null }]);
+  const baseline = await outcome(() => runtime().store.loadStoredMerchantMembershipProfiles(oldReader.client, siteId));
+  let rpcCalls = 0;
+  const client: MerchantMembershipsStoreClient = {
+    from: () => assert.fail("eligible projection must not fetch full transactions"),
+    async rpc(name, args) {
+      rpcCalls++;
+      assert.equal(name, "faolla_customer_membership_profiles_v1");
+      assert.deepEqual(jsonClone(args), { p_site_id: siteId });
+      return { data: response, error: null };
+    },
+  };
+  const enabled = runtime(false, true);
+  const current = await outcome(() => enabled.store.loadStoredMerchantMembershipProfiles(client, siteId));
+  assert.deepEqual(current, baseline);
+  assert.equal(rpcCalls, 1);
+  assert.equal(enabled.counts.transactionEntries, 0);
+  assert.ok(enabled.counts.membershipRecords > raw.length, "merge still makes its second normalization pass");
+});
+
+test("projection fallback retains legacy empty-query retries, schema branches and final failure result", async () => {
+  const good = { data: [row([member()])], error: null };
+  const missing = (column: string): Reply => ({ data: null, error: { message: `column pages.${column} does not exist` } });
+  const fallbackResponses = [
+    { data: { version: 1, status: "fallback", siteId }, error: null },
+    { data: null, error: { code: "PGRST202", message: "missing function" } },
+    { data: null, error: { code: "42501", message: "permission denied" } },
+    { data: { version: 1, status: "projected", siteId, rows: [] }, error: null },
+    { data: { version: 1, status: "projected", siteId: "99990002", rows: [row([])] }, error: null },
+  ];
+  const sourceReplies: Array<Array<Reply | Error>> = [[good], [{ data: [], error: null }, good],
+    [missing("merchant_id"), good], [missing("updated_at"), good], [missing("slug")],
+    [{ data: [], error: null }, missing("updated_at"), good],
+    [{ data: [row([member("bad", { transactions: [transaction(0, { balanceDelta: { toString: null } })] })])], error: null }],
+    [new Error("source unavailable")], [{ data: null, error: { message: "source permission denied" } }]];
+  for (const response of fallbackResponses) {
+    for (const replies of sourceReplies) {
+      const oldIo = reader(replies), newIo = reader(replies);
+      let rpcCalls = 0;
+      newIo.client.rpc = async () => { rpcCalls++; return response; };
+      const oldResult = await outcome(() => runtime().store.loadStoredMerchantMembershipProfiles(oldIo.client, siteId));
+      const newResult = await outcome(() => runtime(false, true).store.loadStoredMerchantMembershipProfiles(newIo.client, siteId));
+      assert.deepEqual(newResult, oldResult);
+      assert.deepEqual(newIo.events, oldIo.events);
+      assert.equal(newIo.queries, oldIo.queries);
+      assert.equal(rpcCalls, 1, "only one optional projection attempt, no loop or unbounded retry");
+    }
+  }
+});
+
+test("enabled projection never changes full history readers or the original save contract", async () => {
+  const raw = member("full", { transactions: Array.from({ length: 620 }, (_, index) => transaction(index)) });
+  const run = runtime(false, true);
+  const client = reader([{ data: [row([raw])], error: null }, { data: [row([raw])], error: null }]);
+  client.client.rpc = async () => assert.fail("full readers and original writer cannot use profile RPC");
+  const full = await run.store.loadStoredMerchantMemberships(client.client, siteId);
+  assert.ok(full);
+  assert.equal(full.memberships[0]!.transactions.length, 620);
+  const saved = await run.store.saveStoredMerchantMemberships(client.client, {
+    siteId, memberships: full.memberships, expectedUpdatedAt: now,
+  });
+  assert.deepEqual(jsonClone(saved), { error: null });
+  assert.equal(run.mutations.length, 1);
+  const mutation = run.mutations[0] as { mutation: { memberships: { next: MerchantMembershipRecord[] } } };
+  assert.equal(mutation.mutation.memberships.next[0]!.transactions.length, 620);
 });

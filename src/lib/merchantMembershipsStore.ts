@@ -4,6 +4,7 @@ import {
   resolveMerchantMembershipLedgerDualWriteConfig,
 } from "@/lib/merchantMembershipLedgerDualWrite.server";
 import { commitMerchantOrderMembershipTransaction } from "@/lib/merchantOrderMembershipTransaction.server";
+import { isMembershipProfileProjectionEnabled, tryLoadMembershipProfileProjection } from "@/lib/merchantMembershipProfileProjection.server";
 
 const MERCHANT_MEMBERSHIP_SLUG_PREFIX = "__merchant_memberships__:";
 
@@ -228,7 +229,8 @@ function stripCustomerUnusedTransactions(value: unknown) {
  * Customer-directory-only view of persisted JSON. Keep the original query and
  * both profile-normalization passes, including ID ties before site filtering.
  * Safe transaction histories need no deep normalization for this consumer;
- * source bytes are still fully read. Never pass this incomplete view to writers.
+ * an opt-in database projection can omit safe histories before transmission.
+ * Never pass this incomplete view to writers.
  * This is not a general adapter for accessor/proxy-bearing JavaScript objects.
  */
 export async function loadStoredMerchantMembershipProfiles(
@@ -237,7 +239,9 @@ export async function loadStoredMerchantMembershipProfiles(
 ): Promise<StoredMerchantMembershipProfiles | null> {
   const normalizedSiteId = normalizeText(siteId);
   if (!normalizedSiteId) return null;
-  const rows = await queryStoredMembershipRows(supabase, normalizedSiteId);
+  const projectedRows = isMembershipProfileProjectionEnabled(normalizedSiteId)
+    ? await tryLoadMembershipProfileProjection(supabase, normalizedSiteId) : null;
+  const rows = projectedRows ?? await queryStoredMembershipRows(supabase, normalizedSiteId);
   const slug = buildMembershipsSlug(normalizedSiteId);
   const profileRows = rows.map((row) => {
     const rowSlug = normalizeText(row.slug);
