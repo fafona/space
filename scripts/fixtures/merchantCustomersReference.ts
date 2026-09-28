@@ -1,3 +1,8 @@
+// Frozen full pre-optimization reference; test fixture only, never production.
+// Source: b4a7b77a9f93d08cb9640da3d0b33ae2abe092d1:src/lib/merchantCustomers.ts
+// Original UTF-8 SHA-256: 1a44b96f9f901b2e7edab8f7faae24ea0745fa8312ef5815418e54a35fa420e4
+// Everything after the following marker is the unmodified Git source.
+// BEGIN FROZEN SOURCE
 import type { MerchantBookingRecord } from "@/lib/merchantBookings";
 import type { MerchantMembershipRecord } from "@/lib/merchantMemberships";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
@@ -370,7 +375,7 @@ function mergeTaxProfile(
 function mergeProfiles(
   preferred: MerchantCustomerProfile,
   fallback: MerchantCustomerProfile,
-  options: { replaceEmpty?: boolean; mergeIdentityAliases?: boolean } = {},
+  options: { replaceEmpty?: boolean } = {},
 ): MerchantCustomerProfile {
   const replace = options.replaceEmpty === true;
   const choose = (nextValue: string, previousValue: string) => (replace ? nextValue : nextValue || previousValue);
@@ -401,16 +406,14 @@ function mergeProfiles(
     customFields: replace
       ? preferred.customFields
       : { ...fallback.customFields, ...preferred.customFields },
-    identityAliases: options.mergeIdentityAliases === false
-      ? preferred.identityAliases
-      : Array.from(
-          new Set([
-            ...fallback.identityAliases,
-            ...preferred.identityAliases,
-            ...getMerchantCustomerIdentityTokens(fallback),
-            ...getMerchantCustomerIdentityTokens(preferred),
-          ]),
-        ).slice(0, MAX_IDENTITY_ALIASES),
+    identityAliases: Array.from(
+      new Set([
+        ...fallback.identityAliases,
+        ...preferred.identityAliases,
+        ...getMerchantCustomerIdentityTokens(fallback),
+        ...getMerchantCustomerIdentityTokens(preferred),
+      ]),
+    ).slice(0, MAX_IDENTITY_ALIASES),
     sources: Array.from(new Set([...preferred.sources, ...fallback.sources])),
     createdAt: earlierTimestamp(preferred.createdAt, fallback.createdAt) || preferred.createdAt,
     updatedAt: laterTimestamp(preferred.updatedAt, fallback.updatedAt) || preferred.updatedAt,
@@ -750,9 +753,7 @@ export function buildMerchantCustomerDirectory(input: MerchantCustomerDirectoryI
       );
       let profile = ordered[ordered.length - 1]!.profile;
       for (let index = ordered.length - 2; index >= 0; index -= 1) {
-        // Directory aliases come from the original candidates below, not the
-        // intermediate merged profiles. Keep upsert's alias merging unchanged.
-        profile = mergeProfiles(ordered[index]!.profile, profile, { mergeIdentityAliases: false });
+        profile = mergeProfiles(ordered[index]!.profile, profile);
       }
       const id =
         stored?.profile.id ||
