@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { NextResponse } from "next/server";
 import ts from "typescript";
+import { restoreLegacyOrderMergeSource } from "./merchantOrdersMergeReference";
 
 // Offline synthetic-path measurement, not production latency/auth/DB acceptance.
 // Actual route, list/store entrypoints and reducer execute unchanged. Verified
@@ -16,6 +17,8 @@ import ts from "typescript";
 // bookings deliberately exclude reminder/status delivery. V1 modes are off.
 // Explicit legacyMembershipRead selects the real full membership loader from
 // the same executing store module solely for offline differential measurements.
+// Explicit legacyOrderMerge instead compiles the pinned pre-change order store;
+// executedSourceHashes identifies that difference from the on-disk source.
 // Timings include fixture I/O copying/accounting overhead; async source phases
 // overlap and nest, so they must never be added together as exclusive CPU time.
 export const MERCHANT_CUSTOMER_BASELINE_SITE = "99990001";
@@ -36,6 +39,9 @@ export type MerchantCustomerGetBaselineOptions = {
   transactionsPerMembership?: number;
   transactionMoneyFixture?: "scalar-invalid" | "complex-coercible" | "complex-throwing";
   legacyMembershipRead?: boolean;
+  orderItemsPerOrder?: number;
+  orderTruncationWhitespace?: boolean;
+  legacyOrderMerge?: boolean;
 };
 export type MerchantCustomerBaselinePhase = { calls: number; wallMs: number };
 export type MerchantCustomerBaselineIo = {
@@ -86,6 +92,11 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
     && counts.memberships * transactionsPerMembership <= 100_000, "invalid_baseline_transaction_count");
   assert.ok(options.transactionMoneyFixture === undefined || ["scalar-invalid", "complex-coercible", "complex-throwing"].includes(options.transactionMoneyFixture), "invalid_baseline_transaction_money_fixture");
   assert.ok(options.legacyMembershipRead === undefined || typeof options.legacyMembershipRead === "boolean", "invalid_baseline_legacy_membership_read");
+  const orderItemsPerOrder = options.orderItemsPerOrder ?? 1;
+  assert.ok(Number.isSafeInteger(orderItemsPerOrder) && orderItemsPerOrder >= 1 && orderItemsPerOrder <= 1000
+    && counts.orders * orderItemsPerOrder <= 100_000, "invalid_baseline_order_item_count");
+  assert.ok(options.orderTruncationWhitespace === undefined || typeof options.orderTruncationWhitespace === "boolean", "invalid_baseline_order_whitespace_flag");
+  assert.ok(options.legacyOrderMerge === undefined || typeof options.legacyOrderMerge === "boolean", "invalid_baseline_legacy_order_merge");
   const note = (kind: "order" | "booking", index: number) => {
     if (options.noteLength === undefined) return "Synthetic " + kind;
     const sentence = "Synthetic " + kind + " note " + index + ". ";
@@ -102,8 +113,10 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
   }));
   const orders = Array.from({ length: counts.orders }, (_, index) => ({
     id: "order-" + index, siteId: site, siteName: "Synthetic merchant", status: "completed", pricePrefix: "EUR",
-    customerAccountId: identity(index).accountId, customer: { name: identity(index).name, email: identity(index).email, phone: "", note: note("order", index) },
-    items: [{ productId: "synthetic-product", name: "Synthetic item", quantity: 1, unitPrice: 2 }],
+    customerAccountId: identity(index).accountId, customer: { name: identity(index).name, email: identity(index).email, phone: "",
+      note: options.orderTruncationWhitespace ? "x".repeat(1999) + " tail" : note("order", index) },
+    items: Array.from({ length: orderItemsPerOrder }, () => ({ productId: "synthetic-product",
+      name: options.orderTruncationWhitespace ? "x".repeat(499) + " tail" : "Synthetic item", quantity: 1, unitPrice: 2 })),
     createdAt: timestamp(index), updatedAt: timestamp(index),
   }));
   const bookings = Array.from({ length: counts.bookings + counts.foreignBookings }, (_, index) => {
@@ -159,6 +172,7 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
   const remoteBytes = bytes(rows);
   const inputBytes = Object.freeze({ local: localBytes, remote: remoteBytes, total: localBytes + remoteBytes });
   const sourceHashes: Record<string, string> = {};
+  const executedSourceHashes: Record<string, string> = {};
   let runtimeClone = clone;
   let active: { measure: boolean; io: MerchantCustomerBaselineIo; phases: Record<string, MerchantCustomerBaselinePhase>; phaseOrder: string[]; effects: ReturnType<typeof createHash> } | null = null;
   const event = (value: unknown) => {
@@ -299,9 +313,13 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
     assert.match(name, /^(lib|data|app)\/[A-Za-z0-9_./-]+\.tsx?$/, "unexpected_dependency:" + name);
     assert.equal(path.posix.normalize(name), name, "noncanonical_source_dependency");
     const moduleRecord = { exports: {} as Record<string, unknown> }; modules.set(name, moduleRecord);
-    const source = readFileSync(path.join(root, name), "utf8"), digest = sha(source), key = name + ":" + digest;
-    sourceHashes["src/" + name] = digest;
-    if (!compiled.has(key)) compiled.set(key, ts.transpileModule(source, {
+    const source = readFileSync(path.join(root, name), "utf8");
+    const executedSource = options.legacyOrderMerge === true && name === "lib/merchantOrdersStore.ts"
+      ? restoreLegacyOrderMergeSource(source) : source;
+    const executedDigest = sha(executedSource), key = name + ":" + executedDigest;
+    sourceHashes["src/" + name] = sha(source);
+    executedSourceHashes["src/" + name] = executedDigest;
+    if (!compiled.has(key)) compiled.set(key, ts.transpileModule(executedSource, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
     }).outputText);
     const execute = new Script("(function(require,module,exports){" + compiled.get(key) + "\n})", { filename: name }).runInContext(context);
@@ -324,6 +342,7 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
   const route = load("app/api/merchant-customers/route.ts") as { GET: (request: Request) => Promise<Response> };
   return {
     get sourceHashes() { return Object.freeze({ ...sourceHashes }); },
+    get executedSourceHashes() { return Object.freeze({ ...executedSourceHashes }); },
     async get(input: { measure?: boolean; requestedSiteId?: string; view?: "manager-v1"; payloadAudit?: boolean } = {}): Promise<MerchantCustomerGetBaselineReport> {
       assert.equal(active, null, "concurrent_baseline_get_not_supported");
       const measurementEnabled = input.measure !== false;

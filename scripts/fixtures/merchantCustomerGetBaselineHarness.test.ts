@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { runInNewContext } from "node:vm";
+import { LEGACY_MERCHANT_ORDERS_STORE_SHA256 } from "./merchantOrdersMergeReference";
 import {
   createMerchantCustomerGetBaselineHarness,
   type MerchantCustomerGetBaselineOptions,
@@ -119,9 +120,57 @@ test("empty sources and explicit counts are deterministic, bounded, and do not a
     { noteLength: -1 }, { noteLength: 1001 }, { noteLength: 0.1 }, { noteLength: Number.NaN }, { noteLength: "1000" },
     { transactionsPerMembership: -1 }, { transactionsPerMembership: 10_001 }, { transactionsPerMembership: 0.1 },
     { transactionsPerMembership: Number.NaN }, { transactionsPerMembership: "10" }, { memberships: 11, transactionsPerMembership: 10_000 },
-    { transactionMoneyFixture: "caller-payload" }, { legacyMembershipRead: "true" }]) {
+    { transactionMoneyFixture: "caller-payload" }, { legacyMembershipRead: "true" },
+    { orderItemsPerOrder: 0 }, { orderItemsPerOrder: 1001 }, { orderItemsPerOrder: 0.1 }, { orderItemsPerOrder: Number.NaN },
+    { orderItemsPerOrder: "20" }, { orders: 101, orderItemsPerOrder: 1000 },
+    { orderTruncationWhitespace: "true" }, { legacyOrderMerge: "true" }]) {
     assert.throws(() => createMerchantCustomerGetBaselineHarness(options as MerchantCustomerGetBaselineOptions), /invalid_baseline_/);
   }
+});
+
+test("actual order-store normalization reuse preserves full GET results and IO against the pinned original source", async () => {
+  const storePath = "src/lib/merchantOrdersStore.ts";
+  const scenarios: MerchantCustomerGetBaselineOptions[] = [{}, mixed, { ...mixed, orderItemsPerOrder: 20 },
+    { ...mixed, orderItemsPerOrder: 3, orderTruncationWhitespace: true },
+    { ...mixed, failSource: "orders" }, { ...mixed, bookingReadRepair: true }];
+  for (const options of scenarios) {
+    for (const view of [undefined, "manager-v1"] as const) {
+      // Alternate construction order too: shared compilation must be keyed by
+      // executed bytes, not by the identical on-disk candidate source alone.
+      const variants = view ? [true, false] : [false, true];
+      const harnesses = variants.map((legacyOrderMerge) => createMerchantCustomerGetBaselineHarness({ ...options, instrumentation: true, legacyOrderMerge }));
+      const candidate = harnesses[variants.indexOf(false)], legacy = harnesses[variants.indexOf(true)];
+      const sourceHashes = candidate.sourceHashes;
+      assert.deepEqual(legacy.sourceHashes, sourceHashes);
+      assert.deepEqual(candidate.executedSourceHashes, sourceHashes);
+      assert.equal(legacy.executedSourceHashes[storePath], LEGACY_MERCHANT_ORDERS_STORE_SHA256);
+      assert.notEqual(sourceHashes[storePath], LEGACY_MERCHANT_ORDERS_STORE_SHA256);
+      assert.deepEqual(legacy.executedSourceHashes, { ...sourceHashes, [storePath]: LEGACY_MERCHANT_ORDERS_STORE_SHA256 });
+      for (let request = 0; request < 2; request++) {
+        const next = await candidate.get({ view, payloadAudit: true });
+        const old = await legacy.get({ view, measure: false, payloadAudit: true });
+        assert.deepEqual(withoutTiming(next), old, "complete response, source trace and all side effects must be byte-identical");
+        assert.equal(next.status, 200);
+        assert.deepEqual(next.warnings, options.failSource ? ["orders_unavailable"] : []);
+        assert.equal(next.phases.ordersRead.calls, 1);
+        assert.equal(next.io.forbiddenCalls, 0);
+        if (!options.bookingReadRepair || request > 0) assert.equal(next.io.localWrites + next.io.pageUpdates + next.io.pageInserts, 0);
+      }
+      assert.deepEqual(candidate.sourceHashes, sourceHashes);
+      assert.deepEqual(legacy.executedSourceHashes, { ...sourceHashes, [storePath]: LEGACY_MERCHANT_ORDERS_STORE_SHA256 });
+    }
+  }
+});
+
+test("explicit single order items preserve legacy fixtures while item-rich inputs retain every order", async () => {
+  const ordinary = await createMerchantCustomerGetBaselineHarness(mixed).get({ measure: false });
+  const explicitOne = await createMerchantCustomerGetBaselineHarness({ ...mixed, orderItemsPerOrder: 1 }).get({ measure: false });
+  assert.deepEqual(explicitOne, ordinary);
+  const items = await createMerchantCustomerGetBaselineHarness({ ...mixed, orderItemsPerOrder: 20 }).get({ measure: false });
+  assert.deepEqual(items.outcomes, ordinary.outcomes);
+  assert.notEqual(items.responseSha256, ordinary.responseSha256, "order totals must account for the additional line items");
+  assert.ok(items.inputBytes.remote > ordinary.inputBytes.remote);
+  assert.ok(items.io.readBytes > ordinary.io.readBytes);
 });
 
 test("profile membership reads equal the actual legacy loader for complete full and manager GETs, including malformed history", async () => {

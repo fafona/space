@@ -161,6 +161,32 @@ function attachMerchantOrderChunkIndex(siteId: string, row: StoredMerchantOrders
   };
 }
 
+// Only receives fresh records returned by normalizeMerchantOrderRecords above
+// the final merge, never raw storage or caller-owned records. Most are already
+// stable; trim-then-slice can expose trailing whitespace, so those records must
+// still take the original second normalization (including every item/amount).
+function finishNormalizedMerchantOrders(orders: Iterable<MerchantOrderRecord>): MerchantOrderRecord[] {
+  return Array.from(orders, (order) => {
+    const customer = order.customer;
+    const needsSecondPass =
+      order.clientRequestId?.trim() !== order.clientRequestId ||
+      customer.name.trim() !== customer.name ||
+      customer.phone.trim() !== customer.phone ||
+      customer.email.trim() !== customer.email ||
+      customer.note.trim() !== customer.note ||
+      order.items.some((item) =>
+        item.productId.trim() !== item.productId ||
+        item.code.trim() !== item.code ||
+        item.name.trim() !== item.name ||
+        item.description.trim() !== item.description ||
+        item.imageUrl.trim() !== item.imageUrl ||
+        item.tag.trim() !== item.tag ||
+        item.unitPriceText.trim() !== item.unitPriceText,
+      );
+    return needsSecondPass ? normalizeMerchantOrderRecords([order])[0] : order;
+  }).sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
 export function mergeStoredMerchantOrdersRows(
   siteId: string,
   rows: StoredMerchantOrdersRow[],
@@ -203,7 +229,7 @@ export function mergeStoredMerchantOrdersRows(
 
   return {
     siteId: normalizedSiteId,
-    orders: normalizeMerchantOrderRecords(Array.from(orderMap.values())),
+    orders: finishNormalizedMerchantOrders(orderMap.values()),
     updatedAt,
   };
 }
