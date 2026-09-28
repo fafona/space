@@ -162,3 +162,58 @@ test('reader rejects evidence addition during the observation and sanitizes IO e
   const broken = filesystem(); broken.io.openSync = () => { throw Error('secret /private/credential'); };
   assert.throws(broken.read, /^Error: legacy_recovery_read_unverified$/);
 });
+
+const RECOVERED_LOCK = 'operation.lock.recovered-20260916T0623Z';
+test('closed archives retain and hash a strict empty recovered-lock directory without changing other evidence', () => {
+  for (const records of [restoredFixture(), abortedFixture(), [current(), archive('ended')]]) {
+    const f = filesystem(records), before = f.read(), location = `${records[1].path}/${RECOVERED_LOCK}`;
+    f.put(location);
+    const result = f.read(), proof = result.hashes.find(item => item.path === location);
+    assert.match(proof.sha256, /^[a-f0-9]{64}$/); assert(Object.isFrozen(proof));
+    assert.deepEqual(result.hashes.filter(item => item.path !== location), before.hashes);
+    assert.deepEqual(result.closedRecords, before.closedRecords); assert.deepEqual(result.protectedDirectories, []);
+    assert.equal(f.nodes.get(location).bytes, null); assert.deepEqual(f.io.readdirSync(location), []);
+    f.nodes.get(location).ino++;
+    assert.notEqual(f.read().hashes.find(item => item.path === location).sha256, proof.sha256);
+  }
+});
+test('recovered-lock directory cannot release an uncertified archive or be placed in current', () => {
+  const records = [current(), archive()], f = filesystem(records);
+  f.put(`${records[1].path}/${RECOVERED_LOCK}`);
+  assert.throws(f.read, /recovered_lock_unclosed/);
+  const currentOnly = filesystem(); currentOnly.put(`${ROOT}/merchant-space/${RECOVERED_LOCK}`);
+  assert.throws(currentOnly.read, /unsafe_file/);
+});
+for (const [name, mutate] of [
+  ['nonempty', (f, location) => f.put(`${location}/private-unknown.json`, '{}')],
+  ['symlink', (f, location) => { f.nodes.get(location).link = '/unrelated'; }],
+  ['not root owned', (f, location) => { f.nodes.get(location).uid = 1000n; }],
+  ['mode 500 instead of 700', (f, location) => { f.nodes.get(location).mode = 0o40500n; }],
+  ['regular file', (f, location) => f.put(location, 'not-a-directory')],
+]) test(`recovered-lock evidence refuses ${name}`, () => {
+  const records = restoredFixture(), f = filesystem(records), location = `${records[1].path}/${RECOVERED_LOCK}`;
+  f.put(location); mutate(f, location); assert.throws(f.read, /^Error: legacy_recovery_[a-z_]+$/);
+});
+test('recovered-lock names require an exact valid UTC minute timestamp', () => {
+  for (const name of ['operation.lock.recovered-', `${RECOVERED_LOCK}-other`, 'operation.lock.recovered-20260231T0623Z',
+    'operation.lock.recovered-20261316T0623Z', 'operation.lock.recovered-20260916T2463Z', 'operation.lock.recovered-20260916T062300Z']) {
+    const records = restoredFixture(), f = filesystem(records); f.put(`${records[1].path}/${name}`);
+    assert.throws(f.read, /unsafe_file/);
+  }
+});
+test('recovered-lock replacement or new contents during reading invalidate the observation', () => {
+  for (const change of ['identity', 'listing']) {
+    const records = restoredFixture(), f = filesystem(records), location = `${records[1].path}/${RECOVERED_LOCK}`;
+    f.put(location); const original = f.io.readFileSync; let changed = false;
+    f.io.readFileSync = fd => {
+      const bytes = original(fd);
+      if (!changed && bytes.toString() === records[1].files['state.json']) {
+        changed = true;
+        if (change === 'identity') f.nodes.get(location).ino++;
+        else f.put(`${location}/late-proof.json`, '{}');
+      }
+      return bytes;
+    };
+    assert.throws(f.read, /evidence_changed/); assert.equal(f.descriptors.size, 0);
+  }
+});

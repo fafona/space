@@ -49,6 +49,12 @@ function auxiliary(record, value) {
       fail('auxiliary_binding_invalid');
   }
 }
+function recoveredLockName(name) {
+  const parts = /^operation\.lock\.recovered-([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})Z$/.exec(name);
+  if (!parts) return false;
+  const iso = `${parts[1]}-${parts[2]}-${parts[3]}T${parts[4]}:${parts[5]}:00.000Z`, date = new Date(iso);
+  return Number.isFinite(date.getTime()) && date.toISOString() === iso;
+}
 
 /** Pure classifier for already securely read records. No parsed private values
  * are returned. Files are original Buffer/string bytes, never reserialized JSON. */
@@ -120,7 +126,7 @@ export function readLegacyReleaseRecovery({io = fs, maintenanceRoot = MAINTENANC
   try {
     if (![maintenanceRoot, evidenceRoot].every(value => typeof value === 'string' && value.startsWith('/') && value !== '/' &&
         path.normalize(value) === value && !/[\x00-\x1f\\]/.test(value)) || path.dirname(maintenanceRoot) !== evidenceRoot) fail('roots_invalid');
-    const snapshots = new Map(); let total = 0;
+    const snapshots = new Map(), recoveredLocks = []; let total = 0;
     const directory = (location, privateMode = true) => {
       const stat = io.lstatSync(location, {bigint: true});
       if (!stat.isDirectory() || stat.isSymbolicLink() || Number(stat.uid) !== 0 ||
@@ -162,6 +168,12 @@ export function readLegacyReleaseRecovery({io = fs, maintenanceRoot = MAINTENANC
           if (listing(`${location}/${name}`).length) fail('operation_lock_not_empty');
           continue;
         }
+        if (kind === 'archive' && recoveredLockName(name)) {
+          const lock = `${location}/${name}`, entries = listing(lock);
+          if ((Number(directory(lock).mode) & 0o7777) !== 0o700 || entries.length) fail('recovered_lock_invalid');
+          recoveredLocks.push({archive: location, path: lock, identity: snapshots.get(lock).identity, entries});
+          continue;
+        }
         files[name] = read(`${location}/${name}`);
       }
       return {kind, id, path: location, files};
@@ -177,13 +189,22 @@ export function readLegacyReleaseRecovery({io = fs, maintenanceRoot = MAINTENANC
       if (match) records.push(record(match[1] === 'restoration' ? 'restoration' : 'aborted', match[2], `${evidenceRoot}/${name}`));
       else if (/^faolla-(?:restoration|aborted-prepare)-[0-9]/.test(name)) fail('unknown_recovery_entry');
     }
-    const result = classifyLegacyRecoveryRecords(records);
+    const classification = classifyLegacyRecoveryRecords(records);
+    const closedArchives = new Set(classification.closedRecords.filter(record =>
+      ['archive-ended', 'restoration-ended', 'aborted-prepare-restored'].includes(record.closure)).map(record => record.path));
+    const lockHashes = recoveredLocks.map(lock => {
+      if (!closedArchives.has(lock.archive)) fail('recovered_lock_unclosed');
+      // Unlike the caller's transient current lock, this sealed historical
+      // directory is immutable evidence. Bind its identity AND empty listing.
+      return {path: lock.path, sha256: hash(JSON.stringify({version: 1, kind: 'archived-recovered-lock',
+        identity: lock.identity, entries: lock.entries}))};
+    });
     for (const [location, snapshot] of snapshots) {
       const stat = snapshot.names ? directory(location, snapshot.privateMode) : io.lstatSync(location, {bigint: true});
       if (identity(stat) !== snapshot.identity || snapshot.names && JSON.stringify(io.readdirSync(location).sort()) !== JSON.stringify(snapshot.names))
         fail('evidence_changed');
     }
-    return result;
+    return freeze({...classification, hashes: [...classification.hashes, ...lockHashes].sort((a, b) => a.path.localeCompare(b.path))});
   } catch (error) {
     if (/^legacy_recovery_[a-z_]+$/.test(error?.message ?? '')) throw error;
     fail('read_unverified');
