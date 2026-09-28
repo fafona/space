@@ -379,6 +379,49 @@ All original suites, build, vacant-port/process checks, smoke and ready gates
 remain mandatory. There is no additional stop, automatic retry or traffic
 switch, and the ordinary `finish-stage` build requirement is unchanged.
 
+## Customer read CPU/payload code-only lane (2026-09-28)
+
+The user approved this separate publication scope after being told that the
+existing lanes reject the customer optimization files. `customer-code-performance`
+uses its own exact 57-path allowlist, selected by `merchantCustomerListView.ts`
+before older overlapping anchors. No older allowlist is widened. The closure
+includes the seven reviewed local checkpoints and the five already-reviewed
+operational-only changes since live application `57dbac3a`.
+
+This is a **code-only** release. Use `stage SHA BASELINE`, then `activate SHA`;
+staging produces `ready-no-database`, which activation requires. Every database helper
+and the controller database action reject this lane before backup, migration,
+pilot or enablement operations. Migration 060 is present as inactive source,
+not applied. No 053-059 authority branch, authentication change, dependency
+change, worker change, cleanup or broader schema authority is included.
+
+The baseline's PM2 environment, actual process environment and saved `.env.local`
+must have both membership projection settings absent or explicitly disabled.
+Unexpected enabled/nonempty/noncanonical values are rejected before creating
+release state; they are not silently overwritten. Only the new candidate gets
+`MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED=0` and an empty
+`MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS`. Both candidate configuration
+files are rechecked before tests/build/start; runtime acceptance additionally
+checks PM2 and the actual process environment. Analytics/signing key, retention
+and the existing fafona order-attention pilot remain unchanged. Only the new web
+candidate has background jobs disabled; original services/workers are untouched.
+
+The 81 exact focused files plus three common release checks run serially, as do
+the four existing retirement/rolling suites. Native database runner entrypoints
+are not executed. The full exact-main CI, real protected production build,
+candidate/public smoke, dependency equality, maintenance-state/process/proxy
+ownership, saved before/after configuration hashes and immutable asset checks
+remain mandatory. Candidate and public customer GET probes include both full
+and manager-v1 unauthenticated requests, which must return 401.
+
+Rollback remains available even if the new candidate's settings are faulty: it
+restores only hash-verified owned proxy configurations and does not depend on
+the candidate projection flags. No business records or database objects are
+rolled back. If a slot is needed, use only the already-approved explicit rolling
+inspection/retirement workflow, preserving the live release, two rollback
+anchors, all original services and all files. Staging never retires a process
+implicitly. See [this release's evidence](customer-code-release-2026-09-28.md).
+
 Every controller HTTP probe now explicitly sends `Connection: close`, including
 when caller headers use another capitalization. This avoids reusing an idle
 connection across long synchronous test/build children. Host, manual redirects,

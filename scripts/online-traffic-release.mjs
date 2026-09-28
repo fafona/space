@@ -12,6 +12,7 @@ import {normalizeRetirementProcess,readOnlineRetirementCertificates} from './onl
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {readOnlineRollingRetentions,assertRollingRetainedProcesses,assertRollingStateHistory} from './online-release-rolling.mjs';
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
+import {CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS} from './online-traffic-release-policy.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const [action,target,baseline]=process.argv.slice(2);
@@ -86,8 +87,8 @@ async function verifyBase(s){
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
 function readRuntimePerformanceSavedConfigs(s,includeAfter){
- if(s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu')return null;
- const error=s.lane==='booking-merge-cpu'?'booking_merge_cpu_saved_proxy_changed':'runtime_performance_saved_proxy_changed';
+ if(s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance')return null;
+ const error=s.lane==='customer-code-performance'?'customer_code_performance_saved_proxy_changed':s.lane==='booking-merge-cpu'?'booking_merge_cpu_saved_proxy_changed':'runtime_performance_saved_proxy_changed';
  const saved=new Map();
  for(const file of WEB_RELEASE_FILES){
   const before=safeFile(`${operation}/before-${file}`);
@@ -109,12 +110,20 @@ function verifyCandidate(s){
   const env=candidateEnvironment(s);
   if(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_RETENTION_ENABLED!==env.FAOLLA_TRAFFIC_RETENTION_ENABLED||p.pm2_env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||p.pm2_env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0')fail('booking_merge_cpu_baseline_features_changed');
  }
+ if(s.lane==='customer-code-performance'){
+  const env=verifyCustomerCodeCandidateSettings(s);
+  const actual=webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`));
+  assertCustomerCodeProjectionOff(p.pm2_env);assertCustomerCodeProjectionOff(actual);
+  for(const values of [p.pm2_env,actual]){
+   if(values.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||values.FAOLLA_TRAFFIC_ENABLED!=='1'||!values.FAOLLA_TRAFFIC_SIGNING_SECRET||values.FAOLLA_TRAFFIC_SIGNING_SECRET!==env.FAOLLA_TRAFFIC_SIGNING_SECRET||values.FAOLLA_TRAFFIC_RETENTION_ENABLED!==env.FAOLLA_TRAFFIC_RETENTION_ENABLED||values.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||values.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0'||values.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1')fail('customer_code_performance_baseline_features_changed');
+  }
+ }
  if(s.lane==='public-catalog-batch'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('public_catalog_batch_baseline_features_changed');
  return p;
 }
 function verifyRuntimePerformanceSource(s){
- if(s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu')return;
- if(run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail(s.lane==='booking-merge-cpu'?'booking_merge_cpu_candidate_source_changed':'runtime_performance_candidate_source_changed');
+ if(s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance')return;
+ if(run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail(s.lane==='customer-code-performance'?'customer_code_performance_candidate_source_changed':s.lane==='booking-merge-cpu'?'booking_merge_cpu_candidate_source_changed':'runtime_performance_candidate_source_changed');
 }
 function publishStatic(source,destination){
  const files=[];function walk(dir,rel=''){for(const e of readdirSync(dir,{withFileTypes:true})){const key=rel?`${rel}/${e.name}`:e.name;if(e.isSymbolicLink())fail('static_symlink');if(e.isDirectory())walk(`${dir}/${e.name}`,key);else if(e.isFile())files.push(key);else fail('static_type_invalid');}}
@@ -133,13 +142,17 @@ async function smoke(s,publicMode=false){
  await request(`${origin}/traffic-card-v1.js`);
  await request(`${origin}/api/super-admin/platform-merchant-snapshot`,[401]);
  await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/traffic?siteId=10000000`,[401],'console.faolla.com');
+ if(s.lane==='customer-code-performance'){
+  await request(`${origin}/api/merchant-customers?siteId=10000000`,[401]);
+  await request(`${origin}/api/merchant-customers?siteId=10000000&view=manager-v1`,[401]);
+ }
  // In-progress requests and existing assets remain served by the previous process.
  const html=await(await request(origin+'/')).text();const assets=[...new Set(html.match(/\/_next\/static\/[^"\s<>]+\.(?:js|css)/g)||[])];
  for(const path of assets)await request(origin+path);return assets.length;
 }
 function restoreConfigs(s){
  for(const file of WEB_RELEASE_FILES){const h=hash(safeFile(`${proxy}/${file}`));if(h!==s.configs[file].oldHash&&h!==s.configs[file].newHash)fail('rollback_proxy_not_owned');}
- const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'?readRuntimePerformanceSavedConfigs(s,false):null;
+ const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'?readRuntimePerformanceSavedConfigs(s,false):null;
  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).before:safeFile(`${operation}/before-${file}`));
  run(nginx,['-t']);run(nginx,['-s','reload']);
  s.status='rolled-back';s.rolledBackAt=new Date().toISOString();save(s);
@@ -147,6 +160,25 @@ function restoreConfigs(s){
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
 function candidateEnvironment(s){return JSON.parse(safeFile(`${operation}/runtime.json`));}
+function assertCustomerCodeProjectionOff(env,allowAbsent=false){
+ for(const [key,expected] of [['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED','0'],['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS','']]){
+  if(env[key]!==expected&&!(allowAbsent&&env[key]===undefined))fail('customer_code_projection_must_remain_off');
+ }
+}
+function assertCustomerCodeProjectionFile(text,allowAbsent=false){
+ for(const [key,expected] of [['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED','0'],['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS','']]){
+  const lines=text.split(/\r?\n/).filter(line=>!/^\s*#/.test(line)&&line.includes(key));
+  if(lines.length!==1&&!(allowAbsent&&lines.length===0)||lines.some(line=>line!==`${key}=${expected}`))fail('customer_code_projection_env_file_invalid');
+ }
+}
+function verifyCustomerCodeCandidateSettings(s){
+ if(s.lane!=='customer-code-performance')return null;
+ const env=candidateEnvironment(s);
+ assertCustomerCodeProjectionOff(env);
+ assertCustomerCodeProjectionFile(safeFile(`${s.directory}/.env.local`));
+ if(env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0'||env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1')fail('customer_code_performance_candidate_settings_invalid');
+ return env;
+}
 function verifyOrderAttentionSource(s){
  if(s.lane!=='order-attention')return;
  if(run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('order_attention_candidate_source_changed');
@@ -231,7 +263,7 @@ async function recoverStaticPermissions(s){
  s.staticPermissionRetry={toolRevision:tool.revision,audit,previousRollback:s.rolledBackAt,acceptedAt:new Date().toISOString()};save(s);
 }
 async function activateCandidate(s){
- const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'?readRuntimePerformanceSavedConfigs(s,true):null;
+ const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'?readRuntimePerformanceSavedConfigs(s,true):null;
  verifyOrderAttention(s,'verify');
  const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
  s.status='activating';save(s);
@@ -377,6 +409,14 @@ try{
   const old=previousActive??{...legacy,port:3102,name:'merchant-space-web-live'};
   if(old.target!==baseline||(!previousActive&&legacy.status!=='active'))fail('live_baseline_not_owned');
   const all=pm(),prior=all.find(p=>p.name===old.name);if(!prior||prior.pm2_env.pm_cwd!==old.directory)fail('live_process_mismatch');
+  if(lane==='customer-code-performance'){
+   if(prior.pm2_env.status!=='online'||!Number.isSafeInteger(prior.pid)||prior.pid<=0)fail('customer_code_baseline_process_invalid');
+   assertCustomerCodeProjectionOff(prior.pm2_env,true);
+   const liveEnv=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+   assertCustomerCodeProjectionOff(liveEnv,true);
+   assertCustomerCodeProjectionFile(safeFile(`${old.directory}/.env.local`),true);
+   if(liveEnv.FAOLLA_TRAFFIC_ENABLED!=='1'||!liveEnv.FAOLLA_TRAFFIC_SIGNING_SECRET||liveEnv.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000')fail('customer_code_performance_baseline_features_invalid');
+  }
   if(hash(run('git',['show',`${target}:package-lock.json`],{cwd:app}))!==hash(safeFile(`${old.directory}/package-lock.json`)))fail('dependencies_changed');
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
   const sockets=run('ss',['-ltnH']);const port=[3103,3104,3105,3106,3107,3108,3109,3110].find(p=>!sockets.includes(`:${p} `));if(!port)fail('no_candidate_port');
@@ -395,14 +435,22 @@ try{
   if(lane==='read-index'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('read_index_baseline_features_invalid');
   if(lane==='runtime-performance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('runtime_performance_baseline_features_invalid');
   if(lane==='booking-merge-cpu'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('booking_merge_cpu_baseline_features_invalid');
+  if(lane==='customer-code-performance'){
+   assertCustomerCodeProjectionOff(env,true);assertCustomerCodeProjectionFile(safeFile(`${old.directory}/.env.local`),true);
+   if(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000')fail('customer_code_performance_baseline_features_invalid');
+  }
   if(lane==='public-catalog-batch'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('public_catalog_batch_baseline_features_invalid');
   const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='order-attention'?{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'}:{}),...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
+  if(lane==='customer-code-performance')Object.assign(changes,{MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED:'0',MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS:''});
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
   console.log('online_focused_tests');
   verifyRuntimePerformanceSource(s);
-  const tests=lane==='booking-merge-cpu'
+  verifyCustomerCodeCandidateSettings(s);
+  const tests=lane==='customer-code-performance'
+   ? CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS
+   : lane==='booking-merge-cpu'
    ? BOOKING_MERGE_CPU_FOCUSED_TESTS.slice(0,-3)
    : lane==='runtime-performance'
    ? ['src/components/admin/MerchantCustomerManager.behavior.test.ts','src/lib/merchantCustomerSearch.test.ts','src/components/SitePageClient.behavior.test.ts','src/components/blocks/ProductBlock.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerPagination.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/api/orders/catalog/public/batch-route.test.ts','src/app/api/orders/catalog/public/route.test.ts','src/app/api/orders/route.test.ts','src/lib/merchantPublicCatalog.test.ts','src/lib/publicCatalogCoordinator.test.ts','src/lib/usePublicCatalogBlocks.test.ts','src/lib/merchantCatalog.test.ts','src/lib/merchantCatalogStore.test.ts','src/lib/merchantOrderCatalog.test.ts','src/lib/productBlock.test.ts','scripts/check-release-baseline.test.mjs','scripts/online-static-recovery.test.mjs']
@@ -419,13 +467,16 @@ try{
    : lane==='performance'
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
-  run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  run('node',['--import','tsx','--test',...(lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
   if(lane==='runtime-performance')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   if(lane==='booking-merge-cpu')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
+  if(lane==='customer-code-performance')run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
+  verifyCustomerCodeCandidateSettings(s);
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
   try{run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
   verifyRuntimePerformanceSource(s);
+  verifyCustomerCodeCandidateSettings(s);
   run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(port)],{env});
   let ready=false;for(let i=0;i<25;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('candidate_not_ready');
   verifyCandidate(s);s.status=onlineReleaseStageStatus(lane);save(s);
