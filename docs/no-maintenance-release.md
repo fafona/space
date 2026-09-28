@@ -27,6 +27,22 @@ source from reviewed current main. Do not use the historical full deploy script.
 
 Until activation and public checks finish, do not call the feature deployed.
 
+## Resource-efficient operations (2026-09-28)
+
+Use [the resource playbook](release-resource-efficiency.md) before preparing
+another release. Operations-only scripts/docs do **not** require an application
+candidate, production build, traffic switch or maintenance. They still require
+reviewed main and the normal required CI checks. Runtime changes still use the
+reviewed exact lane and a separately verified candidate; do not call an ops-only
+publication a deployment of unrelated application changes.
+
+For new controller worktrees use `scripts/prepare-online-release-tool.mjs SHA`.
+It excludes only `public/downloads` before checkout, retains all other tracked
+source, verifies blob content and holds the existing deployment locks. It does
+not retrofit or delete old tools. Inactive webpack caches can be inspected and
+explicitly reclaimed using the manifest-bound tool described in the playbook;
+cleanup is not an automatic side effect of stage or activate.
+
 ## Export-only QR UI lane (2026-09-23)
 
 The requested standalone QR export is a separate exact file allowlist selected
