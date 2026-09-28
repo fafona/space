@@ -6,6 +6,7 @@ import ts from "typescript";
 import * as customerTools from "@/lib/merchantCustomers";
 import * as customerPagination from "@/lib/merchantCustomerPagination";
 import * as customerSearch from "@/lib/merchantCustomerSearch";
+import { toMerchantCustomerListItem, type MerchantCustomerListItem } from "@/lib/merchantCustomerListView";
 
 // Exercise the actual component handlers with a minimal hook/JSX harness. No
 // browser, production API, authentication session or real spreadsheet is used.
@@ -24,7 +25,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function harness() {
+function harness({ managerView = true } = {}) {
   const slots: unknown[] = [];
   const effects = new Map<number, Effect>();
   const pending: Array<{ layout: boolean; run: () => void }> = [];
@@ -48,7 +49,7 @@ function harness() {
   let deferredQueryOverride: string | null = null;
   const customerRows = new Map<string, customerTools.MerchantCustomerDirectoryItem[]>();
   const mutations: Array<{ method: string; body: unknown }> = [];
-  const requests: Array<{ siteId: string; method: string; signal?: AbortSignal }> = [];
+  const requests: Array<{ siteId: string; method: string; signal?: AbortSignal; view: string | null }> = [];
   const readPlans: FetchPlan[] = [];
   const mutationPlans: FetchPlan[] = [];
   const timers = new Map<number, { action: () => void; delay: number }>();
@@ -69,10 +70,17 @@ function harness() {
       writes += 1;
       mutations.push({ method: options.method, body: options.body ? JSON.parse(options.body) : null });
     } else reads += 1;
-    const requestedSite = new URL(url, "https://fixture.invalid").searchParams.get("siteId") ?? siteId;
-    requests.push({ siteId: requestedSite, method: options?.method ?? "GET", signal: options?.signal });
+    const params = new URL(url, "https://fixture.invalid").searchParams;
+    const requestedSite = params.get("siteId") ?? siteId;
+    requests.push({ siteId: requestedSite, method: options?.method ?? "GET", signal: options?.signal, view: params.get("view") });
     const plan = (options?.method ? mutationPlans : readPlans).shift();
-    const payload = { customers: customerRows.get(requestedSite) ?? [], version: "v1", created: 1 };
+    const rows = customerRows.get(requestedSite) ?? [];
+    // An old server ignores the view parameter. Both payloads must work with
+    // the same client during rolling publication or rollback.
+    const payload = {
+      customers: managerView && params.get("view") === "manager-v1" ? rows.map(toMerchantCustomerListItem) : rows,
+      version: "v1", created: 1,
+    };
     // Intentionally permit a transport to finish after abort, so scope/request
     // identity guards, rather than the mock, must prevent stale acceptance.
     if (plan?.headers) await plan.headers;
@@ -129,7 +137,7 @@ function harness() {
       if (name === "@/lib/merchantCustomers") return customerTools;
       if (name === "@/lib/merchantCustomerPagination") return customerPagination;
       if (name === "@/lib/merchantCustomerSearch") return {
-        compileMerchantCustomerSearch: (rows: customerTools.MerchantCustomerDirectoryItem[]) => {
+        compileMerchantCustomerSearch: (rows: MerchantCustomerListItem[]) => {
           searchCorpora += 1;
           return customerSearch.compileMerchantCustomerSearch(rows);
         },
@@ -919,3 +927,89 @@ test("actual empty customer query only normalizes query text while source/status
     assert.equal(app.counts().reads, 1);
   } finally { String.prototype.normalize = originalNormalize; }
 });
+
+test("manager-v1 and legacy full responses render identical lists, totals and search results", async () => {
+  const rows = fixtureCustomers(151);
+  rows[149] = {
+    ...rows[149],
+    displayName: "Later-page customer",
+    notes: "profile-note-marker",
+    tags: ["tag-marker"],
+    customFields: { "field-key": "field-value" },
+    tax: { ...rows[149].tax, number: "tax-marker" },
+    address: { ...rows[149].address, line2: "address-marker" },
+    activity: {
+      ...rows[149].activity, orderCount: 7, bookingCount: 9,
+      orderTotals: [{ label: "EUR", amount: 12.34 }, { label: "USD", amount: 56.78 }],
+      lastActivityAt: "2026-09-20T12:34:56.000Z",
+      lastOrderNote: "unused-order-detail", lastBookingNote: "unused-booking-detail",
+    },
+  };
+  const apps = [harness({ managerView: true }), harness({ managerView: false })];
+  for (const app of apps) { app.setCustomerRows(rows); app.render(); }
+  await flush();
+  const assertSame = () => assert.equal(textContent(apps[0].render()), textContent(apps[1].render()));
+  for (const desktop of [false, true]) {
+    for (const app of apps) app.setDesktop(desktop);
+    assertSame();
+    for (const query of ["profile-note-marker", "tag-marker", "field-key field-value", "tax-marker", "address-marker", "unused-order-detail", "unused-booking-detail", ""]) {
+      for (const app of apps) {
+        const search = app.find(app.render(), (item) => item.type === "input" && item.props.placeholder === "名称 / 电话 / 邮箱 / 地址 / 税号 / 编号")!;
+        app.action(search, "onChange", { target: { value: query } });
+      }
+      assertSame();
+      assert.equal(visibleCustomerRows(apps[0]).length, query.startsWith("unused-") ? 0 : query ? 1 : 50);
+    }
+    for (const app of apps) app.action(paginationButton(app, "末页"), "onClick");
+    assertSame();
+    for (const app of apps) app.action(paginationButton(app, "首页"), "onClick");
+  }
+  for (const app of apps) {
+    assert.equal(app.requests.length, 1, "search, paging and breakpoint changes do not load a detail endpoint");
+    assert.equal(app.requests[0].view, "manager-v1", "request the slim view even if an older server ignores it");
+    assert.equal(app.counts().writes, 0);
+  }
+});
+
+for (const managerView of [true, false]) {
+  for (const desktop of [true, false]) {
+    test(`full profile survives editor PATCH with ${managerView ? "manager-v1" : "legacy server"} payload, desktop=${desktop}`, async () => {
+      const rows = fixtureCustomers(1);
+      const customer = rows[0];
+      Object.assign(customer, {
+        referenceCode: "ref-fixture", memberNo: "member-fixture", accountId: "account-fixture",
+        authUserId: "auth-fixture", guestHash: "guest-fixture", phone: "+34600111222", email: "fixture@example.test",
+        birthday: "2000-02-29", gender: "other", notes: "original note", allergens: ["allergen"],
+        tags: ["tag"], customFields: { extra: "kept" }, identityAliases: ["email:old@example.test"],
+        address: { country: "ES", province: "province", city: "city", postalCode: "41001", line1: "street", line2: "unit" },
+        tax: { name: "tax name", number: "tax number", country: "ES", province: "tax province", city: "tax city", address: "tax street" },
+      });
+      const before = JSON.stringify(rows);
+      const app = harness({ managerView });
+      app.setCustomerRows(rows); app.setDesktop(desktop); app.render();
+      await flush();
+      app.action(app.find(visibleCustomerRows(app)[0], (item) => item.type === "button" && item.props.children === "编辑")!, "onClick");
+      const dialog = app.find(app.render(), (item) => typeof item.type === "function" && item.type.name === "CustomerDialog")!;
+      const draft = dialog.props.customer as customerTools.MerchantCustomerProfile;
+      const expected = { ...customer, notes: "edited note" };
+      const submitted = { ...draft, notes: "edited note" };
+      for (const key of ["address", "tax", "allergens", "tags", "customFields", "identityAliases", "sources"] as const) {
+        assert.notEqual(draft[key], customer[key], "editor must retain independent nested draft: " + key);
+      }
+      app.action(dialog, "onSave", submitted);
+      await flush();
+      assert.equal(app.mutations.length, 1);
+      assert.equal(app.mutations[0].method, "PATCH");
+      const body = app.mutations[0].body as { siteId: string; version: string; customer: customerTools.MerchantCustomerProfile };
+      assert.equal(body.siteId, customer.siteId);
+      assert.equal(body.version, "v1", "keep the original manual-store edit version");
+      for (const key of Object.keys(customer).filter((key) => key !== "activity")) {
+        assert.deepEqual(body.customer[key as keyof customerTools.MerchantCustomerProfile], expected[key as keyof typeof expected], key);
+      }
+      assert.equal(JSON.stringify(rows), before, "editing and save must not mutate the loaded source");
+      assert.equal(app.counts().reads, 2, "one initial read and one post-write refresh, no separate detail fetch");
+      assert.ok(app.requests.filter((request) => request.method === "GET").every((request) => request.view === "manager-v1"));
+      assert.equal(app.requests.find((request) => request.method === "PATCH")?.view, null, "the mutation endpoint stays unchanged");
+    });
+  }
+}

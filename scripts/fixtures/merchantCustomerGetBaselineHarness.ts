@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 import { createContext, Script } from "node:vm";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import { NextResponse } from "next/server";
 import ts from "typescript";
 
@@ -29,6 +30,7 @@ export type MerchantCustomerGetBaselineOptions = {
   sessionSiteId?: string | null;
   bookingReadRepair?: boolean;
   instrumentation?: boolean;
+  noteLength?: number;
 };
 export type MerchantCustomerBaselinePhase = { calls: number; wallMs: number };
 export type MerchantCustomerBaselineIo = {
@@ -45,6 +47,7 @@ export type MerchantCustomerGetBaselineReport = {
   phases: Record<string, MerchantCustomerBaselinePhase>;
   phaseOrder: string[];
   getWallMs: number; measurementEnabled: boolean;
+  payloadAudit?: { responseGzipBytes: number; responseCanonicalSha256: string; projectedResponseCanonicalSha256: string };
 };
 type Row = Record<string, unknown>;
 const root = fileURLToPath(new URL("../../src/", import.meta.url));
@@ -54,6 +57,9 @@ const bookingSlug = "__merchant_booking_records__:v1";
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
+const canonicalJson = (value: unknown) => JSON.stringify(value, (_key, entry: unknown) =>
+  entry !== null && typeof entry === "object" && !Array.isArray(entry)
+    ? Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) : entry);
 const countFields = ["storedCustomers", "orders", "bookings", "memberships", "foreignBookings"] as const;
 const phaseNames = ["storedRead", "ordersRead", "bookingsRead", "membershipsRead", "customerReducer", "jsonSerialization"] as const;
 
@@ -69,6 +75,12 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
   assert.ok(options.sessionSiteId === undefined || options.sessionSiteId === null || /^\d{8}$/.test(options.sessionSiteId), "invalid_baseline_session_site");
   assert.ok(options.bookingReadRepair === undefined || typeof options.bookingReadRepair === "boolean", "invalid_baseline_repair_flag");
   assert.ok(options.instrumentation === undefined || typeof options.instrumentation === "boolean", "invalid_baseline_instrumentation_flag");
+  assert.ok(options.noteLength === undefined || (Number.isSafeInteger(options.noteLength) && options.noteLength >= 0 && options.noteLength <= 1000), "invalid_baseline_note_length");
+  const note = (kind: "order" | "booking", index: number) => {
+    if (options.noteLength === undefined) return "Synthetic " + kind;
+    const sentence = "Synthetic " + kind + " note " + index + ". ";
+    return sentence.repeat(Math.ceil(options.noteLength / sentence.length)).slice(0, options.noteLength);
+  };
   const identity = (index: number) => ({
     name: "Synthetic customer " + index % distinct,
     email: `synthetic-${index % distinct}@example.test`, accountId: "synthetic-account-" + index % distinct,
@@ -80,7 +92,7 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
   }));
   const orders = Array.from({ length: counts.orders }, (_, index) => ({
     id: "order-" + index, siteId: site, siteName: "Synthetic merchant", status: "completed", pricePrefix: "EUR",
-    customerAccountId: identity(index).accountId, customer: { name: identity(index).name, email: identity(index).email, phone: "", note: "Synthetic order" },
+    customerAccountId: identity(index).accountId, customer: { name: identity(index).name, email: identity(index).email, phone: "", note: note("order", index) },
     items: [{ productId: "synthetic-product", name: "Synthetic item", quantity: 1, unitPrice: 2 }],
     createdAt: timestamp(index), updatedAt: timestamp(index),
   }));
@@ -89,7 +101,7 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
     return { id: (foreign ? "foreign-booking-" : "booking-") + index, siteId: foreign ? "99990002" : site,
       siteName: "Synthetic merchant", store: "Store", item: "Item", title: "Title", bookingBlockId: "booking", bookingViewport: "desktop",
       appointmentAt: "2032-06-20T12:00", customerName: identity(index).name, email: identity(index).email,
-      customerAccountId: identity(index).accountId, phone: "", note: "Synthetic booking", status: "cancelled",
+      customerAccountId: identity(index).accountId, phone: "", note: note("booking", index), status: "cancelled",
       createdAt: timestamp(index), updatedAt: timestamp(index), editToken: "private-synthetic-edit-token-" + index,
       customerEmailLogs: [{ private: true }], timeline: [{ private: true }] };
   });
@@ -289,7 +301,7 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
   const route = load("app/api/merchant-customers/route.ts") as { GET: (request: Request) => Promise<Response> };
   return {
     get sourceHashes() { return Object.freeze({ ...sourceHashes }); },
-    async get(input: { measure?: boolean; requestedSiteId?: string } = {}): Promise<MerchantCustomerGetBaselineReport> {
+    async get(input: { measure?: boolean; requestedSiteId?: string; view?: "manager-v1"; payloadAudit?: boolean } = {}): Promise<MerchantCustomerGetBaselineReport> {
       assert.equal(active, null, "concurrent_baseline_get_not_supported");
       const measurementEnabled = input.measure !== false;
       const phases = Object.fromEntries(phaseNames.map((name) => [name, { calls: 0, wallMs: 0 }]));
@@ -297,13 +309,14 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
         pageSelects: 0, pageUpdates: 0, pageInserts: 0, readBytes: 0, writeBytes: 0, forbiddenCalls: 0 };
       const phaseOrder: string[] = [];
       active = { measure: measurementEnabled, io, phases, phaseOrder, effects: createHash("sha256") };
-      const request = new Request("https://synthetic.invalid/api/merchant-customers?siteId=" + encodeURIComponent(input.requestedSiteId ?? site));
+      const request = new Request("https://synthetic.invalid/api/merchant-customers?siteId=" + encodeURIComponent(input.requestedSiteId ?? site)
+        + (input.view === undefined ? "" : "&view=" + encodeURIComponent(input.view)));
       const start = measurementEnabled ? performance.now() : 0;
       try {
         const response = await route.GET(request);
         const getWallMs = measurementEnabled ? performance.now() - start : 0;
         const text = await response.text(), body = JSON.parse(text) as { total?: number; warnings?: string[];
-          customers?: Array<{ sources: string[]; activity: { orderCount: number; bookingCount: number } }> };
+          customers?: Array<{ sources: string[]; activity: { [key: string]: unknown; orderCount: number; bookingCount: number } }> };
         assert.equal(io.forbiddenCalls, 0, "baseline_called_forbidden_dependency");
         // Independent aggregate completeness checks from the actual response,
         // after GET timing; never expose customer identity or activity details.
@@ -318,8 +331,21 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
         // Full effects and final memory state are hashed privately, never returned.
         event({ kind: "final-memory", local: [...local], rows });
         const effectsSha256 = active.effects.digest("hex");
+        // Optional analysis runs after GET timing and exposes no raw customer
+        // data. The independent oracle deletes only the five unused activity
+        // fields, retaining every profile field and the whole response envelope.
+        let payloadAudit: MerchantCustomerGetBaselineReport["payloadAudit"];
+        if (input.payloadAudit) {
+          const projected = clone(body);
+          for (const customer of projected.customers ?? []) {
+            for (const field of ["firstActivityAt", "lastOrderAt", "lastBookingAt", "lastOrderNote", "lastBookingNote"]) delete customer.activity[field];
+          }
+          payloadAudit = { responseGzipBytes: gzipSync(text).byteLength,
+            responseCanonicalSha256: sha(canonicalJson(body)), projectedResponseCanonicalSha256: sha(canonicalJson(projected)) };
+        }
         return { status: response.status, customerCount: body.total ?? 0, warnings: body.warnings ?? [], outcomes, responseBytes: Buffer.byteLength(text, "utf8"),
-          responseSha256: sha(text), effectsSha256, inputBytes: { ...inputBytes }, io, phases, phaseOrder, getWallMs, measurementEnabled };
+          responseSha256: sha(text), effectsSha256, inputBytes: { ...inputBytes }, io, phases, phaseOrder, getWallMs, measurementEnabled,
+          ...(payloadAudit ? { payloadAudit } : {}) };
       } finally { active = null; }
     },
   };

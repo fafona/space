@@ -1,5 +1,5 @@
 import type {
-  MerchantCustomerDirectoryItem,
+  MerchantCustomerProfile,
   MerchantCustomerSource,
   MerchantCustomerStatus,
 } from "@/lib/merchantCustomers";
@@ -20,7 +20,7 @@ function normalize(value: unknown) {
     .normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
 }
 
-function searchText(customer: MerchantCustomerDirectoryItem) {
+function searchText(customer: MerchantCustomerProfile) {
   return [
     customer.referenceCode,
     customer.memberNo,
@@ -52,12 +52,12 @@ function searchText(customer: MerchantCustomerDirectoryItem) {
  * IDs/references). Only an eligible row's first nonempty search builds text;
  * opening the directory, paging, or clearing search does not build haystacks.
  */
-export function compileMerchantCustomerSearch(customers: readonly MerchantCustomerDirectoryItem[]) {
+export function compileMerchantCustomerSearch<T extends MerchantCustomerProfile>(customers: readonly T[]) {
   const rows = customers.slice();
   const haystacks = new Map<number, string>();
   let cachedCodeUnits = 0;
   return Object.freeze({
-    filter(input: MerchantCustomerSearchFilter = {}): MerchantCustomerDirectoryItem[] {
+    filter(input: MerchantCustomerSearchFilter = {}): T[] {
       const query = normalize(input.query);
       return rows.filter((customer, ordinal) => {
         if (input.source && input.source !== "all" && !customer.sources.includes(input.source)) return false;

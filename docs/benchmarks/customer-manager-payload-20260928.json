@@ -1,0 +1,241 @@
+{
+  "schema": "faolla-customer-manager-get-payload-v1",
+  "mode": "synthetic-offline",
+  "node": "v24.13.1",
+  "platform": "win32",
+  "sourceHashes": {
+    "src/app/api/merchant-customers/route.ts": "5fd6db5c2927b690bb2491d27208ac4528ee7be5745f707db246b35f3406b2dd",
+    "src/lib/merchantCustomers.ts": "57ef68d0ca4e7d0a6ffa666064aff260c84979eb6de80a3d496f376450df2b1c",
+    "src/lib/merchantCustomerDirectoryStore.ts": "e55637aa9e7429bcc3059d589c329cb77fc2e0e5a59871b6c3dc489745aef580",
+    "src/lib/merchantIdentity.ts": "cd27123a7b7e5c831a0e3e36c94ba88ccad9c776aa51b4b546509630f0d87da2",
+    "src/lib/merchantIdRules.ts": "b8c5039f3e596847256656da4f29d2b08d2d6f6a69dc3c3b7d55efd66d9e8e43",
+    "src/lib/merchantBookings.server.ts": "c8fee30e2d3a0e7da6e0b8f018cb0e9f75188d16d9a49758872334c0da7af744",
+    "src/lib/merchantBookings.ts": "7af070d6684beb82cdf9b95c3e9c15bb045040fd80076b07bf6e92e1dfc1ce86",
+    "src/lib/merchantProfileBinding.ts": "1b8fda5c17fe0e43c5a056b5178f2a0a42a357f28920d80231c805019f58b785",
+    "src/lib/siteRouting.ts": "c8c9aa7a1a618069d8840816417065ee245cc86ecdcd7499005e7ea0aec78c37",
+    "src/lib/merchantBookingWorkbench.ts": "7769e8a78808751d45d05f2d061a151181d39987de72b2bc57b54467bf826882",
+    "src/lib/i18n.ts": "be5265ca5cac9da47e1868a1116b23a37ae020340e863b8c0178c12b5de1ce4a",
+    "src/lib/merchantBookingWorkbenchStore.ts": "729448dac0479a697906560416f17d7b3a0d47056d05448e3efdf99ca18103e6",
+    "src/lib/merchantBookingPersistenceStore.ts": "0025fd4e91b9441ffedca0e979d909551856b9b071447ddfcc9a0d231a4e5a27",
+    "src/lib/merchantBookingCustomerEmail.ts": "845e33499c1ddeac5c9ee4e7c2f5a1f46ca7281641af48e6ae1783fb447e6765",
+    "src/lib/merchantBookingSelfService.ts": "471ea66ecc7a74e91985c1a2c228dba18c57028cff509061389bb43f9e24cecd",
+    "src/lib/merchantPushEvents.ts": "95320b78d40211782fbcb23acce8011ccfcd5cdf704353a77661bda8acebcb05",
+    "src/lib/merchantOrders.ts": "3ff94f360e90d581a0fd069de8c4da8428d64d8f2acdadf3c32a3e6957feced6",
+    "src/lib/merchantBookingRules.ts": "dfa893233fe5926725ba8413ba96116953ae22defdb9eae5315903b540c50877",
+    "src/lib/pagePlans.ts": "266282bc8ec8632d236a81a820fc2b718d32eb42d900c4605f219494a2dbc499",
+    "src/data/homeBlocks.ts": "40218c802963094dc8ba3efb9693ef2bce0feb2f3938a6926ca4847639dd0085",
+    "src/data/faollaHomeLayout.ts": "b24d50e9d59e48fa117daa7eab5420cba3aad7f67936791f0a8c8d4a518e0eb3",
+    "src/lib/blocksSchema.ts": "a9c22d2dec0aea7242611cab8fad449e89b6b8bbe43fc7d3743a59e7a80002d3",
+    "src/lib/planTemplateRuntime.ts": "85e0eacfdc82e20b237618da8d1fba7cdcbcf900fd0660c520c9807515c4b594",
+    "src/lib/editorSystemDefaults.ts": "5a68149ce53909afc8fc4a3549e2781539db66c4183e72b46fb74c55205ae850",
+    "src/lib/domTranslations.ts": "1f0fa66b594d30e27d7510ce752b433a1e2f6219cd6fba71b682bf7a5dc6f779",
+    "src/lib/uiGlossary.ts": "a2fb41d3bfb3c17c4b7f05992e5325678e98ec9eff158db17300206e5bf1d51d",
+    "src/lib/merchantBookingRulesStore.ts": "ffae2c66a855429a345d587a06517a700070e2f72d8657264e832147998445fb",
+    "src/lib/merchantBookingsV1Read.server.ts": "e865bb4c0e0b49e91adb5348b9c428ead00fb3105494de348a4b58a34fe7aff3",
+    "src/lib/merchantMembershipsStore.ts": "39b076bfcfc4605961bf6c32170a3df9730b7aef4d292550845f697058cc4c74",
+    "src/lib/merchantMemberships.ts": "651a498af8f73179e3339833b848556bb7b552a12d94f101c03afceddbc878ca",
+    "src/lib/mutationOperationId.ts": "18a79107bc2958b5a7cdd8f360ade3805305d3dc750456fff219325777903657",
+    "src/lib/merchantOrders.server.ts": "ede4eddc8989a8f41bb41760333609a2035592fb003049e9c90dd530f5cb95c5",
+    "src/lib/merchantOrdersStore.ts": "64dcc9541d8d88f8a5c6b49bc9ba60750ceb5f4024732eaffabd650df54dd341",
+    "src/lib/merchantOrdersV1Read.server.ts": "d25e1c4e3a3e1cefeb71a11af4e001060a8b7e5c3a09369faf37a0aadd355e3c",
+    "src/lib/merchantOrdersV1.ts": "ee946a2e7aebdf39a6130dd9c9e8c115f86be5c82e02ded73b5f198b7006cb02",
+    "src/lib/merchantOrderV1ReadCircuitBreaker.ts": "2b67773686a965067178446f01f0da7cdb100638c7a78fa1223065aff81fd4ed",
+    "src/lib/merchantCustomerListView.ts": "0d79f5f48659dbbfb648aa9c5e3788d84d3032f7ec4fe6f010d07bdd2f51181a",
+    "src/lib/requestMutationGuard.ts": "2c0d69965a1cd4ca1423e3e941e418d1a8fa03ba2e6844cf4e197d43c093ecde",
+    "src/lib/requestOrigin.ts": "438271dde26cdecbbd0533b8b0c652142aba80b162f8fbf49aaafe39a042f781"
+  },
+  "results": [
+    {
+      "name": "1000-shared-identities",
+      "fixture": {
+        "storedCustomers": 1000,
+        "orders": 1000,
+        "bookings": 1000,
+        "memberships": 1000,
+        "distinctCustomers": 1000
+      },
+      "status": 200,
+      "customerCount": 1000,
+      "full": {
+        "responseBytes": 1329989,
+        "responseSha256": "3aa99faeaae1f8b1816eed093e44e1fc03b4e86043cd60f6159e933b2203c202",
+        "responseGzipBytes": 46425,
+        "responseCanonicalSha256": "f4f69cd1894f353808a2dfdb2deabb880558038e411c848071657697c6d03e0e",
+        "projectedResponseCanonicalSha256": "8b708acdaa966ccd25ce752f89a4598ba876cd3fdb5e8ac113ac04f15f005d42"
+      },
+      "manager": {
+        "responseBytes": 1128989,
+        "responseSha256": "14ff59dce6e4f93d37d932e9390307f8c7ec7bd6d807e8a73cd57c66f78cbf2a",
+        "responseGzipBytes": 41972,
+        "responseCanonicalSha256": "8b708acdaa966ccd25ce752f89a4598ba876cd3fdb5e8ac113ac04f15f005d42",
+        "projectedResponseCanonicalSha256": "8b708acdaa966ccd25ce752f89a4598ba876cd3fdb5e8ac113ac04f15f005d42"
+      },
+      "rawReductionPercent": 15.113,
+      "gzipReductionPercent": 9.592,
+      "warnings": [],
+      "outcomes": {
+        "orderCount": 1000,
+        "bookingCount": 1000,
+        "customersBySource": {
+          "manual": 1000,
+          "membership": 1000,
+          "order": 1000,
+          "booking": 1000
+        }
+      },
+      "inputBytes": {
+        "local": 582538,
+        "remote": 1623166,
+        "total": 2205704
+      },
+      "io": {
+        "sessionResolutions": 1,
+        "snapshotReads": 2,
+        "localReads": 3,
+        "localWrites": 0,
+        "pageSelects": 7,
+        "pageUpdates": 0,
+        "pageInserts": 0,
+        "readBytes": 2205484,
+        "writeBytes": 0,
+        "forbiddenCalls": 0
+      },
+      "effectsSha256": "8b29aab87871a5c169b943d2adfc2979c8b6a4f7c325fa98f57740d65cfa69e4",
+      "independentProjectionParity": true,
+      "ioAndEffectsParity": true,
+      "sourceHashParity": true
+    },
+    {
+      "name": "10000-shared-identities",
+      "fixture": {
+        "storedCustomers": 10000,
+        "orders": 10000,
+        "bookings": 10000,
+        "memberships": 10000,
+        "distinctCustomers": 10000
+      },
+      "status": 200,
+      "customerCount": 10000,
+      "full": {
+        "responseBytes": 13398990,
+        "responseSha256": "553e7e51a167741623acf012bacac2875bcec60d65715e9a558348ca86b030dd",
+        "responseGzipBytes": 364357,
+        "responseCanonicalSha256": "323413a730e2a9079c4a5576ac6f704b8c542d32f674a9ae7423cc8240e92562",
+        "projectedResponseCanonicalSha256": "58ea34c668f33ac15643f0d097bba1a4fb90caf62c722a38ff1d89928f0a3aa7"
+      },
+      "manager": {
+        "responseBytes": 11388990,
+        "responseSha256": "eccbf718c920fea4c11138b121080ee477ab9747e1639a3e3f5a78d0564a27bd",
+        "responseGzipBytes": 346055,
+        "responseCanonicalSha256": "58ea34c668f33ac15643f0d097bba1a4fb90caf62c722a38ff1d89928f0a3aa7",
+        "projectedResponseCanonicalSha256": "58ea34c668f33ac15643f0d097bba1a4fb90caf62c722a38ff1d89928f0a3aa7"
+      },
+      "rawReductionPercent": 15.001,
+      "gzipReductionPercent": 5.023,
+      "warnings": [],
+      "outcomes": {
+        "orderCount": 10000,
+        "bookingCount": 10000,
+        "customersBySource": {
+          "manual": 10000,
+          "membership": 10000,
+          "order": 10000,
+          "booking": 10000
+        }
+      },
+      "inputBytes": {
+        "local": 5874538,
+        "remote": 16413947,
+        "total": 22288485
+      },
+      "io": {
+        "sessionResolutions": 1,
+        "snapshotReads": 2,
+        "localReads": 3,
+        "localWrites": 0,
+        "pageSelects": 7,
+        "pageUpdates": 0,
+        "pageInserts": 0,
+        "readBytes": 22286015,
+        "writeBytes": 0,
+        "forbiddenCalls": 0
+      },
+      "effectsSha256": "687a6db383b9e0a12d37bc210e951dd785f16a1cda08efd0da7a6c6ad0309d20",
+      "independentProjectionParity": true,
+      "ioAndEffectsParity": true,
+      "sourceHashParity": true
+    },
+    {
+      "name": "1000-shared-identities-notes1000",
+      "fixture": {
+        "storedCustomers": 1000,
+        "orders": 1000,
+        "bookings": 1000,
+        "memberships": 1000,
+        "distinctCustomers": 1000,
+        "noteLength": 1000
+      },
+      "status": 200,
+      "customerCount": 1000,
+      "full": {
+        "responseBytes": 4282789,
+        "responseSha256": "c700bb1dc2987bfa31e3d5981d83711e0573441a91cc1d55178458c00c91c85e",
+        "responseGzipBytes": 81251,
+        "responseCanonicalSha256": "461abefc09a9797bf8447761b91034e293a187dccee6e4fa8d51bc8ec8c7015c",
+        "projectedResponseCanonicalSha256": "2510a5018786045001187f721e094fa7306acdecd2c1c5af75c8d46db802919f"
+      },
+      "manager": {
+        "responseBytes": 2113889,
+        "responseSha256": "bbf6f4fb6f7743fc2e2c546e8e6629a3327f30c98949d9d32dea11d67089cecd",
+        "responseGzipBytes": 55541,
+        "responseCanonicalSha256": "2510a5018786045001187f721e094fa7306acdecd2c1c5af75c8d46db802919f",
+        "projectedResponseCanonicalSha256": "2510a5018786045001187f721e094fa7306acdecd2c1c5af75c8d46db802919f"
+      },
+      "rawReductionPercent": 50.642,
+      "gzipReductionPercent": 31.643,
+      "warnings": [],
+      "outcomes": {
+        "orderCount": 1000,
+        "bookingCount": 1000,
+        "customersBySource": {
+          "manual": 1000,
+          "membership": 1000,
+          "order": 1000,
+          "booking": 1000
+        }
+      },
+      "inputBytes": {
+        "local": 1565538,
+        "remote": 3591166,
+        "total": 5156704
+      },
+      "io": {
+        "sessionResolutions": 1,
+        "snapshotReads": 2,
+        "localReads": 3,
+        "localWrites": 0,
+        "pageSelects": 7,
+        "pageUpdates": 0,
+        "pageInserts": 0,
+        "readBytes": 5156484,
+        "writeBytes": 0,
+        "forbiddenCalls": 0
+      },
+      "effectsSha256": "6ddae8c0877e213ec016d9d935a266fa3a232ed275c70b6cf83998e7443e1df1",
+      "independentProjectionParity": true,
+      "ioAndEffectsParity": true,
+      "sourceHashParity": true
+    }
+  ],
+  "boundaries": {
+    "realRouteAndSourceLoaders": true,
+    "realAuthentication": false,
+    "realDatabase": false,
+    "realNetwork": false,
+    "productionTraffic": false,
+    "timingsReported": false,
+    "compression": "node:zlib gzipSync defaults over serialized synthetic UTF-8 response; not measured HTTP transfer",
+    "notes": "Optional 1000-character notes use repetitive synthetic prose and are not production content",
+    "noReducedDatabaseWorkClaim": true
+  }
+}

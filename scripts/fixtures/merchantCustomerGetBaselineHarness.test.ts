@@ -115,8 +115,74 @@ test("empty sources and explicit counts are deterministic, bounded, and do not a
   const one = createMerchantCustomerGetBaselineHarness(), two = createMerchantCustomerGetBaselineHarness();
   assert.deepEqual(await one.get({ measure: false }), await two.get({ measure: false }));
   for (const options of [{ bookings: -1 }, { orders: 0.1 }, { memberships: 100_001 }, { storedCustomers: Number.NaN },
-    { foreignBookings: Infinity }, { distinctCustomers: 0 }, { bookings: [] }, { failSource: "unrecognized" }, { sessionSiteId: "customer@example.test" }]) {
+    { foreignBookings: Infinity }, { distinctCustomers: 0 }, { bookings: [] }, { failSource: "unrecognized" }, { sessionSiteId: "customer@example.test" },
+    { noteLength: -1 }, { noteLength: 1001 }, { noteLength: 0.1 }, { noteLength: Number.NaN }, { noteLength: "1000" }]) {
     assert.throws(() => createMerchantCustomerGetBaselineHarness(options as MerchantCustomerGetBaselineOptions), /invalid_baseline_/);
+  }
+});
+
+test("payload audit is opt-in and the default full GET retains its pre-projection response fingerprints", async () => {
+  for (const [options, responseBytes, responseSha256] of [
+    [{}, 87, "a8d1a565217733a4ced41c81a8b0a5db8ebf0c1b79f1e6510ad80e0a4196d4a9"],
+    [mixed, 6641, "197e96495bbf2422fbb851f72860fd66dcd76aae9b5f52610d09fdce50b302ba"],
+  ] as const) {
+    const plain = await createMerchantCustomerGetBaselineHarness(options).get({ measure: false });
+    assert.equal(plain.responseBytes, responseBytes); assert.equal(plain.responseSha256, responseSha256);
+    assert.equal(Object.hasOwn(plain, "payloadAudit"), false, "legacy reports keep their existing shape");
+    const audited = await createMerchantCustomerGetBaselineHarness(options).get({ measure: false, payloadAudit: true });
+    const { payloadAudit, ...unchanged } = audited;
+    assert.deepEqual(unchanged, plain, "post-GET gzip and oracle hashing cannot change response or IO");
+    assert.ok(payloadAudit && payloadAudit.responseGzipBytes > 0);
+    assert.match(payloadAudit.responseCanonicalSha256, /^[a-f0-9]{64}$/);
+    assert.match(payloadAudit.projectedResponseCanonicalSha256, /^[a-f0-9]{64}$/);
+    assert.doesNotMatch(JSON.stringify(audited), /example\.test|Synthetic customer|private-synthetic|customerAccountId|"customers"\s*:/);
+  }
+});
+
+test("actual manager GET equals an independent five-field deletion oracle with identical inputs and effects", async () => {
+  const scenarios: MerchantCustomerGetBaselineOptions[] = [{}, mixed,
+    { storedCustomers: 4 }, { orders: 4 }, { bookings: 4 }, { memberships: 4 },
+    { ...mixed, distinctCustomers: 1 }, { ...mixed, foreignBookings: 30 },
+    { ...mixed, noteLength: 0 }, { ...mixed, noteLength: 1000 }, { ...mixed, bookingReadRepair: true },
+    ...(["customers", "orders", "bookings", "memberships"] as const).map((failSource) => ({ ...mixed, failSource })),
+  ];
+  for (const options of scenarios) {
+    const fullHarness = createMerchantCustomerGetBaselineHarness({ ...options, instrumentation: true });
+    const managerHarness = createMerchantCustomerGetBaselineHarness({ ...options, instrumentation: true });
+    const sourceHashes = managerHarness.sourceHashes;
+    assert.match(sourceHashes["src/lib/merchantCustomerListView.ts"], /^[a-f0-9]{64}$/);
+    for (let request = 0; request < (options.bookingReadRepair ? 3 : 1); request++) {
+      const full = await fullHarness.get({ measure: false, payloadAudit: true });
+      const manager = await managerHarness.get({ measure: false, view: "manager-v1", payloadAudit: true });
+      for (const key of ["status", "customerCount", "warnings", "outcomes", "effectsSha256", "inputBytes", "io", "phases", "phaseOrder"] as const) {
+        assert.deepEqual(manager[key], full[key], key + " changed under manager view");
+      }
+      assert.ok(full.payloadAudit && manager.payloadAudit);
+      assert.equal(manager.payloadAudit.responseCanonicalSha256, full.payloadAudit.projectedResponseCanonicalSha256,
+        "all profile fields, summaries, incomplete flags, order and envelope/version must equal the independent full-response projection");
+      assert.equal(manager.payloadAudit.projectedResponseCanonicalSha256, manager.payloadAudit.responseCanonicalSha256);
+      if (full.status === 200 && full.customerCount > 0) {
+        assert.ok(manager.responseBytes < full.responseBytes, "the actual serialized response must be smaller");
+        assert.notEqual(manager.responseSha256, full.responseSha256);
+      } else assert.equal(manager.responseSha256, full.responseSha256);
+    }
+    assert.deepEqual(fullHarness.sourceHashes, sourceHashes);
+    assert.deepEqual(managerHarness.sourceHashes, sourceHashes, "GET cannot lazily load additional source modules");
+  }
+});
+
+test("manager view leaves denied requests unchanged and unrecognized views retain the legacy full response", async () => {
+  for (const [options, requestedSiteId] of [
+    [mixed, "invalid"], [{ ...mixed, sessionSiteId: null }, undefined], [{ ...mixed, sessionSiteId: "99990002" }, undefined],
+  ] as const) {
+    const full = await createMerchantCustomerGetBaselineHarness(options).get({ measure: false, requestedSiteId });
+    const manager = await createMerchantCustomerGetBaselineHarness(options).get({ measure: false, requestedSiteId, view: "manager-v1" });
+    assert.deepEqual(manager, full); assertZeroDataIo(manager);
+  }
+  const full = await createMerchantCustomerGetBaselineHarness(mixed).get({ measure: false });
+  for (const view of ["", "manager-v2", "full", "MANAGER-V1"]) {
+    const unknown = await createMerchantCustomerGetBaselineHarness(mixed).get({ measure: false, view: view as "manager-v1" });
+    assert.deepEqual(unknown, full, "only the exact manager-v1 opt-in can change the response");
   }
 });
 

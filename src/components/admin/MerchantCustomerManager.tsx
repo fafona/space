@@ -12,10 +12,10 @@ import {
 } from "react";
 import {
   createEmptyMerchantCustomerProfile,
-  type MerchantCustomerDirectoryItem,
   type MerchantCustomerProfile,
   type MerchantCustomerSource,
 } from "@/lib/merchantCustomers";
+import type { MerchantCustomerListItem } from "@/lib/merchantCustomerListView";
 import type { ParsedMerchantCustomerImport } from "@/lib/merchantCustomerImport";
 import { getMerchantCustomerPageWindow } from "@/lib/merchantCustomerPagination";
 import { compileMerchantCustomerSearch } from "@/lib/merchantCustomerSearch";
@@ -36,7 +36,7 @@ type MerchantCustomerManagerProps = {
 
 type CustomerListPayload = {
   ok?: unknown;
-  customers?: MerchantCustomerDirectoryItem[];
+  customers?: MerchantCustomerListItem[];
   version?: unknown;
   warnings?: unknown;
   error?: unknown;
@@ -127,7 +127,7 @@ function formatAddress(customer: MerchantCustomerProfile) {
     .join(" ");
 }
 
-function formatOrderTotals(customer: MerchantCustomerDirectoryItem) {
+function formatOrderTotals(customer: MerchantCustomerListItem) {
   if (customer.activity.orderTotals.length === 0) return "-";
   return customer.activity.orderTotals
     .map((item) => `${item.label} ${Number(item.amount || 0).toFixed(2)}`)
@@ -592,7 +592,7 @@ export default function MerchantCustomerManager({
   siteName,
   className = "",
 }: MerchantCustomerManagerProps) {
-  const [customers, setCustomers] = useState<MerchantCustomerDirectoryItem[]>([]);
+  const [customers, setCustomers] = useState<MerchantCustomerListItem[]>([]);
   const [version, setVersion] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -679,7 +679,7 @@ export default function MerchantCustomerManager({
       pending.promise = (async () => {
         try {
           const { response, data: payload } = await fetchJsonWithAdminPerformance<CustomerListPayload>(
-            `/api/merchant-customers?siteId=${encodeURIComponent(normalizedSiteId)}`,
+            `/api/merchant-customers?siteId=${encodeURIComponent(normalizedSiteId)}&view=manager-v1`,
             {
               cache: "no-store",
               signal: controller.signal,
