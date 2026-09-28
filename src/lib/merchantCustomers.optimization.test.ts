@@ -19,6 +19,11 @@ const NOW = "2026-09-28T12:00:00.000Z";
 const DATE = "2026-07-01T10:00:00.000Z";
 const REFERENCE_SHA256 = "1a44b96f9f901b2e7edab8f7faae24ea0745fa8312ef5815418e54a35fa420e4";
 
+// The frozen pre-profile-read oracle's declaration requires complete membership
+// records. Existing differential fixtures still provide them; production may now
+// also pass the customer-only view, exercised independently below.
+type FullDirectoryInput = Omit<MerchantCustomerDirectoryInput, "memberships"> & { memberships?: MerchantMembershipRecord[] };
+
 function fixedClock(t: TestContext) {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(NOW) });
 }
@@ -70,7 +75,7 @@ function membership(id: string, extra: Partial<MerchantMembershipRecord> = {}): 
   };
 }
 
-function sameDirectory(input: MerchantCustomerDirectoryInput, context: string) {
+function sameDirectory(input: FullDirectoryInput, context: string) {
   const before = structuredClone(input);
   const oldInput = freeze(structuredClone(input));
   const newInput = freeze(structuredClone(input));
@@ -117,7 +122,7 @@ test("frozen reference is the complete pinned b4a7b77a source, with no runtime i
 
 test("empty, invalid site, foreign-only and stored-container inputs preserve exact results", (t) => {
   fixedClock(t);
-  const inputs: MerchantCustomerDirectoryInput[] = [
+  const inputs: FullDirectoryInput[] = [
     { siteId: "" }, { siteId: "   " }, { siteId: SITE },
     { siteId: SITE, storedCustomers: null },
     { siteId: SITE, storedCustomers: { customers: [null, {}, { id: "unfilled" }] } },
@@ -139,7 +144,7 @@ test("transitive four-source bridges merge and removing the local bridge splits 
     customerAccountId: "account-beta",
     customer: { name: "Bridge", email: "ALPHA@example.test", phone: "", note: "Bridge note" },
   });
-  const input: MerchantCustomerDirectoryInput = {
+  const input: FullDirectoryInput = {
     siteId: SITE, storedCustomers: [alpha], memberships: [beta],
     orders: [localBridge, order("foreign-bridge", { ...localBridge, id: "foreign-bridge", siteId: FOREIGN })],
     bookings: [booking("beta-booking", { email: "beta@example.test", note: "Beta note" })],
@@ -180,7 +185,7 @@ test("stored aliases keep insertion order and 24-item cap while derived aliases 
 
 test("NFKC, tax and phone normalization, historical aliases and address fallback preserve identity rules", (t) => {
   fixedClock(t);
-  const input: MerchantCustomerDirectoryInput = {
+  const input: FullDirectoryInput = {
     siteId: SITE,
     storedCustomers: [
       profile("unicode", { accountId: " ＡＢＣ ", email: "new@example.test", identityAliases: ["email:old@example.test"] }),
@@ -224,7 +229,7 @@ test("24-token cap preserves excluded versus included identity bridges", (t) => 
 test("equal timestamps, invalid/raw activity dates and default timestamps preserve ordering and fallback", (t) => {
   fixedClock(t);
   const dates = [DATE, DATE, "not-a-date", "", "2026-07-01T12:00:00+02:00", "2024-02-30", "1969-12-31T23:59:59Z"];
-  const input: MerchantCustomerDirectoryInput = {
+  const input: FullDirectoryInput = {
     siteId: SITE,
     storedCustomers: [{ id: "fallback", siteId: SITE, displayName: "Fallback", createdAt: "invalid", updatedAt: "" }],
     orders: dates.map((createdAt, index) => order(`dated-${index}`, {
@@ -252,7 +257,7 @@ test("activity totals retain source insertion, per-addition rounding and note se
   fixedClock(t);
   const amounts = [1.005, 0.005, -1, 0.105, 0.1, 0.2, 999.999];
   const labels = ["USD", "EUR", "USD", "", "JPY", "EUR", "USD"];
-  const input: MerchantCustomerDirectoryInput = {
+  const input: FullDirectoryInput = {
     siteId: SITE,
     orders: amounts.map((totalAmount, index) => order(`amount-${index}`, {
       totalAmount, pricePrefix: labels[index], customerGuestHash: "same-guest",
@@ -276,7 +281,7 @@ function randomSource(seed: number) {
   };
 }
 
-function generatedInput(seed: number): MerchantCustomerDirectoryInput {
+function generatedInput(seed: number): FullDirectoryInput {
   const next = randomSource(seed);
   const dates = [DATE, "2026-06-01T00:00:00Z", "2026-07-01T12:00:00+02:00", "", "invalid"];
   const identity = () => {
@@ -402,5 +407,25 @@ test("64 seeded shared-upsert cases match the reference in all three replacement
     for (const replaceEmpty of [undefined, false, true]) {
       sameUpsert(existing, incoming, { siteId: SITE, source: "import", replaceEmpty, now: NOW }, `upsert seed ${seed}, mode ${replaceEmpty}`);
     }
+  }
+});
+
+test("customer-only membership profiles retain complete frozen-oracle directory results without transaction fields", (t) => {
+  fixedClock(t);
+  for (let seed = 1; seed <= 64; seed += 1) {
+    const fullInput = freeze(generatedInput(seed));
+    const profiles = (fullInput.memberships ?? []).map((full) => {
+      const { transactions, ...profile } = full;
+      void transactions;
+      return profile;
+    });
+    const input: MerchantCustomerDirectoryInput = freeze({ ...fullInput, memberships: profiles });
+    const before = JSON.stringify(input);
+    const expected = reference.buildMerchantCustomerDirectory(fullInput);
+    const actual = buildMerchantCustomerDirectory(input);
+    assert.deepEqual(actual, expected, `profile seed ${seed}: complete output`);
+    assert.equal(JSON.stringify(actual), JSON.stringify(expected), `profile seed ${seed}: serialized ordering`);
+    assert.equal(JSON.stringify(input), before);
+    assert.ok(profiles.every((profile) => !Object.hasOwn(profile, "transactions")));
   }
 });

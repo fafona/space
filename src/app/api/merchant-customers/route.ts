@@ -12,7 +12,7 @@ import {
 } from "@/lib/merchantCustomerDirectoryStore";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { listMerchantBookings } from "@/lib/merchantBookings.server";
-import { loadStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";
+import { loadStoredMerchantMembershipProfiles } from "@/lib/merchantMembershipsStore";
 import { listMerchantOrders } from "@/lib/merchantOrders.server";
 import { toMerchantCustomerListItem } from "@/lib/merchantCustomerListView";
 import {
@@ -80,7 +80,7 @@ async function loadCustomerDirectory(siteId: string) {
         includeCustomerEmailLogs: false,
         includeTimeline: false,
       }),
-      loadStoredMerchantMemberships(store, siteId),
+      loadStoredMerchantMembershipProfiles(store, siteId),
     ]);
 
   if (storedResult.status === "rejected") throw storedResult.reason;

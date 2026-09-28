@@ -14,6 +14,8 @@ import ts from "typescript";
 // Actual route, list/store entrypoints and reducer execute unchanged. Verified
 // session, snapshot-service and external I/O inputs are synthetic. Cancelled
 // bookings deliberately exclude reminder/status delivery. V1 modes are off.
+// Explicit legacyMembershipRead selects the real full membership loader from
+// the same executing store module solely for offline differential measurements.
 // Timings include fixture I/O copying/accounting overhead; async source phases
 // overlap and nest, so they must never be added together as exclusive CPU time.
 export const MERCHANT_CUSTOMER_BASELINE_SITE = "99990001";
@@ -31,6 +33,9 @@ export type MerchantCustomerGetBaselineOptions = {
   bookingReadRepair?: boolean;
   instrumentation?: boolean;
   noteLength?: number;
+  transactionsPerMembership?: number;
+  transactionMoneyFixture?: "scalar-invalid" | "complex-coercible" | "complex-throwing";
+  legacyMembershipRead?: boolean;
 };
 export type MerchantCustomerBaselinePhase = { calls: number; wallMs: number };
 export type MerchantCustomerBaselineIo = {
@@ -76,6 +81,11 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
   assert.ok(options.bookingReadRepair === undefined || typeof options.bookingReadRepair === "boolean", "invalid_baseline_repair_flag");
   assert.ok(options.instrumentation === undefined || typeof options.instrumentation === "boolean", "invalid_baseline_instrumentation_flag");
   assert.ok(options.noteLength === undefined || (Number.isSafeInteger(options.noteLength) && options.noteLength >= 0 && options.noteLength <= 1000), "invalid_baseline_note_length");
+  const transactionsPerMembership = options.transactionsPerMembership ?? 0;
+  assert.ok(Number.isSafeInteger(transactionsPerMembership) && transactionsPerMembership >= 0 && transactionsPerMembership <= 10_000
+    && counts.memberships * transactionsPerMembership <= 100_000, "invalid_baseline_transaction_count");
+  assert.ok(options.transactionMoneyFixture === undefined || ["scalar-invalid", "complex-coercible", "complex-throwing"].includes(options.transactionMoneyFixture), "invalid_baseline_transaction_money_fixture");
+  assert.ok(options.legacyMembershipRead === undefined || typeof options.legacyMembershipRead === "boolean", "invalid_baseline_legacy_membership_read");
   const note = (kind: "order" | "booking", index: number) => {
     if (options.noteLength === undefined) return "Synthetic " + kind;
     const sentence = "Synthetic " + kind + " note " + index + ". ";
@@ -111,7 +121,15 @@ function scenario(options: MerchantCustomerGetBaselineOptions) {
   const memberships = Array.from({ length: counts.memberships }, (_, index) => ({
     id: "membership-" + index, siteId: site, siteName: "Synthetic merchant", accountId: identity(index).accountId,
     name: identity(index).name, email: identity(index).email, serial: index + 1, memberNo: "synthetic-member-" + index,
-    joinedAt: timestamp(index), updatedAt: timestamp(index), status: "active", transactions: [],
+    joinedAt: timestamp(index), updatedAt: timestamp(index), status: "active",
+    transactions: Array.from({ length: transactionsPerMembership }, (_, transaction) => ({
+      id: "transaction-" + index + "-" + transaction, type: transaction % 2 ? "redeem" : "recharge", status: "completed",
+      at: timestamp(index + transaction), pointDelta: transaction % 2 ? -2 : 5,
+      balanceDelta: options.transactionMoneyFixture === "scalar-invalid" ? "not-money"
+        : options.transactionMoneyFixture === "complex-coercible" ? [2.5]
+        : options.transactionMoneyFixture === "complex-throwing" ? { toString: null } : 2.5,
+      growthDelta: 1.25, note: "Synthetic transaction " + index + ":" + transaction, operatorId: "synthetic-operator",
+    })),
   }));
   const local = new Map<string, unknown>([
     ["merchant-bookings.json", { version: 1, records: clone(bookings) }],
@@ -269,7 +287,7 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
     "lib/merchantCustomerDirectoryStore.ts": ["loadStoredMerchantCustomerDirectory", "storedRead"],
     "lib/merchantOrders.server.ts": ["listMerchantOrders", "ordersRead"],
     "lib/merchantBookings.server.ts": ["listMerchantBookings", "bookingsRead"],
-    "lib/merchantMembershipsStore.ts": ["loadStoredMerchantMemberships", "membershipsRead"],
+    "lib/merchantMembershipsStore.ts": ["loadStoredMerchantMembershipProfiles", "membershipsRead"],
     "lib/merchantCustomers.ts": ["buildMerchantCustomerDirectory", "customerReducer"],
   };
   function load(specifier: string, parent = "app/api/merchant-customers/route.ts"): unknown {
@@ -288,6 +306,11 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
     }).outputText);
     const execute = new Script("(function(require,module,exports){" + compiled.get(key) + "\n})", { filename: name }).runInContext(context);
     execute((next: string) => load(next, name), moduleRecord, moduleRecord.exports);
+    if (name === "lib/merchantMembershipsStore.ts" && options.legacyMembershipRead === true) {
+      assert.equal(typeof moduleRecord.exports.loadStoredMerchantMembershipProfiles, "function");
+      assert.equal(typeof moduleRecord.exports.loadStoredMerchantMemberships, "function");
+      moduleRecord.exports.loadStoredMerchantMembershipProfiles = moduleRecord.exports.loadStoredMerchantMemberships;
+    }
     if (options.instrumentation === true && instrument[name]) {
       const [exportName, phase] = instrument[name], original = moduleRecord.exports[exportName];
       assert.equal(typeof original, "function");

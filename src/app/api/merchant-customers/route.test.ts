@@ -27,6 +27,11 @@ function replaceOnce(source: string, before: string, after: string) {
 
 function legacyRouteSource() {
   let source = replaceOnce(routeSource,
+    'import { loadStoredMerchantMembershipProfiles } from "@/lib/merchantMembershipsStore";',
+    'import { loadStoredMerchantMemberships } from "@/lib/merchantMembershipsStore";');
+  source = replaceOnce(source, "      loadStoredMerchantMembershipProfiles(store, siteId),",
+    "      loadStoredMerchantMemberships(store, siteId),");
+  source = replaceOnce(source,
     'import { toMerchantCustomerListItem } from "@/lib/merchantCustomerListView";\n', "");
   source = replaceOnce(source, `      customers: url.searchParams.get("view") === "manager-v1"
         ? result.customers.map(toMerchantCustomerListItem)
@@ -89,6 +94,10 @@ function harness(options: Options = {}, legacy = false) {
     return jsonClone(data[source]);
   };
   const failures = options.failures;
+  const readMemberships = (received: unknown, requestedSite: string) => {
+    assert.equal(received, client);
+    return read("memberships", requestedSite);
+  };
   const injected: Record<string, unknown> = {
     "next/server": { NextResponse },
     "lib/supabase.ts": { supabase: null },
@@ -111,10 +120,10 @@ function harness(options: Options = {}, legacy = false) {
     },
     "lib/merchantOrders.server.ts": { listMerchantOrders: (requestedSite: string) => read("orders", requestedSite) },
     "lib/merchantBookings.server.ts": { listMerchantBookings: (requestedSite: string, options: unknown) => read("bookings", requestedSite, options) },
-    "lib/merchantMembershipsStore.ts": { loadStoredMerchantMemberships: (received: unknown, requestedSite: string) => {
-      assert.equal(received, client);
-      return read("memberships", requestedSite);
-    } },
+    "lib/merchantMembershipsStore.ts": {
+      loadStoredMerchantMemberships: readMemberships,
+      loadStoredMerchantMembershipProfiles: readMemberships,
+    },
   };
   const allowed = new Set([routePath, "lib/merchantCustomers.ts", "lib/merchantCustomerListView.ts",
     "lib/merchantIdentity.ts", "lib/merchantIdRules.ts", "lib/requestMutationGuard.ts", "lib/requestOrigin.ts"]);
@@ -166,7 +175,7 @@ function expectedListBody<T extends { customers: Array<{ activity: Record<string
   return expected;
 }
 
-test("complete pre-list-view route is preserved by the exact two-hunk inverse", () => {
+test("complete pre-list-view route is preserved by exact list-view and membership-loader inverses", () => {
   legacyRouteSource();
 });
 

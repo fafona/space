@@ -23,6 +23,12 @@ export type StoredMerchantMemberships = {
   updatedAt: string | null;
 };
 
+export type MerchantMembershipProfileRecord = Omit<MerchantMembershipRecord, "transactions">;
+
+export type StoredMerchantMembershipProfiles = Omit<StoredMerchantMemberships, "memberships"> & {
+  memberships: MerchantMembershipProfileRecord[];
+};
+
 type StoredMerchantMembershipsRow = {
   id?: string | number | null;
   slug?: unknown;
@@ -194,6 +200,60 @@ export async function loadStoredMerchantMemberships(
   if (!normalizedSiteId) return null;
   const rows = await queryStoredMembershipRows(supabase, normalizedSiteId);
   return mergeStoredMerchantMembershipRows(normalizedSiteId, rows);
+}
+
+function isSkippableMembershipMoney(value: unknown) {
+  return value === null || value === undefined ||
+    typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function stripCustomerUnusedTransactions(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const transactions = record.transactions;
+  if (Array.isArray(transactions) && !transactions.every((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+    const transaction = item as Record<string, unknown>;
+    return isSkippableMembershipMoney(transaction.balanceDelta) &&
+      isSkippableMembershipMoney(transaction.growthDelta);
+  })) {
+    // Complex money values can throw during the legacy String(value) coercion.
+    // Preserve the entire history so legacy success/failure behavior still wins.
+    return value;
+  }
+  return { ...record, transactions: [] };
+}
+
+/**
+ * Customer-directory-only view of persisted JSON. Keep the original query and
+ * both profile-normalization passes, including ID ties before site filtering.
+ * Safe transaction histories need no deep normalization for this consumer;
+ * source bytes are still fully read. Never pass this incomplete view to writers.
+ * This is not a general adapter for accessor/proxy-bearing JavaScript objects.
+ */
+export async function loadStoredMerchantMembershipProfiles(
+  supabase: MerchantMembershipsStoreClient,
+  siteId: string,
+): Promise<StoredMerchantMembershipProfiles | null> {
+  const normalizedSiteId = normalizeText(siteId);
+  if (!normalizedSiteId) return null;
+  const rows = await queryStoredMembershipRows(supabase, normalizedSiteId);
+  const slug = buildMembershipsSlug(normalizedSiteId);
+  const profileRows = rows.map((row) => {
+    const rowSlug = normalizeText(row.slug);
+    if ((rowSlug && rowSlug !== slug) || !Array.isArray(row.blocks)) return row;
+    return { ...row, blocks: row.blocks.map(stripCustomerUnusedTransactions) };
+  });
+  const stored = mergeStoredMerchantMembershipRows(normalizedSiteId, profileRows);
+  if (!stored) return null;
+  return {
+    ...stored,
+    memberships: stored.memberships.map((membership) => {
+      const { transactions, ...profile } = membership;
+      void transactions;
+      return profile;
+    }),
+  };
 }
 
 export async function saveStoredMerchantMemberships(

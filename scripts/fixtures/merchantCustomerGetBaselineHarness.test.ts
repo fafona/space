@@ -116,9 +116,55 @@ test("empty sources and explicit counts are deterministic, bounded, and do not a
   assert.deepEqual(await one.get({ measure: false }), await two.get({ measure: false }));
   for (const options of [{ bookings: -1 }, { orders: 0.1 }, { memberships: 100_001 }, { storedCustomers: Number.NaN },
     { foreignBookings: Infinity }, { distinctCustomers: 0 }, { bookings: [] }, { failSource: "unrecognized" }, { sessionSiteId: "customer@example.test" },
-    { noteLength: -1 }, { noteLength: 1001 }, { noteLength: 0.1 }, { noteLength: Number.NaN }, { noteLength: "1000" }]) {
+    { noteLength: -1 }, { noteLength: 1001 }, { noteLength: 0.1 }, { noteLength: Number.NaN }, { noteLength: "1000" },
+    { transactionsPerMembership: -1 }, { transactionsPerMembership: 10_001 }, { transactionsPerMembership: 0.1 },
+    { transactionsPerMembership: Number.NaN }, { transactionsPerMembership: "10" }, { memberships: 11, transactionsPerMembership: 10_000 },
+    { transactionMoneyFixture: "caller-payload" }, { legacyMembershipRead: "true" }]) {
     assert.throws(() => createMerchantCustomerGetBaselineHarness(options as MerchantCustomerGetBaselineOptions), /invalid_baseline_/);
   }
+});
+
+test("profile membership reads equal the actual legacy loader for complete full and manager GETs, including malformed history", async () => {
+  const scenarios: MerchantCustomerGetBaselineOptions[] = [mixed, { ...mixed, transactionsPerMembership: 25 },
+    { ...mixed, memberships: 2, transactionsPerMembership: 1000 },
+    ...(["scalar-invalid", "complex-coercible", "complex-throwing"] as const).map((transactionMoneyFixture) =>
+      ({ ...mixed, transactionsPerMembership: 3, transactionMoneyFixture })),
+    { ...mixed, transactionsPerMembership: 20, failSource: "memberships" },
+  ];
+  for (const options of scenarios) {
+    for (const view of [undefined, "manager-v1"] as const) {
+      const candidate = createMerchantCustomerGetBaselineHarness({ ...options, instrumentation: true });
+      const legacy = createMerchantCustomerGetBaselineHarness({ ...options, instrumentation: true, legacyMembershipRead: true });
+      const sourceHashes = candidate.sourceHashes;
+      for (let request = 0; request < 2; request++) {
+        const next = await candidate.get({ view, payloadAudit: true });
+        const old = await legacy.get({ view, measure: false, payloadAudit: true });
+        assert.deepEqual(withoutTiming(next), old, "complete serialized response, phase trace, source IO and memory effects must match");
+        const unavailable = options.transactionMoneyFixture === "complex-throwing" || options.failSource === "memberships";
+        assert.equal(next.status, 200);
+        assert.deepEqual(next.warnings, unavailable ? ["memberships_unavailable"] : []);
+        assert.equal(next.outcomes.customersBySource.membership, unavailable ? 0 : Math.min(options.memberships ?? 0, mixed.distinctCustomers));
+        assert.equal(next.phases.membershipsRead.calls, 1);
+        assert.equal(next.io.localWrites + next.io.pageUpdates + next.io.pageInserts + next.io.forbiddenCalls, 0);
+      }
+      assert.deepEqual(candidate.sourceHashes, sourceHashes);
+      assert.deepEqual(legacy.sourceHashes, sourceHashes, "both paths must execute the same source code, selecting only the loader export");
+    }
+  }
+});
+
+test("synthetic membership history changes input bytes but not customer output, and explicit zero preserves default fixtures", async () => {
+  const ordinary = await createMerchantCustomerGetBaselineHarness(mixed).get({ measure: false });
+  const explicitZero = await createMerchantCustomerGetBaselineHarness({ ...mixed, transactionsPerMembership: 0 }).get({ measure: false });
+  assert.deepEqual(explicitZero, ordinary);
+  const history = await createMerchantCustomerGetBaselineHarness({ ...mixed, transactionsPerMembership: 40 }).get({ measure: false });
+  assert.equal(history.responseSha256, ordinary.responseSha256);
+  assert.equal(history.responseBytes, ordinary.responseBytes);
+  assert.deepEqual(history.outcomes, ordinary.outcomes);
+  assert.equal(history.inputBytes.local, ordinary.inputBytes.local);
+  assert.ok(history.inputBytes.remote > ordinary.inputBytes.remote);
+  assert.ok(history.io.readBytes > ordinary.io.readBytes, "history remains present in the database read; this is not a DB projection");
+  assert.notEqual(history.effectsSha256, ordinary.effectsSha256, "source history remains in input and final-memory fingerprints");
 });
 
 test("payload audit is opt-in and the default full GET retains its pre-projection response fingerprints", async () => {

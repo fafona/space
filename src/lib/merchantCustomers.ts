@@ -79,7 +79,7 @@ export type MerchantCustomerDirectoryInput = {
   storedCustomers?: unknown;
   orders?: MerchantOrderRecord[];
   bookings?: MerchantBookingRecord[];
-  memberships?: MerchantMembershipRecord[];
+  memberships?: Omit<MerchantMembershipRecord, "transactions">[];
 };
 
 type CustomerCandidate = {
@@ -509,7 +509,7 @@ function candidateFromStored(profile: MerchantCustomerProfile): CustomerCandidat
   };
 }
 
-function candidateFromMembership(siteId: string, membership: MerchantMembershipRecord): CustomerCandidate | null {
+function candidateFromMembership(siteId: string, membership: Omit<MerchantMembershipRecord, "transactions">): CustomerCandidate | null {
   const profile = normalizeMerchantCustomerProfile(
     {
       id: `membership-${membership.id}`,
