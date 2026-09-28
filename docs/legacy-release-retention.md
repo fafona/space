@@ -20,6 +20,12 @@ failed operation is closed only by its exact immutable restoration/abort proof;
 its records are never rewritten or deleted. Unknown or changing evidence fails
 closed. Dates alone never authorize deletion.
 
+An archived, timestamped `operation.lock.recovered-*` directory is historical
+evidence, not the current operation lock. It is accepted only when private,
+root-owned, empty and associated with a proven-closed archive. Its directory
+identity and empty inventory are pinned in the evidence digest. It is never
+removed, renamed or treated as permission to ignore an active lock.
+
 Unsupported ownership, permissions or link layouts exclude the whole tree; the
 tool never repairs permissions to make a tree eligible. The only accepted
 multi-link files are the two fixed generated esbuild binary paths, proven to be
