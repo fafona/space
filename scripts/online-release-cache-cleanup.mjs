@@ -189,6 +189,36 @@ function daemonIdentity() {
   return {pid: Number(text), startTicks: stat.slice(stat.lastIndexOf(') ') + 2).split(' ')[19]};
 }
 
+/** history must already have passed readOnlineRollingRetentions' complete proof
+ * validation. This is cache eligibility only, never permission to delete a PM2
+ * registration, source tree, runtime build or recovery certificate. All other
+ * protection sources must still be added, including overlapping live cwd paths.
+ */
+export function selectPm2CacheProtection({pm2, history}) {
+  if (!Array.isArray(pm2) || !Array.isArray(history?.legacyCertificates) || !Array.isArray(history?.entries))
+    fail('pm2_protection_invalid');
+  const certificates = [...history.legacyCertificates, ...history.entries];
+  const protectedDirectories = new Set(), certifiedStoppedDirectories = new Set();
+  for (const row of pm2) {
+    if (!row || !['online', 'stopped'].includes(row.status)) fail('process_transition_pending');
+    if (typeof row.cwd !== 'string' || !row.cwd.startsWith('/') || path.posix.normalize(row.cwd) !== row.cwd ||
+        /[\\\x00-\x1f\x7f]/.test(row.cwd)) fail('pm2_protection_invalid');
+    const matches = row.status === 'stopped' && row.pid === 0 && row.watch === false && row.cronRestart === null
+      ? certificates.filter(cert => {
+        const victim = cert?.victim;
+        return cert?.status === 'completed' && typeof victim?.target === 'string' && victim.target.length === 40 && SHA.test(victim.target) &&
+          victim.cwd === `${APP}.web-releases/${victim.target.slice(0, 12)}-online` &&
+          victim.name === `merchant-space-online-${victim.target.slice(0, 12)}` &&
+          victim.cwd === row.cwd && victim.name === row.name && victim.pmId === row.pmId && victim.port === row.port &&
+          isDeepStrictEqual(row, cert.stoppedProcess);
+      }) : [];
+    if (matches.length === 1) certifiedStoppedDirectories.add(row.cwd);
+    else protectedDirectories.add(row.cwd);
+  }
+  return Object.freeze({protectedDirectories: Object.freeze([...protectedDirectories].sort()),
+    certifiedStoppedDirectories: Object.freeze([...certifiedStoppedDirectories].sort())});
+}
+
 export function observeReleaseResources(revision) {
   validateTool(revision);
   const daemon = daemonIdentity(); // Refuse absent daemon before pm2 can auto-start it.
@@ -205,12 +235,8 @@ export function observeReleaseResources(revision) {
   const protectedDirectories = new Set([active.directory]);
   const mountinfo = fs.readFileSync('/proc/self/mountinfo', 'utf8');
   releaseMountReferences(mountinfo).forEach(value => protectedDirectories.add(value));
-  // Even stopped PM2 registrations may be restartable by cron/watch. Preserve
-  // their caches here; changing runtime retention belongs to the separate tool.
-  for (const process of pm2) {
-    if (!['online', 'stopped'].includes(process.status)) fail('process_transition_pending');
-    protectedDirectories.add(process.cwd);
-  }
+  const pm2Protection = selectPm2CacheProtection({pm2, history});
+  pm2Protection.protectedDirectories.forEach(value => protectedDirectories.add(value));
   const processes = processReferences();
   processes.forEach(item => item.references.forEach(value => protectedDirectories.add(value)));
   const scheduled = schedulerReferences();
@@ -248,7 +274,8 @@ export function observeReleaseResources(revision) {
   const proxyHashes = Object.fromEntries(WEB_RELEASE_FILES.map(name => [name, digest(readOwned(`${WEB_RELEASE_PROXY}/${name}`))]));
   return {version: 1, toolRevision: revision, bootId: fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(),
     hostSha256: digest(fs.readFileSync('/etc/machine-id')), releaseDirectories,
-    protectedDirectories: [...protectedDirectories].sort(), pm2, daemon, processes, scheduled, links,
+    protectedDirectories: [...protectedDirectories].sort(), certifiedStoppedDirectories: pm2Protection.certifiedStoppedDirectories,
+    pm2, daemon, processes, scheduled, links,
     mountinfoSha256: digest(mountinfo),
     historyHead: history.headSha256, legacySha256: history.legacySha256,
     historyCertificates: history.entries.map(item => digest(json(item))), stateHashes: hashes,
