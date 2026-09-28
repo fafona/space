@@ -73,6 +73,22 @@ export function savedPm2References(bytes) {
   if (!Array.isArray(parsed)) fail('saved_pm2_invalid');
   return legacyReferences(parsed);
 }
+// Docker returns Mounts as a set with unstable ordering. Canonicalize that set
+// and object keys only; retain every field and any nested array ordering.
+export function dockerEvidenceLine(line, expectedId) {
+  let value;
+  try {value = JSON.parse(line);} catch {fail('container_evidence_invalid');}
+  const object = item => item !== null && typeof item === 'object' && !Array.isArray(item);
+  if (!Array.isArray(value) || value.length !== 4 || typeof value[0] !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value[0]) || !/^[a-f0-9]{12,64}$/.test(expectedId ?? '') ||
+      !value[0].startsWith(expectedId) || !Array.isArray(value[1]) ||
+      value[1].some(item => !object(item) || ['Type', 'Source', 'Destination'].some(key => typeof item[key] !== 'string')) ||
+      value.slice(2).some(item => item !== null && typeof item !== 'string')) fail('container_evidence_invalid');
+  const canonical = item => Array.isArray(item) ? item.map(canonical) : object(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, canonical(item[key])])) : item;
+  const mounts = value[1].map(item => JSON.stringify(canonical(item))).sort().map(item => JSON.parse(item));
+  return {id: value[0], sha256: digest(JSON.stringify([value[0], mounts, ...value.slice(2)])), references: legacyReferences(value)};
+}
 export function isLegacyReleaseDirectory(value) {
   return typeof value === 'string' && new RegExp(`^${RELEASES.replaceAll('.', '\\.')}/[a-f0-9]{12}-[0-9]{14}$`).test(value);
 }
@@ -112,10 +128,13 @@ function extraReferences(base) {
   const ids = run('docker', ['ps', '-aq']).trim().split(/\s+/).filter(Boolean).sort();
   if (ids.some(id => !/^[a-f0-9]{12,64}$/.test(id))) fail('container_identity_invalid');
   if (ids.length) {
-    const template = '{{json .Id}} {{json .Mounts}} {{json (index .Config.Labels "com.docker.compose.project.working_dir")}} {{json (index .Config.Labels "com.docker.compose.project.config_files")}}';
+    const template = '[{{json .Id}},{{json .Mounts}},{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},{{json (index .Config.Labels "com.docker.compose.project.config_files")}}]';
     const lines = run('docker', ['inspect', '--format', template, ...ids]).trim().split('\n');
     if (lines.length !== ids.length) fail('container_set_changed');
-    for (const line of lines) {docker.push({sha256: digest(line), references: legacyReferences(line)}); legacyReferences(line).forEach(ref => extraProtected.add(ref));}
+    for (const [index, line] of lines.entries()) {
+      const evidence = dockerEvidenceLine(line, ids[index]);
+      docker.push(evidence); evidence.references.forEach(ref => extraProtected.add(ref));
+    }
   }
   const worktrees = run('git', ['worktree', 'list', '--porcelain'], {cwd: APP});
   legacyReferences(worktrees).forEach(ref => extraProtected.add(ref));
@@ -271,6 +290,7 @@ export function legacyReleaseCleanupMain(args = process.argv.slice(2)) {
       syncDirectory(AUDIT);
       for (const name of ['manifests', 'preserved']) fs.mkdirSync(`${location}/${name}`, {mode: 0o700});
       syncDirectory(location);
+      privateWrite(`${location}/observation.json`, json(observation));
       const trees = [], blobs = new Map();
       for (const directory of eligible) {
         const candidate = inspectLegacyCandidate(directory);
@@ -295,7 +315,8 @@ export function legacyReleaseCleanupMain(args = process.argv.slice(2)) {
     if (digest(bytes) !== approvedHash) fail('plan_hash_changed');
     const plan = JSON.parse(bytes), age = Date.now() - Date.parse(plan.createdAt);
     if (plan.toolRevision !== revision || !Number.isFinite(age) || age < 0 || age > 86400000) fail('plan_context_expired');
-    same(fs.readdirSync(location).sort(), ['manifests', 'plan.json', 'preserved'], 'plan_already_attempted');
+    same(fs.readdirSync(location).sort(), ['manifests', 'observation.json', 'plan.json', 'preserved'], 'plan_already_attempted');
+    same(readOwned(`${location}/observation.json`, 8 * 1024 * 1024), Buffer.from(json(plan.observation)), 'initial_observation_changed');
     const beforeAvailable = available();
     const results = executeLegacyReleaseCleanup(plan, {
       observe: () => observeLegacyReleaseCleanup(revision), readManifest: record => readManifest(location, record),

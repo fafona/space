@@ -20,6 +20,12 @@ failed operation is closed only by its exact immutable restoration/abort proof;
 its records are never rewritten or deleted. Unknown or changing evidence fails
 closed. Dates alone never authorize deletion.
 
+Container evidence pins identity, every mount field and both Compose path labels.
+Docker's unordered mount list and JSON object keys are canonicalized before
+hashing; actual field changes and nested array ordering still invalidate the
+plan. The initial observation is written before archival so an interrupted
+inspection retains diagnostic evidence; apply verifies it against the plan.
+
 An archived, timestamped `operation.lock.recovered-*` directory is historical
 evidence, not the current operation lock. It is accepted only when private,
 root-owned, empty and associated with a proven-closed archive. Its directory

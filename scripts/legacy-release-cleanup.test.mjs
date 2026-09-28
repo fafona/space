@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-import {legacyReferences, savedPm2References, isLegacyReleaseDirectory, planLegacyReleaseCleanup, isPreservedLegacyFile, inspectLegacyCandidate,
+import {legacyReferences, savedPm2References, dockerEvidenceLine, isLegacyReleaseDirectory, planLegacyReleaseCleanup, isPreservedLegacyFile, inspectLegacyCandidate,
   assertLegacyObservationUnchanged, executeLegacyReleaseCleanup} from './legacy-release-cleanup.mjs';
 
 const root = '/www/wwwroot/merchant-space.releases';
@@ -41,6 +41,48 @@ test('saved PM2 references decode JSON escapes and reject corrupt non-array dump
   assert.deepEqual(savedPm2References(JSON.stringify([{cwd: first}]).replaceAll('/', '\\u002f')), [first]);
   assert.deepEqual(savedPm2References(JSON.stringify([{cwd: first}]).replaceAll('/', '\\/')), [first]);
   for (const value of ['{broken', '{}', 'null']) assert.throws(() => savedPm2References(value), /saved_pm2_invalid/);
+});
+const containerId = 'a'.repeat(64);
+const containerFixture = () => [containerId, [
+  {Type: 'bind', Source: first, Destination: '/app', RW: true, Mode: 'rw', Propagation: 'rprivate'},
+  {Type: 'volume', Source: '/var/lib/docker/volumes/test/_data', Destination: '/data', RW: false, Name: 'test', Driver: 'local', Extra: {b: 2, a: ['x', 'y']}},
+], '/compose', '/compose/docker-compose.yml'];
+const evidence = value => dockerEvidenceLine(JSON.stringify(value), containerId.slice(0, 12));
+test('Docker mount set and object-key ordering are not reference changes', () => {
+  const value = containerFixture(), reordered = structuredClone(value);
+  reordered[1].reverse();
+  reordered[1] = reordered[1].map(item => Object.fromEntries(Object.entries(item).reverse()));
+  reordered[1][0].Extra = {a: ['x', 'y'], b: 2};
+  assert.deepEqual(evidence(reordered), evidence(value));
+  assert.deepEqual(evidence(value).references, [first]);
+  assert.deepEqual(dockerEvidenceLine(JSON.stringify(value).replaceAll('/', '\\u002f'), containerId), evidence(value));
+});
+test('every Docker mount field, nested array order and label remains pinned', () => {
+  const original = containerFixture(), expected = evidence(original).sha256;
+  for (const field of ['Type', 'Source', 'Destination', 'RW', 'Mode', 'Propagation']) {
+    const changed = structuredClone(original);
+    changed[1][0][field] = field === 'RW' ? false : 'changed';
+    assert.notEqual(evidence(changed).sha256, expected, field);
+  }
+  for (const change of [v => v[1][1].Extra.a.reverse(), v => {v[1][1].NewField = 'new';},
+    v => v[1].pop(), v => v[1].push(v[1][0]), v => {v[2] = second;}, v => {v[3] = second + '/compose.yml';}]) {
+    const changed = structuredClone(original); change(changed);
+    assert.notEqual(evidence(changed).sha256, expected);
+  }
+  const changedId = structuredClone(original); changedId[0] = 'b'.repeat(64);
+  assert.notEqual(dockerEvidenceLine(JSON.stringify(changedId), 'b'.repeat(12)).sha256, expected);
+  assert.deepEqual(evidence([containerId, [], second, null]).references, [second]);
+  assert.deepEqual(evidence([containerId, [], null, null]).references, []);
+});
+test('Docker malformed data and unexpected identity fail closed', () => {
+  for (const value of [null, {}, [], [containerId, []], [containerId, [], null, null, 'extra'],
+    ['short', [], null, null], ['b'.repeat(64), [], null, null], [containerId, null, null, null],
+    [containerId, [null], null, null], [containerId, [{}], null, null],
+    [containerId, [], {}, null], [containerId, [], null, []]])
+    assert.throws(() => evidence(value), /container_evidence_invalid/);
+  assert.throws(() => dockerEvidenceLine('{broken', containerId), /container_evidence_invalid/);
+  for (const expected of ['', null, 'a'.repeat(11), 'A'.repeat(12), containerId + 'a'])
+    assert.throws(() => dockerEvidenceLine(JSON.stringify(containerFixture()), expected), /container_evidence_invalid/);
 });
 test('ordinary observation leaves two legacy candidates', () => {
   assert.deepEqual(planLegacyReleaseCleanup(observation()), {eligible: [first, second], excluded: [{directory: current, reason: 'referenced'}]});
@@ -125,6 +167,7 @@ test('production CLI uses shared locks, exact reviewed source and one-shot priva
   for (const needle of ['withOnlineToolPreparationLocks', 'observeReleaseResources(revision)', 'readLegacyReleaseRecovery()',
     'plan_already_attempted', 'plan_hash_changed', 'plan_context_expired', 'O_EXCL', 'O_NOFOLLOW', 'fs.fsyncSync',
     'source_changed', 'archive_coverage_changed', 'archive_hash_changed', 'verifyArchive', 'dump.pm2.bak',
+    'observation.json', 'initial_observation_changed', 'dockerEvidenceLine(line, ids[index])',
     'docker', '/environ', 'worktree', 'legacy-release-tree.mjs', 'legacy-release-recovery.mjs']) assert.ok(source.includes(needle), needle);
   assert.doesNotMatch(source, /\brmSync\b|rm -rf|pm2', \['(?:delete|stop)|nginx', \['-s'|process\.env\.[A-Z_]*(?:BYPASS|LOCKED)/);
 });
