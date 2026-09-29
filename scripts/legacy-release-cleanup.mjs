@@ -16,6 +16,7 @@ const SHA = /^[a-f0-9]{40}$/, HASH = /^[a-f0-9]{64}$/;
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SOURCE_FILES = ['legacy-release-cleanup.mjs', 'legacy-release-tree.mjs', 'legacy-release-recovery.mjs',
   'online-release-cache-cleanup.mjs', 'online-release-cache-policy.mjs', 'online-release-rolling.mjs',
+  'online-release-retention.mjs', 'online-release-retention-policy.mjs',
   'online-release-rolling-policy.mjs', 'online-release-retirement.mjs', 'online-release-retirement-policy.mjs',
   'web-presentation-release-policy.mjs', 'contact-card-release-policy.mjs', 'prepare-online-release-tool.mjs'];
 const fail = code => {throw Error(`legacy_release_cleanup_${code}`);};

@@ -1,9 +1,10 @@
 import {spawnSync} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
-import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,rmdirSync,realpathSync,lstatSync,readdirSync,readlinkSync,copyFileSync,constants,statfsSync} from 'node:fs';
+import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,realpathSync,lstatSync,readdirSync,readlinkSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
-import {ONLINE_ROOT as root,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+import {ONLINE_ROOT as root,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {planStaticPermissionRecovery} from './online-static-recovery.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
@@ -11,10 +12,15 @@ import {verifyProductionDatabaseBackup} from './verify-production-database-backu
 import {normalizeRetirementProcess,readOnlineRetirementCertificates} from './online-release-retirement.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {readOnlineRollingRetentions,assertRollingRetainedProcesses,assertRollingStateHistory} from './online-release-rolling.mjs';
+import {readOnlineRetentionHistory} from './online-release-retention.mjs';
+import {snapshotOnlineRetentionPublication,assertOnlineRetentionPublication,inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
+import {withOnlineRetentionLocks,runOnlineRetentionUnderHeldLocks} from './online-release-retention-writer.mjs';
+import {completePublicationRetention} from './online-release-retention-publication.mjs';
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS} from './online-traffic-release-policy.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
+const controllerModuleUrl=import.meta.url;
 const [action,target,baseline]=process.argv.slice(2);
 const envBase={...process.env,PM2_HOME:'/root/.pm2'};
 const read=p=>readFileSync(p,'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');
@@ -31,6 +37,10 @@ const operation=`${root}/${target}`,stateFile=`${operation}/state.json`,activeFi
 const save=s=>atomic(stateFile,JSON.stringify(s,null,2));
 const protectedBaseProcesses=['merchant-space','merchant-space-enterprise-automation-worker','merchant-space-contact-card','merchant-space-web-live'];
 function verifyRetainedProcesses(s,all){
+ const retention=readOnlineRetentionHistory();
+ if(retention.entries.length||Object.hasOwn(s,'retentionHeadSha256')){
+  return assertOnlineRetentionPublication({history:retention,state:s,actualActive:JSON.parse(safeFile(activeFile)),current:all.map(normalizeRetirementProcess),action});
+ }
  const history=readOnlineRollingRetentions();
  if(history.entries.length||Object.hasOwn(s,'rollingRetentionHeadSha256')){
   if(!history.entries.length)fail('rolling_retention_history_changed');
@@ -64,9 +74,42 @@ function snapshotRetainedProcesses(all,releaseTarget,oldName,history=readOnlineR
  return saved;
 }
 function snapshotOnlineRetention(all,releaseTarget,oldName){
+ const retention=readOnlineRetentionHistory();
+ if(retention.entries.length){
+  const actualActive=JSON.parse(safeFile(activeFile));
+  if(actualActive.name!==oldName)fail('online_retention_baseline_changed');
+  return snapshotOnlineRetentionPublication({history:retention,actualActive,current:all.map(normalizeRetirementProcess),releaseTarget,
+   rollbackProof:readRetentionRollbackProof(retention,actualActive)});
+ }
  const history=readOnlineRollingRetentions();
  return {processes:snapshotRetainedProcesses(all,releaseTarget,oldName,history),
   ...(history.entries.length?{rollingRetentionHeadSha256:history.headSha256}:{})};
+}
+function readRetentionRollbackProof(history,actualActive){
+ const prior=history.entries.at(-1);
+ if(!prior||actualActive.target===prior.active.target)return null;
+ if(actualActive.target!==prior.rollback.target)fail('online_retention_active_outside_window');
+ const failedOperation=`${root}/${prior.active.target}`,failedStateText=safeFile(`${failedOperation}/state.json`),failedState=JSON.parse(failedStateText);
+ const identity=value=>Object.fromEntries(['target','name','directory','port'].map(key=>[key,value[key]]));
+ return {version:1,historyHeadSha256:failedState.retentionRollbackHeadSha256,from:identity(prior.active),to:identity(prior.rollback),activeFile:actualActive,
+  failedStateText,failedStateSha256:hash(failedStateText),
+  proxyFiles:Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,{beforeText:safeFile(`${failedOperation}/before-${file}`),afterText:safeFile(`${failedOperation}/after-${file}`)}])),
+  proxyHashes:Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,hash(safeFile(`${proxy}/${file}`))]))};
+}
+async function settleOnlineRetention(s,heldLock){
+ const result=await completePublicationRetention(s,{
+  history:()=>readOnlineRetentionHistory(),
+  window:history=>inspectOnlineRetentionWindow({history,actualActive:JSON.parse(safeFile(activeFile)),current:pm().map(normalizeRetirementProcess)}),
+  run:options=>{
+   const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+   const toolRevision=run('git',['rev-parse','HEAD'],{cwd:directory}).trim();
+   return runOnlineRetentionUnderHeldLocks({...options,toolRevision,lock:heldLock});
+  },
+ });
+ // Deliberately outside activateCandidate's rollback catch. Never rewrite the
+ // pinned active state or make a successful application release look failed.
+ if(result.status==='pending')console.error(`online_retention_pending:${result.reason}`);
+ return result;
 }
 async function request(url,statuses=[200],host='www.faolla.com',headers={}){
  const requestHeaders=new Headers({Host:host,...headers});requestHeaders.set('Connection','close');
@@ -82,8 +125,9 @@ async function verifyBase(s){
  if(hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json'))!==s.maintenanceHash||JSON.parse(read('/var/lib/faolla-maintenance/merchant-space/state.json')).phase!=='ended')fail('maintenance_state_changed');
  if(hash(safeFile(marker))!==s.markerHash)fail('legacy_guard_changed');
  if(realpathSync(`${app}.current`)!==s.baseDirectory)fail('baseline_link_changed');
- verifyRetainedProcesses(s,pm());
- if((await(await request(`http://127.0.0.1:${s.oldPort}/api/app-web-version`)).json()).buildId!==s.baseline)fail('baseline_version_changed');
+ const retention=verifyRetainedProcesses(s,pm());
+ const baselineProbe=retention?.baseline??{port:s.oldPort,target:s.baseline};
+ if((await(await request(`http://127.0.0.1:${baselineProbe.port}/api/app-web-version`)).json()).buildId!==baselineProbe.target)fail('baseline_version_changed');
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
 function readRuntimePerformanceSavedConfigs(s,includeAfter){
@@ -153,13 +197,15 @@ async function smoke(s,publicMode=false){
 function restoreConfigs(s){
  for(const file of WEB_RELEASE_FILES){const h=hash(safeFile(`${proxy}/${file}`));if(h!==s.configs[file].oldHash&&h!==s.configs[file].newHash)fail('rollback_proxy_not_owned');}
  const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'?readRuntimePerformanceSavedConfigs(s,false):null;
+ const retention=readOnlineRetentionHistory();
+ if(retention.entries.at(-1)?.active.target===s.target)s.retentionRollbackHeadSha256=retention.headSha256;
  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).before:safeFile(`${operation}/before-${file}`));
  run(nginx,['-t']);run(nginx,['-s','reload']);
  s.status='rolled-back';s.rolledBackAt=new Date().toISOString();save(s);
  // Preserve all schema/data, background processes, marker and candidate artifacts.
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
-function candidateEnvironment(s){return JSON.parse(safeFile(`${operation}/runtime.json`));}
+function candidateEnvironment(s){void s;return JSON.parse(safeFile(`${operation}/runtime.json`));}
 function assertCustomerCodeProjectionOff(env,allowAbsent=false){
  for(const [key,expected] of [['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED','0'],['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS','']]){
   if(env[key]!==expected&&!(allowAbsent&&env[key]===undefined))fail('customer_code_projection_must_remain_off');
@@ -392,18 +438,14 @@ async function resumeBookingStage(s,probeRecovery=false){
  }catch(error){writeFileSync(`${audit}-failure.json`,JSON.stringify({toolRevision:tool.revision,error:error.message,failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});throw error;}
 }
 if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','resume-booking-stage','resume-booking-probe-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
-if(!process.env.FAOLLA_ONLINE_RELEASE_LOCKED){
- const lock=`${app}.deploy.lock`;if(existsSync(lock)&&lstatSync(lock).isSymbolicLink())fail('unsafe_deploy_lock');
- const r=spawnSync('flock',['--nonblock',lock,process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit',env:{...envBase,FAOLLA_ONLINE_RELEASE_LOCKED:'1'}});process.exit(r.status??1);
-}
+try{await withOnlineRetentionLocks(async heldLock=>{
 privateDirectory(root);
-const operationLock='/var/lib/faolla-maintenance/merchant-space/operation.lock';mkdirSync(operationLock,{mode:0o700});
 try{
  if(action==='stage'){
   if(!/^[a-f0-9]{40}$/.test(baseline??'')||existsSync(stateFile))fail('existing_or_invalid_stage');
   if(run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
-  const lane=onlineReleaseLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
+  const lane=onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   const previousActive=existsSync(activeFile)?JSON.parse(safeFile(activeFile)):null;
   const legacy=JSON.parse(safeFile('/var/lib/faolla-web-presentation-release/state.json'));
   const old=previousActive??{...legacy,port:3102,name:'merchant-space-web-live'};
@@ -522,12 +564,13 @@ try{
    verifyCandidate(s);s.status='database-ready';save(s);
   }else if(action==='activate'){
    if(s.status!==onlineReleaseActivationStatus(s.lane))fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
-   await activateCandidate(s);
+   await activateCandidate(s);await settleOnlineRetention(s,heldLock);
   }else if(action==='retry-static'){
-   await recoverStaticPermissions(s);await activateCandidate(s);
+   await recoverStaticPermissions(s);await activateCandidate(s);await settleOnlineRetention(s,heldLock);
   }else if(action==='rollback'){
    if(!['active','activating'].includes(s.status)||!existsSync(activeFile)||JSON.parse(safeFile(activeFile)).target!==s.target)fail('rollback_not_current');configUnchanged(s,true);if(s.lane==='order-attention')restoreOrderAttentionConfigs(s);else restoreConfigs(s);
   }
  }
  const result=JSON.parse(safeFile(stateFile));console.log(JSON.stringify({status:result.status,target:result.target,port:result.port,directory:result.directory}));
-}catch(error){console.error(error.message);process.exitCode=1;}finally{rmdirSync(operationLock);}
+}catch(error){console.error(error.message);process.exitCode=1;}
+});}catch(error){console.error(error.message);process.exitCode=1;}

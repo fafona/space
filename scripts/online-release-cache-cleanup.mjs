@@ -5,7 +5,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {planReleaseCacheCleanup, captureWebpackCache, applyWebpackCacheCleanup} from './online-release-cache-policy.mjs';
-import {readOnlineRollingRetentions} from './online-release-rolling.mjs';
+import {readOnlineRetentionHistory} from './online-release-retention.mjs';
+import {ONLINE_RETENTION_POLICY, inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
 import {assertExistingPm2Directory, normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {WEB_RELEASE_FILES, WEB_RELEASE_PROXY, WEB_RELEASE_MARKER} from './web-presentation-release-policy.mjs';
 import {withOnlineToolPreparationLocks} from './prepare-online-release-tool.mjs';
@@ -18,6 +19,7 @@ const ROOTS = [`${APP}.releases`, `${APP}.route-releases`, `${APP}.web-releases`
 const SHA = /^[a-f0-9]{40}$/;
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const TOOL_FILES = ['online-release-cache-cleanup.mjs', 'online-release-cache-policy.mjs',
+  'online-release-retention.mjs', 'online-release-retention-policy.mjs',
   'online-release-rolling.mjs', 'online-release-rolling-policy.mjs', 'online-release-retirement.mjs',
   'online-release-retirement-policy.mjs', 'web-presentation-release-policy.mjs',
   'contact-card-release-policy.mjs', 'prepare-online-release-tool.mjs'];
@@ -189,23 +191,30 @@ function daemonIdentity() {
   return {pid: Number(text), startTicks: stat.slice(stat.lastIndexOf(') ') + 2).split(' ')[19]};
 }
 
-/** history must already have passed readOnlineRollingRetentions' complete proof
+/** history must already have passed the applicable complete history reader's proof
  * validation. This is cache eligibility only, never permission to delete a PM2
  * registration, source tree, runtime build or recovery certificate. All other
  * protection sources must still be added, including overlapping live cwd paths.
  */
 export function selectPm2CacheProtection({pm2, history}) {
-  if (!Array.isArray(pm2) || !Array.isArray(history?.legacyCertificates) || !Array.isArray(history?.entries))
+  const v2 = history?.version === 2;
+  const rolling = v2 ? history.rollingHistory : history;
+  if (!Array.isArray(pm2) || !Array.isArray(rolling?.legacyCertificates) || !Array.isArray(rolling?.entries) ||
+      (v2 && (history.policy !== ONLINE_RETENTION_POLICY || !Array.isArray(history.entries))))
     fail('pm2_protection_invalid');
-  const certificates = [...history.legacyCertificates, ...history.entries];
+  const certificates = [...rolling.legacyCertificates, ...rolling.entries].map(cert => ({cert, v2: false}));
+  if (v2) certificates.push(...history.entries.map(cert => ({cert, v2: true})));
   const protectedDirectories = new Set(), certifiedStoppedDirectories = new Set();
   for (const row of pm2) {
     if (!row || !['online', 'stopped'].includes(row.status)) fail('process_transition_pending');
     if (typeof row.cwd !== 'string' || !row.cwd.startsWith('/') || path.posix.normalize(row.cwd) !== row.cwd ||
         /[\\\x00-\x1f\x7f]/.test(row.cwd)) fail('pm2_protection_invalid');
     const matches = row.status === 'stopped' && row.pid === 0 && row.watch === false && row.cronRestart === null
-      ? certificates.filter(cert => {
-        const victim = cert?.victim;
+      ? certificates.filter(({cert, v2}) => {
+        if (v2 && (cert?.version !== 2 || cert.policy !== ONLINE_RETENTION_POLICY || cert.kind !== 'retire' ||
+            cert.victim?.process?.status !== 'online' || !Number.isSafeInteger(cert.victim.process.pid) || cert.victim.process.pid < 1 ||
+            !isDeepStrictEqual(row, {...cert.victim.process, pid: 0, status: 'stopped'}))) return false;
+        const victim = v2 ? {...cert.victim.process, target: cert.victim.target} : cert?.victim;
         return cert?.status === 'completed' && typeof victim?.target === 'string' && victim.target.length === 40 && SHA.test(victim.target) &&
           victim.cwd === `${APP}.web-releases/${victim.target.slice(0, 12)}-online` &&
           victim.name === `merchant-space-online-${victim.target.slice(0, 12)}` &&
@@ -219,12 +228,42 @@ export function selectPm2CacheProtection({pm2, history}) {
     certifiedStoppedDirectories: Object.freeze([...certifiedStoppedDirectories].sort())});
 }
 
+/** The caller supplies a fully validated reader result. Completed v2 replaces
+ * only the obsolete three-generation rollback walk; all other live references,
+ * registrations, pending states, mounts and schedulers remain additive guards. */
+export function selectReleaseRetentionProtection({history, active, pm2, states}) {
+  const v2 = history?.version === 2;
+  const rolling = v2 ? history.rollingHistory : history;
+  const protectedDirectories = new Set();
+  if (v2 && history.entries.length) {
+    const window = inspectOnlineRetentionWindow({history, actualActive: active, current: pm2});
+    if (window.phase !== 'stable' || !window.stableRollback) fail('retention_window_rolled_back');
+    for (const anchor of [window.active, window.stableRollback]) {
+      const state = states.find(item => item.location === `${ONLINE}/${anchor.target}/state.json`);
+      if (!state || state.status !== 'active' || state.directory !== anchor.directory) fail('rollback_state_missing');
+      protectedDirectories.add(anchor.directory);
+    }
+  } else {
+    let anchor = active.target;
+    for (let count = 0; count < 3; count++) {
+      const state = states.find(item => item.location === `${ONLINE}/${anchor}/state.json`);
+      if (!state || state.status !== 'active' || typeof state.directory !== 'string') fail('rollback_state_missing');
+      protectedDirectories.add(state.directory); anchor = state.baseline;
+    }
+    const latest = rolling.entries.at(-1);
+    for (const item of latest?.protectedAnchors ?? []) protectedDirectories.add(item.directory);
+    if (latest && latest.nextTarget !== active.target && !states.some(item => item.target === latest.nextTarget && item.status === 'active'))
+      fail('rolling_release_unresolved');
+  }
+  return Object.freeze([...protectedDirectories].sort());
+}
+
 export function observeReleaseResources(revision) {
   validateTool(revision);
   const daemon = daemonIdentity(); // Refuse absent daemon before pm2 can auto-start it.
   const pm2 = JSON.parse(run('pm2', ['jlist'])).map(normalizeRetirementProcess).sort((a, b) => a.pmId - b.pmId);
   same(daemonIdentity(), daemon, 'daemon_changed');
-  const history = readOnlineRollingRetentions();
+  const retention = readOnlineRetentionHistory(), history = retention.rollingHistory;
   const maintenanceText = readOwned(`${MAINTENANCE}/state.json`, true);
   if (JSON.parse(maintenanceText).phase !== 'ended') fail('maintenance_not_ended');
   const activeText = readOwned(`${ONLINE}/active.json`, true), active = JSON.parse(activeText);
@@ -235,7 +274,7 @@ export function observeReleaseResources(revision) {
   const protectedDirectories = new Set([active.directory]);
   const mountinfo = fs.readFileSync('/proc/self/mountinfo', 'utf8');
   releaseMountReferences(mountinfo).forEach(value => protectedDirectories.add(value));
-  const pm2Protection = selectPm2CacheProtection({pm2, history});
+  const pm2Protection = selectPm2CacheProtection({pm2, history: retention});
   pm2Protection.protectedDirectories.forEach(value => protectedDirectories.add(value));
   const processes = processReferences();
   processes.forEach(item => item.references.forEach(value => protectedDirectories.add(value)));
@@ -250,16 +289,8 @@ export function observeReleaseResources(revision) {
     protectedDirectories.add(ref);
     if (fs.existsSync(ref)) protectedDirectories.add(fs.realpathSync(ref));
   }
-  let anchor = active.target;
-  for (let count = 0; count < 3; count++) {
-    const state = states.find(item => item.location === `${ONLINE}/${anchor}/state.json`);
-    if (!state || state.status !== 'active' || typeof state.directory !== 'string') fail('rollback_state_missing');
-    protectedDirectories.add(state.directory); anchor = state.baseline;
-  }
-  const latest = history.entries.at(-1);
-  for (const item of latest?.protectedAnchors ?? []) protectedDirectories.add(item.directory);
-  if (latest && latest.nextTarget !== active.target && !states.some(item => item.target === latest.nextTarget && item.status === 'active'))
-    fail('rolling_release_unresolved');
+  selectReleaseRetentionProtection({history: retention, active, pm2, states})
+    .forEach(value => protectedDirectories.add(value));
   for (const state of states) {
     if (state.location.endsWith('/active.json')) continue;
     if (!['active', 'rolled-back'].includes(state.status)) stateReferences(state.value).forEach(value => protectedDirectories.add(value));
@@ -272,6 +303,7 @@ export function observeReleaseResources(revision) {
     });
   }).sort();
   const proxyHashes = Object.fromEntries(WEB_RELEASE_FILES.map(name => [name, digest(readOwned(`${WEB_RELEASE_PROXY}/${name}`))]));
+  same(readOnlineRetentionHistory(), retention, 'retention_history_changed');
   return {version: 1, toolRevision: revision, bootId: fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(),
     hostSha256: digest(fs.readFileSync('/etc/machine-id')), releaseDirectories,
     protectedDirectories: [...protectedDirectories].sort(), certifiedStoppedDirectories: pm2Protection.certifiedStoppedDirectories,
@@ -279,6 +311,8 @@ export function observeReleaseResources(revision) {
     mountinfoSha256: digest(mountinfo),
     historyHead: history.headSha256, legacySha256: history.legacySha256,
     historyCertificates: history.entries.map(item => digest(json(item))), stateHashes: hashes,
+    ...(retention.entries.length ? {retentionHead: retention.headSha256,
+      retentionCertificates: retention.entries.map(item => digest(json(item)))} : {}),
     activeSha256: digest(activeText), maintenanceSha256: digest(maintenanceText), proxyHashes,
     markerSha256: digest(readOwned(WEB_RELEASE_MARKER)), nginxSha256: digest(nginxText),
     worktreesSha256: digest(run('git', ['worktree', 'list', '--porcelain'], {cwd: APP}))};
@@ -371,7 +405,7 @@ export function cacheCleanupMain(args = process.argv.slice(2)) {
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {cacheCleanupMain();} catch (error) {
-    console.error(/^(?:release_cache_|online_cache_|online_tool_|online_retirement_|online_rolling_)[a-z0-9_]+$/.test(error.message)
+    console.error(/^(?:release_cache_|online_cache_|online_tool_|online_retirement_|online_rolling_|online_retention_)[a-z0-9_]+$/.test(error.message)
       ? error.message : 'release_cache_unexpected_failure');
     process.exitCode = 1;
   }
