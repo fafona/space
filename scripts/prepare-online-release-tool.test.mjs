@@ -11,11 +11,16 @@ import {createOnlineReleaseToolPlan, executeOnlineReleaseToolPlan, verifyOnlineR
   TOOL_SPARSE_PATTERNS} from './prepare-online-release-tool.mjs';
 
 const self = fileURLToPath(new URL('./prepare-online-release-tool.mjs', import.meta.url));
-test('bootstrap identity remains self-contained with only fixed Node builtin imports', () => {
+test('bootstrap remains builtin-only until CLI loads housekeeping from the verified target', () => {
   const source = fs.readFileSync(self, 'utf8');
   assert.deepEqual([...source.matchAll(/^import .+ from '([^']+)';$/gm)].map(match => match[1]),
     ['node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url']);
-  assert.doesNotMatch(source, /\bimport\s*\(|\brequire\s*\(/);
+  assert.doesNotMatch(source, /\brequire\s*\(/);
+  assert.equal([...source.matchAll(/\bimport\s*\(/g)].length, 1);
+  assert.ok(source.indexOf('const prepared = prepareOnlineReleaseToolMain();') < source.indexOf('import(`file://${prepared.directory}/scripts/online-release-tool-retention.mjs`)'));
+  assert.match(source, /runOnlineReleaseToolRetention\(\{target: prepared\.target, bootstrapDirectory\}\)/);
+  assert.match(source, /\.\.\.prepared, toolRetention/);
+  assert.match(source, /toolRetention: \{status: 'pending', reason: 'online_tool_retention_module_unavailable'\}/);
 });
 function fixturePath(location, kind = 'directory') {
   const value = fs.lstatSync(location);

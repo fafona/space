@@ -86,6 +86,18 @@ function harness() {
       verifyBase: async state => result.verifyRetainedProcesses(state, rawRows()),
       restoreOrderAttentionConfigs: () => assert.fail('fixture has no order-attention configuration'),
       run: (command, args) => {host.events.push([command, ...args]); return command === 'git' ? fixtures.sha('8') + '\n' : '';},
+      reclaimPublicationArtifacts: options => {
+        assert.strictEqual(options.lock, host.lock);
+        assert.equal(options.state.status, 'active');
+        assert.equal(options.retentionResult.status, 'completed');
+        const latest = host.history.entries.at(-1);
+        assert.equal(latest.kind, 'retire');
+        assert.equal(latest.victim.target, options.retentionResult.retired);
+        host.events.push(['artifact-reclaim', options.retentionResult.retired]);
+        if (host.failure === 'artifact-throw') throw Error('synthetic-private-error');
+        if (host.failure === 'artifact-pending') return {status: 'pending', reason: 'online_artifact_external_reference'};
+        return {status: 'completed'};
+      },
       runOnlineRetentionUnderHeldLocks: async options => {
         assert.strictEqual(options.lock, host.lock, 'actual housekeeping must forward the held lock capability');
         host.events.push(['retention', options.kind, options.victimTarget]);
@@ -144,6 +156,7 @@ test('actual publisher activation, convergence and retirement advance history wi
   assert.notEqual(h.host.history.headSha256, initial); assert.equal(p.state.retentionHeadSha256, initial);
   assert.equal(p.adapter.verifyRetainedProcesses(p.state, h.rawRows()).converged, true);
   assert.equal(h.host.current.find(p => p.name === h.original.rollback.name).status, 'stopped');
+  assert.deepEqual(h.host.events.filter(e => e[0] === 'artifact-reclaim'), [['artifact-reclaim', fixtures.sha('b')]]);
 });
 
 test('actual rollback pin, saved proxy proof, new snapshot and republish keep the restored version and retire the failed version', async () => {
@@ -182,6 +195,23 @@ for (const failure of ['converge', 'retire']) test(`actual post-activation ${fai
   assert.equal(h.host.events.slice(eventStart).some(e => e[0] === 'write' || e[0] === 'state' || e[0] === '/owned-nginx'), false);
   assert.equal(h.host.events.filter(e => e[0] === 'retention' && e[1] === 'retire').length, failure === 'retire' ? 1 : 0);
   assert.equal(p.state.status, 'active');
+  assert.equal(h.host.events.some(e => e[0] === 'artifact-reclaim'), false);
+});
+
+for (const failure of ['artifact-throw', 'artifact-pending']) test(`artifact ${failure} never changes successful application status or repeats retirement`, async () => {
+  const h = harness(), p = h.stage('f', 3105, 5); await p.adapter.activateCandidate(p.state);
+  const beforeState = h.read(h.statePath(p.state.target)), beforeActive = h.read(h.activeFile);
+  const proxies = WEB_RELEASE_FILES.map(file => h.read(`${h.proxy}/${file}`));
+  h.host.failure = failure;
+  assert.deepEqual(await p.adapter.settleOnlineRetention(p.state, h.lock), {status: 'completed', retired: fixtures.sha('b')});
+  assert.equal(h.read(h.statePath(p.state.target)), beforeState); assert.equal(h.read(h.activeFile), beforeActive);
+  assert.deepEqual(WEB_RELEASE_FILES.map(file => h.read(`${h.proxy}/${file}`)), proxies);
+  assert.equal(h.host.events.filter(e => e[0] === 'artifact-reclaim').length, 1);
+  assert.equal(h.host.events.filter(e => e[0] === 'retention' && e[1] === 'retire').length, 1);
+  assert.ok(h.host.events.some(e => e[0] === 'notice' && e[1].includes('online_artifact_housekeeping') && e[1].includes('pending')));
+  assert.doesNotMatch(JSON.stringify(h.host.events), /synthetic-private-error/);
+  await p.adapter.settleOnlineRetention(p.state, h.lock);
+  assert.equal(h.host.events.filter(e => e[0] === 'artifact-reclaim').length, 1);
 });
 
 for (const corruption of ['before-proxy', 'after-proxy', 'current-proxy', 'rollback-head', 'rollback-time', 'failed-state-status'])

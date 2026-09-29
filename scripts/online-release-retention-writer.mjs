@@ -382,6 +382,10 @@ function assertHeldLocks(token) {
   if (fs.readdirSync(OPERATION_LOCK).length) fail('operation_lock_changed');
 }
 
+// Read-only capability check for post-publication artifact housekeeping. This
+// does not mint a token, reacquire a lock, or accept an environment bypass.
+export {assertHeldLocks as assertOnlineRetentionHeldLocks};
+
 /** Async lock scope: never release the parent FD or operation lock while an
  * awaited observation, stop, save or fsync is still outstanding. */
 export async function withOnlineRetentionLocks(work, {io = fs, spawn = spawnSync,

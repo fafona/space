@@ -231,6 +231,17 @@ export function prepareOnlineReleaseToolMain(args = process.argv.slice(2)) {
   });
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {console.log(JSON.stringify(prepareOnlineReleaseToolMain()));}
+  try {
+    const prepared = prepareOnlineReleaseToolMain();
+    // Preparation's exported synchronous contract is unchanged. Only the CLI
+    // runs bounded housekeeping from the newly verified target checkout. The
+    // old bootstrap may still be executing and is explicitly protected.
+    const bootstrapDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+    import(`file://${prepared.directory}/scripts/online-release-tool-retention.mjs`)
+      .then(module => module.runOnlineReleaseToolRetention({target: prepared.target, bootstrapDirectory}))
+      .then(toolRetention => console.log(JSON.stringify({...prepared, toolRetention})))
+      .catch(() => console.log(JSON.stringify({...prepared,
+        toolRetention: {status: 'pending', reason: 'online_tool_retention_module_unavailable'}})));
+  }
   catch (error) {console.error(error.message); process.exitCode = 1;}
 }
