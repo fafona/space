@@ -123,6 +123,12 @@ environment, merchant uploads, backups and all business records are untouched.
 
 ## Retention discipline
 
+Update (2026-09-29): current online policy is current + **one** stable rollback.
+The newly authorized bounded artifact/tool lifecycle is specified in
+[online-release-artifact-retention.md](online-release-artifact-retention.md).
+The original cache-only command below is still explicit and never independently
+authorizes full-release deletion. The old three-anchor text is historical.
+
 - Keep current runtime, the current policy's three rollback anchors, worker/static
   roots and anything referenced by incomplete operations or immutable recovery.
 - Do not equate the count of directories with the count of removable versions.

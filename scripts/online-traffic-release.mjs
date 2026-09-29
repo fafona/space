@@ -16,6 +16,7 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {snapshotOnlineRetentionPublication,assertOnlineRetentionPublication,inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
 import {withOnlineRetentionLocks,runOnlineRetentionUnderHeldLocks} from './online-release-retention-writer.mjs';
 import {completePublicationRetention} from './online-release-retention-publication.mjs';
+import {reclaimPublicationArtifacts} from './online-release-artifact-cleanup.mjs';
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS} from './online-traffic-release-policy.mjs';
 
@@ -109,6 +110,14 @@ async function settleOnlineRetention(s,heldLock){
  // Deliberately outside activateCandidate's rollback catch. Never rewrite the
  // pinned active state or make a successful application release look failed.
  if(result.status==='pending')console.error(`online_retention_pending:${result.reason}`);
+ if(result.status==='completed'&&result.retired){
+  try{
+   const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+   const toolRevision=directory.split('/').at(-1);
+   const artifacts=reclaimPublicationArtifacts({state:s,retentionResult:result,toolRevision,lock:heldLock});
+   console.error(`online_artifact_housekeeping:${JSON.stringify(artifacts)}`);
+  }catch{console.error('online_artifact_housekeeping:{"status":"pending","reason":"online_artifact_check_failed"}');}
+ }
  return result;
 }
 async function request(url,statuses=[200],host='www.faolla.com',headers={}){

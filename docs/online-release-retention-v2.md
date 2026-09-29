@@ -81,6 +81,12 @@ any process. Earlier partial attempts require separate manual diagnosis.
 
 ## Disk cleanup is a distinct operation
 
+Update (2026-09-29): the authorized bounded post-publication artifact hook is
+documented in [online-release-artifact-retention.md](online-release-artifact-retention.md).
+It adds a separate reference/source/recovery proof for only the just-retired
+version; a stop certificate by itself still never authorizes deleting a tree.
+The following describes the earlier explicit cache/legacy cleanup tools.
+
 Stopping old processes releases runtime resources; it is not a claim that their
 disk trees were deleted. The cache observer understands complete v2 certificates
 and protects current + one (instead of the old three-anchor policy), while

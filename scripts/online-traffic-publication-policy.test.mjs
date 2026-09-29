@@ -26,6 +26,13 @@ const current = [
   'scripts/online-traffic-retention-integration.test.mjs',
   'scripts/online-traffic-publication-policy.mjs', 'scripts/online-traffic-publication-policy.test.mjs',
 ];
+const artifacts = [
+  'docs/online-release-artifact-retention.md',
+  'scripts/online-release-artifact-cleanup.mjs', 'scripts/online-release-artifact-cleanup.test.mjs',
+  'scripts/online-release-artifact-policy.mjs', 'scripts/online-release-artifact-policy.test.mjs',
+  'scripts/online-release-artifact-tree.mjs', 'scripts/online-release-artifact-tree.test.mjs',
+  'scripts/online-release-tool-retention.mjs', 'scripts/online-release-tool-retention.test.mjs',
+];
 const lanes = [
   ['traffic', 'src/components/PublicTrafficProvider.tsx'],
   ['qr-export', 'src/lib/merchantBusinessCardQrExport.ts'],
@@ -40,9 +47,9 @@ const lanes = [
 ];
 
 test('support closure is exactly the reviewed operational files, immutable and never a runtime/schema/dependency exemption', () => {
-  assert.equal(ONLINE_PUBLICATION_SUPPORT_FILES.length, 31);
-  assert.deepEqual([...ONLINE_PUBLICATION_SUPPORT_FILES].sort(), [...previous, ...current].sort());
-  assert.equal(new Set(ONLINE_PUBLICATION_SUPPORT_FILES).size, 31);
+  assert.equal(ONLINE_PUBLICATION_SUPPORT_FILES.length, 40);
+  assert.deepEqual([...ONLINE_PUBLICATION_SUPPORT_FILES].sort(), [...previous, ...current, ...artifacts].sort());
+  assert.equal(new Set(ONLINE_PUBLICATION_SUPPORT_FILES).size, 40);
   assert.equal(Object.isFrozen(ONLINE_PUBLICATION_SUPPORT_FILES), true);
   assert.throws(() => ONLINE_PUBLICATION_SUPPORT_FILES.push('src/lib/merchantIdentity.ts'), TypeError);
   for (const [, anchor] of lanes) assert.equal(ONLINE_PUBLICATION_SUPPORT_FILES.includes(anchor), false);
