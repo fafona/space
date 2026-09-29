@@ -132,7 +132,7 @@ function retainedProcessHarness(){
  const s={target:sha('a'),name:name('a'),oldName:name('b'),processes:saved};
  const normalize=p=>({name:p.name,pmId:p.pm_id,pid:p.pid,cwd:p.pm2_env.pm_cwd,status:p.pm2_env.status,port:Number(p.pm2_env.PORT),backgroundPaused:p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED,automationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED,invitationEnabled:p.pm2_env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED});
  certificate.stoppedProcess=normalize(current[2]);
- const execute=(expression,{certificates=[certificate],all=current,state=s,history={version:1,entries:[],headSha256:null},rollingCheck=()=>{throw Error('unexpected_rolling_check');},action='stage',stateHistoryCheck=()=>{throw Error('unexpected_rolling_state_check');}}={})=>runInNewContext(`${helpers}${expression}`,{s:state,all,action,releaseTarget:sha('d'),oldName:name('a'),readOnlineRetirementCertificates:()=>certificates,readOnlineRollingRetentions:()=>history,assertRollingRetainedProcesses:rollingCheck,assertRollingStateHistory:stateHistoryCheck,normalizeRetirementProcess:normalize,assertRetainedOnlineProcesses,fail:m=>{throw Error(m);}});
+ const execute=(expression,{certificates=[certificate],all=current,state=s,history={version:1,entries:[],headSha256:null},rollingCheck=()=>{throw Error('unexpected_rolling_check');},action='stage',stateHistoryCheck=()=>{throw Error('unexpected_rolling_state_check');}}={})=>runInNewContext(`${helpers}${expression}`,{s:state,all,action,releaseTarget:sha('d'),oldName:name('a'),readOnlineRetentionHistory:()=>({entries:[]}),readOnlineRetirementCertificates:()=>certificates,readOnlineRollingRetentions:()=>history,assertRollingRetainedProcesses:rollingCheck,assertRollingStateHistory:stateHistoryCheck,normalizeRetirementProcess:normalize,assertRetainedOnlineProcesses,fail:m=>{throw Error(m);}});
  return {sha,name,cwd,original,current,certificate,s,execute,source,normalize};
 }
 
@@ -625,7 +625,7 @@ test('rolling stage head cannot disappear, advance or become authorized by a dif
  for(const expression of ['verifyRetainedProcesses(s,all)','snapshotOnlineRetention(all,releaseTarget,oldName)']){
   assert.throws(()=>runInNewContext(`${helpers}${expression}`,{
    s:h.s,all:h.current,releaseTarget:h.sha('d'),oldName:h.name('a'),
-   readOnlineRollingRetentions:()=>{throw Error('incomplete_rolling_history');},
+   readOnlineRetentionHistory:()=>({entries:[]}),readOnlineRollingRetentions:()=>{throw Error('incomplete_rolling_history');},
    readOnlineRetirementCertificates:()=>{throw Error('legacy_fallback_forbidden');},
   }),/incomplete_rolling_history/);
  }
@@ -661,7 +661,7 @@ function rollingReleaseHistoryHarness(){
    :initial.filter(p=>!['d','7','8',...(from==='d'?['c']:[])].includes(p.name.at(-1))).map(p=>({name:p.name,pid:p.pid,cwd:p.pm2_env.pm_cwd})),
   ...(pin?{rollingRetentionHeadSha256:pin}:{})});
  const execute=(s,h,all,action='rollback')=>runInNewContext(`${helpers}verifyRetainedProcesses(s,all)`,{s,all,action,normalizeRetirementProcess,
-  readOnlineRollingRetentions:()=>h,assertRollingRetainedProcesses,assertRollingStateHistory,readOnlineRetirementCertificates:()=>{throw Error('no_legacy_scope_upgrade');},fail:m=>{throw Error(m);}});
+  readOnlineRetentionHistory:()=>({entries:[]}),readOnlineRollingRetentions:()=>h,assertRollingRetainedProcesses,assertRollingStateHistory,readOnlineRetirementCertificates:()=>{throw Error('no_legacy_scope_upgrade');},fail:m=>{throw Error(m);}});
  return {sha,name,state,execute,first,second,firstCurrent,secondCurrent};
 }
 
@@ -1002,6 +1002,7 @@ function runtimePerformanceProxyHarness(lane='runtime-performance'){
   s.configs[file]={oldHash:digest(before),newHash:digest(after)};
  }
  const api=runInNewContext(`${unchanged}${saved}${restore}${activate}({activateCandidate,restoreConfigs,readRuntimePerformanceSavedConfigs})`,{
+  readOnlineRetentionHistory:()=>({entries:[]}),
   WEB_RELEASE_FILES:names,operation:'/operation',proxy:'/proxy',app:'/www/wwwroot/merchant-space',
   activeFile:'/active',nginx:'/nginx',hash:digest,
   safeFile:path=>{reads.push(path);if(!files.has(path))throw Error('missing_fixture_file');return files.get(path);},
@@ -2122,10 +2123,11 @@ test('customer activate requires ready exact candidate and owned proxy while rol
   const gate=name=>{calls.push(name);if(failure===name)throw Error(`failed_${name}`);};
   const task=runInNewContext(`(async()=>{${code.slice(start,end)}})()`,{
    s:h.s,onlineReleaseActivationStatus,verifyCandidate:s=>{calls.push('candidate');return h.api.verifyCandidate(s);},
-   configUnchanged:()=>gate('config'),smoke:async()=>gate('smoke'),activateCandidate:async()=>gate('activate'),fail:message=>{throw Error(message);},
+   configUnchanged:()=>gate('config'),smoke:async()=>gate('smoke'),activateCandidate:async()=>gate('activate'),
+   heldLock:{},settleOnlineRetention:async()=>gate('retention'),fail:message=>{throw Error(message);},
   });
   if(failure){await assert.rejects(task,/not_ready|customer_code_projection_must_remain_off|failed_/);assert.equal(calls.includes('activate'),false);}
-  else {await task;assert.deepEqual(calls,['candidate','config','smoke','activate']);}
+  else {await task;assert.deepEqual(calls,['candidate','config','smoke','activate','retention']);}
  }
  const rollbackStart=code.indexOf("}else if(action==='rollback'){")+"}else if(action==='rollback'){".length;
  const rollbackEnd=code.indexOf('\n  }',rollbackStart),branch=code.slice(rollbackStart,rollbackEnd);
