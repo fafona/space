@@ -19,7 +19,9 @@ function fixture(t) {
   {encoding: 'utf8', env, input, windowsHide: true, timeout: 15000, stdio: ['pipe', 'pipe', 'pipe']});
   const write = (directory, name, bytes) => { const filename = directory + '/' + name; fs.mkdirSync(path.dirname(filename), {recursive: true}); fs.writeFileSync(filename, bytes); };
   const sources = {
-    '.gitignore': '/.env.local\n/.next/\n/.runtime\n/next-env.d.ts\n/node_modules/\n/ignored-extra*\n',
+    // Match the real project's /node_modules rule: it ignores either a real
+    // directory or a symlink, so the filesystem guard is reached on POSIX too.
+    '.gitignore': '/.env.local\n/.next/\n/.runtime\n/next-env.d.ts\n/node_modules\n/ignored-extra*\n',
     'package.json': '{"name":"artifact-tree-fixture","private":true}\n',
     'package-lock.json': '{"name":"artifact-tree-fixture","lockfileVersion":3}\n',
     'PROJECT_RULES.md': 'Isolated test only.\n',
@@ -148,14 +150,35 @@ test('external hardlinks are refused; fully internal dependency hardlinks are sa
   assert.equal(fs.existsSync(f.directory + '/node_modules'), false);
 });
 
-test('refuses external dependency links and a replaced generated root', t => {
+test('refuses external dependency links without changing either tree', t => {
   const f = fixture(t), link = f.directory + '/node_modules/outside';
   fs.symlinkSync(f.shared, link, process.platform === 'win32' ? 'junction' : 'dir');
+  const dependency = fs.readFileSync(f.directory + '/node_modules/package/index.js');
+  const shared = fs.readFileSync(f.shared + '/business-record.txt');
+  assert.equal(f.git(f.directory, ['status', '--porcelain=v1', '--untracked-files=normal']).trim(), '');
   assert.throws(() => captureRetiredArtifactTree(f.directory, f.target, f.ports), /external_generated_symlink/);
-  fs.unlinkSync(link);
-  fs.renameSync(f.directory + '/node_modules', f.root + '/dependencies');
-  fs.symlinkSync(f.root + '/dependencies', f.directory + '/node_modules', process.platform === 'win32' ? 'junction' : 'dir');
+  assert.deepEqual(fs.readFileSync(f.directory + '/node_modules/package/index.js'), dependency);
+  assert.deepEqual(fs.readFileSync(f.shared + '/business-record.txt'), shared);
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+});
+
+test('refuses an ignored symlinked generated root before deleting any artifacts', t => {
+  const f = fixture(t), original = f.root + '/dependencies';
+  fs.renameSync(f.directory + '/node_modules', original);
+  fs.symlinkSync(original, f.directory + '/node_modules', process.platform === 'win32' ? 'junction' : 'dir');
+  const dependency = fs.readFileSync(original + '/package/index.js');
+  const webpack = fs.readFileSync(f.directory + '/.next/cache/webpack/fixture.pack');
+  const source = fs.readFileSync(f.directory + '/src/app/page.tsx');
+  // A directory-only ignore (/node_modules/) exposes a POSIX symlink to Git
+  // and correctly trips worktree_dirty first. The production-matching rule
+  // above deliberately exercises the later, independent unsafe-root guard.
+  assert.equal(f.git(f.directory, ['status', '--porcelain=v1', '--untracked-files=normal']).trim(), '');
   assert.throws(() => captureRetiredArtifactTree(f.directory, f.target, f.ports), /unsafe_type|unsafe_directory/);
+  assert.deepEqual(fs.readFileSync(original + '/package/index.js'), dependency);
+  assert.deepEqual(fs.readFileSync(f.directory + '/.next/cache/webpack/fixture.pack'), webpack);
+  assert.deepEqual(fs.readFileSync(f.directory + '/src/app/page.tsx'), source);
+  assert.equal(fs.lstatSync(f.directory + '/node_modules').isSymbolicLink(), true);
+  assert.equal(fs.realpathSync(f.directory + '/node_modules'), fs.realpathSync(original));
 });
 
 test('internal dependency directory link is unlinked without double-traversing its target', t => {
