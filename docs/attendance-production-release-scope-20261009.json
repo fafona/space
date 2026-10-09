@@ -880,6 +880,7 @@
     "scripts/attendance-recovery-content-contract.mjs",
     "scripts/attendance-recovery-content-contract.test.mjs",
     "scripts/attendance-self-browser-harness.mjs",
+    "scripts/check-merchant-enterprise-browser.mjs",
     "scripts/fixtures/attendance-account-status-recovery-browser.mjs",
     "scripts/fixtures/attendance-account-status-recovery-browser.test.mjs",
     "scripts/fixtures/attendance-account-status-recovery-browser.tsx",
