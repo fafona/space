@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   captureStartupFixtureProcessFact,
   STARTUP_PROCESS_FACT_KEYS,
+  waitForStartupFixtureTitle,
 } from "./test-helpers/startup-process-fact.mjs";
 
 const expectedKeys = [
@@ -49,6 +50,180 @@ test("guard failures propagate unchanged without retry, fallback or partial fact
   }
 });
 
+const finalTitle = Buffer.from("next-server (v16.3.4)\0\0\0", "utf8");
+
+test("fixture marker waits for the exact copied Next title before one fresh capture", async () => {
+  let time = 100, reads = 0, captures = 0;
+  await waitForStartupFixtureTitle({
+    pid: 1234, version: "16.3.4", deadline: 200,
+    now: () => time,
+    readCommandLine: (pid) => {
+      assert.equal(pid, 1234);
+      assert.equal(captures, 0, "pending markers must not collect partial identity facts");
+      return ++reads === 1 ? Buffer.from("/fixture/node\0/fixture/next\0") : finalTitle;
+    },
+    pause: async (milliseconds) => { time += milliseconds; },
+  });
+  assert.equal(reads, 2);
+  assert.equal(time, 125, "marker and startup loop share the same deadline budget");
+  captureStartupFixtureProcessFact(1234, () => { captures += 1; return { pid: 1234 }; });
+  assert.equal(captures, 1);
+});
+
+test("an initialized marker never retries or masks a later guarded capture failure", async () => {
+  let captures = 0, reads = 0;
+  await waitForStartupFixtureTitle({
+    pid: 1234, version: "16.3.4", deadline: 200, now: () => 100,
+    readCommandLine: () => { reads += 1; return finalTitle; },
+    pause: () => assert.fail("initialized title must not wait"),
+  });
+  const failure = new Error("process_identity_drift");
+  assert.throws(() => captureStartupFixtureProcessFact(1234, () => {
+    captures += 1; throw failure;
+  }), (error) => error === failure);
+  assert.equal(reads, 1);
+  assert.equal(captures, 1);
+});
+
+test("actual Linux procfs capture rejects a title transition and accepts a fresh post-marker fact", {
+  skip: process.platform !== "linux" ? "requires real Linux procfs; no simulated acceptance" : false,
+  timeout: 10000,
+}, () => {
+  const supervisionUrl = new URL("./check-production-runtime-supervision.mjs", import.meta.url).href;
+  const helperUrl = new URL("./test-helpers/startup-process-fact.mjs", import.meta.url).href;
+  const childSource = `
+    import assert from "node:assert/strict";
+    import fs from "node:fs";
+    import { createHash } from "node:crypto";
+    import { syncBuiltinESMExports } from "node:module";
+    // Import the actual production exports without executing their CLI entrypoint.
+    process.argv[1] = ${JSON.stringify(fileURLToPath(import.meta.url))};
+    const { captureProcessFact } = await import(${JSON.stringify(supervisionUrl)});
+    const { captureStartupFixtureProcessFact, STARTUP_PROCESS_FACT_KEYS, waitForStartupFixtureTitle } =
+      await import(${JSON.stringify(helperUrl)});
+    const version = "16.3.4";
+    const finalTitle = "next-server (v" + version + ")";
+    // --eval contains newlines; replace only this disposable child's own argv first.
+    process.title = "fixture-before-next-start";
+    const commandLinePath = "/proc/" + process.pid + "/cmdline";
+    const originalRead = fs.readFileSync;
+    let commandLineReads = 0, guardedCaptures = 0;
+    let firstBytes, secondBytes;
+    fs.readFileSync = function (file, ...args) {
+      const actualBytes = Reflect.apply(originalRead, this, [file, ...args]);
+      if (file === commandLinePath) {
+        commandLineReads += 1;
+        if (commandLineReads === 1) {
+          firstBytes = Buffer.from(actualBytes);
+          // Return the real old bytes, then make the second real read see the new title.
+          process.title = finalTitle;
+        } else if (commandLineReads === 2) secondBytes = Buffer.from(actualBytes);
+      }
+      return actualBytes;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => captureStartupFixtureProcessFact(process.pid, (pid) => {
+        guardedCaptures += 1;
+        return captureProcessFact(pid);
+      }), (error) => error.message === "process_identity_drift");
+      assert.equal(guardedCaptures, 1, "a rejected observation must not be retried");
+      assert.equal(commandLineReads, 2, "the unchanged capture performs both real procfs reads");
+      assert.ok(firstBytes.subarray(0, Buffer.byteLength("fixture-before-next-start\\0")).equals(
+        Buffer.from("fixture-before-next-start\\0")));
+      assert.ok(secondBytes.subarray(0, Buffer.byteLength(finalTitle + "\\0")).equals(
+        Buffer.from(finalTitle + "\\0")));
+      assert.equal(firstBytes.equals(secondBytes), false);
+    } finally {
+      fs.readFileSync = originalRead;
+      syncBuiltinESMExports();
+    }
+    await waitForStartupFixtureTitle({
+      pid: process.pid, version, deadline: Date.now() + 2000,
+      pause: () => assert.fail("the already initialized real title must not wait"),
+    });
+    let freshCaptures = 0;
+    const fact = captureStartupFixtureProcessFact(process.pid, (pid) => {
+      freshCaptures += 1;
+      return captureProcessFact(pid);
+    });
+    assert.equal(freshCaptures, 1);
+    assert.deepEqual(Object.keys(fact), STARTUP_PROCESS_FACT_KEYS);
+    assert.equal(fact.pid, process.pid);
+    assert.equal(fact.uid, process.getuid());
+    assert.equal(fact.cwd, fs.realpathSync(process.cwd()));
+    assert.equal(fact.executable, fs.realpathSync(process.execPath));
+    assert.match(fact.startTicks, /^[1-9][0-9]*$/);
+    assert.equal(fact.commandLineDigest, createHash("sha256").update(
+      originalRead(commandLinePath)).digest("hex"));
+    console.log(JSON.stringify({redGuardRejected:true, guardedCaptures, commandLineReads, freshCaptures, finalTitleAccepted:true}));
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", childSource], {
+    encoding: "utf8", timeout: 5000, maxBuffer: 32768,
+    env: { NODE_OPTIONS: "", NODE_PATH: "" },
+  });
+  assert.equal(child.error, undefined);
+  assert.equal(child.signal, null);
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), {
+    redGuardRejected: true, guardedCaptures: 1, commandLineReads: 2,
+    freshCaptures: 1, finalTitleAccepted: true,
+  });
+});
+
+test("wrong versions, substrings and extra arguments cannot become initialized markers", async () => {
+  for (const bytes of [
+    Buffer.from("next-server (v16.3.5)\0"),
+    Buffer.from("prefix next-server (v16.3.4)\0"),
+    Buffer.from("next-server (v16.3.4)\0extra\0"),
+  ]) {
+    let time = 100, reads = 0;
+    await assert.rejects(waitForStartupFixtureTitle({
+      pid: 1234, version: "16.3.4", deadline: 125, now: () => time,
+      readCommandLine: () => { reads += 1; return bytes; },
+      pause: async (milliseconds) => { time += milliseconds; },
+    }), /startup_fixture_title_timeout/);
+    assert.equal(reads, 1);
+    assert.equal(time, 125);
+  }
+});
+
+test("invalid marker bytes and process read failures fail without retry", async () => {
+  for (const bytes of [Buffer.alloc(0), Buffer.alloc(65537), Buffer.from("next-server (v16.3.4)"), Buffer.from([255, 0])]) {
+    let reads = 0;
+    await assert.rejects(waitForStartupFixtureTitle({
+      pid: 1234, version: "16.3.4", deadline: 200, now: () => 100,
+      readCommandLine: () => { reads += 1; return bytes; },
+      pause: () => assert.fail("malformed marker must not wait"),
+    }));
+    assert.equal(reads, 1);
+  }
+  for (const code of ["ENOENT", "EACCES"]) {
+    const failure = Object.assign(new Error(code), { code });
+    let reads = 0;
+    await assert.rejects(waitForStartupFixtureTitle({
+      pid: 1234, version: "16.3.4", deadline: 200, now: () => 100,
+      readCommandLine: () => { reads += 1; throw failure; },
+      pause: () => assert.fail("failed read must not wait"),
+    }), (error) => error === failure);
+    assert.equal(reads, 1);
+  }
+});
+
+test("expired or over-budget marker observations never admit a first capture", async () => {
+  let reads = 0, time = 200;
+  const options = {
+    pid: 1234, version: "16.3.4", deadline: 200, now: () => time,
+    readCommandLine: () => { reads += 1; time = 200; return finalTitle; },
+    pause: () => assert.fail("expired title must not wait"),
+  };
+  await assert.rejects(waitForStartupFixtureTitle(options), /startup_fixture_title_timeout/);
+  assert.equal(reads, 0);
+  time = 100;
+  await assert.rejects(waitForStartupFixtureTitle(options), /startup_fixture_title_timeout/);
+  assert.equal(reads, 1);
+});
+
 test("projection preserves exact fields and types without exposing argv or mutating input", () => {
   const snapshot = Object.freeze({
     pid: 1234, parentPid: 4321, startTicks: "12345678901234567890",
@@ -89,6 +264,8 @@ test("the real fixture uses the projection without changing identity or acceptan
     "assert.ok(accepted>=2,'startup never became verified')",
   ]) assert(fixture.includes(token), token);
   assert(!/catch\s*\(|continue-on-error|process_identity_drift/.test(fixture));
+  assert.match(fixture, /const deadline=Date\.now\(\)\+60000;[\s\S]*nextVersion=JSON\.parse\(readFileSync\(release\+'\/node_modules\/next\/package\.json','utf8'\)\)\.version;[\s\S]*await waitForStartupFixtureTitle\(\{pid:row\.pid,version:nextVersion,deadline\}\);\s*initial=fact\(row\.pid\)/);
+  assert.equal((fixture.match(/Date\.now\(\)\+60000/g) ?? []).length, 1);
 });
 
 test("the acceptance entrypoint still refuses implicit execution before any fixture setup", () => {

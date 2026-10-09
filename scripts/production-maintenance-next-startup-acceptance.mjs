@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {homedir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {STARTUP_PROCESS_FACT_KEYS as keys,captureStartupFixtureProcessFact} from './test-helpers/startup-process-fact.mjs';
+import {STARTUP_PROCESS_FACT_KEYS as keys,captureStartupFixtureProcessFact,waitForStartupFixtureTitle} from './test-helpers/startup-process-fact.mjs';
 if(process.platform!=='linux'||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_NEXT_STARTUP_ACCEPTANCE!=='1'||process.getuid?.()!==0)throw Error('isolated_next_opt_in_required');
 const scripts=dirname(fileURLToPath(import.meta.url))+'/';
 const {captureProcessFact,captureSupervisionSnapshot}=await import(scripts+'check-production-runtime-supervision.mjs');
@@ -44,8 +44,11 @@ if(!captureProcessFact(daemon.pid).commandLine[0].endsWith('('+home+')'))throw E
 const values={SUPABASE_INTERNAL_URL:'http://127.0.0.1:1',NEXT_PUBLIC_SUPABASE_URL:'https://database.invalid',NEXT_PUBLIC_SUPABASE_ANON_KEY:'fixture-key',MERCHANT_STAFF_BUSINESS_RBAC_MODE:'off',MERCHANT_STAFF_BUSINESS_RBAC_SITE_IDS:'',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.invalid',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',PORT:String(port),MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'false',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'false'};
 const digest=createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(values).sort().map(k=>[k,values[k]])))).digest('hex');
 await controlPm2(daemon,boot,{action:'prepare',launch:{role:'candidate-web',appName:'isolated-fixture',appPort:port,release,node:realpathSync(process.execPath),nonce:randomUUID(),envDigest:digest,env:values}});
-const row=(await inspectPm2Registry(daemon,boot))[0];initial=fact(row.pid);let prior=initial;
-let accepted=0;const deadline=Date.now()+60000;
+const row=(await inspectPm2Registry(daemon,boot))[0];const deadline=Date.now()+60000;
+const nextVersion=JSON.parse(readFileSync(release+'/node_modules/next/package.json','utf8')).version;
+await waitForStartupFixtureTitle({pid:row.pid,version:nextVersion,deadline});
+initial=fact(row.pid);let prior=initial;
+let accepted=0;
 for(let i=0;i<240&&Date.now()<deadline;i++){
 const observation=await captureSupervisionSnapshot('isolated-fixture',{runtime:release,nextEntryPath:release+'/node_modules/next/dist/bin/next'},port,'b'.repeat(40));
 const current=fact(row.pid);const reg=(await inspectPm2Registry(daemon,boot))[0];

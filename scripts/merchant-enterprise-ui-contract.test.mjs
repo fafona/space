@@ -2764,6 +2764,16 @@ test("board settings and employee inline editors confirm before discarding local
   assert.match(boardSettings, /onDirtyChange\(boardSettingsHasDraft\)/);
   assert.match(
     boardSettings,
+    /useLayoutEffect\(\(\)\s*=>\s*\{\s*onDirtyChange\(boardSettingsHasDraft\);\s*\},\s*\[boardSettingsHasDraft,\s*onDirtyChange\]\)/,
+    "committed new-field drafts must reach the parent guard before another discrete event",
+  );
+  assert.match(
+    boardSettings,
+    /useLayoutEffect\(\s*\(\)\s*=>\s*\(\)\s*=>\s*\{\s*onDirtyChange\(false\);\s*\},\s*\[onDirtyChange\],?\s*\)/,
+    "settings cleanup must not leave a delayed passive report after a keyed remount",
+  );
+  assert.match(
+    boardSettings,
     /key=\{JSON\.stringify\(\[board\.id,\s*board\.name,\s*board\.description\]\)\}/,
     "unchanged board rows must retain drafts across unrelated overview reloads",
   );
@@ -2781,6 +2791,16 @@ test("board settings and employee inline editors confirm before discarding local
   assert.match(boardRow, /name\s*!==\s*board\.name/);
   assert.match(boardRow, /description\s*!==\s*board\.description/);
   assert.match(boardRow, /onDirtyChange\(board\.id,\s*boardRowIsDirty\)/);
+  assert.match(
+    boardRow,
+    /useLayoutEffect\(\(\)\s*=>\s*\{\s*onDirtyChange\(board\.id,\s*boardRowIsDirty\);\s*\},\s*\[board\.id,\s*boardRowIsDirty,\s*onDirtyChange\]\)/,
+    "existing board-row drafts must synchronously enter the aggregate guard",
+  );
+  assert.match(
+    boardRow,
+    /useLayoutEffect\(\s*\(\)\s*=>\s*\(\)\s*=>\s*\{\s*onDirtyChange\(board\.id,\s*false\);\s*\},\s*\[board\.id,\s*onDirtyChange\],?\s*\)/,
+    "board-row cleanup must use the same synchronous reporting phase",
+  );
 
   const columnRow = sliceBetween(
     /function\s+ColumnSettingsRow\(/,
@@ -2791,6 +2811,16 @@ test("board settings and employee inline editors confirm before discarding local
   assert.match(columnRow, /color\s*!==\s*column\.color/);
   assert.match(columnRow, /isDone\s*!==\s*column\.isDone/);
   assert.match(columnRow, /onDirtyChange\(column\.id,\s*columnRowIsDirty\)/);
+  assert.match(
+    columnRow,
+    /useLayoutEffect\(\(\)\s*=>\s*\{\s*onDirtyChange\(column\.id,\s*columnRowIsDirty\);\s*\},\s*\[column\.id,\s*columnRowIsDirty,\s*onDirtyChange\]\)/,
+    "existing column-row drafts must synchronously enter the aggregate guard",
+  );
+  assert.match(
+    columnRow,
+    /useLayoutEffect\(\s*\(\)\s*=>\s*\(\)\s*=>\s*\{\s*onDirtyChange\(column\.id,\s*false\);\s*\},\s*\[column\.id,\s*onDirtyChange\],?\s*\)/,
+    "column-row cleanup must use the same synchronous reporting phase",
+  );
 
   assert.match(source, /function\s+requestBoardSelection\(/);
   assert.match(
