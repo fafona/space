@@ -3798,11 +3798,12 @@ function BoardSettings({
     });
   }, []);
 
-  useEffect(() => {
+  // Report before the next discrete navigation event; passive updates can lose keyed drafts.
+  useLayoutEffect(() => {
     onDirtyChange(boardSettingsHasDraft);
   }, [boardSettingsHasDraft, onDirtyChange]);
 
-  useEffect(
+  useLayoutEffect(
     () => () => {
       onDirtyChange(false);
     },
@@ -4023,11 +4024,11 @@ function BoardSettingsRow({
   const [description, setDescription] = useState(board.description);
   const boardRowIsDirty = name !== board.name || description !== board.description;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onDirtyChange(board.id, boardRowIsDirty);
   }, [board.id, boardRowIsDirty, onDirtyChange]);
 
-  useEffect(
+  useLayoutEffect(
     () => () => {
       onDirtyChange(board.id, false);
     },
@@ -4164,11 +4165,11 @@ function ColumnSettingsRow({
   const columnRowIsDirty =
     name !== column.name || color !== column.color || isDone !== column.isDone;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onDirtyChange(column.id, columnRowIsDirty);
   }, [column.id, columnRowIsDirty, onDirtyChange]);
 
-  useEffect(
+  useLayoutEffect(
     () => () => {
       onDirtyChange(column.id, false);
     },

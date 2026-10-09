@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import nodeAssert from "node:assert/strict";
+import typescript from "typescript";
+import { build as buildMemoryBundle } from "esbuild";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -1752,6 +1755,214 @@ async function runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDi
   }
 }
 
+async function runBoardSettingsDraftSchedulerRegression(browser) {
+  // Actual components, no app server/API: pause host scheduler only after initial mount.
+  const file = "src/components/admin/MerchantEnterpriseManager.tsx";
+  const source = readFileSync(path.join(root,file), "utf8");
+  const ts = typescript;
+  const esbuild = {build: buildMemoryBundle};
+  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function extract(name, variable = false) {
+    const found = [];
+    function visit(node) {
+      if (!variable && ts.isFunctionDeclaration(node) && node.name?.text === name) found.push(node.getText(ast));
+      if (variable && ts.isVariableStatement(node) && node.declarationList.declarations.some(d => ts.isIdentifier(d.name) && d.name.text === name)) found.push(node.getText(ast));
+      ts.forEachChild(node, visit);
+    }
+    visit(ast);
+    nodeAssert.equal(found.length, 1, `unique actual source ${name}`);
+    return found[0];
+  }
+  const components = ['BoardSettings','BoardSettingsRow','ColumnSettingsRow'].map(name => ({name, source:extract(name)}));
+  for(const component of components){
+    const parsed=ts.createSourceFile('proof.tsx',component.source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+    const hooks=[];
+    function visit(node){
+      if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='useLayoutEffect') hooks.push(node.getText(parsed));
+      ts.forEachChild(node,visit);
+    }
+    visit(parsed);
+    nodeAssert.equal(hooks.length,2,`${component.name}: only actual dirty report and cleanup effects`);
+    nodeAssert.ok(hooks.every(hook=>hook.includes('onDirtyChange(')));
+  }
+  const primary = boardId;
+  const secondary = secondBoardId;
+  const draft = '不可串板的工作列草稿';
+  const actualParent = [extract('handleBoardSettingsDirtyChange', true), extract('discardBoardSettingsDrafts', true), extract('confirmBoardSettingsDraftDiscard'), extract('requestBoardSelection'),extract('toggleBoardSettingsVisibility')].join('\n');
+  const fixtures = [primary, secondary].map((id, i) => ({id,name:`synthetic board ${i + 1}`,description:'',position:i,status:'active',createdAt:'2026-01-01T00:00:00.000Z'}));
+  const fixtureColumns = [primary,secondary].map((boardId,i)=>({id:`synthetic-column-${i+1}`,boardId,name:`synthetic column ${i+1}`,color:'#64748b',isDone:false,position:0,status:'active',createdAt:'2026-01-01T00:00:00.000Z'}));
+  const targets={
+    'new-column':{selector:'input[placeholder="新工作列名称"]',button:'新增工作列',cleanValue:''},
+    'board-row':{selector:'article:has(button[aria-label="将看板“synthetic board 1”前移"]) input',button:'保存',cleanValue:'synthetic board 1'},
+    'column-row':{selector:'article:has(button[aria-label="将工作列“synthetic column 1”前移"]) input',button:'保存',cleanValue:'synthetic column 1'},
+  };
+
+  async function bundle(layout) {
+    const componentSources = components.map(component=>layout?component.source:component.source.replace(/\buseLayoutEffect\(/g,'useEffect(')).join('\n');
+    const code = `
+      import React, {useState,useEffect,useLayoutEffect,useCallback} from 'react';
+      import {createRoot} from 'react-dom/client';
+      ${componentSources}
+      function Wrapper(){
+        const [boards,setBoards]=useState(${JSON.stringify(fixtures)});
+        const [columns,setColumns]=useState(${JSON.stringify(fixtureColumns)});
+        const [selectedBoardId,setSelectedBoardId]=useState(${JSON.stringify(primary)});
+        const [boardSettingsHasDraft,setBoardSettingsHasDraft]=useState(false);
+        const [boardSettingsResetVersion,setBoardSettingsResetVersion]=useState(0);
+        const [showBoardSettings,setShowBoardSettings]=useState(true);
+        const busy=false;
+        const setMessage=()=>{throw new Error('unexpected busy branch');};
+        const activeBoard=boards.find(b=>b.id===selectedBoardId);
+        ${actualParent}
+        window.__proofParent={boardId:activeBoard.id,dirty:boardSettingsHasDraft,resetVersion:boardSettingsResetVersion,showBoardSettings};
+        const reportDirty=useCallback(dirty=>{window.__proofReports.push(dirty);handleBoardSettingsDirtyChange(dirty);},[handleBoardSettingsDirtyChange]);
+        const unsupported=()=>{throw new Error('synthetic proof must not invoke business operation');};
+        return <>
+          <label>当前看板<select value={activeBoard?.id??''} onChange={event=>{
+            if(!requestBoardSelection(event.target.value)){event.currentTarget.value=activeBoard?.id??'';}
+          }}>{boards.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+          <button onClick={toggleBoardSettingsVisibility}>{showBoardSettings?'收起看板设置':'管理看板与工作列'}</button>
+          <button data-proof-only="host-unmount" onClick={()=>setShowBoardSettings(false)}>Synthetic host unmount</button>
+          <button data-proof-only="board-key-reset" onClick={()=>setBoards(current=>current.map(b=>b.id===${JSON.stringify(primary)}?{...b,name:'synthetic refreshed board'}:b))}>Synthetic board metadata replacement</button>
+          <button data-proof-only="column-key-reset" onClick={()=>setColumns(current=>current.map(c=>c.id==='synthetic-column-1'?{...c,name:'synthetic refreshed column'}:c))}>Synthetic column metadata replacement</button>
+          {showBoardSettings?<BoardSettings key={\`board-settings:\${activeBoard?.id??'none'}:\${boardSettingsResetVersion}\`}
+            boards={boards} columns={columns} selectedBoardId={activeBoard.id} busy={false} canCreateBoard={false}
+            onSelectBoard={requestBoardSelection} onCreateBoard={unsupported} onSaveBoard={unsupported}
+            onSetBoardStatus={unsupported} onMoveBoard={unsupported} onCreateColumn={unsupported}
+            onSaveColumn={unsupported} onSetColumnStatus={unsupported} onMoveColumn={unsupported}
+            onDirtyChange={reportDirty}/>:null}
+        </>;
+      }
+      createRoot(document.getElementById('root')).render(<Wrapper/>);
+    `;
+    const result = await esbuild.build({stdin:{contents:code,loader:'tsx',resolveDir:root},bundle:true,platform:'browser',format:'iife',write:false,define:{'process.env.NODE_ENV':'"production"'},logLevel:'silent'});
+    return result.outputFiles[0].text;
+  }
+  const originals = await bundle(false);
+  const candidate = await bundle(true);
+  const results = [];
+  async function capture(page,target){
+    return page.evaluate(({selector,button})=>{
+      const input=document.querySelector(selector);
+      const container=selector.includes('article:')?input?.closest('article'):document;
+      const commitButton=[...(container?.querySelectorAll('button')??[])].find(b=>b.textContent.trim()===button);
+      return {
+        parent:window.__proofParent,
+        boardId:document.querySelector('select').value,
+        draft:input?.value??null,
+        childCommitted:commitButton?!commitButton.disabled:false,
+        schedulerQueued:window.__proofScheduler.queued.length,
+        schedulerPosts:window.__proofScheduler.posts,
+        dirtyReports:[...window.__proofReports],
+      };
+    },targets[target]);
+  }
+  const scenarios=[
+    ...[false,true].map(layout=>({name:`${layout?'layout':'original'}-clean-switch`,layout,target:'new-column',withDraft:false,accept:false})),
+    ...Object.keys(targets).flatMap(target=>[
+      {name:`original-${target}-paused-canceled-switch`,layout:false,target,withDraft:true,accept:false},
+      {name:`layout-${target}-paused-canceled-switch`,layout:true,target,withDraft:true,accept:false},
+      {name:`layout-${target}-paused-accepted-switch`,layout:true,target,withDraft:true,accept:true},
+    ]),
+    ...['new-column','board-row','column-row'].flatMap(target=>[false,true].map(layout=>({name:`${layout?'layout':'original'}-${target}-cleanup`,layout,target,withDraft:true,accept:false,cleanup:true}))),
+  ];
+  for (const scenario of scenarios) {
+      const context = await browser.newContext({serviceWorkers:"block"});
+      context.setDefaultTimeout(3000);
+      try {
+      await context.route('**/*', route => route.abort());
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      const dialogs = [];
+      page.on('dialog', async dialog => {
+        dialogs.push({type:dialog.type(),message:dialog.message()});
+        if(scenario.accept) await dialog.accept(); else await dialog.dismiss();
+      });
+      await page.setContent('<!doctype html><html><body><div id="root"></div></body></html>');
+      await page.evaluate(() => {
+        const NativeMessageChannel = window.MessageChannel;
+        window.__proofScheduler = {hold:false,queued:[],posts:0};
+        window.__proofReports=[];
+        window.MessageChannel = class extends NativeMessageChannel {
+          constructor(){
+            super();
+            const port=this.port2;
+            const nativePost=port.postMessage.bind(port);
+            port.postMessage=(...args)=>{
+              window.__proofScheduler.posts++;
+              if(window.__proofScheduler.hold) window.__proofScheduler.queued.push(()=>nativePost(...args));
+              else nativePost(...args);
+            };
+          }
+        };
+      });
+      await page.addScriptTag({content:scenario.layout?candidate:originals});
+      await page.getByPlaceholder('新工作列名称').waitFor({state:'visible'});
+      // Initial mount settles before pausing React's host scheduler. Discrete event/microtask work remains live.
+      if(!scenario.cleanup)await page.evaluate(()=>{window.__proofScheduler.hold=true;});
+      if(scenario.withDraft)await page.locator(targets[scenario.target].selector).first().fill(draft);
+      if(scenario.cleanup){
+        // Establish a legitimately dirty old instance first; only then pause cleanup scheduling.
+        await page.waitForFunction(()=>window.__proofParent.dirty===true,{},{timeout:3000});
+        await page.evaluate(()=>{window.__proofScheduler.hold=true;});
+      }
+      const before=await capture(page,scenario.target);
+      if(scenario.withDraft) nodeAssert.equal(before.childCommitted,true,`${scenario.name}: actual child state committed`);
+      if(scenario.cleanup){
+        const control=scenario.target==='new-column'?'host-unmount':scenario.target==='board-row'?'board-key-reset':'column-key-reset';
+        await page.locator(`[data-proof-only="${control}"]`).click();
+        const after=await capture(page,scenario.target);
+        const replacement=await page.evaluate(target=>{
+          if(target==='new-column')return {hidden:!document.querySelector('input[placeholder="新工作列名称"]')};
+          const kind=target==='board-row'?'看板':'工作列';
+          const name=target==='board-row'?'synthetic refreshed board':'synthetic refreshed column';
+          const button=document.querySelector(`button[aria-label="将${kind}“${name}”前移"]`);
+          const row=button?.closest('article');
+          const save=[...(row?.querySelectorAll('button')??[])].find(b=>b.textContent.trim()==='保存');
+          return {value:row?.querySelector('input')?.value,saveDisabled:save?.disabled,expected:name};
+        },scenario.target);
+        if(scenario.target==='new-column')nodeAssert.equal(replacement.hidden,true);
+        else{nodeAssert.equal(replacement.value,replacement.expected);nodeAssert.equal(replacement.saveDisabled,true);}
+        nodeAssert.deepEqual(errors,[],`${scenario.name}: browser errors`);
+        nodeAssert.equal(after.childCommitted,false,`${scenario.name}: dirty instance no longer exists`);
+        nodeAssert.equal(after.parent.dirty,!scenario.layout,`${scenario.name}: cleanup guard propagation`);
+        if(scenario.layout){
+          nodeAssert.equal(after.dirtyReports.at(-1),false,`${scenario.name}: synchronous clean report reached parent`);
+          await page.getByLabel('当前看板').selectOption(secondary);
+          nodeAssert.equal(dialogs.length,0,`${scenario.name}: clean replacement does not warn`);
+        }else{
+          nodeAssert.ok(after.schedulerQueued>0,`${scenario.name}: stale cleanup held in scheduler`);
+          await page.getByLabel('当前看板').selectOption(secondary);
+          nodeAssert.equal(dialogs.length,scenario.target==='new-column'?0:1,`${scenario.name}: hidden panel is excluded, mounted clean row retains stale guard`);
+        }
+        results.push({scenario:scenario.name,probeOnlyControl:control,before,after,replacement,dialogs});
+        continue;
+      }
+      await page.getByLabel('当前看板').selectOption(secondary);
+      const after=await capture(page,scenario.target);
+      nodeAssert.deepEqual(errors,[],`${scenario.name}: browser errors`);
+      if(!scenario.withDraft){
+        nodeAssert.equal(dialogs.length,0);nodeAssert.equal(after.boardId,secondary);nodeAssert.equal(after.draft,'');
+      }else if(!scenario.layout){
+        nodeAssert.equal(before.parent.dirty,false,'original committed child precedes parent guard');
+        nodeAssert.ok(before.schedulerQueued>0,'original default scheduler task held');
+        nodeAssert.equal(dialogs.length,0,'original switch bypasses expected confirm');
+        nodeAssert.equal(after.boardId,secondary);nodeAssert.notEqual(after.draft,draft,'original actual keyed remount loses draft');
+      }else{
+        nodeAssert.equal(before.parent.dirty,true,'layout report synchronizes parent before next event');
+        nodeAssert.equal(dialogs.length,1);nodeAssert.equal(dialogs[0].type,'confirm');
+        nodeAssert.equal(dialogs[0].message,'看板设置中有尚未保存的内容。切换看板将放弃这些修改，是否继续？');
+        nodeAssert.equal(after.boardId,scenario.accept?secondary:primary);
+        if(scenario.accept)nodeAssert.notEqual(after.draft,draft);else nodeAssert.equal(after.draft,draft);
+      }
+      results.push({scenario:scenario.name,before,dialogs,after});
+      } finally {await context.close();}
+  }
+
+  return {cases:results.length, actualComponents:components.map(c=>c.name), redDraftLossCases:3, cleanupCases:6, networkBlocked:true, server:false};
+}
+
 async function run() {
   const state = createSharedState();
   const screenshotDirectory = String(
@@ -1800,6 +2011,7 @@ async function run() {
   const { baseUrl, child, readServerOutput } = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
+    const boardSettingsDraftSchedulerRegression = await runBoardSettingsDraftSchedulerRegression(browser);
     await runEmployeeWorkspaceRootRegression(browser, baseUrl, screenshotDirectory);
     const ownerContextA = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
@@ -3826,7 +4038,9 @@ async function run() {
     process.stdout.write(
       JSON.stringify({
         ok: true,
+        boardSettingsDraftSchedulerRegression,
         checks: [
+          "board_settings_actual_react_production_scheduler_red_positive_and_cleanup",
           "employee_members_only_business_root_without_enterprise_mount",
           "employee_capabilities_unavailable_fail_closed",
           "desktop_owner_task_creation",
