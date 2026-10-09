@@ -78,3 +78,5 @@
 操作只写一次 `unpublished-termination.json`，原 `state.json`、候选、依赖、私有环境、日志和原备份全部保留，不伪标发布成功或回滚。共享 pending 校验只认可该固定候选的完整回执和仍保留的原证据；其他待发布操作继续阻止发布。已结束候选仍由旧清理器保护，不扩大清理范围。
 
 新工具必须经正常 PR、必需 CI、合并及 exact-main 验证。首次安装变更 helper 使用已有的 root-owned、干净、只包含固定静态依赖闭包的 sparse bootstrap worktree；逐 blob 验证后先执行 `dry-run`，再执行明确获准的 `end approved-end-unpublished-candidate-5b974eb06c85`。随后正常准备完整发布工具、新候选、新目标备份和完整验收链；不覆盖旧工具或绕过 pending 保护。
+
+重试版本的完整 CI 另暴露了通知客户端的超时边界：响应头已到达、reader 尚未建立时，lease 的 deadline/Auth 校验拒绝后没有取消未读取的 body。以可控时钟确定性复现并补齐该拒绝路径的取消操作；生产超时、成功路径、字节上限、身份和原编号恢复规则均不放宽。原 8ms 墙钟测试改为先确认正文读取已开始、再明确触发 deadline，仍验证正文被取消。
