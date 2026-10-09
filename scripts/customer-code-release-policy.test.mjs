@@ -92,8 +92,18 @@ test('060 is inert source: both stage states are no-database and every database 
   }
 });
 
-test('precisely reversing the new lane leaves the complete prior policy byte-identical',()=>{
+test('precisely reversing the separately added attendance and customer lanes leaves the complete prior policy byte-identical',()=>{
   let original=source;
+  // The attendance lane is separately verified against the complete later
+  // e1d1b213 policy in online-traffic-publication-policy.test.mjs. Remove only
+  // its exact insertions here before reconstructing the older customer base;
+  // neither historical SHA is repinned or inferred from the current file.
+  const attendanceInsertions=["import {readFileSync} from 'node:fs';\n\n",
+    "  if(files.includes('src/lib/merchantAttendance.ts')){assertAttendanceReleaseScope(files);return 'attendance';}\n",
+    "  if(lane==='attendance')return false;\n","  if(lane==='attendance')return;\n"];
+  for(const insertion of attendanceInsertions){assert.equal(original.split(insertion).length,2);original=original.replace(insertion,'');}
+  const managerInsertion="  if(lane==='attendance')throw Error('attendance_database_manager_required');\n";
+  assert.equal(original.split(managerInsertion).length,3);original=original.replaceAll(managerInsertion,'');
   const removeRegion=(start,end)=>{
     assert.equal(original.split(start).length,2,start);
     const from=original.indexOf(start),to=original.indexOf(end,from);

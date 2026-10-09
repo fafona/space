@@ -152,6 +152,7 @@ test("merchant config history keeps full entries and persists details outside ma
           ...createDefaultMerchantPermissionConfig(),
           planLimit: index + 1,
           allowEnterpriseManagement: index === 0,
+          allowEmployeeAttendance: index === 0,
         },
         merchantCardImageUrl: "",
         merchantCardImageOpacity: 1,
@@ -192,6 +193,8 @@ test("merchant config history keeps full entries and persists details outside ma
       reloaded.sites[0]?.configHistory?.[0]?.after.permissionConfig.allowEnterpriseManagement,
       true,
     );
+    assert.equal(reloaded.sites[0]?.configHistory?.[0]?.after.permissionConfig.allowEmployeeAttendance, true);
+    assert.equal(reloaded.sites[0]?.configHistory?.[1]?.after.permissionConfig.allowEmployeeAttendance, false);
 
     const primaryStateRaw = localStorage.getItem("merchant-space:platform-control-center:v1");
     assert.ok(primaryStateRaw);

@@ -1,0 +1,23 @@
+import type { WorkArrangementContextItem } from "./merchantAttendanceWorkArrangement";
+import type { ShiftRuleBindingWorker } from "./merchantAttendanceShiftRuleBinding";
+import type { SelfScheduleSlot, SelfScheduleAssociation } from "./merchantAttendanceSelfSchedule";
+import type { PlanAdoption } from "./merchantAttendancePlanAdoptionView";
+import type { PlanRuleApprovalsSource } from "./merchantAttendancePlanRuleApprovals";
+
+export const PLAN_EXCEPTION_BLOCKERS = ["plan_not_ended", "slot_cancelled", "publication_missing", "worker_inactive", "no_associated_sessions", "association_unverified", "adoption_missing", "adoption_unverified", "approval_mismatch", "session_open", "session_zero_duration", "session_outside_plan", "session_overlap", "session_location_mismatch", "context_unknown", "unassociated_session", "leave_pending", "leave_approved", "calendar_entry", "missing_request", "pending_correction", "work_arrangement_pending"] as const;
+export type PlanExceptionBlocker = typeof PLAN_EXCEPTION_BLOCKERS[number];
+export type PlanExceptionEndpoints = { startAt: string | null; endAt: string | null };
+export type PlanExceptionCandidateField = { state: "blocked" | "unconfigured" | "disabled" | "triggered" | "not_triggered"; minutes: number | null; rawDeltaUs: string | null; excessUs: string | null };
+export type PlanExceptionCandidate = { late: PlanExceptionCandidateField; early: PlanExceptionCandidateField; original: PlanExceptionEndpoints; selected: PlanExceptionEndpoints };
+export type PlanExceptionApproval = { operationId: string; revision: number; sourceId: string; sourceSha256: string; recordedAt: string; source: PlanRuleApprovalsSource };
+export type PlanExceptionEffect = { requestId: string; operationId: string; revision: number; recordedAt: string; rootRequestId: string; previousOperationId: string | null };
+export type PlanExceptionSession = { startEventId: string; operationId: string; lastEventId: string; lastSequence: number; relation: SelfScheduleAssociation; adoption: PlanAdoption | null; original: PlanExceptionEndpoints; selected: PlanExceptionEndpoints; effect: PlanExceptionEffect | null };
+export type PlanExceptionUnassociated = Omit<PlanExceptionSession, "relation" | "adoption"> & { relationSlotId: string | null };
+export type PlanExceptionSection<T> = { limited: boolean; items: T[] };
+export type PlanExceptionLeave = { requestId: string; operationId: string; revision: number; status: "submitted" | "approved" | "rejected" | "withdrawn" | "cancelled"; startAt: string; endAt: string; recordedAt: string };
+export type PlanExceptionCalendar = { entryId: string; operationId: string; revision: number; status: "created" | "cancelled"; locationId: string | null; kind: "holiday" | "closure"; timeZone: string; fromDate: string; throughDate: string; fromAt: string; toAt: string; recordedAt: string };
+export type PlanExceptionMissing = Omit<PlanExceptionLeave, "status"> & { status: "submitted" | "approved" | "rejected" | "withdrawn"; supersedesRequestId: string | null; rootRequestId: string; isCurrentApproved: boolean };
+export type PlanExceptionPendingCorrection = { kind: "correction" | "revision"; requestId: string; operationId: string; revision: number; startEventId: string; startAt: string; endAt: string; recordedAt: string };
+export type PlanExceptionSource = { protocol: "plan-exception-evidence-v1" | "plan-exception-evidence-v2"; policy: "owner-confirmed-plan-edges-v1" | "owner-confirmed-plan-edges-work-v2"; siteId: string; worker: ShiftRuleBindingWorker; slot: SelfScheduleSlot; phase: "future" | "ongoing" | "ended"; approval: PlanExceptionApproval | null; sessions: PlanExceptionSession[]; context: { unassociated: PlanExceptionSection<PlanExceptionUnassociated>; leave: PlanExceptionSection<PlanExceptionLeave>; calendar: PlanExceptionSection<PlanExceptionCalendar>; missing: PlanExceptionSection<PlanExceptionMissing>; pendingCorrections: PlanExceptionSection<PlanExceptionPendingCorrection>; workArrangements?: PlanExceptionSection<WorkArrangementContextItem> } };
+export type PlanExceptionSourceQuery = { siteId: string; workerId: string; slotId: string };
+export type PlanExceptionSourceResult = { protocol: "plan-exception-source-v1" | "plan-exception-source-v2"; siteId: string; actorId: string; worker: ShiftRuleBindingWorker; slot: SelfScheduleSlot; readAt: string; source: PlanExceptionSource; fingerprint: string; eligible: boolean; blockers: PlanExceptionBlocker[]; candidate: PlanExceptionCandidate };

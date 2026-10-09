@@ -2055,7 +2055,7 @@ test("external enterprise navigation stays permission-aware while standalone kee
   assert.match(source, /if\s*\(requestedView\s*!==\s*tab\)\s*commitViewChange\(tab\)/);
   assert.match(
     source,
-    /MERCHANT_ENTERPRISE_VIEW_ITEMS[\s\S]{0,250}filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\)[\s\S]{0,300}onAvailableViewsChange\(views\)/,
+    /MERCHANT_ENTERPRISE_VIEW_ITEMS\s*\.filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\s*&&\s*\(!item\.key\.startsWith\("attendance"\) \|\| attendanceUiAvailable\)\s*&&\s*\(item\.key !== "attendance" \|\| actor\.type === "employee"\)\s*&&\s*\(item\.key !== "attendanceAdmin" \|\| actor\.type === "owner"\)\s*&&\s*\(item\.key !== "attendanceScopes" \|\| actor\.type === "owner"\)\)[\s\S]{0,400}onAvailableViewsChange\(views\)/,
   );
   assert.match(source, /\{!usesExternalNavigation\s*\?\s*\([\s\S]{0,300}<nav/);
   assert.match(
@@ -2226,7 +2226,7 @@ test("mobile owner enterprise keeps internal tabs while desktop navigation remai
   assert.match(source, /\{!usesExternalNavigation\s*\?\s*\([\s\S]{0,300}<nav/);
   assert.match(
     source,
-    /MERCHANT_ENTERPRISE_VIEW_ITEMS[\s\S]{0,250}filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\)/,
+    /MERCHANT_ENTERPRISE_VIEW_ITEMS\s*\.filter\(\(item\)\s*=>\s*can\(actor,\s*item\.permission\)\s*&&\s*\(!item\.key\.startsWith\("attendance"\) \|\| attendanceUiAvailable\)\s*&&\s*\(item\.key !== "attendance" \|\| actor\.type === "employee"\)\s*&&\s*\(item\.key !== "attendanceAdmin" \|\| actor\.type === "owner"\)\s*&&\s*\(item\.key !== "attendanceScopes" \|\| actor\.type === "owner"\)\)/,
     "internal tabs must continue to honor the authenticated enterprise actor's permissions",
   );
 });
@@ -2487,7 +2487,7 @@ test("role permission editor exposes compact primary sections and accessible on-
   assert.match(permissionEditor, /data-role-permission-summary[\s\S]{0,160}role=["']status["'][\s\S]{0,120}aria-live=["']polite["']/);
   assert.match(
     permissionEditor,
-    /已选权限[\s\S]{0,180}\{permissions\.length\}[\s\S]{0,180}MERCHANT_ENTERPRISE_PERMISSION_CATALOG\.length[\s\S]{0,260}已配置[\s\S]{0,180}\{configuredGroupCount\}/,
+    /已选权限[\s\S]{0,180}\{permissions\.length\}[\s\S]{0,180}visiblePermissionCatalog\.length[\s\S]{0,260}已配置[\s\S]{0,180}\{configuredGroupCount\}/,
   );
   assert.match(permissionEditor, /data-role-permission-section=\{section\.key\}/);
   assert.match(permissionEditor, /data-role-permission-section-count/);

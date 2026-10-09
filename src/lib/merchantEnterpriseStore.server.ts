@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { parseAccountStatusCommand } from "./merchantAttendanceAccountSuspension";
+import { attendanceRolloutSiteEnabled } from "./merchantAttendanceRollout";
 import {
   isMerchantEnterpriseSchemaMissingError,
   isMerchantEnterpriseVersion,
@@ -534,6 +536,10 @@ function throwEmployeeRpcError(operation: string, error: unknown): never {
     "permission_denied",
     "employee_board_access_in_use",
     "employee_email_in_use",
+    "attendance_account_suspension_invalid",
+    "attendance_account_suspension_changed",
+    "attendance_account_suspended",
+    "attendance_operation_conflict",
   ]) {
     if (message.includes(code)) throw new Error(code);
   }
@@ -1817,6 +1823,7 @@ export async function updateMerchantEnterpriseEmployee(
     replacementEmployeeId?: string;
     actorType: "owner" | "employee";
     actorId: string;
+    operationId?: string;
   },
 ): Promise<MerchantEnterpriseEmployee> {
   const siteId = normalizeText(input.siteId, 80);
@@ -1912,6 +1919,18 @@ export async function updateMerchantEnterpriseEmployee(
   if ((input.actorType !== "owner" && input.actorType !== "employee") || !actorId) {
     throw new Error("invalid_employee_actor");
   }
+  // Only the approved status path gains an original-operation receipt. Invitation
+  // and profile/role mutations retain their existing parameters and semantics.
+  if (input.operationId !== undefined) {
+    if (input.displayName !== undefined || input.roleId !== undefined || input.roleVersion !== undefined || input.roleTransitionMode !== undefined) throw new Error("invalid_employee_update");
+    try { parseAccountStatusCommand({ operationId: input.operationId, employeeId, version: input.version, status: input.status,
+      ...(offboardingMode !== undefined ? { offboardingMode } : {}), ...(input.replacementEmployeeId !== undefined ? { replacementEmployeeId: input.replacementEmployeeId } : {}) }); }
+    catch { throw new Error("invalid_employee_update"); }
+  }
+  const suspensionEnabled = process.env.FAOLLA_ATTENDANCE_ACCOUNT_SUSPENSION_ENABLED === "1"
+    && attendanceRolloutSiteEnabled(siteId);
+  const attendanceStatus = (input.status === "active" || input.status === "disabled") && (suspensionEnabled || input.operationId !== undefined)
+    ? { attendance_suspension_enabled: suspensionEnabled, ...(input.operationId !== undefined ? { attendance_operation_id: input.operationId } : {}) } : {};
   const result = await client.rpc("faolla_update_merchant_enterprise_employee_v1", {
     p_input: {
       merchant_id: siteId,
@@ -1920,6 +1939,7 @@ export async function updateMerchantEnterpriseEmployee(
       actor_type: input.actorType,
       actor_id: actorId,
       ...patch,
+      ...attendanceStatus,
     },
   });
   if (result.error) throwEmployeeRpcError("enterprise_employee_update_failed", result.error);

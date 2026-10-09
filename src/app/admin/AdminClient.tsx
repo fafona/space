@@ -689,6 +689,9 @@ const MERCHANT_ENTERPRISE_CONTEXT_MENU_ITEMS: Array<{
   { label: "流程自动化", view: "automations" },
   { label: "员工账号", view: "employees" },
   { label: "角色权限", view: "roles" },
+  { label: "考勤配置", view: "attendanceAdmin" },
+  { label: "主管考勤范围", view: "attendanceScopes" },
+  { label: "考勤明细", view: "attendanceRecords" },
   { label: "操作记录", view: "audit" },
 ];
 type ViewportKey = "desktop" | "mobile";

@@ -108,6 +108,7 @@ export type MerchantServicePermissionConfig = {
   allowProductBlock: boolean;
   allowOrderManagement: boolean;
   allowEnterpriseManagement: boolean;
+  allowEmployeeAttendance: boolean;
   allowCouponModule: boolean;
   allowCouponBlock: boolean;
   allowMembershipManagement: boolean;
@@ -436,6 +437,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     allowProductBlock: false,
     allowOrderManagement: false,
     allowEnterpriseManagement: false,
+    allowEmployeeAttendance: false,
     allowCouponModule: false,
     allowCouponBlock: false,
     allowMembershipManagement: false,
@@ -544,6 +546,8 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
       typeof source.allowEnterpriseManagement === "boolean"
         ? source.allowEnterpriseManagement
         : fallback.allowEnterpriseManagement,
+    // Attendance never inherits access from an old enterprise plan.
+    allowEmployeeAttendance: source.allowEnterpriseManagement === true && source.allowEmployeeAttendance === true,
     allowCouponModule,
     allowCouponBlock: allowCouponModule && allowCouponBlockRaw,
     allowMembershipManagement,
@@ -3796,7 +3800,6 @@ export function applyAlert(state: PlatformState, alert: AlertRecord): PlatformSt
 export function nextIsoNow() {
   return nowIso();
 }
-
 
 
 

@@ -20,7 +20,7 @@ const adminClientSource = readFileSync(
 test("audit log is a permission-aware enterprise subview", () => {
   assert.match(
     managerSource,
-    /export\s+type\s+MerchantEnterpriseView\s*=\s*[\s\S]{0,180}["']audit["']/,
+    /export\s+type\s+MerchantEnterpriseView\s*=\s*(?:\|\s*["'][a-zA-Z]+["']\s*)*\|\s*["']audit["']\s*;/,
   );
   assert.match(
     managerSource,

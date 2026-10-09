@@ -552,15 +552,26 @@ function createDefaultDependencies(): MerchantEnterpriseInitialPasswordDependenc
       return { data: result.data, error: result.error };
     },
     loadStaffIdentity: async (input) => {
-      const result = await getService()
-        .from("merchant_enterprise_staff_identities")
-        .select("auth_user_id,email_hash,principal_type")
-        .eq("auth_user_id", input.authUserId)
-        .eq("email_hash", input.emailHash)
-        .eq("principal_type", MERCHANT_STAFF_PRINCIPAL_TYPE)
-        .limit(1)
-        .maybeSingle();
-      return { data: result.data, error: result.error };
+      const result = await getService().rpc(
+        "faolla_lookup_merchant_enterprise_staff_identity_v1",
+        { p_email_hash: input.emailHash },
+      );
+      if (result.error) return { data: null, error: result.error };
+      const identity = recordValue(result.data);
+      // The registry is intentionally RPC-only. Its Auth-recovery fallback is
+      // useful to invitation delivery, but cannot replace this existing-row
+      // requirement or the current validated session's exact identity.
+      const registered = identity?.found === true &&
+        identity.source === "registry" &&
+        identity.auth_user_id === input.authUserId;
+      return {
+        data: registered ? {
+          auth_user_id: input.authUserId,
+          email_hash: input.emailHash,
+          principal_type: MERCHANT_STAFF_PRINCIPAL_TYPE,
+        } : null,
+        error: null,
+      };
     },
     getAuthUserById: async (authUserId) => {
       const result = await getService().auth.admin.getUserById(authUserId);

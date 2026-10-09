@@ -430,6 +430,10 @@ function isSensitiveUiOrAuthPath(pathname: string) {
 
 function withSecurityHeaders(response: NextResponse, request: NextRequest) {
   expireLegacyCrossSubdomainCookies(response, request);
+  const onsiteScan = request.nextUrl.pathname === "/enterprise/attendance-scan";
+  const onsiteCamera = onsiteScan && isCanonicalPortalRequest(request) && response.status >= 200 && response.status < 300 &&
+    process.env.FAOLLA_ATTENDANCE_SELF_ENABLED === "1" && process.env.FAOLLA_ATTENDANCE_TERMINALS_ENABLED === "1" &&
+    process.env.FAOLLA_ATTENDANCE_ONSITE_QR_ENABLED === "1";
   const sensitive = isSensitiveUiOrAuthPath(request.nextUrl.pathname) || isCanonicalSuperAdminRequest(request);
   const frameAncestors = sensitive
     ? "'none'"
@@ -439,8 +443,10 @@ function withSecurityHeaders(response: NextResponse, request: NextRequest) {
     `frame-ancestors ${frameAncestors}; object-src 'none'; base-uri 'self'; form-action 'self'`,
   );
   response.headers.set("X-Content-Type-Options", "nosniff");
-  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  response.headers.set("Permissions-Policy", "camera=(), microphone=(), payment=()");
+  response.headers.set("Referrer-Policy", onsiteScan || request.nextUrl.pathname === "/enterprise/attendance-terminal/onsite" ? "no-referrer" : "strict-origin-when-cross-origin");
+  // Only the new, explicitly enabled phone scanner may ask for same-origin
+  // camera access. All existing pages retain their original deny policy.
+  response.headers.set("Permissions-Policy", `camera=${onsiteCamera ? "(self)" : "()"}, microphone=(), payment=()`);
   if (sensitive) response.headers.set("X-Frame-Options", "DENY");
   else response.headers.delete("X-Frame-Options");
   return response;

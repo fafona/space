@@ -1,0 +1,49 @@
+{
+  "rpc": "faolla_attendance_plan_exception_source_v1(p_query jsonb,p_auth_user_id uuid)",
+  "query": { "siteId": "SiteId", "workerId": "UUID", "slotId": "UUID" },
+  "raw": {
+    "protocol": "plan-exception-source-v1", "siteId": "SiteId", "actorId": "UUID",
+    "worker": "Worker", "slot": "Slot", "readAt": "UTC6", "source": "Source",
+    "sourceText": "exact PostgreSQL source::text", "fingerprint": "sha256 UTF8 sourceText lowercase hex",
+    "eligible": "boolean", "blockers": "Blocker[] unique fixed order", "candidate": "Candidate"
+  },
+  "types": {
+    "Worker": { "workerId": "UUID", "workerName": "string", "workerNo": "string", "employeeId": "UUID", "employeeAuthUserId": "UUID", "version": "positive safe integer", "active": "boolean", "employeeActive": "boolean" },
+    "Slot": { "id": "UUID", "revision": "positive safe integer", "locationId": "UUID", "locationName": "string", "timeZone": "saved string", "workDate": "date", "startAt": "UTC3", "endAt": "UTC3", "cancelled": "boolean", "hasPublicationEvidence": "boolean" },
+    "Source": {
+      "protocol": "plan-exception-evidence-v1", "policy": "owner-confirmed-plan-edges-v1", "siteId": "SiteId",
+      "worker": "Worker", "slot": "Slot", "phase": "future|ongoing|ended",
+      "approval": "Approval|null", "sessions": "Session[] ascending startEventId, max10",
+      "context": {
+        "unassociated": "Section<Unassociated>", "leave": "Section<Leave>",
+        "calendar": "Section<Calendar>", "missing": "Section<Missing>",
+        "pendingCorrections": "Section<PendingCorrection>"
+      }
+    },
+    "Approval": { "operationId": "UUID", "revision": "positive safe integer", "sourceId": "UUID", "sourceSha256": "hex64", "recordedAt": "UTC6", "source": "exact stored140 plan-rule-point-v1 source (two full resolved fields and saved provenance)" },
+    "Endpoints": { "startAt": "UTC6|null", "endAt": "UTC6|null" },
+    "Effect": { "requestId": "UUID", "operationId": "UUID", "revision": "positive safe integer", "recordedAt": "UTC6", "rootRequestId": "UUID", "previousOperationId": "UUID|null" },
+    "Session": { "startEventId": "UUID", "operationId": "UUID", "lastEventId": "UUID", "lastSequence": "positive safe integer", "relation": "exact137 SelfScheduleAssociation", "adoption": "exact145 shared10|null", "original": "Endpoints", "selected": "Endpoints", "effect": "Effect|null" },
+    "Unassociated": { "startEventId": "UUID", "operationId": "UUID", "lastEventId": "UUID", "lastSequence": "positive safe integer", "relationSlotId": "UUID|null", "original": "Endpoints", "selected": "Endpoints", "effect": "Effect|null" },
+    "Section<T>": { "limited": "boolean", "items": "T[] max100; limited implies empty; stable sorted by UUID (pending by kind then requestId)" },
+    "Leave": { "requestId": "UUID", "operationId": "UUID", "revision": "1|2|3", "status": "submitted|approved|rejected|withdrawn|cancelled", "startAt": "UTC3", "endAt": "UTC3", "recordedAt": "UTC6" },
+    "Calendar": { "entryId": "UUID", "operationId": "UUID", "revision": "1|2", "status": "created|cancelled", "locationId": "UUID|null", "kind": "holiday|closure", "timeZone": "saved string", "fromDate": "date", "throughDate": "date", "fromAt": "UTC6", "toAt": "UTC6", "recordedAt": "UTC6" },
+    "Missing": { "requestId": "UUID", "operationId": "UUID", "revision": "1|2", "status": "submitted|approved|rejected|withdrawn", "startAt": "UTC6", "endAt": "UTC6", "recordedAt": "UTC6", "supersedesRequestId": "UUID|null", "rootRequestId": "UUID", "isCurrentApproved": "boolean" },
+    "PendingCorrection": { "kind": "correction|revision", "requestId": "UUID", "operationId": "UUID", "revision": "positive safe integer", "startEventId": "UUID", "startAt": "UTC6", "endAt": "UTC6", "recordedAt": "UTC6" },
+    "CandidateField": { "state": "blocked|unconfigured|disabled|triggered|not_triggered", "minutes": "nonnegative integer|null", "rawDeltaUs": "signed base10 integer string|null", "excessUs": "nonnegative base10 integer string|null" },
+    "Candidate": { "late": "CandidateField", "early": "CandidateField", "original": "Endpoints", "selected": "Endpoints" }
+  },
+  "blockers": ["plan_not_ended", "slot_cancelled", "publication_missing", "worker_inactive", "no_associated_sessions", "association_unverified", "adoption_missing", "adoption_unverified", "approval_mismatch", "session_open", "session_zero_duration", "session_outside_plan", "session_overlap", "session_location_mismatch", "context_unknown", "unassociated_session", "leave_pending", "leave_approved", "calendar_entry", "missing_request", "pending_correction"],
+  "errors": { "attendance_plan_exception_invalid": 503, "attendance_plan_exception_too_large": 422, "inherited": "existing145/139/138 identity, not-found, access and source errors propagate" },
+  "limits": { "sourceUtf8Bytes": 1048576, "associatedSessions": 10, "associatedEvents": 2002, "extraOriginalEvents": 2002, "contextSectionItems": 100 },
+  "semantics": [
+    "No current observation time is inside source. Phase is inside source; readAt is outside and is not a commit timestamp.",
+    "Eligible iff blockers empty. Both fields blocked when ineligible. Eligible unconfigured field cannot be confirmed; disabled and value0 remain distinct.",
+    "Raw delta late=selected earliest start minus plan start; early=plan end minus selected latest end; microseconds exact. Trigger strictly greater than grace*60000000. Excess=max(0,raw-grace). No rounding.",
+    "Original and selected cover all explicitly associated sessions, latest approved correction else original. No synthetic events or automatic association.",
+    "Null adoption stays unknown. Every adopted session must name the same immutable140 approval operation/source; no current approval head read.",
+    "Context overflow is limited empty and context_unknown. Pending proposals scan worker submissions at101 before relevance filtering. No silent truncation.",
+    "Every context source is read under retained owner/settings/worker/employee locks. Historical mismatching identity fails closed rather than disclosing or skipping it.",
+    "Owner147 preview/decide calls this source in the same transaction. Self historical detail does not call it: currentValidation=not_checked."
+  ]
+}

@@ -111,6 +111,28 @@ test("backup-only histories participate in validation, merge, and delta detectio
   assert.equal(saved.payload.merchantConfigHistoryBySiteId["10000000"].length, 2);
   assert.deepEqual(saved.archive.audits.map((entry) => entry.id), ["new-history"]);
 });
+test("attendance activation and pause round-trip the atomic config, audit and authoritative read",()=>atomic(async()=>{
+  const initial=fixture();const store=mock(viewFor(initial));
+  const enabled=fixture("attendance-enable");
+  enabled.snapshot[0].permissionConfig={...createDefaultMerchantPermissionConfig(),allowEnterpriseManagement:true,allowEmployeeAttendance:true};
+  enabled.merchantConfigHistoryBySiteId["10000000"][0].after.permissionConfig=enabled.snapshot[0].permissionConfig;
+  const first=await savePlatformMerchantSnapshot(store.client,enabled,{expectedRevision:initial.revision});
+  assert.equal(first.error,null);
+  const active=await loadAuthoritativeStoredPlatformMerchantSnapshot(store.client);
+  assert.equal(active.payload?.snapshot[0].permissionConfig?.allowEmployeeAttendance,true);
+  const paused=fixture("attendance-pause");
+  paused.snapshot[0].permissionConfig={...enabled.snapshot[0].permissionConfig,allowEmployeeAttendance:false};
+  paused.merchantConfigHistoryBySiteId["10000000"][0].before.permissionConfig=enabled.snapshot[0].permissionConfig;
+  paused.merchantConfigHistoryBySiteId["10000000"][0].after.permissionConfig=paused.snapshot[0].permissionConfig;
+  const second=await savePlatformMerchantSnapshot(store.client,paused,{expectedRevision:first.payload?.revision});
+  assert.equal(second.error,null);
+  const current=await loadAuthoritativeStoredPlatformMerchantSnapshot(store.client);
+  assert.equal(current.payload?.snapshot[0].permissionConfig?.allowEmployeeAttendance,false,"old enabled backup must not win over a current false");
+  const saved=await readPlatformMerchantUserManageAtomic(store.client);
+  const audit=saved.archive.audits.find(a=>a.id==="attendance-pause");
+  assert.equal(audit?.before.permissionConfig.allowEmployeeAttendance,true);assert.equal(audit?.after.permissionConfig.allowEmployeeAttendance,false);
+  assert.equal(store.calls.filter(c=>c.name==="faolla_commit_platform_snapshot_rows_v1").length,2);
+}));
 
 test("no history delta preserves unequal valid archive copies and original physical timestamps", async () => {
   const archive = derivePlatformMerchantConfigArchiveEntries({ nextHistoryBySiteId: fixture("existing-audit").merchantConfigHistoryBySiteId });

@@ -1,0 +1,14 @@
+// Synthetic protocol fixtures only: not SQL, Auth or clock-channel acceptance.
+import { OPERATIONAL_CONSUMER_ACTIVATION_PROTOCOL, operationalConsumerActivationCommandFingerprint, type OperationalConsumerActivationCommand, type OperationalConsumerActivationItem, type OperationalConsumerActivationResult } from "./merchantAttendanceOperationalConsumerActivation";
+export const activationId = (n: number) => `24200000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+export const activationSite = "99990001", activationActor = activationId(1), activationAt = "2026-10-08T12:00:00.123456Z";
+export const activationQuery = { siteId: activationSite, consumer: "application_window" as const, mode: "current" as const };
+export const activationCommand = (action: "activate" | "deactivate" = "activate", revision = 0): OperationalConsumerActivationCommand => ({ siteId: activationSite, consumer: "application_window" as const, operationId: activationId(revision + 10), action, expectedRevision: revision, reason: "合成明确启用理由😀" });
+export async function activationItem(c = activationCommand(), actor = activationActor): Promise<OperationalConsumerActivationItem> { return { siteId: c.siteId, consumer: c.consumer, operationId: c.operationId, actorId: actor, action: c.action, revision: c.expectedRevision + 1, reason: c.reason, recordedAt: activationAt, commandFingerprint: await operationalConsumerActivationCommandFingerprint(c, actor) }; }
+export const activationResult = (current: OperationalConsumerActivationItem | null = null, receipt: OperationalConsumerActivationItem | null = null, writable = true): OperationalConsumerActivationResult => ({ protocol: OPERATIONAL_CONSUMER_ACTIVATION_PROTOCOL, siteId: activationSite, consumer: "application_window" as const, actorId: activationActor, readAt: activationAt, current, receipt, canActivate: writable && !receipt && current?.action !== "activate", canDeactivate: writable && !receipt && current?.action === "activate" });
+export async function activationSaved(c = activationCommand()) { const item = await activationItem(c); return activationResult(item, item, false); }
+export async function activationPendingBytes(c = activationCommand(), actor = activationActor) { return JSON.stringify({ version: 1, actorId: actor, query: activationQuery, command: c, commandFingerprint: await operationalConsumerActivationCommandFingerprint(c, actor) }); }
+export class ActivationMemoryStorage { values = new Map<string, string>(); get length() { return this.values.size; } key(n: number) { return [...this.values.keys()][n] ?? null; } getItem(k: string) { return this.values.get(k) ?? null; } setItem(k: string, v: string) { this.values.set(k, v); } removeItem(k: string) { this.values.delete(k); } }
+export const activationResponse = (data: OperationalConsumerActivationResult) => new Response(JSON.stringify({ ok: true, data }), { headers: { "content-type": "application/json" } });
+
+

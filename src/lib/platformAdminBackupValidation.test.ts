@@ -320,9 +320,16 @@ test("opaque template JSON keeps extension fields but rejects non-JSON values an
 test("legacy missing newer optional permission flags and card presentation settings remain accepted", () => {
   const f = fixture();
   const config = getAt(f.entry.snapshot, `merchantSnapshot.merchantConfigHistoryBySiteId.${SITE}.0.before.permissionConfig`) as Raw;
-  delete config.allowBusinessCardIntroVideo; delete config.allowEnterpriseManagement;
+  delete config.allowBusinessCardIntroVideo; delete config.allowEnterpriseManagement; delete config.allowEmployeeAttendance;
   setAt(f.entry.snapshot, "merchantSnapshot.snapshot.0.businessCards.0", { id: "legacy", imageUrl: "https://example.test/legacy.png", createdAt: AT });
   assert.doesNotThrow(() => assertPlatformAdminBackupSnapshot(f.entry.snapshot));
+});
+test("attendance backup flag accepts strict booleans and rejects malformed values", () => {
+  const f=fixture();
+  const config=getAt(f.entry.snapshot, `merchantSnapshot.merchantConfigHistoryBySiteId.${SITE}.0.before.permissionConfig`) as Raw;
+  config.allowEnterpriseManagement=true;config.allowEmployeeAttendance=true;
+  assert.doesNotThrow(()=>assertPlatformAdminBackupSnapshot(f.entry.snapshot));
+  for(const bad of ["true",1,null]){config.allowEmployeeAttendance=bad;assert.throws(()=>assertPlatformAdminBackupSnapshot(f.entry.snapshot),failure);}
 });
 test("normal non-backup parser keeps its original permissive compatibility behavior", () => {
   const raw = fixture().supportBlocks as Raw[]; setAt(raw, "0.props.payload.threads.0.messages", [null]);

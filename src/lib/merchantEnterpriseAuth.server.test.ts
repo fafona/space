@@ -19,6 +19,7 @@ import {
 } from "@/lib/merchantEnterpriseSupabase";
 import type { loadAuthoritativeCurrentMerchantSnapshotSites } from "@/lib/publishedMerchantService";
 import { MERCHANT_AUTH_COOKIE } from "@/lib/merchantAuthSession";
+import { createEnterpriseLogoutBoundary } from "@/lib/merchantEnterpriseLogout";
 
 process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://faolla.com";
 
@@ -332,5 +333,55 @@ test("enterprise browser storage isolates tokens while allowing short-lived PKCE
     } else {
       Reflect.deleteProperty(globalThis, "window");
     }
+  }
+});
+
+test("strict enterprise storage exposes unavailable persistence instead of reporting a verified logout", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const denied = () => { throw new Error("synthetic storage unavailable"); };
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    sessionStorage: { getItem: denied, setItem: denied, removeItem: denied },
+    localStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+  } });
+  try {
+    const strict = createEnterpriseBrowserAuthStorageAdapter(true), compatible = createEnterpriseBrowserAuthStorageAdapter();
+    const key = "faolla-enterprise-auth-token";
+    assert.throws(() => strict.getItem(key), /synthetic storage unavailable/);
+    assert.throws(() => strict.setItem(key, "synthetic"), /synthetic storage unavailable/);
+    assert.throws(() => strict.removeItem(key), /synthetic storage unavailable/);
+    assert.equal(compatible.getItem(key), null);
+    assert.doesNotThrow(() => compatible.setItem(key, "synthetic"));
+    assert.doesNotThrow(() => compatible.removeItem(key));
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("composed strict logout cannot verify cleanup when PKCE persistence is unreadable or cannot be removed", async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const key = "faolla-enterprise-auth-token", verifier = key + "-code-verifier";
+  try {
+    for (const failure of ["read", "remove"] as const) {
+      const session = new Map([[key, "synthetic session"]]);
+      const local = new Map([[verifier, "synthetic verifier"], [verifier + ".faolla-created-at", String(Date.now())]]);
+      Object.defineProperty(globalThis, "window", { configurable: true, value: {
+        sessionStorage: { getItem: (name: string) => session.get(name) ?? null,
+          setItem: (name: string, value: string) => session.set(name, value), removeItem: (name: string) => session.delete(name) },
+        localStorage: { getItem: (name: string) => { if (failure === "read") throw Error("PKCE read denied"); return local.get(name) ?? null; },
+          setItem: (name: string, value: string) => local.set(name, value),
+          removeItem: (name: string) => { if (failure === "remove" && name.startsWith(verifier)) throw Error("PKCE removal denied"); local.delete(name); } },
+      } });
+      const boundary = createEnterpriseLogoutBoundary(createEnterpriseBrowserAuthStorageAdapter(true), key);
+      const result = await boundary.signOut(async () => ({ error: null }));
+      assert.equal(result.localCleared, false);
+      assert(result.error instanceof Error);
+      assert.equal(boundary.isBlocked(), true);
+      assert.equal(boundary.storage.getItem(key), null);
+      assert.equal(session.has(key), false);
+    }
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
   }
 });

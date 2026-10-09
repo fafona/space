@@ -1,0 +1,111 @@
+//195 INERT unless --run-local; real React components, synthetic Auth/HTTP only.
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+import {runAttendanceCleanupSteps} from './attendance-cleanup.mjs';
+const root=fileURLToPath(new URL('../../',import.meta.url)),require=createRequire(import.meta.url),api='/api/merchant-enterprise/attendance/administrative-closures',admin='/api/merchant-enterprise/attendance/admin';
+export const administrativeClosureBrowserLimits=Object.freeze({ttlMs:180000,http:70,api:40,posts:3});
+export async function createAdministrativeClosureBrowserModel(){
+ const f=require('../../src/lib/merchantAttendanceAdministrativeClosureTestFixtures.ts'),p=require('../../src/lib/merchantAttendanceAdministrativeClosure.ts'),ap=require('../../src/lib/merchantAttendanceAdmin.ts');
+ const seed={siteId:f.closureSite,owner:f.closureOwner,self:f.closureSelf,other:f.closureId(99),worker:f.closureId(3),start:f.closureId(6),history:f.closureId(200)},entries=[],records=new Map(),history=[];let lost=true,hideReceipt=false;
+ const receipt=e=>Object.fromEntries(['operationId','startEventId','revision','action','actorId','recordedAt','commandFingerprint'].map(k=>[k,e[k]]));
+ const frame=start=>({...f.closureFrame(),startEventId:start,tailEventId:start});
+ async function make(command,actor){const source=command.action==='close'||command.action==='record_unknown';return{operationId:command.operationId,startEventId:command.startEventId,revision:command.expectedRevision+1,action:command.action,
+  actorId:actor,actorAccess:command.action==='self_dispute'?'self':'owner',reason:command.reason,verifiedEndAt:command.action==='close'?command.verifiedEndAt:null,disputeOperationId:command.action==='owner_respond'?command.disputeOperationId:null,
+  frame:source?frame(command.startEventId):null,context:source?f.closureContext():null,recordedAt:f.closureAt,commandFingerprint:await p.administrativeClosureCommandFingerprint(seed.siteId,actor,command.action==='self_dispute'?'self':'owner',command)};}
+ // Explicit synthetic saved history for bounded pagination; not UI/SQL writes.
+ for(let n=1;n<=26;n++)history.push(await make({action:'record_unknown',operationId:f.closureId(1000+n),startEventId:seed.history,expectedRevision:n-1,reason:'Synthetic historical unknown '+n,workerId:seed.worker,expectedSourceFingerprint:f.closureContext().sourceFingerprint,verifiedEndAt:null},seed.owner));
+ function detail(rows,mode,actor){const head=rows.at(-1),saved=rows.findLast(e=>e.frame),closed=rows.find(e=>e.action==='close'),fr=saved?.frame??frame(seed.start),caps=f.closureNoCaps();
+  const summary=head?{startEventId:head.startEventId,identity:{workerId:fr.workerId,employeeId:fr.employeeId,employeeAuthUserId:fr.employeeAuthUserId},employmentPeriodId:fr.employmentPeriodId,state:closed?'closed':'pending',revision:head.revision,
+   verifiedEndAt:closed?.verifiedEndAt??null,closedOperationId:closed?.operationId??null,hasDispute:rows.some(e=>e.action==='self_dispute'),updatedAt:head.recordedAt}:null;
+  if(mode==='candidate'&&!closed)caps.canClose=caps.canRecordUnknown=true;else if(mode==='detail'&&actor===seed.self)caps.canDispute=true;else if(mode==='detail'&&summary?.hasDispute)caps.canRespond=true;
+  return{summary,frame:fr,context:saved?.context??f.closureContext(),evidenceOperationId:mode==='candidate'?null:saved.operationId,currentEntry:head??null,
+   closure:closed?{...closed.frame,protocol:p.ADMINISTRATIVE_CLOSURE_BOUNDARY_PROTOCOL,siteId:seed.siteId,operationId:closed.operationId,revision:closed.revision,verifiedEndAt:closed.verifiedEndAt,recordedAt:closed.recordedAt,sourceFingerprint:closed.context.sourceFingerprint}:null,
+   capabilities:caps,blockers:mode==='candidate'&&closed?['already_closed']:[]};}
+ async function respond(url,method,text,actor){const u=new URL(url);assert([api,admin].includes(u.pathname));assert(['GET','POST'].includes(method));
+  if(u.pathname===admin){assert.equal(method,'GET');assert.equal(actor,seed.owner);const q=ap.parseAttendanceAdminQuery(u.href);assert.equal(q.view,'settings');assert.equal(q.siteId,seed.siteId);
+   const body={ok:true,moduleEnabled:true,siteId:seed.siteId,version:1,view:'settings',settings:{timeZone:'Europe/Madrid',enabled:true,webClockEnabled:true,webBreakPaid:false},items:[],nextCursor:null,receipt:null};ap.parseAttendanceAdminResult(body,q);return{status:200,text:JSON.stringify(body)};}
+  let query,command=null;if(method==='POST')({query,command}=p.parseAdministrativeClosureBody(p.parseAdministrativeClosureJson(text,true)));else query=p.parseAdministrativeClosureHttpQuery(u.href);
+  assert.equal(query.siteId,seed.siteId);assert.equal(actor,query.access==='owner'?seed.owner:seed.self);let data;
+  if(command){assert.equal(command.startEventId,seed.start);assert(!records.has(command.operationId),'unexpected_duplicate_POST');assert.equal(command.expectedRevision,entries.length);
+   const e=await make(command,actor);entries.push(e);records.set(e.operationId,e);data={kind:'receipt',receipt:receipt(e)};
+  }else if(query.mode==='recover'){const saved=records.get(query.operationId);data={kind:'receipt',receipt:hideReceipt||!saved||saved.actorId!==actor?null:receipt(saved)};}
+  else if(query.mode==='workers')data={kind:'workers',items:[{workerId:seed.worker,employeeId:f.closureId(4),employeeAuthUserId:seed.self,workerNo:'SYNTHETIC-195',displayName:'合成暂停人员',paused:true}],nextAfterId:null};
+  else if(query.mode==='candidate'){assert.equal(query.workerId,seed.worker);data={kind:'candidate',detail:detail(entries,'candidate',actor)};}
+  else if(query.mode==='list')data={kind:'list',items:[...(entries.length?[detail(entries,'detail',actor).summary]:[]),detail(history,'detail',actor).summary].sort((a,b)=>a.startEventId.localeCompare(b.startEventId)),nextAfterId:null};
+  else{const rows=query.startEventId===seed.history?history:entries;assert(rows.length);if(query.mode==='detail')data={kind:'detail',detail:detail(rows,'detail',actor)};
+   else{assert.equal(query.mode,'history');const all=rows.toReversed().filter(e=>query.beforeRevision===null||e.revision<query.beforeRevision),items=all.slice(0,25);data={kind:'history',startEventId:query.startEventId,items,nextBeforeRevision:all.length>25?items.at(-1).revision:null};}}
+  const result=f.closureResult(data,query,actor);await p.parseAdministrativeClosureResult(result,query,actor,command);const lose=command&&lost;if(lose)lost=false;
+  return{status:200,text:lose?'{"ok":':JSON.stringify({ok:true,data:result}),query,command};
+ }
+ return{seed,entries,records,history,respond,hideReceipt:value=>{hideReceipt=value;}};
+}
+async function bounded(work,ms=12000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('closure_browser_deadline')),ms);})]);}finally{clearTimeout(timer);}}
+async function assets(seed){
+ const{build}=await import('esbuild'),{compile}=await import('@tailwindcss/node'),{default:ts}=await import('typescript');
+ const authStub=`const callbacks=new Set();const state=window.__closureAuth={actor:${JSON.stringify(seed.self)},verified:0,setActor(actor){state.actor=actor;for(const fn of [...callbacks])fn('SIGNED_IN',session());}};const session=()=>({access_token:'synthetic:'+state.actor,user:{id:state.actor}});
+ export const merchantEnterpriseSupabase={auth:{getSession:async()=>({data:{session:session()},error:null}),getUser:async token=>{state.verified++;if(token!=='synthetic:'+state.actor)return{data:{user:null},error:{message:'synthetic_auth_changed'}};return{data:{user:{id:state.actor}},error:null};}}};
+ export const isEnterpriseLogoutBlocked=()=>false;export const onEnterpriseAuthStateChange=fn=>{callbacks.add(fn);return{data:{subscription:{unsubscribe:()=>callbacks.delete(fn)}}};};
+ export const signInEnterpriseWithPassword=()=>{throw Error('auth_out_of_scope')};export const signOutEnterpriseSession=()=>{throw Error('auth_out_of_scope')};`;
+ const bundle=await build({absWorkingDir:root,entryPoints:['scripts/fixtures/attendance-administrative-closure-browser-entry.tsx'],bundle:true,write:false,metafile:true,platform:'browser',format:'esm',target:['es2020'],jsx:'automatic',tsconfig:path.join(root,'tsconfig.json'),outfile:'qa.js',logLevel:'warning',define:{'process.env':'{}','process.env.NODE_ENV':'"development"',__AC_SEED__:JSON.stringify(seed)},
+  plugins:[{name:'synthetic-auth-only',setup(b){b.onResolve({filter:/merchantEnterpriseSupabase$/},()=>({path:'synthetic-auth',namespace:'closure-fixture'}));b.onLoad({filter:/.*/,namespace:'closure-fixture'},()=>({contents:authStub,loader:'js'}));}}]});
+ const candidates=new Set();for(const name of Object.keys(bundle.metafile.inputs)){assert(!/node:crypto|\.server\.ts$/.test(name));if(!/\.tsx?$/.test(name)||name.includes('node_modules'))continue;
+  const ast=ts.createSourceFile(name,await readFile(path.join(root,name),'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);const visit=n=>{if(ts.isStringLiteral(n)||ts.isNoSubstitutionTemplateLiteral(n)||ts.isTemplateHead(n)||ts.isTemplateMiddle(n)||ts.isTemplateTail(n))n.text.split(/\s+/).filter(Boolean).forEach(v=>candidates.add(v));ts.forEachChild(n,visit);};visit(ast);}
+ const css=(await compile('@import "tailwindcss";',{base:root,onDependency:()=>{}})).build([...candidates])+'body{margin:0;background:#f8fafc;font-family:Arial,sans-serif}.qa-main{max-width:1100px;margin:auto;min-width:0}';
+ return{js:bundle.outputFiles.find(f=>f.path.endsWith('.js')).contents,css};
+}
+export async function verifyAdministrativeClosureBrowser(){
+ const started=Date.now(),model=await createAdministrativeClosureBrowserModel(),requests=[],errors=[],inflight=new Set();let totalHttp=0,posts=0,server,browser,context,page,origin,files,closing=false,failure,report,stage='setup',accept=true;
+ const timer=setTimeout(()=>{closing=true;void context?.close().catch(()=>{});server?.closeAllConnections();},administrativeClosureBrowserLimits.ttlMs);
+ const button=name=>page.getByRole('button',{name,exact:true}),settle=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await bounded(Promise.allSettled([...inflight]));};
+ const click=async(name,method='GET')=>{const[r]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname===api&&r.request().method()===method),button(name).click()]);await r.finished();assert.equal(r.status(),200,await r.text());await settle();};
+ const configure=async v=>{await page.evaluate(v=>window.__closureHarness.configure(v),v);await settle();};
+ const pending=()=>page.evaluate(()=>Object.entries(sessionStorage).filter(([key])=>key.startsWith('faolla:attendance:administrative-closure:v1:')));
+ const fill=async reason=>{await page.getByLabel('行政说明',{exact:true}).fill(reason);await page.getByRole('checkbox',{name:/我已核对以上依据与说明/}).check();};
+ const openOwner=async()=>{await button('打开负责人合成宿主').click();await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='行政结案记录与原号核验')?.disabled);await button('行政结案记录与原号核验').click();await page.getByRole('region',{name:'行政结案记录',exact:true}).waitFor();await settle();};
+ const openSelf=async()=>{await page.getByLabel('行政记录商户编号').waitFor();await page.getByLabel('行政记录商户编号').fill(model.seed.siteId);await button('打开本人行政记录').click();await page.getByRole('region',{name:'行政结案记录',exact:true}).waitFor();await settle();};
+ const overflow=async()=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'390px_overflow');
+ try{
+  files=await bounded(assets(model.seed),45000);server=createServer((req,res)=>{const work=(async()=>{assert(!closing);assert(++totalHttp<=administrativeClosureBrowserLimits.http);assert.equal(req.headers.host,new URL(origin).host);const u=new URL(req.url,origin);
+   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'none';script-src 'self';style-src 'self' 'unsafe-inline';connect-src 'self';img-src 'self';base-uri 'none';form-action 'none';frame-ancestors 'none'");
+   if(['/', '/qa.js','/qa.css','/favicon.ico'].includes(u.pathname)){assert.equal(req.method,'GET');assert.equal(u.search,'');if(u.pathname==='/favicon.ico')return res.writeHead(204).end();const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/qa.css"><div id="qa-root"></div><script type="module" src="/qa.js"></script></html>';
+    return res.writeHead(200,{'Content-Type':u.pathname==='/'?'text/html;charset=utf-8':u.pathname==='/qa.js'?'text/javascript;charset=utf-8':'text/css;charset=utf-8'}).end(u.pathname==='/'?html:u.pathname==='/qa.js'?files.js:files.css);}
+   assert([api,admin].includes(u.pathname));assert(requests.length<administrativeClosureBrowserLimits.api);if(req.method==='POST')assert(++posts<=administrativeClosureBrowserLimits.posts);let text='',bytes=0;for await(const chunk of req){bytes+=chunk.length;assert(bytes<=8192);text+=chunk.toString('utf8');}
+   const actor=req.headers['x-synthetic-actor']??String(req.headers['x-merchant-access-token']??'').replace(/^synthetic:/,'');const result=await model.respond(u.href,req.method,text,actor);
+   requests.push({path:u.pathname,method:req.method,query:result.query,action:result.command?.action});res.writeHead(result.status,{'Content-Type':'application/json;charset=utf-8'}).end(result.text);
+  })();inflight.add(work);void work.catch(error=>{errors.push(error.message);if(!res.headersSent)res.writeHead(500,{'Content-Type':'application/json'});res.end('{"ok":false}');}).finally(()=>inflight.delete(work));});
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});const address=server.address();assert(address&&typeof address==='object'&&address.address==='127.0.0.1');origin=`http://127.0.0.1:${address.port}`;
+  const{chromium}=await import('playwright'),launch=chromium.launch({headless:true});void launch.then(b=>{if(closing)return b.close();}).catch(()=>{});browser=await bounded(launch,15000);context=await browser.newContext({serviceWorkers:'block',acceptDownloads:false,viewport:{width:390,height:900}});
+  await context.route('**/*',async route=>{const r=route.request(),u=new URL(r.url());if(u.origin!==origin||!(['/', '/qa.js','/qa.css','/favicon.ico'].includes(u.pathname)&&r.method()==='GET'&&!u.search||[api,admin].includes(u.pathname)&&['GET','POST'].includes(r.method()))){errors.push('external_or_unknown_request');return route.abort();}await route.continue();});
+  page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});page.on('popup',()=>errors.push('popup'));page.on('download',()=>errors.push('download'));page.on('dialog',d=>void(accept?d.accept():d.dismiss()).catch(()=>{}));
+  stage='actual_admin_draft_guard';await page.goto(origin);await button('打开负责人合成宿主').waitFor();assert.equal(requests.length,0);await button('打开负责人合成宿主').click();await page.getByLabel('企业考勤时区',{exact:true}).waitFor();await settle();
+  await page.getByLabel('企业考勤时区',{exact:true}).fill('UTC');await settle();assert.equal(await button('行政结案记录与原号核验').isDisabled(),true);accept=false;assert.equal(await page.evaluate(()=>window.__closureHarness.leave()),false);accept=true;assert.equal(await page.getByLabel('企业考勤时区',{exact:true}).inputValue(),'UTC');assert.equal(posts,0);
+  await page.getByLabel('企业考勤时区',{exact:true}).fill('Europe/Madrid');await button('行政结案记录与原号核验').click();await button('读取已保存行政记录').waitFor();await settle();const inert=requests.length;await settle();assert.equal(requests.length,inert);
+  stage='owner_unknown_flagoff_recovery';await click('读取可核验人员');await click('读取此人结案候选');await fill('Synthetic unknown end');await click('保存结束时刻不明记录','POST');await button('仅 GET 核验行政原编号').waitFor();const original=await pending();assert.equal(original.length,1);assert.equal(model.entries[0].action,'record_unknown');assert.equal(model.entries[0].verifiedEndAt,null);
+  await page.reload();await configure({enabled:false});await openOwner();model.hideReceipt(true);await click('仅 GET 核验行政原编号');assert.deepEqual(await pending(),original);model.hideReceipt(false);await click('仅 GET 核验行政原编号');assert.equal((await pending()).length,0);assert.equal(posts,1);
+  stage='fresh_owner_close_and_cancel';await button('关闭行政记录').click();await configure({enabled:true});await button('行政结案记录与原号核验').click();await click('读取可核验人员');await click('读取此人结案候选');await page.getByLabel('核验结束时刻',{exact:true}).fill('2026-10-08T13:00');await fill('Synthetic verified close');accept=false;await button('确认行政结案').click();await settle();assert.equal(posts,1);assert.equal(await page.getByLabel('行政说明',{exact:true}).inputValue(),'Synthetic verified close');accept=true;await click('确认行政结案','POST');assert.equal(posts,2);
+  await click('读取已保存行政记录');await page.getByText(`时段 ${model.seed.start}`,{exact:true}).locator('..').getByRole('button',{name:'读取行政详情',exact:true}).click();await page.getByText(/这是独立行政边界/).waitFor();assert.match(await page.getByRole('region',{name:'行政结案记录',exact:true}).innerText(),/不是补造的打卡，不计为已核实工时/);await overflow();
+  stage='independent_self_page_no_membership';await configure({mode:'self'});await openSelf();assert(await page.evaluate(()=>window.__closureAuth.verified)>0);await click('读取已保存行政记录');await page.getByText(`时段 ${model.seed.start}`,{exact:true}).locator('..').getByRole('button',{name:'读取行政详情',exact:true}).click();await button('提交本人异议').waitFor();await fill('Synthetic self dispute');
+  stage='late_auth_hidden_and_original_get';accept=false;await button('关闭行政记录').click();assert.equal(await page.getByLabel('行政说明',{exact:true}).inputValue(),'Synthetic self dispute');accept=true;const beforeHide=requests.length;await page.evaluate(()=>window.__closureHarness.visibility(true));assert.equal(await page.getByLabel('行政说明',{exact:true}).count(),0);await page.evaluate(()=>window.__closureHarness.visibility(false));await settle();assert.equal(requests.length,beforeHide);
+  await click('读取已保存行政记录');await page.getByText(`时段 ${model.seed.start}`,{exact:true}).locator('..').getByRole('button',{name:'读取行政详情',exact:true}).click();await button('提交本人异议').waitFor();await fill('Synthetic delayed self dispute');await page.evaluate(()=>window.__closureHarness.hold());await click('提交本人异议','POST');await page.waitForFunction(()=>window.__closureHarness.held());const late=await pending();assert.equal(late.length,1);
+  await page.evaluate(actor=>window.__closureAuth.setActor(actor),model.seed.other);await page.getByLabel('行政记录商户编号').waitFor();await page.evaluate(()=>window.__closureHarness.release());await settle();assert.deepEqual(await pending(),late);assert.equal(await page.getByText('Synthetic delayed self dispute',{exact:true}).count(),0);
+  await page.evaluate(actor=>window.__closureAuth.setActor(actor),model.seed.self);await openSelf();await click('仅 GET 核验行政原编号');assert.equal((await pending()).length,0);assert.equal(posts,3);
+  stage='bounded_history_25_then1_mobile';await click('读取已保存行政记录');await page.getByText(`时段 ${model.seed.history}`,{exact:true}).locator('..').getByRole('button',{name:'读取行政详情',exact:true}).click();await button('读取此时段行政历史').waitFor();await click('读取此时段行政历史');assert.equal(await page.getByText(/^说明：Synthetic historical unknown /).count(),25);await click('读取下一页');assert.equal(await page.getByText(/^说明：Synthetic historical unknown /).count(),1);await overflow();assert.deepEqual(errors,[]);
+  report={groups:6,actualAdmin:true,actualLauncher:true,actualPanel:true,actualIndependentSelfPage:true,nextServerPageStaticOnly:true,mockedData:true,actualAuth:false,actualSql:false,
+   authVerifierStubCalls:await page.evaluate(()=>window.__closureAuth.verified),membershipRequests:0,posts,gets:requests.filter(r=>r.method==='GET').length,apiRequests:requests.length,totalHttp,
+   syntheticHistoryEntries:26,historyPages:[25,1],ownerActions:['record_unknown','close'],selfActions:['self_dispute'],exactOriginalRecovery:true,flagoffRecovery:true,unknownNullKeepsPending:true,lateAuthPreserves:true,hiddenNoAutomaticHttp:true,parentDirtyGuard:true,
+   mobileWidth:390,horizontalOverflow:false,externalRequests:0,diskBundle:false,elapsedMs:Date.now()-started};
+ }catch(error){failure=Error(`administrative_closure_browser_failed:${stage}:${error.message}:${JSON.stringify({errors,requests:requests.slice(-5)})}`,{cause:error});throw failure;}
+ finally{closing=true;clearTimeout(timer);await runAttendanceCleanupSteps([{name:'held body',run:async()=>{if(page&&!page.isClosed())await page.evaluate(()=>window.__closureHarness?.release()).catch(()=>{});}},
+  {name:'owned context',run:()=>context?bounded(context.close(),6000):undefined},{name:'owned browser',run:()=>browser?bounded(browser.close(),6000):undefined},{name:'HTTP work',run:()=>bounded(Promise.allSettled([...inflight]),6000)},
+  {name:'owned listener',run:()=>{server?.closeAllConnections();return server?.listening?bounded(new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve())),6000):undefined;}},{name:'esbuild',run:async()=>{(await import('esbuild')).stop();}}]).catch(error=>{if(failure)throw new AggregateError([failure,error],'closure_browser_cleanup_failed');throw error;});assert(!browser?.isConnected()&&!server?.listening);
+  if(failure)console.error(JSON.stringify({cleanup:'administrative-closure-browser',browserClosed:!browser?.isConnected(),listenerStopped:!server?.listening,apiRequests:requests.length,totalHttp}));}
+ return{...report,browserClosed:true,listenerStopped:true};
+}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+ if(process.argv.length===3&&process.argv[2]==='--run-local')console.log(JSON.stringify(await verifyAdministrativeClosureBrowser()));
+ else if(process.argv.length===2)console.log('Inert. node --import tsx scripts/fixtures/attendance-administrative-closure-browser.mjs --run-local');else throw Error('explicit_run_local_only');
+}

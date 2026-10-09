@@ -25,6 +25,7 @@ import {
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { hasMerchantStaffBusinessPermissions } from "@/lib/merchantStaffBusiness";
 import { isMerchantStaffBusinessRolloutEnabled } from "@/lib/merchantStaffBusinessRollout.server";
+import { attendanceModuleEnabled } from "@/lib/merchantAttendanceEntitlement";
 import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
@@ -81,6 +82,20 @@ export function canMerchantEnterpriseRoleRetainBusinessPermissions(
     !hasMerchantStaffBusinessPermissions(
       nextPermissions ?? currentPermissions,
     )
+  );
+}
+
+/** Admission controls new grants, never strips a saved role or silently grants
+ * permissions. Existing attendance rights may pass through unrelated edits. */
+export function canMerchantEnterpriseRoleIntroduceAttendancePermissions(
+  currentPermissions: readonly string[],
+  nextPermissions: readonly string[] | undefined,
+  attendanceEnabled: boolean,
+) {
+  if (attendanceEnabled || nextPermissions === undefined) return true;
+  const saved = new Set(currentPermissions);
+  return nextPermissions.every(
+    (permission) => !permission.startsWith("attendance.") || saved.has(permission),
   );
 }
 
@@ -218,8 +233,8 @@ async function authorize(request: Request, siteId: string) {
     siteId,
     requiredPermission: "roles.manage",
   });
-  await requireMerchantEnterpriseEntitlement(siteId);
-  return actor;
+  const site = await requireMerchantEnterpriseEntitlement(siteId);
+  return { actor, attendanceEnabled: attendanceModuleEnabled(site) };
 }
 
 export async function POST(request: Request) {
@@ -248,7 +263,13 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const actor = await authorize(request, siteId);
+    const { actor, attendanceEnabled } = await authorize(request, siteId);
+    if (!canMerchantEnterpriseRoleIntroduceAttendancePermissions([], permissions, attendanceEnabled)) {
+      return NextResponse.json(
+        { ok: false, error: "attendance_permission_grant_disabled" },
+        { status: 403 },
+      );
+    }
     if (
       !canMerchantEnterpriseActorManageRoleBusinessPermissions(
         actor,
@@ -338,13 +359,19 @@ export async function PATCH(request: Request) {
       }
     }
 
-    const actor = await authorize(request, siteId);
+    const { actor, attendanceEnabled } = await authorize(request, siteId);
     const store = client();
     const snapshot = await loadMerchantEnterpriseSnapshot(store, siteId);
     const roleId = text(body?.roleId, 80);
     const targetRole = snapshot.roles.find((item) => item.id === roleId);
     if (!targetRole) {
       return NextResponse.json({ ok: false, error: "role_not_found" }, { status: 404 });
+    }
+    if (!canMerchantEnterpriseRoleIntroduceAttendancePermissions(targetRole.permissions, permissions ?? undefined, attendanceEnabled)) {
+      return NextResponse.json(
+        { ok: false, error: "attendance_permission_grant_disabled" },
+        { status: 403 },
+      );
     }
     const stripsBusinessPermissions =
       isMerchantEnterpriseBusinessPermissionStrip(

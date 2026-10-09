@@ -29,6 +29,7 @@ import {
   type MerchantEmployeeWorkspaceRoot,
 } from "@/lib/merchantBusinessCapabilities";
 import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import { createMerchantEmployeeRootLeaveGuard } from "@/lib/merchantEmployeeRootLeaveGuard";
 
 const CAPABILITIES_REFRESH_INTERVAL_MS = 30_000;
 
@@ -443,6 +444,15 @@ export default function MerchantEmployeeWorkspace({
     : capabilityStatus === "disabled"
       ? "collaboration"
       : null;
+  // A new authorization or root mount owns a separate slot. A late cleanup
+  // from the previous manager cannot clear the current manager's leave guard.
+  const collaborationLeaveGuard = useMemo(
+    () => createMerchantEmployeeRootLeaveGuard(
+      `${siteId}:${authorizationEpoch}:${capabilityMountKey || capabilityStatus}:${activeRoot ?? ""}`,
+    ),
+    [siteId, authorizationEpoch, capabilityMountKey, capabilityStatus, activeRoot],
+  );
+  useEffect(() => () => collaborationLeaveGuard.clear(), [collaborationLeaveGuard]);
   const businessApiClient = useMemo<MerchantBusinessApiClient | null>(() => {
     if (!capabilityMountKey) return null;
     const client = createMerchantBusinessApiClient({
@@ -657,6 +667,7 @@ export default function MerchantEmployeeWorkspace({
         siteId={siteId}
         siteName={capabilities?.workspace.siteName}
         accessToken={accessToken}
+        registerLeaveGuard={collaborationLeaveGuard.register}
         standalone
       />
     );
@@ -727,6 +738,9 @@ export default function MerchantEmployeeWorkspace({
       }
       onRefresh={() => void refreshCapabilities()}
       onSelect={(root) => {
+        // Only this explicit user-navigation path consults the guard. Logout,
+        // revoked capabilities and authorization remounts must remain immediate.
+        if (!collaborationLeaveGuard.allowUserRootChange(activeRoot, root)) return;
         if (root === "redemptions") {
           setRedemptionSubviewPreference({
             authorizationKey: subviewAuthorizationKey,

@@ -11,6 +11,7 @@ import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {assertRollingRetainedProcesses,assertRollingStateHistory,rollingHash,ROLLING_BASE_NAMES} from './online-release-rolling-policy.mjs';
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
+import {ATTENDANCE_RELEASE_SCOPE,ATTENDANCE_RELEASE_FILES,ATTENDANCE_RELEASE_FOCUSED_TESTS,validateAttendanceReleaseScope,assertAttendanceReleaseScope,attendanceCandidateEnvironment,assertAttendanceCandidateEnvironment,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
 
 function releaseRequestSource(){
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
@@ -1723,7 +1724,7 @@ test('pilot re-verifies before static publication and restores web traffic befor
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const activate=code.indexOf('async function activateCandidate(');
  assert.ok(code.indexOf("verifyOrderAttention(s,'verify')",activate)<code.indexOf('publishStatic(',activate));
- assert.match(code,/else if\(action==='activate'\)\{\s*if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\);\s*await activateCandidate\(s\);/);
+ assert.match(code,/else if\(action==='activate'\)\{\s*if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\);\s*if\(s.lane==='attendance'\)await verifyAttendanceDatabaseProof\(s\);\s*await activateCandidate\(s\);/);
  const start=code.indexOf('function restoreOrderAttentionConfigs('),end=code.indexOf('function recoveryToolIdentity(',start);
  const calls=[];
  runInNewContext(`${code.slice(start,end)}restoreOrderAttentionConfigs({lane:'order-attention'})`,{
@@ -1784,10 +1785,12 @@ test('static retry is pinned to the explicit rolled-back incident and still-owne
 test('build umask is restored on both success and failure, without widening private file modes',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const start=code.indexOf("console.log('online_build_started')"),end=code.indexOf("if(!existsSync(`${s.directory}/.next/BUILD_ID`))",start);
- for(const shouldFail of [false,true]){
+ for(const lane of ['traffic','attendance'])for(const shouldFail of [false,true]){
   let mask=0o077;const calls=[];
   const execute=()=>runInNewContext(code.slice(start,end),{
-   s:{directory:'/candidate'},env:{},console:{log(){}},
+   lane,s:{directory:'/candidate',target:'a'.repeat(40)},operation:'/operation',env:{},console:{log(){}},
+   hash:()=> 'verified',safeFile:()=> 'private-proof',save:()=>{},
+   buildAttendanceOnlineCandidate(plan){assert.equal(plan.directory,'/candidate');assert.equal(mask,0o022);if(shouldFail)throw Error('build_failed');},
    process:{umask(next){const before=mask;mask=next;calls.push(next);return before;}},
    run(command,args){assert.equal(command,'nice');assert.equal(mask,0o022);assert.deepEqual(Array.from(args),['-n','10','npm','run','build']);if(shouldFail)throw Error('build_failed');},
   });
@@ -2176,5 +2179,123 @@ test('customer private and public smoke require unauthenticated full and manager
   }
   const callsBefore=calls.length;await smoke({...s,lane:'booking-merge-cpu'},publicMode);
   assert.equal(calls.slice(callsBefore).some(call=>views.includes(call.path)),false,'legacy lanes must not gain new probe behavior');
+ }
+});
+
+test('attendance lane admits only its reviewed exact source closure, not older pending migrations or preview tools',()=>{
+ assert.equal(onlineReleaseLane(ATTENDANCE_RELEASE_FILES),'attendance');
+ assert.equal(onlineReleaseStageStatus('attendance'),'staged');assert.equal(onlineReleaseActivationStatus('attendance'),'database-ready');
+ assert.doesNotThrow(()=>assertOnlineReleaseDatabaseAllowed('attendance'));
+ assert.throws(()=>onlineReleaseMigrationTarget('attendance'),/attendance_database_manager_required/);
+ assert.throws(()=>assertPendingOnlineReleaseMigrations('attendance',[]),/attendance_database_manager_required/);
+ for(const foreign of ['package.json','src/lib/merchantAttendanceUnreviewed.ts','scripts/attendance-local-preview.mjs','scripts/package-attendance-pilot-app.mjs',
+  'scripts/supabase-migrations/202609280060_customer_membership_profile_projection.sql','scripts/supabase-migrations/202610090165_attendance_unreviewed.sql']){
+  assert.throws(()=>onlineReleaseLane(['src/lib/merchantAttendance.ts',foreign]),/attendance_release_scope_rejected/);
+ }
+ for(const bad of [[],['src/lib/merchantAttendance.ts','src/lib/merchantAttendance.ts'],['../src/lib/merchantAttendance.ts']])assert.throws(()=>assertAttendanceReleaseScope(bad),/attendance_release_scope_rejected/);
+});
+
+test('attendance manifest pins the 149 reviewed SQL names, unused 165, baseline and authorized single merchant',()=>{
+ const copy=()=>structuredClone(ATTENDANCE_RELEASE_SCOPE);
+ const ordinals=ATTENDANCE_RELEASE_SCOPE.migrations.map(x=>Number(/\d{8}(\d{4})_/.exec(x)[1]));
+ assert.equal(ordinals.length,149);assert.equal(new Set(ordinals).size,149);assert.equal(ordinals.includes(165),false);assert.equal(ordinals.includes(114),true);
+ assert.deepEqual(ordinals.slice().sort((a,b)=>a-b),Array.from({length:150},(_,i)=>61+i).filter(n=>n!==165));
+ for(const mutate of [x=>{x.baseline='b'.repeat(40);},x=>{x.approvedSiteId='10000001';},x=>{x.migrationCount=150;},x=>{x.unusedOrdinals=[];},x=>{x.migrations.pop();},
+  x=>{x.runtime.push('../foreign');},x=>{x.quality.push('src/lib/merchantAttendance.ts');},x=>{x.serverFlags.push('FAOLLA_ATTENDANCE_UNKNOWN_ENABLED','FAOLLA_ATTENDANCE_UNKNOWN_ENABLED');},x=>{x.disabledFlags=[];}]){
+  const x=copy();mutate(x);assert.throws(()=>validateAttendanceReleaseScope(x),/attendance_release_/);
+ }
+ assert.ok(Object.isFrozen(ATTENDANCE_RELEASE_SCOPE.runtime));
+ for(const file of ATTENDANCE_RELEASE_FOCUSED_TESTS)assert.ok(ATTENDANCE_RELEASE_FILES.includes(file),file);
+});
+
+test('attendance environment has explicit compile/runtime phases, exact cohort and permanently disabled runner/destructive gates',()=>{
+ const credential=Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.credentialKeys.map(k=>[k,'A'.repeat(43)]));
+ for(const phase of ['staged','database-ready']){
+  const env={...attendanceCandidateEnvironment(phase),...credential,FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000'};
+  assert.doesNotThrow(()=>assertAttendanceCandidateEnvironment(env,phase));
+  for(const key of ATTENDANCE_RELEASE_SCOPE.publicFlags)assert.equal(env[key],ATTENDANCE_RELEASE_SCOPE.disabledFlags.includes(key)?'0':'1');
+  for(const key of ATTENDANCE_RELEASE_SCOPE.serverFlags)assert.equal(env[key],key==='FAOLLA_ATTENDANCE_ROLLOUT_ENABLED'?'1':phase==='database-ready'&&!ATTENDANCE_RELEASE_SCOPE.disabledFlags.includes(key)?'1':'0');
+  for(const key of ATTENDANCE_RELEASE_SCOPE.siteKeys)assert.equal(env[key],key==='FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS'||phase==='database-ready'?'10000000':'');
+  assert.equal(env.FAOLLA_ENTERPRISE_E2E_HARNESS,'');assert.equal(env.FAOLLA_BACKUP_RESTORE_HARNESS,'');
+  for(const change of [{FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS:'*'},{FAOLLA_ATTENDANCE_ROLLOUT_ENABLED:'0'},
+   {FAOLLA_ATTENDANCE_REMINDERS_RUNNER_ENABLED:'1'},{FAOLLA_ATTENDANCE_RETENTION_DISPOSAL_ENABLED:'1'},
+   {NEXT_PUBLIC_FAOLLA_ATTENDANCE_RETENTION_DISPOSAL_ENABLED:'1'},{FAOLLA_ATTENDANCE_UNREVIEWED_ENABLED:'1'},
+   {FAOLLA_ATTENDANCE_ONSITE_QR_SECRET:'fake-placeholder'},{FAOLLA_ENTERPRISE_E2E_HARNESS:'1'}])assert.throws(()=>assertAttendanceCandidateEnvironment({...env,...change},phase),/attendance_release_environment_invalid/);
+ }
+ for(const [phase,id] of [['staged','10000000'],['database-ready',''],['database-ready','*'],['database-ready','10000001'],['active','10000000']])assert.throws(()=>attendanceCandidateEnvironment(phase,id),/attendance_release_environment_invalid/);
+});
+
+function attendanceProofFixture(){
+ const target='a'.repeat(40),scopeSha256='c'.repeat(64),proofSha256='d'.repeat(64),baseline=ATTENDANCE_RELEASE_SCOPE.baseline;
+ return {value:{schemaVersion:1,kind:'attendance-production-database-ready',target,baseline,scopeSha256,
+  dbIdentity:{containerId:'0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416',containerName:'supabase-db',databaseName:'postgres',databaseOid:'5',systemIdentifier:'7612049595342295079',serverVersionNum:'150008',dataSource:'/opt/supabase/docker/volumes/db/data'},
+  registryCount:209,registryMaximum:'202610090210',backupVerified:true,compatibilityVerified:true,proofSha256},expected:{target,baseline,scopeSha256,proofSha256}};
+}
+test('attendance DB-ready contract requires exact live identity, 209 rows and both backup/compatibility evidence',()=>{
+ const {value,expected}=attendanceProofFixture();assert.equal(assertAttendanceDatabaseReadyProof(value,expected),value);
+ for(const [key,replacement] of Object.entries({target:'b'.repeat(40),baseline:'b'.repeat(40),scopeSha256:'b'.repeat(64),registryCount:210,registryMaximum:'202610090209',backupVerified:false,compatibilityVerified:false,proofSha256:'b'.repeat(64),extra:true,dbIdentity:'e'.repeat(64)})){
+  assert.throws(()=>assertAttendanceDatabaseReadyProof({...value,[key]:replacement},expected),/attendance_database_ready_proof_invalid/);
+ }
+ for(const key of Object.keys(value.dbIdentity))assert.throws(()=>assertAttendanceDatabaseReadyProof({...value,dbIdentity:{...value.dbIdentity,[key]:'foreign'}},expected),/attendance_database_ready_proof_invalid/);
+ assert.throws(()=>assertAttendanceDatabaseReadyProof({...value,dbIdentity:{...value.dbIdentity,extra:'foreign'}},expected),/attendance_database_ready_proof_invalid/);
+ for(const key of Object.keys(value)){const x=structuredClone(value);delete x[key];assert.throws(()=>assertAttendanceDatabaseReadyProof(x,expected),/attendance_database_ready_proof_invalid/);}
+});
+
+test('attendance database action only verifies separate guarded DB manager, is resumable, and never reruns migration SQL',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),marker="if(s.lane==='attendance'){\n    if(!['staged','database-ready'].includes(s.status))";
+ const start=code.indexOf(marker),end=code.indexOf('\n   }else{',start);assert.ok(start>0&&end>start);const branch=code.slice(start,end)+'\n}';
+ assert.doesNotMatch(branch,/applyProductionDatabaseMigrations|createProductionDatabaseBackup|writeFileSync|through/);
+ for(const status of ['staged','database-ready','preparing','active'])for(const transition of [false,true]){
+  const calls=[],s={lane:'attendance',status,...(transition?{attendanceEnvironmentTransition:{}}:{})};
+  const pending=runInNewContext(`(async()=>{${branch}})()`,{s,configUnchanged:()=>calls.push('config'),verifyCandidate:()=>calls.push('candidate'),verifyAttendanceDatabaseProof:async()=>calls.push('DB-readonly'),enableAttendanceCandidate:async()=>calls.push('enable-owned-candidate'),smoke:async()=>calls.push('smoke'),fail:x=>{throw Error(x);}});
+  if(!['staged','database-ready'].includes(status)){await assert.rejects(pending,/database_not_staged/);assert.deepEqual(calls,[]);}
+  else {await pending;assert.deepEqual(calls,status==='database-ready'?['config','candidate','DB-readonly','smoke']:transition?['config','enable-owned-candidate']:['config','candidate','enable-owned-candidate']);}
+ }
+});
+
+test('attendance candidate enablement resumes only proof-bound before/after files and restarts no previous process',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),source=code.slice(code.indexOf('async function enableAttendanceCandidate('),code.indexOf('function assertCustomerCodeProjectionOff('));
+ const hash=x=>createHash('sha256').update(x).digest('hex');
+ const changes=attendanceCandidateEnvironment('database-ready'),beforeRuntime=JSON.stringify(attendanceCandidateEnvironment('staged')),
+  beforeEnv=Object.entries(attendanceCandidateEnvironment('staged')).map(([k,v])=>`${k}=${v}`).join('\n')+'\nUNRELATED=preserved\n',
+  afterRuntime=JSON.stringify({...JSON.parse(beforeRuntime),...changes}),afterEnv=beforeEnv.split('\n').map(line=>{const key=line.slice(0,line.indexOf('='));return Object.hasOwn(changes,key)?`${key}=${changes[key]}`:line;}).join('\n');
+ for(const initial of ['fresh','before-before','after-before','before-after','after-after','foreign-runtime','foreign-env']){
+  const calls=[],s={name:'candidate-owned',directory:'/candidate',status:'staged'},files=new Map([['/operation/runtime.json',initial==='after-before'||initial==='after-after'?afterRuntime:initial==='foreign-runtime'?'foreign':beforeRuntime],['/candidate/.env.local',initial==='before-after'||initial==='after-after'?afterEnv:initial==='foreign-env'?'foreign':beforeEnv]]);
+  if(initial!=='fresh'){s.attendanceDatabaseProofSha256='d'.repeat(64);s.attendanceEnvironmentTransition={beforeRuntime:hash(beforeRuntime),afterRuntime:hash(afterRuntime),beforeEnv:hash(beforeEnv),afterEnv:hash(afterEnv)};}
+  const p={name:s.name,pm2_env:{status:'online',pm_cwd:s.directory,FAOLLA_BACKGROUND_JOBS_PAUSED:'1',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com'}};
+  const enable=runInNewContext(`${source}enableAttendanceCandidate`,{hash,JSON,Object,Promise,operation:'/operation',attendanceCandidateEnvironment,
+   verifyAttendanceDatabaseProof:async()=>{calls.push('DB-readonly');return {proofSha256:'d'.repeat(64)};},pm:()=>[p],safeFile:path=>files.get(path),
+   verifyAttendanceCandidateSettings:(_s,_p,enabled)=>calls.push(enabled?'settings-on':'settings-off'),save:()=>calls.push('save'),
+   atomic:(path,text)=>{calls.push('atomic');files.set(path,text);},run:(command,args,options)=>{assert.equal(command,'pm2');assert.deepEqual(Array.from(args),['restart','candidate-owned','--update-env']);assert.deepEqual(options.env,JSON.parse(afterRuntime));calls.push('restart-own');},
+   smoke:async()=>calls.push('smoke'),verifyCandidate:()=>calls.push('candidate'),setTimeout,fail:x=>{throw Error(x);}});
+  if(initial.startsWith('foreign')){await assert.rejects(enable(s),/attendance_enablement_not_owned|Unexpected token/);assert.equal(calls.includes('restart-own'),false);assert.equal(calls.includes('atomic'),false);}
+  else {await enable(s);assert.equal(s.status,'database-ready');assert.equal(s.attendanceEnabled,true);assert.equal(files.get('/operation/runtime.json'),afterRuntime);assert.equal(files.get('/candidate/.env.local'),afterEnv);assert.equal(calls.filter(x=>x==='restart-own').length,1);assert.ok(calls.indexOf('DB-readonly')<calls.indexOf('restart-own'));assert.ok(calls.indexOf('smoke')<calls.indexOf('candidate'));}
+ }
+});
+
+test('attendance activation rechecks the same proof before traffic switch but rollback does not depend on DB health',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),marker="}else if(action==='activate'){",start=code.indexOf(marker)+marker.length,end=code.indexOf("}else if(action==='retry-static'){",start),source=code.slice(start,end);
+ for(const failure of [null,'proof','status']){
+  const calls=[],s={lane:'attendance',status:failure==='status'?'staged':'database-ready'},gate=x=>{calls.push(x);if(failure===x)throw Error(`failed_${x}`);};
+  const pending=runInNewContext(`(async()=>{${source}})()`,{s,onlineReleaseActivationStatus,verifyCandidate:()=>gate('candidate'),configUnchanged:()=>gate('config'),smoke:async()=>gate('smoke'),verifyAttendanceDatabaseProof:async()=>gate('proof'),activateCandidate:async()=>gate('traffic-switch'),settleOnlineRetention:async()=>gate('retention'),heldLock:{},fail:x=>{throw Error(x);}});
+  if(failure){await assert.rejects(pending,/not_ready|failed_proof/);assert.equal(calls.includes('traffic-switch'),false);}else{await pending;assert.deepEqual(calls,['candidate','config','smoke','proof','traffic-switch','retention']);}
+ }
+ const r=code.slice(code.indexOf("}else if(action==='rollback'){"),code.indexOf('\n  }',code.indexOf("}else if(action==='rollback'){")));
+ assert.doesNotMatch(r,/verifyAttendanceDatabaseProof|verifyCandidate|applyProduction/);assert.match(r,/configUnchanged\(s,true\)/);assert.match(r,/restoreConfigs\(s\)/);
+});
+
+test('attendance unauthenticated private/public smoke distinguishes DB-disabled vs ready routes without enabling QA harnesses',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),source=code.slice(code.indexOf('async function smoke('),code.indexOf('function restoreConfigs('));
+ for(const publicMode of [false,true])for(const attendanceEnabled of [false,true]){
+  const s={lane:'attendance',target:'a'.repeat(40),port:3110,attendanceEnabled},calls=[];
+  const smoke=runInNewContext(`${releaseRequestSource()}${source}smoke`,{Headers,AbortSignal,URL,hasExpectedCardWebsite,fail:x=>{throw Error(x);},
+   fetch:async(url,options)=>{const u=new URL(url),path=u.pathname+u.search;calls.push({url,path,options});assert.equal(options.headers.has('Authorization'),false);assert.equal(options.headers.has('Cookie'),false);
+    const status=u.pathname.startsWith('/api/merchant-enterprise/attendance/')?(attendanceEnabled?401:404):u.pathname.startsWith('/test-harness/')?404:u.pathname.startsWith('/api/super-admin/')?401:200;
+    return {status,json:async()=>({buildId:s.target}),text:async()=>path==='/card/luis-gpyv6u'?'<a class="button secondary" href="https://www.haoyouduosevilla.com/">Website</a>':path==='/card/luis-gpyv6u/contact'?'URL:https://www.haoyouduosevilla.com/':'<script src="/_next/static/chunks/exact.js"></script>'};},
+  });
+  await smoke(s,publicMode);
+  for(const endpoint of ['admin','self','records']){const call=calls.find(x=>x.path===`/api/merchant-enterprise/attendance/${endpoint}?siteId=10000000`);assert.ok(call);assert.ok(call.url.startsWith(publicMode?'https://launch.faolla.com':'http://127.0.0.1:3110'));assert.equal(call.options.headers.get('Host'),'launch.faolla.com');}
+  for(const endpoint of ['enterprise','employee-workspace'])assert.ok(calls.some(x=>x.path===`/test-harness/${endpoint}`));
+  for(const path of ['/login','/admin','/super-admin','/card/luis-gpyv6u','/card/luis-gpyv6u/contact','/traffic-card-v1.js','/_next/static/chunks/exact.js'])assert.ok(calls.some(x=>x.path===path));
  }
 });

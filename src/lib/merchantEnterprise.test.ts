@@ -42,6 +42,15 @@ import {
 } from "@/lib/merchantEnterprise";
 import { MERCHANT_STAFF_BUSINESS_PERMISSIONS } from "@/lib/merchantStaffBusiness";
 
+test("timesheet exports are independent, dependency-checked and absent from all default roles",()=>{
+  for(const [permission,view] of [["attendance.self.export","attendance.self.view"],["attendance.reports.export","attendance.records.view"]] as const){
+    assert(MERCHANT_ENTERPRISE_PERMISSIONS.includes(permission));
+    assert(getMissingMerchantEnterprisePermissionDependencies([permission]).length>0);
+    assert.deepEqual(getMissingMerchantEnterprisePermissionDependencies(["enterprise.view",view,permission]),[]);
+    for(const role of DEFAULT_MERCHANT_ENTERPRISE_ROLES)assert.equal(role.permissions.includes(permission),false);
+  }
+});
+
 test("enterprise permission normalization removes unknown and duplicate permissions", () => {
   assert.deepEqual(
     normalizeMerchantEnterprisePermissions([

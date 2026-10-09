@@ -34,6 +34,9 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["ffmpeg-static"],
   experimental: {
     proxyClientMaxBodySize: "96mb",
+    // Opt in only for the resource-bounded online candidate build. Keep the
+    // ordinary build/runtime configuration unchanged when the flag is absent.
+    ...(process.env.FAOLLA_BUILD_SINGLE_WORKER === "1" ? { cpus: 1 } : {}),
   },
   async headers() {
     return [

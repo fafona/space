@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {runAttendanceLabelsReuse} from './merchant-attendance-choice-labels-reuse-native.mjs';
+import {withAttendanceConcurrencySandbox} from './merchant-attendance-concurrency-sandbox.mjs';
+const require=createRequire(import.meta.url);
+const {executePinAdmin}=require('../src/lib/merchantAttendancePin.server.ts');
+const {executePinClock}=require('../src/lib/merchantAttendancePinClock.server.ts');
+const {terminalHash}=require('../src/lib/merchantAttendanceTerminal.server.ts');
+const lit=v=>v===null?'null':"'"+String(v).replaceAll("'","''")+"'",json=v=>v===null?'null':lit(JSON.stringify(v))+'::jsonb';
+export async function checkPinClock(native,browserCheck=null){
+  await withAttendanceConcurrencySandbox(native,async({sql})=>{
+    const {root,pass,connect}=native,exec=s=>native.query(sql(s)),id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+    for(const name of ['202610010104_merchant_attendance_terminals.sql','202610010106_merchant_attendance_pin_credentials.sql','202610010107_merchant_attendance_pin_clock.sql'])exec(readFileSync(path.join(root,'scripts/supabase-migrations',name),'utf8'));
+    const site='99990001',owner=id(99),terminalId=id(70),workerId=id(201),employeeId=id(101),location=id(301),secret=randomBytes(32).toString('base64url'),pairSecret=randomBytes(32).toString('base64url'),pin='01738264';
+    exec(`insert into public.merchants(id,user_id) values('${site}','${owner}');
+      insert into public.merchant_attendance_settings(merchant_id,time_zone,enabled,web_clock_enabled) values('${site}','Europe/Madrid',true,true);
+      insert into public.merchant_attendance_locations(id,merchant_id,name,time_zone,active) values('${location}','${site}','合成前台','Europe/Madrid',true);
+      insert into public.merchant_enterprise_roles(id,merchant_id,name,permissions) values('${id(30)}','${site}','Self',array['enterprise.view','attendance.self.view','attendance.self.clock']);
+      insert into public.merchant_enterprise_employees(id,merchant_id,auth_user_id,email,display_name,role_id,status) values('${employeeId}','${site}','${id(1)}','clock@example.test','PIN 员工','${id(30)}','active');
+      insert into public.merchant_attendance_workers(id,merchant_id,employee_id,worker_no,display_name,default_location_id,active) values('${workerId}','${site}','${employeeId}','PIN-01','PIN 员工','${location}',true);
+      insert into public.merchant_attendance_employment_periods(id,merchant_id,worker_id,starts_on) values('${id(401)}','${site}','${workerId}','2020-01-01');`);
+    const argsSql=(name,a)=>{
+      if(name==='faolla_attendance_pin_admin_v1')return `public.${name}(${lit(a.p_site)},${lit(a.p_auth)},${lit(a.p_no)},${lit(a.p_operation)},${json(a.p_command)},${a.p_allow_set===true})`;
+      if(name==='faolla_attendance_terminal_device_v1')return `public.${name}(${lit(a.p_site)},${lit(a.p_id)},${lit(a.p_secret_hash)},${lit(a.p_device_hash)},${a.p_allow_pair===true})`;
+      assert(['faolla_attendance_pin_begin_v1','faolla_attendance_pin_clock_v1'].includes(name));
+      return `public.${name}(${lit(a.p_site)},${lit(a.p_terminal)},${lit(a.p_secret_hash)},${lit(a.p_no)},${lit(a.p_lease)},${name.endsWith('clock_v1')?`${a.p_verified===true},${json(a.p_request)},${a.p_allow_new===true}`:String(a.p_allow===true)})`;
+    };
+    const call=(name,a)=>JSON.parse(exec(`set role service_role;select ${argsSql(name,a)};`));
+    const service={rpc:async(name,a)=>{try{return {data:call(name,a),error:null};}catch(e){const code=String(e).match(/ERROR:\s+(attendance_[a-z_]+)/)?.[1];if(!code)throw e;return {data:null,error:{message:code}};}}};
+    const adminSql=(command)=>`set role service_role;select public.faolla_attendance_terminal_admin_v1('${site}','${owner}','{"terminalId":null,"cursor":null}',${json(command)},true);`;
+    exec(adminSql({action:'create',terminalId,locationId:location,label:'PIN 前台',pairHash:terminalHash(pairSecret)}));
+    call('faolla_attendance_terminal_device_v1',{p_site:site,p_id:terminalId,p_secret_hash:terminalHash(pairSecret),p_device_hash:terminalHash(secret),p_allow_pair:true});
+    const input={siteId:site,terminalId,secret,workerNo:'PIN-01',pin,allowNew:true,command:null,operationId:null};
+    const command=(action,sequence,operationId=randomUUID())=>({expectedWorkerId:workerId,expectedEmployeeId:employeeId,locationId:location,action,expectedSequence:sequence,operationId});
+    const webCommand=(action,sequence)=>{const {expectedEmployeeId:ignored,...c}=command(action,sequence);assert.equal(ignored,employeeId);return c;};
+    const begin=()=>({p_site:site,p_terminal:terminalId,p_secret_hash:terminalHash(secret),p_no:'PIN-01',p_lease:randomUUID(),p_allow:true});
+    const finish=(b,c=null,op=null,allow=true)=>call('faolla_attendance_pin_clock_v1',{...b,p_verified:true,p_request:{command:c,operationId:op},p_allow_new:allow});
+    const rawClock=(c,op=null,allow=true)=>{const b=begin();const r=call('faolla_attendance_pin_begin_v1',b);assert.equal(r.workerId,workerId);return finish(b,c,op,allow);};
+    const reset=()=>exec(`update public.merchant_attendance_pin_credentials set attempts=0,window_at=clock_timestamp() where merchant_id='${site}';update public.merchant_attendance_pin_attempts set attempts=0,window_at=clock_timestamp(),lease_id=null,lease_expires=null,worker_id=null,employee_id=null,credential_revision=null where merchant_id='${site}';`);
+    const prior=process.env.FAOLLA_ATTENDANCE_PIN_PEPPER;process.env.FAOLLA_ATTENDANCE_PIN_PEPPER=randomBytes(32).toString('base64url');
+    try{
+      await executePinAdmin({siteId:site,authUserId:owner,workerNo:'PIN-01',operationId:null,allowSet:true,command:{action:'set',operationId:randomUUID(),expectedRevision:0,workerId,employeeId,pin,salt:randomBytes(16).toString('hex')}},service);
+      const initial=await executePinClock(input,service);assert.equal(initial.state.sequence,0);assert.equal(initial.canStart,true);
+      const first=command('clock_in',0),started=await executePinClock({...input,command:first},service);assert.equal(started.receipt.sequence,1);assert.equal(started.state.status,'working');
+      const replay=await executePinClock({...input,command:first},service);assert.equal(replay.replayed,true);assert.deepEqual(replay.receipt,started.receipt);
+      assert.equal((await executePinClock({...input,operationId:first.operationId,allowNew:false},service)).receipt.id,started.receipt.id);
+      await assert.rejects(executePinClock({...input,pin:'11111111',command:command('clock_out',1)},service),/attendance_pin_denied/);
+      assert.equal(exec(`select source||':'||actor_employee_id::text from public.merchant_attendance_events;`),'kiosk:'+employeeId);
+      pass('real PIN + secure device writes one kiosk event with member identity; exact replay/read recovery do not duplicate; wrong PIN writes nothing');reset();
+      assert.equal(rawClock(command('clock_out',0)).error,'attendance_sequence_conflict');
+      assert.equal(rawClock({...first,action:'clock_out'}).error,'attendance_operation_conflict');
+      assert.equal(rawClock(command('break_start',1),null,false).error,'attendance_platform_paused');
+      assert.equal(rawClock(command('break_start',1)).state.status,'break');
+      assert.equal(rawClock(command('clock_out',2)).error,'attendance_break_must_end');
+      assert.equal(rawClock(command('break_end',2),null,false).state.status,'working');
+      assert.equal(rawClock(command('clock_out',3),null,false).state.status,'off');
+      assert.equal(rawClock(null,null,false).canStart,false);
+      assert.equal(rawClock(command('clock_in',4),null,false).error,'attendance_platform_paused');
+      pass('four explicit actions obey state machine, expected sequence and paused-admission finish; business denials consume lease without inserting events');reset();
+      exec(`update public.merchant_attendance_locations set latitude=37,longitude=-5,radius_meters=100 where id='${location}';`);
+      assert.equal(rawClock(command('clock_in',4)).error,'attendance_location_verification_required');
+      exec(`update public.merchant_attendance_locations set latitude=null,longitude=null,radius_meters=null where id='${location}';update public.merchant_attendance_employment_periods set ends_on='2020-01-01' where worker_id='${workerId}';`);
+      assert.equal(rawClock(command('clock_in',4)).error,'attendance_not_employed');
+      exec(`update public.merchant_attendance_employment_periods set ends_on=null where worker_id='${workerId}';update public.merchant_attendance_workers set default_location_id=null where id='${workerId}';`);
+      assert.equal(rawClock(command('clock_in',4)).error,'attendance_location_denied');
+      exec(`update public.merchant_attendance_workers set default_location_id='${location}' where id='${workerId}';`);
+      pass('PIN cannot bypass configured geofence, employment interval or worker default location');reset();
+      const pending=begin();call('faolla_attendance_pin_begin_v1',pending);
+      exec(`update public.merchant_enterprise_employees set status='disabled' where id='${employeeId}';`);
+      assert.equal(finish(pending,command('clock_in',4)).error,'attendance_pin_denied');
+      exec(`update public.merchant_enterprise_employees set status='active' where id='${employeeId}';`);
+      const web=webCommand('clock_in',4);exec(`set role service_role;select public.faolla_attendance_self_v1('${site}','${id(1)}',${json(web)},null);`);
+      assert.equal(rawClock(null,web.operationId).error,'attendance_operation_conflict');
+      assert.equal(rawClock(command('clock_out',5)).state.sequence,6);
+      pass('in-flight employee revocation denies atomically; terminal shares latest web state but never misclaims a web receipt');reset();
+      const c1=connect(),c2=connect(),b=begin();call('faolla_attendance_pin_begin_v1',b);const concurrent=command('clock_in',6);
+      try{
+        await c1.step(sql(`begin;set local role service_role;select ${argsSql('faolla_attendance_pin_clock_v1',{...b,p_verified:true,p_request:{command:concurrent,operationId:null},p_allow_new:true})};`));
+        let done=false;const waiting=c2.step(sql(`select public.faolla_attendance_self_v1('${site}','${id(1)}',${json(webCommand('clock_in',6))},null);`)).then(v=>{done=true;return v;},e=>{done=true;throw e;});
+        const rejected=assert.rejects(waiting,/attendance_sequence_conflict/);await new Promise(resolve=>setTimeout(resolve,80));assert.equal(done,false);await c1.step('commit;');await rejected;
+      }finally{await c1.close();await c2.close();}
+      assert.equal(rawClock(command('clock_out',7)).state.sequence,8);
+      for(const role of ['anon','authenticated','service_role'])assert.throws(()=>exec(`set role ${role};select * from public.merchant_attendance_pin_clock_receipts;`),/permission denied/);
+      for(const source of ['update public.merchant_attendance_pin_clock_receipts set terminal_id=terminal_id','delete from public.merchant_attendance_pin_clock_receipts','truncate public.merchant_attendance_pin_clock_receipts'])assert.throws(()=>exec(source+';'),/attendance_events_append_only/);
+      assert.equal(exec(`select count(*) from public.merchant_attendance_events where source='kiosk';`),exec(`select count(*) from public.merchant_attendance_pin_clock_receipts;`));
+      pass('real web/PIN contention serializes on worker; one wins without duplicate sequence; PIN origin receipts are private and immutable');reset();
+      const expiry=begin();call('faolla_attendance_pin_begin_v1',expiry);
+      exec(`update public.merchant_attendance_pin_attempts set lease_expires=clock_timestamp()+interval '1 second' where merchant_id='${site}';`);
+      const lock=connect(),waiter=connect();
+      try{
+        await lock.step(sql(`begin;select id from public.merchant_enterprise_employees where id='${employeeId}' for update;`));
+        const finishing=waiter.step(sql(`select ${argsSql('faolla_attendance_pin_clock_v1',{...expiry,p_verified:true,p_request:{command:command('clock_in',8),operationId:null},p_allow_new:true})};`));
+        await new Promise(resolve=>setTimeout(resolve,80));
+        assert.equal(exec("select count(*) from pg_stat_activity where wait_event_type='Lock' and query like 'select %faolla_attendance_pin_clock_v1%';"),'1');
+        await new Promise(resolve=>setTimeout(resolve,1100));await lock.step('commit;');
+        assert.deepEqual(JSON.parse(await finishing),{error:'attendance_pin_denied'});
+      }finally{await lock.close();await waiter.close();}reset();
+      const oldLease=begin();call('faolla_attendance_pin_begin_v1',oldLease);
+      await executePinAdmin({siteId:site,authUserId:owner,workerNo:'PIN-01',operationId:null,allowSet:true,command:{action:'set',operationId:randomUUID(),expectedRevision:1,workerId,employeeId,pin,salt:randomBytes(16).toString('hex')}},service);
+      assert.equal(finish(oldLease,command('clock_in',8)).error,'attendance_pin_denied');
+      assert.equal(rawClock({...command('clock_in',8),expectedEmployeeId:id(102)}).error,'attendance_worker_changed');
+      assert.equal(exec(`select max(sequence) from public.merchant_attendance_events where worker_id='${workerId}';`),'8');
+      pass('lease expiry DURING a real member-lock wait, PIN revision reset and stale employee precondition all deny without a punch');reset();
+      const fingerprint=exec("select md5(jsonb_agg(to_jsonb(e) order by sequence)::text) from public.merchant_attendance_events e;");
+      exec(`create function public.attendance_test_pin_receipt_fail() returns trigger language plpgsql set search_path=pg_catalog as $$begin raise exception 'synthetic_pin_receipt_failure';end;$$;
+        create trigger synthetic_receipt_failure before insert on public.merchant_attendance_pin_clock_receipts for each row execute function public.attendance_test_pin_receipt_fail();`);
+      try{assert.throws(()=>rawClock(command('clock_in',8)),/synthetic_pin_receipt_failure/);assert.equal(exec("select md5(jsonb_agg(to_jsonb(e) order by sequence)::text) from public.merchant_attendance_events e;"),fingerprint);}
+      finally{exec('drop trigger synthetic_receipt_failure on public.merchant_attendance_pin_clock_receipts;drop function public.attendance_test_pin_receipt_fail();');reset();}
+      pass('injected receipt-insert failure rolls back its event; no partial punch and original event fingerprint stays unchanged');
+      if(browserCheck)await browserCheck({root,exec,pass,site,owner,id,terminalId,workerId,employeeId,location,secret,pin,input,service,command,reset});
+      const before=exec('select count(*) from public.merchant_attendance_events;'),last=begin();call('faolla_attendance_pin_begin_v1',last);exec(adminSql({action:'revoke',terminalId}));
+      assert.throws(()=>finish(last,command('clock_in',8)),/attendance_terminal_denied/);assert.equal(exec('select count(*) from public.merchant_attendance_events;'),before);
+      pass('terminal revocation before final transaction denies without an event; only isolated synthetic data was written');
+    }finally{if(prior===undefined)delete process.env.FAOLLA_ATTENDANCE_PIN_PEPPER;else process.env.FAOLLA_ATTENDANCE_PIN_PEPPER=prior;}
+  });
+}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))await runAttendanceLabelsReuse(process.argv.slice(2),checkPinClock);

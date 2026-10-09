@@ -16,6 +16,7 @@ import {
   buildDatabaseBackupManifest,
   DATABASE_BACKUP_ARCHIVE_FILES,
   DATABASE_BACKUP_DATA_FILES,
+  sha256File,
 } from "./database-backup-contract.mjs";
 import { verifyProductionDatabaseBackup } from "./verify-production-database-backup.mjs";
 
@@ -130,6 +131,7 @@ test("encrypted database backup verifies every nested recovery component", async
     assert.equal(report.status, "verified");
     assert.equal(report.schemaVersion, 2);
     assert.equal(report.manifestSchemaVersion, 2);
+    assert.equal(report.inputSha256, await sha256File(fixture.encryptedPath));
     assert.equal(report.recoveryContentStatus, "present_unverified");
     assert.equal(report.source.sha, SOURCE_IDENTITY.sourceSha);
     assert.equal(report.nestedArchives.postgresConfig.entryCount, 2);

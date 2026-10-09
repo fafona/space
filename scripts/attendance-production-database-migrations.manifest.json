@@ -1,0 +1,1294 @@
+{
+  "schemaVersion": 1,
+  "kind": "faolla-attendance-production-migrations",
+  "baselineThrough": "202609240052",
+  "baseline": [
+    {
+      "version": "202607250001",
+      "name": "core_transaction_foundation"
+    },
+    {
+      "version": "202607250002",
+      "name": "order_shadow_write_rpc"
+    },
+    {
+      "version": "202607250003",
+      "name": "membership_ledger_shadow_write_rpc"
+    },
+    {
+      "version": "202607250004",
+      "name": "booking_shadow_write_rpc"
+    },
+    {
+      "version": "202607250005",
+      "name": "coupon_shadow_write_rpc"
+    },
+    {
+      "version": "202607250006",
+      "name": "conversation_shadow_write_rpc"
+    },
+    {
+      "version": "202607250007",
+      "name": "reliable_outbox_runtime"
+    },
+    {
+      "version": "202607250008",
+      "name": "scoped_outbox_claim"
+    },
+    {
+      "version": "202607310001",
+      "name": "merchant_enterprise_foundation"
+    },
+    {
+      "version": "202607310002",
+      "name": "merchant_enterprise_board_workflows"
+    },
+    {
+      "version": "202607310003",
+      "name": "merchant_enterprise_invitation_lifecycle"
+    },
+    {
+      "version": "202607310004",
+      "name": "merchant_enterprise_bootstrap_permission_array_fix"
+    },
+    {
+      "version": "202607310005",
+      "name": "merchant_enterprise_task_reordering"
+    },
+    {
+      "version": "202607310006",
+      "name": "merchant_enterprise_task_comments"
+    },
+    {
+      "version": "202607310007",
+      "name": "merchant_enterprise_invitation_removal"
+    },
+    {
+      "version": "202607310008",
+      "name": "merchant_enterprise_task_checklists"
+    },
+    {
+      "version": "202607310009",
+      "name": "merchant_enterprise_board_access_scopes"
+    },
+    {
+      "version": "202607310010",
+      "name": "merchant_enterprise_employee_offboarding"
+    },
+    {
+      "version": "202607310011",
+      "name": "merchant_enterprise_employee_role_transition"
+    },
+    {
+      "version": "202607310012",
+      "name": "merchant_order_task_link"
+    },
+    {
+      "version": "202608010013",
+      "name": "merchant_enterprise_role_atomic_authorization"
+    },
+    {
+      "version": "202608010014",
+      "name": "merchant_enterprise_linked_order_summary"
+    },
+    {
+      "version": "202608020015",
+      "name": "merchant_enterprise_task_atomic_authorization"
+    },
+    {
+      "version": "202608020016",
+      "name": "merchant_enterprise_structure_atomic_authorization"
+    },
+    {
+      "version": "202608020017",
+      "name": "merchant_enterprise_employee_atomic_authorization"
+    },
+    {
+      "version": "202608020018",
+      "name": "merchant_enterprise_notifications"
+    },
+    {
+      "version": "202608020019",
+      "name": "merchant_enterprise_audit"
+    },
+    {
+      "version": "202608030020",
+      "name": "merchant_enterprise_workflows"
+    },
+    {
+      "version": "202608030021",
+      "name": "merchant_enterprise_workflow_archive_pagination"
+    },
+    {
+      "version": "202608040022",
+      "name": "merchant_enterprise_workflow_execution"
+    },
+    {
+      "version": "202608040023",
+      "name": "merchant_enterprise_workflow_revisions"
+    },
+    {
+      "version": "202608040024",
+      "name": "merchant_enterprise_published_choices_and_task_binding"
+    },
+    {
+      "version": "202608040025",
+      "name": "merchant_enterprise_todos"
+    },
+    {
+      "version": "202608040026",
+      "name": "merchant_enterprise_workflow_automations"
+    },
+    {
+      "version": "202608060027",
+      "name": "merchant_poll_ballots"
+    },
+    {
+      "version": "202608070028",
+      "name": "merchant_poll_ballot_deletion"
+    },
+    {
+      "version": "202608070029",
+      "name": "merchant_poll_registered_participants"
+    },
+    {
+      "version": "202608070030",
+      "name": "merchant_poll_payload_capacity"
+    },
+    {
+      "version": "202608090031",
+      "name": "merchant_poll_identity_and_invalidation"
+    },
+    {
+      "version": "202608180032",
+      "name": "merchant_enterprise_audit_query_security"
+    },
+    {
+      "version": "202608190033",
+      "name": "merchant_enterprise_invitation_delivery_outbox"
+    },
+    {
+      "version": "202608190034",
+      "name": "merchant_enterprise_current_operations"
+    },
+    {
+      "version": "202608190035",
+      "name": "ordinary_account_authorization_foundation"
+    },
+    {
+      "version": "202608190036",
+      "name": "ordinary_account_authorization_bootstrap"
+    },
+    {
+      "version": "202608190037",
+      "name": "ordinary_account_system_site_principal_isolation"
+    },
+    {
+      "version": "202608190038",
+      "name": "ordinary_account_recovery_observer"
+    },
+    {
+      "version": "202608190039",
+      "name": "runtime_rpc_execute_acl_hardening"
+    },
+    {
+      "version": "202608190040",
+      "name": "merchant_acl_contract_hardening"
+    },
+    {
+      "version": "202608280041",
+      "name": "merchant_staff_business_permissions"
+    },
+    {
+      "version": "202608300042",
+      "name": "merchant_enterprise_pgcrypto_schema_repair"
+    },
+    {
+      "version": "202608310043",
+      "name": "merchant_employee_initial_password_setup"
+    },
+    {
+      "version": "202609080044",
+      "name": "qr_token_atomic_mutation"
+    },
+    {
+      "version": "202609080045",
+      "name": "order_membership_atomic_mutation"
+    },
+    {
+      "version": "202609080046",
+      "name": "redemption_atomic_mutation"
+    },
+    {
+      "version": "202609080047",
+      "name": "redemption_checkout_context"
+    },
+    {
+      "version": "202609090048",
+      "name": "pages_client_write_acl"
+    },
+    {
+      "version": "202609230049",
+      "name": "account_traffic_analytics"
+    },
+    {
+      "version": "202609230050",
+      "name": "account_traffic_rollup_retention"
+    },
+    {
+      "version": "202609230051",
+      "name": "account_traffic_outcomes_campaigns_export"
+    },
+    {
+      "version": "202609240052",
+      "name": "order_attention_pilot"
+    }
+  ],
+  "from": "202609290061",
+  "through": "202610090210",
+  "migrations": [
+    {
+      "version": "202609290061",
+      "name": "merchant_attendance_foundation",
+      "fileName": "202609290061_merchant_attendance_foundation.sql",
+      "bytes": 8540,
+      "sha256": "f8eccc04232d4c40ec06fc809bf6534e5c85a87cf0aae054a8b438f2147b7ddb"
+    },
+    {
+      "version": "202609290062",
+      "name": "merchant_attendance_permissions",
+      "fileName": "202609290062_merchant_attendance_permissions.sql",
+      "bytes": 6631,
+      "sha256": "2b139fd9faf817b63766f4353643846a6a3da6dbf8f5706796681141ae08ad08"
+    },
+    {
+      "version": "202609290063",
+      "name": "merchant_attendance_self_clock",
+      "fileName": "202609290063_merchant_attendance_self_clock.sql",
+      "bytes": 12165,
+      "sha256": "1579ac34bb353a55e9c6cb66afd3c1fb02096998ddb7f9e9db7aaed03a766a83"
+    },
+    {
+      "version": "202609290064",
+      "name": "merchant_attendance_owner_configuration",
+      "fileName": "202609290064_merchant_attendance_owner_configuration.sql",
+      "bytes": 18616,
+      "sha256": "15d0ac8f1f8a5c43611402805cb1f4af0e2c62085800f8cde1bcccc4ed45071f"
+    },
+    {
+      "version": "202609290065",
+      "name": "merchant_attendance_record_permission",
+      "fileName": "202609290065_merchant_attendance_record_permission.sql",
+      "bytes": 6102,
+      "sha256": "4ffe32c8dfdeaadfc1cbf0063262af1accff7a3ea0333ee8019e7d1f238dd6ed"
+    },
+    {
+      "version": "202609290066",
+      "name": "merchant_attendance_scopes_records",
+      "fileName": "202609290066_merchant_attendance_scopes_records.sql",
+      "bytes": 22965,
+      "sha256": "78fb15789bc1cb0e93caaaba3333a42157a81eea709059b1eec870e87550156f"
+    },
+    {
+      "version": "202609290067",
+      "name": "merchant_attendance_scope_choices",
+      "fileName": "202609290067_merchant_attendance_scope_choices.sql",
+      "bytes": 5664,
+      "sha256": "d6ff44f5791c40c017107f64851162530627ac49e8d6f61d5d84821123321b37"
+    },
+    {
+      "version": "202609300068",
+      "name": "merchant_attendance_self_history",
+      "fileName": "202609300068_merchant_attendance_self_history.sql",
+      "bytes": 5637,
+      "sha256": "9bc6cb22d6656c7676caad5c012f335a2a86299d20829cc97f9368b43ea40419"
+    },
+    {
+      "version": "202609300069",
+      "name": "merchant_attendance_audit_read",
+      "fileName": "202609300069_merchant_attendance_audit_read.sql",
+      "bytes": 9262,
+      "sha256": "8ebc5b4ebbd24d3aa263f044b847356f984e27e0c9139a00e115ad7c0a109b92"
+    },
+    {
+      "version": "202609300070",
+      "name": "merchant_attendance_self_session",
+      "fileName": "202609300070_merchant_attendance_self_session.sql",
+      "bytes": 4347,
+      "sha256": "302db15f789fb30bf6e3893435c574411bd33c0a6528d2aa403b046d258c6213"
+    },
+    {
+      "version": "202609300071",
+      "name": "merchant_attendance_location_precheck",
+      "fileName": "202609300071_merchant_attendance_location_precheck.sql",
+      "bytes": 5942,
+      "sha256": "2137f716d5e6d093f332758d2f383ee089c3a664eb1079617c1ce261b07d790d"
+    },
+    {
+      "version": "202609300072",
+      "name": "merchant_attendance_location_clock",
+      "fileName": "202609300072_merchant_attendance_location_clock.sql",
+      "bytes": 17480,
+      "sha256": "853d18dc30c8b9e112a6cbb5cdbd754b01cb1124042c995f9e1629ddc7b6decd"
+    },
+    {
+      "version": "202609300073",
+      "name": "merchant_attendance_location_policy_drafts",
+      "fileName": "202609300073_merchant_attendance_location_policy_drafts.sql",
+      "bytes": 10553,
+      "sha256": "7421a663229a90436d450a97d4093909515bc33fd6b8dd35364d3bdd299141b0"
+    },
+    {
+      "version": "202609300074",
+      "name": "merchant_attendance_location_reviews",
+      "fileName": "202609300074_merchant_attendance_location_reviews.sql",
+      "bytes": 14657,
+      "sha256": "b720acdb8fe5a38c5d85aa26a48b23da99f72ce2da04c7fdbcdfed0d6cb0a06d"
+    },
+    {
+      "version": "202609300075",
+      "name": "merchant_attendance_location_discussion",
+      "fileName": "202609300075_merchant_attendance_location_discussion.sql",
+      "bytes": 15520,
+      "sha256": "1ea0f95c85c45e5acdce40b09709abb1d7acb7f811130fedf8773c04788a0702"
+    },
+    {
+      "version": "202609300076",
+      "name": "merchant_attendance_location_notices",
+      "fileName": "202609300076_merchant_attendance_location_notices.sql",
+      "bytes": 17932,
+      "sha256": "ff9bbcd87c4fa18d5e3e621ae22ede383ecb80340d39a77ca202bce3eef60590"
+    },
+    {
+      "version": "202609300077",
+      "name": "merchant_attendance_location_clock_notice_guard",
+      "fileName": "202609300077_merchant_attendance_location_clock_notice_guard.sql",
+      "bytes": 14652,
+      "sha256": "64a4f29f83cbf3fed5dc638b703ff50263e00142b46c943e3bd7f056a1121d99"
+    },
+    {
+      "version": "202609300078",
+      "name": "merchant_attendance_location_setup",
+      "fileName": "202609300078_merchant_attendance_location_setup.sql",
+      "bytes": 14310,
+      "sha256": "a82946e8400ec52e69f4c16802baa42472c4151e02edb22e95c70bfe0b45322d"
+    },
+    {
+      "version": "202609300079",
+      "name": "merchant_attendance_self_context",
+      "fileName": "202609300079_merchant_attendance_self_context.sql",
+      "bytes": 2380,
+      "sha256": "1d89b2a22460c157281d8f60b45e18d337670848ce7ceeb7543dea5232a7ddd4"
+    },
+    {
+      "version": "202609300080",
+      "name": "merchant_attendance_audit_export",
+      "fileName": "202609300080_merchant_attendance_audit_export.sql",
+      "bytes": 4530,
+      "sha256": "eb6d2ecdcc1907050bd22fb5fcd96caf568e421bf0708b11e4691004a6ef0511"
+    },
+    {
+      "version": "202609300081",
+      "name": "merchant_attendance_request_permission",
+      "fileName": "202609300081_merchant_attendance_request_permission.sql",
+      "bytes": 6203,
+      "sha256": "357e223dd790e9305bcfc0ae8ef6ff27564d2de413da532541b4510fdf7b46a4"
+    },
+    {
+      "version": "202609300082",
+      "name": "merchant_attendance_correction_requests",
+      "fileName": "202609300082_merchant_attendance_correction_requests.sql",
+      "bytes": 19774,
+      "sha256": "d69ab72e338920365109595e9caaec92b8ea2c03909475105c9314b3e036d448"
+    },
+    {
+      "version": "202609300083",
+      "name": "merchant_attendance_correction_owner_review",
+      "fileName": "202609300083_merchant_attendance_correction_owner_review.sql",
+      "bytes": 13439,
+      "sha256": "a1f4f1fcfb6749e67cb6d4ed510cba4bdf5adf1304e98d685d81e039a8cbf3ad"
+    },
+    {
+      "version": "202609300084",
+      "name": "merchant_attendance_correction_controls",
+      "fileName": "202609300084_merchant_attendance_correction_controls.sql",
+      "bytes": 18233,
+      "sha256": "ae69244295c79d98f44c690cde0143520aa7c97608ac138c2b63806d83721ef3"
+    },
+    {
+      "version": "202609300085",
+      "name": "merchant_attendance_correction_rule_binding",
+      "fileName": "202609300085_merchant_attendance_correction_rule_binding.sql",
+      "bytes": 12695,
+      "sha256": "6b1d9bb1054c19295071859b31bb4a999cf75b8dbeb7c5c7972d2d0c4914de7f"
+    },
+    {
+      "version": "202609300086",
+      "name": "merchant_attendance_correction_decisions",
+      "fileName": "202609300086_merchant_attendance_correction_decisions.sql",
+      "bytes": 33268,
+      "sha256": "d2771da2d71cdc3168c14e7b078aab22f5e98029bb9ec4f7aefd25229bed7f16"
+    },
+    {
+      "version": "202609300087",
+      "name": "merchant_attendance_period_report",
+      "fileName": "202609300087_merchant_attendance_period_report.sql",
+      "bytes": 9259,
+      "sha256": "16c779fb585205b23121290f2579c6d35be2a7afe2184bd6aa709e753ec1d756"
+    },
+    {
+      "version": "202610010088",
+      "name": "merchant_attendance_scoped_period_report",
+      "fileName": "202610010088_merchant_attendance_scoped_period_report.sql",
+      "bytes": 15811,
+      "sha256": "1d64f6f89f347fb65c8908df8ba9e7a68f148f0ef3bfc3507d7ab5edcfa2460b"
+    },
+    {
+      "version": "202610010089",
+      "name": "merchant_attendance_scoped_report_context",
+      "fileName": "202610010089_merchant_attendance_scoped_report_context.sql",
+      "bytes": 7272,
+      "sha256": "991d5200bc360fca0beb7c5afe4711a54e7f6525bd397910b66a8fa76becad9f"
+    },
+    {
+      "version": "202610010090",
+      "name": "merchant_attendance_period_export",
+      "fileName": "202610010090_merchant_attendance_period_export.sql",
+      "bytes": 14394,
+      "sha256": "793d8141938f74ac97dd966d92502873f26b1f28a8dc0afaafed542bc79e93f9"
+    },
+    {
+      "version": "202610010091",
+      "name": "merchant_attendance_revision_requests",
+      "fileName": "202610010091_merchant_attendance_revision_requests.sql",
+      "bytes": 20579,
+      "sha256": "032fc64e30656d83346fffd54bbf1c20e459c849036126ced199bcdb23f90057"
+    },
+    {
+      "version": "202610010092",
+      "name": "merchant_attendance_revision_review",
+      "fileName": "202610010092_merchant_attendance_revision_review.sql",
+      "bytes": 16912,
+      "sha256": "94f16cc3fd322b172a9377c9f3685013b6f747e287c9a8f119dbc0964f3bd8c9"
+    },
+    {
+      "version": "202610010093",
+      "name": "merchant_attendance_versioned_reports",
+      "fileName": "202610010093_merchant_attendance_versioned_reports.sql",
+      "bytes": 95035,
+      "sha256": "3a5b5d76d01d9cefbe3d1eb71681190fe46e33ca32b1c27f58116f80f45f4ac7"
+    },
+    {
+      "version": "202610010094",
+      "name": "merchant_attendance_revision_decision_core",
+      "fileName": "202610010094_merchant_attendance_revision_decision_core.sql",
+      "bytes": 51218,
+      "sha256": "01bf1990ed7af487d1c1b7e17b2035d098bc99ee849151c2b7a79efdb3f074d8"
+    },
+    {
+      "version": "202610010095",
+      "name": "merchant_attendance_revision_cycles",
+      "fileName": "202610010095_merchant_attendance_revision_cycles.sql",
+      "bytes": 70242,
+      "sha256": "d5391223dc6b35bb97d51694d93fd7489bc627a1287a4257bd1a37d8782a3146"
+    },
+    {
+      "version": "202610010096",
+      "name": "merchant_attendance_current_correction_decisions",
+      "fileName": "202610010096_merchant_attendance_current_correction_decisions.sql",
+      "bytes": 14323,
+      "sha256": "a50a3162668ce2a775d50f110301a1e2efa2780cc429bbc5beed6184a33c278c"
+    },
+    {
+      "version": "202610010097",
+      "name": "merchant_attendance_revision_history",
+      "fileName": "202610010097_merchant_attendance_revision_history.sql",
+      "bytes": 10185,
+      "sha256": "961f6b61807b9f8e93f05e9d28b4378cb8cc1e6728ac53cce9eed1d15e1d5766"
+    },
+    {
+      "version": "202610010098",
+      "name": "merchant_attendance_revision_application_access",
+      "fileName": "202610010098_merchant_attendance_revision_application_access.sql",
+      "bytes": 2834,
+      "sha256": "3b800b876a6c6fe2e26dc9f14aff65aefd0c8519d984f8befb30e94654aeef12"
+    },
+    {
+      "version": "202610010099",
+      "name": "merchant_attendance_schedule",
+      "fileName": "202610010099_merchant_attendance_schedule.sql",
+      "bytes": 17934,
+      "sha256": "bbfd014a008438269be96ebd06d069b1eda452a375cb369d0da179bce48f2f36"
+    },
+    {
+      "version": "202610010100",
+      "name": "merchant_attendance_missing_requests",
+      "fileName": "202610010100_merchant_attendance_missing_requests.sql",
+      "bytes": 24972,
+      "sha256": "0aba51f77831c99ecba3ab15955928a1e0d1fda31fd92c8ce84b57b18c08e1b3"
+    },
+    {
+      "version": "202610010101",
+      "name": "merchant_attendance_unified_report",
+      "fileName": "202610010101_merchant_attendance_unified_report.sql",
+      "bytes": 5774,
+      "sha256": "c3063a05fa564220800ca8ef6a43b45333260084130daff018135ea56f64cc1a"
+    },
+    {
+      "version": "202610010102",
+      "name": "merchant_attendance_unified_export",
+      "fileName": "202610010102_merchant_attendance_unified_export.sql",
+      "bytes": 8603,
+      "sha256": "0acfb96dec8799ad0d91999c0d4ff504f7e178eb01a6a33c094ceb9fb9b3d7bd"
+    },
+    {
+      "version": "202610010103",
+      "name": "merchant_attendance_missing_revisions",
+      "fileName": "202610010103_merchant_attendance_missing_revisions.sql",
+      "bytes": 45828,
+      "sha256": "df015bacfe6237e3dfaea25182bcb6e1e1a479e4fe5b9a40b645ea9437d92d60"
+    },
+    {
+      "version": "202610010104",
+      "name": "merchant_attendance_terminals",
+      "fileName": "202610010104_merchant_attendance_terminals.sql",
+      "bytes": 14436,
+      "sha256": "b000752f34ac2b8c0558619948e17494cd145eac2a054ff096da43910be74f0a"
+    },
+    {
+      "version": "202610010105",
+      "name": "merchant_attendance_kiosk_correction_basis",
+      "fileName": "202610010105_merchant_attendance_kiosk_correction_basis.sql",
+      "bytes": 6143,
+      "sha256": "1eefdb5dd74a51e2088fc4d3d76e16d9944bf0f3194191259c120d439d15e6f7"
+    },
+    {
+      "version": "202610010106",
+      "name": "merchant_attendance_pin_credentials",
+      "fileName": "202610010106_merchant_attendance_pin_credentials.sql",
+      "bytes": 17753,
+      "sha256": "ac9a435fb9b8499095eae83db5f21e6ce7c8a14efc62099701beec60756225b2"
+    },
+    {
+      "version": "202610010107",
+      "name": "merchant_attendance_pin_clock",
+      "fileName": "202610010107_merchant_attendance_pin_clock.sql",
+      "bytes": 10461,
+      "sha256": "fae43ae16348682eebde13a22c68636f26407b93439becf1e01818a74dac826b"
+    },
+    {
+      "version": "202610010108",
+      "name": "merchant_attendance_onsite_qr",
+      "fileName": "202610010108_merchant_attendance_onsite_qr.sql",
+      "bytes": 16082,
+      "sha256": "546a2a50b25cf3e199b2ffe2ad67aba62fba84666dc47337108ca938e6dc749f"
+    },
+    {
+      "version": "202610020109",
+      "name": "merchant_attendance_event_channels",
+      "fileName": "202610020109_merchant_attendance_event_channels.sql",
+      "bytes": 11551,
+      "sha256": "9c58a6dad7ca5759db5085b781e9d8d01112c082f20a6b7bf9d85d7fa1407881"
+    },
+    {
+      "version": "202610020110",
+      "name": "merchant_attendance_self_history_identity",
+      "fileName": "202610020110_merchant_attendance_self_history_identity.sql",
+      "bytes": 10351,
+      "sha256": "1bc6188cb6a45d170a00e8800e7639c711b20d0b29996003bb198e5380886b77"
+    },
+    {
+      "version": "202610020111",
+      "name": "merchant_attendance_self_clock_identity",
+      "fileName": "202610020111_merchant_attendance_self_clock_identity.sql",
+      "bytes": 9676,
+      "sha256": "a88aaceb28ffe82d9be88a5610178c102d4416b63b7a7da7d2d18c3259abf783"
+    },
+    {
+      "version": "202610020112",
+      "name": "merchant_attendance_pin_clock_identity",
+      "fileName": "202610020112_merchant_attendance_pin_clock_identity.sql",
+      "bytes": 9955,
+      "sha256": "fb275a8dcf26f7cba7c0725aa10b779454370eb8c4ff3c8ab63630b27a14da02"
+    },
+    {
+      "version": "202610020113",
+      "name": "merchant_attendance_location_receipt_identity",
+      "fileName": "202610020113_merchant_attendance_location_receipt_identity.sql",
+      "bytes": 13660,
+      "sha256": "02e2492bf940fe855a1a3794787883d83adce12388d98e1b6db6711410c84bff"
+    },
+    {
+      "version": "202610030114",
+      "name": "merchant_employee_initial_password_replay",
+      "fileName": "202610030114_merchant_employee_initial_password_replay.sql",
+      "bytes": 11608,
+      "sha256": "f559b7189ced8b1a854401c1fd43097fa1af287f09da23bb29c7b1cb40770159"
+    },
+    {
+      "version": "202610030115",
+      "name": "merchant_attendance_location_notice_coverage",
+      "fileName": "202610030115_merchant_attendance_location_notice_coverage.sql",
+      "bytes": 10284,
+      "sha256": "c21f57e4af1a9a5f4514e1fdb6fa14416bdb904182c23207275bfe05073435f9"
+    },
+    {
+      "version": "202610030116",
+      "name": "merchant_attendance_self_revision_history",
+      "fileName": "202610030116_merchant_attendance_self_revision_history.sql",
+      "bytes": 12771,
+      "sha256": "cba83e0c3e845317e34c9f8b354601a62d8a2e88a97c35894daba51ba3dde3d2"
+    },
+    {
+      "version": "202610030117",
+      "name": "merchant_attendance_owner_backlog",
+      "fileName": "202610030117_merchant_attendance_owner_backlog.sql",
+      "bytes": 15706,
+      "sha256": "5ef698ac8e2ff42d9754473a329aeec434967bafb29f305b57169ef730e14968"
+    },
+    {
+      "version": "202610030118",
+      "name": "merchant_attendance_self_requests",
+      "fileName": "202610030118_merchant_attendance_self_requests.sql",
+      "bytes": 21487,
+      "sha256": "3d0c3a574f350f821b0393e99efc5f828d7e8fa7ff75ab52b7d78ff1232863c0"
+    },
+    {
+      "version": "202610030119",
+      "name": "merchant_attendance_shift_templates",
+      "fileName": "202610030119_merchant_attendance_shift_templates.sql",
+      "bytes": 16714,
+      "sha256": "e6f41092083b13441cc10fb6c83ab6907a4cb239c1fb2089ca699ac025dcf34b"
+    },
+    {
+      "version": "202610030120",
+      "name": "merchant_attendance_schedule_overview",
+      "fileName": "202610030120_merchant_attendance_schedule_overview.sql",
+      "bytes": 14795,
+      "sha256": "bd12d71cc27cf3a638cee885499456d5ff6d8077c358f187dae7d3317dd9d64c"
+    },
+    {
+      "version": "202610030121",
+      "name": "merchant_attendance_leave_permission",
+      "fileName": "202610030121_merchant_attendance_leave_permission.sql",
+      "bytes": 6507,
+      "sha256": "0b5396d062804e29a50c4d3a4d3d00959b7ccc2bcac090f343d15673df421ba9"
+    },
+    {
+      "version": "202610030122",
+      "name": "merchant_attendance_leave_requests",
+      "fileName": "202610030122_merchant_attendance_leave_requests.sql",
+      "bytes": 30027,
+      "sha256": "6eefb3debeded219e2136e0ed65eb48d0cada48dfb31c1de9c62c203ef98fb49"
+    },
+    {
+      "version": "202610030123",
+      "name": "merchant_attendance_calendar",
+      "fileName": "202610030123_merchant_attendance_calendar.sql",
+      "bytes": 25867,
+      "sha256": "81c3a6ac77823916d4a1dd837b17da7f0fd3d6da5886036faedde6058985235d"
+    },
+    {
+      "version": "202610030124",
+      "name": "merchant_attendance_groups",
+      "fileName": "202610030124_merchant_attendance_groups.sql",
+      "bytes": 38115,
+      "sha256": "637ac1ff0f06c237b96a54a783ebfbc30a853bbb7a0f281bc0adddce310e60bb"
+    },
+    {
+      "version": "202610040125",
+      "name": "merchant_attendance_leave_notifications",
+      "fileName": "202610040125_merchant_attendance_leave_notifications.sql",
+      "bytes": 22515,
+      "sha256": "43048a5464b19e2a2434e6b87ca5a9c83c71d045e0829bf604d1526ed6e3db6b"
+    },
+    {
+      "version": "202610040126",
+      "name": "merchant_attendance_leave_review",
+      "fileName": "202610040126_merchant_attendance_leave_review.sql",
+      "bytes": 6975,
+      "sha256": "5e09b8cd213b659e1e09aba7d45f0e768a680201bf7118d3b7d2e12481aa6cee"
+    },
+    {
+      "version": "202610040127",
+      "name": "merchant_attendance_rule_versions",
+      "fileName": "202610040127_merchant_attendance_rule_versions.sql",
+      "bytes": 36029,
+      "sha256": "bbe468d16de6769dfcb1b1c705f7a6bc474e4ba085c2046a89484f4417ad39a8"
+    },
+    {
+      "version": "202610040128",
+      "name": "merchant_attendance_sources",
+      "fileName": "202610040128_merchant_attendance_sources.sql",
+      "bytes": 27127,
+      "sha256": "49176f098e56ada1638d0200afbdccd1b1800a258fd069b4fe928424c506237f"
+    },
+    {
+      "version": "202610040129",
+      "name": "merchant_attendance_personal_rules",
+      "fileName": "202610040129_merchant_attendance_personal_rules.sql",
+      "bytes": 35308,
+      "sha256": "d6e008efdc05c2729f07347600a26e73a8f0148d4adc49f0ab4eaa8348bfd9f3"
+    },
+    {
+      "version": "202610040130",
+      "name": "merchant_attendance_rule_sources",
+      "fileName": "202610040130_merchant_attendance_rule_sources.sql",
+      "bytes": 26511,
+      "sha256": "5d6ad2ab95c429c34fb16a19f733b2d0f083cfff35ab311e2b9b406ab6dcc961"
+    },
+    {
+      "version": "202610040131",
+      "name": "merchant_attendance_rule_captures",
+      "fileName": "202610040131_merchant_attendance_rule_captures.sql",
+      "bytes": 23358,
+      "sha256": "142102baee16f14d486563d09b1a5bd32d65216281ed0bba4118163c5a9852e0"
+    },
+    {
+      "version": "202610040132",
+      "name": "merchant_attendance_rule_capture_history",
+      "fileName": "202610040132_merchant_attendance_rule_capture_history.sql",
+      "bytes": 11612,
+      "sha256": "9f0f591be0e777fe0e1bec91ee17d938a34b1f1a738b1b704487a83c88e4be53"
+    },
+    {
+      "version": "202610040133",
+      "name": "merchant_attendance_shift_rule_bindings",
+      "fileName": "202610040133_merchant_attendance_shift_rule_bindings.sql",
+      "bytes": 39160,
+      "sha256": "d08a49f44e1c2fcd87f125e666b4f155a4a659d35f1d42c5003bd6fd2d39f555"
+    },
+    {
+      "version": "202610040134",
+      "name": "merchant_attendance_bound_clocks",
+      "fileName": "202610040134_merchant_attendance_bound_clocks.sql",
+      "bytes": 11270,
+      "sha256": "8dea79c433d2fbc4beda4eec399fd0754b6c3a34826c3295371100f49ae57ff8"
+    },
+    {
+      "version": "202610040135",
+      "name": "merchant_attendance_shift_rule_binding_reader",
+      "fileName": "202610040135_merchant_attendance_shift_rule_binding_reader.sql",
+      "bytes": 29314,
+      "sha256": "ebf85958080159d4de51facf735b90c1aefc4ee490e18fb5be0b9ea7a8603aa3"
+    },
+    {
+      "version": "202610050136",
+      "name": "merchant_attendance_schedule_publication_evidence",
+      "fileName": "202610050136_merchant_attendance_schedule_publication_evidence.sql",
+      "bytes": 25202,
+      "sha256": "cf91fc898430420c7ec44e7ffb5c1ec71aa946aeb462600a5039530b813d2ca3"
+    },
+    {
+      "version": "202610050137",
+      "name": "merchant_attendance_self_schedule",
+      "fileName": "202610050137_merchant_attendance_self_schedule.sql",
+      "bytes": 35684,
+      "sha256": "401da4596c18fb13a547c6d658f28fd16a350579df5475c81f8614d9ffb1497c"
+    },
+    {
+      "version": "202610050138",
+      "name": "merchant_attendance_shift_check",
+      "fileName": "202610050138_merchant_attendance_shift_check.sql",
+      "bytes": 20478,
+      "sha256": "cea63af8d5842cbdd20af985a1f96347820f198bab9468be2211869ba5add1bc"
+    },
+    {
+      "version": "202610050139",
+      "name": "merchant_attendance_plan_coverage",
+      "fileName": "202610050139_merchant_attendance_plan_coverage.sql",
+      "bytes": 15848,
+      "sha256": "38a0ef219e7b9fc274a5b6c27d80d47034d51149b76e43f2cc6259df4b88f934"
+    },
+    {
+      "version": "202610050140",
+      "name": "merchant_attendance_plan_rule_approvals",
+      "fileName": "202610050140_merchant_attendance_plan_rule_approvals.sql",
+      "bytes": 49773,
+      "sha256": "e61341bf5539bfbf2cfa6779b73807a03c557642915df5863229981bf4835eb0"
+    },
+    {
+      "version": "202610050141",
+      "name": "merchant_attendance_location_schedule",
+      "fileName": "202610050141_merchant_attendance_location_schedule.sql",
+      "bytes": 36989,
+      "sha256": "605efc5b0371dce88c60ffd322c4604edfe794caad70d3b210ebc7046d7c3664"
+    },
+    {
+      "version": "202610050142",
+      "name": "merchant_attendance_onsite_schedule",
+      "fileName": "202610050142_merchant_attendance_onsite_schedule.sql",
+      "bytes": 41515,
+      "sha256": "b326eff5eac90cf46cf2f87418d0ae4262a859f4fe5b0234753009779f7f447d"
+    },
+    {
+      "version": "202610050143",
+      "name": "merchant_attendance_pin_schedule",
+      "fileName": "202610050143_merchant_attendance_pin_schedule.sql",
+      "bytes": 67731,
+      "sha256": "aa25c56ea37640d4e13f5a4942c7f433944f00f2a2a30d5f143d3d1aca06d586"
+    },
+    {
+      "version": "202610050144",
+      "name": "merchant_attendance_self_schedule_adoption",
+      "fileName": "202610050144_merchant_attendance_self_schedule_adoption.sql",
+      "bytes": 34443,
+      "sha256": "ac31308eca5ea71d6bc6d2e7dc44d73eebd3859389be04b7f28706f1ba9aab3f"
+    },
+    {
+      "version": "202610050145",
+      "name": "merchant_attendance_plan_adoption_view",
+      "fileName": "202610050145_merchant_attendance_plan_adoption_view.sql",
+      "bytes": 15730,
+      "sha256": "ae9ecbe910c5e5d1481e6df5ab88c782b42ba4f677731e9d04e293d63de6d61e"
+    },
+    {
+      "version": "202610050146",
+      "name": "merchant_attendance_plan_exception_source",
+      "fileName": "202610050146_merchant_attendance_plan_exception_source.sql",
+      "bytes": 35538,
+      "sha256": "6b210b7c1d2037a14c4ecd9d519196768513bd7f1b832804b2ab47d316e1cecb"
+    },
+    {
+      "version": "202610050147",
+      "name": "merchant_attendance_plan_exception_review",
+      "fileName": "202610050147_merchant_attendance_plan_exception_review.sql",
+      "bytes": 52555,
+      "sha256": "ded2599d08039f510e105e59c21718f9c002a864e40ae64a9a1ab109274e1a00"
+    },
+    {
+      "version": "202610050148",
+      "name": "merchant_attendance_period_source",
+      "fileName": "202610050148_merchant_attendance_period_source.sql",
+      "bytes": 55396,
+      "sha256": "a92362af00d5a5e012409a80d8f78a1c9fa8d241fddc0888e46ac6b3f6a549ba"
+    },
+    {
+      "version": "202610050149",
+      "name": "merchant_attendance_period_closure",
+      "fileName": "202610050149_merchant_attendance_period_closure.sql",
+      "bytes": 44217,
+      "sha256": "52aecbca1fc9f3e94c5d5aed0f5ac579aff07fa05549ae989d1b9fd3d0a4db92"
+    },
+    {
+      "version": "202610050150",
+      "name": "merchant_attendance_period_seal_guards",
+      "fileName": "202610050150_merchant_attendance_period_seal_guards.sql",
+      "bytes": 16932,
+      "sha256": "4dae99fad9a0da5b9bbeb39899693a31c5b92b0e2b9a0ae40070e8886c053449"
+    },
+    {
+      "version": "202610050151",
+      "name": "merchant_attendance_period_source_ranges",
+      "fileName": "202610050151_merchant_attendance_period_source_ranges.sql",
+      "bytes": 44944,
+      "sha256": "b56dcc84de193356ffd6be08741c5d7ba9f2fe3e7d2b7b8b712a8f2703571ae4"
+    },
+    {
+      "version": "202610050152",
+      "name": "merchant_attendance_period_missing_context",
+      "fileName": "202610050152_merchant_attendance_period_missing_context.sql",
+      "bytes": 46217,
+      "sha256": "de44f8fb4ce0bb47ee280398520dc640a8a3ba2189377cfb9c51226c746583eb"
+    },
+    {
+      "version": "202610050153",
+      "name": "merchant_attendance_period_session_capacity",
+      "fileName": "202610050153_merchant_attendance_period_session_capacity.sql",
+      "bytes": 70580,
+      "sha256": "742bfbeb766602626b9f0784c549591e9b14d38fefce07a9bef9fd72a03e0fc9"
+    },
+    {
+      "version": "202610050154",
+      "name": "merchant_attendance_period_missing_root_capacity",
+      "fileName": "202610050154_merchant_attendance_period_missing_root_capacity.sql",
+      "bytes": 60950,
+      "sha256": "b688c317dbf46872fcfecd7d38597d5eadcbe1fc95ee4beec927ae4327e7c78f"
+    },
+    {
+      "version": "202610050155",
+      "name": "merchant_attendance_period_fixed_boundaries",
+      "fileName": "202610050155_merchant_attendance_period_fixed_boundaries.sql",
+      "bytes": 122827,
+      "sha256": "62b9c45e6367419460204d91b9e0078af9e5bd68caf40b4623021d22d9965392"
+    },
+    {
+      "version": "202610060156",
+      "name": "merchant_attendance_work_arrangements",
+      "fileName": "202610060156_merchant_attendance_work_arrangements.sql",
+      "bytes": 53641,
+      "sha256": "cd8c11d1ed9f80dc432d82822942501cd763f69f9b544fa8137f04b7a79f955e"
+    },
+    {
+      "version": "202610060157",
+      "name": "merchant_attendance_work_arrangement_permission",
+      "fileName": "202610060157_merchant_attendance_work_arrangement_permission.sql",
+      "bytes": 6630,
+      "sha256": "f04e1ce63b967dadaa5a40a21d6c2fe4e7744e8d29850df680b31bc1bad45b69"
+    },
+    {
+      "version": "202610060158",
+      "name": "merchant_attendance_work_arrangement_periods",
+      "fileName": "202610060158_merchant_attendance_work_arrangement_periods.sql",
+      "bytes": 60562,
+      "sha256": "0542f4fd9223ba76fd0a0054dd126b629d40a2fa588f259d977637018bab0f67"
+    },
+    {
+      "version": "202610060159",
+      "name": "merchant_attendance_work_arrangement_exceptions",
+      "fileName": "202610060159_merchant_attendance_work_arrangement_exceptions.sql",
+      "bytes": 67319,
+      "sha256": "100377e196cf391b545ac727b6f650b1f79330425adb1fa24cce3f5b6dfa2d5e"
+    },
+    {
+      "version": "202610060160",
+      "name": "merchant_attendance_missing_delegation",
+      "fileName": "202610060160_merchant_attendance_missing_delegation.sql",
+      "bytes": 58827,
+      "sha256": "ae255256ceaec8a1a56fff5176a00702fd20669c52cab2871ad3648a8b2a5137"
+    },
+    {
+      "version": "202610060161",
+      "name": "merchant_attendance_missing_delegation_permission",
+      "fileName": "202610060161_merchant_attendance_missing_delegation_permission.sql",
+      "bytes": 6743,
+      "sha256": "c64c8ca16d572f919ba2e81982578e6c05ef0f85f06448d83c5e0c780e7053c9"
+    },
+    {
+      "version": "202610060162",
+      "name": "merchant_attendance_application_delegation",
+      "fileName": "202610060162_merchant_attendance_application_delegation.sql",
+      "bytes": 72087,
+      "sha256": "b2bd2098509e1809122930e0151a60ae91d8d5cf7a7b7245201d7f247b3db54f"
+    },
+    {
+      "version": "202610060163",
+      "name": "merchant_attendance_application_delegation_permissions",
+      "fileName": "202610060163_merchant_attendance_application_delegation_permissions.sql",
+      "bytes": 6940,
+      "sha256": "11f31641ab2c83e4ad302f99ec1c318616b3a1ca3499b349a951b5883bf4481e"
+    },
+    {
+      "version": "202610060164",
+      "name": "merchant_attendance_account_suspensions",
+      "fileName": "202610060164_merchant_attendance_account_suspensions.sql",
+      "bytes": 58205,
+      "sha256": "e803a22f5fccae530e2811053dfc15a1899c5a7395d669c393f420b84b559340"
+    },
+    {
+      "version": "202610060166",
+      "name": "merchant_attendance_employment_lifecycle",
+      "fileName": "202610060166_merchant_attendance_employment_lifecycle.sql",
+      "bytes": 48001,
+      "sha256": "239ceb5d374907c8f577c07045582136e6cb8c01083ba4da7bcb77032f3291fa"
+    },
+    {
+      "version": "202610060167",
+      "name": "merchant_attendance_schedule_delegation",
+      "fileName": "202610060167_merchant_attendance_schedule_delegation.sql",
+      "bytes": 101171,
+      "sha256": "09c91b92e1909762d9b989323f82775e51aa59c6a01ae3806b34f2e745a52dd5"
+    },
+    {
+      "version": "202610060168",
+      "name": "merchant_attendance_schedule_delegation_permissions",
+      "fileName": "202610060168_merchant_attendance_schedule_delegation_permissions.sql",
+      "bytes": 7129,
+      "sha256": "ba7fd5cd2f0263592c38e47d3ba772f1a2b25a7aa241482b4ba1088fc5af5aec"
+    },
+    {
+      "version": "202610060169",
+      "name": "merchant_attendance_event_notifications",
+      "fileName": "202610060169_merchant_attendance_event_notifications.sql",
+      "bytes": 38528,
+      "sha256": "93a8962c39031b66d08f5bff9a1cd530cd0b958aef32beff57a84b91295e75a1"
+    },
+    {
+      "version": "202610060170",
+      "name": "merchant_attendance_plan_clearance",
+      "fileName": "202610060170_merchant_attendance_plan_clearance.sql",
+      "bytes": 43645,
+      "sha256": "d31131240326a93de50377f388e488285d5aef18065a839135764490ca4c010e"
+    },
+    {
+      "version": "202610060171",
+      "name": "merchant_attendance_plan_posthoc_adoption",
+      "fileName": "202610060171_merchant_attendance_plan_posthoc_adoption.sql",
+      "bytes": 56093,
+      "sha256": "d67767b77a27ea86a1e20c79924c517012a5e59284064d7df16afaf510149399"
+    },
+    {
+      "version": "202610060172",
+      "name": "merchant_attendance_plan_posthoc_evaluation",
+      "fileName": "202610060172_merchant_attendance_plan_posthoc_evaluation.sql",
+      "bytes": 23733,
+      "sha256": "e1516b0b24d5f8cb7ba15ac8aa5b5571783897db8c77f0c0cd86004c37f6bfcf"
+    },
+    {
+      "version": "202610060173",
+      "name": "merchant_attendance_plan_posthoc_formal_source",
+      "fileName": "202610060173_merchant_attendance_plan_posthoc_formal_source.sql",
+      "bytes": 38582,
+      "sha256": "89adb4f9f2a19dd3f5a5930a40ca939091abbb237ae5c81913bb4c6b7f71f6ef"
+    },
+    {
+      "version": "202610060174",
+      "name": "merchant_attendance_plan_posthoc_reviews",
+      "fileName": "202610060174_merchant_attendance_plan_posthoc_reviews.sql",
+      "bytes": 73590,
+      "sha256": "14557a133fb9ab763e6d66caf6c2b3a7a5d891e127846f70511ccecc3ac45d95"
+    },
+    {
+      "version": "202610060175",
+      "name": "merchant_attendance_plan_posthoc_periods",
+      "fileName": "202610060175_merchant_attendance_plan_posthoc_periods.sql",
+      "bytes": 150232,
+      "sha256": "e5a597e5f00e4fcca50a95c121934b5194a93f51d5633145ca084632e705b329"
+    },
+    {
+      "version": "202610070176",
+      "name": "merchant_attendance_outage_foundation",
+      "fileName": "202610070176_merchant_attendance_outage_foundation.sql",
+      "bytes": 42789,
+      "sha256": "23440ba48a0406d88f19018062ef623b5c7f21597668411f492cabc4712edd45"
+    },
+    {
+      "version": "202610070177",
+      "name": "merchant_attendance_outage_links",
+      "fileName": "202610070177_merchant_attendance_outage_links.sql",
+      "bytes": 42039,
+      "sha256": "9679da802e50504f34f89ce7a362765404c50cfff20465b5318602d50ebbe181"
+    },
+    {
+      "version": "202610070178",
+      "name": "merchant_attendance_outage_reviews",
+      "fileName": "202610070178_merchant_attendance_outage_reviews.sql",
+      "bytes": 45579,
+      "sha256": "30b99c5b907b5c13d42b5df5ea0e840ea3c2e03edc8ae6e52640ef5e0ece758f"
+    },
+    {
+      "version": "202610070179",
+      "name": "merchant_attendance_outage_periods",
+      "fileName": "202610070179_merchant_attendance_outage_periods.sql",
+      "bytes": 110529,
+      "sha256": "a3bf9f738cf34e8ea150abfc5cb82a536bf17b72a402d3cdae610cc3113988da"
+    },
+    {
+      "version": "202610070180",
+      "name": "merchant_attendance_outage_subject",
+      "fileName": "202610070180_merchant_attendance_outage_subject.sql",
+      "bytes": 10733,
+      "sha256": "06f9b77a50f69cc2a70f70d94afbe5a33116f51d1639d19e7553f8a26992c9b0"
+    },
+    {
+      "version": "202610070181",
+      "name": "merchant_attendance_outage_relations",
+      "fileName": "202610070181_merchant_attendance_outage_relations.sql",
+      "bytes": 37766,
+      "sha256": "b9f8c38cba0150331165d328bda6bb0001d8d848126a05e62b46046a782eccb8"
+    },
+    {
+      "version": "202610070182",
+      "name": "merchant_attendance_retention",
+      "fileName": "202610070182_merchant_attendance_retention.sql",
+      "bytes": 48195,
+      "sha256": "29ed80f578eef285c308859959faee81f0f0fcee86c35daff0ee4778045fd64c"
+    },
+    {
+      "version": "202610080183",
+      "name": "merchant_attendance_period_continuation",
+      "fileName": "202610080183_merchant_attendance_period_continuation.sql",
+      "bytes": 99478,
+      "sha256": "69cee07caf792eeb2daec4418b46dfc30e740e7f8f9457d4ee200abd65fe7447"
+    },
+    {
+      "version": "202610080184",
+      "name": "merchant_attendance_period_delegated_source",
+      "fileName": "202610080184_merchant_attendance_period_delegated_source.sql",
+      "bytes": 275771,
+      "sha256": "d44bd78d90a60888e10eeacd0335e7637a78e51bfedd1df51815f74f734d7b9c"
+    },
+    {
+      "version": "202610080185",
+      "name": "merchant_attendance_period_delegations",
+      "fileName": "202610080185_merchant_attendance_period_delegations.sql",
+      "bytes": 94656,
+      "sha256": "ea9b77ecec7e9747535e4eb720cffc841e58e545c82338b29cf752565329bd28"
+    },
+    {
+      "version": "202610080186",
+      "name": "merchant_attendance_period_delegated_artifacts",
+      "fileName": "202610080186_merchant_attendance_period_delegated_artifacts.sql",
+      "bytes": 23190,
+      "sha256": "f83dec6091dd516f5df26b5625c92ed2051f82a8a6053e18a68713ecc2a79b7d"
+    },
+    {
+      "version": "202610080187",
+      "name": "merchant_attendance_period_delegated_closure",
+      "fileName": "202610080187_merchant_attendance_period_delegated_closure.sql",
+      "bytes": 44274,
+      "sha256": "d430f9a12ae26c1f0b853bde8bb905c973c0eb25a618004ff099d4cdb3b59eca"
+    },
+    {
+      "version": "202610080188",
+      "name": "merchant_attendance_owner_notifications",
+      "fileName": "202610080188_merchant_attendance_owner_notifications.sql",
+      "bytes": 42812,
+      "sha256": "4963b9345d11d1192c11273fe72d98481d8b06262bfa44cd59b6d3e35f44b904"
+    },
+    {
+      "version": "202610080189",
+      "name": "merchant_attendance_correction_delegation",
+      "fileName": "202610080189_merchant_attendance_correction_delegation.sql",
+      "bytes": 85730,
+      "sha256": "81ab06aecc5093cf992d6a57dd9c8c46ea130d3f5b92073b11616b90d5bdd818"
+    },
+    {
+      "version": "202610080190",
+      "name": "merchant_attendance_correction_delegation_permission",
+      "fileName": "202610080190_merchant_attendance_correction_delegation_permission.sql",
+      "bytes": 9244,
+      "sha256": "e08a7b1a05d7590e2bc605bee4318e4cb45fbf90d08027cc927ff9212c9a1f79"
+    },
+    {
+      "version": "202610080191",
+      "name": "merchant_attendance_operational_rules",
+      "fileName": "202610080191_merchant_attendance_operational_rules.sql",
+      "bytes": 95964,
+      "sha256": "bbd11ae0b454b16ded1da8afbd44cbfbbe44373a1e7db313b91d53b3b79ae085"
+    },
+    {
+      "version": "202610080192",
+      "name": "merchant_attendance_operational_source",
+      "fileName": "202610080192_merchant_attendance_operational_source.sql",
+      "bytes": 39608,
+      "sha256": "f87f89ec27e9d2b81b501f03c1444b848b1829f3ab03dc5aa58b5a51f791b5a6"
+    },
+    {
+      "version": "202610080193",
+      "name": "merchant_attendance_operational_punch",
+      "fileName": "202610080193_merchant_attendance_operational_punch.sql",
+      "bytes": 172800,
+      "sha256": "00aace2e214bc493898e44662b232ba6df14bef66e263fca323b6a1de0724a9f"
+    },
+    {
+      "version": "202610080194",
+      "name": "merchant_attendance_application_window",
+      "fileName": "202610080194_merchant_attendance_application_window.sql",
+      "bytes": 85242,
+      "sha256": "968909150c5841f950404419ef445b76e6b047b1bca9695ee80664641a16eda0"
+    },
+    {
+      "version": "202610080195",
+      "name": "merchant_attendance_administrative_closure",
+      "fileName": "202610080195_merchant_attendance_administrative_closure.sql",
+      "bytes": 166325,
+      "sha256": "cc16feeda1702f79a40cd26cded84ac2535af879b725b6b3d5ff24c68f4d2ecc"
+    },
+    {
+      "version": "202610080196",
+      "name": "merchant_attendance_independent_workers",
+      "fileName": "202610080196_merchant_attendance_independent_workers.sql",
+      "bytes": 191617,
+      "sha256": "6d75d0e376f55ad6796c55b16ba5b4ff00718fd149574998895c3c6aab00a476"
+    },
+    {
+      "version": "202610080197",
+      "name": "merchant_attendance_retention_disposal",
+      "fileName": "202610080197_merchant_attendance_retention_disposal.sql",
+      "bytes": 106817,
+      "sha256": "beb2b87db0268e7e495caf18a9d07a34a642eb954c3a9f60eae776084ffd8a82"
+    },
+    {
+      "version": "202610080198",
+      "name": "merchant_attendance_review_routing",
+      "fileName": "202610080198_merchant_attendance_review_routing.sql",
+      "bytes": 170210,
+      "sha256": "84a0fce6130c5b35f116e29fc56950549c9db459b3c1fe8408ec00a2f7f5e9be"
+    },
+    {
+      "version": "202610080199",
+      "name": "merchant_attendance_day_reviews",
+      "fileName": "202610080199_merchant_attendance_day_reviews.sql",
+      "bytes": 201717,
+      "sha256": "853e4f9f3c3cfa78aa464254b35fbf54fc833cc6a22b453ab60d5df32c22abde"
+    },
+    {
+      "version": "202610080200",
+      "name": "merchant_attendance_operational_cycle",
+      "fileName": "202610080200_merchant_attendance_operational_cycle.sql",
+      "bytes": 212609,
+      "sha256": "203104a41c59d526bdd9740268d6fa3d835e21ae02c7386872737169f18a110e"
+    },
+    {
+      "version": "202610080201",
+      "name": "merchant_attendance_reminders",
+      "fileName": "202610080201_merchant_attendance_reminders.sql",
+      "bytes": 191463,
+      "sha256": "f7e6961da28d6629d83682c7f3a9080b139c079e85d105408d88f8e7fcad3be1"
+    },
+    {
+      "version": "202610080202",
+      "name": "merchant_attendance_management_delegations",
+      "fileName": "202610080202_merchant_attendance_management_delegations.sql",
+      "bytes": 152867,
+      "sha256": "205ad7bd42860e5d71882fe42596af631f0e59b7242b514ba71e79eca39969c8"
+    },
+    {
+      "version": "202610080203",
+      "name": "merchant_attendance_delegated_audit",
+      "fileName": "202610080203_merchant_attendance_delegated_audit.sql",
+      "bytes": 122184,
+      "sha256": "71cf9d25ccc2f3d53d60f0490fd02c8bb86939f2e99f00f9c90453a54648c0d0"
+    },
+    {
+      "version": "202610080204",
+      "name": "merchant_attendance_delegated_groups",
+      "fileName": "202610080204_merchant_attendance_delegated_groups.sql",
+      "bytes": 126326,
+      "sha256": "74b10f29b03e555ddb033bf4cd70ee02c2c4bf5dffbb14e793eecbd42cfdf2f3"
+    },
+    {
+      "version": "202610080205",
+      "name": "merchant_attendance_delegated_configuration",
+      "fileName": "202610080205_merchant_attendance_delegated_configuration.sql",
+      "bytes": 147929,
+      "sha256": "4cd000b3eae1ea9b7e96308e86ffa1fd1ba4bcf097cc1cc1584f942a01b6656a"
+    },
+    {
+      "version": "202610080206",
+      "name": "merchant_attendance_delegated_rules",
+      "fileName": "202610080206_merchant_attendance_delegated_rules.sql",
+      "bytes": 263593,
+      "sha256": "61de1213dddb2d72d3524c831ccf4775bd7dfe890f7f2ea142134adcb08fa8aa"
+    },
+    {
+      "version": "202610080207",
+      "name": "merchant_attendance_delegated_credentials",
+      "fileName": "202610080207_merchant_attendance_delegated_credentials.sql",
+      "bytes": 296038,
+      "sha256": "2c4d31cc5b3567d50782630c5834376669972708077fa914d06ff9ad76cbd1af"
+    },
+    {
+      "version": "202610080208",
+      "name": "merchant_attendance_delegated_revisions",
+      "fileName": "202610080208_merchant_attendance_delegated_revisions.sql",
+      "bytes": 268712,
+      "sha256": "e1a3b19b14bf3f5a67f1c744db215797d18fd9b8961165fef16149097f954f42"
+    },
+    {
+      "version": "202610090209",
+      "name": "merchant_attendance_delegated_plan_exceptions",
+      "fileName": "202610090209_merchant_attendance_delegated_plan_exceptions.sql",
+      "bytes": 434327,
+      "sha256": "779836ce3a3d13e9a817deb31a49cbd9151f33571f1f5d360ce085dc7b23da49"
+    },
+    {
+      "version": "202610090210",
+      "name": "merchant_attendance_utc_validation_fastpath",
+      "fileName": "202610090210_merchant_attendance_utc_validation_fastpath.sql",
+      "bytes": 6025,
+      "sha256": "05d6882d23e9c4db26d945a5f1dda7c96267fb2aac4a17977f55f3aaebf1b9e6"
+    }
+  ]
+}
