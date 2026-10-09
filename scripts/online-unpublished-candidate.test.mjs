@@ -27,6 +27,7 @@ const databaseCode = section('function databaseObservation(', '// A helper-only 
 const observeCode = section('async function observe(', 'function durableReceipt(');
 const receiptCode = section('function durableReceipt(', 'export async function closeUnpublishedCandidateMain(');
 const mainCode = section('export async function closeUnpublishedCandidateMain(', 'if(process.argv[1]');
+const commandCode = section('function command(', 'function readOwned(');
 
 test('one fixed approved incident; no generic target, baseline or candidate authority', () => {
   assert.equal(incident.target, '5b974eb06c858757c8785d5f9106b006903a5ba0');
@@ -212,7 +213,7 @@ function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') 
     command: (name, args) => {
       commands.push({name, args: plain(args)});
       if (name === 'pm2') return JSON.stringify(bad === 'pm2' ? [{name: incident.name}] : state.processes);
-      if (name === 'ss') return bad === 'port' ? `LISTEN 0 128 127.0.0.1:${state.port} 0.0.0.0:*\n` : '';
+      if (name === '/usr/sbin/ss') {assert.deepEqual(plain(args), ['-ltnH']); return bad === 'port' ? `LISTEN 0 128 127.0.0.1:${state.port} 0.0.0.0:*\n` : '';}
       if (name === 'systemctl') return bad === 'unit' ? 'loaded' : 'not-found';
       if (name === 'journalctl') {
         assert.ok(args.includes(`--since=${startedAt.slice(0, 19).replace('T', ' ')} UTC`));
@@ -237,7 +238,28 @@ test('actual collector combines all live metadata observations without mutating 
   assert.equal(result.evidence.diagnosticKind, 'focused-test-replay');
   assert.equal(result.evidence.candidateCompatibilityDatabaseAbsent, true);
   assert.equal(result.evidence.processReferencesAbsent, true);
-  assert.deepEqual(f.commands.map(x => x.name), ['pm2', 'ss', 'systemctl', 'journalctl']);
+  assert.deepEqual(f.commands.map(x => x.name), ['pm2', '/usr/sbin/ss', 'systemctl', 'journalctl']);
+});
+test('restricted observation environment resolves only the actual installed ss, never a PATH fallback', () => {
+  const sockets = 'LISTEN 0 128 127.0.0.1:3105 0.0.0.0:*\n';
+  for (const bad of [null, 'missing', 'exit', 'signal', 'timeout', 'overflow']) {
+    const invoke = runInNewContext(`${commandCode}command`, {MAX_BYTES: 32 * 1024 * 1024, fail,
+      spawnSync: (name, args, options) => {
+        assert.deepEqual(plain(args), ['-ltnH']);
+        assert.equal(options.env.PATH, '/usr/local/bin:/usr/bin:/bin');
+        assert.equal(options.timeout, 20000); assert.equal(options.maxBuffer, 32 * 1024 * 1024);
+        if (name === 'ss' || bad === 'missing') return {status: null, error: {code: 'ENOENT'}};
+        assert.equal(name, '/usr/sbin/ss');
+        if (bad === 'exit') return {status: 1, stdout: sockets};
+        if (bad === 'signal') return {status: 0, signal: 'SIGTERM', stdout: sockets};
+        if (bad === 'timeout') return {status: null, error: {code: 'ETIMEDOUT'}};
+        if (bad === 'overflow') return {status: null, error: {code: 'ENOBUFS'}};
+        return {status: 0, stdout: sockets};
+      }});
+    assert.throws(() => invoke('ss', ['-ltnH']), /observation_command_failed/);
+    if (bad) assert.throws(() => invoke('/usr/sbin/ss', ['-ltnH']), /observation_command_failed/);
+    else assert.equal(invoke('/usr/sbin/ss', ['-ltnH']), sockets);
+  }
 });
 test('actual collector fails closed for source, artifact, log, process, unit, ingress and database drift', async () => {
   for (const bad of ['state', 'source', 'artifact', 'files', 'diagnostic', 'pm2', 'dump', 'logs', 'proc', 'port', 'unit',
@@ -314,9 +336,9 @@ test('durable output is exclusive 0600 sidecar with file+directory fsync and exa
 });
 
 test('collector command allowlist and error output contain no actuator or private value disclosure', () => {
-  assert.deepEqual([...source.matchAll(/command\('([^']+)'/g)].map(m => m[1]).sort(), ['docker', 'docker', 'docker', 'docker', 'journalctl', 'pm2', 'ss', 'systemctl'].sort());
+  assert.deepEqual([...source.matchAll(/command\('([^']+)'/g)].map(m => m[1]).sort(), ['docker', 'docker', 'docker', 'docker', 'journalctl', 'pm2', '/usr/sbin/ss', 'systemctl'].sort());
   assert.match(source, /command\('pm2',\['jlist'\]\)/);
-  assert.match(source, /command\('ss',\['-ltnH'\]\)/);
+  assert.match(source, /command\('\/usr\/sbin\/ss',\['-ltnH'\]\)/);
   assert.match(source, /command\('systemctl',\['show',unit,'--property=LoadState','--value'\]\)/);
   assert.match(source, /command\('journalctl',\['--quiet','--no-pager','--output=json',`--since=\$\{journalSince\}`,'--unit',unit\]\)/);
   assert.doesNotMatch(source, /command\('(?:npm|nice|systemd-run|nginx|kill|rm|cp)'|\['(?:start|stop|delete|restart|reload)'\]|Config\.Env|\.environ|readFileSync\([^\n]*environ/);
