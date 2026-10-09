@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {operationalSourceNativeArgs,operationalSourceNativeMigration,operationalSourceNativeFunctions} from '../merchant-attendance-operational-source-native.mjs';
 const source=readFileSync(new URL('../merchant-attendance-operational-source-native.mjs',import.meta.url),'utf8');
 test('241 runner is inert on import and requires one explicitly supplied absolute owned directory',()=>{
- const args=['--run-local','--directory','C:/Users/User/AppData/Local/Temp/faolla-attendance-foundation-LKtY4L'];
+ const args=['--run-local','--directory',fileURLToPath(new URL('.',import.meta.url))];
  assert.deepEqual(operationalSourceNativeArgs(args),args);
  for(const bad of [[],['--run-local'],['--directory',args[2]],['--run-local','--directory','relative'],[...args,'--create']])
   assert.throws(()=>operationalSourceNativeArgs(bad));

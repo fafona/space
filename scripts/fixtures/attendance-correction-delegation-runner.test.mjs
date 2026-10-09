@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {correctionDelegationNativeArgs,correctionDelegationNativeMigrations,correctionDelegationChangedFunctions} from '../merchant-attendance-correction-delegation-native.mjs';
 const source=readFileSync(new URL('../merchant-attendance-correction-delegation-native.mjs',import.meta.url),'utf8');
 test('238 requires the explicit existing local directory; importing stays inert',()=>{
- const directory='D:/owned/synthetic';assert.deepEqual(correctionDelegationNativeArgs(['--run-local','--directory',directory]),['--run-local','--directory',directory]);
+ const directory=fileURLToPath(new URL('.',import.meta.url));assert.deepEqual(correctionDelegationNativeArgs(['--run-local','--directory',directory]),['--run-local','--directory',directory]);
  for(const args of [[],['--run-local'],['--run-local','--directory','relative'],['--run-local','--directory',directory,'--new-cluster'],
   ['--run-local','--directory',directory+'\n'],['--directory',directory,'--run-local']])assert.throws(()=>correctionDelegationNativeArgs(args));
  assert.doesNotMatch(source,/spawn\(|connect\(|pg_ctl|initdb|closeAll\(|create database|drop schema/i);

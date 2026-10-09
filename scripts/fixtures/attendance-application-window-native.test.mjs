@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {applicationWindowRpcExpression} from './attendance-application-window-native.mjs';
 import {applicationWindowNativeArgs,applicationWindowNativeTables,applicationWindowReplacedFunctions} from '../merchant-attendance-application-window-native.mjs';
 import {continuationCapacityMode} from '../merchant-attendance-period-continuation-native.mjs';
@@ -12,8 +13,9 @@ test('capacity reuse is explicit extension-only; original CLI/full suite default
  assert.throws(()=>continuationCapacityMode(null,{capacity:'reuse_previous'}));
 });
 test('243 native import is inert; explicit existing local directory and finite install scope',()=>{
- for(const args of [[],['--run-local'],['--run-local','--directory','relative'],['--run-local','--directory','D:\\fixture','--extra']])assert.throws(()=>applicationWindowNativeArgs(args));
- assert.deepEqual(applicationWindowNativeArgs(['--run-local','--directory','D:\\owned-fixture']),['--run-local','--directory','D:\\owned-fixture']);
+ const directory=fileURLToPath(new URL('.',import.meta.url));
+ for(const args of [[],['--run-local'],['--run-local','--directory','relative'],['--run-local','--directory',directory,'--extra']])assert.throws(()=>applicationWindowNativeArgs(args));
+ assert.deepEqual(applicationWindowNativeArgs(['--run-local','--directory',directory]),['--run-local','--directory',directory]);
  assert.equal(applicationWindowNativeTables.length,2);assert.equal(applicationWindowReplacedFunctions.length,4);
 });
 test('243 real RPC adapter accepts only exact4 arguments and actual actor',()=>{

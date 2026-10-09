@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {runInNewContext,runInThisContext} from 'node:vm';
 import {lifecycleId as id} from '../merchant-attendance-lifecycle-native-support.mjs';
@@ -23,7 +24,7 @@ test('imports are inert and unowned contexts stop before services or connections
  order("'owner_notifications_owned_synthetic_context_required'",'assertLifecycleSandbox','const {executePlanExceptions}=require');
 });
 test('runner requires explicit local reuse directory and normalizes reverse arguments',()=>{
- const directory='D:/owned-only/synthetic';
+ const directory=fileURLToPath(new URL('.',import.meta.url));
  assert.deepEqual(ownerNotificationsNativeArgs(['--run-local','--directory',directory]),['--run-local','--directory',directory]);
  assert.deepEqual(ownerNotificationsNativeArgs(['--directory',directory,'--run-local']),['--run-local','--directory',directory]);
  for(const args of [[],['--run-local'],['--run-local','--directory','relative'],['--run-local','--directory',directory,'--new-cluster'],
