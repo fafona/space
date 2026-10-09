@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { AttendanceOwnerNotificationsClient, ownerNotificationsPendingKey, parseOwnerNotificationsPending, type OwnerNotificationsClientOptions } from "./merchantAttendanceOwnerNotificationsClient";
 import { parseOwnerNotificationsHttpQuery, parseOwnerNotificationsBody, parseOwnerNotificationsResponse, type OwnerNotificationsItem } from "./merchantAttendanceOwnerNotifications";
@@ -27,6 +27,25 @@ async function detail(f: ReturnType<typeof fixture>) { await f.client.initialize
 async function lost(f: ReturnType<typeof fixture>) { await detail(f); f.setBehavior(async () => { throw Error("lost"); }); await f.client.markRead(); assert.equal(f.client.getSnapshot().phase, "unconfirmed"); }
 function receipt(operationId = op, notificationId = item.notificationId, actor = actorId) {
   return { ok: true, ...base, kind: "receipt", receipt: { operationId, notificationId, actorId: actor, readAt: stamp } };
+}
+function requestClock(t: TestContext) {
+  type Timer = ReturnType<typeof setTimeout>;
+  let now = 1000, sequence = 0;
+  const timers = new Map<Timer, { at: number; callback: () => void }>();
+  t.mock.method(performance, "now", () => now);
+  t.mock.method(globalThis, "setTimeout", ((callback: () => void, ms = 0) => {
+    const handle = ++sequence as unknown as Timer;
+    timers.set(handle, { at: now + ms, callback }); return handle;
+  }) as typeof setTimeout);
+  t.mock.method(globalThis, "clearTimeout", ((handle: Timer) => { timers.delete(handle); }) as typeof clearTimeout);
+  return {
+    advance: (ms: number) => { now += ms; },
+    fireDeadline: () => {
+      assert.equal(timers.size, 1, "exactly one request deadline is armed");
+      const [handle, timer] = [...timers][0]; now = timer.at; timers.delete(handle); timer.callback();
+    },
+    timers: () => timers.size,
+  };
 }
 test("mount and local initialize have zero HTTP, no storage writes; explicit list/detail never mark read", async () => {
   const f = fixture(); await detail(f); assert.equal(f.calls.length, 2); assert.ok(f.calls.every(x => x.init.method === "GET")); assert.equal(f.values.size, 0);
@@ -80,10 +99,58 @@ test("pause aborts a request even when fetch ignores its signal; late result nev
   const run = f.client.load(); f.client.pause(); await run; release(response({ ok: true, ...base, kind: "list", items: [item], nextCursor: null }));
   await new Promise(resolve => setImmediate(resolve)); assert.equal(f.client.getSnapshot().result, null); assert.equal(f.values.size, 0);
 });
-test("one bounded request deadline includes an unending response body", async () => {
-  const f = fixture({ timeoutMs: 8 }); await f.client.initialize(); let cancelled = false;
-  f.setBehavior(async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("{")); }, cancel() { cancelled = true; } }), { headers: { "content-type": "application/json" } }));
-  await f.client.load(); assert.equal(f.client.getSnapshot().phase, "blocked"); assert.equal(cancelled, true);
+test("one bounded request deadline includes an unending response body", async t => {
+  const clock = requestClock(t), f = fixture({ timeoutMs: 8 }); await f.client.initialize();
+  let cancelled = false, reads = 0, entered!: () => void;
+  const pendingRead = new Promise<void>(resolve => { entered = resolve; });
+  const body = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode("{")); }, cancel() { cancelled = true; } });
+  const getReader = body.getReader.bind(body);
+  t.mock.method(body, "getReader", (() => {
+    const reader = getReader(), read = reader.read.bind(reader);
+    t.mock.method(reader, "read", () => { const part = read(); if (++reads === 2) entered(); return part; });
+    return reader;
+  }) as typeof body.getReader);
+  f.setBehavior(async () => new Response(body, { headers: { "content-type": "application/json" } }));
+  const run = f.client.load(); await pendingRead;
+  assert.equal(reads, 2); assert.equal(body.locked, true); assert.equal(cancelled, false);
+  assert.equal(f.calls.at(-1)?.init.signal?.aborted, false);
+  clock.advance(7);
+  assert.equal(f.client.getSnapshot().phase, "loading", "deadline minus one remains in the pending read");
+  assert.equal(f.calls.at(-1)?.init.signal?.aborted, false); assert.equal(cancelled, false);
+  clock.fireDeadline(); await run;
+  assert.equal(f.client.getSnapshot().phase, "blocked"); assert.equal(f.client.getSnapshot().result, null);
+  assert.equal(cancelled, true); assert.equal(body.locked, false); assert.equal(clock.timers(), 0);
+});
+
+test("headers arriving exactly at deadline cancel body even before the timeout signal fires", async t => {
+  const clock = requestClock(t), f = fixture({ timeoutMs: 8 }); await f.client.initialize(); let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+  f.setBehavior(async (_path, init) => {
+    assert.equal(init.signal?.aborted, false);
+    const result = new Response(body, { headers: { "content-type": "application/json" } });
+    clock.advance(8); assert.equal(init.signal?.aborted, false, "deadline callback has not run");
+    return result;
+  });
+  await f.client.load();
+  assert.equal(f.calls.at(-1)?.init.signal?.aborted, true, "post-headers lease guard aborts the request");
+  assert.equal(f.client.getSnapshot().phase, "blocked"); assert.equal(f.client.getSnapshot().result, null);
+  assert.equal(cancelled, true); assert.equal(body.locked, false); assert.equal(clock.timers(), 0);
+});
+
+test("recovery headers after deadline cancel body while retaining the exact unresolved write intent", async t => {
+  const clock = requestClock(t), f = fixture({ timeoutMs: 8 }); await lost(f);
+  const saved = f.values.get(f.client.storageKey); let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode(JSON.stringify(receipt()))); }, cancel() { cancelled = true; } });
+  f.setBehavior(async (_path, init) => {
+    assert.equal(init.method, "GET"); assert.equal(init.body, undefined); assert.equal(init.signal?.aborted, false);
+    const result = new Response(body, { headers: { "content-type": "application/json" } });
+    clock.advance(9); assert.equal(init.signal?.aborted, false); return result;
+  });
+  await f.client.recover();
+  assert.equal(f.values.get(f.client.storageKey), saved);
+  assert.ok(f.client.getSnapshot().pending); assert.equal(f.client.getSnapshot().phase, "unconfirmed");
+  assert.equal(f.client.getSnapshot().result, null); assert.equal(f.calls.filter(x => x.init.method === "POST").length, 1);
+  assert.equal(cancelled, true); assert.equal(body.locked, false); assert.equal(clock.timers(), 0);
 });
 test("strict body rejects duplicate keys, invalid UTF8, oversize, non200 and wrong MIME", async () => {
   const bad = [() => new Response('{"ok":true,"ok":true}', { headers: { "content-type": "application/json" } }),

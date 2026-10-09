@@ -65,15 +65,33 @@ test("196 null, foreign, damaged, oversized, invalid UTF8 and failed recovery re
     assert.equal(storage.values.get(key), raw); assert.equal(calls, 2); }
 });
 test("196 pause/current Auth/storage replacement reject late POST and GET while keeping the relevant pending bytes", async () => {
-  const saved = await independentUiReceipt(); let release: ((r: Response) => void) | null = null, calls = 0, current = true;
-  const { c, storage } = client(async () => { calls++; return new Promise<Response>(resolve => { release = resolve; }); }, memory(), () => current);
-  const waitForCall = async () => { for (let i = 0; i < 30 && !release; i++) await new Promise(resolve => setTimeout(resolve, 1)); assert(release); };
-  const pending = c.post(query(), independentUiCommand()); await waitForCall(); const raw = storage.values.get(key); current = false; release!(reply(saved));
-  await assert.rejects(pending); assert.equal(storage.values.get(key), raw); current = true; release = null;
-  const recovering = c.recover(); await waitForCall(); storage.values.set(key, "replacement intent"); release!(reply(saved));
+  function deferredRequest() {
+    let enter!: () => void, release!: (response: Response) => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const response = new Promise<Response>(resolve => { release = resolve; });
+    return { entered, response, enter, release };
+  }
+  async function enteredBeforeCompletion(entered: Promise<void>, operation: Promise<unknown>, label: string) {
+    await Promise.race([entered, operation.then(
+      () => { assert.fail(`${label} resolved before entering apiFetch`); },
+      () => { assert.fail(`${label} rejected before entering apiFetch`); },
+    )]);
+  }
+  const saved = await independentUiReceipt(), postRequest = deferredRequest(), replacedRequest = deferredRequest(), pausedRequest = deferredRequest();
+  const requests = [postRequest, replacedRequest, pausedRequest]; let calls = 0, current = true;
+  const { c, storage } = client(async (_, init) => {
+    const request = requests[calls++]; assert(request); assert.equal(init?.method, calls === 1 ? "POST" : "GET");
+    request.enter(); return request.response;
+  }, memory(), () => current);
+  const pending = c.post(query(), independentUiCommand()); await enteredBeforeCompletion(postRequest.entered, pending, "admin POST");
+  const raw = storage.values.get(key); current = false; postRequest.release(reply(saved));
+  await assert.rejects(pending); assert.equal(storage.values.get(key), raw); current = true;
+  const recovering = c.recover(); await enteredBeforeCompletion(replacedRequest.entered, recovering, "replacement receipt GET");
+  storage.values.set(key, "replacement intent"); replacedRequest.release(reply(saved));
   await assert.rejects(recovering); assert.equal(storage.values.get(key), "replacement intent"); assert.equal(calls, 2);
-  storage.values.set(key, raw!); release = null; const paused = c.recover(); await waitForCall(); c.pause(); release!(reply(saved));
-  await assert.rejects(paused); assert.equal(storage.values.get(key), raw);
+  storage.values.set(key, raw!); const paused = c.recover(); await enteredBeforeCompletion(pausedRequest.entered, paused, "paused receipt GET");
+  c.pause(); pausedRequest.release(reply(saved));
+  await assert.rejects(paused); assert.equal(storage.values.get(key), raw); assert.equal(calls, 3);
 });
 test("196 one bounded request deadline and busy guard prevent automatic repeat or late parsing acceptance", async () => {
   let calls = 0; const { c, storage } = client(async () => { calls++; return new Promise<Response>(() => {}); }, memory(), () => true, 8);

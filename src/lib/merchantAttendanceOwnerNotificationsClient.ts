@@ -98,7 +98,10 @@ export class AttendanceOwnerNotificationsClient {
         ...(command ? { body: JSON.stringify({ query: q, command }) } : {}), signal: l.controller.signal, cache: "no-store", redirect: "error" });
       if (l.controller.signal.aborted || response.redirected || response.ok && response.status !== 200
         || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") { void response.body?.cancel().catch(() => {}); throw Error("invalid_response"); }
-      this.guard(l); reader = response.body?.getReader(); if (!reader) throw Error("empty_response");
+      // A deadline/Auth change can invalidate the lease after headers but
+      // before a reader exists. Cancel that body as well as an active reader.
+      try { this.guard(l); } catch (error) { void response.body?.cancel().catch(() => {}); throw error; }
+      reader = response.body?.getReader(); if (!reader) throw Error("empty_response");
       const decoder = new TextDecoder("utf-8", { fatal: true }); let bytes = 0, text = "";
       try { while (true) { const part = await reader.read(); this.guard(l); if (part.done) break;
         bytes += part.value.byteLength; if (bytes > (response.status === 200 ? OWNER_NOTIFICATIONS_BYTE_LIMIT : 4096)) throw Error("response_too_large");

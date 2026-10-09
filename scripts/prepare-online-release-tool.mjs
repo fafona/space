@@ -29,6 +29,130 @@ const blobId = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).upda
 const excluded = name => name === 'public/downloads' || name.startsWith('public/downloads/');
 const exists = name => { try { fs.lstatSync(name); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; } };
 
+// One explicitly approved, never-published attendance candidate. This sidecar
+// does not change its original preparing state, delete artifacts or grant a
+// retry of that target. The normal exact-main/source/lock gates still apply.
+const unpublishedTarget = '5b974eb06c858757c8785d5f9106b006903a5ba0';
+const unpublishedOperation = `${RELEASE_ROOT}/${unpublishedTarget}`;
+const unpublishedDirectory = `${APP}.web-releases/${unpublishedTarget.slice(0, 12)}-online`;
+export const UNPUBLISHED_CANDIDATE_INCIDENT = Object.freeze({
+  target: unpublishedTarget, baseline: 'b1304d5d58841c2247b93229b90bb7adcfd64965',
+  stateSha256: '98af9fe83f97d8f02236ff964823cebb5804f663469334c3149c067e3f032709',
+  operation: unpublishedOperation, directory: unpublishedDirectory,
+  name: `merchant-space-online-${unpublishedTarget.slice(0, 12)}`,
+  proxyFiles: Object.freeze(['e6718553d7a03bef1e991fe6b6898cab_www.faolla.com.conf',
+    'no_store_entries_www.faolla.com.conf', 'faolla_contact_card_release.conf']),
+});
+export const UNPUBLISHED_CANDIDATE_ABSENT_PATHS = Object.freeze([
+  `${unpublishedDirectory}/.next`, `${unpublishedDirectory}/.next/BUILD_ID`,
+  ...['attendance-build-proof.json', 'build-home', 'build-cache', 'build-tmp',
+    'attendance-database-progress.json', 'attendance-database-ready.json',
+    'migration-preview.json', 'migration-report.json'].map(name => `${unpublishedOperation}/${name}`),
+]);
+export const UNPUBLISHED_CANDIDATE_PRESERVED_FILES = Object.freeze({
+  'runtime.json': `${unpublishedOperation}/runtime.json`,
+  '.env.local': `${unpublishedDirectory}/.env.local`,
+  'attendance-stage-focused-diagnostic.tap': `${unpublishedOperation}/attendance-stage-focused-diagnostic.tap`,
+  ...Object.fromEntries(UNPUBLISHED_CANDIDATE_INCIDENT.proxyFiles.flatMap(name =>
+    ['before', 'after'].map(prefix => [`${prefix}-${name}`, `${unpublishedOperation}/${prefix}-${name}`]))),
+});
+const terminationObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const terminationKeys = (value, keys) => terminationObject(value) &&
+  Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+const terminationHash = value => typeof value === 'string' && value.length === 64 && /^[a-f0-9]{64}$/.test(value);
+const terminationStable = value => Array.isArray(value) ? value.map(terminationStable) : terminationObject(value)
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, terminationStable(value[key])])) : value;
+const terminationJson = value => JSON.stringify(terminationStable(value));
+const terminationEqual = (left, right) => terminationJson(left) === terminationJson(right);
+const terminationTime = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+  Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const terminationRequire = condition => {if (!condition) fail('unpublished_termination_invalid');};
+
+function unpublishedState(stateText) {
+  const p = UNPUBLISHED_CANDIDATE_INCIDENT;
+  terminationRequire(typeof stateText === 'string' && Buffer.byteLength(stateText) <= 256 * 1024 && sha256(stateText) === p.stateSha256);
+  let state; try {state = JSON.parse(stateText);} catch {fail('unpublished_termination_invalid');}
+  terminationRequire(terminationObject(state) && state.target === p.target && state.baseline === p.baseline &&
+    state.status === 'preparing' && state.lane === 'attendance' && state.attendanceEnabled === false &&
+    state.directory === p.directory && state.name === p.name && Number.isSafeInteger(state.port) && state.port >= 3103 && state.port <= 3110 &&
+    Number.isSafeInteger(state.oldPort) && state.oldPort > 0 && state.oldPort !== state.port &&
+    terminationObject(state.previousActive) && state.previousActive.target === p.baseline &&
+    state.previousActive.name === state.oldName && state.previousActive.directory === state.oldDirectory && state.previousActive.port === state.oldPort &&
+    Array.isArray(state.processes) && state.processes.length > 0 && terminationObject(state.configs) &&
+    terminationHash(state.maintenanceHash) && terminationHash(state.markerHash) && terminationTime(state.startedAt));
+  for (const key of ['attendanceBuildProofSha256', 'attendanceDatabaseProofSha256', 'activatedAt', 'databaseReadyAt', 'terminatedAt', 'termination'])
+    terminationRequire(!Object.hasOwn(state, key));
+  return state;
+}
+
+function unpublishedEvidence(state, evidence) {
+  const p = UNPUBLISHED_CANDIDATE_INCIDENT;
+  terminationRequire(terminationKeys(evidence, ['schemaVersion', 'target', 'baseline', 'operation', 'observedAt', 'stateSha256',
+    'sourceHead', 'sourceClean', 'absentPaths', 'buildUnit', 'activeText', 'processes', 'baseDirectory', 'maintenanceText',
+    'markerSha256', 'proxyHashes', 'retentionHeadSha256', 'database', 'preservedFiles', 'processReferencesAbsent',
+    'pm2DumpReferencesAbsent', 'portVacant', 'candidateCompatibilityDatabaseAbsent', 'diagnosticKind', 'diagnosticFailures']) &&
+    evidence.schemaVersion === 1 && evidence.target === p.target && evidence.baseline === p.baseline && evidence.operation === p.operation &&
+    evidence.stateSha256 === p.stateSha256 && evidence.sourceHead === p.target && evidence.sourceClean === true &&
+    terminationTime(evidence.observedAt) && Date.parse(evidence.observedAt) >= Date.parse(state.startedAt) &&
+    terminationEqual(evidence.absentPaths, UNPUBLISHED_CANDIDATE_ABSENT_PATHS) &&
+    terminationKeys(evidence.buildUnit, ['name', 'loadState', 'journalEmpty']) &&
+    evidence.buildUnit.name === `faolla-attendance-build-${p.target}.service` && evidence.buildUnit.loadState === 'not-found' && evidence.buildUnit.journalEmpty === true &&
+    evidence.processReferencesAbsent === true && evidence.pm2DumpReferencesAbsent === true && evidence.portVacant === true &&
+    evidence.candidateCompatibilityDatabaseAbsent === true && evidence.diagnosticKind === 'focused-test-replay' && evidence.diagnosticFailures === 6 &&
+    typeof evidence.activeText === 'string' && typeof evidence.maintenanceText === 'string' &&
+    terminationEqual(evidence.processes, state.processes) && evidence.baseDirectory === state.baseDirectory &&
+    evidence.markerSha256 === state.markerHash && terminationHash(evidence.markerSha256));
+  let active, maintenance;
+  try {active = JSON.parse(evidence.activeText); maintenance = JSON.parse(evidence.maintenanceText);} catch {fail('unpublished_termination_invalid');}
+  terminationRequire(terminationEqual(active, state.previousActive) && active.target === p.baseline &&
+    sha256(evidence.maintenanceText) === state.maintenanceHash && maintenance.phase === 'ended' &&
+    evidence.retentionHeadSha256 === (state.retentionHeadSha256 ?? state.rollingRetentionHeadSha256 ?? null) &&
+    (evidence.retentionHeadSha256 === null || terminationHash(evidence.retentionHeadSha256)) &&
+    terminationKeys(evidence.proxyHashes, p.proxyFiles) &&
+    terminationKeys(evidence.preservedFiles, Object.keys(UNPUBLISHED_CANDIDATE_PRESERVED_FILES)) &&
+    Object.values(evidence.preservedFiles).every(terminationHash) &&
+    terminationKeys(evidence.database, ['identitySha256', 'registrySha256', 'registryCount', 'registryMaximum', 'attendanceRelations', 'attendanceFunctions']) &&
+    terminationHash(evidence.database.identitySha256) && terminationHash(evidence.database.registrySha256) &&
+    evidence.database.registryCount === 60 && evidence.database.registryMaximum === '202609240052' &&
+    evidence.database.attendanceRelations === 0 && evidence.database.attendanceFunctions === 0);
+  for (const file of p.proxyFiles) {
+    terminationRequire(terminationObject(state.configs[file]) && terminationHash(state.configs[file].oldHash) && terminationHash(state.configs[file].newHash) &&
+      evidence.proxyHashes[file] === state.configs[file].oldHash &&
+      evidence.preservedFiles[`before-${file}`] === state.configs[file].oldHash && evidence.preservedFiles[`after-${file}`] === state.configs[file].newHash);
+  }
+  terminationRequire(!evidence.processes.some(process => !terminationObject(process) || process.name === p.name ||
+    process.cwd === p.directory || process.status === 'online' && process.port === state.port ||
+    typeof process.executable === 'string' && (process.executable === p.directory || process.executable.startsWith(p.directory + '/'))));
+}
+
+/** Pure policy; the locked, ownership-checking collector supplies actual facts. */
+export function createUnpublishedCandidateTerminationReceipt({stateText, evidence, toolRevision, terminatedAt} = {}) {
+  const state = unpublishedState(stateText), p = UNPUBLISHED_CANDIDATE_INCIDENT;
+  unpublishedEvidence(state, evidence);
+  terminationRequire(typeof toolRevision === 'string' && toolRevision.length === 40 && SHA.test(toolRevision) && terminationTime(terminatedAt) &&
+    Date.parse(terminatedAt) >= Date.parse(evidence.observedAt) && Date.parse(terminatedAt) - Date.parse(evidence.observedAt) <= 300000);
+  const savedEvidence = JSON.parse(JSON.stringify(evidence));
+  return {schemaVersion: 1, kind: 'online-unpublished-candidate-termination', target: p.target, baseline: p.baseline,
+    operation: p.operation, candidate: {directory: p.directory, name: p.name, port: state.port}, originalStateSha256: p.stateSha256,
+    originalStateText: stateText, evidence: savedEvidence, evidenceSha256: sha256(terminationJson(savedEvidence)), toolRevision, terminatedAt};
+}
+
+/** Verify sealed historical facts plus only this failed candidate's retained artifacts.
+ * Future successful publication may change the live proxy/DB/PM2 baseline; it
+ * does not retroactively invalidate the termination of this unpublished target.
+ */
+export function assertUnpublishedCandidateTerminationReceipt({stateText, receipt, preservedFiles, absentPaths} = {}) {
+  terminationRequire(terminationKeys(receipt, ['schemaVersion', 'kind', 'target', 'baseline', 'operation', 'candidate',
+    'originalStateSha256', 'originalStateText', 'evidence', 'evidenceSha256', 'toolRevision', 'terminatedAt']) &&
+    receipt.originalStateText === stateText && terminationHash(receipt.evidenceSha256));
+  const expected = createUnpublishedCandidateTerminationReceipt({stateText, evidence: receipt.evidence,
+    toolRevision: receipt.toolRevision, terminatedAt: receipt.terminatedAt});
+  terminationRequire(terminationEqual(receipt, expected) &&
+    terminationKeys(preservedFiles, Object.keys(UNPUBLISHED_CANDIDATE_PRESERVED_FILES)) &&
+    terminationEqual(preservedFiles, receipt.evidence.preservedFiles) && terminationEqual(absentPaths, UNPUBLISHED_CANDIDATE_ABSENT_PATHS));
+  return true;
+}
+
 function canonicalAbsolute(value) {
   if (typeof value !== 'string' || !path.isAbsolute(value) || path.resolve(value) !== value || /[\r\n\0]/.test(value)) fail('path_invalid');
   return value;
@@ -170,8 +294,22 @@ export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoo
     if (!SHA.test(name)) fail('release_entry_invalid');
     const directory = path.join(releaseRoot, name); checkPath(directory);
     const state = path.join(directory, 'state.json'); checkPath(state, 'file');
-    const value = JSON.parse(fs.readFileSync(state, 'utf8'));
-    if (value.target !== name || !['active', 'rolled-back'].includes(value.status)) fail('release_pending');
+    const stateText = fs.readFileSync(state, 'utf8'), value = JSON.parse(stateText);
+    if (value.target !== name) fail('release_pending');
+    if (['active', 'rolled-back'].includes(value.status)) continue;
+    const incident = UNPUBLISHED_CANDIDATE_INCIDENT, receiptPath = path.join(directory, 'unpublished-termination.json');
+    if (name !== incident.target || directory !== incident.operation || value.status !== 'preparing' || !exists(receiptPath)) fail('release_pending');
+    checkPath(receiptPath, 'file'); checkPath(incident.directory);
+    for (const [full, mode] of [[directory, 0o700], [state, 0o600], [receiptPath, 0o600]])
+      if ((fs.lstatSync(full).mode & 0o777) !== mode) fail('unsafe_path');
+    const preservedFiles = {};
+    for (const [key, full] of Object.entries(UNPUBLISHED_CANDIDATE_PRESERVED_FILES)) {
+      checkPath(full, 'file'); if ((fs.lstatSync(full).mode & 0o777) !== 0o600) fail('unsafe_path');
+      preservedFiles[key] = sha256(fs.readFileSync(full));
+    }
+    for (const full of UNPUBLISHED_CANDIDATE_ABSENT_PATHS) if (exists(full)) fail('release_pending');
+    assertUnpublishedCandidateTerminationReceipt({stateText, receipt: JSON.parse(fs.readFileSync(receiptPath, 'utf8')),
+      preservedFiles, absentPaths: [...UNPUBLISHED_CANDIDATE_ABSENT_PATHS]});
   }
 }
 

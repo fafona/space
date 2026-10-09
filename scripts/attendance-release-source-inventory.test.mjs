@@ -40,6 +40,10 @@ test("database source, CI fixture code and local-only tooling cannot be confused
     ["scripts/run-merchant-attendance-reminders.ts", "background-worker-source"],
     ["next.config.ts", "opt-in-build-resource-configuration"],
     ["scripts/attendance-build-worker-config.test.mjs", "unit-or-contract-test"],
+    ["scripts/online-unpublished-candidate.mjs", "release-operation-source"],
+    ["scripts/online-unpublished-candidate.test.mjs", "unit-or-contract-test"],
+    ["scripts/prepare-online-release-tool.mjs", "release-operation-source"],
+    ["scripts/prepare-online-release-tool.test.mjs", "unit-or-contract-test"],
   ]);
   for (const [file, category] of examples) assert.equal(classifyAttendanceChange(file).category, category, file);
 });

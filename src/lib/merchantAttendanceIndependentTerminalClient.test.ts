@@ -94,16 +94,36 @@ test("19664 durable terminal intents is a hard bound and corrupt rows are never 
   await assert.rejects(s.c.punch("clock_in", pin)); assert.equal(s.calls.length, 2); assert.equal(s.storage.values.size, 64);
 });
 test("196 pause/current-device fence and storage CAS reject late clock/recovery without consuming pending", async () => {
-  let release: ((r: Response) => void) | undefined, original: IndependentClockCommand | undefined; let current = true;
+  function deferredRequest() {
+    let enter!: () => void, release!: (response: Response) => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const response = new Promise<Response>(resolve => { release = resolve; });
+    return { entered, response, enter, release };
+  }
+  async function enteredBeforeCompletion(entered: Promise<void>, operation: Promise<unknown>, label: string) {
+    await Promise.race([entered, operation.then(
+      () => { assert.fail(`${label} resolved before entering apiFetch`); },
+      () => { assert.fail(`${label} rejected before entering apiFetch`); },
+    )]);
+  }
+  const clockRequest = deferredRequest(), replacedRequest = deferredRequest(), pausedRequest = deferredRequest();
+  const requests = [clockRequest, replacedRequest, pausedRequest]; let requestIndex = 0, original: IndependentClockCommand | undefined; let current = true;
   const s = setup(async (_url, init) => { const b = JSON.parse(String(init?.body)); if (b.request.kind === "state") return reply({ ok: true, data: state() });
-    if (b.request.kind === "clock") original = b.request.command; return new Promise<Response>(resolve => { release = resolve; }); }, memory(), { current: () => current });
-  const wait = async () => { for (let n = 0; n < 50 && !release; n++) await new Promise(r => setTimeout(r, 1)); assert(release); };
-  await ready(s); const posting = s.c.punch("clock_in", pin); await wait(); const raw = s.storage.values.get(key); current = false; release!(reply({ ok: true, data: clock(original!) }));
-  await assert.rejects(posting); assert.equal(s.storage.values.get(key), raw); current = true; s.c.clear(); release = undefined;
-  const recovering = s.c.recover(workerNo, pin); await wait(); s.storage.values.set(key, "replacement original"); release!(reply({ ok: true, data: envelope({ kind: "receipt", receipt: receipt(original!) }) }));
-  await assert.rejects(recovering); assert.equal(s.storage.values.get(key), "replacement original"); s.storage.values.set(key, raw!); release = undefined;
-  const paused = s.c.recover(workerNo, pin); await wait(); s.c.pause(); release!(reply({ ok: true, data: envelope({ kind: "receipt", receipt: receipt(original!) }) }));
-  await assert.rejects(paused); assert.equal(s.storage.values.get(key), raw); assert.equal(s.c.getSnapshot().device, null); assert.equal(s.c.getSnapshot().result, null);
+    assert.equal(init?.method, "POST"); assert.equal(b.request.kind, requestIndex === 0 ? "clock" : "recover");
+    if (b.request.kind === "clock") original = b.request.command;
+    const request = requests[requestIndex++]; assert(request); request.enter(); return request.response; }, memory(), { current: () => current });
+  // Real command hashing may finish after any small sleep. Invalidate only
+  // after this exact request enters transport, without mocking crypto or time.
+  await ready(s); const posting = s.c.punch("clock_in", pin); await enteredBeforeCompletion(clockRequest.entered, posting, "terminal clock POST");
+  const raw = s.storage.values.get(key); assert(raw); assert(original); current = false; clockRequest.release(reply({ ok: true, data: clock(original) }));
+  await assert.rejects(posting); assert.equal(s.storage.values.get(key), raw); assert.equal(s.calls.length, 3); current = true; s.c.clear();
+  const recovering = s.c.recover(workerNo, pin); await enteredBeforeCompletion(replacedRequest.entered, recovering, "replacement recover POST");
+  s.storage.values.set(key, "replacement original"); replacedRequest.release(reply({ ok: true, data: envelope({ kind: "receipt", receipt: receipt(original) }) }));
+  await assert.rejects(recovering); assert.equal(s.storage.values.get(key), "replacement original"); assert.equal(s.calls.length, 4); s.storage.values.set(key, raw);
+  const paused = s.c.recover(workerNo, pin); await enteredBeforeCompletion(pausedRequest.entered, paused, "paused recover POST");
+  s.c.pause(); pausedRequest.release(reply({ ok: true, data: envelope({ kind: "receipt", receipt: receipt(original) }) }));
+  await assert.rejects(paused); assert.equal(s.storage.values.get(key), raw); assert.equal(s.calls.length, 5); assert.equal(requestIndex, 3);
+  assert.equal(s.c.getSnapshot().device, null); assert.equal(s.c.getSnapshot().result, null);
 });
 test("196 one total deadline, busy guard and15-second body expiry do not retry or lose pending", async () => {
   const s = setup(async (url, init) => JSON.parse(String(init?.body)).request.kind === "clock" ? new Promise<Response>(() => {}) : normal(url, init), memory(), { timeoutMs: 30 });

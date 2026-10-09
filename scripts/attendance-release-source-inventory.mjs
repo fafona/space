@@ -82,11 +82,15 @@ export function classifyAttendanceChange(value) {
     return { category: "release-review-metadata", readContents: true };
   }
   if (file === "scripts/attendance-production-database-migrations.test.mjs"
-    || file === "scripts/attendance-online-build.test.mjs") {
+    || file === "scripts/attendance-online-build.test.mjs"
+    || file === "scripts/online-unpublished-candidate.test.mjs"
+    || file === "scripts/prepare-online-release-tool.test.mjs") {
     return { category: "unit-or-contract-test", readContents: true };
   }
   if (file === "scripts/attendance-production-database-migrations.mjs"
     || file === "scripts/attendance-online-build.mjs"
+    || file === "scripts/online-unpublished-candidate.mjs"
+    || file === "scripts/prepare-online-release-tool.mjs"
     || file === "scripts/online-traffic-release-policy.mjs") {
     return { category: "release-operation-source", readContents: true };
   }
