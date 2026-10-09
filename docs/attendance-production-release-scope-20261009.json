@@ -2648,7 +2648,11 @@
     "scripts/attendance-release-source-inventory.test.mjs",
     "scripts/online-traffic-release-policy.mjs",
     "scripts/online-traffic-release.mjs",
-    "scripts/online-traffic-release.test.mjs"
+    "scripts/online-traffic-release.test.mjs",
+    "scripts/prepare-online-release-tool.mjs",
+    "scripts/prepare-online-release-tool.test.mjs",
+    "scripts/online-unpublished-candidate.mjs",
+    "scripts/online-unpublished-candidate.test.mjs"
   ],
   "evidence": [
     "docs/employee-attendance-account-status-recovery-20261006.md",

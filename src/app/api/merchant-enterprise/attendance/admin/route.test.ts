@@ -8,21 +8,29 @@ import { MerchantAttendanceError } from "@/lib/merchantAttendanceTime";
 const id="00000000-0000-4000-8000-000000000001";
 const settings={timeZone:"UTC",enabled:false,webClockEnabled:false,webBreakPaid:false};
 const body={siteId:"99990001",operationId:id,expectedVersion:0,kind:"settings",values:settings};
-const url="https://www.faolla.com/api/merchant-enterprise/attendance/admin";
-const post=(value:unknown=body,origin="https://www.faolla.com")=>new Request(url,{method:"POST",headers:{"Content-Type":"application/json",origin},body:JSON.stringify(value)});
-// The HTTP fixture has an explicit synthetic cohort, never the publisher's cohort.
-// Restore both values so other tests cannot inherit this fixture's admission.
-let previousRollout: { enabled?: string; sites?: string };
+const canonicalOrigin="https://launch.faolla.com";
+const url=`${canonicalOrigin}/api/merchant-enterprise/attendance/admin`;
+const post=(value:unknown=body,origin=canonicalOrigin)=>new Request(url,{method:"POST",headers:{"Content-Type":"application/json",origin},body:JSON.stringify(value)});
+// The HTTP fixture fixes its synthetic portal and cohort, never the publisher's.
+// Restore every value so other tests cannot inherit this fixture's admission.
+let previousRollout: { enabled?: string; sites?: string; canonicalOrigin?: string; publicOrigin?: string };
 beforeEach(() => {
-  previousRollout = { enabled: process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED, sites: process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS };
+  previousRollout = { enabled: process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED, sites: process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS,
+    canonicalOrigin: process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN, publicOrigin: process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN };
   process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED = "1";
   process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS = body.siteId;
+  process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = canonicalOrigin;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = canonicalOrigin;
 });
 afterEach(() => {
   if (previousRollout.enabled === undefined) delete process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED;
   else process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED = previousRollout.enabled;
   if (previousRollout.sites === undefined) delete process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS;
   else process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS = previousRollout.sites;
+  if (previousRollout.canonicalOrigin === undefined) delete process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
+  else process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = previousRollout.canonicalOrigin;
+  if (previousRollout.publicOrigin === undefined) delete process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  else process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousRollout.publicOrigin;
 });
 function setup(extra:Partial<typeof attendanceAdminDependencies>={}) {
   const calls:AttendanceAdminInput[]=[];
@@ -46,6 +54,15 @@ test("origin and merchant-domain checks run before auth",async()=>{
   let auth=false;const {deps}=setup({authenticate:async()=>{auth=true;throw Error("unexpected");}});
   assert.equal((await handleAttendanceAdmin(post(body,"https://other.example"),deps)).status,403);
   assert.equal((await handleAttendanceAdmin(new Request("https://merchant.faolla.com/api/merchant-enterprise/attendance/admin?siteId=99990001"),deps)).status,403);assert.equal(auth,false);
+});
+test("legacy www portal requests are rejected before auth even with a same-origin POST",async()=>{
+  let auth=false;const {deps,calls}=setup({authenticate:async()=>{auth=true;throw Error("unexpected");}});
+  const legacyUrl="https://www.faolla.com/api/merchant-enterprise/attendance/admin";
+  for(const request of [new Request(`${legacyUrl}?siteId=${body.siteId}`),new Request(legacyUrl,{method:"POST",headers:{"Content-Type":"application/json",origin:"https://www.faolla.com"},body:JSON.stringify(body)})]){
+    const response=await handleAttendanceAdmin(request,deps);
+    assert.equal(response.status,403);assert.equal((await response.json()).error,"forbidden_origin");
+    assert.equal(auth,false);assert.equal(calls.length,0);
+  }
 });
 test("entitlement, rate limit and denied owner never become success",async()=>{
   for(const [overrides,status] of [[{entitlement:async()=>{throw new MerchantEnterpriseAccessError("enterprise_management_disabled",403);}},403],[{allow:()=>false},429],[{execute:async()=>{throw new MerchantAttendanceError("attendance_access_denied");}},403],[{execute:async()=>{throw Error("private database details");}},503]] as const) {

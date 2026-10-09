@@ -66,3 +66,15 @@
 旧版与新 additive schema 的兼容性须在切换前证明。未知 SQL、身份、角色/旧记录漂移或新失败一律停止并保留证据。
 
 本地纯测试、源码静态测试、隔离新库验收、正式库升级、候选构建、公共切换和真实手机验收是不同证据；报告应分别列明，不相互替代。
+
+## 获准结束的未发布候选
+
+2026-10-09 的 `5b974eb06c858757c8785d5f9106b006903a5ba0` 在 focused tests 阶段失败：测试固定旧 `www` 来源，而正式入口使用 `launch.faolla.com`。只修正测试环境隔离并补旧来源拒绝断言，不放宽运行时来源校验。
+
+用户批准保留证据后结束该候选，再对修正版本完整重试。`online-unpublished-candidate.mjs` 只接受这一完整 SHA、原基线及原状态 SHA。它取得既有双锁，核对整个 `.next` 和构建私有目录不存在、systemd unit/journal 无构建痕迹、PM2/保存 dump/进程/端口无候选、正式库仍为精确 052 状态且无考勤对象、无升级/兼容操作文件，以及旧代理、维护状态、保留进程、活动版本不变。
+
+`attendance-stage-focused-diagnostic.tap` 是失败测试重放的诊断日志，不冒充原 stage 完整日志。校验结合固定原状态、实际执行痕迹及原构建入口先创建私有目录的代码约束；未知痕迹一律拒绝结束。
+
+操作只写一次 `unpublished-termination.json`，原 `state.json`、候选、依赖、私有环境、日志和原备份全部保留，不伪标发布成功或回滚。共享 pending 校验只认可该固定候选的完整回执和仍保留的原证据；其他待发布操作继续阻止发布。已结束候选仍由旧清理器保护，不扩大清理范围。
+
+新工具必须经正常 PR、必需 CI、合并及 exact-main 验证。首次安装变更 helper 使用已有的 root-owned、干净、只包含固定静态依赖闭包的 sparse bootstrap worktree；逐 blob 验证后先执行 `dry-run`，再执行明确获准的 `end approved-end-unpublished-candidate-5b974eb06c85`。随后正常准备完整发布工具、新候选、新目标备份和完整验收链；不覆盖旧工具或绕过 pending 保护。
