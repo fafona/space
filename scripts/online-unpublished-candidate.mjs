@@ -127,7 +127,7 @@ async function observe(toolRevision){
   for(const name of ['/root/.pm2/dump.pm2','/root/.pm2/dump.pm2.bak'])referenceAbsent(JSON.parse(readOwned(name,false).toString('utf8')));
   assertOnlineToolOwnedPath('/root/.pm2/logs');if(fs.readdirSync('/root/.pm2/logs').some(name=>name.includes(s.name)))fail('candidate_pm2_log_present');
   const processReferencesAbsent=inspectProcessReferences();
-  const sockets=command('ss',['-ltnH']);if(new RegExp(`:${s.port}\\s`).test(sockets))fail('candidate_port_in_use');
+  const sockets=command('/usr/sbin/ss',['-ltnH']);if(new RegExp(`:${s.port}\\s`).test(sockets))fail('candidate_port_in_use');
   const unit=`faolla-attendance-build-${s.target}.service`;
   if(command('systemctl',['show',unit,'--property=LoadState','--value']).trim()!=='not-found')fail('build_unit_present');
   // systemd 239 cannot parse the ISO T/millisecond/Z spelling. Round down to
