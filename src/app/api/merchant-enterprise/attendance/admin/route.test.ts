@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach, beforeEach } from "node:test";
 import type { User } from "@supabase/supabase-js";
 import { handleAttendanceAdmin, attendanceAdminDependencies } from "./route-handler";
 import type { AttendanceAdminInput } from "@/lib/merchantAttendanceAdmin.server";
@@ -10,10 +10,24 @@ const settings={timeZone:"UTC",enabled:false,webClockEnabled:false,webBreakPaid:
 const body={siteId:"99990001",operationId:id,expectedVersion:0,kind:"settings",values:settings};
 const url="https://www.faolla.com/api/merchant-enterprise/attendance/admin";
 const post=(value:unknown=body,origin="https://www.faolla.com")=>new Request(url,{method:"POST",headers:{"Content-Type":"application/json",origin},body:JSON.stringify(value)});
+// The HTTP fixture has an explicit synthetic cohort, never the publisher's cohort.
+// Restore both values so other tests cannot inherit this fixture's admission.
+let previousRollout: { enabled?: string; sites?: string };
+beforeEach(() => {
+  previousRollout = { enabled: process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED, sites: process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS };
+  process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED = "1";
+  process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS = body.siteId;
+});
+afterEach(() => {
+  if (previousRollout.enabled === undefined) delete process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED;
+  else process.env.FAOLLA_ATTENDANCE_ROLLOUT_ENABLED = previousRollout.enabled;
+  if (previousRollout.sites === undefined) delete process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS;
+  else process.env.FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS = previousRollout.sites;
+});
 function setup(extra:Partial<typeof attendanceAdminDependencies>={}) {
   const calls:AttendanceAdminInput[]=[];
   const deps:typeof attendanceAdminDependencies={enabled:()=>true,authenticate:async()=>({user:{id} as User,accessToken:"synthetic",authenticationMethods:["oauth"]}),
-    entitlement:async()=>({permissionConfig:{allowEnterpriseManagement:true,allowEmployeeAttendance:true}}) as Awaited<ReturnType<typeof attendanceAdminDependencies.entitlement>>,allow:()=>true,
+    entitlement:async()=>({id:body.siteId,permissionConfig:{allowEnterpriseManagement:true,allowEmployeeAttendance:true}}) as Awaited<ReturnType<typeof attendanceAdminDependencies.entitlement>>,allow:()=>true,
     execute:async(input)=>{calls.push(input);return {siteId:input.siteId,version:0,settings:null,view:input.view,items:[],nextCursor:null,receipt:null};},...extra};
   return {calls,deps};
 }
@@ -44,7 +58,7 @@ test("query pagination strict and body size bounded",async()=>{
   assert.equal((await handleAttendanceAdmin(post({...body,padding:"x".repeat(4096)}),deps)).status,413);assert.equal(calls.length,1);
 });
 test("platform pause blocks every config write but keeps owner-scoped reads and receipts",async()=>{
-  const {deps,calls}=setup({entitlement:async()=>({permissionConfig:{allowEnterpriseManagement:true,allowEmployeeAttendance:false}}) as Awaited<ReturnType<typeof attendanceAdminDependencies.entitlement>>});
+  const {deps,calls}=setup({entitlement:async()=>({id:body.siteId,permissionConfig:{allowEnterpriseManagement:true,allowEmployeeAttendance:false}}) as Awaited<ReturnType<typeof attendanceAdminDependencies.entitlement>>});
   const response=await handleAttendanceAdmin(post(),deps);
   assert.equal(response.status,403);assert.equal((await response.json()).error,"attendance_platform_paused");assert.equal(calls.length,0);
   const read=await handleAttendanceAdmin(new Request(`${url}?siteId=99990001&operationId=${id}`),deps);
@@ -56,4 +70,12 @@ test("missing platform flag is closed and client cannot override it",async()=>{
   const {deps,calls}=setup({entitlement:async()=>({}) as Awaited<ReturnType<typeof attendanceAdminDependencies.entitlement>>});
   assert.equal((await handleAttendanceAdmin(post(),deps)).status,403);
   assert.equal((await handleAttendanceAdmin(post({...body,moduleEnabled:true}),deps)).status,400);assert.equal(calls.length,0);
+});
+test("synthetic cohort still rejects missing and foreign entitlement identities before config writes", async () => {
+  for (const siteId of [undefined, "99990002"]) {
+    const { deps, calls } = setup({ entitlement: async () => ({ id: siteId, permissionConfig: { allowEnterpriseManagement: true, allowEmployeeAttendance: true } }) as Awaited<ReturnType<typeof attendanceAdminDependencies.entitlement>> });
+    const response = await handleAttendanceAdmin(post(), deps);
+    assert.equal(response.status, 403); assert.equal((await response.json()).error, "attendance_platform_paused");
+    assert.equal(calls.length, 0);
+  }
 });

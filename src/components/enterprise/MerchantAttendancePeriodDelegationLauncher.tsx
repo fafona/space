@@ -17,6 +17,7 @@ export function periodDelegationLauncherVisible(access: "owner" | "delegate", en
 }
 /** Only one child exists at a time. A saved grant is a navigation anchor, never
  * authorization to skip the delegated endpoint's fresh checks. */
+/* eslint-disable react-hooks/refs -- This exact monotonic scope fence revokes old async/storage authority before effects. An abandoned render can only invalidate a lease; it cannot reauthorize an old A-B-A token. */
 export default function MerchantAttendancePeriodDelegationLauncher(props: Props) {
   const enabled = props.enabled ?? process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_PERIOD_DELEGATION_ENABLED === "1";
   const periodsEnabled = enabled && (props.periodsEnabled ?? (process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_PERIOD_CLOSURES_ENABLED === "1"
@@ -34,6 +35,7 @@ export default function MerchantAttendancePeriodDelegationLauncher(props: Props)
   if (props.active === false || !/^\d{8}$/.test(props.siteId) || !periodDelegationLauncherIdentityValid(props.access, props.actorId, props.authUserId)) return null;
   return <Launcher key={token} {...props} enabled={enabled} periodsEnabled={periodsEnabled} isCurrentAuth={isCurrentAuth} cycleIsCurrentAuth={cycleIsCurrentAuth}/>;
 }
+/* eslint-enable react-hooks/refs */
 function Launcher(props: Props & { enabled: boolean; periodsEnabled: boolean; isCurrentAuth: () => boolean; cycleIsCurrentAuth: () => boolean }) {
   const [open, setOpen] = useState(false), [selection, setSelection] = useState<PeriodDelegationPeriodSelection | null>(null);
   const dialog = useRef<HTMLDialogElement>(null), guard = useRef<{ key: string; run: () => boolean } | null>(null), closing = useRef(false);
@@ -63,6 +65,7 @@ function Launcher(props: Props & { enabled: boolean; periodsEnabled: boolean; is
       if (props.disabled || !props.isCurrentAuth() || document.hidden || props.beforeOpen && !props.beforeOpen() || !props.isCurrentAuth()) return;
       setSelection(null); setOpen(true);
     }}>{props.access === "owner" ? props.enabled ? "周期管理授权" : "周期授权核验／撤销" : props.enabled ? "我的受托周期" : "核对待确认周期授权原编号"}</button>}
+    {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Full-document navigation deliberately re-verifies Auth on the independent recovery page, without prefetch or reusing this workspace session. */}
     <a className="block text-sm underline" href="/enterprise/attendance-recovery" onClick={event => {
       if (!props.isCurrentAuth() || props.beforeOpen && !props.beforeOpen() || !leave()) event.preventDefault();
     }}>核对待确认周期原编号（独立恢复）</a>
