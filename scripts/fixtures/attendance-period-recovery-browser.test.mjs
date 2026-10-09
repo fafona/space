@@ -66,6 +66,9 @@ test('runner is inert, loopback-only, in-memory, bounded and finally closes ever
 test('entry uses the real independent Panel, synthetic Auth lease and delayed actual response bytes',async()=>{
  const text=await readFile(new URL('./attendance-period-recovery-browser-entry.tsx',import.meta.url),'utf8');
  assert.match(text,/import RecoveryPanel from .*MerchantAttendanceDelegationRecoveryPanel/);assert.match(text,/<RecoveryPanel key=\{generation\} authUserId=/);
+ assert.match(text,/const \{ other, generation \} = identity/);
+ assert.match(text,/const next = \{ other: value, generation: scope\.current\.generation \+ 1 \};[\s\S]*scope\.current = next;\s*flushSync\(\(\) => setIdentity\(next\)\)/);
+ assert.doesNotMatch(text,/if \(scope\.current\.other !== other\)|const generation = scope\.current/);
  assert.match(text,/generation === generation/);assert.match(text,/controller\.enqueue\(bytes\.slice\(0, 1\)\)/);assert.match(text,/featureFlagsEnabled: false/);
  assert.doesNotMatch(text,/getUser\(|createClient\(|sessionStorage\.setItem|POST|PATCH/);
 });

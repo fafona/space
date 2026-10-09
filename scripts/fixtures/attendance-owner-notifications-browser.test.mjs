@@ -59,5 +59,8 @@ test('inert runner remains loopback/in-memory/budgeted with all owned resources 
 test('entry renders actual Launcher with a synthetic Auth lease and holds strict bytes only after first byte',async()=>{
  const text=await readFile(new URL('./attendance-owner-notifications-browser-entry.tsx',import.meta.url),'utf8');
  assert.match(text,/import Launcher from .*MerchantAttendanceOwnerNotificationsLauncher/);assert.match(text,/<Launcher key=\{token\}/);assert.match(text,/isCurrentAuth=\{isCurrentAuth\}/);
+ assert.match(text,/const \{ other, token \} = identity/);
+ assert.match(text,/const next = \{ other: value, token: live\.current\.token \+ 1 \};[\s\S]*live\.current = next;\s*flushSync\(\(\) => setIdentity\(next\)\)/);
+ assert.doesNotMatch(text,/if \(live\.current\.other !== other\)|const token = live\.current/);
  assert.match(text,/controller\.enqueue\(bytes\.slice\(0, 1\)\)/);assert.doesNotMatch(text,/getUser\(|createClient\(|sessionStorage\.setItem|localStorage/);
 });
