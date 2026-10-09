@@ -18,7 +18,7 @@
 这里的 shell 名称只是说明占位，不是允许把未知目标或任意文件注入控制器。
 
 1. 审查并合并本次精确代码闭包，必需 CI 通过；用既有 `prepare-online-release-tool.mjs TARGET` 准备干净、固定 SHA 的发布控制器。不得用未提交工作树、试点打包器或修改状态文件代替。
-2. 构建准入要求实际可用内存至少 6 GiB、可用磁盘至少 20 GiB 且无 swap。若内存不足，只通过已有 ownership guard 停止获准的五个独立试点容器，保留它们的数据库和文件，不停止正式服务或 worker；重新核实准入后执行 `node scripts/online-traffic-release.mjs stage TARGET BASELINE`。只准备新候选，完整 `npm run build` 保持所有前置 guard、类型检查、构建预算和正常烟测，不联网取包。不能为了构建成功放宽资源限制或跳过原 guard。旧服务继续在线。
+2. 构建准入要求实际可用内存至少 6 GiB、可用磁盘至少 20 GiB 且无 swap。若内存不足，只通过已有 ownership guard 停止获准的五个独立试点容器，保留它们的数据库和文件，不停止正式服务或 worker；重新核实准入后执行 `node scripts/online-traffic-release.mjs stage TARGET BASELINE`。只准备新候选，完整 `npm run build` 保持所有前置 guard、类型检查、经用户批准的固定构建预算和正常烟测，不联网取包。不能自动或未经批准扩大资源限制，不能跳过原 guard。旧服务继续在线。
 3. 候选构建完成后，按已有 ownership guard 启动独立试点服务（如构建前曾为释放内存停止它）；执行 `attendance-production-052-compatibility.mjs` 的真实 **052→210** 新库兼容验收。它只对精确正式库做只读元数据核对和 `pg_dump --schema-only`，保留全部非系统 schema（含 public/auth/storage/extensions）的 owners、ACL、RLS、trigger、constraint 及 default ACL；不复制任何业务、Auth 或 storage 记录，不导出/初始化 cluster globals。新库仅插入 manifest 固定的 60 条 version/name 登记元数据，不复制 applied_at，也**不重放历史 0001–052、不运行 init 或 042 补偿**。源052与新库的完整 normalized metadata 合同匹配后，才执行原哈希绑定的 149 个迁移；全过程正式库元数据必须保持不变。随后用 `attendance-production-database-migrations.mjs dry-run --target TARGET --baseline BASELINE` 核对正式库身份、registry 和原始 SQL；正常加密备份创建并验证、上述兼容验收均成功后才允许 `apply`。`apply` 仍要求明确确认、私有备份及 create/verify 报告，并拒绝手工写出的兼容“通过”文件；完整参数以该已审查管理器的解析器及真实报告为准。
 4. `node scripts/online-traffic-release.mjs database TARGET`。这个考勤分支 **不执行 SQL**；只调用管理器再次只读核验正式库及固定位置的真实 DB-ready 报告，随后仅将本候选的安全功能 flag 切换到可用状态，重启本候选并复验。失败保留原状态和证据。
 5. `node scripts/online-traffic-release.mjs activate TARGET`。再次核验候选、原进程、代理哈希、同一 DB-ready 报告与实时库状态；按原流程发布不可变资源、检查 nginx、无维护切换并执行原公共烟测。公共验证失败仍只回滚本操作拥有的代理配置。
@@ -53,9 +53,10 @@
 
 `attendance-online-build.mjs` 只供本通道调用，不改变其他发布通道。
 构建前要求实际 `MemAvailable >= 6 GiB`、候选所在盘可用 `>= 20 GiB`、swap 为 0。
-独立 systemd unit 使用实际 cgroup v1 验证的 **3 GiB / 100% CPU / 128 tasks / 20 分钟** 硬限制、整组终止和 `PrivateNetwork=yes`。
+独立 systemd unit 使用实际 cgroup v1 验证的 **4 GiB / 100% CPU / 128 tasks / 20 分钟** 硬限制、整组终止和 `PrivateNetwork=yes`。
 网络核验比较 net namespace 并读取 `/proc/net/dev` 的仅 lo 接口，不使用可能仍关联 host namespace 的 `/sys/class/net`。
-完整 guard 链在限制内以 Node heap 1792 MiB、明确的 `FAOLLA_BUILD_SINGLE_WORKER=1` 执行；系统不支持实际限制或内存不足时停止，不自动无限制重试。
+完整 guard 链在限制内以 Node heap 3072 MiB、明确的 `FAOLLA_BUILD_SINGLE_WORKER=1` 执行；系统不支持实际限制或内存不足时停止，不自动无限制重试。
+此固定预算经用户于 2026-10-09 明确批准，仅用于独立考勤候选构建，不改变正式网站、数据库或其他发布通道的配置。本机完整冷类型检查在 1792/2304 MiB 下耗尽堆内存，在 3072 MiB 下通过；本机 Node 24 与服务器 Node 20 不同，且 TypeScript 的内存统计不是整个 cgroup 的峰值，因此这不是服务器构建必定成功的证明。至少 6 GiB 的准入要求不变；4 GiB 硬上限仍可能与线上服务争用资源，失败不得自动继续增大上限。
 环境通过私有 `EnvironmentFile` 提供，服务中解析后的关键值逐项和保存 runtime JSON 对比，秘密不放到命令行。
 不额外安装/复制依赖，不连外网获取构建包，不跳完整性/类型检查。失败候选、构建证据和备份保留，不自动清理或扩容。
 

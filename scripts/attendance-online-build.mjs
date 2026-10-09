@@ -3,7 +3,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 
-export const ATTENDANCE_BUILD_LIMITS=Object.freeze({memoryBytes:3*1024**3,minimumAvailableBytes:6*1024**3,minimumDiskBytes:20*1024**3,heapMiB:1792,tasks:128,seconds:1200});
+export const ATTENDANCE_BUILD_LIMITS=Object.freeze({memoryBytes:4*1024**3,minimumAvailableBytes:6*1024**3,minimumDiskBytes:20*1024**3,heapMiB:3072,tasks:128,seconds:1200});
 const fail=code=>{throw Error(`attendance_build_${code}`);};
 export function attendanceOnlineBuildPlan({directory,target,operation}){
   if(!/^[a-f0-9]{40}$/.test(target??'')||directory!==`/www/wwwroot/merchant-space.web-releases/${target.slice(0,12)}-online`||operation!==`/var/lib/faolla-online-release/${target}`)fail('identity_invalid');
