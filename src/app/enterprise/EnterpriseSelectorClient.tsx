@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   buildMerchantEnterpriseSitePath,
   describeMerchantEnterpriseMembershipAvailability,
@@ -8,7 +9,7 @@ import {
   type MerchantEnterpriseMembership,
 } from "@/lib/merchantEnterpriseMembershipSelector";
 import { MerchantEnterpriseAuthGeneration } from "@/lib/merchantEnterpriseAuthGeneration";
-import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
+import { merchantEnterpriseSupabase as supabase, isEnterpriseLogoutBlocked, onEnterpriseAuthStateChange, signInEnterpriseWithPassword, signOutEnterpriseSession } from "@/lib/merchantEnterpriseSupabase";
 
 type MembershipPayload = {
   ok?: boolean;
@@ -61,6 +62,7 @@ export default function EnterpriseSelectorClient() {
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [message, setMessage] = useState("");
   const [memberships, setMemberships] = useState<MerchantEnterpriseMembership[]>([]);
   const [membershipLoadState, setMembershipLoadState] =
@@ -125,7 +127,7 @@ export default function EnterpriseSelectorClient() {
 
         const result = await supabase.auth.getSession();
         if (result.error) throw result.error;
-        token = result.data.session?.access_token ?? "";
+        token = isEnterpriseLogoutBlocked() ? "" : result.data.session?.access_token ?? "";
         if (cancelled || !authGeneration.bindSessionToken(generation, token)) return;
         clearMembershipScopeForAuthTransition(token ? "loading" : "idle");
         setAuthContext(token ? { token, generation } : null);
@@ -144,8 +146,9 @@ export default function EnterpriseSelectorClient() {
     }
 
     void resolveSession(initializationGeneration);
-    const listener = supabase.auth.onAuthStateChange((_event, session) => {
+    const listener = onEnterpriseAuthStateChange((_event, session) => {
       const generation = authGeneration.begin();
+      if (session && isEnterpriseLogoutBlocked()) return;
       const token = session?.access_token ?? "";
       if (!authGeneration.bindSessionToken(generation, token) || cancelled) return;
       clearMembershipScopeForAuthTransition(token ? "loading" : "idle");
@@ -228,10 +231,11 @@ export default function EnterpriseSelectorClient() {
   }, []);
 
   async function signIn() {
+    if (busy) return;
     setBusy(true);
     setMessage("");
     try {
-      const result = await supabase.auth.signInWithPassword({
+      const result = await signInEnterpriseWithPassword({
         email: email.trim().toLowerCase(),
         password,
       });
@@ -303,8 +307,11 @@ export default function EnterpriseSelectorClient() {
   }
 
   async function signOut() {
+    if (busy) return;
+    setSigningOut(true);
     setBusy(true);
     setMessage("");
+    const operation = signOutEnterpriseSession();
     const authGeneration = authGenerationRef.current;
     const generation = authGeneration.begin();
     authGeneration.bindSessionToken(generation, "");
@@ -312,11 +319,14 @@ export default function EnterpriseSelectorClient() {
     setAuthContext(null);
     setCheckingSession(false);
     try {
-      const result = await supabase.auth.signOut();
-      if (result.error) throw result.error;
+      const result = await operation;
+      if (result.error) setMessage(result.localCleared
+        ? "已清除本标签页登录，服务器退出请求未确认。其他设备的登录状态可能仍有效。"
+        : result.error.message);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "退出失败，请稍后重试。");
     } finally {
+      setSigningOut(false);
       setBusy(false);
     }
   }
@@ -379,7 +389,7 @@ export default function EnterpriseSelectorClient() {
               className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-45"
               disabled={busy || !email.trim() || !password}
             >
-              {busy ? "登录中..." : "登录并选择企业"}
+              {signingOut ? "正在退出..." : busy ? "登录中..." : "登录并选择企业"}
             </button>
             <button
               type="button"
@@ -429,6 +439,13 @@ export default function EnterpriseSelectorClient() {
             </button>
           </div>
         </header>
+
+        <div className="mt-4 text-sm">
+          <Link className="underline underline-offset-4" href="/enterprise/attendance-recovery">核对未确认考勤操作</Link>
+          <span className="ml-2 text-slate-500">仅核对本标签页原编号，不要求仍有考勤查看权限。</span>
+          <div className="mt-3"><Link className="underline underline-offset-4" href="/enterprise/attendance-administrative-closures">本人行政结案记录与异议</Link>
+            <span className="ml-2 text-slate-500">已暂停或结束任职时也可用本人原密码账户核验；不代表恢复权限。</span></div>
+        </div>
 
         <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

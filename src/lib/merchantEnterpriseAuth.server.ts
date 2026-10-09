@@ -161,6 +161,8 @@ export async function resolveMerchantEnterpriseActor(
   input: {
     siteId: string;
     requiredPermission?: MerchantEnterprisePermission;
+    /** Observation only: emitted after the original authorization succeeds. */
+    onAuthorizedAuthUserId?: (authUserId: string) => void;
   },
 ): Promise<MerchantEnterpriseActor> {
   const siteId = normalizeText(input.siteId, 80);
@@ -192,6 +194,7 @@ export async function resolveMerchantEnterpriseActor(
       throw new MerchantEnterpriseAccessError("merchant_access_check_failed", 503);
     }
     if (ownerResult.data) {
+      input.onAuthorizedAuthUserId?.(authUserId);
       return {
         type: "owner",
         id: authUserId,
@@ -288,6 +291,7 @@ export async function resolveMerchantEnterpriseActor(
   ) {
     throw new MerchantEnterpriseAccessError("permission_denied", 403);
   }
+  input.onAuthorizedAuthUserId?.(authUserId);
   return actor;
 }
 

@@ -492,3 +492,56 @@ Any new failure stops the attempt; do not broaden the manifest or bypass a guard
 The successful application build remains TARGET, not the newer operational tool
 commit. Future builds explicitly scope umask 022 to the synchronous build child
 and restore the caller's umask afterwards; all private files retain explicit 0600.
+
+## Attendance single-merchant first release (2026-10-09)
+
+The user explicitly approved the backup/compatibility-gated production upgrade
+and selected merchant `10000000` for the first rollout. This is a separate exact
+`attendance` lane, not permission to widen an old lane, apply pending 053–060,
+grant saved platform/employee role rights, or call mock acceptance real mobile
+acceptance. See [the bounded release plan](attendance-production-release-20261009.md)
+and its exact grouped [source scope](attendance-production-release-scope-20261009.json).
+
+Stage still requires reviewed current main, clean exact source, unchanged
+dependencies, original baseline/process/proxy ownership, focused tests and the
+complete build guard chain. Only this lane uses an actually verified, private
+network systemd/cgroup build with 3 GiB memory, 100% CPU, 128 tasks and 20 minutes;
+it admits no unbounded fallback. It does not stop production or existing workers.
+Full public assets, fonts and download features remain part of the candidate.
+
+The initial candidate compiles the reviewed client capabilities but leaves all
+functional server gates off. The separate migration manager must first verify
+an encrypted backup and a real isolated 052-to-210 compatibility upgrade, then
+install exactly 149 reviewed SQL files (165 unused): 60 old registry rows become
+209, maximum `202610090210`. The release controller's `database` action does not
+apply SQL; it consumes a fixed-location, root-owned report and independently
+rechecks the actual production DB identity, registry and guarded function state.
+
+That compatibility upgrade begins with a read-only, actual production052
+schema-only clone into one new pilot DB, not a replay of historical 0001–052,
+bootstrap/init or 042 compensation scripts. All non-system schema metadata,
+owners, ACL/default ACL, RLS, triggers and constraints are preserved and compared
+through the complete normalized metadata contract. No real business/Auth/storage
+rows or cluster globals are copied. Only the manifest's fixed 60 version/name
+registry entries are inserted as system metadata, without production applied_at,
+before the original 149 guarded SQL sources execute. Production metadata is
+checked unchanged around the dump and at acceptance completion. If pilot services
+were stopped for bounded build admission, restart them through their ownership
+guard after stage and before this acceptance; never bypass resource admission.
+If admission requires reclaiming RAM, stop only those five approved, ownership-checked
+pilot containers before stage, retaining all pilot files and databases. Production
+processes and workers are never stopped. The sequence is bounded stage, owned pilot
+restart, real schema-only compatibility, then verified backup and guarded apply.
+
+After that check only the owned candidate is restarted with reviewed safe server
+capabilities; the exact rollout/admission and advanced site lists remain
+`10000000`. Runner/disposal flags and public test harnesses stay disabled, saved
+platform entitlements and role permissions stay unchanged. Partial candidate
+environment changes resume only through the same proof-bound before/after hashes;
+already DB-ready candidates are verified without reapplying SQL.
+
+Activate repeats the live database/report check before the original immutable
+asset publication and owned nginx switch. All original public checks and
+automatic traffic rollback remain. Manual rollback does not depend on a healthy
+candidate/database receipt and never drops or downgrades database objects.
+No cleanup, maintenance, state reset or permission backfill is implicit.

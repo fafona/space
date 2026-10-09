@@ -1,3 +1,5 @@
+import {readFileSync} from 'node:fs';
+
 // Authorized on 2026-09-23: additive analytics, with no maintenance or worker restart.
 export const ONLINE_ROOT = '/var/lib/faolla-online-release';
 export const TRAFFIC_MIGRATIONS = ['202609230049','202609230050','202609230051'];
@@ -253,7 +255,62 @@ export const CUSTOMER_CODE_PERFORMANCE_FILES = Object.freeze([
   'src/lib/merchantOrdersV1Read.server.test.ts',
 ]);
 const customerCodePerformanceFiles = new Set(CUSTOMER_CODE_PERFORMANCE_FILES);
+// A source-only scope is not a deployment or database authorization receipt.
+// Every exact path is reviewed in the same clean-main commit as this policy.
+export const ATTENDANCE_RELEASE_SCOPE_FILE = 'docs/attendance-production-release-scope-20261009.json';
+export function validateAttendanceReleaseScope(value) {
+  const groups=['runtime','quality','migrations','configuration','operations','evidence'];
+  if(value?.schemaVersion!==1||value.owner!=='attendance-production-release-20261009'||value.baseline!=='b1304d5d58841c2247b93229b90bb7adcfd64965'||value.approvedSiteId!=='10000000'||value.migrationCount!==149||JSON.stringify(value.unusedOrdinals)!=='[165]')throw Error('attendance_release_scope_manifest_invalid');
+  const files=[];
+  for(const group of groups){
+    if(!Array.isArray(value[group]))throw Error('attendance_release_scope_manifest_invalid');
+    for(const file of value[group]){
+      if(typeof file!=='string'||!file||/[\\\0\r\n*?]/.test(file)||file.startsWith('/')||file.split('/').some(p=>!p||p==='.'||p==='..')||files.includes(file))throw Error('attendance_release_scope_manifest_invalid');
+      files.push(file);
+    }
+  }
+  if(files.length>4096||!files.includes('src/lib/merchantAttendance.ts')||!files.includes(ATTENDANCE_RELEASE_SCOPE_FILE)||value.migrations.length!==149)throw Error('attendance_release_scope_manifest_invalid');
+  const ordinals=[];
+  for(const file of value.migrations){const m=/^scripts\/supabase-migrations\/\d{8}(\d{4})_[a-z0-9_]+\.sql$/.exec(file);if(!m)throw Error('attendance_release_migration_scope_invalid');ordinals.push(Number(m[1]));}
+  const expected=Array.from({length:150},(_,i)=>61+i).filter(n=>n!==165);
+  if(JSON.stringify(ordinals.slice().sort((a,b)=>a-b))!==JSON.stringify(expected))throw Error('attendance_release_migration_scope_invalid');
+  for(const [group,pattern] of [['serverFlags',/^FAOLLA_ATTENDANCE_[A-Z0-9_]+_ENABLED$/],['publicFlags',/^NEXT_PUBLIC_FAOLLA_ATTENDANCE_[A-Z0-9_]+_ENABLED$/],['siteKeys',/^FAOLLA_ATTENDANCE_[A-Z0-9_]+_(?:SITE_IDS|SITES)$/]]){
+    if(!Array.isArray(value[group])||value[group].length<1||value[group].length>256||new Set(value[group]).size!==value[group].length||value[group].some(key=>!pattern.test(key)))throw Error('attendance_release_environment_catalog_invalid');
+  }
+  if(JSON.stringify(value.disabledFlags)!==JSON.stringify(['FAOLLA_ATTENDANCE_REMINDERS_RUNNER_ENABLED','FAOLLA_ATTENDANCE_RETENTION_DISPOSAL_ENABLED','NEXT_PUBLIC_FAOLLA_ATTENDANCE_RETENTION_DISPOSAL_ENABLED'])||JSON.stringify(value.credentialKeys)!==JSON.stringify(['FAOLLA_ATTENDANCE_ONSITE_QR_SECRET','FAOLLA_ATTENDANCE_PIN_PEPPER']))throw Error('attendance_release_environment_catalog_invalid');
+  return Object.freeze({...value,...Object.fromEntries(groups.map(g=>[g,Object.freeze([...value[g]])])),serverFlags:Object.freeze([...value.serverFlags]),publicFlags:Object.freeze([...value.publicFlags]),siteKeys:Object.freeze([...value.siteKeys]),disabledFlags:Object.freeze([...value.disabledFlags]),credentialKeys:Object.freeze([...value.credentialKeys])});
+}
+export const ATTENDANCE_RELEASE_SCOPE=validateAttendanceReleaseScope(JSON.parse(readFileSync(new URL('../'+ATTENDANCE_RELEASE_SCOPE_FILE,import.meta.url),'utf8')));
+export const ATTENDANCE_RELEASE_FILES=Object.freeze(['runtime','quality','migrations','configuration','operations','evidence'].flatMap(g=>ATTENDANCE_RELEASE_SCOPE[g]));
+const attendanceReleaseFiles=new Set(ATTENDANCE_RELEASE_FILES);
+export function assertAttendanceReleaseScope(files){
+  if(!Array.isArray(files)||!files.length||new Set(files).size!==files.length||files.some(file=>!attendanceReleaseFiles.has(file)))throw Error('attendance_release_scope_rejected');
+}
+export function attendanceCandidateEnvironment(phase,siteId=phase==='database-ready'?ATTENDANCE_RELEASE_SCOPE.approvedSiteId:''){
+  if(!['staged','database-ready'].includes(phase)||siteId!==(phase==='database-ready'?ATTENDANCE_RELEASE_SCOPE.approvedSiteId:''))throw Error('attendance_release_environment_invalid');
+  const disabled=new Set(ATTENDANCE_RELEASE_SCOPE.disabledFlags);
+  return {...Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.publicFlags.map(k=>[k,disabled.has(k)?'0':'1'])),...Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.serverFlags.map(k=>[k,phase==='database-ready'&&!disabled.has(k)?'1':'0'])),...Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.siteKeys.map(k=>[k,phase==='database-ready'?siteId:''])),FAOLLA_ATTENDANCE_ROLLOUT_ENABLED:'1',FAOLLA_ATTENDANCE_ROLLOUT_SITE_IDS:ATTENDANCE_RELEASE_SCOPE.approvedSiteId,FAOLLA_ENTERPRISE_E2E_HARNESS:'',FAOLLA_BACKUP_RESTORE_HARNESS:''};
+}
+export function assertAttendanceCandidateEnvironment(env,phase,siteId=phase==='database-ready'?ATTENDANCE_RELEASE_SCOPE.approvedSiteId:''){
+  const expected=attendanceCandidateEnvironment(phase,siteId),known=new Set([...Object.keys(expected),...ATTENDANCE_RELEASE_SCOPE.credentialKeys]);
+  if(!env||Object.entries(expected).some(([k,v])=>env[k]!==v)||Object.keys(env).some(k=>/^(?:NEXT_PUBLIC_)?FAOLLA_ATTENDANCE_/.test(k)&&!known.has(k))||ATTENDANCE_RELEASE_SCOPE.credentialKeys.some(k=>!/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(env[k]??'')))throw Error('attendance_release_environment_invalid');
+  return env;
+}
+export function assertAttendanceDatabaseReadyProof(value,{target,baseline,scopeSha256,proofSha256}={}){
+  const keys=['schemaVersion','kind','target','baseline','scopeSha256','dbIdentity','registryCount','registryMaximum','backupVerified','compatibilityVerified','proofSha256'];
+  const identity={containerId:'0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416',containerName:'supabase-db',databaseName:'postgres',databaseOid:'5',systemIdentifier:'7612049595342295079',serverVersionNum:'150008',dataSource:'/opt/supabase/docker/volumes/db/data'};
+  if(!value||Object.keys(value).length!==keys.length||keys.some(k=>!Object.hasOwn(value,k))||value.schemaVersion!==1||value.kind!=='attendance-production-database-ready'||value.target!==target||value.baseline!==baseline||!(/^[a-f0-9]{40}$/).test(target??'')||baseline!==ATTENDANCE_RELEASE_SCOPE.baseline||value.scopeSha256!==scopeSha256||!(/^[a-f0-9]{64}$/).test(scopeSha256??'')||!value.dbIdentity||Object.keys(value.dbIdentity).length!==Object.keys(identity).length||Object.entries(identity).some(([k,v])=>value.dbIdentity[k]!==v)||value.registryCount!==209||value.registryMaximum!=='202610090210'||value.backupVerified!==true||value.compatibilityVerified!==true||!(/^[a-f0-9]{64}$/).test(value.proofSha256??'')||proofSha256!==undefined&&value.proofSha256!==proofSha256)throw Error('attendance_database_ready_proof_invalid');
+  return value;
+}
+export const ATTENDANCE_RELEASE_FOCUSED_TESTS=Object.freeze([
+  'src/lib/merchantAttendanceTime.test.ts','src/lib/merchantAttendanceEntitlement.test.ts','src/lib/merchantAttendanceSelf.test.ts','src/lib/merchantAttendanceAdmin.test.ts','src/lib/merchantAttendanceSelfClient.test.ts','src/lib/merchantAttendanceAdminClient.test.ts',
+  'src/app/api/merchant-enterprise/attendance/self/route.test.ts','src/app/api/merchant-enterprise/attendance/admin/route.test.ts','src/lib/merchantEnterpriseAuth.server.test.ts','src/lib/merchantEnterprise.test.ts','src/data/platformControlStore.test.ts','src/app/super-admin/SuperAdminClient.contract.test.ts',
+  'scripts/merchant-enterprise-invitation-application-contract.test.mjs','scripts/merchant-enterprise-membership-selector-ui-contract.test.mjs','scripts/merchant-enterprise-ui-contract.test.mjs','scripts/check-supabase-migrations.test.mjs','scripts/attendance-production-database-migrations.test.mjs',
+  'src/lib/merchantAttendanceRollout.test.ts','scripts/merchant-attendance-rollout-ui-contract.test.mjs','scripts/attendance-build-worker-config.test.mjs','scripts/attendance-online-build.test.mjs',
+  'src/app/api/merchant-enterprise/roles/route.attendance-admission.test.ts',
+]);
 export function onlineReleaseLane(files) {
+  if(files.includes('src/lib/merchantAttendance.ts')){assertAttendanceReleaseScope(files);return 'attendance';}
   if (files.includes(customerCodePerformanceAnchor)) {
     if (files.some(file => !customerCodePerformanceFiles.has(file))) throw Error('customer_code_performance_release_scope_rejected');
     return 'customer-code-performance';
@@ -294,6 +351,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if(lane==='attendance')return false;
   if (lane === 'customer-code-performance') return true;
   if (lane === 'booking-merge-cpu') return true;
   if (lane === 'runtime-performance') return true;
@@ -309,6 +367,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if(lane==='attendance')return;
   if (lane === 'customer-code-performance') throw Error('customer_code_performance_database_forbidden');
   if (lane === 'booking-merge-cpu') throw Error('booking_merge_cpu_database_forbidden');
   if (lane === 'runtime-performance') throw Error('runtime_performance_database_forbidden');
@@ -321,10 +380,12 @@ export function assertOnlineReleaseDatabaseAllowed(lane) {
 }
 export function onlineReleaseMigrationTarget(lane) {
   assertOnlineReleaseDatabaseAllowed(lane);
+  if(lane==='attendance')throw Error('attendance_database_manager_required');
   return lane === 'order-attention' ? ORDER_ATTENTION_MIGRATION : '202609230051';
 }
 export function assertPendingOnlineReleaseMigrations(lane, pending) {
   assertOnlineReleaseDatabaseAllowed(lane);
+  if(lane==='attendance')throw Error('attendance_database_manager_required');
   if (lane === 'traffic') return assertPendingTrafficMigrations(pending);
   if (!Array.isArray(pending) || pending.length > 1 || pending.some(item =>
     item?.version !== ORDER_ATTENTION_MIGRATION || item?.name !== 'order_attention_pilot' ||

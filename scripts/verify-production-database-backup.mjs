@@ -15,6 +15,7 @@ import {
   validateDatabaseBackupArchiveEntries,
   validateDatabaseBackupNestedArchiveEntry,
   verifyDatabaseBackupManifestFiles,
+  sha256File,
 } from "./database-backup-contract.mjs";
 
 const MINIMUM_PASSPHRASE_LENGTH = 24;
@@ -263,6 +264,7 @@ export async function withVerifiedProductionDatabaseBackup(input) {
   if (!inputDetails.isFile() || inputDetails.size <= 0) {
     throw new DatabaseBackupVerificationError("encrypted_backup_invalid");
   }
+  const encryptedInputSha256 = await sha256File(inputPath);
   const passphrase = String(input.passphrase ?? "");
   if (passphrase.length < MINIMUM_PASSPHRASE_LENGTH) {
     throw new DatabaseBackupVerificationError(
@@ -366,6 +368,10 @@ export async function withVerifiedProductionDatabaseBackup(input) {
       ),
     };
 
+    const inputSha256 = await sha256File(inputPath);
+    if (inputSha256 !== encryptedInputSha256) {
+      throw new DatabaseBackupVerificationError("encrypted_backup_changed_during_verification");
+    }
     const report = {
       schemaVersion: 2,
       checkedAt: new Date().toISOString(),
@@ -375,6 +381,7 @@ export async function withVerifiedProductionDatabaseBackup(input) {
       format: verification.manifest.format,
       inputFile: path.basename(inputPath),
       inputBytes: inputDetails.size,
+      inputSha256,
       source: verification.manifest.source,
       // Archive verification checks the supplied proof shape, not restored data.
       recoveryContentStatus: verification.manifest.source?.database?.recoveryContent

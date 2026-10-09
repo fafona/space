@@ -282,6 +282,8 @@ export function getMerchantEnterpriseEmployeeMutationErrorResponse(
   error: unknown,
 ) {
   const code = error instanceof Error ? error.message : "";
+  if (code === "attendance_account_suspension_invalid") return { status: 503, body: { ok: false, error: code } } as const;
+  if (["attendance_account_suspension_changed", "attendance_account_suspended", "attendance_operation_conflict"].includes(code)) return { status: 409, body: { ok: false, error: code } } as const;
   if (
     code === "employee_offboarding_scope_denied" ||
     code === "employee_role_transition_scope_denied" ||
@@ -991,6 +993,13 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: false, error: "invalid_employee" }, { status: 400 });
     }
     const action = text(body?.action, 40);
+    // New operation IDs apply only to the narrow status flow. They do not
+    // alter invitation idempotency, role changes, or the old version preflight.
+    if (!action && body?.operationId !== undefined && (
+      typeof body.operationId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.operationId) || body.operationId.length !== 36
+      || !["active", "disabled"].includes(String(body.status))
+      || Object.keys(body).some(key => !["siteId", "employeeId", "version", "status", "offboardingMode", "replacementEmployeeId", "operationId"].includes(key))
+    )) return NextResponse.json({ ok: false, error: "invalid_employee_update" }, { status: 400 });
     if (
       action &&
       action !== "resend_invite" &&
@@ -1271,6 +1280,7 @@ export async function PATCH(request: Request) {
         : {}),
       ...offboarding.payload,
       ...mutationActor,
+      ...(body?.operationId !== undefined ? { operationId: body.operationId as string } : {}),
     });
     return NextResponse.json({
       ok: true,

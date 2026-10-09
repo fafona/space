@@ -1,5 +1,7 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type AuthChangeEvent, type Session } from "@supabase/supabase-js";
 import { deleteBrowserAuthStorageCookie } from "@/lib/browserAuthStorage";
+import { shouldApplyEnterpriseAuthEvent } from "@/lib/merchantEnterpriseAuthEvents";
+import { createEnterpriseLogoutBoundary } from "@/lib/merchantEnterpriseLogout";
 import {
   getResolvedSupabaseUrl,
   legacySupabaseAuthStorageKey,
@@ -22,7 +24,7 @@ export function isEnterpriseOAuthTransientStorageKey(key: string) {
   );
 }
 
-export function createEnterpriseBrowserAuthStorageAdapter() {
+export function createEnterpriseBrowserAuthStorageAdapter(strictSessionStorage = false) {
   function transientCreatedAtKey(key: string) {
     return `${key}.faolla-created-at`;
   }
@@ -32,8 +34,9 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
       try {
         window.localStorage.removeItem(key);
         window.localStorage.removeItem(transientCreatedAtKey(key));
-      } catch {
+      } catch (error) {
         // Storage can be unavailable in restricted browser contexts.
+        if (strictSessionStorage) throw error;
       }
     }
     deleteBrowserAuthStorageCookie(key);
@@ -68,8 +71,9 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
             deleteBrowserAuthStorageCookie(key);
             return value;
           }
-        } catch {
+        } catch (error) {
           // Fall through to cleanup.
+          if (strictSessionStorage) throw error;
         }
         removeTransientPersistence(key);
         return null;
@@ -77,8 +81,9 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
       let value: string | null = null;
       try {
         value = window.sessionStorage.getItem(key);
-      } catch {
+      } catch (error) {
         // Treat unavailable session storage as a signed-out session.
+        if (strictSessionStorage) throw error;
       }
       clearLegacyPersistence(key);
       return value;
@@ -92,8 +97,9 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
               transientCreatedAtKey(key),
               String(Date.now()),
             );
-          } catch {
+          } catch (error) {
             // Supabase will surface an unusable PKCE flow if persistence is blocked.
+            if (strictSessionStorage) throw error;
           }
         }
         deleteBrowserAuthStorageCookie(key);
@@ -102,8 +108,9 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
       if (typeof window !== "undefined") {
         try {
           window.sessionStorage.setItem(key, value);
-        } catch {
+        } catch (error) {
           // Supabase will surface an unusable session if persistence is blocked.
+          if (strictSessionStorage) throw error;
         }
       }
       clearLegacyPersistence(key);
@@ -116,8 +123,9 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
       if (typeof window !== "undefined") {
         try {
           window.sessionStorage.removeItem(key);
-        } catch {
+        } catch (error) {
           // Best-effort cleanup.
+          if (strictSessionStorage) throw error;
         }
       }
       clearLegacyPersistence(key);
@@ -134,12 +142,17 @@ export function createEnterpriseBrowserAuthStorageAdapter() {
  * same-origin local storage for at most 15 minutes so email callbacks opened
  * in a new tab can complete; they never contain access or refresh tokens.
  */
+const enterpriseLogout = createEnterpriseLogoutBoundary(
+  createEnterpriseBrowserAuthStorageAdapter(true),
+  enterpriseStorageKey,
+);
+
 export const merchantEnterpriseSupabase = createClient(
   enterpriseSupabaseUrl,
   resolvedSupabaseAnonKey,
   {
     auth: {
-      storage: createEnterpriseBrowserAuthStorageAdapter(),
+      storage: enterpriseLogout.storage,
       storageKey: enterpriseStorageKey,
       persistSession: true,
       detectSessionInUrl: false,
@@ -148,3 +161,24 @@ export const merchantEnterpriseSupabase = createClient(
     },
   },
 );
+
+export const isEnterpriseLogoutBlocked = enterpriseLogout.isBlocked;
+/** Only this tab's persisted employee session may drive employee UI state. */
+export function onEnterpriseAuthStateChange(
+  callback: (event: AuthChangeEvent, session: Session | null) => void,
+) {
+  return merchantEnterpriseSupabase.auth.onAuthStateChange((event, session) => {
+    if (!shouldApplyEnterpriseAuthEvent(
+      session,
+      () => enterpriseLogout.storage.getItem(enterpriseStorageKey),
+      enterpriseLogout.isBlocked,
+    )) return;
+    callback(event, session);
+  });
+}
+export function signOutEnterpriseSession() {
+  return enterpriseLogout.signOut(() => merchantEnterpriseSupabase.auth.signOut());
+}
+export function signInEnterpriseWithPassword(credentials: { email: string; password: string }) {
+  return enterpriseLogout.signIn(() => merchantEnterpriseSupabase.auth.signInWithPassword(credentials));
+}

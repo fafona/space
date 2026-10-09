@@ -19,6 +19,9 @@ import {completePublicationRetention} from './online-release-retention-publicati
 import {reclaimPublicationArtifacts} from './online-release-artifact-cleanup.mjs';
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS} from './online-traffic-release-policy.mjs';
+import {ATTENDANCE_RELEASE_SCOPE,ATTENDANCE_RELEASE_SCOPE_FILE,ATTENDANCE_RELEASE_FOCUSED_TESTS,attendanceCandidateEnvironment,assertAttendanceCandidateEnvironment,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
+import {verifyAttendanceProductionDatabaseReady} from './attendance-production-database-migrations.mjs';
+import {buildAttendanceOnlineCandidate,assertAttendanceBuildAdmission} from './attendance-online-build.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
@@ -154,7 +157,9 @@ function readRuntimePerformanceSavedConfigs(s,includeAfter){
 }
 function verifyCandidate(s){
  verifyRuntimePerformanceSource(s);
+ if(s.lane==='attendance')verifyAttendanceSource(s);
  const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
+ if(s.lane==='attendance')verifyAttendanceCandidateSettings(s,p);
  if(s.lane==='order-attention'&&p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==(s.orderAttentionEnabled?'10000000':'0'))fail('order_attention_candidate_flag_invalid');
  if(s.lane==='bounded-lists'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('bounded_lists_baseline_features_changed');
  if(s.lane==='read-index'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('read_index_baseline_features_changed');
@@ -199,6 +204,11 @@ async function smoke(s,publicMode=false){
   await request(`${origin}/api/merchant-customers?siteId=10000000`,[401]);
   await request(`${origin}/api/merchant-customers?siteId=10000000&view=manager-v1`,[401]);
  }
+ if(s.lane==='attendance'){
+  const portal=publicMode?'https://launch.faolla.com':origin;
+  for(const entry of ['/api/merchant-enterprise/attendance/admin','/api/merchant-enterprise/attendance/self','/api/merchant-enterprise/attendance/records'])await request(`${portal}${entry}?siteId=10000000`,[s.attendanceEnabled?401:404],'launch.faolla.com');
+  for(const entry of ['/test-harness/enterprise','/test-harness/employee-workspace'])await request(portal+entry,[404],'launch.faolla.com');
+ }
  // In-progress requests and existing assets remain served by the previous process.
  const html=await(await request(origin+'/')).text();const assets=[...new Set(html.match(/\/_next\/static\/[^"\s<>]+\.(?:js|css)/g)||[])];
  for(const path of assets)await request(origin+path);return assets.length;
@@ -215,6 +225,49 @@ function restoreConfigs(s){
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
 function candidateEnvironment(s){void s;return JSON.parse(safeFile(`${operation}/runtime.json`));}
+function verifyAttendanceSource(s){
+ if(s.lane!=='attendance')return;
+ if(s.baseline!==ATTENDANCE_RELEASE_SCOPE.baseline||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim()||hash(safeFile(`${s.directory}/${ATTENDANCE_RELEASE_SCOPE_FILE}`))!==s.attendanceReleaseScopeSha256||hash(safeFile(`${s.directory}/scripts/attendance-production-database-migrations.manifest.json`))!==s.attendanceMigrationScopeSha256||!s.attendanceBuildProofSha256||hash(safeFile(`${operation}/attendance-build-proof.json`))!==s.attendanceBuildProofSha256)fail('attendance_candidate_source_changed');
+}
+function verifyAttendanceCandidateSettings(s,p,enabled=s.attendanceEnabled===true){
+ const phase=enabled?'database-ready':'staged',env=candidateEnvironment(s);
+ assertAttendanceCandidateEnvironment(env,phase);
+ for(const actual of [p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))]){
+  assertAttendanceCandidateEnvironment(actual,phase);
+  if(actual.FAOLLA_TRAFFIC_ENABLED!=='1'||actual.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||actual.FAOLLA_TRAFFIC_SIGNING_SECRET!==env.FAOLLA_TRAFFIC_SIGNING_SECRET||actual.FAOLLA_TRAFFIC_RETENTION_ENABLED!==env.FAOLLA_TRAFFIC_RETENTION_ENABLED||actual.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||actual.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||actual.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0'||ATTENDANCE_RELEASE_SCOPE.credentialKeys.some(k=>actual[k]!==env[k]))fail('attendance_candidate_settings_invalid');
+ }
+ const lines=safeFile(`${s.directory}/.env.local`).split('\n');
+ for(const [key,value] of Object.entries({...attendanceCandidateEnvironment(phase),...Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.credentialKeys.map(k=>[k,env[k]]))}))if(lines.filter(line=>new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(line)).length!==1||!lines.includes(`${key}=${value}`))fail('attendance_candidate_environment_file_invalid');
+ return env;
+}
+async function verifyAttendanceDatabaseProof(s){
+ verifyAttendanceSource(s);
+ const proof=await verifyAttendanceProductionDatabaseReady({target:s.target,baseline:s.baseline});
+ return assertAttendanceDatabaseReadyProof(proof,{target:s.target,baseline:s.baseline,scopeSha256:s.attendanceMigrationScopeSha256,...(s.attendanceDatabaseProofSha256?{proofSha256:s.attendanceDatabaseProofSha256}:{})});
+}
+async function enableAttendanceCandidate(s){
+ const proof=await verifyAttendanceDatabaseProof(s),p=pm().find(p=>p.name===s.name);
+ if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
+ const runtimeText=safeFile(`${operation}/runtime.json`),envText=safeFile(`${s.directory}/.env.local`),changes=attendanceCandidateEnvironment('database-ready');
+ const nextRuntime=JSON.stringify({...JSON.parse(runtimeText),...changes});
+ const nextEnv=envText.split('\n').map(line=>{const key=line.slice(0,line.indexOf('='));return Object.hasOwn(changes,key)?`${key}=${changes[key]}`:line;}).join('\n');
+ if(!s.attendanceEnvironmentTransition){
+  verifyAttendanceCandidateSettings(s,p,false);
+  s.attendanceDatabaseProofSha256=proof.proofSha256;
+  s.attendanceEnvironmentTransition={beforeRuntime:hash(runtimeText),afterRuntime:hash(nextRuntime),beforeEnv:hash(envText),afterEnv:hash(nextEnv)};save(s);
+ }
+ const t=s.attendanceEnvironmentTransition;
+ if(![t.beforeRuntime,t.afterRuntime].includes(hash(runtimeText))||![t.beforeEnv,t.afterEnv].includes(hash(envText))||hash(nextRuntime)!==t.afterRuntime||hash(nextEnv)!==t.afterEnv)fail('attendance_enablement_not_owned');
+ // Resume only the same proof-bound candidate transition; never reapply SQL or
+ // restart any existing web/background process. Preserve failed state.
+ if(hash(runtimeText)!==t.afterRuntime)atomic(`${operation}/runtime.json`,nextRuntime);
+ if(hash(envText)!==t.afterEnv)atomic(`${s.directory}/.env.local`,nextEnv);
+ run('pm2',['restart',s.name,'--update-env'],{env:JSON.parse(nextRuntime)});
+ const current=pm().find(p=>p.name===s.name);if(!current||current.pm2_env.status!=='online'||current.pm2_env.pm_cwd!==s.directory)fail('candidate_identity_invalid');verifyAttendanceCandidateSettings(s,current,true);
+ s.attendanceEnabled=true;save(s);
+ let ready=false;for(let i=0;i<20;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('attendance_enabled_candidate_not_ready');
+ verifyCandidate(s);s.status='database-ready';save(s);
+}
 function assertCustomerCodeProjectionOff(env,allowAbsent=false){
  for(const [key,expected] of [['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED','0'],['MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS','']]){
   if(env[key]!==expected&&!(allowAbsent&&env[key]===undefined))fail('customer_code_projection_must_remain_off');
@@ -455,6 +508,7 @@ try{
   if(run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
   const lane=onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
+  if(lane==='attendance'&&baseline!==ATTENDANCE_RELEASE_SCOPE.baseline)fail('attendance_live_baseline_invalid');
   const previousActive=existsSync(activeFile)?JSON.parse(safeFile(activeFile)):null;
   const legacy=JSON.parse(safeFile('/var/lib/faolla-web-presentation-release/state.json'));
   const old=previousActive??{...legacy,port:3102,name:'merchant-space-web-live'};
@@ -470,15 +524,18 @@ try{
   }
   if(hash(run('git',['show',`${target}:package-lock.json`],{cwd:app}))!==hash(safeFile(`${old.directory}/package-lock.json`)))fail('dependencies_changed');
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
+  if(lane==='attendance')assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   const sockets=run('ss',['-ltnH']);const port=[3103,3104,3105,3106,3107,3108,3109,3110].find(p=>!sockets.includes(`:${p} `));if(!port)fail('no_candidate_port');
   privateDirectory(operation);
   const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),...snapshotOnlineRetention(all,target,old.name),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
+  if(lane==='attendance'){s.attendanceEnabled=false;s.attendanceReleaseScopeSha256=hash(run('git',['show',`${target}:${ATTENDANCE_RELEASE_SCOPE_FILE}`],{cwd:app}));s.attendanceMigrationScopeSha256=hash(run('git',['show',`${target}:scripts/attendance-production-database-migrations.manifest.json`],{cwd:app}));}
   save(s);run('git',['worktree','add','--detach',s.directory,target],{cwd:app});
   run('cp',['-a','--reflink=auto',`${old.directory}/node_modules`,`${s.directory}/node_modules`],{timeout:180000});
   const env=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+  if(lane==='attendance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('attendance_baseline_features_invalid');
   if(lane==='qr-export'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('qr_export_analytics_baseline_invalid');
   if(lane==='performance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('performance_analytics_baseline_invalid');
   if(lane==='order-attention'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('order_attention_analytics_baseline_invalid');
@@ -493,13 +550,16 @@ try{
   if(lane==='public-catalog-batch'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('public_catalog_batch_baseline_features_invalid');
   const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:new Date().toISOString(),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',...(lane==='order-attention'?{FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'0'}:{}),...(lane==='traffic'?{FAOLLA_TRAFFIC_ENABLED:'0',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',FAOLLA_TRAFFIC_SIGNING_SECRET:env.FAOLLA_TRAFFIC_SIGNING_SECRET||randomBytes(48).toString('base64url')}:{}),PORT:String(port)};
   if(lane==='customer-code-performance')Object.assign(changes,{MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_ENABLED:'0',MERCHANT_CUSTOMER_MEMBERSHIP_PROJECTION_SITE_IDS:''});
+  if(lane==='attendance')Object.assign(changes,attendanceCandidateEnvironment('staged'),Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.credentialKeys.map(k=>[k,env[k]||randomBytes(32).toString('base64url')])));
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
   console.log('online_focused_tests');
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);
-  const tests=lane==='customer-code-performance'
+  const tests=lane==='attendance'
+   ? ATTENDANCE_RELEASE_FOCUSED_TESTS
+   : lane==='customer-code-performance'
    ? CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS
    : lane==='booking-merge-cpu'
    ? BOOKING_MERGE_CPU_FOCUSED_TESTS.slice(0,-3)
@@ -524,7 +584,8 @@ try{
   if(lane==='customer-code-performance')run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   verifyCustomerCodeCandidateSettings(s);
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
-  try{run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
+  try{if(lane==='attendance')buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});else run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
+  if(lane==='attendance'){s.attendanceBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);}
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);
@@ -545,6 +606,11 @@ try{
   }else if(action==='resume-booking-probe-stage'){
    await resumeBookingStage(s,true);
   }else if(action==='database'){
+   if(s.lane==='attendance'){
+    if(!['staged','database-ready'].includes(s.status))fail('database_not_staged');configUnchanged(s);
+    if(s.status==='database-ready'){verifyCandidate(s);await verifyAttendanceDatabaseProof(s);await smoke(s);}
+    else {if(!s.attendanceEnvironmentTransition)verifyCandidate(s);await enableAttendanceCandidate(s);}
+   }else{
    assertOnlineReleaseDatabaseAllowed(s.lane);
    if(s.status!=='staged')fail('database_not_staged');configUnchanged(s);verifyCandidate(s);
    verifyOrderAttentionSource(s);
@@ -571,8 +637,10 @@ try{
    }
    let ready=false;for(let i=0;i<20;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('enabled_candidate_not_ready');
    verifyCandidate(s);s.status='database-ready';save(s);
+   }
   }else if(action==='activate'){
    if(s.status!==onlineReleaseActivationStatus(s.lane))fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
+   if(s.lane==='attendance')await verifyAttendanceDatabaseProof(s);
    await activateCandidate(s);await settleOnlineRetention(s,heldLock);
   }else if(action==='retry-static'){
    await recoverStaticPermissions(s);await activateCandidate(s);await settleOnlineRetention(s,heldLock);

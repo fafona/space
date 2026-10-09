@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 import {
   closestCorners,
   DndContext,
@@ -24,12 +26,20 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { AttendanceAccountStatusClient } from "@/lib/merchantAttendanceAccountSuspensionClient";
+import { attendanceReminderPendingKey } from "@/lib/merchantAttendanceRemindersClient";
+import { attendanceUiAdmissionCurrent, type AttendanceUiAdmission } from "@/lib/merchantAttendanceRollout";
+import { correctionDelegationPendingKey } from "@/lib/merchantAttendanceCorrectionDelegationClient";
+import { reminderSelfNavigationPendingKeys, type ReminderSelfSessionSelection } from "@/lib/merchantAttendanceRemindersSelfNavigation";
+import { reminderOriginalTarget, type ReminderReviewTarget } from "@/lib/merchantAttendanceRemindersNavigation";
 import {
   buildMerchantTaskEditChanges,
   canMerchantEnterpriseEmployeeCoverBoards,
@@ -104,7 +114,28 @@ export type MerchantEnterpriseView =
   | "automations"
   | "employees"
   | "roles"
+  | "attendance"
+  | "attendanceAdmin"
+  | "attendanceScopes"
+  | "attendanceRecords"
   | "audit";
+
+const MerchantAttendanceSelfPanel = dynamic(() => import("@/components/enterprise/MerchantAttendanceSelfPanel"), {
+  ssr: false,
+  loading: () => <p role="status" className="mt-5 rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">正在加载考勤…</p>,
+});
+const MerchantAttendanceAdminPanel = dynamic(() => import("@/components/enterprise/MerchantAttendanceAdminPanel"), { ssr: false });
+const MerchantAttendanceScopePanel = dynamic(() => import("@/components/enterprise/MerchantAttendanceScopePanel"), { ssr: false });
+const MerchantAttendanceRecordsPanel = dynamic(() => import("@/components/enterprise/MerchantAttendanceRecordsPanel"), { ssr: false });
+const MerchantAttendancePeriodDelegationLauncher = dynamic(() => import("@/components/enterprise/MerchantAttendancePeriodDelegationLauncher"), { ssr: false });
+const MerchantAttendanceCorrectionDelegationLauncher = dynamic(() => import("@/components/enterprise/MerchantAttendanceCorrectionDelegationLauncher"), { ssr: false });
+const MerchantAttendanceRemindersLauncher = dynamic(() => import("@/components/enterprise/MerchantAttendanceRemindersLauncher"), { ssr: false });
+const MerchantAttendanceReminderCorrectionWorkspace = dynamic(() => import("@/components/enterprise/MerchantAttendanceReminderCorrectionWorkspace"), { ssr: false });
+const MerchantAttendanceManagementDelegatedLauncher = dynamic(() => import("@/components/enterprise/MerchantAttendanceManagementDelegatedLauncher"), { ssr: false });
+const MerchantAttendanceDelegatedPlanExceptionsLauncher = dynamic(() => import("@/components/enterprise/MerchantAttendanceDelegatedPlanExceptionsLauncher"), { ssr: false });
+const MerchantAttendanceOperationalRulesRecoveryLink = dynamic(() => import("@/components/enterprise/MerchantAttendanceOperationalRulesLauncher").then(m => m.OperationalRulesRecoveryLink), { ssr: false });
+const MerchantAttendanceOperationalPunchActivationRecoveryLink = dynamic(() => import("@/components/enterprise/MerchantAttendanceOperationalPunchActivationLauncher").then(m => m.OperationalPunchActivationRecoveryLink), { ssr: false });
+const MerchantAttendanceOperationalConsumerActivationRecoveryLink = dynamic(() => import("@/components/enterprise/MerchantAttendanceOperationalConsumerActivationLauncher").then(m => m.OperationalConsumerActivationRecoveryLink), { ssr: false });
 
 export type MerchantEnterpriseExternalNavigation = {
   mode: "external";
@@ -124,6 +155,10 @@ const MERCHANT_ENTERPRISE_VIEW_ITEMS = [
   { key: "automations", label: "流程自动化", permission: "automations.view" },
   { key: "employees", label: "员工账号", permission: "employees.view" },
   { key: "roles", label: "角色权限", permission: "roles.view" },
+  { key: "attendance", label: "我的考勤", permission: "attendance.self.view" },
+  { key: "attendanceAdmin", label: "考勤配置", permission: "enterprise.view" },
+  { key: "attendanceScopes", label: "主管考勤范围", permission: "enterprise.view" },
+  { key: "attendanceRecords", label: "考勤明细", permission: "attendance.records.view" },
   { key: "audit", label: "操作记录", permission: "audit.view" },
 ] as const satisfies ReadonlyArray<{
   key: MerchantEnterpriseView;
@@ -148,14 +183,17 @@ type MerchantEnterpriseManagerProps = {
   onOpenSourceOrder?: (input: { siteId: string; orderId: string }) => Promise<void> | void;
   onTodoCountChange?: (count: number) => void;
   registerLeaveGuard?: (guard: (() => boolean) | null) => void;
+  accountSuspensionEnabled?: boolean;
 };
 
 type OverviewPayload = {
   ok?: boolean;
   error?: string;
   actor?: MerchantEnterpriseActor;
+  currentAuthUserId?: string | null;
   snapshot?: MerchantEnterpriseSnapshot;
   needsBootstrap?: boolean;
+  attendanceEnabled?: boolean;
 };
 
 type TaskEventsPayload = {
@@ -2367,6 +2405,7 @@ function EmployeeOffboardingDialog({
   allowReassign,
   busy,
   errorMessage,
+  attendanceSuspensionNotice = false,
   onConfirm,
   onClose,
 }: {
@@ -2377,6 +2416,7 @@ function EmployeeOffboardingDialog({
   allowReassign: boolean;
   busy: boolean;
   errorMessage: string;
+  attendanceSuspensionNotice?: boolean;
   onConfirm: (mode: EmployeeOffboardingMode, replacementEmployeeId: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -2456,6 +2496,7 @@ function EmployeeOffboardingDialog({
             >
               将停用“{employee.displayName}”的企业账号。{taskSummary}
             </p>
+            {attendanceSuspensionNotice && <p className="mt-2 text-sm leading-6 text-amber-900">服务端启用联动或已有暂停历史时，账号停用与考勤暂停同事务；原号回执确认结果。不自动下班或改变在职日期。账号恢复后仍需负责人核验，旧 PIN 与旧委托须重新设置／授予。</p>}
           </div>
           <button
             ref={cancelButtonRef}
@@ -2986,6 +3027,7 @@ const ROLE_PERMISSION_GROUP_ORDER = [
   "角色",
   "流程",
   "审计",
+  "考勤",
   "积分兑换",
   "预约管理",
   "订单管理",
@@ -3003,6 +3045,7 @@ const ROLE_PERMISSION_GROUP_LABELS: Record<RolePermissionGroup, string> = {
   角色: "角色权限",
   流程: "工作流程",
   审计: "审计记录",
+  考勤: "员工考勤",
   积分兑换: "积分兑换",
   预约管理: "预约管理",
   订单管理: "订单管理",
@@ -3018,7 +3061,7 @@ const ROLE_PERMISSION_SECTIONS: ReadonlyArray<{
   {
     key: "collaboration",
     label: "企业协作",
-    groups: ["工作台", "任务", "订单", "员工", "角色", "流程", "审计"],
+    groups: ["工作台", "任务", "订单", "员工", "角色", "流程", "审计", "考勤"],
   },
   {
     key: "business",
@@ -3059,6 +3102,8 @@ function RolePermissionEditor({
 }) {
   const selected = new Set(permissions);
   const grantable = new Set(grantablePermissions);
+  const visiblePermissionCatalog = MERCHANT_ENTERPRISE_PERMISSION_CATALOG.filter(permission =>
+    !permission.key.startsWith("attendance.") || grantable.has(permission.key) || selected.has(permission.key));
   const [activeGroup, setActiveGroup] = useState<RolePermissionGroup>(
     ROLE_PERMISSION_GROUP_ORDER[0],
   );
@@ -3068,7 +3113,7 @@ function RolePermissionEditor({
     useState<MerchantEnterprisePermission | null>(null);
   const groups = ROLE_PERMISSION_GROUP_ORDER.map((group) => ({
     group,
-    permissions: MERCHANT_ENTERPRISE_PERMISSION_CATALOG.filter(
+    permissions: visiblePermissionCatalog.filter(
       (permission) => permission.group === group,
     ),
   })).filter((group) => group.permissions.length > 0);
@@ -3116,7 +3161,7 @@ function RolePermissionEditor({
             {permissions.length}
           </strong>
           <span className="font-semibold tabular-nums">
-            / {MERCHANT_ENTERPRISE_PERMISSION_CATALOG.length} 项
+            / {visiblePermissionCatalog.length} 项
           </span>
           <span className="text-slate-300" aria-hidden="true">·</span>
           <span>已配置</span>
@@ -4234,7 +4279,39 @@ function ColumnSettingsRow({
 export default function MerchantEnterpriseManager(props: MerchantEnterpriseManagerProps) {
   // Reset every tenant-scoped state value before rendering a different merchant or access token.
   const accessScopeKey = JSON.stringify([props.siteId, props.accessToken ?? ""]);
-  return <MerchantEnterpriseManagerContent key={accessScopeKey} {...props} />;
+  return <MerchantEnterpriseAuthorizationBoundary key={accessScopeKey} {...props} />;
+}
+
+function MerchantEnterpriseAuthorizationBoundary(props: MerchantEnterpriseManagerProps) {
+  const [deniedStatus, setDeniedStatus] = useState<401 | 403 | null>(null);
+  // Keep the invalidation callback stable: parent navigation callbacks can change
+  // every render and must not restart the overview request effect.
+  const callbacks = useRef(props);
+  useEffect(() => {
+    callbacks.current = props;
+  }, [props]);
+  const invalidateAuthorization = useCallback((status: 401 | 403) => {
+    setDeniedStatus(status);
+    callbacks.current.navigation?.onAvailableViewsChange?.([]);
+    callbacks.current.onTodoCountChange?.(0);
+  }, []);
+
+  if (deniedStatus !== null) {
+    // Unmount the entire protected tree, including local drafts and in-flight
+    // readers. Do not clear sessionStorage: attendance receipts may be unknown.
+    return <section aria-label="企业身份需重新核验" className={`min-w-0 p-4 sm:p-6 ${props.className ?? ""}`}>
+      <div className="mx-auto max-w-3xl rounded-3xl border border-rose-200 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-slate-950">企业管理暂不可用</h2>
+        <p role="alert" className="mt-2 text-sm leading-6 text-rose-700">
+          {deniedStatus === 401 ? "登录状态已失效，请重新登录。" : "当前账号已无权访问企业管理，请联系负责人或重新登录。"}
+        </p>
+        <p className="mt-3 text-sm leading-6 text-slate-600">旧身份、资料和未保存的编辑已关闭，已保存的数据不受影响。进行中的操作可能已送达；恢复访问后请先核对结果，不要直接重复提交。</p>
+        <button type="button" className="mt-5 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+          onClick={() => setDeniedStatus(null)}>重新核验企业身份</button>
+      </div>
+    </section>;
+  }
+  return <MerchantEnterpriseManagerContent {...props} onAuthorizationInvalid={invalidateAuthorization} />;
 }
 
 function MerchantEnterpriseManagerContent({
@@ -4250,7 +4327,9 @@ function MerchantEnterpriseManagerContent({
   onOpenSourceOrder,
   onTodoCountChange,
   registerLeaveGuard,
-}: MerchantEnterpriseManagerProps) {
+  accountSuspensionEnabled: accountSuspensionRequested = process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_ACCOUNT_SUSPENSION_ENABLED === "1",
+  onAuthorizationInvalid,
+}: MerchantEnterpriseManagerProps & { onAuthorizationInvalid: (status: 401 | 403) => void }) {
   const resolvedCollaborationRefreshIntervalMs = normalizeCollaborationRefreshInterval(
     collaborationRefreshIntervalMs,
   );
@@ -4258,9 +4337,14 @@ function MerchantEnterpriseManagerContent({
     resolvedCollaborationRefreshIntervalMs * MERCHANT_ENTERPRISE_STALE_INTERVAL_MULTIPLIER;
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
+  const [currentAuthUserId, setCurrentAuthUserId] = useState<string | null>(null);
   const actorAuthorizationFingerprint = actor
     ? buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(actor)
     : "";
+  const [attendanceAdmission, setAttendanceAdmission] = useState<AttendanceUiAdmission | null>(null);
+  const attendanceAdmissionScope = JSON.stringify([siteId, accessToken, actorAuthorizationFingerprint, currentAuthUserId]);
+  const attendanceUiAvailable = attendanceUiAdmissionCurrent(attendanceAdmission, attendanceAdmissionScope);
+  const accountSuspensionEnabled = accountSuspensionRequested && attendanceUiAvailable;
   const actorCanViewTasks = can(actor, "tasks.view");
   const actorCanViewEmployees = can(actor, "employees.view");
   const [snapshot, setSnapshot] = useState<MerchantEnterpriseSnapshot>(EMPTY_SNAPSHOT);
@@ -4312,9 +4396,79 @@ function MerchantEnterpriseManagerContent({
   const usesExternalNavigation = navigation?.mode === "external";
   const requestedView = usesExternalNavigation ? navigation.activeView : internalView;
   const requestedViewAllowed = actor
-    ? can(actor, MERCHANT_ENTERPRISE_VIEW_PERMISSIONS[requestedView])
+    ? can(actor, MERCHANT_ENTERPRISE_VIEW_PERMISSIONS[requestedView]) && (!requestedView.startsWith("attendance") || attendanceUiAvailable) && (requestedView !== "attendance" || actor.type === "employee") && (requestedView !== "attendanceAdmin" || actor.type === "owner") && (requestedView !== "attendanceScopes" || actor.type === "owner")
     : true;
   const tab = requestedViewAllowed ? requestedView : "overview";
+  // Only the currently mounted, authorized attendance child may override the
+  // generic enterprise draft warning. Other enterprise views keep their guard.
+  const attendanceLeaveScope = `${siteId}:${actorAuthorizationFingerprint}:${tab}`;
+  const attendanceLeaveGuardRef = useRef<{ scope: string; guard: () => boolean } | null>(null);
+  const correctionLeaveGuardRef = useRef<{ scope: string; guard: () => boolean } | null>(null);
+  const reminderLeaveGuardRef = useRef<{ scope: string; guard: () => boolean } | null>(null);
+  const reminderCorrectionLeaveGuardRef = useRef<{ scope: string; guard: () => boolean } | null>(null);
+  const managementDelegatedLeaveGuardRef = useRef<{ scope: string; guard: () => boolean } | null>(null);
+  const delegatedPlanExceptionsLeaveGuardRef = useRef<{ scope: string; guard: () => boolean } | null>(null);
+  // The new overview child occupies both existing lanes, so neither legacy
+  // delegate launcher can open beside it. Only this exact registration is
+  // released; a late cleanup cannot remove somebody else's leave guard.
+  const registerReminderLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    const prior = reminderLeaveGuardRef.current;
+    if (guard) {
+      if ([attendanceLeaveGuardRef.current, correctionLeaveGuardRef.current].some(value => value !== null && value !== prior)) return;
+      const registration = { scope: attendanceLeaveScope, guard };
+      reminderLeaveGuardRef.current = registration; attendanceLeaveGuardRef.current = registration; correctionLeaveGuardRef.current = registration;
+    } else if (prior?.scope === attendanceLeaveScope) {
+      if (attendanceLeaveGuardRef.current === prior) attendanceLeaveGuardRef.current = null;
+      if (correctionLeaveGuardRef.current === prior) correctionLeaveGuardRef.current = null;
+      reminderLeaveGuardRef.current = null;
+    }
+  }, [attendanceLeaveScope]);
+  const registerReminderCorrectionLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    const prior = reminderCorrectionLeaveGuardRef.current;
+    if (guard) {
+      if ([attendanceLeaveGuardRef.current, correctionLeaveGuardRef.current].some(value => value !== null && value !== prior)) return;
+      const registration = { scope: attendanceLeaveScope, guard };
+      reminderCorrectionLeaveGuardRef.current = registration; attendanceLeaveGuardRef.current = registration; correctionLeaveGuardRef.current = registration;
+    } else if (prior?.scope === attendanceLeaveScope) {
+      if (attendanceLeaveGuardRef.current === prior) attendanceLeaveGuardRef.current = null;
+      if (correctionLeaveGuardRef.current === prior) correctionLeaveGuardRef.current = null;
+      reminderCorrectionLeaveGuardRef.current = null;
+    }
+  }, [attendanceLeaveScope]);
+  // The new audit workspace owns one exact registration in both old lanes.
+  // Never replace foreign guards or erase one during a stale child cleanup.
+  const registerManagementDelegatedLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    const prior = managementDelegatedLeaveGuardRef.current;
+    if (guard) {
+      if ([attendanceLeaveGuardRef.current, correctionLeaveGuardRef.current].some(value => value !== null && value !== prior)) return;
+      const registration = { scope: attendanceLeaveScope, guard };
+      managementDelegatedLeaveGuardRef.current = registration; attendanceLeaveGuardRef.current = registration; correctionLeaveGuardRef.current = registration;
+    } else if (prior?.scope === attendanceLeaveScope) {
+      if (attendanceLeaveGuardRef.current === prior) attendanceLeaveGuardRef.current = null;
+      if (correctionLeaveGuardRef.current === prior) correctionLeaveGuardRef.current = null;
+      managementDelegatedLeaveGuardRef.current = null;
+    }
+  }, [attendanceLeaveScope]);
+  const registerDelegatedPlanExceptionsLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    const prior = delegatedPlanExceptionsLeaveGuardRef.current;
+    if (guard) {
+      if ([attendanceLeaveGuardRef.current, correctionLeaveGuardRef.current].some(value => value !== null && value !== prior)) return;
+      const registration = { scope: attendanceLeaveScope, guard };
+      delegatedPlanExceptionsLeaveGuardRef.current = registration; attendanceLeaveGuardRef.current = registration; correctionLeaveGuardRef.current = registration;
+    } else if (prior?.scope === attendanceLeaveScope) {
+      if (attendanceLeaveGuardRef.current === prior) attendanceLeaveGuardRef.current = null;
+      if (correctionLeaveGuardRef.current === prior) correctionLeaveGuardRef.current = null;
+      delegatedPlanExceptionsLeaveGuardRef.current = null;
+    }
+  }, [attendanceLeaveScope]);
+  const registerCorrectionLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    if (guard) correctionLeaveGuardRef.current = { scope: attendanceLeaveScope, guard };
+    else if (correctionLeaveGuardRef.current?.scope === attendanceLeaveScope) correctionLeaveGuardRef.current = null;
+  }, [attendanceLeaveScope]);
+  const registerAttendanceLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    if (guard) attendanceLeaveGuardRef.current = { scope: attendanceLeaveScope, guard };
+    else if (attendanceLeaveGuardRef.current?.scope === attendanceLeaveScope) attendanceLeaveGuardRef.current = null;
+  }, [attendanceLeaveScope]);
   const onExternalViewChange = navigation?.onViewChange;
   const onAvailableViewsChange = navigation?.onAvailableViewsChange;
   const commitViewChange = useCallback(
@@ -4447,6 +4601,52 @@ function MerchantEnterpriseManagerContent({
     },
     [accessToken],
   );
+
+  // The new independent launcher is scoped to the same authorized overview.
+  // Invalidate synchronously at render (including A -> B -> A), before effect
+  // cleanup can run. A membership ID is never substituted for actual Auth.
+  const periodDelegationScopeKey = JSON.stringify([siteId, tab, actorAuthorizationFingerprint, currentAuthUserId]);
+  const periodDelegationScope = useRef({ key: periodDelegationScopeKey, requester: apiFetch, token: 0 });
+  if (periodDelegationScope.current.key !== periodDelegationScopeKey || periodDelegationScope.current.requester !== apiFetch) {
+    periodDelegationScope.current = { key: periodDelegationScopeKey, requester: apiFetch, token: periodDelegationScope.current.token + 1 };
+  }
+  const periodDelegationToken = periodDelegationScope.current.token;
+  const periodDelegationAuthCurrent = useCallback(() => periodDelegationScope.current.token === periodDelegationToken, [periodDelegationToken]);
+  const periodDelegationAuthId = actor?.siteId === siteId && currentAuthUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(currentAuthUserId)
+    && (actor.type !== "owner" || currentAuthUserId === actor.id) ? currentAuthUserId : null;
+  const [reminderCorrectionSelection, setReminderCorrectionSelection] = useState<{ token: number; target: ReminderReviewTarget } | null>(null);
+  const [reminderSelfHint, setReminderSelfHint] = useState<{ token: number; employeeId: string; authUserId: string } | null>(null);
+  const reminderCorrectionCurrent = reminderCorrectionSelection?.token === periodDelegationToken && tab === "overview" && actor?.type === "employee"
+    && can(actor, "attendance.correction.review") && !!periodDelegationAuthId && process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_CORRECTION_DELEGATION_ENABLED === "1";
+  useLayoutEffect(() => { if (!reminderCorrectionCurrent) registerReminderCorrectionLeaveGuard(null); }, [reminderCorrectionCurrent, registerReminderCorrectionLeaveGuard]);
+
+  // Membership IDs and employee snapshot rows confer no Auth identity. Only
+  // the same authorized overview may supply the caller's independently verified Auth.
+  const accountStatusAuthId = actor?.siteId === siteId && currentAuthUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(currentAuthUserId)
+    && (actor.type !== "owner" || currentAuthUserId === actor.id) ? currentAuthUserId
+    : actor?.type === "owner" && actor.siteId === siteId && currentAuthUserId === null ? actor.id : "";
+  const accountStatusScope = useRef({ siteId, accountStatusAuthId, actorAuthorizationFingerprint, apiFetch });
+  accountStatusScope.current = { siteId, accountStatusAuthId, actorAuthorizationFingerprint, apiFetch };
+  const accountStatusClient = useMemo(() => {
+    if (!accountStatusAuthId || !actorAuthorizationFingerprint) return null;
+    try { const client = new AttendanceAccountStatusClient({ siteId, actorId: accountStatusAuthId, apiFetch, storage: () => sessionStorage,
+      isCurrentAuth: () => { const current = accountStatusScope.current; return current.siteId === siteId && current.accountStatusAuthId === accountStatusAuthId
+        && current.actorAuthorizationFingerprint === actorAuthorizationFingerprint && current.apiFetch === apiFetch; } });
+      return accountSuspensionEnabled || client.hasLeaveRisk() ? client : null;
+    } catch { return null; }
+  }, [siteId, accountStatusAuthId, actorAuthorizationFingerprint, apiFetch, accountSuspensionEnabled]);
+  const statusSubscribe = useCallback((listener: () => void) => accountStatusClient?.subscribe(listener) ?? (() => {}), [accountStatusClient]);
+  const statusSnapshot = useCallback(() => accountStatusClient?.getSnapshot() ?? null, [accountStatusClient]);
+  const accountStatusState = useSyncExternalStore(statusSubscribe, statusSnapshot, statusSnapshot);
+  const accountStatusLifetime = useRef(accountStatusClient); accountStatusLifetime.current = accountStatusClient;
+  useLayoutEffect(() => {
+    if (!accountStatusClient) return;
+    const hide = () => accountStatusClient.pause();
+    const visibility = () => { if (document.hidden) hide(); else void accountStatusClient.initialize(); };
+    const unload = (event: BeforeUnloadEvent) => { if (accountStatusClient.hasLeaveRisk()) { event.preventDefault(); event.returnValue = ""; } };
+    visibility(); document.addEventListener("visibilitychange", visibility); window.addEventListener("pagehide", hide); window.addEventListener("pageshow", visibility); window.addEventListener("beforeunload", unload);
+    return () => { accountStatusClient.pause(); document.removeEventListener("visibilitychange", visibility); window.removeEventListener("pagehide", hide); window.removeEventListener("pageshow", visibility); window.removeEventListener("beforeunload", unload); };
+  }, [accountStatusClient]);
 
   const fetchCurrentOperations = useCallback(
     async (
@@ -4783,6 +4983,8 @@ function MerchantEnterpriseManagerContent({
     setOverviewRefreshing(preserveData);
     if (!preserveData) {
       setActor(null);
+      setAttendanceAdmission(null);
+      setCurrentAuthUserId(null);
       setSnapshot(EMPTY_SNAPSHOT);
       setNeedsBootstrap(false);
       setMessage(null);
@@ -4804,6 +5006,17 @@ function MerchantEnterpriseManagerContent({
         `/api/merchant-enterprise/overview?siteId=${encodeURIComponent(siteId)}`,
         { signal: controller.signal },
       );
+      if (controller.signal.aborted || requestSequence !== overviewRequestSequenceRef.current) return false;
+      // An authoritative access denial must not be treated as a temporary load
+      // failure or ignored because the user started editing during a silent read.
+      // Inspect status before parsing a possibly missing/invalid error body.
+      if (response.status === 401 || response.status === 403) {
+        accountStatusScope.current.accountStatusAuthId = "";
+        periodDelegationScope.current.token++;
+        setCurrentAuthUserId(null);
+        onAuthorizationInvalid(response.status);
+        return false;
+      }
       const payload = (await response.json().catch(() => null)) as OverviewPayload | null;
       if (
         controller.signal.aborted ||
@@ -4816,6 +5029,10 @@ function MerchantEnterpriseManagerContent({
         throw new Error(readApiError(payload, "企业管理加载失败。"));
       }
       setActor(payload.actor);
+      setCurrentAuthUserId(typeof payload.currentAuthUserId === "string" ? payload.currentAuthUserId : null);
+      setAttendanceAdmission({ enabled: payload.attendanceEnabled === true,
+        scope: JSON.stringify([siteId, accessToken, buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(payload.actor),
+          typeof payload.currentAuthUserId === "string" ? payload.currentAuthUserId : null]) });
       setSnapshot(payload.snapshot);
       setNeedsBootstrap(payload.needsBootstrap === true);
       const syncedAt = Date.now();
@@ -4833,6 +5050,8 @@ function MerchantEnterpriseManagerContent({
       }
       if (!preserveData) {
         setActor(null);
+        setAttendanceAdmission(null);
+        setCurrentAuthUserId(null);
         setSnapshot(EMPTY_SNAPSHOT);
         setNeedsBootstrap(false);
         setFailedInvitationEmployeeIds(new Set());
@@ -4859,7 +5078,7 @@ function MerchantEnterpriseManagerContent({
         if (preserveData) setOverviewRefreshing(false);
       }
     }
-  }, [apiFetch, siteId]);
+  }, [apiFetch, siteId, accessToken, onAuthorizationInvalid]);
 
   const refreshOverview = useCallback(async () => {
     if (overviewAbortControllerRef.current) return;
@@ -5090,7 +5309,11 @@ function MerchantEnterpriseManagerContent({
         setMessage({ kind: "info", text: "当前操作正在保存，请完成后再切换功能。" });
         return false;
       }
-      if (
+      if (tab === "employees" && accountStatusClient?.hasLeaveRisk() && !window.confirm("员工账号操作结果尚未确认。离开不会撤销已发送操作，原编号会保留；继续吗？")) return false;
+      const attendanceGuard = correctionLeaveGuardRef.current?.scope === attendanceLeaveScope ? correctionLeaveGuardRef.current : attendanceLeaveGuardRef.current;
+      if (actor && attendanceGuard?.scope === attendanceLeaveScope) {
+        if (!attendanceGuard.guard()) return false;
+      } else if (
         actor &&
         !canAutoRefreshOnFocus &&
         !window.confirm("当前页面有未保存的内容。切换功能将放弃这些修改，是否继续？")
@@ -5113,7 +5336,7 @@ function MerchantEnterpriseManagerContent({
       }
       return true;
     },
-    [actor, busy, canAutoRefreshOnFocus, tab],
+    [actor, attendanceLeaveScope, busy, canAutoRefreshOnFocus, tab, accountStatusClient],
   );
   const requestViewChange = useCallback(
     (view: MerchantEnterpriseView) => {
@@ -5123,6 +5346,41 @@ function MerchantEnterpriseManagerContent({
     },
     [commitViewChange, confirmViewChange],
   );
+  //The reminder itself confers no authority. Only the actual employee's
+  //authorized overview may hand off a pointer; every original read is explicit.
+  const reminderRecipientReady = () => {
+    const own = reminderLeaveGuardRef.current;
+    return !document.hidden && tab === "overview" && !busy && !loading && canAutoRefreshOnFocus && actor?.type === "employee"
+      && !!periodDelegationAuthId && periodDelegationAuthCurrent() && own?.scope === attendanceLeaveScope
+      && [attendanceLeaveGuardRef.current, correctionLeaveGuardRef.current].every(value => value === null || value === own);
+  };
+  const openReminderSelfSession = (selection: ReminderSelfSessionSelection): boolean => {
+    if (!reminderRecipientReady() || actor?.type !== "employee" || !can(actor, "attendance.self.view")
+      || selection.siteId !== siteId || selection.employeeId !== actor.id || selection.authUserId !== periodDelegationAuthId) return false;
+    try { for (const key of reminderSelfNavigationPendingKeys(siteId, selection.authUserId, actor.id)) {
+      if (!periodDelegationAuthCurrent() || window.sessionStorage.getItem(key) !== null) return false;
+    } } catch { return false; }
+    if (!reminderRecipientReady() || !requestViewChange("attendance")) return false;
+    //Exactly one overview -> attendance scope transition. Returning later,
+    //changing Auth/requester or A -> B -> A cannot reactivate this local hint.
+    setReminderSelfHint({ token: periodDelegationToken + 1, employeeId: actor.id, authUserId: selection.authUserId }); return true;
+  };
+  const openReminderDelegateTarget = (raw: ReminderReviewTarget): boolean => {
+    if (!reminderRecipientReady() || actor?.type !== "employee" || !can(actor, "attendance.correction.review")
+      || process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_CORRECTION_DELEGATION_ENABLED !== "1") return false;
+    let target: ReminderReviewTarget; try {
+      target = reminderOriginalTarget(raw); if (target.family !== "correction") return false;
+      for (const key of [attendanceReminderPendingKey(siteId, periodDelegationAuthId!), correctionDelegationPendingKey(siteId, "delegate", actor.id)]) {
+        if (!periodDelegationAuthCurrent() || window.sessionStorage.getItem(key) !== null) return false;
+      }
+    } catch { return false; }
+    if (!reminderRecipientReady()) return false;
+    //Reserve both lanes BEFORE the lazy module renders. Reminder cleanup can
+    //release only its own old registration, never this new exact registration.
+    const reservation = { scope: attendanceLeaveScope, guard: () => false };
+    reminderCorrectionLeaveGuardRef.current = reservation; attendanceLeaveGuardRef.current = reservation; correctionLeaveGuardRef.current = reservation;
+    setReminderCorrectionSelection({ token: periodDelegationToken, target }); return true;
+  };
   const settleWorkflowFocusRequest = useCallback(
     (requestId: number, opened: boolean) => {
       const pending = workflowFocusResolverRef.current;
@@ -5223,7 +5481,7 @@ function MerchantEnterpriseManagerContent({
 
   const availableViewKey = actor
     ? MERCHANT_ENTERPRISE_VIEW_ITEMS
-        .filter((item) => can(actor, item.permission))
+        .filter((item) => can(actor, item.permission) && (!item.key.startsWith("attendance") || attendanceUiAvailable) && (item.key !== "attendance" || actor.type === "employee") && (item.key !== "attendanceAdmin" || actor.type === "owner") && (item.key !== "attendanceScopes" || actor.type === "owner"))
         .map((item) => item.key)
         .join("|")
     : "";
@@ -5622,9 +5880,9 @@ function MerchantEnterpriseManagerContent({
   const archivedTaskCount = boardTasks.filter((task) => Boolean(task.archivedAt)).length;
   const grantablePermissions =
     actor?.type === "owner"
-      ? MERCHANT_ENTERPRISE_PERMISSION_CATALOG.map((permission) => permission.key)
+      ? MERCHANT_ENTERPRISE_PERMISSION_CATALOG.filter(permission => attendanceUiAvailable || !permission.key.startsWith("attendance.")).map((permission) => permission.key)
       : (actor?.permissions ?? []).filter(
-          (permission) => !isMerchantStaffBusinessPermission(permission),
+          (permission) => !isMerchantStaffBusinessPermission(permission) && (attendanceUiAvailable || !permission.startsWith("attendance.")),
         );
   const employeeById = useMemo(
     () => new Map(snapshot.employees.map((employee) => [employee.id, employee] as const)),
@@ -6484,6 +6742,7 @@ function MerchantEnterpriseManagerContent({
       return;
     }
     if (!window.confirm(`确认恢复“${employee.displayName}”的企业账号吗？`)) return;
+    if (await updateEmployeeStatusWithReceipt({ employeeId: employee.id, version: employee.version, status })) return;
     await mutate(
       "/api/merchant-enterprise/employees",
       "PATCH",
@@ -6501,6 +6760,8 @@ function MerchantEnterpriseManagerContent({
     replacementEmployeeId: string,
   ) {
     if (!offboardingEmployee) return;
+    if (await updateEmployeeStatusWithReceipt({ employeeId: offboardingEmployee.id, version: offboardingEmployee.version, status: "disabled", offboardingMode: mode,
+      ...(mode === "reassign" ? { replacementEmployeeId } : {}) })) { setOffboardingEmployeeId(""); return; }
     const payload = await mutate(
       "/api/merchant-enterprise/employees",
       "PATCH",
@@ -6516,6 +6777,28 @@ function MerchantEnterpriseManagerContent({
         : "员工账号已停用，未完成任务已解除负责人。",
     );
     if (payload) setOffboardingEmployeeId("");
+  }
+
+  async function updateEmployeeStatusWithReceipt(input: Parameters<AttendanceAccountStatusClient["submit"]>[0]): Promise<boolean> {
+    const client = accountStatusClient;
+    if (!accountSuspensionEnabled && !client?.hasLeaveRisk()) return false;
+    if (!client || accountStatusLifetime.current !== client || document.hidden) { setMessage({ kind: "error", text: "无法核验当前操作者登录身份，请重新验证后再处理账号；未降级发送旧操作。" }); return true; }
+    if (client.hasLeaveRisk()) { setMessage({ kind: "info", text: "请先核对原员工账号操作编号，不自动重发或覆盖待确认意图。" }); return true; }
+    setBusy(true);
+    try { await client.submit(input); if (accountStatusLifetime.current !== client || document.hidden) return true;
+      const latest = client.getSnapshot(); setMessage({ kind: latest.result?.statusReceipt ? "success" : "info", text: latest.message });
+      // Only a checked immutable receipt authorizes a success-driven refresh.
+      if (!latest.pending && latest.result?.statusReceipt) await loadOverview({ preserveData: true });
+    } finally { if (accountStatusLifetime.current === client) setBusy(false); }
+    return true;
+  }
+
+  async function recoverEmployeeStatus() {
+    const client = accountStatusClient; if (!client || document.hidden || busy) return;
+    setBusy(true);
+    try { await client.recover(); if (accountStatusLifetime.current !== client || document.hidden) return;
+      const latest = client.getSnapshot(); if (!latest.pending && latest.result?.statusReceipt) await loadOverview({ preserveData: true });
+    } finally { if (accountStatusLifetime.current === client) setBusy(false); }
   }
 
   function updateEmployeeRole(
@@ -6865,7 +7148,7 @@ function MerchantEnterpriseManagerContent({
             className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:flex sm:overflow-x-auto"
           >
             {MERCHANT_ENTERPRISE_VIEW_ITEMS
-              .filter((item) => can(actor, item.permission))
+              .filter((item) => can(actor, item.permission) && (!item.key.startsWith("attendance") || attendanceUiAvailable) && (item.key !== "attendance" || actor.type === "employee") && (item.key !== "attendanceAdmin" || actor.type === "owner") && (item.key !== "attendanceScopes" || actor.type === "owner"))
               .map(({ key, label }) => (
               <button
                 key={key}
@@ -6898,7 +7181,7 @@ function MerchantEnterpriseManagerContent({
           </div>
         ) : null}
 
-        {needsBootstrap ? (
+        {needsBootstrap && tab !== "attendance" && tab !== "attendanceAdmin" && tab !== "attendanceScopes" && tab !== "attendanceRecords" ? (
           <section className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-6">
             <h2 className="text-lg font-semibold text-amber-950">初始化企业工作区</h2>
             <p className="mt-2 text-sm leading-6 text-amber-800">
@@ -6919,6 +7202,94 @@ function MerchantEnterpriseManagerContent({
             ) : null}
           </section>
         ) : null}
+
+        {attendanceUiAvailable ? <>
+        {tab === "attendanceScopes" && actor.type === "owner" ? (
+          <MerchantAttendanceScopePanel key={`${siteId}:${actor.id}`} siteId={siteId} ownerId={actor.id} apiFetch={apiFetch} />
+        ) : null}
+
+        {tab === "attendanceRecords" && can(actor, "attendance.records.view") ? (
+          <MerchantAttendanceRecordsPanel key={`${siteId}:${actor.type}:${actor.id}`} siteId={siteId} actorId={actor.id} access={actor.type === "owner" ? "owner" : "manager"} apiFetch={apiFetch} />
+        ) : null}
+
+        {tab === "attendanceAdmin" && actor.type === "owner" ? (
+          <MerchantAttendanceAdminPanel key={`${siteId}:${actor.id}`} siteId={siteId} ownerId={actor.id} authUserId={periodDelegationAuthId} isCurrentAuth={periodDelegationAuthCurrent}
+            siteName={siteName} apiFetch={apiFetch} registerLeaveGuard={registerAttendanceLeaveGuard} />
+        ) : null}
+
+        {tab === "overview" && periodDelegationAuthId ? <MerchantAttendanceOperationalRulesRecoveryLink
+          key={`operational-recovery:${siteId}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`} siteId={siteId} actorId={periodDelegationAuthId}
+          isCurrentAuth={periodDelegationAuthCurrent} beforeLeave={() => { if (busy || loading || !periodDelegationAuthCurrent()) return false;
+            const correction = correctionLeaveGuardRef.current, attendance = attendanceLeaveGuardRef.current;
+            if (correction?.scope === attendanceLeaveScope && !correction.guard()) return false;
+            return attendance?.scope !== attendanceLeaveScope || attendance.guard(); }}/>:null}
+
+        {tab === "overview" && periodDelegationAuthId ? <MerchantAttendanceOperationalPunchActivationRecoveryLink
+          key={`operational-punch-recovery:${siteId}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`} siteId={siteId} actorId={periodDelegationAuthId}
+          isCurrentAuth={periodDelegationAuthCurrent} beforeLeave={() => { if (busy || loading || !periodDelegationAuthCurrent()) return false;
+            const correction = correctionLeaveGuardRef.current, attendance = attendanceLeaveGuardRef.current;
+            if (correction?.scope === attendanceLeaveScope && !correction.guard()) return false;
+            return attendance?.scope !== attendanceLeaveScope || attendance.guard(); }}/>:null}
+
+        {/* Independent enterprise entry: period.view deliberately does not require self.view. */}
+        {tab === "overview" && periodDelegationAuthId ? <MerchantAttendanceRemindersLauncher
+          key={`attendance-reminders:${siteId}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`} siteId={siteId} actorId={periodDelegationAuthId}
+          apiFetch={apiFetch} isCurrentAuth={periodDelegationAuthCurrent} requesterKey={actorAuthorizationFingerprint}
+          enabled={process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_REMINDERS_ENABLED === "1"} disabled={busy || loading}
+          beforeOpen={() => !busy && !loading && periodDelegationAuthCurrent() && !attendanceLeaveGuardRef.current && !correctionLeaveGuardRef.current}
+          selfEmployeeId={actor.type === "employee" && can(actor, "attendance.self.view") ? actor.id : null}
+          onOpenSelfSession={actor.type === "employee" && can(actor, "attendance.self.view") ? openReminderSelfSession : undefined}
+          onOpenDelegateTarget={actor.type === "employee" && can(actor, "attendance.correction.review") ? openReminderDelegateTarget : undefined}
+          registerLeaveGuard={registerReminderLeaveGuard}/>:null}
+        {reminderCorrectionCurrent && actor.type === "employee" && periodDelegationAuthId && reminderCorrectionSelection ? <MerchantAttendanceReminderCorrectionWorkspace
+          key={`reminder-correction:${siteId}:${actor.id}:${periodDelegationAuthId}:${periodDelegationToken}`} siteId={siteId} employeeId={actor.id} authUserId={periodDelegationAuthId}
+          target={reminderCorrectionSelection.target} apiFetch={apiFetch} enabled={process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_CORRECTION_DELEGATION_ENABLED === "1"}
+          isCurrentAuth={periodDelegationAuthCurrent} registerLeaveGuard={registerReminderCorrectionLeaveGuard}
+          onClose={() => { registerReminderCorrectionLeaveGuard(null); setReminderCorrectionSelection(null); }}/>:null}
+
+        {tab === "overview" && periodDelegationAuthId ? <MerchantAttendanceManagementDelegatedLauncher
+          key={`management-delegated:${siteId}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`} siteId={siteId} actorId={periodDelegationAuthId}
+          ownerMode={false} apiFetch={apiFetch} isCurrentAuth={periodDelegationAuthCurrent} requesterKey={actorAuthorizationFingerprint}
+          grantEnabled={process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_MANAGEMENT_DELEGATIONS_ENABLED === "1"}
+          auditEnabled={process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_DELEGATED_AUDIT_ENABLED === "1"} disabled={busy || loading}
+          beforeOpen={() => !busy && !loading && periodDelegationAuthCurrent() && !attendanceLeaveGuardRef.current && !correctionLeaveGuardRef.current}
+          registerLeaveGuard={registerManagementDelegatedLeaveGuard}/>:null}
+
+        {tab === "overview" && periodDelegationAuthId ? <MerchantAttendanceDelegatedPlanExceptionsLauncher
+          key={`plan-exceptions-delegated:${siteId}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`} siteId={siteId} actorId={periodDelegationAuthId}
+          ownerMode={false} apiFetch={apiFetch} isCurrentAuth={periodDelegationAuthCurrent} requesterKey={actorAuthorizationFingerprint}
+          grantEnabled={process.env.NEXT_PUBLIC_FAOLLA_ATTENDANCE_MANAGEMENT_DELEGATIONS_ENABLED === "1"} disabled={busy || loading}
+          beforeOpen={() => !busy && !loading && periodDelegationAuthCurrent() && !attendanceLeaveGuardRef.current && !correctionLeaveGuardRef.current}
+          registerLeaveGuard={registerDelegatedPlanExceptionsLeaveGuard}/>:null}
+
+        {tab === "overview" && periodDelegationAuthId ? <MerchantAttendanceOperationalConsumerActivationRecoveryLink
+          key={`operational-consumer-recovery:${siteId}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`} siteId={siteId} actorId={periodDelegationAuthId}
+          isCurrentAuth={periodDelegationAuthCurrent} beforeLeave={() => { if (busy || loading || !periodDelegationAuthCurrent()) return false;
+            const correction = correctionLeaveGuardRef.current, attendance = attendanceLeaveGuardRef.current;
+            if (correction?.scope === attendanceLeaveScope && !correction.guard()) return false;
+            return attendance?.scope !== attendanceLeaveScope || attendance.guard(); }}/>:null}
+
+        {tab === "overview" && actor.type === "employee" && can(actor, "attendance.period.view") && periodDelegationAuthId ? (
+          <MerchantAttendancePeriodDelegationLauncher key={`period-delegation:${siteId}:${actor.id}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`}
+            siteId={siteId} access="delegate" actorId={actor.id} authUserId={periodDelegationAuthId} apiFetch={apiFetch}
+            isCurrentAuth={periodDelegationAuthCurrent} disabled={busy || loading} beforeOpen={() => !busy && !loading && !correctionLeaveGuardRef.current && periodDelegationAuthCurrent()}
+            registerLeaveGuard={registerAttendanceLeaveGuard}/>
+        ) : null}
+
+        {/* First-correction review does not require a personal worker or self.view. */}
+        {tab === "overview" && actor.type === "employee" && can(actor, "attendance.correction.review") && periodDelegationAuthId ? (
+          <MerchantAttendanceCorrectionDelegationLauncher key={`correction-delegation:${siteId}:${actor.id}:${periodDelegationAuthId}:${actorAuthorizationFingerprint}`}
+            siteId={siteId} access="delegate" actorId={actor.id} authUserId={periodDelegationAuthId} apiFetch={apiFetch}
+            isCurrentAuth={periodDelegationAuthCurrent} disabled={busy || loading} beforeOpen={() => !busy && !loading && !attendanceLeaveGuardRef.current && periodDelegationAuthCurrent()}
+            registerLeaveGuard={registerCorrectionLeaveGuard}/>
+        ) : null}
+
+        {tab === "attendance" && actor.type === "employee" ? (
+          <MerchantAttendanceSelfPanel key={`${siteId}:${actor.id}`} siteId={siteId} siteName={siteName}
+            openOperationalOnMount={reminderSelfHint?.token === periodDelegationToken && reminderSelfHint.employeeId === actor.id && reminderSelfHint.authUserId === currentAuthUserId}
+            employeeId={actor.id} authUserId={currentAuthUserId} isCurrentAuth={periodDelegationAuthCurrent} employeeName={actor.displayName} canClock={can(actor, "attendance.self.clock")} apiFetch={apiFetch} registerLeaveGuard={registerAttendanceLeaveGuard} />
+        ) : null}
+        </> : null}
 
         {!needsBootstrap && tab === "overview" ? (
           <div className="mt-5 space-y-5">
@@ -7657,6 +8028,14 @@ function MerchantEnterpriseManagerContent({
 
         {!needsBootstrap && tab === "employees" ? (
           <div className="mt-5 space-y-5">
+            {(accountStatusState?.pending || accountStatusState?.result?.statusReceipt || accountStatusState?.phase === "blocked") && <section aria-label="企业账号原号核验" data-account-status className="min-w-0 space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm">
+              <p role="status" className="break-words">{accountStatusState.message}</p>
+              {accountStatusState.pending && <><p className="break-all">待核对原操作编号：{accountStatusState.pending.command.operationId}</p><p>只读取原号，不自动重新停用／恢复。离开或关闭开关不删除原号。</p>
+                <button type="button" className="rounded-xl border bg-white px-3 py-2 disabled:opacity-40" disabled={busy} onClick={() => void recoverEmployeeStatus()}>核对原员工账号编号</button></>}
+              {accountStatusState.result?.statusReceipt && <div data-account-status-receipt><p className="font-semibold">企业账号{accountStatusState.result.statusReceipt.status === "active" ? "恢复" : "停用"}原操作已确认</p><p className="break-all">操作 {accountStatusState.result.statusReceipt.operationId}</p>
+                <p>{accountStatusState.result.statusReceipt.suspensionId ? "此原号关联考勤暂停，请由负责人到考勤配置的“考勤暂停待核验”入口明确核验。" : "此原号未关联考勤暂停，不能推断考勤恢复。"}</p></div>}
+              <p>账号恢复、考勤暂停解除、设置新 PIN、重新授予委托是独立结果；不自动下班或改变在职日期。</p>
+            </section>}
             {can(actor, "employees.manage") ? (
               <section
                 ref={employeeInviteFormRef}
@@ -7740,7 +8119,7 @@ function MerchantEnterpriseManagerContent({
                     (role) => role.id === employee.roleId,
                   );
                   return (
-                    <div key={employee.id} className="px-5 py-4">
+                    <div key={employee.id} data-enterprise-employee-id={employee.id} className="px-5 py-4">
                       <div className="flex flex-wrap items-center justify-between gap-4">
                         <div className="min-w-0">
                           <div className="font-semibold text-slate-900">{employee.displayName}</div>
@@ -8219,6 +8598,7 @@ function MerchantEnterpriseManagerContent({
           <EmployeeOffboardingDialog
             key={`${offboardingEmployee.id}:${offboardingEmployee.version}`}
             employee={offboardingEmployee}
+            attendanceSuspensionNotice={accountSuspensionEnabled || !!accountStatusState?.pending}
             openTaskCount={offboardingOpenTasks.length}
             taskCountExact={
               actor.type === "owner" ||

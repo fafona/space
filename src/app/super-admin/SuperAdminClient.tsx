@@ -1774,6 +1774,7 @@ function describePermissionValue(
     key === "allowProductBlock" ||
     key === "allowOrderManagement" ||
     key === "allowEnterpriseManagement" ||
+    key === "allowEmployeeAttendance" ||
     key === "allowCouponModule" ||
     key === "allowCouponBlock" ||
     key === "allowMembershipManagement" ||
@@ -1830,6 +1831,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowProductBlock", label: "可产品区块" },
     { key: "allowOrderManagement", label: "可订单管理" },
     { key: "allowEnterpriseManagement", label: "可企业管理" },
+    { key: "allowEmployeeAttendance", label: "可员工考勤" },
     { key: "allowCouponModule", label: "可优惠券模块" },
     { key: "allowCouponBlock", label: "可优惠券区块" },
     { key: "allowMembershipManagement", label: "可会员管理" },
@@ -2245,6 +2247,7 @@ export default function SuperAdminClient() {
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
   const [configAllowOrderManagement, setConfigAllowOrderManagement] = useState(false);
   const [configAllowEnterpriseManagement, setConfigAllowEnterpriseManagement] = useState(false);
+  const [configAllowEmployeeAttendance, setConfigAllowEmployeeAttendance] = useState(false);
   const [configAllowCouponModule, setConfigAllowCouponModule] = useState(false);
   const [configAllowCouponBlock, setConfigAllowCouponBlock] = useState(false);
   const [configAllowMembershipManagement, setConfigAllowMembershipManagement] = useState(false);
@@ -4602,6 +4605,7 @@ export default function SuperAdminClient() {
     setConfigAllowProductBlock(permission.allowProductBlock);
     setConfigAllowOrderManagement(permission.allowProductBlock && permission.allowOrderManagement);
     setConfigAllowEnterpriseManagement(permission.allowEnterpriseManagement);
+    setConfigAllowEmployeeAttendance(permission.allowEmployeeAttendance);
     setConfigAllowCouponModule(permission.allowCouponModule);
     setConfigAllowCouponBlock(permission.allowCouponModule && permission.allowCouponBlock);
     setConfigAllowMembershipManagement(permission.allowMembershipManagement);
@@ -7172,6 +7176,9 @@ export default function SuperAdminClient() {
         )}`,
       );
     }
+    if (prevPermission.allowEmployeeAttendance !== (configAllowEnterpriseManagement && configAllowEmployeeAttendance)) {
+      pendingChanges.push(`员工考勤：${formatBool(prevPermission.allowEmployeeAttendance)} -> ${formatBool(configAllowEnterpriseManagement && configAllowEmployeeAttendance)}`);
+    }
     if (prevPermission.allowCouponModule !== configAllowCouponModule) {
       pendingChanges.push(`优惠券模块：${formatBool(prevPermission.allowCouponModule)} -> ${formatBool(configAllowCouponModule)}`);
     }
@@ -7273,6 +7280,7 @@ export default function SuperAdminClient() {
         allowProductBlock: configAllowProductBlock,
         allowOrderManagement: configAllowProductBlock && configAllowOrderManagement,
         allowEnterpriseManagement: configAllowEnterpriseManagement,
+        allowEmployeeAttendance: configAllowEnterpriseManagement && configAllowEmployeeAttendance,
         allowCouponModule: configAllowCouponModule,
         allowCouponBlock: configAllowCouponModule && configAllowCouponBlock,
         allowMembershipManagement: configAllowMembershipManagement,
@@ -10001,9 +10009,14 @@ export default function SuperAdminClient() {
                                 <input
                                   type="checkbox"
                                   checked={configAllowEnterpriseManagement}
-                                  onChange={(e) => setConfigAllowEnterpriseManagement(e.target.checked)}
+                                  onChange={(e) => { setConfigAllowEnterpriseManagement(e.target.checked); if (!e.target.checked) setConfigAllowEmployeeAttendance(false); }}
                                 />
                                 企业管理
+                              </label>
+                              <label className={`flex items-start gap-2 rounded border px-2 py-1.5 ${configAllowEnterpriseManagement ? "" : "opacity-50"}`}>
+                                <input type="checkbox" className="mt-1" checked={configAllowEnterpriseManagement && configAllowEmployeeAttendance}
+                                  disabled={!configAllowEnterpriseManagement} onChange={(e) => setConfigAllowEmployeeAttendance(e.target.checked)} />
+                                <span>员工考勤<span className="mt-1 block text-xs leading-5 text-slate-500">默认关闭，需先启用企业管理。仅关闭本项时，停止新上班、开始休息和配置修改，保留读取及已有班次收尾；企业管理、账号和角色权限仍须有效。开通后还需配置地点、人员及员工权限。</span></span>
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input

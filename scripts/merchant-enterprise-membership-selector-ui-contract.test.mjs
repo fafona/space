@@ -22,7 +22,9 @@ const membershipNormalizer = read(membershipNormalizerPath);
 
 test("enterprise selector reuses the isolated employee session", () => {
   assert.match(selector, /merchantEnterpriseSupabase\s+as\s+supabase/);
-  assert.match(selector, /supabase\.auth\.signInWithPassword\(/);
+  assert.match(selector, /signInEnterpriseWithPassword\(/);
+  const isolatedClient = read("src/lib/merchantEnterpriseSupabase.ts");
+  assert.match(isolatedClient, /enterpriseLogout\.signIn\(\(\) => merchantEnterpriseSupabase\.auth\.signInWithPassword\(credentials\)\)/);
   assert.match(selector, /supabase\.auth\.exchangeCodeForSession\(code\)/);
   assert.match(selector, /supabase\.auth\.setSession\(/);
   assert.match(selectorPage, /referrer:\s*["']no-referrer["']/);
@@ -95,7 +97,7 @@ test("session initialization and auth events share a latest-wins generation", ()
       "initial session resolution must use the same generation guard as auth events",
     );
     const callback = source.match(
-      /onAuthStateChange\(\(_event, session\) => \{([\s\S]*?)\n    \}\);/,
+      /onEnterpriseAuthStateChange\(\(_event, session\) => \{([\s\S]*?)\n    \}\);/,
     )?.[1];
     assert.ok(callback, "auth callback is missing");
     if (source === portal) {
@@ -125,7 +127,7 @@ test("session initialization and auth events share a latest-wins generation", ()
   );
 
   const selectorCallback = selector.match(
-    /onAuthStateChange\(\(_event, session\) => \{([\s\S]*?)\n    \}\);/,
+    /onEnterpriseAuthStateChange\(\(_event, session\) => \{([\s\S]*?)\n    \}\);/,
   )?.[1];
   assert.ok(selectorCallback);
   assert.ok(

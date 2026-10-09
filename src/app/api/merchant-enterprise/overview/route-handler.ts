@@ -24,6 +24,7 @@ import {
   isTrustedSameOriginMutationRequest,
 } from "@/lib/requestMutationGuard";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { attendanceModuleEnabled } from "@/lib/merchantAttendanceEntitlement";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -125,11 +126,13 @@ export async function GET(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ ok: false, error: "invalid_site_id" }, { status: 400 });
     }
+    let currentAuthUserId: string | null = null;
     const actor = await resolveMerchantEnterpriseActor(request, {
       siteId,
       requiredPermission: "enterprise.view",
+      onAuthorizedAuthUserId: (authUserId) => { currentAuthUserId = authUserId; },
     });
-    await requireMerchantEnterpriseEntitlement(siteId);
+    const site = await requireMerchantEnterpriseEntitlement(siteId);
     const enterpriseStore = storeClient();
     const [snapshot, needsBootstrap] = await Promise.all([
       loadMerchantEnterpriseSnapshot(enterpriseStore, siteId),
@@ -139,6 +142,10 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       actor,
+      currentAuthUserId,
+      attendanceEnabled: attendanceModuleEnabled(site)
+        && process.env.FAOLLA_ATTENDANCE_SELF_ENABLED === "1"
+        && process.env.FAOLLA_ATTENDANCE_ADMIN_ENABLED === "1",
       snapshot: visibleSnapshot,
       needsBootstrap,
     });

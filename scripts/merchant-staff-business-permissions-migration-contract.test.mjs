@@ -227,19 +227,23 @@ const staffPermissions = readConstArray(
   staffSource,
   "MERCHANT_STAFF_BUSINESS_PERMISSIONS",
 );
-const collaborationPermissions = readConstArray(
+const allCollaborationPermissions = readConstArray(
   enterpriseSource,
   "MERCHANT_ENTERPRISE_COLLABORATION_PERMISSIONS",
 );
+// 041 predates the separately versioned attendance catalog. Do not modify a
+// historical migration or make it retroactively grant a later capability.
+const collaborationPermissions = allCollaborationPermissions.filter(key => !key.startsWith("attendance."));
 const expectedPermissions = [...collaborationPermissions, ...staffPermissions];
 const staffDependencies = readTypeScriptDependencies(
   staffSource,
   "MERCHANT_STAFF_BUSINESS_PERMISSION_DEPENDENCIES",
 );
-const collaborationDependencies = readTypeScriptDependencies(
+const allCollaborationDependencies = readTypeScriptDependencies(
   enterpriseSource,
   "MERCHANT_ENTERPRISE_PERMISSION_DEPENDENCIES",
 );
+const collaborationDependencies = new Map([...allCollaborationDependencies].filter(([key]) => !key.startsWith("attendance.")));
 const expectedDependencies = new Map([
   ...collaborationDependencies,
   ...staffDependencies,
@@ -295,7 +299,18 @@ test("rollback compatibility marker freezes the exact v1 permission keys", () =>
   });
 });
 
-test("SQL validator permission catalog and dependencies exactly match TypeScript", () => {
+test("later attendance capabilities have explicit dependencies but are not retroactively inserted into 041", () => {
+  const attendanceKeys = allCollaborationPermissions.filter(key => key.startsWith("attendance."));
+  assert(attendanceKeys.length > 0);
+  assert.deepEqual(new Set(allCollaborationDependencies.keys()), new Set(allCollaborationPermissions));
+  const { catalog } = readSqlPermissionCatalog(migrationSource);
+  for (const key of attendanceKeys) {
+    assert(allCollaborationDependencies.has(key), key);
+    assert.equal(catalog.has(key), false, key);
+  }
+});
+
+test("legacy 041 SQL validator permission catalog and dependencies exactly match non-attendance TypeScript", () => {
   const { validator, catalog } = readSqlPermissionCatalog(migrationSource);
   assert.deepEqual([...catalog.keys()], expectedPermissions);
   assert.deepEqual(

@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import MerchantEmployeeWorkspace from "@/components/enterprise/MerchantEmployeeWorkspace";
 import { MerchantEnterpriseAuthGeneration } from "@/lib/merchantEnterpriseAuthGeneration";
 import {
+  EnterpriseInvitationSessionError,
+  requireEnterpriseInvitationSession,
+} from "@/lib/merchantEnterpriseInvitationSession";
+import {
   MERCHANT_ENTERPRISE_ONBOARDING_QUERY_KEY,
 } from "@/lib/merchantEnterpriseInvitationOnboarding";
-import { merchantEnterpriseSupabase as supabase } from "@/lib/merchantEnterpriseSupabase";
+import { merchantEnterpriseSupabase as supabase, isEnterpriseLogoutBlocked, onEnterpriseAuthStateChange, signInEnterpriseWithPassword, signOutEnterpriseSession } from "@/lib/merchantEnterpriseSupabase";
 
 type EnterpriseAuthSession = Awaited<
   ReturnType<typeof supabase.auth.getSession>
@@ -563,6 +567,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     useState<InitialPasswordSetupState>(null);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [message, setMessage] = useState("");
   const invitationCredentialRef = useRef<InvitationCredential | null>(null);
   const storedInvitationCredentialRef =
@@ -828,7 +833,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
           if (result.error) throw result.error;
           session = result.data.session;
         }
-        token = session?.access_token ?? "";
+        token = isEnterpriseLogoutBlocked() ? "" : session?.access_token ?? "";
         let storedInvitation = storedInvitationCredentialRef.current;
         if (
           storedInvitation?.stage === "exchange_pending" &&
@@ -888,7 +893,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       }
     }
     void resolveSession(initializationGeneration);
-    const listener = supabase.auth.onAuthStateChange((_event, session) => {
+    const listener = onEnterpriseAuthStateChange((_event, session) => {
       // Supabase can emit INITIAL_SESSION for the previous account while a
       // code/hash callback is still establishing the invited account. Let the
       // callback resolver own that transition so stale credentials can never
@@ -896,6 +901,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
       if (authCallbackInProgressRef.current) return;
       if (passwordSetupTransitionRef.current) return;
       const generation = authGeneration.begin();
+      if (session && isEnterpriseLogoutBlocked()) return;
       if (invitationExchangeSubmittedRef.current) {
         authGeneration.bindSessionToken(generation, "");
         return;
@@ -1012,7 +1018,20 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     initialPasswordOperationRef.current = null;
   }
 
-  async function acceptPendingInvitationWithPasswordSession(token: string) {
+  function returnToInvitationSignIn() {
+    const generation = authGenerationRef.current.begin();
+    authGenerationRef.current.bindSessionToken(generation, "");
+    clearInitialPasswordOperation();
+    setPassword("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setInvitedAccountEmail("");
+    setAuthContext(null);
+    setInitialPasswordSetupState(null);
+    setChecking(false);
+  }
+
+  async function acceptPendingInvitationWithPasswordSession(session: EnterpriseAuthSession) {
     let storedInvitation = storedInvitationCredentialRef.current;
     if (!storedInvitation) {
       throw new EnterpriseInvitationAcceptanceError(
@@ -1020,6 +1039,14 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         true,
       );
     }
+    // All manual entry points must preserve the callback's bound account. Do
+    // this synchronously, before changing its stage, binding UI or sending HTTP.
+    // The server still independently validates password authentication/access.
+    const token = requireEnterpriseInvitationSession(
+      session,
+      storedInvitation.authUserId,
+      isEnterpriseLogoutBlocked(),
+    );
     if (storedInvitation.stage === "password_pending") {
       storedInvitation = markInvitationPasswordCompleted(siteId, storedInvitation);
       storedInvitationCredentialRef.current = storedInvitation;
@@ -1046,10 +1073,11 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   }
 
   async function signIn() {
+    if (busy) return;
     setBusy(true);
     setMessage("");
     try {
-      const result = await supabase.auth.signInWithPassword({
+      const result = await signInEnterpriseWithPassword({
         email: email.trim().toLowerCase(),
         password,
       });
@@ -1061,10 +1089,15 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         storedInvitationCredentialRef.current?.stage === "password_pending" ||
         storedInvitationCredentialRef.current?.stage === "accept_pending"
       ) {
-        await acceptPendingInvitationWithPasswordSession(token);
+        await acceptPendingInvitationWithPasswordSession(result.data.session);
       }
       setPassword("");
     } catch (error) {
+      if (error instanceof EnterpriseInvitationSessionError) {
+        returnToInvitationSignIn();
+        setMessage(error.message);
+        return;
+      }
       if (
         error instanceof EnterpriseInvitationAcceptanceError &&
         error.terminal
@@ -1162,8 +1195,13 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
         );
       }
 
-      await acceptPendingInvitationWithPasswordSession(passwordSessionToken);
+      await acceptPendingInvitationWithPasswordSession(signedIn.data.session);
     } catch (error) {
+      if (error instanceof EnterpriseInvitationSessionError) {
+        returnToInvitationSignIn();
+        setMessage(error.message);
+        return;
+      }
       if (
         error instanceof EnterpriseInitialPasswordSetupError &&
         error.terminal
@@ -1241,10 +1279,13 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     try {
       const result = await supabase.auth.getSession();
       if (result.error) throw result.error;
-      const token = result.data.session?.access_token ?? "";
-      if (!token) throw new Error("登录会话已失效，请使用员工邮箱和密码重新登录。");
-      await acceptPendingInvitationWithPasswordSession(token);
+      await acceptPendingInvitationWithPasswordSession(result.data.session);
     } catch (error) {
+      if (error instanceof EnterpriseInvitationSessionError) {
+        returnToInvitationSignIn();
+        setMessage(error.message);
+        return;
+      }
       if (
         error instanceof EnterpriseInvitationAcceptanceError &&
         error.terminal
@@ -1320,6 +1361,11 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
   }
 
   async function signOut() {
+    if (busy) return;
+    setSigningOut(true);
+    setBusy(true);
+    setMessage("");
+    const operation = signOutEnterpriseSession();
     const authGeneration = authGenerationRef.current;
     const generation = authGeneration.begin();
     authGeneration.bindSessionToken(generation, "");
@@ -1332,8 +1378,12 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
     setAccountPanelOpen(false);
     setAuthContext(null);
     setChecking(false);
-    const result = await supabase.auth.signOut();
-    if (result.error) setMessage("退出失败，请稍后重试。");
+    try {
+      const result = await operation;
+      if (result.error) setMessage(result.localCleared
+        ? "已清除本标签页登录，服务器退出请求未确认。其他设备的登录状态可能仍有效。"
+        : result.error.message);
+    } finally { setSigningOut(false); setBusy(false); }
   }
 
   if (checking || portalContextMismatch) {
@@ -1504,7 +1554,7 @@ export default function EnterprisePortalClient({ siteId }: { siteId: string }) {
               disabled={busy || !email.trim() || !password}
               onClick={() => void signIn()}
             >
-              {busy ? "登录中..." : "登录企业工作台"}
+              {signingOut ? "正在退出..." : busy ? "登录中..." : "登录企业工作台"}
             </button>
             <button
               type="button"

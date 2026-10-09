@@ -99,6 +99,25 @@ test("employee acceptance and membership selection require password authenticati
   );
 });
 
+test("accepted invitation recovery is read-only and remains behind the original password and entitlement gates", () => {
+  const source = read(acceptRoutePath);
+  const password = source.indexOf("requireMerchantEnterprisePasswordAuthentication(authContext)");
+  const initialized = source.indexOf("MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY", password);
+  const entitlement = source.indexOf("await requireMerchantEnterpriseEntitlement(siteId)");
+  const failure = source.indexOf("if (waiverResult.error)");
+  const candidate = source.indexOf("isAcceptedInvitationRecoveryCandidate(waiverResult.error)", failure);
+  const recovery = source.indexOf("await recoverAcceptedMerchantEmployeeInvitation(service", candidate);
+  const originalError = source.indexOf("throw merchantEmployeeInvitationAcceptError(waiverResult.error)", recovery);
+  const originalAccept = source.indexOf('service.rpc("faolla_accept_merchant_employee_invitation_v1"', originalError);
+  assert(password > 0 && initialized > password && entitlement > initialized && failure > entitlement);
+  assert(candidate > failure && recovery > candidate && originalError > recovery && originalAccept > originalError);
+  const branch = source.slice(candidate, originalError);
+  assert.match(branch, /siteId,\s*authUserId,\s*invitationVersion,/);
+  assert.match(branch, /if \(employee\) \{\s*return NextResponse\.json\(\{ ok: true, employee, alreadyActive: true \}\)/);
+  assert.doesNotMatch(branch, /\.rpc\(|\.insert\(|\.update\(|\.delete\(/);
+  assert.match(source, /const authUserId = text\(user\.id, 80\)/);
+});
+
 test("initial password setup revalidates invitation and identity before the Auth mutation", () => {
   const source = read(initialPasswordRoutePath);
   const handlerStart = source.indexOf(
@@ -239,7 +258,7 @@ test("portal completes server-validated password setup before fresh login and ac
     "supabase.auth.signInWithPassword(",
   );
   const acceptInvitation = setupSource.indexOf(
-    "await acceptPendingInvitationWithPasswordSession(passwordSessionToken)",
+    "await acceptPendingInvitationWithPasswordSession(signedIn.data.session)",
   );
   assert.ok(serverSetup >= 0);
   assert.ok(clearOperation > serverSetup);
@@ -573,7 +592,7 @@ test("portal coalesces simultaneous auth callbacks and consumes credentials only
   );
   assert.match(
     source,
-    /supabase\.auth\.onAuthStateChange\([\s\S]*ensureMembershipAccepted\(token\)/,
+    /onEnterpriseAuthStateChange\([\s\S]*ensureMembershipAccepted\(token\)/,
   );
   assert.match(
     source,
@@ -665,7 +684,7 @@ test("portal resumes an authenticated invitation acceptance without issuing anot
     "the callback URL may be scrubbed only after password_pending survives a reload",
   );
 
-  const listenerStart = source.indexOf("supabase.auth.onAuthStateChange");
+  const listenerStart = source.indexOf("onEnterpriseAuthStateChange((_event");
   const listenerPasswordGate = source.indexOf(
     'if (storedInvitation?.stage === "password_pending")',
     listenerStart,
@@ -730,6 +749,67 @@ test("portal resumes an authenticated invitation acceptance without issuing anot
     /beginPasswordAuthenticatedPortalSession\(token\)|authGeneration\.begin\(\)/,
     "an old acceptance completion must never create a newer generation",
   );
+});
+
+test("manual invitation acceptance validates the complete SDK identity before stage, UI binding or HTTP", () => {
+  const source = read(portalPath);
+  const start = source.indexOf("async function acceptPendingInvitationWithPasswordSession(");
+  const end = source.indexOf("async function signIn()", start);
+  assert.ok(start >= 0 && end > start);
+  const acceptance = source.slice(start, end);
+  assert.match(acceptance, /acceptPendingInvitationWithPasswordSession\(session: EnterpriseAuthSession\)/);
+  const guard = acceptance.indexOf("const token = requireEnterpriseInvitationSession(");
+  const stage = acceptance.indexOf("markInvitationPasswordCompleted(siteId, storedInvitation)");
+  const bind = acceptance.indexOf("beginPasswordAuthenticatedPortalSession(token)");
+  const publish = acceptance.indexOf("setAuthContext({ siteId, token, generation })");
+  const send = acceptance.indexOf("await ensureMembershipAccepted(token)");
+  assert.ok(guard >= 0 && stage > guard && bind > stage && publish > bind && send > publish);
+  assert.match(acceptance.slice(guard, stage), /requireEnterpriseInvitationSession\(\s*session,\s*storedInvitation\.authUserId,\s*isEnterpriseLogoutBlocked\(\),\s*\)/);
+  assert.doesNotMatch(acceptance.slice(0, stage), /\bawait\b/, "the identity check must not introduce an asynchronous gap before the stage transition");
+});
+
+test("all three manual invitation entries pass the SDK session and a missing retry session reaches the shared guard", () => {
+  const source = read(portalPath);
+  const entries = [
+    ["async function signIn()", "async function completeInitialPasswordSetup()", "result.data.session"],
+    ["async function completeInitialPasswordSetup()", "async function retryInvitationAcceptance()", "signedIn.data.session"],
+    ["async function retryInvitationAcceptance()", "async function setLoginPassword()", "result.data.session"],
+  ];
+  for (const [from, to, session] of entries) {
+    const start = source.indexOf(from), end = source.indexOf(to, start);
+    assert.ok(start >= 0 && end > start);
+    const entry = source.slice(start, end);
+    assert.equal((entry.match(/await acceptPendingInvitationWithPasswordSession\(/g) ?? []).length, 1);
+    assert.ok(entry.includes(`await acceptPendingInvitationWithPasswordSession(${session});`));
+    assert.doesNotMatch(entry, /acceptPendingInvitationWithPasswordSession\((?:token|passwordSessionToken)\)/);
+  }
+  const retry = source.slice(source.indexOf(entries[2][0]), source.indexOf(entries[2][1]));
+  assert.match(retry, /await supabase\.auth\.getSession\(\);\s*if \(result\.error\) throw result\.error;\s*await acceptPendingInvitationWithPasswordSession\(result\.data\.session\)/);
+  assert.doesNotMatch(retry, /if \(!token\)|new Error\("登录会话已失效/);
+});
+
+test("manual session rejection returns to login before other catches without deleting or consuming the bound invitation", () => {
+  const source = read(portalPath);
+  const returnStart = source.indexOf("function returnToInvitationSignIn()");
+  const returnEnd = source.indexOf("async function acceptPendingInvitationWithPasswordSession", returnStart);
+  assert.ok(returnStart >= 0 && returnEnd > returnStart);
+  const returnToLogin = source.slice(returnStart, returnEnd);
+  for (const statement of ['setPassword("")', 'setNewPassword("")', 'setConfirmNewPassword("")',
+    'setInvitedAccountEmail("")', "setAuthContext(null)", "setInitialPasswordSetupState(null)", "setChecking(false)"])
+    assert.ok(returnToLogin.includes(statement));
+  assert.match(returnToLogin, /clearInitialPasswordOperation\(\)/);
+  assert.doesNotMatch(returnToLogin, /clearInvitationCredential|clearStoredInvitationCredential|markInvitation|ensureMembershipAccepted|signOut|sessionStorage/);
+  assert.doesNotMatch(returnToLogin, /(?:storedInvitationCredentialRef|invitationCredentialRef|invitationVersionRef)\.current\s*=/);
+  const entryPoints = [
+    ["async function signIn()", "async function completeInitialPasswordSetup()"],
+    ["async function completeInitialPasswordSetup()", "async function retryInvitationAcceptance()"],
+    ["async function retryInvitationAcceptance()", "async function setLoginPassword()"],
+  ];
+  for (const [from, to] of entryPoints) {
+    const start = source.indexOf(from), end = source.indexOf(to, start);
+    assert.ok(start >= 0 && end > start);
+    assert.match(source.slice(start, end), /\} catch \(error\) \{\s*if \(error instanceof EnterpriseInvitationSessionError\) \{\s*returnToInvitationSignIn\(\);\s*setMessage\(error\.message\);\s*return;\s*\}/);
+  }
 });
 
 test("portal exits terminal password acceptance states and never traps sign-out", () => {
@@ -819,7 +899,7 @@ test("portal ignores stale session events while an Auth callback establishes the
     resolveStart,
   );
   assert.ok(markCallback > resolveStart && exchangeCode > markCallback);
-  const listenerStart = source.indexOf("supabase.auth.onAuthStateChange", resolveStart);
+  const listenerStart = source.indexOf("onEnterpriseAuthStateChange((_event", resolveStart);
   const listenerEnd = source.indexOf("return () =>", listenerStart);
   const listenerSource = source.slice(listenerStart, listenerEnd);
   const staleGuard = listenerSource.indexOf(

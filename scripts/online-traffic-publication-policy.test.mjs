@@ -110,7 +110,14 @@ test('invalid path inventory is rejected without normalizing aliases into the al
     assert.throws(() => onlinePublicationLane(files), /online_publication_files_invalid/);
 });
 
-test('the complete historical lane policy remains byte-for-byte unchanged', () => {
-  const source = readFileSync(new URL('./online-traffic-release-policy.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+test('outside the explicitly added attendance lane every historical policy byte remains unchanged', () => {
+  let source = readFileSync(new URL('./online-traffic-release-policy.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+  const start=source.indexOf('// A source-only scope is not a deployment or database authorization receipt.');
+  const end=source.indexOf('export function onlineReleaseLane(files) {',start);
+  assert.ok(start>0&&end>start);
+  source=source.slice(0,start)+source.slice(end);
+  const additions=["import {readFileSync} from 'node:fs';\n\n","  if(files.includes('src/lib/merchantAttendance.ts')){assertAttendanceReleaseScope(files);return 'attendance';}\n","  if(lane==='attendance')return false;\n","  if(lane==='attendance')return;\n"];
+  for(const addition of additions){assert.equal(source.split(addition).length,2);source=source.replace(addition,'');}
+  const managerGuard="  if(lane==='attendance')throw Error('attendance_database_manager_required');\n";assert.equal(source.split(managerGuard).length,3);source=source.replaceAll(managerGuard,'');
   assert.equal(createHash('sha256').update(source).digest('hex'), 'e1d1b213ea0f7335262c93fa3739622df4a080348c995f44b77cee62067e9eee');
 });

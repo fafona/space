@@ -11,6 +11,10 @@ import {
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { MERCHANT_STAFF_PASSWORD_INITIALIZED_METADATA_KEY } from "@/lib/merchantStaffPrincipal.server";
 import {
+  isAcceptedInvitationRecoveryCandidate,
+  recoverAcceptedMerchantEmployeeInvitation,
+} from "@/lib/merchantEnterpriseInvitationRecovery.server";
+import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
 } from "@/lib/requestMutationGuard";
@@ -157,6 +161,20 @@ export async function POST(request: Request) {
         },
       );
       if (waiverResult.error) {
+        // Accept may already have committed before its HTTP reply was lost (or
+        // another duplicate request won). Confirm only this password-authenticated
+        // account's accepted membership for the same invitation generation. Never
+        // retry a writer or treat every invalid invitation as successful.
+        if (isAcceptedInvitationRecoveryCandidate(waiverResult.error)) {
+          const employee = await recoverAcceptedMerchantEmployeeInvitation(service, {
+            siteId,
+            authUserId,
+            invitationVersion,
+          });
+          if (employee) {
+            return NextResponse.json({ ok: true, employee, alreadyActive: true });
+          }
+        }
         throw merchantEmployeeInvitationAcceptError(waiverResult.error);
       }
       const waiver =

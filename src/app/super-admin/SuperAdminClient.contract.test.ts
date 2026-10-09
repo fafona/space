@@ -3,6 +3,16 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const sourceUrl = new URL("./SuperAdminClient.tsx", import.meta.url);
+test("attendance is opt-in with enterprise dependency, diff and persisted config wiring", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  assert.match(source, /\[configAllowEmployeeAttendance, setConfigAllowEmployeeAttendance\] = useState\(false\)/);
+  assert.match(source, /setConfigAllowEmployeeAttendance\(permission.allowEmployeeAttendance\)/);
+  assert.match(source, /prevPermission.allowEmployeeAttendance !== \(configAllowEnterpriseManagement && configAllowEmployeeAttendance\)/);
+  assert.match(source, /allowEmployeeAttendance: configAllowEnterpriseManagement && configAllowEmployeeAttendance/);
+  assert.match(source, /checked=\{configAllowEnterpriseManagement && configAllowEmployeeAttendance\}/);
+  assert.match(source, /key: "allowEmployeeAttendance", label: "可员工考勤"/);
+  assert.match(source, /保留读取及已有班次收尾/);
+});
 
 test("initial snapshot hydration is not immediately written back in the background", async () => {
   const source = await readFile(sourceUrl, "utf8");
