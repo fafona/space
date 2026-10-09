@@ -117,11 +117,18 @@ test("foreign immutable scope and paused empty grants cannot become selected dec
 });
 
 test("late receipt after current Auth invalidation keeps original durable command and cancels response", async () => {
-  let current = true, resolve!: (v: Response) => void, canceled = false;
-  const f = fixture({ isCurrentAuth: () => current, fetch: async (url, init) => init?.method === "POST" ? new Promise<Response>(r => { resolve = r; })
-    : response(http(parseCorrectionDelegationHttpQuery(`https://example.test${url}`))) });
+  let current = true, resolve!: (v: Response) => void, entered!: () => void, canceled = false;
+  const postEntered = new Promise<void>(r => { entered = r; });
+  const postResponse = new Promise<Response>(r => { resolve = r; });
+  const f = fixture({ isCurrentAuth: () => current, fetch: async (url, init) => {
+    if (init?.method === "POST") { entered(); return postResponse; }
+    return response(http(parseCorrectionDelegationHttpQuery(`https://example.test${url}`)));
+  } });
   await ready(f.client); const running = f.client.decide("approve", "Synthetic review");
-  for (let i = 0; i < 30 && !resolve; i++) await new Promise(r => setTimeout(r, 0)); assert.ok(resolve);
+  await Promise.race([postEntered, running.then(
+    () => { assert.fail("decision completed before entering POST apiFetch"); },
+    () => { assert.fail("decision rejected before entering POST apiFetch"); },
+  )]);
   const saved = f.storage.getItem(f.client.storageKey); assert.ok(saved); current = false;
   resolve(new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(JSON.stringify({ ok: true }))); }, cancel() { canceled = true; } }), { headers: { "Content-Type": "application/json" } }));
   await running; assert.equal(canceled, true); assert.equal(f.storage.getItem(f.client.storageKey), saved); assert.equal(f.client.getSnapshot().result, null);

@@ -307,7 +307,8 @@ export const ATTENDANCE_RELEASE_FOCUSED_TESTS=Object.freeze([
   'src/app/api/merchant-enterprise/attendance/self/route.test.ts','src/app/api/merchant-enterprise/attendance/admin/route.test.ts','src/lib/merchantEnterpriseAuth.server.test.ts','src/lib/merchantEnterprise.test.ts','src/data/platformControlStore.test.ts','src/app/super-admin/SuperAdminClient.contract.test.ts',
   'scripts/merchant-enterprise-invitation-application-contract.test.mjs','scripts/merchant-enterprise-membership-selector-ui-contract.test.mjs','scripts/merchant-enterprise-ui-contract.test.mjs','scripts/check-supabase-migrations.test.mjs','scripts/attendance-production-database-migrations.test.mjs',
   'src/lib/merchantAttendanceRollout.test.ts','scripts/merchant-attendance-rollout-ui-contract.test.mjs','scripts/attendance-build-worker-config.test.mjs','scripts/attendance-online-build.test.mjs',
-  'src/app/api/merchant-enterprise/roles/route.attendance-admission.test.ts','src/lib/merchantAttendanceOwnerNotificationsClient.test.ts',
+  'src/app/api/merchant-enterprise/roles/route.attendance-admission.test.ts','src/lib/merchantAttendanceOwnerNotificationsClient.test.ts','src/lib/merchantAttendanceAccountSuspensionClient.test.ts',
+  'src/lib/merchantAttendanceIndependentAdminClient.test.ts','src/lib/merchantAttendanceIndependentTerminalClient.test.ts','src/lib/merchantAttendanceCorrectionDelegationClient.test.ts',
 ]);
 export function onlineReleaseLane(files) {
   if(files.includes('src/lib/merchantAttendance.ts')){assertAttendanceReleaseScope(files);return 'attendance';}

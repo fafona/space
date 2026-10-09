@@ -22,9 +22,32 @@ test("lost status response survives reload and recover is GET-only; null/error n
   const d = new AttendanceAccountStatusClient({ ...f.options, apiFetch: async (_, init) => { assert.equal(init?.method, "GET"); return reply(await statusReceipt()); } }); await d.initialize(); await d.recover(); assert.equal(d.getSnapshot().pending, null); assert.equal(f.data.size, 0);
 });
 test("pause and live auth change prevent late settle or storage deletion", async () => {
-  let release!: (r: Response) => void, current = true; const f = setup(async () => new Promise<Response>(r => { release = r; }), { isCurrentAuth: () => current }); const c = new AttendanceAccountStatusClient(f.options); await c.initialize(); const p = c.submit(intent());
-  await new Promise(r => setTimeout(r, 10)); current = false; release(reply({ ok: true, employee: { id: status().employeeId, version: 2, status: "disabled" } })); await p; assert.ok(c.getSnapshot().pending); assert.equal(c.getSnapshot().result, null); assert.equal(f.data.size, 1);
-  const d = new AttendanceAccountStatusClient({ ...f.options, isCurrentAuth: () => true }); await d.initialize(); const recovery = d.recover(); await new Promise(r => setTimeout(r, 5)); d.pause(); release(reply(await statusReceipt())); await recovery; assert.equal(d.getSnapshot().result, null); assert.equal(f.data.size, 1);
+  function deferredRequest() {
+    let enter!: () => void, release!: (response: Response) => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const response = new Promise<Response>(resolve => { release = resolve; });
+    return { entered, response, enter, release };
+  }
+  async function enteredBeforeCompletion(entered: Promise<void>, operation: Promise<void>, label: string) {
+    await Promise.race([entered, operation.then(() => { assert.fail(`${label} completed before entering apiFetch`); })]);
+  }
+  const patchRequest = deferredRequest(), recoveryRequest = deferredRequest();
+  let current = true;
+  const f = setup(async (_, init) => {
+    assert.equal(init?.method, "PATCH"); patchRequest.enter(); return patchRequest.response;
+  }, { isCurrentAuth: () => current });
+  const c = new AttendanceAccountStatusClient(f.options); await c.initialize(); const p = c.submit(intent());
+  await enteredBeforeCompletion(patchRequest.entered, p, "status PATCH");
+  current = false; patchRequest.release(reply({ ok: true, employee: { id: status().employeeId, version: 2, status: "disabled" } })); await p;
+  assert.ok(c.getSnapshot().pending); assert.equal(c.getSnapshot().result, null); assert.equal(f.data.size, 1);
+  const saved = f.data.get(c.storageKey);
+  const d = new AttendanceAccountStatusClient({ ...f.options, isCurrentAuth: () => true, apiFetch: async (_, init) => {
+    assert.equal(init?.method, "GET"); recoveryRequest.enter(); return recoveryRequest.response;
+  } });
+  await d.initialize(); const recovery = d.recover();
+  await enteredBeforeCompletion(recoveryRequest.entered, recovery, "receipt GET");
+  d.pause(); recoveryRequest.release(reply(await statusReceipt())); await recovery;
+  assert.equal(d.getSnapshot().result, null); assert.equal(f.data.size, 1); assert.equal(f.data.get(c.storageKey), saved);
 });
 test("subscriber reentrancy cannot send after pause and storage compare-and-swap will not delete changed intents", async () => {
   let calls = 0; const f = setup(async () => { calls++; return reply(await statusReceipt()); }); const c = new AttendanceAccountStatusClient(f.options); await c.initialize(); const unsub = c.subscribe(() => { if (c.getSnapshot().phase === "saving") c.pause(); }); await c.submit(intent()); unsub(); assert.equal(calls, 0);
