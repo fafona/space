@@ -37,7 +37,9 @@ export function assertAttendanceBuildEnvironment(actual,saved){
   if(actual.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||actual.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||actual.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0')fail('environment_mismatch');
 }
 function systemdBuildValue(value){
-  if(typeof value!=='string'||value.includes('\0')||Buffer.from(value,'utf8').toString('utf8')!==value)return false;
+  // v239 env_value_is_valid permits TAB/LF but rejects other ASCII controls.
+  // Do not normalize CR: that would silently change a guarded saved value.
+  if(typeof value!=='string'||/[\u0000-\u0008\u000b-\u001f\u007f]/.test(value)||Buffer.from(value,'utf8').toString('utf8')!==value)return false;
   // Match systemd v239 unichar_is_valid, including Unicode noncharacters.
   for(const character of value){const code=character.codePointAt(0);if(code>=0xfdd0&&code<=0xfdef||(code&0xfffe)===0xfffe)return false;}
   return true;
