@@ -3,10 +3,13 @@ import {ATTENDANCE_STAGED_REPAIR as p,ATTENDANCE_STAGED_REPAIR_PRESERVED as pres
  ATTENDANCE_STAGED_FOLLOW_ON as follow,ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON as sequence,ATTENDANCE_STAGED_ACL_FOLLOW_ON as acl,
  ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON as schema,
  ATTENDANCE_STAGED_GUARD_FOLLOW_ON as guard,
+ ATTENDANCE_STAGED_PHASE_FOLLOW_ON as phaseFollowOn,
+ ATTENDANCE_STAGED_PHASE_FOLLOW_ON_FILES as phaseAllowed,
  ATTENDANCE_STAGED_REPAIR_FILES as allowed,
  assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt,
  assertAttendanceStagedSequenceFollowOnReceipt,assertAttendanceStagedAclFollowOnReceipt,
- assertAttendanceStagedSchemaFollowOnReceipt,assertAttendanceStagedGuardFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
+ assertAttendanceStagedSchemaFollowOnReceipt,assertAttendanceStagedGuardFollowOnReceipt,
+ assertAttendanceStagedPhaseFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
 export function stagedRepairReceiptFixture(){return {schemaVersion:1,kind:'attendance-staged-tool-repair',target:p.target,baseline:p.baseline,
  toolRevision:'e'.repeat(40),originalStateSha256:p.stateSha256,originalBuildProofSha256:p.buildProofSha256,
  sourceInputsSha256:'a'.repeat(64),builtOutputSha256:p.builtOutputSha256,scopeSha256:p.scopeSha256,preservedFiles:{...preserved},
@@ -206,4 +209,59 @@ test('guard follow-on binds all seven actual sixth-failure pins and validates th
  assert.equal(new Set([follow.receiptName,sequence.receiptName,acl.receiptName,schema.receiptName,guard.receiptName]).size,5);
  assert.ok(Object.values(guard.archive.files).every(x=>/^[a-f0-9]{64}$/.test(x)));
  assert.equal(assertAttendanceStagedGuardFollowOnReceipt(f.chain,ports),f.chain);
+});
+
+export function stagedPhaseFollowOnReceiptFixture(){
+ const {original,firstFollowOnReceipt,sequenceFollowOnReceipt,aclFollowOnReceipt,
+  previousReceipt:schemaFollowOnReceipt,chain:previousReceipt}=stagedGuardFollowOnReceiptFixture();
+ previousReceipt.effectiveReceipt.toolRevision=phaseFollowOn.previousToolRevision;
+ const preparedAt='2026-10-10T15:00:00.000Z',effectiveReceipt={...previousReceipt.effectiveReceipt,
+  toolRevision:'f'.repeat(40),preparedAt,changedToolFiles:[
+   'scripts/attendance-production-052-compatibility.mjs',
+   'scripts/attendance-production-052-compatibility.test.mjs',
+   'scripts/attendance-production-database-migrations.mjs',
+   'scripts/attendance-production-database-migrations.test.mjs',
+   'scripts/attendance-staged-tool-repair-policy.mjs',
+   'scripts/attendance-staged-tool-repair-policy.test.mjs',
+   'scripts/attendance-staged-tool-repair.mjs',
+   'scripts/attendance-staged-tool-repair.test.mjs',
+   'scripts/attendance-production-multiphase-guards-native.mjs',
+   'scripts/attendance-production-multiphase-guards-native.test.mjs',
+  ]};
+ return {original,firstFollowOnReceipt,sequenceFollowOnReceipt,aclFollowOnReceipt,schemaFollowOnReceipt,previousReceipt,
+  chain:{schemaVersion:1,kind:'attendance-staged-tool-repair-phase-follow-on',target:p.target,baseline:p.baseline,
+   previousToolRevision:phaseFollowOn.previousToolRevision,previousReceiptSha256:phaseFollowOn.previousReceiptSha256,
+   failedAttemptArchive:structuredClone(phaseFollowOn.archive),effectiveReceipt,preparedAt}};
+}
+test('phase follow-on freezes the old 15-path scope and binds all actual seventh-failure pins through six predecessors',()=>{
+ const f=stagedPhaseFollowOnReceiptFixture(),ports={originalReceipt:f.original,originalReceiptSha256:follow.previousReceiptSha256,
+  firstFollowOnReceipt:f.firstFollowOnReceipt,firstFollowOnReceiptSha256:sequence.previousReceiptSha256,
+  sequenceFollowOnReceipt:f.sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256:acl.previousReceiptSha256,
+  aclFollowOnReceipt:f.aclFollowOnReceipt,aclFollowOnReceiptSha256:schema.previousReceiptSha256,
+  schemaFollowOnReceipt:f.schemaFollowOnReceipt,schemaFollowOnReceiptSha256:guard.previousReceiptSha256,
+  previousReceipt:f.previousReceipt,previousReceiptSha256:phaseFollowOn.previousReceiptSha256};
+ assert.equal(allowed.length,15);assert.equal(phaseAllowed.length,17);
+ assert.deepEqual(phaseAllowed.slice(0,allowed.length),allowed);
+ assert.equal(phaseFollowOn.previousToolRevision,'2cd4d129dfcc2ee18ba0866a4316266ba8f58a96');
+ assert.equal(phaseFollowOn.previousReceiptSha256,'2d94c9c9a3a548e314ae075c53884ec5093924947e9cb97c4719f7aeb72a4c26');
+ assert.equal(phaseFollowOn.archive.database.oid,'61716');assert.equal(phaseFollowOn.archive.database.registryCount,'135');
+ assert.equal(phaseFollowOn.archive.database.maximumMigrationVersion,'202610040135');
+ assert.equal(phaseFollowOn.archive.database.migration136IndexOid,'67386');
+ assert.equal(phaseFollowOn.archive.directory,`${p.operation}/attendance-compatibility-failure-20261010-143000`);
+ assert.equal(phaseFollowOn.archive.database.originalName,'faolla_attendance_compat_a535a308e21f');
+ assert.equal(phaseFollowOn.archive.database.retainedName,'faolla_attendance_failed_a535a308e21f_20261010_143000');
+ assert.equal(Object.keys(phaseFollowOn.archive.files).length,7);
+ assert.ok(Object.values(phaseFollowOn.archive.files).every(value=>/^[a-f0-9]{64}$/.test(value)));
+ assert.deepEqual(phaseFollowOn.archive.files,{
+  'attendance-compatibility-attempt.json':'83248198a0b299fd4c5c2367d363bbddf6fd88ea58bfae78d2a2ed1f8f0ca364',
+  'attendance-compatibility-metadata.sql':'3d4808ffd338bdddd7287d5281ddcb66b44dba720cc75bee349cf716b6e8405d',
+  'attendance-compatibility-extension-metadata.json':'2acb4760ae3f402d92af21fbe7f03d1099dde93d66191a10b7cc4edd5a178f01',
+  'attendance-compatibility-extension-supplement.sql':'4d0411d8405dcce07e600b2dc5de81b0c7eb7e42a609d92f7eec889237bd0db5',
+  'prepared.json':'714feaa1a81c6511c09841e58da0114a6f07361265a0075afa0465fbaf9355d1',
+  'sql-applied.json':'e5f8e9d8c2a21055bbccbdcff4694db57b875bdcfbcea98af1fa725bdf401be4',
+  'completed.json':'89e5b3109155f829e61230317ce22821ecbab40d59b8a126f407a28c43aa95f4',
+ });
+ assert.equal(new Set([follow.receiptName,sequence.receiptName,acl.receiptName,schema.receiptName,
+  guard.receiptName,phaseFollowOn.receiptName]).size,6);
+ assert.equal(assertAttendanceStagedPhaseFollowOnReceipt(f.chain,ports),f.chain);
 });

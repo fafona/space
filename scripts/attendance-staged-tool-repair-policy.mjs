@@ -275,3 +275,87 @@ export function assertAttendanceStagedGuardFollowOnReceipt(r,{originalReceipt,or
   effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
  return r;
 }
+
+// A sixth, separately approved extension repairs only the eight reviewed
+// multi-transaction migration wrappers. All six earlier receipts and all seven
+// failed databases remain immutable evidence.
+export const ATTENDANCE_STAGED_PHASE_FOLLOW_ON=Object.freeze({
+ previousToolRevision:'2cd4d129dfcc2ee18ba0866a4316266ba8f58a96',
+ previousReceiptSha256:'2d94c9c9a3a548e314ae075c53884ec5093924947e9cb97c4719f7aeb72a4c26',
+ receiptName:'attendance-staged-tool-repair-phase-follow-on.json',
+ archive:Object.freeze({
+  directory:`${ATTENDANCE_STAGED_REPAIR.operation}/attendance-compatibility-failure-20261010-143000`,
+  files:Object.freeze({
+   'attendance-compatibility-attempt.json':'83248198a0b299fd4c5c2367d363bbddf6fd88ea58bfae78d2a2ed1f8f0ca364',
+   'attendance-compatibility-metadata.sql':'3d4808ffd338bdddd7287d5281ddcb66b44dba720cc75bee349cf716b6e8405d',
+   'attendance-compatibility-extension-metadata.json':'2acb4760ae3f402d92af21fbe7f03d1099dde93d66191a10b7cc4edd5a178f01',
+   'attendance-compatibility-extension-supplement.sql':'4d0411d8405dcce07e600b2dc5de81b0c7eb7e42a609d92f7eec889237bd0db5',
+   'prepared.json':'714feaa1a81c6511c09841e58da0114a6f07361265a0075afa0465fbaf9355d1',
+   'sql-applied.json':'e5f8e9d8c2a21055bbccbdcff4694db57b875bdcfbcea98af1fa725bdf401be4',
+   'completed.json':'89e5b3109155f829e61230317ce22821ecbab40d59b8a126f407a28c43aa95f4',
+  }),
+  database:Object.freeze({
+   oid:'61716',
+   originalName:'faolla_attendance_compat_a535a308e21f',
+   retainedName:'faolla_attendance_failed_a535a308e21f_20261010_143000',
+   registryCount:'135',
+   maximumMigrationVersion:'202610040135',
+   migration136IndexOid:'67386',
+  }),
+ }),
+});
+export const ATTENDANCE_STAGED_PHASE_FOLLOW_ON_FILES=Object.freeze([
+ ...ATTENDANCE_STAGED_REPAIR_FILES,
+ 'scripts/attendance-production-multiphase-guards-native.mjs',
+ 'scripts/attendance-production-multiphase-guards-native.test.mjs',
+]);
+const phaseRequiredFiles=Object.freeze([
+ 'scripts/attendance-production-052-compatibility.mjs',
+ 'scripts/attendance-production-052-compatibility.test.mjs',
+ 'scripts/attendance-production-database-migrations.mjs',
+ 'scripts/attendance-production-database-migrations.test.mjs',
+ 'scripts/attendance-staged-tool-repair-policy.mjs',
+ 'scripts/attendance-staged-tool-repair-policy.test.mjs',
+ 'scripts/attendance-staged-tool-repair.mjs',
+ 'scripts/attendance-staged-tool-repair.test.mjs',
+ 'scripts/attendance-production-multiphase-guards-native.mjs',
+ 'scripts/attendance-production-multiphase-guards-native.test.mjs',
+]);
+function assertAttendanceStagedPhaseRepairReceipt(r,{target:expectedTarget,toolRevision}={}){
+ need(Array.isArray(r?.changedToolFiles)&&r.changedToolFiles.length>0&&
+  new Set(r.changedToolFiles).size===r.changedToolFiles.length&&
+  r.changedToolFiles.every(file=>ATTENDANCE_STAGED_PHASE_FOLLOW_ON_FILES.includes(file)));
+ // Preserve the old receipt validator and its 15-path authority byte-for-byte;
+ // validate the two phase-only paths only in this new receipt layer.
+ const historicalFiles=r.changedToolFiles.filter(file=>ATTENDANCE_STAGED_REPAIR_FILES.includes(file));
+ assertAttendanceStagedRepairReceipt({...r,changedToolFiles:historicalFiles},{target:expectedTarget,toolRevision});
+ need(phaseRequiredFiles.every(file=>r.changedToolFiles.includes(file)));
+ return r;
+}
+export function assertAttendanceStagedPhaseFollowOnReceipt(r,{originalReceipt,originalReceiptSha256,
+ firstFollowOnReceipt,firstFollowOnReceiptSha256,sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256,
+ aclFollowOnReceipt,aclFollowOnReceiptSha256,schemaFollowOnReceipt,schemaFollowOnReceiptSha256,
+ previousReceipt,previousReceiptSha256,target:expectedTarget,toolRevision}={}){
+ const f=ATTENDANCE_STAGED_PHASE_FOLLOW_ON,p=ATTENDANCE_STAGED_REPAIR;
+ need(r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).length===followOnKeys.length&&followOnKeys.every(k=>Object.hasOwn(r,k)));
+ // Real archive pins are a precondition. PENDING can never authorize a read,
+ // preparation or runtime fallback.
+ need(Object.values(f.archive.files).every(hex));
+ assertAttendanceStagedGuardFollowOnReceipt(previousReceipt,{originalReceipt,originalReceiptSha256,
+  firstFollowOnReceipt,firstFollowOnReceiptSha256,sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256,
+  aclFollowOnReceipt,aclFollowOnReceiptSha256,previousReceipt:schemaFollowOnReceipt,
+  previousReceiptSha256:schemaFollowOnReceiptSha256,target:p.target,toolRevision:f.previousToolRevision});
+ need(previousReceiptSha256===f.previousReceiptSha256&&r.schemaVersion===1&&
+  r.kind==='attendance-staged-tool-repair-phase-follow-on'&&r.target===p.target&&r.baseline===p.baseline&&
+  (!expectedTarget||expectedTarget===p.target)&&r.previousToolRevision===f.previousToolRevision&&
+  r.previousReceiptSha256===f.previousReceiptSha256);
+ try{assert.deepEqual(r.failedAttemptArchive,f.archive);}catch{need(false);}
+ const previous=previousReceipt.effectiveReceipt,effective=assertAttendanceStagedPhaseRepairReceipt(r.effectiveReceipt,{target:p.target,toolRevision});
+ need(![f.previousToolRevision,ATTENDANCE_STAGED_GUARD_FOLLOW_ON.previousToolRevision,
+  ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON.previousToolRevision,ATTENDANCE_STAGED_ACL_FOLLOW_ON.previousToolRevision,
+  ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON.previousToolRevision,ATTENDANCE_STAGED_FOLLOW_ON.previousToolRevision].includes(effective.toolRevision)&&
+  effective.sourceInputsSha256===previous.sourceInputsSha256&&effective.dependencySha256===previous.dependencySha256&&
+  effective.preparedAt===r.preparedAt&&Date.parse(effective.preparedAt)>=Date.parse(previous.preparedAt)&&
+  phaseRequiredFiles.every(file=>effective.changedToolFiles.includes(file)));
+ return r;
+}
