@@ -88,8 +88,8 @@ test('only guarded saved values transfer and protected build environment is fina
  assert.equal(attendanceBuildEnvironmentText(Object.fromEntries(Object.entries(saved).reverse()),input),text);
 });
 
-test('quoted values preserve newline, CR, Unicode, backslashes, quotes and literal variable syntax',()=>{
- const values=['',' Chinese中文 español 🚀 ','quote"single\'backslash\\tail\\','line1\nline2\r\nline3\tend','\\\n\\\r\n"\nFAOLLA_INJECTED="1','$HOME ${SUPABASE_SECRET} $(command) `command` %n # ; ='];
+test('quoted values preserve LF, TAB, Unicode, backslashes, quotes and literal variable syntax',()=>{
+ const values=['',' Chinese中文 español 🚀 ','quote"single\'backslash\\tail\\','line1\nline2\nline3\tend','\\\n\\\n"\nFAOLLA_INJECTED="1','$HOME ${SUPABASE_SECRET} $(command) `command` %n # ; ='];
  for(const value of values){const saved={...savedRuntime(),MAIL_PASSWORD:value},parsed=quotedEnvironment(attendanceBuildEnvironmentText(saved,input));assert.equal(parsed.MAIL_PASSWORD,value);assert.equal(Object.hasOwn(parsed,'FAOLLA_INJECTED'),false);assertAttendanceBuildEnvironment(parsed,saved);}
 });
 
@@ -99,6 +99,17 @@ test('invalid selected values and names fail generically before any file is writ
  for(const code of [0xfdcf,0xfdf0,0xfffd,0x1fffd,0x10fffd])assert.doesNotThrow(()=>attendanceBuildEnvironmentText({...savedRuntime(),MAIL_VALUE:String.fromCodePoint(code)},input));
  for(const saved of [null,[],{...savedRuntime(),FAOLLA_BACKGROUND_JOBS_PAUSED:'0'},{...savedRuntime(),MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'1'}])assert.throws(()=>attendanceBuildEnvironmentText(saved,input),/environment_invalid|environment_mismatch/);
  assert.throws(()=>attendanceBuildEnvironmentText({...savedRuntime(),MAIL_VALUE:'\\'.repeat(2*1024**2)},input),/environment_invalid/);
+});
+
+test('actual v239 rejected ASCII controls fail before launch without normalization',()=>{
+ for(let code=0;code<=0x7f;code++){
+  if(code>=0x20&&code!==0x7f||code===9||code===10)continue;
+  const value=`synthetic-before${String.fromCharCode(code)}synthetic-after`;
+  assert.throws(()=>attendanceBuildEnvironmentText({...savedRuntime(),FAOLLA_ORIGIN_FIX_LOCKED:value},input),e=>e.message==='attendance_build_environment_invalid');
+  const f=memoryBuildFixture();f.put(`${input.operation}/runtime.json`,JSON.stringify({...f.saved,FAOLLA_ORIGIN_FIX_LOCKED:value}));let calls=0;f.spawn=()=>{calls++;throw Error('must_not_launch');};
+  assert.throws(()=>f.helpers.buildAttendanceOnlineCandidate(input),/environment_invalid/);assert.equal(calls,0);assert.equal(f.fds.size,0);
+  for(const leaf of ['build-home','build-cache','build-tmp','attendance-build.env','attendance-build-proof.json'])assert.equal(f.files.has(`${input.operation}/${leaf}`),false);
+ }
 });
 
 test('private environment writes are exclusive, root-owned, no-follow, durable and read back',()=>{
