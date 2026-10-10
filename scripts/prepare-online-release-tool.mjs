@@ -29,7 +29,7 @@ const blobId = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).upda
 const excluded = name => name === 'public/downloads' || name.startsWith('public/downloads/');
 const exists = name => { try { fs.lstatSync(name); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; } };
 
-// One explicitly approved, never-published attendance candidate. This sidecar
+// The original explicitly approved, never-published attendance candidate. This sidecar
 // does not change its original preparing state, delete artifacts or grant a
 // retry of that target. The normal exact-main/source/lock gates still apply.
 const unpublishedTarget = '5b974eb06c858757c8785d5f9106b006903a5ba0';
@@ -56,6 +56,52 @@ export const UNPUBLISHED_CANDIDATE_PRESERVED_FILES = Object.freeze({
   ...Object.fromEntries(UNPUBLISHED_CANDIDATE_INCIDENT.proxyFiles.flatMap(name =>
     ['before', 'after'].map(prefix => [`${prefix}-${name}`, `${unpublishedOperation}/${prefix}-${name}`]))),
 });
+// A second, separately approved incident did enter the sandboxed build unit.
+// Its environment check failed before npm; retain the real failed journal,
+// original private stage log and the three empty directories, not a fictional
+// never-started build. No caller may supply another incident or replace pins.
+const environmentTarget = 'e754793a589593011da249d00ae05326f54302bf';
+const environmentOperation = `${RELEASE_ROOT}/${environmentTarget}`;
+const environmentDirectory = `${APP}.web-releases/${environmentTarget.slice(0, 12)}-online`;
+export const UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT = Object.freeze({
+  target: environmentTarget, baseline: 'b1304d5d58841c2247b93229b90bb7adcfd64965',
+  stateSha256: 'f98fbad3170b634c88e3400952bba0db6cef84d7137b467bdb7ec8a0ee835f3d',
+  operation: environmentOperation, directory: environmentDirectory,
+  name: `merchant-space-online-${environmentTarget.slice(0, 12)}`,
+  proxyFiles: UNPUBLISHED_CANDIDATE_INCIDENT.proxyFiles,
+  stageLog: `/var/log/faolla-attendance-publication/${environmentTarget}-stage.log`,
+  stageLogSha256: 'd7d045e832780ddfded2b7425cb053bcd7564f381591164357fe16f63eba164a',
+  buildSource: `${environmentDirectory}/scripts/attendance-online-build.mjs`,
+  buildSourceSha256: '02d43cce249532ee287b25bf9a2c9231ee4351416757a0faf99d47648ee6e636',
+  journalSha256: '96095c31158115cb1e9e3399d28ff9fd243c472aa58c32d6045a874513871530',
+});
+export const UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS = Object.freeze([
+  `${environmentDirectory}/.next`, `${environmentDirectory}/.next/BUILD_ID`,
+  ...['attendance-build-proof.json', 'attendance-database-progress.json', 'attendance-database-ready.json',
+    'attendance-database-compatibility.json', 'attendance-compatibility-attempt.json', 'attendance-compatibility-metadata.sql',
+    'migration-preview.json', 'migration-report.json'].map(name => `${environmentOperation}/${name}`),
+]);
+export const UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES = Object.freeze({
+  'runtime.json': `${environmentOperation}/runtime.json`, '.env.local': `${environmentDirectory}/.env.local`,
+  'stage.log': UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT.stageLog,
+  ...Object.fromEntries(UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT.proxyFiles.flatMap(name =>
+    ['before', 'after'].map(prefix => [`${prefix}-${name}`, `${environmentOperation}/${prefix}-${name}`]))),
+});
+export const UNPUBLISHED_BUILD_ENVIRONMENT_FILE_SHA256 = Object.freeze({
+  'runtime.json': '9b227b9d700001926f35b846e5a2a700dc33a9578a05b59f51a532c9b1482ed2',
+  '.env.local': 'da261a4e6c130fbf0f6275a3c3fe09391f3971609298349e1b67ff62df23e0e2',
+  'stage.log': UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT.stageLogSha256,
+  'before-e6718553d7a03bef1e991fe6b6898cab_www.faolla.com.conf': '474c2eef77404ebf7905c8563e5a0e015f4525420c4ce925b2478a196a560608',
+  'after-e6718553d7a03bef1e991fe6b6898cab_www.faolla.com.conf': 'ff7104caafcca9c6578caacfb1305fdcf1438a1f09ecda131aac33d1d863a60c',
+  'before-no_store_entries_www.faolla.com.conf': '3a274b28d47d3be7e7963611b638a1d94a75dc9d351277941739291061972db2',
+  'after-no_store_entries_www.faolla.com.conf': '2be8bb00e785f713f3119c569de014e4d2ca1d77e14bd900dc9e9fa454d33b52',
+  'before-faolla_contact_card_release.conf': '90ec0b94cdb735d9375744c98b1b2fb2ae7ae4bbb9ce22c1d8efb7d6c641d69a',
+  'after-faolla_contact_card_release.conf': '0554e813cb3b317caba59ef1e74367bb550d04eac8205909e2bae87d1102b7e5',
+});
+export const UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES = Object.freeze(Object.fromEntries(
+  [['build-home', 2624499], ['build-cache', 2624500], ['build-tmp', 2624501]].map(([name, ino]) => [name,
+    Object.freeze({path: `${environmentOperation}/${name}`, uid: 0, mode: 0o700, dev: 64769, ino, nlink: 2, entries: Object.freeze([])})]),
+));
 const terminationObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const terminationKeys = (value, keys) => terminationObject(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -68,8 +114,7 @@ const terminationTime = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2
   Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const terminationRequire = condition => {if (!condition) fail('unpublished_termination_invalid');};
 
-function unpublishedState(stateText) {
-  const p = UNPUBLISHED_CANDIDATE_INCIDENT;
+function unpublishedState(stateText, p = UNPUBLISHED_CANDIDATE_INCIDENT) {
   terminationRequire(typeof stateText === 'string' && Buffer.byteLength(stateText) <= 256 * 1024 && sha256(stateText) === p.stateSha256);
   let state; try {state = JSON.parse(stateText);} catch {fail('unpublished_termination_invalid');}
   terminationRequire(terminationObject(state) && state.target === p.target && state.baseline === p.baseline &&
@@ -153,6 +198,80 @@ export function assertUnpublishedCandidateTerminationReceipt({stateText, receipt
   return true;
 }
 
+function unpublishedBuildEnvironmentEvidence(state, evidence) {
+  const p = UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT;
+  terminationRequire(terminationKeys(evidence, ['schemaVersion', 'target', 'baseline', 'operation', 'observedAt', 'stateSha256',
+    'sourceHead', 'sourceClean', 'absentPaths', 'buildUnit', 'activeText', 'processes', 'baseDirectory', 'maintenanceText',
+    'markerSha256', 'proxyHashes', 'retentionHeadSha256', 'database', 'preservedFiles', 'processReferencesAbsent',
+    'pm2DumpReferencesAbsent', 'portVacant', 'candidateCompatibilityDatabaseAbsent', 'diagnosticKind', 'diagnosticTests',
+    'diagnosticPasses', 'diagnosticFailures', 'diagnosticSkipped', 'diagnosticCancelled', 'buildAttemptOccurred', 'npmStarted',
+    'buildSourceSha256', 'preservedDirectories']) && evidence.schemaVersion === 1 && evidence.target === p.target &&
+    evidence.baseline === p.baseline && evidence.operation === p.operation && evidence.stateSha256 === p.stateSha256 &&
+    evidence.sourceHead === p.target && evidence.sourceClean === true && terminationTime(evidence.observedAt) &&
+    Date.parse(evidence.observedAt) >= Date.parse(state.startedAt) &&
+    terminationEqual(evidence.absentPaths, UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS) &&
+    terminationEqual(evidence.preservedFiles, UNPUBLISHED_BUILD_ENVIRONMENT_FILE_SHA256) &&
+    terminationEqual(evidence.preservedDirectories, UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES) &&
+    evidence.buildSourceSha256 === p.buildSourceSha256 && evidence.buildAttemptOccurred === true && evidence.npmStarted === false &&
+    evidence.processReferencesAbsent === true && evidence.pm2DumpReferencesAbsent === true && evidence.portVacant === true &&
+    evidence.candidateCompatibilityDatabaseAbsent === true && evidence.diagnosticKind === 'failed-build-environment' &&
+    evidence.diagnosticTests === 543 && evidence.diagnosticPasses === 543 && evidence.diagnosticFailures === 0 &&
+    evidence.diagnosticSkipped === 0 && evidence.diagnosticCancelled === 0 &&
+    terminationKeys(evidence.buildUnit, ['name', 'loadState', 'journalEmpty', 'journalSha256', 'journalEntries']) &&
+    evidence.buildUnit.name === `faolla-attendance-build-${p.target}.service` && evidence.buildUnit.loadState === 'not-found' &&
+    evidence.buildUnit.journalEmpty === false && evidence.buildUnit.journalSha256 === p.journalSha256 &&
+    Array.isArray(evidence.buildUnit.journalEntries) && evidence.buildUnit.journalEntries.length === 4 &&
+    sha256(terminationJson(evidence.buildUnit.journalEntries)) === p.journalSha256 &&
+    typeof evidence.activeText === 'string' && typeof evidence.maintenanceText === 'string' &&
+    terminationEqual(evidence.processes, state.processes) && evidence.baseDirectory === state.baseDirectory &&
+    evidence.markerSha256 === state.markerHash && terminationHash(evidence.markerSha256));
+  let active, maintenance;
+  try {active = JSON.parse(evidence.activeText); maintenance = JSON.parse(evidence.maintenanceText);} catch {fail('unpublished_termination_invalid');}
+  terminationRequire(terminationEqual(active, state.previousActive) && active.target === p.baseline &&
+    sha256(evidence.maintenanceText) === state.maintenanceHash && maintenance.phase === 'ended' &&
+    evidence.retentionHeadSha256 === (state.retentionHeadSha256 ?? state.rollingRetentionHeadSha256 ?? null) &&
+    (evidence.retentionHeadSha256 === null || terminationHash(evidence.retentionHeadSha256)) &&
+    terminationKeys(evidence.proxyHashes, p.proxyFiles) &&
+    terminationKeys(evidence.database, ['identitySha256', 'registrySha256', 'registryCount', 'registryMaximum', 'attendanceRelations', 'attendanceFunctions']) &&
+    terminationHash(evidence.database.identitySha256) && terminationHash(evidence.database.registrySha256) &&
+    evidence.database.registryCount === 60 && evidence.database.registryMaximum === '202609240052' &&
+    evidence.database.attendanceRelations === 0 && evidence.database.attendanceFunctions === 0);
+  for (const file of p.proxyFiles) {
+    terminationRequire(terminationObject(state.configs[file]) && terminationHash(state.configs[file].oldHash) && terminationHash(state.configs[file].newHash) &&
+      evidence.proxyHashes[file] === state.configs[file].oldHash &&
+      evidence.preservedFiles[`before-${file}`] === state.configs[file].oldHash && evidence.preservedFiles[`after-${file}`] === state.configs[file].newHash);
+  }
+  terminationRequire(!evidence.processes.some(process => !terminationObject(process) || process.name === p.name ||
+    process.cwd === p.directory || process.status === 'online' && process.port === state.port ||
+    typeof process.executable === 'string' && (process.executable === p.directory || process.executable.startsWith(p.directory + '/'))));
+}
+
+/** Separate fixed-case policy: this receipt cannot terminate the old 5b case. */
+export function createUnpublishedBuildEnvironmentTerminationReceipt({stateText, evidence, toolRevision, terminatedAt} = {}) {
+  const p = UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT, state = unpublishedState(stateText, p);
+  unpublishedBuildEnvironmentEvidence(state, evidence);
+  terminationRequire(typeof toolRevision === 'string' && toolRevision.length === 40 && SHA.test(toolRevision) && terminationTime(terminatedAt) &&
+    Date.parse(terminatedAt) >= Date.parse(evidence.observedAt) && Date.parse(terminatedAt) - Date.parse(evidence.observedAt) <= 300000);
+  const savedEvidence = JSON.parse(JSON.stringify(evidence));
+  return {schemaVersion: 1, kind: 'online-unpublished-build-environment-termination', target: p.target, baseline: p.baseline,
+    operation: p.operation, candidate: {directory: p.directory, name: p.name, port: state.port}, originalStateSha256: p.stateSha256,
+    originalStateText: stateText, evidence: savedEvidence, evidenceSha256: sha256(terminationJson(savedEvidence)), toolRevision, terminatedAt};
+}
+
+export function assertUnpublishedBuildEnvironmentTerminationReceipt({stateText, receipt, preservedFiles, absentPaths,
+  preservedDirectories, buildSourceSha256} = {}) {
+  terminationRequire(terminationKeys(receipt, ['schemaVersion', 'kind', 'target', 'baseline', 'operation', 'candidate',
+    'originalStateSha256', 'originalStateText', 'evidence', 'evidenceSha256', 'toolRevision', 'terminatedAt']) &&
+    receipt.originalStateText === stateText && terminationHash(receipt.evidenceSha256));
+  const expected = createUnpublishedBuildEnvironmentTerminationReceipt({stateText, evidence: receipt.evidence,
+    toolRevision: receipt.toolRevision, terminatedAt: receipt.terminatedAt});
+  terminationRequire(terminationEqual(receipt, expected) && terminationEqual(preservedFiles, receipt.evidence.preservedFiles) &&
+    terminationEqual(absentPaths, UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS) &&
+    terminationEqual(preservedDirectories, receipt.evidence.preservedDirectories) &&
+    buildSourceSha256 === UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT.buildSourceSha256);
+  return true;
+}
+
 function canonicalAbsolute(value) {
   if (typeof value !== 'string' || !path.isAbsolute(value) || path.resolve(value) !== value || /[\r\n\0]/.test(value)) fail('path_invalid');
   return value;
@@ -177,6 +296,20 @@ export function assertOnlineToolOwnedPath(location, kind = 'directory', io = fs)
         io.realpathSync(current) !== current) fail('unsafe_path');
     const parent = path.dirname(current); if (parent === current) break; current = parent;
   }
+}
+
+export function readUnpublishedBuildEnvironmentDirectories(io = fs, checkPath = assertOnlineToolOwnedPath) {
+  const result = {};
+  for (const [key, expected] of Object.entries(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES)) {
+    checkPath(expected.path); const before = io.lstatSync(expected.path);
+    const entries = io.readdirSync(expected.path).sort(), after = io.lstatSync(expected.path);
+    for (const name of ['dev', 'ino', 'mode', 'uid', 'nlink', 'mtimeMs', 'ctimeMs'])
+      if (before[name] !== after[name]) fail('unpublished_termination_invalid');
+    result[key] = {path: expected.path, uid: before.uid, mode: before.mode & 0o777,
+      dev: before.dev, ino: before.ino, nlink: before.nlink, entries};
+  }
+  terminationRequire(terminationEqual(result, UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES));
+  return result;
 }
 
 function gitEnvironment() {
@@ -297,19 +430,27 @@ export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoo
     const stateText = fs.readFileSync(state, 'utf8'), value = JSON.parse(stateText);
     if (value.target !== name) fail('release_pending');
     if (['active', 'rolled-back'].includes(value.status)) continue;
-    const incident = UNPUBLISHED_CANDIDATE_INCIDENT, receiptPath = path.join(directory, 'unpublished-termination.json');
+    const environmentCase = name === UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT.target;
+    const incident = environmentCase ? UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT : UNPUBLISHED_CANDIDATE_INCIDENT;
+    const retainedPaths = environmentCase ? UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES : UNPUBLISHED_CANDIDATE_PRESERVED_FILES;
+    const absentPaths = environmentCase ? UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS : UNPUBLISHED_CANDIDATE_ABSENT_PATHS;
+    const receiptPath = path.join(directory, 'unpublished-termination.json');
     if (name !== incident.target || directory !== incident.operation || value.status !== 'preparing' || !exists(receiptPath)) fail('release_pending');
     checkPath(receiptPath, 'file'); checkPath(incident.directory);
     for (const [full, mode] of [[directory, 0o700], [state, 0o600], [receiptPath, 0o600]])
       if ((fs.lstatSync(full).mode & 0o777) !== mode) fail('unsafe_path');
     const preservedFiles = {};
-    for (const [key, full] of Object.entries(UNPUBLISHED_CANDIDATE_PRESERVED_FILES)) {
+    for (const [key, full] of Object.entries(retainedPaths)) {
       checkPath(full, 'file'); if ((fs.lstatSync(full).mode & 0o777) !== 0o600) fail('unsafe_path');
       preservedFiles[key] = sha256(fs.readFileSync(full));
     }
-    for (const full of UNPUBLISHED_CANDIDATE_ABSENT_PATHS) if (exists(full)) fail('release_pending');
-    assertUnpublishedCandidateTerminationReceipt({stateText, receipt: JSON.parse(fs.readFileSync(receiptPath, 'utf8')),
-      preservedFiles, absentPaths: [...UNPUBLISHED_CANDIDATE_ABSENT_PATHS]});
+    for (const full of absentPaths) if (exists(full)) fail('release_pending');
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    if (environmentCase) {
+      checkPath(incident.buildSource, 'file');
+      assertUnpublishedBuildEnvironmentTerminationReceipt({stateText, receipt, preservedFiles, absentPaths: [...absentPaths],
+        preservedDirectories: readUnpublishedBuildEnvironmentDirectories(fs, checkPath), buildSourceSha256: sha256(fs.readFileSync(incident.buildSource))});
+    } else assertUnpublishedCandidateTerminationReceipt({stateText, receipt, preservedFiles, absentPaths: [...absentPaths]});
   }
 }
 
