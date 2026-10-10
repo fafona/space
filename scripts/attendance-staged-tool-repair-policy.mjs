@@ -101,3 +101,44 @@ export function assertAttendanceStagedFollowOnReceipt(r,{originalReceipt,origina
   effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
  return r;
 }
+
+// A second, separately approved extension seals the sequence-metadata repair.
+// Both older receipts and both failed archives remain immutable evidence.
+export const ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON=Object.freeze({
+ previousToolRevision:'c9829973748fd082c4c579023edd6f7fc538ed29',
+ previousReceiptSha256:'3c2fc90cbc0d6857312c0bf86c16cb0fd2e80623262c9610340e73220b13a58d',
+ receiptName:'attendance-staged-tool-repair-sequence-follow-on.json',
+ archive:Object.freeze({
+  directory:`${ATTENDANCE_STAGED_REPAIR.operation}/attendance-compatibility-failure-20261010-065836`,
+  files:Object.freeze({
+   'attendance-compatibility-attempt.json':'32c97503f8c3f61b657b12025898bdb8584feb9da971a35e38ca5f9a9b0a46b2',
+   'attendance-compatibility-metadata.sql':'3d4808ffd338bdddd7287d5281ddcb66b44dba720cc75bee349cf716b6e8405d',
+   'attendance-compatibility-extension-metadata.json':'4eaaa1a26b2da139919f7e29cd42d02a32b6023ed05e1f067eb74a93287f8a3e',
+   'attendance-compatibility-extension-supplement.sql':'ea8b0d11028bc6c61f8facb2e1e290931c85356b00fbca5098d4859011b1446d',
+   'prepared.json':'fe55b52521a25ff572638bd5b56a6e9dca959248c27b1a805e9409cf9282ab5e',
+   'sql-applied.json':'2a653be8595e174bd30a295e27b3cdecc5f5bceb5d94059c889ca4f413edac8f',
+   'completed.json':'fe3f0eafe06b82e362e93a55f78a231d29023fe96479b486f025cc19d5c6e9bf',
+  }),
+  database:Object.freeze({oid:'34130',originalName:'faolla_attendance_compat_a535a308e21f',
+   retainedName:'faolla_attendance_failed_a535a308e21f_20261010_065836'}),
+ }),
+});
+export function assertAttendanceStagedSequenceFollowOnReceipt(r,{originalReceipt,originalReceiptSha256,
+ previousReceipt,previousReceiptSha256,target:expectedTarget,toolRevision}={}){
+ const f=ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON,p=ATTENDANCE_STAGED_REPAIR;
+ need(r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).length===followOnKeys.length&&followOnKeys.every(k=>Object.hasOwn(r,k)));
+ // An incomplete actual archival pin is a blocker, never synthetic authority.
+ need(Object.values(f.archive.files).every(hex));
+ assertAttendanceStagedFollowOnReceipt(previousReceipt,{originalReceipt,originalReceiptSha256,target:p.target,toolRevision:f.previousToolRevision});
+ need(previousReceiptSha256===f.previousReceiptSha256&&r.schemaVersion===1&&r.kind==='attendance-staged-tool-repair-sequence-follow-on'&&
+  r.target===p.target&&r.baseline===p.baseline&&(!expectedTarget||expectedTarget===p.target)&&
+  r.previousToolRevision===f.previousToolRevision&&r.previousReceiptSha256===f.previousReceiptSha256);
+ try{assert.deepEqual(r.failedAttemptArchive,f.archive);}catch{need(false);}
+ const previous=previousReceipt.effectiveReceipt,effective=assertAttendanceStagedRepairReceipt(r.effectiveReceipt,{target:p.target,toolRevision});
+ need(effective.toolRevision!==f.previousToolRevision&&effective.toolRevision!==ATTENDANCE_STAGED_FOLLOW_ON.previousToolRevision&&
+  effective.sourceInputsSha256===previous.sourceInputsSha256&&effective.dependencySha256===previous.dependencySha256&&
+  effective.preparedAt===r.preparedAt&&Date.parse(effective.preparedAt)>=Date.parse(previous.preparedAt)&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair.mjs')&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
+ return r;
+}

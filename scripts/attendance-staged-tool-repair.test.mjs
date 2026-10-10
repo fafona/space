@@ -9,9 +9,12 @@ import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
 import {ATTENDANCE_STAGED_REPAIR as p, ATTENDANCE_STAGED_REPAIR_FILES as allowed,
   ATTENDANCE_STAGED_REPAIR_PRESERVED as pins, ATTENDANCE_STAGED_FOLLOW_ON as follow,
-  assertAttendanceStagedRepairReceipt, assertAttendanceStagedFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
-import {stagedRepairImportClosure, prepareAttendanceStagedToolRepair, prepareAttendanceStagedToolRepairFollowOn} from './attendance-staged-tool-repair.mjs';
-import {stagedFollowOnReceiptFixture} from './attendance-staged-tool-repair-policy.test.mjs';
+  ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON as sequence,
+  assertAttendanceStagedRepairReceipt, assertAttendanceStagedFollowOnReceipt,
+  assertAttendanceStagedSequenceFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
+import {stagedRepairImportClosure, prepareAttendanceStagedToolRepair, prepareAttendanceStagedToolRepairFollowOn,
+  prepareAttendanceStagedToolRepairSequenceFollowOn} from './attendance-staged-tool-repair.mjs';
+import {stagedFollowOnReceiptFixture,stagedSequenceFollowOnReceiptFixture} from './attendance-staged-tool-repair-policy.test.mjs';
 
 const entry = fileURLToPath(new URL('./attendance-staged-tool-repair.mjs', import.meta.url));
 const repository = fileURLToPath(new URL('../', import.meta.url));
@@ -338,7 +341,8 @@ test('synthetic verification selects only a fully validated follow-on and never 
   function fixture({present = true, invalid = false, changedOriginal = false, changedArchive = false, changedFollow = false} = {}) {
     let originalReads = 0, followReads = 0, archiveReads = 0; const requests = [];
     const verify = functionVm('verifyAttendanceStagedToolRepairReceipt', {p, follow, APP, ROOT: '/synthetic-tools', receiptFile: oldFile,
-      followOnReceiptFile: nextFile, sha: digest, evidenceExists: file => {assert.equal(file, nextFile); return present;},
+      followOnReceiptFile: nextFile, sequenceFollowOnReceiptFile: `${p.operation}/${sequence.receiptName}`, sha: digest,
+      evidenceExists: file => {if(file===`${p.operation}/${sequence.receiptName}`)return false;assert.equal(file, nextFile);return present;},
       ownedFile: (file, options) => {assert.equal(options.privateMode, true); if (file === oldFile) return raw; assert.equal(file, nextFile); followReads++;
         return invalid ? Buffer.from('{}') : changedFollow && followReads > 1 ? Buffer.from('{}') : followRaw;},
       originalFollowOnReceipt: () => {originalReads++; if (changedOriginal && originalReads > 1) throw Error('original_receipt_changed');
@@ -363,4 +367,203 @@ test('real follow-on CLI rejects a non-Linux/non-root invocation before any prod
   assert.throws(() => prepareAttendanceStagedToolRepairFollowOn(revision, 'approved-staged-attendance-tool-repair-follow-on'), /attendance_staged_repair_invocation/);
   const actual = spawnSync(process.execPath, [entry, 'prepare-follow-on', revision, 'approved-staged-attendance-tool-repair-follow-on'], {encoding: 'utf8', timeout: 10000, windowsHide: true});
   assert.equal(actual.status, 1); assert.equal(actual.stdout, ''); assert.match(actual.stderr, /^attendance_staged_repair_invocation\r?\n$/);
+});
+
+// VM ports exercise the state machine against the fixed, completed archive.
+// A deliberately incomplete copy below is test-only and never reaches a real path.
+const syntheticSequence = structuredClone(sequence);
+const policyEntry=fileURLToPath(new URL('./attendance-staged-tool-repair-policy.mjs',import.meta.url));
+const policySyntax=ts.createSourceFile(policyEntry,fs.readFileSync(policyEntry,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+const sequenceValidatorNode=policySyntax.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='assertAttendanceStagedSequenceFollowOnReceipt');
+assert.ok(sequenceValidatorNode);
+const sequencePolicyVm=config=>runInNewContext(`${sequenceValidatorNode.getText(policySyntax).replace(/^export\s+/,'')}\nassertAttendanceStagedSequenceFollowOnReceipt`,
+  {Object,Date,assert,ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON:config,ATTENDANCE_STAGED_REPAIR:p,ATTENDANCE_STAGED_FOLLOW_ON:follow,
+    followOnKeys:['schemaVersion','kind','target','baseline','previousToolRevision','previousReceiptSha256','failedAttemptArchive','effectiveReceipt','preparedAt'],
+    need:value=>{if(!value)throw Error('attendance_staged_repair_receipt_invalid');},hex:value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value),
+    assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt},{timeout:1000});
+const syntheticSequenceValidator=sequencePolicyVm(syntheticSequence);
+const pendingSequence={...syntheticSequence,archive:{...syntheticSequence.archive,
+  files:{...syntheticSequence.archive.files,'completed.json':'PENDING'}}};
+function syntheticSequenceFixture(){
+  const f=stagedSequenceFollowOnReceiptFixture();f.chain.failedAttemptArchive=structuredClone(syntheticSequence.archive);return f;
+}
+
+test('synthetic sequence validator exercises the complete chain and rejects an incomplete VM-only archival pin',()=>{
+  const {original,previousReceipt,chain}=syntheticSequenceFixture(),ports={originalReceipt:original,
+    originalReceiptSha256:follow.previousReceiptSha256,previousReceipt,previousReceiptSha256:sequence.previousReceiptSha256};
+  assert.equal(syntheticSequenceValidator(chain,ports),chain);
+  for(const change of [{previousReceiptSha256:'0'.repeat(64)},{originalReceiptSha256:'0'.repeat(64)},
+    {previousReceipt:{...previousReceipt,kind:'invalid'}},{target:'d'.repeat(40)},{toolRevision:'d'.repeat(40)}])
+    assert.throws(()=>syntheticSequenceValidator(chain,{...ports,...change}));
+  for(const change of [{skip:true},{kind:'attendance-staged-tool-repair-follow-on'},{previousToolRevision:follow.previousToolRevision},
+    {previousReceiptSha256:follow.previousReceiptSha256},{failedAttemptArchive:{...syntheticSequence.archive,directory:'/arbitrary'}},
+    {failedAttemptArchive:{...syntheticSequence.archive,files:{...syntheticSequence.archive.files,'completed.json':'0'.repeat(64)}}}])
+    assert.throws(()=>syntheticSequenceValidator({...chain,...change},ports));
+  for(const change of [{toolRevision:follow.previousToolRevision},{toolRevision:sequence.previousToolRevision},{toolRevision:p.target},
+    {sourceInputsSha256:'c'.repeat(64)},{dependencySha256:'c'.repeat(64)},{scopeSha256:'c'.repeat(64)},
+    {builtOutputSha256:'c'.repeat(64)},{changedToolFiles:['scripts/attendance-production-052-compatibility.mjs']},
+    {preparedAt:'2026-10-10T05:00:00.000Z'},{preparedAt:'2026-10-10T08:00:00.000Z'}])
+    assert.throws(()=>syntheticSequenceValidator({...chain,effectiveReceipt:{...chain.effectiveReceipt,...change}},ports));
+  assert.throws(()=>sequencePolicyVm(pendingSequence)(chain,ports),/receipt_invalid/);
+  assert.equal(assertAttendanceStagedSequenceFollowOnReceipt(chain,ports),chain);
+});
+
+test('synthetic historical first follow-on requires its fixed bytes, complete original chain and exact historical Git application inputs',()=>{
+  const rows=`100644 blob ${'a'.repeat(40)}\tsrc/app/page.tsx`;
+  function fixture({wrongPin=false,wrongRevision=false,wrongScope=false,wrongInputs=false,wrongReceiptInput=false,
+    changedRead=false,changedOriginal=false,brokenOriginal=false,brokenArchive=false,brokenAncestry=false}={}){
+    const {original,previousReceipt}=syntheticSequenceFixture(),requests=[];
+    original.sourceInputsSha256=digest(rows);previousReceipt.effectiveReceipt.sourceInputsSha256=wrongReceiptInput?'c'.repeat(64):digest(rows);
+    previousReceipt.effectiveReceipt.changedToolFiles.sort();if(wrongRevision)previousReceipt.effectiveReceipt.toolRevision='d'.repeat(40);
+    const raw=Buffer.from(JSON.stringify(previousReceipt));let reads=0,originals=0;
+    const read=functionVm('previousSequenceFollowOnReceipt',{p,follow,sequence,allowed,APP,
+      followOnReceiptFile:`${p.operation}/${follow.receiptName}`,
+      originalFollowOnReceipt:()=>{originals++;if(brokenOriginal||changedOriginal&&originals>1)throw Error('original_receipt_changed');
+        return {receipt:original,receiptSha256:follow.previousReceiptSha256};},
+      ownedFile:(file,options)=>{assert.equal(file,`${p.operation}/${follow.receiptName}`);assert.equal(options.privateMode,true);reads++;
+        return changedRead&&reads>1?Buffer.from('{}'):raw;},
+      sha:bytes=>Buffer.isBuffer(bytes)&&bytes.equals(raw)?wrongPin?'0'.repeat(64):sequence.previousReceiptSha256:digest(bytes),
+      assertAttendanceStagedFollowOnReceipt,
+      git:(directory,args)=>{assert.equal(directory,APP);requests.push([...args]);if(args[0]==='merge-base'){
+        assert.deepEqual([...args],['merge-base','--is-ancestor',follow.previousToolRevision,sequence.previousToolRevision]);
+        if(brokenAncestry)throw Error('ancestry_failed');return '';}
+        assert.deepEqual([...args],['diff','--no-renames','--name-status',p.target,sequence.previousToolRevision]);
+        return wrongScope?'M\tsrc/app/page.tsx':previousReceipt.effectiveReceipt.changedToolFiles.map(name=>`M\t${name}`).join('\n');},
+      runOnlineToolGit:(directory,args)=>{assert.equal(directory,APP);assert.equal(args[0],'ls-tree');requests.push([...args]);
+        return Buffer.from((wrongInputs&&args.at(-1)===sequence.previousToolRevision?rows.replace('a'.repeat(40),'b'.repeat(40)):rows)+'\0');},
+      archivedFollowOnFailure:()=>{if(brokenArchive)throw Error('failure_archive_changed');return follow.archive;},
+    });return {requests,read};
+  }
+  const f=fixture(),result=f.read();assert.equal(result.receiptSha256,sequence.previousReceiptSha256);
+  assert.equal(result.receipt.effectiveReceipt.toolRevision,sequence.previousToolRevision);
+  assert.ok(f.requests.every(args=>['merge-base','diff','ls-tree'].includes(args[0])));
+  for(const options of [{wrongPin:true},{wrongRevision:true},{wrongScope:true},{wrongInputs:true},{wrongReceiptInput:true},
+    {changedRead:true},{changedOriginal:true},{brokenOriginal:true},{brokenArchive:true},{brokenAncestry:true}])assert.throws(fixture(options).read);
+});
+
+test('synthetic third-failure archive requires seven exact private pins and stable identity; VM-only pending pins block before reads',()=>{
+  function fixture({extra=false,missing=false,changedFile=false,mode=0o700,moved=false}={}){
+    let lists=0;const bytes=new Map(Object.keys(syntheticSequence.archive.files).filter(name=>!missing||name!=='completed.json').map(name=>[name,Buffer.from(name)]));
+    const read=functionVm('archivedSequenceFollowOnFailure',{sequence:syntheticSequence,
+      assertOnlineToolOwnedPath:file=>assert.equal(file,syntheticSequence.archive.directory),
+      fs:{lstatSync:file=>{assert.equal(file,syntheticSequence.archive.directory);return {dev:1,ino:moved&&lists>1?2:1,uid:0,mode,mtimeMs:1,ctimeMs:1};},
+        readdirSync:file=>{assert.equal(file,syntheticSequence.archive.directory);lists++;return [...bytes.keys(),...(extra?['unexpected.json']:[])];}},
+      ownedFile:(file,options)=>{assert.ok(file.startsWith(syntheticSequence.archive.directory+'/'));assert.equal(options.privateMode,true);
+        assert.equal(options.maxBytes,8*1024**2);return bytes.get(path.posix.basename(file));},
+      sha:value=>changedFile?'0'.repeat(64):syntheticSequence.archive.files[value.toString('utf8')],
+    });return read;
+  }
+  assert.deepEqual(fixture()(),syntheticSequence.archive);
+  for(const options of [{extra:true},{missing:true},{changedFile:true},{mode:0o755},{moved:true}])assert.throws(fixture(options),/failure_archive_(?:invalid|changed)/);
+  const pendingRead=functionVm('archivedSequenceFollowOnFailure',{sequence:pendingSequence,
+    assertOnlineToolOwnedPath:()=>assert.fail('pending archive must not read production paths')});
+  assert.throws(pendingRead,/failure_archive_pending/);
+});
+
+function sequencePreparationFixture({existingPath,changeCandidate=false,changePrevious=false,changeArchive=false,brokenAncestry=false,
+  wrongReadback=false,brokenPrevious=false}={}){
+  const {original,previousReceipt}=syntheticSequenceFixture(),calls=[],written=new Map(),descriptors=new Map();
+  const oldFile=`${p.operation}/attendance-staged-tool-repair.json`,previousFile=`${p.operation}/${follow.receiptName}`,
+    nextFile=`${p.operation}/${sequence.receiptName}`;
+  const oldBytes=Buffer.from(JSON.stringify(original)),previousBytes=Buffer.from(JSON.stringify(previousReceipt));
+  written.set(oldFile,oldBytes);written.set(previousFile,previousBytes);
+  const previous={original:{receipt:original,receiptSha256:follow.previousReceiptSha256},receipt:previousReceipt,receiptSha256:sequence.previousReceiptSha256};
+  const before={preservedFiles:{...pins},builtOutputSha256:p.builtOutputSha256,dependencySha256:original.dependencySha256};
+  const info={toolRevision:revision,sourceInputsSha256:original.sourceInputsSha256,changedToolFiles:previousReceipt.effectiveReceipt.changedToolFiles};
+  let locked=false,observations=0,previousReads=0,archives=0;
+  const constants={...fs.constants,O_NOFOLLOW:fs.constants.O_NOFOLLOW||0x20000,O_DIRECTORY:fs.constants.O_DIRECTORY||0x10000};
+  const io={constants,
+    openSync(file,flags,mode){assert.ok(locked);const fd=descriptors.size+10;calls.push({kind:'open',file,flags,mode});
+      if(file===nextFile){assert.equal(mode,0o600);assert.ok(flags&constants.O_EXCL);assert.ok(flags&constants.O_CREAT);assert.ok(flags&constants.O_NOFOLLOW);}
+      else assert.equal(file,p.operation);descriptors.set(fd,file);return fd;},
+    writeFileSync(fd,bytes){assert.equal(descriptors.get(fd),nextFile);written.set(nextFile,Buffer.from(bytes));calls.push({kind:'write',file:nextFile});},
+    fsyncSync(fd){assert.ok(descriptors.has(fd));calls.push({kind:'fsync',file:descriptors.get(fd)});},
+    closeSync(fd){assert.ok(descriptors.has(fd));descriptors.delete(fd);},
+  };
+  const prepare=functionVm('prepareAttendanceStagedToolRepairSequenceFollowOn',{p,follow,sequence:syntheticSequence,APP,ROOT:'/synthetic-bootstrap',
+    maintenance:'/var/lib/faolla-maintenance/merchant-space',sequenceFollowOnReceiptFile:nextFile,fs:io,sha:digest,process:{umask:()=>0o022},
+    evidenceExists:file=>file===existingPath,
+    git:(directory,args)=>{assert.equal(directory,APP);assert.deepEqual([...args],['merge-base','--is-ancestor',sequence.previousToolRevision,revision]);
+      calls.push({kind:'ancestry'});if(brokenAncestry)throw Error('ancestry_failed');return '';},
+    verifySource:(target,directory,options)=>{assert.equal(target,revision);calls.push({kind:'source',directory,options});return info;},
+    withOnlineToolPreparationLocks:(options,work)=>{assert.equal(options.deployLock,`${APP}.deploy.lock`);assert.equal(options.maintenance,'/var/lib/faolla-maintenance/merchant-space');
+      calls.push({kind:'locks'});locked=true;try{return work();}finally{locked=false;}},
+    previousSequenceFollowOnReceipt:()=>{assert.ok(locked);previousReads++;calls.push({kind:'previous'});
+      if(brokenPrevious||changePrevious&&previousReads>1)throw Error('previous_receipt_changed');return previous;},
+    archivedSequenceFollowOnFailure:()=>{assert.ok(locked);archives++;calls.push({kind:'archive'});
+      if(changeArchive&&archives>1)throw Error('failure_archive_changed');return syntheticSequence.archive;},
+    observe:()=>{assert.ok(locked);observations++;calls.push({kind:'observe'});return changeCandidate&&observations>1?{...before,dependencySha256:'c'.repeat(64)}:before;},
+    assertAttendanceStagedSequenceFollowOnReceipt:syntheticSequenceValidator,
+    assertOnlineToolNoPending:options=>{assert.ok(locked);assertAttendanceStagedRepairReceipt(options.fixedStagedRepairReceipt,{toolRevision:revision});calls.push({kind:'pending'});},
+    createOnlineReleaseToolPlan:target=>({target}),executeOnlineReleaseToolPlan:plan=>{assert.ok(locked);assert.equal(plan.target,revision);
+      calls.push({kind:'prepare-source-only'});return {directory:'/synthetic-tools',target:revision};},
+    ownedFile:(file,options)=>{assert.equal(file,nextFile);assert.equal(options.privateMode,true);return wrongReadback?Buffer.from('{}'):written.get(nextFile);},
+  });return {calls,written,descriptors,oldFile,previousFile,nextFile,oldBytes,previousBytes,run:confirm=>prepare(revision,confirm)};
+}
+
+test('synthetic sequence preparation preserves both old receipts/builds, holds two normal locks, observes twice and durably seals only its exclusive new file',()=>{
+  const f=sequencePreparationFixture(),result=f.run('approved-staged-attendance-tool-repair-sequence-follow-on');
+  assert.equal(result.toolRevision,revision);assert.equal(result.originalReceiptSha256,follow.previousReceiptSha256);
+  assert.equal(result.previousReceiptSha256,sequence.previousReceiptSha256);
+  assert.equal(result.applicationRebuilt,false);assert.equal(result.productionDatabaseChanged,false);assert.equal(result.trafficChanged,false);
+  assert.ok(f.written.get(f.oldFile).equals(f.oldBytes));assert.ok(f.written.get(f.previousFile).equals(f.previousBytes));
+  assert.equal(f.written.size,3);assert.equal(f.descriptors.size,0);assert.equal(result.receiptSha256,digest(f.written.get(f.nextFile)));
+  assert.equal(f.calls.filter(c=>c.kind==='observe').length,2);assert.equal(f.calls.filter(c=>c.kind==='prepare-source-only').length,1);
+  assert.deepEqual(f.calls.filter(c=>c.kind==='fsync').map(c=>c.file),[f.nextFile,p.operation]);
+  assert.ok(f.calls.findLastIndex(c=>c.kind==='observe')<f.calls.findIndex(c=>c.kind==='write'));
+});
+
+test('synthetic sequence preparation blocks every live canonical attempt and never overwrites old receipts or clears a failed new write',()=>{
+  const approval=sequencePreparationFixture();assert.throws(()=>approval.run('approved-staged-attendance-tool-repair-follow-on'),/approval_required/);
+  assert.equal(approval.calls.length,0);
+  const absentNames=['attendance-database-compatibility.json','attendance-compatibility-attempt.json','attendance-compatibility-metadata.sql',
+    'attendance-compatibility-extension-metadata.json','attendance-compatibility-extension-supplement.sql','attendance-database-progress.json','attendance-database-ready.json'];
+  for(const name of absentNames){const f=sequencePreparationFixture({existingPath:`${p.operation}/${name}`});
+    assert.throws(()=>f.run('approved-staged-attendance-tool-repair-sequence-follow-on'),/database_attempt_exists/);assert.equal(f.written.size,2);}
+  for(const options of [{existingPath:`${p.operation}/${sequence.receiptName}`},{changeCandidate:true},{changePrevious:true},
+    {changeArchive:true},{brokenAncestry:true},{brokenPrevious:true}]){
+    const f=sequencePreparationFixture(options);assert.throws(()=>f.run('approved-staged-attendance-tool-repair-sequence-follow-on'),
+      /sequence_follow_on_receipt_exists|candidate_changed_during_preparation|previous_receipt_changed|failure_archive_changed|ancestry_failed/);
+    assert.equal(f.written.size,2);assert.ok(f.written.get(f.oldFile).equals(f.oldBytes));assert.ok(f.written.get(f.previousFile).equals(f.previousBytes));assert.equal(f.descriptors.size,0);
+  }
+  const f=sequencePreparationFixture({wrongReadback:true});assert.throws(()=>f.run('approved-staged-attendance-tool-repair-sequence-follow-on'),/receipt_write_changed/);
+  assert.equal(f.written.size,3);assert.ok(f.written.get(f.oldFile).equals(f.oldBytes));assert.ok(f.written.get(f.previousFile).equals(f.previousBytes));
+});
+
+test('synthetic effective sequence verification never falls back if either historical chain or the new chain/archive/current source is invalid',()=>{
+  const {original,previousReceipt,chain}=syntheticSequenceFixture(),oldRaw=Buffer.from(JSON.stringify(original)),previousRaw=Buffer.from(JSON.stringify(previousReceipt)),
+    nextRaw=Buffer.from(JSON.stringify(chain)),oldFile=`${p.operation}/attendance-staged-tool-repair.json`,previousFile=`${p.operation}/${follow.receiptName}`,
+    nextFile=`${p.operation}/${sequence.receiptName}`;
+  function fixture({badPrevious=false,badNew=false,changedPrevious=false,changedNew=false,changedArchive=false,changedOriginal=false,
+    changedSource=false,changedDependency=false,brokenAncestry=false}={}){
+    let previousReads=0,newReads=0,archiveReads=0,oldReads=0;const requests=[];
+    const verify=functionVm('verifyAttendanceStagedToolRepairReceipt',{p,follow,sequence:syntheticSequence,APP,ROOT:'/synthetic-tools',receiptFile:oldFile,
+      followOnReceiptFile:previousFile,sequenceFollowOnReceiptFile:nextFile,sha:digest,evidenceExists:file=>{assert.equal(file,nextFile);return true;},
+      ownedFile:(file,options)=>{assert.equal(options.privateMode,true);if(file===oldFile){oldReads++;return changedOriginal&&oldReads>1?Buffer.from('{}'):oldRaw;}
+        assert.equal(file,nextFile);newReads++;return badNew||changedNew&&newReads>1?Buffer.from('{}'):nextRaw;},
+      previousSequenceFollowOnReceipt:()=>{previousReads++;if(badPrevious||changedPrevious&&previousReads>1)throw Error('previous_receipt_changed');
+        return {original:{receipt:original,receiptSha256:follow.previousReceiptSha256},receipt:previousReceipt,receiptSha256:sequence.previousReceiptSha256};},
+      assertAttendanceStagedRepairReceipt,assertAttendanceStagedSequenceFollowOnReceipt:syntheticSequenceValidator,
+      git:(directory,args)=>{assert.equal(directory,APP);assert.deepEqual([...args],['merge-base','--is-ancestor',sequence.previousToolRevision,chain.effectiveReceipt.toolRevision]);
+        if(brokenAncestry)throw Error('ancestry_failed');return '';},
+      archivedSequenceFollowOnFailure:()=>{archiveReads++;if(changedArchive&&archiveReads>1)throw Error('failure_archive_changed');return syntheticSequence.archive;},
+      verifySource:(target,root)=>{requests.push({target,root});return {changedToolFiles:changedSource?['src/app/page.tsx']:chain.effectiveReceipt.changedToolFiles,
+        sourceInputsSha256:chain.effectiveReceipt.sourceInputsSha256};},
+      observe:()=>({dependencySha256:changedDependency?'c'.repeat(64):chain.effectiveReceipt.dependencySha256}),
+      originalFollowOnReceipt:()=>assert.fail('cannot silently fall back to older current-source check'),
+    });return {requests,run:()=>verify({target:p.target,rootDir:'/synthetic-tools',phase:'migration'})};
+  }
+  const f=fixture(),result=f.run();assert.equal(result.receiptKind,'attendance-staged-tool-repair-sequence-follow-on');
+  assert.equal(result.toolRevision,chain.effectiveReceipt.toolRevision);assert.equal(result.receiptSha256,digest(nextRaw));
+  assert.equal(result.originalReceiptSha256,follow.previousReceiptSha256);assert.equal(result.previousReceiptSha256,sequence.previousReceiptSha256);
+  assert.deepEqual(f.requests,[{target:chain.effectiveReceipt.toolRevision,root:'/synthetic-tools'}]);assert.notEqual(result.receiptSha256,digest(previousRaw));
+  for(const options of [{badPrevious:true},{badNew:true},{changedPrevious:true},{changedNew:true},{changedArchive:true},{changedOriginal:true},
+    {changedSource:true},{changedDependency:true},{brokenAncestry:true}])assert.throws(fixture(options).run);
+});
+
+test('real sequence CLI rejects a non-Linux/non-root invocation without any production path access', {skip:process.platform==='linux'&&process.getuid?.()===0},()=>{
+  assert.throws(()=>prepareAttendanceStagedToolRepairSequenceFollowOn(revision,'approved-staged-attendance-tool-repair-sequence-follow-on'),/attendance_staged_repair_invocation/);
+  const actual=spawnSync(process.execPath,[entry,'prepare-sequence-follow-on',revision,'approved-staged-attendance-tool-repair-sequence-follow-on'],
+    {encoding:'utf8',timeout:10000,windowsHide:true});
+  assert.equal(actual.status,1);assert.equal(actual.stdout,'');assert.match(actual.stderr,/^attendance_staged_repair_invocation\r?\n$/);
 });

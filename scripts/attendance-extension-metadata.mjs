@@ -49,7 +49,7 @@ export function attendanceExtensionMetadataSnapshotExpression(){return `(select 
     'acl',${acl("coalesce(c.relacl,acldefault(case when c.relkind='S' then 'S'::\"char\" else 'r'::\"char\" end,c.relowner))")},
     'columns',(select coalesce(jsonb_agg(jsonb_build_object('name',a.attname,'type',format_type(a.atttypid,a.atttypmod),'notNull',a.attnotnull,'identity',a.attidentity,'generated',a.attgenerated,'collation',(select cn.nspname||'.'||co.collname from pg_collation co join pg_namespace cn on cn.oid=co.collnamespace where co.oid=a.attcollation),'default',pg_get_expr(ad.adbin,ad.adrelid),'acl',${acl('a.attacl')}) order by a.attnum),'[]'::jsonb) from pg_attribute a left join pg_attrdef ad on ad.adrelid=a.attrelid and ad.adnum=a.attnum where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped),
     'definition',case when c.relkind in('v','m') then pg_get_viewdef(c.oid,true) when c.relkind in('i','I') then pg_get_indexdef(c.oid) else null end,
-    'sequence',(select jsonb_build_array(q.seqtypid::regtype::text,q.seqstart,q.seqincrement,q.seqmax,q.seqmin,q.seqcache,q.seqcycle) from pg_sequence q where q.seqrelid=c.oid),
+    'sequence',(select jsonb_build_array(q.seqtypid::regtype::text,q.seqstart::text,q.seqincrement::text,q.seqmax::text,q.seqmin::text,q.seqcache::text,q.seqcycle) from pg_sequence q where q.seqrelid=c.oid),
     'constraints',(select coalesce(jsonb_agg(jsonb_build_array(k.conname,k.contype,k.convalidated,pg_get_constraintdef(k.oid,true)) order by k.conname),'[]'::jsonb) from pg_constraint k where k.conrelid=c.oid)) from pg_class c where c.oid=d.objid)
    when d.classid='pg_type'::regclass then (select jsonb_build_object('owner',pg_get_userbyid(t.typowner),'type',t.typtype,'category',t.typcategory,'preferred',t.typispreferred,'defined',t.typisdefined,'delimiter',t.typdelim,'length',t.typlen,'byValue',t.typbyval,'alignment',t.typalign,'storage',t.typstorage,
     'element',case when t.typelem<>0 then format_type(t.typelem,null) else null end,'base',case when t.typbasetype<>0 then format_type(t.typbasetype,t.typtypmod) else null end,'notNull',t.typnotnull,'default',t.typdefault,
@@ -63,12 +63,29 @@ export function attendanceExtensionMetadataSnapshotExpression(){return `(select 
   from pg_depend d join pg_proc p on d.classid='pg_proc'::regclass and p.oid=d.objid join pg_namespace n on n.oid=p.pronamespace join pg_language l on l.oid=p.prolang where d.refclassid='pg_extension'::regclass and d.refobjid=e.oid and d.deptype='e')) order by e.extname),'[]'::jsonb)
  from pg_extension e join pg_namespace en on en.oid=e.extnamespace)`;}
 export function attendanceExtensionMetadataSnapshotSql(){return `-- attendance_compatibility_extension_metadata\nbegin read only;set local statement_timeout='8s';set local search_path=pg_catalog,public;select ${attendanceExtensionMetadataSnapshotExpression()}::text;commit;\n`;}
+// PostgreSQL int8 exceeds JavaScript's safe number range. Keep all sequence
+// integers as canonical decimal text and fail closed on lossy numeric input.
+function validateLosslessNumbers(value){
+ if(typeof value==='number')need(Number.isFinite(value)&&(!Number.isInteger(value)||Number.isSafeInteger(value)),'attendance_extension_metadata_unsafe_number');
+ else if(value&&typeof value==='object')for(const child of Object.values(value))validateLosslessNumbers(child);
+}
+function validateSequence(sequence){
+ if(sequence==null)return;
+ need(Array.isArray(sequence)&&sequence.length===7&&['smallint','integer','bigint'].includes(sequence[0])&&typeof sequence[6]==='boolean','attendance_extension_metadata_sequence');
+ for(const value of sequence.slice(1,6)){
+  need(typeof value==='string'&&/^(?:0|-?[1-9][0-9]*)$/.test(value)&&value.length<=20,'attendance_extension_metadata_sequence_integer');
+  const integer=BigInt(value);
+  need(integer>=-9223372036854775808n&&integer<=9223372036854775807n,'attendance_extension_metadata_sequence_integer');
+ }
+}
 export function validateAttendanceExtensionMetadata(snapshot){
  need(Array.isArray(snapshot)&&snapshot.length===8,'attendance_extension_metadata_extensions');
+ validateLosslessNumbers(snapshot);
  same(snapshot.map(e=>[e.name,e.version,e.schema,e.members?.length,e.routines?.length]),attendanceExtensionMetadataPins,'attendance_extension_metadata_pins');
  const catalogs=['pg_proc','pg_namespace','pg_language','pg_class','pg_type','pg_event_trigger'];
  for(const e of snapshot){
   need(e.owner==='supabase_admin'&&e.members.every(m=>catalogs.includes(m.catalog)&&typeof m.identity==='string'&&!m.metadata?.unsupportedCatalog),'attendance_extension_metadata_member');
+  for(const member of e.members)if(member.catalog==='pg_class')validateSequence(member.metadata?.sequence);
   need(new Set(e.members.map(m=>m.catalog+':'+m.identity)).size===e.members.length&&new Set(e.routines.map(r=>r.signature)).size===e.routines.length,'attendance_extension_metadata_duplicates');
   const routineMembers=e.members.filter(m=>m.catalog==='pg_proc');
   need(routineMembers.length===e.routines.length&&e.routines.every(r=>routineMembers.some(m=>m.identity===r.memberIdentity)),'attendance_extension_metadata_routine_members');

@@ -18,6 +18,7 @@ import {
 } from './attendance-production-database-migrations.mjs';
 const target='a'.repeat(40),baseline=ATTENDANCE_RELEASE_SCOPE.baseline,sha=x=>createHash('sha256').update(x).digest('hex');
 const repairTarget='a535a308e21f121e7cf410a6f7d84c974eb370a6',toolRevision='b'.repeat(40),receiptSha256='c'.repeat(64);
+const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on';
 const managerSource=await readFile(new URL('./attendance-production-database-migrations.mjs',import.meta.url),'utf8');
 function managerSection(first,next){
  const start=managerSource.indexOf(first),end=managerSource.indexOf(next,start+first.length);
@@ -185,7 +186,7 @@ test('general backup contract is byte-identical and still rejects a mismatched s
 // Extract the actual small routing/binding functions into a synthetic VM.
 // The verifier stub here proves branch ordering only; production has no
 // injectable verifier and these tests do not establish real receipt acceptance.
-function repairRouting({sourceSha=toolRevision,secondSourceSha=sourceSha,deny=false,followOn=false,denyExtensions=false}={}){
+function repairRouting({verifiedToolRevision=toolRevision,verifiedReceiptSha256=receiptSha256,sourceSha=verifiedToolRevision,secondSourceSha=sourceSha,deny=false,receiptKind,denyExtensions=false}={}){
  const calls=[];
  const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
  const wrapper=managerSection('async function migrationBackupEvidence','export function attendance052CompatibilityPlan');
@@ -194,8 +195,8 @@ function repairRouting({sourceSha=toolRevision,secondSourceSha=sourceSha,deny=fa
   require_:(condition,code)=>{if(!condition)throw new Error(code);},
   ownedJson:async()=>({value:{source:{sha:sourceSha}}}),
   validateDatabaseBackupSourceIdentity:source=>({valid:true,source}),
-  verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision,receiptSha256,...(followOn?{receiptKind:'attendance-staged-tool-repair-follow-on'}:{})};},
-  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(repair?.receiptKind!=='attendance-staged-tool-repair-follow-on')return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
+  verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision:verifiedToolRevision,receiptSha256:verifiedReceiptSha256,...(receiptKind===undefined?{}:{receiptKind})};},
+  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
   validateAttendanceBackupEvidence:async input=>{calls.push(['backup',input.target]);if(secondSourceSha!==input.target)throw new Error('attendance_backup_source_not_target');return {source:{sha:secondSourceSha},restoreRehearsed:false};},
  });
  return {calls,route};
@@ -226,6 +227,39 @@ test('fixed repaired routing binds the real-verifier result before selecting one
  assert.deepEqual(foreign.calls,[['verify',repairTarget]]);
  const swapped=repairRouting({secondSourceSha:repairTarget});
  await assert.rejects(()=>swapped.route({target:repairTarget},auditPair()),/backup_source_not_target/);
+});
+
+test('only the two real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
+ const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
+ const classify=runInNewContext(`${helpers}\nrequiresFollowOnExtensionEvidence`,{
+  require_:(condition,code)=>{if(!condition)throw new Error(code);},
+ });
+ assert.equal(classify(null),false);assert.equal(classify({}),false);
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind])assert.equal(classify({receiptKind}),true);
+ for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra',false,1])
+  assert.throws(()=>classify({receiptKind}),/attendance_tool_repair_receipt_kind_invalid/);
+ for(const receiptKind of [null,'','attendance-staged-tool-repair','unknown-follow-on']){
+  const model=repairRouting({receiptKind});
+  await assert.rejects(()=>model.route({target:repairTarget},auditPair()),/attendance_tool_repair_receipt_kind_invalid/);
+  assert.deepEqual(model.calls,[['verify',repairTarget]]);
+ }
+});
+
+test('sequence follow-on uses only its new verified revision and receipt, never either old audit',async()=>{
+ const verifiedToolRevision='d'.repeat(40),verifiedReceiptSha256='e'.repeat(64);
+ const audit={toolRevision:verifiedToolRevision,stagedToolRepairReceiptSha256:verifiedReceiptSha256};
+ const model=repairRouting({verifiedToolRevision,verifiedReceiptSha256,receiptKind:sequenceFollowOnKind});
+ const result=await model.route({target:repairTarget},audit);
+ assert.deepEqual(model.calls,[['verify',repairTarget],['backup',verifiedToolRevision],['extensions']]);
+ assert.deepEqual(plain(result.audit),audit);assert.equal(result.repair.receiptKind,sequenceFollowOnKind);
+ for(const stale of [auditPair(),{...audit,toolRevision},{...audit,stagedToolRepairReceiptSha256:receiptSha256}]){
+  const changed=repairRouting({verifiedToolRevision,verifiedReceiptSha256,receiptKind:sequenceFollowOnKind});
+  await assert.rejects(()=>changed.route({target:repairTarget},stale),/compatibility_tool_repair_source_mismatch/);
+  assert(!changed.calls.some(([kind])=>kind==='extensions'));
+ }
+ const foreign=repairRouting({verifiedToolRevision,verifiedReceiptSha256,sourceSha:toolRevision,receiptKind:sequenceFollowOnKind});
+ await assert.rejects(()=>foreign.route({target:repairTarget},audit),/backup_tool_repair_source_mismatch/);
+ assert.deepEqual(foreign.calls,[['verify',repairTarget]]);
 });
 
 test('fixed repaired routing refuses absent or changed compatibility audit and cannot attach an audit to an unrepaired source',async()=>{
@@ -270,8 +304,9 @@ test('runtime repair cannot be injected; resumed writes and ready acceptance sta
  assert(ready.includes('same(actual.functions,proof.functions'));
 });
 
-function extensionEvidenceFixture(){
+function extensionEvidenceFixture(sequence){
  const metadata=Buffer.from(syntheticAttendanceExtensionDump),snapshot=syntheticAttendanceExtensionMetadata();
+ if(sequence)snapshot.find(e=>e.name==='pg_net').members.find(m=>m.catalog==='pg_class').metadata.sequence=sequence;
  const reconstructed=attendanceExtensionMetadataSupplement(metadata.toString('utf8'),snapshot);
  const extensionMetadata=Buffer.from(JSON.stringify({schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:sha(metadata),snapshotSha256:reconstructed.snapshotSha256,snapshot,operations:reconstructed.operations})+'\n');
  const proof={...compatibility(),target:repairTarget,databaseName:`faolla_attendance_compat_${repairTarget.slice(0,12)}`};
@@ -291,10 +326,80 @@ test('follow-on extension gate reconstructs original dump plus actual bounded su
  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence({...proof,target},files),/evidence_target/);
 });
 test('follow-on routing requires extra artifacts after independent receipt and backup checks',async()=>{
- const model=repairRouting({followOn:true});await model.route({target:repairTarget},auditPair());
- assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
- const denied=repairRouting({followOn:true,denyExtensions:true});await assert.rejects(()=>denied.route({target:repairTarget},auditPair()),/synthetic_extension_evidence_refused/);
- assert.deepEqual(denied.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind]){
+  const model=repairRouting({receiptKind});await model.route({target:repairTarget},auditPair());
+  assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
+  const denied=repairRouting({receiptKind,denyExtensions:true});await assert.rejects(()=>denied.route({target:repairTarget},auditPair()),/synthetic_extension_evidence_refused/);
+  assert.deepEqual(denied.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
+ }
+});
+
+test('self-hashed old numeric sequence artifacts are refused; exact text survives reconstruction without changing dump',async()=>{
+ const sequence=['bigint','0','1','9223372036854775807','-9223372036854775808','1',false];
+ const {proof,files}=extensionEvidenceFixture(sequence);
+ assert.equal(await validateAttendanceExtensionCompatibilityEvidence(proof,files),proof.productionMetadataSource.extensionMetadata);
+ const artifact=JSON.parse(files.extensionMetadata.toString('utf8'));
+ const expectedSnapshot=JSON.stringify(artifact.snapshot),expectedHex=Buffer.from(expectedSnapshot).toString('hex');
+ const reconstructed=attendanceExtensionMetadataSupplement(files.metadata.toString('utf8'),artifact.snapshot);
+ assert.equal(reconstructed.sourceSha256,sha(files.metadata));assert.equal(files.metadata.toString('utf8'),syntheticAttendanceExtensionDump);
+ assert(files.supplement.toString('utf8').includes(expectedHex));
+ const expected=JSON.parse(Buffer.from(expectedHex,'hex').toString('utf8'));
+ assert.deepEqual(expected.find(e=>e.name==='pg_net').members.find(m=>m.catalog==='pg_class').metadata.sequence,sequence);
+ artifact.snapshot.find(e=>e.name==='pg_net').members.find(m=>m.catalog==='pg_class').metadata.sequence=sequence.map((value,i)=>i>0&&i<6?Number(value):value);
+ const oldSnapshot=JSON.stringify(artifact.snapshot),oldHex=Buffer.from(oldSnapshot).toString('hex');
+ assert(oldSnapshot.includes('9223372036854776000'));assert(!oldSnapshot.includes('"9223372036854775807"'));
+ artifact.snapshotSha256=sha(oldSnapshot);
+ const oldSupplement=Buffer.from(files.supplement.toString('utf8').replace(expectedHex,oldHex));
+ const oldMetadata=Buffer.from(JSON.stringify(artifact)+'\n'),oldRestoration=reconstructed.sql.replace(expectedHex,oldHex);
+ const oldEvidence={...proof.productionMetadataSource.extensionMetadata,sourceSha256:sha(oldMetadata),snapshotSha256:artifact.snapshotSha256,supplementSha256:sha(oldSupplement),restorationSha256:sha(oldRestoration)};
+ const oldProof={...proof,productionMetadataSource:{...proof.productionMetadataSource,extensionMetadata:oldEvidence}};
+ await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(oldProof,{...files,extensionMetadata:oldMetadata,supplement:oldSupplement}),/^Error: attendance_extension_metadata_unsafe_number$/);
+});
+
+function extensionArtifactRouting(fixture){
+ const calls=[],directory=`/synthetic/${repairTarget}`,compatibilityFile=`${directory}/attendance-database-compatibility.json`;
+ const proofBytes=Buffer.from(JSON.stringify(fixture.proof)+'\n');
+ const artifacts=new Map([[compatibilityFile,proofBytes],
+  [`${directory}/attendance-compatibility-metadata.sql`,fixture.files.metadata],
+  [`${directory}/attendance-compatibility-extension-metadata.json`,fixture.files.extensionMetadata],
+  [`${directory}/attendance-compatibility-extension-supplement.sql`,fixture.files.supplement]]);
+ const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
+ const gate=managerSection('async function verifyFollowOnExtensionCompatibility','async function migrationBackupEvidence');
+ const verify=runInNewContext(`${helpers}\n${gate}\nverifyFollowOnExtensionCompatibility`,{
+  STAGED_TOOL_REPAIR_TARGET:repairTarget,SHA:/^[0-9a-f]{40}$/,HEX:/^[0-9a-f]{64}$/,
+  attendanceProductionScopeSha256,path:path.posix,digest:sha,
+  require_:(condition,code)=>{if(!condition)throw new Error(code);},
+  same:(actual,expected,code)=>assert.deepEqual(plain(actual),plain(expected),code),
+  runtimePaths:target=>{assert.equal(target,repairTarget);return {directory,compatibility:compatibilityFile};},
+  ownedRuntime:async observed=>{assert.equal(observed,directory);calls.push(['owned',observed]);},
+  privateExtensionEvidenceBytes:async(file,maximum)=>{calls.push(['read',file,maximum]);if(!artifacts.has(file))throw Error('synthetic_artifact_missing');return artifacts.get(file);},
+  validateAttendanceCompatibilityProof:(proof,options)=>validateAttendanceCompatibilityProof(plain(proof),plain(options)),validateAttendanceExtensionCompatibilityEvidence,
+ });
+ return {verify,calls,artifacts,proofSha256:sha(proofBytes),directory,compatibilityFile};
+}
+
+test('actual sequence follow-on artifact gate binds new receipt and all four fixed private evidence paths',async()=>{
+ const verifiedToolRevision='d'.repeat(40),verifiedReceiptSha256='e'.repeat(64);
+ const repair={receiptKind:sequenceFollowOnKind,toolRevision:verifiedToolRevision,receiptSha256:verifiedReceiptSha256};
+ const fixture=extensionEvidenceFixture(['bigint','0','1','9223372036854775807','-9223372036854775808','1',false]);
+ Object.assign(fixture.proof,{toolRevision:verifiedToolRevision,stagedToolRepairReceiptSha256:verifiedReceiptSha256});
+ const input={target:repairTarget,baseline},model=extensionArtifactRouting(fixture);
+ assert.equal(await model.verify(input,fixture.proof,repair),model.proofSha256);
+ assert.deepEqual(model.calls,[['owned',model.directory],['read',model.compatibilityFile,2000000],
+  ['read',`${model.directory}/attendance-compatibility-metadata.sql`,16000000],
+  ['read',`${model.directory}/attendance-compatibility-extension-metadata.json`,2000000],
+  ['read',`${model.directory}/attendance-compatibility-extension-supplement.sql`,2000000]]);
+ for(const file of model.artifacts.keys()){
+  const missing=extensionArtifactRouting(fixture);missing.artifacts.delete(file);
+  await assert.rejects(()=>missing.verify(input,fixture.proof,repair),/synthetic_artifact_missing/);
+ }
+ for(const changed of [{...repair,toolRevision},{...repair,receiptSha256}, {...repair,receiptKind:'unknown-follow-on'}]){
+  const stale=extensionArtifactRouting(fixture);
+  await assert.rejects(()=>stale.verify(input,fixture.proof,changed),/attendance_(?:extension_evidence_tool_repair|tool_repair_receipt_kind_invalid)/);
+  assert(!stale.calls.some(row=>row[1]?.endsWith('attendance-compatibility-metadata.sql')));
+ }
+ const changedProof=extensionArtifactRouting(fixture);
+ await assert.rejects(()=>changedProof.verify(input,{...fixture.proof,transcriptSha256:'f'.repeat(64)},repair),/canonical_proof/);
 });
 test('follow-on artifact paths are fixed/private/stable and ready rebinds their canonical proof before actual DB reads',()=>{
  const artifacts=managerSection('async function privateExtensionEvidenceBytes','async function migrationBackupEvidence');
@@ -303,6 +408,7 @@ test('follow-on artifact paths are fixed/private/stable and ready rebinds their 
  assert(artifacts.includes('const fixed=runtimePaths(input.target)'));
  assert(!/input\.(?:paths|rootOwned|testOnly|verifyAttendance|toolRevision|receiptSha256)/.test(artifacts));
  const ready=managerSection('export async function verifyAttendanceProductionDatabaseReady','export function parseAttendanceProductionArguments');
+ assert(ready.includes('if(requiresFollowOnExtensionEvidence(repair))'));
  assert(ready.indexOf('verifyFollowOnExtensionCompatibility(input,compatibility.value,repair)')<ready.indexOf('actual=await state('));
  assert(ready.includes('compatibility.sha256===proof.compatibilityProofSha256'));
 });
