@@ -4,6 +4,11 @@ import {createHash} from 'node:crypto';
 import {attendanceExtensionMetadataPins,attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
 import {syntheticAttendanceExtensionMetadata,syntheticAttendanceExtensionDump,syntheticAttendanceExtensionGrants} from './test-helpers/attendance-extension-metadata.mjs';
 const sha=value=>createHash('sha256').update(value).digest('hex');
+const sequenceMetadata=sequence=>{
+ const snapshot=syntheticAttendanceExtensionMetadata();
+ snapshot.find(e=>e.name==='pg_net').members.find(m=>m.catalog==='pg_class').metadata.sequence=sequence;
+ return snapshot;
+};
 
 test('read-only sampler covers every member address and complete routine semantics without rows or roles',()=>{
  const sql=attendanceExtensionMetadataSnapshotSql();
@@ -77,4 +82,46 @@ test('actual metadata pins deny altered members, owner, signature, source or his
   s=>s[0].routines[0].definition+='SELECT 1;',s=>s[0].routines[0].securityDefiner=true,s=>s[0].routines[0].config=['search_path=public'],s=>s[0].routines[0].bodySha256='0'.repeat(64),
   s=>s[1].routines[0].securityDefiner=true,s=>s[1].routines[0].config=null,s=>s[1].routines[1].bodySha256='0'.repeat(64)];
  for(const modify of modifications){const snapshot=syntheticAttendanceExtensionMetadata();modify(snapshot);assert.throws(()=>validateAttendanceExtensionMetadata(snapshot),/^Error: attendance_extension_metadata_/);}
+});
+test('all five sequence int8 fields are exported as exact text, never JSON numbers',()=>{
+ const sql=attendanceExtensionMetadataSnapshotSql();
+ for(const field of ['seqstart','seqincrement','seqmax','seqmin','seqcache'])assert.match(sql,new RegExp(`\\bq\\.${field}\\s*::\\s*text\\b`),field);
+ assert(sql.includes('q.seqtypid::regtype::text'));assert(sql.includes('q.seqcycle'));
+});
+test('sequence signed int64 extremes survive JSON roundtrip and final guard hex without changing raw dump',()=>{
+ const sequence=['bigint','0','-9007199254740993','9223372036854775807','-9223372036854775808','9007199254740993',false];
+ const snapshot=sequenceMetadata(sequence),roundtrip=JSON.parse(JSON.stringify(snapshot));
+ assert.deepEqual(roundtrip,snapshot);validateAttendanceExtensionMetadata(roundtrip);
+ const result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,roundtrip);
+ const encoded=result.supplementSql.match(/convert_from\(decode\('([a-f0-9]+)','hex'\),'UTF8'\)::jsonb/);
+ assert(encoded);const text=Buffer.from(encoded[1],'hex').toString('utf8'),expected=JSON.parse(text);
+ assert.deepEqual(expected,snapshot);
+ assert.deepEqual(expected.find(e=>e.name==='pg_net').members.find(m=>m.catalog==='pg_class').metadata.sequence,sequence);
+ assert(text.includes('"9223372036854775807"'));assert(text.includes('"-9223372036854775808"'));assert(!text.includes('9223372036854776000'));
+ const boundary=result.supplementSql.indexOf('\n-- Compare every actual extension member'),insertion=result.supplementSql.slice(0,boundary),final=result.supplementSql.slice(boundary);
+ assert.equal(result.sql.slice(0,result.insertBeforeFirstAcl)+result.sql.slice(result.insertBeforeFirstAcl+insertion.length,-final.length),syntheticAttendanceExtensionDump);
+ assert.equal(result.sourceSha256,sha(syntheticAttendanceExtensionDump));assert.equal(result.snapshotSha256,sha(JSON.stringify(snapshot)));
+});
+test('sequence metadata retains canonical signed text including zero and supported type/cycle shape',()=>{
+ for(const [type,max,min] of [['smallint','32767','-32768'],['integer','2147483647','-2147483648'],['bigint','9223372036854775807','-9223372036854775808']]){
+  validateAttendanceExtensionMetadata(sequenceMetadata([type,'0','1',max,min,'1',false]));
+  validateAttendanceExtensionMetadata(sequenceMetadata([type,'-1','-1',max,min,'1',true]));
+ }
+ for(const value of ['0','1','-1','9007199254740991','9007199254740992','9007199254740993','-9007199254740993','9223372036854775807','-9223372036854775808']){
+  const snapshot=sequenceMetadata(['bigint',value,'1','9223372036854775807','-9223372036854775808','1',false]);
+  validateAttendanceExtensionMetadata(snapshot);assert.deepEqual(JSON.parse(JSON.stringify(snapshot)),snapshot);
+ }
+});
+test('sequence metadata rejects rounded/safe numeric values, noncanonical and out-of-int64 text in every position',()=>{
+ const valid=['bigint','0','1','9223372036854775807','-9223372036854775808','1',false];
+ const invalid=['','+1','-0','00','01','-01',' 1','1 ','1\n','1.0','1e3','NaN','Infinity','9223372036854775808','-9223372036854775809',0,-1,Number('9223372036854775807'),null];
+ for(let position=1;position<=5;position++)for(const value of invalid){const sequence=[...valid];sequence[position]=value;assert.throws(()=>validateAttendanceExtensionMetadata(sequenceMetadata(sequence)),/^Error: attendance_extension_metadata_/);}
+ for(const sequence of [valid.slice(0,6),[...valid,'extra'],{...valid},['BIGINT',...valid.slice(1)],['text',...valid.slice(1)],[...valid.slice(0,6),'false'],[...valid.slice(0,6),0]])assert.throws(()=>validateAttendanceExtensionMetadata(sequenceMetadata(sequence)),/^Error: attendance_extension_metadata_/);
+});
+test('unsafe numeric integers elsewhere in the complete extension snapshot are rejected recursively',()=>{
+ for(const inject of [
+  s=>s[0].routines[0].cost=Number('9007199254740993'),
+  s=>s[0].members[0].metadata={nested:[{value:Number('-9007199254740993')}]},
+  s=>s[0].configuration=[{nested:{value:Number('9223372036854775807')}}]
+ ]){const snapshot=sequenceMetadata(['bigint','0','1','9223372036854775807','-9223372036854775808','1',false]);inject(snapshot);assert.throws(()=>validateAttendanceExtensionMetadata(snapshot),/^Error: attendance_extension_metadata_/);}
 });

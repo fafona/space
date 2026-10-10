@@ -199,6 +199,11 @@ function bindToolRepairAudit(value,repair,code){
  validateToolRepairAuditShape(value,code);
  require_(repair&&value.toolRevision===repair.toolRevision&&value.stagedToolRepairReceiptSha256===repair.receiptSha256,code);
 }
+function requiresFollowOnExtensionEvidence(repair){
+ if(!repair||!Object.hasOwn(repair,'receiptKind'))return false;
+ require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on','attendance_tool_repair_receipt_kind_invalid');
+ return true;
+}
 async function verifiedMigrationToolRepair(input){
  require_(input.target===STAGED_TOOL_REPAIR_TARGET,'attendance_tool_repair_target_invalid');
  // No injectable verifier or source-SHA override. The fixed runtime rechecks
@@ -207,6 +212,7 @@ async function verifiedMigrationToolRepair(input){
  const result=await verifyAttendanceStagedToolRepairReceipt({target:input.target,rootDir:input.rootDir??ROOT,phase:'migration'});
  require_(result?.receipt?.target===input.target&&typeof result.toolRevision==='string'&&SHA.test(result.toolRevision)&&result.toolRevision!==input.target&&
   typeof result.receiptSha256==='string'&&HEX.test(result.receiptSha256),'attendance_tool_repair_receipt_invalid');
+ requiresFollowOnExtensionEvidence(result);
  return result;
 }
 // This extra gate belongs only to the independently verified fixed follow-on
@@ -242,7 +248,7 @@ async function privateExtensionEvidenceBytes(file,maximum){
  return bytes;
 }
 async function verifyFollowOnExtensionCompatibility(input,compatibility,repair){
- if(repair?.receiptKind!=='attendance-staged-tool-repair-follow-on')return null;
+ if(!requiresFollowOnExtensionEvidence(repair))return null;
  require_(input.target===STAGED_TOOL_REPAIR_TARGET,'attendance_extension_evidence_target');
  const fixed=runtimePaths(input.target);await ownedRuntime(fixed.directory);
  const proofBytes=await privateExtensionEvidenceBytes(fixed.compatibility,2000000),proof=JSON.parse(proofBytes.toString('utf8'));
@@ -259,6 +265,7 @@ async function migrationBackupEvidence(input,compatibility){
  let repair=null;
  if(input.target===STAGED_TOOL_REPAIR_TARGET&&source.source.sha!==input.target){
   repair=await verifiedMigrationToolRepair(input);
+  requiresFollowOnExtensionEvidence(repair);
   require_(source.source.sha===repair.toolRevision,'attendance_backup_tool_repair_source_mismatch');
  }
  // The general backup contract remains unchanged. Only a real, independently
@@ -365,7 +372,7 @@ export async function verifyAttendanceProductionDatabaseReady(input={}){
  let audit={};
  if(input.target===STAGED_TOOL_REPAIR_TARGET&&hasToolRepairAudit(proof)){
   const repair=await verifiedMigrationToolRepair(input);bindToolRepairAudit(proof,repair,'attendance_ready_tool_repair_source_mismatch');
-  if(repair.receiptKind==='attendance-staged-tool-repair-follow-on'){
+  if(requiresFollowOnExtensionEvidence(repair)){
    const compatibility=await ownedJson(runtimePaths(input.target).compatibility);
    require_(compatibility.sha256===proof.compatibilityProofSha256,'attendance_ready_compatibility_changed');
    require_(await verifyFollowOnExtensionCompatibility(input,compatibility.value,repair)===proof.compatibilityProofSha256,'attendance_ready_compatibility_changed');
