@@ -140,13 +140,18 @@ test('CLI has no production/data dump/source/proof/roles/testOnly bypass flag',(
  assert.throws(()=>parseAttendanceCompatibilityArguments(['dry-run','--target',target,'--baseline',baseline,'--source-pilot-container-id',attendanceProductionIdentity.containerId]));
 });
 
-test('GraphQL initial ACL restoration is derived only from the real sealed ACL follow-on receipt',async()=>{
+test('GraphQL initial object and schema ACL restoration is derived only from real sealed follow-on receipts',async()=>{
  const source=await readFile(new URL('./attendance-production-052-compatibility.mjs',import.meta.url),'utf8');
- assert(source.includes("{restoreGraphqlInitialAcl:repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'}"));
+ assert(source.includes("const restoreGraphqlInitialSchemaAcl=repair?.receiptKind==='attendance-staged-tool-repair-schema-follow-on'"));
+ assert(source.includes("const restoreGraphqlInitialAcl=repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl"));
+ assert(source.includes('{restoreGraphqlInitialAcl,restoreGraphqlInitialSchemaAcl},formalBefore.schemaAcl'));
+ assert(source.includes('validateAttendanceGraphqlInitialSchemaAclSnapshot(schemaAcl)'));
+ assert.equal(source.match(/productionMetadataState\(input,assets.manifest,restoreGraphqlInitialSchemaAcl\)/g)?.length,3);
+ assert(source.includes('schemaSnapshot:formalBefore.schemaAcl,schemaSnapshotSha256:supplement.schemaSnapshotSha256'));
  assert(source.includes("repair=verifyAttendanceStagedToolRepairReceipt({target:input.target,rootDir:input.rootDir??ROOT,phase:'staged'})"));
- assert(!/input\.(?:restoreGraphqlInitialAcl|receiptKind)/.test(source));
- assert.throws(()=>parseAttendanceCompatibilityArguments(['dry-run','--target',target,'--baseline',baseline,
-  '--source-pilot-container-id',pilot,'--restore-graphql-initial-acl','true']));
+ assert(!/input\.(?:restoreGraphqlInitialAcl|restoreGraphqlInitialSchemaAcl|schemaSnapshot|receiptKind)/.test(source));
+ for(const flag of ['--restore-graphql-initial-acl','--restore-graphql-initial-schema-acl','--schema-snapshot','--receipt-kind'])
+  assert.throws(()=>parseAttendanceCompatibilityArguments(['dry-run','--target',target,'--baseline',baseline,'--source-pilot-container-id',pilot,flag,'true']));
 });
 test('mock dry-run only inspects pilot/source and creates no DB, metadata or proof',async()=>{
  const f=await fixture(),db=fake();try{const r=await runAttendance052Compatibility({...f,runCommand:db.runCommand});assert.equal(r.executed,false);assert.deepEqual(db.writes,[]);await assert.rejects(()=>readFile(f.paths.proof));}finally{await rm(f.directory,{recursive:true,force:true});}

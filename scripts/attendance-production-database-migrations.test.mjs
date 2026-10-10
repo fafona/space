@@ -9,7 +9,7 @@ import {recoveryContentFixture} from './test-fixtures/database-recovery-content.
 import {PRODUCTION_RELEASE_AGGREGATE_KEYS} from './production-release-attestation.mjs';
 import {ATTENDANCE_RELEASE_SCOPE,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
 import {attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
-import {syntheticAttendanceExtensionMetadata,syntheticAttendanceGraphqlInitialAclMetadata,syntheticAttendanceExtensionDump} from './test-helpers/attendance-extension-metadata.mjs';
+import {syntheticAttendanceExtensionMetadata,syntheticAttendanceGraphqlInitialAclMetadata,syntheticAttendanceGraphqlInitialSchemaAclMetadata,syntheticAttendanceExtensionDump} from './test-helpers/attendance-extension-metadata.mjs';
 import {
  attendanceProductionIdentity,attendanceProductionScopeSha256,attendanceProductionLegacy052SourceSha256,loadAttendanceProductionScope,validateAttendanceRegistry,
  attendanceReadOnlyStateSql,validateAttendanceProductionState,protectedAttendanceMigrationSql,
@@ -18,7 +18,7 @@ import {
 } from './attendance-production-database-migrations.mjs';
 const target='a'.repeat(40),baseline=ATTENDANCE_RELEASE_SCOPE.baseline,sha=x=>createHash('sha256').update(x).digest('hex');
 const repairTarget='a535a308e21f121e7cf410a6f7d84c974eb370a6',toolRevision='b'.repeat(40),receiptSha256='c'.repeat(64);
-const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on',aclFollowOnKind='attendance-staged-tool-repair-acl-follow-on';
+const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on',aclFollowOnKind='attendance-staged-tool-repair-acl-follow-on',schemaFollowOnKind='attendance-staged-tool-repair-schema-follow-on';
 const managerSource=await readFile(new URL('./attendance-production-database-migrations.mjs',import.meta.url),'utf8');
 function managerSection(first,next){
  const start=managerSource.indexOf(first),end=managerSource.indexOf(next,start+first.length);
@@ -196,7 +196,7 @@ function repairRouting({verifiedToolRevision=toolRevision,verifiedReceiptSha256=
   ownedJson:async()=>({value:{source:{sha:sourceSha}}}),
   validateDatabaseBackupSourceIdentity:source=>({valid:true,source}),
   verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision:verifiedToolRevision,receiptSha256:verifiedReceiptSha256,...(receiptKind===undefined?{}:{receiptKind})};},
-  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind,aclFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
+  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
   validateAttendanceBackupEvidence:async input=>{calls.push(['backup',input.target]);if(secondSourceSha!==input.target)throw new Error('attendance_backup_source_not_target');return {source:{sha:secondSourceSha},restoreRehearsed:false};},
  });
  return {calls,route};
@@ -229,14 +229,14 @@ test('fixed repaired routing binds the real-verifier result before selecting one
  await assert.rejects(()=>swapped.route({target:repairTarget},auditPair()),/backup_source_not_target/);
 });
 
-test('only the three real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
+test('only the four real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
  const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
  const classify=runInNewContext(`${helpers}\nrequiresFollowOnExtensionEvidence`,{
   require_:(condition,code)=>{if(!condition)throw new Error(code);},
  });
  assert.equal(classify(null),false);assert.equal(classify({}),false);
- for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind])assert.equal(classify({receiptKind}),true);
- for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra','attendance-staged-tool-repair-acl-follow-on-extra',false,1])
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind])assert.equal(classify({receiptKind}),true);
+ for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra','attendance-staged-tool-repair-acl-follow-on-extra','attendance-staged-tool-repair-schema-follow-on-extra',false,1])
   assert.throws(()=>classify({receiptKind}),/attendance_tool_repair_receipt_kind_invalid/);
  for(const receiptKind of [null,'','attendance-staged-tool-repair','unknown-follow-on']){
   const model=repairRouting({receiptKind});
@@ -324,13 +324,15 @@ test('runtime repair cannot be injected; resumed writes and ready acceptance sta
  assert(ready.includes('same(actual.functions,proof.functions'));
 });
 
-function extensionEvidenceFixture(sequence,{restoreGraphqlInitialAcl=false}={}){
+function extensionEvidenceFixture(sequence,{restoreGraphqlInitialAcl=false,restoreGraphqlInitialSchemaAcl=false}={}){
  const metadata=Buffer.from(syntheticAttendanceExtensionDump),snapshot=restoreGraphqlInitialAcl?syntheticAttendanceGraphqlInitialAclMetadata():syntheticAttendanceExtensionMetadata();
  if(sequence)snapshot.find(e=>e.name==='pg_net').members.find(m=>m.catalog==='pg_class').metadata.sequence=sequence;
- const reconstructed=attendanceExtensionMetadataSupplement(metadata.toString('utf8'),snapshot,{restoreGraphqlInitialAcl});
- const extensionMetadata=Buffer.from(JSON.stringify({schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:sha(metadata),snapshotSha256:reconstructed.snapshotSha256,snapshot,operations:reconstructed.operations})+'\n');
+ const schemaSnapshot=restoreGraphqlInitialSchemaAcl?syntheticAttendanceGraphqlInitialSchemaAclMetadata():undefined;
+ const reconstructed=attendanceExtensionMetadataSupplement(metadata.toString('utf8'),snapshot,{restoreGraphqlInitialAcl,restoreGraphqlInitialSchemaAcl},schemaSnapshot);
+ const schemaAudit=restoreGraphqlInitialSchemaAcl?{schemaSnapshot,schemaSnapshotSha256:reconstructed.schemaSnapshotSha256}:{};
+ const extensionMetadata=Buffer.from(JSON.stringify({schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:sha(metadata),snapshotSha256:reconstructed.snapshotSha256,snapshot,operations:reconstructed.operations,...schemaAudit})+'\n');
  const proof={...compatibility(),target:repairTarget,databaseName:`faolla_attendance_compat_${repairTarget.slice(0,12)}`};
- proof.productionMetadataSource={...proof.productionMetadataSource,metadataSourceSha256:sha(metadata),extensionMetadata:{sourceSha256:sha(extensionMetadata),snapshotSha256:reconstructed.snapshotSha256,supplementSha256:reconstructed.supplementSha256,restorationSha256:sha(reconstructed.sql),originalMetadataSourceSha256:sha(metadata),extensionCount:8,memberCount:96,routineCount:80}};
+ proof.productionMetadataSource={...proof.productionMetadataSource,metadataSourceSha256:sha(metadata),extensionMetadata:{sourceSha256:sha(extensionMetadata),snapshotSha256:reconstructed.snapshotSha256,supplementSha256:reconstructed.supplementSha256,restorationSha256:sha(reconstructed.sql),originalMetadataSourceSha256:sha(metadata),extensionCount:8,memberCount:96,routineCount:80,...(restoreGraphqlInitialSchemaAcl?{schemaSnapshotSha256:reconstructed.schemaSnapshotSha256}:{})}};
  return {proof,files:{metadata,extensionMetadata,supplement:Buffer.from(reconstructed.supplementSql)}};
 }
 test('follow-on extension gate reconstructs original dump plus actual bounded supplement, not a hash-only assertion',async()=>{
@@ -379,12 +381,46 @@ test('ACL artifact reconstruction requires explicit opt-in and preserves the exa
  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(changedProof,{...files,extensionMetadata:changedBytes},{restoreGraphqlInitialAcl:true}),/attendance_extension_evidence_operations/);
 });
 test('follow-on routing requires extra artifacts after independent receipt and backup checks',async()=>{
- for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind]){
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind]){
   const model=repairRouting({receiptKind});await model.route({target:repairTarget},auditPair());
   assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
   const denied=repairRouting({receiptKind,denyExtensions:true});await assert.rejects(()=>denied.route({target:repairTarget},auditPair()),/synthetic_extension_evidence_refused/);
   assert.deepEqual(denied.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
  }
+});
+
+test('schema artifact reconstruction binds the independent actual snapshot and cannot reuse the prior ACL opt-in',async()=>{
+ const options={restoreGraphqlInitialAcl:true,restoreGraphqlInitialSchemaAcl:true};
+ const {proof,files}=extensionEvidenceFixture(undefined,options);
+ assert.equal(await validateAttendanceExtensionCompatibilityEvidence(proof,files,options),proof.productionMetadataSource.extensionMetadata);
+ const artifact=JSON.parse(files.extensionMetadata.toString('utf8'));
+ assert.deepEqual(artifact.schemaSnapshot,syntheticAttendanceGraphqlInitialSchemaAclMetadata());
+ assert.equal(artifact.schemaSnapshotSha256,sha(JSON.stringify(artifact.schemaSnapshot)));
+ assert.equal(files.metadata.toString('utf8'),syntheticAttendanceExtensionDump);
+ for(const oldOptions of [undefined,{}, {restoreGraphqlInitialAcl:true},Object.create(options)])
+  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(proof,files,oldOptions),/attendance_extension_evidence_shape/);
+ for(const bad of [undefined,null,1,'true']){
+  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(proof,files,{...options,restoreGraphqlInitialSchemaAcl:bad}),/attendance_extension_evidence_options/);
+ }
+ const updateArtifact=changed=>{
+  const bytes=Buffer.from(JSON.stringify(changed)+'\n');
+  return {proof:{...proof,productionMetadataSource:{...proof.productionMetadataSource,extensionMetadata:{...proof.productionMetadataSource.extensionMetadata,sourceSha256:sha(bytes)}}},files:{...files,extensionMetadata:bytes}};
+ };
+ for(const key of ['schemaSnapshot','schemaSnapshotSha256']){
+  const changed=plain(artifact);delete changed[key];const modified=updateArtifact(changed);
+  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(modified.proof,modified.files,options),/attendance_extension_evidence_artifact_shape/);
+ }
+ const changed=plain(artifact);changed.schemaSnapshotSha256='0'.repeat(64);const modified=updateArtifact(changed);
+ await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(modified.proof,modified.files,options),/attendance_extension_evidence_schema_snapshot/);
+ const extra=plain(artifact);extra.schemaSnapshot.push(plain(extra.schemaSnapshot[0]));const doubled=updateArtifact(extra);
+ await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(doubled.proof,doubled.files,options),/attendance_(?:extension|graphql)_/);
+});
+
+test('schema restore runtime selection remains sealed-receipt derived, not a caller option',()=>{
+ const actual=managerSection('async function verifyFollowOnExtensionCompatibility','async function migrationBackupEvidence');
+ assert(actual.includes("const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'"));
+ assert(actual.includes("restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl"));
+ assert(!/input\.(?:restoreGraphqlInitialAcl|restoreGraphqlInitialSchemaAcl|schemaSnapshot)/.test(actual));
 });
 
 test('self-hashed old numeric sequence artifacts are refused; exact text survives reconstruction without changing dump',async()=>{
@@ -481,12 +517,51 @@ test('actual ACL follow-on gate derives opt-in only from its verified kind and r
  const changedProof=extensionArtifactRouting(fixture);
  await assert.rejects(()=>changedProof.verify(input,{...fixture.proof,transcriptSha256:'b'.repeat(64)},repair),/canonical_proof/);
 });
+test('schema follow-on actual manager routing binds its new pair and four artifacts without caller-selected restoration (VM/synthetic evidence)',async()=>{
+ const verifiedToolRevision='1'.repeat(40),verifiedReceiptSha256='2'.repeat(64);
+ const repair={receiptKind:schemaFollowOnKind,toolRevision:verifiedToolRevision,receiptSha256:verifiedReceiptSha256};
+ const fixture=extensionEvidenceFixture(undefined,{restoreGraphqlInitialAcl:true,restoreGraphqlInitialSchemaAcl:true});
+ Object.assign(fixture.proof,{toolRevision:verifiedToolRevision,stagedToolRepairReceiptSha256:verifiedReceiptSha256});
+ // The actual extracted gate must ignore caller overrides, even when false or
+ // carrying a different snapshot; only its already-verified repair kind routes.
+ const input={target:repairTarget,baseline,restoreGraphqlInitialAcl:false,restoreGraphqlInitialSchemaAcl:false,schemaSnapshot:[{name:'public'}]};
+ const model=extensionArtifactRouting(fixture);
+ assert.equal(await model.verify(input,fixture.proof,repair),model.proofSha256);
+ assert.deepEqual(model.calls,[['owned',model.directory],['read',model.compatibilityFile,2000000],
+  ['read',`${model.directory}/attendance-compatibility-metadata.sql`,16000000],
+  ['read',`${model.directory}/attendance-compatibility-extension-metadata.json`,2000000],
+  ['read',`${model.directory}/attendance-compatibility-extension-supplement.sql`,2000000]]);
+ assert.equal(fixture.proof.productionMetadataSource.extensionMetadata.schemaSnapshotSha256,
+  sha(JSON.stringify(JSON.parse(fixture.files.extensionMetadata.toString('utf8')).schemaSnapshot)));
+ for(const file of model.artifacts.keys()){
+  const missing=extensionArtifactRouting(fixture);missing.artifacts.delete(file);
+  await assert.rejects(()=>missing.verify(input,fixture.proof,repair),/synthetic_artifact_missing/);
+ }
+ for(const file of [...model.artifacts.keys()].filter(file=>file!==model.compatibilityFile)){
+  const changed=extensionArtifactRouting(fixture);
+  changed.artifacts.set(file,Buffer.concat([changed.artifacts.get(file),Buffer.from('\n')]));
+  await assert.rejects(()=>changed.verify(input,fixture.proof,repair),/attendance_extension_evidence_artifact_changed/);
+ }
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind]){
+  const older=extensionArtifactRouting(fixture);
+  await assert.rejects(()=>older.verify({...input,restoreGraphqlInitialSchemaAcl:true},fixture.proof,{...repair,receiptKind}),/attendance_extension_evidence_shape/);
+ }
+ for(const changed of [{...repair,toolRevision},{...repair,receiptSha256},
+  {...repair,receiptKind:'attendance-staged-tool-repair-schema-follow-on-extra'}]){
+  const stale=extensionArtifactRouting(fixture);
+  await assert.rejects(()=>stale.verify(input,fixture.proof,changed),/attendance_(?:extension_evidence_tool_repair|tool_repair_receipt_kind_invalid)/);
+  assert(!stale.calls.some(row=>row[1]?.endsWith('attendance-compatibility-metadata.sql')));
+ }
+ const changedProof=extensionArtifactRouting(fixture);
+ await assert.rejects(()=>changedProof.verify(input,{...fixture.proof,transcriptSha256:'3'.repeat(64)},repair),/canonical_proof/);
+ assert.equal(fixture.files.metadata.toString('utf8'),syntheticAttendanceExtensionDump);
+});
 test('follow-on artifact paths are fixed/private/stable and ready rebinds their canonical proof before actual DB reads',()=>{
  const artifacts=managerSection('async function privateExtensionEvidenceBytes','async function migrationBackupEvidence');
  assert(artifacts.includes('before.uid===0')&&artifacts.includes('(before.mode&0o777)===0o600')&&artifacts.includes('before.nlink===1'));
  assert(artifacts.includes('after.ino')&&artifacts.includes('after.ctimeMs')&&artifacts.includes('bytes.length===before.size'));
  assert(artifacts.includes('const fixed=runtimePaths(input.target)'));
- assert(artifacts.includes("validateAttendanceExtensionCompatibilityEvidence(proof,files,{restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'})"));
+ assert(artifacts.includes("validateAttendanceExtensionCompatibilityEvidence(proof,files,{restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl,restoreGraphqlInitialSchemaAcl})"));
  assert(!/restoreGraphqlInitialAcl:(?:proof|compatibility|input|files)\./.test(artifacts));
  assert(!/input\.(?:paths|rootOwned|testOnly|verifyAttendance|toolRevision|receiptSha256)/.test(artifacts));
  const ready=managerSection('export async function verifyAttendanceProductionDatabaseReady','export function parseAttendanceProductionArguments');
