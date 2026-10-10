@@ -7,7 +7,11 @@ import {runInNewContext} from 'node:vm';
 import {unpublishedCandidateImportClosure, unpublishedCandidateDatabaseSql} from './online-unpublished-candidate.mjs';
 import {UNPUBLISHED_CANDIDATE_INCIDENT as incident,
   UNPUBLISHED_CANDIDATE_ABSENT_PATHS as absentPaths,
-  UNPUBLISHED_CANDIDATE_PRESERVED_FILES as preservedPaths} from './prepare-online-release-tool.mjs';
+  UNPUBLISHED_CANDIDATE_PRESERVED_FILES as preservedPaths,
+  UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT as environmentIncident,
+  UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS as environmentAbsentPaths,
+  UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES as environmentPreservedPaths,
+  UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES as environmentDirectories} from './prepare-online-release-tool.mjs';
 
 const root = new URL('../', import.meta.url);
 const readSource = name => fs.readFileSync(new URL(name, root), 'utf8');
@@ -15,6 +19,8 @@ const source = readSource('scripts/online-unpublished-candidate.mjs');
 const policy = readSource('scripts/prepare-online-release-tool.mjs');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const plain = value => JSON.parse(JSON.stringify(value));
+const stable = value => Array.isArray(value) ? value.map(stable) : value !== null && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
 const fail = code => {throw Error(`online_unpublished_${code}`);};
 const equal = (a, b, code) => {try {assert.deepEqual(plain(a), plain(b));} catch {fail(code);}};
 function section(start, end) {
@@ -22,12 +28,13 @@ function section(start, end) {
   assert.ok(a >= 0 && b > a, `${start} source section`);
   return source.slice(a, b).replace(/^export /gm, '');
 }
-const processCode = section('function inspectProcessReferences()', 'export function unpublishedCandidateDatabaseSql');
+const processCode = section('function inspectProcessReferences(', 'export function unpublishedCandidateDatabaseSql');
 const databaseCode = section('function databaseObservation(', '// A helper-only source bootstrap');
 const observeCode = section('async function observe(', 'function durableReceipt(');
 const receiptCode = section('function durableReceipt(', 'export async function closeUnpublishedCandidateMain(');
 const mainCode = section('export async function closeUnpublishedCandidateMain(', 'if(process.argv[1]');
 const commandCode = section('function command(', 'function readOwned(');
+const legacyIncident = incident, legacyPreservedPaths = preservedPaths, legacyAbsentPaths = absentPaths;
 
 test('one fixed approved incident; no generic target, baseline or candidate authority', () => {
   assert.equal(incident.target, '5b974eb06c858757c8785d5f9106b006903a5ba0');
@@ -132,7 +139,7 @@ test('database adapter pins formal identity, exact registry and existing pilot c
   const manifestBytes = fs.readFileSync(new URL('scripts/attendance-production-database-migrations.manifest.json', root));
   const registry = JSON.parse(manifestBytes).baseline;
   const revision = 'a'.repeat(40);
-  for (const bad of [null, 'identity', 'registry', 'attendance', 'pilot', 'compat']) {
+  for (const selected of [incident, environmentIncident]) for (const bad of [null, 'identity', 'registry', 'attendance', 'pilot', 'compat']) {
     const calls = [], fact = {...db, primary: true, registry, attendanceRelations: 0, attendanceFunctions: 0};
     if (bad === 'identity') fact.databaseOid = '6';
     if (bad === 'registry') fact.registry = registry.slice(1);
@@ -149,12 +156,12 @@ test('database adapter pins formal identity, exact registry and existing pilot c
       assert.doesNotMatch(options.input, /\b(?:create|alter|drop|insert|update|delete|grant|revoke)\b/i);
       if (args[2] === db.containerId) return JSON.stringify(fact);
       assert.equal(args[2], pilot);
-      assert.match(options.input, /faolla_attendance_compat_5b974eb06c85/);
+      assert.ok(options.input.includes(`faolla_attendance_compat_${selected.target.slice(0, 12)}`));
       return bad === 'compat' ? '1' : '0';
     };
-    const invoke = () => runInNewContext(`${databaseCode}databaseObservation(revision)`, {
+    const invoke = () => runInNewContext(`${databaseCode}databaseObservation(revision, selected)`, {
       DB: db, PILOT_DB: pilot, APP: '/www/wwwroot/merchant-space', incident, command, hash, equal, fail,
-      unpublishedCandidateDatabaseSql, revision,
+      unpublishedCandidateDatabaseSql, revision, selected,
       runOnlineToolGit: (_cwd, args) => {assert.deepEqual(plain(args), ['show', `${revision}:scripts/attendance-production-database-migrations.manifest.json`]); return manifestBytes;},
     });
     if (bad) assert.throws(invoke); else {
@@ -164,16 +171,22 @@ test('database adapter pins formal identity, exact registry and existing pilot c
   }
 });
 
-function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') {
+function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z', environmentCase = false) {
   // This synthetic in-memory collector fixture never satisfies the production
   // incident hash. It exercises actual collector code, not a server proof.
-  const files = new Map(), names = Object.keys(preservedPaths).filter(k => k !== '.env.local').concat('state.json').sort();
+  const p = environmentCase ? environmentIncident : legacyIncident,
+    selectedPreservedPaths = environmentCase ? environmentPreservedPaths : legacyPreservedPaths,
+    selectedAbsentPaths = environmentCase ? environmentAbsentPaths : legacyAbsentPaths;
+  const files = new Map(), names = Object.keys(selectedPreservedPaths).filter(k => k !== '.env.local' && k !== 'stage.log')
+    .concat('state.json', environmentCase ? ['build-home', 'build-cache', 'build-tmp'] : []).sort();
+  const incident = p, preservedPaths = selectedPreservedPaths, absentPaths = selectedAbsentPaths;
   const state = {target: incident.target, baseline: incident.baseline, directory: incident.directory, name: incident.name,
     port: 3103, oldPort: 3105, startedAt, baseDirectory: '/synthetic-baseline',
     processes: [{name: 'synthetic-live', cwd: '/synthetic-live', port: 3105, pid: 71, status: 'online'}],
     previousActive: {target: incident.baseline, name: 'synthetic-live', directory: '/synthetic-live', port: 3105}, configs: {}};
   for (const [key, name] of Object.entries(preservedPaths)) files.set(name, Buffer.from(key === 'attendance-stage-focused-diagnostic.tap'
-    ? '# tests 479\n# pass 473\n# fail 6\n' : `synthetic-${key}\n`));
+    ? '# tests 479\n# pass 473\n# fail 6\n' : key === 'stage.log'
+      ? '# tests 543\n# pass 543\n# fail 0\n# skipped 0\n# cancelled 0\nonline_build_started\nattendance_build_environment_mismatch\n' : `synthetic-${key}\n`));
   for (const name of incident.proxyFiles) {
     const old = files.get(preservedPaths[`before-${name}`]), next = files.get(preservedPaths[`after-${name}`]);
     state.configs[name] = {oldHash: hash(old), newHash: hash(next)};
@@ -187,9 +200,18 @@ function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') 
   files.set('/var/lib/faolla-online-release/active.json', Buffer.from(JSON.stringify(state.previousActive)));
   files.set(`${incident.operation}/state.json`, Buffer.from(JSON.stringify(state)));
   const syntheticIncident = {...incident, stateSha256: hash(files.get(`${incident.operation}/state.json`))};
+  let journalEntries;
+  if (environmentCase) {
+    files.set(p.buildSource, Buffer.from('synthetic original checker before npm; no real server assertion'));
+    journalEntries = [{MESSAGE: 'Started fixture', UNIT: `faolla-attendance-build-${p.target}.service`},
+      {MESSAGE: 'Main process exited', EXIT_STATUS: '1'}, {UNIT_RESULT: 'exit-code'}, {MESSAGE: 'Consumed CPU time'}];
+    Object.assign(syntheticIncident, {stageLogSha256: hash(files.get(p.stageLog)), buildSourceSha256: hash(files.get(p.buildSource)),
+      journalSha256: hash(JSON.stringify(stable(journalEntries)))});
+  }
   files.set('/root/.pm2/dump.pm2', Buffer.from('[]')); files.set('/root/.pm2/dump.pm2.bak', Buffer.from('[]'));
   if (bad === 'state') files.set(`${incident.operation}/state.json`, Buffer.from(JSON.stringify({...state, port: 3106})));
-  if (bad === 'diagnostic') files.set(preservedPaths['attendance-stage-focused-diagnostic.tap'], Buffer.from('# tests 479\n# pass 473\n# fail 6\nonline_build_started\n'));
+  if (bad === 'diagnostic') files.set(environmentCase ? p.stageLog : preservedPaths['attendance-stage-focused-diagnostic.tap'], Buffer.from('# tests 479\n# pass 473\n# fail 6\nonline_build_started\n'));
+  if (bad === 'build-source') files.set(p.buildSource, Buffer.from('changed original source'));
   if (bad === 'dump') files.set('/root/.pm2/dump.pm2.bak', Buffer.from(JSON.stringify([{cwd: incident.directory}])));
   if (bad === 'active') files.set('/var/lib/faolla-online-release/active.json', Buffer.from('{"target":"foreign"}'));
   if (bad === 'maintenance') files.set(maintenancePath, Buffer.from('{"phase":"started"}'));
@@ -197,7 +219,10 @@ function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') 
   if (bad === 'proxy') files.set(`/www/server/panel/vhost/nginx/proxy/www.faolla.com/${incident.proxyFiles[0]}`, Buffer.from('foreign'));
   const commands = [];
   const observe = runInNewContext(`${observeCode}observe`, {
-    incident: syntheticIncident, absentPaths, preservedPaths, RECEIPT: 'unpublished-termination.json', path, hash, equal, fail,
+    incident: syntheticIncident, absentPaths, preservedPaths, RECEIPT: 'unpublished-termination.json', path, hash, equal, fail, stable,
+    environmentIncident: environmentCase ? syntheticIncident : environmentIncident,
+    environmentAbsentPaths, environmentPreservedPaths,
+    readUnpublishedBuildEnvironmentDirectories: () => {if (bad === 'empty-dir') fail('unpublished_termination_invalid'); return plain(environmentDirectories);},
     APP: '/www/wwwroot/merchant-space', MAINTENANCE: '/var/lib/faolla-maintenance/merchant-space',
     WEB_RELEASE_PROXY: '/www/server/panel/vhost/nginx/proxy/www.faolla.com',
     WEB_RELEASE_MARKER: '/www/server/panel/vhost/nginx/proxy/www.faolla.com/faolla_web_release.conf',
@@ -205,7 +230,8 @@ function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') 
     readOwned: name => {assert.ok(files.has(name), name); return files.get(name);},
     git: (_cwd, args) => args[0] === 'rev-parse' ? (bad === 'source' ? 'foreign' : incident.target) : '',
     exists: name => bad === 'artifact' && name === absentPaths[0],
-    fs: {readdirSync: name => name === incident.operation ? (bad === 'files' ? [...names, 'unexpected.json'] : names)
+    fs: {lstatSync: () => ({mode: bad === 'ownership' ? 0o755 : 0o700}),
+      readdirSync: name => name === incident.operation ? (bad === 'files' ? [...names, 'unexpected.json'] : names)
       : (bad === 'logs' ? [incident.name + '-out.log'] : []), realpathSync: () => bad === 'link' ? '/foreign' : state.baseDirectory},
     referenceAbsent: value => {if (JSON.stringify(value).includes(incident.directory) || JSON.stringify(value).includes(incident.name)) fail('candidate_reference_present');},
     normalizeRetirementProcess: value => value,
@@ -217,6 +243,16 @@ function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') 
       if (name === 'systemctl') return bad === 'unit' ? 'loaded' : 'not-found';
       if (name === 'journalctl') {
         assert.ok(args.includes(`--since=${startedAt.slice(0, 19).replace('T', ' ')} UTC`));
+        if (environmentCase) {
+          const rows = plain(journalEntries);
+          if (bad === 'journal-empty') return '';
+          if (bad === 'journal-extra') rows.push({MESSAGE: 'second attempt'});
+          if (bad === 'journal-status') rows[1].EXIT_STATUS = '0';
+          if (bad === 'journal') return 'invalid JSON';
+          // Field ordering can vary in journalctl JSON; full semantic bytes are
+          // canonically pinned without omitting any original journal fields.
+          return rows.map(row => JSON.stringify(Object.fromEntries(Object.entries(row).reverse()))).join('\n');
+        }
         return bad === 'journal' ? '{"MESSAGE":"Started"}' : '';
       }
       assert.fail(name);
@@ -231,7 +267,7 @@ function observationFixture(bad = null, startedAt = '2026-10-09T18:00:00.000Z') 
     AbortSignal,
     databaseObservation: () => {if (bad === 'database') fail('database_changed'); return {registryCount: 60};},
   });
-  return {run: () => observe('a'.repeat(40)), commands};
+  return {run: () => observe('a'.repeat(40), syntheticIncident), commands};
 }
 test('actual collector combines all live metadata observations without mutating its synthetic fixture', async () => {
   const f = observationFixture(), result = await f.run();
@@ -275,22 +311,55 @@ test('systemd239 journal boundary uses UTC seconds rounded down, never a later I
   }
   assert.match(source, /const journalSince=s\.startedAt\.slice\(0,19\)\.replace\('T',' '\)\+' UTC'/);
 });
+test('second fixed collector seals its full nonempty failed journal, preserved empty directories and before-npm source', async () => {
+  const f = observationFixture(null, '2026-10-09T21:09:03.043Z', true), result = await f.run();
+  assert.equal(result.evidence.target, environmentIncident.target);
+  assert.equal(result.evidence.buildAttemptOccurred, true); assert.equal(result.evidence.npmStarted, false);
+  assert.equal(result.evidence.buildUnit.journalEmpty, false);
+  assert.equal(result.evidence.buildUnit.journalEntries.length, 4);
+  assert.equal(result.evidence.buildUnit.journalEntries[1].EXIT_STATUS, '1');
+  assert.equal(result.evidence.buildUnit.journalSha256, hash(JSON.stringify(stable(result.evidence.buildUnit.journalEntries))));
+  assert.equal(result.evidence.diagnosticKind, 'failed-build-environment');
+  assert.equal(result.evidence.diagnosticTests, 543); assert.equal(result.evidence.diagnosticPasses, 543);
+  assert.equal(result.evidence.diagnosticFailures, 0);
+  assert.deepEqual(plain(result.evidence.preservedDirectories), plain(environmentDirectories));
+  assert.deepEqual(plain(result.evidence.absentPaths), [...environmentAbsentPaths]);
+  assert.deepEqual(f.commands.map(x => x.name), ['pm2', '/usr/sbin/ss', 'systemctl', 'journalctl']);
+});
+test('second fixed collector rejects build/log/source/directory/journal/proxy/DB drift rather than erasing failed evidence', async () => {
+  for (const bad of ['state', 'source', 'artifact', 'files', 'diagnostic', 'build-source', 'empty-dir', 'ownership',
+    'pm2', 'dump', 'logs', 'proc', 'port', 'unit', 'journal', 'journal-empty', 'journal-extra', 'journal-status',
+    'active', 'maintenance', 'marker', 'link', 'proxy', 'history', 'http', 'database'])
+    await assert.rejects(observationFixture(bad, '2026-10-09T21:09:03.043Z', true).run(), undefined, bad);
+});
 
 function coordinatorFixture({prior = false, drift = false, finalDrift = false, args = ['dry-run']} = {}) {
-  const calls = [], receiptPath = `${incident.operation}/unpublished-termination.json`;
+  const selected = args[1] === environmentIncident.target || args[1] === 'approved-end-unpublished-candidate-e754793a5895' ? environmentIncident : incident;
+  const calls = [], receiptPath = `${selected.operation}/unpublished-termination.json`;
   let observations = 0, written = prior, receipt;
-  const base = {stateText: 'synthetic state fixture; not server proof', evidence: {stable: true, preservedFiles: {synthetic: 'a'.repeat(64)}, absentPaths: ['synthetic']}};
+  const base = {stateText: 'synthetic state fixture; not server proof', evidence: {stable: true, preservedFiles: {synthetic: 'a'.repeat(64)}, absentPaths: ['synthetic'],
+    ...(selected === environmentIncident ? {preservedDirectories: plain(environmentDirectories), buildSourceSha256: environmentIncident.buildSourceSha256} : {})}};
+  const createReceipt = input => {calls.push('createReceipt'); assert.equal(input.stateText, base.stateText); receipt = {fixture: true}; return receipt;};
+  const assertReceipt = input => {
+    calls.push('assertReceipt'); assert.equal(input.stateText, base.stateText);
+    if (selected === environmentIncident) {
+      assert.deepEqual(plain(input.preservedDirectories), plain(environmentDirectories));
+      assert.equal(input.buildSourceSha256, environmentIncident.buildSourceSha256);
+    } else assert.equal(Object.hasOwn(input, 'preservedDirectories'), false);
+  };
   const task = runInNewContext(`${mainCode}closeUnpublishedCandidateMain(argv)`, {
-    argv: args, process: {platform: 'linux', getuid: () => 0}, incident, RECEIPT: 'unpublished-termination.json', hash, equal, fail,
-    verifySource: () => {calls.push('verifySource'); return 'a'.repeat(40);},
+    argv: args, process: {platform: 'linux', getuid: () => 0}, incident, environmentIncident, RECEIPT: 'unpublished-termination.json', hash, equal, fail,
+    verifySource: p => {assert.equal(p, selected); calls.push('verifySource'); return 'a'.repeat(40);},
     withOnlineRetentionLocks: async fn => {calls.push('lock'); return fn();},
-    observe: async () => {calls.push('observe'); const n = observations++; return {...base, evidence: {...base.evidence,
+    observe: async (_revision, p) => {assert.equal(p, selected); calls.push('observe'); const n = observations++; return {...base, evidence: {...base.evidence,
       observedAt: `2026-10-09T18:00:0${n}.000Z`, stable: !(drift && n === 1 || finalDrift && n === 2)}};},
     exists: name => {assert.equal(name, receiptPath); return written;},
     readOwned: name => {assert.equal(name, receiptPath); return Buffer.from(JSON.stringify(receipt ?? {fixture: true}));},
-    createUnpublishedCandidateTerminationReceipt: input => {calls.push('createReceipt'); assert.equal(input.stateText, base.stateText); receipt = {fixture: true}; return receipt;},
-    assertUnpublishedCandidateTerminationReceipt: input => {calls.push('assertReceipt'); assert.equal(input.stateText, base.stateText);},
-    durableReceipt: value => {calls.push('writeReceipt'); assert.deepEqual(plain(value), {fixture: true}); written = true;},
+    createUnpublishedCandidateTerminationReceipt: input => {assert.equal(selected, incident); return createReceipt(input);},
+    assertUnpublishedCandidateTerminationReceipt: input => {assert.equal(selected, incident); assertReceipt(input);},
+    createUnpublishedBuildEnvironmentTerminationReceipt: input => {assert.equal(selected, environmentIncident); return createReceipt(input);},
+    assertUnpublishedBuildEnvironmentTerminationReceipt: input => {assert.equal(selected, environmentIncident); assertReceipt(input);},
+    durableReceipt: (value, p) => {assert.equal(p, selected); calls.push('writeReceipt'); assert.deepEqual(plain(value), {fixture: true}); written = true;},
   });
   return {task, calls};
 }
@@ -317,22 +386,45 @@ test('unstable pre-write observation refuses all writes; post-write drift never 
   const prior = coordinatorFixture({prior: true}), reused = await prior.task;
   assert.equal(reused.reused, true); assert.ok(!prior.calls.includes('writeReceipt'));
 });
+test('second explicit CLI selects only its fixed case with independent receipt, stable observations and final readback', async () => {
+  const dry = coordinatorFixture({args: ['dry-run', environmentIncident.target]}), dryResult = await dry.task;
+  assert.equal(dryResult.target, environmentIncident.target); assert.equal(dryResult.persistentEvidenceWrites, 0);
+  assert.deepEqual(dry.calls, ['verifySource', 'lock', 'verifySource', 'observe', 'createReceipt', 'observe']);
+  const args = ['end', 'approved-end-unpublished-candidate-e754793a5895'];
+  const end = coordinatorFixture({args}), ended = await end.task;
+  assert.equal(ended.target, environmentIncident.target); assert.equal(ended.originalStateUnchanged, true);
+  assert.equal(ended.productionDataChanged, false); assert.equal(ended.trafficSwitched, false);
+  assert.deepEqual(end.calls, ['verifySource', 'lock', 'verifySource', 'observe', 'createReceipt', 'observe', 'writeReceipt', 'observe', 'assertReceipt']);
+  const drift = coordinatorFixture({args, drift: true}); await assert.rejects(drift.task, /observation_changed/);
+  assert.ok(!drift.calls.includes('writeReceipt'));
+  const final = coordinatorFixture({args, finalDrift: true}); await assert.rejects(final.task, /post_close_observation_changed/);
+  assert.equal(final.calls.filter(x => x === 'writeReceipt').length, 1); assert.ok(!final.calls.includes('assertReceipt'));
+  const existing = coordinatorFixture({args, prior: true}), reused = await existing.task;
+  assert.equal(reused.reused, true); assert.ok(!existing.calls.includes('writeReceipt'));
+  for (const args of [['dry-run', 'f'.repeat(40)], ['dry-run', incident.target], ['end', environmentIncident.target],
+    ['end', 'approved-end-unpublished-candidate-e754793a5895', '--force'],
+    ['end', 'approved-end-unpublished-candidate-e754793a5895\n']]) {
+    const invalid = coordinatorFixture({args}); await assert.rejects(invalid.task, /invocation_invalid/); assert.deepEqual(invalid.calls, []);
+  }
+});
 
 test('durable output is exclusive 0600 sidecar with file+directory fsync and exact readback', () => {
-  const name = `${incident.operation}/unpublished-termination.json`, calls = [], receipt = {fixture: true};
+  for (const selected of [incident, environmentIncident]) {
+  const name = `${selected.operation}/unpublished-termination.json`, calls = [], receipt = {fixture: true};
   let bytes;
   const io = {constants: fs.constants,
     openSync: (location, flags, mode) => {calls.push(['open', location, flags, mode]); return location === name ? 7 : 8;},
     writeFileSync: (fd, value) => {assert.equal(fd, 7); bytes = Buffer.from(value); calls.push(['write', fd]);},
     fsyncSync: fd => calls.push(['sync', fd]), closeSync: fd => calls.push(['close', fd]),
   };
-  runInNewContext(`${receiptCode}durableReceipt(receipt)`, {incident, RECEIPT: 'unpublished-termination.json', fs: io, receipt, Buffer, equal,
+  runInNewContext(`${receiptCode}durableReceipt(receipt, selected)`, {incident, selected, RECEIPT: 'unpublished-termination.json', fs: io, receipt, Buffer, equal,
     readOwned: location => {assert.equal(location, name); return bytes;}});
   assert.deepEqual(calls[0], ['open', name, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600]);
   assert.deepEqual(calls.map(x => x[0]), ['open', 'write', 'sync', 'close', 'open', 'sync', 'close']);
-  assert.equal(calls[4][1], incident.operation);
+  assert.equal(calls[4][1], selected.operation);
   assert.equal(bytes.toString(), JSON.stringify(receipt, null, 2) + '\n');
   assert.doesNotMatch(receiptCode, /rename|unlink|rmdir|rmSync|state\.json|runtime\.json|\.env\.local/);
+  }
 });
 
 test('collector command allowlist and error output contain no actuator or private value disclosure', () => {
@@ -361,7 +453,9 @@ test('historical pending exception remains one exact receipt, not a renamed stat
   assert.match(policy, /sha256\(stateText\) === p\.stateSha256/);
   assert.match(policy, /if \(\['active', 'rolled-back'\]\.includes\(value\.status\)\) continue/);
   assert.match(policy, /name !== incident\.target \|\| directory !== incident\.operation \|\| value\.status !== 'preparing' \|\| !exists\(receiptPath\)/);
-  assert.match(policy, /assertUnpublishedCandidateTerminationReceipt\(\{stateText, receipt: JSON\.parse/);
+  assert.match(policy, /else assertUnpublishedCandidateTerminationReceipt\(\{stateText, receipt, preservedFiles, absentPaths/);
+  assert.match(policy, /environmentCase = name === UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT\.target/);
+  assert.match(policy, /assertUnpublishedBuildEnvironmentTerminationReceipt\(\{stateText, receipt, preservedFiles/);
   assert.match(policy, /process\.status === 'online' && process\.port === state\.port/);
   assert.doesNotMatch(policy, /value\.status\s*=\s*['"](?:active|rolled-back|ended)/);
 });

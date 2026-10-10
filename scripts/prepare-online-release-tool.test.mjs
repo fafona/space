@@ -13,7 +13,10 @@ import {createOnlineReleaseToolPlan, executeOnlineReleaseToolPlan, verifyOnlineR
   withOnlineToolPreparationLocks, prepareOnlineReleaseToolMain, TOOL_REQUIRED_FILES,
   TOOL_SPARSE_PATTERNS, UNPUBLISHED_CANDIDATE_INCIDENT, UNPUBLISHED_CANDIDATE_ABSENT_PATHS,
   UNPUBLISHED_CANDIDATE_PRESERVED_FILES, createUnpublishedCandidateTerminationReceipt,
-  assertUnpublishedCandidateTerminationReceipt} from './prepare-online-release-tool.mjs';
+  assertUnpublishedCandidateTerminationReceipt, UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT,
+  UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS, UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES,
+  UNPUBLISHED_BUILD_ENVIRONMENT_FILE_SHA256, UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES,
+  createUnpublishedBuildEnvironmentTerminationReceipt, assertUnpublishedBuildEnvironmentTerminationReceipt} from './prepare-online-release-tool.mjs';
 
 const self = fileURLToPath(new URL('./prepare-online-release-tool.mjs', import.meta.url));
 test('bootstrap remains builtin-only until CLI loads housekeeping from the verified target', () => {
@@ -267,10 +270,13 @@ test('Linux real flock remains held by parent after lock child exits and release
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
-function terminationFixture() {
-  const p = UNPUBLISHED_CANDIDATE_INCIDENT, maintenance = '/var/lib/faolla-maintenance/merchant-space';
+function terminationFixture(environmentCase = false) {
+  const p = environmentCase ? UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT : UNPUBLISHED_CANDIDATE_INCIDENT,
+    retainedPaths = environmentCase ? UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES : UNPUBLISHED_CANDIDATE_PRESERVED_FILES,
+    missingPaths = environmentCase ? UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS : UNPUBLISHED_CANDIDATE_ABSENT_PATHS,
+    maintenance = '/var/lib/faolla-maintenance/merchant-space';
   const maintenanceText = '{"phase":"ended"}', texts = Object.fromEntries(
-    Object.keys(UNPUBLISHED_CANDIDATE_PRESERVED_FILES).map(key => [key, `synthetic ${key}\n`]));
+    Object.keys(retainedPaths).map(key => [key, `synthetic ${key}\n`]));
   const previousActive = {target: p.baseline, status: 'active', name: `merchant-space-online-${p.baseline.slice(0, 12)}`,
     directory: `/www/wwwroot/merchant-space.web-releases/${p.baseline.slice(0, 12)}-online`, port: 3104};
   const processes = [{name: previousActive.name, cwd: previousActive.directory, pid: 501, pmId: 2, port: 3104, status: 'online'},
@@ -284,7 +290,7 @@ function terminationFixture() {
   const stateText = JSON.stringify(state, null, 2), stateSha256 = digest(stateText);
   const evidence = {schemaVersion: 1, target: p.target, baseline: p.baseline, operation: p.operation,
     observedAt: '2026-10-09T10:01:00.000Z', stateSha256, sourceHead: p.target, sourceClean: true,
-    absentPaths: [...UNPUBLISHED_CANDIDATE_ABSENT_PATHS],
+    absentPaths: [...missingPaths],
     buildUnit: {name: `faolla-attendance-build-${p.target}.service`, loadState: 'not-found', journalEmpty: true},
     activeText: JSON.stringify(previousActive), processes: clone(processes), baseDirectory: state.baseDirectory,
     maintenanceText, markerSha256: state.markerHash, retentionHeadSha256: state.retentionHeadSha256,
@@ -294,40 +300,77 @@ function terminationFixture() {
     preservedFiles: Object.fromEntries(Object.entries(texts).map(([key, value]) => [key, digest(value)])),
     processReferencesAbsent: true, pm2DumpReferencesAbsent: true, portVacant: true,
     candidateCompatibilityDatabaseAbsent: true, diagnosticKind: 'focused-test-replay', diagnosticFailures: 6};
+  const journalEntries = [
+    {UNIT: `faolla-attendance-build-${p.target}.service`, MESSAGE: 'Started synthetic fixture'},
+    {UNIT: `faolla-attendance-build-${p.target}.service`, EXIT_STATUS: '1', MESSAGE: 'Main process exited'},
+    {UNIT: `faolla-attendance-build-${p.target}.service`, UNIT_RESULT: 'exit-code'},
+    {UNIT: `faolla-attendance-build-${p.target}.service`, MESSAGE: 'Consumed synthetic CPU time'},
+  ];
+  const stable = value => Array.isArray(value) ? value.map(stable) : value !== null && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+  const buildSourceText = 'synthetic original before-npm environment checker; not server source\n';
+  if (environmentCase) Object.assign(evidence, {
+    buildUnit: {name: `faolla-attendance-build-${p.target}.service`, loadState: 'not-found', journalEmpty: false,
+      journalSha256: digest(JSON.stringify(stable(journalEntries))), journalEntries},
+    diagnosticKind: 'failed-build-environment', diagnosticTests: 543, diagnosticPasses: 543,
+    diagnosticFailures: 0, diagnosticSkipped: 0, diagnosticCancelled: 0,
+    buildAttemptOccurred: true, npmStarted: false, buildSourceSha256: digest(buildSourceText),
+    preservedDirectories: clone(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES),
+  });
   const files = new Map([[`${maintenance}/state.json`, maintenanceText], [`${p.operation}/state.json`, stateText],
-    ...Object.entries(UNPUBLISHED_CANDIDATE_PRESERVED_FILES).map(([key, full]) => [full, texts[key]])]);
+    ...Object.entries(retainedPaths).map(([key, full]) => [full, texts[key]])]);
   const directories = new Set(['/', maintenance, '/var/lib/faolla-online-release', p.operation, p.directory]);
+  if (environmentCase) {
+    files.set(p.buildSource, buildSourceText);
+    for (const value of Object.values(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES)) directories.add(value.path);
+  }
   for (const full of [...directories, ...files.keys()]) {
     let current = path.posix.dirname(full);
     while (!directories.has(current)) {directories.add(current); current = path.posix.dirname(current);}
   }
-  const patches = new Map(), io = {
+  const patches = new Map(), directoryEntries = new Map(), io = {
     lstatSync(full) {
       const isFile = files.has(full), isDirectory = directories.has(full);
       if (!isFile && !isDirectory) throw Object.assign(Error('synthetic missing'), {code: 'ENOENT'});
-      return {uid: 0, mode: isFile ? 0o600 : 0o700, nlink: 1, isFile: () => isFile,
+      const expected = environmentCase ? Object.values(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES).find(value => value.path === full) : undefined;
+      return {uid: 0, mode: isFile ? 0o600 : 0o700, nlink: 1, ...expected, isFile: () => isFile,
         isDirectory: () => isDirectory, isSymbolicLink: () => false, ...patches.get(full)};
     },
     realpathSync: full => full,
     readFileSync(full, encoding) {if (!files.has(full)) throw Error('synthetic unreadable'); return encoding ? files.get(full) : Buffer.from(files.get(full));},
-    readdirSync(full) {assert.equal(full, '/var/lib/faolla-online-release'); return [p.target];},
+    readdirSync(full) {
+      if (full === '/var/lib/faolla-online-release') return [p.target];
+      assert.ok(environmentCase && Object.values(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES).some(value => value.path === full), full);
+      return directoryEntries.get(full) ?? [];
+    },
   };
   // The real original state is SHA-pinned. This VM replaces only that hash for
   // an explicitly synthetic fixture, never provides a production override and
   // cannot prove that actual live observations satisfy the collector contract.
   const source = fs.readFileSync(self, 'utf8');
   assert.equal(source.split(`stateSha256: '${p.stateSha256}'`).length - 1, 1);
-  const code = [source.slice(source.indexOf('const APP ='), source.indexOf('function canonicalAbsolute')),
+  let code = [source.slice(source.indexOf('const APP ='), source.indexOf('function canonicalAbsolute')),
     source.slice(source.indexOf('function canonicalAbsolute'), source.indexOf('export function createOnlineReleaseToolPlan')),
     source.slice(source.indexOf('export function assertOnlineToolOwnedPath'), source.indexOf('function gitEnvironment')),
     source.slice(source.indexOf('export function assertOnlineToolNoPending'), source.indexOf('export function withOnlineToolPreparationLocks')),
-    '({createUnpublishedCandidateTerminationReceipt, assertUnpublishedCandidateTerminationReceipt, assertOnlineToolNoPending, assertOnlineToolOwnedPath})',
+    '({createUnpublishedCandidateTerminationReceipt, assertUnpublishedCandidateTerminationReceipt, createUnpublishedBuildEnvironmentTerminationReceipt, assertUnpublishedBuildEnvironmentTerminationReceipt, assertOnlineToolNoPending, assertOnlineToolOwnedPath})',
   ].join('\n').replace(`stateSha256: '${p.stateSha256}'`, `stateSha256: '${stateSha256}'`).replaceAll('export ', '');
+  if (environmentCase) {
+    // Only this synthetic VM replaces the fixed real incident's literal hashes.
+    // Neither the executable CLI nor exported production policy has overrides.
+    const replacements = new Map(Object.entries(UNPUBLISHED_BUILD_ENVIRONMENT_FILE_SHA256).map(([key, value]) => [value, evidence.preservedFiles[key]]));
+    replacements.set(p.buildSourceSha256, evidence.buildSourceSha256);
+    replacements.set(p.journalSha256, evidence.buildUnit.journalSha256);
+    for (const [before, after] of replacements) {
+      assert.equal(code.split(`'${before}'`).length - 1, 1, before);
+      code = code.replace(`'${before}'`, `'${after}'`);
+    }
+  }
   const api = runInNewContext(code, {fs: io, path: path.posix, createHash, Buffer}, {timeout: 1000});
   const input = {stateText, evidence, toolRevision: 'e'.repeat(40), terminatedAt: '2026-10-09T10:01:05.000Z'};
-  const receipt = api.createUnpublishedCandidateTerminationReceipt(input);
+  const receipt = environmentCase ? api.createUnpublishedBuildEnvironmentTerminationReceipt(input) : api.createUnpublishedCandidateTerminationReceipt(input);
   files.set(`${p.operation}/unpublished-termination.json`, JSON.stringify(receipt));
-  return {p, state, stateText, evidence, files, directories, patches, api, input, receipt};
+  return {p, state, stateText, evidence, files, directories, patches, directoryEntries, api, input, receipt};
 }
 function assertSyntheticReceipt(f, changes = {}) {
   return f.api.assertUnpublishedCandidateTerminationReceipt({stateText: f.stateText, receipt: f.receipt,
@@ -459,4 +502,114 @@ test('synthetic pending checker rejects build/database residue or unsafe retaine
   f.patches.set(f.p.directory, {isSymbolicLink: () => true});
   assert.throws(() => f.api.assertOnlineToolNoPending(), /unsafe_path/);
   assert.equal(f.files.get(`${f.p.operation}/state.json`), f.stateText);
+});
+
+function assertSyntheticEnvironmentReceipt(f, changes = {}) {
+  return f.api.assertUnpublishedBuildEnvironmentTerminationReceipt({stateText: f.stateText, receipt: f.receipt,
+    preservedFiles: clone(f.evidence.preservedFiles), absentPaths: [...UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS],
+    preservedDirectories: clone(f.evidence.preservedDirectories), buildSourceSha256: f.evidence.buildSourceSha256, ...changes});
+}
+test('second fixed incident pins actual state/log/source/journal and preserves original empty directory identities', () => {
+  const p = UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT;
+  assert.equal(p.target, 'e754793a589593011da249d00ae05326f54302bf');
+  assert.equal(p.baseline, UNPUBLISHED_CANDIDATE_INCIDENT.baseline);
+  assert.equal(p.stateSha256, 'f98fbad3170b634c88e3400952bba0db6cef84d7137b467bdb7ec8a0ee835f3d');
+  assert.equal(p.stageLogSha256, 'd7d045e832780ddfded2b7425cb053bcd7564f381591164357fe16f63eba164a');
+  assert.equal(p.buildSourceSha256, '02d43cce249532ee287b25bf9a2c9231ee4351416757a0faf99d47648ee6e636');
+  assert.equal(p.journalSha256, '96095c31158115cb1e9e3399d28ff9fd243c472aa58c32d6045a874513871530');
+  assert.equal(p.stageLog, `/var/log/faolla-attendance-publication/${p.target}-stage.log`);
+  assert.deepEqual(p.proxyFiles, WEB_RELEASE_FILES);
+  assert.equal(Object.keys(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES).length, 9);
+  assert.deepEqual(Object.keys(UNPUBLISHED_BUILD_ENVIRONMENT_FILE_SHA256), Object.keys(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES));
+  assert.equal(UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS.length, 10);
+  for (const [name, ino] of [['build-home', 2624499], ['build-cache', 2624500], ['build-tmp', 2624501]]) {
+    assert.deepEqual(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES[name],
+      {path: `${p.operation}/${name}`, uid: 0, mode: 0o700, dev: 64769, ino, nlink: 2, entries: []});
+    assert.ok(!UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS.includes(`${p.operation}/${name}`));
+  }
+  for (const stateText of ['{}', '{"status":"terminated"}', '\n']) {
+    assert.throws(() => createUnpublishedBuildEnvironmentTerminationReceipt({stateText}), /unpublished_termination_invalid/);
+    assert.throws(() => assertUnpublishedBuildEnvironmentTerminationReceipt({stateText, receipt: {status: 'terminated'}}), /unpublished_termination_invalid/);
+  }
+});
+test('synthetic second receipt seals a real-attempt-shaped failed journal, not never-started evidence', () => {
+  const f = terminationFixture(true);
+  assert.equal(assertSyntheticEnvironmentReceipt(f), true);
+  assert.equal(f.receipt.kind, 'online-unpublished-build-environment-termination');
+  assert.equal(f.receipt.evidence.buildAttemptOccurred, true); assert.equal(f.receipt.evidence.npmStarted, false);
+  assert.equal(f.receipt.evidence.buildUnit.journalEmpty, false);
+  assert.equal(f.receipt.evidence.buildUnit.journalEntries.length, 4);
+  assert.equal(f.receipt.evidence.diagnosticTests, 543); assert.equal(f.receipt.evidence.diagnosticFailures, 0);
+  const saved = clone(f.receipt.evidence.buildUnit.journalEntries);
+  f.evidence.buildUnit.journalEntries[1].EXIT_STATUS = '0';
+  assert.deepEqual(clone(f.receipt.evidence.buildUnit.journalEntries), saved);
+  assert.equal(f.files.get(`${f.p.operation}/state.json`), f.stateText);
+});
+test('synthetic second policy rejects missing facts, fictional absence, changed source/log and any changed journal', () => {
+  const f = terminationFixture(true), create = evidence => f.api.createUnpublishedBuildEnvironmentTerminationReceipt({...f.input, evidence});
+  for (const key of Object.keys(f.evidence)) {
+    const evidence = clone(f.evidence); delete evidence[key];
+    assert.throws(() => create(evidence), /unpublished_termination_invalid/, `missing ${key}`);
+  }
+  for (const [key, value] of [['target', UNPUBLISHED_CANDIDATE_INCIDENT.target], ['sourceClean', false],
+    ['buildAttemptOccurred', false], ['npmStarted', true], ['buildSourceSha256', 'f'.repeat(64)],
+    ['diagnosticKind', 'focused-test-replay'], ['diagnosticTests', 479], ['diagnosticPasses', 542],
+    ['diagnosticFailures', 6], ['diagnosticSkipped', 1], ['diagnosticCancelled', 1], ['candidateCompatibilityDatabaseAbsent', false]])
+    assert.throws(() => create({...clone(f.evidence), [key]: value}), /unpublished_termination_invalid/, key);
+  for (const key of Object.keys(f.evidence.preservedFiles)) {
+    const evidence = clone(f.evidence); evidence.preservedFiles[key] = 'f'.repeat(64);
+    assert.throws(() => create(evidence), /unpublished_termination_invalid/, key);
+  }
+  for (const change of [unit => {unit.journalEmpty = true;}, unit => {unit.journalEntries = [];},
+    unit => {unit.journalEntries.pop();}, unit => {unit.journalEntries.push({MESSAGE: 'second attempt'});},
+    unit => {unit.journalEntries[1].EXIT_STATUS = '0';}, unit => {unit.journalEntries.reverse();},
+    unit => {unit.journalSha256 = 'f'.repeat(64);}, unit => {unit.loadState = 'loaded';}]) {
+    const evidence = clone(f.evidence); change(evidence.buildUnit);
+    assert.throws(() => create(evidence), /unpublished_termination_invalid/);
+  }
+  assert.throws(() => create({...clone(f.evidence), approved: true}), /unpublished_termination_invalid/);
+});
+test('synthetic second verifier cannot reuse first receipt or manufacture changed original bytes and retained directory facts', () => {
+  const f = terminationFixture(true), old = terminationFixture();
+  assert.throws(() => assertSyntheticEnvironmentReceipt(f, {receipt: old.receipt}), /unpublished_termination_invalid/);
+  assert.throws(() => assertSyntheticReceipt(old, {receipt: f.receipt}), /unpublished_termination_invalid/);
+  assert.throws(() => assertSyntheticEnvironmentReceipt(f, {stateText: f.stateText + '\n'}), /unpublished_termination_invalid/);
+  assert.throws(() => assertSyntheticEnvironmentReceipt(f, {buildSourceSha256: 'f'.repeat(64)}), /unpublished_termination_invalid/);
+  assert.throws(() => assertSyntheticEnvironmentReceipt(f, {absentPaths: UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS.slice(1)}), /unpublished_termination_invalid/);
+  for (const [key, value] of [['dev', 1], ['ino', 1], ['mode', 0o755], ['uid', 1000], ['nlink', 3], ['entries', ['npm-output']]]) {
+    const preservedDirectories = clone(f.evidence.preservedDirectories); preservedDirectories['build-home'][key] = value;
+    assert.throws(() => assertSyntheticEnvironmentReceipt(f, {preservedDirectories}), /unpublished_termination_invalid/, key);
+  }
+});
+test('synthetic second pending exception requires original private bytes and retained empty directory identities, without rereading live facts', () => {
+  const f = terminationFixture(true);
+  f.api.assertOnlineToolNoPending();
+  const receiptPath = `${f.p.operation}/unpublished-termination.json`, saved = f.files.get(receiptPath);
+  f.files.set(receiptPath, JSON.stringify(terminationFixture().receipt));
+  assert.throws(() => f.api.assertOnlineToolNoPending(), /unpublished_termination_invalid/);
+  f.files.set(receiptPath, saved);
+  for (const [key, expected] of Object.entries(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_DIRECTORIES)) {
+    f.directoryEntries.set(expected.path, ['npm-artifact']);
+    assert.throws(() => f.api.assertOnlineToolNoPending(), /unpublished_termination_invalid/, key);
+    f.directoryEntries.delete(expected.path);
+    for (const patch of [{ino: expected.ino + 1}, {dev: expected.dev + 1}, {nlink: 3}, {mode: 0o755}, {uid: 1000}, {isSymbolicLink: () => true}]) {
+      f.patches.set(expected.path, patch); assert.throws(() => f.api.assertOnlineToolNoPending(), undefined, `${key} ${JSON.stringify(patch)}`);
+      f.patches.delete(expected.path);
+    }
+    f.directories.delete(expected.path); assert.throws(() => f.api.assertOnlineToolNoPending()); f.directories.add(expected.path);
+  }
+  for (const full of [...Object.values(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES), f.p.buildSource]) {
+    const content = f.files.get(full); f.files.set(full, content + 'changed');
+    assert.throws(() => f.api.assertOnlineToolNoPending(), /unpublished_termination_invalid/, full); f.files.set(full, content);
+  }
+  for (const full of UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS) {
+    f.files.set(full, 'retained rejected evidence');
+    assert.throws(() => f.api.assertOnlineToolNoPending(), /release_pending/, full); f.files.delete(full);
+  }
+  for (const full of [f.p.operation, `${f.p.operation}/state.json`, receiptPath, ...Object.values(UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES)]) {
+    f.patches.set(full, {mode: full === f.p.operation ? 0o755 : 0o644});
+    assert.throws(() => f.api.assertOnlineToolNoPending(), /unsafe_path/, full); f.patches.delete(full);
+  }
+  assert.equal(f.files.get(`${f.p.operation}/state.json`), f.stateText);
+  f.api.assertOnlineToolNoPending();
 });

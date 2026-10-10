@@ -1,4 +1,4 @@
-// Explicit closure of the one approved pre-build incident. No build, migration,
+// Explicit closure of two separately approved fixed incidents. No build, migration,
 // traffic switch, process stop, deletion, or rewrite of original release state.
 import * as fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +9,11 @@ import {isDeepStrictEqual} from 'node:util';
 import {assertOnlineToolOwnedPath,runOnlineToolGit,createOnlineReleaseToolPlan,verifyOnlineReleaseTool,
   UNPUBLISHED_CANDIDATE_INCIDENT as incident,UNPUBLISHED_CANDIDATE_ABSENT_PATHS as absentPaths,
   UNPUBLISHED_CANDIDATE_PRESERVED_FILES as preservedPaths,createUnpublishedCandidateTerminationReceipt,
-  assertUnpublishedCandidateTerminationReceipt} from './prepare-online-release-tool.mjs';
+  assertUnpublishedCandidateTerminationReceipt,UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT as environmentIncident,
+  UNPUBLISHED_BUILD_ENVIRONMENT_ABSENT_PATHS as environmentAbsentPaths,
+  UNPUBLISHED_BUILD_ENVIRONMENT_PRESERVED_FILES as environmentPreservedPaths,
+  createUnpublishedBuildEnvironmentTerminationReceipt,assertUnpublishedBuildEnvironmentTerminationReceipt,
+  readUnpublishedBuildEnvironmentDirectories} from './prepare-online-release-tool.mjs';
 import {withOnlineRetentionLocks} from './online-release-retention-writer.mjs';
 import {normalizeRetirementProcess,assertExistingPm2Directory} from './online-release-retirement.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
@@ -23,6 +27,8 @@ const PILOT_DB='0d0a85a8ff50b585f690ba80a56d7d215adca2df1fa7c820840ff3389687d907
 const RECEIPT='unpublished-termination.json',MAX_BYTES=32*1024*1024;
 const fail=code=>{throw Error(`online_unpublished_${code}`);};
 const hash=value=>createHash('sha256').update(value).digest('hex');
+const stable=value=>Array.isArray(value)?value.map(stable):value!==null&&typeof value==='object'
+  ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
 const equal=(a,b,code)=>{if(!isDeepStrictEqual(a,b))fail(code);};
 const exists=name=>{try{fs.lstatSync(name);return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}};
 const git=(cwd,args)=>runOnlineToolGit(cwd,args).toString('utf8').trim();
@@ -39,21 +45,21 @@ function readOwned(name,privateMode=true){
     return bytes;
   }finally{fs.closeSync(fd);}
 }
-function referenceAbsent(value){
-  if(JSON.stringify(value).includes(incident.directory)||JSON.stringify(value).includes(incident.name))fail('candidate_reference_present');
+function referenceAbsent(value,p=incident){
+  if(JSON.stringify(value).includes(p.directory)||JSON.stringify(value).includes(p.name))fail('candidate_reference_present');
 }
-function inspectProcessReferences(){
+function inspectProcessReferences(p=incident){
   for(const name of fs.readdirSync('/proc').filter(name=>/^[1-9][0-9]*$/.test(name))){
     const base=`/proc/${name}`;
     try{
       let cwd;try{cwd=fs.readlinkSync(`${base}/cwd`);}catch(error){if(!['ENOENT','ESRCH'].includes(error.code))throw error;}
-      if(cwd===incident.directory||cwd?.startsWith(incident.directory+'/'))fail('candidate_process_present');
+      if(cwd===p.directory||cwd?.startsWith(p.directory+'/'))fail('candidate_process_present');
       for(const leaf of ['cmdline','maps']){
-        const bytes=fs.readFileSync(`${base}/${leaf}`);if(bytes.includes(incident.directory)||bytes.includes(incident.name))fail('candidate_process_present');
+        const bytes=fs.readFileSync(`${base}/${leaf}`);if(bytes.includes(p.directory)||bytes.includes(p.name))fail('candidate_process_present');
       }
       for(const fd of fs.readdirSync(`${base}/fd`)){
         let target;try{target=fs.readlinkSync(`${base}/fd/${fd}`);}catch(error){if(['ENOENT','ESRCH'].includes(error.code))continue;throw error;}
-        if(target===incident.directory||target.startsWith(incident.directory+'/'))fail('candidate_process_present');
+        if(target===p.directory||target.startsWith(p.directory+'/'))fail('candidate_process_present');
       }
     }catch(error){if(['ENOENT','ESRCH'].includes(error.code))continue;throw error;}
   }
@@ -65,7 +71,7 @@ select jsonb_build_object('databaseName',current_database(),'databaseOid',(selec
  'registry',(select jsonb_agg(jsonb_build_object('version',version::text,'name',name) order by version) from public.faolla_schema_migrations),
  'attendanceRelations',(select count(*) from pg_class where relnamespace='public'::regnamespace and relname like 'merchant_attendance_%'),
  'attendanceFunctions',(select count(*) from pg_proc where pronamespace='public'::regnamespace and proname like 'faolla_attendance_%'))::text;commit;\n`;}
-function databaseObservation(toolRevision){
+function databaseObservation(toolRevision,p=incident){
   const inspect=JSON.parse(command('docker',['inspect','--format','{"id":{{json .Id}},"name":{{json .Name}},"running":{{json .State.Running}},"mounts":{{json .Mounts}}}',DB.containerId]));
   if(inspect.id!==DB.containerId||inspect.name!=='/'+DB.containerName||inspect.running!==true||!inspect.mounts.some(m=>m.Type==='bind'&&m.Source===DB.dataSource&&m.RW===true))fail('database_identity_changed');
   const args=id=>['exec','-i',id,'sh','-lc','set -eu; : "${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=8000 -c lock_timeout=3000"; exec psql -h 127.0.0.1 -U supabase_admin -d postgres --no-password --no-psqlrc --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate'];
@@ -78,7 +84,7 @@ function databaseObservation(toolRevision){
   if(v.registry.length!==60||v.registry.at(-1).version!=='202609240052'||v.primary!==true||v.attendanceRelations!==0||v.attendanceFunctions!==0)fail('database_already_changed');
   const pilot=JSON.parse(command('docker',['inspect','--format','{"id":{{json .Id}},"running":{{json .State.Running}}}',PILOT_DB]));
   if(pilot.id!==PILOT_DB||pilot.running!==true)fail('pilot_database_identity_changed');
-  const compat=`faolla_attendance_compat_${incident.target.slice(0,12)}`;
+  const compat=`faolla_attendance_compat_${p.target.slice(0,12)}`;
   if(command('docker',args(PILOT_DB),{input:`begin read only;select count(*) from pg_database where datname='${compat}';commit;\n`}).trim()!=='0')fail('compatibility_database_present');
   return {identitySha256:hash(JSON.stringify(DB)),registrySha256:hash(JSON.stringify(v.registry)),registryCount:60,registryMaximum:'202609240052',attendanceRelations:0,attendanceFunctions:0};
 }
@@ -93,13 +99,13 @@ export function unpublishedCandidateImportClosure(readSource,entries=['scripts/o
     }
   }for(const name of entries)visit(name);return [...seen].sort();
 }
-function verifySource(){
-  const revision=git(APP,['rev-parse','origin/main']);if(!SHA.test(revision)||revision===incident.target)fail('tool_not_new_main');
+function verifySource(p=incident){
+  const revision=git(APP,['rev-parse','origin/main']);if(!SHA.test(revision)||revision===p.target)fail('tool_not_new_main');
   const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
   if(directory===`/var/lib/faolla-online-code/${revision}`){verifyOnlineReleaseTool(createOnlineReleaseToolPlan(revision));return revision;}
   if(directory!==`/var/lib/faolla-online-bootstrap/${revision}`)fail('tool_directory_invalid');
   assertOnlineToolOwnedPath(directory);if(git(directory,['rev-parse','HEAD'])!==revision||git(directory,['status','--porcelain=v1','--untracked-files=all']))fail('tool_source_changed');
-  git(APP,['merge-base','--is-ancestor',incident.target,revision]);
+  git(APP,['merge-base','--is-ancestor',p.target,revision]);
   const files=unpublishedCandidateImportClosure(name=>runOnlineToolGit(APP,['show',`${revision}:${name}`]).toString('utf8'));
   const patterns=files.map(name=>`/${name}`).join('\n')+'\n';
   const patternFile=path.resolve(directory,git(directory,['rev-parse','--git-path','info/sparse-checkout']));
@@ -111,68 +117,97 @@ function verifySource(){
   const index=git(directory,['ls-files','-t','-z']).split('\0').filter(Boolean);if(index.some(row=>(files.includes(row.slice(2))?'H':'S')!==row[0])||index.filter(row=>row[0]==='H').length!==files.length)fail('bootstrap_index_changed');
   return revision;
 }
-async function observe(toolRevision){
-  assertOnlineToolOwnedPath(incident.operation);assertOnlineToolOwnedPath(incident.directory);
-  const stateText=readOwned(`${incident.operation}/state.json`).toString('utf8'),s=JSON.parse(stateText);
-  if(hash(stateText)!==incident.stateSha256)fail('original_state_changed');
+async function observe(toolRevision,p=incident){
+  const environmentCase=p===environmentIncident,selectedAbsentPaths=environmentCase?environmentAbsentPaths:absentPaths,
+    selectedPreservedPaths=environmentCase?environmentPreservedPaths:preservedPaths;
+  assertOnlineToolOwnedPath(p.operation);assertOnlineToolOwnedPath(p.directory);
+  if(environmentCase&&[p.operation,p.directory].some(name=>(fs.lstatSync(name).mode&0o777)!==0o700))fail('evidence_directory_invalid');
+  const stateText=readOwned(`${p.operation}/state.json`).toString('utf8'),s=JSON.parse(stateText);
+  if(hash(stateText)!==p.stateSha256)fail('original_state_changed');
   if(git(s.directory,['rev-parse','HEAD'])!==s.target||git(s.directory,['status','--porcelain=v1','--untracked-files=all']))fail('candidate_source_changed');
-  for(const name of absentPaths){assertOnlineToolOwnedPath(path.dirname(name)===(s.directory+'/.next')?s.directory:path.dirname(name));if(exists(name))fail('execution_trace_present');}
-  const actualPreserved=Object.fromEntries(Object.entries(preservedPaths).map(([key,name])=>[key,hash(readOwned(name))]));
-  const entries=fs.readdirSync(incident.operation).sort(),expected=Object.keys(preservedPaths).filter(key=>key!=='.env.local').concat('state.json',exists(`${incident.operation}/${RECEIPT}`)?[RECEIPT]:[]).sort();
+  for(const name of selectedAbsentPaths){assertOnlineToolOwnedPath(path.dirname(name)===(s.directory+'/.next')?s.directory:path.dirname(name));if(exists(name))fail('execution_trace_present');}
+  const actualPreserved=Object.fromEntries(Object.entries(selectedPreservedPaths).map(([key,name])=>[key,hash(readOwned(name))]));
+  const entries=fs.readdirSync(p.operation).sort(),expected=Object.keys(selectedPreservedPaths).filter(key=>key!=='.env.local'&&key!=='stage.log').concat('state.json',environmentCase?['build-home','build-cache','build-tmp']:[],exists(`${p.operation}/${RECEIPT}`)?[RECEIPT]:[]).sort();
   equal(entries,expected,'operation_entries_changed');
-  const diag=readOwned(preservedPaths['attendance-stage-focused-diagnostic.tap']).toString('utf8');
-  if(!/^# tests 479$/m.test(diag)||!/^# pass 473$/m.test(diag)||!/^# fail 6$/m.test(diag)||/online_build_started/.test(diag))fail('focused_diagnostic_changed');
-  assertExistingPm2Directory();const raw=JSON.parse(command('pm2',['jlist']));referenceAbsent(raw);
+  let buildFacts,diagnosticFacts;
+  if(environmentCase){
+    const log=readOwned(p.stageLog).toString('utf8'),sourceSha256=hash(readOwned(p.buildSource,false));
+    if(hash(log)!==p.stageLogSha256||sourceSha256!==p.buildSourceSha256||
+      !/^# tests 543$/m.test(log)||!/^# pass 543$/m.test(log)||!/^# fail 0$/m.test(log)||
+      !/^# skipped 0$/m.test(log)||!/^# cancelled 0$/m.test(log)||
+      !/online_build_started[\s\S]*attendance_build_environment_mismatch/.test(log))fail('build_environment_diagnostic_changed');
+    buildFacts={buildAttemptOccurred:true,npmStarted:false,buildSourceSha256:sourceSha256,
+      preservedDirectories:readUnpublishedBuildEnvironmentDirectories()};
+    diagnosticFacts={diagnosticKind:'failed-build-environment',diagnosticTests:543,diagnosticPasses:543,
+      diagnosticFailures:0,diagnosticSkipped:0,diagnosticCancelled:0};
+  }else{
+    const diag=readOwned(preservedPaths['attendance-stage-focused-diagnostic.tap']).toString('utf8');
+    if(!/^# tests 479$/m.test(diag)||!/^# pass 473$/m.test(diag)||!/^# fail 6$/m.test(diag)||/online_build_started/.test(diag))fail('focused_diagnostic_changed');
+    buildFacts={};diagnosticFacts={diagnosticKind:'focused-test-replay',diagnosticFailures:6};
+  }
+  assertExistingPm2Directory();const raw=JSON.parse(command('pm2',['jlist']));referenceAbsent(raw,p);
   const current=raw.map(normalizeRetirementProcess);equal(current,s.processes,'retained_process_changed');
-  for(const name of ['/root/.pm2/dump.pm2','/root/.pm2/dump.pm2.bak'])referenceAbsent(JSON.parse(readOwned(name,false).toString('utf8')));
+  for(const name of ['/root/.pm2/dump.pm2','/root/.pm2/dump.pm2.bak'])referenceAbsent(JSON.parse(readOwned(name,false).toString('utf8')),p);
   assertOnlineToolOwnedPath('/root/.pm2/logs');if(fs.readdirSync('/root/.pm2/logs').some(name=>name.includes(s.name)))fail('candidate_pm2_log_present');
-  const processReferencesAbsent=inspectProcessReferences();
+  const processReferencesAbsent=inspectProcessReferences(p);
   const sockets=command('/usr/sbin/ss',['-ltnH']);if(new RegExp(`:${s.port}\\s`).test(sockets))fail('candidate_port_in_use');
   const unit=`faolla-attendance-build-${s.target}.service`;
   if(command('systemctl',['show',unit,'--property=LoadState','--value']).trim()!=='not-found')fail('build_unit_present');
   // systemd 239 cannot parse the ISO T/millisecond/Z spelling. Round down to
   // the preceding whole UTC second so no beginning of this attempt is omitted.
   const journalSince=s.startedAt.slice(0,19).replace('T',' ')+' UTC';
-  if(command('journalctl',['--quiet','--no-pager','--output=json',`--since=${journalSince}`,'--unit',unit]).trim())fail('build_journal_present');
+  const journal=command('journalctl',['--quiet','--no-pager','--output=json',`--since=${journalSince}`,'--unit',unit]).trim();
+  let buildUnit={name:unit,loadState:'not-found',journalEmpty:true};
+  if(environmentCase){
+    let journalEntries;try{journalEntries=journal.split('\n').map(line=>JSON.parse(line));}catch{fail('build_journal_changed');}
+    const journalSha256=hash(JSON.stringify(stable(journalEntries)));
+    if(journalEntries.length!==4||journalSha256!==p.journalSha256)fail('build_journal_changed');
+    buildUnit={name:unit,loadState:'not-found',journalEmpty:false,journalSha256,journalEntries};
+  }else if(journal)fail('build_journal_present');
   const activeText=readOwned('/var/lib/faolla-online-release/active.json').toString('utf8'),active=JSON.parse(activeText);
   equal(active,s.previousActive,'active_changed');
   const maintenanceText=readOwned(`${MAINTENANCE}/state.json`).toString('utf8');if(hash(maintenanceText)!==s.maintenanceHash||JSON.parse(maintenanceText).phase!=='ended')fail('maintenance_changed');
   const markerSha256=hash(readOwned(WEB_RELEASE_MARKER,false));if(markerSha256!==s.markerHash)fail('marker_changed');
   const baseDirectory=fs.realpathSync(`${APP}.current`);if(baseDirectory!==s.baseDirectory)fail('baseline_link_changed');
-  const proxyHashes=Object.fromEntries(incident.proxyFiles.map(name=>[name,hash(readOwned(`${WEB_RELEASE_PROXY}/${name}`,false))]));
-  for(const name of incident.proxyFiles)if(proxyHashes[name]!==s.configs[name].oldHash||actualPreserved[`before-${name}`]!==s.configs[name].oldHash||actualPreserved[`after-${name}`]!==s.configs[name].newHash)fail('proxy_changed');
+  const proxyHashes=Object.fromEntries(p.proxyFiles.map(name=>[name,hash(readOwned(`${WEB_RELEASE_PROXY}/${name}`,false))]));
+  for(const name of p.proxyFiles)if(proxyHashes[name]!==s.configs[name].oldHash||actualPreserved[`before-${name}`]!==s.configs[name].oldHash||actualPreserved[`after-${name}`]!==s.configs[name].newHash)fail('proxy_changed');
   const history=readOnlineRetentionHistory();assertOnlineRetentionPublication({history,state:s,actualActive:active,current,action:'status'});
   const response=await fetch(`http://127.0.0.1:${s.oldPort}/api/app-web-version`,{headers:{Host:'www.faolla.com',Connection:'close'},redirect:'manual',signal:AbortSignal.timeout(10000)});
   if(response.status!==200||(await response.json()).buildId!==s.baseline)fail('baseline_version_changed');
-  return {stateText,evidence:{schemaVersion:1,target:s.target,baseline:s.baseline,operation:incident.operation,observedAt:new Date().toISOString(),stateSha256:hash(stateText),sourceHead:s.target,sourceClean:true,absentPaths:[...absentPaths],buildUnit:{name:unit,loadState:'not-found',journalEmpty:true},activeText,processes:current,baseDirectory,maintenanceText,markerSha256,proxyHashes,retentionHeadSha256:history.headSha256,database:databaseObservation(toolRevision),preservedFiles:actualPreserved,processReferencesAbsent,pm2DumpReferencesAbsent:true,portVacant:true,candidateCompatibilityDatabaseAbsent:true,diagnosticKind:'focused-test-replay',diagnosticFailures:6}};
+  return {stateText,evidence:{schemaVersion:1,target:s.target,baseline:s.baseline,operation:p.operation,observedAt:new Date().toISOString(),stateSha256:hash(stateText),sourceHead:s.target,sourceClean:true,absentPaths:[...selectedAbsentPaths],buildUnit,activeText,processes:current,baseDirectory,maintenanceText,markerSha256,proxyHashes,retentionHeadSha256:history.headSha256,database:databaseObservation(toolRevision,p),preservedFiles:actualPreserved,processReferencesAbsent,pm2DumpReferencesAbsent:true,portVacant:true,candidateCompatibilityDatabaseAbsent:true,...diagnosticFacts,...buildFacts}};
 }
-function durableReceipt(receipt){
-  const name=`${incident.operation}/${RECEIPT}`,text=JSON.stringify(receipt,null,2)+'\n';
+function durableReceipt(receipt,p=incident){
+  const name=`${p.operation}/${RECEIPT}`,text=JSON.stringify(receipt,null,2)+'\n';
   const fd=fs.openSync(name,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
   try{fs.writeFileSync(fd,text);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
-  const dir=fs.openSync(incident.operation,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
+  const dir=fs.openSync(p.operation,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
   equal(readOwned(name),Buffer.from(text),'receipt_readback_changed');
 }
 export async function closeUnpublishedCandidateMain(argv=process.argv.slice(2)){
-  if(process.platform!=='linux'||process.getuid?.()!==0||!(argv.length===1&&argv[0]==='dry-run'||argv.length===2&&argv[0]==='end'&&argv[1]==='approved-end-unpublished-candidate-5b974eb06c85'))fail('invocation_invalid');
-  const revision=verifySource();
+  const environmentCase=argv.length===2&&(argv[0]==='dry-run'&&argv[1]===environmentIncident.target||argv[0]==='end'&&argv[1]==='approved-end-unpublished-candidate-e754793a5895');
+  if(process.platform!=='linux'||process.getuid?.()!==0||!(environmentCase||argv.length===1&&argv[0]==='dry-run'||argv.length===2&&argv[0]==='end'&&argv[1]==='approved-end-unpublished-candidate-5b974eb06c85'))fail('invocation_invalid');
+  const p=environmentCase?environmentIncident:incident,
+    createReceipt=environmentCase?createUnpublishedBuildEnvironmentTerminationReceipt:createUnpublishedCandidateTerminationReceipt,
+    assertReceipt=environmentCase?assertUnpublishedBuildEnvironmentTerminationReceipt:assertUnpublishedCandidateTerminationReceipt;
+  const receiptFacts=e=>({preservedFiles:e.preservedFiles,absentPaths:e.absentPaths,...(environmentCase?{preservedDirectories:e.preservedDirectories,buildSourceSha256:e.buildSourceSha256}:{})});
+  const revision=verifySource(p);
   return withOnlineRetentionLocks(async()=>{
-    if(verifySource()!==revision)fail('tool_changed');
-    const before=await observe(revision),receiptPath=`${incident.operation}/${RECEIPT}`;
+    if(verifySource(p)!==revision)fail('tool_changed');
+    const before=await observe(revision,p),receiptPath=`${p.operation}/${RECEIPT}`;
     if(exists(receiptPath)){
       const receipt=JSON.parse(readOwned(receiptPath).toString('utf8'));
-      assertUnpublishedCandidateTerminationReceipt({stateText:before.stateText,receipt,preservedFiles:before.evidence.preservedFiles,absentPaths:before.evidence.absentPaths});
-      return {status:'ended-unpublished',target:incident.target,receiptSha256:hash(readOwned(receiptPath)),reused:true,originalStateUnchanged:true};
+      assertReceipt({stateText:before.stateText,receipt,...receiptFacts(before.evidence)});
+      return {status:'ended-unpublished',target:p.target,receiptSha256:hash(readOwned(receiptPath)),reused:true,originalStateUnchanged:true};
     }
-    const receipt=createUnpublishedCandidateTerminationReceipt({stateText:before.stateText,evidence:before.evidence,toolRevision:revision,terminatedAt:new Date().toISOString()});
+    const receipt=createReceipt({stateText:before.stateText,evidence:before.evidence,toolRevision:revision,terminatedAt:new Date().toISOString()});
     // Re-observe all mutable facts under the same locks before writing once.
-    const after=await observe(revision);equal(after.stateText,before.stateText,'original_state_changed');
+    const after=await observe(revision,p);equal(after.stateText,before.stateText,'original_state_changed');
     const stable=e=>{const v={...e};delete v.observedAt;return v;};equal(stable(after.evidence),stable(before.evidence),'observation_changed');
-    if(argv[0]==='dry-run')return {status:'eligible-unpublished',target:incident.target,originalStateUnchanged:true,persistentEvidenceWrites:0,toolRevision:revision};
-    durableReceipt(receipt);
-    const final=await observe(revision);equal(stable(final.evidence),stable(before.evidence),'post_close_observation_changed');
-    assertUnpublishedCandidateTerminationReceipt({stateText:final.stateText,receipt,preservedFiles:final.evidence.preservedFiles,absentPaths:final.evidence.absentPaths});
-    return {status:'ended-unpublished',target:incident.target,receiptSha256:hash(readOwned(receiptPath)),originalStateUnchanged:true,failedFilesRetained:true,productionDataChanged:false,trafficSwitched:false};
+    if(argv[0]==='dry-run')return {status:'eligible-unpublished',target:p.target,originalStateUnchanged:true,persistentEvidenceWrites:0,toolRevision:revision};
+    durableReceipt(receipt,p);
+    const final=await observe(revision,p);equal(stable(final.evidence),stable(before.evidence),'post_close_observation_changed');
+    assertReceipt({stateText:final.stateText,receipt,...receiptFacts(final.evidence)});
+    return {status:'ended-unpublished',target:p.target,receiptSha256:hash(readOwned(receiptPath)),originalStateUnchanged:true,failedFilesRetained:true,productionDataChanged:false,trafficSwitched:false};
   });
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){try{console.log(JSON.stringify(await closeUnpublishedCandidateMain()));}catch(error){console.error(/^online_(?:unpublished|tool|retention)_[a-z_]+$/.test(error?.message??'')?error.message:'online_unpublished_unverified');process.exitCode=1;}}
