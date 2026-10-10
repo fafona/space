@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,7 @@ import {loadAttendance052CompatibilitySources,validateAttendance052SchemaOnlySql
  attendanceCompatibilityPublicAclSql,attendanceCompatibilityFixturesSql,attendanceCompatibilityEmployeeSql,
  attendanceCompatibilityFactsSql,attendanceCompatibilityUtcCases,guardedAttendanceCompatibilitySourceSql,
  runAttendance052Compatibility,parseAttendanceCompatibilityArguments} from './attendance-production-052-compatibility.mjs';
+import {syntheticAttendanceExtensionMetadata,syntheticAttendanceExtensionDump} from './test-helpers/attendance-extension-metadata.mjs';
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const target='a'.repeat(40),baseline='b1304d5d58841c2247b93229b90bb7adcfd64965',pilot='c'.repeat(64);
 const assets=await loadAttendance052CompatibilitySources({rootOwned:false});
@@ -21,13 +22,14 @@ const truncateMetadata=[
 ].join('\n')+'\n';
 function formalState(){return {...attendanceProductionIdentity,currentUser:'supabase_admin',adminSuperuser:true,postgresSuperuser:false,primary:true,registry:assets.manifest.baseline,owners:{merchants:'supabase_admin',merchant_enterprise_roles:'supabase_admin',merchant_enterprise_employees:'supabase_admin'},attendanceRelations:0,attendanceFunctions:0,functions:Object.fromEntries(fnKeys.map((f,i)=>[f,{oid:i+50,owner:'supabase_admin',kind:'f',sourceSha256:attendanceProductionLegacy052SourceSha256[f],metadata:{oid:i+50,proowner:10,prolang:14,provolatile:'v',proisstrict:false,proparallel:'u',proleakproof:false,proretset:false,pronargdefaults:0,proargdefaults:null,proargnames:['p_input'],proargmodes:null,proallargtypes:null,proargtypes:'3802',proconfig:['search_path=public'],proacl:['supabase_admin=X/supabase_admin'],procost:100,prorows:0,prosecdef:true,prokind:'f',prorettype:3802,prosupport:'-',prosqlbody:null}}]))};}
 function snapshot(installed=0){return {databaseOid:'20000',backendPid:550,owner:'supabase_admin',registry:[...assets.manifest.baseline,...assets.manifest.migrations.slice(0,installed).map(({version,name})=>({version,name}))],attendanceRelations:installed?100:0,attendanceFunctions:installed?600:0,authUsers:0,outsideSha256:'d'.repeat(64),rolesSha256:'e'.repeat(64),tables,functions:Object.fromEntries(fnKeys.map((f,i)=>[f,{metadata:{oid:i+50,proowner:10,prolang:14,proacl:['supabase_admin=X/supabase_admin'],proconfig:i===1&&installed===149?['search_path=pg_catalog']:['search_path=public']},sourceSha256:attendanceProductionLegacy052SourceSha256[f]}]))};}
-function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffix=''}={}){
- let created=false,installed=0;const writes=[],commands=[];
+function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffix='',extensionDrift=null}={}){
+ let created=false,installed=0,formalReads=0;const writes=[],commands=[];
  const runCommand=async(command,args,options={})=>{
   assert.equal(command,'docker');assert.deepEqual(args.slice(0,2),['--host','unix:///var/run/docker.sock']);assert(!args.join(' ').includes('.Config.Env'));commands.push(args);
   if(args.includes(attendanceProductionIdentity.containerId)){
    if(args[2]==='inspect')return {status:0,stdout:JSON.stringify({id:attendanceProductionIdentity.containerId,name:'/supabase-db',running:true,mounts:[{Type:'bind',Source:attendanceProductionIdentity.dataSource,RW:true}]})};
-   if(args.at(-1).includes('exec pg_dump')){assert(args.at(-1).includes('--schema-only'));assert(args.at(-1).includes('default_transaction_read_only=on'));return {status:0,stdout:'CREATE SCHEMA auth;\nCREATE TABLE auth.users(id uuid);\nCREATE TABLE public.faolla_schema_migrations(version bigint,name text);\nCREATE TRIGGER project AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.project_fn();\n'+truncateMetadata+metadataSuffix};}
+   if(args.at(-1).includes('exec pg_dump')){assert(args.at(-1).includes('--schema-only'));assert(args.at(-1).includes('default_transaction_read_only=on'));return {status:0,stdout:syntheticAttendanceExtensionDump+'CREATE SCHEMA auth;\nCREATE TABLE auth.users(id uuid);\nCREATE TABLE public.faolla_schema_migrations(version bigint,name text);\nCREATE TRIGGER project AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.project_fn();\n'+truncateMetadata+metadataSuffix+'\n'};}
+   if(options.input.startsWith('-- attendance_compatibility_extension_metadata')){const extensions=syntheticAttendanceExtensionMetadata();if(extensionDrift==='formal'&&++formalReads>1)extensions[0].members.at(-1).metadata.enabled='D';return {status:0,stdout:JSON.stringify(extensions)};}
    assert(options.input.startsWith('begin read only;')||options.input.startsWith('-- attendance_compatibility_metadata_contract\nbegin read only;'));return {status:0,stdout:JSON.stringify(options.input.startsWith('begin read only;')?formalState():'9'.repeat(64))};
   }
   if(args[2]==='inspect')return {status:0,stdout:JSON.stringify({id:pilot,name:'/faolla-attendance-pilot-db',image:'sha256:8613ba8eab946dff6674a2db6aab75b80aa101da39035fe20f62b0c7591ab35d',running:true,network:'none',ports:{},privileged:false,labels:{'com.docker.compose.project':'faolla-attendance-pilot','io.faolla.isolated-pilot':'attendance-pilot-20261009'},mounts:[{Type:'bind',Source:'/opt/faolla-attendance-pilot/runtime/db/data',RW:true}]})};
@@ -36,6 +38,7 @@ function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffi
   if(s.startsWith('-- attendance_compatibility_source_probe'))return result({...acl,databaseOid:'5',databaseName:'postgres',systemIdentifier:'7611111111111111111',serverVersionNum:'150008',currentUser:'supabase_admin',adminSuperuser:true,postgresSuperuser:false,legacyAdminEdge:false,existingCompatibilityDatabase:created,authUsers:0,merchants:0,staff:0,storageObjects:0,rolesSha256:'e'.repeat(64),catalogSha256:'f'.repeat(64),...sourceOverride});
   if(s.startsWith('create database ')){created=true;writes.push('CREATE_DATABASE');return {status:0,stdout:''};}
   if(s.startsWith('-- attendance_compatibility_snapshot'))return result(snapshot(installed));
+  if(s.startsWith('-- attendance_compatibility_extension_metadata')){const extensions=syntheticAttendanceExtensionMetadata();if(extensionDrift==='clone'&&args.at(-1).includes('-d faolla_attendance_compat_'))extensions[0].members.at(-1).metadata.enabled='D';return result(extensions);}
   if(s.startsWith('-- attendance_compatibility_metadata_contract'))return result('9'.repeat(64));
   if(s.startsWith('-- attendance_compatibility_baseline_facts'))return result(mismatch&&installed===149?'0'.repeat(64):'1'.repeat(64));
   if(s.startsWith('-- attendance_compatibility_permission_inputs'))return result([{input:['enterprise.view'],accepted:true}]);
@@ -50,7 +53,7 @@ function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffi
  };
  return {runCommand,writes,commands};
 }
-async function fixture(){const directory=await mkdtemp(path.join(os.tmpdir(),'faolla-052-compatibility-test-'));return {directory,paths:{directory,attempt:path.join(directory,'attempt.json'),proof:path.join(directory,'proof.json'),metadata:path.join(directory,'metadata.sql')},target,baseline,sourcePilotContainerId:pilot,testOnly:true,rootOwned:false};}
+async function fixture(){const directory=await mkdtemp(path.join(os.tmpdir(),'faolla-052-compatibility-test-'));return {directory,paths:{directory,attempt:path.join(directory,'attempt.json'),proof:path.join(directory,'proof.json'),metadata:path.join(directory,'metadata.sql'),extensionMetadata:path.join(directory,'extension-metadata.json'),extensionSupplement:path.join(directory,'extension-supplement.sql')},target,baseline,sourcePilotContainerId:pilot,testOnly:true,rootOwned:false};}
 
 test('actual052 metadata clone seeds only frozen60 registry names; original149 source pins unchanged',()=>{
  assert.equal(assets.baseline.length,60);assert.equal(assets.sources.length,149);assert(assets.baseline.every(x=>Object.keys(x).length===2));
@@ -145,12 +148,34 @@ test('mock metadata containing a real TRUNCATE fails before any attempt, metadat
   assert.deepEqual(db.writes,[]);for(const file of [f.paths.attempt,f.paths.metadata,f.paths.proof])await assert.rejects(()=>readFile(file),{code:'ENOENT'});
  }finally{await rm(f.directory,{recursive:true,force:true});}
 });
+test('mock formal member drift fails before artifacts; clone member drift never installs149 or emits proof',async()=>{
+ for(const extensionDrift of ['formal','clone']){
+  const f=await fixture(),db=fake({extensionDrift});try{
+   await assert.rejects(()=>runAttendance052Compatibility({...f,apply:true,confirm:'approved-isolated-052-210-compatibility',runCommand:db.runCommand}),new RegExp(extensionDrift==='formal'?'attendance_compatibility_formal_metadata_drift':'attendance_compatibility_clone_extension_metadata'));
+   assert.equal(db.writes.filter(x=>/^\d+$/.test(x)).length,0);await assert.rejects(()=>readFile(f.paths.proof),{code:'ENOENT'});
+   if(extensionDrift==='formal'){assert.deepEqual(db.writes,[]);for(const file of [f.paths.attempt,f.paths.metadata,f.paths.extensionMetadata,f.paths.extensionSupplement])await assert.rejects(()=>readFile(file),{code:'ENOENT'});}
+  }finally{await rm(f.directory,{recursive:true,force:true});}
+ }
+});
+test('mock exclusive supplement collision preserves old evidence and cannot create DB or success proof',async()=>{
+ const f=await fixture(),db=fake();try{
+  await writeFile(f.paths.extensionSupplement,'previous-failure-evidence\n',{flag:'wx',mode:0o600});
+  await assert.rejects(()=>runAttendance052Compatibility({...f,apply:true,confirm:'approved-isolated-052-210-compatibility',runCommand:db.runCommand}),{code:'EEXIST'});
+  assert.equal(await readFile(f.paths.extensionSupplement,'utf8'),'previous-failure-evidence\n');assert.deepEqual(db.writes,[]);
+  for(const file of [f.paths.attempt,f.paths.proof])await assert.rejects(()=>readFile(file),{code:'ENOENT'});
+ }finally{await rm(f.directory,{recursive:true,force:true});}
+});
 test('mock executor derives proof after actual052 schema-only clone+149 measured comparisons',async()=>{
  const f=await fixture(),db=fake();try{
   const r=await runAttendance052Compatibility({...f,apply:true,confirm:'approved-isolated-052-210-compatibility',runCommand:db.runCommand});assert.equal(r.finalRegistryCount,209);assert.equal(r.utcCases,25);assert.equal(r.employeeLegacyCases,4);assert.equal(r.realHttpAuthAccepted,false);assert.equal(r.productionRestoreProved,false);
   assert.equal(db.writes.filter(x=>/^\d+$/.test(x)).length,149);assert.equal(db.writes.at(-1),'202610090210');validateAttendanceCompatibilityProof(r,{target,baseline,scopeSha256:assets.scopeSha256});assert.equal(sha(await readFile(f.paths.proof)),r.proofSha256);
   assert.equal(r.historicalBootstrapReplayed,false);assert.equal(r.productionMetadataSource.productionDataCopied,false);assert.equal(r.productionMetadataSource.schemaOnly,true);
   assert((await readFile(f.paths.metadata,'utf8')).includes(truncateMetadata));
+  assert((await readFile(f.paths.metadata,'utf8')).startsWith('\n-- Synthetic'));assert((await readFile(f.paths.metadata,'utf8')).endsWith('\n\n'));
+  const extension=r.productionMetadataSource.extensionMetadata;
+  assert.equal(extension.originalMetadataSourceSha256,r.productionMetadataSource.metadataSourceSha256);
+  assert.equal(extension.sourceSha256,sha(await readFile(f.paths.extensionMetadata)));assert.equal(extension.supplementSha256,sha(await readFile(f.paths.extensionSupplement)));
+  assert.deepEqual([extension.extensionCount,extension.memberCount,extension.routineCount],[8,96,80]);
  }finally{await rm(f.directory,{recursive:true,force:true});}
 });
 test('mock failure or changed synthetic facts leaves no success proof and never drops/rebuilds',async()=>{

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';import test from 'node:test';
 import {ATTENDANCE_STAGED_REPAIR as p,ATTENDANCE_STAGED_REPAIR_PRESERVED as preserved,
- assertAttendanceStagedRepairReceipt} from './attendance-staged-tool-repair-policy.mjs';
+ ATTENDANCE_STAGED_FOLLOW_ON as follow,ATTENDANCE_STAGED_REPAIR_FILES as allowed,
+ assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
 export function stagedRepairReceiptFixture(){return {schemaVersion:1,kind:'attendance-staged-tool-repair',target:p.target,baseline:p.baseline,
  toolRevision:'e'.repeat(40),originalStateSha256:p.stateSha256,originalBuildProofSha256:p.buildProofSha256,
  sourceInputsSha256:'a'.repeat(64),builtOutputSha256:p.builtOutputSha256,scopeSha256:p.scopeSha256,preservedFiles:{...preserved},
@@ -20,4 +21,43 @@ test('fixed evidence, unchanged build/SQL/dependencies and no arbitrary skip/sco
   {changedToolFiles:['scripts/supabase-migrations/202610090210_merchant_attendance_utc.sql']},{changedToolFiles:[]},
   {preservedFiles:{...preserved,'runtime.json':'0'.repeat(64)}}])assert.throws(()=>assertAttendanceStagedRepairReceipt({...r,...changes}));
  for(const key of Object.keys(r)){const v={...r};delete v[key];assert.throws(()=>assertAttendanceStagedRepairReceipt(v),key);}
+});
+
+export function stagedFollowOnReceiptFixture(){
+ const original={...stagedRepairReceiptFixture(),toolRevision:follow.previousToolRevision};
+ const preparedAt='2026-10-10T06:00:00.000Z',effectiveReceipt={...original,toolRevision:'f'.repeat(40),preparedAt,
+  changedToolFiles:['scripts/attendance-production-052-compatibility.mjs','scripts/attendance-staged-tool-repair.mjs',
+   'scripts/attendance-staged-tool-repair-policy.mjs']};
+ return {original,chain:{schemaVersion:1,kind:'attendance-staged-tool-repair-follow-on',target:p.target,baseline:p.baseline,
+  previousToolRevision:follow.previousToolRevision,previousReceiptSha256:follow.previousReceiptSha256,
+  failedAttemptArchive:structuredClone(follow.archive),effectiveReceipt,preparedAt}};
+}
+test('one follow-on distinguishes its effective revision from the fixed original receipt and archived failed attempt',()=>{
+ const {original,chain}=stagedFollowOnReceiptFixture(),before=JSON.stringify(original);
+ assert.equal(assertAttendanceStagedFollowOnReceipt(chain,{originalReceipt:original,originalReceiptSha256:follow.previousReceiptSha256}),chain);
+ assert.equal(JSON.stringify(original),before);assert.notEqual(chain.effectiveReceipt.toolRevision,original.toolRevision);
+ assert.equal(chain.previousReceiptSha256,'9fcbddec82ad14257e8eacc1a187b40c34a02bc00f89547c3a4dec41f3200633');
+ assert.equal(chain.previousToolRevision,'80803b115ed964031650cfb9b3d5676d6d50aeaa');
+ assert.equal(chain.failedAttemptArchive.database.oid,'31204');
+ assert.ok(allowed.includes('scripts/attendance-extension-metadata.mjs'));
+ assert.ok(allowed.includes('scripts/attendance-extension-metadata.test.mjs'));
+ assert.ok(allowed.includes('scripts/test-helpers/attendance-extension-metadata.mjs'));
+});
+test('follow-on rejects missing/unknown chain fields, arbitrary history or archive, and application/input/dependency changes',()=>{
+ const {original,chain}=stagedFollowOnReceiptFixture(),ports={originalReceipt:original,originalReceiptSha256:follow.previousReceiptSha256};
+ for(const key of Object.keys(chain)){const altered={...chain};delete altered[key];assert.throws(()=>assertAttendanceStagedFollowOnReceipt(altered,ports),key);}
+ for(const change of [{skip:true},{target:'a'.repeat(40)},{baseline:'b'.repeat(40)},{kind:'attendance-staged-tool-repair'},
+  {previousToolRevision:'d'.repeat(40)},{previousReceiptSha256:'e'.repeat(64)},
+  {failedAttemptArchive:{...follow.archive,directory:'/arbitrary/archive'}},
+  {failedAttemptArchive:{...follow.archive,files:{...follow.archive.files,'additional.json':'a'.repeat(64)}}}])
+  assert.throws(()=>assertAttendanceStagedFollowOnReceipt({...chain,...change},ports));
+ for(const change of [{toolRevision:follow.previousToolRevision},{toolRevision:p.target},{sourceInputsSha256:'c'.repeat(64)},
+  {dependencySha256:'c'.repeat(64)},{scopeSha256:'c'.repeat(64)},{builtOutputSha256:'c'.repeat(64)},
+  {changedToolFiles:['scripts/attendance-production-052-compatibility.mjs']},
+  {preparedAt:'2026-10-10T03:00:00.000Z'},{preparedAt:'2026-10-10T07:00:00.000Z'}])
+  assert.throws(()=>assertAttendanceStagedFollowOnReceipt({...chain,effectiveReceipt:{...chain.effectiveReceipt,...change}},ports));
+ assert.throws(()=>assertAttendanceStagedFollowOnReceipt(chain,{...ports,originalReceiptSha256:'0'.repeat(64)}));
+ assert.throws(()=>assertAttendanceStagedFollowOnReceipt(chain,{...ports,originalReceipt:{...original,toolRevision:'c'.repeat(40)}}));
+ assert.throws(()=>assertAttendanceStagedFollowOnReceipt(chain,{...ports,target:'c'.repeat(40)}));
+ assert.throws(()=>assertAttendanceStagedFollowOnReceipt(chain,{...ports,toolRevision:'c'.repeat(40)}));
 });

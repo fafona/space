@@ -23,6 +23,8 @@ export const ATTENDANCE_STAGED_REPAIR_FILES=Object.freeze([
  'scripts/online-unpublished-candidate.test.mjs',
  'scripts/attendance-staged-tool-repair-policy.mjs','scripts/attendance-staged-tool-repair-policy.test.mjs',
  'scripts/attendance-staged-tool-repair.mjs','scripts/attendance-staged-tool-repair.test.mjs',
+ 'scripts/attendance-extension-metadata.mjs','scripts/attendance-extension-metadata.test.mjs',
+ 'scripts/test-helpers/attendance-extension-metadata.mjs',
  'docs/attendance-staged-tool-repair-20261010.md',
 ]);
 export const ATTENDANCE_STAGED_REPAIR_PRESERVED=Object.freeze({
@@ -59,5 +61,43 @@ export function assertAttendanceStagedRepairReceipt(r,{target:expectedTarget,too
   r.changedToolFiles.every(f=>ATTENDANCE_STAGED_REPAIR_FILES.includes(f))&&r.changedToolFiles.includes('scripts/attendance-production-052-compatibility.mjs')&&
   typeof r.preparedAt==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(r.preparedAt)&&
   Number.isFinite(Date.parse(r.preparedAt))&&new Date(r.preparedAt).toISOString()===r.preparedAt);
+ return r;
+}
+
+// A single follow-on may extend the fixed, already-sealed repair. It does not
+// relabel, overwrite or replace the original 80803b receipt or failed attempt.
+export const ATTENDANCE_STAGED_FOLLOW_ON=Object.freeze({
+ previousToolRevision:'80803b115ed964031650cfb9b3d5676d6d50aeaa',
+ previousReceiptSha256:'9fcbddec82ad14257e8eacc1a187b40c34a02bc00f89547c3a4dec41f3200633',
+ receiptName:'attendance-staged-tool-repair-follow-on.json',
+ archive:Object.freeze({
+  directory:`${ATTENDANCE_STAGED_REPAIR.operation}/attendance-compatibility-failure-20261010-054934`,
+  files:Object.freeze({
+   'attendance-compatibility-attempt.json':'a35fb6bedeb887f24429d58d770e90b0bb710d90fcb4072ac721d2d19ead09ef',
+   'attendance-compatibility-metadata.sql':'960007578f3d0e676aae6965575c57f1dd915c6b93dc272e4d2f8915108d2548',
+   'prepared.json':'c17bbca66e3510593604b5e90264cf80b1d8a6614426dabb1900cb14cc8a3421',
+   'sql-applied.json':'2ef960e9321777dd0886798a919a8fb8e8fe2a5202f546546979a1bf2cb531e2',
+   'completed.json':'5d0923d6d53d035d7929e7a0451d91d00902e632818c0b76daa4fb78b85259de',
+  }),
+  database:Object.freeze({oid:'31204',originalName:'faolla_attendance_compat_a535a308e21f',
+   retainedName:'faolla_attendance_failed_a535a308e21f_20261010_054934'}),
+ }),
+});
+const followOnKeys=['schemaVersion','kind','target','baseline','previousToolRevision','previousReceiptSha256',
+ 'failedAttemptArchive','effectiveReceipt','preparedAt'];
+export function assertAttendanceStagedFollowOnReceipt(r,{originalReceipt,originalReceiptSha256,target:expectedTarget,toolRevision}={}){
+ const f=ATTENDANCE_STAGED_FOLLOW_ON,p=ATTENDANCE_STAGED_REPAIR;
+ need(r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).length===followOnKeys.length&&followOnKeys.every(k=>Object.hasOwn(r,k)));
+ assertAttendanceStagedRepairReceipt(originalReceipt,{target:p.target,toolRevision:f.previousToolRevision});
+ need(originalReceiptSha256===f.previousReceiptSha256&&r.schemaVersion===1&&r.kind==='attendance-staged-tool-repair-follow-on'&&
+  r.target===p.target&&r.baseline===p.baseline&&(!expectedTarget||expectedTarget===p.target)&&
+  r.previousToolRevision===f.previousToolRevision&&r.previousReceiptSha256===f.previousReceiptSha256);
+ try{assert.deepEqual(r.failedAttemptArchive,f.archive);}catch{need(false);}
+ const effective=assertAttendanceStagedRepairReceipt(r.effectiveReceipt,{target:p.target,toolRevision});
+ need(effective.toolRevision!==f.previousToolRevision&&effective.sourceInputsSha256===originalReceipt.sourceInputsSha256&&
+  effective.dependencySha256===originalReceipt.dependencySha256&&effective.preparedAt===r.preparedAt&&
+  Date.parse(effective.preparedAt)>=Date.parse(originalReceipt.preparedAt)&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair.mjs')&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
  return r;
 }
