@@ -19,16 +19,25 @@ import {createOnlineReleaseToolPlan, executeOnlineReleaseToolPlan, verifyOnlineR
   createUnpublishedBuildEnvironmentTerminationReceipt, assertUnpublishedBuildEnvironmentTerminationReceipt} from './prepare-online-release-tool.mjs';
 
 const self = fileURLToPath(new URL('./prepare-online-release-tool.mjs', import.meta.url));
-test('bootstrap remains builtin-only until CLI loads housekeeping from the verified target', () => {
+const stagedRepairPolicy = fileURLToPath(new URL('./attendance-staged-tool-repair-policy.mjs', import.meta.url));
+test('bootstrap has one byte-verified builtin-only policy dependency before verified CLI housekeeping', () => {
   const source = fs.readFileSync(self, 'utf8');
   assert.deepEqual([...source.matchAll(/^import .+ from '([^']+)';$/gm)].map(match => match[1]),
-    ['node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url']);
+    ['node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url', './attendance-staged-tool-repair-policy.mjs']);
   assert.doesNotMatch(source, /\brequire\s*\(/);
   assert.equal([...source.matchAll(/\bimport\s*\(/g)].length, 1);
   assert.ok(source.indexOf('const prepared = prepareOnlineReleaseToolMain();') < source.indexOf('import(`file://${prepared.directory}/scripts/online-release-tool-retention.mjs`)'));
   assert.match(source, /runOnlineReleaseToolRetention\(\{target: prepared\.target, bootstrapDirectory\}\)/);
   assert.match(source, /\.\.\.prepared, toolRetention/);
   assert.match(source, /toolRetention: \{status: 'pending', reason: 'online_tool_retention_module_unavailable'\}/);
+  const policySource = fs.readFileSync(stagedRepairPolicy, 'utf8');
+  assert.ok([...policySource.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)].every(match => match[1].startsWith('node:')));
+  assert.doesNotMatch(policySource, /\bimport\s*(?:\(|['"])|\brequire\s*\(/);
+  assert.ok(TOOL_REQUIRED_FILES.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
+  assert.match(source, /policyBytes\.equals\(Buffer\.from\(git\(plan\.app, \['show', `\$\{plan\.target\}:\$\{STAGED_REPAIR_POLICY\}`\]\)\)\)/);
+  const ordinaryCli = source.slice(source.indexOf('export function prepareOnlineReleaseToolMain'));
+  assert.doesNotMatch(ordinaryCli, /fixedStagedRepairReceipt/);
+  assert.match(ordinaryCli, /verifyOnlineToolBootstrap\(plan\); assertOnlineToolNoPending\(\);/);
 });
 function fixturePath(location, kind = 'directory') {
   const value = fs.lstatSync(location);
@@ -51,7 +60,9 @@ function fixture(t) {
   const app = path.join(directory, 'repository'), toolRoot = path.join(directory, 'tools');
   fs.mkdirSync(app); fs.mkdirSync(toolRoot);
   fixtureGit(app, ['init']); fixtureGit(app, ['config', 'user.name', 'Fixture']); fixtureGit(app, ['config', 'user.email', 'fixture@example.invalid']);
-  const files = new Map(TOOL_REQUIRED_FILES.map(name => [name, name === 'scripts/prepare-online-release-tool.mjs' ? fs.readFileSync(self) : `fixture ${name}\n`]));
+  const files = new Map(TOOL_REQUIRED_FILES.map(name => [name, name === 'scripts/prepare-online-release-tool.mjs'
+    ? fs.readFileSync(self) : name === 'scripts/attendance-staged-tool-repair-policy.mjs'
+      ? fs.readFileSync(stagedRepairPolicy) : `fixture ${name}\n`]));
   files.set('src/nested/source.ts', 'export const fixture = 1;\n');
   files.set('public/traffic-card-v1.js', 'retained\n');
   files.set('public/downloads/large.zip', 'synthetic archive\n');
@@ -213,6 +224,27 @@ test('an unrelated clean checkout with identical helper bytes is not a known boo
   assert.equal(fs.existsSync(f.plan.directory), false);
 });
 
+test('bootstrap rejects changed policy bytes even if helper bytes and reported status are unchanged', t => {
+  const f = fixture(t), policy = path.join(f.app, 'scripts/attendance-staged-tool-repair-policy.mjs');
+  fs.appendFileSync(policy, '\n// synthetic unreviewed dependency change\n');
+  const entry = path.join(f.app, 'scripts/prepare-online-release-tool.mjs');
+  const hideDirty = {...f.ports, git: (cwd, args, input) => args[0] === 'status' ? '' : f.ports.git(cwd, args, input)};
+  assert.throws(() => verifyOnlineToolBootstrap(f.plan, entry, hideDirty), /bootstrap_source_changed/);
+  assert.equal(fs.existsSync(f.plan.directory), false);
+});
+
+test('known ancestor cannot bootstrap a reviewed new policy using unchanged helper bytes', t => {
+  const f = fixture(t), bootstrap = path.join(f.directory, 'older-policy-bootstrap');
+  fixtureGit(f.app, ['worktree', 'add', '--detach', bootstrap, f.target]);
+  fs.appendFileSync(path.join(f.app, 'scripts/attendance-staged-tool-repair-policy.mjs'), '\n// synthetic reviewed policy change\n');
+  fixtureGit(f.app, ['add', 'scripts/attendance-staged-tool-repair-policy.mjs']); fixtureGit(f.app, ['commit', '-m', 'Synthetic policy revision']);
+  const target = fixtureGit(f.app, ['rev-parse', 'HEAD']).trim(); fixtureGit(f.app, ['update-ref', 'refs/remotes/origin/main', target]);
+  const plan = createOnlineReleaseToolPlan(target, {app: f.app, toolRoot: f.toolRoot});
+  assert.throws(() => verifyOnlineToolBootstrap(plan, path.join(bootstrap, 'scripts/prepare-online-release-tool.mjs'), f.ports), /bootstrap_source_changed/);
+  assert.equal(fs.existsSync(plan.directory), false);
+  verifyOnlineToolBootstrap(plan, path.join(f.app, 'scripts/prepare-online-release-tool.mjs'), f.ports);
+});
+
 test('ownership guard checks every ancestor, file links, root ownership and writable modes', () => {
   const root = path.parse(path.resolve('.')).root, directory = path.join(root, 'private', 'tool');
   const normal = {uid: 0, mode: 0o700, nlink: 1, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false};
@@ -238,6 +270,103 @@ test('pending and incomplete releases or active maintenance reject source prepar
   }
   fs.writeFileSync(path.join(maintenance, 'state.json'), '{"phase":"prepared"}');
   assert.throws(() => assertOnlineToolNoPending({maintenance, releaseRoot}, fixturePath), /maintenance_not_ended/);
+});
+
+function stagedRepairPendingFixture() {
+  const policySource = fs.readFileSync(stagedRepairPolicy, 'utf8');
+  const fixedStateHash = '2732c9e1b4d85da750be85445d72cb84d5ea8d939aab0fb88c957732476a3156';
+  const state = {target: 'a535a308e21f121e7cf410a6f7d84c974eb370a6', baseline: 'b1304d5d58841c2247b93229b90bb7adcfd64965',
+    status: 'staged', directory: '/www/wwwroot/merchant-space.web-releases/a535a308e21f-online', lane: 'attendance'};
+  const stateText = JSON.stringify(state, null, 2), stateHash = digest(stateText);
+  assert.equal(policySource.split(`stateSha256:'${fixedStateHash}'`).length - 1, 1);
+  // Only a synthetic VM substitutes this fixed original-state SHA. It runs the
+  // real strict receipt validator; no runtime target/hash override is exported.
+  const policyCode = policySource.replace(`stateSha256:'${fixedStateHash}'`, `stateSha256:'${stateHash}'`)
+    .replace(/^import .+;\r?$/gm, '').replaceAll('export ', '') + `\n({ATTENDANCE_STAGED_REPAIR, assertAttendanceStagedRepairReceipt,
+      receipt: {schemaVersion:1, kind:'attendance-staged-tool-repair', target:ATTENDANCE_STAGED_REPAIR.target,
+      baseline:ATTENDANCE_STAGED_REPAIR.baseline, toolRevision:'e'.repeat(40), originalStateSha256:ATTENDANCE_STAGED_REPAIR.stateSha256,
+      originalBuildProofSha256:ATTENDANCE_STAGED_REPAIR.buildProofSha256, sourceInputsSha256:'a'.repeat(64),
+      builtOutputSha256:ATTENDANCE_STAGED_REPAIR.builtOutputSha256, scopeSha256:ATTENDANCE_STAGED_REPAIR.scopeSha256,
+      preservedFiles:{...ATTENDANCE_STAGED_REPAIR_PRESERVED}, activeSha256:ATTENDANCE_STAGED_REPAIR.activeSha256,
+      maintenanceSha256:ATTENDANCE_STAGED_REPAIR.maintenanceSha256, markerSha256:ATTENDANCE_STAGED_REPAIR.markerSha256,
+      retentionHeadSha256:ATTENDANCE_STAGED_REPAIR.retentionHeadSha256, dependencySha256:'b'.repeat(64),
+      changedToolFiles:['scripts/attendance-production-052-compatibility.mjs'], approvedNoRebuild:true,
+      preparedAt:'2026-10-10T04:00:00.000Z'}})`;
+  const policy = runInNewContext(policyCode, {assert}, {timeout: 1000}), p = policy.ATTENDANCE_STAGED_REPAIR;
+  policy.assertAttendanceStagedRepairReceipt(policy.receipt);
+  const maintenance = '/var/lib/faolla-maintenance/merchant-space', releaseRoot = '/var/lib/faolla-online-release';
+  const files = new Map([[`${maintenance}/state.json`, '{"phase":"ended"}'], [`${p.operation}/state.json`, stateText]]);
+  const directories = new Set(['/', maintenance, releaseRoot, p.operation, p.directory]);
+  for (const full of [...directories, ...files.keys()]) {
+    let parent = path.posix.dirname(full);
+    while (!directories.has(parent)) {directories.add(parent); parent = path.posix.dirname(parent);}
+  }
+  const patches = new Map(), entries = [p.target], io = {
+    lstatSync(full) {
+      const isFile = files.has(full), isDirectory = directories.has(full);
+      if (!isFile && !isDirectory) throw Object.assign(Error('synthetic missing'), {code: 'ENOENT'});
+      return {uid: 0, mode: isFile ? 0o600 : 0o700, nlink: 1, isFile: () => isFile, isDirectory: () => isDirectory,
+        isSymbolicLink: () => false, ...patches.get(full)};
+    },
+    realpathSync: full => full,
+    readFileSync(full, encoding) {assert.ok(files.has(full)); return encoding ? files.get(full) : Buffer.from(files.get(full));},
+    readdirSync(full) {assert.equal(full, releaseRoot); return [...entries];},
+  };
+  const helperSource = fs.readFileSync(self, 'utf8');
+  const helperCode = [helperSource.slice(helperSource.indexOf('const APP ='), helperSource.indexOf('function canonicalAbsolute')),
+    helperSource.slice(helperSource.indexOf('function canonicalAbsolute'), helperSource.indexOf('export function createOnlineReleaseToolPlan')),
+    helperSource.slice(helperSource.indexOf('export function assertOnlineToolOwnedPath'), helperSource.indexOf('function gitEnvironment')),
+    helperSource.slice(helperSource.indexOf('export function assertOnlineToolNoPending'), helperSource.indexOf('export function withOnlineToolPreparationLocks')),
+    '({assertOnlineToolNoPending})'].join('\n').replaceAll('export ', '');
+  const api = runInNewContext(helperCode, {fs: io, path: path.posix, createHash, Buffer,
+    ATTENDANCE_STAGED_REPAIR: p, assertAttendanceStagedRepairReceipt: policy.assertAttendanceStagedRepairReceipt}, {timeout: 1000});
+  return {p, state, stateText, files, directories, patches, entries, receipt: policy.receipt, api};
+}
+
+test('synthetic fixed staged repair is opt-in and never modifies original state or receipt', () => {
+  const f = stagedRepairPendingFixture(), receiptText = JSON.stringify(f.receipt);
+  assert.throws(() => f.api.assertOnlineToolNoPending(), /release_pending/);
+  f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt});
+  assert.equal(f.files.get(`${f.p.operation}/state.json`), f.stateText);
+  assert.equal(JSON.stringify(f.receipt), receiptText);
+});
+
+test('fixed staged receipt cannot exempt changed original bytes, status, baseline or candidate identity', () => {
+  const f = stagedRepairPendingFixture(), statePath = `${f.p.operation}/state.json`;
+  for (const stateText of [f.stateText + '\n', JSON.stringify({...f.state, status: 'preparing'}),
+    JSON.stringify({...f.state, status: 'database-ready'}), JSON.stringify({...f.state, status: 'active'}),
+    JSON.stringify({...f.state, baseline: 'd'.repeat(40)}), JSON.stringify({...f.state, directory: '/different'}),
+    JSON.stringify({...f.state, target: 'd'.repeat(40)})]) {
+    f.files.set(statePath, stateText);
+    assert.throws(() => f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt}), /release_pending/);
+    assert.equal(f.files.get(statePath), stateText);
+  }
+});
+
+test('fixed staged repair cannot bypass another pending release or unused/unknown repair target', () => {
+  const f = stagedRepairPendingFixture(), other = 'd'.repeat(40), operation = `/var/lib/faolla-online-release/${other}`;
+  f.directories.add(operation); f.entries.push(other);
+  f.files.set(`${operation}/state.json`, JSON.stringify({target: other, status: 'staged'}));
+  assert.throws(() => f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt}), /release_pending/);
+  f.entries.pop(); f.entries.pop();
+  assert.throws(() => f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt}), /release_pending/);
+  f.entries.push(other);
+  assert.throws(() => f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: {...f.receipt, target: other}}), /attendance_staged_repair_receipt_invalid/);
+});
+
+test('fixed staged repair requires a complete strict receipt and private owned state paths', () => {
+  const f = stagedRepairPendingFixture();
+  for (const receipt of [null, {approvedNoRebuild: true}, {...f.receipt, skip: true},
+    {...f.receipt, originalBuildProofSha256: 'd'.repeat(64)}, {...f.receipt, toolRevision: f.p.target}])
+    assert.throws(() => f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: receipt}), /attendance_staged_repair_receipt_invalid/);
+  for (const [full, patch] of [[f.p.operation, {mode: 0o755}], [`${f.p.operation}/state.json`, {mode: 0o644}],
+    [`${f.p.operation}/state.json`, {uid: 1000}], [`${f.p.operation}/state.json`, {nlink: 2}],
+    [f.p.directory, {isSymbolicLink: () => true}]]) {
+    f.patches.set(full, patch);
+    assert.throws(() => f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt}), /unsafe_path/);
+    f.patches.delete(full);
+  }
+  f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt});
 });
 
 test('busy deploy lock never creates operation lock; existing operation lock is preserved', t => {

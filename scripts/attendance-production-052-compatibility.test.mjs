@@ -15,15 +15,19 @@ const assets=await loadAttendance052CompatibilitySources({rootOwned:false});
 const acl={publicAcl:{owner:'postgres',entries:[{grantor:'postgres',grantee:'postgres',privilege:'USAGE',grantable:false},{grantor:'postgres',grantee:'PUBLIC',privilege:'USAGE',grantable:false}]},defaultAcls:[{owner:'supabase_admin',schema:'public',type:'r',entries:[{grantor:'supabase_admin',grantee:'postgres',privilege:'SELECT',grantable:false}]}]};
 const tables=['merchants','merchant_enterprise_roles','merchant_enterprise_employees','pages'].map(name=>({name,columns:['id','created_at']}));
 const fnKeys=Object.keys(attendanceProductionLegacy052SourceSha256);
+const truncateMetadata=[
+ ...Array.from({length:8},(_,i)=>`CREATE TRIGGER protect_${i} BEFORE TRUNCATE ON storage.synthetic_${i} FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete();`),
+ ...['postgres','anon','authenticated','service_role'].map(role=>`GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.synthetic TO ${role};`)
+].join('\n')+'\n';
 function formalState(){return {...attendanceProductionIdentity,currentUser:'supabase_admin',adminSuperuser:true,postgresSuperuser:false,primary:true,registry:assets.manifest.baseline,owners:{merchants:'supabase_admin',merchant_enterprise_roles:'supabase_admin',merchant_enterprise_employees:'supabase_admin'},attendanceRelations:0,attendanceFunctions:0,functions:Object.fromEntries(fnKeys.map((f,i)=>[f,{oid:i+50,owner:'supabase_admin',kind:'f',sourceSha256:attendanceProductionLegacy052SourceSha256[f],metadata:{oid:i+50,proowner:10,prolang:14,provolatile:'v',proisstrict:false,proparallel:'u',proleakproof:false,proretset:false,pronargdefaults:0,proargdefaults:null,proargnames:['p_input'],proargmodes:null,proallargtypes:null,proargtypes:'3802',proconfig:['search_path=public'],proacl:['supabase_admin=X/supabase_admin'],procost:100,prorows:0,prosecdef:true,prokind:'f',prorettype:3802,prosupport:'-',prosqlbody:null}}]))};}
 function snapshot(installed=0){return {databaseOid:'20000',backendPid:550,owner:'supabase_admin',registry:[...assets.manifest.baseline,...assets.manifest.migrations.slice(0,installed).map(({version,name})=>({version,name}))],attendanceRelations:installed?100:0,attendanceFunctions:installed?600:0,authUsers:0,outsideSha256:'d'.repeat(64),rolesSha256:'e'.repeat(64),tables,functions:Object.fromEntries(fnKeys.map((f,i)=>[f,{metadata:{oid:i+50,proowner:10,prolang:14,proacl:['supabase_admin=X/supabase_admin'],proconfig:i===1&&installed===149?['search_path=pg_catalog']:['search_path=public']},sourceSha256:attendanceProductionLegacy052SourceSha256[f]}]))};}
-function fake({failMigration=null,mismatch=false,sourceOverride={}}={}){
+function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffix=''}={}){
  let created=false,installed=0;const writes=[],commands=[];
  const runCommand=async(command,args,options={})=>{
   assert.equal(command,'docker');assert.deepEqual(args.slice(0,2),['--host','unix:///var/run/docker.sock']);assert(!args.join(' ').includes('.Config.Env'));commands.push(args);
   if(args.includes(attendanceProductionIdentity.containerId)){
    if(args[2]==='inspect')return {status:0,stdout:JSON.stringify({id:attendanceProductionIdentity.containerId,name:'/supabase-db',running:true,mounts:[{Type:'bind',Source:attendanceProductionIdentity.dataSource,RW:true}]})};
-   if(args.at(-1).includes('exec pg_dump')){assert(args.at(-1).includes('--schema-only'));assert(args.at(-1).includes('default_transaction_read_only=on'));return {status:0,stdout:'CREATE SCHEMA auth;\nCREATE TABLE auth.users(id uuid);\nCREATE TABLE public.faolla_schema_migrations(version bigint,name text);\nCREATE TRIGGER project AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.project_fn();\n'};}
+   if(args.at(-1).includes('exec pg_dump')){assert(args.at(-1).includes('--schema-only'));assert(args.at(-1).includes('default_transaction_read_only=on'));return {status:0,stdout:'CREATE SCHEMA auth;\nCREATE TABLE auth.users(id uuid);\nCREATE TABLE public.faolla_schema_migrations(version bigint,name text);\nCREATE TRIGGER project AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.project_fn();\n'+truncateMetadata+metadataSuffix};}
    assert(options.input.startsWith('begin read only;')||options.input.startsWith('-- attendance_compatibility_metadata_contract\nbegin read only;'));return {status:0,stdout:JSON.stringify(options.input.startsWith('begin read only;')?formalState():'9'.repeat(64))};
   }
   if(args[2]==='inspect')return {status:0,stdout:JSON.stringify({id:pilot,name:'/faolla-attendance-pilot-db',image:'sha256:8613ba8eab946dff6674a2db6aab75b80aa101da39035fe20f62b0c7591ab35d',running:true,network:'none',ports:{},privileged:false,labels:{'com.docker.compose.project':'faolla-attendance-pilot','io.faolla.isolated-pilot':'attendance-pilot-20261009'},mounts:[{Type:'bind',Source:'/opt/faolla-attendance-pilot/runtime/db/data',RW:true}]})};
@@ -63,6 +67,57 @@ test('schema-only validator retains public/Auth triggers but denies data/globals
  const source='CREATE TABLE public.synthetic(id int);\nCREATE TRIGGER project AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.project_fn();\nCREATE FUNCTION public.native() RETURNS void AS $$ begin DELETE FROM public.synthetic;end; $$ LANGUAGE plpgsql;\n';assert.equal(validateAttendance052SchemaOnlySql(source).sql,source);
  for(const s of ['INSERT INTO public.merchants VALUES(1);','COPY auth.users FROM stdin;','CREATE ROLE fake;','ALTER DATABASE postgres SET a=1;','\\connect postgres'])assert.throws(()=>validateAttendance052SchemaOnlySql(s));
 });
+
+test('schema-only TRUNCATE events and exact TABLE privilege lists retain every original byte',()=>{
+ for(const source of [truncateMetadata,
+  'CREATE OR REPLACE TRIGGER "protect;quoted"\nBEFORE INSERT OR TRUNCATE OR UPDATE OF "column,name" ON "storage"."synthetic;quoted"\nFOR EACH STATEMENT EXECUTE FUNCTION "storage"."protect_delete"(\'argument;value\');',
+  'CREATE /* outer /* nested */ comment */ TRIGGER protect AFTER TRUNCATE ON storage.synthetic FOR EACH STATEMENT EXECUTE PROCEDURE storage.protect_delete();',
+  'GRANT SELECT ("column,name"),\nTRUNCATE /* privilege only */ , UPDATE (id) ON TABLE "public"."synthetic;quoted", public.other TO "role;quoted", service_role WITH GRANT OPTION GRANTED BY postgres;',
+  'GRANT TRUNCATE ON public.synthetic TO postgres;\nGRANT TRUNCATE ON TABLE public.other TO anon;',
+  'CREATE FUNCTION public.native() RETURNS void AS $native$ begin TRUNCATE public.synthetic; end; $native$ LANGUAGE plpgsql;'
+ ])assert.deepEqual(validateAttendance052SchemaOnlySql(source),{sql:source,sha256:sha(source)});
+});
+
+test('real TRUNCATE statements are denied with qualified/quoted/ONLY/TABLE/comment and prior-statement variants',()=>{
+ const statements=[
+  'TRUNCATE public.synthetic;',
+  'truncate "public"."synthetic;quoted";',
+  'TRUNCATE\nTABLE\nONLY public.synthetic RESTART IDENTITY CASCADE;',
+  'TRUNCATE ONLY public.synthetic;',
+  'TRUNCATE/* comment */public.synthetic;',
+  'TRUNCATE -- comment\n TABLE public.synthetic;',
+  '-- comment\rTRUNCATE/* comment */public.synthetic;',
+  'TRUNCATE /* outer /* nested */ comment */ "public"."synthetic";',
+  'TRUNCATE(public.synthetic);'
+ ];
+ for(const statement of statements)for(const prefix of ['', '-- schema metadata\n', '/* comment; */\n', 'CREATE TABLE public.synthetic(id int);', truncateMetadata]){
+  assert.throws(()=>validateAttendance052SchemaOnlySql(prefix+statement),/attendance_compatibility_metadata_not_schema_only/);
+ }
+});
+
+test('metadata exemptions never cover other tokens, appended commands or malformed privilege/trigger contexts',()=>{
+ const trigger='CREATE TRIGGER protect BEFORE TRUNCATE ON storage.synthetic FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete()';
+ const grant='GRANT SELECT,TRUNCATE ON TABLE public.synthetic TO service_role';
+ for(const source of [
+  trigger+' TRUNCATE public.synthetic;',
+  grant+' TRUNCATE public.synthetic;',
+  trigger+';TRUNCATE public.synthetic;',
+  grant+';/* separated */TRUNCATE public.synthetic;',
+  trigger+';-- pretend GRANT TRUNCATE ON TABLE x TO y;\nTRUNCATE public.synthetic;',
+  'CREATE TRIGGER protect BEFORE TRUNCATE public.synthetic;',
+  'CREATE TRIGGER protect BEFORE TRUNCATE ON storage.synthetic FOR EACH ROW EXECUTE FUNCTION storage.protect_delete();',
+  'GRANT TRUNCATE public.synthetic;',
+  'GRANT unknown,TRUNCATE ON TABLE public.synthetic TO anon;',
+  'GRANT SELECT ON TABLE public.synthetic TO TRUNCATE;',
+  'GRANT TRUNCATE ON TABLE public.synthetic TO anon DELETE FROM public.synthetic;',
+  grant+';INSERT INTO public.synthetic VALUES(1);',
+  trigger+';DELETE FROM public.synthetic;',
+  grant+';COPY public.synthetic FROM stdin;',
+  'CREATE TRIGGER protect BEFORE TRUNCATE ON storage.synthetic FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete(\'a;\');TRUNCATE public.synthetic;',
+  'GRANT TRUNCATE ON TABLE "public"."synthetic;TRUNCATE public.other" TO anon;TRUNCATE public.synthetic;',
+  "SELECT E'escaped\\\'quote';TRUNCATE/* comment */public.synthetic;"
+ ])assert.throws(()=>validateAttendance052SchemaOnlySql(source),/attendance_compatibility_metadata_not_schema_only/);
+});
 test('ACL clone retains postgres bootstrap defaults and is database scoped, never memberships',()=>{
  const source=attendanceCompatibilityPublicAclSql(acl);assert(source.includes('for role "supabase_admin" in schema "public" grant SELECT on TABLES to "postgres"'));
  assert(!/alter role|create role|reassign owned|cascade/i.test(source));
@@ -84,11 +139,18 @@ test('CLI has no production/data dump/source/proof/roles/testOnly bypass flag',(
 test('mock dry-run only inspects pilot/source and creates no DB, metadata or proof',async()=>{
  const f=await fixture(),db=fake();try{const r=await runAttendance052Compatibility({...f,runCommand:db.runCommand});assert.equal(r.executed,false);assert.deepEqual(db.writes,[]);await assert.rejects(()=>readFile(f.paths.proof));}finally{await rm(f.directory,{recursive:true,force:true});}
 });
+test('mock metadata containing a real TRUNCATE fails before any attempt, metadata, proof or new DB write',async()=>{
+ const f=await fixture(),db=fake({metadataSuffix:'TRUNCATE/* data command */public.synthetic;'});try{
+  await assert.rejects(()=>runAttendance052Compatibility({...f,apply:true,confirm:'approved-isolated-052-210-compatibility',runCommand:db.runCommand}),/attendance_compatibility_metadata_not_schema_only/);
+  assert.deepEqual(db.writes,[]);for(const file of [f.paths.attempt,f.paths.metadata,f.paths.proof])await assert.rejects(()=>readFile(file),{code:'ENOENT'});
+ }finally{await rm(f.directory,{recursive:true,force:true});}
+});
 test('mock executor derives proof after actual052 schema-only clone+149 measured comparisons',async()=>{
  const f=await fixture(),db=fake();try{
   const r=await runAttendance052Compatibility({...f,apply:true,confirm:'approved-isolated-052-210-compatibility',runCommand:db.runCommand});assert.equal(r.finalRegistryCount,209);assert.equal(r.utcCases,25);assert.equal(r.employeeLegacyCases,4);assert.equal(r.realHttpAuthAccepted,false);assert.equal(r.productionRestoreProved,false);
   assert.equal(db.writes.filter(x=>/^\d+$/.test(x)).length,149);assert.equal(db.writes.at(-1),'202610090210');validateAttendanceCompatibilityProof(r,{target,baseline,scopeSha256:assets.scopeSha256});assert.equal(sha(await readFile(f.paths.proof)),r.proofSha256);
   assert.equal(r.historicalBootstrapReplayed,false);assert.equal(r.productionMetadataSource.productionDataCopied,false);assert.equal(r.productionMetadataSource.schemaOnly,true);
+  assert((await readFile(f.paths.metadata,'utf8')).includes(truncateMetadata));
  }finally{await rm(f.directory,{recursive:true,force:true});}
 });
 test('mock failure or changed synthetic facts leaves no success proof and never drops/rebuilds',async()=>{

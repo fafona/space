@@ -14,6 +14,7 @@ export const attendanceProductionScopeSha256='3518a971c62c0f9a074b94c873078729e3
 export const attendanceProductionIdentity=Object.freeze({containerId:'0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416',containerName:'supabase-db',databaseName:'postgres',databaseOid:'5',systemIdentifier:'7612049595342295079',serverVersionNum:'150008',dataSource:'/opt/supabase/docker/volumes/db/data'});
 const SHA=/^[0-9a-f]{40}$/;
 const HEX=/^[0-9a-f]{64}$/;
+const STAGED_TOOL_REPAIR_TARGET='a535a308e21f121e7cf410a6f7d84c974eb370a6';
 const FUNCTIONS=['faolla_valid_merchant_enterprise_permissions_v1(text[])','faolla_update_merchant_enterprise_employee_v1(jsonb)','faolla_update_merchant_enterprise_employee_v1_preaudit_019(jsonb)','faolla_attendance_valid_zone_v1(text)'];
 export const attendanceProductionLegacy052SourceSha256=Object.freeze({
  [FUNCTIONS[0]]:'58fd1ff5d0d5b310d156de06a61cc86f344c86b5ea82b9fcff9b7b154e89539d',
@@ -170,6 +171,7 @@ export function validateAttendanceCompatibilityProof(proof,{target,baseline,scop
  require_(/^[1-9][0-9]{0,9}$/.test(proof.databaseOid)&&proof.databaseOid!=='5'&&Number.isSafeInteger(proof.backendPid)&&proof.backendPid>0&&/^[0-9]{10,24}$/.test(proof.sourcePilotSystemIdentifier)&&proof.sourcePilotSystemIdentifier!==attendanceProductionIdentity.systemIdentifier,'attendance_compatibility_database_identity');
  for(const key of ['outsideCatalog','clusterRoles'])require_(HEX.test(proof[`${key}Sha256Before`])&&proof[`${key}Sha256Before`]===proof[`${key}Sha256After`],'attendance_compatibility_catalog_drift');
  const source=proof.productionMetadataSource;require_(source?.schemaOnly===true&&source.productionDataCopied===false&&source.registryCount===60&&source.registryMaximum==='202609240052'&&HEX.test(source.metadataSourceSha256)&&HEX.test(source.normalizedContractSha256)&&HEX.test(source.formalStateSha256Before)&&source.formalStateSha256Before===source.formalStateSha256After&&proof.historicalBootstrapReplayed===false&&proof.originalAttendanceSourcesInstalled===149,'attendance_compatibility_actual_052_source');same(source.identity,attendanceProductionIdentity,'attendance_compatibility_actual_052_identity');
+ if(target===STAGED_TOOL_REPAIR_TARGET&&hasToolRepairAudit(proof))validateToolRepairAuditShape(proof,'attendance_compatibility_tool_repair_audit_invalid');
  return proof;
 }
 export async function validateAttendanceBackupEvidence(input){
@@ -186,6 +188,42 @@ export async function validateAttendanceBackupEvidence(input){
  require_(await sha256File(input.backup)===create.outputSha256,'attendance_backup_archive_changed');
  const age=(input.nowMs??Date.now())-Date.parse(create.createdAt);require_(age>=-60000&&age<=24*60*60*1000,'attendance_backup_stale');
  return {archiveSha256:create.outputSha256,archiveBytes:create.outputBytes,createdAt:create.createdAt,source:source.source,restoreRehearsed:false};
+}
+
+const hasToolRepairAudit=value=>Object.hasOwn(value,'toolRevision')||Object.hasOwn(value,'stagedToolRepairReceiptSha256');
+function validateToolRepairAuditShape(value,code){
+ require_(typeof value.toolRevision==='string'&&SHA.test(value.toolRevision)&&value.toolRevision!==STAGED_TOOL_REPAIR_TARGET&&
+  typeof value.stagedToolRepairReceiptSha256==='string'&&HEX.test(value.stagedToolRepairReceiptSha256),code);
+}
+function bindToolRepairAudit(value,repair,code){
+ validateToolRepairAuditShape(value,code);
+ require_(repair&&value.toolRevision===repair.toolRevision&&value.stagedToolRepairReceiptSha256===repair.receiptSha256,code);
+}
+async function verifiedMigrationToolRepair(input){
+ require_(input.target===STAGED_TOOL_REPAIR_TARGET,'attendance_tool_repair_target_invalid');
+ // No injectable verifier or source-SHA override. The fixed runtime rechecks
+ // current trusted tool/main identity, retained candidate bytes and receipt.
+ const {verifyAttendanceStagedToolRepairReceipt}=await import('./attendance-staged-tool-repair.mjs');
+ const result=await verifyAttendanceStagedToolRepairReceipt({target:input.target,rootDir:input.rootDir??ROOT,phase:'migration'});
+ require_(result?.receipt?.target===input.target&&typeof result.toolRevision==='string'&&SHA.test(result.toolRevision)&&result.toolRevision!==input.target&&
+  typeof result.receiptSha256==='string'&&HEX.test(result.receiptSha256),'attendance_tool_repair_receipt_invalid');
+ return result;
+}
+async function migrationBackupEvidence(input,compatibility){
+ const {value:create}=await ownedJson(input.createReport,input);
+ const source=validateDatabaseBackupSourceIdentity(create.source,{requireRecoveryContent:true});require_(source.valid,'attendance_backup_source_invalid');
+ let repair=null;
+ if(input.target===STAGED_TOOL_REPAIR_TARGET&&source.source.sha!==input.target){
+  repair=await verifiedMigrationToolRepair(input);
+  require_(source.source.sha===repair.toolRevision,'attendance_backup_tool_repair_source_mismatch');
+ }
+ // The general backup contract remains unchanged. Only a real, independently
+ // verified fixed-case receipt can choose its exact current tool as source.
+ const backup=await validateAttendanceBackupEvidence({...input,target:repair?.toolRevision??input.target});
+ if(input.target===STAGED_TOOL_REPAIR_TARGET&&(repair||hasToolRepairAudit(compatibility)))
+  bindToolRepairAudit(compatibility,repair,'attendance_compatibility_tool_repair_source_mismatch');
+ if(repair)require_(backup.source.sha===repair.toolRevision,'attendance_backup_tool_repair_source_mismatch');
+ return {backup,repair,audit:repair?{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256}:{}};
 }
 
 export function attendance052CompatibilityPlan({target,sourcePilotContainerId}){
@@ -232,11 +270,12 @@ export async function runAttendanceProductionMigrations(input={}){
   require_(input.confirm==='approved-attendance-061-210','attendance_explicit_apply_approval_required');
   await ownedRuntime(paths.directory,input);
   const compatibility=await ownedJson(paths.compatibility,input);validateAttendanceCompatibilityProof(compatibility.value,{...input,scopeSha256:scope.scopeSha256});
-  const backup=await validateAttendanceBackupEvidence(input);
+  const {backup,repair,audit}=await migrationBackupEvidence(input,compatibility.value);
   let progress;
   if(input.resume){
    const prior=await ownedJson(paths.progress,input);require_(prior.sha256===input.resumeSha256,'attendance_resume_proof_changed');progress=prior.value;
    require_(progress.kind==='attendance-production-database-progress'&&progress.target===input.target&&progress.baseline===input.baseline&&progress.scopeSha256===scope.scopeSha256&&progress.backupArchiveSha256===backup.archiveSha256&&progress.compatibilityProofSha256===compatibility.sha256&&count<=149,'attendance_resume_not_exact');
+   if(input.target===STAGED_TOOL_REPAIR_TARGET&&(repair||hasToolRepairAudit(progress)))bindToolRepairAudit(progress,repair,'attendance_resume_tool_repair_source_mismatch');
    if(count===progress.installed+1){
     // Exactly the journaled attempt may have committed before its receipt was
     // lost. Do not replay that SQL; the exact registry confirms only this step.
@@ -246,7 +285,7 @@ export async function runAttendanceProductionMigrations(input={}){
    }
    require_(progress.installed===count,'attendance_resume_not_exact');
   }else{
-   progress={schemaVersion:1,kind:'attendance-production-database-progress',target:input.target,baseline:input.baseline,scopeSha256:scope.scopeSha256,dbIdentity:attendanceProductionIdentity,backupArchiveSha256:backup.archiveSha256,compatibilityProofSha256:compatibility.sha256,installed:0,initialFunctions:initial.functions,receipts:[]};
+   progress={schemaVersion:1,kind:'attendance-production-database-progress',target:input.target,baseline:input.baseline,scopeSha256:scope.scopeSha256,...audit,dbIdentity:attendanceProductionIdentity,backupArchiveSha256:backup.archiveSha256,compatibilityProofSha256:compatibility.sha256,installed:0,initialFunctions:initial.functions,receipts:[]};
    await saveEvidence(paths.progress,progress);
   }
   for(let i=count;i<149;i++){
@@ -267,7 +306,7 @@ export async function runAttendanceProductionMigrations(input={}){
   same(final.functions[FUNCTIONS[0]].metadata,progress.initialFunctions[FUNCTIONS[0]].metadata,'attendance_legacy_validator_metadata_changed');
   const oldWrapper={...progress.initialFunctions[FUNCTIONS[1]].metadata},newWrapper={...final.functions[FUNCTIONS[1]].metadata};delete oldWrapper.proconfig;delete newWrapper.proconfig;
   same(oldWrapper,newWrapper,'attendance_legacy_employee_metadata_changed');same(final.functions[FUNCTIONS[1]].metadata.proconfig,['search_path=pg_catalog'],'attendance_legacy_employee_search_path');
-  const ready={schemaVersion:1,kind:'attendance-production-database-ready',target:input.target,baseline:input.baseline,scopeSha256:scope.scopeSha256,dbIdentity:attendanceProductionIdentity,registryCount:209,registryMaximum:'202610090210',registry:final.registry,functions:final.functions,
+  const ready={schemaVersion:1,kind:'attendance-production-database-ready',target:input.target,baseline:input.baseline,scopeSha256:scope.scopeSha256,...audit,dbIdentity:attendanceProductionIdentity,registryCount:209,registryMaximum:'202610090210',registry:final.registry,functions:final.functions,
    backupVerified:true,backupArchiveSha256:backup.archiveSha256,backupCreatedAt:backup.createdAt,compatibilityVerified:true,compatibilityProofSha256:compatibility.sha256,legacyRowsProtectedInEveryTransaction:true,oldRolePermissionsAutoGranted:false,restoreRehearsed:false,completedAt:new Date().toISOString()};
   const proofSha256=await saveEvidence(paths.ready,ready);return {...ready,proofSha256};
  }finally{await lock.release();}
@@ -278,10 +317,15 @@ export async function verifyAttendanceProductionDatabaseReady(input={}){
  const paths=input.paths??runtimePaths(input.target);await ownedRuntime(paths.directory,input);
  const {value:proof,sha256:proofSha256}=await ownedJson(paths.ready,input);
  require_(proof.schemaVersion===1&&proof.kind==='attendance-production-database-ready'&&proof.target===input.target&&proof.baseline===input.baseline&&proof.scopeSha256===attendanceProductionScopeSha256&&proof.backupVerified===true&&proof.compatibilityVerified===true&&proof.legacyRowsProtectedInEveryTransaction===true&&proof.oldRolePermissionsAutoGranted===false,'attendance_ready_proof_invalid');
+ let audit={};
+ if(input.target===STAGED_TOOL_REPAIR_TARGET&&hasToolRepairAudit(proof)){
+  const repair=await verifiedMigrationToolRepair(input);bindToolRepairAudit(proof,repair,'attendance_ready_tool_repair_source_mismatch');
+  audit={toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256};
+ }
  same(proof.dbIdentity,attendanceProductionIdentity,'attendance_ready_database_mismatch');
  const scope=await loadAttendanceProductionScope(input),actual=await state(input.runCommand??runMigrationCommand);validateAttendanceProductionState(actual,scope.manifest,{complete:true});
  same(actual.registry,proof.registry,'attendance_ready_registry_changed');same(actual.functions,proof.functions,'attendance_ready_functions_changed');
- return {schemaVersion:1,kind:proof.kind,target:input.target,baseline:input.baseline,scopeSha256:proof.scopeSha256,dbIdentity:proof.dbIdentity,registryCount:209,registryMaximum:'202610090210',backupVerified:true,compatibilityVerified:true,proofSha256};
+ return {schemaVersion:1,kind:proof.kind,target:input.target,baseline:input.baseline,scopeSha256:proof.scopeSha256,...audit,dbIdentity:proof.dbIdentity,registryCount:209,registryMaximum:'202610090210',backupVerified:true,compatibilityVerified:true,proofSha256};
 }
 
 export function parseAttendanceProductionArguments(argv){

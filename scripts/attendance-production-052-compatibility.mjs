@@ -54,10 +54,81 @@ async function productionMetadataState(input,manifest){
  const state=JSON.parse(await readonly(attendanceReadOnlyStateSql()));validateAttendanceProductionState(state,manifest,{fresh:true});
  const contract=JSON.parse(await readonly(attendanceCompatibilityMetadataContractSql()));return {state,contract};
 }
+function schemaOnlyTruncateMask(source){
+ const permitted=[],statement=[];
+ const finish=()=>{
+  if(!statement.some(t=>t.kind==='word'&&t.value==='truncate')){statement.length=0;return;}
+  let i=0;const allowed=[];
+  const word=value=>statement[i]?.kind==='word'&&statement[i]?.value===value&&Boolean(++i);
+  const symbol=value=>statement[i]?.kind==='symbol'&&statement[i]?.value===value&&Boolean(++i);
+  const name=()=>{if(!['word','identifier'].includes(statement[i]?.kind))return false;i++;return true;};
+  const qualified=()=>{if(!name())return false;while(symbol('.'))if(!name())return false;return true;};
+  const names=()=>{if(!name())return false;while(symbol(','))if(!name())return false;return true;};
+  const trigger=()=>{
+   if(!word('create'))return false;
+   if(word('or')&&!(word('replace')))return false;
+   if(!word('trigger')||!name()||!(word('before')||word('after')))return false;
+   do{
+    const event=statement[i];
+    if(event?.kind!=='word'||!['insert','delete','update','truncate'].includes(event.value))return false;i++;
+    if(event.value==='truncate')allowed.push(event);
+    if(event.value==='update'&&word('of')&&!names())return false;
+   }while(word('or'));
+   if(!word('on')||!qualified()||!word('for')||!word('each')||!word('statement')||!word('execute')||!(word('function')||word('procedure'))||!qualified()||!symbol('('))return false;
+   if(!symbol(')')){
+    do{if(!['word','identifier','literal','number'].includes(statement[i]?.kind))return false;i++;}while(symbol(','));
+    if(!symbol(')'))return false;
+   }
+   return i===statement.length;
+  };
+  const grant=()=>{
+   if(!word('grant'))return false;
+   do{
+    const privilege=statement[i];
+    if(privilege?.kind!=='word'||!['select','insert','update','delete','truncate','references','trigger'].includes(privilege.value))return false;i++;
+    if(privilege.value==='truncate')allowed.push(privilege);
+    if(symbol('(')&&(!['select','insert','update','references'].includes(privilege.value)||!names()||!symbol(')')))return false;
+   }while(symbol(','));
+   if(!word('on'))return false;word('table');
+   if(!qualified())return false;while(symbol(','))if(!qualified())return false;
+   if(!word('to')||!names())return false;
+   if(word('with')&&!(word('grant')&&word('option')))return false;
+   if(word('granted')&&!(word('by')&&name()))return false;
+   return i===statement.length;
+  };
+  let valid=trigger();
+  if(!valid){i=0;allowed.length=0;valid=grant();}
+  need(valid&&statement.every(t=>t.kind!=='word'||t.value!=='truncate'||allowed.includes(t)),'attendance_compatibility_metadata_not_schema_only');
+  permitted.push(...allowed);statement.length=0;
+ };
+ // Inspect each statement without treating comment/string semicolons as boundaries.
+ // Only the specific event/privilege tokens are masked, never a complete statement.
+ for(let i=0;i<source.length;){
+  const start=i,c=source[i];
+  if(/\s/.test(c)){i++;continue;}
+  if(source.startsWith('--',i)){i+=2;while(i<source.length&&!['\r','\n'].includes(source[i]))i++;continue;}
+  if(source.startsWith('/*',i)){
+   i+=2;let depth=1;while(i<source.length&&depth){if(source.startsWith('/*',i)){depth++;i+=2;}else if(source.startsWith('*/',i)){depth--;i+=2;}else i++;}
+   need(depth===0,'attendance_compatibility_metadata_not_schema_only');continue;
+  }
+  if(c==='"'||c==="'"){
+   const escaped=c==="'"&&/[eE]/.test(source[i-1]??'')&&!/[a-z0-9_$]/i.test(source[i-2]??'');
+   i++;let closed=false;while(i<source.length){if(escaped&&source[i]==='\\'){i+=2;continue;}if(source[i]===c){if(source[i+1]===c){i+=2;continue;}i++;closed=true;break;}i++;}
+   need(closed,'attendance_compatibility_metadata_not_schema_only');statement.push({kind:c==='"'?'identifier':'literal',start,end:i});continue;
+  }
+  const token=source.slice(i).match(/^[a-z_][a-z0-9_$]*|^[0-9]+(?:\.[0-9]+)?/i);
+  if(token){i+=token[0].length;statement.push({kind:/^[0-9]/.test(token[0])?'number':'word',value:token[0].toLowerCase(),start,end:i});continue;}
+  i++;if(c===';')finish();else statement.push({kind:'symbol',value:c,start,end:i});
+ }
+ finish();
+ let result=source;for(const t of permitted.toReversed())result=result.slice(0,t.start)+' '.repeat(t.end-t.start)+result.slice(t.end);
+ return result;
+}
 export function validateAttendance052SchemaOnlySql(source){
  need(typeof source==='string'&&source.length>0&&source.length<16000000,'attendance_compatibility_metadata_size');let masked=source,match;
  const bodies=/\bCREATE(?:\s+OR\s+REPLACE)?\s+(?:FUNCTION|PROCEDURE)\b[\s\S]*?\bAS\s+(\$(?:[a-z_][a-z0-9_]*)?\$)/gi;
  while((match=bodies.exec(source))){const start=bodies.lastIndex,end=source.indexOf(match[1],start);need(end>=start,'attendance_compatibility_metadata_delimiter');masked=masked.slice(0,start)+masked.slice(start,end).replace(/[^\r\n]/g,' ')+masked.slice(end);bodies.lastIndex=end+match[1].length;}
+ masked=schemaOnlyTruncateMask(masked);
  // No data commands, globals, database selection or production credentials.
  // Preserve ALL actual052 public/Auth triggers/owners/grants/RLS/definitions.
  need(!/(?:^|\n)\s*\\|\b(?:CREATE|ALTER|DROP)\s+(?:ROLE|USER|DATABASE)\b|\b(?:INSERT\s+INTO|COPY\s+[^;\n]+\s+FROM|TRUNCATE\s+|DELETE\s+FROM|SELECT\s+pg_catalog\.setval)\b/i.test(masked),'attendance_compatibility_metadata_not_schema_only');
@@ -184,17 +255,25 @@ function originalUtcExpression(foundation){const body=foundation.match(/create o
 export async function runAttendance052Compatibility(input={}){
  const database=inputs(input),assets=await loadAttendance052CompatibilitySources(input),p=input.paths??paths(input.target);
  if(input.testOnly!==true)need(process.platform==='linux'&&process.getuid?.()===0,'attendance_compatibility_linux_root');
+ // Only the separately approved, already-built application may use a reviewed
+ // source-only tool revision. A mock/test flag cannot provide this real proof.
+ let repair=null;
+ if(input.target==='a535a308e21f121e7cf410a6f7d84c974eb370a6'){
+  const {verifyAttendanceStagedToolRepairReceipt}=await import('./attendance-staged-tool-repair.mjs');
+  repair=verifyAttendanceStagedToolRepairReceipt({target:input.target,rootDir:input.rootDir??ROOT,phase:'staged'});
+ }
+ const audit=repair?{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256}:{};
  await owned(p.directory,{directory:true,testOnly:input.testOnly});if(input.testOnly!==true){let ancestor=path.dirname(p.directory);for(;;){await owned(ancestor,{directory:true});const parent=path.dirname(ancestor);if(parent===ancestor)break;ancestor=parent;}}
  if(input.testOnly!==true){await owned(PILOT,{directory:true});await owned(PILOT+'/.pilot-owner.json');const marker=JSON.parse(await readFile(PILOT+'/.pilot-owner.json','utf8'));need(marker.owner===OWNER&&marker.root===PILOT&&marker.project==='faolla-attendance-pilot','attendance_compatibility_owner_marker');}
  await inspect(input);const beforeSource=await sql(input,'postgres',attendanceCompatibilitySourceProbeSql(database),{json:true,readOnly:true});validateSource(beforeSource);
  need(beforeSource.existingCompatibilityDatabase===false,'attendance_compatibility_database_already_exists');
  const formalBefore=await productionMetadataState(input,assets.manifest);
- if(input.apply!==true)return {schemaVersion:1,kind:'attendance-052-upgrade-compatibility-dry-run',target:input.target,baseline:input.baseline,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,scopeSha256:assets.scopeSha256,baselineCount:60,migrationCount:149,productionDataCopied:false,executed:false};
+ if(input.apply!==true)return {schemaVersion:1,kind:'attendance-052-upgrade-compatibility-dry-run',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,scopeSha256:assets.scopeSha256,baselineCount:60,migrationCount:149,productionDataCopied:false,executed:false};
  need(input.confirm==='approved-isolated-052-210-compatibility','attendance_compatibility_explicit_approval');
  const dump=await run(input,['exec',attendanceProductionIdentity.containerId,'sh','-lc','set -eu; : "${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS="-c default_transaction_read_only=on -c lock_timeout=3s -c statement_timeout=120000"; exec pg_dump -h 127.0.0.1 -U supabase_admin -d postgres --schema-only --no-comments --no-security-labels --no-publications --no-subscriptions'],undefined,16000000);
  const metadata=validateAttendance052SchemaOnlySql(dump+'\n'),transcript=[];
  const formalAfterDump=await productionMetadataState(input,assets.manifest);eq(formalAfterDump,formalBefore,'attendance_compatibility_formal_metadata_drift');
- await privateWrite(p.metadata,metadata.sql);await privateWrite(p.attempt,{schemaVersion:1,kind:'attendance-052-upgrade-compatibility-attempt',target:input.target,baseline:input.baseline,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourceSystemIdentifier:beforeSource.systemIdentifier,scopeSha256:assets.scopeSha256,productionSchemaOnlyRead:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,formalMetadataStateSha256:sha(JSON.stringify(formalBefore)),sourceCatalogSha256:beforeSource.catalogSha256,sourceRolesSha256:beforeSource.rolesSha256});
+ await privateWrite(p.metadata,metadata.sql);await privateWrite(p.attempt,{schemaVersion:1,kind:'attendance-052-upgrade-compatibility-attempt',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourceSystemIdentifier:beforeSource.systemIdentifier,scopeSha256:assets.scopeSha256,productionSchemaOnlyRead:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,formalMetadataStateSha256:sha(JSON.stringify(formalBefore)),sourceCatalogSha256:beforeSource.catalogSha256,sourceRolesSha256:beforeSource.rolesSha256});
  const exec=async(source,label)=>{await inspect(input);await sql(input,database,source);transcript.push({label,sqlSha256:sha(source),passed:true});input.onProgress?.({label});};
  // The only statement targeting pilot postgres is CREATE of this unique name.
  // Existing pilot postgres is never installed into or repaired.
@@ -227,7 +306,7 @@ export async function runAttendance052Compatibility(input={}){
  const afterSource=await sql(input,'postgres',attendanceCompatibilitySourceProbeSql(database),{json:true,readOnly:true});validateSource(afterSource);eq(afterSource.catalogSha256,beforeSource.catalogSha256,'attendance_compatibility_existing_pilot_catalog_changed');eq(afterSource.rolesSha256,beforeSource.rolesSha256,'attendance_compatibility_existing_roles_changed');
  const formalAfter=await productionMetadataState(input,assets.manifest);eq(formalAfter,formalBefore,'attendance_compatibility_formal_changed');
  const checks=Object.fromEntries(attendance052CompatibilityPlan(input).checks.map(x=>[x,true]));
- const proof={schemaVersion:1,kind:'attendance-052-upgrade-compatibility',target:input.target,baseline:input.baseline,scopeSha256:attendanceProductionScopeSha256,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourcePilotSystemIdentifier:beforeSource.systemIdentifier,databaseOid:start.databaseOid,backendPid:start.backendPid,owner:'supabase_admin',productionDataCopied:false,
+ const proof={schemaVersion:1,kind:'attendance-052-upgrade-compatibility',target:input.target,baseline:input.baseline,...audit,scopeSha256:attendanceProductionScopeSha256,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourcePilotSystemIdentifier:beforeSource.systemIdentifier,databaseOid:start.databaseOid,backendPid:start.backendPid,owner:'supabase_admin',productionDataCopied:false,
   baselineRegistryCount:60,baselineRegistryMaximum:'202609240052',initialAttendanceRelations:empty.attendanceRelations,initialAttendanceFunctions:empty.attendanceFunctions,finalRegistryCount:final.registry.length,finalRegistryMaximum:final.registry.at(-1).version,checks,
   transcriptSha256:sha(JSON.stringify({transcript,metadataSourceSha256:metadata.sha256,formalBefore,formalAfter,permissions:beforePermissions,employeeTests,utcBefore,utcAfter,noBackfill})),legacyFingerprintBefore:beforeFacts,legacyFingerprintAfter:afterFacts,outsideCatalogSha256Before:start.outsideSha256,outsideCatalogSha256After:final.outsideSha256,clusterRolesSha256Before:beforeSource.rolesSha256,clusterRolesSha256After:afterSource.rolesSha256,
   productionMetadataSource:{identity:attendanceProductionIdentity,registryCount:60,registryMaximum:'202609240052',schemaOnly:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,normalizedContractSha256:formalBefore.contract,formalStateSha256Before:sha(JSON.stringify(formalBefore)),formalStateSha256After:sha(JSON.stringify(formalAfter))},originalAttendanceSourcesInstalled:149,historicalBootstrapReplayed:false,utcCases:25,employeeLegacyCases:4,realHttpAuthAccepted:false,productionRestoreProved:false,completedAt:new Date().toISOString()};
