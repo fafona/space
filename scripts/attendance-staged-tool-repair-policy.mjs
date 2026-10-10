@@ -229,3 +229,49 @@ export function assertAttendanceStagedSchemaFollowOnReceipt(r,{originalReceipt,o
   effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
  return r;
 }
+
+// A fifth, separately approved extension corrects only the isolated final-guard
+// syntax. All five earlier receipts and failed archives remain immutable.
+export const ATTENDANCE_STAGED_GUARD_FOLLOW_ON=Object.freeze({
+ previousToolRevision:'d7a2fd018adf3ce68ee31b51e7684051604c0b4b',
+ previousReceiptSha256:'6436bd65e5f19a626413d0b0d8cfcf7062589b891f07d88171c614a1d39103af',
+ receiptName:'attendance-staged-tool-repair-guard-follow-on.json',
+ archive:Object.freeze({
+  directory:`${ATTENDANCE_STAGED_REPAIR.operation}/attendance-compatibility-failure-20261010-130500`,
+  files:Object.freeze({
+   'attendance-compatibility-attempt.json':'ab742711550dfd62bd89ab15997933f0815145c83a1b67cb586ee1669d3abeda',
+   'attendance-compatibility-metadata.sql':'3d4808ffd338bdddd7287d5281ddcb66b44dba720cc75bee349cf716b6e8405d',
+   'attendance-compatibility-extension-metadata.json':'2acb4760ae3f402d92af21fbe7f03d1099dde93d66191a10b7cc4edd5a178f01',
+   'attendance-compatibility-extension-supplement.sql':'4d0411d8405dcce07e600b2dc5de81b0c7eb7e42a609d92f7eec889237bd0db5',
+   'prepared.json':'6e386b5ffb6c524c48c27a18ee972c6e0e21afb55dd4c55566b29629a54ded29',
+   'sql-applied.json':'d8e46b0a51f551a04e7a39007de716c07ec2029aa99d6c22ca71ac5313ffb93c',
+   'completed.json':'f06d87e82da09d47e32dd200dbad2183b65f718a9ebc944a061d3133b78d6989',
+  }),
+  database:Object.freeze({oid:'58619',originalName:'faolla_attendance_compat_a535a308e21f',
+   retainedName:'faolla_attendance_failed_a535a308e21f_20261010_130500'}),
+ }),
+});
+export function assertAttendanceStagedGuardFollowOnReceipt(r,{originalReceipt,originalReceiptSha256,
+ firstFollowOnReceipt,firstFollowOnReceiptSha256,sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256,
+ aclFollowOnReceipt,aclFollowOnReceiptSha256,previousReceipt,previousReceiptSha256,target:expectedTarget,toolRevision}={}){
+ const f=ATTENDANCE_STAGED_GUARD_FOLLOW_ON,p=ATTENDANCE_STAGED_REPAIR;
+ need(r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).length===followOnKeys.length&&followOnKeys.every(k=>Object.hasOwn(r,k)));
+ need(Object.values(f.archive.files).every(hex));
+ assertAttendanceStagedSchemaFollowOnReceipt(previousReceipt,{originalReceipt,originalReceiptSha256,
+  firstFollowOnReceipt,firstFollowOnReceiptSha256,sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256,
+  previousReceipt:aclFollowOnReceipt,previousReceiptSha256:aclFollowOnReceiptSha256,target:p.target,toolRevision:f.previousToolRevision});
+ need(previousReceiptSha256===f.previousReceiptSha256&&r.schemaVersion===1&&r.kind==='attendance-staged-tool-repair-guard-follow-on'&&
+  r.target===p.target&&r.baseline===p.baseline&&(!expectedTarget||expectedTarget===p.target)&&
+  r.previousToolRevision===f.previousToolRevision&&r.previousReceiptSha256===f.previousReceiptSha256);
+ try{assert.deepEqual(r.failedAttemptArchive,f.archive);}catch{need(false);}
+ const previous=previousReceipt.effectiveReceipt,effective=assertAttendanceStagedRepairReceipt(r.effectiveReceipt,{target:p.target,toolRevision});
+ need(effective.toolRevision!==f.previousToolRevision&&effective.toolRevision!==ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON.previousToolRevision&&
+  effective.toolRevision!==ATTENDANCE_STAGED_ACL_FOLLOW_ON.previousToolRevision&&
+  effective.toolRevision!==ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON.previousToolRevision&&
+  effective.toolRevision!==ATTENDANCE_STAGED_FOLLOW_ON.previousToolRevision&&effective.sourceInputsSha256===previous.sourceInputsSha256&&
+  effective.dependencySha256===previous.dependencySha256&&effective.preparedAt===r.preparedAt&&
+  Date.parse(effective.preparedAt)>=Date.parse(previous.preparedAt)&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair.mjs')&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
+ return r;
+}

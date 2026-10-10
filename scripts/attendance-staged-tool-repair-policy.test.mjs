@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';import test from 'node:test';
 import {ATTENDANCE_STAGED_REPAIR as p,ATTENDANCE_STAGED_REPAIR_PRESERVED as preserved,
  ATTENDANCE_STAGED_FOLLOW_ON as follow,ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON as sequence,ATTENDANCE_STAGED_ACL_FOLLOW_ON as acl,
  ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON as schema,
+ ATTENDANCE_STAGED_GUARD_FOLLOW_ON as guard,
  ATTENDANCE_STAGED_REPAIR_FILES as allowed,
  assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt,
  assertAttendanceStagedSequenceFollowOnReceipt,assertAttendanceStagedAclFollowOnReceipt,
- assertAttendanceStagedSchemaFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
+ assertAttendanceStagedSchemaFollowOnReceipt,assertAttendanceStagedGuardFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
 export function stagedRepairReceiptFixture(){return {schemaVersion:1,kind:'attendance-staged-tool-repair',target:p.target,baseline:p.baseline,
  toolRevision:'e'.repeat(40),originalStateSha256:p.stateSha256,originalBuildProofSha256:p.buildProofSha256,
  sourceInputsSha256:'a'.repeat(64),builtOutputSha256:p.builtOutputSha256,scopeSha256:p.scopeSha256,preservedFiles:{...preserved},
@@ -181,4 +182,28 @@ test('schema follow-on binds all seven actual fifth-failure pins and validates t
  assert.equal(new Set([follow.receiptName,sequence.receiptName,acl.receiptName,schema.receiptName]).size,4);
  assert.ok(Object.values(schema.archive.files).every(x=>/^[a-f0-9]{64}$/.test(x)));
  assert.equal(assertAttendanceStagedSchemaFollowOnReceipt(f.chain,ports),f.chain);
+});
+
+export function stagedGuardFollowOnReceiptFixture(){
+ const {original,firstFollowOnReceipt,sequenceFollowOnReceipt,previousReceipt:aclFollowOnReceipt,chain:previousReceipt}=stagedSchemaFollowOnReceiptFixture();
+ previousReceipt.effectiveReceipt.toolRevision=guard.previousToolRevision;
+ const preparedAt='2026-10-10T14:00:00.000Z',effectiveReceipt={...previousReceipt.effectiveReceipt,
+  toolRevision:'e'.repeat(40),preparedAt};
+ return {original,firstFollowOnReceipt,sequenceFollowOnReceipt,aclFollowOnReceipt,previousReceipt,
+  chain:{schemaVersion:1,kind:'attendance-staged-tool-repair-guard-follow-on',target:p.target,baseline:p.baseline,
+   previousToolRevision:guard.previousToolRevision,previousReceiptSha256:guard.previousReceiptSha256,
+   failedAttemptArchive:structuredClone(guard.archive),effectiveReceipt,preparedAt}};
+}
+test('guard follow-on binds all seven actual sixth-failure pins and validates the complete immutable five-receipt chain',()=>{
+ const f=stagedGuardFollowOnReceiptFixture(),ports={originalReceipt:f.original,originalReceiptSha256:follow.previousReceiptSha256,
+  firstFollowOnReceipt:f.firstFollowOnReceipt,firstFollowOnReceiptSha256:sequence.previousReceiptSha256,
+  sequenceFollowOnReceipt:f.sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256:acl.previousReceiptSha256,
+  aclFollowOnReceipt:f.aclFollowOnReceipt,aclFollowOnReceiptSha256:schema.previousReceiptSha256,
+  previousReceipt:f.previousReceipt,previousReceiptSha256:guard.previousReceiptSha256};
+ assert.equal(allowed.length,15);assert.equal(guard.previousToolRevision,'d7a2fd018adf3ce68ee31b51e7684051604c0b4b');
+ assert.equal(guard.previousReceiptSha256,'6436bd65e5f19a626413d0b0d8cfcf7062589b891f07d88171c614a1d39103af');
+ assert.equal(guard.archive.database.oid,'58619');assert.equal(Object.keys(guard.archive.files).length,7);
+ assert.equal(new Set([follow.receiptName,sequence.receiptName,acl.receiptName,schema.receiptName,guard.receiptName]).size,5);
+ assert.ok(Object.values(guard.archive.files).every(x=>/^[a-f0-9]{64}$/.test(x)));
+ assert.equal(assertAttendanceStagedGuardFollowOnReceipt(f.chain,ports),f.chain);
 });

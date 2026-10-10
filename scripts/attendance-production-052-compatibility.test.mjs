@@ -4,7 +4,8 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {attendanceProductionLegacy052SourceSha256,attendanceProductionIdentity,validateAttendanceCompatibilityProof} from './attendance-production-database-migrations.mjs';
+import {runInNewContext} from 'node:vm';
+import {attendanceProductionLegacy052SourceSha256,attendanceProductionIdentity,validateAttendanceCompatibilityProof,protectedAttendanceMigrationSql} from './attendance-production-database-migrations.mjs';
 import {loadAttendance052CompatibilitySources,validateAttendance052SchemaOnlySql,
  attendanceCompatibilityPublicAclSql,attendanceCompatibilityFixturesSql,attendanceCompatibilityEmployeeSql,
  attendanceCompatibilityFactsSql,attendanceCompatibilityUtcCases,guardedAttendanceCompatibilitySourceSql,
@@ -47,6 +48,9 @@ function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffi
   if(s.startsWith('-- attendance_compatibility_no_backfill'))return result({settings:0,workers:0,newRolePermissions:false});
   if(s.includes('$attendance_production_prestate$')){
    const m=assets.sources[installed];assert(m);assert(s.includes(m.source.slice(0,m.source.indexOf('begin;'))));
+   assert.equal(s,protectedAttendanceMigrationSql(m,installed,assets.manifest));
+   for(const table of ['merchants','merchant_enterprise_roles','merchant_enterprise_employees'])
+    assert.equal(s.split(`k=any(((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[])`).length-1,2);
    writes.push(m.version);if(installed===failMigration)return {status:1,stdout:'',stderr:'synthetic failure'};installed++;return {status:0,stdout:''};
   }
   assert(args.at(-1).includes(`-d faolla_attendance_compat_${target.slice(0,12)}`));writes.push('SCOPED_SQL');return {status:0,stdout:''};
@@ -142,7 +146,7 @@ test('CLI has no production/data dump/source/proof/roles/testOnly bypass flag',(
 
 test('GraphQL initial object and schema ACL restoration is derived only from real sealed follow-on receipts',async()=>{
  const source=await readFile(new URL('./attendance-production-052-compatibility.mjs',import.meta.url),'utf8');
- assert(source.includes("const restoreGraphqlInitialSchemaAcl=repair?.receiptKind==='attendance-staged-tool-repair-schema-follow-on'"));
+ assert(source.includes("const restoreGraphqlInitialSchemaAcl=repair?.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair?.receiptKind==='attendance-staged-tool-repair-guard-follow-on'"));
  assert(source.includes("const restoreGraphqlInitialAcl=repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl"));
  assert(source.includes('{restoreGraphqlInitialAcl,restoreGraphqlInitialSchemaAcl},formalBefore.schemaAcl'));
  assert(source.includes('validateAttendanceGraphqlInitialSchemaAclSnapshot(schemaAcl)'));
@@ -152,6 +156,29 @@ test('GraphQL initial object and schema ACL restoration is derived only from rea
  assert(!/input\.(?:restoreGraphqlInitialAcl|restoreGraphqlInitialSchemaAcl|schemaSnapshot|receiptKind)/.test(source));
  for(const flag of ['--restore-graphql-initial-acl','--restore-graphql-initial-schema-acl','--schema-snapshot','--receipt-kind'])
   assert.throws(()=>parseAttendanceCompatibilityArguments(['dry-run','--target',target,'--baseline',baseline,'--source-pilot-container-id',pilot,flag,'true']));
+});
+test('actual compatibility routing rejects unknown receipt kinds and keeps restoration receipt-derived despite caller flags (VM/synthetic result)',async()=>{
+ const source=await readFile(new URL('./attendance-production-052-compatibility.mjs',import.meta.url),'utf8');
+ const start=source.indexOf(" if(repair&&Object.hasOwn(repair,'receiptKind'))"),end=source.indexOf('\n await owned(p.directory',start);
+ assert(start>source.indexOf('repair=verifyAttendanceStagedToolRepairReceipt(')&&end>start);
+ const route=repair=>runInNewContext(source.slice(start,end)+'\n({audit,restoreGraphqlInitialAcl,restoreGraphqlInitialSchemaAcl})',{
+  repair,input:{testOnly:true,receiptKind:'attendance-staged-tool-repair-guard-follow-on',restoreGraphqlInitialAcl:true,restoreGraphqlInitialSchemaAcl:true,schemaSnapshot:[]},
+  need:(condition,code)=>{if(!condition)throw Error(code);},
+ });
+ const pair={toolRevision:'4'.repeat(40),receiptSha256:'5'.repeat(64)};
+ for(const [receiptKind,objectAcl,schemaAcl] of [
+  ['attendance-staged-tool-repair-follow-on',false,false],
+  ['attendance-staged-tool-repair-sequence-follow-on',false,false],
+  ['attendance-staged-tool-repair-acl-follow-on',true,false],
+  ['attendance-staged-tool-repair-schema-follow-on',true,true],
+  ['attendance-staged-tool-repair-guard-follow-on',true,true],
+ ]){
+  const actual=route({...pair,receiptKind});assert.equal(actual.restoreGraphqlInitialAcl,objectAcl);assert.equal(actual.restoreGraphqlInitialSchemaAcl,schemaAcl);
+  assert.deepEqual(JSON.parse(JSON.stringify(actual.audit)),{toolRevision:pair.toolRevision,stagedToolRepairReceiptSha256:pair.receiptSha256});
+ }
+ for(const repair of [null,pair]){const actual=route(repair);assert.equal(actual.restoreGraphqlInitialAcl,false);assert.equal(actual.restoreGraphqlInitialSchemaAcl,false);}
+ for(const receiptKind of [undefined,null,'','unknown','attendance-staged-tool-repair-guard-follow-on-extra',false,1])
+  assert.throws(()=>route({...pair,receiptKind}),/attendance_tool_repair_receipt_kind_invalid/);
 });
 test('mock dry-run only inspects pilot/source and creates no DB, metadata or proof',async()=>{
  const f=await fixture(),db=fake();try{const r=await runAttendance052Compatibility({...f,runCommand:db.runCommand});assert.equal(r.executed,false);assert.deepEqual(db.writes,[]);await assert.rejects(()=>readFile(f.paths.proof));}finally{await rm(f.directory,{recursive:true,force:true});}

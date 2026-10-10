@@ -270,8 +270,9 @@ export async function runAttendance052Compatibility(input={}){
   const {verifyAttendanceStagedToolRepairReceipt}=await import('./attendance-staged-tool-repair.mjs');
   repair=verifyAttendanceStagedToolRepairReceipt({target:input.target,rootDir:input.rootDir??ROOT,phase:'staged'});
  }
+ if(repair&&Object.hasOwn(repair,'receiptKind'))need(['attendance-staged-tool-repair-follow-on','attendance-staged-tool-repair-sequence-follow-on','attendance-staged-tool-repair-acl-follow-on','attendance-staged-tool-repair-schema-follow-on','attendance-staged-tool-repair-guard-follow-on'].includes(repair.receiptKind),'attendance_tool_repair_receipt_kind_invalid');
  const audit=repair?{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256}:{};
- const restoreGraphqlInitialSchemaAcl=repair?.receiptKind==='attendance-staged-tool-repair-schema-follow-on';
+ const restoreGraphqlInitialSchemaAcl=repair?.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair?.receiptKind==='attendance-staged-tool-repair-guard-follow-on';
  const restoreGraphqlInitialAcl=repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl;
  await owned(p.directory,{directory:true,testOnly:input.testOnly});if(input.testOnly!==true){let ancestor=path.dirname(p.directory);for(;;){await owned(ancestor,{directory:true});const parent=path.dirname(ancestor);if(parent===ancestor)break;ancestor=parent;}}
  if(input.testOnly!==true){await owned(PILOT,{directory:true});await owned(PILOT+'/.pilot-owner.json');const marker=JSON.parse(await readFile(PILOT+'/.pilot-owner.json','utf8'));need(marker.owner===OWNER&&marker.root===PILOT&&marker.project==='faolla-attendance-pilot','attendance_compatibility_owner_marker');}
