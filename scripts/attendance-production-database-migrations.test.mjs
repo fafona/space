@@ -18,7 +18,7 @@ import {
 } from './attendance-production-database-migrations.mjs';
 const target='a'.repeat(40),baseline=ATTENDANCE_RELEASE_SCOPE.baseline,sha=x=>createHash('sha256').update(x).digest('hex');
 const repairTarget='a535a308e21f121e7cf410a6f7d84c974eb370a6',toolRevision='b'.repeat(40),receiptSha256='c'.repeat(64);
-const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on',aclFollowOnKind='attendance-staged-tool-repair-acl-follow-on',schemaFollowOnKind='attendance-staged-tool-repair-schema-follow-on';
+const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on',aclFollowOnKind='attendance-staged-tool-repair-acl-follow-on',schemaFollowOnKind='attendance-staged-tool-repair-schema-follow-on',guardFollowOnKind='attendance-staged-tool-repair-guard-follow-on';
 const managerSource=await readFile(new URL('./attendance-production-database-migrations.mjs',import.meta.url),'utf8');
 function managerSection(first,next){
  const start=managerSource.indexOf(first),end=managerSource.indexOf(next,start+first.length);
@@ -83,9 +83,46 @@ test('live probe is explicitly read-only, bounded, no secret/row projection',()=
  const sql=attendanceReadOnlyStateSql();assert(sql.startsWith('begin read only;'));assert(sql.includes("statement_timeout='8s'"));
  assert(!/config\.env|password|select \*/i.test(sql));assert(sql.includes('pg_control_system'));assert(sql.endsWith('commit;\n'));
 });
-test('all original149 SQL bytes preserved after removing only new guards; one short transaction each',()=>{
+// This is a generated-SQL contract, not a substitute for PostgreSQL execution.
+// Inspect both wrapper sections separately so a correct entry cannot conceal a
+// weaker exit, and removal must reproduce every reviewed original SQL byte.
+function assertGeneratedRowGuardContract(source,wrapped){
+ const entries=[...wrapped.matchAll(/\nset transaction isolation level repeatable read;\n[\s\S]*?\nupdate pg_temp\.faolla_attendance_protected_rows_guard set v=case k [^\n]* end;\n/g)];
+ const exits=[...wrapped.matchAll(/\ndo \$attendance_production_poststate\$ begin\n[\s\S]*?\nend;\$attendance_production_poststate\$;\n/g)];
+ assert.equal(entries.length,1);assert.equal(exits.length,1);
+ const entry=entries[0][0],exit=exits[0][0];
+ const originalBegin=source.match(/(?:^|\r?\n)begin;/i);
+ assert(originalBegin);assert.equal(entries[0].index,originalBegin.index+originalBegin[0].length);
+ assert(entries[0].index+entry.length<exits[0].index);
+ assert.equal(wrapped.replace(entry,'').replace(exit,''),source);
+ assert(entry.includes("set local lock_timeout='3s';set local statement_timeout='120s'"));
+ assert(entry.includes("current_user<>'supabase_admin' or not pg_try_advisory_xact_lock(20260731,1)"));
+ assert(entry.includes('attendance_production_registry_changed'));
+ assert(entry.includes('k text primary key,cols text[] not null,metadata jsonb not null,v text'));
+ assert(exit.includes('not(g.metadata<@case g.k'));
+ assert(exit.includes('attendance_production_legacy_columns_changed'));
+ assert(exit.includes('where g.v<>case g.k'));
+ assert(exit.includes('attendance_production_legacy_rows_changed'));
+ assert(exit.includes('attendance_production_registration_missing'));
+ const tables=['merchants','merchant_enterprise_roles','merchant_enterprise_employees'];
+ for(const table of tables){
+  const projection=`(select jsonb_object_agg(k,v) from jsonb_each(to_jsonb(t)) e(k,v) where k=any(((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[]))`;
+  for(const section of [entry,exit])assert.equal(section.split(projection).length-1,1);
+  assert(entry.includes(`'${table}',array(select attname::text from pg_attribute where attrelid='public.${table}'::regclass and attnum>0 and not attisdropped order by attnum)`));
+  for(const section of [entry,exit])assert(section.includes(`'public.${table}'::regclass and attnum>0 and not attisdropped`));
+ }
+ for(const section of [entry,exit]){
+  assert.equal(section.split("count(*)::text||':'||coalesce(string_agg(h,'' order by h collate \"C\"),'')").length-1,3);
+  assert.equal(section.split("::text,'UTF8')),'hex') h from public.").length-1,3);
+  assert(!/k=any\(\(select cols/i.test(section));
+ }
+ return {entry,exit};
+}
+
+test('all original149 SQL bytes preserved after removing only new guards; scalar text arrays protect three tables before and after each transaction',()=>{
  for(let i=0;i<149;i++){
   const source=scope.sources[i].source,wrapped=protectedAttendanceMigrationSql(scope.sources[i],i,scope.manifest);
+  assertGeneratedRowGuardContract(source,wrapped);
   assert(wrapped.includes('set transaction isolation level repeatable read'));
   assert(wrapped.includes('pg_try_advisory_xact_lock(20260731,1)'));
   assert(wrapped.includes('attendance_production_legacy_rows_changed'));
@@ -94,6 +131,32 @@ test('all original149 SQL bytes preserved after removing only new guards; one sh
   assert.equal((wrapped.match(/\$attendance_production_prestate\$/g)||[]).length,2);
  }
  assert.throws(()=>protectedAttendanceMigrationSql(scope.sources[1],0,scope.manifest));
+});
+test('generated guard contract rejects the original ANY subquery bug and malicious weakening of either side',()=>{
+ const migration=scope.sources[0],wrapped=protectedAttendanceMigrationSql(migration,0,scope.manifest);
+ const {entry,exit}=assertGeneratedRowGuardContract(migration.source,wrapped);
+ const originalAnySubquery=['merchants','merchant_enterprise_roles','merchant_enterprise_employees'].reduce((sql,table)=>
+  sql.replaceAll(`((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[]`,
+   `(select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}')`),wrapped);
+ const weakened=[
+  originalAnySubquery,
+  wrapped.replace(exit,exit.replace('::text[]','')),
+  wrapped.replace(entry,entry.replace('count(*)','count(distinct h)')),
+  wrapped.replace(exit,exit.replace('count(*)','count(distinct h)')),
+  wrapped.replace(exit,exit.replace('order by h collate "C"','')),
+  wrapped.replace(entry,entry.replace('order by attnum','')),
+  wrapped.replace(exit,exit.replace('not(g.metadata<@case g.k','(g.metadata<@case g.k')),
+  wrapped.replace(entry,entry.replace('not pg_try_advisory_xact_lock(20260731,1)','false')),
+  wrapped.replace(entry,entry.replace('attendance_production_registry_changed','ignored_registry')),
+  wrapped.replace(exit,exit.replace('where g.v<>case g.k','where false and g.v<>case g.k')),
+  wrapped.replace(exit,exit.replace('attendance_production_registration_missing','ignored_registration')),
+ ];
+ for(const changed of weakened){assert.notEqual(changed,wrapped);assert.throws(()=>assertGeneratedRowGuardContract(migration.source,changed));}
+ // These unchanged code pins are from S5, not repinned to a changed guard:
+ // only oldColumns gained the explicit scalar-array cast.
+ const fingerprint=managerSection('export const attendanceLegacyRowFingerprintSql','\n};')+'\n};\n';
+ assert.equal(sha(fingerprint.replaceAll('\r\n','\n')),'2ffb2c1cec528a665212f45a47eded87f2f11e3b9b297397f34e8d78be718f44');
+ assert.equal(sha(managerSection('const columnMetadata','async function ownedJson').replaceAll('\r\n','\n')),'0f54b79e508f2311eec3ac8dcc2279d23f3dcf61d7e56f6c861e99d5565d6577');
 });
 test('052 compatibility proof rejects final-only installs, real data, production DB and incomplete checks',()=>{
  const args={target,baseline,scopeSha256:attendanceProductionScopeSha256};assert.equal(validateAttendanceCompatibilityProof(compatibility(),args).finalRegistryCount,209);
@@ -196,7 +259,7 @@ function repairRouting({verifiedToolRevision=toolRevision,verifiedReceiptSha256=
   ownedJson:async()=>({value:{source:{sha:sourceSha}}}),
   validateDatabaseBackupSourceIdentity:source=>({valid:true,source}),
   verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision:verifiedToolRevision,receiptSha256:verifiedReceiptSha256,...(receiptKind===undefined?{}:{receiptKind})};},
-  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
+  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
   validateAttendanceBackupEvidence:async input=>{calls.push(['backup',input.target]);if(secondSourceSha!==input.target)throw new Error('attendance_backup_source_not_target');return {source:{sha:secondSourceSha},restoreRehearsed:false};},
  });
  return {calls,route};
@@ -229,14 +292,14 @@ test('fixed repaired routing binds the real-verifier result before selecting one
  await assert.rejects(()=>swapped.route({target:repairTarget},auditPair()),/backup_source_not_target/);
 });
 
-test('only the four real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
+test('only the five real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
  const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
  const classify=runInNewContext(`${helpers}\nrequiresFollowOnExtensionEvidence`,{
   require_:(condition,code)=>{if(!condition)throw new Error(code);},
  });
  assert.equal(classify(null),false);assert.equal(classify({}),false);
- for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind])assert.equal(classify({receiptKind}),true);
- for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra','attendance-staged-tool-repair-acl-follow-on-extra','attendance-staged-tool-repair-schema-follow-on-extra',false,1])
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind])assert.equal(classify({receiptKind}),true);
+ for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra','attendance-staged-tool-repair-acl-follow-on-extra','attendance-staged-tool-repair-schema-follow-on-extra','attendance-staged-tool-repair-guard-follow-on-extra',false,1])
   assert.throws(()=>classify({receiptKind}),/attendance_tool_repair_receipt_kind_invalid/);
  for(const receiptKind of [null,'','attendance-staged-tool-repair','unknown-follow-on']){
   const model=repairRouting({receiptKind});
@@ -381,7 +444,7 @@ test('ACL artifact reconstruction requires explicit opt-in and preserves the exa
  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(changedProof,{...files,extensionMetadata:changedBytes},{restoreGraphqlInitialAcl:true}),/attendance_extension_evidence_operations/);
 });
 test('follow-on routing requires extra artifacts after independent receipt and backup checks',async()=>{
- for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind]){
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind]){
   const model=repairRouting({receiptKind});await model.route({target:repairTarget},auditPair());
   assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
   const denied=repairRouting({receiptKind,denyExtensions:true});await assert.rejects(()=>denied.route({target:repairTarget},auditPair()),/synthetic_extension_evidence_refused/);
@@ -418,7 +481,7 @@ test('schema artifact reconstruction binds the independent actual snapshot and c
 
 test('schema restore runtime selection remains sealed-receipt derived, not a caller option',()=>{
  const actual=managerSection('async function verifyFollowOnExtensionCompatibility','async function migrationBackupEvidence');
- assert(actual.includes("const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'"));
+ assert(actual.includes("const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on'"));
  assert(actual.includes("restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl"));
  assert(!/input\.(?:restoreGraphqlInitialAcl|restoreGraphqlInitialSchemaAcl|schemaSnapshot)/.test(actual));
 });
@@ -554,6 +617,32 @@ test('schema follow-on actual manager routing binds its new pair and four artifa
  }
  const changedProof=extensionArtifactRouting(fixture);
  await assert.rejects(()=>changedProof.verify(input,{...fixture.proof,transcriptSha256:'3'.repeat(64)},repair),/canonical_proof/);
+ assert.equal(fixture.files.metadata.toString('utf8'),syntheticAttendanceExtensionDump);
+});
+
+test('guard follow-on actual artifact gate inherits only the reviewed seven objects and two schema ACLs from its verified receipt (VM/synthetic evidence)',async()=>{
+ const repair={receiptKind:guardFollowOnKind,toolRevision:'4'.repeat(40),receiptSha256:'5'.repeat(64)};
+ const fixture=extensionEvidenceFixture(undefined,{restoreGraphqlInitialAcl:true,restoreGraphqlInitialSchemaAcl:true});
+ Object.assign(fixture.proof,{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256});
+ const input={target:repairTarget,baseline,testOnly:true,receiptKind:followOnKind,restoreGraphqlInitialAcl:false,restoreGraphqlInitialSchemaAcl:false,schemaSnapshot:[]};
+ const model=extensionArtifactRouting(fixture);
+ assert.equal(await model.verify(input,fixture.proof,repair),model.proofSha256);
+ assert.equal(model.calls.filter(row=>row[0]==='read').length,4);
+ const artifact=JSON.parse(fixture.files.extensionMetadata.toString('utf8'));
+ assert.equal(artifact.operations.filter(operation=>operation.operation==='restore-actual-initial-acl').length,7);
+ assert.deepEqual(artifact.schemaSnapshot,syntheticAttendanceGraphqlInitialSchemaAclMetadata());
+ for(const file of model.artifacts.keys()){
+  const missing=extensionArtifactRouting(fixture);missing.artifacts.delete(file);
+  await assert.rejects(()=>missing.verify(input,fixture.proof,repair),/synthetic_artifact_missing/);
+ }
+ for(const changed of [{...repair,toolRevision},{...repair,receiptSha256},
+  {...repair,receiptKind:guardFollowOnKind+'-extra'}, {...repair,receiptKind:null}]){
+  const refused=extensionArtifactRouting(fixture);
+  await assert.rejects(()=>refused.verify(input,fixture.proof,changed),/attendance_(?:extension_evidence_tool_repair|tool_repair_receipt_kind_invalid)/);
+  assert(!refused.calls.some(row=>row[1]?.endsWith('attendance-compatibility-metadata.sql')));
+ }
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind])
+  await assert.rejects(()=>extensionArtifactRouting(fixture).verify({...input,restoreGraphqlInitialSchemaAcl:true},fixture.proof,{...repair,receiptKind}),/attendance_extension_evidence_shape/);
  assert.equal(fixture.files.metadata.toString('utf8'),syntheticAttendanceExtensionDump);
 });
 test('follow-on artifact paths are fixed/private/stable and ready rebinds their canonical proof before actual DB reads',()=>{

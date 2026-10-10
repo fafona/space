@@ -121,7 +121,9 @@ export const attendanceLegacyRowFingerprintSql=(table,columns)=>{
  const row=columns?`(select jsonb_object_agg(k,v) from jsonb_each(to_jsonb(t)) e(k,v) where k=any(${columns}))`:'to_jsonb(t)';
  return `(select encode(sha256(convert_to(count(*)::text||':'||coalesce(string_agg(h,'' order by h collate "C"),''),'UTF8')),'hex') from (select encode(sha256(convert_to(${row}::text,'UTF8')),'hex') h from public.${table} t) r)`;
 };
-const oldColumns=table=>`(select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}')`;
+// Force scalar-array ANY, not ANY(subquery), whose rows have type text[].
+// The same frozen pre-migration columns are projected before and after DDL.
+const oldColumns=table=>`((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[]`;
 const columnMetadata=table=>`(select jsonb_agg(jsonb_build_object('name',attname,'type',atttypid,'modifier',atttypmod,'collation',attcollation) order by attnum) from pg_attribute where attrelid='public.${table}'::regclass and attnum>0 and not attisdropped)`;
 export function protectedAttendanceMigrationSql(migration,prior,manifest){
  require_(manifest.migrations[prior]?.fileName===migration.fileName,'attendance_migration_out_of_order');
@@ -201,7 +203,7 @@ function bindToolRepairAudit(value,repair,code){
 }
 function requiresFollowOnExtensionEvidence(repair){
  if(!repair||!Object.hasOwn(repair,'receiptKind'))return false;
- require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on','attendance_tool_repair_receipt_kind_invalid');
+ require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on','attendance_tool_repair_receipt_kind_invalid');
  return true;
 }
 async function verifiedMigrationToolRepair(input){
@@ -262,7 +264,7 @@ async function verifyFollowOnExtensionCompatibility(input,compatibility,repair){
  validateAttendanceCompatibilityProof(proof,{target:input.target,baseline:input.baseline,scopeSha256:attendanceProductionScopeSha256});
  bindToolRepairAudit(proof,repair,'attendance_extension_evidence_tool_repair');
  const files={metadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-metadata.sql'),16000000),extensionMetadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-metadata.json'),2000000),supplement:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-supplement.sql'),2000000)};
- const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on';
+ const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on';
  await validateAttendanceExtensionCompatibilityEvidence(proof,files,{restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl,restoreGraphqlInitialSchemaAcl});
  return digest(proofBytes);
 }
