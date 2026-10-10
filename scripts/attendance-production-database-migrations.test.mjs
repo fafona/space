@@ -4,6 +4,7 @@ import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {runInNewContext} from 'node:vm';
 import {recoveryContentFixture} from './test-fixtures/database-recovery-content.mjs';
 import {PRODUCTION_RELEASE_AGGREGATE_KEYS} from './production-release-attestation.mjs';
 import {ATTENDANCE_RELEASE_SCOPE,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
@@ -14,6 +15,12 @@ import {
  runAttendanceProductionMigrations,verifyAttendanceProductionDatabaseReady,parseAttendanceProductionArguments,
 } from './attendance-production-database-migrations.mjs';
 const target='a'.repeat(40),baseline=ATTENDANCE_RELEASE_SCOPE.baseline,sha=x=>createHash('sha256').update(x).digest('hex');
+const repairTarget='a535a308e21f121e7cf410a6f7d84c974eb370a6',toolRevision='b'.repeat(40),receiptSha256='c'.repeat(64);
+const managerSource=await readFile(new URL('./attendance-production-database-migrations.mjs',import.meta.url),'utf8');
+function managerSection(first,next){
+ const start=managerSource.indexOf(first),end=managerSource.indexOf(next,start+first.length);
+ assert(start>=0&&end>start);return managerSource.slice(start,end);
+}
 const scope=await loadAttendanceProductionScope({rootOwned:false});
 const checks=attendance052CompatibilityPlan({target,sourcePilotContainerId:'c'.repeat(64)}).checks;
 const compatibility=()=>({schemaVersion:1,kind:'attendance-052-upgrade-compatibility',target,baseline,scopeSha256:attendanceProductionScopeSha256,
@@ -146,4 +153,116 @@ test('failed migration stops immediately; explicit SHA-bound resume never replay
   await runAttendanceProductionMigrations({...args,resume:true,resumeSha256});assert.equal(db.writes.length,149);
   assert.equal(db.writes.filter(x=>x==='202609290063').length,1);
  }finally{await rm(f.directory,{recursive:true,force:true});}
+});
+
+test('fixed repaired compatibility audit is optional for old evidence but a present pair must be complete',()=>{
+ const proof={...compatibility(),target:repairTarget,databaseName:`faolla_attendance_compat_${repairTarget.slice(0,12)}`};
+ const args={target:repairTarget,baseline,scopeSha256:attendanceProductionScopeSha256};
+ assert.equal(validateAttendanceCompatibilityProof(proof,args),proof);
+ const audited={...proof,toolRevision,stagedToolRepairReceiptSha256:receiptSha256};
+ // This is a pure shape check, not acceptance of a real runtime repair receipt.
+ assert.equal(validateAttendanceCompatibilityProof(audited,args),audited);
+ for(const pair of [
+  {toolRevision},{stagedToolRepairReceiptSha256:receiptSha256},
+  {toolRevision:repairTarget,stagedToolRepairReceiptSha256:receiptSha256},
+  {toolRevision:'B'.repeat(40),stagedToolRepairReceiptSha256:receiptSha256},
+  {toolRevision,stagedToolRepairReceiptSha256:'c'.repeat(63)},
+  {toolRevision,stagedToolRepairReceiptSha256:null},
+ ])assert.throws(()=>validateAttendanceCompatibilityProof({...proof,...pair},args),/tool_repair_audit_invalid/);
+});
+
+test('general backup contract is byte-identical and still rejects a mismatched source for the fixed target',async()=>{
+ const original=managerSection('export async function validateAttendanceBackupEvidence(input){','\nconst hasToolRepairAudit').trimEnd();
+ assert.equal(sha(original),'402e0e717ab5fc2b9ed874249374ed14298924368e321e2f4fe370591cc8921a');
+ const f=await fixture();try{
+  await assert.rejects(()=>validateAttendanceBackupEvidence({...f,target:repairTarget,testOnly:true,toolRevision,
+   verifyAttendanceStagedToolRepairReceipt:()=>({toolRevision,receiptSha256})}),/backup_source_not_target/);
+ }finally{await rm(f.directory,{recursive:true,force:true});}
+});
+
+// Extract the actual small routing/binding functions into a synthetic VM.
+// The verifier stub here proves branch ordering only; production has no
+// injectable verifier and these tests do not establish real receipt acceptance.
+function repairRouting({sourceSha=toolRevision,secondSourceSha=sourceSha,deny=false}={}){
+ const calls=[];
+ const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
+ const wrapper=managerSection('async function migrationBackupEvidence','export function attendance052CompatibilityPlan');
+ const route=runInNewContext(`${helpers}\n${wrapper}\nmigrationBackupEvidence`,{
+  STAGED_TOOL_REPAIR_TARGET:repairTarget,SHA:/^[0-9a-f]{40}$/,HEX:/^[0-9a-f]{64}$/,
+  require_:(condition,code)=>{if(!condition)throw new Error(code);},
+  ownedJson:async()=>({value:{source:{sha:sourceSha}}}),
+  validateDatabaseBackupSourceIdentity:source=>({valid:true,source}),
+  verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision,receiptSha256};},
+  validateAttendanceBackupEvidence:async input=>{calls.push(['backup',input.target]);if(secondSourceSha!==input.target)throw new Error('attendance_backup_source_not_target');return {source:{sha:secondSourceSha},restoreRehearsed:false};},
+ });
+ return {calls,route};
+}
+const auditPair=()=>({toolRevision,stagedToolRepairReceiptSha256:receiptSha256});
+const plain=value=>JSON.parse(JSON.stringify(value));
+
+test('routing contract never calls the repair verifier for ordinary or unchanged fixed sources',async()=>{
+ const ordinary=repairRouting({sourceSha:target});
+ assert.deepEqual(plain((await ordinary.route({target},{})).audit),{});
+ assert.deepEqual(ordinary.calls,[['backup',target]]);
+ const mismatch=repairRouting();await assert.rejects(()=>mismatch.route({target},{}),/backup_source_not_target/);
+ assert.deepEqual(mismatch.calls,[['backup',target]]);
+ const unchanged=repairRouting({sourceSha:repairTarget});
+ assert.deepEqual(plain((await unchanged.route({target:repairTarget},{})).audit),{});
+ assert.deepEqual(unchanged.calls,[['backup',repairTarget]]);
+});
+
+test('fixed repaired routing binds the real-verifier result before selecting one exact backup source',async()=>{
+ const model=repairRouting();const result=await model.route({target:repairTarget},auditPair());
+ assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision]]);
+ assert.deepEqual(plain(result.audit),auditPair());assert.equal(result.backup.source.sha,toolRevision);
+ const refused=repairRouting({deny:true});
+ await assert.rejects(()=>refused.route({target:repairTarget},auditPair()),/synthetic_receipt_refused/);
+ assert.deepEqual(refused.calls,[['verify',repairTarget]]);
+ const foreign=repairRouting({sourceSha:'d'.repeat(40)});
+ await assert.rejects(()=>foreign.route({target:repairTarget},auditPair()),/backup_tool_repair_source_mismatch/);
+ assert.deepEqual(foreign.calls,[['verify',repairTarget]]);
+ const swapped=repairRouting({secondSourceSha:repairTarget});
+ await assert.rejects(()=>swapped.route({target:repairTarget},auditPair()),/backup_source_not_target/);
+});
+
+test('fixed repaired routing refuses absent or changed compatibility audit and cannot attach an audit to an unrepaired source',async()=>{
+ for(const proof of [{},{toolRevision},{...auditPair(),toolRevision:'d'.repeat(40)},
+  {...auditPair(),stagedToolRepairReceiptSha256:'d'.repeat(64)}]){
+  const model=repairRouting();await assert.rejects(()=>model.route({target:repairTarget},proof),/compatibility_tool_repair_source_mismatch/);
+ }
+ const unchanged=repairRouting({sourceSha:repairTarget});
+ await assert.rejects(()=>unchanged.route({target:repairTarget},auditPair()),/compatibility_tool_repair_source_mismatch/);
+ assert.deepEqual(unchanged.calls,[['backup',repairTarget]]);
+});
+
+test('one exact audit binder rejects missing, cross-revision and cross-receipt progress or ready evidence',()=>{
+ const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
+ const bind=runInNewContext(`${helpers}\nbindToolRepairAudit`,{
+  STAGED_TOOL_REPAIR_TARGET:repairTarget,SHA:/^[0-9a-f]{40}$/,HEX:/^[0-9a-f]{64}$/,
+  require_:(condition,code)=>{if(!condition)throw new Error(code);},
+ });
+ const repair={toolRevision,receiptSha256};assert.doesNotThrow(()=>bind(auditPair(),repair,'synthetic_audit_refused'));
+ for(const changed of [{},{toolRevision},{...auditPair(),toolRevision:'d'.repeat(40)},
+  {...auditPair(),stagedToolRepairReceiptSha256:'d'.repeat(64)}])
+  assert.throws(()=>bind(changed,repair,'synthetic_audit_refused'),/synthetic_audit_refused/);
+ assert.throws(()=>bind(auditPair(),null,'synthetic_audit_refused'),/synthetic_audit_refused/);
+});
+
+test('runtime repair cannot be injected; resumed writes and ready acceptance stay behind the same fixed receipt binding',()=>{
+ const verifier=managerSection('async function verifiedMigrationToolRepair','async function migrationBackupEvidence');
+ assert(verifier.includes("await import('./attendance-staged-tool-repair.mjs')"));
+ assert(verifier.includes("rootDir:input.rootDir??ROOT,phase:'migration'"));
+ assert(verifier.includes('input.target===STAGED_TOOL_REPAIR_TARGET'));
+ assert(!/input\.(?:testOnly|verifyAttendanceStagedToolRepairReceipt|toolRevision|receiptSha256)/.test(verifier));
+ const run=managerSection('export async function runAttendanceProductionMigrations','export async function verifyAttendanceProductionDatabaseReady');
+ const binding=run.indexOf("bindToolRepairAudit(progress,repair,'attendance_resume_tool_repair_source_mismatch')");
+ assert(binding>0&&binding<run.indexOf('if(count===progress.installed+1)'));
+ assert(run.includes('scopeSha256:scope.scopeSha256,...audit,dbIdentity:attendanceProductionIdentity'));
+ const ready=managerSection('export async function verifyAttendanceProductionDatabaseReady','export function parseAttendanceProductionArguments');
+ assert(ready.includes('input.target===STAGED_TOOL_REPAIR_TARGET&&hasToolRepairAudit(proof)'));
+ assert(ready.includes('await verifiedMigrationToolRepair(input)'));
+ assert(ready.includes("bindToolRepairAudit(proof,repair,'attendance_ready_tool_repair_source_mismatch')"));
+ assert(ready.indexOf('bindToolRepairAudit(proof')<ready.indexOf('actual=await state('));
+ assert(ready.includes('same(actual.registry,proof.registry'));
+ assert(ready.includes('same(actual.functions,proof.functions'));
 });
