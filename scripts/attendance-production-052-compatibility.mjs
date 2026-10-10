@@ -6,10 +6,11 @@
 // DROP/rebuild, broad owner repair, maintenance, entitlement or role backfill.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {lstat,readFile,realpath,writeFile} from 'node:fs/promises';
+import {lstat,open,readFile,realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {runMigrationCommand} from './apply-production-database-migrations.mjs';
+import {attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
 import {loadAttendanceProductionScope,attendanceProductionScopeSha256,attendanceProductionIdentity,
  attendanceProductionLegacy052SourceSha256,validateAttendanceRegistry,protectedAttendanceMigrationSql,
  attendance052CompatibilityPlan,validateAttendanceCompatibilityProof,attendanceReadOnlyStateSql,validateAttendanceProductionState} from './attendance-production-database-migrations.mjs';
@@ -25,17 +26,17 @@ const pgText=x=>x===null?'null':`convert_from(decode('${Buffer.from(x,'utf8').to
 const FN=Object.keys(attendanceProductionLegacy052SourceSha256);
 export const attendanceCompatibilityUtcCases=Object.freeze([null,'','UTC','utc','Utc',' UTC','UTC ','UTC\n','UTC\t','Etc/UTC','Etc/GMT','GMT','Europe/Madrid','America/New_York','Asia/Shanghai','Pacific/Auckland','Europe/Paris','Asia/Kathmandu','Africa/Cairo','Australia/Sydney','NOT_A_TIME_ZONE','UTC'.repeat(40),'\u0001','\u200bUTC','UTC\u00a0']);
 export const attendanceCompatibilityPermissionCases=Object.freeze([null,[],['enterprise.view'],['enterprise.view','tasks.view'],['enterprise.view','roles.view','employees.view','employees.manage'],['enterprise.view','enterprise.view'],['tasks.view'],['not-a-permission']]);
-function paths(target){const directory=`/var/lib/faolla-online-release/${target}`;return {directory,attempt:`${directory}/attendance-compatibility-attempt.json`,proof:`${directory}/attendance-database-compatibility.json`,metadata:`${directory}/attendance-compatibility-metadata.sql`};}
+function paths(target){const directory=`/var/lib/faolla-online-release/${target}`;return {directory,attempt:`${directory}/attendance-compatibility-attempt.json`,proof:`${directory}/attendance-database-compatibility.json`,metadata:`${directory}/attendance-compatibility-metadata.sql`,extensionMetadata:`${directory}/attendance-compatibility-extension-metadata.json`,extensionSupplement:`${directory}/attendance-compatibility-extension-supplement.sql`};}
 function inputs(input){need(git.test(input.target??'')&&input.baseline===BASELINE,'attendance_compatibility_target');need(hex.test(input.sourcePilotContainerId??'')&&input.sourcePilotContainerId!==attendanceProductionIdentity.containerId,'attendance_compatibility_pilot');return `faolla_attendance_compat_${input.target.slice(0,12)}`;}
 async function owned(file,{directory=false,testOnly=false}={}){
  const info=await lstat(file);need(!info.isSymbolicLink()&&(directory?info.isDirectory():info.isFile()),'attendance_compatibility_evidence_type');
  if(!testOnly)need(info.uid===0&&(info.mode&0o022)===0,'attendance_compatibility_evidence_owner');
  need(await realpath(file)===file,'attendance_compatibility_evidence_path');return info;
 }
-async function privateWrite(file,value){const bytes=Buffer.from(typeof value==='string'?value:JSON.stringify(value,null,2)+'\n');await writeFile(file,bytes,{flag:'wx',mode:0o600});return sha(bytes);}
-async function run(input,args,sql,limit=1000000){
+async function privateWrite(file,value){const bytes=Buffer.from(typeof value==='string'?value:JSON.stringify(value,null,2)+'\n');const fd=await open(file,'wx',0o600);try{await fd.writeFile(bytes);await fd.sync();}finally{await fd.close();}if(process.platform==='linux'){const directory=await open(path.dirname(file),'r');try{await directory.sync();}finally{await directory.close();}}return sha(bytes);}
+async function run(input,args,sql,limit=1000000,trim=true){
  const r=await(input.runCommand??runMigrationCommand)('docker',['--host','unix:///var/run/docker.sock',...args],{input:sql,timeoutMs:150000,outputLimitBytes:limit});
- need(r?.status===0&&!r.timedOut,'attendance_compatibility_command_failed');return String(r.stdout??'').trim();
+ need(r?.status===0&&!r.timedOut,'attendance_compatibility_command_failed');const output=String(r.stdout??'');return trim?output.trim():output;
 }
 function psql(input,database,readOnly=false){need(/^[a-z0-9_]{1,63}$/.test(database),'attendance_compatibility_db_name');return ['exec','-i',input.sourcePilotContainerId,'sh','-lc',
  `set -eu; : "\${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS='-c lock_timeout=3s -c statement_timeout=${readOnly?8000:120000} -c idle_in_transaction_session_timeout=15000 -c timezone=UTC -c DateStyle=ISO,YMD -c extra_float_digits=3'; exec psql -h 127.0.0.1 -U supabase_admin -d ${database} --no-password --no-psqlrc --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate`];}
@@ -52,7 +53,8 @@ async function productionMetadataState(input,manifest){
  need(v.id===attendanceProductionIdentity.containerId&&v.name==='/supabase-db'&&v.running===true&&v.mounts?.some(m=>m.Type==='bind'&&m.Source===attendanceProductionIdentity.dataSource&&m.RW===true),'attendance_compatibility_formal_container');
  const readonly=source=>run(input,psql({...input,sourcePilotContainerId:attendanceProductionIdentity.containerId},'postgres',true),source,4000000);
  const state=JSON.parse(await readonly(attendanceReadOnlyStateSql()));validateAttendanceProductionState(state,manifest,{fresh:true});
- const contract=JSON.parse(await readonly(attendanceCompatibilityMetadataContractSql()));return {state,contract};
+ const contract=JSON.parse(await readonly(attendanceCompatibilityMetadataContractSql()));
+ const extensions=JSON.parse(await readonly(attendanceExtensionMetadataSnapshotSql()));validateAttendanceExtensionMetadata(extensions);return {state,contract,extensions};
 }
 function schemaOnlyTruncateMask(source){
  const permitted=[],statement=[];
@@ -266,19 +268,26 @@ export async function runAttendance052Compatibility(input={}){
  await owned(p.directory,{directory:true,testOnly:input.testOnly});if(input.testOnly!==true){let ancestor=path.dirname(p.directory);for(;;){await owned(ancestor,{directory:true});const parent=path.dirname(ancestor);if(parent===ancestor)break;ancestor=parent;}}
  if(input.testOnly!==true){await owned(PILOT,{directory:true});await owned(PILOT+'/.pilot-owner.json');const marker=JSON.parse(await readFile(PILOT+'/.pilot-owner.json','utf8'));need(marker.owner===OWNER&&marker.root===PILOT&&marker.project==='faolla-attendance-pilot','attendance_compatibility_owner_marker');}
  await inspect(input);const beforeSource=await sql(input,'postgres',attendanceCompatibilitySourceProbeSql(database),{json:true,readOnly:true});validateSource(beforeSource);
+ const sourceExtensionsBefore=await sql(input,'postgres',attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true});
  need(beforeSource.existingCompatibilityDatabase===false,'attendance_compatibility_database_already_exists');
  const formalBefore=await productionMetadataState(input,assets.manifest);
  if(input.apply!==true)return {schemaVersion:1,kind:'attendance-052-upgrade-compatibility-dry-run',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,scopeSha256:assets.scopeSha256,baselineCount:60,migrationCount:149,productionDataCopied:false,executed:false};
  need(input.confirm==='approved-isolated-052-210-compatibility','attendance_compatibility_explicit_approval');
- const dump=await run(input,['exec',attendanceProductionIdentity.containerId,'sh','-lc','set -eu; : "${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS="-c default_transaction_read_only=on -c lock_timeout=3s -c statement_timeout=120000"; exec pg_dump -h 127.0.0.1 -U supabase_admin -d postgres --schema-only --no-comments --no-security-labels --no-publications --no-subscriptions'],undefined,16000000);
- const metadata=validateAttendance052SchemaOnlySql(dump+'\n'),transcript=[];
+ const dump=await run(input,['exec',attendanceProductionIdentity.containerId,'sh','-lc','set -eu; : "${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS="-c default_transaction_read_only=on -c lock_timeout=3s -c statement_timeout=120000"; exec pg_dump -h 127.0.0.1 -U supabase_admin -d postgres --schema-only --no-comments --no-security-labels --no-publications --no-subscriptions'],undefined,16000000,false);
+ const metadata=validateAttendance052SchemaOnlySql(dump),transcript=[];
+ const supplement=attendanceExtensionMetadataSupplement(metadata.sql,formalBefore.extensions);
  const formalAfterDump=await productionMetadataState(input,assets.manifest);eq(formalAfterDump,formalBefore,'attendance_compatibility_formal_metadata_drift');
- await privateWrite(p.metadata,metadata.sql);await privateWrite(p.attempt,{schemaVersion:1,kind:'attendance-052-upgrade-compatibility-attempt',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourceSystemIdentifier:beforeSource.systemIdentifier,scopeSha256:assets.scopeSha256,productionSchemaOnlyRead:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,formalMetadataStateSha256:sha(JSON.stringify(formalBefore)),sourceCatalogSha256:beforeSource.catalogSha256,sourceRolesSha256:beforeSource.rolesSha256});
+ await privateWrite(p.metadata,metadata.sql);
+ const extensionMetadataSha256=await privateWrite(p.extensionMetadata,{schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:metadata.sha256,snapshotSha256:supplement.snapshotSha256,snapshot:formalBefore.extensions,operations:supplement.operations});
+ await privateWrite(p.extensionSupplement,supplement.supplementSql);
+ const extensionEvidence={sourceSha256:extensionMetadataSha256,snapshotSha256:supplement.snapshotSha256,supplementSha256:supplement.supplementSha256,restorationSha256:sha(supplement.sql),originalMetadataSourceSha256:metadata.sha256,extensionCount:8,memberCount:96,routineCount:80};
+ await privateWrite(p.attempt,{schemaVersion:1,kind:'attendance-052-upgrade-compatibility-attempt',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourceSystemIdentifier:beforeSource.systemIdentifier,scopeSha256:assets.scopeSha256,productionSchemaOnlyRead:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,extensionMetadata:extensionEvidence,formalMetadataStateSha256:sha(JSON.stringify(formalBefore)),sourceCatalogSha256:beforeSource.catalogSha256,sourceRolesSha256:beforeSource.rolesSha256});
  const exec=async(source,label)=>{await inspect(input);await sql(input,database,source);transcript.push({label,sqlSha256:sha(source),passed:true});input.onProgress?.({label});};
  // The only statement targeting pilot postgres is CREATE of this unique name.
  // Existing pilot postgres is never installed into or repaired.
  await sql(input,'postgres',`create database ${identifier(database)} with template template0 owner supabase_admin;`);
- await exec(guardedAttendanceCompatibilitySourceSql('begin;\n'+metadata.sql+'\ncommit;\n',database),'actual-formal052-schema-only-metadata');
+ await exec(guardedAttendanceCompatibilitySourceSql('begin;\n'+supplement.sql+'\ncommit;\n',database),'actual-formal052-schema-only-metadata');
+ eq(await sql(input,database,attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true}),formalBefore.extensions,'attendance_compatibility_clone_extension_metadata');
  eq(await sql(input,database,attendanceCompatibilityMetadataContractSql(),{json:true,readOnly:true}),formalBefore.contract,'attendance_compatibility_clone_metadata_contract');
  await exec(`-- attendance_compatibility_registry_system_metadata\nbegin;insert into public.faolla_schema_migrations(version,name) values ${assets.baseline.map(x=>`(${x.version},${literal(x.name)})`).join(',')};commit;\n`,'fixed-60-registry-system-metadata');
  const empty=await sql(input,database,snapshotSql(),{json:true,readOnly:true});need(empty.owner==='supabase_admin'&&empty.authUsers===0&&empty.attendanceRelations===0&&empty.attendanceFunctions===0,'attendance_compatibility_baseline_not_empty');eq(empty.registry,assets.manifest.baseline,'attendance_compatibility_baseline_registry');
@@ -304,12 +313,14 @@ export async function runAttendance052Compatibility(input={}){
  eq(final.outsideSha256,start.outsideSha256,'attendance_compatibility_outside_catalog');eq(final.rolesSha256,beforeSource.rolesSha256,'attendance_compatibility_cluster_roles');
  const noBackfill=await sql(input,database,"-- attendance_compatibility_no_backfill\nbegin read only;select jsonb_build_object('settings',(select count(*) from public.merchant_attendance_settings),'workers',(select count(*) from public.merchant_attendance_workers),'newRolePermissions',exists(select 1 from public.merchant_enterprise_roles r,unnest(r.permissions) p where p like 'attendance.%'))::text;commit;\n",{json:true,readOnly:true});eq(noBackfill,{settings:0,workers:0,newRolePermissions:false},'attendance_compatibility_auto_enable');
  const afterSource=await sql(input,'postgres',attendanceCompatibilitySourceProbeSql(database),{json:true,readOnly:true});validateSource(afterSource);eq(afterSource.catalogSha256,beforeSource.catalogSha256,'attendance_compatibility_existing_pilot_catalog_changed');eq(afterSource.rolesSha256,beforeSource.rolesSha256,'attendance_compatibility_existing_roles_changed');
+ eq(await sql(input,'postgres',attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true}),sourceExtensionsBefore,'attendance_compatibility_existing_pilot_extensions_changed');
+ eq(await sql(input,database,attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true}),formalBefore.extensions,'attendance_compatibility_final_extension_metadata');
  const formalAfter=await productionMetadataState(input,assets.manifest);eq(formalAfter,formalBefore,'attendance_compatibility_formal_changed');
  const checks=Object.fromEntries(attendance052CompatibilityPlan(input).checks.map(x=>[x,true]));
  const proof={schemaVersion:1,kind:'attendance-052-upgrade-compatibility',target:input.target,baseline:input.baseline,...audit,scopeSha256:attendanceProductionScopeSha256,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourcePilotSystemIdentifier:beforeSource.systemIdentifier,databaseOid:start.databaseOid,backendPid:start.backendPid,owner:'supabase_admin',productionDataCopied:false,
   baselineRegistryCount:60,baselineRegistryMaximum:'202609240052',initialAttendanceRelations:empty.attendanceRelations,initialAttendanceFunctions:empty.attendanceFunctions,finalRegistryCount:final.registry.length,finalRegistryMaximum:final.registry.at(-1).version,checks,
-  transcriptSha256:sha(JSON.stringify({transcript,metadataSourceSha256:metadata.sha256,formalBefore,formalAfter,permissions:beforePermissions,employeeTests,utcBefore,utcAfter,noBackfill})),legacyFingerprintBefore:beforeFacts,legacyFingerprintAfter:afterFacts,outsideCatalogSha256Before:start.outsideSha256,outsideCatalogSha256After:final.outsideSha256,clusterRolesSha256Before:beforeSource.rolesSha256,clusterRolesSha256After:afterSource.rolesSha256,
-  productionMetadataSource:{identity:attendanceProductionIdentity,registryCount:60,registryMaximum:'202609240052',schemaOnly:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,normalizedContractSha256:formalBefore.contract,formalStateSha256Before:sha(JSON.stringify(formalBefore)),formalStateSha256After:sha(JSON.stringify(formalAfter))},originalAttendanceSourcesInstalled:149,historicalBootstrapReplayed:false,utcCases:25,employeeLegacyCases:4,realHttpAuthAccepted:false,productionRestoreProved:false,completedAt:new Date().toISOString()};
+  transcriptSha256:sha(JSON.stringify({transcript,metadataSourceSha256:metadata.sha256,extensionEvidence,formalBefore,formalAfter,permissions:beforePermissions,employeeTests,utcBefore,utcAfter,noBackfill})),legacyFingerprintBefore:beforeFacts,legacyFingerprintAfter:afterFacts,outsideCatalogSha256Before:start.outsideSha256,outsideCatalogSha256After:final.outsideSha256,clusterRolesSha256Before:beforeSource.rolesSha256,clusterRolesSha256After:afterSource.rolesSha256,
+  productionMetadataSource:{identity:attendanceProductionIdentity,registryCount:60,registryMaximum:'202609240052',schemaOnly:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,extensionMetadata:extensionEvidence,normalizedContractSha256:formalBefore.contract,formalStateSha256Before:sha(JSON.stringify(formalBefore)),formalStateSha256After:sha(JSON.stringify(formalAfter))},originalAttendanceSourcesInstalled:149,historicalBootstrapReplayed:false,utcCases:25,employeeLegacyCases:4,realHttpAuthAccepted:false,productionRestoreProved:false,completedAt:new Date().toISOString()};
  validateAttendanceCompatibilityProof(proof,{...input,scopeSha256:assets.scopeSha256});const proofSha256=await privateWrite(p.proof,proof);return {...proof,proofSha256};
 }
 export function parseAttendanceCompatibilityArguments(argv){const command=argv[0]??'dry-run';need(['dry-run','apply'].includes(command),'attendance_compatibility_command');const out={apply:command==='apply'};

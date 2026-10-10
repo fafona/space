@@ -8,10 +8,12 @@ import {runInNewContext} from 'node:vm';
 import {recoveryContentFixture} from './test-fixtures/database-recovery-content.mjs';
 import {PRODUCTION_RELEASE_AGGREGATE_KEYS} from './production-release-attestation.mjs';
 import {ATTENDANCE_RELEASE_SCOPE,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
+import {attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
+import {syntheticAttendanceExtensionMetadata,syntheticAttendanceExtensionDump} from './test-helpers/attendance-extension-metadata.mjs';
 import {
  attendanceProductionIdentity,attendanceProductionScopeSha256,attendanceProductionLegacy052SourceSha256,loadAttendanceProductionScope,validateAttendanceRegistry,
  attendanceReadOnlyStateSql,validateAttendanceProductionState,protectedAttendanceMigrationSql,
- validateAttendanceCompatibilityProof,validateAttendanceBackupEvidence,attendance052CompatibilityPlan,filterAttendanceCompatibilityMetadataSql,
+ validateAttendanceCompatibilityProof,validateAttendanceBackupEvidence,validateAttendanceExtensionCompatibilityEvidence,attendance052CompatibilityPlan,filterAttendanceCompatibilityMetadataSql,
  runAttendanceProductionMigrations,verifyAttendanceProductionDatabaseReady,parseAttendanceProductionArguments,
 } from './attendance-production-database-migrations.mjs';
 const target='a'.repeat(40),baseline=ATTENDANCE_RELEASE_SCOPE.baseline,sha=x=>createHash('sha256').update(x).digest('hex');
@@ -183,7 +185,7 @@ test('general backup contract is byte-identical and still rejects a mismatched s
 // Extract the actual small routing/binding functions into a synthetic VM.
 // The verifier stub here proves branch ordering only; production has no
 // injectable verifier and these tests do not establish real receipt acceptance.
-function repairRouting({sourceSha=toolRevision,secondSourceSha=sourceSha,deny=false}={}){
+function repairRouting({sourceSha=toolRevision,secondSourceSha=sourceSha,deny=false,followOn=false,denyExtensions=false}={}){
  const calls=[];
  const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
  const wrapper=managerSection('async function migrationBackupEvidence','export function attendance052CompatibilityPlan');
@@ -192,7 +194,8 @@ function repairRouting({sourceSha=toolRevision,secondSourceSha=sourceSha,deny=fa
   require_:(condition,code)=>{if(!condition)throw new Error(code);},
   ownedJson:async()=>({value:{source:{sha:sourceSha}}}),
   validateDatabaseBackupSourceIdentity:source=>({valid:true,source}),
-  verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision,receiptSha256};},
+  verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision,receiptSha256,...(followOn?{receiptKind:'attendance-staged-tool-repair-follow-on'}:{})};},
+  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(repair?.receiptKind!=='attendance-staged-tool-repair-follow-on')return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
   validateAttendanceBackupEvidence:async input=>{calls.push(['backup',input.target]);if(secondSourceSha!==input.target)throw new Error('attendance_backup_source_not_target');return {source:{sha:secondSourceSha},restoreRehearsed:false};},
  });
  return {calls,route};
@@ -265,4 +268,41 @@ test('runtime repair cannot be injected; resumed writes and ready acceptance sta
  assert(ready.indexOf('bindToolRepairAudit(proof')<ready.indexOf('actual=await state('));
  assert(ready.includes('same(actual.registry,proof.registry'));
  assert(ready.includes('same(actual.functions,proof.functions'));
+});
+
+function extensionEvidenceFixture(){
+ const metadata=Buffer.from(syntheticAttendanceExtensionDump),snapshot=syntheticAttendanceExtensionMetadata();
+ const reconstructed=attendanceExtensionMetadataSupplement(metadata.toString('utf8'),snapshot);
+ const extensionMetadata=Buffer.from(JSON.stringify({schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:sha(metadata),snapshotSha256:reconstructed.snapshotSha256,snapshot,operations:reconstructed.operations})+'\n');
+ const proof={...compatibility(),target:repairTarget,databaseName:`faolla_attendance_compat_${repairTarget.slice(0,12)}`};
+ proof.productionMetadataSource={...proof.productionMetadataSource,metadataSourceSha256:sha(metadata),extensionMetadata:{sourceSha256:sha(extensionMetadata),snapshotSha256:reconstructed.snapshotSha256,supplementSha256:reconstructed.supplementSha256,restorationSha256:sha(reconstructed.sql),originalMetadataSourceSha256:sha(metadata),extensionCount:8,memberCount:96,routineCount:80}};
+ return {proof,files:{metadata,extensionMetadata,supplement:Buffer.from(reconstructed.supplementSql)}};
+}
+test('follow-on extension gate reconstructs original dump plus actual bounded supplement, not a hash-only assertion',async()=>{
+ const {proof,files}=extensionEvidenceFixture();assert.equal(await validateAttendanceExtensionCompatibilityEvidence(proof,files),proof.productionMetadataSource.extensionMetadata);
+ const base=proof.productionMetadataSource.extensionMetadata;
+ for(const changed of [null,{...base,extra:true},{...base,extensionCount:9},{...base,memberCount:95},{...base,routineCount:79},{...base,snapshotSha256:'f'.repeat(64)},{...base,restorationSha256:'f'.repeat(64)},{...base,originalMetadataSourceSha256:'f'.repeat(64)}]){
+  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence({...proof,productionMetadataSource:{...proof.productionMetadataSource,extensionMetadata:changed}},files),/attendance_extension_/);
+ }
+ for(const key of Object.keys(files))await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(proof,{...files,[key]:Buffer.concat([files[key],Buffer.from('\nchanged')])}),/artifact_changed/);
+ const artifact=JSON.parse(files.extensionMetadata.toString('utf8'));artifact.operations=[];
+ const changedBytes=Buffer.from(JSON.stringify(artifact));
+ await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence({...proof,productionMetadataSource:{...proof.productionMetadataSource,extensionMetadata:{...base,sourceSha256:sha(changedBytes)}}},{...files,extensionMetadata:changedBytes}),/operations/);
+ await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence({...proof,target},files),/evidence_target/);
+});
+test('follow-on routing requires extra artifacts after independent receipt and backup checks',async()=>{
+ const model=repairRouting({followOn:true});await model.route({target:repairTarget},auditPair());
+ assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
+ const denied=repairRouting({followOn:true,denyExtensions:true});await assert.rejects(()=>denied.route({target:repairTarget},auditPair()),/synthetic_extension_evidence_refused/);
+ assert.deepEqual(denied.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
+});
+test('follow-on artifact paths are fixed/private/stable and ready rebinds their canonical proof before actual DB reads',()=>{
+ const artifacts=managerSection('async function privateExtensionEvidenceBytes','async function migrationBackupEvidence');
+ assert(artifacts.includes('before.uid===0')&&artifacts.includes('(before.mode&0o777)===0o600')&&artifacts.includes('before.nlink===1'));
+ assert(artifacts.includes('after.ino')&&artifacts.includes('after.ctimeMs')&&artifacts.includes('bytes.length===before.size'));
+ assert(artifacts.includes('const fixed=runtimePaths(input.target)'));
+ assert(!/input\.(?:paths|rootOwned|testOnly|verifyAttendance|toolRevision|receiptSha256)/.test(artifacts));
+ const ready=managerSection('export async function verifyAttendanceProductionDatabaseReady','export function parseAttendanceProductionArguments');
+ assert(ready.indexOf('verifyFollowOnExtensionCompatibility(input,compatibility.value,repair)')<ready.indexOf('actual=await state('));
+ assert(ready.includes('compatibility.sha256===proof.compatibilityProofSha256'));
 });

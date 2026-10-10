@@ -8,8 +8,10 @@ import {fileURLToPath} from 'node:url';
 import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
 import {ATTENDANCE_STAGED_REPAIR as p, ATTENDANCE_STAGED_REPAIR_FILES as allowed,
-  ATTENDANCE_STAGED_REPAIR_PRESERVED as pins, assertAttendanceStagedRepairReceipt} from './attendance-staged-tool-repair-policy.mjs';
-import {stagedRepairImportClosure, prepareAttendanceStagedToolRepair} from './attendance-staged-tool-repair.mjs';
+  ATTENDANCE_STAGED_REPAIR_PRESERVED as pins, ATTENDANCE_STAGED_FOLLOW_ON as follow,
+  assertAttendanceStagedRepairReceipt, assertAttendanceStagedFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
+import {stagedRepairImportClosure, prepareAttendanceStagedToolRepair, prepareAttendanceStagedToolRepairFollowOn} from './attendance-staged-tool-repair.mjs';
+import {stagedFollowOnReceiptFixture} from './attendance-staged-tool-repair-policy.test.mjs';
 
 const entry = fileURLToPath(new URL('./attendance-staged-tool-repair.mjs', import.meta.url));
 const repository = fileURLToPath(new URL('../', import.meta.url));
@@ -25,7 +27,7 @@ function functionCode(name) {
   assert.ok(node, name); return node.getText(syntax).replace(/^export\s+/, '');
 }
 function functionVm(name, globals) {
-  return runInNewContext(`${functionCode(name)}\n${name}`, {Buffer, createHash, path: path.posix, fail, need, same, ...globals}, {timeout: 1000});
+  return runInNewContext(`${functionCode(name)}\n${name}`, {Buffer, JSON, createHash, path: path.posix, fail, need, same, ...globals}, {timeout: 1000});
 }
 
 test('real static closure includes every transitive local import according to the JS parser', () => {
@@ -221,5 +223,144 @@ test('runtime command sites are observations only: no build, PM2 writer, databas
 test('real CLI rejects a non-Linux/non-root invocation before any production path access', {skip: process.platform === 'linux' && process.getuid?.() === 0}, () => {
   assert.throws(() => prepareAttendanceStagedToolRepair(revision, 'approved-staged-attendance-tool-repair'), /attendance_staged_repair_invocation/);
   const actual = spawnSync(process.execPath, [entry, 'prepare', revision, 'approved-staged-attendance-tool-repair'], {encoding: 'utf8', timeout: 10000, windowsHide: true});
+  assert.equal(actual.status, 1); assert.equal(actual.stdout, ''); assert.match(actual.stderr, /^attendance_staged_repair_invocation\r?\n$/);
+});
+
+test('synthetic original follow-on evidence requires exact old bytes pin, fixed historical scope and unchanged application inputs', () => {
+  const {original: base} = stagedFollowOnReceiptFixture(), rows = `100644 blob ${'a'.repeat(40)}\tsrc/app/page.tsx`;
+  function fixture({wrongPin = false, wrongScope = false, wrongInputs = false, wrongReceiptInput = false} = {}) {
+    const original = {...base, sourceInputsSha256: wrongReceiptInput ? 'c'.repeat(64) : digest(rows)};
+    const raw = Buffer.from(JSON.stringify(original)), calls = [];
+    const read = functionVm('originalFollowOnReceipt', {p, follow, allowed, APP, receiptFile: `${p.operation}/attendance-staged-tool-repair.json`,
+      ownedFile: (file, options) => {assert.equal(file, `${p.operation}/attendance-staged-tool-repair.json`); assert.equal(options.privateMode, true); return raw;},
+      sha: bytes => Buffer.isBuffer(bytes) && bytes.equals(raw) ? wrongPin ? '0'.repeat(64) : follow.previousReceiptSha256 : digest(bytes),
+      assertAttendanceStagedRepairReceipt, assertOnlineToolOwnedPath: location => assert.equal(location, APP),
+      git: (directory, args) => {assert.equal(directory, APP); calls.push(args); if (args[0] === 'merge-base') return '';
+        assert.equal(args[0], 'diff'); return wrongScope ? 'M\tsrc/app/page.tsx' : 'M\tscripts/attendance-production-052-compatibility.mjs';},
+      runOnlineToolGit: (directory, args) => {assert.equal(directory, APP); assert.equal(args[0], 'ls-tree'); calls.push(args);
+        return Buffer.from((wrongInputs && args.at(-1) === follow.previousToolRevision ? rows.replace('a'.repeat(40), 'b'.repeat(40)) : rows) + '\0');},
+    });
+    return {read, calls, raw};
+  }
+  const positive = fixture(); assert.equal(positive.read().receiptSha256, follow.previousReceiptSha256);
+  assert.ok(positive.calls.every(args => ['diff', 'merge-base', 'ls-tree'].includes(args[0])));
+  for (const options of [{wrongPin: true}, {wrongScope: true}, {wrongInputs: true}, {wrongReceiptInput: true}])
+    assert.throws(fixture(options).read, /original_receipt_(?:changed|source)/);
+});
+
+test('synthetic archived failure requires exact private directory entries, every file pin and stable directory identity', () => {
+  function fixture({extra = false, changedFile = false, mode = 0o700, moved = false} = {}) {
+    let lists = 0;
+    const bytes = new Map(Object.keys(follow.archive.files).map(name => [name, Buffer.from(name)]));
+    const read = functionVm('archivedFollowOnFailure', {follow,
+      assertOnlineToolOwnedPath: location => assert.equal(location, follow.archive.directory),
+      fs: {lstatSync: location => {assert.equal(location, follow.archive.directory); return {dev: 1, ino: moved && lists > 1 ? 2 : 1, uid: 0, mode, mtimeMs: 1, ctimeMs: 1};},
+        readdirSync: location => {assert.equal(location, follow.archive.directory); lists++; return [...bytes.keys(), ...(extra ? ['unexpected.json'] : [])];}},
+      ownedFile: (location, options) => {assert.ok(location.startsWith(follow.archive.directory + '/')); assert.equal(options.privateMode, true);
+        return bytes.get(path.posix.basename(location));},
+      sha: value => changedFile ? '0'.repeat(64) : follow.archive.files[value.toString('utf8')],
+    });
+    return read;
+  }
+  assert.deepEqual(fixture()(), follow.archive);
+  for (const options of [{extra: true}, {changedFile: true}, {mode: 0o755}, {moved: true}])
+    assert.throws(fixture(options), /failure_archive_(?:invalid|changed)/);
+});
+
+function followOnPreparationFixture({existingAttempt = false, existingReceipt = false, changeCandidate = false,
+  changeOriginal = false, changeArchive = false, wrongReadback = false, brokenAncestry = false} = {}) {
+  const {original} = stagedFollowOnReceiptFixture(), calls = [], descriptors = new Map(), written = new Map();
+  const oldFile = `${p.operation}/attendance-staged-tool-repair.json`, nextFile = `${p.operation}/${follow.receiptName}`;
+  const oldBytes = Buffer.from(JSON.stringify(original)); written.set(oldFile, oldBytes);
+  const before = {preservedFiles: {...pins}, builtOutputSha256: p.builtOutputSha256, dependencySha256: original.dependencySha256};
+  const info = {toolRevision: revision, sourceInputsSha256: original.sourceInputsSha256,
+    changedToolFiles: ['scripts/attendance-production-052-compatibility.mjs', 'scripts/attendance-staged-tool-repair.mjs', 'scripts/attendance-staged-tool-repair-policy.mjs']};
+  let locked = false, observations = 0, originals = 0, archives = 0;
+  const constants = {...fs.constants, O_NOFOLLOW: fs.constants.O_NOFOLLOW || 0x20000,
+    O_DIRECTORY: fs.constants.O_DIRECTORY || 0x10000}; // Explicit synthetic Linux flags, including on Windows.
+  const io = {constants,
+    openSync(location, flags, mode) {assert.ok(locked); const fd = descriptors.size + 10; calls.push({kind: 'open', location, flags, mode});
+      if (location === nextFile) {assert.equal(mode, 0o600); assert.ok(flags & constants.O_EXCL); assert.ok(flags & constants.O_NOFOLLOW);}
+      else assert.equal(location, p.operation); descriptors.set(fd, location); return fd;},
+    writeFileSync(fd, bytes) {assert.equal(descriptors.get(fd), nextFile); written.set(nextFile, Buffer.from(bytes)); calls.push({kind: 'write', location: nextFile});},
+    fsyncSync(fd) {assert.ok(descriptors.has(fd)); calls.push({kind: 'fsync', location: descriptors.get(fd)});},
+    closeSync(fd) {assert.ok(descriptors.has(fd)); descriptors.delete(fd);},
+  };
+  const run = functionVm('prepareAttendanceStagedToolRepairFollowOn', {p, follow, ROOT: '/synthetic-bootstrap', APP,
+    maintenance: '/var/lib/faolla-maintenance/merchant-space', followOnReceiptFile: nextFile, fs: io, sha: digest,
+    process: {umask: () => 0o022},
+    evidenceExists: location => location === nextFile ? existingReceipt : existingAttempt && location.endsWith('/attendance-compatibility-attempt.json'),
+    git: (directory, args) => {assert.equal(directory, APP); assert.deepEqual([...args], ['merge-base', '--is-ancestor', follow.previousToolRevision, revision]);
+      calls.push({kind: 'ancestry'}); if (brokenAncestry) throw Error('ancestry_failed'); return '';},
+    verifySource: (target, directory, options) => {assert.equal(target, revision); calls.push({kind: 'source', directory, options}); return info;},
+    withOnlineToolPreparationLocks: (options, work) => {assert.equal(options.deployLock, `${APP}.deploy.lock`); calls.push({kind: 'lock'}); locked = true; try {return work();} finally {locked = false;}},
+    originalFollowOnReceipt: () => {assert.ok(locked); originals++; calls.push({kind: 'original'});
+      if (changeOriginal && originals > 1) throw Error('original_receipt_changed'); return {receipt: original, receiptSha256: follow.previousReceiptSha256};},
+    archivedFollowOnFailure: () => {assert.ok(locked); archives++; calls.push({kind: 'archive'});
+      if (changeArchive && archives > 1) throw Error('failure_archive_changed'); return follow.archive;},
+    observe: () => {assert.ok(locked); observations++; calls.push({kind: 'observe'}); return changeCandidate && observations > 1 ? {...before, dependencySha256: 'c'.repeat(64)} : before;},
+    assertAttendanceStagedFollowOnReceipt,
+    assertOnlineToolNoPending: options => {assert.ok(locked); assertAttendanceStagedRepairReceipt(options.fixedStagedRepairReceipt);
+      assert.equal(options.fixedStagedRepairReceipt.toolRevision, revision); calls.push({kind: 'pending'});},
+    createOnlineReleaseToolPlan: target => ({target}), executeOnlineReleaseToolPlan: plan => {assert.ok(locked); assert.equal(plan.target, revision);
+      calls.push({kind: 'prepare-source-only'}); return {directory: '/synthetic-tools', target: revision};},
+    ownedFile: (location, options) => {assert.equal(location, nextFile); assert.equal(options.privateMode, true);
+      return wrongReadback ? Buffer.from('{}') : written.get(nextFile);},
+  });
+  return {calls, written, descriptors, oldFile, nextFile, oldBytes, run: confirm => run(revision, confirm)};
+}
+test('synthetic follow-on preparation retains original bytes, archives and build, and writes only one new durable receipt under the normal locks', () => {
+  const f = followOnPreparationFixture(), result = f.run('approved-staged-attendance-tool-repair-follow-on');
+  assert.equal(result.applicationRebuilt, false); assert.equal(result.productionDatabaseChanged, false); assert.equal(result.trafficChanged, false);
+  assert.equal(result.toolRevision, revision); assert.equal(result.originalReceiptSha256, follow.previousReceiptSha256);
+  assert.ok(f.written.get(f.oldFile).equals(f.oldBytes)); assert.equal(f.written.size, 2); assert.equal(f.descriptors.size, 0);
+  assert.equal(f.calls.filter(c => c.kind === 'observe').length, 2); assert.equal(f.calls.filter(c => c.kind === 'prepare-source-only').length, 1);
+  assert.deepEqual(f.calls.filter(c => c.kind === 'fsync').map(c => c.location), [f.nextFile, p.operation]);
+  assert.ok(f.calls.findLastIndex(c => c.kind === 'observe') < f.calls.findIndex(c => c.kind === 'write'));
+  assert.equal(result.receiptSha256, digest(f.written.get(f.nextFile)));
+});
+test('synthetic follow-on rejects missing approval, another branch, live attempts, reused receipt or changed evidence without rewriting anything', () => {
+  const approval = followOnPreparationFixture(); assert.throws(() => approval.run('approved-staged-attendance-tool-repair'), /approval_required/);
+  assert.equal(approval.calls.length, 0);
+  for (const options of [{existingAttempt: true}, {existingReceipt: true}, {changeCandidate: true}, {changeOriginal: true}, {changeArchive: true}, {brokenAncestry: true}]) {
+    const f = followOnPreparationFixture(options); assert.throws(() => f.run('approved-staged-attendance-tool-repair-follow-on'),
+      /database_attempt_exists|follow_on_receipt_exists|candidate_changed_during_preparation|original_receipt_changed|failure_archive_changed|ancestry_failed/);
+    assert.equal(f.written.size, 1); assert.ok(f.written.get(f.oldFile).equals(f.oldBytes)); assert.equal(f.descriptors.size, 0);
+  }
+  const failedReadback = followOnPreparationFixture({wrongReadback: true});
+  assert.throws(() => failedReadback.run('approved-staged-attendance-tool-repair-follow-on'), /receipt_write_changed/);
+  assert.equal(failedReadback.written.size, 2, 'retain the failed new write as evidence, without clearing or retrying');
+});
+
+test('synthetic verification selects only a fully validated follow-on and never silently falls back on a broken chain', () => {
+  const {original, chain} = stagedFollowOnReceiptFixture(), raw = Buffer.from(JSON.stringify(original)), followRaw = Buffer.from(JSON.stringify(chain));
+  const oldFile = `${p.operation}/attendance-staged-tool-repair.json`, nextFile = `${p.operation}/${follow.receiptName}`;
+  function fixture({present = true, invalid = false, changedOriginal = false, changedArchive = false, changedFollow = false} = {}) {
+    let originalReads = 0, followReads = 0, archiveReads = 0; const requests = [];
+    const verify = functionVm('verifyAttendanceStagedToolRepairReceipt', {p, follow, APP, ROOT: '/synthetic-tools', receiptFile: oldFile,
+      followOnReceiptFile: nextFile, sha: digest, evidenceExists: file => {assert.equal(file, nextFile); return present;},
+      ownedFile: (file, options) => {assert.equal(options.privateMode, true); if (file === oldFile) return raw; assert.equal(file, nextFile); followReads++;
+        return invalid ? Buffer.from('{}') : changedFollow && followReads > 1 ? Buffer.from('{}') : followRaw;},
+      originalFollowOnReceipt: () => {originalReads++; if (changedOriginal && originalReads > 1) throw Error('original_receipt_changed');
+        return {receipt: original, receiptSha256: follow.previousReceiptSha256};},
+      archivedFollowOnFailure: () => {archiveReads++; if (changedArchive && archiveReads > 1) throw Error('failure_archive_changed'); return follow.archive;},
+      assertAttendanceStagedRepairReceipt, assertAttendanceStagedFollowOnReceipt,
+      git: (directory, args) => {assert.equal(directory, APP); assert.deepEqual([...args], ['merge-base', '--is-ancestor', follow.previousToolRevision, chain.effectiveReceipt.toolRevision]); return '';},
+      verifySource: (target, root) => {requests.push({target, root}); const receipt = present ? chain.effectiveReceipt : original;
+        return {changedToolFiles: receipt.changedToolFiles, sourceInputsSha256: receipt.sourceInputsSha256};},
+      observe: () => ({dependencySha256: original.dependencySha256}),
+    });
+    return {requests, run: () => verify({target: p.target, rootDir: '/synthetic-tools', phase: 'migration'})};
+  }
+  const f = fixture(), result = f.run(); assert.equal(result.toolRevision, chain.effectiveReceipt.toolRevision);
+  assert.equal(result.receiptSha256, digest(followRaw)); assert.equal(result.originalReceiptSha256, follow.previousReceiptSha256);
+  assert.equal(result.receiptKind, 'attendance-staged-tool-repair-follow-on'); assert.deepEqual(f.requests, [{target: chain.effectiveReceipt.toolRevision, root: '/synthetic-tools'}]);
+  const legacy = fixture({present: false}).run(); assert.equal(legacy.toolRevision, original.toolRevision); assert.equal(legacy.receiptSha256, digest(raw));
+  for (const options of [{invalid: true}, {changedOriginal: true}, {changedArchive: true}, {changedFollow: true}]) assert.throws(fixture(options).run);
+});
+
+test('real follow-on CLI rejects a non-Linux/non-root invocation before any production path access', {skip: process.platform === 'linux' && process.getuid?.() === 0}, () => {
+  assert.throws(() => prepareAttendanceStagedToolRepairFollowOn(revision, 'approved-staged-attendance-tool-repair-follow-on'), /attendance_staged_repair_invocation/);
+  const actual = spawnSync(process.execPath, [entry, 'prepare-follow-on', revision, 'approved-staged-attendance-tool-repair-follow-on'], {encoding: 'utf8', timeout: 10000, windowsHide: true});
   assert.equal(actual.status, 1); assert.equal(actual.stdout, ''); assert.match(actual.stderr, /^attendance_staged_repair_invocation\r?\n$/);
 });

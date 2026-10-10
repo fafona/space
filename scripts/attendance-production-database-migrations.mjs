@@ -209,6 +209,50 @@ async function verifiedMigrationToolRepair(input){
   typeof result.receiptSha256==='string'&&HEX.test(result.receiptSha256),'attendance_tool_repair_receipt_invalid');
  return result;
 }
+// This extra gate belongs only to the independently verified fixed follow-on
+// repair. It does not select a source revision, accept a receipt, or alter the
+// general backup contract. The original dump and both supplementary artifacts
+// must reconstruct precisely the schema-only restoration used by the clone.
+export async function validateAttendanceExtensionCompatibilityEvidence(proof,files){
+ require_(proof?.target===STAGED_TOOL_REPAIR_TARGET,'attendance_extension_evidence_target');
+ const source=proof.productionMetadataSource,evidence=source?.extensionMetadata;
+ const keys=['sourceSha256','snapshotSha256','supplementSha256','restorationSha256','originalMetadataSourceSha256','extensionCount','memberCount','routineCount'];
+ require_(evidence&&typeof evidence==='object'&&!Array.isArray(evidence),'attendance_extension_evidence_missing');
+ same(Object.keys(evidence).sort(),keys.sort(),'attendance_extension_evidence_shape');
+ for(const key of keys.filter(k=>k.endsWith('Sha256')))require_(typeof evidence[key]==='string'&&HEX.test(evidence[key]),'attendance_extension_evidence_hash');
+ require_(evidence.extensionCount===8&&evidence.memberCount===96&&evidence.routineCount===80&&evidence.originalMetadataSourceSha256===source.metadataSourceSha256,'attendance_extension_evidence_source');
+ for(const key of ['metadata','extensionMetadata','supplement'])require_(Buffer.isBuffer(files?.[key]),'attendance_extension_evidence_bytes');
+ require_(digest(files.metadata)===source.metadataSourceSha256&&digest(files.extensionMetadata)===evidence.sourceSha256&&digest(files.supplement)===evidence.supplementSha256,'attendance_extension_evidence_artifact_changed');
+ const artifact=JSON.parse(files.extensionMetadata.toString('utf8'));
+ same(Object.keys(artifact).sort(),['schemaVersion','kind','identity','originalMetadataSourceSha256','snapshotSha256','snapshot','operations'].sort(),'attendance_extension_evidence_artifact_shape');
+ require_(artifact.schemaVersion===1&&artifact.kind==='attendance-actual-formal-extension-metadata'&&artifact.originalMetadataSourceSha256===source.metadataSourceSha256&&artifact.snapshotSha256===evidence.snapshotSha256,'attendance_extension_evidence_artifact_identity');
+ same(artifact.identity,attendanceProductionIdentity,'attendance_extension_evidence_database');
+ const {attendanceExtensionMetadataSupplement}=await import('./attendance-extension-metadata.mjs');
+ const reconstructed=attendanceExtensionMetadataSupplement(files.metadata.toString('utf8'),artifact.snapshot);
+ require_(reconstructed.sourceSha256===source.metadataSourceSha256&&reconstructed.snapshotSha256===evidence.snapshotSha256&&reconstructed.supplementSha256===evidence.supplementSha256&&digest(reconstructed.sql)===evidence.restorationSha256&&files.supplement.equals(Buffer.from(reconstructed.supplementSql)),'attendance_extension_evidence_reconstruction');
+ same(artifact.operations,reconstructed.operations,'attendance_extension_evidence_operations');
+ return evidence;
+}
+async function privateExtensionEvidenceBytes(file,maximum){
+ const before=await lstat(file);
+ require_(before.isFile()&&!before.isSymbolicLink()&&before.uid===0&&(before.mode&0o777)===0o600&&before.nlink===1&&before.size>0&&before.size<maximum,'attendance_extension_evidence_not_private');
+ const bytes=await readFile(file),after=await lstat(file);
+ same([after.dev,after.ino,after.size,after.mtimeMs,after.ctimeMs,after.mode,after.uid,after.nlink],[before.dev,before.ino,before.size,before.mtimeMs,before.ctimeMs,before.mode,before.uid,before.nlink],'attendance_extension_evidence_changed_during_read');
+ require_(bytes.length===before.size,'attendance_extension_evidence_changed_during_read');
+ return bytes;
+}
+async function verifyFollowOnExtensionCompatibility(input,compatibility,repair){
+ if(repair?.receiptKind!=='attendance-staged-tool-repair-follow-on')return null;
+ require_(input.target===STAGED_TOOL_REPAIR_TARGET,'attendance_extension_evidence_target');
+ const fixed=runtimePaths(input.target);await ownedRuntime(fixed.directory);
+ const proofBytes=await privateExtensionEvidenceBytes(fixed.compatibility,2000000),proof=JSON.parse(proofBytes.toString('utf8'));
+ same(proof,compatibility,'attendance_extension_evidence_canonical_proof');
+ validateAttendanceCompatibilityProof(proof,{target:input.target,baseline:input.baseline,scopeSha256:attendanceProductionScopeSha256});
+ bindToolRepairAudit(proof,repair,'attendance_extension_evidence_tool_repair');
+ const files={metadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-metadata.sql'),16000000),extensionMetadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-metadata.json'),2000000),supplement:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-supplement.sql'),2000000)};
+ await validateAttendanceExtensionCompatibilityEvidence(proof,files);
+ return digest(proofBytes);
+}
 async function migrationBackupEvidence(input,compatibility){
  const {value:create}=await ownedJson(input.createReport,input);
  const source=validateDatabaseBackupSourceIdentity(create.source,{requireRecoveryContent:true});require_(source.valid,'attendance_backup_source_invalid');
@@ -223,6 +267,7 @@ async function migrationBackupEvidence(input,compatibility){
  if(input.target===STAGED_TOOL_REPAIR_TARGET&&(repair||hasToolRepairAudit(compatibility)))
   bindToolRepairAudit(compatibility,repair,'attendance_compatibility_tool_repair_source_mismatch');
  if(repair)require_(backup.source.sha===repair.toolRevision,'attendance_backup_tool_repair_source_mismatch');
+ await verifyFollowOnExtensionCompatibility(input,compatibility,repair);
  return {backup,repair,audit:repair?{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256}:{}};
 }
 
@@ -320,6 +365,11 @@ export async function verifyAttendanceProductionDatabaseReady(input={}){
  let audit={};
  if(input.target===STAGED_TOOL_REPAIR_TARGET&&hasToolRepairAudit(proof)){
   const repair=await verifiedMigrationToolRepair(input);bindToolRepairAudit(proof,repair,'attendance_ready_tool_repair_source_mismatch');
+  if(repair.receiptKind==='attendance-staged-tool-repair-follow-on'){
+   const compatibility=await ownedJson(runtimePaths(input.target).compatibility);
+   require_(compatibility.sha256===proof.compatibilityProofSha256,'attendance_ready_compatibility_changed');
+   require_(await verifyFollowOnExtensionCompatibility(input,compatibility.value,repair)===proof.compatibilityProofSha256,'attendance_ready_compatibility_changed');
+  }
   audit={toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256};
  }
  same(proof.dbIdentity,attendanceProductionIdentity,'attendance_ready_database_mismatch');

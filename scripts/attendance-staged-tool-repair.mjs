@@ -2,7 +2,8 @@
 import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';import {fileURLToPath,pathToFileURL} from 'node:url';
 import {ATTENDANCE_STAGED_REPAIR as p,ATTENDANCE_STAGED_REPAIR_FILES as allowed,
- ATTENDANCE_STAGED_REPAIR_PRESERVED as pins,assertAttendanceStagedRepairReceipt} from './attendance-staged-tool-repair-policy.mjs';
+ ATTENDANCE_STAGED_REPAIR_PRESERVED as pins,ATTENDANCE_STAGED_FOLLOW_ON as follow,
+ assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
 import {createOnlineReleaseToolPlan,verifyOnlineReleaseTool,verifyOnlineToolBootstrap,executeOnlineReleaseToolPlan,
  assertOnlineToolNoPending,withOnlineToolPreparationLocks,assertOnlineToolOwnedPath,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
@@ -12,6 +13,7 @@ import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 const APP='/www/wwwroot/merchant-space',ROOT=fileURLToPath(new URL('../',import.meta.url));
 const maintenance='/var/lib/faolla-maintenance/merchant-space',proxy='/www/server/panel/vhost/nginx/proxy/www.faolla.com';
 const receiptFile=`${p.operation}/attendance-staged-tool-repair.json`,sha=x=>createHash('sha256').update(x).digest('hex');
+const followOnReceiptFile=`${p.operation}/${follow.receiptName}`;
 const fail=code=>{throw Error(`attendance_staged_repair_${code}`);};
 const need=(x,code)=>{if(!x)fail(code);},git=(directory,args)=>runOnlineToolGit(directory,args).toString('utf8').trim();
 const same=(a,b,code)=>need(JSON.stringify(a)===JSON.stringify(b),code);
@@ -26,6 +28,7 @@ function ownedFile(file,{privateMode=false,maxBytes=4*1024**2}={}){
   need(bytes.length===before.size,'file_changed');return bytes;
  }finally{fs.closeSync(fd);}
 }
+function evidenceExists(file){try{fs.lstatSync(file);return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}}
 export function stagedRepairImportClosure(readSource){
  const seen=new Set();function visit(name){if(seen.has(name))return;
   need(/^scripts\/[a-z0-9-]+\.mjs$/.test(name),'bootstrap_import_invalid');seen.add(name);
@@ -123,9 +126,46 @@ function observe(){
  for(const m of manifest.migrations)need(sha(ownedFile(`${p.directory}/scripts/supabase-migrations/${m.fileName}`))===m.sha256,'migration_source_changed');
  return {preservedFiles:preserved,builtOutputSha256:built.sha256,dependencySha256:dependency.sha256};
 }
+function originalFollowOnReceipt(){
+ const raw=ownedFile(receiptFile,{privateMode:true}),receipt=JSON.parse(raw);
+ need(sha(raw)===follow.previousReceiptSha256,'original_receipt_changed');
+ assertAttendanceStagedRepairReceipt(receipt,{target:p.target,toolRevision:follow.previousToolRevision});
+ assertOnlineToolOwnedPath(APP);git(APP,['merge-base','--is-ancestor',p.target,follow.previousToolRevision]);
+ // Historical Git evidence is not executed and does not weaken the current
+ // main/clean/detached gate in verifySource for the effective new tool revision.
+ const changes=git(APP,['diff','--no-renames','--name-status',p.target,follow.previousToolRevision]).split('\n').filter(Boolean).map(row=>{
+  const [status,name,...extra]=row.split('\t');need(['M','A'].includes(status)&&extra.length===0&&allowed.includes(name),'original_receipt_source');return name;
+ }).sort();same(changes,receipt.changedToolFiles,'original_receipt_source');
+ const inputs=revision=>runOnlineToolGit(APP,['ls-tree','-r','-z',revision]).toString('utf8').split('\0').filter(Boolean)
+  .filter(row=>!allowed.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+ const original=inputs(p.target),previous=inputs(follow.previousToolRevision);same(previous,original,'original_receipt_source');
+ need(sha(previous)===receipt.sourceInputsSha256,'original_receipt_source');
+ return {receipt,receiptSha256:sha(raw)};
+}
+function archivedFollowOnFailure(){
+ const archive=follow.archive;assertOnlineToolOwnedPath(archive.directory);
+ const before=fs.lstatSync(archive.directory);need((before.mode&0o777)===0o700,'failure_archive_invalid');
+ const names=Object.keys(archive.files).sort();same(fs.readdirSync(archive.directory).sort(),names,'failure_archive_invalid');
+ for(const name of names)need(sha(ownedFile(`${archive.directory}/${name}`,{privateMode:true,maxBytes:8*1024**2}))===archive.files[name],'failure_archive_changed');
+ same(fs.readdirSync(archive.directory).sort(),names,'failure_archive_changed');const after=fs.lstatSync(archive.directory);
+ for(const key of ['dev','ino','uid','mode','mtimeMs','ctimeMs'])need(after[key]===before[key],'failure_archive_changed');
+ return archive;
+}
 export function verifyAttendanceStagedToolRepairReceipt({target,rootDir=ROOT,phase='staged'}={}){
  need(target===p.target&&['staged','migration'].includes(phase),'receipt_target');
  const raw=ownedFile(receiptFile,{privateMode:true}),receipt=JSON.parse(raw);assertAttendanceStagedRepairReceipt(receipt,{target});
+ if(evidenceExists(followOnReceiptFile)){
+  const original=originalFollowOnReceipt(),followRaw=ownedFile(followOnReceiptFile,{privateMode:true}),chain=JSON.parse(followRaw);
+  assertAttendanceStagedFollowOnReceipt(chain,{originalReceipt:original.receipt,originalReceiptSha256:original.receiptSha256,target});
+  git(APP,['merge-base','--is-ancestor',follow.previousToolRevision,chain.effectiveReceipt.toolRevision]);
+  archivedFollowOnFailure();const effective=chain.effectiveReceipt,source=verifySource(effective.toolRevision,rootDir),observed=observe();
+  same(source.changedToolFiles,effective.changedToolFiles,'receipt_source_changed');need(source.sourceInputsSha256===effective.sourceInputsSha256,'receipt_source_changed');
+  need(observed.dependencySha256===effective.dependencySha256,'receipt_dependencies_changed');
+  need(ownedFile(followOnReceiptFile,{privateMode:true}).equals(followRaw),'receipt_changed');archivedFollowOnFailure();
+  same(originalFollowOnReceipt(),original,'original_receipt_changed');
+  return {receipt:effective,receiptSha256:sha(followRaw),toolRevision:effective.toolRevision,
+   originalReceiptSha256:original.receiptSha256,receiptKind:chain.kind};
+ }
  const source=verifySource(receipt.toolRevision,rootDir),observed=observe();
  same(source.changedToolFiles,receipt.changedToolFiles,'receipt_source_changed');need(source.sourceInputsSha256===receipt.sourceInputsSha256,'receipt_source_changed');
  need(observed.dependencySha256===receipt.dependencySha256,'receipt_dependencies_changed');
@@ -155,7 +195,40 @@ export function prepareAttendanceStagedToolRepair(revision,confirm){
    applicationRebuilt:false,productionDatabaseChanged:false,trafficChanged:false,source:prepared};
  });
 }
+export function prepareAttendanceStagedToolRepairFollowOn(revision,confirm){
+ need(confirm==='approved-staged-attendance-tool-repair-follow-on','approval_required');
+ need(revision!==follow.previousToolRevision,'follow_on_revision');const source=verifySource(revision,ROOT,{bootstrap:true});
+ git(APP,['merge-base','--is-ancestor',follow.previousToolRevision,revision]);
+ return withOnlineToolPreparationLocks({deployLock:`${APP}.deploy.lock`,maintenance},()=>{
+  verifySource(revision,ROOT,{bootstrap:true});need(!evidenceExists(followOnReceiptFile),'follow_on_receipt_exists');
+  for(const name of ['attendance-database-compatibility.json','attendance-compatibility-attempt.json','attendance-compatibility-metadata.sql',
+   'attendance-database-progress.json','attendance-database-ready.json'])need(!evidenceExists(`${p.operation}/${name}`),'database_attempt_exists');
+  const original=originalFollowOnReceipt(),archive=archivedFollowOnFailure(),before=observe();
+  need(before.dependencySha256===original.receipt.dependencySha256&&source.sourceInputsSha256===original.receipt.sourceInputsSha256,'original_receipt_changed');
+  const preparedAt=new Date().toISOString(),effective={schemaVersion:1,kind:'attendance-staged-tool-repair',target:p.target,baseline:p.baseline,
+   toolRevision:revision,originalStateSha256:p.stateSha256,originalBuildProofSha256:p.buildProofSha256,sourceInputsSha256:source.sourceInputsSha256,
+   builtOutputSha256:before.builtOutputSha256,scopeSha256:p.scopeSha256,preservedFiles:before.preservedFiles,activeSha256:p.activeSha256,
+   maintenanceSha256:p.maintenanceSha256,markerSha256:p.markerSha256,retentionHeadSha256:p.retentionHeadSha256,
+   dependencySha256:before.dependencySha256,changedToolFiles:source.changedToolFiles,approvedNoRebuild:true,preparedAt};
+  const chain={schemaVersion:1,kind:'attendance-staged-tool-repair-follow-on',target:p.target,baseline:p.baseline,
+   previousToolRevision:follow.previousToolRevision,previousReceiptSha256:original.receiptSha256,
+   failedAttemptArchive:archive,effectiveReceipt:effective,preparedAt};
+  assertAttendanceStagedFollowOnReceipt(chain,{originalReceipt:original.receipt,originalReceiptSha256:original.receiptSha256,target:p.target,toolRevision:revision});
+  // This is a truthful new effective receipt, not a mutation/relabel of the old file.
+  assertOnlineToolNoPending({fixedStagedRepairReceipt:effective});const plan=createOnlineReleaseToolPlan(revision),prior=process.umask(0o077);
+  let prepared;try{prepared=executeOnlineReleaseToolPlan(plan);}finally{process.umask(prior);}
+  verifySource(revision,prepared.directory);same(observe(),before,'candidate_changed_during_preparation');
+  same(originalFollowOnReceipt(),original,'original_receipt_changed');same(archivedFollowOnFailure(),archive,'failure_archive_changed');
+  const fd=fs.openSync(followOnReceiptFile,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
+  try{fs.writeFileSync(fd,JSON.stringify(chain,null,2)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  const directory=fs.openSync(p.operation,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}
+  const sealed=ownedFile(followOnReceiptFile,{privateMode:true});same(JSON.parse(sealed),chain,'receipt_write_changed');
+  same(originalFollowOnReceipt(),original,'original_receipt_changed');
+  return {status:'staged-tool-repair-follow-on-prepared',target:p.target,toolRevision:revision,receiptSha256:sha(sealed),
+   originalReceiptSha256:original.receiptSha256,applicationRebuilt:false,productionDatabaseChanged:false,trafficChanged:false,source:prepared};
+ });
+}
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){try{
- const args=process.argv.slice(2);need(args.length===3&&args[0]==='prepare','invocation');
- console.log(JSON.stringify(prepareAttendanceStagedToolRepair(args[1],args[2])));
+ const args=process.argv.slice(2);need(args.length===3&&['prepare','prepare-follow-on'].includes(args[0]),'invocation');
+ console.log(JSON.stringify(args[0]==='prepare'?prepareAttendanceStagedToolRepair(args[1],args[2]):prepareAttendanceStagedToolRepairFollowOn(args[1],args[2])));
 }catch(e){console.error(/^attendance_staged_repair_[a-z_]+$/.test(e?.message??'')?e.message:'attendance_staged_repair_unverified');process.exitCode=1;}}
