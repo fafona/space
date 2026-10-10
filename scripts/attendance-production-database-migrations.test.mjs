@@ -12,13 +12,13 @@ import {attendanceExtensionMetadataSupplement} from './attendance-extension-meta
 import {syntheticAttendanceExtensionMetadata,syntheticAttendanceGraphqlInitialAclMetadata,syntheticAttendanceGraphqlInitialSchemaAclMetadata,syntheticAttendanceExtensionDump} from './test-helpers/attendance-extension-metadata.mjs';
 import {
  attendanceProductionIdentity,attendanceProductionScopeSha256,attendanceProductionLegacy052SourceSha256,loadAttendanceProductionScope,validateAttendanceRegistry,
- attendanceReadOnlyStateSql,validateAttendanceProductionState,protectedAttendanceMigrationSql,
+ attendanceReadOnlyStateSql,validateAttendanceProductionState,protectedAttendanceMigrationSql,attendanceProtectedMultiphaseMigrations,
  validateAttendanceCompatibilityProof,validateAttendanceBackupEvidence,validateAttendanceExtensionCompatibilityEvidence,attendance052CompatibilityPlan,filterAttendanceCompatibilityMetadataSql,
  runAttendanceProductionMigrations,verifyAttendanceProductionDatabaseReady,parseAttendanceProductionArguments,
 } from './attendance-production-database-migrations.mjs';
 const target='a'.repeat(40),baseline=ATTENDANCE_RELEASE_SCOPE.baseline,sha=x=>createHash('sha256').update(x).digest('hex');
 const repairTarget='a535a308e21f121e7cf410a6f7d84c974eb370a6',toolRevision='b'.repeat(40),receiptSha256='c'.repeat(64);
-const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on',aclFollowOnKind='attendance-staged-tool-repair-acl-follow-on',schemaFollowOnKind='attendance-staged-tool-repair-schema-follow-on',guardFollowOnKind='attendance-staged-tool-repair-guard-follow-on';
+const followOnKind='attendance-staged-tool-repair-follow-on',sequenceFollowOnKind='attendance-staged-tool-repair-sequence-follow-on',aclFollowOnKind='attendance-staged-tool-repair-acl-follow-on',schemaFollowOnKind='attendance-staged-tool-repair-schema-follow-on',guardFollowOnKind='attendance-staged-tool-repair-guard-follow-on',phaseFollowOnKind='attendance-staged-tool-repair-phase-follow-on';
 const managerSource=await readFile(new URL('./attendance-production-database-migrations.mjs',import.meta.url),'utf8');
 function managerSection(first,next){
  const start=managerSource.indexOf(first),end=managerSource.indexOf(next,start+first.length);
@@ -89,12 +89,18 @@ test('live probe is explicitly read-only, bounded, no secret/row projection',()=
 function assertGeneratedRowGuardContract(source,wrapped){
  const entries=[...wrapped.matchAll(/\nset transaction isolation level repeatable read;\n[\s\S]*?\nupdate pg_temp\.faolla_attendance_protected_rows_guard set v=case k [^\n]* end;\n/g)];
  const exits=[...wrapped.matchAll(/\ndo \$attendance_production_poststate\$ begin\n[\s\S]*?\nend;\$attendance_production_poststate\$;\n/g)];
- assert.equal(entries.length,1);assert.equal(exits.length,1);
- const entry=entries[0][0],exit=exits[0][0];
+ const plan=attendanceProtectedMultiphaseMigrations.find(item=>item.sha256===sha(source));
  const originalBegin=source.match(/(?:^|\r?\n)begin;/i);
- assert(originalBegin);assert.equal(entries[0].index,originalBegin.index+originalBegin[0].length);
- assert(entries[0].index+entry.length<exits[0].index);
- assert.equal(wrapped.replace(entry,'').replace(exit,''),source);
+ assert(originalBegin);
+ const phases=plan?.transactions??[{begin:originalBegin.index+originalBegin[0].length-6,commit:source.search(/commit;\s*$/i)}];
+ assert.equal(entries.length,phases.length);assert.equal(exits.length,phases.length);
+ let removed=wrapped,shift=0;
+ for(let index=0;index<phases.length;index++){
+ const entry=entries[index][0],exit=exits[index][0];
+ assert.equal(entries[index].index,phases[index].begin+6+shift);
+ assert.equal(exits[index].index,phases[index].commit+shift+entry.length);
+ shift+=entry.length+exit.length;
+ removed=removed.replace(entry,'').replace(exit,'');
  assert(entry.includes("set local lock_timeout='3s';set local statement_timeout='120s'"));
  assert(entry.includes("current_user<>'supabase_admin' or not pg_try_advisory_xact_lock(20260731,1)"));
  assert(entry.includes('attendance_production_registry_changed'));
@@ -103,7 +109,14 @@ function assertGeneratedRowGuardContract(source,wrapped){
  assert(exit.includes('attendance_production_legacy_columns_changed'));
  assert(exit.includes('where g.v<>case g.k'));
  assert(exit.includes('attendance_production_legacy_rows_changed'));
- assert(exit.includes('attendance_production_registration_missing'));
+ assert.equal(exit.includes('attendance_production_registration_missing'),index===phases.length-1);
+ if(plan){
+  assert(exit.includes('attendance_production_registry_changed'));
+  const prior=scope.sources.findIndex(item=>item.fileName===plan.fileName);
+  const registry=count=>JSON.stringify([...scope.manifest.baseline,...scope.manifest.migrations.slice(0,count).map(({version,name})=>({version,name}))]).replaceAll("'","''");
+  assert(entry.includes(` is distinct from '${registry(prior)}'::jsonb`));
+  assert(exit.includes(` is distinct from '${registry(prior+(index===phases.length-1?1:0))}'::jsonb`));
+ }
  const tables=['merchants','merchant_enterprise_roles','merchant_enterprise_employees'];
  for(const table of tables){
   const projection=`(select jsonb_object_agg(k,v) from jsonb_each(to_jsonb(t)) e(k,v) where k=any(((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[]))`;
@@ -116,7 +129,9 @@ function assertGeneratedRowGuardContract(source,wrapped){
   assert.equal(section.split("::text,'UTF8')),'hex') h from public.").length-1,3);
   assert(!/k=any\(\(select cols/i.test(section));
  }
- return {entry,exit};
+ }
+ assert.equal(removed,source);
+ return {entry:entries[0][0],exit:exits.at(-1)[0],entries,exits};
 }
 
 test('all original149 SQL bytes preserved after removing only new guards; scalar text arrays protect three tables before and after each transaction',()=>{
@@ -128,7 +143,8 @@ test('all original149 SQL bytes preserved after removing only new guards; scalar
   assert(wrapped.includes('attendance_production_legacy_rows_changed'));
   assert(!wrapped.includes('reassign owned'));assert(!wrapped.includes('alter default privileges')||source.includes('alter default privileges'));
   assert(wrapped.includes('merchant_enterprise_roles'));assert(wrapped.includes('merchant_enterprise_employees'));
-  assert.equal((wrapped.match(/\$attendance_production_prestate\$/g)||[]).length,2);
+  const phases=attendanceProtectedMultiphaseMigrations.find(item=>item.fileName===scope.sources[i].fileName)?.transactions.length??1;
+  assert.equal((wrapped.match(/\$attendance_production_prestate\$/g)||[]).length,phases*2);
  }
  assert.throws(()=>protectedAttendanceMigrationSql(scope.sources[1],0,scope.manifest));
 });
@@ -152,11 +168,70 @@ test('generated guard contract rejects the original ANY subquery bug and malicio
   wrapped.replace(exit,exit.replace('attendance_production_registration_missing','ignored_registration')),
  ];
  for(const changed of weakened){assert.notEqual(changed,wrapped);assert.throws(()=>assertGeneratedRowGuardContract(migration.source,changed));}
- // These unchanged code pins are from S5, not repinned to a changed guard:
- // only oldColumns gained the explicit scalar-array cast.
+ // The fingerprint itself remains byte-identical; the authorized change is
+ // only placement/registry wrapping of the eight exact multiphase sources.
  const fingerprint=managerSection('export const attendanceLegacyRowFingerprintSql','\n};')+'\n};\n';
  assert.equal(sha(fingerprint.replaceAll('\r\n','\n')),'2ffb2c1cec528a665212f45a47eded87f2f11e3b9b297397f34e8d78be718f44');
- assert.equal(sha(managerSection('const columnMetadata','async function ownedJson').replaceAll('\r\n','\n')),'0f54b79e508f2311eec3ac8dcc2279d23f3dcf61d7e56f6c861e99d5565d6577');
+});
+
+test('141 single-transaction generated outputs remain byte-identical to the pre-phase reviewed tool',()=>{
+ const hash=createHash('sha256');let count=0;
+ for(let index=0;index<scope.sources.length;index++){
+  const migration=scope.sources[index];if(attendanceProtectedMultiphaseMigrations.some(plan=>plan.fileName===migration.fileName))continue;
+  hash.update(migration.fileName+'\0'+protectedAttendanceMigrationSql(migration,index,scope.manifest)+'\0');count++;
+ }
+ assert.equal(count,141);assert.equal(hash.digest('hex'),'510a890cd217f809ad60053f8375fdf7d2107b23e209b672124c49c1bc029da2');
+});
+
+test('eight fixed source pins expose exactly19 original transaction pairs and8 concurrent indexes outside them',()=>{
+ assert.equal(attendanceProtectedMultiphaseMigrations.length,8);
+ assert.equal(attendanceProtectedMultiphaseMigrations.reduce((n,plan)=>n+plan.transactions.length,0),19);
+ assert.equal(attendanceProtectedMultiphaseMigrations.reduce((n,plan)=>n+plan.concurrentIndexes.length,0),8);
+ for(const plan of attendanceProtectedMultiphaseMigrations){
+  const index=scope.sources.findIndex(source=>source.fileName===plan.fileName),migration=scope.sources[index];
+  assert.equal(sha(migration.source),plan.sha256);assert.equal(Buffer.byteLength(migration.source),plan.bytes);
+  assert(Object.isFrozen(plan)&&Object.isFrozen(plan.transactions)&&Object.isFrozen(plan.concurrentIndexes));
+  const wrapped=protectedAttendanceMigrationSql(migration,index,scope.manifest),contract=assertGeneratedRowGuardContract(migration.source,wrapped);
+  const prefix=count=>JSON.stringify([...scope.manifest.baseline,...scope.manifest.migrations.slice(0,count).map(({version,name})=>({version,name}))]).replaceAll("'","''");
+  for(let phase=0;phase<plan.transactions.length;phase++){
+   const {begin,commit}=plan.transactions[phase];assert.equal(migration.source.slice(begin,begin+6),'begin;');assert.equal(migration.source.slice(commit,commit+7),'commit;');
+   assert(Object.isFrozen(plan.transactions[phase]));
+   assert(contract.entries[phase][0].includes(` is distinct from '${prefix(index)}'::jsonb`));
+   assert(contract.exits[phase][0].includes(` is distinct from '${prefix(index+(phase===plan.transactions.length-1?1:0))}'::jsonb`));
+   assert(!contract.entries[phase][0].includes('preserve rows'));assert(!contract.entries[phase][0].includes('pg_advisory_lock('));
+   assert.equal(contract.entries[phase][0].split('on commit drop;').length-1,1);
+  }
+  for(const {start,end} of plan.concurrentIndexes){
+   const statement=migration.source.slice(start,end);assert(statement.startsWith('create index concurrently '));
+   const preceding=plan.transactions.findIndex((transaction,i)=>i+1<plan.transactions.length&&start>=transaction.commit+7&&end<=plan.transactions[i+1].begin);
+   assert(preceding>=0);const output=wrapped.indexOf(statement);assert(output>=0);
+   assert(output>contract.exits[preceding].index+contract.exits[preceding][0].length+7);
+   assert(output<contract.entries[preceding+1].index-6);
+   assert.equal(wrapped.split(statement).length-1,1);
+  }
+  for(const source of [migration.source+'\n',migration.source.replace('begin;','-- begin;'),migration.source.replace('commit;','commit;\nbegin;'),migration.source.replace('begin;','do $fake$ begin; end; $fake$;\nbegin;')]){
+   assert.throws(()=>protectedAttendanceMigrationSql({...migration,source},index,scope.manifest),/attendance_(?:multiphase_source_pin|migration_transaction_shape)/);
+  }
+  const altered={...scope.manifest,migrations:scope.manifest.migrations.map((m,i)=>i===index?{...m,sha256:'0'.repeat(64)}:m)};
+  assert.throws(()=>protectedAttendanceMigrationSql(migration,index,altered),/attendance_multiphase_manifest_pin/);
+ }
+});
+
+for(const plan of attendanceProtectedMultiphaseMigrations)test(`${plan.fileName}: each phase rejects stripped entry, row/column/duplicate/registry guards and premature registration (SQL contract only)`,()=>{
+ const index=scope.sources.findIndex(source=>source.fileName===plan.fileName),migration=scope.sources[index];
+ const wrapped=protectedAttendanceMigrationSql(migration,index,scope.manifest),{entries,exits}=assertGeneratedRowGuardContract(migration.source,wrapped);
+ for(let phase=0;phase<plan.transactions.length;phase++){
+  const entry=entries[phase][0],exit=exits[phase][0];
+  for(const section of [entry,exit])for(const changed of [section.replace('count(*)','count(distinct h)'),section.replace('::text[]',''),section.replace('order by h collate "C"','')])
+   assert.throws(()=>assertGeneratedRowGuardContract(migration.source,wrapped.replace(section,changed)));
+  for(const changed of [wrapped.replace(entry,''),wrapped.replace(exit,''),wrapped.replace(entry,entry.replace('pg_try_advisory_xact_lock(20260731,1)','true')),
+   wrapped.replace(exit,exit.replace('attendance_production_legacy_columns_changed','ignored_columns')),
+   wrapped.replace(exit,exit.replace('where g.v<>case g.k','where false and g.v<>case g.k')),
+   wrapped.replace(entry,entry.replace(' is distinct from ','<>')),
+   wrapped.replace(exit,exit.replace(' is distinct from ','<>')),
+   wrapped.replace(exit,exit.replace('attendance_production_registry_changed','ignored_registry'))])
+   assert.throws(()=>assertGeneratedRowGuardContract(migration.source,changed));
+ }
 });
 test('052 compatibility proof rejects final-only installs, real data, production DB and incomplete checks',()=>{
  const args={target,baseline,scopeSha256:attendanceProductionScopeSha256};assert.equal(validateAttendanceCompatibilityProof(compatibility(),args).finalRegistryCount,209);
@@ -259,7 +334,7 @@ function repairRouting({verifiedToolRevision=toolRevision,verifiedReceiptSha256=
   ownedJson:async()=>({value:{source:{sha:sourceSha}}}),
   validateDatabaseBackupSourceIdentity:source=>({valid:true,source}),
   verifiedMigrationToolRepair:async input=>{calls.push(['verify',input.target]);if(deny)throw new Error('synthetic_receipt_refused');return {receipt:{target:repairTarget},toolRevision:verifiedToolRevision,receiptSha256:verifiedReceiptSha256,...(receiptKind===undefined?{}:{receiptKind})};},
-  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
+  verifyFollowOnExtensionCompatibility:async(_input,_proof,repair)=>{if(![followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind,phaseFollowOnKind].includes(repair?.receiptKind))return null;calls.push(['extensions']);if(denyExtensions)throw new Error('synthetic_extension_evidence_refused');},
   validateAttendanceBackupEvidence:async input=>{calls.push(['backup',input.target]);if(secondSourceSha!==input.target)throw new Error('attendance_backup_source_not_target');return {source:{sha:secondSourceSha},restoreRehearsed:false};},
  });
  return {calls,route};
@@ -292,14 +367,14 @@ test('fixed repaired routing binds the real-verifier result before selecting one
  await assert.rejects(()=>swapped.route({target:repairTarget},auditPair()),/backup_source_not_target/);
 });
 
-test('only the five real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
+test('only the six real follow-on kinds require extension evidence; unknown kinds never select a backup',async()=>{
  const helpers=managerSection('const hasToolRepairAudit','async function verifiedMigrationToolRepair');
  const classify=runInNewContext(`${helpers}\nrequiresFollowOnExtensionEvidence`,{
   require_:(condition,code)=>{if(!condition)throw new Error(code);},
  });
  assert.equal(classify(null),false);assert.equal(classify({}),false);
- for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind])assert.equal(classify({receiptKind}),true);
- for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra','attendance-staged-tool-repair-acl-follow-on-extra','attendance-staged-tool-repair-schema-follow-on-extra','attendance-staged-tool-repair-guard-follow-on-extra',false,1])
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind,phaseFollowOnKind])assert.equal(classify({receiptKind}),true);
+ for(const receiptKind of [undefined,null,'','attendance-staged-tool-repair','attendance-staged-tool-repair-sequence-follow-on-extra','attendance-staged-tool-repair-acl-follow-on-extra','attendance-staged-tool-repair-schema-follow-on-extra','attendance-staged-tool-repair-guard-follow-on-extra','attendance-staged-tool-repair-phase-follow-on-extra',false,1])
   assert.throws(()=>classify({receiptKind}),/attendance_tool_repair_receipt_kind_invalid/);
  for(const receiptKind of [null,'','attendance-staged-tool-repair','unknown-follow-on']){
   const model=repairRouting({receiptKind});
@@ -444,7 +519,7 @@ test('ACL artifact reconstruction requires explicit opt-in and preserves the exa
  await assert.rejects(()=>validateAttendanceExtensionCompatibilityEvidence(changedProof,{...files,extensionMetadata:changedBytes},{restoreGraphqlInitialAcl:true}),/attendance_extension_evidence_operations/);
 });
 test('follow-on routing requires extra artifacts after independent receipt and backup checks',async()=>{
- for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind]){
+ for(const receiptKind of [followOnKind,sequenceFollowOnKind,aclFollowOnKind,schemaFollowOnKind,guardFollowOnKind,phaseFollowOnKind]){
   const model=repairRouting({receiptKind});await model.route({target:repairTarget},auditPair());
   assert.deepEqual(model.calls,[['verify',repairTarget],['backup',toolRevision],['extensions']]);
   const denied=repairRouting({receiptKind,denyExtensions:true});await assert.rejects(()=>denied.route({target:repairTarget},auditPair()),/synthetic_extension_evidence_refused/);
@@ -620,8 +695,8 @@ test('schema follow-on actual manager routing binds its new pair and four artifa
  assert.equal(fixture.files.metadata.toString('utf8'),syntheticAttendanceExtensionDump);
 });
 
-test('guard follow-on actual artifact gate inherits only the reviewed seven objects and two schema ACLs from its verified receipt (VM/synthetic evidence)',async()=>{
- const repair={receiptKind:guardFollowOnKind,toolRevision:'4'.repeat(40),receiptSha256:'5'.repeat(64)};
+for(const receiptKind of [guardFollowOnKind,phaseFollowOnKind])test(`${receiptKind}: actual artifact gate inherits only the reviewed seven objects and two schema ACLs from its verified receipt (VM/synthetic evidence)`,async()=>{
+ const repair={receiptKind,toolRevision:'4'.repeat(40),receiptSha256:'5'.repeat(64)};
  const fixture=extensionEvidenceFixture(undefined,{restoreGraphqlInitialAcl:true,restoreGraphqlInitialSchemaAcl:true});
  Object.assign(fixture.proof,{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256});
  const input={target:repairTarget,baseline,testOnly:true,receiptKind:followOnKind,restoreGraphqlInitialAcl:false,restoreGraphqlInitialSchemaAcl:false,schemaSnapshot:[]};
@@ -636,7 +711,7 @@ test('guard follow-on actual artifact gate inherits only the reviewed seven obje
   await assert.rejects(()=>missing.verify(input,fixture.proof,repair),/synthetic_artifact_missing/);
  }
  for(const changed of [{...repair,toolRevision},{...repair,receiptSha256},
-  {...repair,receiptKind:guardFollowOnKind+'-extra'}, {...repair,receiptKind:null}]){
+  {...repair,receiptKind:receiptKind+'-extra'}, {...repair,receiptKind:null}]){
   const refused=extensionArtifactRouting(fixture);
   await assert.rejects(()=>refused.verify(input,fixture.proof,changed),/attendance_(?:extension_evidence_tool_repair|tool_repair_receipt_kind_invalid)/);
   assert(!refused.calls.some(row=>row[1]?.endsWith('attendance-compatibility-metadata.sql')));

@@ -125,6 +125,49 @@ export const attendanceLegacyRowFingerprintSql=(table,columns)=>{
 // The same frozen pre-migration columns are projected before and after DDL.
 const oldColumns=table=>`((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[]`;
 const columnMetadata=table=>`(select jsonb_agg(jsonb_build_object('name',attname,'type',atttypid,'modifier',atttypmod,'collation',attcollation) order by attnum) from pg_attribute where attrelid='public.${table}'::regclass and attnum>0 and not attisdropped)`;
+// These are reviewed offsets in eight EXACT original source buffers, not a SQL
+// parser or a regex that could mistake a DO/function body for a transaction.
+// No original transaction, concurrent-index statement, or source byte changes.
+export const attendanceProtectedMultiphaseMigrations=Object.freeze([
+ ['202610050136_merchant_attendance_schedule_publication_evidence.sql','cf91fc898430420c7ec44e7ffb5c1ec71aa946aeb462600a5039530b813d2ca3',25202,[[232,3743],[4132,25194]],[[3982,4130]]],
+ ['202610050139_merchant_attendance_plan_coverage.sql','38a0ef219e7b9fc274a5b6c27d80d47034d51149b76e43f2cc6259df4b88f934',15848,[[237,4083],[4441,15840]],[[4245,4439]]],
+ ['202610050142_merchant_attendance_onsite_schedule.sql','b326eff5eac90cf46cf2f87418d0ae4262a859f4fe5b0234753009779f7f447d',41515,[[382,4850],[5009,5818],[5827,41507]],[]],
+ ['202610050143_merchant_attendance_pin_schedule.sql','aa25c56ea37640d4e13f5a4942c7f433944f00f2a2a30d5f143d3d1aca06d586',67731,[[370,4459],[4542,5356],[5365,67723]],[]],
+ ['202610050144_merchant_attendance_self_schedule_adoption.sql','ac31308eca5ea71d6bc6d2e7dc44d73eebd3859389be04b7f28706f1ba9aab3f',34443,[[231,4488],[4571,5430],[5439,34435]],[]],
+ ['202610050151_merchant_attendance_period_source_ranges.sql','b56dcc84de193356ffd6be08741c5d7ba9f2fe3e7d2b7b8b712a8f2703571ae4',44944,[[544,5451],[6274,44935]],[[5614,5933],[5934,6272]]],
+ ['202610060160_merchant_attendance_missing_delegation.sql','ae255256ceaec8a1a56fff5176a00702fd20669c52cab2871ad3648a8b2a5137',58827,[[309,4721],[5040,58819]],[[4810,5038]]],
+ ['202610080198_merchant_attendance_review_routing.sql','84a0fce6130c5b35f116e29fc56950549c9db459b3c1fe8408ec00a2f7f5e9be',170210,[[146,29814],[30565,170202]],[[29822,30067],[30068,30307],[30308,30564]]],
+].map(([fileName,sha256,bytes,transactions,concurrentIndexes])=>Object.freeze({fileName,sha256,bytes,
+ transactions:Object.freeze(transactions.map(([begin,commit])=>Object.freeze({begin,commit}))),
+ concurrentIndexes:Object.freeze(concurrentIndexes.map(([start,end])=>Object.freeze({start,end}))),
+})));
+function protectedAttendanceMultiphaseSql(migration,plan,entry,exit,rows,manifest,prior){
+ const source=migration.source;
+ require_(digest(source)===plan.sha256&&Buffer.byteLength(source)===plan.bytes,'attendance_multiphase_source_pin');
+ require_(migration.sha256===plan.sha256&&migration.bytes===plan.bytes&&manifest.migrations[prior].sha256===plan.sha256&&manifest.migrations[prior].bytes===plan.bytes,'attendance_multiphase_manifest_pin');
+ const finalRows=canonical([...manifest.baseline,...manifest.migrations.slice(0,prior+1).map(({version,name})=>({version,name}))]).replaceAll("'","''");
+ const registration=` if not exists(select 1 from public.faolla_schema_migrations where version=${migration.version} and name='${migration.name}') then raise exception 'attendance_production_registration_missing';end if;`;
+ // Equality of a complete prefix must reject the empty/NULL aggregate too.
+ // This closes the NEW phase gates only; the141 legacy outputs stay exact.
+ const registry=value=>` if (select jsonb_agg(jsonb_build_object('version',version::text,'name',name) order by version) from public.faolla_schema_migrations) is distinct from '${value}'::jsonb then raise exception 'attendance_production_registry_changed';end if;`;
+ const phaseEntry=entry.replace(`<>'${rows}'::jsonb`,` is distinct from '${rows}'::jsonb`);
+ const earlyExit=exit.replace(registration,registry(rows)),finalExit=exit.replace(registration,registration+'\n'+registry(finalRows));
+ require_(phaseEntry!==entry&&earlyExit!==exit&&finalExit!==exit,'attendance_multiphase_registry_guard');
+ let cursor=0,result='';
+ for(let index=0;index<plan.transactions.length;index++){
+  const {begin,commit}=plan.transactions[index];
+  require_(begin>=cursor&&commit>begin+6&&source.slice(begin,begin+6)==='begin;'&&source.slice(commit,commit+7)==='commit;'&&source[begin-1]==='\n'&&source[commit-1]==='\n','attendance_multiphase_transaction_shape');
+  result+=source.slice(cursor,begin+6)+phaseEntry+source.slice(begin+6,commit)+(index===plan.transactions.length-1?finalExit:earlyExit)+source.slice(commit,commit+7);
+  cursor=commit+7;
+ }
+ for(const {start,end} of plan.concurrentIndexes){
+  require_(source.slice(start,end).startsWith('create index concurrently ')&&source[end-1]===';'&&
+   plan.transactions.some((transaction,index)=>index+1<plan.transactions.length&&start>=transaction.commit+7&&end<=plan.transactions[index+1].begin),'attendance_multiphase_concurrent_index_shape');
+ }
+ result+=source.slice(cursor);
+ require_(result.replaceAll(phaseEntry,'').replaceAll(earlyExit,'').replaceAll(finalExit,'')===source,'attendance_original_sql_changed');
+ return result;
+}
 export function protectedAttendanceMigrationSql(migration,prior,manifest){
  require_(manifest.migrations[prior]?.fileName===migration.fileName,'attendance_migration_out_of_order');
  const source=migration.source,begin=source.match(/(?:^|\r?\n)begin;/i);require_(begin&&/commit;\s*$/i.test(source),'attendance_migration_transaction_shape');
@@ -142,6 +185,8 @@ update pg_temp.faolla_attendance_protected_rows_guard set v=case k ${PROTECTED.m
  if exists(select 1 from pg_temp.faolla_attendance_protected_rows_guard g where g.v<>case g.k ${PROTECTED.map(t=>`when '${t}' then ${attendanceLegacyRowFingerprintSql(t,oldColumns(t))}`).join(' ')} end) then raise exception 'attendance_production_legacy_rows_changed';end if;
  if not exists(select 1 from public.faolla_schema_migrations where version=${migration.version} and name='${migration.name}') then raise exception 'attendance_production_registration_missing';end if;
 end;$attendance_production_poststate$;\n`;
+ const phases=attendanceProtectedMultiphaseMigrations.find(plan=>plan.fileName===migration.fileName);
+ if(phases)return protectedAttendanceMultiphaseSql(migration,phases,entry,exit,rows,manifest,prior);
  const first=begin.index+begin[0].length,last=source.search(/commit;\s*$/i);
  const result=source.slice(0,first)+entry+source.slice(first,last)+exit+source.slice(last);
  require_(result.replace(entry,'').replace(exit,'')===source,'attendance_original_sql_changed');
@@ -203,7 +248,7 @@ function bindToolRepairAudit(value,repair,code){
 }
 function requiresFollowOnExtensionEvidence(repair){
  if(!repair||!Object.hasOwn(repair,'receiptKind'))return false;
- require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on','attendance_tool_repair_receipt_kind_invalid');
+ require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-phase-follow-on','attendance_tool_repair_receipt_kind_invalid');
  return true;
 }
 async function verifiedMigrationToolRepair(input){
@@ -264,7 +309,7 @@ async function verifyFollowOnExtensionCompatibility(input,compatibility,repair){
  validateAttendanceCompatibilityProof(proof,{target:input.target,baseline:input.baseline,scopeSha256:attendanceProductionScopeSha256});
  bindToolRepairAudit(proof,repair,'attendance_extension_evidence_tool_repair');
  const files={metadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-metadata.sql'),16000000),extensionMetadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-metadata.json'),2000000),supplement:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-supplement.sql'),2000000)};
- const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on';
+ const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-guard-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-phase-follow-on';
  await validateAttendanceExtensionCompatibilityEvidence(proof,files,{restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl,restoreGraphqlInitialSchemaAcl});
  return digest(proofBytes);
 }

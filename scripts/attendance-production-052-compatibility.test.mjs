@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
-import {attendanceProductionLegacy052SourceSha256,attendanceProductionIdentity,validateAttendanceCompatibilityProof,protectedAttendanceMigrationSql} from './attendance-production-database-migrations.mjs';
+import {attendanceProductionLegacy052SourceSha256,attendanceProductionIdentity,validateAttendanceCompatibilityProof,protectedAttendanceMigrationSql,attendanceProtectedMultiphaseMigrations} from './attendance-production-database-migrations.mjs';
 import {loadAttendance052CompatibilitySources,validateAttendance052SchemaOnlySql,
  attendanceCompatibilityPublicAclSql,attendanceCompatibilityFixturesSql,attendanceCompatibilityEmployeeSql,
  attendanceCompatibilityFactsSql,attendanceCompatibilityUtcCases,guardedAttendanceCompatibilitySourceSql,
@@ -50,7 +50,7 @@ function fake({failMigration=null,mismatch=false,sourceOverride={},metadataSuffi
    const m=assets.sources[installed];assert(m);assert(s.includes(m.source.slice(0,m.source.indexOf('begin;'))));
    assert.equal(s,protectedAttendanceMigrationSql(m,installed,assets.manifest));
    for(const table of ['merchants','merchant_enterprise_roles','merchant_enterprise_employees'])
-    assert.equal(s.split(`k=any(((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[])`).length-1,2);
+    assert.equal(s.split(`k=any(((select cols from pg_temp.faolla_attendance_protected_rows_guard where k='${table}'))::text[])`).length-1,2*(attendanceProtectedMultiphaseMigrations.find(plan=>plan.fileName===m.fileName)?.transactions.length??1));
    writes.push(m.version);if(installed===failMigration)return {status:1,stdout:'',stderr:'synthetic failure'};installed++;return {status:0,stdout:''};
   }
   assert(args.at(-1).includes(`-d faolla_attendance_compat_${target.slice(0,12)}`));writes.push('SCOPED_SQL');return {status:0,stdout:''};
@@ -172,6 +172,7 @@ test('actual compatibility routing rejects unknown receipt kinds and keeps resto
   ['attendance-staged-tool-repair-acl-follow-on',true,false],
   ['attendance-staged-tool-repair-schema-follow-on',true,true],
   ['attendance-staged-tool-repair-guard-follow-on',true,true],
+  ['attendance-staged-tool-repair-phase-follow-on',true,true],
  ]){
   const actual=route({...pair,receiptKind});assert.equal(actual.restoreGraphqlInitialAcl,objectAcl);assert.equal(actual.restoreGraphqlInitialSchemaAcl,schemaAcl);
   assert.deepEqual(JSON.parse(JSON.stringify(actual.audit)),{toolRevision:pair.toolRevision,stagedToolRepairReceiptSha256:pair.receiptSha256});
