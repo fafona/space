@@ -26,5 +26,19 @@ export function syntheticAttendanceExtensionMetadata(){return attendanceExtensio
  if(members.length!==memberCount)throw Error('synthetic_extension_fixture_count');
  return {name,version,schema,owner:'supabase_admin',relocatable:false,configuration:[],members,routines};
 });}
+// TEST ONLY: exact authorized identities/ACL sets, with synthetic function
+// definitions. This is not a formal metadata dump or a database acceptance.
+export function syntheticAttendanceGraphqlInitialAclMetadata(){
+ const snapshot=syntheticAttendanceExtensionMetadata(),extension=snapshot.find(e=>e.name==='pg_graphql');
+ const acl=(grantees,privileges)=>grantees.flatMap(grantee=>privileges.map(privilege=>({grantor:'supabase_admin',grantee,privilege,grantable:false})));
+ const signatures=['graphql._internal_resolve(text,jsonb,text,jsonb)','graphql.comment_directive(text)','graphql.exception(text)','graphql.get_schema_version()','graphql.increment_schema_version()','graphql.resolve(text,jsonb,text,jsonb)'];
+ for(let i=0;i<signatures.length;i++){
+  const signature=signatures[i],r=routine(signature,`CREATE OR REPLACE FUNCTION ${signature}\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1; $function$\n`,{acl:acl(['PUBLIC','anon','authenticated','postgres','service_role','supabase_admin'],['EXECUTE'])});
+  extension.routines[i+1]=r;extension.members[i+1]={catalog:'pg_proc',type:'function',identity:r.memberIdentity,metadata:null};
+ }
+ const sequence=extension.members.find(m=>m.catalog==='pg_class');
+ Object.assign(sequence,{type:'sequence',identity:'graphql.seq_schema_version',metadata:{kind:'S',owner:'supabase_admin',acl:acl(['anon','authenticated','postgres','service_role','supabase_admin'],['SELECT','UPDATE','USAGE']),sequence:['integer','1','1','2147483647','1','1',false]}});
+ return snapshot;
+}
 export const syntheticAttendanceExtensionGrants=['anon','authenticated','postgres','service_role'].map(role=>`GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO ${role};`).join('\n')+'\n';
 export const syntheticAttendanceExtensionDump='\n-- Synthetic schema metadata; no real rows or Auth accounts.\nCREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA graphql;\nCREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;\n'+syntheticAttendanceExtensionGrants+'\n';

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {attendanceExtensionMetadataPins,attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
-import {syntheticAttendanceExtensionMetadata,syntheticAttendanceExtensionDump,syntheticAttendanceExtensionGrants} from './test-helpers/attendance-extension-metadata.mjs';
+import {syntheticAttendanceExtensionMetadata,syntheticAttendanceGraphqlInitialAclMetadata,syntheticAttendanceExtensionDump,syntheticAttendanceExtensionGrants} from './test-helpers/attendance-extension-metadata.mjs';
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const sequenceMetadata=sequence=>{
  const snapshot=syntheticAttendanceExtensionMetadata();
@@ -124,4 +124,67 @@ test('unsafe numeric integers elsewhere in the complete extension snapshot are r
   s=>s[0].members[0].metadata={nested:[{value:Number('-9007199254740993')}]},
   s=>s[0].configuration=[{nested:{value:Number('9223372036854775807')}}]
  ]){const snapshot=sequenceMetadata(['bigint','0','1','9223372036854775807','-9223372036854775808','1',false]);inject(snapshot);assert.throws(()=>validateAttendanceExtensionMetadata(snapshot),/^Error: attendance_extension_metadata_/);}
+});
+test('default and explicit-false supplements preserve the previously sealed byte contract',()=>{
+ const snapshot=syntheticAttendanceExtensionMetadata(),result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot);
+ assert.deepEqual(attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:false}),result);
+ assert.equal(sha(result.sql),'7bb36ff4dca35704ef89a4f9b2049608fc5268f645c7c76bfd55d26a09e560cb');
+ assert.equal(sha(result.supplementSql),'c1d4f7714efdae7e76eccb25798ccee143e73cc86d45ec3f90975432968d32fc');
+ assert.equal(sha(JSON.stringify(result.operations)),'2853210ee2bdca914a95d32ffbd5b37d7358690b42705d406fc0d5c70c0f617d');
+ assert(!result.sql.includes('attendance_extension_graphql_initial_acl'));
+ for(const options of [null,true,[],{restoreGraphqlInitialAcl:'true'},{restoreGraphqlInitialAcl:1},{restoreGraphqlInitialAcl:true,skipGuard:true}])assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,options),/attendance_extension_metadata_options/);
+ assert.deepEqual(attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,Object.create({restoreGraphqlInitialAcl:true})),result);
+ assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{[Symbol('restoreGraphqlInitialAcl')]:true}),/attendance_extension_metadata_options/);
+});
+test('new explicit ACL supplement restores exactly seven identities after the dump and before unchanged full guard',()=>{
+ const snapshot=syntheticAttendanceGraphqlInitialAclMetadata(),legacy=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot);
+ const result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:true});
+ const start=result.sql.indexOf('\n-- Seven actual pg_graphql initial ACLs'),end=result.sql.indexOf('\n-- Compare every actual extension member',start);
+ assert(start>result.sql.indexOf('GRANT ALL ON FUNCTION graphql_public.graphql')&&end>start);
+ const acl=result.sql.slice(start,end);assert.equal(result.sql.slice(0,start)+result.sql.slice(end),legacy.sql);
+ const supplementalStart=result.supplementSql.indexOf('\n-- Seven actual pg_graphql initial ACLs'),supplementalEnd=result.supplementSql.indexOf('\n-- Compare every actual extension member',supplementalStart);
+ assert.equal(result.supplementSql.slice(0,supplementalStart)+result.supplementSql.slice(supplementalEnd),legacy.supplementSql);
+ assert.equal(result.sql.slice(end),legacy.sql.slice(legacy.sql.indexOf('\n-- Compare every actual extension member')));
+ assert.equal(result.sourceSha256,sha(syntheticAttendanceExtensionDump));assert.equal(result.snapshotSha256,legacy.snapshotSha256);
+ assert.deepEqual(result.operations.slice(0,3),legacy.operations);assert.equal(result.operations.length,10);
+ assert.deepEqual(result.operations.slice(3).map(x=>x.signature),['graphql.seq_schema_version','graphql._internal_resolve(text,jsonb,text,jsonb)','graphql.comment_directive(text)','graphql.exception(text)','graphql.get_schema_version()','graphql.increment_schema_version()','graphql.resolve(text,jsonb,text,jsonb)']);
+ assert.equal((acl.match(/grant SELECT, UPDATE, USAGE on sequence graphql\.seq_schema_version to /g)||[]).length,4);
+ assert.equal((acl.match(/grant EXECUTE on function graphql\./g)||[]).length,24);
+ const grants=acl.split('\n').filter(line=>/^\s+grant /.test(line));assert.equal(grants.length,29);
+ const ownerGrant=grants.filter(line=>line.endsWith(' to supabase_admin granted by supabase_admin;'));
+ assert.deepEqual(ownerGrant,['  grant SELECT, UPDATE on sequence graphql.seq_schema_version to supabase_admin granted by supabase_admin;']);
+ for(const line of grants.filter(line=>!ownerGrant.includes(line)))assert.match(line,/ to (anon|authenticated|postgres|service_role) granted by supabase_admin;$/);
+ assert(!/^\s*(?:revoke\b|set(?: local)? role\b|create\b|alter\b|drop\b|execute\b)/mi.test(acl));
+ assert(!/with grant option|grant all|select graphql\./i.test(acl));
+});
+test('seven ACL targets require exact extension membership, complete non-ACL metadata and known missing-or-full prestate',()=>{
+ const snapshot=syntheticAttendanceGraphqlInitialAclMetadata(),result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:true});
+ const start=result.supplementSql.indexOf('\n-- Seven actual pg_graphql initial ACLs'),end=result.supplementSql.indexOf('\n-- Compare every actual extension member',start),acl=result.supplementSql.slice(start,end);
+ assert(acl.includes("current_database()<>'faolla_attendance_compat_a535a308e21f'"));assert(acl.includes("current_user<>'supabase_admin' or session_user<>'supabase_admin'"));
+ assert(acl.includes("e.extversion='1.5.11'"));assert(acl.includes('set local search_path=pg_catalog,public;'));
+ assert.equal((acl.match(/d\.objsubid=0/g)||[]).length,7);assert.equal((acl.match(/d\.refobjsubid=0/g)||[]).length,7);
+ assert.equal((acl.match(/select x\.value into strict actual_object/g)||[]).length,7);
+ assert.equal((acl.match(/attendance_extension_graphql_acl_nonacl_changed/g)||[]).length,7);
+ assert.equal((acl.match(/attendance_extension_graphql_acl_prestate/g)||[]).length,7);
+ assert.equal((acl.match(/if actual_acl=convert_from/g)||[]).length,7);
+ for(const operation of result.operations.slice(3)){
+  assert.equal(operation.extension,'pg_graphql');assert.equal(operation.version,'1.5.11');assert.equal(operation.grantor,'supabase_admin');assert.equal(operation.operation,'restore-actual-initial-acl');
+  assert.deepEqual(operation.missingGrantees,['anon','authenticated','postgres','service_role']);assert(operation.expectedAcl.every(a=>a.grantor==='supabase_admin'&&a.grantable===false));
+  if(operation.catalog==='pg_class')assert.deepEqual(operation.missingOwnerPrivileges,['SELECT','UPDATE']);else assert(!Object.hasOwn(operation,'missingOwnerPrivileges'));
+ }
+ const encoded=[...acl.matchAll(/convert_from\(decode\('([a-f0-9]+)','hex'\),'UTF8'\)::jsonb/g)].map(m=>JSON.parse(Buffer.from(m[1],'hex').toString('utf8')));
+ const arrays=encoded.filter(Array.isArray);assert(arrays.some(a=>a.length===1&&a[0].grantee==='supabase_admin'&&a[0].grantor==='supabase_admin'&&a[0].privilege==='USAGE'&&a[0].grantable===false));
+ assert(!arrays.some(a=>a.length===3&&a.every(x=>x.grantee==='supabase_admin')));
+ assert(arrays.some(a=>a.length===2&&a.some(x=>x.grantee==='PUBLIC')&&a.some(x=>x.grantee==='supabase_admin')));
+ assert(arrays.some(a=>a.length===15));assert(arrays.some(a=>a.length===6));
+});
+test('authorized initial ACL repair rejects any changed expected identity, grantor, role, option or partial ACL',()=>{
+ const sequence=s=>s[0].members.find(m=>m.identity==='graphql.seq_schema_version'),routine=s=>s[0].routines.find(r=>r.signature==='graphql.get_schema_version()');
+ const modifications=[
+  s=>sequence(s).identity='graphql.other_sequence',s=>sequence(s).type='table',s=>sequence(s).metadata.kind='r',s=>sequence(s).metadata.owner='postgres',
+  s=>sequence(s).metadata.acl.push({...sequence(s).metadata.acl[0]}),s=>sequence(s).metadata.acl[0].grantor='postgres',s=>sequence(s).metadata.acl[0].grantee='PUBLIC',s=>sequence(s).metadata.acl[0].grantable=true,s=>sequence(s).metadata.acl[0].privilege='EXECUTE',s=>sequence(s).metadata.acl.pop(),s=>sequence(s).metadata.acl[0].extra=true,
+  s=>routine(s).signature='graphql.other()',s=>routine(s).kind='p',s=>routine(s).acl[0].grantor='postgres',s=>routine(s).acl[0].grantee='unknown',s=>routine(s).acl[0].grantable=true,s=>routine(s).acl[0].privilege='SELECT',s=>routine(s).acl.pop(),s=>routine(s).acl.push({...routine(s).acl[0]})
+ ];
+ for(const modify of modifications){const snapshot=syntheticAttendanceGraphqlInitialAclMetadata();modify(snapshot);assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:true}),/^Error: attendance_extension_(?:metadata|graphql_acl)_/);}
+ assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,syntheticAttendanceExtensionMetadata(),{restoreGraphqlInitialAcl:true}),/attendance_extension_graphql_acl_/);
 });

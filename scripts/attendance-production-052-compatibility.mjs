@@ -275,7 +275,8 @@ export async function runAttendance052Compatibility(input={}){
  need(input.confirm==='approved-isolated-052-210-compatibility','attendance_compatibility_explicit_approval');
  const dump=await run(input,['exec',attendanceProductionIdentity.containerId,'sh','-lc','set -eu; : "${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS="-c default_transaction_read_only=on -c lock_timeout=3s -c statement_timeout=120000"; exec pg_dump -h 127.0.0.1 -U supabase_admin -d postgres --schema-only --no-comments --no-security-labels --no-publications --no-subscriptions'],undefined,16000000,false);
  const metadata=validateAttendance052SchemaOnlySql(dump),transcript=[];
- const supplement=attendanceExtensionMetadataSupplement(metadata.sql,formalBefore.extensions);
+ const supplement=attendanceExtensionMetadataSupplement(metadata.sql,formalBefore.extensions,
+  {restoreGraphqlInitialAcl:repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'});
  const formalAfterDump=await productionMetadataState(input,assets.manifest);eq(formalAfterDump,formalBefore,'attendance_compatibility_formal_metadata_drift');
  await privateWrite(p.metadata,metadata.sql);
  const extensionMetadataSha256=await privateWrite(p.extensionMetadata,{schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:metadata.sha256,snapshotSha256:supplement.snapshotSha256,snapshot:formalBefore.extensions,operations:supplement.operations});
