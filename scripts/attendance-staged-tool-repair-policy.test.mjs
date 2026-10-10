@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';import test from 'node:test';
 import {ATTENDANCE_STAGED_REPAIR as p,ATTENDANCE_STAGED_REPAIR_PRESERVED as preserved,
- ATTENDANCE_STAGED_FOLLOW_ON as follow,ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON as sequence,ATTENDANCE_STAGED_REPAIR_FILES as allowed,
+ ATTENDANCE_STAGED_FOLLOW_ON as follow,ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON as sequence,ATTENDANCE_STAGED_ACL_FOLLOW_ON as acl,
+ ATTENDANCE_STAGED_REPAIR_FILES as allowed,
  assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt,
- assertAttendanceStagedSequenceFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
+ assertAttendanceStagedSequenceFollowOnReceipt,assertAttendanceStagedAclFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
 export function stagedRepairReceiptFixture(){return {schemaVersion:1,kind:'attendance-staged-tool-repair',target:p.target,baseline:p.baseline,
  toolRevision:'e'.repeat(40),originalStateSha256:p.stateSha256,originalBuildProofSha256:p.buildProofSha256,
  sourceInputsSha256:'a'.repeat(64),builtOutputSha256:p.builtOutputSha256,scopeSha256:p.scopeSha256,preservedFiles:{...preserved},
@@ -107,4 +108,52 @@ test('sequence follow-on keeps exact chain keys, historical SHA, fixed archive a
   {previousReceipt:{...previousReceipt,effectiveReceipt:{...previousReceipt.effectiveReceipt,toolRevision:'d'.repeat(40)}}},
   {target:'d'.repeat(40)},{toolRevision:'d'.repeat(40)}])
   assert.throws(()=>assertAttendanceStagedSequenceFollowOnReceipt(chain,{...ports,...change}));
+});
+
+export function stagedAclFollowOnReceiptFixture(){
+ const {original,previousReceipt:firstFollowOnReceipt,chain:previousReceipt}=stagedSequenceFollowOnReceiptFixture();
+ previousReceipt.effectiveReceipt.toolRevision=acl.previousToolRevision;
+ const preparedAt='2026-10-10T09:00:00.000Z',effectiveReceipt={...previousReceipt.effectiveReceipt,
+  toolRevision:'e'.repeat(40),preparedAt};
+ return {original,firstFollowOnReceipt,previousReceipt,chain:{schemaVersion:1,kind:'attendance-staged-tool-repair-acl-follow-on',
+  target:p.target,baseline:p.baseline,previousToolRevision:acl.previousToolRevision,
+  previousReceiptSha256:acl.previousReceiptSha256,failedAttemptArchive:structuredClone(acl.archive),effectiveReceipt,preparedAt}};
+}
+test('ACL follow-on validates all three immutable earlier receipts and seven actual fourth-failure pins without expanding tool scope',()=>{
+ const {original,firstFollowOnReceipt,previousReceipt,chain}=stagedAclFollowOnReceiptFixture(),ports={originalReceipt:original,
+  originalReceiptSha256:follow.previousReceiptSha256,firstFollowOnReceipt,firstFollowOnReceiptSha256:sequence.previousReceiptSha256,
+  previousReceipt,previousReceiptSha256:acl.previousReceiptSha256};
+ const before=JSON.stringify({original,firstFollowOnReceipt,previousReceipt});
+ assert.equal(allowed.length,15);assert.equal(acl.previousToolRevision,'ff85a47ae96fa766d037b3d728f7f21a113efb70');
+ assert.equal(acl.previousReceiptSha256,'b908814b40ab9f8b7983851ffb1f1b9982439abe12f83aa7d82e3a177ab3f644');
+ assert.equal(acl.archive.database.oid,'37190');assert.equal(Object.keys(acl.archive.files).length,7);
+ assert.ok(Object.values(acl.archive.files).every(x=>/^[a-f0-9]{64}$/.test(x)));
+ assert.equal(new Set([follow.receiptName,sequence.receiptName,acl.receiptName]).size,3);
+ assert.equal(assertAttendanceStagedAclFollowOnReceipt(chain,ports),chain);
+ assert.equal(JSON.stringify({original,firstFollowOnReceipt,previousReceipt}),before);
+});
+test('ACL follow-on rejects a broken older chain, arbitrary history/archive, new authority or changed original application evidence',()=>{
+ const {original,firstFollowOnReceipt,previousReceipt,chain}=stagedAclFollowOnReceiptFixture(),ports={originalReceipt:original,
+  originalReceiptSha256:follow.previousReceiptSha256,firstFollowOnReceipt,firstFollowOnReceiptSha256:sequence.previousReceiptSha256,
+  previousReceipt,previousReceiptSha256:acl.previousReceiptSha256};
+ for(const key of Object.keys(chain)){const altered={...chain};delete altered[key];assert.throws(()=>assertAttendanceStagedAclFollowOnReceipt(altered,ports),key);}
+ for(const change of [{skip:true},{kind:'attendance-staged-tool-repair-sequence-follow-on'},{target:'d'.repeat(40)},
+  {baseline:'d'.repeat(40)},{previousToolRevision:sequence.previousToolRevision},{previousReceiptSha256:sequence.previousReceiptSha256},
+  {failedAttemptArchive:{...acl.archive,directory:'/arbitrary/archive'}},
+  {failedAttemptArchive:{...acl.archive,database:{...acl.archive.database,oid:'34130'}}},
+  {failedAttemptArchive:{...acl.archive,files:{...acl.archive.files,'unexpected.json':'a'.repeat(64)}}}])
+  assert.throws(()=>assertAttendanceStagedAclFollowOnReceipt({...chain,...change},ports));
+ for(const change of [{toolRevision:acl.previousToolRevision},{toolRevision:sequence.previousToolRevision},
+  {toolRevision:follow.previousToolRevision},{toolRevision:p.target},{sourceInputsSha256:'c'.repeat(64)},
+  {dependencySha256:'c'.repeat(64)},{scopeSha256:'c'.repeat(64)},{builtOutputSha256:'c'.repeat(64)},
+  {approvedNoRebuild:false},{preservedFiles:{...preserved,'runtime.json':'0'.repeat(64)}},
+  {changedToolFiles:['scripts/attendance-production-052-compatibility.mjs']},
+  {preparedAt:'2026-10-10T05:00:00.000Z'},{preparedAt:'2026-10-10T10:00:00.000Z'}])
+  assert.throws(()=>assertAttendanceStagedAclFollowOnReceipt({...chain,effectiveReceipt:{...chain.effectiveReceipt,...change}},ports));
+ for(const change of [{originalReceiptSha256:'0'.repeat(64)},{firstFollowOnReceiptSha256:'0'.repeat(64)},
+  {previousReceiptSha256:'0'.repeat(64)},{originalReceipt:{...original,kind:'unknown'}},
+  {firstFollowOnReceipt:{...firstFollowOnReceipt,kind:'unknown'}},{previousReceipt:{...previousReceipt,kind:'unknown'}},
+  {previousReceipt:{...previousReceipt,effectiveReceipt:{...previousReceipt.effectiveReceipt,toolRevision:'d'.repeat(40)}}},
+  {target:'d'.repeat(40)},{toolRevision:'d'.repeat(40)}])
+  assert.throws(()=>assertAttendanceStagedAclFollowOnReceipt(chain,{...ports,...change}));
 });

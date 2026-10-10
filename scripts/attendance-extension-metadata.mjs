@@ -121,7 +121,58 @@ function statements(source){
  }
  need(!masked.trim(),'attendance_extension_metadata_dump_anchor');return result;
 }
-export function attendanceExtensionMetadataSupplement(dump,snapshot){
+const graphqlAclRoles=Object.freeze(['anon','authenticated','postgres','service_role']);
+const graphqlAclFunctions=Object.freeze(['graphql._internal_resolve(text,jsonb,text,jsonb)','graphql.comment_directive(text)','graphql.exception(text)','graphql.get_schema_version()','graphql.increment_schema_version()','graphql.resolve(text,jsonb,text,jsonb)']);
+const graphqlSequence='graphql.seq_schema_version';
+function checkedSupplementOptions(options){
+ need(options&&typeof options==='object'&&!Array.isArray(options)&&Reflect.ownKeys(options).every(k=>k==='restoreGraphqlInitialAcl')&&
+  (!Object.hasOwn(options,'restoreGraphqlInitialAcl')||typeof options.restoreGraphqlInitialAcl==='boolean'),'attendance_extension_metadata_options');
+ return Object.hasOwn(options,'restoreGraphqlInitialAcl')&&options.restoreGraphqlInitialAcl===true;
+}
+function canonicalAcl(entries){
+ need(Array.isArray(entries),'attendance_extension_graphql_acl_expected');
+ for(const a of entries)need(a&&typeof a==='object'&&!Array.isArray(a)&&Object.keys(a).length===4&&
+  ['grantor','grantee','privilege','grantable'].every(k=>Object.hasOwn(a,k)),'attendance_extension_graphql_acl_expected');
+ return entries.map(a=>[a.grantor,a.grantee,a.privilege,a.grantable]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b),'en'));
+}
+// Explicitly authorized for the fixed NEW isolated clone only. The old sealed
+// supplement is byte-identical when this independent option is not selected.
+function graphqlInitialAclSupplement(snapshot){
+ const extension=snapshot.find(e=>e.name==='pg_graphql');
+ need(extension?.version==='1.5.11'&&extension.schema==='graphql'&&extension.owner==='supabase_admin','attendance_extension_graphql_acl_extension');
+ const expectedAcl=(grantees,privileges)=>grantees.flatMap(grantee=>privileges.map(privilege=>({grantor:'supabase_admin',grantee,privilege,grantable:false})));
+ const sequence=extension.members.filter(m=>m.catalog==='pg_class'&&m.identity===graphqlSequence);
+ need(sequence.length===1&&sequence[0].type==='sequence'&&sequence[0].metadata?.kind==='S'&&sequence[0].metadata.owner==='supabase_admin','attendance_extension_graphql_acl_sequence');
+ const targets=[{catalog:'pg_class',signature:graphqlSequence,expected:sequence[0],acl:sequence[0].metadata.acl,privileges:['SELECT','UPDATE','USAGE'],grantees:[...graphqlAclRoles,'supabase_admin']}];
+ for(const signature of graphqlAclFunctions){
+  const routines=extension.routines.filter(r=>r.signature===signature);
+  need(routines.length===1&&routines[0].owner==='supabase_admin'&&routines[0].kind==='f'&&
+   extension.members.filter(m=>m.catalog==='pg_proc'&&m.identity===routines[0].memberIdentity).length===1,'attendance_extension_graphql_acl_function');
+  targets.push({catalog:'pg_proc',signature,expected:routines[0],acl:routines[0].acl,privileges:['EXECUTE'],grantees:['PUBLIC',...graphqlAclRoles,'supabase_admin']});
+ }
+ let sql=`\n-- Seven actual pg_graphql initial ACLs omitted by pg_dump's initial-privilege delta.\nset local search_path=pg_catalog,public;\ndo $attendance_extension_graphql_initial_acl$\ndeclare\n actual_snapshot jsonb;actual_object jsonb;actual_acl jsonb;\nbegin\n if current_database()<>'faolla_attendance_compat_a535a308e21f' or current_user<>'supabase_admin' or session_user<>'supabase_admin' or not exists(select 1 from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='pg_graphql' and e.extversion='1.5.11' and n.nspname='graphql' and pg_get_userbyid(e.extowner)='supabase_admin') then raise exception 'attendance_extension_graphql_acl_identity';end if;\n actual_snapshot:=${attendanceExtensionMetadataSnapshotExpression()};\n`;
+ const operations=[];
+ for(const target of targets){
+  same(canonicalAcl(target.acl),canonicalAcl(expectedAcl(target.grantees,target.privileges)),'attendance_extension_graphql_acl_expected');
+  const isSequence=target.catalog==='pg_class',lookup=isSequence?`to_regclass('${target.signature}')`:`to_regprocedure('${target.signature}')`;
+  const objectGuard=isSequence?`exists(select 1 from pg_class c where c.oid=${lookup} and c.relkind='S' and pg_get_userbyid(c.relowner)='supabase_admin')`:
+   `exists(select 1 from pg_proc p where p.oid=${lookup} and p.prokind='f' and pg_get_userbyid(p.proowner)='supabase_admin')`;
+  sql+=` if not ${objectGuard} or (select count(*) from pg_depend d join pg_extension e on e.oid=d.refobjid where d.classid='${target.catalog}'::regclass and d.objid=${lookup} and d.objsubid=0 and d.refclassid='pg_extension'::regclass and d.refobjsubid=0 and d.deptype='e' and e.extname='pg_graphql' and e.extversion='1.5.11' and pg_get_userbyid(e.extowner)='supabase_admin')<>1 then raise exception 'attendance_extension_graphql_acl_member';end if;\n`;
+  sql+=` select x.value into strict actual_object from jsonb_array_elements(actual_snapshot) e cross join lateral jsonb_array_elements(e.value->'${isSequence?'members':'routines'}') x where e.value->>'name'='pg_graphql' and ${isSequence?`x.value->>'catalog'='pg_class' and x.value->>'identity'`:`x.value->>'signature'`}='${target.signature}';\n`;
+  const expected=pgText(JSON.stringify(target.expected))+'::jsonb',full=pgText(JSON.stringify(target.acl))+'::jsonb';
+  const base=pgText(JSON.stringify(target.acl.filter(a=>isSequence?a.grantee==='supabase_admin'&&a.privilege==='USAGE':a.grantee==='supabase_admin'||a.grantee==='PUBLIC')))+'::jsonb';
+  sql+=isSequence?` if actual_object #- '{metadata,acl}' is distinct from (${expected} #- '{metadata,acl}') then raise exception 'attendance_extension_graphql_acl_nonacl_changed';end if;\n actual_acl:=actual_object#>'{metadata,acl}';\n`:
+   ` if actual_object-'acl' is distinct from (${expected}-'acl') then raise exception 'attendance_extension_graphql_acl_nonacl_changed';end if;\n actual_acl:=actual_object->'acl';\n`;
+  sql+=` if actual_acl is distinct from ${base} and actual_acl is distinct from ${full} then raise exception 'attendance_extension_graphql_acl_prestate';end if;\n if actual_acl=${base} then\n`;
+  if(isSequence)sql+=`  grant SELECT, UPDATE on sequence ${target.signature} to supabase_admin granted by supabase_admin;\n`;
+  for(const role of graphqlAclRoles)sql+=`  grant ${target.privileges.join(', ')} on ${isSequence?'sequence':'function'} ${target.signature} to ${role} granted by supabase_admin;\n`;
+  sql+=' end if;\n';
+  operations.push({catalog:target.catalog,signature:target.signature,operation:'restore-actual-initial-acl',extension:'pg_graphql',version:'1.5.11',grantor:'supabase_admin',missingGrantees:[...graphqlAclRoles],privileges:target.privileges,...(isSequence?{missingOwnerPrivileges:['SELECT','UPDATE']}:{}),expectedAcl:target.acl});
+ }
+ sql+='end;\n$attendance_extension_graphql_initial_acl$;\n';return {sql,operations};
+}
+export function attendanceExtensionMetadataSupplement(dump,snapshot,options={}){
+ const restoreGraphqlInitialAcl=checkedSupplementOptions(options);
  need(typeof dump==='string'&&dump.length>0&&Buffer.byteLength(dump)<16000000&&!dump.includes('\0'),'attendance_extension_metadata_dump');
  const validated=validateAttendanceExtensionMetadata(snapshot),parsed=statements(dump);
  const graphAcl=/^GRANT ALL ON FUNCTION graphql_public\.graphql\((?:text, text, jsonb, jsonb|operationName text, query text, variables jsonb, extensions jsonb)\) TO (anon|authenticated|postgres|service_role)(?: WITH GRANT OPTION)?;$/i;
@@ -137,8 +188,9 @@ export function attendanceExtensionMetadataSupplement(dump,snapshot){
  attributes+='end;\n$attendance_extension_net$;\n';
  const insertion=wrapperSql+attributes;
  const finalGuard=`\n-- Compare every actual extension member and routine before metadata COMMIT.\nset local search_path=pg_catalog,public;\ndo $attendance_extension_full_metadata$\nbegin\n if ${attendanceExtensionMetadataSnapshotExpression()}<>${pgText(JSON.stringify(snapshot))}::jsonb then raise exception 'attendance_extension_full_metadata_mismatch';end if;\nend;\n$attendance_extension_full_metadata$;\n`;
- const sql=dump.slice(0,anchor)+insertion+dump.slice(anchor)+finalGuard;
- need(sql.slice(0,anchor)+sql.slice(anchor+insertion.length,-finalGuard.length)===dump,'attendance_extension_metadata_original_changed');
- const supplementSql=insertion+finalGuard;
- return {sql,supplementSql,supplementSha256:sha(supplementSql),snapshotSha256:validated.snapshotSha256,sourceSha256:sha(dump),insertBeforeFirstAcl:anchor,operations:[{signature:wrapper,operation:'create-missing-member',definitionSha256:validated.wrapper.definitionSha256},{signature:get,operation:'actual-attributes-only',securityDefiner:false,config:['search_path=net']},{signature:post,operation:'actual-attributes-only',securityDefiner:false,config:['search_path=net']}]};
+ const aclSupplement=restoreGraphqlInitialAcl?graphqlInitialAclSupplement(snapshot):{sql:'',operations:[]};
+ const sql=dump.slice(0,anchor)+insertion+dump.slice(anchor)+aclSupplement.sql+finalGuard;
+ need(sql.slice(0,anchor)+sql.slice(anchor+insertion.length,-(aclSupplement.sql.length+finalGuard.length))===dump,'attendance_extension_metadata_original_changed');
+ const supplementSql=insertion+aclSupplement.sql+finalGuard;
+ return {sql,supplementSql,supplementSha256:sha(supplementSql),snapshotSha256:validated.snapshotSha256,sourceSha256:sha(dump),insertBeforeFirstAcl:anchor,operations:[{signature:wrapper,operation:'create-missing-member',definitionSha256:validated.wrapper.definitionSha256},{signature:get,operation:'actual-attributes-only',securityDefiner:false,config:['search_path=net']},{signature:post,operation:'actual-attributes-only',securityDefiner:false,config:['search_path=net']},...aclSupplement.operations]};
 }
