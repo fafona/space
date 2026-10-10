@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {attendanceExtensionMetadataPins,attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
-import {syntheticAttendanceExtensionMetadata,syntheticAttendanceGraphqlInitialAclMetadata,syntheticAttendanceExtensionDump,syntheticAttendanceExtensionGrants} from './test-helpers/attendance-extension-metadata.mjs';
+import {attendanceExtensionMetadataPins,attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement,attendanceGraphqlInitialSchemaAclSnapshotExpression,attendanceGraphqlInitialSchemaAclSnapshotSql,validateAttendanceGraphqlInitialSchemaAclSnapshot} from './attendance-extension-metadata.mjs';
+import {syntheticAttendanceExtensionMetadata,syntheticAttendanceGraphqlInitialAclMetadata,syntheticAttendanceGraphqlInitialSchemaAclMetadata,syntheticAttendanceExtensionDump,syntheticAttendanceExtensionGrants} from './test-helpers/attendance-extension-metadata.mjs';
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const sequenceMetadata=sequence=>{
  const snapshot=syntheticAttendanceExtensionMetadata();
@@ -187,4 +187,104 @@ test('authorized initial ACL repair rejects any changed expected identity, grant
  ];
  for(const modify of modifications){const snapshot=syntheticAttendanceGraphqlInitialAclMetadata();modify(snapshot);assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:true}),/^Error: attendance_extension_(?:metadata|graphql_acl)_/);}
  assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,syntheticAttendanceExtensionMetadata(),{restoreGraphqlInitialAcl:true}),/attendance_extension_graphql_acl_/);
+});
+test('separate schema sampler reads only the two actual namespace and initial ACLs without changing the old extension sampler',()=>{
+ const sql=attendanceGraphqlInitialSchemaAclSnapshotSql();
+ assert(sql.startsWith('-- attendance_compatibility_graphql_initial_schema_acl\nbegin read only;'));
+ assert(sql.includes(attendanceGraphqlInitialSchemaAclSnapshotExpression()));
+ assert(sql.includes("i.classoid='pg_namespace'::regclass and i.objoid=n.oid and i.objsubid=0"));
+ assert(sql.includes("n.nspname in ('graphql','graphql_public')"));
+ for(const field of ['nspowner','nspacl','pg_init_privs','initprivs','initialPrivilegeType','i.privtype','aclexplode','set local search_path=pg_catalog,public'])assert(sql.includes(field),field);
+ assert(!/create\s|alter\s|grant\s|revoke\s|drop\s|auth\.users|pg_authid|pg_auth_members|last_value|password/i.test(sql));
+ assert(!attendanceExtensionMetadataSnapshotSql().includes('pg_init_privs'));
+ assert(!attendanceExtensionMetadataSnapshotSql().includes('initialPrivilegeType'));
+});
+test('schema restoration is an independent strict boolean and preserves every old default/false and seven-object output byte',()=>{
+ for(const snapshot of [syntheticAttendanceExtensionMetadata(),syntheticAttendanceGraphqlInitialAclMetadata()]){
+  const oldOptions=snapshot[0].members.some(m=>m.identity==='graphql.seq_schema_version')?{restoreGraphqlInitialAcl:true}:{};
+  const result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,oldOptions);
+  assert.deepEqual(attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{...oldOptions,restoreGraphqlInitialSchemaAcl:false}),result);
+  assert(!Object.hasOwn(result,'schemaSnapshotSha256'));
+  assert(!result.sql.includes('attendance_extension_graphql_initial_schema_acl'));
+  if(oldOptions.restoreGraphqlInitialAcl){
+   assert.equal(sha(result.sql),'397e21eb1458175f870bd60df3c6ba3b3b45ab3ed8b8a0e1b54172a2020154d0');
+   assert.equal(sha(result.supplementSql),'9bf0b2c20222a1d69cb5ae535088ef1559df722d6743d2e1c40b583709316a50');
+   assert.equal(sha(JSON.stringify(result.operations)),'bf93e3b68971f275c061ca9c4110a2fc471aaea500b5dd80dff40bd5962db032');
+  }
+ }
+ const snapshot=syntheticAttendanceExtensionMetadata(),schema=syntheticAttendanceGraphqlInitialSchemaAclMetadata();
+ for(const options of [{restoreGraphqlInitialSchemaAcl:1},{restoreGraphqlInitialSchemaAcl:'true'},{restoreGraphqlInitialSchemaAcl:null},{restoreGraphqlInitialSchemaAcl:true,skipGuard:true},{[Symbol('restoreGraphqlInitialSchemaAcl')]:true}])assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,options,schema),/attendance_extension_metadata_options/);
+ for(const options of [{},{restoreGraphqlInitialSchemaAcl:false},Object.create({restoreGraphqlInitialSchemaAcl:true})]){
+  for(const hiddenInput of [schema,null,[],{}])assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,options,hiddenInput),/attendance_extension_metadata_options/);
+ }
+ assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialSchemaAcl:true}),/attendance_extension_graphql_schema_acl_snapshot/);
+});
+test('two schema source ACLs exactly preserve owner CREATE/USAGE and the sole postgres grant option',()=>{
+ const snapshot=syntheticAttendanceGraphqlInitialSchemaAclMetadata(),validated=validateAttendanceGraphqlInitialSchemaAclSnapshot(snapshot);
+ assert.deepEqual(validated.snapshot,snapshot);assert.equal(validated.snapshotSha256,sha(JSON.stringify(snapshot)));
+ assert.deepEqual(snapshot.map(s=>s.name),['graphql','graphql_public']);
+ for(const schema of snapshot){
+  assert.equal(schema.owner,'supabase_admin');assert.equal(schema.initialPrivilegeType,'e');assert.deepEqual(schema.acl,schema.initialAcl);assert.equal(schema.acl.length,6);
+  assert.deepEqual(schema.acl.filter(a=>a.grantee==='supabase_admin').map(a=>[a.privilege,a.grantable]),[['CREATE',false],['USAGE',false]]);
+  assert.deepEqual(schema.acl.filter(a=>a.grantable),[{grantor:'supabase_admin',grantee:'postgres',privilege:'USAGE',grantable:true}]);
+ }
+});
+test('new two-schema supplement emits exactly eight fixed grants and leaves raw dump/old seven/full guard bytes intact',()=>{
+ const snapshot=syntheticAttendanceGraphqlInitialAclMetadata(),schema=syntheticAttendanceGraphqlInitialSchemaAclMetadata();
+ const legacy=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:true});
+ const result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,snapshot,{restoreGraphqlInitialAcl:true,restoreGraphqlInitialSchemaAcl:true},schema);
+ const start=result.sql.indexOf('\n-- Two actual GraphQL initial schema ACLs'),end=result.sql.indexOf('\n-- Compare every actual extension member',start),sql=result.sql.slice(start,end);
+ assert(start>result.sql.indexOf('$attendance_extension_graphql_initial_acl$;')&&end>start);
+ assert.equal(result.sql.slice(0,start)+result.sql.slice(end),legacy.sql);
+ const s=result.supplementSql.indexOf('\n-- Two actual GraphQL initial schema ACLs'),e=result.supplementSql.indexOf('\n-- Compare every actual extension member',s);
+ assert.equal(result.supplementSql.slice(0,s)+result.supplementSql.slice(e),legacy.supplementSql);
+ assert.equal(result.sourceSha256,legacy.sourceSha256);assert.equal(result.snapshotSha256,legacy.snapshotSha256);assert.equal(result.schemaSnapshotSha256,sha(JSON.stringify(schema)));
+ assert.deepEqual(result.operations.slice(0,10),legacy.operations);assert.equal(result.operations.length,12);
+ const grants=sql.split('\n').filter(line=>/^\s+grant /.test(line));
+ assert.deepEqual(grants,['graphql','graphql_public'].flatMap(name=>[
+  ...['anon','authenticated','service_role'].map(role=>`  grant USAGE on schema ${name} to ${role} granted by supabase_admin;`),
+  `  grant USAGE on schema ${name} to postgres with grant option granted by supabase_admin;`
+ ]));
+ assert.equal(grants.length,8);assert.equal(grants.filter(line=>line.includes('with grant option')).length,2);
+ assert(!/^\s*(?:revoke\b|set(?: local)? role\b|create\b|alter\b|drop\b|execute\b)/mi.test(sql));
+ assert(!/grant all|grant CREATE|on (?:function|sequence|table)|pg_authid|pg_auth_members|update pg_/i.test(sql));
+ for(const operation of result.operations.slice(10)){
+  assert.equal(operation.catalog,'pg_namespace');assert.equal(operation.operation,'restore-actual-initial-schema-acl');assert.equal(operation.grantor,'supabase_admin');
+  assert.deepEqual(operation.privileges,['USAGE']);assert.deepEqual(operation.grantOptionGrantees,['postgres']);assert.equal(operation.expectedAcl.length,6);
+ }
+ const independentlySelected=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,syntheticAttendanceExtensionMetadata(),{restoreGraphqlInitialSchemaAcl:true},schema);
+ assert.equal(independentlySelected.operations.length,5);assert(!independentlySelected.sql.includes('do $attendance_extension_graphql_initial_acl$'));
+});
+test('schema SQL checks BOTH complete prestates before any grant, then full exact poststate in the unique isolated clone',()=>{
+ const schema=syntheticAttendanceGraphqlInitialSchemaAclMetadata(),result=attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,syntheticAttendanceExtensionMetadata(),{restoreGraphqlInitialSchemaAcl:true},schema);
+ const start=result.supplementSql.indexOf('\n-- Two actual GraphQL initial schema ACLs'),end=result.supplementSql.indexOf('\n-- Compare every actual extension member',start),sql=result.supplementSql.slice(start,end);
+ assert(sql.includes("current_database()<>'faolla_attendance_compat_a535a308e21f'"));assert(sql.includes("current_user<>'supabase_admin' or session_user<>'supabase_admin'"));
+ assert(sql.includes("e.extname='pg_graphql' and e.extversion='1.5.11'"));assert(sql.includes("pg_get_userbyid(e.extowner)='supabase_admin'"));
+ const firstGrant=sql.indexOf('  grant '),lastPrestate=sql.lastIndexOf("then raise exception 'attendance_extension_graphql_schema_acl_prestate';end if;");
+ assert(firstGrant>lastPrestate);assert.equal((sql.match(/select x\.value into strict actual_object/g)||[]).length,2);
+ assert.equal((sql.match(/attendance_extension_graphql_schema_acl_owner/g)||[]).length,2);
+ assert.equal((sql.match(/actual_acl is distinct from/g)||[]).length,4);
+ assert(sql.indexOf("raise exception 'attendance_extension_graphql_schema_acl_poststate'")>sql.lastIndexOf('  grant '));
+ const encoded=[...sql.matchAll(/convert_from\(decode\('([a-f0-9]+)','hex'\),'UTF8'\)::jsonb/g)].map(m=>JSON.parse(Buffer.from(m[1],'hex').toString('utf8')));
+ const base=schema[0].acl.filter(a=>a.grantee==='supabase_admin'),full=schema[0].acl;
+ assert(encoded.filter(value=>JSON.stringify(value)===JSON.stringify(base)).length>=4);
+ assert.equal(encoded.filter(value=>JSON.stringify(value)===JSON.stringify(full)).length,2);
+ assert.deepEqual(encoded.at(-1),schema.map(s=>({name:s.name,owner:s.owner,acl:s.acl})));
+ assert(!sql.includes('initialAcl'));assert(!sql.includes('pg_init_privs'));
+});
+test('schema source validation denies unknown identities, roles, grantors, permissions and every partial or widened ACL',()=>{
+ const modifications=[
+  s=>s.pop(),s=>s.push(structuredClone(s[0])),s=>s.reverse(),s=>s[0].name='public',s=>s[1].name='graphql',s=>s[0].owner='postgres',
+  s=>s[0].initialPrivilegeType='i',s=>s[0].initialPrivilegeType=null,s=>delete s[0].initialAcl,s=>s[0].extra=true,s=>s[0][Symbol('hidden')]=true,
+  s=>s[0].acl.pop(),s=>s[0].initialAcl.pop(),s=>s[0].acl.push({...s[0].acl[0]}),s=>s[0].acl[0].grantee='PUBLIC',s=>s[0].acl[0].grantee='unknown',
+  s=>s[0].acl[0].grantor='postgres',s=>s[0].acl[0].privilege='CREATE',s=>s[0].acl[0].grantable=true,s=>s[0].acl.find(a=>a.grantee==='postgres').grantable=false,
+  s=>s[0].acl.find(a=>a.grantee==='supabase_admin').grantable=true,s=>s[0].acl[0].extra=true,s=>s[0].acl[0][Symbol('hidden')]=true,
+  s=>s[0].initialAcl[0].grantee='service_role',s=>s[0].initialAcl.find(a=>a.grantee==='postgres').grantable=false
+ ];
+ for(const invalid of [null,1,'abcd',[],{},['supabase_admin','anon','USAGE',false]])modifications.push(s=>s[0].acl[0]=invalid);
+ for(const modify of modifications){const schema=syntheticAttendanceGraphqlInitialSchemaAclMetadata();modify(schema);
+  assert.throws(()=>validateAttendanceGraphqlInitialSchemaAclSnapshot(schema),/^Error: attendance_extension_graphql_schema_acl_/);
+  assert.throws(()=>attendanceExtensionMetadataSupplement(syntheticAttendanceExtensionDump,syntheticAttendanceExtensionMetadata(),{restoreGraphqlInitialSchemaAcl:true},schema),/^Error: attendance_extension_graphql_schema_acl_/);
+ }
+ for(const schema of [null,undefined,{},[]])assert.throws(()=>validateAttendanceGraphqlInitialSchemaAclSnapshot(schema),/attendance_extension_graphql_schema_acl_snapshot/);
 });

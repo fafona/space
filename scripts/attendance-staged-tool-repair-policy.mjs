@@ -184,3 +184,48 @@ export function assertAttendanceStagedAclFollowOnReceipt(r,{originalReceipt,orig
   effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
  return r;
 }
+
+// A fourth, separately approved extension restores only the two diagnosed
+// isolated schema ACLs. The four prior receipts and archives remain immutable.
+export const ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON=Object.freeze({
+ previousToolRevision:'ce22f77b8d89f4cf36f0c6737149014cef8bdb69',
+ previousReceiptSha256:'01ffc768fc7de8c69978d6fd83cbe0669a7168cb15943ce2e01f2a8e53fc9b37',
+ receiptName:'attendance-staged-tool-repair-schema-follow-on.json',
+ archive:Object.freeze({
+  directory:`${ATTENDANCE_STAGED_REPAIR.operation}/attendance-compatibility-failure-20261010-114333`,
+  files:Object.freeze({
+   'attendance-compatibility-attempt.json':'3fe16f2cb423a1a7c897fbab102af664863bbfa1b94152869fa174ff502a76de',
+   'attendance-compatibility-metadata.sql':'3d4808ffd338bdddd7287d5281ddcb66b44dba720cc75bee349cf716b6e8405d',
+   'attendance-compatibility-extension-metadata.json':'672373d5fd1174b74fb43aebf10bba0806bdb71357550348ef4018e40b8b781c',
+   'attendance-compatibility-extension-supplement.sql':'5c20d2d9555338cb0f412c6d164a6420a2cc601f888ad1a0e31cfb24fe3b5056',
+   'prepared.json':'bd52e63b711b7bca7bbcacbe7d87e0eb207feeb03efcc9a33f0dc0144fcda615',
+   'sql-applied.json':'e7c66e9fc693f9153b2fe215b00d62a00af2809336140068868edfd878b994c8',
+   'completed.json':'b7c2c7c37d88b5f60db11d5dea9ddf3953948997c1a3834d16b7d0a6ab6764f1',
+  }),
+  database:Object.freeze({oid:'55550',originalName:'faolla_attendance_compat_a535a308e21f',
+   retainedName:'faolla_attendance_failed_a535a308e21f_20261010_114333'}),
+ }),
+});
+export function assertAttendanceStagedSchemaFollowOnReceipt(r,{originalReceipt,originalReceiptSha256,
+ firstFollowOnReceipt,firstFollowOnReceiptSha256,sequenceFollowOnReceipt,sequenceFollowOnReceiptSha256,
+ previousReceipt,previousReceiptSha256,target:expectedTarget,toolRevision}={}){
+ const f=ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON,p=ATTENDANCE_STAGED_REPAIR;
+ need(r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).length===followOnKeys.length&&followOnKeys.every(k=>Object.hasOwn(r,k)));
+ need(Object.values(f.archive.files).every(hex));
+ assertAttendanceStagedAclFollowOnReceipt(previousReceipt,{originalReceipt,originalReceiptSha256,
+  firstFollowOnReceipt,firstFollowOnReceiptSha256,previousReceipt:sequenceFollowOnReceipt,
+  previousReceiptSha256:sequenceFollowOnReceiptSha256,target:p.target,toolRevision:f.previousToolRevision});
+ need(previousReceiptSha256===f.previousReceiptSha256&&r.schemaVersion===1&&r.kind==='attendance-staged-tool-repair-schema-follow-on'&&
+  r.target===p.target&&r.baseline===p.baseline&&(!expectedTarget||expectedTarget===p.target)&&
+  r.previousToolRevision===f.previousToolRevision&&r.previousReceiptSha256===f.previousReceiptSha256);
+ try{assert.deepEqual(r.failedAttemptArchive,f.archive);}catch{need(false);}
+ const previous=previousReceipt.effectiveReceipt,effective=assertAttendanceStagedRepairReceipt(r.effectiveReceipt,{target:p.target,toolRevision});
+ need(effective.toolRevision!==f.previousToolRevision&&effective.toolRevision!==ATTENDANCE_STAGED_ACL_FOLLOW_ON.previousToolRevision&&
+  effective.toolRevision!==ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON.previousToolRevision&&
+  effective.toolRevision!==ATTENDANCE_STAGED_FOLLOW_ON.previousToolRevision&&effective.sourceInputsSha256===previous.sourceInputsSha256&&
+  effective.dependencySha256===previous.dependencySha256&&effective.preparedAt===r.preparedAt&&
+  Date.parse(effective.preparedAt)>=Date.parse(previous.preparedAt)&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair.mjs')&&
+  effective.changedToolFiles.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
+ return r;
+}

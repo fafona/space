@@ -201,7 +201,7 @@ function bindToolRepairAudit(value,repair,code){
 }
 function requiresFollowOnExtensionEvidence(repair){
  if(!repair||!Object.hasOwn(repair,'receiptKind'))return false;
- require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on','attendance_tool_repair_receipt_kind_invalid');
+ require_(repair.receiptKind==='attendance-staged-tool-repair-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-sequence-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on','attendance_tool_repair_receipt_kind_invalid');
  return true;
 }
 async function verifiedMigrationToolRepair(input){
@@ -220,12 +220,14 @@ async function verifiedMigrationToolRepair(input){
 // general backup contract. The original dump and both supplementary artifacts
 // must reconstruct precisely the schema-only restoration used by the clone.
 export async function validateAttendanceExtensionCompatibilityEvidence(proof,files,options={}){
- require_(options&&typeof options==='object'&&!Array.isArray(options)&&Reflect.ownKeys(options).every(key=>key==='restoreGraphqlInitialAcl')&&
-  (!Object.hasOwn(options,'restoreGraphqlInitialAcl')||typeof options.restoreGraphqlInitialAcl==='boolean'),'attendance_extension_evidence_options');
+ const optionKeys=['restoreGraphqlInitialAcl','restoreGraphqlInitialSchemaAcl'];
+ require_(options&&typeof options==='object'&&!Array.isArray(options)&&Reflect.ownKeys(options).every(key=>optionKeys.includes(key))&&
+  optionKeys.every(key=>!Object.hasOwn(options,key)||typeof options[key]==='boolean'),'attendance_extension_evidence_options');
  const restoreGraphqlInitialAcl=Object.hasOwn(options,'restoreGraphqlInitialAcl')&&options.restoreGraphqlInitialAcl===true;
+ const restoreGraphqlInitialSchemaAcl=Object.hasOwn(options,'restoreGraphqlInitialSchemaAcl')&&options.restoreGraphqlInitialSchemaAcl===true;
  require_(proof?.target===STAGED_TOOL_REPAIR_TARGET,'attendance_extension_evidence_target');
  const source=proof.productionMetadataSource,evidence=source?.extensionMetadata;
- const keys=['sourceSha256','snapshotSha256','supplementSha256','restorationSha256','originalMetadataSourceSha256','extensionCount','memberCount','routineCount'];
+ const keys=['sourceSha256','snapshotSha256','supplementSha256','restorationSha256','originalMetadataSourceSha256','extensionCount','memberCount','routineCount',...(restoreGraphqlInitialSchemaAcl?['schemaSnapshotSha256']:[])];
  require_(evidence&&typeof evidence==='object'&&!Array.isArray(evidence),'attendance_extension_evidence_missing');
  same(Object.keys(evidence).sort(),keys.sort(),'attendance_extension_evidence_shape');
  for(const key of keys.filter(k=>k.endsWith('Sha256')))require_(typeof evidence[key]==='string'&&HEX.test(evidence[key]),'attendance_extension_evidence_hash');
@@ -233,11 +235,12 @@ export async function validateAttendanceExtensionCompatibilityEvidence(proof,fil
  for(const key of ['metadata','extensionMetadata','supplement'])require_(Buffer.isBuffer(files?.[key]),'attendance_extension_evidence_bytes');
  require_(digest(files.metadata)===source.metadataSourceSha256&&digest(files.extensionMetadata)===evidence.sourceSha256&&digest(files.supplement)===evidence.supplementSha256,'attendance_extension_evidence_artifact_changed');
  const artifact=JSON.parse(files.extensionMetadata.toString('utf8'));
- same(Object.keys(artifact).sort(),['schemaVersion','kind','identity','originalMetadataSourceSha256','snapshotSha256','snapshot','operations'].sort(),'attendance_extension_evidence_artifact_shape');
+ same(Object.keys(artifact).sort(),['schemaVersion','kind','identity','originalMetadataSourceSha256','snapshotSha256','snapshot','operations',...(restoreGraphqlInitialSchemaAcl?['schemaSnapshot','schemaSnapshotSha256']:[])].sort(),'attendance_extension_evidence_artifact_shape');
  require_(artifact.schemaVersion===1&&artifact.kind==='attendance-actual-formal-extension-metadata'&&artifact.originalMetadataSourceSha256===source.metadataSourceSha256&&artifact.snapshotSha256===evidence.snapshotSha256,'attendance_extension_evidence_artifact_identity');
  same(artifact.identity,attendanceProductionIdentity,'attendance_extension_evidence_database');
  const {attendanceExtensionMetadataSupplement}=await import('./attendance-extension-metadata.mjs');
- const reconstructed=attendanceExtensionMetadataSupplement(files.metadata.toString('utf8'),artifact.snapshot,{restoreGraphqlInitialAcl});
+ const reconstructed=attendanceExtensionMetadataSupplement(files.metadata.toString('utf8'),artifact.snapshot,{restoreGraphqlInitialAcl,restoreGraphqlInitialSchemaAcl},artifact.schemaSnapshot);
+ if(restoreGraphqlInitialSchemaAcl)require_(artifact.schemaSnapshotSha256===evidence.schemaSnapshotSha256&&reconstructed.schemaSnapshotSha256===evidence.schemaSnapshotSha256,'attendance_extension_evidence_schema_snapshot');
  require_(reconstructed.sourceSha256===source.metadataSourceSha256&&reconstructed.snapshotSha256===evidence.snapshotSha256&&reconstructed.supplementSha256===evidence.supplementSha256&&digest(reconstructed.sql)===evidence.restorationSha256&&files.supplement.equals(Buffer.from(reconstructed.supplementSql)),'attendance_extension_evidence_reconstruction');
  same(artifact.operations,reconstructed.operations,'attendance_extension_evidence_operations');
  return evidence;
@@ -259,7 +262,8 @@ async function verifyFollowOnExtensionCompatibility(input,compatibility,repair){
  validateAttendanceCompatibilityProof(proof,{target:input.target,baseline:input.baseline,scopeSha256:attendanceProductionScopeSha256});
  bindToolRepairAudit(proof,repair,'attendance_extension_evidence_tool_repair');
  const files={metadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-metadata.sql'),16000000),extensionMetadata:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-metadata.json'),2000000),supplement:await privateExtensionEvidenceBytes(path.join(fixed.directory,'attendance-compatibility-extension-supplement.sql'),2000000)};
- await validateAttendanceExtensionCompatibilityEvidence(proof,files,{restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'});
+ const restoreGraphqlInitialSchemaAcl=repair.receiptKind==='attendance-staged-tool-repair-schema-follow-on';
+ await validateAttendanceExtensionCompatibilityEvidence(proof,files,{restoreGraphqlInitialAcl:repair.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl,restoreGraphqlInitialSchemaAcl});
  return digest(proofBytes);
 }
 async function migrationBackupEvidence(input,compatibility){

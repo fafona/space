@@ -40,5 +40,16 @@ export function syntheticAttendanceGraphqlInitialAclMetadata(){
  Object.assign(sequence,{type:'sequence',identity:'graphql.seq_schema_version',metadata:{kind:'S',owner:'supabase_admin',acl:acl(['anon','authenticated','postgres','service_role','supabase_admin'],['SELECT','UPDATE','USAGE']),sequence:['integer','1','1','2147483647','1','1',false]}});
  return snapshot;
 }
+// TEST ONLY: the separately approved two-namespace ACL shape. No private
+// formal schema dump or database acceptance is represented by this fixture.
+export function syntheticAttendanceGraphqlInitialSchemaAclMetadata(){
+ const acl=[
+  ...['anon','authenticated'].map(grantee=>({grantor:'supabase_admin',grantee,privilege:'USAGE',grantable:false})),
+  {grantor:'supabase_admin',grantee:'postgres',privilege:'USAGE',grantable:true},
+  {grantor:'supabase_admin',grantee:'service_role',privilege:'USAGE',grantable:false},
+  ...['CREATE','USAGE'].map(privilege=>({grantor:'supabase_admin',grantee:'supabase_admin',privilege,grantable:false}))
+ ];
+ return ['graphql','graphql_public'].map(name=>({name,owner:'supabase_admin',acl:structuredClone(acl),initialAcl:structuredClone(acl),initialPrivilegeType:'e'}));
+}
 export const syntheticAttendanceExtensionGrants=['anon','authenticated','postgres','service_role'].map(role=>`GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO ${role};`).join('\n')+'\n';
 export const syntheticAttendanceExtensionDump='\n-- Synthetic schema metadata; no real rows or Auth accounts.\nCREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA graphql;\nCREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;\n'+syntheticAttendanceExtensionGrants+'\n';

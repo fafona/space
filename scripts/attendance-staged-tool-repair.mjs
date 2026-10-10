@@ -4,8 +4,10 @@ import {spawnSync} from 'node:child_process';import {fileURLToPath,pathToFileURL
 import {ATTENDANCE_STAGED_REPAIR as p,ATTENDANCE_STAGED_REPAIR_FILES as allowed,
  ATTENDANCE_STAGED_REPAIR_PRESERVED as pins,ATTENDANCE_STAGED_FOLLOW_ON as follow,
  ATTENDANCE_STAGED_SEQUENCE_FOLLOW_ON as sequence,ATTENDANCE_STAGED_ACL_FOLLOW_ON as acl,
+ ATTENDANCE_STAGED_SCHEMA_FOLLOW_ON as schema,
  assertAttendanceStagedRepairReceipt,assertAttendanceStagedFollowOnReceipt,
- assertAttendanceStagedSequenceFollowOnReceipt,assertAttendanceStagedAclFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
+ assertAttendanceStagedSequenceFollowOnReceipt,assertAttendanceStagedAclFollowOnReceipt,
+ assertAttendanceStagedSchemaFollowOnReceipt} from './attendance-staged-tool-repair-policy.mjs';
 import {createOnlineReleaseToolPlan,verifyOnlineReleaseTool,verifyOnlineToolBootstrap,executeOnlineReleaseToolPlan,
  assertOnlineToolNoPending,withOnlineToolPreparationLocks,assertOnlineToolOwnedPath,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
@@ -18,6 +20,7 @@ const receiptFile=`${p.operation}/attendance-staged-tool-repair.json`,sha=x=>cre
 const followOnReceiptFile=`${p.operation}/${follow.receiptName}`;
 const sequenceFollowOnReceiptFile=`${p.operation}/${sequence.receiptName}`;
 const aclFollowOnReceiptFile=`${p.operation}/${acl.receiptName}`;
+const schemaFollowOnReceiptFile=`${p.operation}/${schema.receiptName}`;
 const fail=code=>{throw Error(`attendance_staged_repair_${code}`);};
 const need=(x,code)=>{if(!x)fail(code);},git=(directory,args)=>runOnlineToolGit(directory,args).toString('utf8').trim();
 const same=(a,b,code)=>need(JSON.stringify(a)===JSON.stringify(b),code);
@@ -209,9 +212,54 @@ function archivedAclFollowOnFailure(){
  for(const key of ['dev','ino','uid','mode','mtimeMs','ctimeMs'])need(after[key]===before[key],'failure_archive_changed');
  return archive;
 }
+function previousSchemaFollowOnReceipt(){
+ const previous=previousAclFollowOnReceipt(),raw=ownedFile(aclFollowOnReceiptFile,{privateMode:true}),receipt=JSON.parse(raw);
+ need(sha(raw)===schema.previousReceiptSha256,'previous_receipt_changed');
+ assertAttendanceStagedAclFollowOnReceipt(receipt,{originalReceipt:previous.previous.original.receipt,
+  originalReceiptSha256:previous.previous.original.receiptSha256,firstFollowOnReceipt:previous.previous.receipt,
+  firstFollowOnReceiptSha256:previous.previous.receiptSha256,previousReceipt:previous.receipt,
+  previousReceiptSha256:previous.receiptSha256,target:p.target,toolRevision:schema.previousToolRevision});
+ git(APP,['merge-base','--is-ancestor',acl.previousToolRevision,schema.previousToolRevision]);
+ const changes=git(APP,['diff','--no-renames','--name-status',p.target,schema.previousToolRevision]).split('\n').filter(Boolean).map(row=>{
+  const [status,name,...extra]=row.split('\t');need(['M','A'].includes(status)&&extra.length===0&&allowed.includes(name),'previous_receipt_source');return name;
+ }).sort();same(changes,receipt.effectiveReceipt.changedToolFiles,'previous_receipt_source');
+ const inputs=revision=>runOnlineToolGit(APP,['ls-tree','-r','-z',revision]).toString('utf8').split('\0').filter(Boolean)
+  .filter(row=>!allowed.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+ const baseline=inputs(p.target),prior=inputs(schema.previousToolRevision);same(prior,baseline,'previous_receipt_source');
+ need(sha(prior)===receipt.effectiveReceipt.sourceInputsSha256,'previous_receipt_source');
+ archivedAclFollowOnFailure();need(ownedFile(aclFollowOnReceiptFile,{privateMode:true}).equals(raw),'previous_receipt_changed');
+ same(previousAclFollowOnReceipt(),previous,'previous_receipt_changed');
+ return {previous,receipt,receiptSha256:sha(raw)};
+}
+function archivedSchemaFollowOnFailure(){
+ const archive=schema.archive;need(Object.values(archive.files).every(x=>/^[a-f0-9]{64}$/.test(x)),'failure_archive_pending');
+ assertOnlineToolOwnedPath(archive.directory);
+ const before=fs.lstatSync(archive.directory);need((before.mode&0o777)===0o700,'failure_archive_invalid');
+ const names=Object.keys(archive.files).sort();same(fs.readdirSync(archive.directory).sort(),names,'failure_archive_invalid');
+ for(const name of names)need(sha(ownedFile(`${archive.directory}/${name}`,{privateMode:true,maxBytes:8*1024**2}))===archive.files[name],'failure_archive_changed');
+ same(fs.readdirSync(archive.directory).sort(),names,'failure_archive_changed');const after=fs.lstatSync(archive.directory);
+ for(const key of ['dev','ino','uid','mode','mtimeMs','ctimeMs'])need(after[key]===before[key],'failure_archive_changed');
+ return archive;
+}
 export function verifyAttendanceStagedToolRepairReceipt({target,rootDir=ROOT,phase='staged'}={}){
  need(target===p.target&&['staged','migration'].includes(phase),'receipt_target');
  const raw=ownedFile(receiptFile,{privateMode:true}),receipt=JSON.parse(raw);assertAttendanceStagedRepairReceipt(receipt,{target});
+ if(evidenceExists(schemaFollowOnReceiptFile)){
+  const previous=previousSchemaFollowOnReceipt(),schemaRaw=ownedFile(schemaFollowOnReceiptFile,{privateMode:true}),chain=JSON.parse(schemaRaw);
+  assertAttendanceStagedSchemaFollowOnReceipt(chain,{originalReceipt:previous.previous.previous.original.receipt,
+   originalReceiptSha256:previous.previous.previous.original.receiptSha256,firstFollowOnReceipt:previous.previous.previous.receipt,
+   firstFollowOnReceiptSha256:previous.previous.previous.receiptSha256,sequenceFollowOnReceipt:previous.previous.receipt,
+   sequenceFollowOnReceiptSha256:previous.previous.receiptSha256,previousReceipt:previous.receipt,previousReceiptSha256:previous.receiptSha256,target});
+  git(APP,['merge-base','--is-ancestor',schema.previousToolRevision,chain.effectiveReceipt.toolRevision]);
+  archivedSchemaFollowOnFailure();const effective=chain.effectiveReceipt,source=verifySource(effective.toolRevision,rootDir),observed=observe();
+  same(source.changedToolFiles,effective.changedToolFiles,'receipt_source_changed');need(source.sourceInputsSha256===effective.sourceInputsSha256,'receipt_source_changed');
+  need(observed.dependencySha256===effective.dependencySha256,'receipt_dependencies_changed');
+  need(ownedFile(schemaFollowOnReceiptFile,{privateMode:true}).equals(schemaRaw),'receipt_changed');archivedSchemaFollowOnFailure();
+  same(previousSchemaFollowOnReceipt(),previous,'previous_receipt_changed');
+  need(ownedFile(receiptFile,{privateMode:true}).equals(raw),'original_receipt_changed');
+  return {receipt:effective,receiptSha256:sha(schemaRaw),toolRevision:effective.toolRevision,
+   originalReceiptSha256:previous.previous.previous.original.receiptSha256,previousReceiptSha256:previous.receiptSha256,receiptKind:chain.kind};
+ }
  if(evidenceExists(aclFollowOnReceiptFile)){
   const previous=previousAclFollowOnReceipt(),aclRaw=ownedFile(aclFollowOnReceiptFile,{privateMode:true}),chain=JSON.parse(aclRaw);
   assertAttendanceStagedAclFollowOnReceipt(chain,{originalReceipt:previous.previous.original.receipt,
@@ -389,10 +437,51 @@ export function prepareAttendanceStagedToolRepairAclFollowOn(revision,confirm){
    applicationRebuilt:false,productionDatabaseChanged:false,trafficChanged:false,source:prepared};
  });
 }
+export function prepareAttendanceStagedToolRepairSchemaFollowOn(revision,confirm){
+ need(confirm==='approved-staged-attendance-tool-repair-schema-follow-on','approval_required');
+ need(revision!==schema.previousToolRevision&&revision!==acl.previousToolRevision&&
+  revision!==sequence.previousToolRevision&&revision!==follow.previousToolRevision,'schema_follow_on_revision');
+ const source=verifySource(revision,ROOT,{bootstrap:true});git(APP,['merge-base','--is-ancestor',schema.previousToolRevision,revision]);
+ return withOnlineToolPreparationLocks({deployLock:`${APP}.deploy.lock`,maintenance},()=>{
+  verifySource(revision,ROOT,{bootstrap:true});need(!evidenceExists(schemaFollowOnReceiptFile),'schema_follow_on_receipt_exists');
+  for(const name of ['attendance-database-compatibility.json','attendance-compatibility-attempt.json','attendance-compatibility-metadata.sql',
+   'attendance-compatibility-extension-metadata.json','attendance-compatibility-extension-supplement.sql',
+   'attendance-database-progress.json','attendance-database-ready.json'])need(!evidenceExists(`${p.operation}/${name}`),'database_attempt_exists');
+  const previous=previousSchemaFollowOnReceipt(),archive=archivedSchemaFollowOnFailure(),before=observe();
+  need(before.dependencySha256===previous.receipt.effectiveReceipt.dependencySha256&&
+   source.sourceInputsSha256===previous.receipt.effectiveReceipt.sourceInputsSha256,'previous_receipt_changed');
+  const preparedAt=new Date().toISOString(),effective={schemaVersion:1,kind:'attendance-staged-tool-repair',target:p.target,baseline:p.baseline,
+   toolRevision:revision,originalStateSha256:p.stateSha256,originalBuildProofSha256:p.buildProofSha256,sourceInputsSha256:source.sourceInputsSha256,
+   builtOutputSha256:before.builtOutputSha256,scopeSha256:p.scopeSha256,preservedFiles:before.preservedFiles,activeSha256:p.activeSha256,
+   maintenanceSha256:p.maintenanceSha256,markerSha256:p.markerSha256,retentionHeadSha256:p.retentionHeadSha256,
+   dependencySha256:before.dependencySha256,changedToolFiles:source.changedToolFiles,approvedNoRebuild:true,preparedAt};
+  const chain={schemaVersion:1,kind:'attendance-staged-tool-repair-schema-follow-on',target:p.target,baseline:p.baseline,
+   previousToolRevision:schema.previousToolRevision,previousReceiptSha256:previous.receiptSha256,
+   failedAttemptArchive:archive,effectiveReceipt:effective,preparedAt};
+  assertAttendanceStagedSchemaFollowOnReceipt(chain,{originalReceipt:previous.previous.previous.original.receipt,
+   originalReceiptSha256:previous.previous.previous.original.receiptSha256,firstFollowOnReceipt:previous.previous.previous.receipt,
+   firstFollowOnReceiptSha256:previous.previous.previous.receiptSha256,sequenceFollowOnReceipt:previous.previous.receipt,
+   sequenceFollowOnReceiptSha256:previous.previous.receiptSha256,previousReceipt:previous.receipt,
+   previousReceiptSha256:previous.receiptSha256,target:p.target,toolRevision:revision});
+  assertOnlineToolNoPending({fixedStagedRepairReceipt:effective});const plan=createOnlineReleaseToolPlan(revision),prior=process.umask(0o077);
+  let prepared;try{prepared=executeOnlineReleaseToolPlan(plan);}finally{process.umask(prior);}
+  verifySource(revision,prepared.directory);same(observe(),before,'candidate_changed_during_preparation');
+  same(previousSchemaFollowOnReceipt(),previous,'previous_receipt_changed');same(archivedSchemaFollowOnFailure(),archive,'failure_archive_changed');
+  const fd=fs.openSync(schemaFollowOnReceiptFile,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
+  try{fs.writeFileSync(fd,JSON.stringify(chain,null,2)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  const directory=fs.openSync(p.operation,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}
+  const sealed=ownedFile(schemaFollowOnReceiptFile,{privateMode:true});same(JSON.parse(sealed),chain,'receipt_write_changed');
+  same(previousSchemaFollowOnReceipt(),previous,'previous_receipt_changed');same(archivedSchemaFollowOnFailure(),archive,'failure_archive_changed');
+  return {status:'staged-tool-repair-schema-follow-on-prepared',target:p.target,toolRevision:revision,receiptSha256:sha(sealed),
+   originalReceiptSha256:previous.previous.previous.original.receiptSha256,previousReceiptSha256:previous.receiptSha256,
+   applicationRebuilt:false,productionDatabaseChanged:false,trafficChanged:false,source:prepared};
+ });
+}
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){try{
- const args=process.argv.slice(2);need(args.length===3&&['prepare','prepare-follow-on','prepare-sequence-follow-on','prepare-acl-follow-on'].includes(args[0]),'invocation');
+ const args=process.argv.slice(2);need(args.length===3&&['prepare','prepare-follow-on','prepare-sequence-follow-on','prepare-acl-follow-on','prepare-schema-follow-on'].includes(args[0]),'invocation');
  const prepare=args[0]==='prepare'?prepareAttendanceStagedToolRepair:args[0]==='prepare-follow-on'?
   prepareAttendanceStagedToolRepairFollowOn:args[0]==='prepare-sequence-follow-on'?
-   prepareAttendanceStagedToolRepairSequenceFollowOn:prepareAttendanceStagedToolRepairAclFollowOn;
+   prepareAttendanceStagedToolRepairSequenceFollowOn:args[0]==='prepare-acl-follow-on'?
+    prepareAttendanceStagedToolRepairAclFollowOn:prepareAttendanceStagedToolRepairSchemaFollowOn;
  console.log(JSON.stringify(prepare(args[1],args[2])));
 }catch(e){console.error(/^attendance_staged_repair_[a-z_]+$/.test(e?.message??'')?e.message:'attendance_staged_repair_unverified');process.exitCode=1;}}

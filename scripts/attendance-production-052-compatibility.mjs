@@ -10,7 +10,8 @@ import {lstat,open,readFile,realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {runMigrationCommand} from './apply-production-database-migrations.mjs';
-import {attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement} from './attendance-extension-metadata.mjs';
+import {attendanceExtensionMetadataSnapshotSql,validateAttendanceExtensionMetadata,attendanceExtensionMetadataSupplement,
+ attendanceGraphqlInitialSchemaAclSnapshotSql,validateAttendanceGraphqlInitialSchemaAclSnapshot} from './attendance-extension-metadata.mjs';
 import {loadAttendanceProductionScope,attendanceProductionScopeSha256,attendanceProductionIdentity,
  attendanceProductionLegacy052SourceSha256,validateAttendanceRegistry,protectedAttendanceMigrationSql,
  attendance052CompatibilityPlan,validateAttendanceCompatibilityProof,attendanceReadOnlyStateSql,validateAttendanceProductionState} from './attendance-production-database-migrations.mjs';
@@ -48,13 +49,18 @@ async function inspect(input){
  need(v.mounts?.length>0&&v.mounts.every(m=>m.Type==='bind'&&m.Source.startsWith(PILOT+'/')&&!m.Source.includes('/../'))&&v.mounts.some(m=>m.Source===PILOT+'/runtime/db/data'&&m.RW===true),'attendance_compatibility_mount');return v;
 }
 export async function loadAttendance052CompatibilitySources({rootDir=ROOT,...input}={}){const scope=await loadAttendanceProductionScope({rootDir,...input});return {...scope,baseline:scope.manifest.baseline};}
-async function productionMetadataState(input,manifest){
+async function productionMetadataState(input,manifest,restoreGraphqlInitialSchemaAcl=false){
  const v=JSON.parse(await run(input,['inspect','--format','{"id":{{json .Id}},"name":{{json .Name}},"running":{{json .State.Running}},"mounts":{{json .Mounts}}}',attendanceProductionIdentity.containerId]));
  need(v.id===attendanceProductionIdentity.containerId&&v.name==='/supabase-db'&&v.running===true&&v.mounts?.some(m=>m.Type==='bind'&&m.Source===attendanceProductionIdentity.dataSource&&m.RW===true),'attendance_compatibility_formal_container');
  const readonly=source=>run(input,psql({...input,sourcePilotContainerId:attendanceProductionIdentity.containerId},'postgres',true),source,4000000);
  const state=JSON.parse(await readonly(attendanceReadOnlyStateSql()));validateAttendanceProductionState(state,manifest,{fresh:true});
  const contract=JSON.parse(await readonly(attendanceCompatibilityMetadataContractSql()));
- const extensions=JSON.parse(await readonly(attendanceExtensionMetadataSnapshotSql()));validateAttendanceExtensionMetadata(extensions);return {state,contract,extensions};
+ const extensions=JSON.parse(await readonly(attendanceExtensionMetadataSnapshotSql()));validateAttendanceExtensionMetadata(extensions);
+ if(restoreGraphqlInitialSchemaAcl){
+  const schemaAcl=JSON.parse(await readonly(attendanceGraphqlInitialSchemaAclSnapshotSql()));
+  validateAttendanceGraphqlInitialSchemaAclSnapshot(schemaAcl);return {state,contract,extensions,schemaAcl};
+ }
+ return {state,contract,extensions};
 }
 function schemaOnlyTruncateMask(source){
  const permitted=[],statement=[];
@@ -265,23 +271,26 @@ export async function runAttendance052Compatibility(input={}){
   repair=verifyAttendanceStagedToolRepairReceipt({target:input.target,rootDir:input.rootDir??ROOT,phase:'staged'});
  }
  const audit=repair?{toolRevision:repair.toolRevision,stagedToolRepairReceiptSha256:repair.receiptSha256}:{};
+ const restoreGraphqlInitialSchemaAcl=repair?.receiptKind==='attendance-staged-tool-repair-schema-follow-on';
+ const restoreGraphqlInitialAcl=repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'||restoreGraphqlInitialSchemaAcl;
  await owned(p.directory,{directory:true,testOnly:input.testOnly});if(input.testOnly!==true){let ancestor=path.dirname(p.directory);for(;;){await owned(ancestor,{directory:true});const parent=path.dirname(ancestor);if(parent===ancestor)break;ancestor=parent;}}
  if(input.testOnly!==true){await owned(PILOT,{directory:true});await owned(PILOT+'/.pilot-owner.json');const marker=JSON.parse(await readFile(PILOT+'/.pilot-owner.json','utf8'));need(marker.owner===OWNER&&marker.root===PILOT&&marker.project==='faolla-attendance-pilot','attendance_compatibility_owner_marker');}
  await inspect(input);const beforeSource=await sql(input,'postgres',attendanceCompatibilitySourceProbeSql(database),{json:true,readOnly:true});validateSource(beforeSource);
  const sourceExtensionsBefore=await sql(input,'postgres',attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true});
  need(beforeSource.existingCompatibilityDatabase===false,'attendance_compatibility_database_already_exists');
- const formalBefore=await productionMetadataState(input,assets.manifest);
+ const formalBefore=await productionMetadataState(input,assets.manifest,restoreGraphqlInitialSchemaAcl);
  if(input.apply!==true)return {schemaVersion:1,kind:'attendance-052-upgrade-compatibility-dry-run',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,scopeSha256:assets.scopeSha256,baselineCount:60,migrationCount:149,productionDataCopied:false,executed:false};
  need(input.confirm==='approved-isolated-052-210-compatibility','attendance_compatibility_explicit_approval');
  const dump=await run(input,['exec',attendanceProductionIdentity.containerId,'sh','-lc','set -eu; : "${POSTGRES_PASSWORD:?required}"; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS="-c default_transaction_read_only=on -c lock_timeout=3s -c statement_timeout=120000"; exec pg_dump -h 127.0.0.1 -U supabase_admin -d postgres --schema-only --no-comments --no-security-labels --no-publications --no-subscriptions'],undefined,16000000,false);
  const metadata=validateAttendance052SchemaOnlySql(dump),transcript=[];
  const supplement=attendanceExtensionMetadataSupplement(metadata.sql,formalBefore.extensions,
-  {restoreGraphqlInitialAcl:repair?.receiptKind==='attendance-staged-tool-repair-acl-follow-on'});
- const formalAfterDump=await productionMetadataState(input,assets.manifest);eq(formalAfterDump,formalBefore,'attendance_compatibility_formal_metadata_drift');
+  {restoreGraphqlInitialAcl,restoreGraphqlInitialSchemaAcl},formalBefore.schemaAcl);
+ const schemaAudit=restoreGraphqlInitialSchemaAcl?{schemaSnapshot:formalBefore.schemaAcl,schemaSnapshotSha256:supplement.schemaSnapshotSha256}:{};
+ const formalAfterDump=await productionMetadataState(input,assets.manifest,restoreGraphqlInitialSchemaAcl);eq(formalAfterDump,formalBefore,'attendance_compatibility_formal_metadata_drift');
  await privateWrite(p.metadata,metadata.sql);
- const extensionMetadataSha256=await privateWrite(p.extensionMetadata,{schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:metadata.sha256,snapshotSha256:supplement.snapshotSha256,snapshot:formalBefore.extensions,operations:supplement.operations});
+ const extensionMetadataSha256=await privateWrite(p.extensionMetadata,{schemaVersion:1,kind:'attendance-actual-formal-extension-metadata',identity:attendanceProductionIdentity,originalMetadataSourceSha256:metadata.sha256,snapshotSha256:supplement.snapshotSha256,snapshot:formalBefore.extensions,operations:supplement.operations,...schemaAudit});
  await privateWrite(p.extensionSupplement,supplement.supplementSql);
- const extensionEvidence={sourceSha256:extensionMetadataSha256,snapshotSha256:supplement.snapshotSha256,supplementSha256:supplement.supplementSha256,restorationSha256:sha(supplement.sql),originalMetadataSourceSha256:metadata.sha256,extensionCount:8,memberCount:96,routineCount:80};
+ const extensionEvidence={sourceSha256:extensionMetadataSha256,snapshotSha256:supplement.snapshotSha256,supplementSha256:supplement.supplementSha256,restorationSha256:sha(supplement.sql),originalMetadataSourceSha256:metadata.sha256,extensionCount:8,memberCount:96,routineCount:80,...(restoreGraphqlInitialSchemaAcl?{schemaSnapshotSha256:supplement.schemaSnapshotSha256}:{})};
  await privateWrite(p.attempt,{schemaVersion:1,kind:'attendance-052-upgrade-compatibility-attempt',target:input.target,baseline:input.baseline,...audit,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourceSystemIdentifier:beforeSource.systemIdentifier,scopeSha256:assets.scopeSha256,productionSchemaOnlyRead:true,productionDataCopied:false,metadataSourceSha256:metadata.sha256,extensionMetadata:extensionEvidence,formalMetadataStateSha256:sha(JSON.stringify(formalBefore)),sourceCatalogSha256:beforeSource.catalogSha256,sourceRolesSha256:beforeSource.rolesSha256});
  const exec=async(source,label)=>{await inspect(input);await sql(input,database,source);transcript.push({label,sqlSha256:sha(source),passed:true});input.onProgress?.({label});};
  // The only statement targeting pilot postgres is CREATE of this unique name.
@@ -316,7 +325,7 @@ export async function runAttendance052Compatibility(input={}){
  const afterSource=await sql(input,'postgres',attendanceCompatibilitySourceProbeSql(database),{json:true,readOnly:true});validateSource(afterSource);eq(afterSource.catalogSha256,beforeSource.catalogSha256,'attendance_compatibility_existing_pilot_catalog_changed');eq(afterSource.rolesSha256,beforeSource.rolesSha256,'attendance_compatibility_existing_roles_changed');
  eq(await sql(input,'postgres',attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true}),sourceExtensionsBefore,'attendance_compatibility_existing_pilot_extensions_changed');
  eq(await sql(input,database,attendanceExtensionMetadataSnapshotSql(),{json:true,readOnly:true}),formalBefore.extensions,'attendance_compatibility_final_extension_metadata');
- const formalAfter=await productionMetadataState(input,assets.manifest);eq(formalAfter,formalBefore,'attendance_compatibility_formal_changed');
+ const formalAfter=await productionMetadataState(input,assets.manifest,restoreGraphqlInitialSchemaAcl);eq(formalAfter,formalBefore,'attendance_compatibility_formal_changed');
  const checks=Object.fromEntries(attendance052CompatibilityPlan(input).checks.map(x=>[x,true]));
  const proof={schemaVersion:1,kind:'attendance-052-upgrade-compatibility',target:input.target,baseline:input.baseline,...audit,scopeSha256:attendanceProductionScopeSha256,databaseName:database,sourcePilotContainerId:input.sourcePilotContainerId,sourcePilotSystemIdentifier:beforeSource.systemIdentifier,databaseOid:start.databaseOid,backendPid:start.backendPid,owner:'supabase_admin',productionDataCopied:false,
   baselineRegistryCount:60,baselineRegistryMaximum:'202609240052',initialAttendanceRelations:empty.attendanceRelations,initialAttendanceFunctions:empty.attendanceFunctions,finalRegistryCount:final.registry.length,finalRegistryMaximum:final.registry.at(-1).version,checks,
