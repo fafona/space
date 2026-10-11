@@ -36,7 +36,7 @@ test('repair is fixed to the observed never-cut contact candidate, not the atten
   assert.equal(p.candidateProcessEnvironmentSha256, '1b9ac09da027ba907d98af4c1f82aec0a6454027d1024d252bb1c7c47ba8a101');
   assert.equal(p.candidateProcessCommandSha256, '27b1c4018acc951f78bba448089ba571e34d9730f9040f2c951666092a3243c0');
   assert.equal(p.candidateProcessExecutable, '/usr/bin/node');
-  assert.equal(p.sourceInputsSha256, '14073da5d843cc33006079ff3b38e401c8ee72988fd429b399e36e945d597739');
+  assert.equal(p.sourceInputsSha256, '23875e19fb95213c1acb356debbd75aaed644c7948aca52da7cc7c539d411f20');
   assert.equal(p.builtOutputSha256, 'd475c2782d282d9a857f7f661536afcf453e7aef2820262ea29a6b8682e1c97c');
   assert.equal(p.dependencySha256, 'cb0428251f3bfe2c700eedd3242d3506e0bdd556511852f9810e7dd62e9b63fe');
   assert.equal(p.activeSha256, 'c848d358369cfee8963d1f034ca87eb1c8b82df586789b18603802bdbd68a142');
@@ -45,7 +45,7 @@ test('repair is fixed to the observed never-cut contact candidate, not the atten
   assert.equal(p.retentionHeadSha256, '7407f4e12fdc4106de16d5e63214a3a1cab778461d449aeeac2c3528d31b7402');
 });
 
-test('source closure admits only four approved implementation/test pairs plus two corresponding integration tests', () => {
+test('source closure admits only four approved implementation/test pairs plus three corresponding integration tests', () => {
   assert.deepEqual(allowed, [
     'scripts/contact-wechat-staged-tool-repair-policy.mjs',
     'scripts/contact-wechat-staged-tool-repair-policy.test.mjs',
@@ -57,8 +57,9 @@ test('source closure admits only four approved implementation/test pairs plus tw
     'scripts/prepare-online-release-tool.test.mjs',
     'scripts/attendance-staged-tool-repair.test.mjs',
     'scripts/contact-wechat-release-policy.test.mjs',
+    'scripts/online-unpublished-candidate.test.mjs',
   ]);
-  assert.equal(new Set(allowed).size, 10);
+  assert.equal(new Set(allowed).size, 11);
   for (const value of [p, allowed, preserved, paths]) assert.ok(Object.isFrozen(value));
 });
 
@@ -120,7 +121,7 @@ test('incident closure format excludes only exact tool paths without pinning fut
   }
 });
 
-test('the complete typed receipt is accepted without mutation and exact ten paths may be reordered', () => {
+test('the complete typed receipt is accepted without mutation and exact eleven paths may be reordered', () => {
   const receipt = contactWechatStagedRepairReceiptFixture(), before = structuredClone(receipt);
   assert.equal(assertContactWechatStagedRepairReceipt(receipt, {target: p.target, toolRevision: receipt.toolRevision}), receipt);
   assert.deepEqual(receipt, before);

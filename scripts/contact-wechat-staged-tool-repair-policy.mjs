@@ -21,9 +21,9 @@ export const CONTACT_WECHAT_STAGED_REPAIR = Object.freeze({
   candidateProcessExecutable: '/usr/bin/node',
   stateSha256: '6a4febe8ebbc297613d351cec219f940bf0beabbd8cc5da903da0bfca4b68bbd',
   buildProofSha256: 'c5a7512e8ce08bac9e5a4b76baa9f0c45d664bb302e9ad55cf482120cf4435c7',
-  // Sorted Git ls-tree -r -z records, excluding only the exact ten tool paths,
+  // Git-order ls-tree -r -z records, excluding only the exact eleven tool paths,
   // joined with NUL and no trailing NUL. All other application inputs stay 9a877.
-  sourceInputsSha256: '14073da5d843cc33006079ff3b38e401c8ee72988fd429b399e36e945d597739',
+  sourceInputsSha256: '23875e19fb95213c1acb356debbd75aaed644c7948aca52da7cc7c539d411f20',
   // attendanceRepairTreeFingerprint: .next excludes ONLY root cache and trace;
   // node_modules permits only owned links resolving internally to its own root.
   builtOutputSha256: 'd475c2782d282d9a857f7f661536afcf453e7aef2820262ea29a6b8682e1c97c',
@@ -45,6 +45,7 @@ export const CONTACT_WECHAT_STAGED_REPAIR_FILES = Object.freeze([
   'scripts/prepare-online-release-tool.test.mjs',
   'scripts/attendance-staged-tool-repair.test.mjs',
   'scripts/contact-wechat-release-policy.test.mjs',
+  'scripts/online-unpublished-candidate.test.mjs',
 ]);
 
 export const CONTACT_WECHAT_STAGED_REPAIR_PRESERVED = Object.freeze({
@@ -124,7 +125,7 @@ export function assertContactWechatStagedRepairReceipt(r, {target: expectedTarge
   need(record(r.preservedFiles, Object.keys(CONTACT_WECHAT_STAGED_REPAIR_PRESERVED)));
   try { assert.deepEqual(r.preservedFiles, CONTACT_WECHAT_STAGED_REPAIR_PRESERVED); }
   catch { need(false); }
-  // All four implementation/test pairs and the two corresponding integration
+  // All four implementation/test pairs and the three corresponding integration
   // tests are mandatory. No app, SQL, dependency, documentation, previous
   // attendance repair implementation or unrelated support path is admitted.
   need(Array.isArray(r.changedToolFiles) &&
