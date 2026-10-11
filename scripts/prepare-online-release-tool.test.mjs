@@ -6,6 +6,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
+import {CONTACT_WECHAT_STAGED_REPAIR} from './contact-wechat-staged-tool-repair-policy.mjs';
 import {runInNewContext} from 'node:vm';
 import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
 import {createOnlineReleaseToolPlan, executeOnlineReleaseToolPlan, verifyOnlineReleaseTool,
@@ -20,23 +21,28 @@ import {createOnlineReleaseToolPlan, executeOnlineReleaseToolPlan, verifyOnlineR
 
 const self = fileURLToPath(new URL('./prepare-online-release-tool.mjs', import.meta.url));
 const stagedRepairPolicy = fileURLToPath(new URL('./attendance-staged-tool-repair-policy.mjs', import.meta.url));
-test('bootstrap has one byte-verified builtin-only policy dependency before verified CLI housekeeping', () => {
+const contactStagedRepairPolicy = fileURLToPath(new URL('./contact-wechat-staged-tool-repair-policy.mjs', import.meta.url));
+test('bootstrap has two byte-verified builtin-only policy dependencies before verified CLI housekeeping', () => {
   const source = fs.readFileSync(self, 'utf8');
   assert.deepEqual([...source.matchAll(/^import .+ from '([^']+)';$/gm)].map(match => match[1]),
-    ['node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url', './attendance-staged-tool-repair-policy.mjs']);
+    ['node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url', './attendance-staged-tool-repair-policy.mjs','./contact-wechat-staged-tool-repair-policy.mjs']);
   assert.doesNotMatch(source, /\brequire\s*\(/);
   assert.equal([...source.matchAll(/\bimport\s*\(/g)].length, 1);
   assert.ok(source.indexOf('const prepared = prepareOnlineReleaseToolMain();') < source.indexOf('import(`file://${prepared.directory}/scripts/online-release-tool-retention.mjs`)'));
   assert.match(source, /runOnlineReleaseToolRetention\(\{target: prepared\.target, bootstrapDirectory\}\)/);
   assert.match(source, /\.\.\.prepared, toolRetention/);
   assert.match(source, /toolRetention: \{status: 'pending', reason: 'online_tool_retention_module_unavailable'\}/);
-  const policySource = fs.readFileSync(stagedRepairPolicy, 'utf8');
+  for(const policy of [stagedRepairPolicy,contactStagedRepairPolicy]){
+  const policySource = fs.readFileSync(policy, 'utf8');
   assert.ok([...policySource.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)].every(match => match[1].startsWith('node:')));
   assert.doesNotMatch(policySource, /\bimport\s*(?:\(|['"])|\brequire\s*\(/);
+  }
   assert.ok(TOOL_REQUIRED_FILES.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
-  assert.match(source, /policyBytes\.equals\(Buffer\.from\(git\(plan\.app, \['show', `\$\{plan\.target\}:\$\{STAGED_REPAIR_POLICY\}`\]\)\)\)/);
+  assert.ok(TOOL_REQUIRED_FILES.includes('scripts/contact-wechat-staged-tool-repair-policy.mjs'));
+  assert.match(source, /for \(const policyName of \[STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY\]\)/);
+  assert.match(source, /policyBytes\.equals\(Buffer\.from\(git\(plan\.app, \['show', `\$\{plan\.target\}:\$\{policyName\}`\]\)\)\)/);
   const ordinaryCli = source.slice(source.indexOf('export function prepareOnlineReleaseToolMain'));
-  assert.doesNotMatch(ordinaryCli, /fixedStagedRepairReceipt/);
+  assert.doesNotMatch(ordinaryCli, /fixedStagedRepairReceipt|fixedContactWechatStagedRepairReceipt/);
   assert.match(ordinaryCli, /verifyOnlineToolBootstrap\(plan\); assertOnlineToolNoPending\(\);/);
 });
 function fixturePath(location, kind = 'directory') {
@@ -62,7 +68,8 @@ function fixture(t) {
   fixtureGit(app, ['init']); fixtureGit(app, ['config', 'user.name', 'Fixture']); fixtureGit(app, ['config', 'user.email', 'fixture@example.invalid']);
   const files = new Map(TOOL_REQUIRED_FILES.map(name => [name, name === 'scripts/prepare-online-release-tool.mjs'
     ? fs.readFileSync(self) : name === 'scripts/attendance-staged-tool-repair-policy.mjs'
-      ? fs.readFileSync(stagedRepairPolicy) : `fixture ${name}\n`]));
+      ? fs.readFileSync(stagedRepairPolicy) : name === 'scripts/contact-wechat-staged-tool-repair-policy.mjs'
+        ? fs.readFileSync(contactStagedRepairPolicy) : `fixture ${name}\n`]));
   files.set('src/nested/source.ts', 'export const fixture = 1;\n');
   files.set('public/traffic-card-v1.js', 'retained\n');
   files.set('public/downloads/large.zip', 'synthetic archive\n');
@@ -367,6 +374,63 @@ test('fixed staged repair requires a complete strict receipt and private owned s
     f.patches.delete(full);
   }
   f.api.assertOnlineToolNoPending({fixedStagedRepairReceipt: f.receipt});
+});
+
+function contactRepairPendingFixture(){
+  const original=CONTACT_WECHAT_STAGED_REPAIR,state={target:original.target,baseline:original.baseline,directory:original.directory,
+    name:original.name,port:original.port,lane:'contact-wechat-code-only',status:'preparing'};
+  const stateText=JSON.stringify(state),stateHash=digest(stateText);
+  const policySource=fs.readFileSync(contactStagedRepairPolicy,'utf8');
+  assert.equal(policySource.split(`stateSha256: '${original.stateSha256}'`).length-1,1);
+  const code=policySource.replace(`stateSha256: '${original.stateSha256}'`,`stateSha256: '${stateHash}'`).replace(/^import .+;\r?$/gm,'').replaceAll('export ','');
+  const policy=runInNewContext(`${code}\n({p:CONTACT_WECHAT_STAGED_REPAIR,assertContactWechatStagedRepairReceipt,receipt:{schemaVersion:1,kind:'contact-wechat-staged-tool-repair',
+    target,baseline:CONTACT_WECHAT_STAGED_REPAIR.baseline,toolRevision:'e'.repeat(40),originalStateSha256:CONTACT_WECHAT_STAGED_REPAIR.stateSha256,
+    originalBuildProofSha256:CONTACT_WECHAT_STAGED_REPAIR.buildProofSha256,sourceInputsSha256:CONTACT_WECHAT_STAGED_REPAIR.sourceInputsSha256,
+    builtOutputSha256:CONTACT_WECHAT_STAGED_REPAIR.builtOutputSha256,preservedFiles:{...CONTACT_WECHAT_STAGED_REPAIR_PRESERVED},
+    activeSha256:CONTACT_WECHAT_STAGED_REPAIR.activeSha256,maintenanceSha256:CONTACT_WECHAT_STAGED_REPAIR.maintenanceSha256,
+    markerSha256:CONTACT_WECHAT_STAGED_REPAIR.markerSha256,retentionHeadSha256:CONTACT_WECHAT_STAGED_REPAIR.retentionHeadSha256,
+    dependencySha256:CONTACT_WECHAT_STAGED_REPAIR.dependencySha256,changedToolFiles:[...CONTACT_WECHAT_STAGED_REPAIR_FILES],approvedNoRebuild:true,preparedAt:'2026-10-11T12:00:00.000Z'}})`,{assert});
+  policy.assertContactWechatStagedRepairReceipt(policy.receipt);
+  const maintenance='/var/lib/faolla-maintenance/merchant-space',releaseRoot='/var/lib/faolla-online-release',p=policy.p;
+  const files=new Map([[`${maintenance}/state.json`,'{"phase":"ended"}'],[`${p.operation}/state.json`,stateText]]),entries=[p.target],patches=new Map();
+  const io={readdirSync:()=>[...entries],readFileSync:full=>{assert.ok(files.has(full));return files.get(full);},lstatSync:full=>({mode:files.has(full)?0o600:0o700,...patches.get(full)})};
+  const helperSource=fs.readFileSync(self,'utf8'),helper=helperSource.slice(helperSource.indexOf('export function assertOnlineToolNoPending'),helperSource.indexOf('export function withOnlineToolPreparationLocks')).replaceAll('export ','');
+  const api=runInNewContext(`${helper}\n({assertOnlineToolNoPending})`,{fs:io,path:path.posix,SHA:/^[a-f0-9]{40}$/,MAINTENANCE:maintenance,RELEASE_ROOT:releaseRoot,
+    CONTACT_WECHAT_STAGED_REPAIR:p,assertContactWechatStagedRepairReceipt:policy.assertContactWechatStagedRepairReceipt,
+    ATTENDANCE_STAGED_REPAIR:{target:'a535a308e21f121e7cf410a6f7d84c974eb370a6'},assertAttendanceStagedRepairReceipt:()=>{},
+    assertOnlineToolOwnedPath:()=>{},sha256:digest,fail:message=>{throw Error(`online_tool_${message}`);},
+    UNPUBLISHED_BUILD_ENVIRONMENT_INCIDENT:{target:'b'.repeat(40)},UNPUBLISHED_CANDIDATE_INCIDENT:{target:'c'.repeat(40)},
+    UNPUBLISHED_CANDIDATE_PRESERVED_FILES:{},UNPUBLISHED_CANDIDATE_ABSENT_PATHS:[],exists:()=>false});
+  return {p,state,stateText,files,entries,patches,api,receipt:policy.receipt};
+}
+test('contact pending exception admits only the explicitly sealed preparing candidate without changing bytes',()=>{
+  const f=contactRepairPendingFixture(),statePath=`${f.p.operation}/state.json`,before=JSON.stringify(f.receipt);
+  assert.throws(()=>f.api.assertOnlineToolNoPending(),/release_pending/);
+  f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt});
+  assert.equal(f.files.get(statePath),f.stateText);assert.equal(JSON.stringify(f.receipt),before);
+  for(const patch of [{status:'ready-no-database'},{port:3105},{name:'foreign'},{lane:'attendance'},{baseline:'d'.repeat(40)},{directory:'/different'},{extra:'changed'}]){
+    f.files.set(statePath,JSON.stringify({...f.state,...patch}));
+    assert.throws(()=>f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt}),/release_pending/);
+  }
+  f.files.set(statePath,f.stateText+'\n');assert.throws(()=>f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt}),/release_pending/);
+  f.files.set(statePath,f.stateText);
+  f.entries.push('d'.repeat(40));f.files.set('/var/lib/faolla-online-release/'+ 'd'.repeat(40)+'/state.json',JSON.stringify({target:'d'.repeat(40),status:'preparing'}));
+  assert.throws(()=>f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt}),/release_pending/);
+  f.entries.pop();
+  assert.throws(()=>f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt,fixedStagedRepairReceipt:{}}),/release_pending/);
+  for(const [full,mode] of [[f.p.operation,0o755],[statePath,0o644]]){
+    f.patches.set(full,{mode});assert.throws(()=>f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt}),/unsafe_path/);f.patches.clear();
+  }
+  f.entries.length=0;assert.throws(()=>f.api.assertOnlineToolNoPending({fixedContactWechatStagedRepairReceipt:f.receipt}),/release_pending/);
+});
+
+test('bootstrap verifies contact policy bytes and rejects an ancestor with an outdated policy',t=>{
+  const f=fixture(t),bootstrap=path.join(f.directory,'contact-bootstrap');
+  fixtureGit(f.app,['worktree','add','--detach',bootstrap,f.target]);
+  const entry=path.join(bootstrap,'scripts/prepare-online-release-tool.mjs');verifyOnlineToolBootstrap(f.plan,entry,f.ports);
+  const policy=path.join(bootstrap,'scripts/contact-wechat-staged-tool-repair-policy.mjs');fs.appendFileSync(policy,'\n// changed\n');
+  const hidden={...f.ports,git:(cwd,args,input)=>args[0]==='status'?'':f.ports.git(cwd,args,input)};
+  assert.throws(()=>verifyOnlineToolBootstrap(f.plan,entry,hidden),/bootstrap_source_changed/);
 });
 
 test('busy deploy lock never creates operation lock; existing operation lock is preserved', t => {

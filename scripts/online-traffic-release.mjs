@@ -25,6 +25,8 @@ import {buildAttendanceOnlineCandidate,assertAttendanceBuildAdmission} from './a
 import {CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES,assertContactWechatApprovedClosure} from './contact-wechat-release-policy.mjs';
 import {buildContactWechatOnlineCandidate,assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
 import {contactWechatReleaseProbeFetch} from './contact-wechat-release-probe-transport.mjs';
+import {CONTACT_WECHAT_STAGED_REPAIR} from './contact-wechat-staged-tool-repair-policy.mjs';
+import {assertContactWechatStagedRepairCandidate} from './contact-wechat-staged-tool-repair.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
@@ -303,7 +305,9 @@ function contactWechatContactProof(response,body){
  return {bodySha256:hash(body),contentType:response.headers.get('content-type'),contentDispositionSha256:hash(response.headers.get('content-disposition')??'')};
 }
 function assertContactWechatResponse(s,card,response,body){
- if(!card.includes('function showWechatContactGuide(source)')||!card.includes('wechat-contact-guide')||!card.includes('contactSaveButtons')||!card.includes('MicroMessenger')||!card.includes('data-wechat-contact-download')||!card.includes('data-traffic-action="contact_download_click"'))fail('contact_wechat_guide_missing');
+ // Match the actual generated, case-insensitive UA predicate rather than the
+ // capitalization of one browser UA. Keep the full guide and contact gates.
+ if(!card.includes('function showWechatContactGuide(source)')||!card.includes('wechat-contact-guide')||!card.includes('contactSaveButtons')||!card.includes('/micromessenger/i.test(String(navigator.userAgent || ""))')||!card.includes('data-wechat-contact-download')||!card.includes('data-traffic-action="contact_download_click"'))fail('contact_wechat_guide_missing');
  if(JSON.stringify(contactWechatContactProof(response,body))!==JSON.stringify(s.contactWechatContactProof))fail('contact_wechat_contact_response_changed');
 }
 async function contactWechatAttendanceSmoke(origin,publicMode=false){
@@ -595,6 +599,7 @@ if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage',
 try{await withOnlineRetentionLocks(async heldLock=>{
 privateDirectory(root);
 try{
+ if(action==='database'&&target===CONTACT_WECHAT_STAGED_REPAIR.target)fail('contact_wechat_code_only_database_forbidden');
  if(action==='stage'){
   if(!/^[a-f0-9]{40}$/.test(baseline??'')||existsSync(stateFile))fail('existing_or_invalid_stage');
   if(run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
@@ -727,8 +732,11 @@ try{
    // controller correction. Never rewrite build identity or mark it ready blind.
    if(s.status!=='preparing'||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('resume_candidate_source_changed');
    if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('resume_build_missing');
+   if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'preparing'});
    run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});
-   configUnchanged(s);verifyCandidate(s);await smoke(s);s.status=onlineReleaseStageStatus(s.lane);save(s);
+   configUnchanged(s);verifyCandidate(s);await smoke(s);
+   if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'preparing'});
+   s.status=onlineReleaseStageStatus(s.lane);save(s);
   }else if(action==='resume-booking-stage'){
    await resumeBookingStage(s);
   }else if(action==='resume-booking-probe-stage'){
@@ -767,8 +775,10 @@ try{
    verifyCandidate(s);s.status='database-ready';save(s);
    }
   }else if(action==='activate'){
+   if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'ready-no-database'});
    if(s.status!==onlineReleaseActivationStatus(s.lane))fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
    if(s.lane==='attendance')await verifyAttendanceDatabaseProof(s);
+   if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'ready-no-database'});
    await activateCandidate(s);await settleOnlineRetention(s,heldLock);
   }else if(action==='retry-static'){
    await recoverStaticPermissions(s);await activateCandidate(s);await settleOnlineRetention(s,heldLock);

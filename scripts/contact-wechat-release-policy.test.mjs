@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
 import {
   CONTACT_WECHAT_RELEASE_LANE, CONTACT_WECHAT_RELEASE_BASELINE,
   CONTACT_WECHAT_APPROVED_TOOL_REVISION, CONTACT_WECHAT_APPLICATION_FILES,
@@ -89,17 +88,18 @@ test('unrelated runtime, vCard endpoint, data writers, dependencies, SQL and gen
   }
 });
 
-test('the exact 17-file historical pin literals and current source bytes match without requiring Git history in CI', () => {
+test('the exact 17-file historical application pin literals remain frozen independently of a newer code-only checker', () => {
   // Independently recorded after read-only Git-object verification of
-  // a535a308..4e482a84. Shallow CI checks these literal pins and every present
-  // source byte; it never fetches history or conditionally skips this proof.
+  // a535a308..4e482a84. The already-built application stays at 9a877; a reviewed
+  // source-only checker has a different revision. Its current bytes are not the
+  // historical application inputs. Runtime contactWechatClosure still checks
+  // all 17 Git blobs at the application target; the repair separately verifies
+  // every candidate blob and admits only its exact tool/test closure. No pin is
+  // changed and no historical source proof is skipped or fetched in shallow CI.
   assert.deepEqual(Object.keys(CONTACT_WECHAT_APPROVED_SUPPORT_SHA256), historical);
   assert.equal(createHash('sha256').update(JSON.stringify(CONTACT_WECHAT_APPROVED_SUPPORT_SHA256)).digest('hex'),
     'f426864b0816faa4f6a31760f3255483b7374cc141e040a3706d8dcc8a373d88');
-  for (const file of historical) {
-    const bytes = readFileSync(new URL('../' + file, import.meta.url));
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), CONTACT_WECHAT_APPROVED_SUPPORT_SHA256[file], file);
-  }
+  assert.equal(assertContactWechatApprovedClosure(proof()), CONTACT_WECHAT_RELEASE_LANE);
 });
 
 test('source proof requires the fixed live baseline, all 17 exact unchanged support blobs and no extra hash-map keys', () => {
