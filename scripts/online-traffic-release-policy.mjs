@@ -1,4 +1,5 @@
 import {readFileSync} from 'node:fs';
+import {hasContactWechatReleaseAnchor, assertContactWechatReleaseScope} from './contact-wechat-release-policy.mjs';
 
 // Authorized on 2026-09-23: additive analytics, with no maintenance or worker restart.
 export const ONLINE_ROOT = '/var/lib/faolla-online-release';
@@ -311,6 +312,7 @@ export const ATTENDANCE_RELEASE_FOCUSED_TESTS=Object.freeze([
   'src/lib/merchantAttendanceIndependentAdminClient.test.ts','src/lib/merchantAttendanceIndependentTerminalClient.test.ts','src/lib/merchantAttendanceCorrectionDelegationClient.test.ts',
 ]);
 export function onlineReleaseLane(files) {
+  if(hasContactWechatReleaseAnchor(files)){assertContactWechatReleaseScope(files);return 'contact-wechat-code-only';}
   if(files.includes('src/lib/merchantAttendance.ts')){assertAttendanceReleaseScope(files);return 'attendance';}
   if (files.includes(customerCodePerformanceAnchor)) {
     if (files.some(file => !customerCodePerformanceFiles.has(file))) throw Error('customer_code_performance_release_scope_rejected');
@@ -352,6 +354,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if(lane==='contact-wechat-code-only')return true;
   if(lane==='attendance')return false;
   if (lane === 'customer-code-performance') return true;
   if (lane === 'booking-merge-cpu') return true;
@@ -368,6 +371,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if(lane==='contact-wechat-code-only')throw Error('contact_wechat_code_only_database_forbidden');
   if(lane==='attendance')return;
   if (lane === 'customer-code-performance') throw Error('customer_code_performance_database_forbidden');
   if (lane === 'booking-merge-cpu') throw Error('booking_merge_cpu_database_forbidden');

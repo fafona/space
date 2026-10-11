@@ -92,8 +92,13 @@ test('060 is inert source: both stage states are no-database and every database 
   }
 });
 
-test('precisely reversing the separately added attendance and customer lanes leaves the complete prior policy byte-identical',()=>{
+test('precisely reversing the separately added contact-WeChat, attendance and customer lanes leaves the complete prior policy byte-identical',()=>{
   let original=source;
+  const contactInsertions=["import {hasContactWechatReleaseAnchor, assertContactWechatReleaseScope} from './contact-wechat-release-policy.mjs';\n",
+    "  if(hasContactWechatReleaseAnchor(files)){assertContactWechatReleaseScope(files);return 'contact-wechat-code-only';}\n",
+    "  if(lane==='contact-wechat-code-only')return true;\n",
+    "  if(lane==='contact-wechat-code-only')throw Error('contact_wechat_code_only_database_forbidden');\n"];
+  for(const insertion of contactInsertions){assert.equal(original.split(insertion).length,2);original=original.replace(insertion,'');}
   // The attendance lane is separately verified against the complete later
   // e1d1b213 policy in online-traffic-publication-policy.test.mjs. Remove only
   // its exact insertions here before reconstructing the older customer base;
