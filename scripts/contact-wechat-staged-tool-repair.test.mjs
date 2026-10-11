@@ -210,20 +210,24 @@ test('daemon guard binds owned PID bytes to a root process with the exact existi
 
 function processFixture({change = ''} = {}) {
   const inherited = {FAOLLA_TRAFFIC_ENABLED: '1', FAOLLA_TRAFFIC_SIGNING_SECRET: 'synthetic-signing-secret',
-    FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID: '10000000', FAOLLA_SUPER_ADMIN_ORIGIN: 'https://console.faolla.com', NODE_ENV: 'production'};
+    FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID: '10000000', FAOLLA_SUPER_ADMIN_ORIGIN: 'https://console.faolla.com', NODE_ENV: 'production',
+    PWD: '/root/original-launch-directory'};
   const common = {FAOLLA_BACKGROUND_JOBS_PAUSED: '1', MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED: '0',
     MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED: '0', NODE_OPTIONS: '--max-old-space-size=4096', NEXT_TELEMETRY_DISABLED: '1', PM2_HOME: '/root/.pm2'};
-  const candidate = {...inherited, ...common, FAOLLA_WEB_BUILD_ID: p.target, NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID: p.target, PORT: '3104'};
+  const candidate = {...inherited, ...common, PWD: p.directory, FAOLLA_WEB_BUILD_ID: p.target, NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID: p.target, PORT: '3104'};
   const baseline = {...inherited, ...common, FAOLLA_WEB_BUILD_ID: p.baseline, NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID: p.baseline, PORT: '3103'};
-  const runtime = {...candidate}, candidateRaw = {...candidate}, baselineRaw = {...baseline};
+  const runtime = {...candidate, PWD: inherited.PWD}, candidateRaw = {...candidate}, baselineRaw = {...baseline};
   const own = {name: p.name, pid: p.candidatePid, identity: {name: p.name, pid: p.candidatePid}, pm2_env: {...candidate, pm_cwd: p.directory, status: 'online'}};
   const previous = {name: 'merchant-space-online-a535a308e21f', pid: 456, identity: {name: 'baseline', pid: 456},
     pm2_env: {...baseline, pm_cwd: '/www/wwwroot/merchant-space.web-releases/a535a308e21f-online', status: 'online'}};
   const raw = environment => Buffer.from(Object.entries(environment).map(([key, value]) => `${key}=${value}`).join('\0') + '\0');
+  const runtimeBytes = Buffer.from(JSON.stringify(runtime)), fakePins = {...pins, 'runtime.json': digest(runtimeBytes)};
   const candidateBytes = raw(candidate), commandBytes = Buffer.from('next-server (v16.1.6)\0'), baselineFile = Buffer.from('original-file');
   const fakePolicy = {...p, candidateProcessSha256: digest(JSON.stringify(own.identity)),
     candidateProcessEnvironmentSha256: digest(candidateBytes), candidateProcessCommandSha256: digest(commandBytes)};
-  const state = {oldName: previous.name, oldDirectory: previous.pm2_env.pm_cwd, contactWechatBaselinePid: previous.pid,
+  const state = {target: p.target, baseline: p.baseline, directory: p.directory, port: p.port,
+    oldName: previous.name, oldDirectory: previous.pm2_env.pm_cwd, contactWechatBaselinePid: previous.pid,
+    contactWechatRuntimeSha256: fakePins['runtime.json'],
     contactWechatInheritedEnvironmentKeys: Object.keys(inherited).sort(),
     contactWechatInheritedEnvironmentSha256: digest(JSON.stringify(Object.fromEntries(Object.keys(inherited).sort().map(key => [key, inherited[key]])))),
     contactWechatBaselineEnvironmentFileSha256: digest(baselineFile)};
@@ -232,6 +236,9 @@ function processFixture({change = ''} = {}) {
   if (change === 'candidate-env') candidateRaw.FAOLLA_TRAFFIC_SIGNING_SECRET = 'other';
   if (change === 'baseline-env') baselineRaw.FAOLLA_TRAFFIC_SIGNING_SECRET = 'other';
   if (change === 'baseline-unknown') baselineRaw.STRIPE_SECRET_KEY = 'unreviewed';
+  if (change === 'baseline-pm2-unknown') previous.pm2_env.STRIPE_SECRET_KEY = 'unreviewed';
+  if (change === 'candidate-unknown') candidateRaw.STRIPE_SECRET_KEY = 'unreviewed';
+  if (change === 'candidate-pm2-unknown') own.pm2_env.STRIPE_SECRET_KEY = 'unreviewed';
   if (change === 'runtime-env') runtime.FAOLLA_TRAFFIC_SIGNING_SECRET = 'other';
   if (change === 'runtime-unknown') runtime.STRIPE_SECRET_KEY = 'unreviewed';
   if (change === 'pm2-env') own.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET = 'other';
@@ -239,9 +246,20 @@ function processFixture({change = ''} = {}) {
   if (change === 'heap') runtime.NODE_OPTIONS = '--max-old-space-size=8192';
   if (change === 'port') runtime.PORT = '3105';
   if (change === 'baseline-pid') previous.pid++;
-  const processObservation = functionVm('processObservation', {p: fakePolicy,
+  if (change === 'target') state.target = 'f'.repeat(40);
+  if (change === 'state-directory') state.directory = '/tmp/app';
+  if (change === 'pm2-cwd') own.pm2_env.pm_cwd = '/tmp/app';
+  if (change === 'runtime-pin') state.contactWechatRuntimeSha256 = '0'.repeat(64);
+  if (change.startsWith('pwd:')) {
+    const [, side, kind] = change.split(':'), environment = {proc: candidateRaw, pm2: own.pm2_env, baseline: baselineRaw,
+      'baseline-pm2': previous.pm2_env, runtime}[side];
+    if (kind === 'missing') delete environment.PWD;
+    else environment.PWD = kind === 'empty' ? '' : '/tmp/incorrect-directory';
+  }
+  const processObservation = functionVm('processObservation', {p: fakePolicy, pins: fakePins,
     normalizeRetirementProcess: value => value.identity, webReleaseRuntimeEnvironment,
     protectedEnvironment: functionVm('protectedEnvironment', {}),
+    fixedCandidateEnvironment: functionVm('fixedCandidateEnvironment', {p: fakePolicy}),
     ownedFile: file => file === paths['runtime.json'] ? Buffer.from(JSON.stringify(runtime))
       : change === 'baseline-file' ? Buffer.from('changed-file') : baselineFile,
     fs: {lstatSync: () => ({uid: change === 'owner' ? 1000 : 0}),
@@ -249,14 +267,36 @@ function processFixture({change = ''} = {}) {
         : file.startsWith(`/proc/${own.pid}/`) ? raw(candidateRaw) : raw(baselineRaw),
       realpathSync: file => file.endsWith('/exe') ? change === 'exe' ? '/tmp/node' : p.candidateProcessExecutable
         : change === 'cwd' ? '/tmp/app' : file.startsWith(`/proc/${own.pid}/`) ? own.pm2_env.pm_cwd : previous.pm2_env.pm_cwd}});
-  return {run: () => processObservation(state, [own, previous])};
+  return {run: () => processObservation(state, [own, previous]), state, runtime, own, previous, candidateRaw, baselineRaw};
 }
 test('actual process gate binds PID, command, executable, root owner, PM2 config and exact inherited environment', () => {
   assert.equal(processFixture().run().processes.length, 2);
-  for (const change of ['pid', 'process-config', 'candidate-env', 'baseline-env', 'baseline-unknown', 'runtime-env',
-    'runtime-unknown', 'pm2-env', 'paused', 'heap', 'port', 'baseline-pid', 'baseline-file', 'owner', 'command', 'exe', 'cwd'])
+  for (const change of ['pid', 'process-config', 'candidate-env', 'baseline-env', 'baseline-unknown', 'baseline-pm2-unknown',
+    'candidate-unknown', 'candidate-pm2-unknown', 'runtime-env', 'runtime-unknown', 'pm2-env', 'paused', 'heap', 'port',
+    'baseline-pid', 'baseline-file', 'owner', 'command', 'exe', 'cwd', 'target', 'state-directory', 'pm2-cwd', 'runtime-pin'])
     assert.throws(processFixture({change}).run, /(?:process|environment|baseline)_changed|process_owner_changed|candidate_environment_changed|process_directory_changed/,
       change);
+});
+test('fixed candidate PWD digest normalization preserves raw input bytes and the sealed original PWD even when neither original cwd matches', () => {
+  const f = processFixture(), before = JSON.stringify({state: f.state, runtime: f.runtime, own: f.own, previous: f.previous,
+    candidateRaw: f.candidateRaw, baselineRaw: f.baselineRaw});
+  assert.notEqual(f.runtime.PWD, f.previous.pm2_env.pm_cwd);
+  assert.notEqual(f.runtime.PWD, f.own.pm2_env.pm_cwd);
+  assert.equal(f.candidateRaw.PWD, p.directory); assert.equal(f.own.pm2_env.PWD, p.directory);
+  assert.equal(f.run().processes.length, 2);
+  assert.equal(JSON.stringify({state: f.state, runtime: f.runtime, own: f.own, previous: f.previous,
+    candidateRaw: f.candidateRaw, baselineRaw: f.baselineRaw}), before);
+});
+test('missing empty or foreign PWD in any original or candidate source remains a rejection, not an ignored key', () => {
+  for (const side of ['proc', 'pm2', 'baseline', 'baseline-pm2', 'runtime']) for (const kind of ['missing', 'empty', 'wrong'])
+    assert.throws(processFixture({change: `pwd:${side}:${kind}`}).run, /(?:process|environment)_changed/, `${side}/${kind}`);
+  const normalize = functionVm('fixedCandidateEnvironment', {}), state = {target: p.target, baseline: p.baseline, directory: p.directory, port: p.port};
+  const actual = {PWD: p.directory, BUSINESS_TOKEN: 'unchanged'}, runtime = {PWD: '/root/original-launch-directory'};
+  assert.deepEqual(JSON.parse(JSON.stringify(normalize(state, actual, runtime))), {...actual, PWD: runtime.PWD});
+  for (const patch of [{target: 'f'.repeat(40)}, {baseline: 'f'.repeat(40)}, {directory: '/tmp/app'}, {port: 3105}])
+    assert.throws(() => normalize({...state, ...patch}, actual, runtime), /inherited_environment_changed/);
+  for (const value of [undefined, '', '/tmp/app']) assert.throws(() => normalize(state, {...actual, PWD: value}, runtime), /inherited_environment_changed/);
+  for (const value of [undefined, '']) assert.throws(() => normalize(state, actual, {PWD: value}), /inherited_environment_changed/);
 });
 
 function pilotFixture({change = ''} = {}) {
