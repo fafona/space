@@ -2308,28 +2308,30 @@ function contactWechatControllerSource(){
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  return code.slice(code.indexOf('function contactWechatProtectedEnvironment('),code.indexOf('function verifyAttendanceSource('));
 }
-function contactWechatSettingsFixture(){
- const target='a'.repeat(40),operation='/operation',baseline=CONTACT_WECHAT_RELEASE_BASELINE;
+function contactWechatSettingsFixture({fixed=false}={}){
+ const target=fixed?CONTACT_WECHAT_STAGED_REPAIR.target:'a'.repeat(40),directory=fixed?CONTACT_WECHAT_STAGED_REPAIR.directory:'/candidate',operation='/operation',baseline=CONTACT_WECHAT_RELEASE_BASELINE;
  const inherited={...attendanceCandidateEnvironment('database-ready'),...Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.credentialKeys.map(key=>[key,'A'.repeat(43)])),
   FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-signing-secret',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',
   FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',
   PATH:'/usr/bin:/bin',HOME:'/root',NODE_ENV:'production',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1',PM2_HOME:'/root/.pm2',PORT:'3103',SUPABASE_SERVICE_ROLE_KEY:'synthetic-service-secret'};
+ if(fixed)inherited.PWD='/root/original-launch-directory';
  const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:'2026-10-11T12:00:00.000Z',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',PORT:'3104'};
  const env={...inherited,...changes},oldText='SUPER_ADMIN_PASSWORD=synthetic-file-only\nWEB_PUSH_PRIVATE_KEY=synthetic-file-only\nUNRELATED=unchanged\nPORT=3103\n',nextText=oldText.split('\n').filter(line=>!Object.keys(changes).some(key=>line.startsWith(`${key}=`))).join('\n')+'\n'+Object.entries(changes).map(([key,value])=>`${key}=${value}`).join('\n')+'\n';
- const files=new Map([['/operation/runtime.json',JSON.stringify(env)],['/old/.env.local',oldText],['/candidate/.env.local',nextText]]),hash=value=>createHash('sha256').update(value).digest('hex');
- const p={name:'candidate',pid:3211,pm2_env:{...env,status:'online',pm_cwd:'/candidate'}},prior={name:'baseline',pid:3210,pm2_env:{...inherited,status:'online',pm_cwd:'/old'}},actual={...env},baselineActual={...inherited};
- const s={lane:'contact-wechat-code-only',target,baseline,port:3104,directory:'/candidate',oldDirectory:'/old',oldName:'baseline',contactWechatBaselinePid:3210,
+ const files=new Map([['/operation/runtime.json',JSON.stringify(env)],['/old/.env.local',oldText],[`${directory}/.env.local`,nextText]]),hash=value=>createHash('sha256').update(value).digest('hex');
+ const p={name:'candidate',pid:3211,pm2_env:{...env,...(fixed?{PWD:directory}:{}),status:'online',pm_cwd:directory}},prior={name:'baseline',pid:3210,pm2_env:{...inherited,status:'online',pm_cwd:'/old'}},actual={...env,...(fixed?{PWD:directory}:{})},baselineActual={...inherited},cwd={candidate:directory};
+ const s={lane:'contact-wechat-code-only',target,baseline,port:3104,directory,oldDirectory:'/old',oldName:'baseline',contactWechatBaselinePid:3210,
   contactWechatRuntimeSha256:hash(files.get('/operation/runtime.json')),contactWechatEnvironmentFileSha256:hash(nextText),contactWechatBaselineEnvironmentFileSha256:hash(oldText)};
  const api=runInNewContext(`${contactWechatControllerSource()}({contactWechatProtectedEnvironment,contactWechatEnvironmentDigest,verifyContactWechatSettings,assertContactWechatResponse,contactWechatContactProof,contactWechatClosure,verifyContactWechatSource})`,{
-  hash,operation,CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES,assertAttendanceCandidateEnvironment,
+  hash,operation,CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_STAGED_REPAIR,CONTACT_WECHAT_APPROVED_SUPPORT_FILES,assertAttendanceCandidateEnvironment,
   candidateEnvironment:()=>JSON.parse(files.get('/operation/runtime.json')),
   safeFile:path=>{if(!files.has(path))throw Error('missing_fixture_file');return files.get(path);},
   pm:()=>[prior,p],webReleaseRuntimeEnvironment,
   read:path=>Object.entries(path==='/proc/3210/environ'?baselineActual:actual).map(([key,value])=>`${key}=${value}`).join('\0'),
+  realpathSync:path=>{assert.equal(path,'/proc/3211/cwd');return cwd.candidate;},
   fail:message=>{throw Error(message);},
  });
  s.contactWechatInheritedEnvironmentKeys=Object.keys(api.contactWechatProtectedEnvironment(inherited));s.contactWechatInheritedEnvironmentSha256=api.contactWechatEnvironmentDigest(inherited);
- return {s,api,env,inherited,files,p,prior,actual,baselineActual,hash};
+ return {s,api,env,inherited,files,p,prior,actual,baselineActual,cwd,hash};
 }
 test('contact code-only inheritance checks exact baseline and candidate saved files PM2 and actual process values without exposing secrets',()=>{
  const good=contactWechatSettingsFixture();assert.doesNotThrow(()=>good.api.verifyContactWechatSettings(good.s,good.p));
@@ -2351,6 +2353,45 @@ test('contact code-only file-only credentials remain exact and the only dotenv c
  const f=contactWechatSettingsFixture();f.files.set('/candidate/.env.local',f.files.get('/candidate/.env.local').replace('synthetic-file-only','different'));f.s.contactWechatEnvironmentFileSha256=f.hash(f.files.get('/candidate/.env.local'));
  assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_environment_delta_invalid/);
  for(const key of ['PORT','NODE_OPTIONS','PM2_HOME','NEXT_TELEMETRY_DISABLED','FAOLLA_WEB_BUILD_ID','NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID','MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED']){const f=contactWechatSettingsFixture();f.actual[key]='changed';assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_candidate_environment_invalid/);}
+});
+test('only fixed staged contact candidate normalizes its proven PWD digest copy without changing raw runtime or process inputs',()=>{
+ const f=contactWechatSettingsFixture({fixed:true}),before=JSON.stringify({env:f.env,files:[...f.files],actual:f.actual,baselineActual:f.baselineActual,p:f.p,prior:f.prior,s:f.s});
+ assert.notEqual(f.env.PWD,f.s.oldDirectory);assert.notEqual(f.env.PWD,f.s.directory);
+ assert.equal(f.actual.PWD,CONTACT_WECHAT_STAGED_REPAIR.directory);assert.equal(f.p.pm2_env.PWD,CONTACT_WECHAT_STAGED_REPAIR.directory);
+ assert.doesNotThrow(()=>f.api.verifyContactWechatSettings(f.s,f.p));
+ assert.equal(JSON.stringify({env:f.env,files:[...f.files],actual:f.actual,baselineActual:f.baselineActual,p:f.p,prior:f.prior,s:f.s}),before);
+ for(const patch of [{target:'f'.repeat(40)},{baseline:'f'.repeat(40)},{directory:'/foreign'},{port:3105}]){
+  const bad=contactWechatSettingsFixture({fixed:true});Object.assign(bad.s,patch);
+  assert.throws(()=>bad.api.verifyContactWechatSettings(bad.s,bad.p),/contact_wechat_|missing_fixture_file/);
+ }
+ // A different lane/target continues the original strict, unnormalized check.
+ const old=contactWechatSettingsFixture();old.inherited.PWD='/root/original-launch-directory';old.env.PWD=old.inherited.PWD;
+ old.files.set('/operation/runtime.json',JSON.stringify(old.env));old.s.contactWechatRuntimeSha256=old.hash(old.files.get('/operation/runtime.json'));
+ old.prior.pm2_env.PWD=old.inherited.PWD;old.baselineActual.PWD=old.inherited.PWD;
+ old.p.pm2_env.PWD=old.s.directory;old.actual.PWD=old.s.directory;
+ old.s.contactWechatInheritedEnvironmentKeys=Object.keys(old.api.contactWechatProtectedEnvironment(old.inherited));old.s.contactWechatInheritedEnvironmentSha256=old.api.contactWechatEnvironmentDigest(old.inherited);
+ assert.throws(()=>old.api.verifyContactWechatSettings(old.s,old.p),/contact_wechat_inherited_environment_changed/);
+});
+test('fixed staged contact PWD remains mandatory and all original hashes keys business settings and cwd must match',()=>{
+ for(const side of ['saved','pm2','actual','baseline-pm2','baseline-actual'])for(const kind of ['missing','empty','wrong']){
+  const f=contactWechatSettingsFixture({fixed:true}),value=side==='saved'?{...f.env}:side==='pm2'?f.p.pm2_env:side==='actual'?f.actual:side==='baseline-pm2'?f.prior.pm2_env:f.baselineActual;
+  if(kind==='missing')delete value.PWD;else value.PWD=kind==='empty'?'':'/foreign';
+  if(side==='saved')f.files.set('/operation/runtime.json',JSON.stringify(value));
+  assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_environment_file_changed|contact_wechat_inherited_environment_changed/,`${side}/${kind}`);
+ }
+ // Even recomputing the mutable model's file hash cannot authorize a missing
+ // original PWD or changed sealed digest/key set. Actual state/raw pins remain.
+ for(const kind of ['missing','empty','wrong','unknown']){
+  const f=contactWechatSettingsFixture({fixed:true}),value={...f.env};
+  if(kind==='missing')delete value.PWD;else if(kind==='unknown')value.STRIPE_SECRET_KEY='unreviewed';else value.PWD=kind==='empty'?'':'/foreign';
+  f.files.set('/operation/runtime.json',JSON.stringify(value));f.s.contactWechatRuntimeSha256=f.hash(f.files.get('/operation/runtime.json'));
+  assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_inherited_environment_changed/);
+ }
+ for(const side of ['pm2','actual','baseline-pm2','baseline-actual'])for(const key of ['STRIPE_SECRET_KEY','FAOLLA_TRAFFIC_SIGNING_SECRET']){
+  const f=contactWechatSettingsFixture({fixed:true});(side==='pm2'?f.p.pm2_env:side==='actual'?f.actual:side==='baseline-pm2'?f.prior.pm2_env:f.baselineActual)[key]='changed-synthetic';
+  assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_inherited_environment_changed/);
+ }
+ for(const side of ['proc','pm2']){const f=contactWechatSettingsFixture({fixed:true});if(side==='proc')f.cwd.candidate='/foreign';else f.p.pm2_env.pm_cwd='/foreign';assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_candidate_directory_changed/);}
 });
 test('contact code-only closure passes only the 17 fixed approved support byte hashes while sealing the complete changed-file closure',()=>{
  const code=contactWechatControllerSource(),hash=value=>createHash('sha256').update(value).digest('hex'),files=[...CONTACT_WECHAT_APPROVED_SUPPORT_FILES,'src/app/card/[card]/route.ts','src/lib/merchantBusinessCardWebsiteRoute.test.ts','scripts/contact-wechat-online-build.mjs'];

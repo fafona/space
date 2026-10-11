@@ -200,6 +200,15 @@ function protectedEnvironment(environment, keys) {
   need(keys.every(key => typeof environment[key] === 'string'), 'inherited_environment_changed');
   return Object.fromEntries(keys.map(key => [key, environment[key]]));
 }
+function fixedCandidateEnvironment(state, environment, runtime) {
+  need(state.target === p.target && state.baseline === p.baseline && state.directory === p.directory &&
+    state.port === p.port && typeof runtime.PWD === 'string' && runtime.PWD.length > 0 &&
+    environment.PWD === p.directory, 'inherited_environment_changed');
+  // PM2 legitimately sets the new process PWD to its fixed launch directory.
+  // Preserve raw bytes and PWD as a protected key; normalize only this digest
+  // input copy to the already sealed, verified baseline/runtime value.
+  return {...environment, PWD: runtime.PWD};
+}
 function processObservation(state, all) {
   const own = all.find(process => process.name === p.name), baseline = all.find(process => process.name === state.oldName);
   need(own && own.pid === p.candidatePid && sha(JSON.stringify(normalizeRetirementProcess(own))) === p.candidateProcessSha256,
@@ -219,16 +228,24 @@ function processObservation(state, all) {
   need(sha(candidate.bytes) === p.candidateProcessEnvironmentSha256 &&
     sha(fs.readFileSync(`/proc/${own.pid}/cmdline`)) === p.candidateProcessCommandSha256 &&
     fs.realpathSync(`/proc/${own.pid}/exe`) === p.candidateProcessExecutable, 'candidate_process_changed');
-  const runtime = JSON.parse(ownedFile(paths['runtime.json'], {privateMode: true}));
+  const runtimeBytes = ownedFile(paths['runtime.json'], {privateMode: true});
+  need(sha(runtimeBytes) === pins['runtime.json'] && state.contactWechatRuntimeSha256 === pins['runtime.json'],
+    'inherited_environment_changed');
+  const runtime = JSON.parse(runtimeBytes);
   const inheritedKeys = state.contactWechatInheritedEnvironmentKeys;
-  for (const environment of [candidate.environment, original.environment, runtime])
+  need(Array.isArray(inheritedKeys) && inheritedKeys.includes('PWD') && typeof runtime.PWD === 'string' && runtime.PWD.length > 0,
+    'inherited_environment_changed');
+  // Verify all original inputs first. In particular baseline PWD is bound to
+  // its sealed value/digest, not inferred from the baseline process cwd.
+  for (const environment of [runtime, original.environment, baseline.pm2_env])
     need(sha(JSON.stringify(protectedEnvironment(environment, inheritedKeys))) === state.contactWechatInheritedEnvironmentSha256,
       'inherited_environment_changed');
-  // PM2 contains its own lowercase bookkeeping; select only the pinned business
-  // keys there and require the actual /proc and saved runtime key sets exactly.
-  for (const environment of [own.pm2_env, baseline.pm2_env]) {
-    need(inheritedKeys.every(key => typeof environment[key] === 'string') &&
-      sha(JSON.stringify(Object.fromEntries(inheritedKeys.map(key => [key, environment[key]])))) === state.contactWechatInheritedEnvironmentSha256,
+  need(own.pm2_env.pm_cwd === p.directory, 'process_directory_changed');
+  // protectedEnvironment ignores only the existing PM2 bookkeeping keys and
+  // lowercase metadata; every uppercase business key remains exact.
+  for (const environment of [candidate.environment, own.pm2_env]) {
+    const digestInput = fixedCandidateEnvironment(state, environment, runtime);
+    need(sha(JSON.stringify(protectedEnvironment(digestInput, inheritedKeys))) === state.contactWechatInheritedEnvironmentSha256,
       'inherited_environment_changed');
   }
   for (const environment of [candidate.environment, runtime, own.pm2_env])

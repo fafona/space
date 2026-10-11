@@ -264,6 +264,12 @@ function contactWechatProtectedEnvironment(env,keys){
  return Object.fromEntries(names.map(key=>[key,env[key]]));
 }
 function contactWechatEnvironmentDigest(env,keys){return hash(JSON.stringify(contactWechatProtectedEnvironment(env,keys)));}
+function contactWechatFixedCandidateEnvironment(s,actual,env){
+ if(s.target!==CONTACT_WECHAT_STAGED_REPAIR.target||s.baseline!==CONTACT_WECHAT_STAGED_REPAIR.baseline||s.directory!==CONTACT_WECHAT_STAGED_REPAIR.directory||s.port!==CONTACT_WECHAT_STAGED_REPAIR.port||typeof env.PWD!=='string'||env.PWD.length===0||actual.PWD!==CONTACT_WECHAT_STAGED_REPAIR.directory)fail('contact_wechat_inherited_environment_changed');
+ // Only this fixed candidate's digest copy uses the verified sealed PWD. The
+ // real process/PM2 bytes, runtime file and protected PWD key remain unchanged.
+ return {...actual,PWD:env.PWD};
+}
 function contactWechatClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
  const sourceSha256ByFile=Object.fromEntries(CONTACT_WECHAT_APPROVED_SUPPORT_FILES.map(file=>[file,hash(run('git',['show',`${releaseTarget}:${file}`],{cwd:app}))]));
@@ -285,11 +291,28 @@ function verifyContactWechatSettings(s,p){
  const env=verifyContactWechatSavedSettings(s);
  const prior=pm().find(process=>process.name===s.oldName);
  if(!prior||prior.pid!==s.contactWechatBaselinePid||prior.pm2_env.status!=='online'||prior.pm2_env.pm_cwd!==s.oldDirectory)fail('contact_wechat_baseline_process_changed');
+ if(s.target===CONTACT_WECHAT_STAGED_REPAIR.target){
+  const baselineActual=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`)),candidateActual=webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`));
+  if(!s.contactWechatInheritedEnvironmentKeys.includes('PWD')||typeof env.PWD!=='string'||env.PWD.length===0)fail('contact_wechat_inherited_environment_changed');
+  // Check the complete original key set/digest before candidate normalization.
+  // Baseline PWD need not equal cwd: its sealed original value is authoritative.
+  for(const actual of [env,baselineActual,prior.pm2_env]){
+   assertAttendanceCandidateEnvironment(actual,'database-ready');
+   if(JSON.stringify(Object.keys(contactWechatProtectedEnvironment(actual)))!==JSON.stringify(s.contactWechatInheritedEnvironmentKeys)||contactWechatEnvironmentDigest(actual,s.contactWechatInheritedEnvironmentKeys)!==s.contactWechatInheritedEnvironmentSha256)fail('contact_wechat_inherited_environment_changed');
+  }
+  if(s.directory!==CONTACT_WECHAT_STAGED_REPAIR.directory||p.pm2_env.pm_cwd!==CONTACT_WECHAT_STAGED_REPAIR.directory||realpathSync(`/proc/${p.pid}/cwd`)!==CONTACT_WECHAT_STAGED_REPAIR.directory)fail('contact_wechat_candidate_directory_changed');
+  for(const actual of [p.pm2_env,candidateActual]){
+   assertAttendanceCandidateEnvironment(actual,'database-ready');
+   const digestInput=contactWechatFixedCandidateEnvironment(s,actual,env);
+   if(JSON.stringify(Object.keys(contactWechatProtectedEnvironment(digestInput)))!==JSON.stringify(s.contactWechatInheritedEnvironmentKeys)||contactWechatEnvironmentDigest(digestInput,s.contactWechatInheritedEnvironmentKeys)!==s.contactWechatInheritedEnvironmentSha256)fail('contact_wechat_inherited_environment_changed');
+  }
+ }else{
  for(const actual of [prior.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`)),env,p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))]){
   assertAttendanceCandidateEnvironment(actual,'database-ready');
   if(contactWechatEnvironmentDigest(actual,s.contactWechatInheritedEnvironmentKeys)!==s.contactWechatInheritedEnvironmentSha256)fail('contact_wechat_inherited_environment_changed');
  }
  for(const actual of [webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`)),env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))])if(JSON.stringify(Object.keys(contactWechatProtectedEnvironment(actual)))!==JSON.stringify(s.contactWechatInheritedEnvironmentKeys))fail('contact_wechat_inherited_environment_changed');
+ }
  for(const actual of [env,p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))])if(actual.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||actual.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||actual.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0'||actual.FAOLLA_WEB_BUILD_ID!==s.target||actual.NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID!==s.target||actual.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com'||actual.PORT!==String(s.port)||actual.NODE_OPTIONS!=='--max-old-space-size=4096'||actual.NEXT_TELEMETRY_DISABLED!=='1'||actual.PM2_HOME!=='/root/.pm2')fail('contact_wechat_candidate_environment_invalid');
 }
 function verifyContactWechatSavedSettings(s){
