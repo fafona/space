@@ -22,6 +22,9 @@ import {CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS} from './online-traffic-release-
 import {ATTENDANCE_RELEASE_SCOPE,ATTENDANCE_RELEASE_SCOPE_FILE,ATTENDANCE_RELEASE_FOCUSED_TESTS,attendanceCandidateEnvironment,assertAttendanceCandidateEnvironment,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
 import {verifyAttendanceProductionDatabaseReady} from './attendance-production-database-migrations.mjs';
 import {buildAttendanceOnlineCandidate,assertAttendanceBuildAdmission} from './attendance-online-build.mjs';
+import {CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES,assertContactWechatApprovedClosure} from './contact-wechat-release-policy.mjs';
+import {buildContactWechatOnlineCandidate,assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
+import {contactWechatReleaseProbeFetch} from './contact-wechat-release-probe-transport.mjs';
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
@@ -101,6 +104,21 @@ function readRetentionRollbackProof(history,actualActive){
   proxyHashes:Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,hash(safeFile(`${proxy}/${file}`))]))};
 }
 async function settleOnlineRetention(s,heldLock){
+ if(s.lane==='contact-wechat-code-only'){
+  try{
+   if(s.status!=='active')fail('contact_wechat_bookkeeping_not_active');
+   const history=readOnlineRetentionHistory(),prior=history.entries.at(-1);
+   if(!prior)return {status:'not-enabled',retired:null};
+   if(prior.active.target!==s.target){
+    const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+    const toolRevision=run('git',['rev-parse','HEAD'],{cwd:directory}).trim();
+    await runOnlineRetentionUnderHeldLocks({kind:'converge',activeTarget:s.target,victimTarget:null,toolRevision,lock:heldLock});
+   }
+   const window=inspectOnlineRetentionWindow({history:readOnlineRetentionHistory(),actualActive:JSON.parse(safeFile(activeFile)),current:pm().map(normalizeRetirementProcess)});
+   if(window.phase!=='stable'||window.active.target!==s.target)fail('contact_wechat_bookkeeping_window_changed');
+   return {status:'completed',retired:null};
+  }catch{console.error('online_retention_pending:contact_wechat_bookkeeping_unverified');return {status:'pending',reason:'contact_wechat_bookkeeping_unverified',retired:null};}
+ }
  const result=await completePublicationRetention(s,{
   history:()=>readOnlineRetentionHistory(),
   window:history=>inspectOnlineRetentionWindow({history,actualActive:JSON.parse(safeFile(activeFile)),current:pm().map(normalizeRetirementProcess)}),
@@ -143,8 +161,8 @@ async function verifyBase(s){
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
 function readRuntimePerformanceSavedConfigs(s,includeAfter){
- if(s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance')return null;
- const error=s.lane==='customer-code-performance'?'customer_code_performance_saved_proxy_changed':s.lane==='booking-merge-cpu'?'booking_merge_cpu_saved_proxy_changed':'runtime_performance_saved_proxy_changed';
+ if(s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance'&&s.lane!=='contact-wechat-code-only')return null;
+ const error=s.lane==='contact-wechat-code-only'?'contact_wechat_saved_proxy_changed':s.lane==='customer-code-performance'?'customer_code_performance_saved_proxy_changed':s.lane==='booking-merge-cpu'?'booking_merge_cpu_saved_proxy_changed':'runtime_performance_saved_proxy_changed';
  const saved=new Map();
  for(const file of WEB_RELEASE_FILES){
   const before=safeFile(`${operation}/before-${file}`);
@@ -158,8 +176,10 @@ function readRuntimePerformanceSavedConfigs(s,includeAfter){
 function verifyCandidate(s){
  verifyRuntimePerformanceSource(s);
  if(s.lane==='attendance')verifyAttendanceSource(s);
+ if(s.lane==='contact-wechat-code-only')verifyContactWechatSource(s,true);
  const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
  if(s.lane==='attendance')verifyAttendanceCandidateSettings(s,p);
+ if(s.lane==='contact-wechat-code-only')verifyContactWechatSettings(s,p);
  if(s.lane==='order-attention'&&p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!==(s.orderAttentionEnabled?'10000000':'0'))fail('order_attention_candidate_flag_invalid');
  if(s.lane==='bounded-lists'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('bounded_lists_baseline_features_changed');
  if(s.lane==='read-index'&&(p.pm2_env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||p.pm2_env.FAOLLA_TRAFFIC_ENABLED!=='1'||!p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET||p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET!==candidateEnvironment(s).FAOLLA_TRAFFIC_SIGNING_SECRET))fail('read_index_baseline_features_changed');
@@ -196,7 +216,10 @@ async function smoke(s,publicMode=false){
  for(const path of ['/','/login','/admin','/super-admin'])await request(origin+path,[200,301,302,303,307,308]);
  const card=await(await request(`${origin}/card/luis-gpyv6u`)).text();
  if(!hasExpectedCardWebsite(card))fail('card_website_regression');
- if(!(await(await request(`${origin}/card/luis-gpyv6u/contact`)).text()).includes('URL:https://www.haoyouduosevilla.com/'))fail('vcard_website_regression');
+ const contactResponse=await request(`${origin}/card/luis-gpyv6u/contact`);
+ const contact=await contactResponse.text();
+ if(!contact.includes('URL:https://www.haoyouduosevilla.com/'))fail('vcard_website_regression');
+ if(s.lane==='contact-wechat-code-only')assertContactWechatResponse(s,card,contactResponse,contact);
  await request(`${origin}/traffic-card-v1.js`);
  await request(`${origin}/api/super-admin/platform-merchant-snapshot`,[401]);
  await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/traffic?siteId=10000000`,[401],'console.faolla.com');
@@ -209,13 +232,20 @@ async function smoke(s,publicMode=false){
   for(const entry of ['/api/merchant-enterprise/attendance/admin','/api/merchant-enterprise/attendance/self','/api/merchant-enterprise/attendance/records'])await request(`${portal}${entry}?siteId=10000000`,[s.attendanceEnabled?401:404],'launch.faolla.com');
   for(const entry of ['/test-harness/enterprise','/test-harness/employee-workspace'])await request(portal+entry,[404],'launch.faolla.com');
  }
+ if(s.lane==='contact-wechat-code-only'){
+  await contactWechatAttendanceSmoke(origin,publicMode);
+  if(publicMode){
+   const canonicalCard=await(await request('https://faolla.com/card/luis-gpyv6u')).text(),canonicalContact=await request('https://faolla.com/card/luis-gpyv6u/contact');
+   assertContactWechatResponse(s,canonicalCard,canonicalContact,await canonicalContact.text());
+  }
+ }
  // In-progress requests and existing assets remain served by the previous process.
  const html=await(await request(origin+'/')).text();const assets=[...new Set(html.match(/\/_next\/static\/[^"\s<>]+\.(?:js|css)/g)||[])];
  for(const path of assets)await request(origin+path);return assets.length;
 }
 function restoreConfigs(s){
  for(const file of WEB_RELEASE_FILES){const h=hash(safeFile(`${proxy}/${file}`));if(h!==s.configs[file].oldHash&&h!==s.configs[file].newHash)fail('rollback_proxy_not_owned');}
- const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'?readRuntimePerformanceSavedConfigs(s,false):null;
+ const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,false):null;
  const retention=readOnlineRetentionHistory();
  if(retention.entries.at(-1)?.active.target===s.target)s.retentionRollbackHeadSha256=retention.headSha256;
  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).before:safeFile(`${operation}/before-${file}`));
@@ -225,6 +255,67 @@ function restoreConfigs(s){
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
 function candidateEnvironment(s){void s;return JSON.parse(safeFile(`${operation}/runtime.json`));}
+function contactWechatProtectedEnvironment(env,keys){
+ const ignored=new Set(['FAOLLA_WEB_BUILD_ID','NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID','FAOLLA_WEB_RELEASED_AT','FAOLLA_BACKGROUND_JOBS_PAUSED','MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED','MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED','PORT','PM2_HOME','NODE_OPTIONS','NEXT_TELEMETRY_DISABLED','NODE_APP_INSTANCE','NODE_CHANNEL_FD','NODE_CHANNEL_SERIALIZATION_MODE','NODE_UNIQUE_ID','PM2_USAGE']);
+ const names=keys??Object.keys(env).sort().filter(key=>/^[A-Z][A-Z0-9_]*$/.test(key)&&!ignored.has(key));
+ if(names.some(key=>typeof env[key]!=='string'))fail('contact_wechat_inherited_environment_changed');
+ return Object.fromEntries(names.map(key=>[key,env[key]]));
+}
+function contactWechatEnvironmentDigest(env,keys){return hash(JSON.stringify(contactWechatProtectedEnvironment(env,keys)));}
+function contactWechatClosure(releaseTarget,releaseBaseline){
+ const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
+ const sourceSha256ByFile=Object.fromEntries(CONTACT_WECHAT_APPROVED_SUPPORT_FILES.map(file=>[file,hash(run('git',['show',`${releaseTarget}:${file}`],{cwd:app}))]));
+ assertContactWechatApprovedClosure({baseline:releaseBaseline,files,sourceSha256ByFile});
+ return hash(JSON.stringify(Object.fromEntries(files.map(file=>[file,hash(run('git',['show',`${releaseTarget}:${file}`],{cwd:app}))]))));
+}
+function verifyContactWechatSource(s,buildRequired=false){
+ if(s.lane!=='contact-wechat-code-only')return;
+ if(s.baseline!==CONTACT_WECHAT_RELEASE_BASELINE||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim()||contactWechatClosure(s.target,s.baseline)!==s.contactWechatClosureSha256)fail('contact_wechat_candidate_source_changed');
+ if(hash(safeFile(`${s.directory}/package-lock.json`))!==s.contactWechatDependencyLockSha256||hash(safeFile(`${s.oldDirectory}/package-lock.json`))!==s.contactWechatDependencyLockSha256)fail('contact_wechat_dependencies_changed');
+ if(buildRequired){
+  if(!s.contactWechatBuildProofSha256||hash(safeFile(`${operation}/attendance-build-proof.json`))!==s.contactWechatBuildProofSha256)fail('contact_wechat_build_proof_changed');
+  const proof=JSON.parse(safeFile(`${operation}/attendance-build-proof.json`));
+  if(proof.target!==s.target||proof.buildId!==safeFile(`${s.directory}/.next/BUILD_ID`).trim()||proof.guardedCommand!=='npm run build'||proof.memoryBytes!==4*1024**3||proof.heapMiB!==3072||proof.cpuQuotaPercent!==100||proof.tasks!==128||proof.seconds!==1200||proof.privateNetworkVerified!==true||proof.swapBytes!==0)fail('contact_wechat_build_proof_invalid');
+ }
+}
+function verifyContactWechatSettings(s,p){
+ if(s.lane!=='contact-wechat-code-only')return;
+ const env=verifyContactWechatSavedSettings(s);
+ const prior=pm().find(process=>process.name===s.oldName);
+ if(!prior||prior.pid!==s.contactWechatBaselinePid||prior.pm2_env.status!=='online'||prior.pm2_env.pm_cwd!==s.oldDirectory)fail('contact_wechat_baseline_process_changed');
+ for(const actual of [prior.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`)),env,p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))]){
+  assertAttendanceCandidateEnvironment(actual,'database-ready');
+  if(contactWechatEnvironmentDigest(actual,s.contactWechatInheritedEnvironmentKeys)!==s.contactWechatInheritedEnvironmentSha256)fail('contact_wechat_inherited_environment_changed');
+ }
+ for(const actual of [webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`)),env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))])if(JSON.stringify(Object.keys(contactWechatProtectedEnvironment(actual)))!==JSON.stringify(s.contactWechatInheritedEnvironmentKeys))fail('contact_wechat_inherited_environment_changed');
+ for(const actual of [env,p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))])if(actual.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||actual.MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED!=='0'||actual.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED!=='0'||actual.FAOLLA_WEB_BUILD_ID!==s.target||actual.NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID!==s.target||actual.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com'||actual.PORT!==String(s.port)||actual.NODE_OPTIONS!=='--max-old-space-size=4096'||actual.NEXT_TELEMETRY_DISABLED!=='1'||actual.PM2_HOME!=='/root/.pm2')fail('contact_wechat_candidate_environment_invalid');
+}
+function verifyContactWechatSavedSettings(s){
+ const env=candidateEnvironment(s);
+ if(hash(safeFile(`${operation}/runtime.json`))!==s.contactWechatRuntimeSha256||hash(safeFile(`${s.directory}/.env.local`))!==s.contactWechatEnvironmentFileSha256||hash(safeFile(`${s.oldDirectory}/.env.local`))!==s.contactWechatBaselineEnvironmentFileSha256)fail('contact_wechat_environment_file_changed');
+ const overrides={FAOLLA_WEB_BUILD_ID:s.target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:s.target,FAOLLA_WEB_RELEASED_AT:env.FAOLLA_WEB_RELEASED_AT,FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',PORT:String(s.port)};
+ const inheritedText=safeFile(`${s.oldDirectory}/.env.local`).split('\n').filter(line=>!Object.keys(overrides).some(key=>line.startsWith(`${key}=`))).join('\n');
+ if(safeFile(`${s.directory}/.env.local`)!==inheritedText+'\n'+Object.entries(overrides).map(([key,value])=>`${key}=${value}`).join('\n')+'\n')fail('contact_wechat_environment_delta_invalid');
+ if(contactWechatEnvironmentDigest(env)!==s.contactWechatInheritedEnvironmentSha256)fail('contact_wechat_inherited_environment_changed');
+ return env;
+}
+function contactWechatContactProof(response,body){
+ return {bodySha256:hash(body),contentType:response.headers.get('content-type'),contentDispositionSha256:hash(response.headers.get('content-disposition')??'')};
+}
+function assertContactWechatResponse(s,card,response,body){
+ if(!card.includes('function showWechatContactGuide(source)')||!card.includes('wechat-contact-guide')||!card.includes('contactSaveButtons')||!card.includes('MicroMessenger')||!card.includes('data-wechat-contact-download')||!card.includes('data-traffic-action="contact_download_click"'))fail('contact_wechat_guide_missing');
+ if(JSON.stringify(contactWechatContactProof(response,body))!==JSON.stringify(s.contactWechatContactProof))fail('contact_wechat_contact_response_changed');
+}
+async function contactWechatAttendanceSmoke(origin,publicMode=false){
+ const portal=publicMode?'https://launch.faolla.com':origin;
+ const probe=async(path,status)=>{
+  if(publicMode)return request(portal+path,[status],'launch.faolla.com');
+  const response=await contactWechatReleaseProbeFetch(portal+path,{redirect:'manual',headers:{Host:'launch.faolla.com',Connection:'close'},signal:AbortSignal.timeout(20000)});
+  if(response.status!==status)fail(`contact_wechat_http:${response.status}:${path.split('?')[0]}`);return response;
+ };
+ for(const entry of ['/api/merchant-enterprise/attendance/admin','/api/merchant-enterprise/attendance/self','/api/merchant-enterprise/attendance/records'])await probe(`${entry}?siteId=10000000`,401);
+ for(const entry of ['/test-harness/enterprise','/test-harness/employee-workspace'])await probe(entry,404);
+}
 function verifyAttendanceSource(s){
  if(s.lane!=='attendance')return;
  if(s.baseline!==ATTENDANCE_RELEASE_SCOPE.baseline||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim()||hash(safeFile(`${s.directory}/${ATTENDANCE_RELEASE_SCOPE_FILE}`))!==s.attendanceReleaseScopeSha256||hash(safeFile(`${s.directory}/scripts/attendance-production-database-migrations.manifest.json`))!==s.attendanceMigrationScopeSha256||!s.attendanceBuildProofSha256||hash(safeFile(`${operation}/attendance-build-proof.json`))!==s.attendanceBuildProofSha256)fail('attendance_candidate_source_changed');
@@ -371,7 +462,8 @@ async function recoverStaticPermissions(s){
  s.staticPermissionRetry={toolRevision:tool.revision,audit,previousRollback:s.rolledBackAt,acceptedAt:new Date().toISOString()};save(s);
 }
 async function activateCandidate(s){
- const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'?readRuntimePerformanceSavedConfigs(s,true):null;
+ const saved=s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,true):null;
+ if(s.lane==='contact-wechat-code-only'&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.contactWechatDependenciesSha256)fail('contact_wechat_dependency_tree_changed');
  verifyOrderAttention(s,'verify');
  const staticDir=realpathSync(`${app}/.next/static`);if(!staticDir.startsWith('/www/wwwroot/merchant-space'))fail('unexpected_static_directory');s.staticFiles=publishStatic(`${s.directory}/.next/static`,staticDir);
  s.status='activating';save(s);
@@ -509,11 +601,32 @@ try{
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
   const lane=onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   if(lane==='attendance'&&baseline!==ATTENDANCE_RELEASE_SCOPE.baseline)fail('attendance_live_baseline_invalid');
+  const contactWechatClosureSha256=lane==='contact-wechat-code-only'?contactWechatClosure(target,baseline):null;
   const previousActive=existsSync(activeFile)?JSON.parse(safeFile(activeFile)):null;
   const legacy=JSON.parse(safeFile('/var/lib/faolla-web-presentation-release/state.json'));
   const old=previousActive??{...legacy,port:3102,name:'merchant-space-web-live'};
   if(old.target!==baseline||(!previousActive&&legacy.status!=='active'))fail('live_baseline_not_owned');
   const all=pm(),prior=all.find(p=>p.name===old.name);if(!prior||prior.pm2_env.pm_cwd!==old.directory)fail('live_process_mismatch');
+  let contactWechatBaseline;
+  if(lane==='contact-wechat-code-only'){
+   if(!previousActive||baseline!==CONTACT_WECHAT_RELEASE_BASELINE||old.port!==3103||old.name!==`merchant-space-online-${baseline.slice(0,12)}`||old.directory!==`${app}.web-releases/${baseline.slice(0,12)}-online`||prior.pm2_env.status!=='online'||!Number.isSafeInteger(prior.pid)||prior.pid<=0)fail('contact_wechat_live_baseline_invalid');
+   const inherited=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+   assertContactWechatBuildEnvironmentKeys(inherited);
+   const inheritedKeys=Object.keys(contactWechatProtectedEnvironment(inherited));
+   for(const actual of [prior.pm2_env,inherited]){
+    assertAttendanceCandidateEnvironment(actual,'database-ready');
+    if(actual.FAOLLA_TRAFFIC_ENABLED!=='1'||!actual.FAOLLA_TRAFFIC_SIGNING_SECRET||actual.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||actual.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com'||actual.NODE_OPTIONS!=='--max-old-space-size=4096'||actual.NEXT_TELEMETRY_DISABLED!=='1'||actual.PM2_HOME!=='/root/.pm2'||contactWechatEnvironmentDigest(actual,inheritedKeys)!==contactWechatEnvironmentDigest(inherited))fail('contact_wechat_baseline_features_invalid');
+   }
+   if((await(await request(`http://127.0.0.1:${old.port}/api/app-web-version`)).json()).buildId!==baseline||JSON.parse(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')).phase!=='ended')fail('contact_wechat_baseline_not_ready');
+   const response=await request(`http://127.0.0.1:${old.port}/card/luis-gpyv6u/contact`),body=await response.text();
+   if(!body.includes('URL:https://www.haoyouduosevilla.com/')||!/^text\/vcard(?:;|$)/i.test(response.headers.get('content-type')??'')||!response.headers.get('content-disposition'))fail('contact_wechat_baseline_contact_invalid');
+   for(const origin of ['https://www.faolla.com','https://faolla.com']){
+    const publicContact=await request(`${origin}/card/luis-gpyv6u/contact`),publicBody=await publicContact.text();
+    if(JSON.stringify(contactWechatContactProof(publicContact,publicBody))!==JSON.stringify(contactWechatContactProof(response,body)))fail('contact_wechat_baseline_public_contact_changed');
+   }
+   await contactWechatAttendanceSmoke(`http://127.0.0.1:${old.port}`);
+   contactWechatBaseline={contactWechatClosureSha256,contactWechatInheritedEnvironmentKeys:inheritedKeys,contactWechatInheritedEnvironmentSha256:contactWechatEnvironmentDigest(inherited),contactWechatBaselineEnvironmentFileSha256:hash(safeFile(`${old.directory}/.env.local`)),contactWechatDependencyLockSha256:hash(safeFile(`${old.directory}/package-lock.json`)),contactWechatBaselinePid:prior.pid,contactWechatContactProof:contactWechatContactProof(response,body)};
+  }
   if(lane==='customer-code-performance'){
    if(prior.pm2_env.status!=='online'||!Number.isSafeInteger(prior.pid)||prior.pid<=0)fail('customer_code_baseline_process_invalid');
    assertCustomerCodeProjectionOff(prior.pm2_env,true);
@@ -524,16 +637,21 @@ try{
   }
   if(hash(run('git',['show',`${target}:package-lock.json`],{cwd:app}))!==hash(safeFile(`${old.directory}/package-lock.json`)))fail('dependencies_changed');
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
-  if(lane==='attendance')assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
+  if(lane==='attendance'||lane==='contact-wechat-code-only')assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   const sockets=run('ss',['-ltnH']);const port=[3103,3104,3105,3106,3107,3108,3109,3110].find(p=>!sockets.includes(`:${p} `));if(!port)fail('no_candidate_port');
   privateDirectory(operation);
   const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),...snapshotOnlineRetention(all,target,old.name),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
+  if(lane==='contact-wechat-code-only')Object.assign(s,contactWechatBaseline);
   if(lane==='attendance'){s.attendanceEnabled=false;s.attendanceReleaseScopeSha256=hash(run('git',['show',`${target}:${ATTENDANCE_RELEASE_SCOPE_FILE}`],{cwd:app}));s.attendanceMigrationScopeSha256=hash(run('git',['show',`${target}:scripts/attendance-production-database-migrations.manifest.json`],{cwd:app}));}
   save(s);run('git',['worktree','add','--detach',s.directory,target],{cwd:app});
   run('cp',['-a','--reflink=auto',`${old.directory}/node_modules`,`${s.directory}/node_modules`],{timeout:180000});
+  if(lane==='contact-wechat-code-only'){
+   s.contactWechatDependenciesSha256=bookingResumeDependencies(`${old.directory}/node_modules`);
+   if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.contactWechatDependenciesSha256)fail('contact_wechat_dependency_tree_changed');
+  }
   const env=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
   if(lane==='attendance'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'))fail('attendance_baseline_features_invalid');
   if(lane==='qr-export'&&(env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET))fail('qr_export_analytics_baseline_invalid');
@@ -554,11 +672,17 @@ try{
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
+  if(lane==='contact-wechat-code-only'){
+   if(contactWechatEnvironmentDigest(env)!==s.contactWechatInheritedEnvironmentSha256)fail('contact_wechat_inherited_environment_changed');
+   s.contactWechatRuntimeSha256=hash(safeFile(`${operation}/runtime.json`));s.contactWechatEnvironmentFileSha256=hash(safeFile(`${s.directory}/.env.local`));save(s);verifyContactWechatSource(s);
+  }
   console.log('online_focused_tests');
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);
   const tests=lane==='attendance'
    ? ATTENDANCE_RELEASE_FOCUSED_TESTS
+   : lane==='contact-wechat-code-only'
+   ? ['src/lib/merchantBusinessCardWebsiteRoute.test.ts','src/lib/merchantBusinessCardShare.test.ts','src/lib/merchantBusinessCardDestination.test.ts','scripts/contact-wechat-release-policy.test.mjs','scripts/contact-wechat-online-build.test.mjs','scripts/contact-wechat-release-probe-transport.test.mjs','scripts/attendance-online-build.test.mjs','scripts/online-traffic-publication-policy.test.mjs']
    : lane==='customer-code-performance'
    ? CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS
    : lane==='booking-merge-cpu'
@@ -584,8 +708,12 @@ try{
   if(lane==='customer-code-performance')run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   verifyCustomerCodeCandidateSettings(s);
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
-  try{if(lane==='attendance')buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});else run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
+  try{if(lane==='attendance')buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});else if(lane==='contact-wechat-code-only'){verifyContactWechatSource(s);verifyContactWechatSavedSettings(s);buildContactWechatOnlineCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation});}else run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
   if(lane==='attendance'){s.attendanceBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);}
+  if(lane==='contact-wechat-code-only'){
+   s.contactWechatBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyContactWechatSource(s,true);
+   if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.contactWechatDependenciesSha256)fail('contact_wechat_dependency_tree_changed');
+  }
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);

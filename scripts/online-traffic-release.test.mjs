@@ -12,6 +12,7 @@ import {assertRollingRetainedProcesses,assertRollingStateHistory,rollingHash,ROL
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,CUSTOMER_CODE_PERFORMANCE_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
 import {assertOnlineTrafficScope,onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,assertPendingTrafficMigrations,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
 import {ATTENDANCE_RELEASE_SCOPE,ATTENDANCE_RELEASE_FILES,ATTENDANCE_RELEASE_FOCUSED_TESTS,validateAttendanceReleaseScope,assertAttendanceReleaseScope,attendanceCandidateEnvironment,assertAttendanceCandidateEnvironment,assertAttendanceDatabaseReadyProof} from './online-traffic-release-policy.mjs';
+import {CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES} from './contact-wechat-release-policy.mjs';
 
 function releaseRequestSource(){
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
@@ -256,7 +257,7 @@ test('actual database branch refuses every no-database lane before backup, migra
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
  const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
- for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden'],['customer-code-performance','customer_code_performance_database_forbidden']]){
+ for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden'],['customer-code-performance','customer_code_performance_database_forbidden'],['contact-wechat-code-only','contact_wechat_code_only_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
@@ -2298,4 +2299,116 @@ test('attendance unauthenticated private/public smoke distinguishes DB-disabled 
   for(const endpoint of ['enterprise','employee-workspace'])assert.ok(calls.some(x=>x.path===`/test-harness/${endpoint}`));
   for(const path of ['/login','/admin','/super-admin','/card/luis-gpyv6u','/card/luis-gpyv6u/contact','/traffic-card-v1.js','/_next/static/chunks/exact.js'])assert.ok(calls.some(x=>x.path===path));
  }
+});
+
+function contactWechatControllerSource(){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ return code.slice(code.indexOf('function contactWechatProtectedEnvironment('),code.indexOf('function verifyAttendanceSource('));
+}
+function contactWechatSettingsFixture(){
+ const target='a'.repeat(40),operation='/operation',baseline=CONTACT_WECHAT_RELEASE_BASELINE;
+ const inherited={...attendanceCandidateEnvironment('database-ready'),...Object.fromEntries(ATTENDANCE_RELEASE_SCOPE.credentialKeys.map(key=>[key,'A'.repeat(43)])),
+  FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_TRAFFIC_SIGNING_SECRET:'synthetic-signing-secret',FAOLLA_TRAFFIC_RETENTION_ENABLED:'0',
+  FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',
+  PATH:'/usr/bin:/bin',HOME:'/root',NODE_ENV:'production',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1',PM2_HOME:'/root/.pm2',PORT:'3103',SUPABASE_SERVICE_ROLE_KEY:'synthetic-service-secret'};
+ const changes={FAOLLA_WEB_BUILD_ID:target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:target,FAOLLA_WEB_RELEASED_AT:'2026-10-11T12:00:00.000Z',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',PORT:'3104'};
+ const env={...inherited,...changes},oldText='SUPER_ADMIN_PASSWORD=synthetic-file-only\nWEB_PUSH_PRIVATE_KEY=synthetic-file-only\nUNRELATED=unchanged\nPORT=3103\n',nextText=oldText.split('\n').filter(line=>!Object.keys(changes).some(key=>line.startsWith(`${key}=`))).join('\n')+'\n'+Object.entries(changes).map(([key,value])=>`${key}=${value}`).join('\n')+'\n';
+ const files=new Map([['/operation/runtime.json',JSON.stringify(env)],['/old/.env.local',oldText],['/candidate/.env.local',nextText]]),hash=value=>createHash('sha256').update(value).digest('hex');
+ const p={name:'candidate',pid:3211,pm2_env:{...env,status:'online',pm_cwd:'/candidate'}},prior={name:'baseline',pid:3210,pm2_env:{...inherited,status:'online',pm_cwd:'/old'}},actual={...env},baselineActual={...inherited};
+ const s={lane:'contact-wechat-code-only',target,baseline,port:3104,directory:'/candidate',oldDirectory:'/old',oldName:'baseline',contactWechatBaselinePid:3210,
+  contactWechatRuntimeSha256:hash(files.get('/operation/runtime.json')),contactWechatEnvironmentFileSha256:hash(nextText),contactWechatBaselineEnvironmentFileSha256:hash(oldText)};
+ const api=runInNewContext(`${contactWechatControllerSource()}({contactWechatProtectedEnvironment,contactWechatEnvironmentDigest,verifyContactWechatSettings,assertContactWechatResponse,contactWechatContactProof,contactWechatClosure,verifyContactWechatSource})`,{
+  hash,operation,CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES,assertAttendanceCandidateEnvironment,
+  candidateEnvironment:()=>JSON.parse(files.get('/operation/runtime.json')),
+  safeFile:path=>{if(!files.has(path))throw Error('missing_fixture_file');return files.get(path);},
+  pm:()=>[prior,p],webReleaseRuntimeEnvironment,
+  read:path=>Object.entries(path==='/proc/3210/environ'?baselineActual:actual).map(([key,value])=>`${key}=${value}`).join('\0'),
+  fail:message=>{throw Error(message);},
+ });
+ s.contactWechatInheritedEnvironmentKeys=Object.keys(api.contactWechatProtectedEnvironment(inherited));s.contactWechatInheritedEnvironmentSha256=api.contactWechatEnvironmentDigest(inherited);
+ return {s,api,env,inherited,files,p,prior,actual,baselineActual,hash};
+}
+test('contact code-only inheritance checks exact baseline and candidate saved files PM2 and actual process values without exposing secrets',()=>{
+ const good=contactWechatSettingsFixture();assert.doesNotThrow(()=>good.api.verifyContactWechatSettings(good.s,good.p));
+ for(const side of ['saved','pm2','actual','baseline-pm2','baseline-actual'])for(const key of ['FAOLLA_TRAFFIC_SIGNING_SECRET','FAOLLA_TRAFFIC_ENABLED','FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID','FAOLLA_SUPER_ADMIN_ORIGIN','SUPABASE_SERVICE_ROLE_KEY','HOME','PATH']){
+  const f=contactWechatSettingsFixture();
+  if(side==='saved'){f.files.set('/operation/runtime.json',JSON.stringify({...f.env,[key]:'changed-synthetic'}));}
+  else (side==='pm2'?f.p.pm2_env:side==='actual'?f.actual:side==='baseline-pm2'?f.prior.pm2_env:f.baselineActual)[key]='changed-synthetic';
+  assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),error=>/contact_wechat_|attendance_release_/.test(error.message)&&!error.message.includes('synthetic-signing-secret'));
+ }
+ for(const side of ['saved','actual','baseline-actual']){
+  const f=contactWechatSettingsFixture();if(side==='saved'){f.files.set('/operation/runtime.json',JSON.stringify({...f.env,STRIPE_SECRET_KEY:'synthetic'}));f.s.contactWechatRuntimeSha256=f.hash(f.files.get('/operation/runtime.json'));}
+  else (side==='actual'?f.actual:f.baselineActual).STRIPE_SECRET_KEY='synthetic';
+  assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_inherited_environment_changed/);
+ }
+ for(const patch of [{pid:9999},{pm2_env:{status:'stopped'}},{pm2_env:{status:'online',pm_cwd:'/foreign'}}]){const f=contactWechatSettingsFixture();Object.assign(f.prior,patch);assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_baseline_process_changed/);}
+});
+test('contact code-only file-only credentials remain exact and the only dotenv change is the fixed new candidate delta',()=>{
+ for(const path of ['/old/.env.local','/candidate/.env.local','/operation/runtime.json']){const f=contactWechatSettingsFixture();f.files.set(path,f.files.get(path)+'\nchanged');assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_environment_file_changed|Unexpected/);}
+ const f=contactWechatSettingsFixture();f.files.set('/candidate/.env.local',f.files.get('/candidate/.env.local').replace('synthetic-file-only','different'));f.s.contactWechatEnvironmentFileSha256=f.hash(f.files.get('/candidate/.env.local'));
+ assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_environment_delta_invalid/);
+ for(const key of ['PORT','NODE_OPTIONS','PM2_HOME','NEXT_TELEMETRY_DISABLED','FAOLLA_WEB_BUILD_ID','NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID','MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED']){const f=contactWechatSettingsFixture();f.actual[key]='changed';assert.throws(()=>f.api.verifyContactWechatSettings(f.s,f.p),/contact_wechat_candidate_environment_invalid/);}
+});
+test('contact code-only closure passes only the 17 fixed approved support byte hashes while sealing the complete changed-file closure',()=>{
+ const code=contactWechatControllerSource(),hash=value=>createHash('sha256').update(value).digest('hex'),files=[...CONTACT_WECHAT_APPROVED_SUPPORT_FILES,'src/app/card/[card]/route.ts','src/lib/merchantBusinessCardWebsiteRoute.test.ts','scripts/contact-wechat-online-build.mjs'];
+ const calls=[];
+ const closure=runInNewContext(`${code}contactWechatClosure`,{app:'/app',hash,CONTACT_WECHAT_APPROVED_SUPPORT_FILES,run:(command,args)=>{assert.equal(command,'git');calls.push([...args]);return args[0]==='diff'?files.join('\n'):`synthetic-content:${args[1]}`;},
+  assertContactWechatApprovedClosure:value=>{assert.equal(value.baseline,CONTACT_WECHAT_RELEASE_BASELINE);assert.deepEqual([...value.files],files);assert.deepEqual(Object.keys(value.sourceSha256ByFile),[...CONTACT_WECHAT_APPROVED_SUPPORT_FILES]);},fail:x=>{throw Error(x);}});
+ const target='a'.repeat(40),digest=closure(target,CONTACT_WECHAT_RELEASE_BASELINE);assert.match(digest,/^[a-f0-9]{64}$/);assert.ok(calls.some(args=>args[1]===`${target}:src/app/card/[card]/route.ts`));
+});
+test('contact code-only VCF content and response type/disposition match baseline byte proof and actual emitted guidance is present',()=>{
+ const f=contactWechatSettingsFixture(),response=new Response('synthetic',{headers:{'Content-Type':'text/vcard; charset=utf-8','Content-Disposition':'attachment; filename="synthetic.vcf"'}}),body='BEGIN:VCARD\r\nURL:https://example.invalid\r\nEND:VCARD\r\n';
+ f.s.contactWechatContactProof=f.api.contactWechatContactProof(response,body);
+ const card='function showWechatContactGuide(source) wechat-contact-guide contactSaveButtons MicroMessenger data-wechat-contact-download data-traffic-action="contact_download_click"';
+ assert.doesNotThrow(()=>f.api.assertContactWechatResponse(f.s,card,response,body));
+ for(const marker of ['showWechatContactGuide','wechat-contact-guide','contactSaveButtons','MicroMessenger','data-wechat-contact-download','contact_download_click'])assert.throws(()=>f.api.assertContactWechatResponse(f.s,card.replaceAll(marker,'removed'),response,body),/contact_wechat_guide_missing/);
+ assert.throws(()=>f.api.assertContactWechatResponse(f.s,card,response,body+'\n'),/contact_wechat_contact_response_changed/);
+ for(const changed of [{'Content-Type':'text/plain','Content-Disposition':'attachment; filename="synthetic.vcf"'},{'Content-Type':'text/vcard; charset=utf-8','Content-Disposition':'inline'}])assert.throws(()=>f.api.assertContactWechatResponse(f.s,card,new Response(body,{headers:changed}),body),/contact_wechat_contact_response_changed/);
+});
+test('contact code-only preflight closure env inheritance and bounded resource admission precede candidate-state or source writes',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),stage=code.indexOf("if(action==='stage'){"),write=code.indexOf('privateDirectory(operation)',stage);
+ for(const marker of ['contactWechatClosure(target,baseline)','contact_wechat_live_baseline_invalid','assertContactWechatBuildEnvironmentKeys(inherited)','assertAttendanceCandidateEnvironment(actual,\'database-ready\')','contactWechatAttendanceSmoke(`http://127.0.0.1:${old.port}`)','assertAttendanceBuildAdmission({meminfo:']){const position=code.indexOf(marker,stage);assert.ok(position>stage&&position<write,marker);}
+ const build=code.indexOf('buildContactWechatOnlineCandidate({lane,baseline:s.baseline',write),proof=code.indexOf('s.contactWechatBuildProofSha256=',build),launch=code.indexOf("run('pm2',['start'",build),readiness=code.indexOf('s.status=onlineReleaseStageStatus(lane)',launch);
+ assert.ok(write<build&&build<proof&&proof<launch&&launch<readiness);
+ assert.match(code,/verifyContactWechatSource\(s,true\)/);assert.match(code,/bookingResumeDependencies\(`\$\{s.directory\}\/node_modules`\)!==s.contactWechatDependenciesSha256/);
+ assert.equal(onlineReleaseStageStatus('contact-wechat-code-only'),'ready-no-database');assert.equal(onlineReleaseActivationStatus('contact-wechat-code-only'),'ready-no-database');
+ assert.throws(()=>assertOnlineReleaseDatabaseAllowed('contact-wechat-code-only'),/contact_wechat_code_only_database_forbidden/);
+});
+test('contact code-only private/public attendance smoke retains enabled auth and rejects harness access, with real private Host transport only',async()=>{
+ const code=contactWechatControllerSource();
+ for(const publicMode of [false,true])for(const wrongStatus of [null,200,404]){
+  const calls=[];const smoke=runInNewContext(`${code}contactWechatAttendanceSmoke`,{AbortSignal,request:async(url,statuses,host)=>{calls.push({url,status:statuses[0],host,transport:'public'});if(wrongStatus!==null)throw Error('wrong_status');},
+   contactWechatReleaseProbeFetch:async(url,options)=>{calls.push({url,status:url.includes('/test-harness/')?404:401,host:options.headers.Host,transport:'private'});assert.equal(options.redirect,'manual');return {status:wrongStatus??(url.includes('/test-harness/')?404:401)};},fail:message=>{throw Error(message);}});
+  if(wrongStatus!==null)await assert.rejects(smoke('http://127.0.0.1:3104',publicMode),/wrong_status|contact_wechat_http/);
+  else {await smoke('http://127.0.0.1:3104',publicMode);assert.equal(calls.length,5);for(const call of calls){assert.equal(call.host,'launch.faolla.com');assert.equal(call.transport,publicMode?'public':'private');assert.ok(call.url.startsWith(publicMode?'https://launch.faolla.com':'http://127.0.0.1:3104'));}assert.deepEqual(calls.map(call=>call.status),[401,401,401,404,404]);}
+ }
+});
+test('contact code-only post-publication bookkeeping appends only converge with null victim and cannot stop retire or reclaim',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),start=code.indexOf("if(s.lane==='contact-wechat-code-only'){",code.indexOf('async function settleOnlineRetention(')),end=code.indexOf('\n const result=await completePublicationRetention',start),branch=code.slice(start,end);
+ assert.doesNotMatch(branch,/retire'|reclaimPublicationArtifacts|completePublicationRetention/);
+ for(const failure of [null,'not-active','converge','window']){
+  let history={entries:[{active:{target:'b'.repeat(40)}}]},calls=[];const s={lane:'contact-wechat-code-only',target:'a'.repeat(40),status:failure==='not-active'?'preparing':'active'};
+  const result=await runInNewContext(`(async()=>{${branch}})()`,{s,heldLock:'held-lock',controllerModuleUrl:'file:///tool/scripts/online-traffic-release.mjs',URL,fileURLToPath:()=>'/tool/',activeFile:'/active',
+   readOnlineRetentionHistory:()=>history,run:(command,args)=>{assert.equal(command,'git');assert.deepEqual([...args],['rev-parse','HEAD']);return 'c'.repeat(40);},
+   runOnlineRetentionUnderHeldLocks:async value=>{calls.push(value);assert.deepEqual(Object.keys(value),['kind','activeTarget','victimTarget','toolRevision','lock']);assert.equal(value.kind,'converge');assert.equal(value.victimTarget,null);if(failure==='converge')throw Error('failed');history={entries:[{active:{target:s.target}}]};},
+   inspectOnlineRetentionWindow:()=>({phase:failure==='window'?'changed':'stable',active:{target:s.target}}),safeFile:()=>JSON.stringify({target:s.target}),pm:()=>[],normalizeRetirementProcess:x=>x,
+   fail:x=>{throw Error(x);},console:{error(){}},
+  });
+  assert.equal(result.retired,null);assert.equal(result.status,failure?'pending':'completed');assert.equal(calls.length,failure==='not-active'?0:1);
+ }
+});
+test('contact code-only rollback reuses all-file snapshot validation and restores only the owned live baseline',async()=>{
+ for(const invalid of ['saved-drift','saved-missing','current-drift']){
+  const f=runtimePerformanceProxyHarness('contact-wechat-code-only');f.s.status='active';
+  for(const name of f.names)f.files.set(`/proxy/${name}`,f.files.get(`/operation/after-${name}`));
+  if(invalid==='saved-drift')f.files.set('/operation/before-last.conf','unowned');
+  if(invalid==='saved-missing')f.files.delete('/operation/before-last.conf');
+  if(invalid==='current-drift')f.files.set('/proxy/last.conf','unowned');
+  assert.throws(()=>f.api.restoreConfigs(f.s),invalid==='current-drift'?/rollback_proxy_not_owned/:invalid==='saved-missing'?/missing_fixture_file/:/contact_wechat_saved_proxy_changed/);
+  assert.deepEqual(f.effects,[]);assert.equal(f.s.status,'active');
+ }
+ const f=runtimePerformanceProxyHarness('contact-wechat-code-only'),before=f.names.map(name=>f.files.get(`/operation/before-${name}`));f.s.status='active';
+ for(const name of f.names)f.files.set(`/proxy/${name}`,f.files.get(`/operation/after-${name}`));
+ f.api.restoreConfigs(f.s);assert.equal(f.s.status,'rolled-back');assert.deepEqual(f.names.map(name=>f.files.get(`/proxy/${name}`)),before);
+ assert.equal(f.effects.some(effect=>effect.includes('stop')||effect.includes('restart')),false);
 });
