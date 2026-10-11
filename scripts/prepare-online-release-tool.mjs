@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {ATTENDANCE_STAGED_REPAIR, assertAttendanceStagedRepairReceipt} from './attendance-staged-tool-repair-policy.mjs';
+import {CONTACT_WECHAT_STAGED_REPAIR, assertContactWechatStagedRepairReceipt} from './contact-wechat-staged-tool-repair-policy.mjs';
 
 const APP = '/www/wwwroot/merchant-space';
 const TOOL_ROOT = '/var/lib/faolla-online-code';
@@ -11,10 +12,11 @@ const MAINTENANCE = '/var/lib/faolla-maintenance/merchant-space';
 const RELEASE_ROOT = '/var/lib/faolla-online-release';
 const SELF = 'scripts/prepare-online-release-tool.mjs';
 const STAGED_REPAIR_POLICY = 'scripts/attendance-staged-tool-repair-policy.mjs';
+const CONTACT_STAGED_REPAIR_POLICY = 'scripts/contact-wechat-staged-tool-repair-policy.mjs';
 const SHA = /^[a-f0-9]{40}$/;
 export const TOOL_SPARSE_PATTERNS = '/*\n!/public/downloads/\n';
 export const TOOL_REQUIRED_FILES = Object.freeze([
-  SELF, STAGED_REPAIR_POLICY, 'scripts/online-traffic-release.mjs', 'scripts/online-traffic-release-policy.mjs',
+  SELF, STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, 'scripts/online-traffic-release.mjs', 'scripts/online-traffic-release-policy.mjs',
   'scripts/online-release-rolling.mjs', 'scripts/online-release-rolling-policy.mjs',
   'scripts/online-release-retirement.mjs', 'scripts/online-release-retirement-policy.mjs',
   'scripts/web-presentation-release-policy.mjs', 'scripts/contact-card-release-policy.mjs',
@@ -419,15 +421,17 @@ export function executeOnlineReleaseToolPlan(plan, ports = {}) {
   return {...verifyOnlineReleaseTool(plan, ports), created: true};
 }
 
-export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoot = RELEASE_ROOT, fixedStagedRepairReceipt} = {}, checkPath = assertOnlineToolOwnedPath) {
+export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoot = RELEASE_ROOT, fixedStagedRepairReceipt, fixedContactWechatStagedRepairReceipt} = {}, checkPath = assertOnlineToolOwnedPath) {
   // This is not a CLI skip option. Only the separately reviewed, locked repair
   // entrypoint supplies a complete receipt for the single already-built case.
   if (fixedStagedRepairReceipt !== undefined) assertAttendanceStagedRepairReceipt(fixedStagedRepairReceipt);
+  if (fixedStagedRepairReceipt !== undefined && fixedContactWechatStagedRepairReceipt !== undefined) fail('release_pending');
+  if (fixedContactWechatStagedRepairReceipt !== undefined) assertContactWechatStagedRepairReceipt(fixedContactWechatStagedRepairReceipt);
   checkPath(maintenance);
   const statePath = path.join(maintenance, 'state.json'); checkPath(statePath, 'file');
   if (JSON.parse(fs.readFileSync(statePath, 'utf8')).phase !== 'ended') fail('maintenance_not_ended');
   checkPath(releaseRoot);
-  let stagedRepairMatched = false;
+  let stagedRepairMatched = false, contactStagedRepairMatched = false;
   for (const name of fs.readdirSync(releaseRoot)) {
     if (name === 'active.json') {checkPath(path.join(releaseRoot, name), 'file'); continue;}
     if (!SHA.test(name)) fail('release_entry_invalid');
@@ -436,6 +440,18 @@ export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoo
     const stateText = fs.readFileSync(state, 'utf8'), value = JSON.parse(stateText);
     if (value.target !== name) fail('release_pending');
     if (['active', 'rolled-back'].includes(value.status)) continue;
+    if (fixedContactWechatStagedRepairReceipt !== undefined && name === CONTACT_WECHAT_STAGED_REPAIR.target) {
+      const receipt = fixedContactWechatStagedRepairReceipt, incident = CONTACT_WECHAT_STAGED_REPAIR;
+      if (directory !== incident.operation || value.status !== 'preparing' || value.lane !== 'contact-wechat-code-only' ||
+          value.baseline !== incident.baseline || value.directory !== incident.directory || value.name !== incident.name ||
+          value.port !== incident.port || sha256(stateText) !== incident.stateSha256 ||
+          receipt.originalStateSha256 !== incident.stateSha256) fail('release_pending');
+      if ((fs.lstatSync(directory).mode & 0o777) !== 0o700 || (fs.lstatSync(state).mode & 0o777) !== 0o600) fail('unsafe_path');
+      checkPath(incident.directory);
+      assertContactWechatStagedRepairReceipt(receipt, {target: name, toolRevision: receipt.toolRevision});
+      contactStagedRepairMatched = true;
+      continue;
+    }
     if (fixedStagedRepairReceipt !== undefined && name === ATTENDANCE_STAGED_REPAIR.target) {
       const receipt = fixedStagedRepairReceipt, incident = ATTENDANCE_STAGED_REPAIR;
       if (directory !== incident.operation || value.status !== 'staged' || value.baseline !== incident.baseline ||
@@ -470,6 +486,7 @@ export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoo
     } else assertUnpublishedCandidateTerminationReceipt({stateText, receipt, preservedFiles, absentPaths: [...absentPaths]});
   }
   if (fixedStagedRepairReceipt !== undefined && !stagedRepairMatched) fail('release_pending');
+  if (fixedContactWechatStagedRepairReceipt !== undefined && !contactStagedRepairMatched) fail('release_pending');
 }
 
 export function withOnlineToolPreparationLocks({deployLock, maintenance}, work, {
@@ -510,14 +527,16 @@ export function verifyOnlineToolBootstrap(plan, self = fileURLToPath(import.meta
   if (path.join(repository, SELF) !== self || sourceHead.length !== 40 || !SHA.test(sourceHead) ||
       text(git(repository, ['status', '--porcelain=v1', '--untracked-files=all'])).trim() ||
       !fs.readFileSync(self).equals(Buffer.from(git(plan.app, ['show', `${plan.target}:${SELF}`])))) fail('bootstrap_source_changed');
-  // Verify the only non-builtin dependency as well as this helper. An ancestor
-  // may bootstrap a later tool only while both reviewed source files remain
+  // Verify both builtin-only policy dependencies as well as this helper. An ancestor
+  // may bootstrap a later tool only while all reviewed source files remain
   // byte-identical; changed policy bytes require a new verified closure.
-  const policy = path.join(repository, STAGED_REPAIR_POLICY); checkPath(policy, 'file');
+  for (const policyName of [STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY]) {
+  const policy = path.join(repository, policyName); checkPath(policy, 'file');
   const policyBytes = fs.readFileSync(policy), policySource = policyBytes.toString('utf8');
-  if (!policyBytes.equals(Buffer.from(git(plan.app, ['show', `${plan.target}:${STAGED_REPAIR_POLICY}`]))) ||
+  if (!policyBytes.equals(Buffer.from(git(plan.app, ['show', `${plan.target}:${policyName}`]))) ||
       [...policySource.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)].some(match => !match[1].startsWith('node:')) ||
       /\bimport\s*(?:\(|['"])|\brequire\s*\(/.test(policySource)) fail('bootstrap_source_changed');
+  }
   git(plan.app, ['merge-base', '--is-ancestor', sourceHead, plan.target]);
 }
 
