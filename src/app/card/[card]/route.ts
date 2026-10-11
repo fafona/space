@@ -841,6 +841,36 @@ function buildInlineI18nScript() {
       "pt-PT": "Ativar som",
       "ru-RU": "Включить звук"
     };
+    const CONTACT_SAVE_GUIDE_TEXT = {
+      "zh-CN": {
+        title: "请在浏览器中保存联系人",
+        note: "微信内通常会先下载联系人文件，网页不能自动切换到系统浏览器。请按以下步骤继续：",
+        steps: ["点微信右上角的“…”菜单。", "选择“在浏览器中打开”。", "在浏览器中再次点击“一键保存到通讯录”，按系统提示处理联系人。"],
+        close: "知道了，返回联系卡",
+        download: "继续在微信下载"
+      },
+      "zh-TW": {
+        title: "請在瀏覽器中儲存聯絡人",
+        note: "微信內通常會先下載聯絡人檔案，網頁不能自動切換到系統瀏覽器。請按以下步驟繼續：",
+        steps: ["點微信右上角的「…」選單。", "選擇「在瀏覽器中開啟」。", "在瀏覽器中再次點擊「一鍵儲存到通訊錄」，按照系統提示處理聯絡人。"],
+        close: "知道了，返回聯絡卡",
+        download: "繼續在微信下載"
+      },
+      "en-GB": {
+        title: "Save the contact in your browser",
+        note: "WeChat may download the contact file first. This page cannot automatically switch to your system browser. Follow these steps:",
+        steps: ["Tap the “…” menu at the top right of WeChat.", "Choose “Open in browser”.", "In your browser, tap the save-contact button again and follow the system prompts."],
+        close: "Got it, return to the contact card",
+        download: "Continue downloading in WeChat"
+      },
+      "es-ES": {
+        title: "Guarda el contacto desde tu navegador",
+        note: "WeChat puede descargar primero el archivo de contacto. Esta página no puede abrir automáticamente el navegador del sistema. Sigue estos pasos:",
+        steps: ["Pulsa el menú «…» arriba a la derecha en WeChat.", "Elige «Abrir en el navegador».", "En el navegador, pulsa de nuevo el botón para guardar el contacto y sigue las indicaciones del sistema."],
+        close: "Entendido, volver a la tarjeta",
+        download: "Continuar descargando en WeChat"
+      }
+    };
     const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"];
     const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
     const localeCacheStore = new Map();
@@ -1448,6 +1478,106 @@ function buildInlineI18nScript() {
         }
       }, 720);
     }
+
+    let wechatContactGuide = null;
+
+    function showWechatContactGuide(source) {
+      if (wechatContactGuide) {
+        wechatContactGuide.querySelector("[data-wechat-contact-close]")?.focus();
+        return;
+      }
+      const text = resolveIntroText(CONTACT_SAVE_GUIDE_TEXT, document.documentElement.lang, "en-GB");
+      const overlay = document.createElement("div");
+      overlay.id = "wechat-contact-guide";
+      overlay.setAttribute("data-no-translate", "1");
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "true");
+      overlay.setAttribute("aria-labelledby", "wechat-contact-guide-title");
+      overlay.setAttribute("aria-describedby", "wechat-contact-guide-note");
+      overlay.style.cssText = "position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:rgba(15,23,42,.55);";
+      const panel = document.createElement("div");
+      panel.style.cssText = "width:100%;max-width:420px;max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);overflow:auto;padding:22px;border-radius:22px;background:#fff;color:#0f172a;box-shadow:0 24px 80px rgba(15,23,42,.24);font-size:15px;line-height:1.6;";
+      const title = document.createElement("h2");
+      title.id = "wechat-contact-guide-title";
+      title.style.cssText = "margin:0;font-size:20px;line-height:1.4;";
+      title.textContent = text.title;
+      const note = document.createElement("p");
+      note.id = "wechat-contact-guide-note";
+      note.textContent = text.note;
+      const steps = document.createElement("ol");
+      steps.style.cssText = "padding-left:22px;margin:16px 0;";
+      text.steps.forEach((step) => {
+        const item = document.createElement("li");
+        item.style.marginBottom = "8px";
+        item.textContent = step;
+        steps.appendChild(item);
+      });
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:grid;gap:10px;margin-top:20px;";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "button";
+      close.setAttribute("data-wechat-contact-close", "");
+      close.style.minHeight = "44px";
+      close.textContent = text.close;
+      const download = document.createElement("a");
+      download.className = "button secondary";
+      download.setAttribute("data-wechat-contact-download", "");
+      // Keep the actual original download address, with no original-button marker
+      // or synthetic click that could reopen this guide.
+      download.setAttribute("href", source.getAttribute("href") || "");
+      download.style.minHeight = "44px";
+      download.textContent = text.download;
+      const previousOverflow = document.body.style.overflow;
+      const closeGuide = () => {
+        if (wechatContactGuide !== overlay) return;
+        overlay.remove();
+        wechatContactGuide = null;
+        document.body.style.overflow = previousOverflow;
+        source.focus();
+      };
+      close.addEventListener("click", closeGuide);
+      download.addEventListener("click", (event) => {
+        event.preventDefault();
+        const href = download.getAttribute("href");
+        closeGuide();
+        navigateToUrl(href);
+      });
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) closeGuide();
+      });
+      overlay.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeGuide();
+        } else if (event.key === "Tab") {
+          event.preventDefault();
+          (document.activeElement === close ? download : close).focus();
+        }
+      });
+      actions.appendChild(close);
+      actions.appendChild(download);
+      panel.appendChild(title);
+      panel.appendChild(note);
+      panel.appendChild(steps);
+      panel.appendChild(actions);
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+      document.body.style.overflow = "hidden";
+      wechatContactGuide = overlay;
+      close.focus();
+    }
+
+    const contactSaveButtons = Array.from(document.querySelectorAll('a[data-traffic-action="contact_download_click"]'));
+    contactSaveButtons.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        if (!isWechatBrowser()) return;
+        const source = event.currentTarget;
+        if (!(source instanceof HTMLAnchorElement) || !source.getAttribute("href")) return;
+        event.preventDefault();
+        showWechatContactGuide(source);
+      });
+    });
 
     const wechatButtons = Array.from(document.querySelectorAll("[data-wechat-primary]"));
     wechatButtons.forEach((button) => {
@@ -4478,7 +4608,7 @@ export async function GET(
   const websiteUrl = resolveBusinessCardContactWebsite(websiteSnapshot?.card, payload.targetUrl, payload.contact?.websiteUrl);
   const trafficResource = introDebug ? null : websiteSnapshot ? { siteId: websiteSnapshot.siteId, cardId: websiteSnapshot.card.id, name: payload.name }
     : await resolvePersonalCardTraffic(payload.ownerMerchantId, shareKey);
-  const htmlVersion = `${payload.updatedAt ?? ""}|website:${websiteUrl}`;
+  const htmlVersion = `${payload.updatedAt ?? ""}|website:${websiteUrl}|contact-guide:v1`;
   const cachedHtml = introDebug
     ? ""
     : readCachedContactCardHtml(shareKey, requestOrigin, htmlVersion);
