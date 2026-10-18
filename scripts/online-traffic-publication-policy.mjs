@@ -1,5 +1,6 @@
 import {onlineReleaseLane} from './online-traffic-release-policy.mjs';
 import {hasContactWechatReleaseAnchor, assertContactWechatReleaseScope} from './contact-wechat-release-policy.mjs';
+import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';
 
 // Exact operational support closure reviewed for the two-version rollout.
 // This separates application lane classification from source-only tooling; it
@@ -53,6 +54,7 @@ const support = new Set(ONLINE_PUBLICATION_SUPPORT_FILES);
 export function onlinePublicationLane(files) {
   if (!Array.isArray(files) || files.some(file => typeof file !== 'string' || !file || /[\0\r\n\\]/.test(file)) ||
       new Set(files).size !== files.length) throw Error('online_publication_files_invalid');
+  if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}
   // This dedicated closure is checked BEFORE generic support filtering. Its
   // historical repair paths remain source-only and do not become exemptions
   // for any older application lane or for this lane's exact two-file slice.

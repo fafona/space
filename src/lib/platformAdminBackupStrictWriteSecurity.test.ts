@@ -7,10 +7,12 @@ import { createPlatformAdminDataBackupEntry, buildPlatformAdminDataBackupBlocks,
 import { createPlatformAdminDataBackupHandlers } from "./platformAdminDataBackupRoute";
 import { buildPlatformMerchantSnapshotBlocks, PLATFORM_MERCHANT_SNAPSHOT_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG,
-  PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG } from "./platformMerchantSnapshot";
+  PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG, normalizePlatformMerchantSnapshotPayload } from "./platformMerchantSnapshot";
 import { buildPlatformMerchantConfigArchiveBlocks, PLATFORM_MERCHANT_CONFIG_ARCHIVE_SLUG,
   PLATFORM_MERCHANT_CONFIG_ARCHIVE_BACKUP_SLUG } from "./platformMerchantConfigArchive";
 import { buildPlatformSupportInboxBlocks, PLATFORM_SUPPORT_INBOX_SLUG } from "./platformSupportInbox";
+import { createDefaultMerchantBusinessCardDraft } from "./merchantBusinessCards";
+import { parsePlatformAdminBackupCreateAck } from "./platformAdminBackupCreateClient";
 
 const AT = "2026-09-08T12:00:00.000Z";
 const PRIVATE = "SYNTHETIC-PRIVATE-DATABASE-ERROR private@example.invalid password=not-a-real-secret";
@@ -148,6 +150,51 @@ async function assertIncomplete(response: Response) {
   const payload = await response.json();
   assert.deepEqual(payload, INCOMPLETE);
   assert.doesNotMatch(JSON.stringify(payload), /SYNTHETIC-PRIVATE|private@example|password=/);
+}
+
+for (const imageFields of [
+  { shareImageUrl: "https://example.test/share.png" },
+  { contactPagePublicImageUrl: "https://example.test/contact.png" },
+  { shareImageUrl: "https://example.test/share.png", contactPagePublicImageUrl: "https://example.test/contact.png" },
+]) {
+  test(`automatic snapshot POST accepts public-image cards without changing existing backup or merchant rows: ${Object.keys(imageFields).join("+")}`, async () => {
+    const f = fixture();
+    const snapshot = normalizePlatformMerchantSnapshotPayload({ ...f.entry.snapshot.merchantSnapshot!, snapshot: [{ id: "10000000", createdAt: AT,
+      businessCards: [{ ...createDefaultMerchantBusinessCardDraft({}), id: "synthetic-card", createdAt: AT,
+        imageUrl: "https://example.test/front.png", ...imageFields }],
+    }] });
+    const stored = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const previous = createPlatformAdminDataBackupEntry({ source: "manual", operator: "Synthetic", snapshot: {
+      ...f.entry.snapshot, merchantSnapshot: snapshot,
+    } });
+    previous.id = f.entry.id; previous.at = AT;
+    const previousBlocks = stored(buildPlatformAdminDataBackupBlocks({ backups: [previous] }));
+    for (const slug of [PLATFORM_ADMIN_DATA_BACKUP_SLUG, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG]) {
+      f.rows.get(slug)!.blocks = structuredClone(previousBlocks);
+    }
+    for (const slug of [PLATFORM_MERCHANT_SNAPSHOT_SLUG, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
+      PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG]) {
+      f.rows.get(slug)!.blocks = stored(buildPlatformMerchantSnapshotBlocks(snapshot));
+    }
+    const merchantRows = [...f.rows].filter(([slug]) => ![PLATFORM_ADMIN_DATA_BACKUP_SLUG, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG].includes(slug))
+      .map(([slug, row]) => [slug, structuredClone(row)] as const);
+    const response = await f.handlers.POST(request({ source: "auto", operator: "Synthetic",
+      platformState: f.entry.snapshot.platformState, merchantAccounts: [] }, "POST"));
+    assert.equal(response.status, 200, await response.clone().text());
+    const reply = await response.json();
+    const acknowledgement = parsePlatformAdminBackupCreateAck(reply);
+    assert.ok(acknowledgement, JSON.stringify(reply));
+    assert.equal(acknowledgement?.created, true);
+    assert.equal(acknowledgement.backups.length, 2);
+    assert.deepEqual(new Set(f.writes), new Set([PLATFORM_ADMIN_DATA_BACKUP_SLUG, PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG]));
+    assert.equal(f.rpcCalls, 0);
+    for (const [slug, row] of merchantRows) assert.deepEqual(f.rows.get(slug), row);
+    const first = f.rows.get(PLATFORM_ADMIN_DATA_BACKUP_SLUG)!.blocks;
+    assert.deepEqual(first, f.rows.get(PLATFORM_ADMIN_DATA_BACKUP_BACKUP_SLUG)!.blocks);
+    const backups = (first as typeof previousBlocks)[0].props.payload.backups;
+    assert.equal(backups.length, 2);
+    assert.deepEqual(backups.find(({ id }) => id === previous.id), previousBlocks[0].props.payload.backups[0]);
+  });
 }
 
 for (const slug of [PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
