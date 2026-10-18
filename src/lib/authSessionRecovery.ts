@@ -32,10 +32,15 @@ export type MerchantCookieSessionPayload = {
   user?: Session["user"] | null;
 };
 
-let merchantSessionPayloadInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
-let merchantSessionPayloadWithTokensInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
+export type MerchantSessionReadResult =
+  | { status: "authenticated"; payload: MerchantCookieSessionPayload }
+  | { status: "unauthenticated"; payload: null }
+  | { status: "unavailable"; payload: null };
+
+let merchantSessionPayloadInFlight: Promise<MerchantSessionReadResult> | null = null;
+let merchantSessionPayloadWithTokensInFlight: Promise<MerchantSessionReadResult> | null = null;
 let merchantSessionPayloadCache: {
-  payload: MerchantCookieSessionPayload | null;
+  result: MerchantSessionReadResult;
   expiresAt: number;
 } | null = null;
 
@@ -44,6 +49,7 @@ const UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS = 1500;
 
 type ReadMerchantSessionPayloadOptions = {
   includeClientTokens?: boolean;
+  forceRefresh?: boolean;
 };
 
 function isNativeAppShellRuntime() {
@@ -69,21 +75,21 @@ export function invalidateMerchantSessionPayloadCache() {
   merchantSessionPayloadCache = null;
 }
 
-function readCachedMerchantSessionPayload() {
+function readCachedMerchantSessionResult() {
   if (!merchantSessionPayloadCache) return undefined;
   if (merchantSessionPayloadCache.expiresAt <= Date.now()) {
     merchantSessionPayloadCache = null;
     return undefined;
   }
-  return merchantSessionPayloadCache.payload;
+  return merchantSessionPayloadCache.result;
 }
 
-function cacheMerchantSessionPayload(
-  payload: MerchantCookieSessionPayload | null,
+function cacheMerchantSessionResult(
+  result: MerchantSessionReadResult,
   lifetimeMs: number,
 ) {
   merchantSessionPayloadCache = {
-    payload,
+    result,
     expiresAt: Date.now() + Math.max(0, lifetimeMs),
   };
 }
@@ -395,51 +401,57 @@ function buildSyntheticSessionFromMerchantCookiePayload(payload: {
   } as Session;
 }
 
-export async function readMerchantSessionPayload(
+// Only an explicit authentication rejection is evidence of a signed-out
+// session. Timeouts, bad responses and transport/service failures are unknown.
+export async function readMerchantSessionResult(
   timeoutMs = 4500,
   options: ReadMerchantSessionPayloadOptions = {},
-): Promise<MerchantCookieSessionPayload | null> {
-  if (typeof window === "undefined") return null;
+): Promise<MerchantSessionReadResult> {
+  if (typeof window === "undefined") return { status: "unavailable", payload: null };
   const includeClientTokens = options.includeClientTokens === true || isNativeAppShellRuntime();
-  if (!includeClientTokens) {
-    const cachedPayload = readCachedMerchantSessionPayload();
-    if (cachedPayload !== undefined) return cachedPayload;
+  if (!includeClientTokens && !options.forceRefresh) {
+    const cachedResult = readCachedMerchantSessionResult();
+    if (cachedResult !== undefined) return cachedResult;
   }
   const inFlight = includeClientTokens ? merchantSessionPayloadWithTokensInFlight : merchantSessionPayloadInFlight;
   if (inFlight) return inFlight;
-  let task: Promise<MerchantCookieSessionPayload | null> | null = null;
-  task = (async () => {
+  let task: Promise<MerchantSessionReadResult> | null = null;
+  task = (async (): Promise<MerchantSessionReadResult> => {
     try {
-      const response = await withTimeout(
-        fetch(buildMerchantSessionRequestHref(includeClientTokens), {
-          method: "GET",
-          cache: "no-store",
-          credentials: "include",
-          headers: {
-            accept: "application/json",
-          },
-        }),
+      const result = await withTimeout<MerchantSessionReadResult>(
+        (async (): Promise<MerchantSessionReadResult> => {
+          const response = await fetch(buildMerchantSessionRequestHref(includeClientTokens), {
+            method: "GET",
+            cache: "no-store",
+            credentials: "include",
+            headers: {
+              accept: "application/json",
+            },
+          });
+          if (response.status === 401 || response.status === 403) {
+            return { status: "unauthenticated", payload: null };
+          }
+          if (!response.ok) return { status: "unavailable", payload: null };
+          const payload = (await response.json()) as MerchantCookieSessionPayload | null;
+          if (payload?.authenticated !== true || typeof payload.user?.id !== "string" || !payload.user.id.trim()) {
+            return { status: "unavailable", payload: null };
+          }
+          return { status: "authenticated", payload };
+        })(),
         Math.max(1200, timeoutMs),
       );
-      if (!response.ok) {
-        if (!includeClientTokens && (response.status === 401 || response.status === 403)) {
-          cacheMerchantSessionPayload(null, UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS);
-        }
-        return null;
-      }
-      const payload = (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
-      if (!includeClientTokens) {
-        cacheMerchantSessionPayload(
-          payload,
-          payload?.authenticated === true
+      if (!includeClientTokens && result.status !== "unavailable") {
+        cacheMerchantSessionResult(
+          result,
+          result.status === "authenticated"
             ? AUTHENTICATED_MERCHANT_SESSION_CACHE_MS
             : UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS,
         );
       }
-      persistBrowserSupabaseSessionFromMerchantPayload(payload);
-      return payload;
+      persistBrowserSupabaseSessionFromMerchantPayload(result.payload);
+      return result;
     } catch {
-      return null;
+      return { status: "unavailable", payload: null };
     } finally {
       if (task && merchantSessionPayloadInFlight === task) {
         merchantSessionPayloadInFlight = null;
@@ -455,6 +467,15 @@ export async function readMerchantSessionPayload(
     merchantSessionPayloadInFlight = task;
   }
   return task;
+}
+
+// Compatibility for callers that only need the public identity. Callers making
+// a logout/redirect decision must use the discriminated result above.
+export async function readMerchantSessionPayload(
+  timeoutMs = 4500,
+  options: ReadMerchantSessionPayloadOptions = {},
+): Promise<MerchantCookieSessionPayload | null> {
+  return (await readMerchantSessionResult(timeoutMs, options)).payload;
 }
 
 function isAuthenticatedMerchantSessionPayload(payload: MerchantCookieSessionPayload | null | undefined) {
@@ -639,12 +660,9 @@ export async function syncMerchantSessionCookies(
     );
     if (!response.ok) return null;
     const payload = (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
-    cacheMerchantSessionPayload(
-      payload,
-      payload?.authenticated === true
-        ? AUTHENTICATED_MERCHANT_SESSION_CACHE_MS
-        : UNAUTHENTICATED_MERCHANT_SESSION_CACHE_MS,
-    );
+    if (payload?.authenticated === true && typeof payload.user?.id === "string" && payload.user.id.trim()) {
+      cacheMerchantSessionResult({ status: "authenticated", payload }, AUTHENTICATED_MERCHANT_SESSION_CACHE_MS);
+    }
     return payload;
   } catch {
     return null;
@@ -670,8 +688,9 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
     if (inFlight) return inFlight;
     const task = (async () => {
       try {
-        const payload = await readMerchantSessionPayload(timeoutMs);
-        if (isAuthenticatedMerchantSessionPayload(payload)) return payload;
+        const result = await readMerchantSessionResult(timeoutMs);
+        const payload = result.payload;
+        if (result.status !== "unauthenticated") return payload;
 
         const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
           Math.max(3600, Math.min(9000, timeoutMs + 1800)),

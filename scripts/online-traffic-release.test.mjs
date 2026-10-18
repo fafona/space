@@ -1,3 +1,4 @@
+import {LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS} from './merchant-login-release-policy.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync,spawn} from 'node:child_process';
@@ -8,7 +9,7 @@ import {runInNewContext as vmRunInNewContext} from 'node:vm';
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.
-const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
+const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
 import {webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
@@ -974,7 +975,7 @@ test('runtime performance stage runs its exact suites between source gates befor
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,26);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const stage=code.indexOf("if(action==='stage'){");
  const before=code.indexOf('verifyRuntimePerformanceSource(s);',stage);
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
@@ -1250,7 +1251,7 @@ test('public catalog batch stage runs its exact regressions before the guarded b
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,tests.length+fixed.length);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(build>end&&ready>build);
@@ -1387,7 +1388,7 @@ test('read-index stage includes all tracked traffic regressions once plus catalo
  assert.equal(new Set(tests).size,tests.length);
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(start>0&&end>start&&build>end&&ready>build);

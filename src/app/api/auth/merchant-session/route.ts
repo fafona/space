@@ -279,7 +279,8 @@ function isTransientMerchantSessionError(error: unknown) {
   const name = typeof record.name === "string" ? record.name : "";
   const code = typeof record.code === "string" ? record.code : "";
   if (name === "AbortError") return true;
-  if (Number(record.status) === 0) return true;
+  const status = Number(record.status);
+  if (name === "AuthRetryableFetchError" || status === 0 || status === 429 || status >= 500) return true;
   return /timeout|temporarily|connection|network|fetch|load failed|unavailable|cooldown/i.test(message + code);
 }
 
@@ -697,9 +698,7 @@ export async function POST(request: Request) {
     }
 
     if (!accessToken) {
-      const response = noStoreJson({ ok: false, error: "merchant_session_missing_access_token" }, { status: 400 });
-      clearMerchantAuthCookies(response, request);
-      return response;
+      return noStoreJson({ ok: false, error: "merchant_session_missing_access_token" }, { status: 400 });
     }
 
     let verifiedAccessToken = accessToken;
@@ -734,9 +733,9 @@ export async function POST(request: Request) {
     }
 
     if (!user) {
-      const response = noStoreJson({ ok: false, error: "merchant_session_invalid_access_token" }, { status: 401 });
-      clearMerchantAuthCookies(response, request);
-      return response;
+      // Rejection of submitted (possibly stale) tokens says nothing about the
+      // current cookie session. Never let a failed sync clear a newer login.
+      return noStoreJson({ ok: false, error: "merchant_session_invalid_access_token" }, { status: 401 });
     }
 
     await assertLegacyMerchantIdentityAllowed(adminSupabase, user);
@@ -789,12 +788,10 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     if (isMerchantStaffPrincipalError(error)) {
-      const response = noStoreJson(
+      return noStoreJson(
         { ok: false, error: error.code },
         { status: error.status },
       );
-      if (error.status === 403) clearMerchantAuthCookies(response, request);
-      return response;
     }
     return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
   }

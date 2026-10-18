@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET, POST } from "@/app/api/auth/merchant-session/route";
+import { POST as logoutMerchant } from "@/app/api/auth/merchant-logout/route";
 import {
   MERCHANT_AUTH_COOKIE,
   MERCHANT_AUTH_REFRESH_COOKIE,
@@ -471,5 +472,158 @@ test("merchant-session POST reports invalid Google OAuth code explicitly", async
     globalThis.fetch = originalFetch;
     process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+  }
+});
+
+async function withSyntheticSessionAuth(run: (cookie: string) => Promise<void>) {
+  const originalFetch = globalThis.fetch;
+  const keys = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "FAOLLA_CANONICAL_PORTAL_ORIGIN"];
+  const priorEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const user = {
+    id: "44444444-4444-4444-8444-444444444444",
+    email: "session-regression@example.invalid",
+    user_metadata: { platform_account_type: "merchant", platform_account_id: "99990001", merchant_id: "99990001" },
+    app_metadata: {},
+  };
+  Object.assign(process.env, {
+    NEXT_PUBLIC_SUPABASE_URL: "https://merchant-session-regression.invalid",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "synthetic-anon",
+    SUPABASE_SERVICE_ROLE_KEY: "synthetic-service",
+    FAOLLA_CANONICAL_PORTAL_ORIGIN: "https://launch.faolla.com",
+  });
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+    assert.equal(url.hostname, "merchant-session-regression.invalid", "production networking is forbidden in this test");
+    if (url.pathname === "/auth/v1/user") {
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (authorization === "Bearer regression-current-access" || authorization === "Bearer regression-new-access") {
+        return Response.json(user);
+      }
+      if (authorization === "Bearer regression-staff-access") {
+        return Response.json({ ...user, app_metadata: { principal_type: "merchant_staff" } });
+      }
+      if (authorization === "Bearer regression-busy-access") {
+        return Response.json({ message: "service unavailable" }, { status: 503 });
+      }
+      return Response.json({ message: "JWT expired", code: "bad_jwt" }, { status: 401 });
+    }
+    if (url.pathname === "/auth/v1/token") {
+      return Response.json({ error: "invalid_grant", code: "refresh_token_already_used" }, { status: 400 });
+    }
+    if (url.pathname === "/rest/v1/merchant_enterprise_employees") return Response.json([]);
+    if (url.pathname === "/rest/v1/merchants") return Response.json([{ id: "99990001" }]);
+    if (url.pathname === `/auth/v1/admin/users/${user.id}`) return Response.json({ user });
+    throw new Error(`unexpected synthetic auth endpoint: ${url.pathname}`);
+  };
+  try {
+    await run(`${MERCHANT_AUTH_COOKIE}=regression-current-access; ${MERCHANT_AUTH_REFRESH_COOKIE}=regression-current-refresh`);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of keys) {
+      if (priorEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = priorEnv[key];
+    }
+  }
+}
+
+function syntheticSessionRequest(cookie: string, body?: unknown) {
+  return new Request("https://launch.faolla.com/api/auth/merchant-session", {
+    method: body === undefined ? "GET" : "POST",
+    headers: { cookie, origin: "https://launch.faolla.com", "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+test("failed, missing and forbidden sync credentials never clear a different valid cookie session", async () => {
+  await withSyntheticSessionAuth(async (cookie) => {
+    assert.equal((await GET(syntheticSessionRequest(cookie))).status, 200);
+    for (const [body, status] of [
+      [{ accessToken: "regression-stale-access", refreshToken: "regression-stale-refresh" }, 401],
+      [{}, 400],
+      [{ accessToken: "regression-staff-access" }, 403],
+      [{ accessToken: "regression-busy-access" }, 503],
+      [{ authCode: "regression-invalid-code", codeVerifier: "synthetic-verifier" }, 401],
+    ] as const) {
+      const response = await POST(syntheticSessionRequest(cookie, body));
+      assert.equal(response.status, status);
+      assert.equal(response.headers.get("set-cookie"), null, "a failed sync cannot mutate the current session");
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.equal((await GET(syntheticSessionRequest(cookie))).status, 200);
+    }
+  });
+});
+
+test("malformed sync and cross-origin mutation cannot delete a valid current session", async () => {
+  await withSyntheticSessionAuth(async (cookie) => {
+    const malformed = await POST(new Request("https://launch.faolla.com/api/auth/merchant-session", {
+      method: "POST",
+      headers: { cookie, origin: "https://launch.faolla.com", "content-type": "application/json" },
+      body: "{",
+    }));
+    assert.equal(malformed.status, 400);
+    assert.equal(malformed.headers.get("set-cookie"), null);
+    const untrusted = await POST(new Request("https://launch.faolla.com/api/auth/merchant-session", {
+      method: "POST",
+      headers: { cookie, origin: "https://untrusted.invalid", "content-type": "application/json" },
+      body: JSON.stringify({ accessToken: "regression-new-access" }),
+    }));
+    assert.equal(untrusted.status, 403);
+    assert.equal(untrusted.headers.get("set-cookie"), null);
+  });
+});
+
+test("confirmed invalid or staff cookie sessions still reject access and expire their cookies", async () => {
+  await withSyntheticSessionAuth(async () => {
+    for (const [token, status] of [["regression-revoked-access", 401], ["regression-staff-access", 403]] as const) {
+      const response = await GET(syntheticSessionRequest(
+        `${MERCHANT_AUTH_COOKIE}=${token}; ${MERCHANT_AUTH_REFRESH_COOKIE}=regression-invalid-refresh`,
+      ));
+      assert.equal(response.status, status);
+      for (const name of [MERCHANT_AUTH_COOKIE, MERCHANT_AUTH_REFRESH_COOKIE]) {
+        assert.equal(response.cookies.get(name)?.maxAge, 0);
+      }
+    }
+  });
+});
+
+test("valid sync still establishes host-only HttpOnly cookies without returning bearer tokens", async () => {
+  await withSyntheticSessionAuth(async (cookie) => {
+    const response = await POST(syntheticSessionRequest(cookie, {
+      accessToken: "regression-new-access", refreshToken: "regression-new-refresh", preferredAccountType: "merchant",
+    }));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.authenticated, true);
+    assert.equal(payload.merchantId, "99990001");
+    assert.equal(payload.accessToken, undefined);
+    assert.equal(payload.refreshToken, undefined);
+    for (const name of [MERCHANT_AUTH_COOKIE, MERCHANT_AUTH_REFRESH_COOKIE]) {
+      const saved = response.cookies.get(name);
+      assert.equal(saved?.httpOnly, true);
+      assert.equal(saved?.secure, true);
+      assert.equal(saved?.domain, undefined);
+      assert.notEqual(saved?.maxAge, 0);
+    }
+  });
+});
+
+test("upstream auth service outages remain 503 and never expire cookie credentials", async () => {
+  await withSyntheticSessionAuth(async () => {
+    const response = await GET(syntheticSessionRequest(
+      `${MERCHANT_AUTH_COOKIE}=regression-busy-access; ${MERCHANT_AUTH_REFRESH_COOKIE}=regression-busy-refresh`,
+    ));
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.equal((await response.json()).error, "merchant_session_unavailable");
+  });
+});
+
+test("explicit merchant logout still clears both authentication cookies", async () => {
+  const response = await logoutMerchant(new Request("https://launch.faolla.com/api/auth/merchant-logout", {
+    method: "POST", headers: { origin: "https://launch.faolla.com" },
+  }));
+  assert.equal(response.status, 200);
+  for (const name of [MERCHANT_AUTH_COOKIE, MERCHANT_AUTH_REFRESH_COOKIE]) {
+    assert.equal(response.cookies.get(name)?.maxAge, 0);
   }
 });

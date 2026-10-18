@@ -1,3 +1,4 @@
+import {LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -70,7 +71,7 @@ function harness() {
   function api(target, action = 'activate') {
     const operation = `${root}/${target}`;
     let result;
-    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,BACKUP_RELEASE_LANE,
+    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,LOGIN_RELEASE_LANE,BACKUP_RELEASE_LANE,
       root, operation, activeFile, proxy, target, action, protectedBaseProcesses: ROLLING_BASE_NAMES,
       app: '/www/wwwroot/merchant-space', nginx: '/owned-nginx', controllerModuleUrl: import.meta.url, fileURLToPath,
       readOnlineRetentionHistory: () => clone(host.history), pm: rawRows,
