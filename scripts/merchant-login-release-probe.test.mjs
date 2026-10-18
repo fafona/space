@@ -11,7 +11,7 @@ test('login probe only permits unauthenticated loopback GET for the exact sessio
 test('native session probe preserves Host, buffers response and refuses oversized or aborted reads',async()=>{
  let mode='normal';const calls=[];
  const server=http.createServer((request,response)=>{
-  calls.push({host:request.headers.host,method:request.method,path:request.url,cookie:request.headers.cookie,authorization:request.headers.authorization});
+  calls.push({host:request.headers.host,method:request.method,path:request.url,forwardedProto:request.headers['x-forwarded-proto'],cookie:request.headers.cookie,authorization:request.headers.authorization});
   if(mode==='oversized')return response.end(Buffer.alloc(LOGIN_PROBE_LIMITS.bodyBytes+1));
   if(mode==='pending'){response.writeHead(401);response.flushHeaders();return;}
   response.writeHead(401,{'Content-Type':'application/json'});response.end('{"authenticated":false}');
@@ -20,7 +20,7 @@ test('native session probe preserves Host, buffers response and refuses oversize
  try{
   const address=`http://127.0.0.1:${server.address().port}${path}`;
   const response=await merchantLoginReleaseProbeFetch(address,options());assert.equal(response.status,401);assert.deepEqual(await response.json(),{authenticated:false});
-  assert.deepEqual(calls[0],{host:'launch.faolla.com',method:'GET',path,cookie:undefined,authorization:undefined});
+  assert.deepEqual(calls[0],{host:'launch.faolla.com',method:'GET',path,forwardedProto:'https',cookie:undefined,authorization:undefined});
   mode='oversized';await assert.rejects(merchantLoginReleaseProbeFetch(address,options()),/body_limit/);
   mode='pending';const controller=new AbortController(),task=merchantLoginReleaseProbeFetch(address,{...options(),signal:controller.signal});setTimeout(()=>controller.abort(),20);await assert.rejects(task,/aborted/);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

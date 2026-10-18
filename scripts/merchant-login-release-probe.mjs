@@ -12,7 +12,7 @@ export async function merchantLoginReleaseProbeFetch(address,options={}){
    if(error){response?.destroy();request.destroy();reject(error);}else resolve(value);
   };
   const abort=()=>finish(Error('merchant_login_probe_aborted'));
-  const request=http.request(url,{method:'GET',agent:false,headers:{Host:'launch.faolla.com',Connection:'close'},maxHeaderSize:16384},incoming=>{
+  const request=http.request(url,{method:'GET',agent:false,headers:{Host:'launch.faolla.com',Connection:'close','X-Forwarded-Proto':'https'},maxHeaderSize:16384},incoming=>{
    response=incoming;let size=0;const chunks=[];
    incoming.on('data',chunk=>{size+=chunk.length;if(size>LOGIN_PROBE_LIMITS.bodyBytes)finish(Error('merchant_login_probe_body_limit'));else chunks.push(chunk);});
    incoming.on('error',()=>finish(Error('merchant_login_probe_response_failed')));
