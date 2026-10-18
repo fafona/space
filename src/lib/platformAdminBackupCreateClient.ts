@@ -1,4 +1,5 @@
 import type { PlatformAdminDataBackupListItem } from "./platformAdminDataBackup";
+import { PLATFORM_ADMIN_DATA_BACKUP_SCOPE } from "./platformAdminDataBackupScope";
 
 const summaryKeys = ["id", "at", "operator", "source", "scheduleDateKey", "summary", "userManageCounts", "supportCounts"];
 const userCountKeys = ["siteCount", "userCount", "roleCount", "merchantAccountCount", "merchantSnapshotCount", "merchantConfigBackupCount"] as const;
@@ -55,6 +56,30 @@ function summary(value: unknown): PlatformAdminDataBackupListItem {
   };
 }
 
+/** The actual route includes this public contract. Accept only its exact known
+ * shape and values, not arbitrary metadata or a claim of full-database recovery.
+ * Descriptor checks keep getters/prototypes out of the acknowledgement boundary.
+ */
+function scopeContract(value: unknown, expected: unknown): void {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
+        value.length !== expected.length || Reflect.ownKeys(value).length !== expected.length + 1) fail();
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (let index = 0; index < expected.length; index++) {
+      const entry = descriptors[index];
+      if (!entry?.enumerable || !Object.hasOwn(entry, "value")) fail();
+      scopeContract(entry.value, expected[index]);
+    }
+    return;
+  }
+  if (expected !== null && typeof expected === "object") {
+    const input = record(value, Object.keys(expected));
+    for (const [key, entry] of Object.entries(expected)) scopeContract(input[key], entry);
+    return;
+  }
+  if (value !== expected) fail();
+}
+
 /** A create acknowledgement is a bounded list of summaries, never a full backup.
  * Unknown/partial/error responses must be treated as an unconfirmed write by the
  * caller. Parsing never repairs missing fields or exposes raw internal errors.
@@ -63,7 +88,8 @@ export function parsePlatformAdminBackupCreateAck(value: unknown): {
   created: boolean; backups: PlatformAdminDataBackupListItem[];
 } | null {
   try {
-    const input = record(value, ["ok", "created", "backups"], ["backup"]);
+    const input = record(value, ["ok", "created", "backups"], ["backup", "backupScope"]);
+    if (Object.hasOwn(input, "backupScope")) scopeContract(input.backupScope, PLATFORM_ADMIN_DATA_BACKUP_SCOPE);
     if (input.ok !== true || typeof input.created !== "boolean" ||
         Object.hasOwn(input, "backup") !== input.created) fail();
     const list = input.backups;

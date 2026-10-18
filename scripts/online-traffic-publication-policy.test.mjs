@@ -112,6 +112,10 @@ test('invalid path inventory is rejected without normalizing aliases into the al
 
 test('outside the explicitly added attendance and contact-WeChat lanes every historical policy byte remains unchanged', () => {
   let source = readFileSync(new URL('./online-traffic-release-policy.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+  for(const insertion of ["import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';\n",
+   "  if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}\n",
+   "  if(lane===BACKUP_RELEASE_LANE)return true;\n",
+   "  if(lane===BACKUP_RELEASE_LANE)throw Error('super_admin_backup_release_database_forbidden');\n"]){assert.equal(source.split(insertion).length,2);source=source.replace(insertion,'');}
   const start=source.indexOf('// A source-only scope is not a deployment or database authorization receipt.');
   const end=source.indexOf('export function onlineReleaseLane(files) {',start);
   assert.ok(start>0&&end>start);

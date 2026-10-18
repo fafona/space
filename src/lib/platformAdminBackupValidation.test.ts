@@ -13,7 +13,7 @@ import { buildPlatformMerchantSnapshotBlocks, PLATFORM_MERCHANT_SNAPSHOT_SLUG, P
   PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG } from "./platformMerchantSnapshot";
 import { buildPlatformSupportInboxBlocks, PLATFORM_SUPPORT_INBOX_SLUG, readPlatformSupportInboxFromBlocks } from "./platformSupportInbox";
 import { assertPlatformAdminBackupCopiesConsistent, assertPlatformAdminBackupMerchantAccounts, assertPlatformAdminBackupPlatformState,
-  assertPlatformAdminBackupSnapshot, readPlatformAdminDataBackupBlocksValidated,
+  assertPlatformAdminBackupSnapshot, assertPlatformAdminBackupSavePayload, readPlatformAdminDataBackupBlocksValidated,
   readPlatformMerchantConfigArchiveBlocksValidated, readPlatformMerchantSnapshotBlocksValidated,
   readPlatformSupportInboxBlocksValidated } from "./platformAdminBackupValidation";
 import { PLATFORM_ADMIN_BACKUP_READ_UNAVAILABLE } from "./platformAdminBackupStrictRead";
@@ -59,6 +59,31 @@ function setAt(value: unknown, path: string, replacement: unknown) {
 }
 function getAt(value: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((current, key) => (current as Raw)[key], value);
+}
+
+for (const imageFields of [
+  { shareImageUrl: "https://example.test/share.png" },
+  { contactPagePublicImageUrl: "https://example.test/contact.png" },
+  { shareImageUrl: "https://example.test/share.png", contactPagePublicImageUrl: "https://example.test/contact.png" },
+]) {
+  test(`public-image backup validates in memory, not only after JSON transport: ${Object.keys(imageFields).join("+")}`, () => {
+    const f = fixture();
+    Object.assign(f.entry.snapshot.merchantSnapshot!.snapshot[0].businessCards![0], imageFields);
+    const input = structuredClone(f.entry.snapshot);
+    const entry = createPlatformAdminDataBackupEntry({ source: "manual", operator: "Synthetic", snapshot: input });
+    assert.doesNotThrow(() => assertPlatformAdminBackupSavePayload({ backups: [entry] }));
+    assert.deepEqual(entry, stored(entry), "normalization must not add present-but-undefined image fields");
+    assert.deepEqual(input, f.entry.snapshot, "snapshot preparation must not mutate its input");
+    const normalized = entry.snapshot.merchantSnapshot!;
+    assert.equal(normalized.snapshot[0].businessCards![0].imageUrl, imageFields.shareImageUrl ?? imageFields.contactPagePublicImageUrl);
+    assert.equal(normalized.snapshot[0].chatBusinessCard!.imageUrl, normalized.snapshot[0].businessCards![0].imageUrl);
+
+    const persisted = stored(buildPlatformAdminDataBackupBlocks({ backups: [entry] }));
+    const read = readPlatformAdminDataBackupBlocksValidated(persisted);
+    assert.doesNotThrow(() => assertPlatformAdminBackupSavePayload(read), "validated persisted backups remain valid after read normalization");
+    assert.deepEqual(read, stored(read));
+    assert.deepEqual(stored(read.backups[0]), entry, "reading must preserve the existing backup contents");
+  });
 }
 
 test("business-card website addresses survive strict snapshot backup validation", () => {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parsePlatformAdminBackupCreateAck } from "./platformAdminBackupCreateClient";
 import { createPlatformAdminBackupRestoreSyncGuard } from "./platformAdminBackupRestoreClient";
+import { PLATFORM_ADMIN_DATA_BACKUP_SCOPE, withPlatformAdminDataBackupScope } from "./platformAdminDataBackupScope";
 
 function item(id = "synthetic-backup") {
   return { id, at: "2026-09-09T11:30:00.000Z", operator: "测试管理员", source: "manual" as const,
@@ -27,6 +28,40 @@ test("create ACK accepts eight summaries and semantically identical reordered ke
   const backup: Record<string, unknown> = Object.fromEntries(Object.entries(backups[2]).reverse());
   backup.userManageCounts = Object.fromEntries(Object.entries(backups[2].userManageCounts).reverse());
   assert.deepEqual(parsePlatformAdminBackupCreateAck({ ok: true, created: true, backups, backup }), { created: true, backups });
+});
+
+test("create ACK accepts the exact application-snapshot scope emitted by the real route", () => {
+  for (const input of [ack(), { ok: true, created: false, backups: [item()] }]) {
+    const expected = parsePlatformAdminBackupCreateAck(input);
+    assert.ok(expected);
+    const scoped = withPlatformAdminDataBackupScope(input);
+    assert.deepEqual(parsePlatformAdminBackupCreateAck(scoped), expected);
+    const reordered: Record<string, unknown> = Object.fromEntries(Object.entries(scoped.backupScope).reverse());
+    reordered.schedule = Object.fromEntries(Object.entries(scoped.backupScope.schedule).reverse());
+    assert.deepEqual(parsePlatformAdminBackupCreateAck({ ...scoped, backupScope: reordered }), expected);
+  }
+});
+
+test("scope metadata cannot legitimize unknown, expanded or malformed backup acknowledgements", () => {
+  let getters = 0;
+  const scope = structuredClone(PLATFORM_ADMIN_DATA_BACKUP_SCOPE);
+  const getter = Object.defineProperty({ ...scope }, "kind", { enumerable: true,
+    get() { getters++; throw new Error("PRIVATE"); } });
+  const nestedGetter = Object.defineProperty({ ...scope.schedule }, "trigger", { enumerable: true,
+    get() { getters++; return scope.schedule.trigger; } });
+  const arrayGetter = [...scope.included];
+  Object.defineProperty(arrayGetter, "0", { enumerable: true, get() { getters++; return scope.included[0]; } });
+  for (const backupScope of [null, undefined, [], {}, { ...scope, version: 2 },
+    { ...scope, fullDatabaseBackup: true }, { ...scope, independentBackupCopy: true },
+    { ...scope, extra: "PRIVATE" }, { ...scope, included: [...scope.included, "PRIVATE"] },
+    { ...scope, included: scope.included.slice(1) }, { ...scope, included: arrayGetter },
+    { ...scope, schedule: { ...scope.schedule, extra: "PRIVATE" } },
+    { ...scope, schedule: nestedGetter }, getter]) {
+    assert.equal(parsePlatformAdminBackupCreateAck({ ...ack(), backupScope }), null);
+  }
+  assert.equal(getters, 0);
+  assert.equal(parsePlatformAdminBackupCreateAck({ ...withPlatformAdminDataBackupScope(ack()), unknown: true }), null);
+  assert.equal(parsePlatformAdminBackupCreateAck(withPlatformAdminDataBackupScope({ ...ack(), ok: false })), null);
 });
 
 test("missing, error, partial, legacy and contradictory envelopes never acknowledge a write", () => {

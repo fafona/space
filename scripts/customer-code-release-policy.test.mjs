@@ -94,6 +94,10 @@ test('060 is inert source: both stage states are no-database and every database 
 
 test('precisely reversing the separately added contact-WeChat, attendance and customer lanes leaves the complete prior policy byte-identical',()=>{
   let original=source;
+  for(const insertion of ["import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';\n",
+   "  if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}\n",
+   "  if(lane===BACKUP_RELEASE_LANE)return true;\n",
+   "  if(lane===BACKUP_RELEASE_LANE)throw Error('super_admin_backup_release_database_forbidden');\n"]){assert.equal(original.split(insertion).length,2);original=original.replace(insertion,'');}
   const contactInsertions=["import {hasContactWechatReleaseAnchor, assertContactWechatReleaseScope} from './contact-wechat-release-policy.mjs';\n",
     "  if(hasContactWechatReleaseAnchor(files)){assertContactWechatReleaseScope(files);return 'contact-wechat-code-only';}\n",
     "  if(lane==='contact-wechat-code-only')return true;\n",

@@ -245,9 +245,9 @@ function compactSnapshotBusinessCard(
   return {
     ...card,
     imageUrl: publicImageUrl,
-    shareImageUrl: shareImageUrl || undefined,
+    ...(shareImageUrl ? { shareImageUrl } : {}),
     contactPageImageUrl: "",
-    contactPagePublicImageUrl: contactPagePublicImageUrl || undefined,
+    ...(contactPagePublicImageUrl ? { contactPagePublicImageUrl } : {}),
     // The editor consumes this snapshot too. The flattened front image cannot
     // replace its editable background source. Retain the source and transforms.
     backgroundImageUrl: card.backgroundImageUrl,

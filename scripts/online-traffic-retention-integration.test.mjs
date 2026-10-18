@@ -9,6 +9,7 @@ import {completePublicationRetention} from './online-release-retention-publicati
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {ROLLING_BASE_NAMES} from './online-release-rolling-policy.mjs';
 import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
+import {BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';
 
 // Execute actual publisher helpers and actual pure policy in the host realm.
 // Host observations/writes, HTTP/static checks and writer operations are memory
@@ -69,7 +70,7 @@ function harness() {
   function api(target, action = 'activate') {
     const operation = `${root}/${target}`;
     let result;
-    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,
+    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,BACKUP_RELEASE_LANE,
       root, operation, activeFile, proxy, target, action, protectedBaseProcesses: ROLLING_BASE_NAMES,
       app: '/www/wwwroot/merchant-space', nginx: '/owned-nginx', controllerModuleUrl: import.meta.url, fileURLToPath,
       readOnlineRetentionHistory: () => clone(host.history), pm: rawRows,
