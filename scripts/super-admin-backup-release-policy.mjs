@@ -24,6 +24,7 @@ export const BACKUP_TOOL_FILES=Object.freeze([
  'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-publication-policy.mjs',
  'scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs',
  'scripts/online-traffic-publication-policy.test.mjs','scripts/customer-code-release-policy.test.mjs',
+ 'scripts/online-traffic-retention-integration.test.mjs',
  'docs/super-admin-backup-release-20261018.md',
 ]);
 const allowed=new Set([...BACKUP_APPLICATION_FILES,...BACKUP_HISTORICAL_FILES,...BACKUP_TOOL_FILES]);
@@ -67,4 +68,5 @@ export const BACKUP_FOCUSED_TESTS=Object.freeze([
  'src/lib/platformMerchantSnapshot.test.ts','src/lib/platformMerchantSnapshotStore.test.ts',
  'scripts/super-admin-backup-release-policy.test.mjs','scripts/attendance-online-build.test.mjs',
  'scripts/online-traffic-publication-policy.test.mjs',
+ 'scripts/online-traffic-retention-integration.test.mjs',
 ]);
