@@ -1,3 +1,4 @@
+import {hasLoginReleaseAnchor,assertLoginReleaseScope,LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';
 import {onlineReleaseLane} from './online-traffic-release-policy.mjs';
 import {hasContactWechatReleaseAnchor, assertContactWechatReleaseScope} from './contact-wechat-release-policy.mjs';
 import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';
@@ -52,6 +53,7 @@ export const ONLINE_PUBLICATION_SUPPORT_FILES = Object.freeze([
 const support = new Set(ONLINE_PUBLICATION_SUPPORT_FILES);
 
 export function onlinePublicationLane(files) {
+  if(hasLoginReleaseAnchor(files)){assertLoginReleaseScope(files);return LOGIN_RELEASE_LANE;}
   if (!Array.isArray(files) || files.some(file => typeof file !== 'string' || !file || /[\0\r\n\\]/.test(file)) ||
       new Set(files).size !== files.length) throw Error('online_publication_files_invalid');
   if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}

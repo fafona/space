@@ -112,6 +112,7 @@ test('invalid path inventory is rejected without normalizing aliases into the al
 
 test('outside the explicitly added attendance and contact-WeChat lanes every historical policy byte remains unchanged', () => {
   let source = readFileSync(new URL('./online-traffic-release-policy.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+  for(const insertion of ["import {hasLoginReleaseAnchor,assertLoginReleaseScope,LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';\n","  if(hasLoginReleaseAnchor(files)){assertLoginReleaseScope(files);return LOGIN_RELEASE_LANE;}\n","  if(lane===LOGIN_RELEASE_LANE)return true;\n","  if(lane===LOGIN_RELEASE_LANE)throw Error('merchant_login_release_database_forbidden');\n"]){assert.equal(source.split(insertion).length,2);source=source.replace(insertion,'');}
   for(const insertion of ["import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';\n",
    "  if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}\n",
    "  if(lane===BACKUP_RELEASE_LANE)return true;\n",

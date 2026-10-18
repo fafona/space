@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React from "react";
+import ts from "typescript";
 import { renderToStaticMarkup } from "react-dom/server";
 import DeferredFaollaFrame from "../../components/admin/DeferredFaollaFrame";
 import { canShowMerchantWorkspaceBeforeEditor } from "../../lib/merchantWorkspaceLoading";
@@ -175,4 +176,97 @@ test("business-card user changes have specific actions and use the stable callba
   assert.match(handler, /action: "设置聊天展示名片"/);
   assert.match(source, /onCardsChange: handleMerchantBusinessCardsChange/);
   assert.doesNotMatch(source, /action: "更新名片夹"/);
+});
+
+test("actual login redirect boundary requires a fresh explicit session rejection", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const start = source.indexOf("const releaseMerchantUnauthenticatedState = async () => {");
+  const end = source.indexOf("const shouldPreserveMerchantSessionDuringResume", start);
+  assert.ok(start > 0 && end > start);
+  const executable = ts.transpileModule(
+    `${source.slice(start, end)}\nreleaseMerchantUnauthenticatedState;`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+  ).outputText;
+  for (const status of ["authenticated", "unavailable", "unauthenticated", "unmounted"] as const) {
+    const events: string[] = [];
+    let complete!: (value: unknown) => void;
+    const context = {
+      mounted: true,
+      preserveNativeFaollaShell: () => false,
+      shouldPreserveMerchantSessionDuringResume: () => false,
+      redirectNativeMerchantShellToLaunch: () => false,
+      AUTH_CHECK_TIMEOUT_MS: 6000,
+      readMerchantSessionResult: (timeout: number, options: { forceRefresh: boolean }) => {
+        assert.equal(timeout, 6000);
+        assert.equal(options.forceRefresh, true);
+        return new Promise((resolve) => { complete = resolve; });
+      },
+      releaseMerchantUnavailableState: () => events.push("retry-unavailable"),
+      setMerchantAuthRecheckVersion: () => events.push("recheck-valid-session"),
+      setMerchantAuthUnavailable: () => events.push("confirmed-rejection"),
+      claimAdminAutoReload: () => false,
+      window: {
+        sessionStorage: {},
+        location: { pathname: "/99990001", search: "", hash: "", replace: () => events.push("login"), reload: () => events.push("reload") },
+      },
+    };
+    const release = runInNewContext(executable, context) as () => Promise<void>;
+    const pending = release();
+    assert.deepEqual(events, [], "must await the authoritative result before navigation");
+    if (status === "unmounted") context.mounted = false;
+    complete({ status: status === "unmounted" ? "unauthenticated" : status, payload: null });
+    await pending;
+    assert.deepEqual(events, {
+      authenticated: ["recheck-valid-session"],
+      unavailable: ["retry-unavailable"],
+      unauthenticated: ["confirmed-rejection", "login"],
+      unmounted: [],
+    }[status], status);
+  }
+});
+
+test("actual unavailable-session retries back off, pause when hidden and clean up their listeners", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const start = source.indexOf("const releaseMerchantUnavailableState = () => {");
+  const end = source.indexOf("const isNativeMerchantShellRuntime", start);
+  assert.ok(start > 0 && end > start);
+  const executable = `${source.slice(start, end)}\nreleaseMerchantUnavailableState();`;
+  const failureCount = { current: 0 };
+  for (const expectedDelay of [2000, 4000, 8000, 16000, 30000, 30000]) {
+    const listeners = new Map<string, () => void>();
+    let scheduledRetry: (() => void) | undefined;
+    let cleanup: (() => void) | undefined;
+    let rechecks = 0;
+    let timerCleared = false;
+    const context = {
+      mounted: true,
+      detachUnavailableAuthRecheck: null,
+      merchantAuthFailureCountRef: failureCount,
+      setMerchantAuthUnavailable() {}, setRemoteContentVerified() {}, setHasEditorContent() {}, releaseCheckingScreen() {},
+      setMerchantAuthRecheckVersion: () => { rechecks += 1; },
+      window: {
+        setTimeout: (retry: () => void, delay: number) => { assert.equal(delay, expectedDelay); scheduledRetry = retry; return 42; },
+        clearTimeout: (id: number) => { assert.equal(id, 42); timerCleared = true; },
+        addEventListener: (name: string, callback: () => void) => listeners.set(name, callback),
+        removeEventListener: (name: string) => listeners.delete(name),
+      },
+      document: {
+        visibilityState: "hidden",
+        addEventListener: (name: string, callback: () => void) => listeners.set(name, callback),
+        removeEventListener: (name: string) => listeners.delete(name),
+      },
+      saveCleanup: (callback: () => void) => { cleanup = callback; },
+    };
+    runInNewContext(`${executable}\nsaveCleanup(detachUnavailableAuthRecheck);`, context);
+    scheduledRetry?.();
+    assert.equal(rechecks, 0, "hidden pages must not start polling");
+    context.document.visibilityState = "visible";
+    listeners.get("visibilitychange")?.();
+    listeners.get("online")?.();
+    listeners.get("focus")?.();
+    assert.equal(rechecks, 1, "all wakeup events share the same retry");
+    cleanup?.();
+    assert.equal(listeners.size, 0);
+    assert.equal(timerCleared, true);
+  }
 });

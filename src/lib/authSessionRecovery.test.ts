@@ -7,8 +7,10 @@ import {
   persistBrowserSupabaseSessionSnapshot,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
+  readMerchantSessionResult,
+  startMerchantSessionKeepAlive,
 } from "@/lib/authSessionRecovery";
-import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey } from "@/lib/supabase";
+import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey, supabase } from "@/lib/supabase";
 
 class MemoryStorage implements Storage {
   #store = new Map<string, string>();
@@ -188,6 +190,158 @@ test("merchant session payload briefly dedupes an unauthenticated response", asy
   } finally {
     invalidateMerchantSessionPayloadCache();
     Object.assign(globalThis, { fetch: previousFetch });
+    harness.restore();
+  }
+});
+
+test("only explicit 401/403 session rejections confirm unauthenticated status", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const status of [401, 403]) {
+      invalidateMerchantSessionPayloadCache();
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response(null, { status });
+      };
+      assert.deepEqual(await readMerchantSessionResult(), { status: "unauthenticated", payload: null });
+      assert.equal(await readMerchantSessionPayload(), null);
+      assert.equal(calls, 1);
+    }
+  } finally {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = previousFetch;
+    harness.restore();
+  }
+});
+
+test("service errors, origin rejection and malformed responses are unknown, never signed out or cached", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  const failures = [
+    ...[421, 429, 500, 503].map((status) => async () => new Response(null, { status })),
+    async () => { throw new TypeError("synthetic offline"); },
+    async () => new Response("<html>proxy error</html>"),
+    async () => Response.json(null),
+    async () => Response.json({ authenticated: false }),
+    async () => Response.json({ authenticated: true, user: {} }),
+    async () => Response.json({ authenticated: true, user: { id: 1 } }),
+  ];
+  try {
+    for (const failure of failures) {
+      invalidateMerchantSessionPayloadCache();
+      let calls = 0;
+      globalThis.fetch = async () => { calls += 1; return failure(); };
+      assert.deepEqual(await readMerchantSessionResult(), { status: "unavailable", payload: null });
+      assert.equal(await readMerchantSessionPayload(), null);
+      assert.equal(calls, 2, "temporary failure must not populate the signed-out cache");
+    }
+  } finally {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = previousFetch;
+    harness.restore();
+  }
+});
+
+test("force recheck bypasses a cached identity and shares its result with identity-only callers", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = async () => {
+      calls += 1;
+      return calls === 1
+        ? Response.json({ authenticated: true, user: { id: "synthetic-user" } })
+        : new Response(null, { status: 401 });
+    };
+    assert.equal((await readMerchantSessionResult()).status, "authenticated");
+    assert.equal((await readMerchantSessionPayload())?.user?.id, "synthetic-user");
+    assert.equal(calls, 1);
+    assert.equal((await readMerchantSessionResult(4500, { forceRefresh: true })).status, "unauthenticated");
+    assert.equal(await readMerchantSessionPayload(), null);
+    assert.equal(calls, 2);
+  } finally {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = previousFetch;
+    harness.restore();
+  }
+});
+
+test("concurrent status and identity readers share one session request", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  let release: (() => void) | undefined;
+  let calls = 0;
+  try {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = async () => {
+      calls += 1;
+      await new Promise<void>((resolve) => { release = resolve; });
+      return Response.json({ authenticated: true, user: { id: "synthetic-user" } });
+    };
+    const status = readMerchantSessionResult();
+    const identity = readMerchantSessionPayload();
+    release?.();
+    assert.equal((await status).status, "authenticated");
+    assert.equal((await identity)?.user?.id, "synthetic-user");
+    assert.equal(calls, 1);
+  } finally {
+    release?.();
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = previousFetch;
+    harness.restore();
+  }
+});
+
+test("session timeout bounds JSON body reads as well as response headers", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  try {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: () => new Promise(() => {}),
+    }) as Response;
+    assert.deepEqual(await readMerchantSessionResult(1200), { status: "unavailable", payload: null });
+  } finally {
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = previousFetch;
+    harness.restore();
+  }
+});
+
+test("keepalive does not attempt SDK recovery or cookie sync during a service outage", async () => {
+  const harness = installWindowStorage();
+  const previousFetch = globalThis.fetch;
+  const previousDocument = globalThis.document;
+  const originalGetSession = supabase.auth.getSession;
+  let sdkCalls = 0;
+  let fetchCalls = 0;
+  let dispose: (() => void) | undefined;
+  try {
+    invalidateMerchantSessionPayloadCache();
+    Object.assign(window, { setInterval, clearInterval, addEventListener() {}, removeEventListener() {} });
+    Object.assign(globalThis, { document: { visibilityState: "visible", addEventListener() {}, removeEventListener() {} } });
+    supabase.auth.getSession = async () => { sdkCalls += 1; return { data: { session: null }, error: null }; };
+    globalThis.fetch = async (_input, init) => {
+      fetchCalls += 1;
+      assert.equal(init?.method, "GET");
+      return new Response(null, { status: 503 });
+    };
+    dispose = startMerchantSessionKeepAlive();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(fetchCalls, 1);
+    assert.equal(sdkCalls, 0);
+  } finally {
+    dispose?.();
+    invalidateMerchantSessionPayloadCache();
+    globalThis.fetch = previousFetch;
+    supabase.auth.getSession = originalGetSession;
+    if (previousDocument === undefined) Reflect.deleteProperty(globalThis, "document");
+    else Object.assign(globalThis, { document: previousDocument });
     harness.restore();
   }
 });

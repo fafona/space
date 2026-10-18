@@ -130,6 +130,7 @@ import {
   isTransientAuthValidationError,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
+  readMerchantSessionResult,
   recoverBrowserSupabaseSessionViaMerchantCookies,
   recoverBrowserSupabaseSessionWithRefresh,
   startMerchantSessionKeepAlive,
@@ -4056,6 +4057,9 @@ export default function AdminClient({
   const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
+  const [merchantAuthUnavailable, setMerchantAuthUnavailable] = useState(false);
+  const [merchantAuthRecheckVersion, setMerchantAuthRecheckVersion] = useState(0);
+  const merchantAuthFailureCountRef = useRef(0);
   const [merchantWorkspaceEditorPending, setMerchantWorkspaceEditorPending] = useState(false);
   const checkingAuthRef = useRef(startInLoadingState);
   const [hasEditorContent, setHasEditorContent] = useState(true);
@@ -6547,6 +6551,7 @@ export default function AdminClient({
     let mounted = true;
     let uiReleased = false;
     let editorHydrationFinished = false;
+    let detachUnavailableAuthRecheck: (() => void) | null = null;
     setMerchantWorkspaceEditorPending(false);
     const clearJustSignedInFlagFromUrl = () => {
       if (typeof window === "undefined") return;
@@ -6568,6 +6573,33 @@ export default function AdminClient({
         uiReleased = true;
         setCheckingAuth(false);
       }
+    };
+    const releaseMerchantUnavailableState = () => {
+      if (!mounted) return;
+      setMerchantAuthUnavailable(true);
+      setRemoteContentVerified(false);
+      setHasEditorContent(true);
+      releaseCheckingScreen({ notice: "暂时无法确认登录状态，正在自动重试；无需退出或重新登录。" });
+      if (detachUnavailableAuthRecheck) return;
+      // Back off while the service is unavailable, pause when hidden, and
+      // retry promptly on reconnection. This never authorizes a business API.
+      const delayMs = Math.min(30_000, 2000 * 2 ** Math.min(4, merchantAuthFailureCountRef.current++));
+      let retryRequested = false;
+      const retry = () => {
+        if (!mounted || retryRequested || document.visibilityState === "hidden") return;
+        retryRequested = true;
+        setMerchantAuthRecheckVersion((value) => value + 1);
+      };
+      const retryTimer = window.setTimeout(retry, delayMs);
+      window.addEventListener("online", retry);
+      window.addEventListener("focus", retry);
+      document.addEventListener("visibilitychange", retry);
+      detachUnavailableAuthRecheck = () => {
+        window.clearTimeout(retryTimer);
+        window.removeEventListener("online", retry);
+        window.removeEventListener("focus", retry);
+        document.removeEventListener("visibilitychange", retry);
+      };
     };
     const isNativeMerchantShellRuntime = () => {
       if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return false;
@@ -6637,7 +6669,7 @@ export default function AdminClient({
       window.location.replace(`/launch?nativeAuthRetry=${retryCount + 1}`);
       return true;
     };
-    const releaseMerchantUnauthenticatedState = () => {
+    const releaseMerchantUnauthenticatedState = async () => {
       if (!mounted) return;
       if (preserveNativeFaollaShell()) return;
       if (shouldPreserveMerchantSessionDuringResume()) {
@@ -6647,6 +6679,19 @@ export default function AdminClient({
         return;
       }
       if (redirectNativeMerchantShellToLaunch()) return;
+      // A healthy gateway or an empty SDK session does not prove that the
+      // HttpOnly cookie session is invalid. Reconfirm before any reload/login.
+      const confirmed = await readMerchantSessionResult(AUTH_CHECK_TIMEOUT_MS, { forceRefresh: true });
+      if (!mounted) return;
+      if (confirmed.status === "unavailable") {
+        releaseMerchantUnavailableState();
+        return;
+      }
+      if (confirmed.status === "authenticated") {
+        setMerchantAuthRecheckVersion((value) => value + 1);
+        return;
+      }
+      setMerchantAuthUnavailable(false);
       let reloadStorage: AdminAutoReloadStorage | null = null;
       try {
         reloadStorage = window.sessionStorage;
@@ -6897,10 +6942,10 @@ export default function AdminClient({
     const gatewayReadyTask = canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS)).catch(() => false);
     const initialMerchantPayloadTask = !isPlatformEditor
       ? withTimeout(
-          readMerchantSessionPayload(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
+          readMerchantSessionResult(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
           AUTH_CHECK_TIMEOUT_MS,
           "登录检查超时，已使用本地缓存继续编辑",
-        ).catch(() => null)
+        ).catch(() => ({ status: "unavailable", payload: null } as const))
       : null;
 
     (async () => {
@@ -6913,7 +6958,15 @@ export default function AdminClient({
         };
 
         if (!isPlatformEditor) {
-          let merchantPayload = initialMerchantPayloadTask ? await initialMerchantPayloadTask : null;
+          const initialResult = initialMerchantPayloadTask ? await initialMerchantPayloadTask : null;
+          if (!mounted) return;
+          if (!initialResult || initialResult.status === "unavailable") {
+            clearTimeout(safetyTimeoutId);
+            if (preserveNativeFaollaShell()) return;
+            releaseMerchantUnavailableState();
+            return;
+          }
+          let merchantPayload = initialResult.payload;
           let merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
           let merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
           let merchantEmail =
@@ -6946,6 +6999,8 @@ export default function AdminClient({
             merchantIdsRef.current = mergePreferredMerchantIds(merchantIds, merchantIdsRef.current);
           }
           if (merchantId || merchantEmail) {
+            setMerchantAuthUnavailable(false);
+            merchantAuthFailureCountRef.current = 0;
             merchantSessionIdentityRef.current = {
               merchantId,
               email: merchantEmail || null,
@@ -7454,6 +7509,7 @@ export default function AdminClient({
     return () => {
       mounted = false;
       clearTimeout(safetyTimeoutId);
+      detachUnavailableAuthRecheck?.();
       if (authSubscription) authSubscription.unsubscribe();
       if (detachKeepAlive) detachKeepAlive();
       merchantIdsRef.current = [];
@@ -7466,6 +7522,7 @@ export default function AdminClient({
     isPlatformEditor,
     justSignedIn,
     merchantEditorOnly,
+    merchantAuthRecheckVersion,
     platformSeedBlocks,
     readFreshMerchantSessionIdentity,
     setMerchantDesktopSection,
@@ -18689,6 +18746,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           style={supportMobileViewportFrameStyle}
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            {merchantAuthUnavailable ? (
+              <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-900">
+                暂时无法确认登录状态，正在自动重试；无需退出或重新登录。
+              </div>
+            ) : null}
             {supportMobileDialogContent}
           </div>
         </main>
