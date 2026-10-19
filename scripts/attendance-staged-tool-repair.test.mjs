@@ -62,7 +62,8 @@ test('real static closure includes every transitive local import according to th
   assert.ok(seen.has('scripts/prepare-online-release-tool.mjs'));
   assert.ok(seen.has('scripts/attendance-staged-tool-repair-policy.mjs'));
   assert.ok(seen.has('scripts/contact-wechat-staged-tool-repair-policy.mjs'));
-  assert.equal(seen.size,12);
+  assert.ok(seen.has('scripts/merchant-login-unbuilt-repair-policy.mjs'));
+  assert.equal(seen.size,13);
 });
 
 test('closure follows inline/multiline static imports, reexports and cycles but refuses escapes', () => {

@@ -1,4 +1,5 @@
 import {LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS} from './merchant-login-release-policy.mjs';
+import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment} from './merchant-login-unbuilt-repair-policy.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync,spawn} from 'node:child_process';
@@ -9,7 +10,7 @@ import {runInNewContext as vmRunInNewContext} from 'node:vm';
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.
-const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
+const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
 import {webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
@@ -20,6 +21,17 @@ import {ATTENDANCE_RELEASE_SCOPE,ATTENDANCE_RELEASE_FILES,ATTENDANCE_RELEASE_FOC
 import {CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES} from './contact-wechat-release-policy.mjs';
 import ts from 'typescript';
 import {CONTACT_WECHAT_STAGED_REPAIR} from './contact-wechat-staged-tool-repair-policy.mjs';
+
+test('login-only test environment repair retains all build, runtime and publication gates',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.match(code,/env:lane===LOGIN_RELEASE_LANE\?loginUnitTestEnvironment\(\):env/);
+ const start=code.indexOf("}else if(action==='resume-login-stage'){");
+ const branch=code.slice(start,code.indexOf("}else if(action==='database'){",start));
+ for(const gate of ['resumeLoginUnbuiltCandidate','verifyBase(s)','configUnchanged(s)','verifyLoginRelease(s)','bookingResumeDependencies','verifyLoginRelease(s,true)','check-admin-bundle-budget.mjs','candidateEnvironment(s)','smoke(s)','verifyCandidate(s)','onlineReleaseStageStatus(s.lane)'])assert.ok(branch.includes(gate),gate);
+ assert.doesNotMatch(branch,/database|migration|rmSync|unlinkSync|reset|NODE_ENV.*production/);
+ assert.equal(code.split("if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});").length-1,2);
+ assert.match(code,/merchant_login_unbuilt_use_reviewed_resume/);
+});
 
 function releaseRequestSource(){
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
@@ -1730,7 +1742,10 @@ test('actual pilot database branch backs up before exactly 052 and requires enab
  }
 });
 test('pilot re-verifies before static publication and restores web traffic before disabling only its candidate',()=>{
- const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const actual=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const loginGuard="   if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});\n";
+ assert.equal(actual.split(loginGuard).length,3);
+ const code=actual.replaceAll(loginGuard,'');
  const activate=code.indexOf('async function activateCandidate(');
  assert.ok(code.indexOf("verifyOrderAttention(s,'verify')",activate)<code.indexOf('publishStatic(',activate));
  assert.match(code,/else if\(action==='activate'\)\{\s*if\(target===CONTACT_WECHAT_STAGED_REPAIR.target\)assertContactWechatStagedRepairCandidate\(\{target,phase:'ready-no-database'\}\);\s*if\(s.status!==onlineReleaseActivationStatus\(s.lane\)\)fail\('not_ready'\);verifyCandidate\(s\);configUnchanged\(s\);await smoke\(s\);\s*if\(s.lane==='attendance'\)await verifyAttendanceDatabaseProof\(s\);\s*if\(target===CONTACT_WECHAT_STAGED_REPAIR.target\)assertContactWechatStagedRepairCandidate\(\{target,phase:'ready-no-database'\}\);\s*await activateCandidate\(s\);/);
