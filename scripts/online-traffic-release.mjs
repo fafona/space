@@ -1,5 +1,6 @@
 import {LOGIN_RELEASE_LANE,LOGIN_RELEASE_BASELINE,LOGIN_FOCUSED_TESTS,assertLoginReleaseClosure,loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides,loginCandidateEnvironmentText,buildLoginReleaseCandidate} from './merchant-login-release-policy.mjs';
 import {merchantLoginReleaseProbeFetch} from './merchant-login-release-probe.mjs';
+import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,resumeLoginUnbuiltCandidate,assertLoginUnbuiltRepairCandidate} from './merchant-login-unbuilt-repair.mjs';
 import {spawnSync} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,realpathSync,lstatSync,readdirSync,readlinkSync,copyFileSync,constants,statfsSync} from 'node:fs';
@@ -732,7 +733,9 @@ async function resumeBookingStage(s,probeRecovery=false){
   s.status=onlineReleaseStageStatus(s.lane);save(s);
  }catch(error){writeFileSync(`${audit}-failure.json`,JSON.stringify({toolRevision:tool.revision,error:error.message,failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});throw error;}
 }
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','resume-booking-stage','resume-booking-probe-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+if(action==='resume-login-stage'&&process.argv.slice(2).length!==2)fail('invalid_online_invocation');
+if(target===LOGIN_UNBUILT_REPAIR.target&&['finish-stage','resume-booking-stage','resume-booking-probe-stage','retry-static'].includes(action))fail('merchant_login_unbuilt_use_reviewed_resume');
 try{await withOnlineRetentionLocks(async heldLock=>{
 privateDirectory(root);
 try{
@@ -894,7 +897,7 @@ try{
    : lane==='performance'
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
-  run('node',['--import','tsx','--test',...(lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env,timeout:180000,stdio:'inherit'});
+  run('node',['--import','tsx','--test',...(lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env,timeout:180000,stdio:'inherit'});
   if(lane==='runtime-performance')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   if(lane==='booking-merge-cpu')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   if(lane==='customer-code-performance')run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
@@ -936,6 +939,13 @@ try{
    await resumeBookingStage(s);
   }else if(action==='resume-booking-probe-stage'){
    await resumeBookingStage(s,true);
+  }else if(action==='resume-login-stage'){
+   await resumeLoginUnbuiltCandidate(s,{rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),
+    verifyBefore:async()=>{await verifyBase(s);configUnchanged(s);verifyLoginRelease(s);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.loginDependenciesSha256)fail('merchant_login_dependency_tree_changed');},
+    runTests:(tests,testEnv)=>{console.log('online_login_repair_focused_tests');run('node',['--import','tsx','--test','--test-concurrency=1',...tests],{cwd:s.directory,env:testEnv,timeout:180000,stdio:'inherit'});},
+    verifyBuilt:()=>{s.loginBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyLoginRelease(s,true);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.loginDependenciesSha256)fail('merchant_login_dependency_tree_changed');run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});},
+    start:()=>run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(s.port)],{env:candidateEnvironment(s)}),
+    smoke:()=>smoke(s),ready:()=>{verifyCandidate(s);s.status=onlineReleaseStageStatus(s.lane);save(s);}});
   }else if(action==='database'){
    if(s.lane==='attendance'){
     if(!['staged','database-ready'].includes(s.status))fail('database_not_staged');configUnchanged(s);
@@ -970,9 +980,11 @@ try{
    verifyCandidate(s);s.status='database-ready';save(s);
    }
   }else if(action==='activate'){
+   if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});
    if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'ready-no-database'});
    if(s.status!==onlineReleaseActivationStatus(s.lane))fail('not_ready');verifyCandidate(s);configUnchanged(s);await smoke(s);
    if(s.lane==='attendance')await verifyAttendanceDatabaseProof(s);
+   if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});
    if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'ready-no-database'});
    await activateCandidate(s);await settleOnlineRetention(s,heldLock);
   }else if(action==='retry-static'){
