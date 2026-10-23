@@ -1,3 +1,4 @@
+import {hasGoogleLoginReleaseAnchor,assertGoogleLoginReleaseScope,GOOGLE_LOGIN_RELEASE_LANE} from './google-login-release-policy.mjs';
 import {hasLoginReleaseAnchor,assertLoginReleaseScope,LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';
 import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';
 import {readFileSync} from 'node:fs';
@@ -314,6 +315,7 @@ export const ATTENDANCE_RELEASE_FOCUSED_TESTS=Object.freeze([
   'src/lib/merchantAttendanceIndependentAdminClient.test.ts','src/lib/merchantAttendanceIndependentTerminalClient.test.ts','src/lib/merchantAttendanceCorrectionDelegationClient.test.ts',
 ]);
 export function onlineReleaseLane(files) {
+  if(hasGoogleLoginReleaseAnchor(files)){assertGoogleLoginReleaseScope(files);return GOOGLE_LOGIN_RELEASE_LANE;}
   if(hasLoginReleaseAnchor(files)){assertLoginReleaseScope(files);return LOGIN_RELEASE_LANE;}
   if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}
   if(hasContactWechatReleaseAnchor(files)){assertContactWechatReleaseScope(files);return 'contact-wechat-code-only';}
@@ -358,6 +360,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if(lane===GOOGLE_LOGIN_RELEASE_LANE)return true;
   if(lane===LOGIN_RELEASE_LANE)return true;
   if(lane===BACKUP_RELEASE_LANE)return true;
   if(lane==='contact-wechat-code-only')return true;
@@ -377,6 +380,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if(lane===GOOGLE_LOGIN_RELEASE_LANE)throw Error('google_login_release_database_forbidden');
   if(lane===LOGIN_RELEASE_LANE)throw Error('merchant_login_release_database_forbidden');
   if(lane===BACKUP_RELEASE_LANE)throw Error('super_admin_backup_release_database_forbidden');
   if(lane==='contact-wechat-code-only')throw Error('contact_wechat_code_only_database_forbidden');

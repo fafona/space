@@ -1,3 +1,4 @@
+import {hasGoogleLoginReleaseAnchor,assertGoogleLoginReleaseScope,GOOGLE_LOGIN_RELEASE_LANE} from './google-login-release-policy.mjs';
 import {hasLoginReleaseAnchor,assertLoginReleaseScope,LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';
 import {onlineReleaseLane} from './online-traffic-release-policy.mjs';
 import {hasContactWechatReleaseAnchor, assertContactWechatReleaseScope} from './contact-wechat-release-policy.mjs';
@@ -53,6 +54,7 @@ export const ONLINE_PUBLICATION_SUPPORT_FILES = Object.freeze([
 const support = new Set(ONLINE_PUBLICATION_SUPPORT_FILES);
 
 export function onlinePublicationLane(files) {
+  if(hasGoogleLoginReleaseAnchor(files)){assertGoogleLoginReleaseScope(files);return GOOGLE_LOGIN_RELEASE_LANE;}
   if(hasLoginReleaseAnchor(files)){assertLoginReleaseScope(files);return LOGIN_RELEASE_LANE;}
   if (!Array.isArray(files) || files.some(file => typeof file !== 'string' || !file || /[\0\r\n\\]/.test(file)) ||
       new Set(files).size !== files.length) throw Error('online_publication_files_invalid');

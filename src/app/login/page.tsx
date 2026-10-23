@@ -1865,14 +1865,9 @@ function LoginPageInner() {
       if (requestedRedirectPath) callbackUrl.searchParams.set("redirect", requestedRedirectPath);
       if (loginFromUrl) callbackUrl.searchParams.set("loginFrom", loginFromUrl);
 
-      const queryParams: Record<string, string> = {};
-      const accountHint = account.trim();
-      if (!isStandaloneDisplayMode()) {
-        queryParams.prompt = "select_account";
-      }
-      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountHint)) {
-        queryParams.login_hint = accountHint;
-      }
+      // Installed/PWA windows must confirm the account just like browser tabs.
+      // Do not send login_hint: Google may use it to skip the account chooser.
+      const queryParams: Record<string, string> = { prompt: "select_account" };
 
       writeGoogleOAuthAttempt({
         accountType,
