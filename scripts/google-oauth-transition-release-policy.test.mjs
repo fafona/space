@@ -1,0 +1,125 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync,existsSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {runInNewContext} from 'node:vm';
+import http from 'node:http';
+import {readGoogleTransitionCallbackHtml,GOOGLE_TRANSITION_PROBE_LIMITS} from './google-oauth-transition-release-policy.mjs';
+import {GOOGLE_TRANSITION_RELEASE_LANE as lane,GOOGLE_TRANSITION_RELEASE_BASELINE as baseline,GOOGLE_TRANSITION_APPLICATION_FILES as app,GOOGLE_TRANSITION_TOOL_FILES as tooling,GOOGLE_TRANSITION_FOCUSED_TESTS,hasGoogleTransitionReleaseAnchor,assertGoogleTransitionReleaseScope,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint} from './google-oauth-transition-release-policy.mjs';
+import {loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides,loginCandidateEnvironmentText} from './merchant-login-release-policy.mjs';
+import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
+import {onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations} from './online-traffic-release-policy.mjs';
+import {attendanceOnlineBuildPlan,ATTENDANCE_BUILD_LIMITS} from './attendance-online-build.mjs';
+const files=[...app,...tooling],target='a'.repeat(40),root=new URL('../',import.meta.url);
+const readBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
+test('the complete three-file Google loading UI repair has a distinct no-database lane',()=>{
+ for(const list of [app,files,[...files].reverse()]){assert.equal(onlinePublicationLane(list),lane);assert.equal(onlineReleaseLane(list),lane);}
+ assert.equal(onlineReleaseStageStatus(lane),'ready-no-database');assert.equal(onlineReleaseActivationStatus(lane),'ready-no-database');
+ for(const fn of [assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget])assert.throws(()=>fn(lane),/google_transition_release_database_forbidden/);
+ assert.throws(()=>assertPendingOnlineReleaseMigrations(lane,new Proxy([],{get(){assert.fail('no database reads');}})),/database_forbidden/);
+ for(const file of app)assert.throws(()=>assertGoogleTransitionReleaseScope(files.filter(x=>x!==file)),/scope_rejected/);
+ assert.equal(hasGoogleTransitionReleaseAnchor(tooling),false);
+});
+test('scope cannot admit adjacent data, permission, auth, API, worker, SQL, dependency, workflow or cleanup changes',()=>{
+ for(const file of ['src/app/admin/AdminClient.tsx','src/app/api/bookings/route.ts','src/app/login/other.tsx','src/lib/merchantAttendanceManagementClient.ts','src/lib/merchantAttendanceScope.ts','src/app/api/merchant-enterprise/attendance/scopes/route.ts','src/lib/authSessionRecovery.ts','src/lib/browserAuthStorage.ts','package.json','package-lock.json','.env.local','.github/workflows/ci.yml','scripts/supabase-migrations/new.sql','scripts/online-release-artifact-cleanup.mjs','scripts/merchant-login-release-policy.mjs'])assert.throws(()=>onlinePublicationLane([...files,file]),/scope_rejected/);
+ for(const list of [[],null,[...files,app[0]],['../'+app[0],...files]])assert.throws(()=>assertGoogleTransitionReleaseScope(list),/scope_rejected/);
+});
+test('closure pins all three full application files, the exact live baseline, complete tools and every byte',()=>{
+ const value=assertGoogleTransitionReleaseClosure({baseline,files,readBlob});
+ assert.match(value,/^[a-f0-9]{64}$/);assert.equal(assertGoogleTransitionReleaseClosure({baseline,files:[...files].reverse(),readBlob}),value);
+ assert.throws(()=>assertGoogleTransitionReleaseClosure({baseline:target,files,readBlob}),/baseline_invalid/);
+ for(const file of tooling)assert.throws(()=>assertGoogleTransitionReleaseClosure({baseline,files:files.filter(x=>x!==file),readBlob}),/tool_closure_missing/);
+ for(const file of app)assert.throws(()=>assertGoogleTransitionReleaseClosure({baseline,files,readBlob:f=>readBlob(f)+(f===file?'\n// unexpected app edit':'')}),/application_content_rejected/);
+ assert.notEqual(assertGoogleTransitionReleaseClosure({baseline,files,readBlob:f=>readBlob(f)+(f===tooling[0]?'\n// fixture tool change':'')}),value);
+});
+test('bounded build retains private network, memory, CPU, tasks, no swap, time and admission without larger budgets',()=>{
+ const input={lane,baseline,target,directory:`/www/wwwroot/merchant-space.web-releases/${target.slice(0,12)}-online`,operation:`/var/lib/faolla-online-release/${target}`,environment:{PATH:'/usr/bin'}};
+ const plan=buildGoogleTransitionReleaseCandidate(input,attendanceOnlineBuildPlan);
+ for(const p of ['MemoryMax=4294967296','CPUQuota=100%','TasksMax=128','RuntimeMaxSec=1200','PrivateNetwork=yes'])assert.ok(plan.properties.includes(p));
+ assert.equal(ATTENDANCE_BUILD_LIMITS.minimumAvailableBytes,6*1024**3);assert.equal(ATTENDANCE_BUILD_LIMITS.minimumDiskBytes,20*1024**3);
+ for(const patch of [{lane:'google-login-account-confirmation-code-only'},{baseline:target},{environment:{UNREVIEWED_SECRET:'fixture'}}])assert.throws(()=>buildGoogleTransitionReleaseCandidate({...input,...patch},()=>assert.fail('no build')),/scope_invalid|environment_unreviewed/);
+ for(const file of GOOGLE_TRANSITION_FOCUSED_TESTS)assert.ok(existsSync(new URL(file,root)),file);
+ for(const file of ['src/app/login/googleOAuthTransition.test.ts','src/lib/merchantAttendanceScopeNavigation.test.tsx','src/lib/merchantAttendanceManagementClient.test.ts','src/app/api/merchant-enterprise/attendance/scopes/route.test.ts'])assert.ok(GOOGLE_TRANSITION_FOCUSED_TESTS.includes(file));
+});
+function verifierFixture(){
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const source=code.slice(code.indexOf('function verifyGoogleTransitionRelease('),code.indexOf('function scopeNavigationClosure('));
+ const hash=value=>createHash('sha256').update(value).digest('hex');
+ const s={target,baseline,directory:'/candidate',oldDirectory:'/baseline',oldName:'baseline',googleTransitionBaselinePid:101,port:3105,googleTransitionClosureSha256:'closure'};
+ const inherited={PATH:'/usr/bin',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.faolla.com',FAOLLA_TRAFFIC_ENABLED:'1',FAOLLA_TRAFFIC_SIGNING_SECRET:'fixture',FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID:'10000000',FAOLLA_PLATFORM_SNAPSHOT_WRITE_MODE:'off',PWD:'/baseline'};
+ const env={...inherited,...loginCandidateOverrides(s,'2026-10-18T12:00:00.000Z'),PWD:s.directory,PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'};
+ const prior={name:s.oldName,pid:101,pm2_env:{...inherited,status:'online',pm_cwd:s.oldDirectory}},p={pid:202,pm2_env:{...env}};
+ const proof={target,buildId:'fixture-build',guardedCommand:'npm run build',memoryBytes:4*1024**3,heapMiB:3072,cpuQuotaPercent:100,tasks:128,seconds:1200,privateNetworkVerified:true,swapBytes:0};
+ const files=new Map([['/candidate/package-lock.json','lock'],['/baseline/package-lock.json','lock'],['/operation/runtime.json',JSON.stringify(env)],['/baseline/.env.local','EXISTING=keep\n'],['/candidate/.next/BUILD_ID','fixture-build'],['/operation/attendance-build-proof.json',JSON.stringify(proof)]]);
+ files.set('/candidate/.env.local',loginCandidateEnvironmentText(files.get('/baseline/.env.local'),loginCandidateOverrides(s,env.FAOLLA_WEB_RELEASED_AT)));
+ Object.assign(s,{googleTransitionDependencyLockSha256:hash('lock'),googleTransitionRuntimeSha256:hash(files.get('/operation/runtime.json')),googleTransitionBaselineEnvironmentFileSha256:hash(files.get('/baseline/.env.local')),googleTransitionEnvironmentFileSha256:hash(files.get('/candidate/.env.local')),googleTransitionInheritedEnvironmentSha256:hash(JSON.stringify(loginProtectedEnvironment(env))),googleTransitionBuildProofSha256:hash(files.get('/operation/attendance-build-proof.json'))});
+ const hooks={head:target,status:'',closure:'closure',owned:true},checked=[];
+ const check=runInNewContext(`${source}verifyGoogleTransitionRelease`,{GOOGLE_TRANSITION_RELEASE_BASELINE:baseline,operation:'/operation',hash,loginProtectedEnvironment,assertLoginEnvironment,loginCandidateEnvironmentText,loginCandidateOverrides,
+  bookingResumeOwnedPath:path=>{checked.push(path);if(!hooks.owned)throw Error('path_not_owned');},
+  run:(_command,args)=>args[0]==='rev-parse'?hooks.head:hooks.status,googleTransitionClosure:()=>hooks.closure,
+  candidateEnvironment:()=>JSON.parse(files.get('/operation/runtime.json')),pm:()=>[prior],
+  safeFile:path=>{if(!files.has(path))throw Error('missing_proof');return files.get(path);},
+  read:path=>path==='/proc/101/environ'?inherited:env,webReleaseRuntimeEnvironment:value=>value,
+  assertAttendanceCandidateEnvironment:()=>checked.push('attendance-settings'),realpathSync:()=>s.directory,
+  fail:message=>{throw Error(message);},
+ });
+ return {s,env,inherited,prior,p,proof,files,hooks,checked,hash,check:()=>check(s,true,p)};
+}
+test('real controller verifier seals source, inherited settings, process identity and build evidence without writes',()=>{
+ const good=verifierFixture();assert.doesNotThrow(good.check);assert.ok(good.checked.includes('/candidate/node_modules'));assert.ok(good.checked.includes('attendance-settings'));
+ const mutations=[
+  f=>{f.hooks.head='b'.repeat(40);},f=>{f.hooks.status=' M src/unreviewed.ts';},f=>{f.hooks.closure='wrong';},f=>{f.hooks.owned=false;},
+  f=>{f.files.set('/candidate/package-lock.json','different');},f=>{f.files.set('/operation/runtime.json','{}');},
+  f=>{f.files.set('/baseline/.env.local','changed');},f=>{f.files.set('/candidate/.env.local','changed');},
+  f=>{f.inherited.FAOLLA_PLATFORM_SNAPSHOT_WRITE_MODE='on';},f=>{f.inherited.NEW_BUSINESS_SETTING='1';},
+  f=>{f.prior.pid++;},f=>{f.prior.pm2_env.status='stopped';},f=>{f.p.pm2_env.PWD='/wrong';},
+  f=>{f.p.pm2_env.FAOLLA_TRAFFIC_SIGNING_SECRET='changed';},f=>{f.env.PWD='/wrong';},
+  f=>{f.files.delete('/operation/attendance-build-proof.json');},f=>{f.files.set('/candidate/.next/BUILD_ID','wrong');},
+  ...['target','guardedCommand','memoryBytes','heapMiB','cpuQuotaPercent','tasks','seconds','privateNetworkVerified','swapBytes'].map(key=>f=>{
+   f.files.set('/operation/attendance-build-proof.json',JSON.stringify({...f.proof,[key]:'wrong'}));
+   f.s.googleTransitionBuildProofSha256=f.hash(f.files.get('/operation/attendance-build-proof.json'));
+  }),
+ ];
+ for(const mutate of mutations){const fixture=verifierFixture();mutate(fixture);assert.throws(fixture.check,/google_transition_|super_admin_backup_release_environment_changed|missing_proof|path_not_owned/);}
+});
+
+test('controller wires scope-only source, environment, budget, smoke, rollback and convergence gates without retirement',()=>{
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ for(const part of ['if(lane===GOOGLE_TRANSITION_RELEASE_LANE)assertAttendanceBuildAdmission','verifyGoogleTransitionRelease(s);buildGoogleTransitionReleaseCandidate','s.googleTransitionBuildProofSha256=hash(safeFile(','verifyGoogleTransitionRelease(s,true,p)','env:lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env','s.googleTransitionDependenciesSha256','let googleTransitionBaseline;','if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE&&bookingResumeDependencies'])assert.ok(source.includes(part),part);
+ const retention=source.slice(source.indexOf(' if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){'),source.indexOf(' if(s.lane===SCOPE_NAV_RELEASE_LANE){'));
+ assert.match(retention,/victimTarget:null/);assert.doesNotMatch(retention,/completePublicationRetention|reclaimPublicationArtifacts|kind:'retire'/);
+ const smoke=source.slice(source.indexOf(' if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){',source.indexOf('async function smoke(')),source.indexOf(' if(s.lane===SCOPE_NAV_RELEASE_LANE){',source.indexOf('async function smoke(')));
+ for(const part of ['assertContactWechatResponse','data-backups','contactWechatAttendanceSmoke','merchantLoginReleaseProbeFetch','authenticated!==false','assertGoogleTransitionFirstPaint','readGoogleTransitionCallbackHtml(s.port)','/login?oauth=google&accountType=merchant'])assert.ok(smoke.includes(part),part);
+ assert.match(source,/s.lane===GOOGLE_TRANSITION_RELEASE_LANE\|\|s.lane===SCOPE_NAV_RELEASE_LANE/);
+});
+test('first-paint smoke requires actual branded markup and rejects login fields without running effects or auth',()=>{
+ const html='<main class="faolla-loading-progress-screen grid"><div>Faolla</div></main>';
+ assert.doesNotThrow(()=>assertGoogleTransitionFirstPaint(html));
+ for(const bad of ['',null,'<script>faolla-loading-progress-screen</script>',html+'<input name="merchant-login-account">',html+"<input name='merchant-login-password'>"])assert.throws(()=>assertGoogleTransitionFirstPaint(bad),/first_paint_invalid/);
+});
+test('private callback probe accepts only a numeric loopback port with fixed body/time bounds',async()=>{
+ for(const port of [undefined,null,'3106','https://example.com',0,-1,65536,NaN,1.5])await assert.rejects(readGoogleTransitionCallbackHtml(port),/probe_port_invalid/);
+ assert.deepEqual(GOOGLE_TRANSITION_PROBE_LIMITS,{milliseconds:20000,bodyBytes:2*1024**2});
+});
+test('real private HTTP probe preserves exact Host/proto, never sends credentials or follows redirects, and bounds reads',async()=>{
+ const calls=[];let mode='normal';
+ const server=http.createServer((request,response)=>{
+  calls.push({host:request.headers.host,proto:request.headers['x-forwarded-proto'],method:request.method,path:request.url,cookie:request.headers.cookie,authorization:request.headers.authorization});
+  if(mode==='redirect'){response.writeHead(308,{Location:'https://example.invalid/never-follow'});return response.end();}
+  if(mode==='type'){response.writeHead(200,{'Content-Type':'application/json'});return response.end('{}');}
+  response.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+  if(mode==='large')return response.end(Buffer.alloc(GOOGLE_TRANSITION_PROBE_LIMITS.bodyBytes+1));
+  if(mode==='pending'){response.flushHeaders();return;}
+  response.end('<main class="faolla-loading-progress-screen">Faolla</main>');
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const port=server.address().port;
+  assertGoogleTransitionFirstPaint(await readGoogleTransitionCallbackHtml(port));
+  assert.deepEqual(calls[0],{host:'launch.faolla.com',proto:'https',method:'GET',path:'/login?oauth=google&accountType=merchant',cookie:undefined,authorization:undefined});
+  for(const value of ['redirect','type']){mode=value;await assert.rejects(readGoogleTransitionCallbackHtml(port),/response_invalid/);}
+  assert.equal(calls.length,3);
+  mode='large';await assert.rejects(readGoogleTransitionCallbackHtml(port),/body_limit/);
+  mode='pending';const controller=new AbortController(),task=readGoogleTransitionCallbackHtml(port,{signal:controller.signal});setTimeout(()=>controller.abort(),20);await assert.rejects(task,/aborted/);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});

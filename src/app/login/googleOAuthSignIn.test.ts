@@ -66,6 +66,7 @@ function createHarness(options: HarnessOptions = {}) {
     setMsg: (message: string) => messages.push(message),
     setNeedConfirmEmail: () => undefined,
     setPendingAction: (action: string | null) => pending.push(action),
+    setGoogleOAuthTransitionPending: () => undefined,
     clearGoogleOAuthAttempt: () => { cleared += 1; },
     readSupabaseAuthSettings: async () => {
       settingsRead += 1;

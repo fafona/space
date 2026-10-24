@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
+import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import {
   AUTH_ACCOUNT_MAX_LENGTH,
   AUTH_EMAIL_MAX_LENGTH,
@@ -463,6 +464,9 @@ function LoginPageInner() {
     () => (searchParams.get("oauth") ?? "").trim().toLowerCase() === "google",
     [searchParams],
   );
+  // Start on the callback's first render, before effects run. Keep this latched
+  // through URL cleanup and navigation so the sign-in form cannot flash back.
+  const [googleOAuthTransitionPending, setGoogleOAuthTransitionPending] = useState(isGoogleOAuthReturn && !loggedOut);
   const googleOAuthAccountType = useMemo(
     () => normalizePlatformAccountType(searchParams.get("accountType")) || "personal",
     [searchParams],
@@ -516,6 +520,7 @@ function LoginPageInner() {
       }
     }
     setMsg("Google 登录已过期，请重新点击 Google 登录。");
+    setGoogleOAuthTransitionPending(false);
   }, [googleOAuthStateExpired, loginFromUrl, requestedEntryAccountType, requestedRedirectPath]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const [embeddedShellLogin, setEmbeddedShellLogin] = useState(false);
@@ -1376,9 +1381,11 @@ function LoginPageInner() {
       }
       setPendingAction(null);
       setMsg("");
+      setGoogleOAuthTransitionPending(false);
       return;
     }
     let mounted = true;
+    setGoogleOAuthTransitionPending(true);
     setAuthView("signin");
     setPendingAction("google");
     setMsg("正在使用 Google 登录...");
@@ -1572,6 +1579,7 @@ function LoginPageInner() {
           }
           setMsg("Google 登录未完成，请重新点击 Google 登录。");
           setPendingAction(null);
+          setGoogleOAuthTransitionPending(false);
           return;
         }
         clearGoogleOAuthAttempt();
@@ -1595,6 +1603,7 @@ function LoginPageInner() {
         }
         setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
         setPendingAction(null);
+        setGoogleOAuthTransitionPending(false);
       }
     })();
 
@@ -1833,6 +1842,7 @@ function LoginPageInner() {
     if (isWeChatBrowser) {
       setMsg(googleWeChatBlockedMessage);
       setPendingAction(null);
+      setGoogleOAuthTransitionPending(false);
       return;
     }
     writeStoredLoginEntryAccountType(accountType);
@@ -1853,6 +1863,7 @@ function LoginPageInner() {
         clearGoogleOAuthAttempt();
         setMsg("Google 登录尚未在认证服务中启用。请先在 Supabase/Auth 中配置 Google Provider。");
         setPendingAction(null);
+        setGoogleOAuthTransitionPending(false);
         return;
       }
 
@@ -1892,6 +1903,7 @@ function LoginPageInner() {
       clearGoogleOAuthAttempt();
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
       setPendingAction(null);
+      setGoogleOAuthTransitionPending(false);
     }
   }
   signInWithGoogleRef.current = signInWithGoogle;
@@ -2222,6 +2234,20 @@ function LoginPageInner() {
 
   if (embeddedShellLogin) {
     return <main className="faolla-login-shell min-h-screen bg-[#081121]" aria-hidden="true" />;
+  }
+
+  if (googleOAuthTransitionPending) {
+    return (
+      <LoadingProgressScreen
+        locale={locale}
+        statusTitle={
+          locale.startsWith("zh")
+            ? "欢迎使用 FAOLLA 愿您生意兴隆！"
+            : "Welcome to FAOLLA. Wishing you a thriving business!"
+        }
+        statusDescription={msg}
+      />
+    );
   }
 
   return (
