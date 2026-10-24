@@ -1,4 +1,4 @@
-import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint} from './google-oauth-transition-release-policy.mjs';
+import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint,readGoogleTransitionCallbackHtml} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_RELEASE_BASELINE,SCOPE_NAV_FOCUSED_TESTS,assertScopeNavigationReleaseClosure,buildScopeNavigationReleaseCandidate} from './attendance-scope-navigation-release-policy.mjs';
 import {GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_RELEASE_BASELINE,GOOGLE_LOGIN_FOCUSED_TESTS,assertGoogleLoginReleaseClosure,buildGoogleLoginReleaseCandidate} from './google-login-release-policy.mjs';
 import {LOGIN_RELEASE_LANE,LOGIN_RELEASE_BASELINE,LOGIN_FOCUSED_TESTS,assertLoginReleaseClosure,loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides,loginCandidateEnvironmentText,buildLoginReleaseCandidate} from './merchant-login-release-policy.mjs';
@@ -316,8 +316,8 @@ async function smoke(s,publicMode=false){
  if(s.lane==='contact-wechat-code-only')assertContactWechatResponse(s,card,contactResponse,contact);
  if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){
   assertContactWechatResponse(s,card,contactResponse,contact);
-  const transitionOrigin=publicMode?'https://launch.faolla.com':origin;
-  assertGoogleTransitionFirstPaint(await(await request(`${transitionOrigin}/login?oauth=google&accountType=merchant`,[200],'launch.faolla.com')).text());
+  const transitionHtml=publicMode?await(await request('https://launch.faolla.com/login?oauth=google&accountType=merchant',[200],'launch.faolla.com')).text():await readGoogleTransitionCallbackHtml(s.port);
+  assertGoogleTransitionFirstPaint(transitionHtml);
   await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/data-backups`,[401],'console.faolla.com');
   await contactWechatAttendanceSmoke(origin,publicMode);
   const session=publicMode?await request('https://launch.faolla.com/api/auth/merchant-session',[401],'launch.faolla.com'):await merchantLoginReleaseProbeFetch(`${origin}/api/auth/merchant-session`,{redirect:'manual',headers:{Host:'launch.faolla.com',Connection:'close'},signal:AbortSignal.timeout(20000)});

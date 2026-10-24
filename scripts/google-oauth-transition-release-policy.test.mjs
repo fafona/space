@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
+import http from 'node:http';
+import {readGoogleTransitionCallbackHtml,GOOGLE_TRANSITION_PROBE_LIMITS} from './google-oauth-transition-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE as lane,GOOGLE_TRANSITION_RELEASE_BASELINE as baseline,GOOGLE_TRANSITION_APPLICATION_FILES as app,GOOGLE_TRANSITION_TOOL_FILES as tooling,GOOGLE_TRANSITION_FOCUSED_TESTS,hasGoogleTransitionReleaseAnchor,assertGoogleTransitionReleaseScope,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint} from './google-oauth-transition-release-policy.mjs';
 import {loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides,loginCandidateEnvironmentText} from './merchant-login-release-policy.mjs';
 import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
@@ -87,11 +89,37 @@ test('controller wires scope-only source, environment, budget, smoke, rollback a
  const retention=source.slice(source.indexOf(' if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){'),source.indexOf(' if(s.lane===SCOPE_NAV_RELEASE_LANE){'));
  assert.match(retention,/victimTarget:null/);assert.doesNotMatch(retention,/completePublicationRetention|reclaimPublicationArtifacts|kind:'retire'/);
  const smoke=source.slice(source.indexOf(' if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){',source.indexOf('async function smoke(')),source.indexOf(' if(s.lane===SCOPE_NAV_RELEASE_LANE){',source.indexOf('async function smoke(')));
- for(const part of ['assertContactWechatResponse','data-backups','contactWechatAttendanceSmoke','merchantLoginReleaseProbeFetch','authenticated!==false','assertGoogleTransitionFirstPaint','/login?oauth=google&accountType=merchant'])assert.ok(smoke.includes(part),part);
+ for(const part of ['assertContactWechatResponse','data-backups','contactWechatAttendanceSmoke','merchantLoginReleaseProbeFetch','authenticated!==false','assertGoogleTransitionFirstPaint','readGoogleTransitionCallbackHtml(s.port)','/login?oauth=google&accountType=merchant'])assert.ok(smoke.includes(part),part);
  assert.match(source,/s.lane===GOOGLE_TRANSITION_RELEASE_LANE\|\|s.lane===SCOPE_NAV_RELEASE_LANE/);
 });
 test('first-paint smoke requires actual branded markup and rejects login fields without running effects or auth',()=>{
  const html='<main class="faolla-loading-progress-screen grid"><div>Faolla</div></main>';
  assert.doesNotThrow(()=>assertGoogleTransitionFirstPaint(html));
  for(const bad of ['',null,'<script>faolla-loading-progress-screen</script>',html+'<input name="merchant-login-account">',html+"<input name='merchant-login-password'>"])assert.throws(()=>assertGoogleTransitionFirstPaint(bad),/first_paint_invalid/);
+});
+test('private callback probe accepts only a numeric loopback port with fixed body/time bounds',async()=>{
+ for(const port of [undefined,null,'3106','https://example.com',0,-1,65536,NaN,1.5])await assert.rejects(readGoogleTransitionCallbackHtml(port),/probe_port_invalid/);
+ assert.deepEqual(GOOGLE_TRANSITION_PROBE_LIMITS,{milliseconds:20000,bodyBytes:2*1024**2});
+});
+test('real private HTTP probe preserves exact Host/proto, never sends credentials or follows redirects, and bounds reads',async()=>{
+ const calls=[];let mode='normal';
+ const server=http.createServer((request,response)=>{
+  calls.push({host:request.headers.host,proto:request.headers['x-forwarded-proto'],method:request.method,path:request.url,cookie:request.headers.cookie,authorization:request.headers.authorization});
+  if(mode==='redirect'){response.writeHead(308,{Location:'https://example.invalid/never-follow'});return response.end();}
+  if(mode==='type'){response.writeHead(200,{'Content-Type':'application/json'});return response.end('{}');}
+  response.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+  if(mode==='large')return response.end(Buffer.alloc(GOOGLE_TRANSITION_PROBE_LIMITS.bodyBytes+1));
+  if(mode==='pending'){response.flushHeaders();return;}
+  response.end('<main class="faolla-loading-progress-screen">Faolla</main>');
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const port=server.address().port;
+  assertGoogleTransitionFirstPaint(await readGoogleTransitionCallbackHtml(port));
+  assert.deepEqual(calls[0],{host:'launch.faolla.com',proto:'https',method:'GET',path:'/login?oauth=google&accountType=merchant',cookie:undefined,authorization:undefined});
+  for(const value of ['redirect','type']){mode=value;await assert.rejects(readGoogleTransitionCallbackHtml(port),/response_invalid/);}
+  assert.equal(calls.length,3);
+  mode='large';await assert.rejects(readGoogleTransitionCallbackHtml(port),/body_limit/);
+  mode='pending';const controller=new AbortController(),task=readGoogleTransitionCallbackHtml(port,{signal:controller.signal});setTimeout(()=>controller.abort(),20);await assert.rejects(task,/aborted/);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

@@ -30,6 +30,9 @@ Candidate/public smoke retains contact/vCard/WeChat, attendance and super-admin
 denial, hidden harnesses, merchant-session host boundaries, login and assets.
 The additional callback GET uses only an empty OAuth marker, no code/token or
 account, and checks first-paint loading markup without executing browser effects.
+Its fixed native HTTP loopback transport preserves the launch Host and HTTPS
+forwarding metadata, rejects redirects, and bounds body size and elapsed time;
+it does not widen the existing session-only probe or follow traffic into live.
 No production account or business data is created. Gracefully switch only after
 all gates pass, with owned rollback on failed public validation. Post-publication
 retention is convergence-only: keep active and baseline rollback, never stop or

@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import http from 'node:http';
 import {buildAttendanceOnlineCandidate,attendanceOnlineBuildPlan} from './attendance-online-build.mjs';
 import {assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
 import {SCOPE_NAV_FOCUSED_TESTS} from './attendance-scope-navigation-release-policy.mjs';
@@ -46,6 +47,33 @@ export function buildGoogleTransitionReleaseCandidate(input,build=buildAttendanc
 }
 export function assertGoogleTransitionFirstPaint(html){
  if(typeof html!=='string'||!/<main\b[^>]*\bclass="[^"]*\bfaolla-loading-progress-screen\b/.test(html)||/<input\b[^>]*\bname=["']merchant-login-(?:account|password)["']/i.test(html))fail('first_paint_invalid');
+}
+export const GOOGLE_TRANSITION_PROBE_LIMITS=Object.freeze({milliseconds:20000,bodyBytes:2*1024**2});
+// One fixed, unauthenticated loopback GET. Never follows a redirect into live.
+// Native HTTP preserves the launch Host and nginx's HTTPS-forwarding metadata.
+export async function readGoogleTransitionCallbackHtml(port,{signal}={}){
+ if(!Number.isInteger(port)||port<1||port>65535)fail('probe_port_invalid');
+ return new Promise((resolve,reject)=>{
+  let settled=false,timer,response;
+  const finish=(error,value)=>{
+   if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);
+   if(error){response?.destroy();request.destroy();reject(error);}else resolve(value);
+  };
+  const abort=()=>finish(Error('google_transition_probe_aborted'));
+  const request=http.request({hostname:'127.0.0.1',port,path:'/login?oauth=google&accountType=merchant',method:'GET',agent:false,
+   headers:{Host:'launch.faolla.com',Connection:'close','X-Forwarded-Proto':'https'},maxHeaderSize:16384},incoming=>{
+   response=incoming;let size=0;const chunks=[];
+   if(incoming.statusCode!==200||!/^text\/html(?:;|$)/i.test(incoming.headers['content-type']??''))return finish(Error('google_transition_probe_response_invalid'));
+   incoming.on('data',chunk=>{size+=chunk.length;if(size>GOOGLE_TRANSITION_PROBE_LIMITS.bodyBytes)finish(Error('google_transition_probe_body_limit'));else chunks.push(chunk);});
+   incoming.on('error',()=>finish(Error('google_transition_probe_response_failed')));
+   incoming.on('aborted',()=>finish(Error('google_transition_probe_response_failed')));
+   incoming.on('end',()=>{if(!settled)finish(null,Buffer.concat(chunks).toString('utf8'));});
+  });
+  request.on('error',()=>finish(Error('google_transition_probe_request_failed')));
+  timer=setTimeout(()=>finish(Error('google_transition_probe_timeout')),GOOGLE_TRANSITION_PROBE_LIMITS.milliseconds);
+  signal?.addEventListener('abort',abort,{once:true});
+  if(signal?.aborted)abort();else request.end();
+ });
 }
 export const GOOGLE_TRANSITION_FOCUSED_TESTS=Object.freeze([...new Set([
  ...SCOPE_NAV_FOCUSED_TESTS,'src/app/login/googleOAuthTransition.test.ts',
