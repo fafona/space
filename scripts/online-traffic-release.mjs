@@ -1,3 +1,4 @@
+import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_RELEASE_BASELINE,SCOPE_NAV_FOCUSED_TESTS,assertScopeNavigationReleaseClosure,buildScopeNavigationReleaseCandidate} from './attendance-scope-navigation-release-policy.mjs';
 import {GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_RELEASE_BASELINE,GOOGLE_LOGIN_FOCUSED_TESTS,assertGoogleLoginReleaseClosure,buildGoogleLoginReleaseCandidate} from './google-login-release-policy.mjs';
 import {LOGIN_RELEASE_LANE,LOGIN_RELEASE_BASELINE,LOGIN_FOCUSED_TESTS,assertLoginReleaseClosure,loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides,loginCandidateEnvironmentText,buildLoginReleaseCandidate} from './merchant-login-release-policy.mjs';
@@ -112,6 +113,21 @@ function readRetentionRollbackProof(history,actualActive){
   proxyHashes:Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,hash(safeFile(`${proxy}/${file}`))]))};
 }
 async function settleOnlineRetention(s,heldLock){
+ if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){
+  try{
+   if(s.status!=='active')fail('google_transition_bookkeeping_not_active');
+   const prior=readOnlineRetentionHistory().entries.at(-1);
+   if(!prior)return {status:'not-enabled',retired:null};
+   if(prior.active.target!==s.target){
+    const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+    const toolRevision=run('git',['rev-parse','HEAD'],{cwd:directory}).trim();
+    await runOnlineRetentionUnderHeldLocks({kind:'converge',activeTarget:s.target,victimTarget:null,toolRevision,lock:heldLock});
+   }
+   const window=inspectOnlineRetentionWindow({history:readOnlineRetentionHistory(),actualActive:JSON.parse(safeFile(activeFile)),current:pm().map(normalizeRetirementProcess)});
+   if(window.phase!=='stable'||window.active.target!==s.target)fail('google_transition_bookkeeping_window_changed');
+   return {status:'completed',retired:null};
+  }catch{console.error('online_retention_pending:google_transition_bookkeeping_unverified');return {status:'pending',reason:'google_transition_bookkeeping_unverified',retired:null};}
+ }
  if(s.lane===SCOPE_NAV_RELEASE_LANE){
   try{
    if(s.status!=='active')fail('scope_navigation_bookkeeping_not_active');
@@ -229,7 +245,7 @@ async function verifyBase(s){
 }
 function configUnchanged(s,active=false){for(const file of WEB_RELEASE_FILES)if(hash(safeFile(`${proxy}/${file}`))!==s.configs[file][active?'newHash':'oldHash'])fail('proxy_configuration_changed');}
 function readRuntimePerformanceSavedConfigs(s,includeAfter){
- if(s.lane!==SCOPE_NAV_RELEASE_LANE&&s.lane!==GOOGLE_LOGIN_RELEASE_LANE&&s.lane!==LOGIN_RELEASE_LANE&&s.lane!==BACKUP_RELEASE_LANE&&s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance'&&s.lane!=='contact-wechat-code-only')return null;
+ if(s.lane!==GOOGLE_TRANSITION_RELEASE_LANE&&s.lane!==SCOPE_NAV_RELEASE_LANE&&s.lane!==GOOGLE_LOGIN_RELEASE_LANE&&s.lane!==LOGIN_RELEASE_LANE&&s.lane!==BACKUP_RELEASE_LANE&&s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance'&&s.lane!=='contact-wechat-code-only')return null;
  const error=s.lane===LOGIN_RELEASE_LANE?'merchant_login_saved_proxy_changed':s.lane==='contact-wechat-code-only'?'contact_wechat_saved_proxy_changed':s.lane==='customer-code-performance'?'customer_code_performance_saved_proxy_changed':s.lane==='booking-merge-cpu'?'booking_merge_cpu_saved_proxy_changed':'runtime_performance_saved_proxy_changed';
  const saved=new Map();
  for(const file of WEB_RELEASE_FILES){
@@ -242,6 +258,7 @@ function readRuntimePerformanceSavedConfigs(s,includeAfter){
  return saved;
 }
 function verifyCandidate(s){
+ if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE)verifyGoogleTransitionRelease(s,true);
  if(s.lane===SCOPE_NAV_RELEASE_LANE)verifyScopeNavigationRelease(s,true);
  if(s.lane===GOOGLE_LOGIN_RELEASE_LANE)verifyGoogleLoginRelease(s,true);
  if(s.lane===LOGIN_RELEASE_LANE)verifyLoginRelease(s,true);
@@ -250,6 +267,7 @@ function verifyCandidate(s){
  if(s.lane==='attendance')verifyAttendanceSource(s);
  if(s.lane==='contact-wechat-code-only')verifyContactWechatSource(s,true);
  const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
+ if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE)verifyGoogleTransitionRelease(s,true,p);
  if(s.lane===SCOPE_NAV_RELEASE_LANE)verifyScopeNavigationRelease(s,true,p);
  if(s.lane===GOOGLE_LOGIN_RELEASE_LANE)verifyGoogleLoginRelease(s,true,p);
  if(s.lane===LOGIN_RELEASE_LANE)verifyLoginRelease(s,true,p);
@@ -296,6 +314,20 @@ async function smoke(s,publicMode=false){
  const contact=await contactResponse.text();
  if(!contact.includes('URL:https://www.haoyouduosevilla.com/'))fail('vcard_website_regression');
  if(s.lane==='contact-wechat-code-only')assertContactWechatResponse(s,card,contactResponse,contact);
+ if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){
+  assertContactWechatResponse(s,card,contactResponse,contact);
+  const transitionOrigin=publicMode?'https://launch.faolla.com':origin;
+  assertGoogleTransitionFirstPaint(await(await request(`${transitionOrigin}/login?oauth=google&accountType=merchant`,[200],'launch.faolla.com')).text());
+  await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/data-backups`,[401],'console.faolla.com');
+  await contactWechatAttendanceSmoke(origin,publicMode);
+  const session=publicMode?await request('https://launch.faolla.com/api/auth/merchant-session',[401],'launch.faolla.com'):await merchantLoginReleaseProbeFetch(`${origin}/api/auth/merchant-session`,{redirect:'manual',headers:{Host:'launch.faolla.com',Connection:'close'},signal:AbortSignal.timeout(20000)});
+  if(session.status!==401||(await session.json()).authenticated!==false)fail('google_transition_unauthenticated_probe_failed');
+  if(publicMode){
+   await request('https://faolla.com/api/auth/merchant-session',[421],'faolla.com');
+   const response=await request('https://faolla.com/card/luis-gpyv6u/contact');
+   assertContactWechatResponse(s,await(await request('https://faolla.com/card/luis-gpyv6u')).text(),response,await response.text());
+  }
+ }
  if(s.lane===SCOPE_NAV_RELEASE_LANE){
   assertContactWechatResponse(s,card,contactResponse,contact);
   await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/data-backups`,[401],'console.faolla.com');
@@ -362,7 +394,7 @@ async function smoke(s,publicMode=false){
 }
 function restoreConfigs(s){
  for(const file of WEB_RELEASE_FILES){const h=hash(safeFile(`${proxy}/${file}`));if(h!==s.configs[file].oldHash&&h!==s.configs[file].newHash)fail('rollback_proxy_not_owned');}
- const saved=s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,false):null;
+ const saved=s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,false):null;
  const retention=readOnlineRetentionHistory();
  if(retention.entries.at(-1)?.active.target===s.target)s.retentionRollbackHeadSha256=retention.headSha256;
  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).before:safeFile(`${operation}/before-${file}`));
@@ -372,6 +404,35 @@ function restoreConfigs(s){
  if(existsSync(activeFile)&&JSON.parse(safeFile(activeFile)).target===s.target)atomic(activeFile,JSON.stringify(s.previousActive??{target:s.baseline,port:s.oldPort,directory:s.oldDirectory,name:s.oldName}));
 }
 function candidateEnvironment(s){void s;return JSON.parse(safeFile(`${operation}/runtime.json`));}
+function googleTransitionClosure(releaseTarget,releaseBaseline){
+ const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
+ return assertGoogleTransitionReleaseClosure({baseline:releaseBaseline,files,readBlob:(file,revision=releaseTarget)=>run('git',['show',`${revision}:${file}`],{cwd:app})});
+}
+function verifyGoogleTransitionRelease(s,buildRequired=false,p){
+ for(const directory of [s.directory,s.oldDirectory]){bookingResumeOwnedPath(directory);bookingResumeOwnedPath(`${directory}/node_modules`);}
+ if(s.baseline!==GOOGLE_TRANSITION_RELEASE_BASELINE||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim()||googleTransitionClosure(s.target,s.baseline)!==s.googleTransitionClosureSha256)fail('google_transition_candidate_source_changed');
+ for(const directory of [s.directory,s.oldDirectory])if(hash(safeFile(`${directory}/package-lock.json`))!==s.googleTransitionDependencyLockSha256)fail('google_transition_dependencies_changed');
+ const env=candidateEnvironment(s),prior=pm().find(item=>item.name===s.oldName);
+ if(!prior||prior.pid!==s.googleTransitionBaselinePid||prior.pm2_env.status!=='online'||prior.pm2_env.pm_cwd!==s.oldDirectory)fail('google_transition_baseline_process_changed');
+ if(hash(safeFile(`${operation}/runtime.json`))!==s.googleTransitionRuntimeSha256||hash(safeFile(`${s.oldDirectory}/.env.local`))!==s.googleTransitionBaselineEnvironmentFileSha256||hash(safeFile(`${s.directory}/.env.local`))!==s.googleTransitionEnvironmentFileSha256)fail('google_transition_environment_file_changed');
+ if(safeFile(`${s.directory}/.env.local`)!==loginCandidateEnvironmentText(safeFile(`${s.oldDirectory}/.env.local`),loginCandidateOverrides(s,env.FAOLLA_WEB_RELEASED_AT)))fail('google_transition_environment_delta_invalid');
+ if(hash(JSON.stringify(loginProtectedEnvironment(env)))!==s.googleTransitionInheritedEnvironmentSha256)fail('google_transition_environment_changed');
+ const actualBaseline=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+ assertLoginEnvironment(actualBaseline,env);assertLoginEnvironment(prior.pm2_env,env,false);
+ for(const values of [actualBaseline,env])assertAttendanceCandidateEnvironment(values,'database-ready');
+ if(env.PWD!==s.directory||env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com'||env.FAOLLA_TRAFFIC_ENABLED!=='1'||!env.FAOLLA_TRAFFIC_SIGNING_SECRET||env.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000')fail('google_transition_features_changed');
+ const fixed={...loginCandidateOverrides(s,env.FAOLLA_WEB_RELEASED_AT),PWD:s.directory,PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'};
+ for(const values of [env,...(p?[p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))]:[])]){
+  assertLoginEnvironment(values,env,values!==p?.pm2_env);
+  assertAttendanceCandidateEnvironment(values,'database-ready');
+  for(const [key,value] of Object.entries(fixed))if(values[key]!==value)fail('google_transition_candidate_environment_invalid');
+ }
+ if(p&&realpathSync(`/proc/${p.pid}/cwd`)!==s.directory)fail('google_transition_candidate_directory_changed');
+ if(buildRequired){
+  const text=safeFile(`${operation}/attendance-build-proof.json`),proof=JSON.parse(text);
+  if(hash(text)!==s.googleTransitionBuildProofSha256||proof.target!==s.target||proof.buildId!==safeFile(`${s.directory}/.next/BUILD_ID`).trim()||proof.guardedCommand!=='npm run build'||proof.memoryBytes!==4*1024**3||proof.heapMiB!==3072||proof.cpuQuotaPercent!==100||proof.tasks!==128||proof.seconds!==1200||proof.privateNetworkVerified!==true||proof.swapBytes!==0)fail('google_transition_build_proof_changed');
+ }
+}
 function scopeNavigationClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
  return assertScopeNavigationReleaseClosure({baseline:releaseBaseline,files,readBlob:(file,revision=releaseTarget)=>run('git',['show',`${revision}:${file}`],{cwd:app})});
@@ -720,7 +781,8 @@ async function recoverStaticPermissions(s){
  s.staticPermissionRetry={toolRevision:tool.revision,audit,previousRollback:s.rolledBackAt,acceptedAt:new Date().toISOString()};save(s);
 }
 async function activateCandidate(s){
- const saved=s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,true):null;
+ const saved=s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,true):null;
+ if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.googleTransitionDependenciesSha256)fail('google_transition_dependency_tree_changed');
  if(s.lane===SCOPE_NAV_RELEASE_LANE&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.scopeNavigationDependenciesSha256)fail('scope_navigation_dependency_tree_changed');
  if(s.lane===GOOGLE_LOGIN_RELEASE_LANE&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.googleLoginDependenciesSha256)fail('google_login_dependency_tree_changed');
  if(s.lane===LOGIN_RELEASE_LANE&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.loginDependenciesSha256)fail('merchant_login_dependency_tree_changed');
@@ -867,6 +929,7 @@ try{
   const lane=onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   if(lane==='attendance'&&baseline!==ATTENDANCE_RELEASE_SCOPE.baseline)fail('attendance_live_baseline_invalid');
   const contactWechatClosureSha256=lane==='contact-wechat-code-only'?contactWechatClosure(target,baseline):null;
+  const googleTransitionClosureSha256=lane===GOOGLE_TRANSITION_RELEASE_LANE?googleTransitionClosure(target,baseline):null;
   const scopeNavigationClosureSha256=lane===SCOPE_NAV_RELEASE_LANE?scopeNavigationClosure(target,baseline):null;
   const googleLoginClosureSha256=lane===GOOGLE_LOGIN_RELEASE_LANE?googleLoginClosure(target,baseline):null;
   const loginClosureSha256=lane===LOGIN_RELEASE_LANE?loginClosure(target,baseline):null;
@@ -877,10 +940,22 @@ try{
   if(old.target!==baseline||(!previousActive&&legacy.status!=='active'))fail('live_baseline_not_owned');
   const all=pm(),prior=all.find(p=>p.name===old.name);if(!prior||prior.pm2_env.pm_cwd!==old.directory)fail('live_process_mismatch');
   let contactWechatBaseline;
+  let googleTransitionBaseline;
   let scopeNavigationBaseline;
   let googleLoginBaseline;
   let loginBaseline;
   let backupBaseline;
+  if(lane===GOOGLE_TRANSITION_RELEASE_LANE){
+   if(!previousActive||baseline!==GOOGLE_TRANSITION_RELEASE_BASELINE||old.port!==3105||old.name!==`merchant-space-online-${baseline.slice(0,12)}`||old.directory!==`${app}.web-releases/${baseline.slice(0,12)}-online`||prior.pm2_env.status!=='online'||!Number.isSafeInteger(prior.pid)||prior.pid<=0)fail('google_transition_live_baseline_invalid');
+   bookingResumeOwnedPath(old.directory);bookingResumeOwnedPath(`${old.directory}/node_modules`);
+   if(realpathSync(`/proc/${prior.pid}/cwd`)!==old.directory)fail('google_transition_baseline_directory_changed');
+   const inherited=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+   assertContactWechatBuildEnvironmentKeys(inherited);assertAttendanceCandidateEnvironment(inherited,'database-ready');assertLoginEnvironment(prior.pm2_env,inherited,false);
+   if(inherited.FAOLLA_TRAFFIC_ENABLED!=='1'||!inherited.FAOLLA_TRAFFIC_SIGNING_SECRET||inherited.FAOLLA_ORDER_ATTENTION_PILOT_SITE_ID!=='10000000'||inherited.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('google_transition_baseline_features_invalid');
+   const response=await request(`http://127.0.0.1:${old.port}/card/luis-gpyv6u/contact`),body=await response.text();
+   if(!body.includes('URL:https://www.haoyouduosevilla.com/')||!/^text\/vcard(?:;|$)/i.test(response.headers.get('content-type')??''))fail('google_transition_baseline_contact_invalid');
+   googleTransitionBaseline={googleTransitionClosureSha256,googleTransitionInheritedEnvironmentSha256:hash(JSON.stringify(loginProtectedEnvironment(inherited))),googleTransitionBaselineEnvironmentFileSha256:hash(safeFile(`${old.directory}/.env.local`)),googleTransitionDependencyLockSha256:hash(safeFile(`${old.directory}/package-lock.json`)),googleTransitionBaselinePid:prior.pid,contactWechatContactProof:contactWechatContactProof(response,body)};
+  }
   if(lane===SCOPE_NAV_RELEASE_LANE){
    if(!previousActive||baseline!==SCOPE_NAV_RELEASE_BASELINE||old.port!==3104||old.name!==`merchant-space-online-${baseline.slice(0,12)}`||old.directory!==`${app}.web-releases/${baseline.slice(0,12)}-online`||prior.pm2_env.status!=='online'||!Number.isSafeInteger(prior.pid)||prior.pid<=0)fail('scope_navigation_live_baseline_invalid');
    bookingResumeOwnedPath(old.directory);bookingResumeOwnedPath(`${old.directory}/node_modules`);
@@ -955,6 +1030,7 @@ try{
   if(hash(run('git',['show',`${target}:package-lock.json`],{cwd:app}))!==hash(safeFile(`${old.directory}/package-lock.json`)))fail('dependencies_changed');
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
   if(lane==='attendance'||lane==='contact-wechat-code-only')assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
+  if(lane===GOOGLE_TRANSITION_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if(lane===SCOPE_NAV_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if(lane===GOOGLE_LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if(lane===LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
@@ -965,6 +1041,7 @@ try{
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
+  if(lane===GOOGLE_TRANSITION_RELEASE_LANE)Object.assign(s,googleTransitionBaseline);
   if(lane===SCOPE_NAV_RELEASE_LANE)Object.assign(s,scopeNavigationBaseline);
   if(lane===GOOGLE_LOGIN_RELEASE_LANE)Object.assign(s,googleLoginBaseline);
   if(lane===LOGIN_RELEASE_LANE)Object.assign(s,loginBaseline);
@@ -973,6 +1050,10 @@ try{
   if(lane==='attendance'){s.attendanceEnabled=false;s.attendanceReleaseScopeSha256=hash(run('git',['show',`${target}:${ATTENDANCE_RELEASE_SCOPE_FILE}`],{cwd:app}));s.attendanceMigrationScopeSha256=hash(run('git',['show',`${target}:scripts/attendance-production-database-migrations.manifest.json`],{cwd:app}));}
   save(s);run('git',['worktree','add','--detach',s.directory,target],{cwd:app});
   run('cp',['-a','--reflink=auto',`${old.directory}/node_modules`,`${s.directory}/node_modules`],{timeout:180000});
+  if(lane===GOOGLE_TRANSITION_RELEASE_LANE){
+   s.googleTransitionDependenciesSha256=bookingResumeDependencies(`${old.directory}/node_modules`);
+   if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.googleTransitionDependenciesSha256)fail('google_transition_dependency_tree_changed');
+  }
   if(lane===SCOPE_NAV_RELEASE_LANE){
    s.scopeNavigationDependenciesSha256=bookingResumeDependencies(`${old.directory}/node_modules`);
    if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.scopeNavigationDependenciesSha256)fail('scope_navigation_dependency_tree_changed');
@@ -1013,6 +1094,10 @@ try{
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
+  if(lane===GOOGLE_TRANSITION_RELEASE_LANE){
+   env.PWD=s.directory;atomic(`${operation}/runtime.json`,JSON.stringify(env));
+   s.googleTransitionRuntimeSha256=hash(safeFile(`${operation}/runtime.json`));s.googleTransitionEnvironmentFileSha256=hash(safeFile(`${s.directory}/.env.local`));save(s);verifyGoogleTransitionRelease(s);
+  }
   if(lane===SCOPE_NAV_RELEASE_LANE){
    env.PWD=s.directory;atomic(`${operation}/runtime.json`,JSON.stringify(env));
    s.scopeNavigationRuntimeSha256=hash(safeFile(`${operation}/runtime.json`));s.scopeNavigationEnvironmentFileSha256=hash(safeFile(`${s.directory}/.env.local`));save(s);verifyScopeNavigationRelease(s);
@@ -1038,6 +1123,8 @@ try{
   verifyCustomerCodeCandidateSettings(s);
   const tests=lane==='attendance'
    ? ATTENDANCE_RELEASE_FOCUSED_TESTS
+   : lane===GOOGLE_TRANSITION_RELEASE_LANE
+   ? GOOGLE_TRANSITION_FOCUSED_TESTS
    : lane===SCOPE_NAV_RELEASE_LANE
    ? SCOPE_NAV_FOCUSED_TESTS
    : lane===GOOGLE_LOGIN_RELEASE_LANE
@@ -1067,13 +1154,17 @@ try{
    : lane==='performance'
    ? ['src/lib/performanceTelemetry.test.ts','src/lib/visiblePolling.test.ts','src/lib/merchantCustomers.test.ts','src/lib/merchantCustomerListViewport.test.ts','src/lib/merchantCustomerImport.test.ts','src/lib/merchantCustomerDirectoryStore.test.ts','src/app/api/merchant-customers/route.test.ts','src/app/admin/AdminClient.attention.test.ts','src/app/admin/AdminClient.contract.test.ts','src/components/admin/MerchantCustomerManager.behavior.test.ts','src/components/admin/MerchantCustomerManager.contract.test.ts','scripts/repair-unlaunched-transport.test.mjs','src/lib/merchantBusinessCardWebsiteRoute.test.ts']
    : [...run('git',['ls-files','src/lib/accountTraffic*.test.ts','src/app/api/traffic/**/route.test.ts','src/app/api/super-admin/traffic/**/route.test.ts','src/app/api/super-admin/traffic/route.test.ts'],{cwd:s.directory}).trim().split('\n'),'src/app/api/orders/route.test.ts','src/app/api/memberships/route.test.ts','scripts/account-traffic-analytics-contract.test.mjs','scripts/account-traffic-card-script.test.mjs'];
-  run('node',['--import','tsx','--test',...(lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env,timeout:180000,stdio:'inherit'});
+  run('node',['--import','tsx','--test',...(lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,'src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env,timeout:180000,stdio:'inherit'});
   if(lane==='runtime-performance')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   if(lane==='booking-merge-cpu')run('node',['--test','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   if(lane==='customer-code-performance')run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   verifyCustomerCodeCandidateSettings(s);
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
-  try{if(lane===SCOPE_NAV_RELEASE_LANE){verifyScopeNavigationRelease(s);buildScopeNavigationReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===GOOGLE_LOGIN_RELEASE_LANE){verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===LOGIN_RELEASE_LANE){verifyLoginRelease(s);buildLoginReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===BACKUP_RELEASE_LANE){verifyBackupRelease(s);buildBackupReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane==='attendance')buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});else if(lane==='contact-wechat-code-only'){verifyContactWechatSource(s);verifyContactWechatSavedSettings(s);buildContactWechatOnlineCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation});}else run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
+  try{if(lane===GOOGLE_TRANSITION_RELEASE_LANE){verifyGoogleTransitionRelease(s);buildGoogleTransitionReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===SCOPE_NAV_RELEASE_LANE){verifyScopeNavigationRelease(s);buildScopeNavigationReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===GOOGLE_LOGIN_RELEASE_LANE){verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===LOGIN_RELEASE_LANE){verifyLoginRelease(s);buildLoginReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===BACKUP_RELEASE_LANE){verifyBackupRelease(s);buildBackupReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane==='attendance')buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});else if(lane==='contact-wechat-code-only'){verifyContactWechatSource(s);verifyContactWechatSavedSettings(s);buildContactWechatOnlineCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation});}else run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
+  if(lane===GOOGLE_TRANSITION_RELEASE_LANE){
+   s.googleTransitionBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyGoogleTransitionRelease(s,true);
+   if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.googleTransitionDependenciesSha256)fail('google_transition_dependency_tree_changed');
+  }
   if(lane===SCOPE_NAV_RELEASE_LANE){
    s.scopeNavigationBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyScopeNavigationRelease(s,true);
    if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.scopeNavigationDependenciesSha256)fail('scope_navigation_dependency_tree_changed');

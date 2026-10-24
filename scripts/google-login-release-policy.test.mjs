@@ -12,7 +12,9 @@ const files=[...app,...tooling],target='a'.repeat(40);
 const root=new URL('../',import.meta.url);
 // Synthetic baseline port keeps unit tests independent of checkout depth.
 // The real controller reads both revisions using git show before any write.
-const readBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
+const readCurrentBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
+// Immutable reviewed page, not today's UI: old production pins stay unchanged.
+const readBlob=file=>readCurrentBlob(file==='src/app/login/page.tsx'?'scripts/fixtures/google-login-account-confirmation-page-20261023.txt':file);
 test('only the complete three-file Google repair has the distinct no-database lane',()=>{
  for(const list of [app,files,[...files].reverse()]){assert.equal(onlinePublicationLane(list),lane);assert.equal(onlineReleaseLane(list),lane);}
  assert.equal(onlineReleaseStageStatus(lane),'ready-no-database');assert.equal(onlineReleaseActivationStatus(lane),'ready-no-database');
@@ -35,6 +37,10 @@ test('closure pins full application content, inherited tools, exact baseline and
  assert.notEqual(assertGoogleLoginReleaseClosure({baseline,files,readBlob:(f,r)=>readBlob(f,r)+(f==='src/app/login/googleOAuthSignIn.test.ts'?'\n// fixture change':'')}),digest);
  assert.equal(GOOGLE_LOGIN_REVIEWED_MAIN,'5447e076c66eeda5ef61833f2d2e7ac511041eb2');
 });
+test('the original Google lane still rejects the later loading-only page',()=>{
+ assert.throws(()=>assertGoogleLoginReleaseClosure({baseline,files,readBlob:readCurrentBlob}),/application_content_rejected/);
+});
+
 test('build retains private-network, memory, CPU, task and time budgets and rejects other input',()=>{
  const input={lane,baseline,target,directory:`/www/wwwroot/merchant-space.web-releases/${target.slice(0,12)}-online`,operation:`/var/lib/faolla-online-release/${target}`,environment:{PATH:'/usr/bin'}};
  const plan=buildGoogleLoginReleaseCandidate(input,attendanceOnlineBuildPlan);
@@ -86,7 +92,7 @@ test('real controller verifier seals source, inherited settings, process identit
 
 test('controller wires Google-only ownership, budget, unit environment, smoke, rollback and convergence gates',()=>{
  const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- for(const part of ['if(lane===GOOGLE_LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission','verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate','s.googleLoginBuildProofSha256=hash(safeFile(','verifyGoogleLoginRelease(s,true,p)','env:lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env','s.googleLoginDependenciesSha256','let googleLoginBaseline;'])assert.ok(source.includes(part),part);
+ for(const part of ['if(lane===GOOGLE_LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission','verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate','s.googleLoginBuildProofSha256=hash(safeFile(','verifyGoogleLoginRelease(s,true,p)','env:lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env','s.googleLoginDependenciesSha256','let googleLoginBaseline;'])assert.ok(source.includes(part),part);
  const retention=source.slice(source.indexOf(' if(s.lane===GOOGLE_LOGIN_RELEASE_LANE){'),source.indexOf(' if(s.lane===LOGIN_RELEASE_LANE){'));
  assert.match(retention,/victimTarget:null/);assert.doesNotMatch(retention,/completePublicationRetention|reclaimPublicationArtifacts/);
  const smoke=source.slice(source.indexOf(' if(s.lane===GOOGLE_LOGIN_RELEASE_LANE){',source.indexOf('async function smoke(')),source.indexOf(' if(s.lane===LOGIN_RELEASE_LANE){',source.indexOf('async function smoke(')));
