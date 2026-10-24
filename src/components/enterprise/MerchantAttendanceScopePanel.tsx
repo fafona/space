@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AttendanceScopeClient, attendanceManagementMessage, attendanceManagementRequest } from "@/lib/merchantAttendanceManagementClient";
 import { parseAttendanceChoicesResult, type AttendanceChoice, type AttendanceChoiceKind, type AttendanceChoicesResult } from "@/lib/merchantAttendanceChoices";
 import type { AttendanceManagementGrant } from "@/lib/merchantAttendanceScope";
@@ -46,6 +46,16 @@ function ChoicePicker({ siteId, kind, apiFetch, selected, onToggle, disabled = f
   </div>;
 }
 type Draft = AttendanceManagementGrant & { revision: number; labels: Record<string, AttendanceChoice> };
+export function attendanceScopeDraftIsDirty(draft: AttendanceManagementGrant | null, initial: AttendanceManagementGrant | null) {
+  if (!draft) return false;
+  if (!initial) return true;
+  const sameIds = (a: readonly string[], b: readonly string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  // The server may emit microsecond precision while datetime-local uses milliseconds.
+  // Remove only insignificant trailing zeros, never round a nonzero fraction.
+  const time = (value: string | null) => value?.replace(/(\.\d*?)0+Z$/, "$1Z").replace(/\.Z$/, "Z") ?? null;
+  return draft.id !== initial.id || !sameIds(draft.workerIds, initial.workerIds) || !sameIds(draft.locationIds, initial.locationIds)
+    || time(draft.validFrom) !== time(initial.validFrom) || time(draft.validUntil) !== time(initial.validUntil);
+}
 function SelectedChoices({ siteId, apiFetch, kind, ids, known, disabled, onRemove }: {
   siteId: string; apiFetch: AttendanceApiFetch; kind: "workers" | "locations"; ids: readonly string[];
   known: Record<string, AttendanceChoice>; disabled: boolean; onRemove: (choice: AttendanceChoice) => void;
@@ -80,19 +90,38 @@ function SelectedChoices({ siteId, apiFetch, kind, ids, known, disabled, onRemov
 }
 function utcInput(iso: string | null) { return iso?.replace(/Z$/, "") ?? ""; }
 function fromUtcInput(value: string) { return value.length === 16 ? `${value}:00.000Z` : value.length === 19 ? `${value}.000Z` : `${value}Z`; }
-type ScopePanelProps = { siteId: string; ownerId: string; apiFetch: AttendanceApiFetch };
+type ScopePanelProps = { siteId: string; ownerId: string; apiFetch: AttendanceApiFetch; registerLeaveGuard?: (guard: (() => boolean) | null) => void };
 export default function MerchantAttendanceScopePanel(props: ScopePanelProps) {
   return <ScopeScreen key={`${props.siteId}:${props.ownerId}`} {...props} />;
 }
-function ScopeScreen({ siteId, ownerId, apiFetch }: ScopePanelProps) {
+function ScopeScreen({ siteId, ownerId, apiFetch, registerLeaveGuard }: ScopePanelProps) {
   const client = useMemo(() => new AttendanceScopeClient({ siteId, ownerId, apiFetch, storage: () => window.sessionStorage }), [siteId, ownerId, apiFetch]);
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
   const [manager, setManager] = useState<AttendanceChoice | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [initialDraft, setInitialDraft] = useState<AttendanceManagementGrant | null>(null);
   const [picker, setPicker] = useState<"workers" | "locations">("workers");
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [choosing, setChoosing] = useState(true);
+  const draftIsDirty = attendanceScopeDraftIsDirty(draft, initialDraft);
+  useLayoutEffect(() => {
+    const hasPending = () => {
+      if (client.getSnapshot().pending) return true;
+      try { return window.sessionStorage.getItem(client.storageKey) !== null; }
+      catch { return true; } // Unreadable storage must not silently lose an unknown operation.
+    };
+    registerLeaveGuard?.(() => {
+      if (hasPending()) return window.confirm("考勤范围仍有待确认操作，或暂时无法核对本标签页的操作记录。离开不会撤销已发送操作；原编号将保留供核对。确定离开吗？");
+      return !draftIsDirty || window.confirm("考勤范围有未保存的修改。离开将放弃这些修改，是否继续？");
+    });
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!draftIsDirty && !hasPending()) return;
+      event.preventDefault(); event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => { window.removeEventListener("beforeunload", beforeUnload); registerLeaveGuard?.(null); };
+  }, [client, draftIsDirty, registerLeaveGuard]);
   useEffect(() => { void client.initialize(); return () => client.dispose(); }, [client]);
   const ready = state.phase === "ready" && !!state.result;
   const locked = !ready || !!state.pending;
@@ -102,8 +131,10 @@ function ScopeScreen({ siteId, ownerId, apiFetch }: ScopePanelProps) {
   };
   const edit = (g?: AttendanceManagementGrant) => {
     if (!state.result || locked) return;
-    setDraft({ ...(g ?? { id: crypto.randomUUID(), workerIds: [], locationIds: [], validFrom: new Date().toISOString(), validUntil: null }),
-      workerIds: [...(g?.workerIds ?? [])], locationIds: [...(g?.locationIds ?? [])], revision: state.result.scope.revision, labels: {} });
+    const initial = { ...(g ?? { id: crypto.randomUUID(), workerIds: [], locationIds: [], validFrom: new Date().toISOString(), validUntil: null }),
+      workerIds: [...(g?.workerIds ?? [])], locationIds: [...(g?.locationIds ?? [])] };
+    setInitialDraft(initial);
+    setDraft({ ...initial, workerIds: [...initial.workerIds], locationIds: [...initial.locationIds], revision: state.result.scope.revision, labels: {} });
     setRemoveId(null); setNotice(""); setPicker("workers");
   };
   const toggle = (c: AttendanceChoice) => {

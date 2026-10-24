@@ -5303,6 +5303,11 @@ function MerchantEnterpriseManagerContent({
     lastSyncedAtMs > 0 && overviewNowMs - lastSyncedAtMs >= collaborationStaleAfterMs;
   const enterpriseAutoRefreshPaused = Boolean(actor && !canAutoRefreshOnFocus);
 
+  const hasStoredAttendanceScopeOperation = useCallback(() => {
+    if (tab !== "attendanceScopes" || actor?.type !== "owner") return false;
+    try { return window.sessionStorage.getItem(`faolla:attendance:scope:v1:${siteId}:${actor.id}`) !== null; }
+    catch { return true; }
+  }, [actor, siteId, tab]);
   const confirmViewChange = useCallback(
     (view: MerchantEnterpriseView | null) => {
       if (view !== null && view === tab) return true;
@@ -5314,6 +5319,10 @@ function MerchantEnterpriseManagerContent({
       const attendanceGuard = correctionLeaveGuardRef.current?.scope === attendanceLeaveScope ? correctionLeaveGuardRef.current : attendanceLeaveGuardRef.current;
       if (actor && attendanceGuard?.scope === attendanceLeaveScope) {
         if (!attendanceGuard.guard()) return false;
+      } else if (actor && tab === "attendanceScopes") {
+        // While this lazy panel is loading no interactive draft exists yet.
+        // Keep persisted unknown operations protected without inventing edits.
+        if (hasStoredAttendanceScopeOperation() && !window.confirm("考勤范围有待确认操作，或暂时无法核对操作记录。离开不会撤销已发送操作；原编号将保留供核对。确定离开吗？")) return false;
       } else if (
         actor &&
         !canAutoRefreshOnFocus &&
@@ -5337,7 +5346,7 @@ function MerchantEnterpriseManagerContent({
       }
       return true;
     },
-    [actor, attendanceLeaveScope, busy, canAutoRefreshOnFocus, tab, accountStatusClient],
+    [actor, attendanceLeaveScope, busy, canAutoRefreshOnFocus, tab, accountStatusClient, hasStoredAttendanceScopeOperation],
   );
   const requestViewChange = useCallback(
     (view: MerchantEnterpriseView) => {
@@ -5468,12 +5477,15 @@ function MerchantEnterpriseManagerContent({
   useEffect(() => {
     if (!actor || canAutoRefreshOnFocus) return;
     const preventUnsavedUnload = (event: BeforeUnloadEvent) => {
+      // Once mounted, scope owns the exact draft/pending check. Before that,
+      // only a stored unknown operation can be at risk, never an unseen draft.
+      if (tab === "attendanceScopes" && (attendanceLeaveGuardRef.current?.scope === attendanceLeaveScope || !hasStoredAttendanceScopeOperation())) return;
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", preventUnsavedUnload);
     return () => window.removeEventListener("beforeunload", preventUnsavedUnload);
-  }, [actor, canAutoRefreshOnFocus]);
+  }, [actor, canAutoRefreshOnFocus, tab, attendanceLeaveScope, hasStoredAttendanceScopeOperation]);
 
   useEffect(() => {
     if (!actor) return;
@@ -7206,7 +7218,7 @@ function MerchantEnterpriseManagerContent({
 
         {attendanceUiAvailable ? <>
         {tab === "attendanceScopes" && actor.type === "owner" ? (
-          <MerchantAttendanceScopePanel key={`${siteId}:${actor.id}`} siteId={siteId} ownerId={actor.id} apiFetch={apiFetch} />
+          <MerchantAttendanceScopePanel key={`${siteId}:${actor.id}`} siteId={siteId} ownerId={actor.id} apiFetch={apiFetch} registerLeaveGuard={registerAttendanceLeaveGuard} />
         ) : null}
 
         {tab === "attendanceRecords" && can(actor, "attendance.records.view") ? (
