@@ -1,3 +1,4 @@
+import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS} from './attendance-scope-navigation-release-policy.mjs';
 import {GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS} from './google-login-release-policy.mjs';
 import {LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS} from './merchant-login-release-policy.mjs';
 import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment} from './merchant-login-unbuilt-repair-policy.mjs';
@@ -11,7 +12,7 @@ import {runInNewContext as vmRunInNewContext} from 'node:vm';
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.
-const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS,LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
+const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS,GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS,LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
 import {webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
@@ -25,7 +26,7 @@ import {CONTACT_WECHAT_STAGED_REPAIR} from './contact-wechat-staged-tool-repair-
 
 test('login-only test environment repair retains all build, runtime and publication gates',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- assert.match(code,/env:lane===GOOGLE_LOGIN_RELEASE_LANE\|\|lane===LOGIN_RELEASE_LANE\?loginUnitTestEnvironment\(\):env/);
+ assert.match(code,/env:lane===SCOPE_NAV_RELEASE_LANE\|\|lane===GOOGLE_LOGIN_RELEASE_LANE\|\|lane===LOGIN_RELEASE_LANE\?loginUnitTestEnvironment\(\):env/);
  const start=code.indexOf("}else if(action==='resume-login-stage'){");
  const branch=code.slice(start,code.indexOf("}else if(action==='database'){",start));
  for(const gate of ['resumeLoginUnbuiltCandidate','verifyBase(s)','configUnchanged(s)','verifyLoginRelease(s)','bookingResumeDependencies','verifyLoginRelease(s,true)','check-admin-bundle-budget.mjs','candidateEnvironment(s)','smoke(s)','verifyCandidate(s)','onlineReleaseStageStatus(s.lane)'])assert.ok(branch.includes(gate),gate);
@@ -988,7 +989,7 @@ test('runtime performance stage runs its exact suites between source gates befor
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,26);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const stage=code.indexOf("if(action==='stage'){");
  const before=code.indexOf('verifyRuntimePerformanceSource(s);',stage);
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
@@ -1264,7 +1265,7 @@ test('public catalog batch stage runs its exact regressions before the guarded b
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  assert.equal(new Set([...tests,...fixed]).size,tests.length+fixed.length);
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(build>end&&ready>build);
@@ -1401,7 +1402,7 @@ test('read-index stage includes all tracked traffic regressions once plus catalo
  assert.equal(new Set(tests).size,tests.length);
  const fixed=['src/lib/merchantBusinessCardQrPreview.test.ts','src/lib/canonicalSuperAdminRequest.test.ts','scripts/online-traffic-release.test.mjs'];
  for(const file of [...tests,...fixed])assert.ok(statSync(new URL(`../${file}`,import.meta.url)).isFile(),file);
- assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
+ assert.ok(code.slice(end).startsWith(`run('node',['--import','tsx','--test',...(lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE||lane===BACKUP_RELEASE_LANE||lane==='booking-merge-cpu'||lane==='customer-code-performance'?['--test-concurrency=1']:[]),...tests,${fixed.map(file=>`'${file}'`).join(',')}]`));
  const build=code.indexOf("run('nice',['-n','10','npm','run','build']",end);
  const ready=code.indexOf('s.status=onlineReleaseStageStatus(lane)',build);
  assert.ok(start>0&&end>start&&build>end&&ready>build);

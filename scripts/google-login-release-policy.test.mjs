@@ -86,7 +86,7 @@ test('real controller verifier seals source, inherited settings, process identit
 
 test('controller wires Google-only ownership, budget, unit environment, smoke, rollback and convergence gates',()=>{
  const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- for(const part of ['if(lane===GOOGLE_LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission','verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate','s.googleLoginBuildProofSha256=hash(safeFile(','verifyGoogleLoginRelease(s,true,p)','env:lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env','s.googleLoginDependenciesSha256','let googleLoginBaseline;'])assert.ok(source.includes(part),part);
+ for(const part of ['if(lane===GOOGLE_LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission','verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate','s.googleLoginBuildProofSha256=hash(safeFile(','verifyGoogleLoginRelease(s,true,p)','env:lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env','s.googleLoginDependenciesSha256','let googleLoginBaseline;'])assert.ok(source.includes(part),part);
  const retention=source.slice(source.indexOf(' if(s.lane===GOOGLE_LOGIN_RELEASE_LANE){'),source.indexOf(' if(s.lane===LOGIN_RELEASE_LANE){'));
  assert.match(retention,/victimTarget:null/);assert.doesNotMatch(retention,/completePublicationRetention|reclaimPublicationArtifacts/);
  const smoke=source.slice(source.indexOf(' if(s.lane===GOOGLE_LOGIN_RELEASE_LANE){',source.indexOf('async function smoke(')),source.indexOf(' if(s.lane===LOGIN_RELEASE_LANE){',source.indexOf('async function smoke(')));

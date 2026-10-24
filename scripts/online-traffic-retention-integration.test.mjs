@@ -1,3 +1,4 @@
+import {SCOPE_NAV_RELEASE_LANE} from './attendance-scope-navigation-release-policy.mjs';
 import {GOOGLE_LOGIN_RELEASE_LANE} from './google-login-release-policy.mjs';
 import {LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';
 import test from 'node:test';
@@ -72,7 +73,7 @@ function harness() {
   function api(target, action = 'activate') {
     const operation = `${root}/${target}`;
     let result;
-    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,GOOGLE_LOGIN_RELEASE_LANE,LOGIN_RELEASE_LANE,BACKUP_RELEASE_LANE,
+    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,SCOPE_NAV_RELEASE_LANE,GOOGLE_LOGIN_RELEASE_LANE,LOGIN_RELEASE_LANE,BACKUP_RELEASE_LANE,
       root, operation, activeFile, proxy, target, action, protectedBaseProcesses: ROLLING_BASE_NAMES,
       app: '/www/wwwroot/merchant-space', nginx: '/owned-nginx', controllerModuleUrl: import.meta.url, fileURLToPath,
       readOnlineRetentionHistory: () => clone(host.history), pm: rawRows,

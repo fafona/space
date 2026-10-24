@@ -1,3 +1,4 @@
+import {hasScopeNavigationReleaseAnchor,assertScopeNavigationReleaseScope,SCOPE_NAV_RELEASE_LANE} from './attendance-scope-navigation-release-policy.mjs';
 import {hasGoogleLoginReleaseAnchor,assertGoogleLoginReleaseScope,GOOGLE_LOGIN_RELEASE_LANE} from './google-login-release-policy.mjs';
 import {hasLoginReleaseAnchor,assertLoginReleaseScope,LOGIN_RELEASE_LANE} from './merchant-login-release-policy.mjs';
 import {hasBackupReleaseAnchor,assertBackupReleaseScope,BACKUP_RELEASE_LANE} from './super-admin-backup-release-policy.mjs';
@@ -315,6 +316,7 @@ export const ATTENDANCE_RELEASE_FOCUSED_TESTS=Object.freeze([
   'src/lib/merchantAttendanceIndependentAdminClient.test.ts','src/lib/merchantAttendanceIndependentTerminalClient.test.ts','src/lib/merchantAttendanceCorrectionDelegationClient.test.ts',
 ]);
 export function onlineReleaseLane(files) {
+  if(hasScopeNavigationReleaseAnchor(files)){assertScopeNavigationReleaseScope(files);return SCOPE_NAV_RELEASE_LANE;}
   if(hasGoogleLoginReleaseAnchor(files)){assertGoogleLoginReleaseScope(files);return GOOGLE_LOGIN_RELEASE_LANE;}
   if(hasLoginReleaseAnchor(files)){assertLoginReleaseScope(files);return LOGIN_RELEASE_LANE;}
   if(hasBackupReleaseAnchor(files)){assertBackupReleaseScope(files);return BACKUP_RELEASE_LANE;}
@@ -360,6 +362,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if(lane===SCOPE_NAV_RELEASE_LANE)return true;
   if(lane===GOOGLE_LOGIN_RELEASE_LANE)return true;
   if(lane===LOGIN_RELEASE_LANE)return true;
   if(lane===BACKUP_RELEASE_LANE)return true;
@@ -380,6 +383,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if(lane===SCOPE_NAV_RELEASE_LANE)throw Error('scope_navigation_release_database_forbidden');
   if(lane===GOOGLE_LOGIN_RELEASE_LANE)throw Error('google_login_release_database_forbidden');
   if(lane===LOGIN_RELEASE_LANE)throw Error('merchant_login_release_database_forbidden');
   if(lane===BACKUP_RELEASE_LANE)throw Error('super_admin_backup_release_database_forbidden');
