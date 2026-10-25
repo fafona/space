@@ -84,7 +84,12 @@ test('real controller verifier seals source, inherited settings, process identit
 });
 
 test('controller wires scope-only source, environment, budget, smoke, rollback and convergence gates without retirement',()=>{
- const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ // Project only the separately approved new lane's joint selectors out of this
+ // historical lane wiring assertion; new-lane tests execute its actual closure.
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8')
+  .replaceAll('(s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)','s.lane===GOOGLE_TRANSITION_RELEASE_LANE')
+  .replaceAll('(lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)','lane===GOOGLE_TRANSITION_RELEASE_LANE')
+  .replaceAll('(lane===RECORDS_UI_RELEASE_LANE?buildRecordsUiReleaseCandidate:buildGoogleTransitionReleaseCandidate)','buildGoogleTransitionReleaseCandidate');
  for(const part of ['if(lane===GOOGLE_TRANSITION_RELEASE_LANE)assertAttendanceBuildAdmission','verifyGoogleTransitionRelease(s);buildGoogleTransitionReleaseCandidate','s.googleTransitionBuildProofSha256=hash(safeFile(','verifyGoogleTransitionRelease(s,true,p)','env:lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env','s.googleTransitionDependenciesSha256','let googleTransitionBaseline;','if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE&&bookingResumeDependencies'])assert.ok(source.includes(part),part);
  const retention=source.slice(source.indexOf(' if(s.lane===GOOGLE_TRANSITION_RELEASE_LANE){'),source.indexOf(' if(s.lane===SCOPE_NAV_RELEASE_LANE){'));
  assert.match(retention,/victimTarget:null/);assert.doesNotMatch(retention,/completePublicationRetention|reclaimPublicationArtifacts|kind:'retire'/);

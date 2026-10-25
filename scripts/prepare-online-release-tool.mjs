@@ -1,3 +1,4 @@
+import {GOOGLE_UNBUILT_CLOSURE,GOOGLE_UNBUILT_ABSENT_PATHS,GOOGLE_UNBUILT_PRESERVED_FILES,assertGoogleUnbuiltClosureReceipt} from './google-transition-unbuilt-close-policy.mjs';
 import * as fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -15,10 +16,11 @@ const SELF = 'scripts/prepare-online-release-tool.mjs';
 const STAGED_REPAIR_POLICY = 'scripts/attendance-staged-tool-repair-policy.mjs';
 const CONTACT_STAGED_REPAIR_POLICY = 'scripts/contact-wechat-staged-tool-repair-policy.mjs';
 const LOGIN_UNBUILT_REPAIR_POLICY = 'scripts/merchant-login-unbuilt-repair-policy.mjs';
+const GOOGLE_UNBUILT_CLOSE_POLICY = 'scripts/google-transition-unbuilt-close-policy.mjs';
 const SHA = /^[a-f0-9]{40}$/;
 export const TOOL_SPARSE_PATTERNS = '/*\n!/public/downloads/\n';
 export const TOOL_REQUIRED_FILES = Object.freeze([
-  SELF, STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, LOGIN_UNBUILT_REPAIR_POLICY, 'scripts/online-traffic-release.mjs', 'scripts/online-traffic-release-policy.mjs',
+  SELF, STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, LOGIN_UNBUILT_REPAIR_POLICY, GOOGLE_UNBUILT_CLOSE_POLICY, 'scripts/online-traffic-release.mjs', 'scripts/online-traffic-release-policy.mjs',
   'scripts/online-release-rolling.mjs', 'scripts/online-release-rolling-policy.mjs',
   'scripts/online-release-retirement.mjs', 'scripts/online-release-retirement-policy.mjs',
   'scripts/web-presentation-release-policy.mjs', 'scripts/contact-card-release-policy.mjs',
@@ -447,6 +449,22 @@ export function assertOnlineToolNoPending({maintenance = MAINTENANCE, releaseRoo
     const stateText = fs.readFileSync(state, 'utf8'), value = JSON.parse(stateText);
     if (value.target !== name) fail('release_pending');
     if (['active', 'rolled-back'].includes(value.status)) continue;
+    if (name === '8fabf8078a15115ad7765ae7dc60ae63adc74f98') {
+      const p = GOOGLE_UNBUILT_CLOSURE, receiptPath = path.join(directory, 'unpublished-termination.json');
+      if (directory !== p.operation || value.status !== 'preparing' || sha256(stateText) !== p.stateSha256 || !exists(receiptPath)) fail('release_pending');
+      checkPath(p.directory); checkPath(receiptPath, 'file');
+      for (const [full, mode] of [[directory, 0o700], [state, 0o600], [receiptPath, 0o600]])
+        if ((fs.lstatSync(full).mode & 0o777) !== mode) fail('unsafe_path');
+      const preservedFiles = {};
+      for (const [key, full] of Object.entries(GOOGLE_UNBUILT_PRESERVED_FILES)) {
+        checkPath(full, 'file'); if ((fs.lstatSync(full).mode & 0o777) !== 0o600) fail('unsafe_path');
+        preservedFiles[key] = sha256(fs.readFileSync(full));
+      }
+      for (const full of GOOGLE_UNBUILT_ABSENT_PATHS) if (exists(full)) fail('release_pending');
+      assertGoogleUnbuiltClosureReceipt({stateText,receipt:JSON.parse(fs.readFileSync(receiptPath,'utf8')),
+        preservedFiles,absentPaths:[...GOOGLE_UNBUILT_ABSENT_PATHS]});
+      continue;
+    }
     if (fixedLoginUnbuiltRepairReceipt !== undefined && name === LOGIN_UNBUILT_REPAIR.target) {
       const receipt = fixedLoginUnbuiltRepairReceipt, incident = LOGIN_UNBUILT_REPAIR;
       if (directory !== incident.operation || value.status !== 'preparing' || value.lane !== 'merchant-login-recovery-code-only' ||
@@ -547,7 +565,7 @@ export function verifyOnlineToolBootstrap(plan, self = fileURLToPath(import.meta
   // Verify all builtin-only policy dependencies as well as this helper. An ancestor
   // may bootstrap a later tool only while all reviewed source files remain
   // byte-identical; changed policy bytes require a new verified closure.
-  for (const policyName of [STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, LOGIN_UNBUILT_REPAIR_POLICY]) {
+  for (const policyName of [STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, LOGIN_UNBUILT_REPAIR_POLICY, GOOGLE_UNBUILT_CLOSE_POLICY]) {
   const policy = path.join(repository, policyName); checkPath(policy, 'file');
   const policyBytes = fs.readFileSync(policy), policySource = policyBytes.toString('utf8');
   if (!policyBytes.equals(Buffer.from(git(plan.app, ['show', `${plan.target}:${policyName}`]))) ||

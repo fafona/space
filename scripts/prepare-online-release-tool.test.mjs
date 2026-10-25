@@ -1,4 +1,11 @@
 import test from 'node:test';
+
+test('Google resource-failure closure recognizes only the fixed write-once termination receipt, not a generic preparing override',()=>{
+ const source=fs.readFileSync(self,'utf8');
+ const branch=source.slice(source.indexOf("    if (name === '8fabf8078a15115ad7765ae7dc60ae63adc74f98')"),source.indexOf('    if (fixedLoginUnbuiltRepairReceipt'));
+ for(const item of ['value.status !== \'preparing\'','sha256(stateText) !== p.stateSha256','!exists(receiptPath)','assertGoogleUnbuiltClosureReceipt','GOOGLE_UNBUILT_ABSENT_PATHS','GOOGLE_UNBUILT_PRESERVED_FILES','0o600','0o700'])assert.ok(branch.includes(item),item);
+ assert.doesNotMatch(branch,/value\.status\s*=|writeFileSync|unlinkSync|allowUnsafe|--skip/);
+});
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
@@ -24,17 +31,18 @@ const self = fileURLToPath(new URL('./prepare-online-release-tool.mjs', import.m
 const stagedRepairPolicy = fileURLToPath(new URL('./attendance-staged-tool-repair-policy.mjs', import.meta.url));
 const contactStagedRepairPolicy = fileURLToPath(new URL('./contact-wechat-staged-tool-repair-policy.mjs', import.meta.url));
 const loginUnbuiltRepairPolicy = fileURLToPath(new URL('./merchant-login-unbuilt-repair-policy.mjs', import.meta.url));
-test('bootstrap has three byte-verified builtin-only policy dependencies before verified CLI housekeeping', () => {
+const googleUnbuiltClosePolicy = fileURLToPath(new URL('./google-transition-unbuilt-close-policy.mjs', import.meta.url));
+test('bootstrap has four byte-verified builtin-only policy dependencies before verified CLI housekeeping', () => {
   const source = fs.readFileSync(self, 'utf8');
   assert.deepEqual([...source.matchAll(/^import .+ from '([^']+)';$/gm)].map(match => match[1]),
-    ['node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url', './attendance-staged-tool-repair-policy.mjs','./contact-wechat-staged-tool-repair-policy.mjs','./merchant-login-unbuilt-repair-policy.mjs']);
+    ['./google-transition-unbuilt-close-policy.mjs', 'node:fs', 'node:path', 'node:crypto', 'node:child_process', 'node:url', './attendance-staged-tool-repair-policy.mjs','./contact-wechat-staged-tool-repair-policy.mjs','./merchant-login-unbuilt-repair-policy.mjs']);
   assert.doesNotMatch(source, /\brequire\s*\(/);
   assert.equal([...source.matchAll(/\bimport\s*\(/g)].length, 1);
   assert.ok(source.indexOf('const prepared = prepareOnlineReleaseToolMain();') < source.indexOf('import(`file://${prepared.directory}/scripts/online-release-tool-retention.mjs`)'));
   assert.match(source, /runOnlineReleaseToolRetention\(\{target: prepared\.target, bootstrapDirectory\}\)/);
   assert.match(source, /\.\.\.prepared, toolRetention/);
   assert.match(source, /toolRetention: \{status: 'pending', reason: 'online_tool_retention_module_unavailable'\}/);
-  for(const policy of [stagedRepairPolicy,contactStagedRepairPolicy,loginUnbuiltRepairPolicy]){
+  for(const policy of [stagedRepairPolicy,contactStagedRepairPolicy,loginUnbuiltRepairPolicy,googleUnbuiltClosePolicy]){
   const policySource = fs.readFileSync(policy, 'utf8');
   assert.ok([...policySource.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)].every(match => match[1].startsWith('node:')));
   assert.doesNotMatch(policySource, /\bimport\s*(?:\(|['"])|\brequire\s*\(/);
@@ -42,7 +50,8 @@ test('bootstrap has three byte-verified builtin-only policy dependencies before 
   assert.ok(TOOL_REQUIRED_FILES.includes('scripts/attendance-staged-tool-repair-policy.mjs'));
   assert.ok(TOOL_REQUIRED_FILES.includes('scripts/contact-wechat-staged-tool-repair-policy.mjs'));
   assert.ok(TOOL_REQUIRED_FILES.includes('scripts/merchant-login-unbuilt-repair-policy.mjs'));
-  assert.match(source, /for \(const policyName of \[STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, LOGIN_UNBUILT_REPAIR_POLICY\]\)/);
+  assert.ok(TOOL_REQUIRED_FILES.includes('scripts/google-transition-unbuilt-close-policy.mjs'));
+  assert.match(source, /for \(const policyName of \[STAGED_REPAIR_POLICY, CONTACT_STAGED_REPAIR_POLICY, LOGIN_UNBUILT_REPAIR_POLICY, GOOGLE_UNBUILT_CLOSE_POLICY\]\)/);
   assert.match(source, /policyBytes\.equals\(Buffer\.from\(git\(plan\.app, \['show', `\$\{plan\.target\}:\$\{policyName\}`\]\)\)\)/);
   const ordinaryCli = source.slice(source.indexOf('export function prepareOnlineReleaseToolMain'));
   assert.doesNotMatch(ordinaryCli, /fixedStagedRepairReceipt|fixedContactWechatStagedRepairReceipt|fixedLoginUnbuiltRepairReceipt/);
@@ -73,7 +82,8 @@ function fixture(t) {
     ? fs.readFileSync(self) : name === 'scripts/attendance-staged-tool-repair-policy.mjs'
       ? fs.readFileSync(stagedRepairPolicy) : name === 'scripts/contact-wechat-staged-tool-repair-policy.mjs'
         ? fs.readFileSync(contactStagedRepairPolicy) : name === 'scripts/merchant-login-unbuilt-repair-policy.mjs'
-          ? fs.readFileSync(loginUnbuiltRepairPolicy) : `fixture ${name}\n`]));
+          ? fs.readFileSync(loginUnbuiltRepairPolicy) : name === 'scripts/google-transition-unbuilt-close-policy.mjs'
+            ? fs.readFileSync(googleUnbuiltClosePolicy) : `fixture ${name}\n`]));
   files.set('src/nested/source.ts', 'export const fixture = 1;\n');
   files.set('public/traffic-card-v1.js', 'retained\n');
   files.set('public/downloads/large.zip', 'synthetic archive\n');
