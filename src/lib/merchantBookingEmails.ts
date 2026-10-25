@@ -46,6 +46,7 @@ export type MerchantBookingConfirmationEmailSendResult =
       status: "failed";
       error: string;
       deliveryUnconfirmed?: boolean;
+      retryAfterSeconds?: number;
       subject?: string;
       locale?: string;
       senderName?: string;
@@ -89,6 +90,12 @@ function getMerchantBookingConfirmationEmailConfig(): MerchantBookingConfirmatio
     from,
     ...(replyTo ? { replyTo } : {}),
   };
+}
+
+/** Configuration presence only, NOT proof of sender-domain verification or
+ * successful delivery. Do not expose the key, mailbox address or credential. */
+export function getMerchantBookingEmailReadiness() {
+  return { configured: Boolean(getMerchantBookingConfirmationEmailConfig()) };
 }
 
 function escapeHtml(value: string) {
@@ -315,6 +322,7 @@ async function sendPreparedMerchantBookingEmail(input: {
       status: "failed",
       error: result.error,
       ...(result.delivery === "unconfirmed" ? { deliveryUnconfirmed: true } : {}),
+      ...(result.retryAfterSeconds ? { retryAfterSeconds: result.retryAfterSeconds } : {}),
       subject: input.subject,
       locale: resolvedLocale,
       senderName: resolvedSenderName,

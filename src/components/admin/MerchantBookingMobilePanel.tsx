@@ -14,6 +14,8 @@ import {
 import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
+import { BookingScheduleOverview } from "./BookingScheduleOverview";
+import { mergeBookingDrafts, mergeBookingRefreshRecords, bookingDeliveryLabel } from "@/lib/merchantBookingPresentation";
 import { useI18n } from "@/components/I18nProvider";
 import { showGlobalToast } from "@/lib/globalToast";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
@@ -368,14 +370,7 @@ function getTimelineEntryTitle(entry: MerchantBookingTimelineEntry, locale: stri
     return locale.startsWith("es") ? `Estado → ${nextLabel}` : `状态改为 ${nextLabel}`;
   }
   if (entry.kind === "customer_email") {
-    const deliveryLabel =
-      entry.delivery === "unconfirmed" ? (locale.startsWith("es") ? "sin confirmar" : "结果待确认") : entry.delivery === "failed"
-        ? locale.startsWith("es")
-          ? "falló"
-          : "失败"
-        : locale.startsWith("es")
-          ? "enviado"
-          : "已发送";
+    const deliveryLabel = bookingDeliveryLabel(entry.delivery, locale);
     if (entry.emailKind === "reminder") {
       return locale.startsWith("es") ? `Recordatorio por correo ${deliveryLabel}` : `客户提醒邮件${deliveryLabel}`;
     }
@@ -385,14 +380,9 @@ function getTimelineEntryTitle(entry: MerchantBookingTimelineEntry, locale: stri
     return locale.startsWith("es") ? `Correo de estado ${deliveryLabel}` : `状态邮件${deliveryLabel}`;
   }
   if (entry.kind === "merchant_reminder") {
-    return entry.delivery === "failed"
-      ? locale.startsWith("es")
-        ? "Push al comercio falló"
-        : "商家提醒推送失败"
-      : locale.startsWith("es")
-        ? "Push al comercio enviado"
-        : "商家提醒已推送";
+    return locale.startsWith("es") ? `Push al comercio ${bookingDeliveryLabel(entry.delivery, locale)}` : `商家提醒推送${bookingDeliveryLabel(entry.delivery, locale)}`;
   }
+  if (entry.kind === "merchant_notification") return locale.startsWith("es") ? `Aviso de nueva cita ${bookingDeliveryLabel(entry.delivery, locale)}` : `新预约通知${bookingDeliveryLabel(entry.delivery, locale)}`;
   return locale.startsWith("es") ? "Actividad de reserva" : "预约动态";
 }
 
@@ -565,6 +555,15 @@ export default function MerchantBookingMobilePanel({
   const [todayDateValue, setTodayDateValue] = useState("");
   const [records, setRecords] = useState<MerchantBookingRecord[]>(() => readCachedBookingRecords(siteId));
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
+  const recordsRef = useRef(records);
+  const draftsRef = useRef(drafts);
+  const remoteOffsetRef = useRef(0);
+  const loadGenerationRef = useRef(0);
+  const draftScopeRef = useRef(siteId);
+  const [syncWarning, setSyncWarning] = useState("");
+  const [lastSyncedAt, setLastSyncedAt] = useState("");
+  useEffect(() => { recordsRef.current = records; }, [records]);
+  useEffect(() => { draftsRef.current = drafts; }, [drafts]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -669,14 +668,25 @@ export default function MerchantBookingMobilePanel({
 
   const loadBookings = useCallback(async () => {
     if (!siteId) return;
+    const generation = ++loadGenerationRef.current;
+    setLoadingMoreRecords(false);
+    if (draftScopeRef.current !== siteId) {
+      draftScopeRef.current = siteId;
+      recordsRef.current = [];
+      draftsRef.current = {};
+      remoteOffsetRef.current = 0;
+      setDrafts({});
+      setLastSyncedAt("");
+    }
     const cachedRecords = readCachedBookingRecords(siteId);
     if (cachedRecords.length > 0) {
-      setRecords(cachedRecords);
-      setDrafts(Object.fromEntries(cachedRecords.map((record) => [record.id, createDraft(record)])));
+      const cached = mergeBookingRefreshRecords(recordsRef.current, cachedRecords, draftsRef.current, createDraft);
+      setRecords(cached);
+      setDrafts((current) => mergeBookingDrafts(current, recordsRef.current, cached, createDraft));
+      setSyncWarning(locale.startsWith("es") ? "Datos en caché; verificando…" : "当前显示缓存，正在核对……");
       setLoading(false);
     } else {
-      setRecords([]);
-      setDrafts({});
+      if (recordsRef.current.length === 0) { setRecords([]); setDrafts({}); }
       setLoading(true);
     }
     setError("");
@@ -694,25 +704,33 @@ export default function MerchantBookingMobilePanel({
       if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
         throw new Error(json?.message || loadFailedText);
       }
+      if (loadGenerationRef.current !== generation) return;
       writeCachedBookingRecords(siteId, json.bookings);
-      setRecords(json.bookings);
-      setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
+      const next = mergeBookingRefreshRecords(recordsRef.current, json.bookings, draftsRef.current, createDraft);
+      setRecords(next);
+      setDrafts((current) => mergeBookingDrafts(current, recordsRef.current, next, createDraft));
+      remoteOffsetRef.current = json.bookings.length;
+      setSyncWarning(next.length > json.bookings.length ? (locale.startsWith("es") ? "Borradores conservados; revise antes de guardar." : "已保留未保存草稿，保存前请核对记录。") : "");
+      setLastSyncedAt(new Date().toISOString());
       setHasMoreRemoteRecords(Boolean(json.hasMore));
     } catch (loadError) {
+      if (loadGenerationRef.current !== generation) return;
+      setSyncWarning(cachedRecords.length > 0 ? (locale.startsWith("es") ? "Sin conexión: datos en caché, no disponibilidad confirmada." : "同步失败：正在显示旧缓存，不能据此判断剩余名额。") : "");
       setError(cachedRecords.length > 0 ? "" : loadError instanceof Error ? loadError.message : loadFailedText);
       setHasMoreRemoteRecords(false);
     } finally {
-      setLoading(false);
+      if (loadGenerationRef.current === generation) setLoading(false);
     }
-  }, [loadFailedText, siteId]);
+  }, [loadFailedText, siteId, locale]);
 
   const loadMoreBookings = useCallback(async () => {
     if (!siteId || loading || loadingMoreRecords || !hasMoreRemoteRecords) return;
+    const generation = loadGenerationRef.current;
     setLoadingMoreRecords(true);
     setError("");
     try {
       const response = await fetch(
-        `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=${records.length}&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
+        `/api/bookings?siteId=${encodeURIComponent(siteId)}&offset=${remoteOffsetRef.current}&limit=${MERCHANT_BOOKING_FETCH_LIMIT}`,
         {
           cache: "no-store",
           credentials: "same-origin",
@@ -724,8 +742,10 @@ export default function MerchantBookingMobilePanel({
       if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
         throw new Error(json?.message || loadFailedText);
       }
+      if (loadGenerationRef.current !== generation) return;
       const nextBookings = json.bookings;
-      setHasMoreRemoteRecords(Boolean(json.hasMore));
+      remoteOffsetRef.current += nextBookings.length;
+      setHasMoreRemoteRecords(Boolean(json.hasMore) && nextBookings.length > 0);
       setRecords((currentRecords) => {
         const existingIds = new Set(currentRecords.map((record) => record.id));
         const mergedRecords = [
@@ -733,19 +753,22 @@ export default function MerchantBookingMobilePanel({
           ...nextBookings.filter((record) => !existingIds.has(record.id)),
         ];
         writeCachedBookingRecords(siteId, mergedRecords);
-        setDrafts(Object.fromEntries(mergedRecords.map((record) => [record.id, createDraft(record)])));
+        setDrafts((current) => mergeBookingDrafts(current, currentRecords, mergedRecords, createDraft));
         return mergedRecords;
       });
     } catch (loadError) {
+      if (loadGenerationRef.current !== generation) return;
       setError(loadError instanceof Error ? loadError.message : loadFailedText);
     } finally {
-      setLoadingMoreRecords(false);
+      if (loadGenerationRef.current === generation) setLoadingMoreRecords(false);
     }
-  }, [hasMoreRemoteRecords, loadFailedText, loading, loadingMoreRecords, records.length, siteId]);
+  }, [hasMoreRemoteRecords, loadFailedText, loading, loadingMoreRecords, siteId]);
 
+  const invalidatePendingBookingLoads = useCallback(() => { loadGenerationRef.current++; }, []);
   useEffect(() => {
     void loadBookings();
-  }, [loadBookings]);
+    return invalidatePendingBookingLoads;
+  }, [loadBookings, invalidatePendingBookingLoads]);
 
   useEffect(() => {
     if (!siteId) return;
@@ -957,6 +980,7 @@ export default function MerchantBookingMobilePanel({
     async (bookingId: string) => {
       const currentRecord = records.find((item) => item.id === bookingId);
       if (!currentRecord || !isMerchantBookingPendingMerchantTouch(currentRecord)) return currentRecord ?? null;
+      const generation = loadGenerationRef.current;
       const touchedAt = new Date().toISOString();
       setRecords((current) =>
         current.map((item) => (item.id === bookingId ? { ...item, merchantTouchedAt: touchedAt } : item)),
@@ -977,13 +1001,18 @@ export default function MerchantBookingMobilePanel({
         if (!response.ok || !json?.ok || !json.booking) {
           throw new Error("mark_touched_failed");
         }
+        if (loadGenerationRef.current !== generation) return null;
         setRecords((current) => current.map((item) => (item.id === bookingId ? json.booking! : item)));
         return json.booking;
       } catch {
+        if (loadGenerationRef.current === generation) {
+          setRecords((current) => current.map((item) => item.id === bookingId && item.merchantTouchedAt === touchedAt ? { ...item, merchantTouchedAt: currentRecord.merchantTouchedAt } : item));
+          setError(locale.startsWith("es") ? "No se confirmó la revisión. Vuelva a sincronizar." : "查看状态未能保存，请重新同步后核对。");
+        }
         return null;
       }
     },
-    [records, siteId],
+    [records, siteId, locale],
   );
 
   const handleDraftChange = useCallback(
@@ -1019,7 +1048,7 @@ export default function MerchantBookingMobilePanel({
     void markBookingTouched(record.id);
     setDrafts((current) => ({
       ...current,
-      [record.id]: createDraft(record),
+      [record.id]: current[record.id] ?? createDraft(record),
     }));
     setDetailTimelineOpen(false);
     setDetailBookingId(record.id);
@@ -1868,6 +1897,8 @@ export default function MerchantBookingMobilePanel({
           </div>
 
           <div className="space-y-3">
+            {syncWarning ? <p role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">{syncWarning}</p> : lastSyncedAt ? <p role="status" className="mb-3 text-xs text-slate-500">{locale.startsWith("es") ? "Sincronizado" : "最近同步"} · {new Date(lastSyncedAt).toLocaleTimeString()}</p> : null}
+            <BookingScheduleOverview records={records} rules={bookingRulesSnapshot} locale={locale} partial={hasMoreRemoteRecords || Boolean(syncWarning)} onSelect={(id) => { const record = records.find((item) => item.id === id); if (record) openDetailDialog(record); }} />
             {loading ? (
               <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                 {getMerchantBookingFieldText("managementLoading", locale)}

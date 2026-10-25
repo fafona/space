@@ -51,7 +51,8 @@ export type MerchantBookingTimelineKind =
   | "status_changed"
   | "acknowledged"
   | "customer_email"
-  | "merchant_reminder";
+  | "merchant_reminder"
+  | "merchant_notification";
 
 export type MerchantBookingCustomerEmailLogEntry = {
   id: string;
@@ -73,7 +74,7 @@ export type MerchantBookingTimelineEntry = {
   fromStatus?: MerchantBookingStatus;
   toStatus?: MerchantBookingStatus;
   emailKind?: MerchantBookingCustomerEmailLogKind;
-  delivery?: "sent" | "failed" | "unconfirmed";
+  delivery?: "queued" | "sent" | "failed" | "unconfirmed" | "skipped";
   subject?: string;
   senderName?: string;
   locale?: string;

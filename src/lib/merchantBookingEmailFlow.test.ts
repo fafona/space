@@ -33,6 +33,8 @@ function harness(unconfirmed = true) {
     return { attempted: true, attemptedAt: new FixedDate().toISOString(), status: "failed", error: "Synthetic uncertain delivery", ...(unconfirmed ? { deliveryUnconfirmed: true } : {}) };
   };
   const context = vm.createContext({ ...bookings, ...workbench, ...links, randomBytes, Date: FixedDate, Buffer, JSON, Math, Promise,
+    queueBookingNotification: () => null,
+    isAtomicBookingStorageEnabled: () => false,
     withBookingStoreLock: async (task: () => Promise<unknown>) => task(),
     readMerchantBookingStore: async () => ({ version: 1, records: structuredClone(records) }),
     writeMerchantBookingStore: async (store: { records: bookings.MerchantBookingStoredRecord[] }) => { records = structuredClone(store.records); },

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readAtomicBookingPersistence, stageAtomicBookingPersistence, runAtomicBookingMutation, isAtomicBookingStorageEnabled } from "./merchantBookingAtomicRuntime.server";
 import {
   createDefaultMerchantBookingWorkbenchSettings,
   normalizeMerchantBookingWorkbenchSettings,
@@ -85,6 +86,8 @@ function bookingWorkbenchStoresEqual(
 }
 
 async function readBookingWorkbenchStore(): Promise<MerchantBookingWorkbenchStoreFile> {
+  const atomic = await readAtomicBookingPersistence("workbench", normalizeBookingWorkbenchStore);
+  if (atomic.handled) return atomic.value ?? { version: STORE_VERSION, settingsBySiteId: {} };
   const localStore = await readLocalBookingWorkbenchStore();
   const supabase = createServerSupabaseServiceClient();
   if (!supabase) return localStore;
@@ -119,6 +122,7 @@ async function readBookingWorkbenchStore(): Promise<MerchantBookingWorkbenchStor
 }
 
 async function writeBookingWorkbenchStore(store: MerchantBookingWorkbenchStoreFile) {
+  if (stageAtomicBookingPersistence("workbench", store)) return;
   const supabase = createServerSupabaseServiceClient();
   if (supabase) {
     await saveMerchantBookingPersistenceValue(supabase, "workbench", store);
@@ -160,7 +164,7 @@ export async function updateMerchantBookingWorkbenchSettings(
   if (!normalizedSiteId) {
     throw new Error("invalid_site_id");
   }
-  return withBookingWorkbenchStoreLock(async () => {
+  const update = async () => {
     await input.assertAuthorizationCurrent?.();
     const store = await readBookingWorkbenchStore();
     const current =
@@ -172,5 +176,8 @@ export async function updateMerchantBookingWorkbenchSettings(
     store.settingsBySiteId[normalizedSiteId] = normalizedSettings;
     await writeBookingWorkbenchStore(store);
     return normalizedSettings;
-  });
+  };
+  return isAtomicBookingStorageEnabled()
+    ? runAtomicBookingMutation({ siteId: normalizedSiteId, operation: "workbench.update", authorize: input.assertAuthorizationCurrent }, update)
+    : withBookingWorkbenchStoreLock(update);
 }

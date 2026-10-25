@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import type { MerchantBookingStoredRecord } from "./merchantBookings";
 
-/** Preparation-only adapter: intentionally NOT imported by any route or worker.
- * No environment activation, client creation, legacy/local fallback, mail send,
- * or production enablement lives here. All writers/configuration/automation and
- * rollback cohorts must be adapted and checked before future activation.
+/** Transaction protocol; runtime integration stays opt-in and database-gated.
+ * No activation RPC, legacy fallback after an error, or mail send lives here.
+ * Drain incompatible writers/automation and prove rollback BEFORE activation.
  */
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type BookingAtomicJson = null | boolean | number | string | BookingAtomicJson[] | { [key: string]: BookingAtomicJson };
+type Json = BookingAtomicJson;
 export type BookingAtomicSnapshot = {
   generation: string;
   revision: string;
@@ -14,7 +14,14 @@ export type BookingAtomicSnapshot = {
 };
 export type BookingMailIntent = {
   bookingId: string;
-  kind: "status" | "reminder" | "manual";
+  kind: "status" | "reminder" | "manual" | "push" | "created_push";
+  context?: {
+    eventId: string;
+    senderName: string;
+    merchantDisplayName: string;
+    extraMessage: string;
+    booking: Pick<MerchantBookingStoredRecord, "siteId" | "id" | "siteName" | "store" | "item" | "appointmentAt" | "title" | "customerName" | "email" | "phone" | "note" | "status" | "appointmentTimeZone">;
+  };
   // A deliberate whitelist, with NO editToken or manage link. Future dispatch
   // must resolve the private token only in memory and check the booking again.
   message: {
@@ -37,6 +44,8 @@ export type BookingAtomicPlan = {
   next: { version: 1; records: MerchantBookingStoredRecord[] };
   result: { [key: string]: Json };
   mailJobs: BookingMailIntent[];
+  configuration?: { rules?: Json; workbench?: Json };
+  noop?: boolean;
 };
 export type BookingAtomicRpc = (
   name: string,
@@ -120,10 +129,12 @@ export async function executeAtomicBookingCommand(options: {
       rows: snapshot.rows as BookingAtomicSnapshot["rows"],
     };
     const plan = await options.plan(structuredClone(expected));
+    if (plan.noop) return { replayed: false, result: plan.result };
     try {
       return outcome(await call(options.rpc, "faolla_booking_atomic_commit_v1", {
         ...identity,
-        p_mutation: { ...expected, next: plan.next, result: plan.result, mailJobs: plan.mailJobs },
+        p_mutation: { ...expected, next: plan.next, result: plan.result, mailJobs: plan.mailJobs,
+          ...(plan.configuration ? { configuration: plan.configuration } : {}) },
       }));
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "booking_atomic_conflict" || attempt === 2) throw error;

@@ -72,6 +72,7 @@ type SaveWorkbenchOptions = {
 };
 type MetricTone = "amber" | "sky" | "emerald" | "rose" | "cyan";
 type WorkbenchDashboard = {
+  emailDelivery?: { configured: boolean; queuedMode: boolean; workerEnabled: boolean };
   pushDeviceCount?: number;
   automation?: {
     started: boolean;
@@ -1505,6 +1506,8 @@ export default function BookingWorkbenchDialog({
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold">{locale.startsWith("es") ? "Estado automático" : "自动化状态"}</div>
+                      {dashboard?.emailDelivery && !dashboard.emailDelivery.configured ? <p role="status" className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{locale.startsWith("es") ? "El correo central no está configurado. Active el proveedor y verifique el dominio remitente; activar este interruptor no garantiza el envío." : "平台发信服务尚未配置。需要配置邮件服务并验证发件域名；仅开启商户开关不会实际发送邮件。"}</p> : null}
+                      {dashboard?.emailDelivery?.queuedMode && !dashboard.emailDelivery.workerEnabled ? <p role="status" className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{locale.startsWith("es") ? "Las reservas se guardan, pero el procesador de notificaciones está desactivado." : "预约可保存，但通知处理任务尚未启用，排队邮件不会发送。"}</p> : null}
                       <div className={`mt-1 text-sm ${mutedTextClassName}`}>
                         {dashboard?.automation?.running
                           ? locale.startsWith("es")

@@ -20,6 +20,9 @@ import net from "node:net";
 import { randomUUID } from "node:crypto";
 import atomicPreparation from "../src/lib/merchantBookingAtomicPreparation.server.ts";
 import bookingCore from "../src/lib/merchantBookings.ts";
+import atomicRuntime from "../src/lib/merchantBookingAtomicRuntime.server.ts";
+import notificationWorker from "../src/lib/merchantBookingNotificationWorker.server.ts";
+import { runInNewContext } from "node:vm";
 const { bookingAtomicCommandIdentity, executeAtomicBookingCommand } = atomicPreparation;
 const { getMerchantBookingSlotCapacityIssue } = bookingCore;
 
@@ -41,6 +44,7 @@ let admin;
 const connections = [];
 let config;
 const root = path.resolve(import.meta.dirname, "..");
+const requireRepository = createRequire(path.join(root, "package.json"));
 const owner = "__faolla_booking_persistence__";
 const primary = "__merchant_booking_records__:v1";
 let passed = 0;
@@ -58,9 +62,17 @@ function identity(nonce = randomUUID(), semanticInput = { operation: "create" },
 }
 function rpc(client) {
   return async (name, args) => {
-    assert.ok(["faolla_booking_atomic_snapshot_v1", "faolla_booking_atomic_commit_v1"].includes(name));
-    const values = [args.p_site_id, args.p_command_key, args.p_request_hash];
-    if (name.includes("commit")) values.push(args.p_mutation);
+    const fields = {
+      faolla_booking_atomic_read_v2: [],
+      faolla_booking_command_result_v2: ["p_site_id", "p_command_key"],
+      faolla_booking_atomic_snapshot_v1: ["p_site_id", "p_command_key", "p_request_hash"],
+      faolla_booking_atomic_commit_v1: ["p_site_id", "p_command_key", "p_request_hash", "p_mutation"],
+      faolla_booking_mail_claim_v1: ["p_site_id"],
+      faolla_booking_mail_settle_v2: ["p_site_id", "p_id", "p_lease_id", "p_state", "p_receipt", "p_error", "p_subject", "p_retry_seconds"],
+      faolla_booking_mail_states_v2: ["p_site_id", "p_booking_ids"],
+    }[name];
+    assert.ok(fields, `unexpected RPC ${name}`);
+    const values = fields.map((key) => args[key]);
     try {
       const result = await one(client, `select public.${name}(${values.map((_, i) => `$${i + 1}`).join(",")}) as data`, values);
       return { data: result.data, error: null };
@@ -88,6 +100,28 @@ async function commit(client, ident, value) {
 }
 const mail = (id) => ({ bookingId: id, kind: "status", message: { recipient: "synthetic@example.invalid", status: "active" } });
 async function check(name, body) { await body(); passed++; console.log(`[booking-atomic-pg] PASS ${name}`); }
+
+async function actualBookingModule(fixedNow) {
+  const ts = requireRepository("typescript");
+  const file = path.join(root, "src/lib/merchantBookings.server.ts");
+  const compiled = ts.transpileModule(await readFile(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
+  const compiledModule = { exports: {} };
+  const require = (name) => {
+    if (name === "./publishedMerchantService") return { loadCurrentMerchantSnapshotSiteBySiteId: async (siteId) => ({ merchantName: "Synthetic", id: siteId, domain: "https://synthetic.example.invalid",
+      permissionConfig: { allowBookingBlock: true, allowBookingAutoEmail: true }, location: { countryCode: "ES" } }) };
+    if (name === "./superAdminServer") return { createServerSupabaseServiceClient: () => null };
+    if (name === "./resilientJsonFileStore") return { readJsonFileWithBackup: () => { throw new Error("unexpected_local_read"); }, writeJsonFileWithBackup: () => { throw new Error("unexpected_local_write"); } };
+    if (name === "./merchantBookingEmails") return { sendMerchantBookingStatusEmail: () => { throw new Error("email_before_commit"); }, sendMerchantBookingReminderEmail: () => { throw new Error("reminder_before_commit"); } };
+    if (name === "./webPush") return { notifyMerchantPushSubscribers: () => { throw new Error("push_before_commit"); } };
+    return name.startsWith("./") ? requireRepository(path.join(root, "src/lib", `${name.slice(2)}.ts`)) : requireRepository(name);
+  };
+  class FixtureDate extends Date {
+    constructor(value = fixedNow) { super(value); }
+    static now() { return Date.parse(fixedNow); }
+  }
+  runInNewContext(compiled, { module: compiledModule, exports: compiledModule.exports, require, process: { cwd: () => evidence }, Date: fixedNow ? FixtureDate : Date, Buffer, Promise, JSON, Math, structuredClone }, { filename: file });
+  return compiledModule.exports;
+}
 
 before(async () => {
   const socket = net.createServer();
@@ -305,5 +339,179 @@ test("real PostgreSQL transactions, private ACLs and conservative mail leases", 
     assert.equal((await one(admin, "select count(*)::int as n from pages where slug=$1", [primary])).n, 2);
     await admin.query("update faolla_booking_atomic_control set active=false");
     await admin.query("delete from pages where id=$1", [row.id]);
+  });
+  await check("v2 migration remains inactive, validates its SQL and adds gated runtime reads", async () => {
+    // The dependency-conflict case deliberately inserted a malformed synthetic
+    // rules row. Seed a valid EMPTY fixture while inactive; runtime must never
+    // auto-repair that malformed row or a production store.
+    await admin.query("update pages set blocks=$1 where slug='__merchant_booking_rules__:v1'", [{ version: 1, snapshots: {} }]);
+    const runtimeSql = await readFile(path.join(root, "scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql"), "utf8");
+    await admin.query("update faolla_booking_atomic_control set active=true");
+    await assert.rejects(admin.query(runtimeSql), /booking_atomic_upgrade_requires_inactive/);
+    await admin.query("rollback");
+    assert.equal((await one(admin, "select count(*)::int as n from information_schema.columns where table_name='faolla_booking_atomic_control' and column_name='protocol'")).n, 0);
+    await admin.query("update faolla_booking_atomic_control set active=false");
+    await admin.query(runtimeSql);
+    assert.equal((await one(admin, "select active from faolla_booking_atomic_control")).active, false);
+    await assert.rejects(service1.query("select faolla_booking_atomic_read_v2()"), /booking_atomic_inactive/);
+    await admin.query("update faolla_booking_atomic_control set active=true");
+    assert.equal((await one(service1, "select faolla_booking_atomic_read_v2() as snapshot")).snapshot.protocol, 2);
+    const result = await atomicRuntime.runAtomicBookingMutation({ siteId: "runtime", operation: "acceptance.config" }, async () => {
+      atomicRuntime.stageAtomicBookingPersistence("workbench", { version: 1, settingsBySiteId: { runtime: { timeZone: "Europe/Madrid" } } });
+      return { updated: true };
+    }, rpc(service1));
+    assert.deepEqual(result, { updated: true });
+    assert.equal((await one(admin, "select blocks from pages where slug='__merchant_booking_workbench__:v1'")).blocks.settingsBySiteId.runtime.timeZone, "Europe/Madrid");
+  });
+  const core = await actualBookingModule();
+  await check("v2 recovery, delivery and configuration RPCs remain private after upgrade", async () => {
+    const exposed = ["faolla_booking_atomic_read_v2()", "faolla_booking_command_result_v2(text,text)",
+      "faolla_booking_mail_states_v2(text,text[])", "faolla_booking_mail_settle_v2(text,uuid,uuid,text,text,text,text,integer)"];
+    for (const signature of exposed) {
+      for (const role of ["anon", "authenticated"]) {
+        assert.equal((await one(admin, "select has_function_privilege($1,$2,'EXECUTE') as allowed", [role, signature])).allowed, false);
+      }
+      assert.equal((await one(admin, "select has_function_privilege('service_role',$1,'EXECUTE') as allowed", [signature])).allowed, true);
+    }
+    for (const signature of ["faolla_booking_atomic_configuration_v2(text,text,jsonb)", "faolla_booking_mail_settle_v1(text,uuid,uuid,text,text)"]) {
+      assert.equal((await one(admin, "select has_function_privilege('service_role',$1,'EXECUTE') as allowed", [signature])).allowed, false);
+    }
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal((await one(admin, "select has_table_privilege($1,'faolla_booking_mail_jobs','SELECT') as allowed", [role])).allowed, false);
+    }
+  });
+  const siteId = "99999997";
+  const withIo = (client, action) => atomicRuntime.withIsolatedBookingAtomicRpc(rpc(client), action);
+  const settingsStore = requireRepository(path.join(root, "src/lib/merchantBookingWorkbenchStore.ts"));
+  const workbench = requireRepository(path.join(root, "src/lib/merchantBookingWorkbench.ts"));
+  const input = { siteId, bookingBlockId: "synthetic-booking", bookingViewport: "desktop", store: "Store", item: "Consultation", title: "Mx",
+    appointmentAt: "2030-02-01T10:00", customerName: "Synthetic", email: "customer@example.invalid", phone: "000", note: "", customerGuestHash: "synthetic-guest" };
+  let created;
+  const request = { nonce: randomUUID(), principalScope: "guest:synthetic", semanticInput: input };
+  const create = (client, identity = request) => withIo(client, () => atomicRuntime.withBookingRequestIdentity(identity, () => core.createMerchantBooking(input)));
+  await check("actual settings writer and rules snapshot keep unrelated merchants untouched", async () => {
+    await withIo(service1, () => settingsStore.saveMerchantBookingWorkbenchSettings(siteId, workbench.normalizeMerchantBookingWorkbenchSettings({ timeZone: "Europe/Madrid",
+      customerAutoEmailEnabled: true, customerAutoEmailStatuses: ["active", "cancelled"], customerEmailReplyTo: "merchant@example.invalid" })));
+    const before = (await one(admin, "select blocks from pages where slug='__merchant_booking_workbench__:v1'")).blocks.settingsBySiteId.runtime;
+    await withIo(service1, () => atomicRuntime.runAtomicBookingMutation({ siteId, operation: "acceptance.rules" }, async () => {
+      atomicRuntime.stageAtomicBookingPersistence("rules", { version: 1, snapshots: { [siteId]: { version: 1, siteId, publishedAt: new Date().toISOString(), entries: [{
+        viewport: "desktop", blockId: "synthetic-booking", storeOptions: ["Store"], itemOptions: ["Consultation"], titleOptions: ["Mx"], availableTimeRanges: ["09:00-18:00"],
+        timeSlotRules: [{ timeRange: "09:00-18:00", maxBookings: 1 }], blockedDates: [], holidayDates: [], maxBookingsPerSlot: 1,
+      }] } } }); return null;
+    }));
+    assert.deepEqual((await one(admin, "select blocks from pages where slug='__merchant_booking_workbench__:v1'")).blocks.settingsBySiteId.runtime, before);
+  });
+  await check("actual public create saves its queued timeline and private intent, never invokes mail or local cache", async () => {
+    created = await create(service1);
+    assert.ok(created.booking.id); assert.ok(created.editToken);
+    const stored = (await one(admin, "select blocks from pages where slug=$1", [primary])).blocks.records.find((record) => record.id === created.booking.id);
+    assert.equal(stored.appointmentTimeZone, "Europe/Madrid");
+    assert.equal(stored.timeline.filter((entry) => entry.delivery === "queued").length, 2);
+    const job = await one(admin, "select * from faolla_booking_mail_jobs where booking_id=$1 and kind='status'", [stored.id]);
+    assert.equal(job.delivery_context.eventId, stored.timeline.find((entry) => entry.delivery === "queued").id);
+    assert.equal(JSON.stringify(job).includes(created.editToken), false);
+  });
+  await check("actual create replay succeeds even after its seat is full, without another booking or email", async () => {
+    const duplicate = await create(service2);
+    assert.equal(duplicate.booking.id, created.booking.id); assert.equal(duplicate.editToken, created.editToken);
+    await assert.rejects(create(service2, { ...request, nonce: randomUUID() }), /人数已满/);
+    assert.equal((await one(admin, "select count(*)::int as n from faolla_booking_mail_jobs where booking_id=$1 and kind='status'", [created.booking.id])).n, 1);
+    assert.equal((await one(admin, "select count(*)::int as n from faolla_booking_mail_jobs where booking_id=$1 and kind='created_push'", [created.booking.id])).n, 1);
+  });
+  await check("actual lost-response recovery is bound to the server principal, merchant and nonce", async () => {
+    const before = (await one(admin, "select revision::text as revision from faolla_booking_atomic_control")).revision;
+    const recover = (scope, nonce = request.nonce, site = siteId) => withIo(service1, () => atomicRuntime.findBookingSubmissionResult(site, nonce, scope));
+    const recovered = await recover(request.principalScope);
+    assert.equal(recovered.supported, true); assert.equal(recovered.found, true);
+    assert.equal(recovered.result.booking.id, created.booking.id);
+    assert.equal(recovered.result.editToken, created.editToken);
+    assert.equal((await recover("guest:other")).found, false);
+    assert.equal((await recover(request.principalScope, randomUUID())).found, false);
+    assert.equal((await recover(request.principalScope, request.nonce, "99999996")).found, false);
+    assert.equal((await one(admin, "select revision::text as revision from faolla_booking_atomic_control")).revision, before);
+  });
+  await check("v2 rejects bearer data in frozen context and foreign configuration without partial writes", async () => {
+    const canonical = (await one(admin, "select blocks from pages where slug=$1", [primary])).blocks;
+    const queued = await one(admin, "select * from faolla_booking_mail_jobs where booking_id=$1 and kind='status'", [created.booking.id]);
+    const forbidden = { bookingId: created.booking.id, kind: "status", message: queued.message,
+      context: { ...queued.delivery_context, booking: { ...queued.delivery_context.booking, editToken: "forbidden-bearer" } } };
+    let ident = identity(randomUUID(), { operation: "negative.context" }, siteId);
+    let snap = await snapshot(service1, ident);
+    await assert.rejects(commit(service1, ident, mutation(snap, canonical.records, [forbidden])), /booking_atomic_invalid_mail_context/);
+    assert.deepEqual(await snapshot(service1, ident), snap);
+    ident = identity(randomUUID(), { operation: "negative.configuration" }, siteId);
+    snap = await snapshot(service1, ident);
+    const configuration = structuredClone(snap.rows.find((row) => row.slug === "__merchant_booking_workbench__:v1").blocks);
+    configuration.settingsBySiteId.runtime.timeZone = "UTC";
+    await assert.rejects(commit(service1, ident, { ...mutation(snap, canonical.records), configuration: { workbench: configuration } }), /booking_atomic_invalid_configuration/);
+    assert.deepEqual(await snapshot(service1, ident), snap);
+  });
+  await check("actual token read is side-effect-free and wrong token cannot mutate or dispatch", async () => {
+    const before = (await one(admin, "select revision::text as revision from faolla_booking_atomic_control")).revision;
+    await withIo(service1, () => core.getMerchantBookingSelfServiceDetails({ bookingId: created.booking.id, editToken: created.editToken }));
+    await assert.rejects(withIo(service1, () => core.updateMerchantBooking({ bookingId: created.booking.id, editToken: "wrong", action: "cancel" })), /凭证无效/);
+    assert.equal((await one(admin, "select revision::text as revision from faolla_booking_atomic_control")).revision, before);
+  });
+  await check("actual reminder queue ownership survives timeline trimming without another reminder or a false sent log", async () => {
+    await withIo(service1, () => settingsStore.updateMerchantBookingWorkbenchSettings(siteId, {
+      update: (settings) => ({ ...settings, customerReminderOffsetsMinutes: [60] }) }));
+    // The 60-minute reminder intentionally has a narrow trigger grace window.
+    // 10:00 Madrid is 09:00 UTC in February; 08:01 UTC is 59 minutes before it.
+    const clocked = await actualBookingModule("2030-02-01T08:01:00Z");
+    await withIo(service1, () => clocked.runMerchantBookingAutomationForAllSites());
+    const ident = identity(randomUUID(), { operation: "synthetic.timeline.trim" }, siteId);
+    const snap = await snapshot(service1, ident);
+    const next = records(snap);
+    const record = next.find((value) => value.id === created.booking.id);
+    assert.deepEqual(record.customerReminderProcessedMinutes, [60]);
+    assert.equal(record.timeline.filter((entry) => entry.emailKind === "reminder" && entry.delivery === "queued").length, 1);
+    assert.equal((record.customerEmailLogs ?? []).length, 0, "queue ownership is not confirmed delivery");
+    record.timeline = record.timeline.filter((entry) => entry.emailKind !== "reminder");
+    await commit(service1, ident, mutation(snap, next));
+    await withIo(service1, () => clocked.runMerchantBookingAutomationForAllSites());
+    assert.equal((await one(admin, "select count(*)::int as n from faolla_booking_mail_jobs where booking_id=$1 and kind='reminder'", [record.id])).n, 1);
+  });
+  await check("actual queue worker uses verified current Reply-To and retries only a definite rate limit", async () => {
+    const oldKey = process.env.RESEND_API_KEY, oldFrom = process.env.BOOKING_CONFIRMATION_EMAIL_FROM;
+    process.env.RESEND_API_KEY = "synthetic-not-a-real-key"; process.env.BOOKING_CONFIRMATION_EMAIL_FROM = "synthetic@example.invalid";
+    const outgoing = [];
+    let limited = true;
+    const fetcher = async (url, options) => {
+      assert.equal(url, "https://api.resend.com/emails"); outgoing.push(JSON.parse(options.body));
+      return limited ? new Response("", { status: 429, headers: { "retry-after": "1" } }) : new Response(JSON.stringify({ id: "synthetic-provider-receipt" }), { status: 200 });
+    };
+    const dependencies = { rpc: rpc(service1), load: (id) => withIo(service1, () => core.getMerchantBookingNotificationContext(id)),
+      send: (job, current) => notificationWorker.deliverBookingNotification(job, current, { fetcher }), paused: () => false, now: Date.now };
+    try {
+      let job = (await rpc(service1)("faolla_booking_mail_claim_v1", { p_site_id: siteId })).data;
+      assert.equal(await notificationWorker.processBookingNotification(job, dependencies), "pending");
+      assert.equal((await one(admin, "select state from faolla_booking_mail_jobs where id=$1", [job.id])).state, "pending");
+      await admin.query("update faolla_booking_mail_jobs set not_before=clock_timestamp()-interval '1 second' where id=$1", [job.id]);
+      limited = false;
+      job = (await rpc(service1)("faolla_booking_mail_claim_v1", { p_site_id: siteId })).data;
+      assert.equal(job.attempts, 2);
+      assert.equal(await notificationWorker.processBookingNotification(job, dependencies), "sent");
+      assert.equal(outgoing.length, 2); assert.equal(outgoing[1].reply_to, "merchant@example.invalid");
+      assert.ok(outgoing[1].text.includes("/booking-manage#"));
+      assert.equal((await one(admin, "select state from faolla_booking_mail_jobs where id=$1", [job.id])).state, "sent");
+      const records = await withIo(service1, () => core.listMerchantBookings(siteId, { includeTimeline: true, includeCustomerEmailLogs: true }));
+      assert.equal(records[0].timeline.filter((entry) => entry.delivery === "sent").length, 1);
+      assert.equal(records[0].customerEmailLogs.length, 1);
+      assert.equal(records[0].editToken, undefined);
+    } finally {
+      if (oldKey === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = oldKey;
+      if (oldFrom === undefined) delete process.env.BOOKING_CONFIRMATION_EMAIL_FROM; else process.env.BOOKING_CONFIRMATION_EMAIL_FROM = oldFrom;
+    }
+  });
+  await check("actual cancellation enqueues a replacement and stale queued state mail is skipped", async () => {
+    await withIo(service1, () => core.sendMerchantBookingManualEmailBySite({ siteId, bookingId: created.booking.id, assertAuthorizationCurrent: async () => {} }));
+    // Manual sending marks a merchant touch, so use the merchant mutation for
+    // this cancellation rather than bypassing the customer lifecycle lock.
+    await withIo(service1, () => core.updateMerchantBookingBySite({ siteId, bookingId: created.booking.id, status: "cancelled", assertAuthorizationCurrent: async () => {} }));
+    const job = (await rpc(service1)("faolla_booking_mail_claim_v1", { p_site_id: siteId })).data;
+    let sends = 0;
+    assert.equal(await notificationWorker.processBookingNotification(job, { rpc: rpc(service1), now: Date.now, paused: () => false,
+      load: (id) => withIo(service1, () => core.getMerchantBookingNotificationContext(id)), send: async () => { sends++; throw new Error("must_not_send_stale"); } }), "skipped");
+    assert.equal(sends, 0);
   });
 });

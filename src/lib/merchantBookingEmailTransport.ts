@@ -7,7 +7,7 @@ export type MerchantBookingEmailTransportDependencies = {
 
 type EmailTransportResult =
   | { delivery: "sent"; messageId: string }
-  | { delivery: "failed" | "unconfirmed"; error: string };
+  | { delivery: "failed" | "unconfirmed"; error: string; retryAfterSeconds?: number };
 
 // One attempt only. A timeout or lost response does not establish that the
 // provider rejected the message; never report it as sent or blindly retry here.
@@ -43,6 +43,11 @@ export async function deliverMerchantBookingEmail(
         return { delivery: "unconfirmed", error: "邮件服务响应异常，发送结果待确认，请先核对发送记录再决定是否重发" };
       }
       // Do not echo provider response bodies, credentials, or customer data.
+      if (response.status === 429) {
+        const requested = Number(response.headers.get("retry-after"));
+        return { delivery: "failed", error: "provider_rate_limited",
+          retryAfterSeconds: Number.isFinite(requested) && requested > 0 ? Math.max(1, Math.min(3600, Math.ceil(requested))) : 60 };
+      }
       return { delivery: "failed", error: `邮件服务拒绝请求（HTTP ${response.status}），请检查发件配置和收件地址` };
     }
     let messageId = "";

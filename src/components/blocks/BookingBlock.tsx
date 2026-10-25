@@ -1,6 +1,7 @@
 "use client";
+import { beginBookingSubmission, finishBookingSubmission, readPendingBookingSubmission } from "@/lib/merchantBookingSubmission";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePublicTraffic, usePublicTrafficExposure } from "@/components/PublicTrafficProvider";
 import { useSearchParams } from "next/navigation";
 import type { BookingProps } from "@/data/homeBlocks";
@@ -298,6 +299,7 @@ export default function BookingBlock({
   );
   const [mode, setMode] = useState<"form" | "success">("form");
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [error, setError] = useState("");
   const [bookingCustomerAuthProof, setBookingCustomerAuthProof] = useState("");
   const isLiveBooking = interactive && isMerchantNumericId(runtimeSiteId);
@@ -306,6 +308,39 @@ export default function BookingBlock({
   const restoredEditToken = restoredParams.editToken;
   const restoredBlockId = restoredParams.bookingBlockId;
   const restoredViewport = restoredParams.bookingViewport;
+
+  const lookupPendingSubmission = useCallback(async () => {
+    const scope = `${runtimeSiteId}:${runtimeBlockId}:${runtimeViewport}`;
+    const pending = readPendingBookingSubmission(scope);
+    if (!pending?.pending) return null;
+    const auth = await resolveFrontendAuthPayload(2600).catch(() => null);
+    const response = await fetch("/api/bookings", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ siteId: runtimeSiteId, requestNonce: pending.nonce, lookupRequest: true,
+        frontendAuthProof: auth?.frontendAuthProof || bookingCustomerAuthProof,
+        customerGuestToken: auth?.authenticated === true && auth.accountType === "personal" ? "" : readPersonalGuestMergeToken() }) });
+    const result = await response.json().catch(() => null) as { ok?: boolean; found?: boolean; booking?: MerchantBookingRecord; editToken?: string; message?: string } | null;
+    if (!response.ok || !result?.ok) throw new Error(result?.message || "上次提交结果暂时无法核对，请稍后重试，勿重复新建预约");
+    return result.found && result.booking && result.editToken ? { booking: result.booking, editToken: result.editToken } : null;
+  }, [runtimeSiteId, runtimeBlockId, runtimeViewport, bookingCustomerAuthProof]);
+
+  const acceptRecoveredSubmission = useCallback((result: SubmittedBookingState) => {
+    persistEditToken(result.booking.id, result.editToken);
+    if (!result.booking.customerAccountId && !result.booking.customerUserId && !result.booking.customerLoginEmail) upsertPersonalGuestBooking(result.booking);
+    finishBookingSubmission(`${runtimeSiteId}:${runtimeBlockId}:${runtimeViewport}`, true);
+    setSubmittedState(result);
+    setDraft(buildInitialDraft(storeOptions, itemOptions, titleOptions, result.booking));
+    setMode("success");
+    setError("");
+    notifyPersonalConsumptionChanged();
+  }, [runtimeSiteId, runtimeBlockId, runtimeViewport, storeOptions, itemOptions, titleOptions]);
+
+  useEffect(() => {
+    if (!isLiveBooking || submittedState || restoredBookingId || submittingRef.current) return;
+    let cancelled = false;
+    void lookupPendingSubmission().then((result) => { if (!cancelled && result) acceptRecoveredSubmission(result); })
+      .catch((failure) => { if (!cancelled) setError(failure instanceof Error ? failure.message : "预约结果核对失败"); });
+    return () => { cancelled = true; };
+  }, [isLiveBooking, submittedState, restoredBookingId, lookupPendingSubmission, acceptRecoveredSubmission]);
 
   useEffect(() => {
     if (typeof window === "undefined" || mode !== "form" || !submittedState) return;
@@ -534,11 +569,16 @@ export default function BookingBlock({
   };
 
   const submitBooking = async () => {
-    if (!isLiveBooking) return;
+    if (!isLiveBooking || submittingRef.current) return;
+    submittingRef.current = true;
     traffic?.("booking", runtimeBlockId, "submit_attempt");
     setSubmitting(true);
     setError("");
     try {
+      if (!submittedState) {
+        const recovered = await lookupPendingSubmission();
+        if (recovered) { acceptRecoveredSubmission(recovered); return; }
+      }
       if (appointmentDateIssue) {
         throw new Error(appointmentDateIssue);
       }
@@ -563,6 +603,10 @@ export default function BookingBlock({
         (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
         bookingCustomerAuthProof;
       const isPersonalAuthenticated = latestAuthPayload?.authenticated === true && latestAuthPayload.accountType === "personal";
+      const submissionScope = `${runtimeSiteId}:${runtimeBlockId}:${runtimeViewport}`;
+      const requestNonce = submittedState ? undefined : await beginBookingSubmission(submissionScope, {
+        siteId: runtimeSiteId, bookingBlockId: runtimeBlockId, bookingViewport: runtimeViewport, ...payload,
+      });
       const response = await fetch("/api/bookings", {
         method: submittedState ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -583,6 +627,7 @@ export default function BookingBlock({
                 bookingViewport: runtimeViewport,
                 frontendAuthProof,
                 customerGuestToken: isPersonalAuthenticated ? "" : readPersonalGuestMergeToken(),
+                requestNonce,
                 ...payload,
               },
         ),
@@ -591,8 +636,10 @@ export default function BookingBlock({
         | { ok?: boolean; message?: string; booking?: MerchantBookingRecord; editToken?: string }
         | null;
       if (!response.ok || !json?.ok || !json.booking) {
+        if (!submittedState && response.status < 500 && response.status >= 400) finishBookingSubmission(submissionScope, true);
         throw new Error(json?.message || "预约提交失败，请稍后重试");
       }
+      if (!submittedState) finishBookingSubmission(submissionScope, true);
       if (!isPersonalAuthenticated) {
         upsertPersonalGuestBooking(json.booking);
       }
@@ -610,6 +657,7 @@ export default function BookingBlock({
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "预约提交失败，请稍后重试");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

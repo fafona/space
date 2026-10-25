@@ -164,6 +164,11 @@ jobs:
       - name: Enterprise Browser Journeys
         run: npm run test:enterprise-browser
 
+      - name: Booking Browser Journeys
+        # Browser prerequisites stay in this existing mandatory Playwright job,
+        # not in the dependency-free Quality unit/contract partition.
+        run: npm run test:booking-browser
+
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
     runs-on: ubuntu-latest

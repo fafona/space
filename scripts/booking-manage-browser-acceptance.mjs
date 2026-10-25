@@ -3,7 +3,8 @@ import test from "node:test";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 
-// Synthetic-only browser verification of the real management page. Network is
+// Explicit browser acceptance in the existing mandatory Playwright CI job.
+// Synthetic-only verification of the real management page. Network is
 // intercepted before navigation; unexpected destinations fail the test.
 test("booking manager works across devices, protects locked records and retains failed drafts", { timeout: 90000 }, async () => {
   const bundle = await build({ stdin: {

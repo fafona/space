@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -256,7 +257,7 @@ export function createMerchantCustomerGetBaselineHarness(options: MerchantCustom
   const injected: Record<string, unknown> = {
     "next/server": { NextResponse: options.instrumentation === true
       ? { json: (...args: Parameters<typeof NextResponse.json>) => timed("jsonSerialization", () => NextResponse.json(...args)) } : NextResponse },
-    "node:path": path, "node:util": { isDeepStrictEqual }, "node:crypto": { randomBytes: forbidden("entropy"), createHash },
+    "node:path": path, "node:util": { isDeepStrictEqual }, "node:async_hooks": { AsyncLocalStorage }, "node:crypto": { randomBytes: forbidden("entropy"), createHash },
     "lib/supabase.ts": { supabase: null }, "lib/superAdminServer.ts": { createServerSupabaseServiceClient: () => client },
     "lib/serverMerchantSession.ts": { resolveMerchantSessionFromRequest: async () => {
       assert.ok(active); active.io.sessionResolutions++; event({ kind: "verified-session-input" });

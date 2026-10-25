@@ -485,6 +485,7 @@ export function buildMerchantBookingReminderSummary(
       | "customerReminderUnconfirmedMinutes"
       | "merchantReminderProcessedMinutes"
       | "noShowMarkedAt"
+      | "timeline"
     >
   >,
   settings: MerchantBookingWorkbenchSettings,
@@ -495,11 +496,15 @@ export function buildMerchantBookingReminderSummary(
     if (settings.customerAutoEmailEnabled !== true) return false;
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.customerReminderOffsetsMinutes, now);
     return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset)
-      && !(record.customerReminderUnconfirmedMinutes ?? []).includes(dueOffset);
+      && !(record.customerReminderUnconfirmedMinutes ?? []).includes(dueOffset)
+      && !(record.timeline ?? []).some((entry) => entry.emailKind === "reminder" && ["queued", "sent", "unconfirmed"].includes(entry.delivery || "")
+        && entry.appointmentAt === record.appointmentAt && entry.minutesBefore === dueOffset);
   }).length;
   const dueMerchantReminderCount = activeRecords.filter((record) => {
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.merchantReminderOffsetsMinutes, now);
-    return dueOffset !== null && !(record.merchantReminderProcessedMinutes ?? []).includes(dueOffset);
+    return dueOffset !== null && !(record.merchantReminderProcessedMinutes ?? []).includes(dueOffset)
+      && !(record.timeline ?? []).some((entry) => entry.kind === "merchant_reminder" && ["queued", "sent", "unconfirmed"].includes(entry.delivery || "")
+        && entry.appointmentAt === record.appointmentAt && entry.minutesBefore === dueOffset);
   }).length;
   const pendingNoShowCount = activeRecords.filter(
     (record) => !trimText(record.noShowMarkedAt) && shouldMarkMerchantBookingNoShow(record, settings, now),

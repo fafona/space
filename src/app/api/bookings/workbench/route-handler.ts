@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { getMerchantBookingEmailReadiness } from "@/lib/merchantBookingEmails";
+import { isAtomicBookingStorageEnabled } from "@/lib/merchantBookingAtomicRuntime.server";
 import { NextResponse } from "next/server";
 import {
   authorizeMerchantBusinessRequest,
@@ -106,7 +108,10 @@ function applyAutoEmailPermissionGuard(
   } satisfies MerchantBookingWorkbenchSettings;
 }
 
-async function buildWorkbenchDashboard(siteId: string) {
+async function buildWorkbenchDashboard(siteId: string): Promise<{
+  pushDeviceCount: number; automation: ReturnType<typeof getMerchantBookingAutomationRuntimeSnapshot>;
+  emailDelivery?: { configured: boolean; queuedMode: boolean; workerEnabled: boolean };
+}> {
   let pushDeviceCount = 0;
   const supabase = createServerSupabaseServiceClient();
   if (supabase) {
@@ -123,6 +128,8 @@ async function buildWorkbenchDashboard(siteId: string) {
   return {
     pushDeviceCount,
     automation: getMerchantBookingAutomationRuntimeSnapshot(),
+    emailDelivery: { ...getMerchantBookingEmailReadiness(), queuedMode: isAtomicBookingStorageEnabled(),
+      workerEnabled: process.env.MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED === "1" },
   };
 }
 
@@ -207,7 +214,7 @@ function projectDashboardForActor(
       ? { pushDeviceCount: dashboard.pushDeviceCount }
       : {}),
     ...(actor.businessPermissions.includes("bookings.automation.manage")
-      ? { automation: dashboard.automation }
+      ? { automation: dashboard.automation, ...(dashboard.emailDelivery ? { emailDelivery: dashboard.emailDelivery } : {}) }
       : {}),
   };
 }

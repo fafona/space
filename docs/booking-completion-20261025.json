@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-10-25",
+  "status": "local_implementation_verified_not_deployed",
+  "branch": "fix/booking-core-20261025",
+  "priorLocalCommits": ["47202f42", "d7674a30", "ab110ef4"],
+  "productionChanged": false,
+  "productionMigrationsApplied": false,
+  "realMessagesSent": false,
+  "auditItems": [
+    {"id": "B01", "change": "New bookings retain an explicit IANA appointment zone; DST gaps/repeated times fail closed. Historical unzoned records are not silently reinterpreted."},
+    {"id": "B02", "change": "Token and personal-account edits share lifecycle and merchant-touch restrictions."},
+    {"id": "B03", "change": "Current merchant entitlement is checked inside admission and CAS retries, not inferred from cached published rules."},
+    {"id": "B04", "change": "Device-independent /booking-manage links retain bearer credentials in the fragment, not a request URL."},
+    {"id": "B05", "change": "Merchant restore and batch restore preflight capacity, including joint occupancy."},
+    {"id": "B06", "change": "New public bookings and customer rescheduling reject past or invalid appointment times."},
+    {"id": "B07", "change": "Client nonce, principal-bound durable command results, CAS admission and lost-response recovery prevent duplicate creates in atomic-v2.", "activationRequired": true},
+    {"id": "B08", "change": "Invalid tokens cannot start automation; atomic-v2 reads never send messages, merge local files or perform read-repair."},
+    {"id": "B09", "change": "Bounded central email transport, truthful uncertain outcomes and a durable private notification dispatcher are implemented.", "activationRequired": true, "realProviderAcceptance": "not_performed"},
+    {"id": "B10", "change": "Private per-merchant Reply-To supports customer replies without exposing merchant mailbox passwords. Format validation is not mailbox ownership verification."}
+  ],
+  "completedRecommendations": [
+    "Reservation changes, scoped configuration, command deduplication and notification intents commit together in atomic-v2.",
+    "Lease-owned dispatch requires a receipt before reporting sent. Unknown sends are not requeued; definite HTTP 429 retries are bounded to three attempts.",
+    "Reminder queue ownership survives bounded timeline trimming, without creating a false sent log.",
+    "Desktop and mobile retain dirty drafts across pagination, refresh and reopened details; stale response generations cannot replace a newer list.",
+    "Persistent stale-cache warnings and last-sync indicators distinguish cached data from current server results.",
+    "Day/week agenda and loaded-record capacity summaries are available on desktop and mobile. They are explicitly not authoritative availability.",
+    "Booking workbench shows missing central mail configuration or disabled queued-worker warnings without revealing secrets.",
+    "Operational browser acceptances run in the existing mandatory browser CI job; old release policies and required checks remain unchanged."
+  ],
+  "verification": {
+    "runtime": "Windows, Node 24.13.1; local verification is not hosted Linux/Node 20 release CI",
+    "remainingCiPartition": {
+      "command": "node scripts/run-ci-tests.mjs remaining",
+      "files": 1528,
+      "batches": 39,
+      "failedBatches": 0,
+      "tests": 16004,
+      "passed": 15967,
+      "failed": 0,
+      "existingPlatformOrOptInSkips": 37,
+      "log": "D:/faolla-booking-build-234ed47d26144484836e68cace0c5a96/remaining-ci-final.log"
+    },
+    "workflowPartitionAndBookingContracts": {"passed": 39, "failed": 0, "skipped": 0},
+    "postgresAcceptance": {
+      "command": "npm run test:booking-atomic:postgres",
+      "version": "17.10",
+      "checks": 24,
+      "failed": 0,
+      "evidence": "C:/Users/User/AppData/Local/Temp/faolla-booking-atomic-test-gGnNNA",
+      "ownedSyntheticClusterStopped": true,
+      "networkAndMessages": "Loopback-only owned database; injected synthetic email transport; no production credentials or real sends."
+    },
+    "browserAcceptance": {"command": "npm run test:booking-browser", "groups": 4, "failed": 0, "skipped": 0, "network": "All requests intercepted before navigation; unexpected paths/origins fail."},
+    "typecheck": "passed",
+    "fullEslint": {"exitCode": 0, "errors": 0, "existingWarningsInUnmodifiedFiles": 44},
+    "changedFileEslint": {"errors": 0, "warnings": 0},
+    "encodingAndWhitespace": "passed",
+    "isolatedBuild": {
+      "command": "npm run build",
+      "result": "passed",
+      "directory": "D:/faolla-booking-build-234ed47d26144484836e68cace0c5a96",
+      "dependencies": "Fresh private npm ci; shared worktree node_modules untouched; pinned WASM guard retained.",
+      "environment": "Synthetic Supabase public values, no provider/service credentials, background jobs paused.",
+      "adminAsyncEntryKiB": 1084.9,
+      "largestChunkKiB": 456.2
+    }
+  },
+  "activation": {
+    "defaultStorageMode": "legacy",
+    "defaultNotificationWorkerEnabled": "0",
+    "migrations": ["202610250211_booking_atomic_preparation.sql", "202610250212_booking_atomic_runtime.sql"],
+    "migrationInstallationActivatesRuntime": false,
+    "upgradeRejectsAnActiveOldGeneration": true,
+    "requiresSeparateApprovalAndVerification": [
+      "A migration-aware release scope, complete hosted CI, bounded build, smoke checks, compatible rollback and version retention. Do not widen or reuse old login/attendance code-only lanes.",
+      "Reconcile legacy local JSON and authoritative rows without overwriting historical bookings; verify actual private pages/RPC ACLs and all configuration/backup writers.",
+      "Quiesce every incompatible booking web writer, GET-triggered automation and timer before activating a compatible database generation. A database fence cannot undo a send performed before a rejected old write.",
+      "Verify the central sender/domain and send a separately approved real recipient test, including Reply-To, management/calendar links, customer reminders and merchant notifications.",
+      "Enable only the compatible application/worker cohort after the database gate passes; never fall back to legacy IO after an atomic error."
+    ],
+    "limitations": [
+      "Global JSON-store CAS is deliberately coarse; no normalized-storage scalability or performance claim is made.",
+      "Stable HTTP retry identities currently cover public creation/recovery. Manual email callers must not treat an unknown request result as permission to resend.",
+      "Local verification does not establish production sender configuration, actual delivery or live feature activation."
+    ]
+  }
+}

@@ -40,6 +40,8 @@ function harness(initial: bookings.MerchantBookingStoredRecord[] = [], options: 
   const settings = workbench.normalizeMerchantBookingWorkbenchSettings({ timeZone: options.timeZone });
   const bindings: unknown[] = [];
   const context = vm.createContext({ ...bookings, ...workbench, ...rules, ...time, randomBytes, Date, Buffer, JSON, Math, Promise,
+    isAtomicBookingStorageEnabled: () => false,
+    queueBookingNotification: () => null,
     MERCHANT_BOOKING_SITE_NAME_MAX_BYTES: 320, MERCHANT_BOOKING_SITE_NAME_CONTROL_PATTERN: /[\u0000-\u001f]/u,
     withBookingStoreLock: async (task: () => Promise<unknown>) => task(),
     readMerchantBookingStore: async () => ({ version: 1, records: structuredClone(records) }),

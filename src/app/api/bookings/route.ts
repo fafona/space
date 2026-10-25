@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { withBookingRequestIdentity, isAtomicBookingStorageEnabled, findBookingSubmissionResult } from "@/lib/merchantBookingAtomicRuntime.server";
+import { isBookingRequestNonce } from "@/lib/merchantBookingSubmission";
 import { recordTrafficOutcome } from "@/lib/accountTrafficOutcome.server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBookingPushNotification } from "@/lib/merchantPushEvents";
@@ -209,10 +211,15 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Partial<MerchantBookingCreateInput> & {
       frontendAuthProof?: unknown;
       customerGuestToken?: unknown;
+      requestNonce?: unknown;
+      lookupRequest?: unknown;
     };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
       return privateJson({ error: "invalid_site_id" }, { status: 400 });
+    }
+    if ((body.requestNonce !== undefined && !isBookingRequestNonce(body.requestNonce)) || (isAtomicBookingStorageEnabled() && !isBookingRequestNonce(body.requestNonce))) {
+      return privateJson({ error: "booking_request_nonce_required", message: "请刷新页面后重试，以启用预约重复提交保护" }, { status: 400 });
     }
     const personalSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
     const frontendProof = personalSession ? null : verifyFrontendAuthProof(body.frontendAuthProof);
@@ -229,7 +236,7 @@ export async function POST(request: Request) {
     const fallbackCustomerName =
       personalProfile?.name ||
       (fallbackCustomerEmail.includes("@") ? fallbackCustomerEmail.split("@")[0] ?? "" : "");
-    const created = await createMerchantBooking({
+    const createInput: MerchantBookingCreateInput = {
       siteId,
       siteName: String(body.siteName ?? "").trim(),
       bookingBlockId: String(body.bookingBlockId ?? "").trim() || undefined,
@@ -246,12 +253,22 @@ export async function POST(request: Request) {
       customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
       customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
       customerGuestHash: personalSession || personalProof ? "" : hashPersonalGuestMergeToken(body.customerGuestToken),
-    });
+    };
+    const principalScope = personalSession || personalProof ? `personal:${createInput.customerAccountId || createInput.customerUserId || createInput.customerLoginEmail}`
+      : `guest:${createInput.customerGuestHash || "anonymous"}`;
+    if (body.lookupRequest === true) {
+      if (!isBookingRequestNonce(body.requestNonce)) return privateJson({ error: "invalid_request_nonce" }, { status: 400 });
+      const result = await findBookingSubmissionResult(siteId, body.requestNonce, principalScope);
+      return privateJson({ ok: true, supported: result.supported, found: result.found, ...(result.found ? result.result as object : {}) });
+    }
+    const created = await withBookingRequestIdentity({ nonce: typeof body.requestNonce === "string" ? body.requestNonce : undefined,
+      principalScope,
+      semanticInput: createInput }, () => createMerchantBooking(createInput));
 
     void recordTrafficOutcome(request, { siteId, module: "booking", recordId: created.booking.id,
       objectId: created.booking.bookingBlockId || "booking-legacy", occurredAt: created.booking.createdAt });
     const supabase = createServerSupabaseServiceClient();
-    if (supabase) {
+    if (supabase && !isAtomicBookingStorageEnabled()) {
       const notification = buildMerchantBookingPushNotification({
         siteId,
         booking: created.booking,
@@ -271,7 +288,7 @@ export async function POST(request: Request) {
         error: "booking_create_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
-      { status: 400 },
+      { status: isAtomicBookingStorageEnabled() && error instanceof Error && error.message.startsWith("booking_atomic_") ? 503 : 400 },
     );
   }
 }
