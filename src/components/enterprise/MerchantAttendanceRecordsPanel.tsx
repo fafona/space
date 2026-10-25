@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AttendanceRecordsClient, attendanceManagementMessage, attendanceRecordsDateQuery } from "@/lib/merchantAttendanceManagementClient";
 import type { AttendanceApiFetch } from "@/lib/merchantAttendanceSelfClient";
 import ScopedTimesheetLauncher from "./MerchantAttendanceScopedTimesheetLauncher";
@@ -11,6 +11,41 @@ const actions = { clock_in: "上班", break_start: "开始休息", break_end: "�
 type RecordsPanelProps = {
   siteId: string; actorId: string; access: "owner" | "manager"; apiFetch: AttendanceApiFetch;
 };
+
+// Keep native calendar interaction, but never use its locale-dependent text
+// renderer for the visible value. The query still receives the exact ISO date.
+export function AttendanceRecordsDateField({ label, value, onChange }: {
+  label: string; value: string; onChange: (value: string) => void;
+}) {
+  const id = useId(), pickerRef = useRef<HTMLInputElement>(null), textRef = useRef<HTMLInputElement>(null);
+  const openPicker = () => {
+    const picker = pickerRef.current;
+    if (!picker) return;
+    try {
+      if (typeof picker.showPicker === "function") { picker.showPicker(); return; }
+    } catch { /* Embedded browsers may block native pickers; typing stays available. */ }
+    try { picker.focus({ preventScroll: true }); picker.click(); }
+    catch { textRef.current?.focus(); }
+  };
+  return <div className="min-w-0 text-sm">
+    <label htmlFor={id}>{label}</label>
+    <div className="relative mt-1" data-no-translate="1" translate="no">
+      <input ref={textRef} id={id} className={`${input} !mt-0 pr-12 font-sans tabular-nums`} type="text"
+        autoComplete="off" placeholder="YYYY-MM-DD" title="YYYY-MM-DD" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
+        maxLength={10} value={value} onChange={e => onChange(e.target.value)} required />
+      <button type="button" aria-label={`选择${label}`} onClick={openPicker}
+        className="absolute inset-y-0 right-1 flex w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500">
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+          <path d="M6 2.75v2.5M14 2.75v2.5M3.75 7.25h12.5M5.5 4.5h9a1.75 1.75 0 0 1 1.75 1.75v8.25A1.75 1.75 0 0 1 14.5 16.25h-9A1.75 1.75 0 0 1 3.75 14.5V6.25A1.75 1.75 0 0 1 5.5 4.5Z"
+            stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <input ref={pickerRef} type="date" tabIndex={-1} aria-hidden="true"
+        className="pointer-events-none absolute right-1 top-0 h-full w-9 opacity-0"
+        value={/^\d{4}-\d{2}-\d{2}$/.test(value) ? value : ""} onChange={e => onChange(e.target.value)} />
+    </div>
+  </div>;
+}
 export default function MerchantAttendanceRecordsPanel(props: RecordsPanelProps) {
   return <RecordsScreen key={`${props.siteId}:${props.access}:${props.actorId}`} {...props} />;
 }
@@ -45,8 +80,8 @@ function RecordsScreen({ siteId, actorId, access, apiFetch }: RecordsPanelProps)
       {access === "owner" ? "负责人可查看本企业的原始打卡记录。" : "仅显示当前角色及主管授权范围内的记录。"}不推算缺卡、工资或应出勤时数。</p></header>
     {access === "manager" && <ScopedTimesheetLauncher siteId={siteId} actorId={actorId} access="manager" apiFetch={apiFetch}/>}
     <form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" onSubmit={e => { e.preventDefault(); query(); }}>
-      <label className="min-w-0 text-sm">开始日期<input className={input} type="date" value={start} onChange={e => setStart(e.target.value)} required /></label>
-      <label className="min-w-0 text-sm">结束日期（含当天）<input className={input} type="date" value={end} onChange={e => setEnd(e.target.value)} required /></label>
+      <AttendanceRecordsDateField label="开始日期" value={start} onChange={setStart} />
+      <AttendanceRecordsDateField label="结束日期（含当天）" value={end} onChange={setEnd} />
       <label className="min-w-0 text-sm">查询／显示时区<input className={input} list="attendance-record-zones" value={zone} onChange={e => setZone(e.target.value)} required />
         <datalist id="attendance-record-zones">{["UTC", "Europe/Madrid", "Atlantic/Canary", "Asia/Shanghai", "America/New_York"].map(z => <option value={z} key={z} />)}</datalist></label>
       <div className="flex items-end"><button className={`${button} w-full`} disabled={busy} type="submit">查询明细</button></div>

@@ -67,7 +67,8 @@ test('independent recursion confirms the complete actual reviewed static import 
   const actual = unpublishedCandidateImportClosure(readSource);
   assert.deepEqual(actual, [...seen].sort());
   assert.ok(actual.includes('scripts/merchant-login-unbuilt-repair-policy.mjs'));
-  assert.equal(actual.length, 14);
+  assert.equal(actual.length, 15);
+  assert.ok(actual.includes('scripts/google-transition-unbuilt-close-policy.mjs'));
   assert.ok(actual.includes('scripts/contact-wechat-staged-tool-repair-policy.mjs'));
   for (const name of actual) assert.match(name, /^scripts\/[a-z0-9-]+\.mjs$/);
 });

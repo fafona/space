@@ -5084,6 +5084,7 @@ function MerchantEnterpriseManagerContent({
   const refreshOverview = useCallback(async () => {
     if (overviewAbortControllerRef.current) return;
     if (
+      tab !== "attendanceRecords" &&
       !canAutoRefreshOnFocusRef.current &&
       !window.confirm("当前页面可能包含未保存的编辑。刷新将放弃这些修改，是否继续？")
     ) {
@@ -5093,7 +5094,7 @@ function MerchantEnterpriseManagerContent({
     if (refreshed) {
       setMessage({ kind: "success", text: "已同步最新协作数据。" });
     }
-  }, [loadOverview]);
+  }, [loadOverview, tab]);
 
   useEffect(() => {
     void loadOverview();
@@ -5325,6 +5326,8 @@ function MerchantEnterpriseManagerContent({
         if (hasStoredAttendanceScopeOperation() && !window.confirm("考勤范围有待确认操作，或暂时无法核对操作记录。离开不会撤销已发送操作；原编号将保留供核对。确定离开吗？")) return false;
       } else if (
         actor &&
+        // Record dates and filters are query-only, not a persisted edit.
+        tab !== "attendanceRecords" &&
         !canAutoRefreshOnFocus &&
         !window.confirm("当前页面有未保存的内容。切换功能将放弃这些修改，是否继续？")
       ) {
@@ -5475,7 +5478,8 @@ function MerchantEnterpriseManagerContent({
   }, [confirmViewChange, registerLeaveGuard]);
 
   useEffect(() => {
-    if (!actor || canAutoRefreshOnFocus) return;
+    // Records owns no editable business data; pausing refresh is not dirtiness.
+    if (!actor || canAutoRefreshOnFocus || tab === "attendanceRecords") return;
     const preventUnsavedUnload = (event: BeforeUnloadEvent) => {
       // Once mounted, scope owns the exact draft/pending check. Before that,
       // only a stored unknown operation can be at risk, never an unseen draft.
