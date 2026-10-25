@@ -629,6 +629,7 @@ export default function BookingWorkbenchDialog({
               settings?: MerchantBookingWorkbenchSettings & {
                 calendarSyncEnabled?: boolean;
               };
+              message?: string;
               dashboard?: WorkbenchDashboard;
               error?: string;
             }
@@ -1028,13 +1029,14 @@ export default function BookingWorkbenchDialog({
         const json = (await response.json().catch(() => null)) as
           | {
               ok?: boolean;
+              message?: string;
               settings?: MerchantBookingWorkbenchSettings & {
                 calendarSyncEnabled?: boolean;
               };
             }
           | null;
         if (!response.ok || !json?.ok || !json.settings) {
-          throw new Error("工作台设置保存失败");
+          throw new Error(json?.message || "工作台设置保存失败");
         }
         if (securityGenerationRef.current !== generation) return null;
         const normalized = normalizeMerchantBookingWorkbenchSettings(
@@ -1573,6 +1575,12 @@ export default function BookingWorkbenchDialog({
                 <div className="space-y-4">
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("sky")}`}>
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
+                    <label className="mt-4 block space-y-1">
+                      <span className="text-sm">新预约使用的商户时区（IANA）</span>
+                      <input className={inputClassName} value={draft.timeZone ?? ""} placeholder="例如 Europe/Madrid 或 Atlantic/Canary"
+                        onChange={(event) => setDraft((current) => ({ ...current, timeZone: event.target.value }))} />
+                      <span className="block text-xs opacity-70">只影响新预约和明确改期的预约，不换算历史记录。留空保持旧行为；请根据门店所在地设置，不使用访客手机的时区。</span>
+                    </label>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <label className="min-w-0 space-y-1">
                         <span className="text-sm">最少提前分钟</span>

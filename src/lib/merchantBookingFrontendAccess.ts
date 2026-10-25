@@ -103,6 +103,7 @@ export function getMerchantBookingWorkbenchSectionFingerprint(
 ) {
   if (section === "settings") {
     return JSON.stringify({
+      timeZone: settings.timeZone,
       minAdvanceMinutes: settings.minAdvanceMinutes,
       dailyCutoffTime: settings.dailyCutoffTime,
       bufferMinutes: settings.bufferMinutes,
@@ -131,6 +132,7 @@ export function createMerchantBookingEmployeeWorkbenchDraft(
   permissions: MerchantBookingFrontendPermissions,
 ): MerchantBookingWorkbenchSettings {
   const safe: MerchantBookingWorkbenchSettings = {
+    timeZone: settings.timeZone,
     minAdvanceMinutes: settings.minAdvanceMinutes,
     dailyCutoffTime: settings.dailyCutoffTime,
     bufferMinutes: settings.bufferMinutes,

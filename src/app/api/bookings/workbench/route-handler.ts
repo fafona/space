@@ -230,6 +230,7 @@ function mergeSettingsSection(
   if (section === "settings") {
     return {
       ...current,
+      timeZone: proposed.timeZone,
       minAdvanceMinutes: proposed.minAdvanceMinutes,
       dailyCutoffTime: proposed.dailyCutoffTime,
       bufferMinutes: proposed.bufferMinutes,
@@ -362,6 +363,10 @@ export async function handleMerchantBookingWorkbenchPatch(
       return privateJson({ error: "permission_denied" }, { status: 403 });
     }
     const proposed = normalizeMerchantBookingWorkbenchSettings(body.settings);
+    const requestedZone = (body.settings as { timeZone?: unknown } | null)?.timeZone;
+    if (requestedZone !== undefined && (typeof requestedZone !== "string" || (requestedZone.trim() && !proposed.timeZone))) {
+      return privateJson({ error: "invalid_booking_time_zone", message: "请填写有效的 IANA 时区，例如 Europe/Madrid" }, { status: 400 });
+    }
     const snapshotSite = await dependencies.loadSnapshotSite(siteId).catch(
       () => null,
     );
@@ -377,6 +382,9 @@ export async function handleMerchantBookingWorkbenchPatch(
         });
       },
       update: (current) => {
+        // Older clients do not know this additive field; saving unrelated
+        // settings must not silently clear a configured booking time zone.
+        if (requestedZone === undefined) proposed.timeZone = current.timeZone;
         if (actor.type === "employee" && section) {
           return mergeSettingsSection(
             current,

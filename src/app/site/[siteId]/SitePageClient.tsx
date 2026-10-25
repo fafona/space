@@ -4,6 +4,7 @@ import Link from "next/link";
 import PublicTrafficProvider from "@/components/PublicTrafficProvider";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { readMerchantBookingManageRedirect } from "@/lib/merchantBookingSelfService";
 import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
 import FrontendAuthEntry from "@/components/FrontendAuthEntry";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
@@ -410,6 +411,12 @@ export function SitePageClient({
   const siteScope = siteId ? buildSiteStoreScope(siteId) : "default";
 
   const hydrated = useHydrated();
+  useEffect(() => {
+    // Old mail links may target a page/viewport whose booking block no longer
+    // exists. The independent manager still resolves the original rule binding.
+    const target = readMerchantBookingManageRedirect(window.location.href);
+    if (target) window.location.replace(target);
+  }, []);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());

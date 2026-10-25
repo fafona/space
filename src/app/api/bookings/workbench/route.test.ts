@@ -270,6 +270,35 @@ test("settings section preserves automation and calendar values and reauthorizes
   assertPrivateHeaders(response);
 });
 
+test("booking time zone validates before persistence and is not erased by older clients", async () => {
+  const actor = makeEmployee(["bookings.view", "bookings.settings.manage"]);
+  const current = { ...makeSettings(), timeZone: "Europe/Madrid" };
+  let writes = 0;
+  const dependencies: Partial<MerchantBookingWorkbenchRouteDependencies> = {
+    async authorizeActor() { return actor; },
+    async reauthorizeActor() { return actor; },
+    async loadSnapshotSite() { return null; },
+    async updateSettings(_siteId, input) {
+      await input.assertAuthorizationCurrent?.();
+      writes++;
+      return input.update(current);
+    },
+  };
+  for (const timeZone of ["Not/AZone", 123, null]) {
+    const response = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "settings", settings: { timeZone } }), dependencies);
+    assert.equal(response.status, 400);
+    assert.equal(writes, 0);
+  }
+  const older = { ...current };
+  delete (older as { timeZone?: string }).timeZone;
+  const response = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "settings", settings: older }), dependencies);
+  assert.equal(response.status, 200);
+  assert.equal(((await response.json()).settings as MerchantBookingWorkbenchSettings).timeZone, "Europe/Madrid");
+  const changed = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "settings", settings: { ...current, timeZone: "Atlantic/Canary" } }), dependencies);
+  assert.equal(changed.status, 200);
+  assert.equal(((await changed.json()).settings as MerchantBookingWorkbenchSettings).timeZone, "Atlantic/Canary");
+});
+
 test("employee calendar rotation never returns the newly generated bearer token", async () => {
   const actor = makeEmployee([
     "bookings.view",

@@ -1,11 +1,22 @@
 import { getUtf8ByteLength, truncateUtf8ByBytes } from "./merchantProfileBinding";
 import type { MerchantBookingRuleViewport } from "./merchantBookingRules";
+import { parseBookingWallTime } from "./merchantBookingTime";
 
 export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "completed", "no_show", "cancelled"] as const;
 export const MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES = 40;
 export const MERCHANT_BOOKING_NOTE_MAX_BYTES = 100;
 
 export type MerchantBookingStatus = (typeof MERCHANT_BOOKING_STATUSES)[number];
+
+// Account and token-based self-service must enforce the same lifecycle policy.
+export function canCustomerChangeMerchantBooking(
+  booking: Pick<MerchantBookingRecord, "status" | "merchantTouchedAt">,
+  action: "update" | "cancel" | "restore",
+) {
+  if (booking.merchantTouchedAt?.trim()) return false;
+  return action === "restore" ? booking.status === "cancelled"
+    : (action === "update" || action === "cancel") && booking.status === "active";
+}
 
 export type MerchantBookingEditableInput = {
   store: string;
@@ -85,6 +96,7 @@ export type MerchantBookingRecord = MerchantBookingEditableInput &
     id: string;
     siteId: string;
     siteName: string;
+    appointmentTimeZone?: string;
     customerAccountId?: string;
     customerUserId?: string;
     customerLoginEmail?: string;
@@ -479,27 +491,7 @@ export function joinMerchantBookingDateTime(date: string, time: string) {
 }
 
 function isValidDateTimeValue(value: string) {
-  if (!value) return false;
-  const normalized = value.includes("T") ? value : value.replace(" ", "T");
-  const matched = normalized.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-  if (!matched) return false;
-  const year = Number.parseInt(matched[1] ?? "", 10);
-  const month = Number.parseInt(matched[2] ?? "", 10);
-  const day = Number.parseInt(matched[3] ?? "", 10);
-  const hour = Number.parseInt(matched[4] ?? "", 10);
-  const minute = Number.parseInt(matched[5] ?? "", 10);
-  if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-    return false;
-  }
-  const timestamp = new Date(normalized);
-  return (
-    Number.isFinite(timestamp.getTime()) &&
-    timestamp.getFullYear() === year &&
-    timestamp.getMonth() + 1 === month &&
-    timestamp.getDate() === day &&
-    timestamp.getHours() === hour &&
-    timestamp.getMinutes() === minute
-  );
+  return parseBookingWallTime(value) !== null;
 }
 
 function isValidEmail(value: string) {

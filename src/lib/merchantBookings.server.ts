@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { getCustomerBookingTimeIssue, parseBookingAppointment } from "./merchantBookingTime";
 import path from "node:path";
 import {
   attachMerchantBookingTrustedBusinessProjection,
   buildMerchantBookingId,
+  canCustomerChangeMerchantBooking,
   getMerchantBookingSlotCapacityIssue,
   sanitizeMerchantBookingEditableInput,
   type MerchantBookingActionInput,
@@ -26,6 +28,7 @@ import {
   getMerchantBookingDueReminderOffset,
   getMerchantBookingRecurringIssue,
   shouldMarkMerchantBookingNoShow,
+  getMerchantBookingWorkbenchPublicSettings,
 } from "./merchantBookingWorkbench";
 import {
   loadMerchantBookingWorkbenchSettings,
@@ -289,6 +292,22 @@ function matchesRuleBinding(record: MerchantBookingStoredRecord, binding: Mercha
   return record.bookingBlockId === binding.bookingBlockId && record.bookingViewport === binding.bookingViewport;
 }
 
+async function assertBookingReopeningCapacity(
+  current: MerchantBookingStoredRecord,
+  status: MerchantBookingStatus,
+  records: MerchantBookingStoredRecord[],
+  settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
+) {
+  const isOpen = (value: MerchantBookingStatus) => value === "active" || value === "confirmed";
+  if (isOpen(current.status) || !isOpen(status)) return;
+  const context = await resolveBookingRuleContext(current.siteId, current);
+  const boundRecords = records.filter((record) => record.siteId === current.siteId && matchesRuleBinding(record, context.binding));
+  const capacityIssue = getMerchantBookingSlotCapacityIssue(current.appointmentAt, context.timeSlotRules, boundRecords, { excludeBookingId: current.id });
+  if (capacityIssue) throw new Error(capacityIssue);
+  const bufferIssue = getMerchantBookingBufferIssue(current, settings.bufferMinutes, boundRecords, { excludeBookingId: current.id });
+  if (bufferIssue) throw new Error(bufferIssue);
+}
+
 function collectWorkbenchAvailabilityIssues(
   appointmentAt: string,
   siteSettings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
@@ -299,6 +318,18 @@ function collectWorkbenchAvailabilityIssues(
   const recurringIssue = getMerchantBookingRecurringIssue(appointmentAt, siteSettings.recurringRules);
   if (recurringIssue) issues.push(recurringIssue);
   return issues;
+}
+
+function bookingAppointmentSettings(
+  current: MerchantBookingStoredRecord,
+  appointmentAt: string,
+  settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
+) {
+  return {
+    ...settings,
+    // Changing settings alone must never reinterpret a historical record.
+    timeZone: current.appointmentTimeZone || (appointmentAt !== current.appointmentAt ? settings.timeZone : ""),
+  };
 }
 
 function applyStatusMetadata(
@@ -488,6 +519,7 @@ function createCustomerEmailLogEntry(input: {
 }
 
 type SiteCustomerEmailRuntime = {
+  allowBooking: boolean;
   allowAutoEmail: boolean;
   merchantDisplayName: string;
   recordSiteName: string;
@@ -534,6 +566,7 @@ async function loadSiteCustomerEmailRuntime(
   );
   const publicSiteUrl = buildMerchantBookingPublicSiteUrl(snapshotSite, siteId);
   return {
+    allowBooking: snapshotSite?.permissionConfig?.allowBookingBlock === true,
     allowAutoEmail,
     merchantDisplayName,
     recordSiteName,
@@ -1200,7 +1233,7 @@ export async function cancelPersonalMerchantBooking(input: {
     if (targetIndex < 0) throw new Error("booking_not_found");
     const current = store.records[targetIndex];
     if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
-    if (current.status !== "active" || trimText(current.merchantTouchedAt)) {
+    if (!canCustomerChangeMerchantBooking(current, "cancel")) {
       throw new Error("booking_customer_action_locked");
     }
 
@@ -1253,13 +1286,17 @@ export async function updatePersonalMerchantBooking(input: {
     if (targetIndex < 0) throw new Error("booking_not_found");
     const current = store.records[targetIndex];
     if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
-    if (trimText(current.merchantTouchedAt)) {
+    if (!canCustomerChangeMerchantBooking(current, input.action)) {
       throw new Error("booking_customer_action_locked");
     }
 
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(current.siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(current.siteId, workbenchSettings, current.siteName);
     const now = new Date().toISOString();
+
+    if (input.action !== "cancel" && !emailRuntime.allowBooking) {
+      throw new Error("该商户当前未开放预约，请联系商户");
+    }
 
     if (input.action === "cancel") {
       if (current.status !== "active") throw new Error("booking_customer_action_locked");
@@ -1313,7 +1350,12 @@ export async function updatePersonalMerchantBooking(input: {
       blockedDates: ruleContext.blockedDates,
       holidayDates: ruleContext.holidayDates,
     });
-    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+    const appointmentSettings = bookingAppointmentSettings(current, nextEditable.appointmentAt, workbenchSettings);
+    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, appointmentSettings));
+    if (input.action === "restore" || nextEditable.appointmentAt !== current.appointmentAt) {
+      const timeIssue = getCustomerBookingTimeIssue(nextEditable.appointmentAt, appointmentSettings.timeZone);
+      if (timeIssue) issues.push(timeIssue);
+    }
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
@@ -1328,6 +1370,7 @@ export async function updatePersonalMerchantBooking(input: {
     const bufferIssue = getMerchantBookingBufferIssue(
       {
         appointmentAt: nextEditable.appointmentAt,
+        appointmentTimeZone: appointmentSettings.timeZone,
         store: nextEditable.store,
         item: nextEditable.item,
       },
@@ -1344,6 +1387,7 @@ export async function updatePersonalMerchantBooking(input: {
       siteName: emailRuntime.recordSiteName,
       ...ruleContext.binding,
       ...nextEditable,
+      ...(appointmentSettings.timeZone ? { appointmentTimeZone: appointmentSettings.timeZone } : {}),
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
       ...applyStatusMetadata(current, nextStatus, now),
       noShowMarkedAt: current.appointmentAt === nextEditable.appointmentAt ? current.noShowMarkedAt : undefined,
@@ -1395,6 +1439,8 @@ async function resolveStoredBookingByEditToken(input: {
 
   let store = await readMerchantBookingStore();
   let record = store.records.find((item) => item.id === bookingId) ?? null;
+  // Invalid credentials must not trigger reminders, emails or status changes.
+  if (!record || record.editToken !== editToken) return null;
   if (record?.siteId) {
     store = await runMerchantBookingAutomationForSite(record.siteId);
     record = store.records.find((item) => item.id === bookingId) ?? null;
@@ -1417,6 +1463,18 @@ export async function getMerchantBookingByEditToken(
   return withoutMerchantBookingToken(record, options);
 }
 
+export async function getMerchantBookingSelfServiceDetails(input: { bookingId: string; editToken: string }) {
+  const record = await resolveStoredBookingByEditToken(input);
+  if (!record) throw new Error("预约凭证无效");
+  const context = await resolveBookingRuleContext(record.siteId, record).catch(() => null);
+  const settings = await loadMerchantBookingWorkbenchSettings(record.siteId);
+  return {
+    booking: withoutMerchantBookingToken(record),
+    rule: context?.rule ?? null,
+    settings: getMerchantBookingWorkbenchPublicSettings(settings),
+  };
+}
+
 export async function createMerchantBooking(input: MerchantBookingCreateInput): Promise<{
   booking: MerchantBookingRecord;
   editToken: string;
@@ -1437,6 +1495,8 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
     holidayDates: ruleContext.holidayDates,
   });
   issues.push(...collectWorkbenchAvailabilityIssues(editable.appointmentAt, workbenchSettings));
+  const timeIssue = getCustomerBookingTimeIssue(editable.appointmentAt, workbenchSettings.timeZone);
+  if (timeIssue) issues.push(timeIssue);
   if (!siteId) {
     issues.push("站点信息缺失");
   }
@@ -1445,6 +1505,11 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
   }
 
   return withBookingStoreLock(async () => {
+    // Recheck current entitlement after queue admission, not only cached rules.
+    const currentRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, input.siteName);
+    if (!currentRuntime.allowBooking) throw new Error("该商户当前未开放预约，请联系商户");
+    const currentTimeIssue = getCustomerBookingTimeIssue(editable.appointmentAt, workbenchSettings.timeZone);
+    if (currentTimeIssue) throw new Error(currentTimeIssue);
     const store = await readMerchantBookingStore();
     const boundRecords = store.records.filter((record) => record.siteId === siteId && matchesRuleBinding(record, ruleContext.binding));
     const slotCapacityIssue = getMerchantBookingSlotCapacityIssue(
@@ -1458,6 +1523,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
     const bufferIssue = getMerchantBookingBufferIssue(
       {
         appointmentAt: editable.appointmentAt,
+        appointmentTimeZone: workbenchSettings.timeZone,
         store: editable.store,
         item: editable.item,
       },
@@ -1489,6 +1555,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       customerGuestHash: trimText(input.customerGuestHash),
       ...ruleContext.binding,
       ...editable,
+      ...(workbenchSettings.timeZone ? { appointmentTimeZone: workbenchSettings.timeZone } : {}),
       status: "active",
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -1541,8 +1608,15 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     if (!current || current.editToken !== editToken) {
       throw new Error("预约凭证无效");
     }
+    const customerAction = input.action === "update" && current.status === "cancelled" ? "restore" : input.action;
+    if (!canCustomerChangeMerchantBooking(current, customerAction)) {
+      throw new Error("booking_customer_action_locked");
+    }
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(current.siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(current.siteId, workbenchSettings, current.siteName);
+    if (input.action !== "cancel" && !emailRuntime.allowBooking) {
+      throw new Error("该商户当前未开放预约，请联系商户");
+    }
 
     if (input.action === "cancel") {
       let next: MerchantBookingStoredRecord = {
@@ -1571,10 +1645,11 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       input.updates,
       current,
     );
-    const normalizedBinding = normalizeBookingRuleBinding(input);
+    // A bearer token may edit its booking, never move it into another block's
+    // rules/capacity pool by supplying a different browser viewport or block ID.
     const ruleContext = await resolveBookingRuleContext(current.siteId, {
-      bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
-      bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
+      bookingBlockId: current.bookingBlockId,
+      bookingViewport: current.bookingViewport,
     });
     const nextEditable = applyAuthoritativeBookingRuleSelection(
       sanitizedEditable,
@@ -1587,7 +1662,12 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       blockedDates: ruleContext.blockedDates,
       holidayDates: ruleContext.holidayDates,
     });
-    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+    const appointmentSettings = bookingAppointmentSettings(current, nextEditable.appointmentAt, workbenchSettings);
+    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, appointmentSettings));
+    if (customerAction === "restore" || nextEditable.appointmentAt !== current.appointmentAt) {
+      const timeIssue = getCustomerBookingTimeIssue(nextEditable.appointmentAt, appointmentSettings.timeZone);
+      if (timeIssue) issues.push(timeIssue);
+    }
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
@@ -1605,6 +1685,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     const bufferIssue = getMerchantBookingBufferIssue(
       {
         appointmentAt: nextEditable.appointmentAt,
+        appointmentTimeZone: appointmentSettings.timeZone,
         store: nextEditable.store,
         item: nextEditable.item,
       },
@@ -1622,8 +1703,9 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       siteName: emailRuntime.recordSiteName,
       ...ruleContext.binding,
       ...nextEditable,
+      ...(appointmentSettings.timeZone ? { appointmentTimeZone: appointmentSettings.timeZone } : {}),
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
-      status: current.status === "cancelled" || current.status === "no_show" ? "active" : current.status,
+      status: customerAction === "restore" ? "active" : current.status,
       updatedAt: new Date().toISOString(),
       noShowMarkedAt:
         current.appointmentAt === nextEditable.appointmentAt && current.status !== "no_show"
@@ -1696,6 +1778,7 @@ export async function updateMerchantBookingStatusBySite(input: {
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, current.siteName);
 
     const nextStatus = input.status;
+    await assertBookingReopeningCapacity(current, nextStatus, store.records, workbenchSettings);
     const touchedAt = new Date().toISOString();
     let next: MerchantBookingStoredRecord = {
       ...current,
@@ -1776,7 +1859,11 @@ export async function updateMerchantBookingBySite(input: {
         blockedDates: ruleContext.blockedDates,
         holidayDates: ruleContext.holidayDates,
       });
-      issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+      const appointmentSettings = bookingAppointmentSettings(current, nextEditable.appointmentAt, workbenchSettings);
+      issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, appointmentSettings));
+      if (appointmentSettings.timeZone && !parseBookingAppointment(nextEditable.appointmentAt, appointmentSettings.timeZone)) {
+        issues.push("预约时间无效或处于夏令时切换的重复／缺失时段，请选择其他时间");
+      }
       if (issues.length > 0) {
         throw new Error(issues[0]);
       }
@@ -1793,6 +1880,7 @@ export async function updateMerchantBookingBySite(input: {
       const bufferIssue = getMerchantBookingBufferIssue(
         {
           appointmentAt: nextEditable.appointmentAt,
+          appointmentTimeZone: appointmentSettings.timeZone,
           store: nextEditable.store,
           item: nextEditable.item,
         },
@@ -1807,6 +1895,9 @@ export async function updateMerchantBookingBySite(input: {
     }
 
     const nextStatus = input.status ?? current.status;
+    if (!hasEditableUpdates) {
+      await assertBookingReopeningCapacity(current, nextStatus, store.records, workbenchSettings);
+    }
     const touchedAt = new Date().toISOString();
     const changedFields = hasEditableUpdates ? collectEditableFieldChanges(current, nextEditable) : [];
     let next: MerchantBookingStoredRecord = {
@@ -1814,6 +1905,8 @@ export async function updateMerchantBookingBySite(input: {
       siteName: emailRuntime.recordSiteName,
       ...nextBinding,
       ...nextEditable,
+      ...(hasEditableUpdates && nextEditable.appointmentAt !== current.appointmentAt && workbenchSettings.timeZone && !current.appointmentTimeZone
+        ? { appointmentTimeZone: workbenchSettings.timeZone } : {}),
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
       ...applyStatusMetadata(current, nextStatus, touchedAt),
     };
@@ -1865,7 +1958,7 @@ export async function updateMerchantBookingsBatchBySite(input: {
   const siteId = trimText(input.siteId);
   const bookingIds = [...new Set((Array.isArray(input.bookingIds) ? input.bookingIds : []).map((item) => trimText(item)).filter(Boolean))];
   if (!siteId || bookingIds.length === 0) {
-    throw new Error("棰勭害璁板綍鍙傛暟缂哄け");
+    throw new Error("预约记录参数缺失");
   }
 
   const updated = await withBookingStoreLock(async () => {
@@ -1875,6 +1968,16 @@ export async function updateMerchantBookingsBatchBySite(input: {
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings);
     const nextRecords: MerchantBookingRecord[] = [];
     const changedRecords: MerchantBookingStoredRecord[] = [];
+
+    // Validate the whole batch against its projected occupancy before sending
+    // any emails or writing anything. Two restorations must count each other.
+    const projectedRecords = store.records.map((record) => ({ ...record }));
+    for (const bookingId of bookingIds) {
+      const current = projectedRecords.find((record) => record.id === bookingId && record.siteId === siteId);
+      if (!current) continue;
+      await assertBookingReopeningCapacity(current, input.status, projectedRecords, workbenchSettings);
+      current.status = input.status;
+    }
 
     for (const bookingId of bookingIds) {
       const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);

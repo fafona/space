@@ -59,7 +59,7 @@ export function buildMerchantBookingSelfServiceUrl(
   const normalizedSiteUrl = normalizePublicUrl(siteUrl);
   const normalizedEditToken = trimText(editToken);
   if (!normalizedSiteUrl || !booking.id || !normalizedEditToken) return "";
-  const url = new URL(normalizedSiteUrl);
+  const url = new URL("/booking-manage", new URL(normalizedSiteUrl).origin);
   url.hash = buildBookingTokenHash({
     bookingId: booking.id,
     editToken: normalizedEditToken,
@@ -67,6 +67,15 @@ export function buildMerchantBookingSelfServiceUrl(
     bookingViewport: booking.bookingViewport,
   });
   return url.toString();
+}
+
+export function readMerchantBookingManageRedirect(href: string) {
+  const url = new URL(href);
+  const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const params = hash.has("bookingId") || hash.has("editToken") ? hash : url.searchParams;
+  const bookingId = trimText(params.get("bookingId")), editToken = trimText(params.get("editToken"));
+  if (!bookingId || !editToken) return "";
+  return `/booking-manage#${buildBookingTokenHash({ bookingId, editToken })}`;
 }
 
 export function buildMerchantBookingCustomerCalendarUrl(

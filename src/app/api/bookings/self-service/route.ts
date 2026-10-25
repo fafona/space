@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMerchantBookingByEditToken } from "@/lib/merchantBookings.server";
+import { getMerchantBookingSelfServiceDetails } from "@/lib/merchantBookings.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -10,7 +10,10 @@ function trimText(value: unknown) {
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
-  response.headers.set("cache-control", "no-store");
+  response.headers.set("cache-control", "private, no-store");
+  response.headers.set("referrer-policy", "no-referrer");
+  response.headers.set("x-content-type-options", "nosniff");
+  response.headers.set("cross-origin-resource-policy", "same-origin");
   return response;
 }
 
@@ -35,13 +38,13 @@ async function resolveSelfServiceBooking(request: Request, body?: SelfServiceTok
       response: noStoreJson({ error: "invalid_booking_token" }, { status: 400 }),
     };
   }
-  const booking = await getMerchantBookingByEditToken({
+  const details = await getMerchantBookingSelfServiceDetails({
     bookingId,
     editToken,
   });
   return {
     ok: true as const,
-    booking,
+    details,
   };
 }
 
@@ -51,7 +54,7 @@ export async function GET(request: Request) {
     if (!resolved.ok) {
       return resolved.response;
     }
-    return noStoreJson({ ok: true, booking: resolved.booking });
+    return noStoreJson({ ok: true, ...resolved.details });
   } catch (error) {
     return noStoreJson(
       {
@@ -70,7 +73,7 @@ export async function POST(request: Request) {
     if (!resolved.ok) {
       return resolved.response;
     }
-    return noStoreJson({ ok: true, booking: resolved.booking });
+    return noStoreJson({ ok: true, ...resolved.details });
   } catch (error) {
     return noStoreJson(
       {

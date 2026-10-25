@@ -11,6 +11,7 @@ import {
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
   createEmptyMerchantBookingInput,
+  canCustomerChangeMerchantBooking,
   formatMerchantBookingDateTime,
   getMerchantBookingDateAvailabilityIssue,
   getMerchantBookingTimeAvailabilityIssue,
@@ -46,6 +47,8 @@ import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } 
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
 import { readPersonalGuestMergeToken, upsertPersonalGuestBooking } from "@/lib/personalGuestSession";
 import { buildBookingOptionPresentations } from "./bookingOptionPresentation";
+import { getCustomerBookingTimeIssue } from "@/lib/merchantBookingTime";
+import { buildMerchantBookingSelfServiceUrl } from "@/lib/merchantBookingSelfService";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -249,6 +252,7 @@ export default function BookingBlock({
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
   const [bookingCustomerDefaults, setBookingCustomerDefaults] = useState<Partial<MerchantBookingEditableInput>>({});
   const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchPublicSettings | null>(null);
+  const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
   const selectedStoreColorStyle = useMemo(
     () => getMerchantBookingStoreColorStyle(workbenchSettings, draft.store),
     [draft.store, workbenchSettings],
@@ -276,11 +280,14 @@ export default function BookingBlock({
   const appointmentWorkbenchIssue = useMemo(
     () => {
       if (appointmentDateIssue) return "";
-      return getMerchantBookingAdvanceIssue(appointmentValue, workbenchSettings);
+      const booking = submittedState?.booking;
+      const timeZone = booking
+        ? booking.appointmentTimeZone || (appointmentValue !== booking.appointmentAt ? workbenchSettings?.timeZone : "")
+        : workbenchSettings?.timeZone;
+      return getMerchantBookingAdvanceIssue(appointmentValue, workbenchSettings ? { ...workbenchSettings, timeZone } : null);
     },
-    [appointmentDateIssue, appointmentValue, workbenchSettings],
+    [appointmentDateIssue, appointmentValue, submittedState, workbenchSettings],
   );
-  const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
   const submittedStoreColorStyle = useMemo(
     () => getMerchantBookingStoreColorStyle(workbenchSettings, submittedState?.booking.store ?? ""),
     [submittedState?.booking.store, workbenchSettings],
@@ -403,8 +410,11 @@ export default function BookingBlock({
 
   useEffect(() => {
     if (!isLiveBooking || !restoredBookingId || !restoredEditToken) return;
-    if (restoredBlockId && runtimeBlockId && restoredBlockId !== runtimeBlockId) return;
-    if (restoredViewport && runtimeViewport && restoredViewport !== runtimeViewport) return;
+    if ((restoredBlockId && runtimeBlockId && restoredBlockId !== runtimeBlockId) ||
+        (restoredViewport && runtimeViewport && restoredViewport !== runtimeViewport)) {
+      window.location.replace(buildMerchantBookingSelfServiceUrl(window.location.origin, { id: restoredBookingId }, restoredEditToken));
+      return;
+    }
     if (submittedState?.booking.id === restoredBookingId && submittedState.editToken === restoredEditToken) return;
 
     let cancelled = false;
@@ -433,6 +443,7 @@ export default function BookingBlock({
           (runtimeBlockId && nextBooking.bookingBlockId && nextBooking.bookingBlockId !== runtimeBlockId) ||
           (runtimeViewport && nextBooking.bookingViewport && nextBooking.bookingViewport !== runtimeViewport)
         ) {
+          window.location.replace(buildMerchantBookingSelfServiceUrl(window.location.origin, { id: restoredBookingId }, restoredEditToken));
           return;
         }
         if (cancelled) return;
@@ -542,6 +553,11 @@ export default function BookingBlock({
         ...draft,
         appointmentAt: joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
       });
+      if (!submittedState || payload.appointmentAt !== submittedState.booking.appointmentAt || submittedState.booking.status === "cancelled") {
+        const zone = submittedState?.booking.appointmentTimeZone || workbenchSettings?.timeZone;
+        const timeIssue = getCustomerBookingTimeIssue(payload.appointmentAt, zone);
+        if (timeIssue) throw new Error(timeIssue);
+      }
       const latestAuthPayload = submittedState ? null : await resolveFrontendAuthPayload(2600).catch(() => null);
       const frontendAuthProof =
         (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
@@ -703,8 +719,11 @@ export default function BookingBlock({
             {submittedState.booking.status === "cancelled" ? "预约已取消" : successTitle}
           </div>
           <div className="mt-2 text-sm text-slate-600">
-            {submittedState.booking.status === "cancelled" ? "您可以继续修改并重新提交预约。" : successText}
+            {canCustomerChangeMerchantBooking(submittedState.booking, "restore") ? "您可以继续修改并重新提交预约。" : successText}
           </div>
+          {!canCustomerChangeMerchantBooking(submittedState.booking, "update") && !canCustomerChangeMerchantBooking(submittedState.booking, "restore") ? (
+            <p className="mt-2 text-sm text-amber-700">该预约已由商户处理或结束，如需调整请联系商户。</p>
+          ) : null}
           <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
             <div>{`预约编号：${submittedState.booking.id}`}</div>
             <div className="flex flex-wrap items-center gap-2">
@@ -752,6 +771,7 @@ export default function BookingBlock({
               type="button"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               onClick={() => setMode("form")}
+              disabled={submitting || !(canCustomerChangeMerchantBooking(submittedState.booking, "update") || canCustomerChangeMerchantBooking(submittedState.booking, "restore"))}
             >
               {updateLabel}
             </button>
@@ -759,7 +779,7 @@ export default function BookingBlock({
               type="button"
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={() => void cancelBooking()}
-              disabled={submitting || submittedState.booking.status === "cancelled"}
+              disabled={submitting || !canCustomerChangeMerchantBooking(submittedState.booking, "cancel")}
             >
               {submitting ? "处理中..." : cancelLabel}
             </button>
