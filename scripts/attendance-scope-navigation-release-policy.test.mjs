@@ -9,7 +9,22 @@ import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations} from './online-traffic-release-policy.mjs';
 import {attendanceOnlineBuildPlan,ATTENDANCE_BUILD_LIMITS} from './attendance-online-build.mjs';
 const files=[...app,...tooling],target='a'.repeat(40),root=new URL('../',import.meta.url);
-const readBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
+const readCurrentBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
+const readBlob=file=>{
+ let source=readCurrentBlob(file);
+ if(file==='src/components/admin/MerchantEnterpriseManager.tsx'){
+  // Test-only reconstruction of the historical scope release. Its immutable
+  // runtime content pin must NOT be widened to admit the later records repair.
+  for(const [current,original] of [
+   ['      tab !== "attendanceRecords" &&\n      !canAutoRefreshOnFocusRef.current &&','      !canAutoRefreshOnFocusRef.current &&'],
+   ['  }, [loadOverview, tab]);','  }, [loadOverview]);'],
+   ['        // Record dates and filters are query-only, not a persisted edit.\n        tab !== "attendanceRecords" &&\n',''],
+   ['    // Records owns no editable business data; pausing refresh is not dirtiness.\n    if (!actor || canAutoRefreshOnFocus || tab === "attendanceRecords") return;',
+    '    if (!actor || canAutoRefreshOnFocus) return;'],
+  ]){assert.equal(source.split(current).length,2,'historical reconstruction is exact and unique');source=source.replace(current,original);}
+ }
+ return source;
+};
 test('the complete three-file pristine-scope UI repair has a distinct no-database lane',()=>{
  for(const list of [app,files,[...files].reverse()]){assert.equal(onlinePublicationLane(list),lane);assert.equal(onlineReleaseLane(list),lane);}
  assert.equal(onlineReleaseStageStatus(lane),'ready-no-database');assert.equal(onlineReleaseActivationStatus(lane),'ready-no-database');
@@ -29,6 +44,11 @@ test('closure pins all three full application files, the exact live baseline, co
  for(const file of tooling)assert.throws(()=>assertScopeNavigationReleaseClosure({baseline,files:files.filter(x=>x!==file),readBlob}),/tool_closure_missing/);
  for(const file of app)assert.throws(()=>assertScopeNavigationReleaseClosure({baseline,files,readBlob:f=>readBlob(f)+(f===file?'\n// unexpected app edit':'')}),/application_content_rejected/);
  assert.notEqual(assertScopeNavigationReleaseClosure({baseline,files,readBlob:f=>readBlob(f)+(f===tooling[0]?'\n// fixture tool change':'')}),value);
+});
+test('later records UI repair is rejected by the unchanged historical scope-only runtime pins',()=>{
+ assert.throws(()=>assertScopeNavigationReleaseClosure({baseline,files,readBlob:readCurrentBlob}),/application_content_rejected/);
+ for(const file of ['src/components/enterprise/MerchantAttendanceRecordsPanel.tsx','src/lib/merchantAttendanceRecordsUi.test.tsx','scripts/check-attendance-records-ui-browser.mjs'])
+  assert.throws(()=>assertScopeNavigationReleaseScope([...files,file]),/scope_rejected/);
 });
 test('bounded build retains private network, memory, CPU, tasks, no swap, time and admission without larger budgets',()=>{
  const input={lane,baseline,target,directory:`/www/wwwroot/merchant-space.web-releases/${target.slice(0,12)}-online`,operation:`/var/lib/faolla-online-release/${target}`,environment:{PATH:'/usr/bin'}};
