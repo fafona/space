@@ -20,6 +20,7 @@ import {
   type MerchantBookingOptionColorStyle,
   type MerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbench";
+import { normalizeMerchantBookingReplyTo } from "@/lib/merchantBookingEmailAddress";
 import { normalizeMerchantBookingTimeRangeOptions } from "@/lib/merchantBookings";
 import type { MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 import type {
@@ -207,6 +208,7 @@ function buildEmailDeliveryStats(records: MerchantBookingRecord[]) {
         if (entry.kind === "customer_email") {
           if (entry.delivery === "sent") summary.customerEmailsSent += 1;
           if (entry.delivery === "failed") summary.customerEmailsFailed += 1;
+          if (entry.delivery === "unconfirmed") summary.customerEmailsUnconfirmed += 1;
         }
         if (entry.kind === "merchant_reminder") {
           if (entry.delivery === "sent") summary.merchantPushSent += 1;
@@ -218,6 +220,7 @@ function buildEmailDeliveryStats(records: MerchantBookingRecord[]) {
     {
       customerEmailsSent: 0,
       customerEmailsFailed: 0,
+      customerEmailsUnconfirmed: 0,
       merchantPushSent: 0,
       merchantPushFailed: 0,
     },
@@ -751,15 +754,15 @@ export default function BookingWorkbenchDialog({
         value: formatAutomationTimestamp(dashboard?.automation?.lastCompletedAt ?? "", locale),
       },
       {
-        label: locale.startsWith("es") ? "Correos 30d" : "30天邮件",
-        value: `${deliveryStats.customerEmailsSent}/${deliveryStats.customerEmailsFailed}`,
+        label: locale.startsWith("es") ? "Correos 30d: enviados / fallidos / sin confirmar" : "30天邮件：已发 / 失败 / 待确认",
+        value: `${deliveryStats.customerEmailsSent}/${deliveryStats.customerEmailsFailed}/${deliveryStats.customerEmailsUnconfirmed}`,
       },
       {
         label: locale.startsWith("es") ? "Push 30d" : "30天推送",
         value: `${deliveryStats.merchantPushSent}/${deliveryStats.merchantPushFailed}`,
       },
     ],
-    [dashboard, deliveryStats.customerEmailsFailed, deliveryStats.customerEmailsSent, deliveryStats.merchantPushFailed, deliveryStats.merchantPushSent, locale],
+    [dashboard, deliveryStats.customerEmailsFailed, deliveryStats.customerEmailsSent, deliveryStats.customerEmailsUnconfirmed, deliveryStats.merchantPushFailed, deliveryStats.merchantPushSent, locale],
   );
   const autoMetrics = useMemo(
     () => [
@@ -2055,7 +2058,18 @@ export default function BookingWorkbenchDialog({
                             placeholder={trimText(siteName) || "商户名称"}
                           />
                         </label>
+                        <label className="space-y-1 lg:col-span-2">
+                          <span className="text-sm">商户回复邮箱（Reply-To）</span>
+                          <input type="email" className={inputClassName} value={draft.customerEmailReplyTo ?? ""}
+                            placeholder="例如 contacto@您的域名.com"
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setDraft((current) => ({ ...current, customerEmailReplyTo: normalizeMerchantBookingReplyTo(value) || value.trim() }));
+                            }} />
+                          <span className={`block text-xs ${mutedTextClassName}`}>平台负责发信，客户点击“回复”时发往这里。无需提供邮箱密码；留空时仍使用平台默认回复地址，请确认填写无误并定期收信。</span>
+                        </label>
                       </div>
+                      <p className={`mt-2 text-xs ${mutedTextClassName}`}>邮件“发送结果待确认”不等于未发送。请先核对邮件服务的发送记录；定时提醒遇到这类结果会暂停该次自动重发，避免重复通知客户。</p>
                       <div className={`mt-2 text-xs ${mutedTextClassName}`}>
                         留空时默认使用商户名称；这里的语言也会用于预约管理里的邮件按钮预填内容。
                       </div>

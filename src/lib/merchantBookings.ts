@@ -36,6 +36,7 @@ export type MerchantBookingRuleBinding = {
 
 export type MerchantBookingAutomationState = {
   customerReminderProcessedMinutes?: number[];
+  customerReminderUnconfirmedMinutes?: number[];
   merchantReminderProcessedMinutes?: number[];
   noShowMarkedAt?: string;
 };
@@ -72,12 +73,13 @@ export type MerchantBookingTimelineEntry = {
   fromStatus?: MerchantBookingStatus;
   toStatus?: MerchantBookingStatus;
   emailKind?: MerchantBookingCustomerEmailLogKind;
-  delivery?: "sent" | "failed";
+  delivery?: "sent" | "failed" | "unconfirmed";
   subject?: string;
   senderName?: string;
   locale?: string;
   minutesBefore?: number;
   deliveredCount?: number;
+  appointmentAt?: string;
   note?: string;
 };
 
@@ -629,6 +631,7 @@ export function withoutMerchantBookingToken(
     confirmationEmailMessageId,
     confirmationEmailError,
     customerReminderProcessedMinutes,
+    customerReminderUnconfirmedMinutes,
     merchantReminderProcessedMinutes,
     noShowMarkedAt,
     customerEmailLogs,
@@ -643,6 +646,7 @@ export function withoutMerchantBookingToken(
   void confirmationEmailError;
   if (!options?.includeAutomationState) {
     void customerReminderProcessedMinutes;
+    void customerReminderUnconfirmedMinutes;
     void merchantReminderProcessedMinutes;
     void noShowMarkedAt;
     if (!options?.includeCustomerEmailLogs) {
@@ -670,6 +674,9 @@ export function withoutMerchantBookingToken(
     ...publicRecord,
     customerReminderProcessedMinutes: Array.isArray(customerReminderProcessedMinutes)
       ? [...customerReminderProcessedMinutes]
+      : [],
+    customerReminderUnconfirmedMinutes: Array.isArray(customerReminderUnconfirmedMinutes)
+      ? [...customerReminderUnconfirmedMinutes]
       : [],
     merchantReminderProcessedMinutes: Array.isArray(merchantReminderProcessedMinutes)
       ? [...merchantReminderProcessedMinutes]

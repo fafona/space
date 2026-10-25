@@ -403,12 +403,13 @@ function createTimelineEntry(input: {
   fromStatus?: MerchantBookingStatus;
   toStatus?: MerchantBookingStatus;
   emailKind?: MerchantBookingCustomerEmailLogKind;
-  delivery?: "sent" | "failed";
+  delivery?: "sent" | "failed" | "unconfirmed";
   subject?: string | null;
   senderName?: string | null;
   locale?: string | null;
   minutesBefore?: number | null;
   deliveredCount?: number | null;
+  appointmentAt?: string;
   note?: string | null;
 }) {
   const entry = {
@@ -423,6 +424,7 @@ function createTimelineEntry(input: {
     ...(fields.length > 0 ? { fields } : {}),
     ...(input.fromStatus ? { fromStatus: input.fromStatus } : {}),
     ...(input.toStatus ? { toStatus: input.toStatus } : {}),
+    ...(input.appointmentAt ? { appointmentAt: input.appointmentAt } : {}),
     ...(input.emailKind ? { emailKind: input.emailKind } : {}),
     ...(input.delivery ? { delivery: input.delivery } : {}),
     ...(trimText(input.subject) ? { subject: trimText(input.subject) } : {}),
@@ -532,6 +534,7 @@ function resolveCustomerEmailSendFailureMessage(
   result: Awaited<ReturnType<typeof sendMerchantBookingStatusEmail>>,
 ) {
   if (!result.attempted) {
+    if (result.reason === "invalid_reply_to") return "回复邮箱格式有误，请先在预约工作台中修改";
     return result.reason === "missing_email" ? "该预约未填写客户邮箱" : "客户邮件发送功能未配置";
   }
   if (result.status === "sent") {
@@ -596,6 +599,7 @@ async function maybeSendCustomerStatusEmail(input: {
   const emailResult = await sendMerchantBookingStatusEmail(record, record.status, {
     locale: runtime.locale,
     senderName: runtime.senderName,
+    replyTo: settings.customerEmailReplyTo,
     merchantDisplayName: runtime.merchantDisplayName,
     extraMessage: settings.customerAutoEmailMessageByStatus[record.status],
     actionLinks,
@@ -616,7 +620,7 @@ async function maybeSendCustomerStatusEmail(input: {
         (entry) =>
           entry.kind === "customer_email" &&
           entry.emailKind === "status" &&
-          entry.delivery === "failed" &&
+          entry.delivery === bookingEmailFailureDelivery(emailResult) &&
           entry.toStatus === record.status,
       )
     ) {
@@ -627,7 +631,7 @@ async function maybeSendCustomerStatusEmail(input: {
           kind: "customer_email",
           at: emailResult.attemptedAt,
           emailKind: "status",
-          delivery: "failed",
+          delivery: bookingEmailFailureDelivery(emailResult),
           toStatus: record.status,
           subject: emailResult.subject,
           senderName: emailResult.senderName,
@@ -664,6 +668,10 @@ async function maybeSendCustomerStatusEmail(input: {
   );
 }
 
+function bookingEmailFailureDelivery(result: unknown): "unconfirmed" | "failed" {
+  return result && typeof result === "object" && "deliveryUnconfirmed" in result && result.deliveryUnconfirmed === true ? "unconfirmed" : "failed";
+}
+
 function buildAutomationStateForEditableUpdate(
   current: MerchantBookingStoredRecord,
   nextEditable: MerchantBookingEditableInput,
@@ -671,17 +679,19 @@ function buildAutomationStateForEditableUpdate(
   if (current.appointmentAt === nextEditable.appointmentAt) {
     return {
       customerReminderProcessedMinutes: current.customerReminderProcessedMinutes,
+      customerReminderUnconfirmedMinutes: current.customerReminderUnconfirmedMinutes,
       merchantReminderProcessedMinutes: current.merchantReminderProcessedMinutes,
     } satisfies Pick<
       MerchantBookingStoredRecord,
-      "customerReminderProcessedMinutes" | "merchantReminderProcessedMinutes"
+      "customerReminderProcessedMinutes" | "customerReminderUnconfirmedMinutes" | "merchantReminderProcessedMinutes"
     >;
   }
 
   return {
     customerReminderProcessedMinutes: [],
+    customerReminderUnconfirmedMinutes: [],
     merchantReminderProcessedMinutes: [],
-  } satisfies Pick<MerchantBookingStoredRecord, "customerReminderProcessedMinutes" | "merchantReminderProcessedMinutes">;
+  } satisfies Pick<MerchantBookingStoredRecord, "customerReminderProcessedMinutes" | "customerReminderUnconfirmedMinutes" | "merchantReminderProcessedMinutes">;
 }
 
 async function resolveBookingRuleContext(
@@ -846,15 +856,17 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
 
       if (next.status === "active" || next.status === "confirmed") {
         const customerProcessed = normalizeProcessedMinutes(next.customerReminderProcessedMinutes);
+        const customerUnconfirmed = normalizeProcessedMinutes(next.customerReminderUnconfirmedMinutes);
         const dueCustomerOffset =
           emailRuntime.allowAutoEmail && settings.customerAutoEmailEnabled === true
             ? getMerchantBookingDueReminderOffset(next, settings.customerReminderOffsetsMinutes, now)
             : null;
-        if (dueCustomerOffset && !customerProcessed.includes(dueCustomerOffset)) {
+        if (dueCustomerOffset && !customerProcessed.includes(dueCustomerOffset) && !customerUnconfirmed.includes(dueCustomerOffset)) {
           const actionLinks = buildCustomerActionLinks(next, emailRuntime.publicSiteUrl);
           const emailResult = await sendMerchantBookingReminderEmail(next, dueCustomerOffset, {
             locale: emailRuntime.locale,
             senderName: emailRuntime.senderName,
+            replyTo: settings.customerEmailReplyTo,
             merchantDisplayName: emailRuntime.merchantDisplayName,
             actionLinks,
           }).catch(() => ({
@@ -890,6 +902,7 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
                 senderName: emailResult.senderName,
                 locale: emailResult.locale,
                 minutesBefore: dueCustomerOffset,
+                appointmentAt: next.appointmentAt,
               }),
             );
             changed = true;
@@ -900,7 +913,8 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
               (entry) =>
                 entry.kind === "customer_email" &&
                 entry.emailKind === "reminder" &&
-                entry.delivery === "failed" &&
+                entry.delivery === bookingEmailFailureDelivery(emailResult) &&
+                entry.appointmentAt === next.appointmentAt &&
                 entry.minutesBefore === dueCustomerOffset,
             )
           ) {
@@ -911,14 +925,22 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
                 kind: "customer_email",
                 at: emailResult.attemptedAt,
                 emailKind: "reminder",
-                delivery: "failed",
+                delivery: bookingEmailFailureDelivery(emailResult),
                 subject: emailResult.subject,
                 senderName: emailResult.senderName,
                 locale: emailResult.locale,
                 minutesBefore: dueCustomerOffset,
+                appointmentAt: next.appointmentAt,
                 note: emailResult.error,
               }),
             );
+            changed = true;
+          }
+          // Unknown delivery is not success. Require review rather than
+          // blindly resending this appointment/offset on the next tick.
+          if (emailResult.attempted && emailResult.status === "failed" && bookingEmailFailureDelivery(emailResult) === "unconfirmed") {
+            customerUnconfirmed.push(dueCustomerOffset);
+            next = { ...next, customerReminderUnconfirmedMinutes: normalizeProcessedMinutes(customerUnconfirmed) };
             changed = true;
           }
         }
@@ -2053,6 +2075,7 @@ export async function sendMerchantBookingManualEmailBySite(input: {
     const emailResult = await sendMerchantBookingStatusEmail(next, next.status, {
       locale: emailRuntime.locale,
       senderName: emailRuntime.senderName,
+      replyTo: workbenchSettings.customerEmailReplyTo,
       merchantDisplayName: emailRuntime.merchantDisplayName,
       extraMessage: workbenchSettings.customerAutoEmailMessageByStatus[next.status],
       actionLinks,
@@ -2074,7 +2097,7 @@ export async function sendMerchantBookingManualEmailBySite(input: {
             kind: "customer_email",
             at: emailResult.attemptedAt,
             emailKind: "manual",
-            delivery: "failed",
+            delivery: bookingEmailFailureDelivery(emailResult),
             toStatus: next.status,
             subject: emailResult.subject,
             senderName: emailResult.senderName,

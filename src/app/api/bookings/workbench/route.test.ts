@@ -299,6 +299,54 @@ test("booking time zone validates before persistence and is not erased by older 
   assert.equal(((await changed.json()).settings as MerchantBookingWorkbenchSettings).timeZone, "Atlantic/Canary");
 });
 
+test("merchant Reply-To is validated, scoped to automation permission, and preserved for older clients", async () => {
+  const current = { ...makeSettings(), customerEmailReplyTo: "original@example.invalid" };
+  let writes = 0;
+  let actor: MerchantBusinessActor = makeEmployee(["bookings.view", "bookings.automation.manage"]);
+  const dependencies: Partial<MerchantBookingWorkbenchRouteDependencies> = {
+    async authorizeActor(_request, input) {
+      assert.equal(input.requiredPermission, actor.type === "owner" ? "bookings.view" : actor.businessPermissions.includes("bookings.automation.manage") ? "bookings.automation.manage" : "bookings.settings.manage");
+      return actor;
+    },
+    async reauthorizeActor() { return actor; },
+    async loadSnapshotSite() { return null; },
+    async updateSettings(_siteId, input) { await input.assertAuthorizationCurrent?.(); writes++; return input.update(current); },
+  };
+  for (const customerEmailReplyTo of ["invalid", "a@example.invalid,b@example.invalid", "a@example.invalid\r\nBcc:b@example.invalid", 123, null]) {
+    const response = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "automation", settings: { ...current, customerEmailReplyTo } }), dependencies);
+    assert.equal(response.status, 400); assert.equal(writes, 0); assertPrivateHeaders(response);
+  }
+  const response = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "automation", settings: { ...current, customerEmailReplyTo: " Merchant@EXAMPLE.invalid " } }), dependencies);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).settings.customerEmailReplyTo, "Merchant@example.invalid");
+
+  actor = makeEmployee(["bookings.view", "bookings.settings.manage"]);
+  const settingsOnly = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "settings", settings: { ...current, customerEmailReplyTo: "attacker@example.invalid" } }), dependencies);
+  assert.equal(settingsOnly.status, 200);
+  assert.equal(Object.hasOwn((await settingsOnly.json()).settings, "customerEmailReplyTo"), false);
+
+  actor = { type: "owner", siteId: SITE_ID, authUserId: "owner-auth", principalKey: "owner:owner-auth", authorizationVersion: "owner", displayName: "Owner",
+    email: "owner@example.invalid", authorizationSource: "database", collaborationPermissions: [], businessPermissions: [] };
+  const legacy: Partial<MerchantBookingWorkbenchSettings> = { ...current };
+  delete legacy.customerEmailReplyTo;
+  const older = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, settings: legacy }), dependencies);
+  assert.equal(older.status, 200);
+  assert.equal((await older.json()).settings.customerEmailReplyTo, "original@example.invalid");
+});
+
+test("workbench Reply-To is visible only to owners or automation managers", async () => {
+  for (const permitted of [false, true]) {
+    const actor = makeEmployee(permitted ? ["bookings.view", "bookings.automation.manage"] : ["bookings.view", "bookings.analytics.view"]);
+    const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+      async authorizeActor() { return actor; },
+      async loadSettings() { return { ...makeSettings(), customerEmailReplyTo: "private@example.invalid" }; },
+      async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).settings.customerEmailReplyTo, permitted ? "private@example.invalid" : undefined);
+  }
+});
+
 test("employee calendar rotation never returns the newly generated bearer token", async () => {
   const actor = makeEmployee([
     "bookings.view",

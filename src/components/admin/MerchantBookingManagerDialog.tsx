@@ -345,7 +345,7 @@ function getTimelineEntryTitle(entry: MerchantBookingTimelineEntry, locale: stri
   }
   if (entry.kind === "customer_email") {
     const deliveryLabel =
-      entry.delivery === "failed"
+      entry.delivery === "unconfirmed" ? (locale.startsWith("es") ? "sin confirmar" : "结果待确认") : entry.delivery === "failed"
         ? locale.startsWith("es")
           ? "falló"
           : "失败"

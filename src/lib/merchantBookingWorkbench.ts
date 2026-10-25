@@ -8,6 +8,7 @@ import {
 } from "./merchantBookings";
 import { resolveSupportedLocale } from "@/lib/i18n";
 import { bookingWallTimeAt, normalizeBookingTimeZone, parseBookingAppointment, parseBookingWallTime } from "./merchantBookingTime";
+import { normalizeMerchantBookingReplyTo } from "./merchantBookingEmailAddress";
 
 export type MerchantBookingRecurringRule = {
   id: string;
@@ -49,6 +50,7 @@ export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSet
   customerAutoEmailStatuses: MerchantBookingStatus[];
   customerAutoEmailMessageByStatus: Partial<Record<MerchantBookingStatus, string>>;
   customerEmailSenderName: string;
+  customerEmailReplyTo?: string;
   customerReminderOffsetsMinutes: number[];
   merchantReminderOffsetsMinutes: number[];
   appointmentAutoStatus: MerchantBookingAppointmentAutoStatus;
@@ -71,6 +73,7 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   customerAutoEmailStatuses: ["confirmed"],
   customerAutoEmailMessageByStatus: {},
   customerEmailSenderName: "",
+  customerEmailReplyTo: "",
   customerReminderOffsetsMinutes: [],
   merchantReminderOffsetsMinutes: [],
   appointmentAutoStatus: "",
@@ -279,6 +282,7 @@ export function normalizeMerchantBookingWorkbenchSettings(value: unknown): Merch
     customerAutoEmailStatuses: normalizeAutoEmailStatuses(source.customerAutoEmailStatuses),
     customerAutoEmailMessageByStatus: normalizeStatusMessageByStatus(source.customerAutoEmailMessageByStatus),
     customerEmailSenderName: trimText(source.customerEmailSenderName),
+    ...(source.customerEmailReplyTo !== undefined ? { customerEmailReplyTo: normalizeMerchantBookingReplyTo(source.customerEmailReplyTo) } : {}),
     customerReminderOffsetsMinutes: normalizeSingleReminderOffset(source.customerReminderOffsetsMinutes),
     merchantReminderOffsetsMinutes: normalizeSingleReminderOffset(source.merchantReminderOffsetsMinutes),
     appointmentAutoStatus: normalizeAppointmentAutoStatus(source.appointmentAutoStatus),
@@ -478,6 +482,7 @@ export function buildMerchantBookingReminderSummary(
       | "appointmentAt"
       | "appointmentTimeZone"
       | "customerReminderProcessedMinutes"
+      | "customerReminderUnconfirmedMinutes"
       | "merchantReminderProcessedMinutes"
       | "noShowMarkedAt"
     >
@@ -489,7 +494,8 @@ export function buildMerchantBookingReminderSummary(
   const dueCustomerReminderCount = activeRecords.filter((record) => {
     if (settings.customerAutoEmailEnabled !== true) return false;
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.customerReminderOffsetsMinutes, now);
-    return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset);
+    return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset)
+      && !(record.customerReminderUnconfirmedMinutes ?? []).includes(dueOffset);
   }).length;
   const dueMerchantReminderCount = activeRecords.filter((record) => {
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.merchantReminderOffsetsMinutes, now);

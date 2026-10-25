@@ -119,6 +119,7 @@ export function getMerchantBookingWorkbenchSectionFingerprint(
     customerAutoEmailMessageByStatus:
       settings.customerAutoEmailMessageByStatus,
     customerEmailSenderName: settings.customerEmailSenderName,
+    customerEmailReplyTo: settings.customerEmailReplyTo,
     customerReminderOffsetsMinutes: settings.customerReminderOffsetsMinutes,
     merchantReminderOffsetsMinutes: settings.merchantReminderOffsetsMinutes,
     appointmentAutoStatus: settings.appointmentAutoStatus,
@@ -144,6 +145,7 @@ export function createMerchantBookingEmployeeWorkbenchDraft(
     customerAutoEmailStatuses: ["confirmed"],
     customerAutoEmailMessageByStatus: {},
     customerEmailSenderName: "",
+    customerEmailReplyTo: "",
     customerReminderOffsetsMinutes: [],
     merchantReminderOffsetsMinutes: [],
     appointmentAutoStatus: "",
@@ -165,6 +167,7 @@ export function createMerchantBookingEmployeeWorkbenchDraft(
       customerAutoEmailMessageByStatus:
         settings.customerAutoEmailMessageByStatus,
       customerEmailSenderName: settings.customerEmailSenderName,
+      customerEmailReplyTo: settings.customerEmailReplyTo,
       customerReminderOffsetsMinutes:
         settings.customerReminderOffsetsMinutes,
       merchantReminderOffsetsMinutes:

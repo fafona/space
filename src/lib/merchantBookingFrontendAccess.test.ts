@@ -114,6 +114,15 @@ test("an injected booking client selects employee mode", () => {
   );
 });
 
+test("Reply-To belongs only to the automation draft and dirty fingerprint", () => {
+  const current = { ...createDefaultMerchantBookingWorkbenchSettings(), customerEmailReplyTo: "merchant@example.invalid" };
+  const changed = { ...current, customerEmailReplyTo: "different@example.invalid" };
+  assert.equal(getMerchantBookingWorkbenchSectionFingerprint(current, "settings"), getMerchantBookingWorkbenchSectionFingerprint(changed, "settings"));
+  assert.notEqual(getMerchantBookingWorkbenchSectionFingerprint(current, "automation"), getMerchantBookingWorkbenchSectionFingerprint(changed, "automation"));
+  assert.equal(createMerchantBookingEmployeeWorkbenchDraft(current, ["bookings.settings.manage"]).customerEmailReplyTo, "");
+  assert.equal(createMerchantBookingEmployeeWorkbenchDraft(current, ["bookings.automation.manage"]).customerEmailReplyTo, "merchant@example.invalid");
+});
+
 test("employee workbench writes strip calendar bearer credentials", () => {
   const current = {
     ...createDefaultMerchantBookingWorkbenchSettings(),

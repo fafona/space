@@ -173,6 +173,7 @@ function projectSettingsForActor(
         ...settings.customerAutoEmailMessageByStatus,
       },
       customerEmailSenderName: settings.customerEmailSenderName,
+      customerEmailReplyTo: settings.customerEmailReplyTo,
       customerReminderOffsetsMinutes: [
         ...settings.customerReminderOffsetsMinutes,
       ],
@@ -249,6 +250,7 @@ function mergeSettingsSection(
         customerAutoEmailMessageByStatus:
           proposed.customerAutoEmailMessageByStatus,
         customerEmailSenderName: proposed.customerEmailSenderName,
+        customerEmailReplyTo: proposed.customerEmailReplyTo,
         customerReminderOffsetsMinutes:
           proposed.customerReminderOffsetsMinutes,
         merchantReminderOffsetsMinutes:
@@ -367,6 +369,10 @@ export async function handleMerchantBookingWorkbenchPatch(
     if (requestedZone !== undefined && (typeof requestedZone !== "string" || (requestedZone.trim() && !proposed.timeZone))) {
       return privateJson({ error: "invalid_booking_time_zone", message: "请填写有效的 IANA 时区，例如 Europe/Madrid" }, { status: 400 });
     }
+    const requestedReplyTo = (body.settings as { customerEmailReplyTo?: unknown } | null)?.customerEmailReplyTo;
+    if (requestedReplyTo !== undefined && (typeof requestedReplyTo !== "string" || (requestedReplyTo.trim() && !proposed.customerEmailReplyTo))) {
+      return privateJson({ error: "invalid_booking_reply_to", message: "请填写一个有效的商户回复邮箱，不要填写名称或多个邮箱" }, { status: 400 });
+    }
     const snapshotSite = await dependencies.loadSnapshotSite(siteId).catch(
       () => null,
     );
@@ -385,6 +391,7 @@ export async function handleMerchantBookingWorkbenchPatch(
         // Older clients do not know this additive field; saving unrelated
         // settings must not silently clear a configured booking time zone.
         if (requestedZone === undefined) proposed.timeZone = current.timeZone;
+        if (requestedReplyTo === undefined) proposed.customerEmailReplyTo = current.customerEmailReplyTo;
         if (actor.type === "employee" && section) {
           return mergeSettingsSection(
             current,

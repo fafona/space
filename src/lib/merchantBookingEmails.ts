@@ -23,13 +23,13 @@ import {
   getMerchantBookingStatusText,
 } from "@/lib/merchantBookingLocale";
 import type { MerchantBookingRecord, MerchantBookingStatus } from "./merchantBookings";
-
-const RESEND_EMAILS_API_URL = "https://api.resend.com/emails";
+import { normalizeMerchantBookingReplyTo } from "./merchantBookingEmailAddress";
+import { deliverMerchantBookingEmail, type MerchantBookingEmailTransportDependencies } from "./merchantBookingEmailTransport";
 
 export type MerchantBookingConfirmationEmailSendResult =
   | {
       attempted: false;
-      reason: "disabled" | "missing_email";
+      reason: "disabled" | "missing_email" | "invalid_reply_to";
     }
   | {
       attempted: true;
@@ -45,6 +45,7 @@ export type MerchantBookingConfirmationEmailSendResult =
       attemptedAt: string;
       status: "failed";
       error: string;
+      deliveryUnconfirmed?: boolean;
       subject?: string;
       locale?: string;
       senderName?: string;
@@ -56,15 +57,10 @@ type MerchantBookingConfirmationEmailConfig = {
   replyTo?: string;
 };
 
-type ResendSendEmailResponse = {
-  id?: string;
-  message?: string;
-  error?: string;
-};
-
 type MerchantBookingCustomerEmailOptions = {
   locale?: string | null;
   senderName?: string | null;
+  replyTo?: string | null;
   merchantDisplayName?: string | null;
   extraMessage?: string | null;
   actionLinks?: {
@@ -104,22 +100,6 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#39;");
 }
 
-function parseResendErrorMessage(status: number, bodyText: string) {
-  if (!bodyText.trim()) {
-    return `resend_request_failed_${status}`;
-  }
-  try {
-    const parsed = JSON.parse(bodyText) as ResendSendEmailResponse;
-    const message = trimText(parsed.message ?? parsed.error ?? "");
-    if (message) {
-      return message;
-    }
-  } catch {
-    // Ignore JSON parse failures and fall back to the raw body text.
-  }
-  return bodyText.trim();
-}
-
 function buildMerchantDisplayName(
   booking: MerchantBookingRecord,
   _locale: string,
@@ -136,7 +116,8 @@ function buildCustomerDisplayName(booking: MerchantBookingRecord, locale: string
 }
 
 function formatBookingTimestamp(booking: MerchantBookingRecord, locale: string) {
-  return formatMerchantBookingDateTime(booking.appointmentAt, locale);
+  const formatted = formatMerchantBookingDateTime(booking.appointmentAt, locale);
+  return booking.appointmentTimeZone ? `${formatted} (${booking.appointmentTimeZone})` : formatted;
 }
 
 function buildFromValue(configuredFrom: string, senderName?: string | null) {
@@ -289,10 +270,11 @@ async function sendPreparedMerchantBookingEmail(input: {
   booking: MerchantBookingRecord;
   locale?: string | null;
   senderName?: string | null;
+  replyTo?: string | null;
   subject: string;
   text: string;
   html: string;
-}): Promise<MerchantBookingConfirmationEmailSendResult> {
+}, dependencies?: MerchantBookingEmailTransportDependencies): Promise<MerchantBookingConfirmationEmailSendResult> {
   const recipient = trimText(input.booking.email).toLowerCase();
   if (!recipient) {
     return {
@@ -308,54 +290,42 @@ async function sendPreparedMerchantBookingEmail(input: {
       reason: "disabled",
     };
   }
+  const requestedReplyTo = trimText(input.replyTo) || config.replyTo || "";
+  const replyTo = normalizeMerchantBookingReplyTo(requestedReplyTo);
+  if (requestedReplyTo && !replyTo) return { attempted: false, reason: "invalid_reply_to" };
 
   const attemptedAt = new Date().toISOString();
   const resolvedLocale = resolveMerchantBookingCustomerEmailLocale(input.locale);
   const resolvedSenderName = trimText(input.senderName);
-  const response = await fetch(RESEND_EMAILS_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const result = await deliverMerchantBookingEmail({
+    apiKey: config.apiKey,
+    body: {
       from: buildFromValue(config.from, resolvedSenderName),
       to: [recipient],
       subject: input.subject,
       text: input.text,
       html: input.html,
-      ...(config.replyTo ? { reply_to: config.replyTo } : {}),
-    }),
-  });
-
-  const responseText = await response.text();
-  if (!response.ok) {
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    },
+  }, dependencies);
+  if (result.delivery !== "sent") {
     return {
       attempted: true,
       attemptedAt,
       status: "failed",
-      error: parseResendErrorMessage(response.status, responseText),
+      error: result.error,
+      ...(result.delivery === "unconfirmed" ? { deliveryUnconfirmed: true } : {}),
       subject: input.subject,
       locale: resolvedLocale,
       senderName: resolvedSenderName,
     };
   }
 
-  let messageId = "";
-  if (responseText.trim()) {
-    try {
-      const parsed = JSON.parse(responseText) as ResendSendEmailResponse;
-      messageId = trimText(parsed.id ?? "");
-    } catch {
-      messageId = "";
-    }
-  }
-
   return {
     attempted: true,
     attemptedAt,
     status: "sent",
-    ...(messageId ? { messageId } : {}),
+    messageId: result.messageId,
     subject: input.subject,
     locale: resolvedLocale,
     senderName: resolvedSenderName,
@@ -366,6 +336,7 @@ export async function sendMerchantBookingStatusEmail(
   booking: MerchantBookingRecord,
   status: MerchantBookingStatus,
   options: MerchantBookingCustomerEmailOptions = {},
+  dependencies?: MerchantBookingEmailTransportDependencies,
 ): Promise<MerchantBookingConfirmationEmailSendResult> {
   const locale = resolveMerchantBookingCustomerEmailLocale(options.locale);
   const merchantDisplayName = buildMerchantDisplayName(booking, locale, options.merchantDisplayName);
@@ -397,23 +368,26 @@ export async function sendMerchantBookingStatusEmail(
     booking,
     locale,
     senderName: options.senderName,
+    replyTo: options.replyTo,
     subject,
     text,
     html,
-  });
+  }, dependencies);
 }
 
 export async function sendMerchantBookingConfirmationEmail(
   booking: MerchantBookingRecord,
   options: MerchantBookingCustomerEmailOptions = {},
+  dependencies?: MerchantBookingEmailTransportDependencies,
 ): Promise<MerchantBookingConfirmationEmailSendResult> {
-  return sendMerchantBookingStatusEmail(booking, "confirmed", options);
+  return sendMerchantBookingStatusEmail(booking, "confirmed", options, dependencies);
 }
 
 export async function sendMerchantBookingReminderEmail(
   booking: MerchantBookingRecord,
   minutesBefore: number,
   options: MerchantBookingCustomerEmailOptions = {},
+  dependencies?: MerchantBookingEmailTransportDependencies,
 ): Promise<MerchantBookingConfirmationEmailSendResult> {
   const locale = resolveMerchantBookingCustomerEmailLocale(options.locale);
   const merchantDisplayName = buildMerchantDisplayName(booking, locale, options.merchantDisplayName);
@@ -443,8 +417,9 @@ export async function sendMerchantBookingReminderEmail(
     booking,
     locale,
     senderName: options.senderName,
+    replyTo: options.replyTo,
     subject,
     text,
     html,
-  });
+  }, dependencies);
 }
