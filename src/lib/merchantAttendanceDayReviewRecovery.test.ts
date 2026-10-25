@@ -60,11 +60,13 @@ test("C15-A 404, timeout, bad JSON/content type and substituted receipt all reta
   await assert.rejects(h.client.recover()); assert.equal(h.values.get(h.client.key), raw); assert.equal(h.calls.length, 1);
 });
 
-test("C15-A pause or identity/scope change after GET suppresses late results and retains original storage", async () => {
-  let release: (r: Response) => void = () => {}; let current = true;
-  const h = harness(async () => new Promise<Response>(resolve => { release = resolve; }), () => current);
+test("C15-A pause or identity/scope change after GET suppresses late results and retains original storage", { timeout: 5000 }, async () => {
+  let release!: (r: Response) => void, markGetStarted!: () => void; let current = true;
+  const getStarted = new Promise<void>(resolve => { markGetStarted = resolve; });
+  const h = harness(async () => new Promise<Response>(resolve => { release = resolve; markGetStarted(); }), () => current);
   await h.client.stage(query(), command()); const raw = h.values.get(h.client.key); const running = h.client.recover();
-  await new Promise(resolve => setTimeout(resolve, 0)); current = false; h.client.pause(); release(reply(h.client, h.values));
+  await getStarted; assert.equal(h.calls.length, 1); assert.equal(h.calls[0].init!.method, "GET");
+  current = false; h.client.pause(); release(reply(h.client, h.values));
   await assert.rejects(running); assert.equal(h.values.get(h.client.key), raw); assert.equal(h.writes().removes, 0); current = true;
   await h.client.load(); assert.equal(h.calls.length, 1);
 });

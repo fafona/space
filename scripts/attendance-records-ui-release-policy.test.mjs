@@ -8,8 +8,10 @@ import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {onlineReleaseLane,onlineReleaseStageStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations} from './online-traffic-release-policy.mjs';
 import {ATTENDANCE_BUILD_LIMITS} from './attendance-online-build.mjs';
 const files=[...app,...tools],readBlob=f=>readFileSync(new URL('../'+f,import.meta.url),'utf8').replace(/\r\n/g,'\n');
-test('approved six-file presentation repair has an independent exact lane, with every database path forbidden',()=>{
- assert.equal(app.length,6);assert.equal(new Set(files).size,files.length);
+test('approved presentation repair and test-only synchronization have an independent exact lane, with every database path forbidden',()=>{
+ assert.equal(app.length,7);assert.equal(new Set(files).size,files.length);
+ assert.ok(app.includes('src/lib/merchantAttendanceDayReviewRecovery.test.ts'));
+ assert.ok(tools.includes('scripts/attendance-staged-tool-repair.test.mjs'));
  assert.equal(onlinePublicationLane(files),lane);assert.equal(onlineReleaseLane(files),lane);assert.equal(onlineReleaseStageStatus(lane),'ready-no-database');
  for(const fn of [assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget])assert.throws(()=>fn(lane),/records_ui_release_database_forbidden/);
  assert.throws(()=>assertPendingOnlineReleaseMigrations(lane,[]),/database_forbidden/);
@@ -19,14 +21,14 @@ test('application bytes, fixed baseline and complete tool closure cannot be broa
  assert.match(assertRecordsUiReleaseClosure({baseline,files,readBlob}),/^[a-f0-9]{64}$/);
  for(const f of app)assert.throws(()=>assertRecordsUiReleaseClosure({baseline,files,readBlob:x=>readBlob(x)+(x===f?'\n//unreviewed':'')}),/content_rejected/);
  for(const f of tools)assert.throws(()=>assertRecordsUiReleaseClosure({baseline,files:files.filter(x=>x!==f),readBlob}),/closure_missing/);
- for(const f of ['src/app/api/bookings/route.ts','package.json','package-lock.json','.env.local','src/lib/merchantAttendanceManagementClient.ts','src/components/enterprise/MerchantAttendanceScopePanel.tsx','scripts/online-release-artifact-cleanup.mjs','.github/workflows/ci.yml'])assert.throws(()=>assertRecordsUiReleaseScope([...files,f]),/scope_rejected/);
+ for(const f of ['src/app/api/bookings/route.ts','package.json','package-lock.json','.env.local','src/lib/merchantAttendanceManagementClient.ts','src/lib/merchantAttendanceDayReviewRecovery.ts','src/components/enterprise/MerchantAttendanceScopePanel.tsx','scripts/online-release-artifact-cleanup.mjs','.github/workflows/ci.yml'])assert.throws(()=>assertRecordsUiReleaseScope([...files,f]),/scope_rejected/);
  assert.throws(()=>assertRecordsUiReleaseClosure({baseline:'a'.repeat(40),files,readBlob}),/baseline_invalid/);
 });
 test('shared mechanics preserve original sandbox budgets and strict lane admission',()=>{
  assert.throws(()=>buildRecordsUiReleaseCandidate({lane:'google-oauth-transition-code-only',baseline}),/build_scope_invalid/);
  assert.equal(ATTENDANCE_BUILD_LIMITS.memoryBytes,4*1024**3);assert.equal(ATTENDANCE_BUILD_LIMITS.heapMiB,3072);
  assert.equal(ATTENDANCE_BUILD_LIMITS.minimumAvailableBytes,6*1024**3);
- for(const f of ['src/lib/merchantAttendanceRecordsUi.test.tsx','src/lib/merchantAttendanceScopeNavigation.test.tsx','src/app/login/googleOAuthTransition.test.ts','scripts/google-transition-unbuilt-close.test.mjs','scripts/online-release-retention-writer.test.mjs'])assert.ok(RECORDS_UI_FOCUSED_TESTS.includes(f));
+ for(const f of ['src/lib/merchantAttendanceRecordsUi.test.tsx','src/lib/merchantAttendanceDayReviewRecovery.test.ts','scripts/attendance-staged-tool-repair.test.mjs','src/lib/merchantAttendanceScopeNavigation.test.tsx','src/app/login/googleOAuthTransition.test.ts','scripts/google-transition-unbuilt-close.test.mjs','scripts/online-release-retention-writer.test.mjs'])assert.ok(RECORDS_UI_FOCUSED_TESTS.includes(f));
 });
 test('actual controller selects new closure/tests/build but retains environment, smoke and convergence without another stop',()=>{
  const s=readBlob('scripts/online-traffic-release.mjs');

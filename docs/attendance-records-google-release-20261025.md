@@ -2,11 +2,21 @@
 
 The user approved one new candidate containing only the read-only attendance
 records navigation/date repair and the already approved Google callback loading
-repair. Six full application/test files are byte-pinned against live dd85d9fb.
+repair. Seven full application/test files are byte-pinned against live dd85d9fb,
+including the separately approved test-only synchronization below.
 No database, permissions, API, dependency, feature configuration or worker changes.
 Existing lanes retain their scopes. The new lane shares the existing sealed
 source/environment/process/rollback mechanics, fixed private HTTP smoke and
 convergence-only retention. Full PR and exact merged-main CI remain mandatory.
+
+After failed PR CI run 40198779402, the user explicitly approved only two test
+repairs: synchronize the staged-tool static import count (13 to 14, retaining
+the independent parser and exact closure equality), and wait explicitly for the
+mocked recovery GET to start before testing pause suppression (not a zero-delay
+timer). Retain all original assertions and the failed run/logs. Attendance
+recovery implementation, business logic and every existing application pin are
+unchanged. Include both test files in the narrow closure and focused suite;
+rerun complete PR CI and exact merged-main CI, with no skipped checks.
 
 Keep 6 GiB available RAM and 20 GiB disk admission, bounded private-network build
 (4 GiB hard, 3072 MiB heap, 1 CPU, 128 tasks, zero swap, 20 minutes). Do not retry
