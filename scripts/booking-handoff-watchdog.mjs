@@ -18,7 +18,7 @@ import {retentionCanonicalText,retentionHash} from './online-release-retention-p
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {normalizeRetirementProcess,assertExistingPm2Directory} from './online-release-retirement.mjs';
 
-export const BOOKING_WATCHDOG_TRIGGER_MS=480000;
+export const BOOKING_WATCHDOG_TRIGGER_MS=420000;
 const APP='/www/wwwroot/merchant-space',DEPLOY=APP+'.deploy.lock',OPERATION='/var/lib/faolla-maintenance/merchant-space/operation.lock';
 const need=(v,c)=>{if(!v)throw Error('booking_watchdog_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c),hash=v=>createHash('sha256').update(v).digest('hex');
 const env=()=>({PATH:'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',HOME:'/root',PM2_HOME:'/root/.pm2',LANG:'C.UTF-8',LC_ALL:'C.UTF-8'});
@@ -141,7 +141,7 @@ async function actualCompleted(lease){
       const r=await fetch(origin+'/api/app-web-version?bookingWatchdog='+lease.window.id,{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(2000)}),v=await r.json();need(r.status===200&&v.ok===true&&v.buildId===CANDIDATE,'completion_public');
     }
     return {certificateSha256:retentionHash(history.entries.at(-1)),generation:gate.generation};
-  }catch{return false;} // A partial journal is never skipped or called complete.
+  }catch(error){if(['EACCES','EPERM'].includes(error.code))throw error;return false;} // A partial journal is never skipped or called complete.
 }
 export async function finishBookingHandoffWatchdog({lock,handle}){
   assertOnlineRetentionHeldLocks(lock);const value=handles.get(handle);need(value,'unowned_handle');value.child.ref();
@@ -176,7 +176,7 @@ async function productionWatchdog(){
     recover:()=>{
       assertBookingWatchdogInheritedLease(lease,{requireParentGone:true});
       const script='/var/lib/faolla-online-code/'+lease.toolRevision+'/scripts/booking-handoff-recovery.mjs';assertOnlineToolOwnedPath(script,'file');
-      const r=spawnSync('/usr/bin/node',[script],{cwd:path.dirname(path.dirname(script)),env:env(),encoding:'utf8',timeout:110000,killSignal:'SIGKILL',maxBuffer:65536,stdio:['ignore','pipe','pipe',3]});
+      const r=spawnSync('/usr/bin/node',[script],{cwd:path.dirname(path.dirname(script)),env:env(),encoding:'utf8',timeout:170000,killSignal:'SIGKILL',maxBuffer:65536,stdio:['ignore','pipe','pipe',3]});
       need(r.status===0&&!r.error&&!r.signal,'recovery_unconfirmed');return JSON.parse(read(ROOT+'/watchdog-recovery.json'));
     },
     finish:(outcome,recovery)=>{

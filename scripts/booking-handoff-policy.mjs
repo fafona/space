@@ -61,6 +61,7 @@ export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-pm2-pause.py','scripts/test_booking_handoff_pm2_pause.py','scripts/booking-handoff-pm2-pause.test.mjs',
  'scripts/booking-handoff-legacy.mjs','scripts/booking-handoff-legacy.test.mjs',
  'scripts/booking-handoff-watchdog.mjs','scripts/booking-handoff-watchdog.test.mjs',
+ 'scripts/booking-handoff-recovery.mjs','scripts/booking-handoff-recovery.test.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;

@@ -104,7 +104,8 @@ export function invokeBookingLegacyPause(before){
   need(r.status===0&&!r.signal&&!r.error&&r.stderr==='','restart_outcome_unknown');return JSON.parse(r.stdout);
 }
 export async function waitBookingLegacyPauseSettled(window,assertHeld=()=>{}){
-  let observed;for(let i=0;i<100;i++){
+  const deadline=process.hrtime.bigint()+10000000000n;
+  let observed;for(let i=0;i<100&&process.hrtime.bigint()<deadline;i++){
     assertHeld();assertBookingHandoffWindow(window,{nowMs:Date.now()});
     try{observed=collectBookingLegacyHost();if(observed.legacy.pid!==1590381&&observed.legacy.status==='online'&&observed.legacy.backgroundPaused==='1'){
       const sockets=parseRetirementSockets(run('ss',['-ltnpH']),run('ss',['-tnpH']));
