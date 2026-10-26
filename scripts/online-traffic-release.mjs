@@ -1,5 +1,6 @@
 import {BOOKING_RELEASE_LANE,BOOKING_RELEASE_BASELINE,BOOKING_FOCUSED_TESTS,assertBookingReleaseClosure,bookingProtectedEnvironment,assertBookingCompatibilityEnvironment,bookingCandidateOverrides,buildBookingReleaseCandidate} from './booking-publication-policy.mjs';
 import {installInactiveBookingSchema,verifyInactiveBookingSchema} from './booking-publication-database.mjs';
+import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,assertBookingHandoffToolClosure,assertBookingReviewedStageIdentity} from './booking-handoff-policy.mjs';
 import {RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,assertRecordsUiReleaseClosure,buildRecordsUiReleaseCandidate} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint,readGoogleTransitionCallbackHtml} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_RELEASE_BASELINE,SCOPE_NAV_FOCUSED_TESTS,assertScopeNavigationReleaseClosure,buildScopeNavigationReleaseCandidate} from './attendance-scope-navigation-release-policy.mjs';
@@ -40,7 +41,8 @@ import {BACKUP_RELEASE_LANE,BACKUP_RELEASE_BASELINE,BACKUP_FOCUSED_TESTS,assertB
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
-const [action,target,baseline]=process.argv.slice(2);
+const [requestedAction,target,baseline]=process.argv.slice(2);
+const action=requestedAction==='stage-booking-reviewed-candidate'?'stage':requestedAction;
 const envBase={...process.env,PM2_HOME:'/root/.pm2'};
 const read=p=>readFileSync(p,'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');
 const fail=m=>{throw Error(m);};
@@ -438,6 +440,17 @@ function candidateEnvironment(s){void s;return JSON.parse(safeFile(`${operation}
 function bookingPublicationClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
  return assertBookingReleaseClosure({baseline:releaseBaseline,files,readBlob:file=>run('git',['show',`${releaseTarget}:${file}`],{cwd:app})});
+}
+function verifyBookingReviewedStage(){
+ if(process.argv.slice(2).length!==3||target!==BOOKING_HANDOFF_CANDIDATE)fail('booking_handoff_stage_invocation');
+ const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');bookingResumeOwnedPath(directory);
+ const revision=run('git',['rev-parse','HEAD'],{cwd:directory}).trim();
+ run('git',['merge-base','--is-ancestor',target,revision],{cwd:app});
+ const files=run('git',['diff','--name-only',target,revision],{cwd:app}).trim().split('\n');
+ const closure=assertBookingHandoffToolClosure({baseline:target,files,readBlob:file=>run('git',['show',`${revision}:${file}`],{cwd:app})});
+ for(const file of BOOKING_HANDOFF_TOOL_FILES){bookingResumeOwnedPath(`${directory}/${file}`,true);if(hash(safeFile(`${directory}/${file}`))!==hash(run('git',['show',`${revision}:${file}`],{cwd:app})))fail('booking_handoff_stage_source_changed');}
+ assertBookingReviewedStageIdentity({requestedAction,target,baseline,toolRevision:revision,currentMain:run('git',['rev-parse','origin/main'],{cwd:app}).trim(),toolHead:revision,toolDirectory:directory,toolClean:!run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:directory}).trim(),ancestorVerified:true,toolClosureSha256:closure});
+ return {toolRevision:revision,toolClosureSha256:closure};
 }
 function verifyBookingPublication(s,buildRequired=false,p){
  for(const directory of [s.directory,s.oldDirectory]){bookingResumeOwnedPath(directory);bookingResumeOwnedPath(`${directory}/node_modules`);}
@@ -989,7 +1002,8 @@ try{
  if(action==='database'&&target===CONTACT_WECHAT_STAGED_REPAIR.target)fail('contact_wechat_code_only_database_forbidden');
  if(action==='stage'){
   if(!/^[a-f0-9]{40}$/.test(baseline??'')||existsSync(stateFile))fail('existing_or_invalid_stage');
-  if(run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
+  const bookingReviewedStage=requestedAction==='stage-booking-reviewed-candidate'?verifyBookingReviewedStage():null;
+  if(!bookingReviewedStage&&run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
   const lane=onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   const bookingClosureSha256=lane===BOOKING_RELEASE_LANE?bookingPublicationClosure(target,baseline):null;
@@ -1121,6 +1135,7 @@ try{
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
+  if(bookingReviewedStage){if(lane!==BOOKING_RELEASE_LANE)fail('booking_handoff_wrong_lane');s.bookingReviewedStage=bookingReviewedStage;}
   if(lane===BOOKING_RELEASE_LANE)Object.assign(s,bookingBaseline);
   if((lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE))Object.assign(s,googleTransitionBaseline);
   if(lane===SCOPE_NAV_RELEASE_LANE)Object.assign(s,scopeNavigationBaseline);

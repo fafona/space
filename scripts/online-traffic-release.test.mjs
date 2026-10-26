@@ -1,3 +1,4 @@
+import * as bookingHandoffPolicy from './booking-handoff-policy.mjs';
 import {BOOKING_RELEASE_LANE,BOOKING_FOCUSED_TESTS} from './booking-publication-policy.mjs';
 import {RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_FOCUSED_TESTS} from './google-oauth-transition-release-policy.mjs';
@@ -2539,4 +2540,21 @@ test('contact code-only rollback reuses all-file snapshot validation and restore
  for(const name of f.names)f.files.set(`/proxy/${name}`,f.files.get(`/operation/after-${name}`));
  f.api.restoreConfigs(f.s);assert.equal(f.s.status,'rolled-back');assert.deepEqual(f.names.map(name=>f.files.get(`/proxy/${name}`)),before);
  assert.equal(f.effects.some(effect=>effect.includes('stop')||effect.includes('restart')),false);
+});
+test('the reviewed booking stage executes exact tool/head/ancestry/source guards before any candidate mutation',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const begin=code.indexOf('function verifyBookingReviewedStage('),end=code.indexOf('function verifyBookingPublication(',begin);
+ assert.ok(begin>=0&&end>begin);const source=code.slice(begin,end),revision='f'.repeat(40),target=bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE;
+ const directory='/var/lib/faolla-online-code/'+revision,files=[...bookingHandoffPolicy.BOOKING_HANDOFF_TOOL_FILES],digest=x=>createHash('sha256').update(x).digest('hex');
+ function fixture(){
+  const state={dirty:false,head:revision,currentMain:revision,sourceChanged:false,paths:[],calls:[]};
+  const fn=runInNewContext(source+'verifyBookingReviewedStage',{...bookingHandoffPolicy,URL,process:{argv:['node','release','stage-booking-reviewed-candidate',target,bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE]},requestedAction:'stage-booking-reviewed-candidate',target,baseline:bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE,app:'/app',controllerModuleUrl:'file:///ignored/scripts/online-traffic-release.mjs',fileURLToPath:()=>directory,bookingResumeOwnedPath:(p,file)=>state.paths.push([p,file]),hash:digest,safeFile:file=>state.sourceChanged?'changed':'synthetic:'+files.find(f=>file===directory+'/'+f),run:(_cmd,args)=>{state.calls.push(args);if(args[0]==='merge-base')return '';if(args[0]==='diff')return files.join('\n');if(args[0]==='show')return 'synthetic:'+args[1].slice(revision.length+1);if(args[0]==='status')return state.dirty?'M changed':'';if(args[0]==='rev-parse')return args[1]==='HEAD'?state.head:state.currentMain;assert.fail('unexpected git command');},fail:code=>{throw Error(code);}});
+  return {state,fn};
+ }
+ const f=fixture(),value=f.fn();assert.equal(value.toolRevision,revision);assert.match(value.toolClosureSha256,/^[a-f0-9]{64}$/);
+ assert.equal(f.state.paths.length,files.length+1);assert.ok(f.state.calls.some(a=>a[0]==='merge-base'&&a[2]===target&&a[3]===revision));
+ for(const patch of [{dirty:true},{head:target},{currentMain:target},{sourceChanged:true}]){const bad=fixture();Object.assign(bad.state,patch);assert.throws(()=>bad.fn(),/booking_handoff_/);}
+ const stage=code.slice(code.indexOf("if(action==='stage'){"));
+ assert.ok(stage.indexOf('verifyBookingReviewedStage()')<stage.indexOf('privateDirectory(operation)'));
+ assert.ok(stage.includes("if(!bookingReviewedStage&&run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main')"));
 });
