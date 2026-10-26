@@ -109,13 +109,14 @@ export function readOnlineRetentionHistory(root = ONLINE_RETENTION_ROOT, io = fs
       if (hash(files[file].text) !== c[key]) fail('proof_hash_changed');
     assertOnlineRetentionCompletion(before, after, history);
     for (const key of ['kind', 'sequence', 'previousSha256', 'legacySha256', 'rollingHeadSha256', 'rollingHistorySha256',
-      'toolRevision', 'active', 'rollback', 'victim', 'rollbackProof']) equal(c[key], before[key], 'certificate_context_changed');
+      'toolRevision', 'active', 'rollback', 'victim', 'rollbackProof', 'bookingHandoff']) equal(c[key], before[key], 'certificate_context_changed');
     equal(c.processes, after.processes, 'certificate_processes_changed');
     equal(c.stoppedProcess, c.kind === 'retire' ? after.processes.find(p => p.name === c.victim.process.name) : null, 'certificate_stopped_changed');
     const expectedPrepared = {version: 2, policy: ONLINE_RETENTION_POLICY, status: 'prepared',
       ...Object.fromEntries(['kind', 'sequence', 'previousSha256', 'legacySha256', 'rollingHeadSha256', 'rollingHistorySha256',
         'toolRevision', 'active', 'rollback', 'victim', 'beforeSha256', 'recoverySha256'].map(k => [k, c[k]])),
       ...(c.rollbackProof !== undefined ? {rollbackProof: c.rollbackProof} : {}), preparedAt: prepared.preparedAt};
+    if (c.bookingHandoff !== undefined) expectedPrepared.bookingHandoff = c.bookingHandoff;
     equal(prepared, expectedPrepared, 'preparation_changed');
     if (typeof prepared.preparedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(prepared.preparedAt) ||
         !Number.isFinite(Date.parse(prepared.preparedAt)) || new Date(prepared.preparedAt).toISOString() !== prepared.preparedAt ||
@@ -136,7 +137,8 @@ export function readOnlineRetentionHistory(root = ONLINE_RETENTION_ROOT, io = fs
 const CONTEXT_KEYS = ['kind', 'sequence', 'previousSha256', 'legacySha256', 'rollingHeadSha256', 'rollingHistorySha256',
   'toolRevision', 'active', 'rollback', 'victim'];
 const context = before => ({...Object.fromEntries(CONTEXT_KEYS.map(key => [key, structuredClone(before[key])])),
-  ...(before.rollbackProof !== undefined ? {rollbackProof: structuredClone(before.rollbackProof)} : {})});
+  ...(before.rollbackProof !== undefined ? {rollbackProof: structuredClone(before.rollbackProof)} : {}),
+  ...(before.bookingHandoff !== undefined ? {bookingHandoff: structuredClone(before.bookingHandoff)} : {})});
 function timestamp(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) ||
       !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) fail('preparation_time_invalid');

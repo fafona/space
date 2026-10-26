@@ -1,6 +1,7 @@
 // User-approved 2026-10-26: PURE contract for the single booking-task handoff.
 // No command, process signal, database write, history rewrite or activation is
-// exposed here. The existing release and retention policies remain unchanged.
+// exposed here. Existing release paths stay strict; a separate reviewed
+// retention adapter may append the single explicitly authorized handoff.
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 
@@ -12,6 +13,12 @@ export const BOOKING_HANDOFF_MAX_MS=600000;
 export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-policy.mjs','scripts/booking-handoff-policy.test.mjs',
  'scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs',
+ 'scripts/booking-handoff-retention.mjs','scripts/booking-handoff-retention.test.mjs',
+ 'scripts/online-release-retention-policy.mjs','scripts/online-release-retention.mjs',
+ 'scripts/online-release-retention.test.mjs','scripts/test-support/booking-handoff-retention-fixture.mjs',
+ 'scripts/online-release-cache-cleanup.mjs','scripts/online-release-cache-cleanup.test.mjs',
+ 'scripts/booking-atomic-worker.mjs','scripts/booking-atomic-worker.test.mjs',
+ 'scripts/attendance-staged-tool-repair.test.mjs','scripts/online-unpublished-candidate.test.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;
