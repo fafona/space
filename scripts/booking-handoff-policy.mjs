@@ -52,6 +52,8 @@ export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-pending.mjs','scripts/booking-handoff-tool-preparation.mjs','scripts/booking-handoff-tool-preparation.test.mjs',
  'scripts/booking-handoff-rule-repair.mjs','scripts/booking-handoff-rule-repair.test.mjs',
  'scripts/booking-handoff-rule-backup.mjs','scripts/booking-handoff-rule-backup.test.mjs',
+ 'scripts/booking-handoff-ingress.mjs','scripts/booking-handoff-ingress.test.mjs',
+ 'scripts/booking-handoff-ingress-acceptance.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;
