@@ -65,3 +65,66 @@ test("205 deadline/cancel does not dispatch late writer after preread and cleans
   await assert.rejects(service.execute(input(), abort.signal), { code: "attendance_unavailable" }); resolve?.(ok(missing())); await new Promise(r => setTimeout(r, 10)); assert.equal(st.calls.length, 1); assert.equal(getEventListeners(abort.signal, "abort").length, 0);
   const cancelled = new AbortController(); cancelled.abort(); await assert.rejects(service.execute(input(), cancelled.signal), { code: "attendance_unavailable" }); assert.equal(st.calls.length, 1);
 });
+
+test("205 a fired timeout permanently fences late preread even before the monotonic deadline", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let clock = 0, resolveRead!: (response: Response) => void, enabledCalls = 0;
+  t.mock.method(performance, "now", () => clock);
+  const read = new Promise<Response>(resolve => { resolveRead = resolve; });
+  const st = stub(() => read), abort = new AbortController();
+  const service = s.createDelegatedConfigurationService(st.service, { enabled: () => { enabledCalls++; return true; }, timeoutMs: 20 });
+  const pending = service.execute(input(), abort.signal);
+  const rejected = assert.rejects(pending, { code: "attendance_unavailable" });
+  assert.equal(st.calls.length, 1);
+  assert.equal(getEventListeners(abort.signal, "abort").length, 1);
+  // A timer may fire just before performance.now() crosses its nominal bound.
+  // Reproduce that order explicitly, without depending on wall-clock sleeps.
+  clock = 19.5;
+  t.mock.timers.tick(20);
+  await rejected;
+  assert.equal(getEventListeners(abort.signal, "abort").length, 0);
+  resolveRead(ok(missing()));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(enabledCalls, 0);
+  assert.equal(st.calls.length, 1);
+  assert.equal(st.calls[0].p_command, null);
+  assert.equal(st.calls[0].p_allow_write, false);
+});
+
+test("205 abort during preread fences the continuation and does not cancel a later independent request", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(performance, "now", () => 0);
+  let resolveRead!: (response: Response) => void;
+  const read = new Promise<Response>(resolve => { resolveRead = resolve; });
+  const value = await saved(), st = stub((_, n) => n === 1 ? read : ok(n === 2 ? missing() : value));
+  const service = s.createDelegatedConfigurationService(st.service, { enabled: () => true, timeoutMs: 20 });
+  const abort = new AbortController(), pending = service.execute(input(), abort.signal);
+  const rejected = assert.rejects(pending, { code: "attendance_unavailable" });
+  assert.equal(st.calls.length, 1);
+  abort.abort(); await rejected;
+  assert.equal(getEventListeners(abort.signal, "abort").length, 0);
+  resolveRead(ok(missing()));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(st.calls.length, 1);
+  assert.deepEqual(await service.execute(input()), value);
+  assert.equal(st.calls.length, 3);
+  assert.deepEqual(st.calls.map(call => call.p_allow_write), [false, false, true]);
+});
+
+test("205 elapsed deadline fences preread even when the timeout callback has not run", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let clock = 0, resolveRead!: (response: Response) => void;
+  t.mock.method(performance, "now", () => clock);
+  const read = new Promise<Response>(resolve => { resolveRead = resolve; });
+  const st = stub(() => read), abort = new AbortController();
+  const service = s.createDelegatedConfigurationService(st.service, { enabled: () => assert.fail("late entitlement check"), timeoutMs: 20 });
+  const pending = service.execute(input(), abort.signal);
+  const rejected = assert.rejects(pending, { code: "attendance_unavailable" });
+  assert.equal(st.calls.length, 1);
+  clock = 20; resolveRead(ok(missing())); await rejected;
+  assert.equal(st.calls.length, 1);
+  assert.equal(getEventListeners(abort.signal, "abort").length, 0);
+  t.mock.timers.tick(20);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(st.calls.length, 1);
+});
