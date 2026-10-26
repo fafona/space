@@ -91,6 +91,32 @@ export async function executeBookingLegacyPause(operations,window){
   await operations.complete(transition);return transition;
 }
 
+/** Connect-only transport, NOT release authority. The normal host or bounded
+ * recovery watchdog must claim the SAME exclusive attempt file first. */
+export function invokeBookingLegacyPause(before){
+  need(process.platform==='linux'&&process.getuid?.()===0&&before?.legacy?.pid===1590381,'rpc_original_host');
+  need(/^\/var\/lib\/faolla-online-code\/[a-f0-9]{40}\/scripts\/booking-handoff-legacy\.mjs$/.test(fileURLToPath(import.meta.url)),'rpc_tool_path');
+  const python=captureTrustedPython(),helper=fileURLToPath(new URL('./booking-handoff-pm2-pause.py',import.meta.url));
+  const helperBefore=read(helper,{privateMode:false});verifyTrustedPython(python);
+  const r=spawnSync(python.target.path,['-I','-S','-B',helper],{cwd:'/',input:JSON.stringify({daemon:before.daemonPeer,process:before.processPeer,expected:before.rpcExpected}),
+    encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:262144,windowsHide:true,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
+  verifyTrustedPython(python);equal(read(helper,{privateMode:false}),helperBefore,'helper_changed');
+  need(r.status===0&&!r.signal&&!r.error&&r.stderr==='','restart_outcome_unknown');return JSON.parse(r.stdout);
+}
+export async function waitBookingLegacyPauseSettled(window,assertHeld=()=>{}){
+  let observed;for(let i=0;i<100;i++){
+    assertHeld();assertBookingHandoffWindow(window,{nowMs:Date.now()});
+    try{observed=collectBookingLegacyHost();if(observed.legacy.pid!==1590381&&observed.legacy.status==='online'&&observed.legacy.backgroundPaused==='1'){
+      const sockets=parseRetirementSockets(run('ss',['-ltnpH']),run('ss',['-tnpH']));
+      if(sockets.listeners.some(s=>s.port===3000&&s.pid===observed.legacy.pid)){
+        const response=await fetch('http://127.0.0.1:3000/login',{headers:{Host:'www.faolla.com',Connection:'close'},redirect:'manual',signal:AbortSignal.timeout(1000)});
+        await response.body?.cancel();if([200,301,302,303,307,308].includes(response.status))return observed;
+      }
+    }}catch{/* Only fresh reads may be repeated during the single restart. */}
+    await new Promise(r=>setTimeout(r,100));
+  }need(false,'restart_not_settled');
+}
+
 export async function pauseLegacyBookingHost({lock,toolRevision}){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
   need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
@@ -114,28 +140,10 @@ export async function pauseLegacyBookingHost({lock,toolRevision}){
   return executeBookingLegacyPause({now:()=>new Date().toISOString(),observe:()=>collectBookingLegacyHost(),admit:verifyAdmission,
     begin:attempt=>{verifyAdmission(attempt.before);writeOnce(ROOT+'/legacy-restart-attempt.json',retentionCanonicalText(attempt));},
     restart:before=>{
-      assertOnlineRetentionHeldLocks(lock);const python=captureTrustedPython(),helper=fileURLToPath(new URL('./booking-handoff-pm2-pause.py',import.meta.url));
-      const helperBefore=read(helper,{privateMode:false});verifyTrustedPython(python);
-      const r=spawnSync(python.target.path,['-I','-S','-B',helper],{cwd:'/',input:JSON.stringify({daemon:before.daemonPeer,process:before.processPeer,expected:before.rpcExpected}),
-        encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:262144,windowsHide:true,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
-      verifyTrustedPython(python);equal(read(helper,{privateMode:false}),helperBefore,'helper_changed');
-      need(r.status===0&&!r.signal&&!r.error&&r.stderr==='','restart_outcome_unknown');const ack=JSON.parse(r.stdout);
+      assertOnlineRetentionHeldLocks(lock);const ack=invokeBookingLegacyPause(before);
       writeOnce(ROOT+'/legacy-restart-rpc-ack.json',retentionCanonicalText(ack));return ack;
     },
-    settled:async()=>{
-      let observed;for(let i=0;i<100;i++){
-        assertOnlineRetentionHeldLocks(lock);assertBookingHandoffWindow(window,{nowMs:Date.now()});
-        try{observed=collectBookingLegacyHost();if(observed.legacy.pid!==1590381&&observed.legacy.status==='online'&&observed.legacy.backgroundPaused==='1'){
-          const sockets=parseRetirementSockets(run('ss',['-ltnpH']),run('ss',['-tnpH']));
-          if(sockets.listeners.some(s=>s.port===3000&&s.pid===observed.legacy.pid)){
-            const response=await fetch('http://127.0.0.1:3000/login',{headers:{Host:'www.faolla.com',Connection:'close'},redirect:'manual',signal:AbortSignal.timeout(1000)});
-            await response.body?.cancel();if([200,301,302,303,307,308].includes(response.status))return observed;
-          }
-        }}
-        catch{/* Only fresh reads may be repeated during the single restart. */}
-        await new Promise(r=>setTimeout(r,100));
-      }need(false,'restart_not_settled');
-    },
+    settled:()=>waitBookingLegacyPauseSettled(window,()=>assertOnlineRetentionHeldLocks(lock)),
     complete:transition=>{assertOnlineRetentionHeldLocks(lock);writeOnce(ROOT+'/legacy-runtime-transition.json',retentionCanonicalText(transition));},
   },window);
 }

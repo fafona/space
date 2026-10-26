@@ -80,7 +80,7 @@ test('a caller cannot forge worker or web changes into the execution plan',async
   }
 });
 test('host adapter owns exact identities and preserves original build/runtime without a production CLI bypass',()=>{
-  if(process.platform!=='linux'||process.getuid?.()!==0)assert.throws(()=>verifyBookingAtomicRuntimeCohort({lock:true,toolRevision:'f'.repeat(40)}),/linux_root/);
+  if(process.platform!=='linux'||process.getuid?.()!==0)assert.throws(()=>verifyBookingAtomicRuntimeCohort({lock:true,toolRevision:'f'.repeat(40)}),/parent_locks_required/);
   const source=readFileSync(new URL('./booking-handoff-runtime.mjs',import.meta.url),'utf8');
   for(const contract of ['assertOnlineRetentionHeldLocks(lock)','assertBookingHandoffToolClosure','verifyInactiveBookingSchema',"'/worker-enabled.json'",'retained_os_identity_changed','primary-runtime-restart-attempt.json','atomic-runtime.json','runtime-ready.json',
     'cohort_os_identity_changed','cohort_actual_environment','atomic_saved_runtime_changed','runtime_attempt_changed'])assert.ok(source.includes(contract),contract);

@@ -301,8 +301,8 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
 
 /** Fresh non-mutating runtime attestation for every routing step. A stale
  * runtime-ready receipt alone is never authority to send public traffic. */
-export function verifyBookingAtomicRuntimeCohort({lock,toolRevision}){
-  need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
+export function collectBookingAtomicRuntimeCohort({toolRevision}){
+  need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');
   need(sha.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
   verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
   const ready=JSON.parse(read(ROOT+'/runtime-ready.json'));
@@ -331,4 +331,7 @@ export function verifyBookingAtomicRuntimeCohort({lock,toolRevision}){
   equal(workerSaved,attempt.plan.worker.runtime,'worker_saved_runtime_changed');
   assertBookingAtomicWorkerEnvironment(workerActual);for(const [key,value]of Object.entries(workerSaved))need(workerActual[key]===value,'worker_actual_environment');
   return {active:anchors[CANDIDATE],rollback:anchors[APPLICATION],runtimeByName,processes:rows};
+}
+export function verifyBookingAtomicRuntimeCohort({lock,toolRevision}){
+  assertOnlineRetentionHeldLocks(lock);return collectBookingAtomicRuntimeCohort({toolRevision});
 }
