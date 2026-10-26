@@ -1,3 +1,4 @@
+import {hasBookingReleaseAnchor,assertBookingReleaseScope,BOOKING_RELEASE_LANE} from './booking-publication-policy.mjs';
 import {hasRecordsUiReleaseAnchor,assertRecordsUiReleaseScope,RECORDS_UI_RELEASE_LANE} from './attendance-records-ui-release-policy.mjs';
 import {hasGoogleTransitionReleaseAnchor,assertGoogleTransitionReleaseScope,GOOGLE_TRANSITION_RELEASE_LANE} from './google-oauth-transition-release-policy.mjs';
 import {hasScopeNavigationReleaseAnchor,assertScopeNavigationReleaseScope,SCOPE_NAV_RELEASE_LANE} from './attendance-scope-navigation-release-policy.mjs';
@@ -318,6 +319,7 @@ export const ATTENDANCE_RELEASE_FOCUSED_TESTS=Object.freeze([
   'src/lib/merchantAttendanceIndependentAdminClient.test.ts','src/lib/merchantAttendanceIndependentTerminalClient.test.ts','src/lib/merchantAttendanceCorrectionDelegationClient.test.ts',
 ]);
 export function onlineReleaseLane(files) {
+  if(hasBookingReleaseAnchor(files)){assertBookingReleaseScope(files);return BOOKING_RELEASE_LANE;}
   if(hasRecordsUiReleaseAnchor(files)){assertRecordsUiReleaseScope(files);return RECORDS_UI_RELEASE_LANE;}
   if(hasGoogleTransitionReleaseAnchor(files)){assertGoogleTransitionReleaseScope(files);return GOOGLE_TRANSITION_RELEASE_LANE;}
   if(hasScopeNavigationReleaseAnchor(files)){assertScopeNavigationReleaseScope(files);return SCOPE_NAV_RELEASE_LANE;}
@@ -366,6 +368,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if(lane===BOOKING_RELEASE_LANE)return false;
   if(lane===RECORDS_UI_RELEASE_LANE)return true;
   if(lane===GOOGLE_TRANSITION_RELEASE_LANE)return true;
   if(lane===SCOPE_NAV_RELEASE_LANE)return true;
@@ -389,6 +392,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if(lane===BOOKING_RELEASE_LANE)return;
   if(lane===RECORDS_UI_RELEASE_LANE)throw Error('records_ui_release_database_forbidden');
   if(lane===GOOGLE_TRANSITION_RELEASE_LANE)throw Error('google_transition_release_database_forbidden');
   if(lane===SCOPE_NAV_RELEASE_LANE)throw Error('scope_navigation_release_database_forbidden');
@@ -409,11 +413,13 @@ export function assertOnlineReleaseDatabaseAllowed(lane) {
 }
 export function onlineReleaseMigrationTarget(lane) {
   assertOnlineReleaseDatabaseAllowed(lane);
+  if(lane===BOOKING_RELEASE_LANE)throw Error('booking_database_manager_required');
   if(lane==='attendance')throw Error('attendance_database_manager_required');
   return lane === 'order-attention' ? ORDER_ATTENTION_MIGRATION : '202609230051';
 }
 export function assertPendingOnlineReleaseMigrations(lane, pending) {
   assertOnlineReleaseDatabaseAllowed(lane);
+  if(lane===BOOKING_RELEASE_LANE)throw Error('booking_database_manager_required');
   if(lane==='attendance')throw Error('attendance_database_manager_required');
   if (lane === 'traffic') return assertPendingTrafficMigrations(pending);
   if (!Array.isArray(pending) || pending.length > 1 || pending.some(item =>
