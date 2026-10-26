@@ -54,14 +54,18 @@ export function guardedBookingCloneSql(source,database){
  return rollback?guarded.replace(/commit;\s*$/,'rollback;\n'):guarded;
 }
 export function bookingCompatibilityLegacyProbeSql(){return `begin;set local statement_timeout='8s';
+set local role service_role;
 do $legacy_probe$ declare v jsonb;begin
  select blocks into strict v from public.pages where slug='__merchant_booking_records__:v1';
  update public.pages set blocks=jsonb_set(blocks,'{compatibilityProbe}','true'::jsonb) where slug='__merchant_booking_records__:v1';
  if not exists(select 1 from public.pages where slug='__merchant_booking_records__:v1' and blocks->'compatibilityProbe'='true'::jsonb) then raise exception 'booking_legacy_write_failed';end if;
  update public.pages set blocks=v where slug='__merchant_booking_records__:v1';
+end;$legacy_probe$;
+reset role;
+do $inactive_probe$ begin
  if exists(select 1 from public.faolla_booking_atomic_control where active) then raise exception 'booking_unexpected_activation';end if;
  if exists(select 1 from public.faolla_booking_atomic_commands) or exists(select 1 from public.faolla_booking_mail_jobs) then raise exception 'booking_unexpected_job';end if;
-end;$legacy_probe$;
+end;$inactive_probe$;
 rollback;`;}
 export async function runBookingCompatibility(input){
  const database=bookingCompatibilityInvocation(input),{target,baseline,rootDir,operation}=input;

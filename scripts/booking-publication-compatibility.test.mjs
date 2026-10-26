@@ -14,6 +14,7 @@ test('outside metadata comparison can remove new objects only in a guarded rolle
  assert.match(sql,/drop table public.faolla_booking_mail_jobs,public.faolla_booking_atomic_commands,public.faolla_booking_atomic_control/);
  for(const value of ['postgres','faolla_booking_compat_aaaaaaaaaaaa;drop database postgres','other'])assert.throws(()=>bookingCompatibilityRollbackMetadataSql(value));
  assert.match(bookingCompatibilityLegacyProbeSql(),/rollback;/);
+ assert.match(bookingCompatibilityLegacyProbeSql(),/set local role service_role;[\s\S]+update public.pages[\s\S]+reset role;/);
 });
 test('production commands are schema-only or read-only and success proof is emitted only after real checks',()=>{
  const source=readFileSync(new URL('./booking-publication-compatibility.mjs',import.meta.url),'utf8');
