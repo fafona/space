@@ -7,6 +7,14 @@ import {GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS} from './google-log
 import {LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS} from './merchant-login-release-policy.mjs';
 import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment} from './merchant-login-unbuilt-repair-policy.mjs';
 import test from 'node:test';
+test('the booking compatibility successor is an exact opt-in action; original database path stays independent',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.match(code,/action==='database-booking-compatibility-adapter'&&\(process\.argv\.slice\(2\)\.length!==2\|\|target!==BOOKING_HANDOFF_CANDIDATE\)/);
+ assert.match(code,/action==='database-booking-compatibility-adapter'&&s\.lane!==BOOKING_RELEASE_LANE/);
+ assert.match(code,/const compatibility=action==='database-booking-compatibility-adapter'\?runBookingCompatibilityAdapter:runBookingCompatibility/);
+ const acceptance=code.indexOf('await compatibility({target:s.target'),backup=code.indexOf("console.log('online_booking_encrypted_backup_started')",acceptance),install=code.indexOf('await installInactiveBookingSchema(',backup);
+ assert.ok(acceptance>0&&backup>acceptance&&install>backup);
+});
 import assert from 'node:assert/strict';
 import {execFileSync,spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -59,7 +67,7 @@ test('login-only test environment repair retains all build, runtime and publicat
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  assert.ok(code.includes('env:(lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env'));
  const start=code.indexOf("}else if(action==='resume-login-stage'){");
- const branch=code.slice(start,code.indexOf("}else if(action==='database'){",start));
+ const branch=code.slice(start,code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'){",start));
  for(const gate of ['resumeLoginUnbuiltCandidate','verifyBase(s)','configUnchanged(s)','verifyLoginRelease(s)','bookingResumeDependencies','verifyLoginRelease(s,true)','check-admin-bundle-budget.mjs','candidateEnvironment(s)','smoke(s)','verifyCandidate(s)','onlineReleaseStageStatus(s.lane)'])assert.ok(branch.includes(gate),gate);
  assert.doesNotMatch(branch,/database|migration|rmSync|unlinkSync|reset|NODE_ENV.*production/);
  assert.equal(code.split("if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});").length-1,2);
@@ -303,17 +311,17 @@ test('stage and activation readiness remain lane-specific and fail closed for un
 });
 test('actual database branch refuses every no-database lane before backup, migrations or candidate operations',async()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const start=code.indexOf("}else if(action==='database'){");
+ const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'){");
  const end=code.indexOf("}else if(action==='activate'){",start);
  assert.ok(start>0&&end>start);
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
- const branch=code.slice(start+"}else if(action==='database'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
+ const branch=code.slice(start+"}else if(action==='database'||action==='database-booking-compatibility-adapter'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
  for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden'],['customer-code-performance','customer_code_performance_database_forbidden'],['contact-wechat-code-only','contact_wechat_code_only_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
-   s:{lane,status:'staged'},assertOnlineReleaseDatabaseAllowed,controllerModuleUrl:import.meta.url,
+   action:'database',s:{lane,status:'staged'},assertOnlineReleaseDatabaseAllowed,controllerModuleUrl:import.meta.url,
    configUnchanged:denied('config'),verifyCandidate:denied('candidate'),verifyOrderAttentionSource:denied('source'),
    applyProductionDatabaseMigrations:denied('migration'),createProductionDatabaseBackup:denied('backup'),
    verifyProductionDatabaseBackup:denied('verify_backup'),run:denied('command'),atomic:denied('state'),
@@ -1745,14 +1753,14 @@ test('pilot operational verifier executes the pinned candidate with invocation-o
 });
 test('actual pilot database branch backs up before exactly 052 and requires enable proof before candidate restart',async()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const start=code.indexOf("}else if(action==='database'){")+"}else if(action==='database'){".length;
+ const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'){")+"}else if(action==='database'||action==='database-booking-compatibility-adapter'){".length;
  const end=code.indexOf("}else if(action==='activate'){",start);
  const branch=code.slice(start,end).replaceAll('import.meta.url','controllerModuleUrl');
  for(const proofValid of [true,false]){
   const calls=[];let migrated=false;
   const s={lane:'order-attention',status:'staged',directory:'/candidate',oldDirectory:'/old',name:'candidate'};
   const task=runInNewContext(`(async()=>{${branch}})()`,{
-   s,operation:'/operation',controllerModuleUrl:import.meta.url,URL,
+   action:'database',s,operation:'/operation',controllerModuleUrl:import.meta.url,URL,
    assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,
    configUnchanged:()=>calls.push('config'),verifyCandidate:()=>calls.push('candidate'),verifyBase:async()=>calls.push('baseline'),
    verifyOrderAttentionSource:()=>calls.push('source'),

@@ -42,6 +42,11 @@ export const BOOKING_HANDOFF_PM2_PROVENANCE=Object.freeze({nodeVersion:'v20.20.1
   'lib/ProcessContainerFork.js':'1fdda3aa24eec19dc74e280d4c1a0d657945fea1de2fc47427a55f1b3f18ef8d',
  })});
 export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
+ 'scripts/booking-compatibility-extension.mjs','scripts/booking-compatibility-extension.test.mjs',
+ 'scripts/booking-compatibility-tool-policy.mjs','scripts/booking-compatibility-tool-policy.test.mjs',
+ 'scripts/booking-compatibility-tool.mjs','scripts/booking-compatibility-tool.test.mjs',
+ 'scripts/booking-publication-compatibility.mjs','scripts/booking-publication-compatibility.test.mjs',
+ 'scripts/booking-publication-policy.test.mjs',
  'scripts/booking-release-probe.mjs','scripts/booking-release-probe.test.mjs',
  'scripts/booking-built-smoke-repair-policy.mjs','scripts/booking-built-smoke-repair-policy.test.mjs',
  'scripts/booking-built-smoke-repair.mjs','scripts/booking-built-smoke-repair.test.mjs',

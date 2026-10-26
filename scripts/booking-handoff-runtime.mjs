@@ -10,6 +10,8 @@ import {BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_CANDIDATE as 
   BOOKING_HANDOFF_BASELINE as BASELINE,assertBookingHandoffToolClosure,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
 import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
 import {assertBookingBuiltSmokeRuntimeContinuation} from './booking-built-smoke-repair.mjs';
+import {assertBookingCompatibilityRuntimeContinuation} from './booking-compatibility-tool.mjs';
+import {BOOKING_COMPATIBILITY_PRIOR_TOOL} from './booking-compatibility-tool-policy.mjs';
 import {bookingProtectedEnvironment,assertBookingCompatibilityEnvironment} from './booking-publication-policy.mjs';
 import {verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
@@ -153,7 +155,8 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
   const stateText=read(RELEASE+'/'+CANDIDATE+'/state.json').toString(),primary=JSON.parse(stateText);
   const rollbackText=read(RELEASE+'/'+APPLICATION+'/state.json').toString(),rollback=JSON.parse(rollbackText);
   const buildToolRevision=primary.bookingReviewedStage?.toolRevision===toolRevision?toolRevision:
-    assertBookingBuiltSmokeRuntimeContinuation({toolRevision,primary,rollback});
+    toolRevision===BOOKING_COMPATIBILITY_PRIOR_TOOL?assertBookingBuiltSmokeRuntimeContinuation({toolRevision,primary,rollback}):
+    assertBookingCompatibilityRuntimeContinuation({toolRevision,primary,rollback});
   need(primary.status==='database-ready'&&primary.baseline===BASELINE&&primary.lane==='booking-runtime-compatibility-only'&&
     primary.bookingReviewedStage?.toolRevision===buildToolRevision&&
     (buildToolRevision!==toolRevision||primary.bookingReviewedStage?.toolClosureSha256===toolClosureSha256)&&

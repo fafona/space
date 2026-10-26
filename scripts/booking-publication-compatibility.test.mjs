@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {bookingCompatibilityInvocation,bookingCompatibilityRollbackMetadataSql,bookingCompatibilityLegacyProbeSql} from './booking-publication-compatibility.mjs';
+import {bookingCompatibilityInvocation,bookingCompatibilityRollbackMetadataSql,bookingCompatibilityLegacyProbeSql,runBookingCompatibilityAdapter} from './booking-publication-compatibility.mjs';
 import {BOOKING_RELEASE_BASELINE as baseline} from './booking-publication-policy.mjs';
 const target='a'.repeat(40),rootDir='/www/wwwroot/merchant-space.web-releases/aaaaaaaaaaaa-online',operation='/var/lib/faolla-online-release/'+target;
 test('real metadata compatibility is pinned to exact candidate and unique owned isolated database',()=>{
@@ -22,4 +22,12 @@ test('production commands are schema-only or read-only and success proof is emit
  assert.ok(source.indexOf("'clone_metadata_mismatch'")<source.indexOf("'/booking-compatibility.json'"));
  assert.ok(source.indexOf("'rpc_acls'")<source.indexOf("'/booking-compatibility.json'"));
  assert.doesNotMatch(source,/testOnly|input\.checks|input\.apply|drop database/i);
+});
+test('booking adapter preserves the failed clone, exclusive attempt files and every genuine compatibility acceptance gate',async()=>{
+ const source=readFileSync(new URL('./booking-publication-compatibility.mjs',import.meta.url),'utf8');
+ for(const token of ["prefix=adapter?'booking-compatibility-adapter':'booking-compatibility'",'failed_clone_not_empty','failed_clone_changed',
+  'bookingCompatibilityExtensionSupplement(metadata.sql,extensions,schemaAcl)','assertBookingCompatibilityContinuation({toolRevision})',
+  'pilotCatalogUnchanged:true','productionMetadataSha256After:formalContract','outside_metadata_changed','rpc_acls','clone_not_empty'])assert.ok(source.includes(token),token);
+ for(const patch of [{target:'b'.repeat(40)},{runCommand:()=>{}},{checks:{fake:true}}])await assert.rejects(runBookingCompatibilityAdapter({target,baseline,rootDir,operation,...patch}));
+ assert.doesNotMatch(source,/drop database|alter role|create role|input\.adapter/i);
 });
