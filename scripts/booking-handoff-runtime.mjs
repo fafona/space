@@ -298,3 +298,37 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
     },
   },plan);
 }
+
+/** Fresh non-mutating runtime attestation for every routing step. A stale
+ * runtime-ready receipt alone is never authority to send public traffic. */
+export function verifyBookingAtomicRuntimeCohort({lock,toolRevision}){
+  need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
+  need(sha.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
+  verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
+  const ready=JSON.parse(read(ROOT+'/runtime-ready.json'));
+  need(ready.kind==='booking-atomic-private-runtime-ready','runtime_not_ready');
+  const attempt=JSON.parse(read(ROOT+'/runtime-attempt.json'));
+  need(attempt.plan?.toolRevision===toolRevision&&hash(retentionCanonicalText(attempt.plan))===ready.planSha256,'runtime_attempt_changed');
+  assertExistingPm2Directory();const daemonPid=Number(read('/root/.pm2/pm2.pid',{privateMode:false}).toString().trim()),daemon=fact(daemonPid);
+  need(fs.readFileSync('/proc/'+daemonPid+'/cmdline','utf8').replace(/\0+$/,'')==='PM2 v6.0.14: God Daemon (/root/.pm2)','daemon');
+  const binary=fs.realpathSync(run('which',['pm2']).trim());assertOnlineToolOwnedPath(binary,'file');
+  need(JSON.parse(read(path.dirname(path.dirname(binary))+'/package.json',{privateMode:false})).version==='6.0.14','pm2_version');
+  const raw=JSON.parse(run(binary,['jlist'])),rows=raw.map(normalizeRetirementProcess).sort((a,b)=>a.pmId-b.pmId);
+  equal(fact(daemonPid),daemon,'daemon_changed');need(rows.length===ready.after.processes.length,'cohort_process_count');
+  for(const p of ready.after.processes.filter(p=>p.name!=='merchant-space'))equal(rows.find(v=>v.name===p.name),p,'cohort_process_changed');
+  for(const p of ready.after.identityProofs.filter(p=>p.name!=='merchant-space'))equal({name:p.name,...fact(p.pid)},p,'cohort_os_identity_changed');
+  const anchors={},runtimeByName={};
+  for(const target of [CANDIDATE,APPLICATION]){
+    const state=JSON.parse(read(RELEASE+'/'+target+'/state.json'));
+    anchors[target]={...location(state),process:rows.find(p=>p.name===state.name)};
+    const saved=JSON.parse(read(RELEASE+'/'+target+'/atomic-runtime.json')),actual=runtime(anchors[target].process.pid);
+    equal(saved,attempt.plan.runtimeByName[state.name],'atomic_saved_runtime_changed');
+    for(const [key,value]of Object.entries(saved))need(actual[key]===value,'cohort_actual_environment');
+    runtimeByName[state.name]=actual;
+  }
+  assertBookingAtomicCohort({active:anchors[CANDIDATE],rollback:anchors[APPLICATION],runtimeByName});
+  const worker=rows.find(p=>p.name===workerName),workerActual=runtime(worker.pid),workerSaved=JSON.parse(read(ROOT+'/worker-runtime.json'));
+  equal(workerSaved,attempt.plan.worker.runtime,'worker_saved_runtime_changed');
+  assertBookingAtomicWorkerEnvironment(workerActual);for(const [key,value]of Object.entries(workerSaved))need(workerActual[key]===value,'worker_actual_environment');
+  return {active:anchors[CANDIDATE],rollback:anchors[APPLICATION],runtimeByName,processes:rows};
+}

@@ -6,7 +6,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A} from './booking-handoff-policy.mjs';
-import {bookingAtomicRuntimePlan,bookingAtomicRuntimeCommands,executeBookingAtomicRuntime,BOOKING_ATOMIC_NEXT_ENV_PROBE} from './booking-handoff-runtime.mjs';
+import {bookingAtomicRuntimePlan,bookingAtomicRuntimeCommands,executeBookingAtomicRuntime,verifyBookingAtomicRuntimeCohort,BOOKING_ATOMIC_NEXT_ENV_PROBE} from './booking-handoff-runtime.mjs';
 
 const anchor=(target,port)=>({target,name:'merchant-space-online-'+target.slice(0,12),directory:'/www/wwwroot/merchant-space.web-releases/'+target.slice(0,12)+'-online',port});
 const primary=anchor(C,3106),rollback=anchor(A,3110);
@@ -80,8 +80,10 @@ test('a caller cannot forge worker or web changes into the execution plan',async
   }
 });
 test('host adapter owns exact identities and preserves original build/runtime without a production CLI bypass',()=>{
+  if(process.platform!=='linux'||process.getuid?.()!==0)assert.throws(()=>verifyBookingAtomicRuntimeCohort({lock:true,toolRevision:'f'.repeat(40)}),/linux_root/);
   const source=readFileSync(new URL('./booking-handoff-runtime.mjs',import.meta.url),'utf8');
-  for(const contract of ['assertOnlineRetentionHeldLocks(lock)','assertBookingHandoffToolClosure','verifyInactiveBookingSchema',"'/worker-enabled.json'",'retained_os_identity_changed','primary-runtime-restart-attempt.json','atomic-runtime.json','runtime-ready.json'])assert.ok(source.includes(contract),contract);
+  for(const contract of ['assertOnlineRetentionHeldLocks(lock)','assertBookingHandoffToolClosure','verifyInactiveBookingSchema',"'/worker-enabled.json'",'retained_os_identity_changed','primary-runtime-restart-attempt.json','atomic-runtime.json','runtime-ready.json',
+    'cohort_os_identity_changed','cohort_actual_environment','atomic_saved_runtime_changed','runtime_attempt_changed'])assert.ok(source.includes(contract),contract);
   assert.doesNotMatch(source.replace(BOOKING_ATOMIC_NEXT_ENV_PROBE,''),/process\.argv|--force|--skip|\['stop'|\['delete'|pm\(\['restart','merchant-space'|writeFileSync\([^\n]*\.env\.local/);
 });
 test('actual Next loader respects atomic process env over legacy file values and rejects file-only email enablement',()=>{
