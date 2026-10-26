@@ -7,7 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_CANDIDATE as CANDIDATE,
-  BOOKING_HANDOFF_BASELINE as BASELINE,assertBookingHandoffToolClosure} from './booking-handoff-policy.mjs';
+  BOOKING_HANDOFF_BASELINE as BASELINE,BOOKING_HANDOFF_ATTENDANCE_FIX_PINS,assertBookingHandoffCandidateClosure,assertBookingHandoffToolClosure} from './booking-handoff-policy.mjs';
 import {BOOKING_SCOPE,BOOKING_TOOL_FILES,bookingProtectedEnvironment,bookingCandidateOverrides,
   assertBookingCompatibilityEnvironment} from './booking-publication-policy.mjs';
 import {loginCandidateEnvironmentText} from './merchant-login-release-policy.mjs';
@@ -115,7 +115,10 @@ export async function prepareBookingHandoffRollback({lock,toolRevision,primaryPo
   const toolClosureSha256=assertBookingHandoffToolClosure({baseline:CANDIDATE,files:changed,
     readBlob:file=>runOnlineToolGit(APP,['show',toolRevision+':'+file])});
   const appDiff=runOnlineToolGit(APP,['diff','--name-only',APPLICATION,CANDIDATE]).toString().trim().split('\n');
-  equal(appDiff.sort(),[...BOOKING_TOOL_FILES].sort(),'application_delta');
+  equal(appDiff.sort(),[...BOOKING_TOOL_FILES,...Object.keys(BOOKING_HANDOFF_ATTENDANCE_FIX_PINS)].sort(),'application_delta');
+  const candidateDiff=runOnlineToolGit(APP,['diff','--name-only',BASELINE,CANDIDATE]).toString().trim().split('\n');
+  assertBookingHandoffCandidateClosure({target:CANDIDATE,baseline:BASELINE,files:candidateDiff,
+    readBlob:file=>runOnlineToolGit(APP,['show',CANDIDATE+':'+file])});
   for(const [file,digest]of Object.entries(BOOKING_SCOPE.pins))need(hash(runOnlineToolGit(APP,['show',APPLICATION+':'+file]))===digest,'application_pin');
   const applicationInputsSha256=hash(runOnlineToolGit(APP,['ls-tree','-r','-z',APPLICATION]));
   assertOnlineToolOwnedPath('/var/lib/faolla-online-release');

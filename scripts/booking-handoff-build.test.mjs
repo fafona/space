@@ -54,6 +54,8 @@ test('real host adapter requires both held locks and reviewed exact source; it h
   const source=readFileSync(new URL('./booking-handoff-build.mjs',import.meta.url),'utf8');
   assert.match(source,/assertOnlineRetentionHeldLocks\(lock\)/);assert.match(source,/verifyOnlineReleaseTool\(createOnlineReleaseToolPlan\(toolRevision\)\)/);
   assert.match(source,/assertOnlineToolNoPending\(\)/);assert.match(source,/assertBookingHandoffToolClosure\(/);
+  assert.match(source,/assertBookingHandoffCandidateClosure\(/);
+  assert.match(source,/\.\.\.BOOKING_TOOL_FILES,\.\.\.Object.keys\(BOOKING_HANDOFF_ATTENDANCE_FIX_PINS\)/);
   assert.match(source,/buildAttendanceOnlineCandidate\(/);assert.match(source,/assertAttendanceBuildAdmission\(/);
   assert.doesNotMatch(source,/run\('pm2',\['(?:start|stop|restart|reload|delete|save)'|run\('(?:psql|docker|nginx)'|applyProduction|installInactive|RESEND_API_KEY\s*=/);
 });

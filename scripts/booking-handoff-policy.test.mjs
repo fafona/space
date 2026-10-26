@@ -25,6 +25,26 @@ test('staging the original reviewed candidate requires exact newer current-main 
  assert.doesNotThrow(()=>p.assertBookingReviewedStageIdentity(v));
  for(const [key,value]of Object.entries({requestedAction:'stage',target:p.BOOKING_HANDOFF_BASELINE,baseline:'a'.repeat(40),toolRevision:p.BOOKING_HANDOFF_CANDIDATE,currentMain:'a'.repeat(40),toolHead:'b'.repeat(40),toolDirectory:'/tmp/forged',toolClean:false,ancestorVerified:false,toolClosureSha256:'bad'}))assert.throws(()=>p.assertBookingReviewedStageIdentity({...v,[key]:value}),undefined,key);
 });
+
+test('the replacement candidate is pinned to the separately approved two-file deadline fix, never arbitrary application content',()=>{
+ assert.equal(p.BOOKING_HANDOFF_CANDIDATE,'f274ad615550c83717aa7af2ad32339608e6f8aa');
+ assert.equal(p.BOOKING_HANDOFF_ORIGINAL_CANDIDATE,'5110bf673d69b117fd0d0d19c5d7d6a9121b704c');
+ assert.equal(Object.keys(p.BOOKING_HANDOFF_ATTENDANCE_FIX_PINS).length,2);
+ const files=[...Object.keys(p.BOOKING_HANDOFF_ATTENDANCE_FIX_PINS),...Array.from({length:70},(_,i)=>'synthetic-'+i)];
+ const value={target:p.BOOKING_HANDOFF_CANDIDATE,baseline:p.BOOKING_HANDOFF_BASELINE,files,
+  readBlob:file=>readFileSync(new URL('../'+file,import.meta.url))};
+ for(const change of [{target:p.BOOKING_HANDOFF_ORIGINAL_CANDIDATE},{baseline:p.BOOKING_HANDOFF_CANDIDATE},
+  {files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(0,-1),files[0]]}])
+  assert.throws(()=>p.assertBookingHandoffCandidateClosure({...value,...change}),/candidate_scope/);
+ for(const file of Object.keys(p.BOOKING_HANDOFF_ATTENDANCE_FIX_PINS))
+  assert.throws(()=>p.assertBookingHandoffCandidateClosure({...value,readBlob:path=>path===file?'changed':value.readBlob(path)}),/candidate_attendance_fix/);
+ assert.throws(()=>p.assertBookingHandoffCandidateClosure({...value,readBlob:file=>file.startsWith('synthetic-')?'unreviewed source':value.readBlob(file)}),/candidate_source/);
+ // Successful digest comparison is a pure byte binding; the host adapter must
+ // read every Git blob itself. No caller-provided success flag is accepted.
+ const source=readFileSync(new URL('./booking-handoff-policy.mjs',import.meta.url),'utf8');
+ assert.match(source,/digest===BOOKING_HANDOFF_CANDIDATE_CLOSURE_SHA256/);
+ assert.equal(p.BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS.includes('src/lib/merchantAttendanceDelegatedConfiguration.server.test.ts'),true);
+});
 test('ten minute window is explicit, canonical, exclusive at deadline and never extensible',()=>{
  assert.doesNotThrow(()=>p.assertBookingHandoffWindow(window,{nowMs:Date.parse(window.startedAt)}));
  for(const patch of [{id:'x'},{startedAt:'2026-10-26T10:00:00Z'},{deadlineAt:'2026-10-26T10:10:00.001Z'},{deadlineAt:window.startedAt},{unknown:true}])assert.throws(()=>p.assertBookingHandoffWindow({...window,...patch}));

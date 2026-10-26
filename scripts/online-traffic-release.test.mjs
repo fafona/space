@@ -2558,3 +2558,24 @@ test('the reviewed booking stage executes exact tool/head/ancestry/source guards
  assert.ok(stage.indexOf('verifyBookingReviewedStage()')<stage.indexOf('privateDirectory(operation)'));
  assert.ok(stage.includes("if(!bookingReviewedStage&&run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main')"));
 });
+
+test('only the reviewed booking stage uses the pinned deadline-fix candidate; normal lane classification stays unchanged',()=>{
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('  const lane=bookingReviewedStage?'),end=source.indexOf('\n',start);
+ assert.ok(start>0&&end>start);
+ const line=source.slice(start,end),events=[];
+ for(const reviewed of [null,{toolRevision:'f'.repeat(40)}]){
+  events.length=0;
+  const lane=runInNewContext(line+'\nlane',{
+   bookingReviewedStage:reviewed,target:bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE,baseline:bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE,
+   BOOKING_RELEASE_LANE:'booking-runtime-compatibility-only',app:'/app',
+   bookingPublicationClosure:(target,baseline)=>{assert.equal(target,bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE);assert.equal(baseline,bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE);events.push('pinned-closure');},
+   onlinePublicationLane:files=>{assert.deepEqual(Array.from(files),['original-file']);events.push('original-lane');return 'original';},
+   run:()=> 'original-file',
+  });
+  assert.equal(lane,reviewed?'booking-runtime-compatibility-only':'original');
+  assert.deepEqual(events,reviewed?['pinned-closure']:['original-lane']);
+ }
+ assert.match(source,/releaseTarget===BOOKING_HANDOFF_CANDIDATE\)return assertBookingHandoffCandidateClosure/);
+ assert.match(source,/bookingReviewedStage\?BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS:\[\]/);
+});

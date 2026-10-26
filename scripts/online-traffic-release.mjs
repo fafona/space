@@ -1,6 +1,6 @@
 import {BOOKING_RELEASE_LANE,BOOKING_RELEASE_BASELINE,BOOKING_FOCUSED_TESTS,assertBookingReleaseClosure,bookingProtectedEnvironment,assertBookingCompatibilityEnvironment,bookingCandidateOverrides,buildBookingReleaseCandidate} from './booking-publication-policy.mjs';
 import {installInactiveBookingSchema,verifyInactiveBookingSchema} from './booking-publication-database.mjs';
-import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,assertBookingHandoffToolClosure,assertBookingReviewedStageIdentity} from './booking-handoff-policy.mjs';
+import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS,assertBookingHandoffCandidateClosure,assertBookingHandoffToolClosure,assertBookingReviewedStageIdentity} from './booking-handoff-policy.mjs';
 import {prepareBookingHandoffRollback} from './booking-handoff-build.mjs';
 import {RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,assertRecordsUiReleaseClosure,buildRecordsUiReleaseCandidate} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint,readGoogleTransitionCallbackHtml} from './google-oauth-transition-release-policy.mjs';
@@ -440,6 +440,7 @@ function restoreConfigs(s){
 function candidateEnvironment(s){void s;return JSON.parse(safeFile(`${operation}/runtime.json`));}
 function bookingPublicationClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
+ if(releaseTarget===BOOKING_HANDOFF_CANDIDATE)return assertBookingHandoffCandidateClosure({target:releaseTarget,baseline:releaseBaseline,files,readBlob:file=>run('git',['show',`${releaseTarget}:${file}`],{cwd:app})});
  return assertBookingReleaseClosure({baseline:releaseBaseline,files,readBlob:file=>run('git',['show',`${releaseTarget}:${file}`],{cwd:app})});
 }
 function verifyBookingReviewedStage(){
@@ -1006,7 +1007,7 @@ try{
   const bookingReviewedStage=requestedAction==='stage-booking-reviewed-candidate'?verifyBookingReviewedStage():null;
   if(!bookingReviewedStage&&run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
-  const lane=onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
+  const lane=bookingReviewedStage?(bookingPublicationClosure(target,baseline),BOOKING_RELEASE_LANE):onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   const bookingClosureSha256=lane===BOOKING_RELEASE_LANE?bookingPublicationClosure(target,baseline):null;
   if(lane==='attendance'&&baseline!==ATTENDANCE_RELEASE_SCOPE.baseline)fail('attendance_live_baseline_invalid');
   const contactWechatClosureSha256=lane==='contact-wechat-code-only'?contactWechatClosure(target,baseline):null;
@@ -1224,7 +1225,7 @@ try{
   console.log('online_focused_tests');
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);
-  if(lane===BOOKING_RELEASE_LANE)run('node',['--import','tsx','--test','--test-concurrency=1',...BOOKING_FOCUSED_TESTS,'scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:loginUnitTestEnvironment(),timeout:180000,stdio:'inherit'});
+  if(lane===BOOKING_RELEASE_LANE)run('node',['--import','tsx','--test','--test-concurrency=1',...BOOKING_FOCUSED_TESTS,...(bookingReviewedStage?BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS:[]),'scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:loginUnitTestEnvironment(),timeout:180000,stdio:'inherit'});
   else {
   const tests=lane==='attendance'
    ? ATTENDANCE_RELEASE_FOCUSED_TESTS

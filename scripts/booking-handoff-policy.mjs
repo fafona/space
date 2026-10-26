@@ -6,8 +6,21 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 
 export const BOOKING_HANDOFF_APPLICATION='6c5d5df31d06b43929e5ba5e6f3978dd51f1c6b0';
-export const BOOKING_HANDOFF_CANDIDATE='5110bf673d69b117fd0d0d19c5d7d6a9121b704c';
+export const BOOKING_HANDOFF_CANDIDATE='f274ad615550c83717aa7af2ad32339608e6f8aa';
 export const BOOKING_HANDOFF_BASELINE='52f602c0734284d81a19f4cdf9cdbf3766aa1834';
+// Separately approved follow-up: the original immutable booking candidate plus
+// ONLY the delegated-attendance cancellation latch and its regression tests.
+// Existing publication lanes and their original application manifest stay fixed.
+export const BOOKING_HANDOFF_ORIGINAL_CANDIDATE='5110bf673d69b117fd0d0d19c5d7d6a9121b704c';
+export const BOOKING_HANDOFF_CANDIDATE_CLOSURE_SHA256='47fac3c0f35ae0bdfa658a0003e7cc0d3fd518a37ce93a83d14d41cff15b2921';
+export const BOOKING_HANDOFF_ATTENDANCE_FIX_PINS=Object.freeze({
+ 'src/lib/merchantAttendanceDelegatedConfiguration.server.test.ts':'d44d5a4d899c186519a7f78d6dac367b3ee7140156e5b406ff7acf17fa7af694',
+ 'src/lib/merchantAttendanceDelegatedConfiguration.server.ts':'1e47548198153c1a21ecc1b65005247fa51699f60fe7993c7797fc97ff101022',
+});
+export const BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS=Object.freeze([
+ 'src/lib/merchantAttendanceDelegatedConfiguration.server.test.ts',
+ 'src/lib/merchantAttendanceDelegatedConfiguration.test.ts',
+]);
 export const BOOKING_HANDOFF_LEGACY_DIRECTORY='/www/wwwroot/merchant-space.releases/e3e685852a63-20260922183053';
 export const BOOKING_HANDOFF_MAX_MS=600000;
 // Read-only provenance collected from the actual host on 2026-10-26. PM2's
@@ -50,6 +63,15 @@ export function assertBookingHandoffToolClosure({baseline,files,readBlob}){
  need(baseline===BOOKING_HANDOFF_CANDIDATE&&Array.isArray(files)&&new Set(files).size===files.length&&
   files.length===BOOKING_HANDOFF_TOOL_FILES.length&&BOOKING_HANDOFF_TOOL_FILES.every(file=>files.includes(file)),'tool_scope');
  return hash(JSON.stringify([...files].sort().map(file=>[file,hash(readBlob(file))])));
+}
+export function assertBookingHandoffCandidateClosure({target,baseline,files,readBlob}){
+ need(target===BOOKING_HANDOFF_CANDIDATE&&baseline===BOOKING_HANDOFF_BASELINE&&Array.isArray(files)&&
+  files.length===72&&new Set(files).size===files.length,'candidate_scope');
+ for(const [file,digest]of Object.entries(BOOKING_HANDOFF_ATTENDANCE_FIX_PINS))
+  need(files.includes(file)&&hash(readBlob(file))===digest,'candidate_attendance_fix');
+ const digest=hash(JSON.stringify([...files].sort().map(file=>[file,hash(readBlob(file))])));
+ need(digest===BOOKING_HANDOFF_CANDIDATE_CLOSURE_SHA256,'candidate_source');
+ return digest;
 }
 export function assertBookingReviewedStageIdentity(value){
  const {requestedAction,target,baseline,toolRevision,currentMain,toolHead,toolDirectory,toolClean,ancestorVerified}=value;
