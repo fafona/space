@@ -20,6 +20,7 @@ import {
   type MerchantBookingOptionColorStyle,
   type MerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbench";
+import { normalizeMerchantBookingReplyTo } from "@/lib/merchantBookingEmailAddress";
 import { normalizeMerchantBookingTimeRangeOptions } from "@/lib/merchantBookings";
 import type { MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 import type {
@@ -71,6 +72,7 @@ type SaveWorkbenchOptions = {
 };
 type MetricTone = "amber" | "sky" | "emerald" | "rose" | "cyan";
 type WorkbenchDashboard = {
+  emailDelivery?: { configured: boolean; queuedMode: boolean; workerEnabled: boolean };
   pushDeviceCount?: number;
   automation?: {
     started: boolean;
@@ -207,6 +209,7 @@ function buildEmailDeliveryStats(records: MerchantBookingRecord[]) {
         if (entry.kind === "customer_email") {
           if (entry.delivery === "sent") summary.customerEmailsSent += 1;
           if (entry.delivery === "failed") summary.customerEmailsFailed += 1;
+          if (entry.delivery === "unconfirmed") summary.customerEmailsUnconfirmed += 1;
         }
         if (entry.kind === "merchant_reminder") {
           if (entry.delivery === "sent") summary.merchantPushSent += 1;
@@ -218,6 +221,7 @@ function buildEmailDeliveryStats(records: MerchantBookingRecord[]) {
     {
       customerEmailsSent: 0,
       customerEmailsFailed: 0,
+      customerEmailsUnconfirmed: 0,
       merchantPushSent: 0,
       merchantPushFailed: 0,
     },
@@ -629,6 +633,7 @@ export default function BookingWorkbenchDialog({
               settings?: MerchantBookingWorkbenchSettings & {
                 calendarSyncEnabled?: boolean;
               };
+              message?: string;
               dashboard?: WorkbenchDashboard;
               error?: string;
             }
@@ -750,15 +755,15 @@ export default function BookingWorkbenchDialog({
         value: formatAutomationTimestamp(dashboard?.automation?.lastCompletedAt ?? "", locale),
       },
       {
-        label: locale.startsWith("es") ? "Correos 30d" : "30天邮件",
-        value: `${deliveryStats.customerEmailsSent}/${deliveryStats.customerEmailsFailed}`,
+        label: locale.startsWith("es") ? "Correos 30d: enviados / fallidos / sin confirmar" : "30天邮件：已发 / 失败 / 待确认",
+        value: `${deliveryStats.customerEmailsSent}/${deliveryStats.customerEmailsFailed}/${deliveryStats.customerEmailsUnconfirmed}`,
       },
       {
         label: locale.startsWith("es") ? "Push 30d" : "30天推送",
         value: `${deliveryStats.merchantPushSent}/${deliveryStats.merchantPushFailed}`,
       },
     ],
-    [dashboard, deliveryStats.customerEmailsFailed, deliveryStats.customerEmailsSent, deliveryStats.merchantPushFailed, deliveryStats.merchantPushSent, locale],
+    [dashboard, deliveryStats.customerEmailsFailed, deliveryStats.customerEmailsSent, deliveryStats.customerEmailsUnconfirmed, deliveryStats.merchantPushFailed, deliveryStats.merchantPushSent, locale],
   );
   const autoMetrics = useMemo(
     () => [
@@ -1028,13 +1033,14 @@ export default function BookingWorkbenchDialog({
         const json = (await response.json().catch(() => null)) as
           | {
               ok?: boolean;
+              message?: string;
               settings?: MerchantBookingWorkbenchSettings & {
                 calendarSyncEnabled?: boolean;
               };
             }
           | null;
         if (!response.ok || !json?.ok || !json.settings) {
-          throw new Error("工作台设置保存失败");
+          throw new Error(json?.message || "工作台设置保存失败");
         }
         if (securityGenerationRef.current !== generation) return null;
         const normalized = normalizeMerchantBookingWorkbenchSettings(
@@ -1500,6 +1506,8 @@ export default function BookingWorkbenchDialog({
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold">{locale.startsWith("es") ? "Estado automático" : "自动化状态"}</div>
+                      {dashboard?.emailDelivery && !dashboard.emailDelivery.configured ? <p role="status" className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{locale.startsWith("es") ? "El correo central no está configurado. Active el proveedor y verifique el dominio remitente; activar este interruptor no garantiza el envío." : "平台发信服务尚未配置。需要配置邮件服务并验证发件域名；仅开启商户开关不会实际发送邮件。"}</p> : null}
+                      {dashboard?.emailDelivery?.queuedMode && !dashboard.emailDelivery.workerEnabled ? <p role="status" className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{locale.startsWith("es") ? "Las reservas se guardan, pero el procesador de notificaciones está desactivado." : "预约可保存，但通知处理任务尚未启用，排队邮件不会发送。"}</p> : null}
                       <div className={`mt-1 text-sm ${mutedTextClassName}`}>
                         {dashboard?.automation?.running
                           ? locale.startsWith("es")
@@ -1573,6 +1581,12 @@ export default function BookingWorkbenchDialog({
                 <div className="space-y-4">
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("sky")}`}>
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
+                    <label className="mt-4 block space-y-1">
+                      <span className="text-sm">新预约使用的商户时区（IANA）</span>
+                      <input className={inputClassName} value={draft.timeZone ?? ""} placeholder="例如 Europe/Madrid 或 Atlantic/Canary"
+                        onChange={(event) => setDraft((current) => ({ ...current, timeZone: event.target.value }))} />
+                      <span className="block text-xs opacity-70">只影响新预约和明确改期的预约，不换算历史记录。留空保持旧行为；请根据门店所在地设置，不使用访客手机的时区。</span>
+                    </label>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <label className="min-w-0 space-y-1">
                         <span className="text-sm">最少提前分钟</span>
@@ -2047,7 +2061,18 @@ export default function BookingWorkbenchDialog({
                             placeholder={trimText(siteName) || "商户名称"}
                           />
                         </label>
+                        <label className="space-y-1 lg:col-span-2">
+                          <span className="text-sm">商户回复邮箱（Reply-To）</span>
+                          <input type="email" className={inputClassName} value={draft.customerEmailReplyTo ?? ""}
+                            placeholder="例如 contacto@您的域名.com"
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setDraft((current) => ({ ...current, customerEmailReplyTo: normalizeMerchantBookingReplyTo(value) || value.trim() }));
+                            }} />
+                          <span className={`block text-xs ${mutedTextClassName}`}>平台负责发信，客户点击“回复”时发往这里。无需提供邮箱密码；留空时仍使用平台默认回复地址，请确认填写无误并定期收信。</span>
+                        </label>
                       </div>
+                      <p className={`mt-2 text-xs ${mutedTextClassName}`}>邮件“发送结果待确认”不等于未发送。请先核对邮件服务的发送记录；定时提醒遇到这类结果会暂停该次自动重发，避免重复通知客户。</p>
                       <div className={`mt-2 text-xs ${mutedTextClassName}`}>
                         留空时默认使用商户名称；这里的语言也会用于预约管理里的邮件按钮预填内容。
                       </div>

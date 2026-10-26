@@ -6,6 +6,7 @@ import ts from "typescript";
 import type { Block } from "@/data/homeBlocks";
 import * as pagePlans from "@/lib/pagePlans";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import * as bookingSelfService from "@/lib/merchantBookingSelfService";
 
 // Run the actual component and touch hook with deterministic hook/effect/JSX
 // adapters. Only browser IO and descendant rendering are replaced; there is no
@@ -125,6 +126,7 @@ function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boole
     if (name === "@/data/blockStore") return { loadPublishedBlocksFromStorage: () => structuredClone(local), savePublishedBlocksToStorage: () => true };
     if (name === "@/data/platformControlStore") return { loadPlatformState: () => platform, subscribePlatformState: (callback: () => void) => { platformCallback = callback; return () => { platformCallback = undefined; }; } };
     if (name === "@/lib/blocksSanitizer") return { sanitizeBlocksForRuntime };
+    if (name === "@/lib/merchantBookingSelfService") return bookingSelfService;
     if (name === "@/lib/deviceViewport") return { MOBILE_BREAKPOINT: 768 };
     if (name === "@/lib/faollaEntry") return { shouldRoutePublicSiteToGuestShell: () => false };
     if (name === "@/lib/pagePlans") return {

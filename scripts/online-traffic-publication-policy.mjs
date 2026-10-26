@@ -1,3 +1,4 @@
+import {hasBookingReleaseAnchor,assertBookingReleaseScope,BOOKING_RELEASE_LANE} from './booking-publication-policy.mjs';
 import {hasRecordsUiReleaseAnchor,assertRecordsUiReleaseScope,RECORDS_UI_RELEASE_LANE} from './attendance-records-ui-release-policy.mjs';
 import {hasGoogleTransitionReleaseAnchor,assertGoogleTransitionReleaseScope,GOOGLE_TRANSITION_RELEASE_LANE} from './google-oauth-transition-release-policy.mjs';
 import {hasScopeNavigationReleaseAnchor,assertScopeNavigationReleaseScope,SCOPE_NAV_RELEASE_LANE} from './attendance-scope-navigation-release-policy.mjs';
@@ -57,6 +58,7 @@ export const ONLINE_PUBLICATION_SUPPORT_FILES = Object.freeze([
 const support = new Set(ONLINE_PUBLICATION_SUPPORT_FILES);
 
 export function onlinePublicationLane(files) {
+  if(hasBookingReleaseAnchor(files)){assertBookingReleaseScope(files);return BOOKING_RELEASE_LANE;}
   if(hasRecordsUiReleaseAnchor(files)){assertRecordsUiReleaseScope(files);return RECORDS_UI_RELEASE_LANE;}
   if(hasGoogleTransitionReleaseAnchor(files)){assertGoogleTransitionReleaseScope(files);return GOOGLE_TRANSITION_RELEASE_LANE;}
   if(hasScopeNavigationReleaseAnchor(files)){assertScopeNavigationReleaseScope(files);return SCOPE_NAV_RELEASE_LANE;}

@@ -1,3 +1,4 @@
+import {BOOKING_RELEASE_LANE} from './booking-publication-policy.mjs';
 import {RECORDS_UI_RELEASE_LANE} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE} from './attendance-scope-navigation-release-policy.mjs';
@@ -75,7 +76,7 @@ function harness() {
   function api(target, action = 'activate') {
     const operation = `${root}/${target}`;
     let result;
-    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,RECORDS_UI_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_LANE,SCOPE_NAV_RELEASE_LANE,GOOGLE_LOGIN_RELEASE_LANE,LOGIN_RELEASE_LANE,BACKUP_RELEASE_LANE,
+    const ports = {...policy, completePublicationRetention, normalizeRetirementProcess, WEB_RELEASE_FILES,BOOKING_RELEASE_LANE,RECORDS_UI_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_LANE,SCOPE_NAV_RELEASE_LANE,GOOGLE_LOGIN_RELEASE_LANE,LOGIN_RELEASE_LANE,BACKUP_RELEASE_LANE,
       root, operation, activeFile, proxy, target, action, protectedBaseProcesses: ROLLING_BASE_NAMES,
       app: '/www/wwwroot/merchant-space', nginx: '/owned-nginx', controllerModuleUrl: import.meta.url, fileURLToPath,
       readOnlineRetentionHistory: () => clone(host.history), pm: rawRows,

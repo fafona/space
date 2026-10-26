@@ -1,8 +1,13 @@
 import { randomBytes } from "node:crypto";
+import { isAtomicBookingStorageEnabled, readAtomicBookingPersistence, stageAtomicBookingPersistence, runAtomicBookingMutation, enqueueAtomicBookingNotification } from "./merchantBookingAtomicRuntime.server";
+import { projectBookingDeliveryStates } from "./merchantBookingNotificationWorker.server";
+import { normalizeMerchantBookingReplyTo } from "./merchantBookingEmailAddress";
+import { getCustomerBookingTimeIssue, parseBookingAppointment } from "./merchantBookingTime";
 import path from "node:path";
 import {
   attachMerchantBookingTrustedBusinessProjection,
   buildMerchantBookingId,
+  canCustomerChangeMerchantBooking,
   getMerchantBookingSlotCapacityIssue,
   sanitizeMerchantBookingEditableInput,
   type MerchantBookingActionInput,
@@ -26,6 +31,7 @@ import {
   getMerchantBookingDueReminderOffset,
   getMerchantBookingRecurringIssue,
   shouldMarkMerchantBookingNoShow,
+  getMerchantBookingWorkbenchPublicSettings,
 } from "./merchantBookingWorkbench";
 import {
   loadMerchantBookingWorkbenchSettings,
@@ -125,7 +131,15 @@ function getGlobalLockStore() {
   };
 }
 
-async function withBookingStoreLock<T>(task: () => Promise<T>) {
+async function withBookingStoreLock<T>(task: () => Promise<T>, command: {
+  siteId?: string; resolveSiteId?: () => Promise<string>; operation: string;
+  semanticInput?: unknown; authorize?: () => Promise<void>; rememberResult?: boolean;
+}) {
+  if (isAtomicBookingStorageEnabled()) {
+    const siteId = command.siteId ?? await command.resolveSiteId?.();
+    if (!siteId) throw new Error("booking_atomic_scope_required");
+    return runAtomicBookingMutation({ ...command, siteId }, task);
+  }
   const lockStore = getGlobalLockStore();
   const previous = lockStore[LOCK_KEY] ?? Promise.resolve();
   let release = () => {};
@@ -186,6 +200,11 @@ function bookingStoresEqual(left: MerchantBookingStoreFile, right: MerchantBooki
 }
 
 async function readMerchantBookingStore(): Promise<MerchantBookingStoreFile> {
+  const atomic = await readAtomicBookingPersistence("records", normalizePersistedMerchantBookingStore);
+  if (atomic.handled) {
+    if (!atomic.value) throw new Error("booking_atomic_primary_required");
+    return atomic.value;
+  }
   const localStore = await readLocalMerchantBookingStore();
   const supabase = createServerSupabaseServiceClient();
   if (!supabase) return localStore;
@@ -231,6 +250,7 @@ async function writeMerchantBookingStore(
   changedRecords: MerchantBookingStoredRecord[],
 ) {
   const normalizedStore = normalizeMerchantBookingStore(store);
+  if (stageAtomicBookingPersistence("records", normalizedStore)) return;
   const supabase = createServerSupabaseServiceClient();
   if (supabase) {
     await saveMerchantBookingPersistenceValue(supabase, "records", normalizedStore);
@@ -289,6 +309,22 @@ function matchesRuleBinding(record: MerchantBookingStoredRecord, binding: Mercha
   return record.bookingBlockId === binding.bookingBlockId && record.bookingViewport === binding.bookingViewport;
 }
 
+async function assertBookingReopeningCapacity(
+  current: MerchantBookingStoredRecord,
+  status: MerchantBookingStatus,
+  records: MerchantBookingStoredRecord[],
+  settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
+) {
+  const isOpen = (value: MerchantBookingStatus) => value === "active" || value === "confirmed";
+  if (isOpen(current.status) || !isOpen(status)) return;
+  const context = await resolveBookingRuleContext(current.siteId, current);
+  const boundRecords = records.filter((record) => record.siteId === current.siteId && matchesRuleBinding(record, context.binding));
+  const capacityIssue = getMerchantBookingSlotCapacityIssue(current.appointmentAt, context.timeSlotRules, boundRecords, { excludeBookingId: current.id });
+  if (capacityIssue) throw new Error(capacityIssue);
+  const bufferIssue = getMerchantBookingBufferIssue(current, settings.bufferMinutes, boundRecords, { excludeBookingId: current.id });
+  if (bufferIssue) throw new Error(bufferIssue);
+}
+
 function collectWorkbenchAvailabilityIssues(
   appointmentAt: string,
   siteSettings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
@@ -299,6 +335,18 @@ function collectWorkbenchAvailabilityIssues(
   const recurringIssue = getMerchantBookingRecurringIssue(appointmentAt, siteSettings.recurringRules);
   if (recurringIssue) issues.push(recurringIssue);
   return issues;
+}
+
+function bookingAppointmentSettings(
+  current: MerchantBookingStoredRecord,
+  appointmentAt: string,
+  settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
+) {
+  return {
+    ...settings,
+    // Changing settings alone must never reinterpret a historical record.
+    timeZone: current.appointmentTimeZone || (appointmentAt !== current.appointmentAt ? settings.timeZone : ""),
+  };
 }
 
 function applyStatusMetadata(
@@ -372,12 +420,13 @@ function createTimelineEntry(input: {
   fromStatus?: MerchantBookingStatus;
   toStatus?: MerchantBookingStatus;
   emailKind?: MerchantBookingCustomerEmailLogKind;
-  delivery?: "sent" | "failed";
+  delivery?: "queued" | "sent" | "failed" | "unconfirmed" | "skipped";
   subject?: string | null;
   senderName?: string | null;
   locale?: string | null;
   minutesBefore?: number | null;
   deliveredCount?: number | null;
+  appointmentAt?: string;
   note?: string | null;
 }) {
   const entry = {
@@ -392,6 +441,7 @@ function createTimelineEntry(input: {
     ...(fields.length > 0 ? { fields } : {}),
     ...(input.fromStatus ? { fromStatus: input.fromStatus } : {}),
     ...(input.toStatus ? { toStatus: input.toStatus } : {}),
+    ...(input.appointmentAt ? { appointmentAt: input.appointmentAt } : {}),
     ...(input.emailKind ? { emailKind: input.emailKind } : {}),
     ...(input.delivery ? { delivery: input.delivery } : {}),
     ...(trimText(input.subject) ? { subject: trimText(input.subject) } : {}),
@@ -488,6 +538,7 @@ function createCustomerEmailLogEntry(input: {
 }
 
 type SiteCustomerEmailRuntime = {
+  allowBooking: boolean;
   allowAutoEmail: boolean;
   merchantDisplayName: string;
   recordSiteName: string;
@@ -500,6 +551,7 @@ function resolveCustomerEmailSendFailureMessage(
   result: Awaited<ReturnType<typeof sendMerchantBookingStatusEmail>>,
 ) {
   if (!result.attempted) {
+    if (result.reason === "invalid_reply_to") return "回复邮箱格式有误，请先在预约工作台中修改";
     return result.reason === "missing_email" ? "该预约未填写客户邮箱" : "客户邮件发送功能未配置";
   }
   if (result.status === "sent") {
@@ -534,6 +586,7 @@ async function loadSiteCustomerEmailRuntime(
   );
   const publicSiteUrl = buildMerchantBookingPublicSiteUrl(snapshotSite, siteId);
   return {
+    allowBooking: snapshotSite?.permissionConfig?.allowBookingBlock === true,
     allowAutoEmail,
     merchantDisplayName,
     recordSiteName,
@@ -559,10 +612,13 @@ async function maybeSendCustomerStatusEmail(input: {
   if (previousStatus === record.status) {
     return record;
   }
+  const queued = queueBookingNotification(record, "status", settings, runtime);
+  if (queued) return queued;
   const actionLinks = buildCustomerActionLinks(record, runtime.publicSiteUrl);
   const emailResult = await sendMerchantBookingStatusEmail(record, record.status, {
     locale: runtime.locale,
     senderName: runtime.senderName,
+    replyTo: settings.customerEmailReplyTo,
     merchantDisplayName: runtime.merchantDisplayName,
     extraMessage: settings.customerAutoEmailMessageByStatus[record.status],
     actionLinks,
@@ -583,7 +639,7 @@ async function maybeSendCustomerStatusEmail(input: {
         (entry) =>
           entry.kind === "customer_email" &&
           entry.emailKind === "status" &&
-          entry.delivery === "failed" &&
+          entry.delivery === bookingEmailFailureDelivery(emailResult) &&
           entry.toStatus === record.status,
       )
     ) {
@@ -594,7 +650,7 @@ async function maybeSendCustomerStatusEmail(input: {
           kind: "customer_email",
           at: emailResult.attemptedAt,
           emailKind: "status",
-          delivery: "failed",
+          delivery: bookingEmailFailureDelivery(emailResult),
           toStatus: record.status,
           subject: emailResult.subject,
           senderName: emailResult.senderName,
@@ -631,6 +687,55 @@ async function maybeSendCustomerStatusEmail(input: {
   );
 }
 
+function bookingEmailFailureDelivery(result: unknown): "unconfirmed" | "failed" {
+  return result && typeof result === "object" && "deliveryUnconfirmed" in result && result.deliveryUnconfirmed === true ? "unconfirmed" : "failed";
+}
+
+function queueBookingNotification(record: MerchantBookingStoredRecord, kind: "status" | "reminder" | "manual" | "push" | "created_push",
+  settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>, runtime: SiteCustomerEmailRuntime, minutesBefore?: number) {
+  if (!isAtomicBookingStorageEnabled()) return null;
+  const isPush = kind === "push" || kind === "created_push";
+  if (!isPush && !record.email.trim()) {
+    if (kind === "manual") throw new Error("该预约未填写客户邮箱");
+    return record;
+  }
+  const replyTo = normalizeMerchantBookingReplyTo(settings.customerEmailReplyTo || "");
+  if (!isPush && settings.customerEmailReplyTo && !replyTo) {
+    if (kind === "manual") throw new Error("回复邮箱格式有误，请先在预约工作台中修改");
+    return appendTimelineEntry(record, createTimelineEntry({ actor: "system", kind: "customer_email", at: new Date().toISOString(),
+      emailKind: kind as MerchantBookingCustomerEmailLogKind, delivery: "failed", note: "invalid_reply_to" }));
+  }
+  const event = createTimelineEntry({ actor: kind === "manual" ? "merchant" : "system",
+    kind: kind === "created_push" ? "merchant_notification" : kind === "push" ? "merchant_reminder" : "customer_email", at: new Date().toISOString(),
+    emailKind: isPush ? undefined : kind as MerchantBookingCustomerEmailLogKind, delivery: "queued", toStatus: record.status,
+    appointmentAt: record.appointmentAt, minutesBefore, senderName: runtime.senderName, locale: runtime.locale });
+  const { id, siteId, siteName, store, item, appointmentAt, appointmentTimeZone, title, customerName, email, phone, note, status } = record;
+  const queued = enqueueAtomicBookingNotification({ bookingId: id, kind,
+    context: { eventId: event.id, senderName: runtime.senderName, merchantDisplayName: runtime.merchantDisplayName,
+      extraMessage: kind === "status" || kind === "manual" ? settings.customerAutoEmailMessageByStatus[status] || "" : "",
+      booking: { id, siteId, siteName, store, item, appointmentAt, ...(appointmentTimeZone ? { appointmentTimeZone } : {}), title, customerName, email, phone, note, status } },
+    message: { recipient: isPush ? "" : record.email, locale: runtime.locale, replyTo: isPush ? null : replyTo || null,
+      appointmentAt, status, ...(minutesBefore ? { reminderOffsetMinutes: minutesBefore } : {}) },
+  });
+  return queued ? appendTimelineEntry(record, event) : null;
+}
+
+async function authorizeTokenBookingSite(input: { bookingId: string; editToken: string }) {
+  const store = await readMerchantBookingStore();
+  const current = store.records.find((record) => record.id === trimText(input.bookingId));
+  if (!current || current.editToken !== trimText(input.editToken)) throw new Error("预约凭证无效");
+  return current.siteId;
+}
+
+async function authorizePersonalBookingSite(input: { bookingId: string; accountId?: string | null; userId?: string | null; email?: string | null }) {
+  const store = await readMerchantBookingStore();
+  const current = store.records.find((record) => record.id === trimText(input.bookingId));
+  if (!current || !matchesPersonalBookingCustomer(current, { accountId: trimText(input.accountId), userId: trimText(input.userId), email: trimText(input.email).toLowerCase() })) {
+    throw new Error("booking_not_found");
+  }
+  return current.siteId;
+}
+
 function buildAutomationStateForEditableUpdate(
   current: MerchantBookingStoredRecord,
   nextEditable: MerchantBookingEditableInput,
@@ -638,17 +743,19 @@ function buildAutomationStateForEditableUpdate(
   if (current.appointmentAt === nextEditable.appointmentAt) {
     return {
       customerReminderProcessedMinutes: current.customerReminderProcessedMinutes,
+      customerReminderUnconfirmedMinutes: current.customerReminderUnconfirmedMinutes,
       merchantReminderProcessedMinutes: current.merchantReminderProcessedMinutes,
     } satisfies Pick<
       MerchantBookingStoredRecord,
-      "customerReminderProcessedMinutes" | "merchantReminderProcessedMinutes"
+      "customerReminderProcessedMinutes" | "customerReminderUnconfirmedMinutes" | "merchantReminderProcessedMinutes"
     >;
   }
 
   return {
     customerReminderProcessedMinutes: [],
+    customerReminderUnconfirmedMinutes: [],
     merchantReminderProcessedMinutes: [],
-  } satisfies Pick<MerchantBookingStoredRecord, "customerReminderProcessedMinutes" | "merchantReminderProcessedMinutes">;
+  } satisfies Pick<MerchantBookingStoredRecord, "customerReminderProcessedMinutes" | "customerReminderUnconfirmedMinutes" | "merchantReminderProcessedMinutes">;
 }
 
 async function resolveBookingRuleContext(
@@ -725,6 +832,7 @@ async function attachTrustedBookingBusinessProjections(
   records: MerchantBookingRecord[],
   siteId: string,
 ) {
+  records = await projectBookingDeliveryStates(records);
   const normalizedSiteId = trimText(siteId);
   const [snapshot, snapshotSite] = await Promise.all([
     loadMerchantBookingRulesSnapshot(normalizedSiteId).catch(() => null),
@@ -764,6 +872,10 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
     const changedRecords: MerchantBookingStoredRecord[] = [];
 
     for (let index = 0; index < store.records.length; index += 1) {
+      // A record can produce up to three notifications. Bound each atomic
+      // transaction below the queue's 100-intent cap; later ticks resume from
+      // persisted queued markers, without repeatedly rejecting an entire site.
+      if (isAtomicBookingStorageEnabled() && changedRecords.length >= 25) break;
       const current = store.records[index];
       if (!current || current.siteId !== normalizedSiteId) continue;
       let next = current;
@@ -813,80 +925,102 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
 
       if (next.status === "active" || next.status === "confirmed") {
         const customerProcessed = normalizeProcessedMinutes(next.customerReminderProcessedMinutes);
+        const customerUnconfirmed = normalizeProcessedMinutes(next.customerReminderUnconfirmedMinutes);
         const dueCustomerOffset =
           emailRuntime.allowAutoEmail && settings.customerAutoEmailEnabled === true
             ? getMerchantBookingDueReminderOffset(next, settings.customerReminderOffsetsMinutes, now)
             : null;
-        if (dueCustomerOffset && !customerProcessed.includes(dueCustomerOffset)) {
-          const actionLinks = buildCustomerActionLinks(next, emailRuntime.publicSiteUrl);
-          const emailResult = await sendMerchantBookingReminderEmail(next, dueCustomerOffset, {
-            locale: emailRuntime.locale,
-            senderName: emailRuntime.senderName,
-            merchantDisplayName: emailRuntime.merchantDisplayName,
-            actionLinks,
-          }).catch(() => ({
-            attempted: true as const,
-            attemptedAt: nowIso,
-            status: "failed" as const,
-            error: "booking_reminder_send_failed",
-            subject: "",
-            locale: emailRuntime.locale,
-            senderName: emailRuntime.senderName,
-          }));
-          if (emailResult.attempted && emailResult.status === "sent") {
+        if (dueCustomerOffset && !customerProcessed.includes(dueCustomerOffset) && !customerUnconfirmed.includes(dueCustomerOffset)
+          && !hasTimelineEntry(next, (entry) => entry.emailKind === "reminder" && entry.delivery === "queued" && entry.appointmentAt === next.appointmentAt && entry.minutesBefore === dueCustomerOffset)) {
+          const queued = queueBookingNotification(next, "reminder", settings, emailRuntime, dueCustomerOffset);
+          if (queued) {
+            next = queued;
+            // Processed means the durable queue owns this appointment/offset,
+            // NOT sent. Keep this marker even if the bounded timeline ages out.
             customerProcessed.push(dueCustomerOffset);
-            next = appendTimelineEntry(
-              appendCustomerEmailLog(
-                next,
-                createCustomerEmailLogEntry({
-                  kind: "reminder",
-                  sentAt: emailResult.attemptedAt,
-                  locale: emailResult.locale,
+            changed = true;
+          } else {
+            const actionLinks = buildCustomerActionLinks(next, emailRuntime.publicSiteUrl);
+            const emailResult = await sendMerchantBookingReminderEmail(next, dueCustomerOffset, {
+              locale: emailRuntime.locale,
+              senderName: emailRuntime.senderName,
+              replyTo: settings.customerEmailReplyTo,
+              merchantDisplayName: emailRuntime.merchantDisplayName,
+              actionLinks,
+            }).catch(() => ({
+              attempted: true as const,
+              attemptedAt: nowIso,
+              status: "failed" as const,
+              error: "booking_reminder_send_failed",
+              subject: "",
+              locale: emailRuntime.locale,
+              senderName: emailRuntime.senderName,
+            }));
+            if (emailResult.attempted && emailResult.status === "sent") {
+              customerProcessed.push(dueCustomerOffset);
+              next = appendTimelineEntry(
+                appendCustomerEmailLog(
+                  next,
+                  createCustomerEmailLogEntry({
+                    kind: "reminder",
+                    sentAt: emailResult.attemptedAt,
+                    locale: emailResult.locale,
+                    subject: emailResult.subject,
+                    senderName: emailResult.senderName,
+                    minutesBefore: dueCustomerOffset,
+                  }),
+                ),
+                createTimelineEntry({
+                  actor: "system",
+                  kind: "customer_email",
+                  at: emailResult.attemptedAt,
+                  emailKind: "reminder",
+                  delivery: "sent",
                   subject: emailResult.subject,
                   senderName: emailResult.senderName,
+                  locale: emailResult.locale,
                   minutesBefore: dueCustomerOffset,
+                  appointmentAt: next.appointmentAt,
                 }),
-              ),
-              createTimelineEntry({
-                actor: "system",
-                kind: "customer_email",
-                at: emailResult.attemptedAt,
-                emailKind: "reminder",
-                delivery: "sent",
-                subject: emailResult.subject,
-                senderName: emailResult.senderName,
-                locale: emailResult.locale,
-                minutesBefore: dueCustomerOffset,
-              }),
-            );
-            changed = true;
-          } else if (
-            emailResult.attempted &&
-            !hasTimelineEntry(
-              next,
-              (entry) =>
-                entry.kind === "customer_email" &&
-                entry.emailKind === "reminder" &&
-                entry.delivery === "failed" &&
-                entry.minutesBefore === dueCustomerOffset,
-            )
-          ) {
-            next = appendTimelineEntry(
-              next,
-              createTimelineEntry({
-                actor: "system",
-                kind: "customer_email",
-                at: emailResult.attemptedAt,
-                emailKind: "reminder",
-                delivery: "failed",
-                subject: emailResult.subject,
-                senderName: emailResult.senderName,
-                locale: emailResult.locale,
-                minutesBefore: dueCustomerOffset,
-                note: emailResult.error,
-              }),
-            );
-            changed = true;
+              );
+              changed = true;
+            } else if (
+              emailResult.attempted &&
+              !hasTimelineEntry(
+                next,
+                (entry) =>
+                  entry.kind === "customer_email" &&
+                  entry.emailKind === "reminder" &&
+                  entry.delivery === bookingEmailFailureDelivery(emailResult) &&
+                  entry.appointmentAt === next.appointmentAt &&
+                  entry.minutesBefore === dueCustomerOffset,
+              )
+            ) {
+              next = appendTimelineEntry(
+                next,
+                createTimelineEntry({
+                  actor: "system",
+                  kind: "customer_email",
+                  at: emailResult.attemptedAt,
+                  emailKind: "reminder",
+                  delivery: bookingEmailFailureDelivery(emailResult),
+                  subject: emailResult.subject,
+                  senderName: emailResult.senderName,
+                  locale: emailResult.locale,
+                  minutesBefore: dueCustomerOffset,
+                  appointmentAt: next.appointmentAt,
+                  note: emailResult.error,
+                }),
+              );
+              changed = true;
+            }
+            // Unknown delivery is not success. Require review rather than
+            // blindly resending this appointment/offset on the next tick.
+            if (emailResult.attempted && emailResult.status === "failed" && bookingEmailFailureDelivery(emailResult) === "unconfirmed") {
+              customerUnconfirmed.push(dueCustomerOffset);
+              next = { ...next, customerReminderUnconfirmedMinutes: normalizeProcessedMinutes(customerUnconfirmed) };
+              changed = true;
+            }
           }
         }
         const normalizedCustomerProcessed = normalizeProcessedMinutes(customerProcessed);
@@ -900,51 +1034,59 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
 
         const merchantProcessed = normalizeProcessedMinutes(next.merchantReminderProcessedMinutes);
         const dueMerchantOffset = getMerchantBookingDueReminderOffset(next, settings.merchantReminderOffsetsMinutes, now);
-        if (dueMerchantOffset && !merchantProcessed.includes(dueMerchantOffset) && supabase) {
-          const notification = buildMerchantBookingReminderPushNotification({
-            siteId: normalizedSiteId,
-            booking: next,
-            minutesBefore: dueMerchantOffset,
-          });
-          const delivery = await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
-            merchantId: normalizedSiteId,
-            ...notification,
-          }).catch(() => null);
-          if (delivery && delivery.delivered > 0) {
+        if (dueMerchantOffset && !merchantProcessed.includes(dueMerchantOffset) && supabase
+          && !hasTimelineEntry(next, (entry) => entry.kind === "merchant_reminder" && entry.delivery === "queued" && entry.appointmentAt === next.appointmentAt && entry.minutesBefore === dueMerchantOffset)) {
+          const queued = queueBookingNotification(next, "push", settings, emailRuntime, dueMerchantOffset);
+          if (queued) {
+            next = queued;
             merchantProcessed.push(dueMerchantOffset);
-            next = appendTimelineEntry(
-              next,
-              createTimelineEntry({
-                actor: "system",
-                kind: "merchant_reminder",
-                at: nowIso,
-                delivery: "sent",
-                minutesBefore: dueMerchantOffset,
-                deliveredCount: delivery.delivered,
-              }),
-            );
             changed = true;
-          } else if (
-            !hasTimelineEntry(
-              next,
-              (entry) =>
-                entry.kind === "merchant_reminder" &&
-                entry.delivery === "failed" &&
-                entry.minutesBefore === dueMerchantOffset,
-            )
-          ) {
-            next = appendTimelineEntry(
-              next,
-              createTimelineEntry({
-                actor: "system",
-                kind: "merchant_reminder",
-                at: nowIso,
-                delivery: "failed",
-                minutesBefore: dueMerchantOffset,
-                note: delivery ? "no_subscriber_delivery" : "push_delivery_failed",
-              }),
-            );
-            changed = true;
+          } else {
+            const notification = buildMerchantBookingReminderPushNotification({
+              siteId: normalizedSiteId,
+              booking: next,
+              minutesBefore: dueMerchantOffset,
+            });
+            const delivery = await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
+              merchantId: normalizedSiteId,
+              ...notification,
+            }).catch(() => null);
+            if (delivery && delivery.delivered > 0) {
+              merchantProcessed.push(dueMerchantOffset);
+              next = appendTimelineEntry(
+                next,
+                createTimelineEntry({
+                  actor: "system",
+                  kind: "merchant_reminder",
+                  at: nowIso,
+                  delivery: "sent",
+                  minutesBefore: dueMerchantOffset,
+                  deliveredCount: delivery.delivered,
+                }),
+              );
+              changed = true;
+            } else if (
+              !hasTimelineEntry(
+                next,
+                (entry) =>
+                  entry.kind === "merchant_reminder" &&
+                  entry.delivery === "failed" &&
+                  entry.minutesBefore === dueMerchantOffset,
+              )
+            ) {
+              next = appendTimelineEntry(
+                next,
+                createTimelineEntry({
+                  actor: "system",
+                  kind: "merchant_reminder",
+                  at: nowIso,
+                  delivery: "failed",
+                  minutesBefore: dueMerchantOffset,
+                  note: delivery ? "no_subscriber_delivery" : "push_delivery_failed",
+                }),
+              );
+              changed = true;
+            }
           }
         }
         const normalizedMerchantProcessed = normalizeProcessedMinutes(merchantProcessed);
@@ -968,7 +1110,7 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
     }
 
     return store;
-  });
+  }, { siteId: normalizedSiteId, operation: "automation.tick", rememberResult: false });
 }
 
 export async function runMerchantBookingAutomationForAllSites() {
@@ -978,6 +1120,10 @@ export async function runMerchantBookingAutomationForAllSites() {
   const siteIds = collectAutomationSiteIds(store.records);
   for (const siteId of siteIds) {
     await runMerchantBookingAutomationForSite(siteId);
+  }
+  if (isAtomicBookingStorageEnabled()) {
+    const { dispatchQueuedBookingNotifications } = await import("./merchantBookingNotificationWorker.server");
+    await dispatchQueuedBookingNotifications(siteIds);
   }
   return {
     processedSiteCount: siteIds.length,
@@ -995,7 +1141,7 @@ export async function listMerchantBookings(
   if (!normalizedSiteId) return [];
   let store: MerchantBookingStoreFile;
   try {
-    store = await runMerchantBookingAutomationForSite(normalizedSiteId);
+    store = isAtomicBookingStorageEnabled() ? await readMerchantBookingStore() : await runMerchantBookingAutomationForSite(normalizedSiteId);
   } catch {
     store = await readMerchantBookingStore();
   }
@@ -1033,7 +1179,7 @@ export async function listMerchantBookingsWindow(
   if (!normalizedSiteId) return { records: [], offset, limit, total: 0, hasMore: false };
   let store: MerchantBookingStoreFile;
   try {
-    store = await runMerchantBookingAutomationForSite(normalizedSiteId);
+    store = isAtomicBookingStorageEnabled() ? await readMerchantBookingStore() : await runMerchantBookingAutomationForSite(normalizedSiteId);
   } catch {
     store = await readMerchantBookingStore();
   }
@@ -1103,7 +1249,7 @@ export async function listPersonalMerchantBookings(
     ),
   );
   let automationCompleted = false;
-  for (const siteId of siteIds) {
+  for (const siteId of isAtomicBookingStorageEnabled() ? [] : siteIds) {
     try {
       await runMerchantBookingAutomationForSite(siteId);
       automationCompleted = true;
@@ -1115,11 +1261,21 @@ export async function listPersonalMerchantBookings(
     store = await readMerchantBookingStore();
   }
 
-  return sortNewestFirst(
+  return projectBookingDeliveryStates(sortNewestFirst(
     store.records
       .filter((record) => matchesPersonalBookingCustomer(record, lookup))
       .map((record) => withoutMerchantBookingToken(record, options)),
-  );
+  ));
+}
+
+/** Worker-only private read: never exported from a route or sent to a browser. */
+export async function getMerchantBookingNotificationContext(bookingId: string) {
+  const store = await readMerchantBookingStore();
+  const record = store.records.find((item) => item.id === bookingId);
+  if (!record) return null;
+  const settings = await loadMerchantBookingWorkbenchSettings(record.siteId);
+  const runtime = await loadSiteCustomerEmailRuntime(record.siteId, settings, record.siteName);
+  return { record, settings, runtime };
 }
 
 export async function attachPersonalMerchantBookingsByGuestHash(input: {
@@ -1144,6 +1300,15 @@ export async function attachPersonalMerchantBookingsByGuestHash(input: {
     if (targetKeys.size >= 200) break;
   }
   if (targetKeys.size === 0) return [];
+
+  if (isAtomicBookingStorageEnabled()) {
+    const sites = [...new Set(input.records.map((record) => trimText(record.siteId)).filter(Boolean))];
+    if (sites.length > 1) {
+      const attached: MerchantBookingRecord[] = [];
+      for (const siteId of sites) attached.push(...await attachPersonalMerchantBookingsByGuestHash({ ...input, records: input.records.filter((record) => trimText(record.siteId) === siteId) }));
+      return sortNewestFirst(attached);
+    }
+  }
 
   return withBookingStoreLock(async () => {
     const store = await readMerchantBookingStore();
@@ -1175,7 +1340,7 @@ export async function attachPersonalMerchantBookingsByGuestHash(input: {
       await writeMerchantBookingStore(store, changedRecords);
     }
     return sortNewestFirst(attached);
-  });
+  }, { resolveSiteId: async () => trimText(input.records[0]?.siteId), operation: "guest.attach", semanticInput: input });
 }
 
 export async function cancelPersonalMerchantBooking(input: {
@@ -1200,7 +1365,7 @@ export async function cancelPersonalMerchantBooking(input: {
     if (targetIndex < 0) throw new Error("booking_not_found");
     const current = store.records[targetIndex];
     if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
-    if (current.status !== "active" || trimText(current.merchantTouchedAt)) {
+    if (!canCustomerChangeMerchantBooking(current, "cancel")) {
       throw new Error("booking_customer_action_locked");
     }
 
@@ -1226,7 +1391,7 @@ export async function cancelPersonalMerchantBooking(input: {
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
-  });
+  }, { resolveSiteId: () => authorizePersonalBookingSite(input), authorize: async () => { await authorizePersonalBookingSite(input); }, operation: "cancelPersonalMerchantBooking", semanticInput: input });
 }
 
 export async function updatePersonalMerchantBooking(input: {
@@ -1253,13 +1418,17 @@ export async function updatePersonalMerchantBooking(input: {
     if (targetIndex < 0) throw new Error("booking_not_found");
     const current = store.records[targetIndex];
     if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
-    if (trimText(current.merchantTouchedAt)) {
+    if (!canCustomerChangeMerchantBooking(current, input.action)) {
       throw new Error("booking_customer_action_locked");
     }
 
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(current.siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(current.siteId, workbenchSettings, current.siteName);
     const now = new Date().toISOString();
+
+    if (input.action !== "cancel" && !emailRuntime.allowBooking) {
+      throw new Error("该商户当前未开放预约，请联系商户");
+    }
 
     if (input.action === "cancel") {
       if (current.status !== "active") throw new Error("booking_customer_action_locked");
@@ -1313,7 +1482,12 @@ export async function updatePersonalMerchantBooking(input: {
       blockedDates: ruleContext.blockedDates,
       holidayDates: ruleContext.holidayDates,
     });
-    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+    const appointmentSettings = bookingAppointmentSettings(current, nextEditable.appointmentAt, workbenchSettings);
+    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, appointmentSettings));
+    if (input.action === "restore" || nextEditable.appointmentAt !== current.appointmentAt) {
+      const timeIssue = getCustomerBookingTimeIssue(nextEditable.appointmentAt, appointmentSettings.timeZone);
+      if (timeIssue) issues.push(timeIssue);
+    }
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
@@ -1328,6 +1502,7 @@ export async function updatePersonalMerchantBooking(input: {
     const bufferIssue = getMerchantBookingBufferIssue(
       {
         appointmentAt: nextEditable.appointmentAt,
+        appointmentTimeZone: appointmentSettings.timeZone,
         store: nextEditable.store,
         item: nextEditable.item,
       },
@@ -1344,6 +1519,7 @@ export async function updatePersonalMerchantBooking(input: {
       siteName: emailRuntime.recordSiteName,
       ...ruleContext.binding,
       ...nextEditable,
+      ...(appointmentSettings.timeZone ? { appointmentTimeZone: appointmentSettings.timeZone } : {}),
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
       ...applyStatusMetadata(current, nextStatus, now),
       noShowMarkedAt: current.appointmentAt === nextEditable.appointmentAt ? current.noShowMarkedAt : undefined,
@@ -1382,7 +1558,7 @@ export async function updatePersonalMerchantBooking(input: {
       ruleContext.rule,
       emailRuntime.recordSiteName,
     );
-  });
+  }, { resolveSiteId: () => authorizePersonalBookingSite(input), authorize: async () => { await authorizePersonalBookingSite(input); }, operation: "updatePersonalMerchantBooking", semanticInput: input });
 }
 
 async function resolveStoredBookingByEditToken(input: {
@@ -1395,7 +1571,9 @@ async function resolveStoredBookingByEditToken(input: {
 
   let store = await readMerchantBookingStore();
   let record = store.records.find((item) => item.id === bookingId) ?? null;
-  if (record?.siteId) {
+  // Invalid credentials must not trigger reminders, emails or status changes.
+  if (!record || record.editToken !== editToken) return null;
+  if (record?.siteId && !isAtomicBookingStorageEnabled()) {
     store = await runMerchantBookingAutomationForSite(record.siteId);
     record = store.records.find((item) => item.id === bookingId) ?? null;
   }
@@ -1417,34 +1595,53 @@ export async function getMerchantBookingByEditToken(
   return withoutMerchantBookingToken(record, options);
 }
 
+export async function getMerchantBookingSelfServiceDetails(input: { bookingId: string; editToken: string }) {
+  const record = await resolveStoredBookingByEditToken(input);
+  if (!record) throw new Error("预约凭证无效");
+  const context = await resolveBookingRuleContext(record.siteId, record).catch(() => null);
+  const settings = await loadMerchantBookingWorkbenchSettings(record.siteId);
+  return {
+    booking: withoutMerchantBookingToken(record),
+    rule: context?.rule ?? null,
+    settings: getMerchantBookingWorkbenchPublicSettings(settings),
+  };
+}
+
 export async function createMerchantBooking(input: MerchantBookingCreateInput): Promise<{
   booking: MerchantBookingRecord;
   editToken: string;
 }> {
   const siteId = trimText(input.siteId);
-  const sanitizedEditable = sanitizeMerchantBookingEditableInput(input);
-  const ruleContext = await resolveBookingRuleContext(siteId, normalizeBookingRuleBinding(input));
-  const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
-  const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, input.siteName);
-  const editable = applyAuthoritativeBookingRuleSelection(
-    sanitizedEditable,
-    ruleContext.rule,
-    emailRuntime.recordSiteName,
-  );
-  const issues = validateMerchantBookingInput(editable, {
-    availableTimeRanges: ruleContext.availableTimeRanges,
-    blockedDates: ruleContext.blockedDates,
-    holidayDates: ruleContext.holidayDates,
-  });
-  issues.push(...collectWorkbenchAvailabilityIssues(editable.appointmentAt, workbenchSettings));
-  if (!siteId) {
-    issues.push("站点信息缺失");
-  }
-  if (issues.length > 0) {
-    throw new Error(issues[0]);
-  }
-
   return withBookingStoreLock(async () => {
+    const sanitizedEditable = sanitizeMerchantBookingEditableInput(input);
+    const ruleContext = await resolveBookingRuleContext(siteId, normalizeBookingRuleBinding(input));
+    const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
+    const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, input.siteName);
+    const editable = applyAuthoritativeBookingRuleSelection(
+      sanitizedEditable,
+      ruleContext.rule,
+      emailRuntime.recordSiteName,
+    );
+    const issues = validateMerchantBookingInput(editable, {
+      availableTimeRanges: ruleContext.availableTimeRanges,
+      blockedDates: ruleContext.blockedDates,
+      holidayDates: ruleContext.holidayDates,
+    });
+    issues.push(...collectWorkbenchAvailabilityIssues(editable.appointmentAt, workbenchSettings));
+    const timeIssue = getCustomerBookingTimeIssue(editable.appointmentAt, workbenchSettings.timeZone);
+    if (timeIssue) issues.push(timeIssue);
+    if (!siteId) {
+      issues.push("站点信息缺失");
+    }
+    if (issues.length > 0) {
+      throw new Error(issues[0]);
+    }
+
+    // Recheck current entitlement after queue admission, not only cached rules.
+    const currentRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, input.siteName);
+    if (!currentRuntime.allowBooking) throw new Error("该商户当前未开放预约，请联系商户");
+    const currentTimeIssue = getCustomerBookingTimeIssue(editable.appointmentAt, workbenchSettings.timeZone);
+    if (currentTimeIssue) throw new Error(currentTimeIssue);
     const store = await readMerchantBookingStore();
     const boundRecords = store.records.filter((record) => record.siteId === siteId && matchesRuleBinding(record, ruleContext.binding));
     const slotCapacityIssue = getMerchantBookingSlotCapacityIssue(
@@ -1458,6 +1655,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
     const bufferIssue = getMerchantBookingBufferIssue(
       {
         appointmentAt: editable.appointmentAt,
+        appointmentTimeZone: workbenchSettings.timeZone,
         store: editable.store,
         item: editable.item,
       },
@@ -1489,6 +1687,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       customerGuestHash: trimText(input.customerGuestHash),
       ...ruleContext.binding,
       ...editable,
+      ...(workbenchSettings.timeZone ? { appointmentTimeZone: workbenchSettings.timeZone } : {}),
       status: "active",
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -1510,6 +1709,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       settings: workbenchSettings,
       runtime: emailRuntime,
     });
+    record = queueBookingNotification(record, "created_push", workbenchSettings, emailRuntime) ?? record;
     store.records.unshift(record);
     await writeMerchantBookingStore(store, [record]);
     const booking = attachTrustedBookingBusinessProjection(
@@ -1521,7 +1721,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       booking,
       editToken: record.editToken,
     };
-  });
+  }, { siteId, operation: "createMerchantBooking", semanticInput: input });
 }
 
 export async function updateMerchantBooking(input: MerchantBookingActionInput): Promise<MerchantBookingRecord> {
@@ -1541,8 +1741,15 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     if (!current || current.editToken !== editToken) {
       throw new Error("预约凭证无效");
     }
+    const customerAction = input.action === "update" && current.status === "cancelled" ? "restore" : input.action;
+    if (!canCustomerChangeMerchantBooking(current, customerAction)) {
+      throw new Error("booking_customer_action_locked");
+    }
     const workbenchSettings = await loadMerchantBookingWorkbenchSettings(current.siteId);
     const emailRuntime = await loadSiteCustomerEmailRuntime(current.siteId, workbenchSettings, current.siteName);
+    if (input.action !== "cancel" && !emailRuntime.allowBooking) {
+      throw new Error("该商户当前未开放预约，请联系商户");
+    }
 
     if (input.action === "cancel") {
       let next: MerchantBookingStoredRecord = {
@@ -1571,10 +1778,11 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       input.updates,
       current,
     );
-    const normalizedBinding = normalizeBookingRuleBinding(input);
+    // A bearer token may edit its booking, never move it into another block's
+    // rules/capacity pool by supplying a different browser viewport or block ID.
     const ruleContext = await resolveBookingRuleContext(current.siteId, {
-      bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
-      bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
+      bookingBlockId: current.bookingBlockId,
+      bookingViewport: current.bookingViewport,
     });
     const nextEditable = applyAuthoritativeBookingRuleSelection(
       sanitizedEditable,
@@ -1587,7 +1795,12 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       blockedDates: ruleContext.blockedDates,
       holidayDates: ruleContext.holidayDates,
     });
-    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+    const appointmentSettings = bookingAppointmentSettings(current, nextEditable.appointmentAt, workbenchSettings);
+    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, appointmentSettings));
+    if (customerAction === "restore" || nextEditable.appointmentAt !== current.appointmentAt) {
+      const timeIssue = getCustomerBookingTimeIssue(nextEditable.appointmentAt, appointmentSettings.timeZone);
+      if (timeIssue) issues.push(timeIssue);
+    }
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
@@ -1605,6 +1818,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     const bufferIssue = getMerchantBookingBufferIssue(
       {
         appointmentAt: nextEditable.appointmentAt,
+        appointmentTimeZone: appointmentSettings.timeZone,
         store: nextEditable.store,
         item: nextEditable.item,
       },
@@ -1622,8 +1836,9 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       siteName: emailRuntime.recordSiteName,
       ...ruleContext.binding,
       ...nextEditable,
+      ...(appointmentSettings.timeZone ? { appointmentTimeZone: appointmentSettings.timeZone } : {}),
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
-      status: current.status === "cancelled" || current.status === "no_show" ? "active" : current.status,
+      status: customerAction === "restore" ? "active" : current.status,
       updatedAt: new Date().toISOString(),
       noShowMarkedAt:
         current.appointmentAt === nextEditable.appointmentAt && current.status !== "no_show"
@@ -1663,7 +1878,7 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       ruleContext.rule,
       emailRuntime.recordSiteName,
     );
-  });
+  }, { resolveSiteId: () => authorizeTokenBookingSite(input), authorize: async () => { await authorizeTokenBookingSite(input); }, operation: "customer.update", semanticInput: input });
 }
 
 export async function updateMerchantBookingStatusBySite(input: {
@@ -1696,6 +1911,7 @@ export async function updateMerchantBookingStatusBySite(input: {
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, current.siteName);
 
     const nextStatus = input.status;
+    await assertBookingReopeningCapacity(current, nextStatus, store.records, workbenchSettings);
     const touchedAt = new Date().toISOString();
     let next: MerchantBookingStoredRecord = {
       ...current,
@@ -1718,7 +1934,7 @@ export async function updateMerchantBookingStatusBySite(input: {
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
-  });
+  }, { siteId, operation: "updateMerchantBookingStatusBySite", semanticInput: input, authorize: input.assertAuthorizationCurrent });
 }
 
 export async function updateMerchantBookingBySite(input: {
@@ -1776,7 +1992,11 @@ export async function updateMerchantBookingBySite(input: {
         blockedDates: ruleContext.blockedDates,
         holidayDates: ruleContext.holidayDates,
       });
-      issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+      const appointmentSettings = bookingAppointmentSettings(current, nextEditable.appointmentAt, workbenchSettings);
+      issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, appointmentSettings));
+      if (appointmentSettings.timeZone && !parseBookingAppointment(nextEditable.appointmentAt, appointmentSettings.timeZone)) {
+        issues.push("预约时间无效或处于夏令时切换的重复／缺失时段，请选择其他时间");
+      }
       if (issues.length > 0) {
         throw new Error(issues[0]);
       }
@@ -1793,6 +2013,7 @@ export async function updateMerchantBookingBySite(input: {
       const bufferIssue = getMerchantBookingBufferIssue(
         {
           appointmentAt: nextEditable.appointmentAt,
+          appointmentTimeZone: appointmentSettings.timeZone,
           store: nextEditable.store,
           item: nextEditable.item,
         },
@@ -1807,6 +2028,9 @@ export async function updateMerchantBookingBySite(input: {
     }
 
     const nextStatus = input.status ?? current.status;
+    if (!hasEditableUpdates) {
+      await assertBookingReopeningCapacity(current, nextStatus, store.records, workbenchSettings);
+    }
     const touchedAt = new Date().toISOString();
     const changedFields = hasEditableUpdates ? collectEditableFieldChanges(current, nextEditable) : [];
     let next: MerchantBookingStoredRecord = {
@@ -1814,6 +2038,8 @@ export async function updateMerchantBookingBySite(input: {
       siteName: emailRuntime.recordSiteName,
       ...nextBinding,
       ...nextEditable,
+      ...(hasEditableUpdates && nextEditable.appointmentAt !== current.appointmentAt && workbenchSettings.timeZone && !current.appointmentTimeZone
+        ? { appointmentTimeZone: workbenchSettings.timeZone } : {}),
       ...buildAutomationStateForEditableUpdate(current, nextEditable),
       ...applyStatusMetadata(current, nextStatus, touchedAt),
     };
@@ -1850,7 +2076,7 @@ export async function updateMerchantBookingBySite(input: {
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
-  });
+  }, { siteId, operation: "updateMerchantBookingBySite", semanticInput: input, authorize: input.assertAuthorizationCurrent });
   return (
     await attachTrustedBookingBusinessProjections([updated], siteId)
   )[0] ?? updated;
@@ -1865,7 +2091,7 @@ export async function updateMerchantBookingsBatchBySite(input: {
   const siteId = trimText(input.siteId);
   const bookingIds = [...new Set((Array.isArray(input.bookingIds) ? input.bookingIds : []).map((item) => trimText(item)).filter(Boolean))];
   if (!siteId || bookingIds.length === 0) {
-    throw new Error("棰勭害璁板綍鍙傛暟缂哄け");
+    throw new Error("预约记录参数缺失");
   }
 
   const updated = await withBookingStoreLock(async () => {
@@ -1875,6 +2101,16 @@ export async function updateMerchantBookingsBatchBySite(input: {
     const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings);
     const nextRecords: MerchantBookingRecord[] = [];
     const changedRecords: MerchantBookingStoredRecord[] = [];
+
+    // Validate the whole batch against its projected occupancy before sending
+    // any emails or writing anything. Two restorations must count each other.
+    const projectedRecords = store.records.map((record) => ({ ...record }));
+    for (const bookingId of bookingIds) {
+      const current = projectedRecords.find((record) => record.id === bookingId && record.siteId === siteId);
+      if (!current) continue;
+      await assertBookingReopeningCapacity(current, input.status, projectedRecords, workbenchSettings);
+      current.status = input.status;
+    }
 
     for (const bookingId of bookingIds) {
       const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
@@ -1910,7 +2146,7 @@ export async function updateMerchantBookingsBatchBySite(input: {
     }
     await writeMerchantBookingStore(store, changedRecords);
     return nextRecords;
-  });
+  }, { siteId, operation: "updateMerchantBookingsBatchBySite", semanticInput: input, authorize: input.assertAuthorizationCurrent });
   return attachTrustedBookingBusinessProjections(updated, siteId);
 }
 
@@ -1946,10 +2182,17 @@ export async function sendMerchantBookingManualEmailBySite(input: {
       },
       touchedAt,
     );
+    const queued = queueBookingNotification(next, "manual", workbenchSettings, emailRuntime);
+    if (queued) {
+      store.records[targetIndex] = queued;
+      await writeMerchantBookingStore(store, [queued]);
+      return withoutMerchantBookingToken(queued, { includeCustomerEmailLogs: true, includeTimeline: true });
+    }
     const actionLinks = buildCustomerActionLinks(next, emailRuntime.publicSiteUrl);
     const emailResult = await sendMerchantBookingStatusEmail(next, next.status, {
       locale: emailRuntime.locale,
       senderName: emailRuntime.senderName,
+      replyTo: workbenchSettings.customerEmailReplyTo,
       merchantDisplayName: emailRuntime.merchantDisplayName,
       extraMessage: workbenchSettings.customerAutoEmailMessageByStatus[next.status],
       actionLinks,
@@ -1971,7 +2214,7 @@ export async function sendMerchantBookingManualEmailBySite(input: {
             kind: "customer_email",
             at: emailResult.attemptedAt,
             emailKind: "manual",
-            delivery: "failed",
+            delivery: bookingEmailFailureDelivery(emailResult),
             toStatus: next.status,
             subject: emailResult.subject,
             senderName: emailResult.senderName,
@@ -2011,7 +2254,7 @@ export async function sendMerchantBookingManualEmailBySite(input: {
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
-  });
+  }, { siteId, operation: "sendMerchantBookingManualEmailBySite", semanticInput: input, authorize: input.assertAuthorizationCurrent });
   return (
     await attachTrustedBookingBusinessProjections([updated], siteId)
   )[0] ?? updated;
@@ -2063,7 +2306,7 @@ export async function acknowledgeMerchantBookingBySite(input: {
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store, [next]);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true, includeTimeline: true });
-  });
+  }, { siteId, operation: "acknowledgeMerchantBookingBySite", semanticInput: input, authorize: input.assertAuthorizationCurrent });
   return (
     await attachTrustedBookingBusinessProjections([updated], siteId)
   )[0] ?? updated;

@@ -13,8 +13,13 @@ const root=new URL('../',import.meta.url);
 // Synthetic baseline port keeps unit tests independent of checkout depth.
 // The real controller reads both revisions using git show before any write.
 const readCurrentBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
-// Immutable reviewed page, not today's UI: old production pins stay unchanged.
-const readBlob=file=>readCurrentBlob(file==='src/app/login/page.tsx'?'scripts/fixtures/google-login-account-confirmation-page-20261023.txt':file);
+// Immutable reviewed page AND manifest, not today's UI/scripts. The production
+// policy's exact hashes stay unchanged; later booking work gets no old authority.
+const historicalApplication={
+ 'src/app/login/page.tsx':'scripts/fixtures/google-login-account-confirmation-page-20261023.txt',
+ 'package.json':'scripts/fixtures/google-login-account-confirmation-package-20261023.txt',
+};
+const readBlob=file=>readCurrentBlob(historicalApplication[file]||file);
 test('only the complete three-file Google repair has the distinct no-database lane',()=>{
  for(const list of [app,files,[...files].reverse()]){assert.equal(onlinePublicationLane(list),lane);assert.equal(onlineReleaseLane(list),lane);}
  assert.equal(onlineReleaseStageStatus(lane),'ready-no-database');assert.equal(onlineReleaseActivationStatus(lane),'ready-no-database');

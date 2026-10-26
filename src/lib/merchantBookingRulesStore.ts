@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readAtomicBookingPersistence, stageAtomicBookingPersistence, runAtomicBookingMutation, isAtomicBookingStorageEnabled } from "./merchantBookingAtomicRuntime.server";
 import type { Block } from "@/data/homeBlocks";
 import {
   buildMerchantBookingRulesSnapshot,
@@ -104,6 +105,8 @@ function mergeBookingRulesStores(
 }
 
 async function readBookingRulesStore(): Promise<MerchantBookingRulesStoreFile> {
+  const atomic = await readAtomicBookingPersistence("rules", normalizeBookingRulesStore);
+  if (atomic.handled) return atomic.value ?? { version: STORE_VERSION, snapshots: {} };
   const localStore = await readLocalBookingRulesStore();
   const supabase = createServerSupabaseServiceClient();
   if (!supabase) return localStore;
@@ -132,6 +135,7 @@ async function readBookingRulesStore(): Promise<MerchantBookingRulesStoreFile> {
 }
 
 async function writeBookingRulesStore(store: MerchantBookingRulesStoreFile) {
+  if (stageAtomicBookingPersistence("rules", store)) return;
   const supabase = createServerSupabaseServiceClient();
   if (supabase) {
     await saveMerchantBookingPersistenceValue(supabase, "rules", store);
@@ -158,6 +162,17 @@ export async function saveMerchantBookingRulesSnapshotForSites(
 ) {
   const normalizedSiteIds = [...new Set(siteIds.map((siteId) => String(siteId ?? "").trim()).filter(Boolean))];
   if (normalizedSiteIds.length === 0) return;
+  if (isAtomicBookingStorageEnabled()) {
+    for (const siteId of normalizedSiteIds) {
+      await runAtomicBookingMutation({ siteId, operation: "rules.publish", semanticInput: { publishedAt } }, async () => {
+        const store = await readBookingRulesStore();
+        store.snapshots[siteId] = buildMerchantBookingRulesSnapshot(siteId, blocks, publishedAt);
+        await writeBookingRulesStore(store);
+        return null;
+      });
+    }
+    return;
+  }
   await withBookingRulesStoreLock(async () => {
     const store = await readBookingRulesStore();
     normalizedSiteIds.forEach((siteId) => {

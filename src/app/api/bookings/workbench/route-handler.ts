@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { getMerchantBookingEmailReadiness } from "@/lib/merchantBookingEmails";
+import { isAtomicBookingStorageEnabled } from "@/lib/merchantBookingAtomicRuntime.server";
 import { NextResponse } from "next/server";
 import {
   authorizeMerchantBusinessRequest,
@@ -106,7 +108,10 @@ function applyAutoEmailPermissionGuard(
   } satisfies MerchantBookingWorkbenchSettings;
 }
 
-async function buildWorkbenchDashboard(siteId: string) {
+async function buildWorkbenchDashboard(siteId: string): Promise<{
+  pushDeviceCount: number; automation: ReturnType<typeof getMerchantBookingAutomationRuntimeSnapshot>;
+  emailDelivery?: { configured: boolean; queuedMode: boolean; workerEnabled: boolean };
+}> {
   let pushDeviceCount = 0;
   const supabase = createServerSupabaseServiceClient();
   if (supabase) {
@@ -123,6 +128,8 @@ async function buildWorkbenchDashboard(siteId: string) {
   return {
     pushDeviceCount,
     automation: getMerchantBookingAutomationRuntimeSnapshot(),
+    emailDelivery: { ...getMerchantBookingEmailReadiness(), queuedMode: isAtomicBookingStorageEnabled(),
+      workerEnabled: process.env.MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED === "1" },
   };
 }
 
@@ -173,6 +180,7 @@ function projectSettingsForActor(
         ...settings.customerAutoEmailMessageByStatus,
       },
       customerEmailSenderName: settings.customerEmailSenderName,
+      customerEmailReplyTo: settings.customerEmailReplyTo,
       customerReminderOffsetsMinutes: [
         ...settings.customerReminderOffsetsMinutes,
       ],
@@ -206,7 +214,7 @@ function projectDashboardForActor(
       ? { pushDeviceCount: dashboard.pushDeviceCount }
       : {}),
     ...(actor.businessPermissions.includes("bookings.automation.manage")
-      ? { automation: dashboard.automation }
+      ? { automation: dashboard.automation, ...(dashboard.emailDelivery ? { emailDelivery: dashboard.emailDelivery } : {}) }
       : {}),
   };
 }
@@ -230,6 +238,7 @@ function mergeSettingsSection(
   if (section === "settings") {
     return {
       ...current,
+      timeZone: proposed.timeZone,
       minAdvanceMinutes: proposed.minAdvanceMinutes,
       dailyCutoffTime: proposed.dailyCutoffTime,
       bufferMinutes: proposed.bufferMinutes,
@@ -248,6 +257,7 @@ function mergeSettingsSection(
         customerAutoEmailMessageByStatus:
           proposed.customerAutoEmailMessageByStatus,
         customerEmailSenderName: proposed.customerEmailSenderName,
+        customerEmailReplyTo: proposed.customerEmailReplyTo,
         customerReminderOffsetsMinutes:
           proposed.customerReminderOffsetsMinutes,
         merchantReminderOffsetsMinutes:
@@ -362,6 +372,14 @@ export async function handleMerchantBookingWorkbenchPatch(
       return privateJson({ error: "permission_denied" }, { status: 403 });
     }
     const proposed = normalizeMerchantBookingWorkbenchSettings(body.settings);
+    const requestedZone = (body.settings as { timeZone?: unknown } | null)?.timeZone;
+    if (requestedZone !== undefined && (typeof requestedZone !== "string" || (requestedZone.trim() && !proposed.timeZone))) {
+      return privateJson({ error: "invalid_booking_time_zone", message: "请填写有效的 IANA 时区，例如 Europe/Madrid" }, { status: 400 });
+    }
+    const requestedReplyTo = (body.settings as { customerEmailReplyTo?: unknown } | null)?.customerEmailReplyTo;
+    if (requestedReplyTo !== undefined && (typeof requestedReplyTo !== "string" || (requestedReplyTo.trim() && !proposed.customerEmailReplyTo))) {
+      return privateJson({ error: "invalid_booking_reply_to", message: "请填写一个有效的商户回复邮箱，不要填写名称或多个邮箱" }, { status: 400 });
+    }
     const snapshotSite = await dependencies.loadSnapshotSite(siteId).catch(
       () => null,
     );
@@ -377,6 +395,10 @@ export async function handleMerchantBookingWorkbenchPatch(
         });
       },
       update: (current) => {
+        // Older clients do not know this additive field; saving unrelated
+        // settings must not silently clear a configured booking time zone.
+        if (requestedZone === undefined) proposed.timeZone = current.timeZone;
+        if (requestedReplyTo === undefined) proposed.customerEmailReplyTo = current.customerEmailReplyTo;
         if (actor.type === "employee" && section) {
           return mergeSettingsSection(
             current,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -125,7 +126,7 @@ function harness(fixture: Fixture, legacy = false) {
   }
   const client = { from: (table: string) => { assert.equal(table, "pages"); return new Query(); }, rpc: forbidden("rpc") };
   const injected: Record<string, unknown> = {
-    "next/server": { NextResponse }, "node:path": path, "node:util": { isDeepStrictEqual },
+    "next/server": { NextResponse }, "node:path": path, "node:util": { isDeepStrictEqual }, "node:async_hooks": { AsyncLocalStorage },
     "node:crypto": { randomBytes: forbidden("entropy"), createHash },
     "lib/supabase.ts": { supabase: null },
     "lib/superAdminServer.ts": { createServerSupabaseServiceClient: () => client },

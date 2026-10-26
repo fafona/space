@@ -1,3 +1,4 @@
+import {BOOKING_RELEASE_LANE,BOOKING_FOCUSED_TESTS} from './booking-publication-policy.mjs';
 import {RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_FOCUSED_TESTS} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS} from './attendance-scope-navigation-release-policy.mjs';
@@ -14,7 +15,7 @@ import {runInNewContext as vmRunInNewContext} from 'node:vm';
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.
-const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_FOCUSED_TESTS,SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS,GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS,LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
+const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{BOOKING_RELEASE_LANE,BOOKING_FOCUSED_TESTS,RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_FOCUSED_TESTS,SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS,GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS,LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
 import {webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';

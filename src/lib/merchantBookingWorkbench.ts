@@ -7,6 +7,8 @@ import {
   type MerchantBookingStatus,
 } from "./merchantBookings";
 import { resolveSupportedLocale } from "@/lib/i18n";
+import { bookingWallTimeAt, normalizeBookingTimeZone, parseBookingAppointment, parseBookingWallTime } from "./merchantBookingTime";
+import { normalizeMerchantBookingReplyTo } from "./merchantBookingEmailAddress";
 
 export type MerchantBookingRecurringRule = {
   id: string;
@@ -31,6 +33,7 @@ export type MerchantBookingOptionColorPreset = MerchantBookingOptionColorStyle &
 export type MerchantBookingItemColorPreset = MerchantBookingOptionColorPreset;
 
 export type MerchantBookingWorkbenchPublicSettings = {
+  timeZone?: string;
   minAdvanceMinutes: number | null;
   dailyCutoffTime: string;
   bufferMinutes: number | null;
@@ -47,6 +50,7 @@ export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSet
   customerAutoEmailStatuses: MerchantBookingStatus[];
   customerAutoEmailMessageByStatus: Partial<Record<MerchantBookingStatus, string>>;
   customerEmailSenderName: string;
+  customerEmailReplyTo?: string;
   customerReminderOffsetsMinutes: number[];
   merchantReminderOffsetsMinutes: number[];
   appointmentAutoStatus: MerchantBookingAppointmentAutoStatus;
@@ -57,6 +61,7 @@ export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSet
 };
 
 const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
+  timeZone: "",
   minAdvanceMinutes: null,
   dailyCutoffTime: "",
   bufferMinutes: null,
@@ -68,6 +73,7 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   customerAutoEmailStatuses: ["confirmed"],
   customerAutoEmailMessageByStatus: {},
   customerEmailSenderName: "",
+  customerEmailReplyTo: "",
   customerReminderOffsetsMinutes: [],
   merchantReminderOffsetsMinutes: [],
   appointmentAutoStatus: "",
@@ -230,25 +236,6 @@ function normalizeOptionColorStyles(value: unknown) {
   return next;
 }
 
-function parseLocalDateTime(value: string) {
-  const { date, time } = splitMerchantBookingDateTime(value);
-  if (!date || !time) return null;
-  const [year, month, day] = date.split("-").map((item) => Number.parseInt(item, 10));
-  const [hour, minute] = time.split(":").map((item) => Number.parseInt(item, 10));
-  const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
-  if (
-    !Number.isFinite(parsed.getTime()) ||
-    parsed.getFullYear() !== year ||
-    parsed.getMonth() !== month - 1 ||
-    parsed.getDate() !== day ||
-    parsed.getHours() !== hour ||
-    parsed.getMinutes() !== minute
-  ) {
-    return null;
-  }
-  return parsed;
-}
-
 function toClockMinutes(value: string) {
   const normalized = normalizeClockTime(value);
   if (!normalized) return Number.NaN;
@@ -280,6 +267,7 @@ export function createDefaultMerchantBookingWorkbenchSettings(): MerchantBooking
 export function normalizeMerchantBookingWorkbenchSettings(value: unknown): MerchantBookingWorkbenchSettings {
   const source = value && typeof value === "object" ? (value as Partial<MerchantBookingWorkbenchSettings>) : {};
   return {
+    ...(source.timeZone !== undefined ? { timeZone: normalizeBookingTimeZone(source.timeZone) } : {}),
     minAdvanceMinutes: normalizePositiveMinutes(source.minAdvanceMinutes),
     dailyCutoffTime: normalizeClockTime(source.dailyCutoffTime),
     bufferMinutes: normalizePositiveMinutes(source.bufferMinutes),
@@ -294,6 +282,7 @@ export function normalizeMerchantBookingWorkbenchSettings(value: unknown): Merch
     customerAutoEmailStatuses: normalizeAutoEmailStatuses(source.customerAutoEmailStatuses),
     customerAutoEmailMessageByStatus: normalizeStatusMessageByStatus(source.customerAutoEmailMessageByStatus),
     customerEmailSenderName: trimText(source.customerEmailSenderName),
+    ...(source.customerEmailReplyTo !== undefined ? { customerEmailReplyTo: normalizeMerchantBookingReplyTo(source.customerEmailReplyTo) } : {}),
     customerReminderOffsetsMinutes: normalizeSingleReminderOffset(source.customerReminderOffsetsMinutes),
     merchantReminderOffsetsMinutes: normalizeSingleReminderOffset(source.merchantReminderOffsetsMinutes),
     appointmentAutoStatus: normalizeAppointmentAutoStatus(source.appointmentAutoStatus),
@@ -309,6 +298,7 @@ export function getMerchantBookingWorkbenchPublicSettings(
 ): MerchantBookingWorkbenchPublicSettings {
   const normalized = normalizeMerchantBookingWorkbenchSettings(value);
   return {
+    timeZone: normalized.timeZone,
     minAdvanceMinutes: normalized.minAdvanceMinutes,
     dailyCutoffTime: normalized.dailyCutoffTime,
     bufferMinutes: normalized.bufferMinutes,
@@ -353,7 +343,7 @@ export function getMerchantBookingAdvanceIssue(
   settings: MerchantBookingWorkbenchPublicSettings | null | undefined,
   now = new Date(),
 ) {
-  const appointmentDate = parseLocalDateTime(appointmentAt);
+  const appointmentDate = parseBookingAppointment(appointmentAt, settings?.timeZone);
   if (!appointmentDate) return "";
 
   const minAdvanceMinutes = settings?.minAdvanceMinutes ?? null;
@@ -362,9 +352,11 @@ export function getMerchantBookingAdvanceIssue(
   }
 
   const cutoffTime = settings?.dailyCutoffTime ?? "";
-  if (cutoffTime && isSameCalendarDay(appointmentDate, now)) {
+  const localNow = settings?.timeZone ? bookingWallTimeAt(now, settings.timeZone) : "";
+  const sameDay = localNow ? appointmentAt.slice(0, 10) === localNow.slice(0, 10) : isSameCalendarDay(appointmentDate, now);
+  if (cutoffTime && sameDay) {
     const cutoffClockMinutes = toClockMinutes(cutoffTime);
-    const nowClockMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowClockMinutes = localNow ? toClockMinutes(localNow.slice(11, 16)) : now.getHours() * 60 + now.getMinutes();
     if (Number.isFinite(cutoffClockMinutes) && nowClockMinutes >= cutoffClockMinutes) {
       return "已过今日截止时间，请选择明天或之后的预约日期";
     }
@@ -377,10 +369,11 @@ export function getMerchantBookingRecurringIssue(
   appointmentAt: string,
   recurringRules: MerchantBookingRecurringRule[] | null | undefined,
 ) {
-  const appointmentDate = parseLocalDateTime(appointmentAt);
+  const civil = parseBookingWallTime(appointmentAt);
+  const appointmentDate = civil ? new Date(civil.epoch) : null;
   if (!appointmentDate) return "";
   const { time } = splitMerchantBookingDateTime(appointmentAt);
-  const weekday = appointmentDate.getDay();
+  const weekday = appointmentDate.getUTCDay();
   const rules = normalizeRecurringRules(recurringRules);
   for (const rule of rules) {
     if (rule.weekday !== weekday) continue;
@@ -395,14 +388,14 @@ export function getMerchantBookingRecurringIssue(
 }
 
 export function getMerchantBookingBufferIssue(
-  targetBooking: Pick<MerchantBookingRecord, "appointmentAt" | "store" | "item">,
+  targetBooking: Pick<MerchantBookingRecord, "appointmentAt" | "appointmentTimeZone" | "store" | "item">,
   bufferMinutes: number | null | undefined,
-  records: Array<Pick<MerchantBookingRecord, "id" | "appointmentAt" | "status" | "store" | "item">>,
+  records: Array<Pick<MerchantBookingRecord, "id" | "appointmentAt" | "appointmentTimeZone" | "status" | "store" | "item">>,
   options?: { excludeBookingId?: string | null },
 ) {
   const normalizedBufferMinutes = normalizePositiveMinutes(bufferMinutes);
   if (!normalizedBufferMinutes) return "";
-  const targetDate = parseLocalDateTime(targetBooking.appointmentAt);
+  const targetDate = parseBookingAppointment(targetBooking.appointmentAt, targetBooking.appointmentTimeZone);
   if (!targetDate) return "";
   const targetStore = trimText(targetBooking.store);
   const targetItem = trimText(targetBooking.item);
@@ -411,7 +404,7 @@ export function getMerchantBookingBufferIssue(
     if (options?.excludeBookingId && record.id === options.excludeBookingId) return false;
     if (record.status !== "active" && record.status !== "confirmed") return false;
     if (trimText(record.store) !== targetStore || trimText(record.item) !== targetItem) return false;
-    const currentDate = parseLocalDateTime(record.appointmentAt);
+    const currentDate = parseBookingAppointment(record.appointmentAt, record.appointmentTimeZone);
     if (!currentDate) return false;
     return Math.abs(currentDate.getTime() - targetTimestamp) < normalizedBufferMinutes * 60 * 1000;
   });
@@ -419,51 +412,51 @@ export function getMerchantBookingBufferIssue(
 }
 
 export function shouldMarkMerchantBookingNoShow(
-  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt">,
+  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt" | "appointmentTimeZone">,
   settings: Pick<MerchantBookingWorkbenchSettings, "noShowEnabled" | "noShowGraceMinutes">,
   now = new Date(),
 ) {
   if (!settings.noShowEnabled || !settings.noShowGraceMinutes) return false;
   if (booking.status !== "active" && booking.status !== "confirmed") return false;
-  const appointmentDate = parseLocalDateTime(booking.appointmentAt);
+  const appointmentDate = parseBookingAppointment(booking.appointmentAt, booking.appointmentTimeZone);
   if (!appointmentDate) return false;
   return appointmentDate.getTime() + settings.noShowGraceMinutes * 60 * 1000 <= now.getTime();
 }
 
 export function getMerchantBookingAutoStatusAtAppointmentTime(
-  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt">,
+  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt" | "appointmentTimeZone">,
   settings: Pick<MerchantBookingWorkbenchSettings, "appointmentAutoStatus">,
   now = new Date(),
 ): Exclude<MerchantBookingAppointmentAutoStatus, ""> | null {
   if (booking.status !== "active" && booking.status !== "confirmed") return null;
   const autoStatus = normalizeAppointmentAutoStatus(settings.appointmentAutoStatus);
   if (!autoStatus) return null;
-  const appointmentDate = parseLocalDateTime(booking.appointmentAt);
+  const appointmentDate = parseBookingAppointment(booking.appointmentAt, booking.appointmentTimeZone);
   if (!appointmentDate) return null;
   return appointmentDate.getTime() <= now.getTime() ? autoStatus : null;
 }
 
 export function isMerchantBookingReminderDue(
-  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt">,
+  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt" | "appointmentTimeZone">,
   offsetMinutes: number,
   now = new Date(),
 ) {
   const normalizedOffset = normalizePositiveMinutes(offsetMinutes);
   if (!normalizedOffset) return false;
   if (booking.status !== "active" && booking.status !== "confirmed") return false;
-  const appointmentDate = parseLocalDateTime(booking.appointmentAt);
+  const appointmentDate = parseBookingAppointment(booking.appointmentAt, booking.appointmentTimeZone);
   if (!appointmentDate) return false;
   const remainingMinutes = Math.floor((appointmentDate.getTime() - now.getTime()) / 60000);
   return remainingMinutes > 0 && remainingMinutes <= normalizedOffset;
 }
 
 export function getMerchantBookingDueReminderOffset(
-  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt">,
+  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt" | "appointmentTimeZone">,
   reminderOffsets: unknown,
   now = new Date(),
 ) {
   if (booking.status !== "active" && booking.status !== "confirmed") return null;
-  const appointmentDate = parseLocalDateTime(booking.appointmentAt);
+  const appointmentDate = parseBookingAppointment(booking.appointmentAt, booking.appointmentTimeZone);
   if (!appointmentDate) return null;
   const remainingMinutes = Math.floor((appointmentDate.getTime() - now.getTime()) / 60000);
   if (remainingMinutes <= 0) return null;
@@ -487,9 +480,12 @@ export function buildMerchantBookingReminderSummary(
       MerchantBookingRecord,
       | "status"
       | "appointmentAt"
+      | "appointmentTimeZone"
       | "customerReminderProcessedMinutes"
+      | "customerReminderUnconfirmedMinutes"
       | "merchantReminderProcessedMinutes"
       | "noShowMarkedAt"
+      | "timeline"
     >
   >,
   settings: MerchantBookingWorkbenchSettings,
@@ -499,11 +495,16 @@ export function buildMerchantBookingReminderSummary(
   const dueCustomerReminderCount = activeRecords.filter((record) => {
     if (settings.customerAutoEmailEnabled !== true) return false;
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.customerReminderOffsetsMinutes, now);
-    return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset);
+    return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset)
+      && !(record.customerReminderUnconfirmedMinutes ?? []).includes(dueOffset)
+      && !(record.timeline ?? []).some((entry) => entry.emailKind === "reminder" && ["queued", "sent", "unconfirmed"].includes(entry.delivery || "")
+        && entry.appointmentAt === record.appointmentAt && entry.minutesBefore === dueOffset);
   }).length;
   const dueMerchantReminderCount = activeRecords.filter((record) => {
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.merchantReminderOffsetsMinutes, now);
-    return dueOffset !== null && !(record.merchantReminderProcessedMinutes ?? []).includes(dueOffset);
+    return dueOffset !== null && !(record.merchantReminderProcessedMinutes ?? []).includes(dueOffset)
+      && !(record.timeline ?? []).some((entry) => entry.kind === "merchant_reminder" && ["queued", "sent", "unconfirmed"].includes(entry.delivery || "")
+        && entry.appointmentAt === record.appointmentAt && entry.minutesBefore === dueOffset);
   }).length;
   const pendingNoShowCount = activeRecords.filter(
     (record) => !trimText(record.noShowMarkedAt) && shouldMarkMerchantBookingNoShow(record, settings, now),

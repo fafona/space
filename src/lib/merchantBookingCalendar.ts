@@ -1,4 +1,5 @@
 import type { MerchantBookingRecord } from "./merchantBookings";
+import { parseBookingAppointment } from "./merchantBookingTime";
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -63,7 +64,9 @@ export function buildMerchantBookingsCalendarIcs(input: {
 
   const events = activeBookings
     .map((booking) => {
-      const startDate = parseLocalBookingDateTime(booking.appointmentAt);
+      const startDate = booking.appointmentTimeZone
+        ? parseBookingAppointment(booking.appointmentAt, booking.appointmentTimeZone)
+        : parseLocalBookingDateTime(booking.appointmentAt);
       if (!startDate) return "";
       const endDate = addMinutes(startDate, 60);
       const customerName = [trimText(booking.customerName), trimText(booking.title)].filter(Boolean).join(" ");

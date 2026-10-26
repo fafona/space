@@ -34,6 +34,25 @@ test("public booking creation responses are private and non-cacheable", async ()
   assertPrivateHeaders(response);
 });
 
+test("atomic public create and recovery require a valid random request ID before any storage or auth IO", async () => {
+  const previous = process.env.MERCHANT_BOOKING_STORAGE_MODE;
+  process.env.MERCHANT_BOOKING_STORAGE_MODE = "atomic-v2";
+  try {
+    for (const lookupRequest of [false, true]) {
+      for (const requestNonce of [undefined, "counter-1", "647e0a78-2eb8-1874-a9d6-ced4f5878450"]) {
+        const response = await POST(new Request(`${ORIGIN}/api/bookings`, { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ siteId: "99999999", lookupRequest, requestNonce }) }));
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).error, "booking_request_nonce_required");
+        assertPrivateHeaders(response);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.MERCHANT_BOOKING_STORAGE_MODE;
+    else process.env.MERCHANT_BOOKING_STORAGE_MODE = previous;
+  }
+});
+
 test("booking mutations keep origin failures private and non-cacheable", async () => {
   const response = await PATCH(
     new Request(`${ORIGIN}/api/bookings`, {
