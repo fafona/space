@@ -23,6 +23,10 @@ export const BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS=Object.freeze([
 ]);
 export const BOOKING_HANDOFF_LEGACY_DIRECTORY='/www/wwwroot/merchant-space.releases/e3e685852a63-20260922183053';
 export const BOOKING_HANDOFF_MAX_MS=600000;
+export const BOOKING_HANDOFF_NATIVE_SOURCES=Object.freeze(['booking-handoff-native-acceptance.mjs','booking-handoff-policy.mjs',
+ 'booking-handoff-host.mjs','booking-handoff-execution.mjs','booking-handoff-host-io.mjs','booking-handoff-watchdog.mjs','booking-handoff-recovery.mjs',
+ 'booking-handoff-activation.mjs','booking-handoff-rule-repair.mjs','booking-handoff-ingress.mjs','booking-handoff-routing.mjs',
+ 'booking-handoff-runtime.mjs','booking-handoff-legacy.mjs','booking-handoff-journal.mjs']);
 // Read-only provenance collected from the actual host on 2026-10-26. PM2's
 // executeApp refreshes pm_uptime, resetState refreshes created_at and the retry
 // delay, and restartProcessId increments restart_time. The isolated real-host
@@ -62,6 +66,9 @@ export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-legacy.mjs','scripts/booking-handoff-legacy.test.mjs',
  'scripts/booking-handoff-watchdog.mjs','scripts/booking-handoff-watchdog.test.mjs',
  'scripts/booking-handoff-recovery.mjs','scripts/booking-handoff-recovery.test.mjs',
+ 'scripts/booking-handoff-host-io.mjs','scripts/booking-handoff-execution.mjs','scripts/booking-handoff-execution.test.mjs',
+ 'scripts/booking-handoff-host.mjs','scripts/booking-handoff-host.test.mjs',
+ 'scripts/booking-handoff-native-acceptance.mjs','scripts/booking-handoff-native-acceptance.test.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;

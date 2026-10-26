@@ -52,7 +52,12 @@ export function selectBookingRecoveryTarget(database,legacy){
     (database.activationAttempted===false||database.activationAttempted===true&&database.originalRowsUntouched===true)?'baseline':'rollback';
 }
 export async function executeBookingFailureRecovery(operations,lease){
-  assertBookingWatchdogLease(lease);await operations.verify();await operations.parentGone();
+  assertBookingWatchdogLease(lease);return executeBookingFailureRecoverySequence(operations,lease);
+}
+// The native fixture uses this IO sequence with its OWN real process/FD/DB
+// identities, never a fabricated production PID, lock token or system identifier.
+export async function executeBookingFailureRecoverySequence(operations,lease){
+  await operations.verify();await operations.parentGone();
   const before=await operations.capture(),database=await operations.databaseBarrier(),legacy=await operations.legacyState(),phase=selectBookingRecoveryTarget(database,legacy);
   await operations.begin({schemaVersion:1,kind:'booking-window-failure-recovery-attempt',operationId:lease.window.id,phase,before,database,legacy,startedAt:operations.now()});
   await operations.disableBookingWorker();let legacyPause={confirmed:legacy.paused===true,attempted:false};
@@ -110,8 +115,9 @@ function productionOperations(lease){
       let after;
       try{after=collectBookingLegacyHost();}catch(error){if(!['booking_legacy_pause_legacy_host','booking_legacy_pause_legacy_os_host'].includes(error.message)&&!['ENOENT','ESRCH'].includes(error.code))throw error;}
       if(after?.legacy.backgroundPaused!=='1'){
-        try{after=await waitBookingLegacyPauseSettled(lease.window,verify);}catch(error){if(error.message!=='booking_legacy_pause_restart_not_settled')throw error;return {confirmed:false,attempted:true,result:'prior_restart_unknown_no_retry'};}
+        try{after=await waitBookingLegacyPauseSettled(lease.window,verify);}catch(error){if(!['booking_legacy_pause_restart_not_settled','booking_handoff_window_expired'].includes(error.message))throw error;return {confirmed:false,attempted:true,result:'prior_restart_unknown_no_retry'};}
       }
+      if(Date.now()>=Date.parse(lease.window.deadlineAt))return {confirmed:false,attempted:true,result:'prior_restart_observed_after_window_no_retry'};
       const transition=bookingLegacyPauseTransition(attempt.before,after,lease.window,new Date().toISOString());
       if(!exists(ROOT+'/legacy-runtime-transition.json'))write(ROOT+'/legacy-runtime-transition.json',retentionCanonicalText(transition));
       return {confirmed:true,attempted:true,result:'existing_attempt_verified_without_replay'};

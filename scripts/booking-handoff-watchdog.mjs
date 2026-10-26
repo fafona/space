@@ -58,6 +58,14 @@ function sourceIdentity(toolRevision,{initial=false}={}){
 }
 export function assertBookingWatchdogLease(lease){
   equal(Object.keys(lease??{}).sort(),['schemaVersion','kind','candidate','toolRevision','window','parent','deploy','operation','routingPlanSha256','gatePlanSha256'].sort(),'lease_shape');
+  equal(Object.keys(lease.parent??{}).sort(),['pid','uid','startTicks','executable','cwd','commandSha256'].sort(),'lease_parent_shape');
+  need(/^[1-9][0-9]*$/.test(lease.parent.startTicks??'')&&/^[a-f0-9]{64}$/.test(lease.parent.commandSha256??''),'lease_parent');
+  for(const [key,first,type,mode]of [['deploy','file',0o100000,0o600],['operation','directory',0o40000,0o700]]){
+    equal(Object.keys(lease[key]??{}).sort(),[first,'identity'].sort(),'lease_lock_shape');
+    const id=lease[key].identity;equal(Object.keys(id??{}).sort(),['dev','ino','uid','mode','nlink'].sort(),'lease_lock_identity');
+    need(['dev','ino','uid','mode','nlink'].every(k=>Number.isSafeInteger(id[k]))&&id.dev>=0&&id.ino>0&&id.uid===0&&
+      (id.mode&0o170000)===type&&(id.mode&0o7777)===mode&&id.nlink===(key==='deploy'?1:2),'lease_lock_identity');
+  }
   need(lease?.schemaVersion===1&&lease.kind==='booking-handoff-independent-watchdog'&&lease.candidate===CANDIDATE&&
     /^[a-f0-9]{40}$/.test(lease.toolRevision??'')&&lease.deploy.file===DEPLOY&&lease.operation.directory===OPERATION&&
     Number.isSafeInteger(lease.parent.pid)&&lease.parent.pid>1&&lease.parent.uid===0&&lease.parent.executable==='/usr/bin/node'&&
@@ -69,7 +77,12 @@ export function assertBookingWatchdogLease(lease){
 /** Actual process/FD tests can exercise this same supervisor with isolated
  * operations. No user-facing timing override or generic target is accepted. */
 export async function runBookingWatchdogLoop(operations,lease){
-  assertBookingWatchdogLease(lease);await operations.verify();await operations.armed();
+  assertBookingWatchdogLease(lease);return runBookingWatchdogSequence(operations);
+}
+// Shared sequence for the separately ownership-checked native fixture. It is
+// NOT a production admission API: the actual entry always uses the strict lease.
+export async function runBookingWatchdogSequence(operations){
+  await operations.verify();await operations.armed();
   while(true){
     await operations.verify();
     if(await operations.completed())return operations.finish('committed',null);

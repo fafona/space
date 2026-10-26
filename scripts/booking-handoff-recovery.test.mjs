@@ -6,7 +6,8 @@ import {selectBookingRecoveryTarget,executeBookingFailureRecovery,BOOKING_RECOVE
 const lease=()=>({schemaVersion:1,kind:'booking-handoff-independent-watchdog',candidate:C,toolRevision:'f'.repeat(40),
   window:{id:'10000000-0000-4000-8000-000000000001',startedAt:'2026-10-26T10:00:00.000Z',deadlineAt:'2026-10-26T10:10:00.000Z'},
   parent:{pid:1234,uid:0,startTicks:'100',executable:'/usr/bin/node',cwd:'/var/lib/faolla-online-code/'+'f'.repeat(40),commandSha256:'a'.repeat(64)},
-  deploy:{file:'/www/wwwroot/merchant-space.deploy.lock',identity:{}},operation:{directory:'/var/lib/faolla-maintenance/merchant-space/operation.lock',identity:{}},
+  deploy:{file:'/www/wwwroot/merchant-space.deploy.lock',identity:{dev:1,ino:2,uid:0,mode:0o100600,nlink:1}},
+  operation:{directory:'/var/lib/faolla-maintenance/merchant-space/operation.lock',identity:{dev:1,ino:3,uid:0,mode:0o40700,nlink:2}},
   routingPlanSha256:'a'.repeat(64),gatePlanSha256:'b'.repeat(64)});
 function fixture({database={active:true,barrierCompleted:true},legacy={paused:false,originalIntact:true},failAt,completedAt='2026-10-26T10:09:00.000Z'}={}){
   const calls=[];let receipt;

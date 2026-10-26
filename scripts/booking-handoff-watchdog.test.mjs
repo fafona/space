@@ -21,7 +21,9 @@ test('watchdog lease fixes the source, controller, inherited lock, operation dir
   assert.equal(assertBookingWatchdogLease(lease()),true);assert.equal(BOOKING_WATCHDOG_TRIGGER_MS,420000);
   for(const change of [l=>l.candidate='b'.repeat(40),l=>l.toolRevision='bad',l=>l.parent.pid=1,l=>l.parent.executable='/bin/sh',
     l=>l.parent.cwd='/other',l=>l.deploy.file='/other.lock',l=>l.operation.directory='/tmp',l=>l.routingPlanSha256='bad',
-    l=>l.window.deadlineAt='2026-10-26T10:09:00.000Z',l=>l.window.deadlineAt='2026-10-26T10:11:00.000Z',l=>l.ignoreDeadline=true]){
+    l=>l.window.deadlineAt='2026-10-26T10:09:00.000Z',l=>l.window.deadlineAt='2026-10-26T10:11:00.000Z',l=>l.ignoreDeadline=true,
+    l=>l.parent.startTicks='',l=>l.parent.commandSha256='bad',l=>l.parent.extra=true,l=>l.deploy.identity.uid=1,l=>l.deploy.identity.nlink=2,
+    l=>l.deploy.identity.mode=0o100644,l=>l.operation.identity.mode=0o40755,l=>l.operation.identity.ino=0,l=>l.operation.identity.extra=true]){
     const l=lease();change(l);assert.throws(()=>assertBookingWatchdogLease(l));
   }
 });
