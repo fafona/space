@@ -20,6 +20,8 @@ export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-atomic-worker.mjs','scripts/booking-atomic-worker.test.mjs',
  'scripts/attendance-staged-tool-repair.test.mjs','scripts/online-unpublished-candidate.test.mjs',
  'scripts/booking-handoff-build.mjs','scripts/booking-handoff-build.test.mjs',
+ 'scripts/booking-handoff-activation.mjs','scripts/booking-handoff-activation.test.mjs',
+ 'scripts/booking-handoff-postgres-acceptance.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;
