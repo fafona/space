@@ -11,7 +11,10 @@ test('source scope is exactly fifteen tool/test files; unchanged inputs include 
  const files=p.BOOKING_COMPATIBILITY_TOOL_FILES;
  assert.equal(files.length,15);assert.equal(new Set(files).size,15);assert.ok(files.every(f=>f.startsWith('scripts/')));
  for(const forbidden of ['scripts/attendance-extension-metadata.mjs','scripts/prepare-online-release-tool.mjs','package.json','package-lock.json'])assert.ok(!files.includes(forbidden));
- const original=execFileSync('git',['ls-tree','-r','-z',p.BOOKING_COMPATIBILITY_PRIOR_TOOL],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
+ // A CI checkout need not contain historical objects. The fixed predecessor
+ // digest still binds every current non-allowlisted input, without fetching or
+ // skipping anything. The production verifier separately reads BOTH revisions.
+ const original=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
   .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
  assert.equal(p.assertBookingCompatibilityToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_COMPATIBILITY_INPUTS_SHA256);
  for(const patch of [{files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(1),'src/app/login/page.tsx']},{currentInputs:original+'changed'},{originalInputs:'fake',currentInputs:'fake'}])

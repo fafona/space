@@ -18,6 +18,7 @@ test('actual static import closure includes complete unchanged bootstrap and all
 });
 test('successor independently verifies exact historical source, full immutable pair and sealed original receipt',()=>{
  for(const token of ['verifyHistoricalOnlineTool(createOnlineReleaseToolPlan(PRIOR),toolRevision)','assertBookingCompatibilityToolDelta(',
+  'originalInputs:sourceInputs(PRIOR),currentInputs:sourceInputs(toolRevision)',
   'verifyOnlineToolBootstrap(plan,','assertBookingHandoffToolClosure(','observeBookingBuiltSmokePair({phase})','assertBookingBuiltSmokeReceipt(',
   'BOOKING_COMPATIBILITY_STAGED_SHA256','preserved_evidence','booking-database-inactive.json','private_parent','O_EXCL','O_NOFOLLOW','fs.fsyncSync'])assert.ok(source.includes(token),token);
  assert.doesNotMatch(source,/\['(?:start|stop|restart|reload|delete|save)'\]|spawnSync|execFileSync|bookingHostSql|unlinkSync|rmSync|--force|--skip|command\('npm'/);
