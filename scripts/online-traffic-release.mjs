@@ -1,6 +1,7 @@
 import {BOOKING_RELEASE_LANE,BOOKING_RELEASE_BASELINE,BOOKING_FOCUSED_TESTS,assertBookingReleaseClosure,bookingProtectedEnvironment,assertBookingCompatibilityEnvironment,bookingCandidateOverrides,buildBookingReleaseCandidate} from './booking-publication-policy.mjs';
 import {installInactiveBookingSchema,verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,assertBookingHandoffToolClosure,assertBookingReviewedStageIdentity} from './booking-handoff-policy.mjs';
+import {prepareBookingHandoffRollback} from './booking-handoff-build.mjs';
 import {RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,assertRecordsUiReleaseClosure,buildRecordsUiReleaseCandidate} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint,readGoogleTransitionCallbackHtml} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_RELEASE_BASELINE,SCOPE_NAV_FOCUSED_TESTS,assertScopeNavigationReleaseClosure,buildScopeNavigationReleaseCandidate} from './attendance-scope-navigation-release-policy.mjs';
@@ -1130,12 +1131,15 @@ try{
   if(lane===LOGIN_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if(lane===BACKUP_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   const sockets=run('ss',['-ltnH']);const port=[3103,3104,3105,3106,3107,3108,3109,3110].find(p=>!sockets.includes(`:${p} `));if(!port)fail('no_candidate_port');
+  const bookingRollbackBuild=bookingReviewedStage?await prepareBookingHandoffRollback({lock:heldLock,toolRevision:bookingReviewedStage.toolRevision,primaryPort:port}):null;
+  if(bookingRollbackBuild){const freshDisk=statfsSync('/www');assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(freshDisk.bavail)*BigInt(freshDisk.bsize),swaps:read('/proc/swaps')});}
   privateDirectory(operation);
   const s={target,baseline,oldPort:old.port,oldDirectory:old.directory,oldName:old.name,previousActive,port,name:`merchant-space-online-${target.slice(0,12)}`,directory:`${app}.web-releases/${target.slice(0,12)}-online`,baseDirectory:realpathSync(`${app}.current`),...snapshotOnlineRetention(all,target,old.name),configs:{},maintenanceHash:hash(safeFile('/var/lib/faolla-maintenance/merchant-space/state.json')),markerHash:hash(safeFile(marker)),status:'preparing',startedAt:new Date().toISOString()};
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
   if(bookingReviewedStage){if(lane!==BOOKING_RELEASE_LANE)fail('booking_handoff_wrong_lane');s.bookingReviewedStage=bookingReviewedStage;}
+  if(bookingRollbackBuild)s.bookingRollbackBuild=bookingRollbackBuild;
   if(lane===BOOKING_RELEASE_LANE)Object.assign(s,bookingBaseline);
   if((lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE))Object.assign(s,googleTransitionBaseline);
   if(lane===SCOPE_NAV_RELEASE_LANE)Object.assign(s,scopeNavigationBaseline);
