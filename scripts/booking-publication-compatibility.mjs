@@ -23,6 +23,12 @@ const hash=x=>createHash('sha256').update(x).digest('hex');
 const need=(ok,code)=>{if(!ok)throw Error('booking_compatibility_'+code);};
 const same=(a,b,code)=>need(JSON.stringify(a)===JSON.stringify(b),code);
 const literal=x=>"'"+String(x).replaceAll("'","''")+"'";
+export const BOOKING_FAILED_CLONE_EMPTY_SQL="begin read only;select (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public')+(select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public');rollback;";
+export function bookingCompatibilityPreservedCloneRead(sql){
+ // Exact generated queries only. The metadata query has its original leading
+ // comment; a broad 'begins with READ ONLY' check is neither needed nor enough.
+ return sql===attendanceCompatibilityMetadataContractSql()||sql===BOOKING_FAILED_CLONE_EMPTY_SQL;
+}
 async function owned(file,{privateMode=false}={}){
  const info=await lstat(file);need(!info.isSymbolicLink()&&info.uid===0&&!(info.mode&(privateMode?0o077:0o022))&&await realpath(file)===file,'ownership');return info;
 }
@@ -100,7 +106,7 @@ async function runBookingCompatibilityInternal(input,adapter){
  const formal=await inspect(production.containerId);
  need(formal.id===production.containerId&&formal.name==='/supabase-db'&&formal.image===image&&formal.running===true&&formal.mounts.some(m=>m.Type==='bind'&&m.Source===production.dataSource&&m.RW===true),'production_identity');
  const query=async(id,db,sql,json=false)=>{
-  need(id===production.containerId&&db==='postgres'||id===pilot.id&&(db==='postgres'||db===database||adapter&&db===originalDatabase&&/^begin read only;/i.test(sql.trim())),'query_target');
+  need(id===production.containerId&&db==='postgres'||id===pilot.id&&(db==='postgres'||db===database||adapter&&db===originalDatabase&&bookingCompatibilityPreservedCloneRead(sql)),'query_target');
   if(id===production.containerId)need(/^begin read only;/i.test(sql.trim())||sql.startsWith('-- attendance_'),'production_read_only');
   const value=(await command(['exec','-i',id,'sh','-lc',`set -eu; export PGPASSWORD="$POSTGRES_PASSWORD"; export PGOPTIONS='-c lock_timeout=3s -c statement_timeout=120000 -c idle_in_transaction_session_timeout=15000'; exec psql -h 127.0.0.1 -U supabase_admin -d ${db} --no-password --no-psqlrc --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate`],sql)).trim();
   return json?JSON.parse(value):value;
@@ -119,7 +125,7 @@ async function runBookingCompatibilityInternal(input,adapter){
  if(adapter){
   need(pilot.id==='0d0a85a8ff50b585f690ba80a56d7d215adca2df1fa7c820840ff3389687d907'&&pilotBefore.systemIdentifier===BOOKING_COMPATIBILITY_PILOT_SYSTEM,'adapter_pilot');
   failedCloneContract=await query(pilot.id,originalDatabase,contractSql,true);
-  need(await query(pilot.id,originalDatabase,"begin read only;select (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public')+(select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public');rollback;")==='0','failed_clone_not_empty');
+  need(await query(pilot.id,originalDatabase,BOOKING_FAILED_CLONE_EMPTY_SQL)==='0','failed_clone_not_empty');
  }
  const sources=await Promise.all(BOOKING_MIGRATIONS.map(m=>readFile(path.join(rootDir,'scripts/supabase-migrations',m.fileName),'utf8')));
  const migrationSql=guardedBookingMigrationSql(sources),sourceSha256=sources.map(hash);

@@ -1,9 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {bookingCompatibilityInvocation,bookingCompatibilityRollbackMetadataSql,bookingCompatibilityLegacyProbeSql,runBookingCompatibilityAdapter} from './booking-publication-compatibility.mjs';
+import {bookingCompatibilityInvocation,bookingCompatibilityRollbackMetadataSql,bookingCompatibilityLegacyProbeSql,runBookingCompatibilityAdapter,
+ bookingCompatibilityPreservedCloneRead,BOOKING_FAILED_CLONE_EMPTY_SQL} from './booking-publication-compatibility.mjs';
+import {attendanceCompatibilityMetadataContractSql} from './attendance-production-052-compatibility.mjs';
 import {BOOKING_RELEASE_BASELINE as baseline} from './booking-publication-policy.mjs';
 const target='a'.repeat(40),rootDir='/www/wwwroot/merchant-space.web-releases/aaaaaaaaaaaa-online',operation='/var/lib/faolla-online-release/'+target;
+test('preserved failed clone admits precisely its two real read-only queries, including the generated leading comment',()=>{
+ const metadata=attendanceCompatibilityMetadataContractSql();assert.ok(metadata.startsWith('-- attendance_compatibility_metadata_contract\nbegin read only;'));
+ assert.equal(bookingCompatibilityPreservedCloneRead(metadata),true);assert.equal(bookingCompatibilityPreservedCloneRead(BOOKING_FAILED_CLONE_EMPTY_SQL),true);
+ for(const sql of ['begin read only;select 1;rollback;',metadata+'select 1;',BOOKING_FAILED_CLONE_EMPTY_SQL.replace('read only',''),
+  "begin read only;commit;drop schema public cascade;",'-- attendance_compatibility_metadata_contract\nbegin;delete from public.pages;commit;'])
+  assert.equal(bookingCompatibilityPreservedCloneRead(sql),false);
+});
 test('real metadata compatibility is pinned to exact candidate and unique owned isolated database',()=>{
  assert.equal(bookingCompatibilityInvocation({target,baseline,rootDir,operation}),'faolla_booking_compat_aaaaaaaaaaaa');
  for(const patch of [{target:'invalid'},{baseline:'b'.repeat(40)},{rootDir:'/www/wwwroot/merchant-space'},{operation:'/tmp/test'}])assert.throws(()=>bookingCompatibilityInvocation({target,baseline,rootDir,operation,...patch}));
