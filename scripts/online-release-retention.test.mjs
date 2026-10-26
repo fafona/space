@@ -10,6 +10,8 @@ import {readOnlineRollingRetentions} from './online-release-rolling.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {ROLLING_BASE_NAMES, rollingCanonicalText} from './online-release-rolling-policy.mjs';
 import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
+import {bookingHandoffFixture} from './test-support/booking-handoff-retention-fixture.mjs';
+import {BOOKING_HANDOFF_BASELINE,BOOKING_HANDOFF_LEGACY_DIRECTORY} from './booking-handoff-policy.mjs';
 
 // The real v2 reader calls the unchanged real rolling and legacy readers. All
 // host observations below are synthetic evidence; no process, provider, real
@@ -33,16 +35,20 @@ function raw(target, port, id) {
     restart_time: 0, created_at: 123, shutdown_with_message: false, env: {PORT: String(port), PRIVATE: 'synthetic-only'},
   }};
 }
-function legacyFixture(extraRows = []) {
-  const raws = [raw(sha('c'), 3103, 3), raw(sha('a'), 3110, 10), raw(sha('b'), 3109, 9), ...extraRows];
+function legacyFixture(extraRows = [], {activeTarget = sha('a'), bookingLegacy = false} = {}) {
+  const raws = [raw(sha('c'), 3103, 3), raw(activeTarget, 3110, 10), raw(sha('b'), 3109, 9), ...extraRows];
   ROLLING_BASE_NAMES.forEach((name, index) => {
     const item = raw(sha('9'), 3000 + index, 20 + index);
     item.name = name; item.pm2_env.pm_cwd = '/base/' + name;
+    if (bookingLegacy && name === 'merchant-space') {
+      item.pid = 1590381; item.pm_id = 0; item.pm2_env.pm_cwd = BOOKING_HANDOFF_LEGACY_DIRECTORY;
+      item.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED = '0'; item.pm2_env.args = ['start', '-p', '3000'];
+    }
     item.pm2_env.pm_exec_path = item.pm2_env.pm_cwd + '/node_modules/next/dist/bin/next'; raws.push(item);
   });
   const processes = raws.map(normalizeRetirementProcess), p = processes[0];
   const victim = {target: sha('c'), name: p.name, cwd: p.cwd, pmId: p.pmId, pid: p.pid, port: p.port};
-  const before = {victim, active: location(sha('a'), 3110), rollback: location(sha('b'), 3109), toolRevision: sha('d'),
+  const before = {victim, active: location(activeTarget, 3110), rollback: location(sha('b'), 3109), toolRevision: sha('d'),
     sourceState: {...location(sha('c'), 3103), status: 'active', buildId: sha('c'), sourceHead: sha('c')},
     sourceClean: true, maintenanceEnded: true, priorCertificates: [], protectedNames: processes.slice(1).map(p => p.name),
     processes, listeners: processes.map(p => ({address: '127.0.0.1', port: p.port, pid: p.pid})),
@@ -55,7 +61,7 @@ function legacyFixture(extraRows = []) {
     beforeSha256: hash(files.get('before.json')), recoverySha256: hash(files.get('recovery-pm2.json')),
     preparedAt: '2026-09-27T19:20:00.000Z'}));
   files.set('certificate.json', legacyText({version: 1, status: 'completed', victim, stoppedProcess: after.processes[0],
-    activeTarget: sha('a'), rollbackTarget: sha('b'), nextTarget: sha('d'), allowedActiveTargets: [sha('a'), sha('b'), sha('d')],
+    activeTarget, rollbackTarget: sha('b'), nextTarget: sha('d'), allowedActiveTargets: [activeTarget, sha('b'), sha('d')],
     beforeSha256: hash(files.get('before.json')), afterSha256: hash(files.get('after.json')), completedAt: '2026-09-27T19:20:00.000Z'}));
   return {files, raws, processes: after.processes};
 }
@@ -196,6 +202,31 @@ function rewriteBoundProof(f, sequence, filename, change) {
   certificate.preparedSha256 = hash(f.files.get(`${directory}/prepared.json`));
   f.put(`${directory}/certificate.json`, canonical(certificate));
 }
+
+test('booking handoff round-trips through the strict reader with all legacy proof bytes untouched', () => {
+  const old = legacyFixture([], {activeTarget: BOOKING_HANDOFF_BASELINE, bookingLegacy: true}), memory = memoryFs(old.files);
+  const rolling = readOnlineRollingRetentions('/rolling', memory.io, '/legacy'), history = createOnlineRetentionHistory(rolling);
+  addReceipt(memory, history, observation(history, 'initialize', old.processes, [BOOKING_HANDOFF_BASELINE, sha('b')]));
+  const original = new Map([...memory.files].map(([name, bytes]) => [name, Buffer.from(bytes)]));
+  const f = bookingHandoffFixture({history, current: old.processes});
+  const receipt = buildOnlineRetentionReceipt(f.before, clone(f.before), {version: 2, process: null}, history,
+    {preparedAt: '2026-10-26T10:01:00.000Z', completedAt: '2026-10-26T10:01:00.000Z'});
+  const directory = '/retention/' + String(receipt.certificate.sequence).padStart(6, '0');
+  memory.directories.add(directory);
+  for (const [file, text] of receipt.files) memory.put(directory + '/' + file, text);
+  const next = {...clone(history), entries: [...clone(history.entries), receipt.certificate], headSha256: retentionHash(receipt.certificate)};
+  memory.put('/retention.head.json', canonical(onlineRetentionHeadRecord(next)));
+  assert.deepEqual(readOnlineRetentionHistory('/retention', memory.io, '/rolling', '/legacy'), next);
+  for (const [name, bytes] of original) if (name !== '/retention.head.json') assert.deepEqual(memory.files.get(name), bytes);
+  // Even a newly hashed certificate cannot silently remove the handoff from
+  // one of the immutable context files; incomplete/altered history fails closed.
+  const prepared = JSON.parse(memory.files.get(directory + '/prepared.json'));
+  delete prepared.bookingHandoff; memory.put(directory + '/prepared.json', canonical(prepared));
+  const certificate = clone(receipt.certificate); certificate.preparedSha256 = hash(canonical(prepared));
+  memory.put(directory + '/certificate.json', canonical(certificate));
+  assert.throws(() => readOnlineRetentionHistory('/retention', memory.io, '/rolling', '/legacy'), /preparation_changed/);
+  assert.equal(memory.fds.size, 0);
+});
 
 test('old retirement and rolling source files retain their original full LF-normalized hashes', () => {
   const expected = {

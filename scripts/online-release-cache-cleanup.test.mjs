@@ -602,7 +602,8 @@ test('actual observation refuses partial/head/tail and frozen rolling-root chang
 test('source validation closure includes every newly imported retention module', () => {
   const source = readFileSync(new URL('./online-release-cache-cleanup.mjs', import.meta.url), 'utf8');
   const files = source.match(/const TOOL_FILES = \[([\s\S]*?)\];/)[1];
-  for (const filename of ['online-release-retention.mjs', 'online-release-retention-policy.mjs'])
+  for (const filename of ['online-release-retention.mjs', 'online-release-retention-policy.mjs',
+    'booking-handoff-retention.mjs', 'booking-handoff-policy.mjs'])
     assert.ok(files.includes(`'${filename}'`));
   assert.match(source, /import \{readOnlineRetentionHistory\} from '\.\/online-release-retention\.mjs'/);
 });

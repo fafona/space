@@ -20,6 +20,7 @@ const SHA = /^[a-f0-9]{40}$/;
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const TOOL_FILES = ['online-release-cache-cleanup.mjs', 'online-release-cache-policy.mjs',
   'online-release-retention.mjs', 'online-release-retention-policy.mjs',
+  'booking-handoff-retention.mjs', 'booking-handoff-policy.mjs',
   'online-release-rolling.mjs', 'online-release-rolling-policy.mjs', 'online-release-retirement.mjs',
   'online-release-retirement-policy.mjs', 'web-presentation-release-policy.mjs',
   'contact-card-release-policy.mjs', 'prepare-online-release-tool.mjs'];
