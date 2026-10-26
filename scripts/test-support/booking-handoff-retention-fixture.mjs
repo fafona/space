@@ -70,7 +70,7 @@ export function bookingHandoffFixture(injected){
   const priorActive=history.entries.at(-1).active;
   const active=anchor(process(CANDIDATE,3106,6),CANDIDATE),rollback=anchor(process(APPLICATION,3107,7),APPLICATION);
   const legacyBefore=clone(current.find(p=>p.name==='merchant-space'));
-  const legacyAfter={...clone(legacyBefore),pid:999999,backgroundPaused:'1',restartCount:legacyBefore.restartCount+1,environmentSha256:h('0')};
+  const legacyAfter={...clone(legacyBefore),pid:999999,backgroundPaused:'1',restartCount:legacyBefore.restartCount+1,createdAt:Date.parse(at)+500,environmentSha256:h('0')};
   const worker={...process(sha('8'),3009,8),name:'merchant-space-booking-atomic-'+CANDIDATE.slice(0,12),
     cwd:active.directory,port:null,interpreter:'/usr/bin/node',executable:'/var/lib/faolla-online-code/'+sha('f')+'/scripts/booking-atomic-worker.mjs',
     args:[],nodeArgs:[],autorestart:true,backgroundPaused:'0'};

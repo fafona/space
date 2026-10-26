@@ -24,13 +24,16 @@ export const BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS=Object.freeze([
 export const BOOKING_HANDOFF_LEGACY_DIRECTORY='/www/wwwroot/merchant-space.releases/e3e685852a63-20260922183053';
 export const BOOKING_HANDOFF_MAX_MS=600000;
 // Read-only provenance collected from the actual host on 2026-10-26. PM2's
-// executeApp refreshes pm_uptime and restartProcessId increments restart_time;
-// these are not merchant configuration and may not be silently normalized away.
+// executeApp refreshes pm_uptime, resetState refreshes created_at and the retry
+// delay, and restartProcessId increments restart_time. The isolated real-host
+// rehearsal also proves four manager-derived keys added to the new OS env.
+// None is merchant configuration, and every value must be independently bound.
 export const BOOKING_HANDOFF_PM2_PROVENANCE=Object.freeze({nodeVersion:'v20.20.1',managerVersion:'6.0.14',
  frameworkSources:Object.freeze({
   'package.json':'d2d8b77291fd72dd588f0511741d706b358d5f4387e86a236c8e39b31d324cfd',
   'lib/God.js':'a43594c030138c6db8d308ee1647903a72a49fc3ae781e600cc56338aa85ba90',
   'lib/God/ActionMethods.js':'fac3eb453287059b94461cff459209c2d0a7c10bcb94ebf0f86aad8d087f82f8',
+  'lib/God/Methods.js':'d063342503f501ee267eaca19c732d29bc640bf3188f08674b2cdddb9beeeb11',
   'lib/God/ForkMode.js':'3d1f57dee19060862b4856b15cd61ca406047e658071609e545ac5e1e7755cb4',
   'lib/ProcessContainerFork.js':'1fdda3aa24eec19dc74e280d4c1a0d657945fea1de2fc47427a55f1b3f18ef8d',
  })});
@@ -97,8 +100,9 @@ export function assertBookingLegacyTaskTransition(before,after){
   hex.test(before.environmentSha256??''),'legacy_identity');
  need(positive(after.pid)&&after.pid!==before.pid&&after.backgroundPaused==='1'&&
   after.restartCount===before.restartCount+1&&hex.test(after.environmentSha256??'')&&
-  after.environmentSha256!==before.environmentSha256,'legacy_transition');
- const mutable=['pid','backgroundPaused','restartCount','environmentSha256'];
+  after.environmentSha256!==before.environmentSha256&&positive(before.createdAt)&&
+  positive(after.createdAt)&&after.createdAt>before.createdAt,'legacy_transition');
+ const mutable=['pid','backgroundPaused','restartCount','environmentSha256','createdAt'];
  const rest=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!mutable.includes(key)));
  equal(rest(after),rest(before),'legacy_unrelated_change');
  return true;
@@ -115,24 +119,35 @@ export function assertBookingLegacyEnvironmentTransition(before,after){
 }
 export function assertBookingLegacyRuntimeEnvironmentTransition(value){
  exactKeys(value,['beforeRaw','afterRaw','beforeConfigured','afterConfigured','legacyBefore','legacyAfter',
-  'beforePmUptime','afterPmUptime','framework','window','observedAt'],'runtime_environment_shape');
+  'beforePmUptime','afterPmUptime','beforePmDerived','afterPmDerived','framework','window','observedAt'],'runtime_environment_shape');
  const {beforeRaw:before,afterRaw:after,legacyBefore,legacyAfter,beforePmUptime,afterPmUptime}=value;
  equal(value.framework,BOOKING_HANDOFF_PM2_PROVENANCE,'pm2_provenance');
  assertBookingLegacyTaskTransition(legacyBefore,legacyAfter);
  assertBookingLegacyEnvironmentTransition(value.beforeConfigured,value.afterConfigured);
  need(object(before)&&object(after)&&Object.values(before).every(v=>typeof v==='string')&&
   Object.values(after).every(v=>typeof v==='string'),'runtime_environment');
- equal(Object.keys(before).sort(),Object.keys(after).sort(),'runtime_environment_keys');
+ // This is the fixed legacy host's first restart, not a reusable permission to
+ // ignore arbitrary PM2 fields. The manager facts must be collected separately
+ // from getMonitorData and the /proc environment, not inferred from one another.
+ equal(value.beforePmDerived,{exitCode:null,nodeVersion:'20.20.1',version:'16.3.4',previousRestartDelay:null,unstableRestarts:0},'runtime_manager_before');
+ equal(value.afterPmDerived,{exitCode:0,nodeVersion:'20.20.1',version:'16.3.4',previousRestartDelay:0,unstableRestarts:0},'runtime_manager_after');
+ const added={exit_code:'0',node_version:'20.20.1',version:'16.3.4',prev_restart_delay:'0'};
+ for(const [key,expected]of Object.entries(added))need(!Object.hasOwn(before,key)&&after[key]===expected&&
+  !Object.hasOwn(value.beforeConfigured,key)&&!Object.hasOwn(value.afterConfigured,key),'runtime_manager_collision');
+ equal(Object.keys(after).sort(),[...Object.keys(before),...Object.keys(added)].sort(),'runtime_environment_keys');
+ need(before.unstable_restarts==='0'&&after.unstable_restarts==='0','runtime_unstable_restart');
  need(before.FAOLLA_BACKGROUND_JOBS_PAUSED==='0'&&after.FAOLLA_BACKGROUND_JOBS_PAUSED==='1'&&
   !before.RESEND_API_KEY&&!after.RESEND_API_KEY&&!before.BOOKING_CONFIRMATION_EMAIL_FROM&&!after.BOOKING_CONFIRMATION_EMAIL_FROM,'runtime_environment_pause');
- const derived=['FAOLLA_BACKGROUND_JOBS_PAUSED','pm_uptime','restart_time'];
+ const derived=['FAOLLA_BACKGROUND_JOBS_PAUSED','created_at','pm_uptime','restart_time',...Object.keys(added)];
  const rest=env=>Object.fromEntries(Object.entries(env).filter(([key])=>!derived.includes(key)).sort(([a],[b])=>a.localeCompare(b)));
  equal(rest(after),rest(before),'runtime_environment_other_change');
  need(before.restart_time===String(legacyBefore.restartCount)&&after.restart_time===String(legacyAfter.restartCount),'runtime_restart_counter');
  need(positive(beforePmUptime)&&positive(afterPmUptime)&&before.pm_uptime===String(beforePmUptime)&&
-  after.pm_uptime===String(afterPmUptime),'runtime_start_counter');
+  after.pm_uptime===String(afterPmUptime)&&before.created_at===String(legacyBefore.createdAt)&&
+  after.created_at===String(legacyAfter.createdAt),'runtime_start_counter');
  const now=time(value.observedAt),window=assertBookingHandoffWindow(value.window,{nowMs:now});
  need(beforePmUptime>=legacyBefore.createdAt&&beforePmUptime<=window.startedAtMs&&
+  legacyAfter.createdAt>=window.startedAtMs&&legacyAfter.createdAt<=afterPmUptime&&
   afterPmUptime>=window.startedAtMs&&afterPmUptime>beforePmUptime&&afterPmUptime<=now,'runtime_start_bound');
  return true;
 }

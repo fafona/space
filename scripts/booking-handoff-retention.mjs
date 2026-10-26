@@ -46,6 +46,8 @@ export function assertBookingRetentionHandoff({handoff,prior,previousSha256,acti
     'databaseBefore','databaseAfter','rollbackReadiness'],'proof_shape');
   const e=handoff.evidence;
   assertBookingHandoffEvidence(e);
+  const bounds=assertBookingHandoffWindow(e.window),restartedAt=handoff.legacyAfter?.createdAt;
+  need(Number.isSafeInteger(restartedAt)&&restartedAt>=bounds.startedAtMs&&restartedAt<=Date.parse(e.completedAt),'restart_outside_window');
   need(object(prior)&&prior.active.target===BASELINE&&e.priorRetentionHeadSha256===previousSha256&&
     e.toolRevision===toolRevision,'predecessor');
   equal(prior.processes.find(p=>p.name==='merchant-space'),handoff.legacyBefore,'legacy_predecessor');

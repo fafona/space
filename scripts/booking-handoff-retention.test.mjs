@@ -79,6 +79,8 @@ test('handoff rejects predecessor, stage, process, atomic activation and readine
     ['enterprise restart',v=>{v.before.processes.find(p=>p.name==='merchant-space-enterprise-automation-worker').pid++;}],
     ['legacy forged before',v=>{v.handoff.legacyBefore.pid++;}],
     ['legacy after',v=>{v.handoff.legacyAfter.backgroundPaused='0';}],
+    ['restart before window',v=>{v.handoff.legacyAfter.createdAt=Date.parse(at)-1;v.before.processes.find(p=>p.name==='merchant-space').createdAt=v.handoff.legacyAfter.createdAt;}],
+    ['restart after completion',v=>{v.handoff.legacyAfter.createdAt=Date.parse(v.handoff.evidence.completedAt)+1;v.before.processes.find(p=>p.name==='merchant-space').createdAt=v.handoff.legacyAfter.createdAt;}],
     ['extra process',v=>{v.before.processes.push({...process(sha('5'),3109,9),name:'foreign'});}],
     ['missing source bytes',v=>{v.handoff.originalStageText+=' ';}],
     ['rewritten stage',v=>{const s=JSON.parse(v.handoff.originalStageText);s.baseline=APPLICATION;v.handoff.originalStageText=JSON.stringify(s);v.handoff.evidence.priorStageSha256=digest(v.handoff.originalStageText);}],

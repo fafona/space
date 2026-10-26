@@ -8,7 +8,7 @@ function legacy(){return {name:'merchant-space',pid:1590381,pmId:0,port:3000,cwd
  executable:p.BOOKING_HANDOFF_LEGACY_DIRECTORY+'/node_modules/next/dist/bin/next',status:'online',backgroundPaused:'0',
  watch:false,cronRestart:null,shutdownWithMessage:false,restartCount:4,environmentSha256:h('a'),args:['start','-p','3000'],
  automationEnabled:null,invitationEnabled:null,createdAt:123,killTimeout:1600,interpreter:'/usr/bin/node',execMode:'fork_mode',nodeArgs:[]};}
-function changed(){return {...legacy(),pid:999999,backgroundPaused:'1',restartCount:5,environmentSha256:h('b')};}
+function changed(){return {...legacy(),pid:999999,backgroundPaused:'1',restartCount:5,createdAt:Date.parse('2026-10-26T10:00:00.500Z'),environmentSha256:h('b')};}
 function anchor(target,port,pid){const name='merchant-space-online-'+target.slice(0,12),directory='/www/wwwroot/merchant-space.web-releases/'+target.slice(0,12)+'-online';
  return {target,name,directory,port,process:{name,cwd:directory,port,pid,pmId:pid,status:'online',backgroundPaused:'1',automationEnabled:'0',invitationEnabled:'0'}};}
 function cohort(){const active=anchor(p.BOOKING_HANDOFF_CANDIDATE,3104,101),rollback=anchor(p.BOOKING_HANDOFF_APPLICATION,3105,102);return {active,rollback,runtimeByName:Object.fromEntries([active,rollback].map(a=>[a.name,{MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED:'0',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',FAOLLA_WEB_BUILD_ID:a.target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:a.target,PORT:String(a.port),PWD:a.directory}]))};}
@@ -52,8 +52,8 @@ test('ten minute window is explicit, canonical, exclusive at deadline and never 
 });
 test('only the exact legacy booking host can restart once with only its global background gate changed',()=>{
  assert.doesNotThrow(()=>p.assertBookingLegacyTaskTransition(legacy(),changed()));
- for(const key of Object.keys(legacy()).filter(k=>!['pid','backgroundPaused','restartCount','environmentSha256'].includes(k))){const after=changed();after[key]='foreign';assert.throws(()=>p.assertBookingLegacyTaskTransition(legacy(),after),undefined,key);}
- for(const patch of [{pid:1590381},{pid:0},{backgroundPaused:'0'},{restartCount:6},{environmentSha256:h('a')},{extra:'new'}])assert.throws(()=>p.assertBookingLegacyTaskTransition(legacy(),{...changed(),...patch}));
+ for(const key of Object.keys(legacy()).filter(k=>!['pid','backgroundPaused','restartCount','environmentSha256','createdAt'].includes(k))){const after=changed();after[key]='foreign';assert.throws(()=>p.assertBookingLegacyTaskTransition(legacy(),after),undefined,key);}
+ for(const patch of [{pid:1590381},{pid:0},{backgroundPaused:'0'},{restartCount:6},{environmentSha256:h('a')},{createdAt:123},{createdAt:0},{extra:'new'}])assert.throws(()=>p.assertBookingLegacyTaskTransition(legacy(),{...changed(),...patch}));
  for(const patch of [{name:'merchant-space-enterprise-automation-worker'},{cwd:'/foreign'},{pid:1590382},{port:3001},{backgroundPaused:'1'},{watch:true},{manualSignalHandle:'1'}])assert.throws(()=>p.assertBookingLegacyTaskTransition({...legacy(),...patch},changed()));
 });
 test('configured process environment comparison does not forgive credentials, business flags, mail configuration or key-set drift',()=>{
@@ -64,18 +64,25 @@ test('configured process environment comparison does not forgive credentials, bu
  const removed={...after};delete removed.KEEP;assert.throws(()=>p.assertBookingLegacyEnvironmentTransition(before,removed));
 });
 
-test('actual OS environment changes are limited to the pause flag and two independently bound PM2 restart counters',()=>{
+test('actual OS environment binds the pause, three counters and exact first-restart manager metadata observed in the isolated host rehearsal',()=>{
  const configured={KEEP:'synthetic-private',FAOLLA_BACKGROUND_JOBS_PAUSED:'0'},beforePmUptime=Date.parse('2026-10-26T09:00:00.000Z'),afterPmUptime=Date.parse('2026-10-26T10:00:01.000Z');
- const beforeRaw={...configured,pm_uptime:String(beforePmUptime),restart_time:String(legacy().restartCount),env:'[object Object]',axm_options:'[object Object]',status:'launching'};
- const afterRaw={...beforeRaw,FAOLLA_BACKGROUND_JOBS_PAUSED:'1',pm_uptime:String(afterPmUptime),restart_time:String(changed().restartCount)};
+ const beforeRaw={...configured,created_at:String(legacy().createdAt),pm_uptime:String(beforePmUptime),restart_time:String(legacy().restartCount),unstable_restarts:'0',env:'[object Object]',axm_options:'[object Object]',status:'launching'};
+ const afterRaw={...beforeRaw,created_at:String(changed().createdAt),FAOLLA_BACKGROUND_JOBS_PAUSED:'1',pm_uptime:String(afterPmUptime),restart_time:String(changed().restartCount),
+  exit_code:'0',node_version:'20.20.1',version:'16.3.4',prev_restart_delay:'0'};
  const value={beforeRaw,afterRaw,beforeConfigured:configured,afterConfigured:{...configured,FAOLLA_BACKGROUND_JOBS_PAUSED:'1'},
-  legacyBefore:legacy(),legacyAfter:changed(),beforePmUptime,afterPmUptime,framework:clone(p.BOOKING_HANDOFF_PM2_PROVENANCE),
+  legacyBefore:legacy(),legacyAfter:changed(),beforePmUptime,afterPmUptime,
+  beforePmDerived:{exitCode:null,nodeVersion:'20.20.1',version:'16.3.4',previousRestartDelay:null,unstableRestarts:0},
+  afterPmDerived:{exitCode:0,nodeVersion:'20.20.1',version:'16.3.4',previousRestartDelay:0,unstableRestarts:0},framework:clone(p.BOOKING_HANDOFF_PM2_PROVENANCE),
   window,observedAt:'2026-10-26T10:00:02.000Z'};
  p.assertBookingLegacyRuntimeEnvironmentTransition(value);
  for(const mutate of [v=>{v.afterRaw.KEEP='changed';},v=>{v.afterRaw.env='changed';},v=>{v.afterRaw.axm_options='changed';},v=>{v.afterRaw.status='online';},
   v=>{v.afterRaw.restart_time='4';},v=>{v.afterRaw.pm_uptime=String(afterPmUptime+1);},v=>{v.afterRaw.EXTRA='new';},
+  v=>{v.afterRaw.created_at='123';},v=>{v.afterRaw.exit_code='1';},v=>{v.beforeRaw.exit_code='0';},v=>{v.afterRaw.node_version='20.20.2';},
+  v=>{v.afterRaw.version='0.1.0';},v=>{v.afterRaw.prev_restart_delay='1000';},v=>{v.afterRaw.unstable_restarts='1';},
+  v=>{v.beforePmDerived.version='0.1.0';},v=>{v.afterPmDerived.exitCode=1;},v=>{v.afterPmDerived.unstableRestarts=1;},
+  v=>{v.afterConfigured.version='16.3.4';},v=>{v.legacyAfter.createdAt=Date.parse(v.window.startedAt)-1;v.afterRaw.created_at=String(v.legacyAfter.createdAt);},
   v=>{v.afterConfigured.KEEP='changed';},v=>{v.framework.managerVersion='6.0.15';},v=>{v.framework.nodeVersion='v20.20.2';},
-  v=>{v.framework.frameworkSources['lib/God.js']='0'.repeat(64);},v=>{v.afterPmUptime=beforePmUptime;v.afterRaw.pm_uptime=String(beforePmUptime);},
+  v=>{v.framework.frameworkSources['lib/God.js']='0'.repeat(64);},v=>{v.framework.frameworkSources['lib/God/Methods.js']='0'.repeat(64);},v=>{v.afterPmUptime=beforePmUptime;v.afterRaw.pm_uptime=String(beforePmUptime);},
   v=>{v.afterPmUptime=Date.parse(v.window.deadlineAt);v.afterRaw.pm_uptime=String(v.afterPmUptime);},v=>{v.observedAt=v.window.deadlineAt;},
   v=>{v.afterRaw.RESEND_API_KEY='forbidden';},v=>{v.legacyAfter.restartCount++;},v=>{v.allowUnsafe=true;}]){
   const v=clone(value);mutate(v);assert.throws(()=>p.assertBookingLegacyRuntimeEnvironmentTransition(v));
