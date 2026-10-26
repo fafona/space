@@ -32,6 +32,9 @@ test('the new guard is byte-for-byte the frozen original after removing only its
   assert.equal(BOOKING_BASE_PENDING_GUARD_SHA256,'2d0b65ce8ff36b2658af66d54210a069523e66c2b969584118b36c0fe58c314b');
   const s=read('./booking-handoff-pending.mjs'),from=s.indexOf('function bookingHandoffPendingBody'),to=s.indexOf('export function assertBookingBasePendingGuardSource');
   let body=s.slice(from,to).replace('function bookingHandoffPendingBody','export function assertOnlineToolNoPending');
+  body=body.replace('checkPath = assertOnlineToolOwnedPath, builtPair)','checkPath = assertOnlineToolOwnedPath)');
+  const repairStart=body.indexOf('    // BEGIN exact already-built booking smoke repair;'),repairEnd=body.indexOf('    // END exact already-built booking smoke repair.\n',repairStart);
+  assert.ok(repairStart>0&&repairEnd>repairStart);body=body.slice(0,repairStart)+body.slice(repairEnd+'    // END exact already-built booking smoke repair.\n'.length);
   const first=body.indexOf('    // BEGIN exact booking terminal state;'),last=body.indexOf('    // END exact booking terminal state.\n',first);
   assert.ok(first>0&&last>first);body=body.slice(0,first)+body.slice(last+'    // END exact booking terminal state.\n'.length);
   assert.equal(hash(body),BOOKING_BASE_PENDING_GUARD_SHA256);

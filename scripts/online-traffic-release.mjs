@@ -2,6 +2,8 @@ import {BOOKING_RELEASE_LANE,BOOKING_RELEASE_BASELINE,BOOKING_FOCUSED_TESTS,asse
 import {installInactiveBookingSchema,verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS,assertBookingHandoffCandidateClosure,assertBookingHandoffToolClosure,assertBookingReviewedStageIdentity} from './booking-handoff-policy.mjs';
 import {prepareBookingHandoffRollback} from './booking-handoff-build.mjs';
+import {bookingReleaseProbeFetch} from './booking-release-probe.mjs';
+import {assertBookingBuiltSmokeCandidate,executeBookingBuiltSmokeContinuation} from './booking-built-smoke-repair.mjs';
 import {RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,assertRecordsUiReleaseClosure,buildRecordsUiReleaseCandidate} from './attendance-records-ui-release-policy.mjs';
 import {GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_RELEASE_BASELINE,GOOGLE_TRANSITION_FOCUSED_TESTS,assertGoogleTransitionReleaseClosure,buildGoogleTransitionReleaseCandidate,assertGoogleTransitionFirstPaint,readGoogleTransitionCallbackHtml} from './google-oauth-transition-release-policy.mjs';
 import {SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_RELEASE_BASELINE,SCOPE_NAV_FOCUSED_TESTS,assertScopeNavigationReleaseClosure,buildScopeNavigationReleaseCandidate} from './attendance-scope-navigation-release-policy.mjs';
@@ -342,10 +344,15 @@ async function smoke(s,publicMode=false){
   assertContactWechatResponse(s,card,contactResponse,contact);
   await contactWechatAttendanceSmoke(origin,publicMode);
   const portal=publicMode?'https://launch.faolla.com':origin;
-  await request(portal+'/booking-manage',[200],'launch.faolla.com');
-  await request(portal+'/api/bookings?siteId=10000000',[401],'launch.faolla.com');
-  await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/data-backups`,[401],'console.faolla.com');
-  assertGoogleTransitionFirstPaint(await(await request(portal+'/login?oauth=google&accountType=merchant',[200],'launch.faolla.com')).text());
+  const bookingProbe=async(path,status,host)=>{
+   if(publicMode)return request((host==='console.faolla.com'?'https://console.faolla.com':portal)+path,[status],host);
+   const response=await bookingReleaseProbeFetch(origin+path,{redirect:'manual',headers:{Host:host,Connection:'close'},signal:AbortSignal.timeout(20000)});
+   if(response.status!==status)fail(`booking_probe_http:${response.status}:${path.split('?')[0]}`);return response;
+  };
+  await bookingProbe('/booking-manage',200,'launch.faolla.com');
+  await bookingProbe('/api/bookings?siteId=10000000',401,'launch.faolla.com');
+  await bookingProbe('/api/super-admin/data-backups',401,'console.faolla.com');
+  assertGoogleTransitionFirstPaint(publicMode?await(await request(portal+'/login?oauth=google&accountType=merchant',[200],'launch.faolla.com')).text():await readGoogleTransitionCallbackHtml(s.port));
  }
  if(s.lane==='contact-wechat-code-only')assertContactWechatResponse(s,card,contactResponse,contact);
  if((s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)){
@@ -995,7 +1002,9 @@ async function resumeBookingStage(s,probeRecovery=false){
   s.status=onlineReleaseStageStatus(s.lane);save(s);
  }catch(error){writeFileSync(`${audit}-failure.json`,JSON.stringify({toolRevision:tool.revision,error:error.message,failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});throw error;}
 }
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','finish-booking-built-smoke','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+if(target===BOOKING_HANDOFF_CANDIDATE&&['finish-stage','resume-booking-stage','resume-booking-probe-stage'].includes(action))fail('booking_built_smoke_use_reviewed_continuation');
+if(action==='finish-booking-built-smoke'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_built_smoke_invocation');
 if(action==='resume-login-stage'&&process.argv.slice(2).length!==2)fail('invalid_online_invocation');
 if(target===LOGIN_UNBUILT_REPAIR.target&&['finish-stage','resume-booking-stage','resume-booking-probe-stage','retry-static'].includes(action))fail('merchant_login_unbuilt_use_reviewed_resume');
 try{await withOnlineRetentionLocks(async heldLock=>{
@@ -1304,7 +1313,15 @@ try{
   verifyCandidate(s);s.status=onlineReleaseStageStatus(lane);save(s);
  }else{
   const s=JSON.parse(safeFile(stateFile));await verifyBase(s);
-  if(action==='finish-stage'){
+  if(action==='finish-booking-built-smoke'){
+   const toolDirectory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+   const toolRevision=run('git',['rev-parse','HEAD'],{cwd:toolDirectory}).trim();
+   if(s.status!=='preparing')fail('booking_built_smoke_phase');
+   await executeBookingBuiltSmokeContinuation({observe:phase=>assertBookingBuiltSmokeCandidate({toolRevision,phase}),
+    bundle:()=>run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory}),
+    verify:()=>{configUnchanged(s);verifyCandidate(s);},smoke:()=>smoke(s),
+    ready:()=>{s.status=onlineReleaseStageStatus(s.lane);save(s);}});
+  }else if(action==='finish-stage'){
    // Re-run acceptance on the exact already-built candidate after a probe-only
    // controller correction. Never rewrite build identity or mark it ready blind.
    if(s.status!=='preparing'||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('resume_candidate_source_changed');

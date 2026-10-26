@@ -86,6 +86,16 @@ test('host adapter owns exact identities and preserves original build/runtime wi
     'cohort_os_identity_changed','cohort_actual_environment','atomic_saved_runtime_changed','runtime_attempt_changed'])assert.ok(source.includes(contract),contract);
   assert.doesNotMatch(source.replace(BOOKING_ATOMIC_NEXT_ENV_PROBE,''),/process\.argv|--force|--skip|\['stop'|\['delete'|pm\(\['restart','merchant-space'|writeFileSync\([^\n]*\.env\.local/);
 });
+
+test('a repaired already-built origin is accepted only by the strict sealed incident attester',()=>{
+ const source=readFileSync(new URL('./booking-handoff-runtime.mjs',import.meta.url),'utf8');
+ assert.match(source,/primary\.bookingReviewedStage\?\.toolRevision===toolRevision\?toolRevision:\s*assertBookingBuiltSmokeRuntimeContinuation\(\{toolRevision,primary,rollback\}\)/);
+ assert.match(source,/rollback\.toolRevision===buildToolRevision/);assert.match(source,/built\.toolRevision===buildToolRevision/);
+ const repair=readFileSync(new URL('./booking-built-smoke-repair.mjs',import.meta.url),'utf8');
+ assert.match(repair,/assertBookingBuiltSmokeCandidate\(\{toolRevision,phase:'database-ready'\}\)/);
+ assert.match(repair,/primary\.bookingReviewedStage\.toolClosureSha256==='1660fac7e48e5e18d11b439f01626d8f0823afebfb1eed00035cbef51caf65fa'/);
+ assert.match(repair,/rollback\.toolRevision===P\.originalTool/);
+});
 test('actual Next loader respects atomic process env over legacy file values and rejects file-only email enablement',()=>{
   const root=mkdtempSync(path.join(tmpdir(),'faolla-booking-atomic-next-env-'));
   writeFileSync(path.join(root,'package.json'),'{}',{flag:'wx'});
