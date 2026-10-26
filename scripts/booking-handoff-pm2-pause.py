@@ -54,7 +54,9 @@ def legacy_snapshot(row):
             or env.get("pm_exec_path") != _DIRECTORY + "/node_modules/next/dist/bin/next"
             or env.get("exec_interpreter") != "/usr/bin/node" or env.get("exec_mode") != "fork_mode"
             or env.get("args") != ["start", "-p", "3000"] or env.get("node_args", []) != []
-            or env.get("watch", False) is not False or env.get("cron_restart") not in (None, False, "0")
+            or env.get("watch", False) is not False
+            or not (env.get("cron_restart") is None or env.get("cron_restart") is False or
+                    type(env.get("cron_restart")) is str and env.get("cron_restart") == "0")
             or env.get("autorestart") is not True or env.get("kill_timeout") != 10000
             or (env.get("shutdown_with_message") is not None and env.get("shutdown_with_message") is not False)
             or env.get("FAOLLA_BACKGROUND_JOBS_PAUSED") != "0"

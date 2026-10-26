@@ -77,7 +77,8 @@ class PauseTests(unittest.TestCase):
             with self.assertRaises(m.BookingPauseError):
                 m.legacy_snapshot(row)
         for key, value in (("pm_cwd", "/other"), ("args", ["start", "-p", "3103"]), ("FAOLLA_BACKGROUND_JOBS_PAUSED", "1"),
-                           ("watch", True), ("autorestart", False), ("kill_timeout", 30000), ("exec_interpreter", "/other/node")):
+                           ("watch", True), ("cron_restart", 0), ("cron_restart", "* * * * *"),
+                           ("autorestart", False), ("kill_timeout", 30000), ("exec_interpreter", "/other/node")):
             row = target()
             row["pm2_env"][key] = value
             with self.assertRaises(m.BookingPauseError):
