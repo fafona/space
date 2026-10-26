@@ -28,6 +28,33 @@ import {CONTACT_WECHAT_RELEASE_BASELINE,CONTACT_WECHAT_APPROVED_SUPPORT_FILES} f
 import ts from 'typescript';
 import {CONTACT_WECHAT_STAGED_REPAIR} from './contact-wechat-staged-tool-repair-policy.mjs';
 
+test('booking private smoke retains every status and first-paint check with the fixed native Host transport; public requests remain HTTPS',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),body=code.slice(code.indexOf('async function smoke('),code.indexOf('function restoreConfigs('));
+ for(const publicMode of [false,true])for(const failure of [null,...(publicMode?[]:['/booking-manage','/api/bookings','/api/super-admin/data-backups','callback'])]){
+  const requests=[],native=[],callbacks=[];const s={lane:BOOKING_RELEASE_LANE,target:'a'.repeat(40),port:3104};
+  const context={AbortSignal,s,publicMode,hasExpectedCardWebsite:()=>true,assertContactWechatResponse:()=>{},contactWechatAttendanceSmoke:async()=>{},
+   assertGoogleTransitionFirstPaint:html=>assert.ok(html.includes('faolla-loading-progress-screen')),
+   readGoogleTransitionCallbackHtml:async port=>{assert.equal(port,s.port);callbacks.push(port);if(failure==='callback')throw Error('callback_failed');return '<main class="faolla-loading-progress-screen">';},
+   bookingReleaseProbeFetch:async(url,options)=>{const parsed=new URL(url),host=options.headers.Host;native.push({path:parsed.pathname,host});assert.equal(parsed.hostname,'127.0.0.1');assert.equal(options.redirect,'manual');
+    assert.equal(host,parsed.pathname.startsWith('/api/super-admin')?'console.faolla.com':'launch.faolla.com');return {status:failure===parsed.pathname?421:parsed.pathname==='/booking-manage'?200:401};},
+   request:async(url,statuses=[200],host='www.faolla.com')=>{requests.push({url,statuses:Array.from(statuses),host});return {status:statuses[0],json:async()=>({buildId:s.target}),text:async()=>url.includes('/contact')?'URL:https://www.haoyouduosevilla.com/':url.includes('oauth=google')?'<main class="faolla-loading-progress-screen">':'<html></html>'};},
+   fail:reason=>{throw Error(reason);},
+  };
+  const task=runInNewContext(body+';smoke(s,publicMode)',context);
+  if(failure){await assert.rejects(task,/booking_probe_http:421|callback_failed/);continue;}
+  await task;if(!publicMode){assert.deepEqual(native,[{path:'/booking-manage',host:'launch.faolla.com'},{path:'/api/bookings',host:'launch.faolla.com'},{path:'/api/super-admin/data-backups',host:'console.faolla.com'}]);assert.deepEqual(callbacks,[3104]);}
+  else{assert.deepEqual(native,[]);assert.deepEqual(callbacks,[]);for(const path of ['/booking-manage','/api/bookings?siteId=10000000','/login?oauth=google&accountType=merchant'])assert.ok(requests.some(r=>r.url==='https://launch.faolla.com'+path));}
+ }
+});
+
+test('fixed built booking continuation is separate, proof-bound, and cannot enter generic stage retry',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8'),start=code.indexOf("if(action==='finish-booking-built-smoke'){"),end=code.indexOf("}else if(action==='finish-stage'){",start),branch=code.slice(start,end);
+ for(const token of ['executeBookingBuiltSmokeContinuation','assertBookingBuiltSmokeCandidate','check-admin-bundle-budget.mjs','configUnchanged(s)','verifyCandidate(s)','smoke(s)','onlineReleaseStageStatus(s.lane)','save(s)'])assert.ok(branch.includes(token),token);
+ assert.doesNotMatch(branch,/pm2|npm|buildAttendance|database|migration|restart|update-env/);
+ assert.match(code,/target===BOOKING_HANDOFF_CANDIDATE&&\['finish-stage','resume-booking-stage','resume-booking-probe-stage'\]\.includes\(action\)/);
+ assert.match(code,/action==='finish-booking-built-smoke'&&\(process\.argv\.slice\(2\)\.length!==2\|\|target!==BOOKING_HANDOFF_CANDIDATE\)/);
+});
+
 test('login-only test environment repair retains all build, runtime and publication gates',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  assert.ok(code.includes('env:(lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env'));
@@ -2127,7 +2154,7 @@ test('customer finish-stage cannot bless missing builds dirty source wrong statu
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const marker="if(action==='finish-stage'){",start=code.indexOf(marker)+marker.length,end=code.indexOf("}else if(action==='resume-booking-stage'){",start);
  assert.ok(start>marker.length&&end>start);
- assert.match(code.slice(start-100,start),/const s=JSON.parse\(safeFile\(stateFile\)\);await verifyBase\(s\);/);
+ assert.match(code.slice(code.lastIndexOf('const s=JSON.parse(safeFile(stateFile));',start),start),/const s=JSON.parse\(safeFile\(stateFile\)\);await verifyBase\(s\);/);
  for(const failure of [null,'status','head','dirty','build','budget','config','actual-projection','smoke']){
   const h=customerCodeCandidateHarness(),calls=[];h.s.status=failure==='status'?'staged':'preparing';
   if(failure==='actual-projection')h.actual[customerProjectionEnabled]='1';

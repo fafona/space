@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
+import {observeBookingBuiltSmokePair} from './booking-built-smoke-repair.mjs';
 import {assertBookingRollbackToolPreparation} from './booking-handoff-retention.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {ATTENDANCE_STAGED_REPAIR,assertAttendanceStagedRepairReceipt} from './attendance-staged-tool-repair-policy.mjs';
@@ -61,7 +62,7 @@ function validateBookingRollbackTerminal({stateText,directory,state,checkPath}){
     fs.readFileSync(source+'/.next/BUILD_ID','utf8').trim()!==proof.buildId)fail('booking_terminal_build_changed');
 }
 
-function bookingHandoffPendingBody({maintenance = MAINTENANCE, releaseRoot = RELEASE_ROOT, fixedStagedRepairReceipt, fixedContactWechatStagedRepairReceipt, fixedLoginUnbuiltRepairReceipt} = {}, checkPath = assertOnlineToolOwnedPath) {
+function bookingHandoffPendingBody({maintenance = MAINTENANCE, releaseRoot = RELEASE_ROOT, fixedStagedRepairReceipt, fixedContactWechatStagedRepairReceipt, fixedLoginUnbuiltRepairReceipt} = {}, checkPath = assertOnlineToolOwnedPath, builtPair) {
   // This is not a CLI skip option. Only the separately reviewed, locked repair
   // entrypoint supplies a complete receipt for its single fixed built/unbuilt case.
   if (fixedStagedRepairReceipt !== undefined) assertAttendanceStagedRepairReceipt(fixedStagedRepairReceipt);
@@ -85,6 +86,12 @@ function bookingHandoffPendingBody({maintenance = MAINTENANCE, releaseRoot = REL
     const stateText = fs.readFileSync(state, 'utf8'), value = JSON.parse(stateText);
     if (value.target !== name) fail('release_pending');
     if (['active', 'rolled-back'].includes(value.status)) continue;
+    // BEGIN exact already-built booking smoke repair; normal callers have no pair.
+    if (builtPair && Object.hasOwn(builtPair.preserved, name)) {
+      if (directory !== RELEASE_ROOT+'/'+name || sha256(privateRead(state)) !== builtPair.preserved[name].stateSha256) fail('release_pending');
+      continue;
+    }
+    // END exact already-built booking smoke repair.
     // BEGIN exact booking terminal state; all original pending cases stay below.
     if (name === APPLICATION && value.status === 'booking-rollback-ready') {
       validateBookingRollbackTerminal({stateText,directory,state,checkPath});
@@ -169,7 +176,14 @@ function bookingHandoffPendingBody({maintenance = MAINTENANCE, releaseRoot = REL
 export function assertBookingBasePendingGuardSource(source){
   if(sha256(originalGuard(source))!==BOOKING_BASE_PENDING_GUARD_SHA256)fail('booking_original_guard_changed');return true;
 }
+export function assertBookingBuiltSmokeToolNoPending(){
+  assertBookingBasePendingGuardSource(fs.readFileSync(new URL('./prepare-online-release-tool.mjs',import.meta.url),'utf8'));
+  // No user-supplied token, target, path, receipt or exception. The actual fixed
+  // pair is re-attested immediately before replaying every other original case.
+  const pair=observeBookingBuiltSmokePair();return bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair);
+}
 export function assertBookingHandoffToolNoPending(...args){
+  if(args.length>2)fail('booking_unexpected_pending_argument');
   const file=new URL('./prepare-online-release-tool.mjs',import.meta.url);assertOnlineToolOwnedPath(fileURLToPath(file),'file');
   assertBookingBasePendingGuardSource(fs.readFileSync(file,'utf8'));
   return bookingHandoffPendingBody(...args);

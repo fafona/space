@@ -9,6 +9,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_CANDIDATE as CANDIDATE,
   BOOKING_HANDOFF_BASELINE as BASELINE,assertBookingHandoffToolClosure,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
 import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
+import {assertBookingBuiltSmokeRuntimeContinuation} from './booking-built-smoke-repair.mjs';
 import {bookingProtectedEnvironment,assertBookingCompatibilityEnvironment} from './booking-publication-policy.mjs';
 import {verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
@@ -151,9 +152,12 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
   const toolClosureSha256=assertBookingHandoffToolClosure({baseline:CANDIDATE,files:changed,readBlob:f=>runOnlineToolGit(APP,['show',toolRevision+':'+f])});
   const stateText=read(RELEASE+'/'+CANDIDATE+'/state.json').toString(),primary=JSON.parse(stateText);
   const rollbackText=read(RELEASE+'/'+APPLICATION+'/state.json').toString(),rollback=JSON.parse(rollbackText);
+  const buildToolRevision=primary.bookingReviewedStage?.toolRevision===toolRevision?toolRevision:
+    assertBookingBuiltSmokeRuntimeContinuation({toolRevision,primary,rollback});
   need(primary.status==='database-ready'&&primary.baseline===BASELINE&&primary.lane==='booking-runtime-compatibility-only'&&
-    primary.bookingReviewedStage?.toolRevision===toolRevision&&primary.bookingReviewedStage?.toolClosureSha256===toolClosureSha256&&
-    rollback.status==='booking-rollback-built'&&rollback.primary===CANDIDATE&&rollback.toolRevision===toolRevision,'stage');
+    primary.bookingReviewedStage?.toolRevision===buildToolRevision&&
+    (buildToolRevision!==toolRevision||primary.bookingReviewedStage?.toolClosureSha256===toolClosureSha256)&&
+    rollback.status==='booking-rollback-built'&&rollback.primary===CANDIDATE&&rollback.toolRevision===buildToolRevision,'stage');
   const history=readOnlineRetentionHistory();need(history.entries.at(-1)?.active.target===BASELINE&&history.headSha256===primary.retentionHeadSha256,'history');
   vacant(ROOT);for(const s of [primary,rollback])vacant(RELEASE+'/'+s.target+'/atomic-runtime.json');
   const inactive=await verifyInactiveBookingSchema({rootDir:primary.directory});
@@ -188,7 +192,7 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
       const actual=runtime(currentPrimary.pid);for(const [k,v]of Object.entries(env))need(actual[k]===v,'primary_inherited_runtime');
     }else{
       const builtText=read(op+'/rollback-built.json'),built=JSON.parse(builtText);
-      need(hash(builtText)===rollback.rollbackBuildSha256&&built.status==='built-not-started'&&built.primary===CANDIDATE&&built.toolRevision===toolRevision&&
+      need(hash(builtText)===rollback.rollbackBuildSha256&&built.status==='built-not-started'&&built.primary===CANDIDATE&&built.toolRevision===buildToolRevision&&
         built.runtimeSha256===originals[s.target].runtimeSha256&&built.environmentFileSha256===originals[s.target].environmentFileSha256&&
         built.buildEvidenceSha256===originals[s.target].buildProofSha256&&built.builtOutputSha256===attendanceRepairTreeFingerprint(s.directory+'/.next',{exclude:['cache','trace']}).sha256,'rollback_artifacts');
     }
