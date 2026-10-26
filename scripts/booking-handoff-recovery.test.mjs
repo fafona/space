@@ -19,10 +19,13 @@ function fixture({database={active:true,barrierCompleted:true},legacy={paused:fa
   return {operations,calls,receipt:()=>receipt};
 }
 test('legacy recovery requires a completed transaction barrier AND an unchanged original timer, never just a SELECT false',()=>{
-  assert.equal(selectBookingRecoveryTarget({active:false,barrierCompleted:true},{originalIntact:true}),'baseline');
+  assert.equal(selectBookingRecoveryTarget({active:false,barrierCompleted:true,activationAttempted:false},{originalIntact:true}),'baseline');
+  assert.equal(selectBookingRecoveryTarget({active:false,barrierCompleted:true,activationAttempted:true,originalRowsUntouched:true},{originalIntact:true}),'baseline');
   for(const [db,old]of [[{active:false},{originalIntact:true}],[{active:false,barrierCompleted:false},{originalIntact:true}],
     [{active:null,barrierCompleted:false},{originalIntact:true}],[{active:true,barrierCompleted:true},{originalIntact:true}],
-    [{active:false,barrierCompleted:true},{originalIntact:false}]])assert.equal(selectBookingRecoveryTarget(db,old),'rollback');
+    [{active:false,barrierCompleted:true},{originalIntact:false}],
+    [{active:false,barrierCompleted:true,activationAttempted:true,originalRowsUntouched:false},{originalIntact:true}],
+    [{active:false,barrierCompleted:true,activationAttempted:false,activationCommitted:true},{originalIntact:true}]])assert.equal(selectBookingRecoveryTarget(db,old),'rollback');
 });
 test('after committed activation recovery disables booking dispatch, pauses the old timer once, routes 6c and closes ingress',async()=>{
   const f=fixture(),r=await executeBookingFailureRecovery(f.operations,lease());
@@ -30,7 +33,7 @@ test('after committed activation recovery disables booking dispatch, pauses the 
   assert.equal(r.target,A);assert.equal(r.phase,'rollback');assert.equal(r.gateClosed,true);assert.equal(r.normalHandoffCompleted,false);
 });
 test('proven inactive recovery restores original routing without restarting or resuming any timer',async()=>{
-  const f=fixture({database:{active:false,barrierCompleted:true}}),r=await executeBookingFailureRecovery(f.operations,lease());
+  const f=fixture({database:{active:false,barrierCompleted:true,activationAttempted:false}}),r=await executeBookingFailureRecovery(f.operations,lease());
   assert.equal(r.target,B);assert.equal(f.calls.includes('pauseLegacyOnce'),false);assert.equal(r.normalHandoffCompleted,false);
 });
 test('unknown DB outcome never routes the legacy website or attempts another authority change',async()=>{

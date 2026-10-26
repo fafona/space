@@ -17,6 +17,7 @@ import {normalizeRetirementProcess,parseRetirementSockets,assertExistingPm2Direc
 import {assertOnlineRetentionPersistedProcesses} from './online-release-retention-writer.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
 import {assertOnlineToolOwnedPath,runOnlineToolGit} from './prepare-online-release-tool.mjs';
+import {BOOKING_PROTECTED_SLUGS} from './booking-publication-database.mjs';
 
 const RELEASE='/var/lib/faolla-online-release',CONTAINER='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416';
 const hash=v=>createHash('sha256').update(v).digest('hex'),need=(v,c)=>{if(!v)throw Error('booking_recovery_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
@@ -33,18 +34,22 @@ function fact(pid){need(Number.isSafeInteger(pid)&&pid>0,'pid');const root='/pro
 function rawEnv(pid){const v={};for(const item of fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean)){const at=item.indexOf('=');need(at>0&&!Object.hasOwn(v,item.slice(0,at)),'raw_environment');v[item.slice(0,at)]=item.slice(at+1);}return v;}
 const location=s=>Object.fromEntries(['target','name','directory','port'].map(k=>[k,s[k]]));
 
+const savedRows=`(select encode(sha256(convert_to(count(*)::text||':'||coalesce(string_agg(h,'' order by h collate "C"),''),'UTF8')),'hex') from
+ (select encode(sha256(convert_to(to_jsonb(p)::text,'UTF8')),'hex') h from public.pages p where slug in
+ (${BOOKING_PROTECTED_SLUGS.map(s=>"'"+s+"'").join(',')})) saved)`;
 export const BOOKING_RECOVERY_BARRIER_SQL=`begin;set local lock_timeout='45s';set local statement_timeout='50s';
 lock table public.pages,public.faolla_booking_atomic_control,public.faolla_booking_atomic_commands,public.faolla_booking_mail_jobs in share row exclusive mode;
 select jsonb_build_object('systemIdentifier',(select system_identifier::text from pg_control_system()),
  'databaseOid',(select oid::text from pg_database where datname=current_database()),'serverVersionNum',current_setting('server_version_num'),
  'databaseName',current_database(),'currentUser',current_user,'primary',not pg_is_in_recovery(),
- 'active',active,'protocol',protocol,'generation',generation::text) from public.faolla_booking_atomic_control;
+ 'active',active,'protocol',protocol,'generation',generation::text,'savedBookingRowsSha256',${savedRows}) from public.faolla_booking_atomic_control;
 rollback;`;
 // The barrier waits for the complete repair+flip transaction, including its
 // commit or rollback. A plain MVCC SELECT false while an old writer is in flight
 // is NOT sufficient to authorize a return to the legacy runtime.
 export function selectBookingRecoveryTarget(database,legacy){
-  return database?.active===false&&database.barrierCompleted===true&&legacy.originalIntact===true?'baseline':'rollback';
+  return database?.active===false&&database.barrierCompleted===true&&legacy.originalIntact===true&&database.activationCommitted!==true&&
+    (database.activationAttempted===false||database.activationAttempted===true&&database.originalRowsUntouched===true)?'baseline':'rollback';
 }
 export async function executeBookingFailureRecovery(operations,lease){
   assertBookingWatchdogLease(lease);await operations.verify();await operations.parentGone();
@@ -93,7 +98,10 @@ function productionOperations(lease){
     if(r.status!==0||r.error||r.signal)return {active:null,barrierCompleted:false,result:'unknown'};
     const value=JSON.parse(r.stdout.trim());need(value.systemIdentifier==='7612049595342295079'&&value.databaseOid==='5'&&value.serverVersionNum==='150008'&&value.databaseName==='postgres'&&
       value.currentUser==='supabase_admin'&&value.primary===true&&value.protocol===2&&typeof value.active==='boolean'&&value.generation===preflight.databaseBefore.generation,'database_generation');
-    return {...value,barrierCompleted:true};
+    const attempted=exists(ROOT+'/activation-attempt.json'),attempt=attempted?JSON.parse(read(ROOT+'/activation-attempt.json')):null;
+    const committed=exists(ROOT+'/activation.json')&&JSON.parse(read(ROOT+'/activation.json')).after?.active===true;
+    return {...value,barrierCompleted:true,activationAttempted:attempted,activationCommitted:committed,
+      originalRowsUntouched:attempted&&attempt.before?.savedBookingRowsSha256===value.savedBookingRowsSha256};
   };
   const pauseLegacyOnce=async()=>{
     verify();let attempt;
