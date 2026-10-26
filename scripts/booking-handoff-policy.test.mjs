@@ -36,12 +36,30 @@ test('only the exact legacy booking host can restart once with only its global b
  for(const patch of [{pid:1590381},{pid:0},{backgroundPaused:'0'},{restartCount:6},{environmentSha256:h('a')},{extra:'new'}])assert.throws(()=>p.assertBookingLegacyTaskTransition(legacy(),{...changed(),...patch}));
  for(const patch of [{name:'merchant-space-enterprise-automation-worker'},{cwd:'/foreign'},{pid:1590382},{port:3001},{backgroundPaused:'1'},{watch:true},{manualSignalHandle:'1'}])assert.throws(()=>p.assertBookingLegacyTaskTransition({...legacy(),...patch},changed()));
 });
-test('raw process environment comparison does not forgive credentials, business flags, mail configuration or key-set drift',()=>{
+test('configured process environment comparison does not forgive credentials, business flags, mail configuration or key-set drift',()=>{
  const before={KEEP:'private-synthetic',FAOLLA_BACKGROUND_JOBS_PAUSED:'0',MERCHANT_ENTERPRISE_ATTENDANCE_ENABLED:'1'},after={...before,FAOLLA_BACKGROUND_JOBS_PAUSED:'1'};
  assert.doesNotThrow(()=>p.assertBookingLegacyEnvironmentTransition(before,after));
  for(const value of [undefined,'','false','yes','1'])assert.throws(()=>p.assertBookingLegacyEnvironmentTransition({...before,FAOLLA_BACKGROUND_JOBS_PAUSED:value},after));
  for(const patch of [{KEEP:'changed'},{RESEND_API_KEY:'not-allowed'},{BOOKING_CONFIRMATION_EMAIL_FROM:'x@example.invalid'},{MERCHANT_ENTERPRISE_ATTENDANCE_ENABLED:'0'},{EXTRA:'value'}])assert.throws(()=>p.assertBookingLegacyEnvironmentTransition(before,{...after,...patch}));
  const removed={...after};delete removed.KEEP;assert.throws(()=>p.assertBookingLegacyEnvironmentTransition(before,removed));
+});
+
+test('actual OS environment changes are limited to the pause flag and two independently bound PM2 restart counters',()=>{
+ const configured={KEEP:'synthetic-private',FAOLLA_BACKGROUND_JOBS_PAUSED:'0'},beforePmUptime=Date.parse('2026-10-26T09:00:00.000Z'),afterPmUptime=Date.parse('2026-10-26T10:00:01.000Z');
+ const beforeRaw={...configured,pm_uptime:String(beforePmUptime),restart_time:String(legacy().restartCount),env:'[object Object]',axm_options:'[object Object]',status:'launching'};
+ const afterRaw={...beforeRaw,FAOLLA_BACKGROUND_JOBS_PAUSED:'1',pm_uptime:String(afterPmUptime),restart_time:String(changed().restartCount)};
+ const value={beforeRaw,afterRaw,beforeConfigured:configured,afterConfigured:{...configured,FAOLLA_BACKGROUND_JOBS_PAUSED:'1'},
+  legacyBefore:legacy(),legacyAfter:changed(),beforePmUptime,afterPmUptime,framework:clone(p.BOOKING_HANDOFF_PM2_PROVENANCE),
+  window,observedAt:'2026-10-26T10:00:02.000Z'};
+ p.assertBookingLegacyRuntimeEnvironmentTransition(value);
+ for(const mutate of [v=>{v.afterRaw.KEEP='changed';},v=>{v.afterRaw.env='changed';},v=>{v.afterRaw.axm_options='changed';},v=>{v.afterRaw.status='online';},
+  v=>{v.afterRaw.restart_time='4';},v=>{v.afterRaw.pm_uptime=String(afterPmUptime+1);},v=>{v.afterRaw.EXTRA='new';},
+  v=>{v.afterConfigured.KEEP='changed';},v=>{v.framework.managerVersion='6.0.15';},v=>{v.framework.nodeVersion='v20.20.2';},
+  v=>{v.framework.frameworkSources['lib/God.js']='0'.repeat(64);},v=>{v.afterPmUptime=beforePmUptime;v.afterRaw.pm_uptime=String(beforePmUptime);},
+  v=>{v.afterPmUptime=Date.parse(v.window.deadlineAt);v.afterRaw.pm_uptime=String(v.afterPmUptime);},v=>{v.observedAt=v.window.deadlineAt;},
+  v=>{v.afterRaw.RESEND_API_KEY='forbidden';},v=>{v.legacyAfter.restartCount++;},v=>{v.allowUnsafe=true;}]){
+  const v=clone(value);mutate(v);assert.throws(()=>p.assertBookingLegacyRuntimeEnvironmentTransition(v));
+ }
 });
 test('every independent enterprise, outbox, attendance, existing web and rollback process remains byte-for-byte identical',()=>{
  const c=cohort(),other={name:'merchant-space-enterprise-automation-worker',pid:1590531,status:'online',args:['unchanged'],environmentSha256:h('c')};

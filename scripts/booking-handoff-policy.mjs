@@ -10,6 +10,17 @@ export const BOOKING_HANDOFF_CANDIDATE='5110bf673d69b117fd0d0d19c5d7d6a9121b704c
 export const BOOKING_HANDOFF_BASELINE='52f602c0734284d81a19f4cdf9cdbf3766aa1834';
 export const BOOKING_HANDOFF_LEGACY_DIRECTORY='/www/wwwroot/merchant-space.releases/e3e685852a63-20260922183053';
 export const BOOKING_HANDOFF_MAX_MS=600000;
+// Read-only provenance collected from the actual host on 2026-10-26. PM2's
+// executeApp refreshes pm_uptime and restartProcessId increments restart_time;
+// these are not merchant configuration and may not be silently normalized away.
+export const BOOKING_HANDOFF_PM2_PROVENANCE=Object.freeze({nodeVersion:'v20.20.1',managerVersion:'6.0.14',
+ frameworkSources:Object.freeze({
+  'package.json':'d2d8b77291fd72dd588f0511741d706b358d5f4387e86a236c8e39b31d324cfd',
+  'lib/God.js':'a43594c030138c6db8d308ee1647903a72a49fc3ae781e600cc56338aa85ba90',
+  'lib/God/ActionMethods.js':'fac3eb453287059b94461cff459209c2d0a7c10bcb94ebf0f86aad8d087f82f8',
+  'lib/God/ForkMode.js':'3d1f57dee19060862b4856b15cd61ca406047e658071609e545ac5e1e7755cb4',
+  'lib/ProcessContainerFork.js':'1fdda3aa24eec19dc74e280d4c1a0d657945fea1de2fc47427a55f1b3f18ef8d',
+ })});
 export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-policy.mjs','scripts/booking-handoff-policy.test.mjs',
  'scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs',
@@ -22,6 +33,7 @@ export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-build.mjs','scripts/booking-handoff-build.test.mjs',
  'scripts/booking-handoff-activation.mjs','scripts/booking-handoff-activation.test.mjs',
  'scripts/booking-handoff-postgres-acceptance.mjs',
+ 'scripts/booking-handoff-pending.mjs','scripts/booking-handoff-tool-preparation.mjs','scripts/booking-handoff-tool-preparation.test.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;
@@ -74,8 +86,32 @@ export function assertBookingLegacyEnvironmentTransition(before,after){
  const rest=value=>Object.fromEntries(Object.entries(value).filter(([key])=>key!=='FAOLLA_BACKGROUND_JOBS_PAUSED').sort(([a],[b])=>a.localeCompare(b)));
  equal(rest(after),rest(before),'legacy_environment_other_change');
  // This is not authority to configure mail or to pause the independent
- // enterprise/outbox process. The host must bind both actual /proc and PM2 env.
+ // enterprise/outbox process. This checks the configured PM2 environment; the
+ // runtime validator below separately binds every actual /proc environment key.
  need(!before.RESEND_API_KEY&&!after.RESEND_API_KEY&&!before.BOOKING_CONFIRMATION_EMAIL_FROM&&!after.BOOKING_CONFIRMATION_EMAIL_FROM,'email_not_disabled');
+ return true;
+}
+export function assertBookingLegacyRuntimeEnvironmentTransition(value){
+ exactKeys(value,['beforeRaw','afterRaw','beforeConfigured','afterConfigured','legacyBefore','legacyAfter',
+  'beforePmUptime','afterPmUptime','framework','window','observedAt'],'runtime_environment_shape');
+ const {beforeRaw:before,afterRaw:after,legacyBefore,legacyAfter,beforePmUptime,afterPmUptime}=value;
+ equal(value.framework,BOOKING_HANDOFF_PM2_PROVENANCE,'pm2_provenance');
+ assertBookingLegacyTaskTransition(legacyBefore,legacyAfter);
+ assertBookingLegacyEnvironmentTransition(value.beforeConfigured,value.afterConfigured);
+ need(object(before)&&object(after)&&Object.values(before).every(v=>typeof v==='string')&&
+  Object.values(after).every(v=>typeof v==='string'),'runtime_environment');
+ equal(Object.keys(before).sort(),Object.keys(after).sort(),'runtime_environment_keys');
+ need(before.FAOLLA_BACKGROUND_JOBS_PAUSED==='0'&&after.FAOLLA_BACKGROUND_JOBS_PAUSED==='1'&&
+  !before.RESEND_API_KEY&&!after.RESEND_API_KEY&&!before.BOOKING_CONFIRMATION_EMAIL_FROM&&!after.BOOKING_CONFIRMATION_EMAIL_FROM,'runtime_environment_pause');
+ const derived=['FAOLLA_BACKGROUND_JOBS_PAUSED','pm_uptime','restart_time'];
+ const rest=env=>Object.fromEntries(Object.entries(env).filter(([key])=>!derived.includes(key)).sort(([a],[b])=>a.localeCompare(b)));
+ equal(rest(after),rest(before),'runtime_environment_other_change');
+ need(before.restart_time===String(legacyBefore.restartCount)&&after.restart_time===String(legacyAfter.restartCount),'runtime_restart_counter');
+ need(positive(beforePmUptime)&&positive(afterPmUptime)&&before.pm_uptime===String(beforePmUptime)&&
+  after.pm_uptime===String(afterPmUptime),'runtime_start_counter');
+ const now=time(value.observedAt),window=assertBookingHandoffWindow(value.window,{nowMs:now});
+ need(beforePmUptime>=legacyBefore.createdAt&&beforePmUptime<=window.startedAtMs&&
+  afterPmUptime>=window.startedAtMs&&afterPmUptime>beforePmUptime&&afterPmUptime<=now,'runtime_start_bound');
  return true;
 }
 export function assertBookingHandoffProcessSet({before,after,legacyBefore,legacyAfter,added}){
