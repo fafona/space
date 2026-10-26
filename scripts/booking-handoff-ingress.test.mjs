@@ -33,5 +33,6 @@ test('operation scope is canonical, time-bounded and has no configurable public 
   assert.throws(()=>createProductionBookingIngressPlan({vhostText:'server { listen 443; }',mainSha256:BOOKING_INGRESS_MAIN_SHA256,window}),/baseline_changed/);
   assert.throws(()=>bookingIngressRestorationText({schemaVersion:1,kind:'booking-only-ingress-gate',file:BOOKING_INGRESS_VHOST,window,beforeText:'forged'},'forged'));
   const source=readFileSync(new URL('./booking-handoff-ingress.mjs',import.meta.url),'utf8');
+  assert.match(source,/isDeepStrictEqual\(reconstructed,plan\)/);
   assert.doesNotMatch(source,/from ['"]node:(?:fs|child_process)|process\.env|\bfetch\(|spawnSync\(|writeFileSync\(|setTimeout\(|--skip|--force/);
 });

@@ -24,6 +24,8 @@ const production=()=>{
 const before=production(),start=Date.now(),window={id:randomUUID(),startedAt:new Date(start).toISOString(),deadlineAt:new Date(start+600000).toISOString()};
 const plan=m.createProductionBookingIngressPlan({vhostText:fs.readFileSync(vhost,'utf8'),mainSha256:hash(fs.readFileSync(main)),window});
 assert.equal(m.bookingIngressRestorationText(plan,plan.afterText),plan.beforeText);
+const reorder=value=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,reorder(value[k])])):value;
+assert.equal(m.bookingIngressRestorationText(JSON.parse(JSON.stringify(reorder(plan))),plan.afterText),plan.beforeText);
 const directory=fs.mkdtempSync('/var/lib/faolla-booking-ingress-rehearsal-');fs.chmodSync(directory,0o700);
 fs.mkdirSync(directory+'/logs',{mode:0o700});
 const write=(name,text)=>fs.writeFileSync(directory+'/'+name,text,{flag:'wx',mode:0o600});

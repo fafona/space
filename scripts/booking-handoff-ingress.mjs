@@ -2,6 +2,7 @@
 // The bounded host controller must arm its independent recovery watchdog before
 // installing this text. This does NOT claim a drain or a ten-minute rehearsal.
 import {createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 import {parseNginx} from './production-maintenance-nginx-profile.mjs';
 import {assertBookingHandoffWindow} from './booking-handoff-policy.mjs';
 
@@ -38,7 +39,7 @@ export function createProductionBookingIngressPlan({vhostText,mainSha256,window}
 export function bookingIngressRestorationText(plan,currentText){
   need(plan?.schemaVersion===1&&plan.kind==='booking-only-ingress-gate'&&plan.file===BOOKING_INGRESS_VHOST,'plan');
   const reconstructed=createProductionBookingIngressPlan({vhostText:plan.beforeText,mainSha256:BOOKING_INGRESS_MAIN_SHA256,window:plan.window});
-  need(JSON.stringify(reconstructed)===JSON.stringify(plan)&&typeof currentText==='string'&&
+  need(isDeepStrictEqual(reconstructed,plan)&&typeof currentText==='string'&&
     hash(currentText)===plan.afterSha256&&currentText===plan.afterText,'restoration_drift');
   return plan.beforeText;
 }
