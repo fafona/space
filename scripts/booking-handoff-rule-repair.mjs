@@ -32,7 +32,11 @@ function entries(snapshot){
   const result=new Map();
   for(const entry of snapshot.entries){
     need(object(entry)&&['desktop','mobile'].includes(entry.viewport)&&typeof entry.blockId==='string'&&
-      entry.blockId.trim()===entry.blockId&&entry.blockId.length>0&&!result.has(binding(entry)),'entry_binding');
+      entry.blockId.trim()===entry.blockId&&entry.blockId.length>0,'entry_binding');
+    // Published plan copies legitimately repeat the same block ID. Such a
+    // binding is usable only when EVERY copy is byte-equivalent; a differing
+    // copy is ambiguous and may not supply options for another page/plan.
+    if(result.has(binding(entry)))equal(result.get(binding(entry)),entry,'entry_binding_ambiguous');
     result.set(binding(entry),entry);
   }
   return result;
@@ -59,9 +63,11 @@ export function planBookingRuleOptionRepair({rulesRow,publishedRows,buildSnapsho
     const expected=buildSnapshot(siteId,structuredClone(page.blocks),snapshot.publishedAt);
     need(expected?.siteId===siteId&&expected.publishedAt===snapshot.publishedAt,'builder_identity');
     const authoritative=entries(expected);equal([...stored.keys()].sort(),[...authoritative.keys()].sort(),'published_bindings_changed');
+    need(snapshot.entries.length===expected.entries.length,'published_entry_count');
     let changed=false;
-    for(const [key,entry]of stored){
-      const published=authoritative.get(key),result=structuredClone(entry),fields=[];
+    for(const [index,entry]of snapshot.entries.entries()){
+      const published=expected.entries[index];need(binding(published)===binding(entry),'published_entry_order');
+      const result=structuredClone(entry),fields=[];
       for(const option of OPTIONS){
         if(Object.hasOwn(entry,option)){
           need(Array.isArray(entry[option]),'malformed_existing_option');
@@ -73,7 +79,6 @@ export function planBookingRuleOptionRepair({rulesRow,publishedRows,buildSnapsho
       }
       equal(result,published,'unapproved_semantic_difference');
       if(fields.length){
-        const index=snapshot.entries.findIndex(e=>binding(e)===key);
         next.snapshots[siteId].entries[index]=result;
         repairs.push({siteId,viewport:entry.viewport,blockId:entry.blockId,index,fields});changed=true;
       }
@@ -103,7 +108,7 @@ function validatePlan(plan,{production}){
       Number.isSafeInteger(repair.index)&&repair.index>=0&&Array.isArray(repair.fields)&&repair.fields.length>0&&
       new Set(repair.fields).size===repair.fields.length&&repair.fields.every(k=>OPTIONS.includes(k)),'repair');
     const before=reconstructed.snapshots[repair.siteId]?.entries?.[repair.index],
-      after=plan.next.snapshots[repair.siteId]?.entries?.[repair.index],key=json([repair.siteId,repair.viewport,repair.blockId]);
+      after=plan.next.snapshots[repair.siteId]?.entries?.[repair.index],key=json([repair.siteId,repair.viewport,repair.blockId,repair.index]);
     need(object(before)&&object(after)&&before.viewport===repair.viewport&&before.blockId===repair.blockId&&!seen.has(key),'repair_binding');
     seen.add(key);changedSites.add(repair.siteId);
     for(const field of repair.fields){

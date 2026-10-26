@@ -49,7 +49,8 @@ async function repairAcceptance(config){
       create trigger set_pages_updated_at before update on public.pages for each row execute function public.set_current_timestamp_updated_at();`);
     const records=Array.from({length:17},(_,i)=>({id:'synthetic-'+i,siteId:'12345678',status:'completed',createdAt:'2026-05-01T00:00:00Z'}));
     const entry={viewport:'desktop',blockId:'synthetic-booking',availableTimeRanges:['10:00-11:00'],timeSlotRules:[],blockedDates:[],holidayDates:[],maxBookingsPerSlot:null};
-    const rules={version:1,snapshots:{'12345678':{version:1,siteId:'12345678',publishedAt:'2026-05-01T00:00:00Z',entries:[entry]}}};
+    const rules={version:1,snapshots:{'12345678':{version:1,siteId:'12345678',publishedAt:'2026-05-01T00:00:00Z',
+      entries:Array.from({length:3},()=>structuredClone(entry))}}};
     const publicId='00000000-0000-4000-8000-000000000002';
     for(const [tenant,slug,blocks,id]of [
       ['__faolla_booking_persistence__','__merchant_booking_records__:v1',{version:1,records}],
@@ -66,7 +67,8 @@ async function repairAcceptance(config){
     const rows=async()=>(await connection.query(`select to_jsonb(p) as value,
       encode(sha256(convert_to(to_jsonb(p)::text,'UTF8')),'hex') as digest from public.pages p order by id`)).rows;
     const initial=await rows(),source=initial.find(r=>r.value.id===publicId),rule=initial.find(r=>r.value.slug==='__merchant_booking_rules__:v1');
-    const expected=structuredClone(rules.snapshots['12345678']);Object.assign(expected.entries[0],{storeOptions:["Store's main",'Branch 2','Branch 3'],itemOptions:['A','B','C','D','E'],titleOptions:['Ms','Mr']});
+    const expected=structuredClone(rules.snapshots['12345678']);for(const e of expected.entries)
+      Object.assign(e,{storeOptions:["Store's main",'Branch 2','Branch 3'],itemOptions:['A','B','C','D','E'],titleOptions:['Ms','Mr']});
     const makePlan=(overrides={})=>planBookingRuleOptionRepair({rulesRow:{...rule.value,rowSha256:rule.digest},
       publishedRows:[{...source.value,rowSha256:source.digest,...overrides}],buildSnapshot:()=>structuredClone(expected)});
     const before=resultsRows(await connection.query(bookingHandoffActivationSnapshotSql)).find(r=>r.snapshot).snapshot;

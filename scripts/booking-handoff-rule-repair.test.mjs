@@ -56,8 +56,8 @@ test('null, string, malformed arrays, duplicate bindings, unknown fields and non
     f=>{f.expected.entries[0].itemOptions=[];},
     f=>{f.expected.entries[0].titleOptions=[1];},
     f=>{f.expected.entries[0].blockId='different';},
-    f=>{f.expected.entries.push(clone(f.expected.entries[0]));},
-    f=>{f.rulesRow.blocks.snapshots['12345678'].entries.push(clone(f.rulesRow.blocks.snapshots['12345678'].entries[0]));},
+    f=>{const e=clone(f.expected.entries[0]);e.itemOptions=['ambiguous'];f.expected.entries.push(e);},
+    f=>{const e=clone(f.rulesRow.blocks.snapshots['12345678'].entries[0]);e.blockedDates=[];f.rulesRow.blocks.snapshots['12345678'].entries.push(e);},
     f=>{f.expected.entries[0].maxBookingsPerSlot=7;},
     f=>{f.expected.entries[0].blockedDates=[];},
     f=>{f.expected.entries[0].timeSlotRules[0].capacity=9;},
@@ -83,7 +83,19 @@ test('reordered published entries cannot conceal an unrelated array-order change
   f.expected.entries.unshift({...clone(second),storeOptions:['3'],itemOptions:['C'],titleOptions:['X']});
   // Entire snapshot comparison intentionally rejects reordering: no unrelated
   // mutation is hidden behind a successful binding lookup.
-  assert.throws(()=>planBookingRuleOptionRepair(f),/unapproved_snapshot_difference/);
+  assert.throws(()=>planBookingRuleOptionRepair(f),/published_entry_order/);
+});
+
+test('real legacy plan copies with equivalent repeated bindings are repaired by exact index, never first-match reuse',()=>{
+  const f=fixture();
+  f.rulesRow.blocks.snapshots['12345678'].entries=Array.from({length:3},()=>clone(f.rulesRow.blocks.snapshots['12345678'].entries[0]));
+  f.expected.entries=Array.from({length:3},()=>clone(f.expected.entries[0]));
+  const plan=planBookingRuleOptionRepair(f);
+  assert.deepEqual(plan.repairs.map(r=>r.index),[0,1,2]);
+  assert.deepEqual(plan.next.snapshots['12345678'],f.expected);
+  assert.ok(sqlFor(plan).includes("'entryCount',3,'fieldCount',9"));
+  const changed=clone(f.expected.entries[2]);changed.itemOptions=['different'];f.expected.entries[2]=changed;
+  assert.throws(()=>planBookingRuleOptionRepair(f),/entry_binding_ambiguous/);
 });
 
 test('the composed transaction keeps the original activation body and repair is before its flip',()=>{
