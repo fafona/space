@@ -49,7 +49,7 @@ function validateBookingRollbackTerminal({stateText,directory,state,checkPath}){
   equal(privateRead(state),Buffer.from(stateText),'booking_terminal_state_changed');
   const source=APP+'.web-releases/'+APPLICATION.slice(0,12)+'-online';
   const artifacts={buildEvidence:privateRead(directory+'/attendance-build-proof.json'),
-    runtime:privateRead(directory+'/runtime.json'),environmentFile:privateRead(source+'/.env.local')};
+    runtime:privateRead(directory+'/atomic-runtime.json'),environmentFile:privateRead(source+'/.env.local')};
   assertBookingRollbackToolPreparation({stateText,history:readOnlineRetentionHistory(),artifacts});
   if(runOnlineToolGit(source,['rev-parse','HEAD']).toString().trim()!==APPLICATION||
     runOnlineToolGit(source,['status','--porcelain=v1','--untracked-files=all']).toString().trim())fail('booking_terminal_source_changed');

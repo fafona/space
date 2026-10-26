@@ -95,7 +95,13 @@ export function bookingHandoffFixture(injected){
     MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED:'0',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',
     MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0',
     FAOLLA_WEB_BUILD_ID:a.target,NEXT_PUBLIC_FAOLLA_WEB_BUILD_ID:a.target,PORT:String(a.port),PWD:a.directory}]));
-  const handoff={evidence:e,originalStageText,legacyBefore,legacyAfter,added,runtimeByName,databaseBefore,databaseAfter,rollbackReadiness};
+  const ruleRepair={schemaVersion:1,kind:'booking-rule-missing-options',planSha256:h('1'),backupSealSha256:h('2'),
+    rowId:'40662361-e851-4455-ac2f-567ac03a021f',beforeRowSha256:'e2ace75b4a6fd169733991927906addce596f24dc41de7eca5c2196de974f5e1',afterRowSha256:h('3'),
+    originalRulesSha256:'5a8fe1e83b8da318980734438970c7f6f17853cca88a54799ae32c0daa537ed1',nextRulesSha256:h('4'),
+    siteCount:2,entryCount:9,fieldCount:27,beforeSavedRowsSha256:h('b'),afterSavedRowsSha256:databaseBefore.savedBookingRowsSha256,
+    updatedAt:'2026-10-26T10:00:30.000Z'};
+  e.ruleRepairSha256=retentionHash(ruleRepair);
+  const handoff={evidence:e,originalStageText,legacyBefore,legacyAfter,added,runtimeByName,databaseBefore,databaseAfter,rollbackReadiness,ruleRepair};
   const before=observation(history,BOOKING_RETENTION_KIND,after,active,rollback,handoff);
   return {history,before,handoff,active,rollback,current,after};
 }

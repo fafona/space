@@ -43,7 +43,7 @@ export function assertBookingRollbackReadiness(readiness,rollback,evidence){
  * recorded runtime edge explicitly names the compatible 6c rollback. */
 export function assertBookingRetentionHandoff({handoff,prior,previousSha256,active,rollback,processes,toolRevision,completedAt}){
   keys(handoff,['evidence','originalStageText','legacyBefore','legacyAfter','added','runtimeByName',
-    'databaseBefore','databaseAfter','rollbackReadiness'],'proof_shape');
+    'databaseBefore','databaseAfter','rollbackReadiness','ruleRepair'],'proof_shape');
   const e=handoff.evidence;
   assertBookingHandoffEvidence(e);
   const bounds=assertBookingHandoffWindow(e.window),restartedAt=handoff.legacyAfter?.createdAt;
@@ -64,6 +64,20 @@ export function assertBookingRetentionHandoff({handoff,prior,previousSha256,acti
     [undefined,''].includes(worker.manualSignalHandle)&&worker.backgroundPaused==='0'&&
     worker.automationEnabled==='0'&&worker.invitationEnabled==='0','worker_identity');
   equal(worker.args,[],'worker_arguments');equal(worker.nodeArgs,[],'worker_arguments');
+  const repair=handoff.ruleRepair;
+  keys(repair,['schemaVersion','kind','planSha256','backupSealSha256','rowId','beforeRowSha256','afterRowSha256',
+    'originalRulesSha256','nextRulesSha256','siteCount','entryCount','fieldCount','beforeSavedRowsSha256','afterSavedRowsSha256','updatedAt'],'rule_repair_shape');
+  need(repair.schemaVersion===1&&repair.kind==='booking-rule-missing-options'&&repair.siteCount===2&&repair.entryCount===9&&repair.fieldCount===27&&
+    repair.rowId==='40662361-e851-4455-ac2f-567ac03a021f'&&
+    repair.beforeRowSha256==='e2ace75b4a6fd169733991927906addce596f24dc41de7eca5c2196de974f5e1'&&
+    repair.originalRulesSha256==='5a8fe1e83b8da318980734438970c7f6f17853cca88a54799ae32c0daa537ed1'&&
+    ['planSha256','backupSealSha256','afterRowSha256','nextRulesSha256','beforeSavedRowsSha256','afterSavedRowsSha256'].every(k=>hex.test(repair[k]??''))&&
+    repair.beforeRowSha256!==repair.afterRowSha256&&repair.originalRulesSha256!==repair.nextRulesSha256&&
+    repair.beforeSavedRowsSha256!==repair.afterSavedRowsSha256&&repair.afterSavedRowsSha256===handoff.databaseBefore.savedBookingRowsSha256,
+    'rule_repair_identity');
+  const repairedAt=Date.parse(repair.updatedAt);
+  need(Number.isFinite(repairedAt)&&repairedAt>=bounds.startedAtMs&&repairedAt<=Date.parse(e.completedAt),'rule_repair_time');
+  equal(rollingHash(repair),e.ruleRepairSha256,'rule_repair_hash');
   assertBookingAtomicActivationTransition(handoff.databaseBefore,handoff.databaseAfter);
   equal(rollingHash({before:handoff.databaseBefore,after:handoff.databaseAfter}),e.activationSha256,'activation_hash');
   assertBookingRollbackReadiness(handoff.rollbackReadiness,rollback,e);

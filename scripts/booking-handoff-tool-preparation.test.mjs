@@ -43,7 +43,7 @@ function collectorFixture(){
   const source='/www/wwwroot/merchant-space.web-releases/'+APPLICATION.slice(0,12)+'-online';
   const maintenance='/var/lib/faolla-maintenance/merchant-space',release='/var/lib/faolla-online-release';
   const files=new Map([[maintenance+'/state.json',Buffer.from('{"phase":"ended"}')],[state,Buffer.from(f.handoff.rollbackReadiness.stateText)],
-    [directory+'/attendance-build-proof.json',f.artifacts.buildEvidence],[directory+'/runtime.json',f.artifacts.runtime],
+    [directory+'/attendance-build-proof.json',f.artifacts.buildEvidence],[directory+'/atomic-runtime.json',f.artifacts.runtime],
     [source+'/.env.local',f.artifacts.environmentFile],[source+'/.next/BUILD_ID',Buffer.from(APPLICATION)]]);
   const names=[APPLICATION],patches=new Map(),fds=new Map();let nextFd=10;
   const dirs=new Set([directory,source,source+'/.next',maintenance,release]);
@@ -86,12 +86,12 @@ test('building, incomplete and unrelated pending candidates never inherit the bo
   assert.throws(()=>f.api.bookingHandoffPendingBody({},own),/release_pending/);
 });
 test('the actual terminal collector refuses artifact bytes, private modes, symlinks, hardlinks and source drift',()=>{
-  for(const key of ['attendance-build-proof.json','runtime.json']){
+  for(const key of ['attendance-build-proof.json','atomic-runtime.json']){
     const f=collectorFixture();f.files.set(f.directory+'/'+key,Buffer.from('changed'));
     assert.throws(()=>f.api.bookingHandoffPendingBody({},f.owned));assert.equal(f.fds.size,0);
   }
   for(const patch of [{uid:1000},{mode:0o100644},{nlink:2},{isSymbolicLink:()=>true}]){
-    const f=collectorFixture();f.patches.set(f.directory+'/runtime.json',patch);
+    const f=collectorFixture();f.patches.set(f.directory+'/atomic-runtime.json',patch);
     assert.throws(()=>f.api.bookingHandoffPendingBody({},f.owned));assert.equal(f.fds.size,0);
   }
   const f=collectorFixture();f.history.entries.pop();

@@ -50,6 +50,8 @@ export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
  'scripts/booking-handoff-activation.mjs','scripts/booking-handoff-activation.test.mjs',
  'scripts/booking-handoff-postgres-acceptance.mjs',
  'scripts/booking-handoff-pending.mjs','scripts/booking-handoff-tool-preparation.mjs','scripts/booking-handoff-tool-preparation.test.mjs',
+ 'scripts/booking-handoff-rule-repair.mjs','scripts/booking-handoff-rule-repair.test.mjs',
+ 'scripts/booking-handoff-rule-backup.mjs','scripts/booking-handoff-rule-backup.test.mjs',
 ]);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![\s\S])/;
@@ -204,7 +206,7 @@ export function assertBookingAtomicActivationTransition(before,after){
 }
 export function assertBookingHandoffEvidence(value){
  const hashes=['priorRetentionHeadSha256','priorStageSha256','sourceClosureSha256','preflightSha256','compatibilitySha256',
-  'backupSha256','ingressGateSha256','legacyDrainSha256','rollbackReadinessSha256','activationSha256','recoveryPlanSha256'];
+  'backupSha256','ingressGateSha256','legacyDrainSha256','rollbackReadinessSha256','activationSha256','recoveryPlanSha256','ruleRepairSha256'];
  exactKeys(value,['schemaVersion','kind','candidate','baseline','application','toolRevision','window','completedAt',...hashes],'evidence_shape');
  need(value.schemaVersion===1&&value.kind==='booking-task-handoff'&&value.candidate===BOOKING_HANDOFF_CANDIDATE&&
   value.baseline===BOOKING_HANDOFF_BASELINE&&value.application===BOOKING_HANDOFF_APPLICATION&&sha.test(value.toolRevision??'')&&

@@ -14,6 +14,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {BOOKING_SCOPE} from './booking-publication-policy.mjs';
 import {guardedProductionBookingActivationSql,isolatedBookingActivationAcceptanceSql,
   bookingHandoffActivationSnapshotSql,BOOKING_ACTIVATION_BODY_SHA256} from './booking-handoff-activation.mjs';
+import {planBookingRuleOptionRepair,isolatedBookingRepairActivationAcceptanceSql} from './booking-handoff-rule-repair.mjs';
 
 assert.equal(process.platform,'win32','this local fixture requires the pinned Windows runtime');
 assert.equal(process.argv.length,2,'no database URL, path or role CLI overrides');
@@ -33,6 +34,109 @@ const resultsRows=results=>(Array.isArray(results)?results:[results]).flatMap(r=
 const snapshot=async()=>resultsRows(await admin.query(bookingHandoffActivationSnapshotSql)).find(row=>row.snapshot)?.snapshot;
 const scalar=async sql=>(await admin.query(sql)).rows[0];
 async function rejectTransaction(sql,pattern){await assert.rejects(admin.query(sql),pattern);await admin.query('rollback');}
+async function repairAcceptance(config){
+  const repairDatabase='faolla_booking_activation_'+randomBytes(8).toString('hex');
+  await admin.query('create database '+repairDatabase);const connection=new Client({...config,database:repairDatabase});
+  let legacy,observer,advisoryKey;
+  try{
+    await connection.connect();await connection.query(`set role supabase_admin;
+      create table public.pages(id uuid primary key default gen_random_uuid(),merchant_id text,slug text,blocks jsonb,
+        created_at timestamptz default now(),updated_at timestamptz default now());
+      create table public.faolla_schema_migrations(version bigint primary key,name text not null);
+      insert into public.faolla_schema_migrations select n,'synthetic-registry-'||n from generate_series(1,209) n;
+      grant usage on schema public to service_role;grant select,insert,update,delete on public.pages to service_role;
+      create function public.set_current_timestamp_updated_at() returns trigger language plpgsql as $$begin new.updated_at=now();return new;end;$$;
+      create trigger set_pages_updated_at before update on public.pages for each row execute function public.set_current_timestamp_updated_at();`);
+    const records=Array.from({length:17},(_,i)=>({id:'synthetic-'+i,siteId:'12345678',status:'completed',createdAt:'2026-05-01T00:00:00Z'}));
+    const entry={viewport:'desktop',blockId:'synthetic-booking',availableTimeRanges:['10:00-11:00'],timeSlotRules:[],blockedDates:[],holidayDates:[],maxBookingsPerSlot:null};
+    const rules={version:1,snapshots:{'12345678':{version:1,siteId:'12345678',publishedAt:'2026-05-01T00:00:00Z',entries:[entry]}}};
+    const publicId='00000000-0000-4000-8000-000000000002';
+    for(const [tenant,slug,blocks,id]of [
+      ['__faolla_booking_persistence__','__merchant_booking_records__:v1',{version:1,records}],
+      ['__faolla_booking_persistence__','__merchant_booking_rules__:v1',rules],
+      ['__faolla_booking_persistence__','__merchant_booking_rules__:v1:backup',{version:1,snapshots:{}}],
+      ['__faolla_booking_persistence__','__merchant_booking_workbench__:v1',{version:1,settingsBySiteId:{}}],
+      ['12345678',null,[],publicId],['other-merchant','ordinary-page',[{unrelated:true}]],
+    ])await connection.query(`insert into public.pages(id,merchant_id,slug,blocks,created_at,updated_at)
+      values(coalesce($1::uuid,gen_random_uuid()),$2,$3,$4::jsonb,'2026-05-01T00:00:00Z','2026-05-01T00:00:00Z')`,[id??null,tenant,slug,JSON.stringify(blocks)]);
+    for(const name of ['202610250211_booking_atomic_preparation.sql','202610250212_booking_atomic_runtime.sql']){
+      const file='scripts/supabase-migrations/'+name,source=await readFile(new URL('../'+file,import.meta.url),'utf8');
+      assert.equal(hash(source.replaceAll('\r\n','\n')),BOOKING_SCOPE.pins[file]);await connection.query(source);
+    }
+    const rows=async()=>(await connection.query(`select to_jsonb(p) as value,
+      encode(sha256(convert_to(to_jsonb(p)::text,'UTF8')),'hex') as digest from public.pages p order by id`)).rows;
+    const initial=await rows(),source=initial.find(r=>r.value.id===publicId),rule=initial.find(r=>r.value.slug==='__merchant_booking_rules__:v1');
+    const expected=structuredClone(rules.snapshots['12345678']);Object.assign(expected.entries[0],{storeOptions:["Store's main",'Branch 2','Branch 3'],itemOptions:['A','B','C','D','E'],titleOptions:['Ms','Mr']});
+    const makePlan=(overrides={})=>planBookingRuleOptionRepair({rulesRow:{...rule.value,rowSha256:rule.digest},
+      publishedRows:[{...source.value,rowSha256:source.digest,...overrides}],buildSnapshot:()=>structuredClone(expected)});
+    const before=resultsRows(await connection.query(bookingHandoffActivationSnapshotSql)).find(r=>r.snapshot).snapshot;
+    const plan=makePlan(),sql=(p=plan,b=before)=>isolatedBookingRepairActivationAcceptanceSql({before:b,databaseName:repairDatabase,plan:p,backupSealSha256:'d'.repeat(64)});
+    const rejects=async(query,pattern)=>{await assert.rejects(connection.query(query),pattern);await connection.query('rollback');assert.deepEqual(await rows(),initial);};
+    await check('repair rejects a changed source page and leaves rules, records and timestamps untouched',async()=>{
+      await rejects(sql(makePlan({rowSha256:'0'.repeat(64)})),/booking_rule_repair_published_source_changed/);
+    });
+    await check('stale saved rows reject before any repair; a later activation failure rolls back the entire repair',async()=>{
+      await rejects(sql(plan,{...before,savedBookingRowsSha256:'0'.repeat(64)}),/booking_rule_repair_saved_rows_changed/);
+      await rejects(sql(plan,{...before,generation:'00000000-0000-4000-8000-000000000001'}),/booking_activation_snapshot_changed/);
+    });
+    await check('unexpected trigger changes to other columns or booking records are detected and fully rolled back',async()=>{
+      await connection.query(`create function public.synthetic_repair_other_column() returns trigger language plpgsql as $$begin
+        if new.slug='__merchant_booking_rules__:v1' then new.created_at=now();end if;return new;end;$$;
+        create trigger zzz_synthetic_repair_other_column before update on public.pages for each row execute function public.synthetic_repair_other_column();`);
+      await rejects(sql(),/booking_rule_repair_other_fields_changed/);
+      await connection.query('drop trigger zzz_synthetic_repair_other_column on public.pages;drop function public.synthetic_repair_other_column()');
+      await connection.query(`create function public.synthetic_repair_other_record() returns trigger language plpgsql as $$begin
+        if new.slug='__merchant_booking_rules__:v1' then update public.pages set blocks='{}'::jsonb where slug='__merchant_booking_records__:v1';end if;return new;end;$$;
+        create trigger synthetic_repair_other_record after update on public.pages for each row execute function public.synthetic_repair_other_record();`);
+      await rejects(sql(),/booking_rule_repair_other_saved_rows_changed/);
+      await connection.query('drop trigger synthetic_repair_other_record on public.pages;drop function public.synthetic_repair_other_record()');
+    });
+    legacy=new Client({...config,database:repairDatabase});await legacy.connect();await legacy.query('set role service_role');
+    observer=new Client({...config,database:repairDatabase});await observer.connect();
+    let queuedLegacyRejected=false;
+    await check('repair plus activation preserves all 17 records, original publication time, backup, workbench and unrelated rows',async()=>{
+      const handoffPid=(await connection.query('select pg_backend_pid() as pid')).rows[0].pid,
+        legacyPid=(await legacy.query('select pg_backend_pid() as pid')).rows[0].pid;
+      advisoryKey=randomBytes(4).readInt32BE();await observer.query('select pg_advisory_lock($1::integer)',[advisoryKey]);
+      // A real lock barrier, not an assumed sleep: the handoff is paused after
+      // its update but before commit, while the old writer is actually queued.
+      const handoff=connection.query(sql().replace(/commit;$/,'select pg_advisory_xact_lock('+advisoryKey+');commit;'));
+      const waitFor=async(predicate)=>{
+        const deadline=Date.now()+5000;
+        while(Date.now()<deadline){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}
+        throw Error('isolated_repair_lock_barrier_timeout');
+      };
+      await waitFor(async()=>Boolean((await observer.query("select 1 from pg_stat_activity where pid=$1 and wait_event='advisory'",[handoffPid])).rowCount));
+      const oldWrite=legacy.query("update public.pages set blocks=$1::jsonb where slug='__merchant_booking_rules__:v1'",[JSON.stringify(rules)]).then(()=>({ok:true}),error=>({error}));
+      await waitFor(async()=>Boolean((await observer.query("select 1 from pg_locks where pid=$1 and relation='public.pages'::regclass and not granted",[legacyPid])).rowCount));
+      await observer.query('select pg_advisory_unlock($1::integer)',[advisoryKey]);advisoryKey=undefined;
+      const result=resultsRows(await handoff),oldResult=await oldWrite;
+      assert.match(oldResult.error?.message??'',/booking_atomic_legacy_writer_fenced/);queuedLegacyRejected=true;
+      const receipt=result.find(r=>r.repair).repair,activation=result.find(r=>r.value).value;
+      assert.equal(receipt.planSha256,plan.planSha256);assert.equal(receipt.beforeRowSha256,rule.digest);
+      assert.equal(receipt.beforeSavedRowsSha256,before.savedBookingRowsSha256);
+      assert.notEqual(receipt.afterSavedRowsSha256,receipt.beforeSavedRowsSha256);
+      assert.deepEqual(activation.before,{...before,savedBookingRowsSha256:receipt.afterSavedRowsSha256});
+      assert.deepEqual(activation.after,{...activation.before,active:true});
+      const after=await rows(),afterRule=after.find(r=>r.value.id===rule.value.id);
+      assert.deepEqual(afterRule.value.blocks,plan.next);
+      assert.deepEqual({...afterRule.value,blocks:rule.value.blocks,updated_at:rule.value.updated_at},rule.value);
+      assert.notEqual(afterRule.value.updated_at,rule.value.updated_at);assert.equal(afterRule.digest,receipt.afterRowSha256);
+      assert.deepEqual(after.filter(r=>r.value.id!==rule.value.id),initial.filter(r=>r.value.id!==rule.value.id));
+      assert.equal(after.find(r=>r.value.slug==='__merchant_booking_records__:v1').value.blocks.records.length,17);
+    });
+    await check('an old writer already queued behind the repair transaction is fenced after commit',async()=>{
+      assert.equal(queuedLegacyRejected,true);
+    });
+    await check('after the combined commit a legacy writer cannot replace repaired rules with its stale snapshot',async()=>{
+      const after=await rows();await assert.rejects(legacy.query("update public.pages set blocks=$1::jsonb where slug='__merchant_booking_rules__:v1'",[JSON.stringify(rules)]),/booking_atomic_legacy_writer_fenced/);
+      assert.deepEqual(await rows(),after);
+    });
+  }finally{
+    if(advisoryKey!==undefined)await observer?.query('select pg_advisory_unlock($1::integer)',[advisoryKey]).catch(()=>{});
+    await observer?.end().catch(()=>{});await legacy?.end().catch(()=>{});await connection.end().catch(()=>{});
+  }
+}
 try{
   const listener=net.createServer();await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
   const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
@@ -113,6 +217,7 @@ try{
     await service.query("insert into public.pages(merchant_id,slug,blocks) values('synthetic-other','ordinary-unrelated','[]'::jsonb)");
     assert.deepEqual(await snapshot(),{...before,active:true});
   });
+  await repairAcceptance(config);
   completed=true;console.log(JSON.stringify({kind:'local-booking-handoff-postgres-acceptance',serverVersionNum:before.serverVersionNum,
     transactionBodySha256:BOOKING_ACTIVATION_BODY_SHA256,isolatedSqlSha256:hash(sql),checks:passed,productionTouched:false,evidence}));
 }finally{

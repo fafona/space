@@ -110,7 +110,7 @@ test('activation may change only inactive to active, never saved bookings, gener
 });
 test('receipt binds the original candidate, original history and all distinct recovery/readiness evidence hashes',()=>{
  const value={schemaVersion:1,kind:'booking-task-handoff',candidate:p.BOOKING_HANDOFF_CANDIDATE,baseline:p.BOOKING_HANDOFF_BASELINE,application:p.BOOKING_HANDOFF_APPLICATION,toolRevision:'a'.repeat(40),window,completedAt:'2026-10-26T10:01:00.000Z'};
- for(const key of ['priorRetentionHeadSha256','priorStageSha256','sourceClosureSha256','preflightSha256','compatibilitySha256','backupSha256','ingressGateSha256','legacyDrainSha256','rollbackReadinessSha256','activationSha256','recoveryPlanSha256'])value[key]=h('b');
+ for(const key of ['priorRetentionHeadSha256','priorStageSha256','sourceClosureSha256','preflightSha256','compatibilitySha256','backupSha256','ingressGateSha256','legacyDrainSha256','rollbackReadinessSha256','activationSha256','recoveryPlanSha256','ruleRepairSha256'])value[key]=h('b');
  assert.doesNotThrow(()=>p.assertBookingHandoffEvidence(value));
  for(const key of Object.keys(value)){const v=clone(value);delete v[key];assert.throws(()=>p.assertBookingHandoffEvidence(v),undefined,key);}
  for(const patch of [{candidate:p.BOOKING_HANDOFF_BASELINE},{completedAt:window.deadlineAt},{extra:'ignored'},{backupSha256:'bad'},{toolRevision:'a'.repeat(40)+'\n'}])assert.throws(()=>p.assertBookingHandoffEvidence({...value,...patch}));
