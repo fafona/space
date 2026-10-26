@@ -20,6 +20,7 @@ export const BOOKING_TOOL_FILES=Object.freeze([
  'scripts/online-traffic-release-policy.mjs','scripts/online-traffic-publication-policy.mjs',
  'scripts/online-traffic-release.mjs','scripts/online-traffic-release.test.mjs',
  'scripts/online-traffic-publication-policy.test.mjs','scripts/online-traffic-retention-integration.test.mjs',
+ 'scripts/customer-code-release-policy.test.mjs',
 ]);
 const allowed=new Set([...BOOKING_APPLICATION_FILES,...BOOKING_TOOL_FILES]);
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -55,5 +56,6 @@ export const BOOKING_FOCUSED_TESTS=Object.freeze([
  'src/lib/merchantBusinessBookingPermissions.test.ts','src/lib/merchantBookings.test.ts','src/lib/merchantBookingRules.test.ts',
  'src/app/api/bookings/route.test.ts','src/app/api/bookings/calendar/route.test.ts','scripts/check-booking-persistence.test.mjs',
  'scripts/attendance-online-build.test.mjs','scripts/online-traffic-publication-policy.test.mjs',
+ 'scripts/customer-code-release-policy.test.mjs',
  'scripts/online-release-retention-policy.test.mjs','scripts/online-release-retention-writer.test.mjs',
 ].filter((value,index,all)=>all.indexOf(value)===index));
