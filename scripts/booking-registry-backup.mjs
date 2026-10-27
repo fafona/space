@@ -22,7 +22,7 @@ const need=(v,c)=>{if(!v)throw Error('booking_registry_backup_'+c);};
 const same=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
 function read(file,{privateMode=true}={}){
  assertOnlineToolOwnedPath(file,'file');const before=fs.lstatSync(file);
- need(before.nlink===1&&before.size>0&&before.size<=256*1024**2&&(!privateMode||(before.mode&0o777)===0o600),'file');
+ need(before.nlink===1&&(before.size>0||!privateMode&&before.size===0)&&before.size<=256*1024**2&&(!privateMode||(before.mode&0o777)===0o600),'file');
  const id=s=>['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].map(k=>s[k]);
  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{
   same(id(fs.fstatSync(fd)),id(before),'file_replaced');const bytes=fs.readFileSync(fd);
