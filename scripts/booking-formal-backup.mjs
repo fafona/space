@@ -71,7 +71,7 @@ export function assertBookingFormalDatabaseSelection({container,state,pilots,met
 async function formalBeforeBackup(){
  const container=JSON.parse(await command(['inspect','--format','{"id":{{json .Id}},"name":{{json .Name}},"running":{{json .State.Running}},"mounts":{{json .Mounts}}}',production.containerId]));
  container.mounts.sort((a,b)=>a.Destination.localeCompare(b.Destination)||a.Source.localeCompare(b.Source));
- const ids=(await command(['ps','-aq','--filter','label=com.docker.compose.project=faolla-attendance-pilot'])).split('\n').filter(Boolean).sort();same(ids,[...BOOKING_FORMAL_PILOT_IDS].sort(),'pilot_set');
+ const ids=(await command(['ps','-aq','--no-trunc','--filter','label=com.docker.compose.project=faolla-attendance-pilot'])).split('\n').filter(Boolean).sort();same(ids,[...BOOKING_FORMAL_PILOT_IDS].sort(),'pilot_set');
  const pilots=[];for(const id of ids)pilots.push(JSON.parse(await command(['inspect','--format','{"id":{{json .Id}},"running":{{json .State.Running}}}',id])));
  const rootDir=APP+'.web-releases/'+C.slice(0,12)+'-online',{manifest}=await loadAttendanceProductionScope({rootDir});
  const state=validateBookingDatabaseState(JSON.parse(await query(bookingDatabaseStateSql)),manifest);

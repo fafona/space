@@ -36,6 +36,22 @@ const observed=()=>({candidate:C,baseline:'b'.repeat(40),toolRevision:'f'.repeat
   buildProofSha256:'5'.repeat(64),environmentSha256:'6'.repeat(64),dependenciesSha256:'7'.repeat(64),builtOutputSha256:'8'.repeat(64)},
  compatibilitySha256:'9'.repeat(64),compatibilityEvidenceSha256:'0'.repeat(64)});
 const backup=()=>({archiveSha256:'a'.repeat(64),archiveBytes:2345,createdAt:new Date(Date.now()-1000).toISOString(),source:{sha:'f'.repeat(40)},restoreRehearsed:false});
+test('actual formal preflight requests full Docker IDs and compares the complete stopped pilot set',async()=>{
+ for(const truncated of [false,true]){
+  const calls=[],container={id:production.containerId,name:'/supabase-db',running:true,mounts:[{Destination:'/data',Type:'bind',Source:production.dataSource,RW:true}]};
+  const evidence={contractSha256:'a'.repeat(64)},proof={evidenceSha256:hash(Buffer.from(JSON.stringify(evidence)))};
+  const fn=extracted('formalBeforeBackup',{need,same,APP:'/app',OP:'/op',C,B:'baseline',production,BOOKING_FORMAL_PILOT_IDS,BOOKING_MIGRATIONS:[{fileName:'one'},{fileName:'two'}],hash,
+   bookingDatabaseStateSql:'state',attendanceCompatibilityMetadataContractSql:()=> 'metadata',
+   command:async args=>{calls.push(JSON.parse(JSON.stringify(args)));if(args[0]==='ps')return BOOKING_FORMAL_PILOT_IDS.map(id=>truncated?id.slice(0,12):id).join('\n');
+    return JSON.stringify(args.at(-1)===production.containerId?container:{id:args.at(-1),running:false});},
+   loadAttendanceProductionScope:async()=>({manifest:[]}),query:async sql=>JSON.stringify(sql==='state'?{...production}:evidence.contractSha256),validateBookingDatabaseState:x=>x,
+   read:file=>Buffer.from(JSON.stringify(file.endsWith('booking-compatibility.json')?proof:file.endsWith('booking-compatibility-evidence.json')?evidence:'migration')),
+   assertBookingCompatibilityProof:()=>{},assertBookingFormalDatabaseSelection:v=>assertBookingFormalDatabaseSelection(JSON.parse(JSON.stringify(v))),
+  });
+  if(truncated)await assert.rejects(fn(),/pilot_set/);else assert.equal((await fn()).pilots.length,5);
+  assert.deepEqual(calls.find(args=>args[0]==='ps'),['ps','-aq','--no-trunc','--filter','label=com.docker.compose.project=faolla-attendance-pilot']);
+ }
+});
 test('binding includes exact application, tool, retained evidence, compatibility, attempt, key and reports',()=>{
  const facts={...observed(),attemptSha256:'a',keySha256:'b',createReportSha256:'c',verifyReportSha256:'d'},dr=backup(),value={schemaVersion:1,kind:'booking-formal-backup-binding',...facts,backup:dr,completedAt:new Date().toISOString()};
  assert.equal(assertBookingFormalBackupBinding(value,facts,dr),true);
