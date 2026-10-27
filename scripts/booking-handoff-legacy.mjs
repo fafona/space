@@ -1,4 +1,4 @@
-import {assertBookingDependencyToolClosure as assertBookingHandoffToolClosure} from './booking-dependency-continuation-policy.mjs';
+import {assertBookingReadyClosure as assertBookingHandoffToolClosure} from './booking-ready-policy.mjs';
 // Exactly one approved restart of the legacy booking timer host. This is NOT a
 // generic PM2 controller. No independent enterprise/outbox process is signalled.
 import * as fs from 'node:fs';
