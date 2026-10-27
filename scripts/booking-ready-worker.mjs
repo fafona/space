@@ -23,6 +23,13 @@ function peer(pid){const f=bookingReadyProcessFact(pid),s=fs.statSync('/proc/'+p
  bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),executable:f.executable,
  executableIdentity:['dev','ino','size','mtimeNs','ctimeNs','nlink','uid','mode'].map(k=>String(s[k])).join(':')};}
 function absent(){for(const f of ['worker-enabled.json','watchdog-lease.json','preflight.json'])need(!fs.existsSync(ROOT+'/'+f),'gate_or_public_attempt');}
+export function bookingReadyWorkerConfiguration(environment){
+ need(environment&&typeof environment==='object'&&!Array.isArray(environment),'pm2_environment');
+ // Two genuine read-only snapshots of this exact gated worker confirmed that
+ // ONLY axm_monitor changes without any configuration or process change. Keep
+ // every other field, including all env values and manager/control metadata.
+ return Object.fromEntries(Object.entries(environment).filter(([key])=>key!=='axm_monitor'));
+}
 export function assertBookingReadyWorkerRawTransition(before,after,oldRow,newRow){
  same(newRow.env,oldRow.env,'configured_environment');
  const metadata={created_at:newRow.created_at,pm_uptime:newRow.pm_uptime,restart_time:newRow.restart_time,pm_exec_path:newRow.pm_exec_path,
@@ -46,7 +53,7 @@ export async function replaceBookingReadyWorker({lock,toolRevision}){
  need(database.registry.length===211&&database.savedBookingRowsSha256==='76bac52f5b3dfc990709a34d89d828a6b77d0479001f6cd5d55128ae077dbe4b','inactive_database');
  need(hash(fs.readFileSync('/usr/lib/node_modules/pm2/lib/Utility.js'))==='97dc35e42a3ca1fdb4d79829346e8dbc693f1b180a764c99f202abc3328f3129','pm2_utility');
  const observe=()=>{assertOnlineRetentionHeldLocks(lock);absent();const list=bookingReadyRawProcesses(),target=list.find(p=>p.name===WORKER);need(target,'worker');need(target.pid>0&&target.pm2_env.status==='online','process_not_ready');
-  return {process:normalizeRetirementProcess(target),raw:raw(target.pid),configured:target.pm2_env,identity:{name:WORKER,...bookingReadyProcessFact(target.pid)},
+  return {process:normalizeRetirementProcess(target),raw:raw(target.pid),configured:bookingReadyWorkerConfiguration(target.pm2_env),identity:{name:WORKER,...bookingReadyProcessFact(target.pid)},
    legacy:collectBookingLegacyHost(),peer:peer(target.pid),rpcExpected:bookingLegacyRpcExpected({...target,pm2_env:{...target.pm2_env,args:target.pm2_env.args??[],node_args:target.pm2_env.node_args??[]}})};};
  let attemptText;
  return executeBookingReadyWorkerReplacement({observe,

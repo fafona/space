@@ -3,7 +3,28 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {executeBookingReadyWorkerReplacement,assertBookingReadyWorkerRawTransition} from './booking-ready-worker.mjs';
+import {executeBookingReadyWorkerReplacement,assertBookingReadyWorkerRawTransition,bookingReadyWorkerConfiguration} from './booking-ready-worker.mjs';
+test('only the actually observed live axm_monitor field is excluded; every configuration field remains bound',()=>{
+ const old={env:{kept:'synthetic'},pm_exec_path:'/old',pm_cwd:'/private',watch:false,created_at:100,restart_time:0,axm_monitor:{heap:1},axm_dynamic:{kept:true}},
+ next={...old,axm_monitor:{heap:2}};
+ assert.deepEqual(bookingReadyWorkerConfiguration(old),bookingReadyWorkerConfiguration(next));
+ assert.deepEqual(Object.keys(bookingReadyWorkerConfiguration(old)),Object.keys(old).filter(k=>k!=='axm_monitor'));
+ for(const patch of [{env:{changed:true}},{pm_exec_path:'/other'},{pm_cwd:'/other'},{watch:true},{created_at:101},{restart_time:1},{axm_dynamic:{kept:false}},{extra:true}])
+  assert.notDeepEqual(bookingReadyWorkerConfiguration(old),bookingReadyWorkerConfiguration({...next,...patch}));
+ for(const invalid of [null,undefined,[],1,'bad'])assert.throws(()=>bookingReadyWorkerConfiguration(invalid));
+});
+test('actual one-attempt sequence tolerates only live monitoring drift before begin/recheck; real configuration drift still refuses restart',async()=>{
+ for(const drift of ['monitor','configuration']){
+  let observations=0,restarts=0;const base={env:{kept:'synthetic'},pm_exec_path:'/old',watch:false};
+  const operations={observe:async()=>({configured:bookingReadyWorkerConfiguration({...base,axm_monitor:{sequence:++observations},...(drift==='configuration'&&observations>1?{watch:true}:{})})}),
+   admit:async()=>{},begin:async()=>{},restart:async()=>{restarts++;return {schemaVersion:1,kind:'booking-ready-worker-rpc-ack',acknowledged:true,peerVerified:true,pm2Version:'6.0.14'};},
+   settled:async()=>({}),verify:async()=>{},complete:async()=> 'done'};
+  if(drift==='monitor'){assert.equal(await executeBookingReadyWorkerReplacement(operations),'done');assert.equal(restarts,1);}
+  else{await assert.rejects(executeBookingReadyWorkerReplacement(operations),/before_changed/);assert.equal(restarts,0);}
+ }
+ const source=readFileSync(new URL('./booking-ready-worker.mjs',import.meta.url),'utf8');
+ assert.match(source,/configured:bookingReadyWorkerConfiguration\(target.pm2_env\)/);
+});
 test('fixed source replacement Python framing tests never contact a real PM2 daemon',()=>{
  const r=spawnSync(process.platform==='win32'?'python.exe':'python3',['-I','-S','-B',fileURLToPath(new URL('./test_booking_ready_pm2_replace.py',import.meta.url))],
  {encoding:'utf8',timeout:10000,maxBuffer:256*1024,windowsHide:true,env:{PATH:process.env.PATH??'',SystemRoot:process.env.SystemRoot??'',TEMP:process.env.TEMP??'',TMP:process.env.TMP??''}});
