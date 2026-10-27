@@ -1,4 +1,6 @@
 import {assertBookingDependencyToolClosure as assertBookingHandoffToolClosure} from './booking-dependency-continuation-policy.mjs';
+import {BOOKING_READY_BASE,BOOKING_READY_RECEIPT} from './booking-ready-policy.mjs';
+import {collectBookingReadyRuntimeCohort} from './booking-ready-runtime.mjs';
 // Private runtime preparation only. No public routing, legacy-host restart,
 // database mutation, history append or worker enablement is exposed here.
 import * as fs from 'node:fs';
@@ -321,6 +323,7 @@ export function collectBookingAtomicRuntimeCohort({toolRevision}){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');
   need(sha.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
   verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
+  if(toolRevision!==BOOKING_READY_BASE&&fs.existsSync(RELEASE+'/'+CANDIDATE+'/'+BOOKING_READY_RECEIPT))return collectBookingReadyRuntimeCohort({toolRevision});
   const ready=JSON.parse(read(ROOT+'/runtime-ready.json'));
   need(ready.kind==='booking-atomic-private-runtime-ready','runtime_not_ready');
   const attempt=JSON.parse(read(ROOT+'/runtime-attempt.json'));

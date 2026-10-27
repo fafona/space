@@ -81,6 +81,34 @@ function launch(role,directory,{fd}={}){ownedCase(directory);const output=fs.ope
  try{return spawn('/usr/bin/node',[FILE,role,directory],{cwd:directory,env:env(),detached:role==='watchdog'||role==='worker',stdio:['ignore',output,output,...(fd===undefined?[]:[fd])]});}
  finally{fs.closeSync(output);}}
 async function spawned(child){await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});return fact(child.pid);}
+// The PID file is an acknowledgement, never a source of signal authority.
+// nginx -t can create it empty before the actual child has even started.
+export function bookingNativeNginxReady({pidText,expected,actual,directory}){
+ need(Number.isSafeInteger(expected?.pid)&&expected.pid>0&&expected.executable===NGINX&&expected.cwd===directory,'fixture_nginx_spawn');
+ need(actual?.pid===expected.pid&&actual.startTicks===expected.startTicks&&actual.executable===NGINX&&actual.cwd===directory&&actual.state!=='Z','fixture_nginx_child_changed');
+ return /^[1-9][0-9]*\n?$/.test(pidText)&&Number(pidText.trim())===expected.pid;
+}
+export async function startBookingNativeNginx(operations){
+ const expected=await operations.spawned();
+ // Register BEFORE reading the PID file, waiting, probing, or writing evidence.
+ operations.register(expected);
+ await operations.until(()=>bookingNativeNginxReady({expected,actual:operations.actual(expected.pid),pidText:operations.pidText(),directory:operations.directory}));
+ return expected;
+}
+function nginxOwnedNow(expected,directory){
+ try{const actual=fact(expected.pid);
+  if(actual.state==='Z'){need(actual.startTicks===expected.startTicks,'fixture_nginx_child_changed');return null;}
+  // Nginx changes its process title during startup. Its direct-spawn PID,
+  // start ticks, root-owned executable and exact private cwd cannot change.
+  bookingNativeNginxReady({expected,actual,pidText:String(expected.pid),directory});return actual;
+ }catch(e){if(['ENOENT','ESRCH'].includes(e.code))return null;throw e;}
+}
+export async function cleanupBookingNativeFixtures(operations){
+ const errors=[];for(const task of [operations.controllers,operations.nginx,operations.legacy,operations.children]){
+  try{await task();}catch(e){errors.push(e);}
+ }
+ if(errors.length)throw new AggregateError(errors,'booking_native_owned_cleanup_unconfirmed');
+}
 function assertFd(c){need(fs.readlinkSync('/proc/self/fd/3')===c.directory+'/deploy.lock','inherited_fd');const s=fs.fstatSync(3),t=fs.lstatSync(c.directory+'/deploy.lock');
  equal([s.dev,s.ino,s.uid,s.mode,s.nlink],[t.dev,t.ino,0,0o100600,1],'inherited_inode');
  const contender=spawnSync('flock',['--nonblock',c.directory+'/deploy.lock','/usr/bin/true'],{env:env(),timeout:2000});need(contender.status===1,'kernel_lock_not_held');}
@@ -212,9 +240,11 @@ async function nativeMain(){
    const c={name,root,directory:runtime,sourceSha256:sourceHashes['booking-handoff-native-acceptance.mjs'],database,before:seeded.before,plan:seeded.plan,ports,lua,window};write(runtime+'/owner.json',c);
    for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=launch(role,runtime),f=await spawned(child);children.push(f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
    write(runtime+'/nginx.conf',bookingNativeConfigText(c,'baseline',false));run(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-t']);
-   const child=spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'});await spawned(child);
-   await until(()=>fs.existsSync(runtime+'/nginx.pid'));nginx=fact(Number(fs.readFileSync(runtime+'/nginx.pid','utf8').trim()));need(nginx.pid===child.pid&&nginx.executable===NGINX,'fixture_nginx_master');write(runtime+'/nginx-process.json',nginx);children.push(nginx);
+   const child=spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'});
+   await startBookingNativeNginx({directory:runtime,spawned:()=>spawned(child),register:f=>{nginx=f;},actual:fact,until,
+    pidText:()=>{try{return fs.readFileSync(runtime+'/nginx.pid','utf8');}catch(e){if(e.code==='ENOENT')return '';throw e;}}});
    await until(async()=>{try{return (await probe(c)).value.buildId===BASELINE;}catch{return false;}});
+   nginx=nginxOwnedNow(nginx,runtime);need(nginx,'fixture_nginx_master');write(runtime+'/nginx-process.json',nginx);children.push(nginx);
    const fd=fs.openSync(runtime+'/deploy.lock',fs.constants.O_RDWR|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);run('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd]});
    let controller;try{controller=launch('controller',runtime,{fd});controllerProcess=await spawned(controller);children.push(controllerProcess);}finally{fs.closeSync(fd);}
    const ended=new Promise(resolve=>controller.once('exit',(code,signal)=>resolve({code,signal})));
@@ -242,9 +272,12 @@ async function nativeMain(){
   }finally{
    // Stop the two possible controllers first, so cleanup cannot race another
    // fixture routing write or restart. Never enumerate-and-kill other apps.
-   for(const file of ['controller.json','watchdog.json']){try{await stop(json(runtime+'/'+file));}catch(e){if(e.code!=='ENOENT')throw e;}}
-   try{const legacy=json(runtime+'/legacy.json');if(!children.some(f=>f.pid===legacy.process.pid))children.push(legacy.process);}catch(e){if(e.code!=='ENOENT')throw e;}
-   for(const f of [...children].reverse())await stop(f);
+   await cleanupBookingNativeFixtures({
+    controllers:async()=>{const failures=[];for(const file of ['controller.json','watchdog.json'])try{await stop(json(runtime+'/'+file));}catch(e){if(e.code!=='ENOENT')failures.push(e);}if(failures.length)throw new AggregateError(failures);},
+    nginx:async()=>{if(nginx){const owned=nginxOwnedNow(nginx,runtime);if(owned)await stop(owned);}},
+    legacy:async()=>{try{await stop(json(runtime+'/legacy.json').process);}catch(e){if(e.code!=='ENOENT')throw e;}},
+    children:async()=>{const failures=[];for(const f of [...children].reverse())try{await stop(f);}catch(e){failures.push(e);}if(failures.length)throw new AggregateError(failures);},
+   });
   }
  }
  equal(production(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
