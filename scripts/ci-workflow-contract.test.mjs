@@ -248,12 +248,14 @@ test("real ingress acceptance is an opt-in isolated job and package installation
   assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/production-maintenance-ingress-acceptance.mjs"), false);
 });
 
+const ingressKernelGuard = 'case "$(uname -r)" in 6.*|7.0.0-1017-azure) ;; *) exit 1 ;; esac';
+
 test("bridge module initialization is fixed and confined to the disposable Ubuntu ingress job", () => {
   const job = jobBlock("maintenance-ingress");
   assert.equal((workflow.match(/^\s*sudo -n \/usr\/sbin\/modprobe br_netfilter$/gm) ?? []).length, 1);
   assert.match(job, /test "\$RUNNER_OS" = Linux/);
   assert.match(job, /ubuntu:24\.04/);
-  assert.match(job, /case "\$\(uname -r\)" in 6\.\*\) ;; \*\) exit 1 ;; esac/);
+  assert.ok(job.includes(ingressKernelGuard));
   assert.match(job, /sudo -n \/usr\/sbin\/modprobe br_netfilter/);
   assert.doesNotMatch(job, /modprobe[^\n]*\$|sysctl|\/proc\/sys\/net\/bridge/);
   assert.ok(job.indexOf("/usr/sbin/modprobe br_netfilter") < job.indexOf("run: node scripts/production-maintenance-ingress-acceptance.mjs"));
@@ -265,14 +267,14 @@ function ingressPreflightScript() {
     .map((line) => line.replace(/^          /, "")).join("\n");
 }
 
-test("ingress diagnostic additions preserve the exact original guarded command sequence", () => {
+test("ingress compatibility trial preserves every guarded command except the explicitly enumerated CI kernel admission", () => {
   const script = ingressPreflightScript();
   const original = [
     "set -euo pipefail",
     'test "$GITHUB_ACTIONS" = true',
     'test "$RUNNER_OS" = Linux',
     'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04',
-    'case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac',
+    ingressKernelGuard,
     "sudo -n /usr/sbin/modprobe br_netfilter",
   ];
   let position = -1;
@@ -314,12 +316,15 @@ function sudo {
 `;
   const cases = [
     { name: "valid host", status: 0, privileged: true },
+    { name: "observed new CI kernel", kernel: "7.0.0-1017-azure", status: 0, privileged: true },
     { name: "non-CI", github: "SECRET_CI_VALUE", status: 1, command: 'test "$GITHUB_ACTIONS" = true' },
     { name: "non-Linux", runner: "SECRET_RUNNER_VALUE", status: 1, command: 'test "$RUNNER_OS" = Linux' },
     { name: "other OS", id: "debian", status: 1, command: 'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04' },
     { name: "other OS version", version: "22.04", status: 1, command: 'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04' },
-    { name: "other kernel major", kernel: "7.0.0-fixture", status: 1, command: 'case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac' },
+    ...["7.0.0-fixture", "7.0.0-1018-azure", "7.0.1-1017-azure", "7.1.0-1017-azure", "8.0.0-1017-azure", "7.0.0-1017-azure-extra"].map((kernel) =>
+      ({ name: `unapproved kernel ${kernel}`, kernel, status: 1, command: ingressKernelGuard })),
     { name: "failed module command", moduleStatus: "42", status: 42, privileged: true, command: "sudo -n /usr/sbin/modprobe br_netfilter" },
+    { name: "failed module command on observed new CI kernel", kernel: "7.0.0-1017-azure", moduleStatus: "42", status: 42, privileged: true, command: "sudo -n /usr/sbin/modprobe br_netfilter" },
   ];
   for (const entry of cases) {
     const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", fixture + ingressPreflightScript()], {

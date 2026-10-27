@@ -486,8 +486,8 @@ jobs:
           test "$RUNNER_OS" = Linux
           preflight_command='test "$(. /etc/os-release; printf '\''%s:%s'\'' "$ID" "$VERSION_ID")" = ubuntu:24.04'
           test "$(. /etc/os-release; printf '%s:%s' "$ID" "$VERSION_ID")" = ubuntu:24.04
-          preflight_command='case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac'
-          case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac
+          preflight_command='case "$(uname -r)" in 6.*|7.0.0-1017-azure) ;; *) exit 1 ;; esac'
+          case "$(uname -r)" in 6.*|7.0.0-1017-azure) ;; *) exit 1 ;; esac
           preflight_command='sudo -n /usr/sbin/modprobe br_netfilter'
           sudo -n /usr/sbin/modprobe br_netfilter
       - name: Run Real Ingress Rules Only Inside New Network Namespace

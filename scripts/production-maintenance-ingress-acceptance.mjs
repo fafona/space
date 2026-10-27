@@ -10,7 +10,7 @@ import { runNftBatch } from "./production-maintenance-nft-transport.mjs";
 // No network/firewall mutation is available until a fresh network AND PID
 // namespace has been independently checked. No host nft/iptables write occurs.
 // The separate CI tool-preparation step may load br_netfilter once on its
-// disposable host. Bridge sysctl writes below are only in a new Linux 6.x
+// disposable host. Bridge sysctl writes below are only in a new reviewed CI
 // network namespace; the outer process verifies its own values remain intact.
 const HERE = fileURLToPath(import.meta.url);
 const ROOT = dirname(dirname(HERE));
@@ -118,9 +118,10 @@ export function readIngressAcceptanceDiagnostic(value) {
 
 export function readIngressAcceptanceBridgeState(readText = (path) => readFileSync(path, "utf8")) {
   const kernelRelease = readText("/proc/sys/kernel/osrelease").trim();
-  // CI is pinned to Ubuntu 24.04 and modern Linux 6.x, where bridge netfilter
-  // sysctls are per-net. Do not apply this initialization to the EL8 host.
-  if (!/^6\.[0-9]+\.[0-9]+(?:[-+.][A-Za-z0-9._+-]+)?$/.test(kernelRelease) || kernelRelease.length > 128) fail();
+  // Keep Linux 6.x and explicitly trial only the observed Ubuntu 24.04 CI
+  // kernel from image 20261025.353.1. Do not admit arbitrary 7.x or EL8 hosts.
+  if ((!/^6\.[0-9]+\.[0-9]+(?:[-+.][A-Za-z0-9._+-]+)?$/.test(kernelRelease) &&
+      kernelRelease !== "7.0.0-1017-azure") || kernelRelease.length > 128) fail();
   const bridge4 = readText("/proc/sys/net/bridge/bridge-nf-call-iptables").trim();
   const bridge6 = readText("/proc/sys/net/bridge/bridge-nf-call-ip6tables").trim();
   if (![bridge4, bridge6].every((value) => value === "0" || value === "1")) fail();
@@ -300,7 +301,7 @@ async function runIsolated(parentNetns) {
     run("ip", ["link", "add", BRIDGE, "type", "bridge"]);
     run("ip", ["address", "add", "172.30.0.1/24", "dev", BRIDGE]);
     run("ip", ["link", "set", BRIDGE, "up"]);
-    // These sysctls are network-namespace local on this CI-only Linux 6.x
+    // These sysctls are network-namespace local on this reviewed CI-only
     // fixture. Production capture still requires existing hooks and never
     // repairs them. Host module preparation is explicit in the separate job.
     stage = "namespace_forwarding";
