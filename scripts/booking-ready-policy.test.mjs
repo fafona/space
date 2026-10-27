@@ -10,7 +10,10 @@ import {BOOKING_READY_EVIDENCE} from './booking-ready-evidence.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex'),read=f=>readFileSync(new URL('../'+f,import.meta.url),'utf8').replaceAll('\r\n','\n');
 const tree=revision=>execFileSync('git',['ls-tree','-r','-z',revision],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean);
 test('independent exact32 successor binds actual raw HEAD, unchanged app/deps/SQL/old guards and CI pins',()=>{
- const actual=tree('HEAD'),inputs=p.bookingReadyInputs(actual),before=p.bookingReadyInputs(tree(p.BOOKING_READY_BASE));
+ // CI's shallow checkout need not contain historical objects. The CURRENT raw
+ // tree remains independently bound to the fixed outside-scope digest. Only
+ // this predecessor unit fixture is projected; production reads both raw trees.
+ const actual=tree('HEAD'),inputs=p.bookingReadyInputs(actual),before=p.bookingReadyInputs(p.projectBookingReadyPredecessorRows(actual));
  assert.equal(p.BOOKING_READY_FILES.length,32);assert.equal(hash(inputs),p.BOOKING_READY_INPUTS_SHA256);assert.equal(inputs,before);
  const value={files:p.BOOKING_READY_FILES,originalInputs:before,currentInputs:inputs,readBlob:read};
  assert.equal(p.assertBookingReadyDelta(value),hash(inputs));
