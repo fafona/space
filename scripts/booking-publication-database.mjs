@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {lstat,readFile,realpath,writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
 import {runMigrationCommand,acquireProductionMigrationLock} from './apply-production-database-migrations.mjs';
 import {attendanceProductionIdentity,loadAttendanceProductionScope,validateAttendanceRegistry,validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
 import {BOOKING_RELEASE_BASELINE,BOOKING_SCOPE} from './booking-publication-policy.mjs';
@@ -33,8 +34,12 @@ export function validateBookingDatabaseState(value,manifest,{installed=false}={}
 export function validateBookingRegistry(value,manifest,{installed=false}={}){
  if(!Array.isArray(value?.registry))fail('database_registry_mismatch');
  const old=value.registry.filter(row=>row.version<'202610250211'),next=value.registry.filter(row=>row.version>='202610250211');
+ if(old.length+next.length!==value.registry.length)fail('database_registry_mismatch');
  validateAttendanceRegistry(old,manifest,{complete:true});
- if(installed?!same(next,BOOKING_MIGRATIONS.map(({version,name})=>({version,name})))||value.bookingTables!==3:next.length!==0||value.bookingTables!==0)fail('database_registry_mismatch');
+ // PostgreSQL jsonb orders object keys independently of JS insertion order.
+ // Only object property order is irrelevant; keys/types/values and array order
+ // remain exact. Keep every other database/install guard unchanged.
+ if(installed?!isDeepStrictEqual(next,BOOKING_MIGRATIONS.map(({version,name})=>({version,name})))||value.bookingTables!==3:next.length!==0||value.bookingTables!==0)fail('database_registry_mismatch');
 }
 export function guardedBookingMigrationSql(sources){
  if(!Array.isArray(sources)||sources.length!==2)fail('migration_scope_invalid');

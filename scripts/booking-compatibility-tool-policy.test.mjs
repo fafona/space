@@ -14,8 +14,14 @@ test('source scope is exactly fifteen tool/test files; unchanged inputs include 
  // A CI checkout need not contain historical objects. The fixed predecessor
  // digest still binds every current non-allowlisted input, without fetching or
  // skipping anything. The production verifier separately reads BOTH revisions.
+ // Project only the explicitly approved successor delta back to this sealed
+ // predecessor. Its validator and fixed digest are NOT widened. The successor
+ // test independently binds every current non-allowlisted tree entry.
+ const predecessorRows={"scripts/booking-publication-database.mjs":"100644 blob f2b0b6655b2b722f7feb0d95ca8e04d18939a47e\tscripts/booking-publication-database.mjs","scripts/booking-publication-database.test.mjs":"100644 blob 0d1b0a1cbad9db23e45deb18efc17a44bc586bbc\tscripts/booking-publication-database.test.mjs"};
+ const successorAdded=["scripts/booking-registry-extension.mjs","scripts/booking-registry-extension.test.mjs","scripts/booking-registry-tool-policy.mjs","scripts/booking-registry-tool-policy.test.mjs","scripts/booking-registry-tool.mjs","scripts/booking-registry-tool.test.mjs"];
  const original=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
-  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))&&!successorAdded.includes(row.slice(row.indexOf('\t')+1)))
+  .map(row=>predecessorRows[row.slice(row.indexOf('\t')+1)]??row).join('\0');
  assert.equal(p.assertBookingCompatibilityToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_COMPATIBILITY_INPUTS_SHA256);
  for(const patch of [{files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(1),'src/app/login/page.tsx']},{currentInputs:original+'changed'},{originalInputs:'fake',currentInputs:'fake'}])
   assert.throws(()=>p.assertBookingCompatibilityToolDelta({files,originalInputs:original,currentInputs:original,...patch}));

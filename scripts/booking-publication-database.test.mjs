@@ -15,6 +15,20 @@ test('only exact production identity and complete 210 registry may install the t
  validateBookingDatabaseState({...state,bookingTables:3,registry:[...registry,...BOOKING_MIGRATIONS.map(({version,name})=>({version,name}))]},manifest,{installed:true});
  assert.throws(()=>validateBookingDatabaseState({...state,bookingTables:3},manifest,{installed:true}));
 });
+test('real PostgreSQL jsonb key order is accepted without weakening exact registry content',()=>{
+ const next=BOOKING_MIGRATIONS.map(({version,name})=>({name,version}));
+ const check=rows=>validateBookingDatabaseState({...state,bookingTables:3,registry:[...registry,...rows]},manifest,{installed:true});
+ assert.doesNotThrow(()=>check(next));
+ assert.doesNotThrow(()=>check(next.map(({name,version})=>({version,name}))));
+ for(const rows of [next.slice(1),[...next,next[0]],[...next].reverse(),
+  [{...next[0],name:'wrong'},next[1]],[{...next[0],version:Number(next[0].version)},next[1]],
+  [{...next[0],extra:true},next[1]],[{version:next[0].version},next[1]],
+  [{name:next[0].name},next[1]],[next[0],{...next[1],name:null}],
+  [next[0],{...next[1],version:'202610250213'}],[...next,{name:'unclassified'}]])assert.throws(()=>check(rows));
+ for(const bookingTables of [0,2,4,'3'])assert.throws(()=>validateBookingDatabaseState({...state,bookingTables,registry:[...registry,...next]},manifest,{installed:true}));
+ assert.throws(()=>validateBookingDatabaseState({...state,registry:[...registry,...next]},manifest));
+});
+
 test('reviewed source bodies execute verbatim once in a bounded all-or-nothing transaction without authority activation',()=>{
  const sql=guardedBookingMigrationSql(sources);
  for(const body of sources.map(source=>source.slice('begin;'.length,source.length-'commit;\n'.length)))assert.ok(sql.includes(body));

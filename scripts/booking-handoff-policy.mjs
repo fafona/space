@@ -42,6 +42,10 @@ export const BOOKING_HANDOFF_PM2_PROVENANCE=Object.freeze({nodeVersion:'v20.20.1
   'lib/ProcessContainerFork.js':'1fdda3aa24eec19dc74e280d4c1a0d657945fea1de2fc47427a55f1b3f18ef8d',
  })});
 export const BOOKING_HANDOFF_TOOL_FILES=Object.freeze([
+ 'scripts/booking-registry-extension.mjs','scripts/booking-registry-extension.test.mjs',
+ 'scripts/booking-registry-tool-policy.mjs','scripts/booking-registry-tool-policy.test.mjs',
+ 'scripts/booking-registry-tool.mjs','scripts/booking-registry-tool.test.mjs',
+ 'scripts/booking-publication-database.mjs','scripts/booking-publication-database.test.mjs',
  'scripts/booking-compatibility-extension.mjs','scripts/booking-compatibility-extension.test.mjs',
  'scripts/booking-compatibility-tool-policy.mjs','scripts/booking-compatibility-tool-policy.test.mjs',
  'scripts/booking-compatibility-tool.mjs','scripts/booking-compatibility-tool.test.mjs',
