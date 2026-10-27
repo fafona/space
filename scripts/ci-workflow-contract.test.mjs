@@ -250,13 +250,94 @@ test("real ingress acceptance is an opt-in isolated job and package installation
 
 test("bridge module initialization is fixed and confined to the disposable Ubuntu ingress job", () => {
   const job = jobBlock("maintenance-ingress");
-  assert.equal((workflow.match(/modprobe/g) ?? []).length, 1);
+  assert.equal((workflow.match(/^\s*sudo -n \/usr\/sbin\/modprobe br_netfilter$/gm) ?? []).length, 1);
   assert.match(job, /test "\$RUNNER_OS" = Linux/);
   assert.match(job, /ubuntu:24\.04/);
   assert.match(job, /case "\$\(uname -r\)" in 6\.\*\) ;; \*\) exit 1 ;; esac/);
   assert.match(job, /sudo -n \/usr\/sbin\/modprobe br_netfilter/);
   assert.doesNotMatch(job, /modprobe[^\n]*\$|sysctl|\/proc\/sys\/net\/bridge/);
   assert.ok(job.indexOf("/usr/sbin/modprobe br_netfilter") < job.indexOf("run: node scripts/production-maintenance-ingress-acceptance.mjs"));
+});
+
+function ingressPreflightScript() {
+  const step = stepBlock(jobBlock("maintenance-ingress"), "Initialize Bridge Netfilter Module on Disposable CI Host Only");
+  return step.split("        run: |\n")[1].trimEnd().split("\n")
+    .map((line) => line.replace(/^          /, "")).join("\n");
+}
+
+test("ingress diagnostic additions preserve the exact original guarded command sequence", () => {
+  const script = ingressPreflightScript();
+  const original = [
+    "set -euo pipefail",
+    'test "$GITHUB_ACTIONS" = true',
+    'test "$RUNNER_OS" = Linux',
+    'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04',
+    'case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac',
+    "sudo -n /usr/sbin/modprobe br_netfilter",
+  ];
+  let position = -1;
+  for (const command of original) {
+    assert.equal(script.split("\n").filter((line) => line === command).length, 1, command);
+    const next = script.indexOf(`\n${command}\n`);
+    const actual = command === original[0] ? 0 : command === original.at(-1) ? script.lastIndexOf(command) : next + 1;
+    assert.ok(actual > position, command);
+    position = actual;
+  }
+  assert.match(script, /trap report_ingress_preflight_result EXIT/);
+  assert.match(script, /local preflight_status=\$\?/);
+  assert.match(script, /exit "\$preflight_status"/);
+  assert.match(script, /printf 'ingress-preflight os=%s kernel=%s\\n'/);
+  assert.match(script, /printf 'ingress-preflight failed: status=%s command=%s\\n'/);
+  assert.doesNotMatch(script, /set -[a-z]*x|BASH_COMMAND|printenv|\benv\b|secrets\.|\|\|\s*true|set \+e|\/proc\//);
+});
+
+test("actual ingress diagnostic shell identifies each guard without leaking values or changing exit status", {
+  skip: process.platform === "win32" && !existsSync(gateBash),
+}, () => {
+  // Stub only host observations and the privileged command. Never load a real
+  // module or read credentials while exercising the exact workflow shell body.
+  const fixture = `
+function . {
+  [ "$#" -eq 1 ] && [ "$1" = /etc/os-release ] || return 97
+  ID="$FIXTURE_ID"
+  VERSION_ID="$FIXTURE_VERSION"
+}
+function uname {
+  [ "$#" -eq 1 ] && [ "$1" = -r ] || return 98
+  printf '%s\\n' "$FIXTURE_KERNEL"
+}
+function sudo {
+  [ "$*" = '-n /usr/sbin/modprobe br_netfilter' ] || return 99
+  printf 'fixture-privileged-command-reached\\n' >&2
+  return "$FIXTURE_MODULE_STATUS"
+}
+`;
+  const cases = [
+    { name: "valid host", status: 0, privileged: true },
+    { name: "non-CI", github: "SECRET_CI_VALUE", status: 1, command: 'test "$GITHUB_ACTIONS" = true' },
+    { name: "non-Linux", runner: "SECRET_RUNNER_VALUE", status: 1, command: 'test "$RUNNER_OS" = Linux' },
+    { name: "other OS", id: "debian", status: 1, command: 'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04' },
+    { name: "other OS version", version: "22.04", status: 1, command: 'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04' },
+    { name: "other kernel major", kernel: "7.0.0-fixture", status: 1, command: 'case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac' },
+    { name: "failed module command", moduleStatus: "42", status: 42, privileged: true, command: "sudo -n /usr/sbin/modprobe br_netfilter" },
+  ];
+  for (const entry of cases) {
+    const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", fixture + ingressPreflightScript()], {
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+        GITHUB_ACTIONS: entry.github ?? "true", RUNNER_OS: entry.runner ?? "Linux",
+        FIXTURE_ID: entry.id ?? "ubuntu", FIXTURE_VERSION: entry.version ?? "24.04",
+        FIXTURE_KERNEL: entry.kernel ?? "6.17.0-fixture", FIXTURE_MODULE_STATUS: entry.moduleStatus ?? "0",
+        PRIVATE_TOKEN: "SECRET_TOKEN_VALUE" },
+      encoding: "utf8", timeout: 5000, windowsHide: true,
+    });
+    assert.equal(result.error, undefined, entry.name);
+    assert.equal(result.signal, null, entry.name);
+    assert.equal(result.status, entry.status, `${entry.name}: ${result.stderr}`);
+    assert.equal(result.stdout, `ingress-preflight os=${entry.id ?? "ubuntu"}:${entry.version ?? "24.04"} kernel=${entry.kernel ?? "6.17.0-fixture"}\n`, entry.name);
+    const privileged = entry.privileged ? "fixture-privileged-command-reached\n" : "";
+    assert.equal(result.stderr, privileged + (entry.command ? `ingress-preflight failed: status=${entry.status} command=${entry.command}\n` : ""), entry.name);
+    assert.doesNotMatch(result.stdout + result.stderr, /SECRET_|PRIVATE_TOKEN/, entry.name);
+  }
 });
 
 test("real PM2 acceptance refuses implicit or non-CI use before installing or creating a fixture", () => {
