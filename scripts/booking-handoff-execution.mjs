@@ -16,7 +16,7 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {retentionCanonicalText,retentionHash} from './online-release-retention-policy.mjs';
 import {parseRetirementSockets} from './online-release-retirement.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
-import {validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-registry-backup.mjs';
+import {bookingPublicationBackupRequest,validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-formal-backup.mjs';
 import {acquireProductionMigrationLock} from './apply-production-database-migrations.mjs';
 import {runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {assertBookingHostInvocation,bookingHostRead as read,bookingHostRun as run,bookingHostSql as sql,bookingHostWriteOnce as write,
@@ -109,7 +109,7 @@ export async function prepareBookingHandoffPreflight(options){
  const inactiveText=read(RELEASE+'/'+CANDIDATE+'/booking-database-inactive.json'),inactive=JSON.parse(inactiveText),compatibilityText=read(RELEASE+'/'+CANDIDATE+'/booking-compatibility.json');
  need(hash(inactiveText)===stage.bookingDatabaseProofSha256&&inactive.status==='installed-inactive'&&inactive.atomicActive===false&&
   inactive.compatibilitySha256===hash(compatibilityText),'inactive_evidence');
- const backup=await validateAttendanceBackupEvidence({target:CANDIDATE,backup:RELEASE+'/'+CANDIDATE+'/database.tar.enc',createReport:RELEASE+'/'+CANDIDATE+'/backup-create.json',verifyReport:RELEASE+'/'+CANDIDATE+'/backup-verify.json'});
+ const backup=await validateAttendanceBackupEvidence(bookingPublicationBackupRequest(CANDIDATE,RELEASE+'/'+CANDIDATE));
  need(backup.archiveSha256===inactive.backupSha256,'full_backup_changed');
  const data=liveDatasetAndPure(new Date(Date.now()+600000).toISOString()),before=JSON.parse(sql(bookingHandoffActivationSnapshotSql));
  assertBookingAtomicActivationTransition(before,{...before,active:true});need(data.legacy.legacy.pid===1590381&&data.legacy.legacy.backgroundPaused==='0','original_timer');
@@ -191,7 +191,7 @@ export async function activateRepairedBookingAuthority(options){
    admission:async observed=>{equal(observed,before,'activation_observation');equal(drain.window,gate.window,'activation_drain_window');
     need(drain.automationEligibleRecords===0&&drain.datasetSha256===preflight.savedDatasetSha256&&Date.now()-Date.parse(drain.completedAt)<30000,'activation_drain_stale');
     const data=liveDatasetAndPure(gate.window.deadlineAt);need(contentHash(data.live)===preflight.savedDatasetSha256,'activation_dataset_changed');equal(data.plan,plan,'activation_plan_changed');
-    const backup=await validateAttendanceBackupEvidence({target:CANDIDATE,backup:RELEASE+'/'+CANDIDATE+'/database.tar.enc',createReport:RELEASE+'/'+CANDIDATE+'/backup-create.json',verifyReport:RELEASE+'/'+CANDIDATE+'/backup-verify.json'});
+    const backup=await validateAttendanceBackupEvidence(bookingPublicationBackupRequest(CANDIDATE,RELEASE+'/'+CANDIDATE));
     need(backup.archiveSha256===preflight.backupSha256,'activation_full_backup_changed');return {window:gate.window,planSha256:plan.planSha256,backupSealSha256:ORIGINAL_SEAL,sqlSha256:hash(statement)};},
    begin:attempt=>{authorize();write(ROOT+'/activation-attempt.json',retentionCanonicalText(attempt));},
    commit:()=>{authorize();return sql(statement,{timeout:30000});},complete:({activation,repair})=>{assertOnlineRetentionHeldLocks(options.lock);

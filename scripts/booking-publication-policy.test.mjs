@@ -73,3 +73,12 @@ test('database compatibility, encrypted backup and inactive-schema proof all pre
  assert.ok(activate.indexOf('await verifyBookingDatabaseProof(s)')<activate.indexOf('publishStatic('));
  assert.doesNotMatch(code,/MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2'|MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED:'1'|pm2',\['(?:stop|delete)'/);
 });
+
+test('fixed formal-backup successor preserves compatibility proof and uses a fresh strict backup before inactive install',()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf("}else if(action==='database-booking-formal-backup'){"),end=code.indexOf("}else if(action==='database'||",start),branch=code.slice(start,end);
+ assert.ok(start>0&&end>start);assert.match(branch,/s\.lane!==BOOKING_RELEASE_LANE\|\|s\.target!==BOOKING_HANDOFF_CANDIDATE\|\|s\.status!=='staged'/);
+ assert.ok(branch.indexOf('await runBookingFormalBackup({lock:heldLock})')<branch.indexOf('await installInactiveBookingSchema('));
+ assert.ok(branch.indexOf('await installInactiveBookingSchema(')<branch.indexOf("s.status='database-ready'"));
+ assert.doesNotMatch(branch,/runBookingRegistryCompatibility|writeFileSync|createProductionDatabaseBackup|booking-compatibility\.json|backup\.key/);
+});

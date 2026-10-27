@@ -6,8 +6,8 @@ import {executeBookingHandoffJournal,createBookingHandoffRetentionOperations,ena
 import {assertOnlineRetentionHistory,retentionHash} from './online-release-retention-policy.mjs';
 test('journal prerequisites revalidate the sealed backup-to-application binding before history publication',()=>{
  const code=readFileSync(new URL('./booking-handoff-journal.mjs',import.meta.url),'utf8');
- assert.ok(code.includes("import {validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-registry-backup.mjs'"));
- assert.match(code,/verifyPrerequisites:async\(\)=>\{verifyProof\(\);const backup=await validateAttendanceBackupEvidence\(\{target:CANDIDATE/);
+ assert.ok(code.includes("import {bookingPublicationBackupRequest,validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-formal-backup.mjs'"));
+ assert.match(code,/verifyPrerequisites:async\(\)=>\{verifyProof\(\);const backup=await validateAttendanceBackupEvidence\(bookingPublicationBackupRequest\(CANDIDATE,RELEASE\+'\/'\+CANDIDATE\)\)/);
 });
 
 function fixture(failAt){

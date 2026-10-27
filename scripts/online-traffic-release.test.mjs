@@ -7,6 +7,13 @@ import {GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS} from './google-log
 import {LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS} from './merchant-login-release-policy.mjs';
 import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment} from './merchant-login-unbuilt-repair-policy.mjs';
 import test from 'node:test';
+
+test('formal backup continuation admits only the exact fixed candidate and two arguments, with no caller paths or DB override',()=>{
+ const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ assert.ok(source.includes("if(action==='database-booking-formal-backup'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_formal_backup_invocation')"));
+ assert.ok(source.includes("await import('./booking-formal-backup.mjs')"));
+ assert.ok(source.includes('await runBookingFormalBackup({lock:heldLock})'));
+});
 test('the booking compatibility successor is an exact opt-in action; original database path stays independent',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  assert.match(code,/action==='database-booking-compatibility-adapter'&&\(process\.argv\.slice\(2\)\.length!==2\|\|target!==BOOKING_HANDOFF_CANDIDATE\)/);
@@ -95,7 +102,7 @@ test('login-only test environment repair retains all build, runtime and publicat
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  assert.ok(code.includes('env:(lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env'));
  const start=code.indexOf("}else if(action==='resume-login-stage'){");
- const branch=code.slice(start,code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){",start));
+ const branch=code.slice(start,code.indexOf("}else if(action==='database-booking-formal-backup'){",start));
  for(const gate of ['resumeLoginUnbuiltCandidate','verifyBase(s)','configUnchanged(s)','verifyLoginRelease(s)','bookingResumeDependencies','verifyLoginRelease(s,true)','check-admin-bundle-budget.mjs','candidateEnvironment(s)','smoke(s)','verifyCandidate(s)','onlineReleaseStageStatus(s.lane)'])assert.ok(branch.includes(gate),gate);
  assert.doesNotMatch(branch,/database|migration|rmSync|unlinkSync|reset|NODE_ENV.*production/);
  assert.equal(code.split("if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});").length-1,2);

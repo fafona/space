@@ -89,7 +89,7 @@ test('host adapter owns exact identities and preserves original build/runtime wi
 
 test('a repaired already-built origin is accepted only by the strict sealed incident attester',()=>{
  const source=readFileSync(new URL('./booking-handoff-runtime.mjs',import.meta.url),'utf8');
- assert.match(source,/primary\.bookingReviewedStage\?\.toolRevision===toolRevision\?toolRevision:\s*toolRevision===BOOKING_COMPATIBILITY_PRIOR_TOOL\?assertBookingBuiltSmokeRuntimeContinuation\(\{toolRevision,primary,rollback\}\):\s*toolRevision===BOOKING_REGISTRY_PRIOR_TOOL\?assertBookingCompatibilityRuntimeContinuation\(\{toolRevision,primary,rollback\}\):\s*assertBookingRegistryRuntimeContinuation\(\{toolRevision,primary,rollback\}\)/);
+ assert.match(source,/primary\.bookingReviewedStage\?\.toolRevision===toolRevision\?toolRevision:\s*toolRevision===BOOKING_COMPATIBILITY_PRIOR_TOOL\?assertBookingBuiltSmokeRuntimeContinuation\(\{toolRevision,primary,rollback\}\):\s*toolRevision===BOOKING_REGISTRY_PRIOR_TOOL\?assertBookingCompatibilityRuntimeContinuation\(\{toolRevision,primary,rollback\}\):\s*toolRevision===BOOKING_FORMAL_PRIOR_TOOL\?assertBookingRegistryRuntimeContinuation\(\{toolRevision,primary,rollback\}\):\s*assertBookingFormalRuntimeContinuation\(\{toolRevision,primary,rollback\}\)/);
  assert.match(source,/rollback\.toolRevision===buildToolRevision/);assert.match(source,/built\.toolRevision===buildToolRevision/);
  const repair=readFileSync(new URL('./booking-built-smoke-repair.mjs',import.meta.url),'utf8');
  assert.match(repair,/assertBookingBuiltSmokeCandidate\(\{toolRevision,phase:'database-ready'\}\)/);
