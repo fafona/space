@@ -65,7 +65,10 @@ function collect(workerContinuation){
 }
 export function collectBookingReadyOriginalCohort(){
  need(!fs.existsSync(ROOT+'/worker-enabled.json')&&!fs.existsSync(ROOT+'/watchdog-lease.json')&&!fs.existsSync(ROOT+'/preflight.json'),'existing_public_attempt');
- return collect(null);
+ const cohort=collect(null),ready=JSON.parse(read(ROOT+'/runtime-ready.json'));
+ same(cohort.processes.find(p=>p.name==='merchant-space'),ready.after.processes.find(p=>p.name==='merchant-space'),'original_legacy_process');
+ const legacy=ready.after.identityProofs.find(p=>p.name==='merchant-space');
+ same({name:'merchant-space',...bookingReadyProcessFact(legacy.pid)},legacy,'original_legacy_os');return cohort;
 }
 export function collectBookingReadyRuntimeCohort({toolRevision}){
  const text=read(ROOT+'/ready-worker-completed.json').toString(),receipt=JSON.parse(text);

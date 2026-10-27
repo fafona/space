@@ -17,7 +17,7 @@ test('only one source replacement of fixed gated worker may change PID/start met
 });
 test('continued runtime cannot manufacture a receipt, replace web identities or trust a stale readiness file alone',()=>{
  for(const token of ['assertBookingReadySource(toolRevision)','attempt.plan?.toolRevision===BASE','protected_process_changed','protected_os_changed',
- 'assertBookingAtomicCohort','actual_web_runtime','actual_worker_runtime','worker_identity_binding','ready-worker-attempt.json','receipt_shape','attempt_before'])assert.ok(source.includes(token),token);
+ 'assertBookingAtomicCohort','actual_web_runtime','actual_worker_runtime','worker_identity_binding','ready-worker-attempt.json','receipt_shape','attempt_before','original_legacy_process','original_legacy_os'])assert.ok(source.includes(token),token);
  assert.doesNotMatch(source,/process\.kill|\['restart'|\['start'|writeFileSync|unlink|rmSync|origin\/main.*BASE/);
  const ast=ts.createSourceFile('x.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),node=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='attestBookingReadyReplacement');
  const expected={schemaVersion:1,kind:'booking-ready-worker-replacement',priorTool:BASE,toolRevision:revision,before:old,after:next,identity:{name:old.name,pid:next.pid},
