@@ -1,3 +1,4 @@
+import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
 // Fixed-host IO shared only by the approved booking controller. No alternate
 // host, database, process name, source revision or unheld lock is accepted.
 import * as fs from 'node:fs';
@@ -8,7 +9,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {assertOnlineToolOwnedPath,verifyOnlineReleaseTool,createOnlineReleaseToolPlan,runOnlineToolGit} from './prepare-online-release-tool.mjs';
-import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,assertBookingHandoffToolClosure} from './booking-handoff-policy.mjs';
+import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE} from './booking-handoff-policy.mjs';
 
 export const BOOKING_HOST_RELEASE='/var/lib/faolla-online-release';
 export const BOOKING_HOST_CONTAINER='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416';

@@ -7,9 +7,10 @@ import {createHash,randomBytes} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
 import {BOOKING_BUILT_SMOKE_PINS as P} from './booking-built-smoke-repair-policy.mjs';
-import {BOOKING_FORMAL_DIRECTORY,BOOKING_FORMAL_RECEIPT,BOOKING_FORMAL_PILOT_IDS} from './booking-formal-backup-policy.mjs';
+import {BOOKING_FORMAL_DIRECTORY,BOOKING_FORMAL_PILOT_IDS} from './booking-formal-backup-policy.mjs';
 import {BOOKING_REGISTRY_ORIGINAL_TOOL} from './booking-registry-tool-policy.mjs';
-import {readBookingFormalFile as read,assertBookingFormalPreserved,assertBookingFormalToolSource,assertBookingFormalContinuation} from './booking-formal-backup-tool.mjs';
+import {readBookingFormalFile as read,assertBookingFormalPreserved} from './booking-formal-backup-tool.mjs';
+import {assertBookingCurrentToolSource as assertBookingFormalToolSource,assertBookingCurrentContinuation as assertBookingFormalContinuation,bookingCurrentReceiptName} from './booking-ci-continuation.mjs';
 import {attendanceRepairTreeFingerprint as tree} from './attendance-staged-tool-repair.mjs';
 import {attendanceProductionIdentity as production,loadAttendanceProductionScope,validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
 import {attendanceCompatibilityMetadataContractSql} from './attendance-production-052-compatibility.mjs';
@@ -43,7 +44,7 @@ function observe(){
  need(hash(read(directory+'/.env.local'))===pin.envSha256,'application_environment');
  same(tree(directory+'/node_modules',{allowInternalLinks:true}),pin.dependencies,'application_dependencies');
  same(tree(directory+'/.next',{exclude:['cache','trace']}),pin.built,'application_build');
- return {candidate:C,baseline:B,toolRevision,...source,preservedSha256,toolReceiptSha256:hash(read(OP+'/'+BOOKING_FORMAL_RECEIPT)),
+ return {candidate:C,baseline:B,toolRevision,...source,preservedSha256,toolReceiptSha256:hash(read(OP+'/'+bookingCurrentReceiptName(toolRevision))),
   application:{target:C,tree:git(['rev-parse','HEAD^{tree}']),originalBuildTool:BOOKING_REGISTRY_ORIGINAL_TOOL,
    buildProofSha256:pin.files['attendance-build-proof.json'],environmentSha256:pin.envSha256,dependenciesSha256:pin.dependencies.sha256,builtOutputSha256:pin.built.sha256},
   compatibilitySha256:hash(read(OP+'/booking-compatibility.json')),compatibilityEvidenceSha256:hash(read(OP+'/booking-compatibility-evidence.json'))};

@@ -1,3 +1,4 @@
+import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
 // Private runtime preparation only. No public routing, legacy-host restart,
 // database mutation, history append or worker enablement is exposed here.
 import * as fs from 'node:fs';
@@ -7,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_CANDIDATE as CANDIDATE,
-  BOOKING_HANDOFF_BASELINE as BASELINE,assertBookingHandoffToolClosure,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
+  BOOKING_HANDOFF_BASELINE as BASELINE,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
 import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
 import {assertBookingBuiltSmokeRuntimeContinuation} from './booking-built-smoke-repair.mjs';
 import {assertBookingCompatibilityRuntimeContinuation} from './booking-compatibility-tool.mjs';
@@ -15,7 +16,7 @@ import {BOOKING_COMPATIBILITY_PRIOR_TOOL} from './booking-compatibility-tool-pol
 import {assertBookingRegistryRuntimeContinuation} from './booking-registry-tool.mjs';
 import {BOOKING_REGISTRY_PRIOR_TOOL} from './booking-registry-tool-policy.mjs';
 import {BOOKING_FORMAL_PRIOR_TOOL} from './booking-formal-backup-policy.mjs';
-import {assertBookingFormalRuntimeContinuation} from './booking-formal-backup-tool.mjs';
+import {assertBookingCurrentRuntimeContinuation as assertBookingFormalRuntimeContinuation} from './booking-ci-continuation.mjs';
 import {bookingProtectedEnvironment,assertBookingCompatibilityEnvironment} from './booking-publication-policy.mjs';
 import {verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';

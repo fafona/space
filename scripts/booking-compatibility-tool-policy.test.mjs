@@ -1,3 +1,4 @@
+import {projectBookingCiPredecessorRows} from './booking-ci-continuation-policy.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -22,7 +23,7 @@ test('source scope is exactly fifteen tool/test files; unchanged inputs include 
   'scripts/booking-formal-backup-policy.mjs','scripts/booking-formal-backup-policy.test.mjs',
   'scripts/booking-formal-backup-tool.mjs','scripts/booking-formal-backup-tool.test.mjs',
   'scripts/booking-formal-backup.mjs','scripts/booking-formal-backup.test.mjs'];
- const original=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
+ const original=projectBookingCiPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean))
   .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))&&!successorAdded.includes(row.slice(row.indexOf('\t')+1)))
   .map(row=>predecessorRows[row.slice(row.indexOf('\t')+1)]??row).join('\0');
  assert.equal(p.assertBookingCompatibilityToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_COMPATIBILITY_INPUTS_SHA256);

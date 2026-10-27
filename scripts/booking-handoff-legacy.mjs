@@ -1,3 +1,4 @@
+import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
 // Exactly one approved restart of the legacy booking timer host. This is NOT a
 // generic PM2 controller. No independent enterprise/outbox process is signalled.
 import * as fs from 'node:fs';
@@ -7,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_LEGACY_DIRECTORY as LEGACY,BOOKING_HANDOFF_PM2_PROVENANCE,
-  assertBookingLegacyEnvironmentTransition,assertBookingLegacyRuntimeEnvironmentTransition,assertBookingHandoffWindow,assertBookingHandoffToolClosure} from './booking-handoff-policy.mjs';
+  assertBookingLegacyEnvironmentTransition,assertBookingLegacyRuntimeEnvironmentTransition,assertBookingHandoffWindow} from './booking-handoff-policy.mjs';
 import {BOOKING_HANDOFF_ROOT as ROOT,verifyBookingAtomicRuntimeCohort} from './booking-handoff-runtime.mjs';
 import {assertBookingAtomicRoutingPlan,assertBookingRoutingCurrent} from './booking-handoff-routing.mjs';
 import {bookingIngressRestorationText,BOOKING_INGRESS_VHOST} from './booking-handoff-ingress.mjs';
