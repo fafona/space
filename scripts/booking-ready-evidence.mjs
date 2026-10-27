@@ -182,3 +182,19 @@ export const BOOKING_READY_EVIDENCE=Object.freeze({
   }
 });
 
+// The failed source-only bootstrap is retained verbatim, not repaired in place.
+// These are the genuine read-only inventory hashes from 2026-10-27T22:54:59Z.
+export const BOOKING_READY_BOOTSTRAP_FAILURE=Object.freeze({
+ revision:'d2d01917b63f26911f7dd95d1042d747dfd467a2',
+ resource:'docs/booking-publication-scope-20261026.json',
+ resourceBytes:6766,
+ resourceSha256:'2b3324418f78019a088fce3151ccc8c3d1ebc0347804ac51cb6f3bfa88af1998',
+ preserved:{
+  '/var/lib/faolla-online-bootstrap/d2d01917b63f26911f7dd95d1042d747dfd467a2/.git':{bytes:92,sha256:'86fc05561a3a35ae536dd8151f264b97fec4434fa61cd811154846f49e874489'},
+  '/www/wwwroot/merchant-space/.git/worktrees/d2d01917b63f26911f7dd95d1042d747dfd467a2/HEAD':{bytes:41,sha256:'59820716299e1af123fd4741bbd628c7e174556d0826f5656cf87e65b1871e87'},
+  '/www/wwwroot/merchant-space/.git/worktrees/d2d01917b63f26911f7dd95d1042d747dfd467a2/index':{bytes:626622,sha256:'58bd9b6d6904a44e4dba3a4ffc167a29166b015c392a9e1929f9811c0f0f6057'},
+  '/www/wwwroot/merchant-space/.git/worktrees/d2d01917b63f26911f7dd95d1042d747dfd467a2/config.worktree':{bytes:82,sha256:'3d99a66c75b1dc4cc16501fcc80895a021ecda8892b3bf2925d783c503d42a1b'},
+  '/www/wwwroot/merchant-space/.git/worktrees/d2d01917b63f26911f7dd95d1042d747dfd467a2/info/sparse-checkout':{bytes:2546,sha256:'3cdb9fc5431d082b64c833d833bd09683ad5334f18475c3196f1c32b5eaf6ff0'}
+ }
+});
+

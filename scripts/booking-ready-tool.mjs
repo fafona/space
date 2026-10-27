@@ -6,7 +6,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_READY_BASE as BASE,BOOKING_READY_RECEIPT as RECEIPT,bookingReadyInputs,assertBookingReadyDelta,assertBookingReadyClosure,assertBookingReadyReceipt} from './booking-ready-policy.mjs';
-import {BOOKING_READY_EVIDENCE as EVIDENCE} from './booking-ready-evidence.mjs';
+import {BOOKING_READY_EVIDENCE as EVIDENCE,BOOKING_READY_BOOTSTRAP_FAILURE as FAILED} from './booking-ready-evidence.mjs';
 import {BOOKING_DEPENDENCY_BASE as PRIOR,BOOKING_DEPENDENCY_RECEIPT,BOOKING_DEPENDENCY_STOPPED,BOOKING_DEPENDENCY_STATES,
  bookingDependencyInputs,assertBookingDependencyToolDelta,assertBookingDependencyToolClosure,assertBookingDependencyReceipt} from './booking-dependency-continuation-policy.mjs';
 import {assertBookingCiKernelEvidence} from './booking-ci-continuation-tool.mjs';
@@ -35,11 +35,53 @@ export function bookingReadyImportClosure(readSource){
   }
  }visit(SELF);return [...seen].sort();
 }
+// Runtime resources are an exact reviewed list, never a glob or caller input.
+export function bookingReadyBootstrapFiles(readSource){
+ return [...bookingReadyImportClosure(readSource),FAILED.resource].sort();
+}
+export function assertBookingReadyBootstrapRepairDelta({files,originalInputs,currentInputs,resource}){
+ same([...files].sort(),['scripts/booking-ready-evidence.mjs','scripts/booking-ready-tool.mjs','scripts/booking-ready-tool.test.mjs'],'bootstrap_repair_scope');
+ need(typeof currentInputs==='string'&&originalInputs===currentInputs,'bootstrap_repair_inputs');
+ need(resource.length===FAILED.resourceBytes&&hash(resource)===FAILED.resourceSha256,'bootstrap_resource');
+}
+export function assertBookingReadyFailedBootstrap(){
+ const directory='/var/lib/faolla-online-bootstrap/'+FAILED.revision;
+ need(git(directory,['rev-parse','HEAD'])===FAILED.revision&&git(directory,['rev-parse','--abbrev-ref','HEAD'])==='HEAD'&&
+  git(directory,['rev-parse','--show-toplevel'])===directory&&!git(directory,['status','--porcelain=v1','--untracked-files=all']),'failed_bootstrap_source');
+ const registration='worktree '+directory+'\nHEAD '+FAILED.revision+'\ndetached';
+ need(git(APP,['worktree','list','--porcelain']).split('\n\n').filter(r=>r.trim()===registration).length===1,'failed_bootstrap_registration');
+ for(const [file,pin]of Object.entries(FAILED.preserved)){
+  const bytes=read(file);need(bytes.length===pin.bytes&&hash(bytes)===pin.sha256,'failed_bootstrap_preserved');
+ }
+ assertOnlineToolOwnedPath(directory);need((fs.lstatSync(directory).mode&0o777)===0o700,'failed_bootstrap_mode');
+ const files=bookingReadyImportClosure(f=>runOnlineToolGit(APP,['show',FAILED.revision+':'+f]).toString());
+ need(files.length===60,'failed_bootstrap_closure');
+ const sparse=path.resolve(directory,git(directory,['rev-parse','--git-path','info/sparse-checkout']));
+ need(read(sparse).toString()===files.map(f=>'/'+f).join('\n')+'\n','failed_bootstrap_sparse');
+ for(const [key,value]of [['core.sparseCheckout','true'],['core.sparseCheckoutCone','false'],['index.sparse','false']])
+  need(git(directory,['config','--worktree','--get',key])===value,'failed_bootstrap_config');
+ const entries=new Set(['.git']);for(const file of files){
+  same(read(directory+'/'+file),runOnlineToolGit(APP,['show',FAILED.revision+':'+file]),'failed_bootstrap_blob');
+  const pieces=file.split('/');while(pieces.length){entries.add(pieces.join('/'));pieces.pop();}
+ }
+ function walk(dir,prefix=''){for(const e of fs.readdirSync(dir,{withFileTypes:true})){
+  need(entries.has(prefix+e.name)&&!e.isSymbolicLink(),'failed_bootstrap_entry');
+  assertOnlineToolOwnedPath(dir+'/'+e.name,e.isDirectory()?'directory':'file');if(e.isDirectory())walk(dir+'/'+e.name,prefix+e.name+'/');
+ }}walk(directory);
+ // In particular the omitted resource stays absent in the OLD bootstrap.
+ try{fs.lstatSync(directory+'/'+FAILED.resource);need(false,'failed_bootstrap_resource_added');}catch(e){if(e.code!=='ENOENT')throw e;}
+ return hash(JSON.stringify(FAILED));
+}
 function source(revision,directory,{bootstrap=false}={}){
  need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(revision??'')&&revision!==BASE,'invocation');
  need(git(APP,['rev-parse','origin/main'])===revision&&git(directory,['rev-parse','HEAD'])===revision&&
  git(directory,['rev-parse','--abbrev-ref','HEAD'])==='HEAD'&&!git(directory,['status','--porcelain=v1','--untracked-files=all']),'source');
  git(APP,['merge-base','--is-ancestor',BASE,revision]);
+ git(APP,['merge-base','--is-ancestor',FAILED.revision,revision]);
+ const repairFiles=changes(FAILED.revision,revision),repairInputs=r=>rows(r).filter(row=>!repairFiles.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+ assertBookingReadyBootstrapRepairDelta({files:repairFiles,originalInputs:repairInputs(FAILED.revision),currentInputs:repairInputs(revision),
+  resource:runOnlineToolGit(APP,['show',revision+':'+FAILED.resource])});
+ assertBookingReadyFailedBootstrap();
  const sourceInputsSha256=assertBookingReadyDelta({files:changes(BASE,revision),originalInputs:bookingReadyInputs(rows(BASE)),
  currentInputs:bookingReadyInputs(rows(revision)),readBlob:f=>runOnlineToolGit(APP,['show',revision+':'+f])});
  // Validate the REAL predecessor's raw delta and receipt, never projected rows.
@@ -59,7 +101,7 @@ function source(revision,directory,{bootstrap=false}={}){
  const plan=createOnlineReleaseToolPlan(revision);verifyOnlineToolBootstrap(plan,directory+'/scripts/prepare-online-release-tool.mjs');
  if(bootstrap){
   need(directory==='/var/lib/faolla-online-bootstrap/'+revision,'bootstrap_path');
-  const files=bookingReadyImportClosure(f=>runOnlineToolGit(APP,['show',revision+':'+f]).toString()),sparse=path.resolve(directory,git(directory,['rev-parse','--git-path','info/sparse-checkout']));
+  const files=bookingReadyBootstrapFiles(f=>runOnlineToolGit(APP,['show',revision+':'+f]).toString()),sparse=path.resolve(directory,git(directory,['rev-parse','--git-path','info/sparse-checkout']));
   need(read(sparse,{privateMode:false}).toString()===files.map(f=>'/'+f).join('\n')+'\n'&&
    git(directory,['config','--worktree','--get','core.sparseCheckout'])==='true'&&git(directory,['config','--worktree','--get','core.sparseCheckoutCone'])==='false'&&
    git(directory,['config','--worktree','--get','index.sparse'])==='false','bootstrap_sparse');
@@ -102,7 +144,7 @@ function seal(name,text){
  const parent=fs.openSync(OP,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY);try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}same(read(file),Buffer.from(text),'seal');
 }
 export function prepareBookingReadyTool(revision,confirmation){
- need(confirmation==='approved-booking-native-ready-continuation','approval');const proof=source(revision,ROOT,{bootstrap:true});
+ need(confirmation==='approved-booking-bootstrap-manifest-continuation','approval');const proof=source(revision,ROOT,{bootstrap:true});
  return withOnlineToolPreparationLocks({deployLock:APP+'.deploy.lock',maintenance:'/var/lib/faolla-maintenance/merchant-space'},()=>{
   same(source(revision,ROOT,{bootstrap:true}),proof,'source_changed');const before=original();assertBookingReadyToolNoPending();
   for(const file of [OP+'/'+RECEIPT,'/var/lib/faolla-booking-handoff/'+C+'/ready-worker-attempt.json'])try{fs.lstatSync(file);need(false,'existing_attempt');}catch(e){if(e.code!=='ENOENT')throw e;}
