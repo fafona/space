@@ -22,6 +22,19 @@ test('binding requires every application/tool/DR fact, exact report bytes and re
 });
 function extracted(name,context){const ast=ts.createSourceFile('backup.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
  return runInNewContext(fn.getText(ast).replace(/^export /,'')+'\n'+name,context);}
+test('actual source reader admits tracked empty blobs but never empty private evidence or unsafe file sizes',()=>{
+ const make=(patch={})=>{
+  const stat={dev:1,ino:2,uid:0,mode:0o100600,nlink:1,size:0,mtimeMs:3,ctimeMs:4,...patch};let opened=false;
+  return {get opened(){return opened;},read:extracted('read',{
+   assertOnlineToolOwnedPath:()=>{},need:(v,c)=>{if(!v)throw Error(c);},same:(a,b,c)=>{if(!isDeepStrictEqual(a,b))throw Error(c);},
+   fs:{constants:{O_RDONLY:1,O_NOFOLLOW:2},lstatSync:()=>stat,fstatSync:()=>stat,openSync:()=>{opened=true;return 1;},readFileSync:()=>Buffer.alloc(stat.size),closeSync:()=>{}},
+  })};
+ };
+ const tracked=make();assert.equal(tracked.read('/tracked/empty.log',{privateMode:false}).length,0);assert.equal(tracked.opened,true);
+ for(const privateMode of [undefined,true]){const evidence=make();assert.throws(()=>evidence.read('/private/evidence.json',privateMode===undefined?undefined:{privateMode}),/file/);assert.equal(evidence.opened,false);}
+ for(const patch of [{size:-1},{size:256*1024**2+1},{nlink:2}]){const unsafe=make(patch);assert.throws(()=>unsafe.read('/tracked/source',{privateMode:false}),/file/);assert.equal(unsafe.opened,false);}
+ assert.equal(make({size:1}).read('/private/evidence.json').length,1);
+});
 function fixture(failure){
  const calls=[],facts=observed(),dr=backup();let sealed,observations=0;const need=(v,c)=>{if(!v)throw Error(c);};
  const gate=name=>{calls.push(name);if(failure===name)throw Error('unconfirmed_'+name);};
