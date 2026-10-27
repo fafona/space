@@ -7,10 +7,11 @@ const hash=x=>createHash('sha256').update(x).digest('hex');
 export function registryReceiptFixture(){return {schemaVersion:1,kind:'booking-registry-tool',priorTool:p.BOOKING_REGISTRY_PRIOR_TOOL,
  originalTool:p.BOOKING_REGISTRY_ORIGINAL_TOOL,toolRevision:'f'.repeat(40),sourceInputsSha256:p.BOOKING_REGISTRY_INPUTS_SHA256,
  toolClosureSha256:'a'.repeat(64),preservedSha256:hash(JSON.stringify(p.BOOKING_REGISTRY_PRESERVED)),preparedAt:'2026-10-26T23:00:00.000Z'};}
-test('source scope is exactly eighteen tool/test files; unchanged inputs include old guard, app, dependencies and migrations',()=>{
+test('source scope is exactly twenty-four tool/test files; unchanged inputs include old guard, app, dependencies and migrations',()=>{
  const files=p.BOOKING_REGISTRY_TOOL_FILES;
- assert.equal(files.length,18);assert.equal(new Set(files).size,18);assert.ok(files.every(f=>f.startsWith('scripts/')));
- for(const forbidden of ['scripts/attendance-extension-metadata.mjs','scripts/prepare-online-release-tool.mjs','package.json','package-lock.json'])assert.ok(!files.includes(forbidden));
+ assert.equal(files.length,24);assert.equal(new Set(files).size,24);assert.ok(files.every(f=>f.startsWith('scripts/')));
+ for(const forbidden of ['scripts/attendance-extension-metadata.mjs','scripts/prepare-online-release-tool.mjs','scripts/create-production-database-backup.mjs',
+  'scripts/verify-production-database-backup.mjs','scripts/attendance-production-database-migrations.mjs','package.json','package-lock.json'])assert.ok(!files.includes(forbidden));
  // A CI checkout need not contain historical objects. The fixed predecessor
  // digest still binds every current non-allowlisted input, without fetching or
  // skipping anything. The production verifier separately reads BOTH revisions.

@@ -1360,6 +1360,9 @@ try{
      const backup=await createProductionDatabaseBackup({outputPath:`${operation}/database.tar.enc`,passphrase,appDirectory:s.oldDirectory,sourceDirectory:backupSource,sourceRepository:'fafona/space',sourceSha:backupSha});
      writeFileSync(`${operation}/backup-create.json`,JSON.stringify(backup),{mode:0o600,flag:'wx'});
      const checked=await verifyProductionDatabaseBackup({inputPath:`${operation}/database.tar.enc`,passphrase});writeFileSync(`${operation}/backup-verify.json`,JSON.stringify(checked),{mode:0o600,flag:'wx'});
+     if(action==='database-booking-registry-repair'){
+      const {sealBookingRegistryBackupBinding}=await import('./booking-registry-backup.mjs');await sealBookingRegistryBackupBinding({lock:heldLock});
+     }
      await verifyBase(s);configUnchanged(s);verifyCandidate(s);
      await installInactiveBookingSchema({target:s.target,baseline:s.baseline,rootDir:s.directory,operation});
      s.bookingDatabaseProofSha256=hash(safeFile(`${operation}/booking-database-inactive.json`));save(s);await verifyBookingDatabaseProof(s);

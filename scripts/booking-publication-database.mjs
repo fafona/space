@@ -3,7 +3,8 @@ import {lstat,readFile,realpath,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import {runMigrationCommand,acquireProductionMigrationLock} from './apply-production-database-migrations.mjs';
-import {attendanceProductionIdentity,loadAttendanceProductionScope,validateAttendanceRegistry,validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
+import {attendanceProductionIdentity,loadAttendanceProductionScope,validateAttendanceRegistry} from './attendance-production-database-migrations.mjs';
+import {validateBookingPublicationBackupEvidence} from './booking-registry-backup.mjs';
 import {BOOKING_RELEASE_BASELINE,BOOKING_SCOPE} from './booking-publication-policy.mjs';
 
 const fail=code=>{throw Error('booking_publication_'+code);};
@@ -107,7 +108,7 @@ export async function installInactiveBookingSchema({target,baseline,rootDir,oper
  const compatibilityText=await privateFile(operation+'/booking-compatibility.json');assertBookingCompatibilityProof(JSON.parse(compatibilityText),{target,baseline,sourceSha256});
  const evidenceText=await privateFile(operation+'/booking-compatibility-evidence.json');
  if(hash(evidenceText)!==JSON.parse(compatibilityText).evidenceSha256)fail('compatibility_evidence_changed');
- const backup=await validateAttendanceBackupEvidence({target,backup:operation+'/database.tar.enc',createReport:operation+'/backup-create.json',verifyReport:operation+'/backup-verify.json'});
+ const backup=await validateBookingPublicationBackupEvidence({target,backup:operation+'/database.tar.enc',createReport:operation+'/backup-create.json',verifyReport:operation+'/backup-verify.json'});
  const lock=await acquireProductionMigrationLock();
  try{
   const before=validateBookingDatabaseState(await state(runCommand),manifest);

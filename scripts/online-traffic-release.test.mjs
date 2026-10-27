@@ -23,6 +23,32 @@ import {createHash} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext as vmRunInNewContext} from 'node:vm';
+
+test('fixed successor preserves genuine current-main DR source and separately binds the immutable built application',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf("console.log('online_booking_encrypted_backup_started')"),end=code.indexOf("writeFileSync(`${operation}/backup-create.json`",start);
+ assert.ok(start>0&&end>start);const snippet=code.slice(start,end),target=bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE;
+ const directory='/www/wwwroot/merchant-space.web-releases/'+target.slice(0,12)+'-online',toolSha='a'.repeat(40),tool='/var/lib/faolla-online-code/'+toolSha;
+ const execute=async(action,{head=target,patch={}}={})=>{
+  const calls=[],s={target,directory,oldDirectory:'/unchanged-legacy',...patch};let captured;
+  const result=vmRunInNewContext('(async()=>{'+snippet+'return backup;})()',{
+   // This is a Linux-only controller slice, even when the test runs on Windows.
+   action,s,BOOKING_HANDOFF_CANDIDATE:target,app:'/www/wwwroot/merchant-space',controllerModuleUrl:'file://'+tool+'/scripts/online-traffic-release.mjs',fileURLToPath:url=>url.pathname,URL,
+   operation:'/private-operation',console:{log:()=>{}},randomBytes:()=>({toString:()=>{calls.push('random');return 'synthetic-only';}}),
+   writeFileSync:()=>calls.push('write'),fail:c=>{throw Error(c);},
+   run:(bin,args,options)=>{assert.equal(bin,'git');assert.deepEqual(Array.from(args),['rev-parse','HEAD']);calls.push('git');return options.cwd===directory?head:toolSha;},
+   createProductionDatabaseBackup:async input=>{calls.push('backup');captured=input;return {synthetic:true};},
+  });
+  try{await result;return {calls,captured};}catch(error){return {calls,error};}
+ };
+ const fixed=await execute('database-booking-registry-repair');assert.equal(fixed.error,undefined);assert.equal(fixed.captured.sourceDirectory,tool+'/');assert.equal(fixed.captured.sourceSha,toolSha);
+ assert.equal(fixed.captured.sourceRepository,'fafona/space');assert.equal(fixed.captured.appDirectory,'/unchanged-legacy');
+ const seal=code.indexOf('await sealBookingRegistryBackupBinding({lock:heldLock})',end),verified=code.indexOf('const checked=await verifyProductionDatabaseBackup',end),install=code.indexOf('await installInactiveBookingSchema(',seal);
+ assert.ok(verified>start&&seal>verified&&install>seal);assert.match(code.slice(verified,seal),/if\(action==='database-booking-registry-repair'\)/);
+ for(const action of ['database','database-booking-compatibility-adapter']){
+  const prior=await execute(action);assert.ok(!prior.error);assert.equal(prior.captured.sourceDirectory,tool+'/');assert.equal(prior.captured.sourceSha,toolSha);
+ }
+});
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.

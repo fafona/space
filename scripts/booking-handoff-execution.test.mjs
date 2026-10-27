@@ -4,6 +4,11 @@ import {readFileSync} from 'node:fs';
 import {executeBookingIngressDrain,executeBookingRepairActivation,BOOKING_HANDOFF_DATASET_SQL,BOOKING_HANDOFF_PURE_PROBE} from './booking-handoff-execution.mjs';
 import {assertBookingHostInvocation} from './booking-handoff-host-io.mjs';
 const h=n=>n.repeat(64),window={id:'10000000-0000-4000-8000-000000000001',startedAt:'2026-10-26T10:00:00.000Z',deadlineAt:'2026-10-26T10:10:00.000Z'};
+test('preflight and activation revalidate the same immutable-application backup binding',()=>{
+ const code=readFileSync(new URL('./booking-handoff-execution.mjs',import.meta.url),'utf8');
+ assert.ok(code.includes("import {validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-registry-backup.mjs'"));
+ assert.equal((code.match(/await validateAttendanceBackupEvidence\(\{target:CANDIDATE/g)||[]).length,2);
+});
 const before=()=>({systemIdentifier:'7612049595342295079',databaseOid:'5',serverVersionNum:'150008',generation:'20000000-0000-4000-8000-000000000002',revision:'0',protocol:2,active:false,savedBookingRowsSha256:h('a'),commands:0,mailJobs:0});
 function drainFixture({failAt,neverDrained=false,eligible=0}={}){
  const events=[];let elapsed=0,polls=0;

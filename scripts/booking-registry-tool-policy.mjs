@@ -15,6 +15,12 @@ export const BOOKING_REGISTRY_PRESERVED=Object.freeze({
 });
 export const BOOKING_REGISTRY_STAGED_SHA256='6c11e4111093d1a0d596b02b1e7b08749112862bb05912ab36da28d362fa8115';
 export const BOOKING_REGISTRY_TOOL_FILES=Object.freeze([
+ "scripts/booking-registry-backup.mjs",
+ "scripts/booking-registry-backup.test.mjs",
+ "scripts/booking-handoff-execution.mjs",
+ "scripts/booking-handoff-execution.test.mjs",
+ "scripts/booking-handoff-journal.mjs",
+ "scripts/booking-handoff-journal.test.mjs",
  "scripts/booking-registry-extension.mjs",
  "scripts/booking-registry-extension.test.mjs",
  "scripts/booking-registry-tool-policy.mjs",
@@ -34,7 +40,7 @@ export const BOOKING_REGISTRY_TOOL_FILES=Object.freeze([
  "scripts/online-traffic-release.test.mjs",
  "scripts/booking-compatibility-tool-policy.test.mjs"
 ]);
-export const BOOKING_REGISTRY_INPUTS_SHA256='268c854cdf51f228198627a3a5d50129f567b35757bc9bf3f6b5bc12f476712a';
+export const BOOKING_REGISTRY_INPUTS_SHA256='7974bfa4d8554d4946ec76e9fbc4a205c84791da0b866391abb59d039b60e1fa';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const need=(v,c)=>{if(!v)throw Error('booking_registry_tool_'+c);};
 export function assertBookingRegistryToolDelta({files,originalInputs,currentInputs}){

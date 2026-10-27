@@ -84,9 +84,13 @@ function seal(file,value){
  try{fs.writeFileSync(fd,bytes);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
  const parent=fs.openSync(OP,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY);try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}same(read(file),bytes,'seal');
 }
-export function assertBookingRegistryContinuation({toolRevision,phase='staged'}){
+export function assertBookingRegistryToolSource(toolRevision){
  const source=verifySource(toolRevision,ROOT),receipt=JSON.parse(read(OP+'/'+RECEIPT));assertBookingRegistryToolReceipt(receipt,toolRevision);
  same(source,{sourceInputsSha256:receipt.sourceInputsSha256,toolClosureSha256:receipt.toolClosureSha256},'receipt_source');
+ return source;
+}
+export function assertBookingRegistryContinuation({toolRevision,phase='staged'}){
+ assertBookingRegistryToolSource(toolRevision);
  return {...observeBookingRegistryContinuation(phase),originalTool:ORIGINAL};
 }
 export function assertBookingRegistryRuntimeContinuation({toolRevision,primary,rollback}){
