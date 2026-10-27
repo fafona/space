@@ -1,3 +1,4 @@
+import {projectBookingCiPredecessorRows} from './booking-ci-continuation-policy.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -21,7 +22,7 @@ test('source scope is exactly twenty-four tool/test files; unchanged inputs incl
  const successorAdded=['scripts/booking-formal-backup-policy.mjs','scripts/booking-formal-backup-policy.test.mjs',
   'scripts/booking-formal-backup-tool.mjs','scripts/booking-formal-backup-tool.test.mjs',
   'scripts/booking-formal-backup.mjs','scripts/booking-formal-backup.test.mjs'];
- const original=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
+ const original=projectBookingCiPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean))
   .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))&&!successorAdded.includes(row.slice(row.indexOf('\t')+1))).join('\0');
  assert.equal(p.assertBookingRegistryToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_REGISTRY_INPUTS_SHA256);
  for(const patch of [{files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(1),'src/app/login/page.tsx']},{currentInputs:original+'changed'},{originalInputs:'fake',currentInputs:'fake'}])

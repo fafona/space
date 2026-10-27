@@ -468,10 +468,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Diagnostics only: static command labels, never an environment dump
+          # or expanded shell trace. Preserve every original guard and status.
+          preflight_command='read non-secret OS and kernel versions'
+          report_ingress_preflight_result() {
+            local preflight_status=$?
+            if [ "$preflight_status" -ne 0 ]; then
+              printf 'ingress-preflight failed: status=%s command=%s\n' "$preflight_status" "$preflight_command" >&2
+            fi
+            exit "$preflight_status"
+          }
+          trap report_ingress_preflight_result EXIT
+          printf 'ingress-preflight os=%s kernel=%s\n' "$(. /etc/os-release; printf '%s:%s' "$ID" "$VERSION_ID")" "$(uname -r)"
+          preflight_command='test "$GITHUB_ACTIONS" = true'
           test "$GITHUB_ACTIONS" = true
+          preflight_command='test "$RUNNER_OS" = Linux'
           test "$RUNNER_OS" = Linux
+          preflight_command='test "$(. /etc/os-release; printf '\''%s:%s'\'' "$ID" "$VERSION_ID")" = ubuntu:24.04'
           test "$(. /etc/os-release; printf '%s:%s' "$ID" "$VERSION_ID")" = ubuntu:24.04
-          case "$(uname -r)" in 6.*) ;; *) exit 1 ;; esac
+          preflight_command='case "$(uname -r)" in 6.*|7.0.0-1017-azure) ;; *) exit 1 ;; esac'
+          case "$(uname -r)" in 6.*|7.0.0-1017-azure) ;; *) exit 1 ;; esac
+          preflight_command='sudo -n /usr/sbin/modprobe br_netfilter'
           sudo -n /usr/sbin/modprobe br_netfilter
       - name: Run Real Ingress Rules Only Inside New Network Namespace
         run: node scripts/production-maintenance-ingress-acceptance.mjs

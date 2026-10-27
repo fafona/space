@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -98,15 +99,26 @@ test("raw tool stderr exception is bounded and only matches the immutable synthe
   assert.ok(Buffer.byteLength(read("nft", ["-f", "-"], input, "baseline_tables", "界".repeat(5000))) <= 1024);
 });
 
-test("bridge fixture only accepts modern CI kernel and fixed per-net fields, preserving parent verification on failure", () => {
+test("bridge fixture accepts Linux 6 and only the observed CI 7 kernel, preserving every per-net check", () => {
   const calls = [];
   const values = { "/proc/sys/kernel/osrelease": "6.14.0-1017-azure\n", "/proc/sys/net/bridge/bridge-nf-call-iptables": "0\n",
     "/proc/sys/net/bridge/bridge-nf-call-ip6tables": "1\n" };
   const read = (path) => { calls.push(path); assert.ok(Object.hasOwn(values, path)); return values[path]; };
-  assert.deepEqual(readIngressAcceptanceBridgeState(read), { kernelRelease: "6.14.0-1017-azure", bridge4: "0", bridge6: "1" });
-  assert.deepEqual(calls, Object.keys(values));
-  for (const kernel of ["4.18.0-348.7.1.el8_5.x86_64", "5.15.0-1", "7.0.0-unknown", "untrusted/path", "6.0"]) {
-    assert.throws(() => readIngressAcceptanceBridgeState((path) => path.endsWith("osrelease") ? kernel : read(path)), /ingress_acceptance_failed/);
+  for (const kernel of ["6.14.0-1017-azure", "6.17.0-1022-azure", "7.0.0-1017-azure"]) {
+    calls.length = 0;
+    values["/proc/sys/kernel/osrelease"] = kernel + "\n";
+    assert.deepEqual(readIngressAcceptanceBridgeState(read), { kernelRelease: kernel, bridge4: "0", bridge6: "1" });
+    assert.deepEqual(calls, Object.keys(values));
+  }
+  for (const kernel of ["4.18.0-348.7.1.el8_5.x86_64", "5.15.0-1", "7.0.0-unknown", "untrusted/path", "6.0",
+    "7.0.0-1018-azure", "7.0.1-1017-azure", "7.1.0-1017-azure", "8.0.0-1017-azure", "7.0.0-1017-azure-extra", "7.0.0-1017-azure\nsecret", "6.0.0-" + "x".repeat(128)]) {
+    calls.length = 0;
+    assert.throws(() => readIngressAcceptanceBridgeState((path) => {
+      calls.push(path);
+      assert.equal(path, "/proc/sys/kernel/osrelease", "reject unsupported kernel before reading bridge fields");
+      return kernel;
+    }), /ingress_acceptance_failed/);
+    assert.deepEqual(calls, ["/proc/sys/kernel/osrelease"]);
   }
   for (const value of ["", "2", "false", "1\n0"]) {
     assert.throws(() => readIngressAcceptanceBridgeState((path) => path.endsWith("osrelease") ? values[path] : value), /ingress_acceptance_failed/);
@@ -116,6 +128,16 @@ test("bridge fixture only accepts modern CI kernel and fixed per-net fields, pre
   assert.ok(checks.indexOf("JSON.stringify(readIngressAcceptanceBridgeState())") < checks.indexOf("if (result.error"));
   assert.match(source, /assertIsolated\(\);\s*writeFileSync\(`\/proc\/sys\/net\/bridge\/\$\{name\}`, "1\\n"\)/);
   assert.match(checks, /JSON.stringify\(parentBridge\)\) fail\(\)/);
+});
+
+test("kernel admission trial leaves all namespace, networking, real acceptance and cleanup bodies unchanged", () => {
+  // Captured from the independent diagnostic commit fcaf056f, not regenerated
+  // from the compatibility change. Only the now-generic comment is projected.
+  const normalized = source.replace(/\r\n/g, "\n");
+  const body = normalized.slice(normalized.indexOf("export function validateIngressAcceptanceInvocation"))
+    .replace("// These sysctls are network-namespace local on this reviewed CI-only",
+      "// These sysctls are network-namespace local on this CI-only Linux 6.x");
+  assert.equal(createHash("sha256").update(body).digest("hex"), "3ba660ca24492a994f2f659020cc45f38327acefa69dc211a49892bd6f4a0c97");
 });
 
 test("acceptance keeps real capture install verification and exact restore, with actual data-plane baselines", () => {

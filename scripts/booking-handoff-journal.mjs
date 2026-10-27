@@ -1,3 +1,4 @@
+import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
 // Actual append-only host collector for the one approved booking handoff.
 // No DB mutation, routing change, restart or stop. The worker gate can be
 // written only AFTER the complete five-file journal and external head commit.
@@ -8,7 +9,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_BASELINE as BASELINE,
-  BOOKING_HANDOFF_CANDIDATE_CLOSURE_SHA256,assertBookingHandoffToolClosure,assertBookingHandoffWindow,assertBookingLegacyRuntimeEnvironmentTransition} from './booking-handoff-policy.mjs';
+  BOOKING_HANDOFF_CANDIDATE_CLOSURE_SHA256,assertBookingHandoffWindow,assertBookingLegacyRuntimeEnvironmentTransition} from './booking-handoff-policy.mjs';
 import {BOOKING_RETENTION_KIND} from './booking-handoff-retention.mjs';
 import {BOOKING_HANDOFF_ROOT as ROOT} from './booking-handoff-runtime.mjs';
 import {assertBookingAtomicRoutingPlan,assertBookingRoutingCurrent} from './booking-handoff-routing.mjs';
