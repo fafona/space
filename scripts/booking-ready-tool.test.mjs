@@ -15,7 +15,8 @@ test('bootstrap traverses the actual cyclic AST import closure, not a guessed su
 test('raw current/predecessor source, historical checkouts, failed evidence and compiled app/deps are revalidated without mutations',()=>{
  for(const token of ['changes(BASE,revision)','bookingReadyInputs(rows(BASE))','bookingReadyInputs(rows(revision))','changes(PRIOR,BASE)','bookingDependencyInputs(rows(BASE))',
  'verifyHistoricalOnlineTool','assertBookingDependencyReceipt(prior,BASE)','assertBookingFormalPreserved()','assertBookingCiKernelEvidence()',
- 'observeBookingReadyApplication()','collectBookingReadyOriginalCohort()','private_web_identity','bootstrap_sparse','bootstrap_entry','O_NOFOLLOW','O_EXCL','fs.fsyncSync','existing_attempt'])assert.ok(source.includes(token),token);
+ 'observeBookingReadyApplication()','collectBookingReadyOriginalCohort()','private_web_identity','bootstrap_sparse','bootstrap_entry','O_NOFOLLOW','O_EXCL','fs.fsyncSync','existing_attempt',
+ 'changes(ORIGINAL,FORMAL)','formalInputs(ORIGINAL)','formalInputs(FORMAL)','changes(FORMAL,PRIOR)','bookingCiInputs(rows(PRIOR))','assertBookingCiReceipt(ci,PRIOR)','prior_ci_source'])assert.ok(source.includes(token),token);
  assert.doesNotMatch(source,/spawnSync|process\.kill|bookingHostSql|unlinkSync|rmSync|projectBooking|\['start'|\['restart'|\['stop'/);
  assert.throws(()=>prepareBookingReadyTool('f'.repeat(40),'wrong'),/approval/);
  if(process.platform!=='linux'||process.getuid?.()!==0)assert.throws(()=>assertBookingReadySource('f'.repeat(40)),/invocation/);

@@ -10,6 +10,8 @@ import {BOOKING_READY_EVIDENCE as EVIDENCE} from './booking-ready-evidence.mjs';
 import {BOOKING_DEPENDENCY_BASE as PRIOR,BOOKING_DEPENDENCY_RECEIPT,BOOKING_DEPENDENCY_STOPPED,BOOKING_DEPENDENCY_STATES,
  bookingDependencyInputs,assertBookingDependencyToolDelta,assertBookingDependencyToolClosure,assertBookingDependencyReceipt} from './booking-dependency-continuation-policy.mjs';
 import {assertBookingCiKernelEvidence} from './booking-ci-continuation-tool.mjs';
+import {BOOKING_CI_BASE as FORMAL,BOOKING_CI_RECEIPT,BOOKING_CI_INPUTS_SHA256,bookingCiInputs,assertBookingCiToolDelta,assertBookingCiReceipt,assertBookingCurrentToolClosure} from './booking-ci-continuation-policy.mjs';
+import {BOOKING_FORMAL_PRIOR_TOOL as ORIGINAL,BOOKING_FORMAL_FILES,assertBookingFormalToolDelta} from './booking-formal-backup-policy.mjs';
 import {readBookingFormalFile as read,assertBookingFormalPreserved} from './booking-formal-backup-tool.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
 import {verifyHistoricalOnlineTool} from './online-release-tool-retention.mjs';
@@ -41,12 +43,19 @@ function source(revision,directory,{bootstrap=false}={}){
  const sourceInputsSha256=assertBookingReadyDelta({files:changes(BASE,revision),originalInputs:bookingReadyInputs(rows(BASE)),
  currentInputs:bookingReadyInputs(rows(revision)),readBlob:f=>runOnlineToolGit(APP,['show',revision+':'+f])});
  // Validate the REAL predecessor's raw delta and receipt, never projected rows.
+ const formalInputs=revision=>rows(revision).filter(r=>!BOOKING_FORMAL_FILES.includes(r.slice(r.indexOf('\t')+1))).join('\0');
+ assertBookingFormalToolDelta({files:changes(ORIGINAL,FORMAL),originalInputs:formalInputs(ORIGINAL),currentInputs:formalInputs(FORMAL)});
+ assertBookingCiToolDelta({files:changes(FORMAL,PRIOR),originalInputs:bookingCiInputs(rows(FORMAL)),currentInputs:bookingCiInputs(rows(PRIOR)),
+  readBlob:f=>runOnlineToolGit(APP,['show',PRIOR+':'+f])});
+ const ci=JSON.parse(read(OP+'/'+BOOKING_CI_RECEIPT));assertBookingCiReceipt(ci,PRIOR);
+ same([BOOKING_CI_INPUTS_SHA256,assertBookingCurrentToolClosure({baseline:C,files:git(APP,['diff','--name-only',C,PRIOR]).split('\n'),
+  readBlob:f=>runOnlineToolGit(APP,['show',PRIOR+':'+f])})],[ci.sourceInputsSha256,ci.toolClosureSha256],'prior_ci_source');
  const prior=JSON.parse(read(OP+'/'+BOOKING_DEPENDENCY_RECEIPT));assertBookingDependencyReceipt(prior,BASE);
  const oldInputs=assertBookingDependencyToolDelta({files:changes(PRIOR,BASE),originalInputs:bookingDependencyInputs(rows(PRIOR)),
  currentInputs:bookingDependencyInputs(rows(BASE)),readBlob:f=>runOnlineToolGit(APP,['show',BASE+':'+f])});
  const oldClosure=assertBookingDependencyToolClosure({baseline:C,files:git(APP,['diff','--name-only',C,BASE]).split('\n'),readBlob:f=>runOnlineToolGit(APP,['show',BASE+':'+f])});
  same([oldInputs,oldClosure],[prior.sourceInputsSha256,prior.toolClosureSha256],'prior_source');
- for(const old of [BASE,PRIOR,'0b0f3f9dbe60a2fa3553c3b510a937cd13c4bd35'])verifyHistoricalOnlineTool(createOnlineReleaseToolPlan(old),revision);
+ for(const old of [BASE,PRIOR,ORIGINAL])verifyHistoricalOnlineTool(createOnlineReleaseToolPlan(old),revision);
  const plan=createOnlineReleaseToolPlan(revision);verifyOnlineToolBootstrap(plan,directory+'/scripts/prepare-online-release-tool.mjs');
  if(bootstrap){
   need(directory==='/var/lib/faolla-online-bootstrap/'+revision,'bootstrap_path');
