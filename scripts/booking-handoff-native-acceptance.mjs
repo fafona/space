@@ -103,6 +103,17 @@ function nginxOwnedNow(expected,directory){
   bookingNativeNginxReady({expected,actual,pidText:String(expected.pid),directory});return actual;
  }catch(e){if(['ENOENT','ESRCH'].includes(e.code))return null;throw e;}
 }
+export async function stopBookingNativeNginx(operations,expected){
+ // Do NOT feed the mutable master title back into generic alive()/stop().
+ // ownedNow rechecks this direct-spawn PID/startTicks/exe/private cwd before
+ // each signal and every exit observation; title drift cannot mean "exited".
+ const live=()=>operations.ownedNow(expected);
+ if(!live())return;operations.signal(expected.pid,'SIGTERM');
+ for(let i=0;i<100&&live();i++)await operations.wait(20);
+ if(live()){operations.signal(expected.pid,'SIGKILL');for(let i=0;i<100&&live();i++)await operations.wait(20);}
+ need(!live(),'nginx_fixture_not_stopped');
+}
+const stopNginx=(expected,directory)=>stopBookingNativeNginx({ownedNow:f=>nginxOwnedNow(f,directory),signal:(pid,signal)=>process.kill(pid,signal),wait},expected);
 export async function cleanupBookingNativeFixtures(operations){
  const errors=[];for(const task of [operations.controllers,operations.nginx,operations.legacy,operations.children]){
   try{await task();}catch(e){errors.push(e);}
@@ -264,6 +275,7 @@ async function nativeMain(){
    const expected=name==='normal'?CANDIDATE:name==='controller-death-before-commit'?BASELINE:APPLICATION,p=await probe(c);need(p.status===200&&p.value.buildId===expected,'public_target');
    need(!fs.readFileSync(runtime+'/nginx.conf','utf8').includes('faolla_booking_handoff'),'gate_not_closed');
    const finalLegacy=json(runtime+'/legacy.json');if(!children.some(f=>f.pid===finalLegacy.process.pid))children.push(finalLegacy.process);
+   await stopNginx(nginx,runtime);
    for(const f of [...children].reverse())await stop(f);need(children.every(f=>!alive(f)),'process_leak');
    need(spawnSync('flock',['--nonblock',runtime+'/deploy.lock','/usr/bin/true'],{timeout:2000}).status===0,'kernel_lock_not_released');
    equal(production(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
@@ -274,7 +286,7 @@ async function nativeMain(){
    // fixture routing write or restart. Never enumerate-and-kill other apps.
    await cleanupBookingNativeFixtures({
     controllers:async()=>{const failures=[];for(const file of ['controller.json','watchdog.json'])try{await stop(json(runtime+'/'+file));}catch(e){if(e.code!=='ENOENT')failures.push(e);}if(failures.length)throw new AggregateError(failures);},
-    nginx:async()=>{if(nginx){const owned=nginxOwnedNow(nginx,runtime);if(owned)await stop(owned);}},
+    nginx:async()=>{if(nginx)await stopNginx(nginx,runtime);},
     legacy:async()=>{try{await stop(json(runtime+'/legacy.json').process);}catch(e){if(e.code!=='ENOENT')throw e;}},
     children:async()=>{const failures=[];for(const f of [...children].reverse())try{await stop(f);}catch(e){failures.push(e);}if(failures.length)throw new AggregateError(failures);},
    });

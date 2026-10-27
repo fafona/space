@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {bookingNativeConfigText,bookingNativeNginxReady,startBookingNativeNginx,cleanupBookingNativeFixtures} from './booking-handoff-native-acceptance.mjs';
+import {bookingNativeConfigText,bookingNativeNginxReady,startBookingNativeNginx,stopBookingNativeNginx,cleanupBookingNativeFixtures} from './booking-handoff-native-acceptance.mjs';
 import {bookingIngressSnippet} from './booking-handoff-ingress.mjs';
 import {parseNginx} from './production-maintenance-nginx-profile.mjs';
 import {BOOKING_HANDOFF_NATIVE_SOURCES} from './booking-handoff-policy.mjs';
@@ -39,6 +39,20 @@ test('failure cleanup attempts every owned group even if a controller, nginx or 
  const source=readFileSync(new URL('./booking-handoff-native-acceptance.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(source,/fact\(Number\(fs.readFileSync\(runtime\+'\/nginx.pid'/);
  assert.match(source,/finally\s*\{[\s\S]*await cleanupBookingNativeFixtures/);
+});
+test('owned nginx title changes cannot suppress cleanup signals or certify a still-running master as stopped',async()=>{
+ for(const mode of ['term','kill','stuck','foreign','gone']){
+  const signals=[];let running=mode!=='gone',reads=0;
+  const ops={ownedNow:expected=>{assert.equal(expected.pid,4321);reads++;
+   if(mode==='foreign')throw Error('fixture_nginx_child_changed');
+   return running?{...nginx,commandSha256:'changing-title-'+reads}:null;},
+   signal:(pid,signal)=>{assert.equal(pid,4321);signals.push(signal);if(mode==='term'||mode==='kill'&&signal==='SIGKILL')running=false;},wait:async ms=>assert.equal(ms,20)};
+  if(['stuck','foreign'].includes(mode))await assert.rejects(stopBookingNativeNginx(ops,nginx));else await stopBookingNativeNginx(ops,nginx);
+  assert.deepEqual(signals,mode==='gone'||mode==='foreign'?[]:mode==='term'?['SIGTERM']:['SIGTERM','SIGKILL']);
+  assert.ok(reads<=205);
+ }
+ const source=readFileSync(new URL('./booking-handoff-native-acceptance.mjs',import.meta.url),'utf8');
+ assert.match(source,/nginx:async\(\)=>\{if\(nginx\)await stopNginx\(nginx,runtime\)/);
 });
 test('native gate uses the exact production rewrite snippet and actual isolated listener/upstream',()=>{
  for(const phase of ['baseline','armed','primary','rollback'])for(const gated of [true,false]){
