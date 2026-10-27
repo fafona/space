@@ -16,7 +16,7 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {retentionCanonicalText,retentionHash} from './online-release-retention-policy.mjs';
 import {parseRetirementSockets} from './online-release-retirement.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
-import {validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
+import {validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-registry-backup.mjs';
 import {acquireProductionMigrationLock} from './apply-production-database-migrations.mjs';
 import {runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {assertBookingHostInvocation,bookingHostRead as read,bookingHostRun as run,bookingHostSql as sql,bookingHostWriteOnce as write,

@@ -4,6 +4,11 @@ import {readFileSync} from 'node:fs';
 import {bookingHandoffFixture} from './test-support/booking-handoff-retention-fixture.mjs';
 import {executeBookingHandoffJournal,createBookingHandoffRetentionOperations,enableCommittedBookingWorker} from './booking-handoff-journal.mjs';
 import {assertOnlineRetentionHistory,retentionHash} from './online-release-retention-policy.mjs';
+test('journal prerequisites revalidate the sealed backup-to-application binding before history publication',()=>{
+ const code=readFileSync(new URL('./booking-handoff-journal.mjs',import.meta.url),'utf8');
+ assert.ok(code.includes("import {validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-registry-backup.mjs'"));
+ assert.match(code,/verifyPrerequisites:async\(\)=>\{verifyProof\(\);const backup=await validateAttendanceBackupEvidence\(\{target:CANDIDATE/);
+});
 
 function fixture(failAt){
   const f=bookingHandoffFixture(),events=[],files=new Map();let certificate;

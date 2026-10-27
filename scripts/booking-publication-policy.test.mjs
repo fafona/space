@@ -66,8 +66,8 @@ test('actual candidate verifier rejects source, process, file, environment, work
 });
 test('database compatibility, encrypted backup and inactive-schema proof all precede publication; no worker cutover is admitted',()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter')"),end=code.indexOf("}else if(action==='activate')",start),branch=code.slice(start,end);
- assert.ok(start>0&&end>start);assert.match(branch,/const compatibility=action==='database-booking-compatibility-adapter'\?runBookingCompatibilityAdapter:runBookingCompatibility/);
+ const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair')"),end=code.indexOf("}else if(action==='activate')",start),branch=code.slice(start,end);
+ assert.ok(start>0&&end>start);assert.match(branch,/const compatibility=action==='database-booking-registry-repair'\?runBookingRegistryCompatibility:action==='database-booking-compatibility-adapter'\?runBookingCompatibilityAdapter:runBookingCompatibility/);
  for(const pair of [['await compatibility','await createProductionDatabaseBackup'],['await createProductionDatabaseBackup','await verifyProductionDatabaseBackup'],['await verifyProductionDatabaseBackup','await installInactiveBookingSchema'],['await installInactiveBookingSchema',"s.status='database-ready'"]])assert.ok(branch.indexOf(pair[0])>=0&&branch.indexOf(pair[0])<branch.indexOf(pair[1]));
  const activate=code.slice(code.indexOf('async function activateCandidate('),code.indexOf('function bookingResumeOwnedPath('));
  assert.ok(activate.indexOf('await verifyBookingDatabaseProof(s)')<activate.indexOf('publishStatic('));

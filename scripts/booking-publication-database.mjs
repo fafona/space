@@ -1,8 +1,10 @@
 import {createHash} from 'node:crypto';
 import {lstat,readFile,realpath,writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
 import {runMigrationCommand,acquireProductionMigrationLock} from './apply-production-database-migrations.mjs';
-import {attendanceProductionIdentity,loadAttendanceProductionScope,validateAttendanceRegistry,validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
+import {attendanceProductionIdentity,loadAttendanceProductionScope,validateAttendanceRegistry} from './attendance-production-database-migrations.mjs';
+import {validateBookingPublicationBackupEvidence} from './booking-registry-backup.mjs';
 import {BOOKING_RELEASE_BASELINE,BOOKING_SCOPE} from './booking-publication-policy.mjs';
 
 const fail=code=>{throw Error('booking_publication_'+code);};
@@ -33,8 +35,12 @@ export function validateBookingDatabaseState(value,manifest,{installed=false}={}
 export function validateBookingRegistry(value,manifest,{installed=false}={}){
  if(!Array.isArray(value?.registry))fail('database_registry_mismatch');
  const old=value.registry.filter(row=>row.version<'202610250211'),next=value.registry.filter(row=>row.version>='202610250211');
+ if(old.length+next.length!==value.registry.length)fail('database_registry_mismatch');
  validateAttendanceRegistry(old,manifest,{complete:true});
- if(installed?!same(next,BOOKING_MIGRATIONS.map(({version,name})=>({version,name})))||value.bookingTables!==3:next.length!==0||value.bookingTables!==0)fail('database_registry_mismatch');
+ // PostgreSQL jsonb orders object keys independently of JS insertion order.
+ // Only object property order is irrelevant; keys/types/values and array order
+ // remain exact. Keep every other database/install guard unchanged.
+ if(installed?!isDeepStrictEqual(next,BOOKING_MIGRATIONS.map(({version,name})=>({version,name})))||value.bookingTables!==3:next.length!==0||value.bookingTables!==0)fail('database_registry_mismatch');
 }
 export function guardedBookingMigrationSql(sources){
  if(!Array.isArray(sources)||sources.length!==2)fail('migration_scope_invalid');
@@ -102,7 +108,7 @@ export async function installInactiveBookingSchema({target,baseline,rootDir,oper
  const compatibilityText=await privateFile(operation+'/booking-compatibility.json');assertBookingCompatibilityProof(JSON.parse(compatibilityText),{target,baseline,sourceSha256});
  const evidenceText=await privateFile(operation+'/booking-compatibility-evidence.json');
  if(hash(evidenceText)!==JSON.parse(compatibilityText).evidenceSha256)fail('compatibility_evidence_changed');
- const backup=await validateAttendanceBackupEvidence({target,backup:operation+'/database.tar.enc',createReport:operation+'/backup-create.json',verifyReport:operation+'/backup-verify.json'});
+ const backup=await validateBookingPublicationBackupEvidence({target,backup:operation+'/database.tar.enc',createReport:operation+'/backup-create.json',verifyReport:operation+'/backup-verify.json'});
  const lock=await acquireProductionMigrationLock();
  try{
   const before=validateBookingDatabaseState(await state(runCommand),manifest);

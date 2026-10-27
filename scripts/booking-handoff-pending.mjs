@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
 import {observeBookingBuiltSmokePair} from './booking-built-smoke-repair.mjs';
 import {observeBookingCompatibilityContinuation} from './booking-compatibility-tool.mjs';
+import {observeBookingRegistryContinuation} from './booking-registry-tool.mjs';
 import {assertBookingRollbackToolPreparation} from './booking-handoff-retention.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {ATTENDANCE_STAGED_REPAIR,assertAttendanceStagedRepairReceipt} from './attendance-staged-tool-repair-policy.mjs';
@@ -188,6 +189,13 @@ export function assertBookingCompatibilityToolNoPending(){
   assertBookingBasePendingGuardSource(fs.readFileSync(new URL('./prepare-online-release-tool.mjs',import.meta.url),'utf8'));
   const pair=observeBookingCompatibilityContinuation('staged');
   // The same private pending body; only actual fixed, fully attested states.
+  for(const target of Object.keys(pair.preserved))pair.preserved[target].stateSha256=sha256(privateRead(RELEASE_ROOT+'/'+target+'/state.json'));
+  return bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair);
+}
+export function assertBookingRegistryToolNoPending(){
+  if(arguments.length)fail('booking_unexpected_pending_argument');
+  assertBookingBasePendingGuardSource(fs.readFileSync(new URL('./prepare-online-release-tool.mjs',import.meta.url),'utf8'));
+  const pair=observeBookingRegistryContinuation('staged');
   for(const target of Object.keys(pair.preserved))pair.preserved[target].stateSha256=sha256(privateRead(RELEASE_ROOT+'/'+target+'/state.json'));
   return bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair);
 }

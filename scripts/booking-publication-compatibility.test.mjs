@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {bookingCompatibilityInvocation,bookingCompatibilityRollbackMetadataSql,bookingCompatibilityLegacyProbeSql,runBookingCompatibilityAdapter,
- bookingCompatibilityPreservedCloneRead,BOOKING_FAILED_CLONE_EMPTY_SQL} from './booking-publication-compatibility.mjs';
+ bookingCompatibilityPreservedCloneRead,BOOKING_FAILED_CLONE_EMPTY_SQL,runBookingRegistryCompatibility,
+ bookingRegistryPreservedCloneRead,BOOKING_REGISTRY_PRESERVED_ROWS_SQL} from './booking-publication-compatibility.mjs';
+import {bookingDatabaseStateSql} from './booking-publication-database.mjs';
 import {attendanceCompatibilityMetadataContractSql} from './attendance-production-052-compatibility.mjs';
 import {BOOKING_RELEASE_BASELINE as baseline} from './booking-publication-policy.mjs';
 const target='a'.repeat(40),rootDir='/www/wwwroot/merchant-space.web-releases/aaaaaaaaaaaa-online',operation='/var/lib/faolla-online-release/'+target;
@@ -16,6 +18,18 @@ test('preserved failed clone admits precisely its two real read-only queries, in
 test('real metadata compatibility is pinned to exact candidate and unique owned isolated database',()=>{
  assert.equal(bookingCompatibilityInvocation({target,baseline,rootDir,operation}),'faolla_booking_compat_aaaaaaaaaaaa');
  for(const patch of [{target:'invalid'},{baseline:'b'.repeat(40)},{rootDir:'/www/wwwroot/merchant-space'},{operation:'/tmp/test'}])assert.throws(()=>bookingCompatibilityInvocation({target,baseline,rootDir,operation,...patch}));
+});
+
+test('registry successor preserves both failed clones by exact read-only queries, never replaying either attempt',async()=>{
+ for(const sql of [attendanceCompatibilityMetadataContractSql(),bookingDatabaseStateSql,BOOKING_REGISTRY_PRESERVED_ROWS_SQL])assert.equal(bookingRegistryPreservedCloneRead(sql),true);
+ for(const sql of [BOOKING_FAILED_CLONE_EMPTY_SQL,'begin read only;select 1;rollback;',BOOKING_REGISTRY_PRESERVED_ROWS_SQL+'select 1;',
+  BOOKING_REGISTRY_PRESERVED_ROWS_SQL.replace('read only',''),bookingDatabaseStateSql+'commit;delete from public.pages;'])assert.equal(bookingRegistryPreservedCloneRead(sql),false);
+ const source=readFileSync(new URL('./booking-publication-compatibility.mjs',import.meta.url),'utf8');
+ for(const token of ['database=registryRepair?BOOKING_REGISTRY_CLONE:',"'booking-compatibility-registry'",'assertBookingRegistryContinuation({toolRevision})',
+  'second_failed_clone_metadata_changed','second_failed_clone_rows_changed','bookingRegistryExtensionSupplement(metadata.sql,extensions,schemaAcl)',
+  'secondFailedCloneRows=await query','validateBookingRegistry(second,manifest,{installed:true})'])assert.ok(source.includes(token),token);
+ assert.ok(source.indexOf("'second_failed_clone_rows_changed'")<source.indexOf("'/booking-compatibility.json'"));
+ for(const patch of [{target:'b'.repeat(40)},{runCommand:()=>{}},{checks:{fake:true}}])await assert.rejects(runBookingRegistryCompatibility({target,baseline,rootDir,operation,...patch}));
 });
 test('outside metadata comparison can remove new objects only in a guarded rolled back isolated transaction',()=>{
  const sql=bookingCompatibilityRollbackMetadataSql('faolla_booking_compat_aaaaaaaaaaaa');
@@ -34,7 +48,7 @@ test('production commands are schema-only or read-only and success proof is emit
 });
 test('booking adapter preserves the failed clone, exclusive attempt files and every genuine compatibility acceptance gate',async()=>{
  const source=readFileSync(new URL('./booking-publication-compatibility.mjs',import.meta.url),'utf8');
- for(const token of ["prefix=adapter?'booking-compatibility-adapter':'booking-compatibility'",'failed_clone_not_empty','failed_clone_changed',
+ for(const token of ["prefix=registryRepair?'booking-compatibility-registry':adapter?'booking-compatibility-adapter':'booking-compatibility'",'failed_clone_not_empty','failed_clone_changed',
   'bookingCompatibilityExtensionSupplement(metadata.sql,extensions,schemaAcl)','assertBookingCompatibilityContinuation({toolRevision})',
   'pilotCatalogUnchanged:true','productionMetadataSha256After:formalContract','outside_metadata_changed','rpc_acls','clone_not_empty'])assert.ok(source.includes(token),token);
  for(const patch of [{target:'b'.repeat(40)},{runCommand:()=>{}},{checks:{fake:true}}])await assert.rejects(runBookingCompatibilityAdapter({target,baseline,rootDir,operation,...patch}));

@@ -11,7 +11,9 @@ test('the booking compatibility successor is an exact opt-in action; original da
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  assert.match(code,/action==='database-booking-compatibility-adapter'&&\(process\.argv\.slice\(2\)\.length!==2\|\|target!==BOOKING_HANDOFF_CANDIDATE\)/);
  assert.match(code,/action==='database-booking-compatibility-adapter'&&s\.lane!==BOOKING_RELEASE_LANE/);
- assert.match(code,/const compatibility=action==='database-booking-compatibility-adapter'\?runBookingCompatibilityAdapter:runBookingCompatibility/);
+ assert.match(code,/const compatibility=action==='database-booking-registry-repair'\?runBookingRegistryCompatibility:action==='database-booking-compatibility-adapter'\?runBookingCompatibilityAdapter:runBookingCompatibility/);
+ assert.match(code,/action==='database-booking-registry-repair'&&\(process\.argv\.slice\(2\)\.length!==2\|\|target!==BOOKING_HANDOFF_CANDIDATE\)/);
+ assert.match(code,/action==='database-booking-registry-repair'&&s\.lane!==BOOKING_RELEASE_LANE/);
  const acceptance=code.indexOf('await compatibility({target:s.target'),backup=code.indexOf("console.log('online_booking_encrypted_backup_started')",acceptance),install=code.indexOf('await installInactiveBookingSchema(',backup);
  assert.ok(acceptance>0&&backup>acceptance&&install>backup);
 });
@@ -21,6 +23,32 @@ import {createHash} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {runInNewContext as vmRunInNewContext} from 'node:vm';
+
+test('fixed successor preserves genuine current-main DR source and separately binds the immutable built application',async()=>{
+ const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
+ const start=code.indexOf("console.log('online_booking_encrypted_backup_started')"),end=code.indexOf("writeFileSync(`${operation}/backup-create.json`",start);
+ assert.ok(start>0&&end>start);const snippet=code.slice(start,end),target=bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE;
+ const directory='/www/wwwroot/merchant-space.web-releases/'+target.slice(0,12)+'-online',toolSha='a'.repeat(40),tool='/var/lib/faolla-online-code/'+toolSha;
+ const execute=async(action,{head=target,patch={}}={})=>{
+  const calls=[],s={target,directory,oldDirectory:'/unchanged-legacy',...patch};let captured;
+  const result=vmRunInNewContext('(async()=>{'+snippet+'return backup;})()',{
+   // This is a Linux-only controller slice, even when the test runs on Windows.
+   action,s,BOOKING_HANDOFF_CANDIDATE:target,app:'/www/wwwroot/merchant-space',controllerModuleUrl:'file://'+tool+'/scripts/online-traffic-release.mjs',fileURLToPath:url=>url.pathname,URL,
+   operation:'/private-operation',console:{log:()=>{}},randomBytes:()=>({toString:()=>{calls.push('random');return 'synthetic-only';}}),
+   writeFileSync:()=>calls.push('write'),fail:c=>{throw Error(c);},
+   run:(bin,args,options)=>{assert.equal(bin,'git');assert.deepEqual(Array.from(args),['rev-parse','HEAD']);calls.push('git');return options.cwd===directory?head:toolSha;},
+   createProductionDatabaseBackup:async input=>{calls.push('backup');captured=input;return {synthetic:true};},
+  });
+  try{await result;return {calls,captured};}catch(error){return {calls,error};}
+ };
+ const fixed=await execute('database-booking-registry-repair');assert.equal(fixed.error,undefined);assert.equal(fixed.captured.sourceDirectory,tool+'/');assert.equal(fixed.captured.sourceSha,toolSha);
+ assert.equal(fixed.captured.sourceRepository,'fafona/space');assert.equal(fixed.captured.appDirectory,'/unchanged-legacy');
+ const seal=code.indexOf('await sealBookingRegistryBackupBinding({lock:heldLock})',end),verified=code.indexOf('const checked=await verifyProductionDatabaseBackup',end),install=code.indexOf('await installInactiveBookingSchema(',seal);
+ assert.ok(verified>start&&seal>verified&&install>seal);assert.match(code.slice(verified,seal),/if\(action==='database-booking-registry-repair'\)/);
+ for(const action of ['database','database-booking-compatibility-adapter']){
+  const prior=await execute(action);assert.ok(!prior.error);assert.equal(prior.captured.sourceDirectory,tool+'/');assert.equal(prior.captured.sourceSha,toolSha);
+ }
+});
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.
@@ -67,7 +95,7 @@ test('login-only test environment repair retains all build, runtime and publicat
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  assert.ok(code.includes('env:(lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)||lane===SCOPE_NAV_RELEASE_LANE||lane===GOOGLE_LOGIN_RELEASE_LANE||lane===LOGIN_RELEASE_LANE?loginUnitTestEnvironment():env'));
  const start=code.indexOf("}else if(action==='resume-login-stage'){");
- const branch=code.slice(start,code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'){",start));
+ const branch=code.slice(start,code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){",start));
  for(const gate of ['resumeLoginUnbuiltCandidate','verifyBase(s)','configUnchanged(s)','verifyLoginRelease(s)','bookingResumeDependencies','verifyLoginRelease(s,true)','check-admin-bundle-budget.mjs','candidateEnvironment(s)','smoke(s)','verifyCandidate(s)','onlineReleaseStageStatus(s.lane)'])assert.ok(branch.includes(gate),gate);
  assert.doesNotMatch(branch,/database|migration|rmSync|unlinkSync|reset|NODE_ENV.*production/);
  assert.equal(code.split("if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});").length-1,2);
@@ -311,12 +339,12 @@ test('stage and activation readiness remain lane-specific and fail closed for un
 });
 test('actual database branch refuses every no-database lane before backup, migrations or candidate operations',async()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'){");
+ const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){");
  const end=code.indexOf("}else if(action==='activate'){",start);
  assert.ok(start>0&&end>start);
  // This branch is extracted from an ESM controller. Substitute only the module
  // URL expression so the unchanged branch can be parsed in a classic VM script.
- const branch=code.slice(start+"}else if(action==='database'||action==='database-booking-compatibility-adapter'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
+ const branch=code.slice(start+"}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){".length,end).replaceAll('import.meta.url','controllerModuleUrl');
  for(const [lane,error] of [['performance','performance_database_forbidden'],['qr-export','qr_export_database_forbidden'],['bounded-lists','bounded_lists_database_forbidden'],['read-index','read_index_database_forbidden'],['public-catalog-batch','public_catalog_batch_database_forbidden'],['runtime-performance','runtime_performance_database_forbidden'],['booking-merge-cpu','booking_merge_cpu_database_forbidden'],['customer-code-performance','customer_code_performance_database_forbidden'],['contact-wechat-code-only','contact_wechat_code_only_database_forbidden']]){
   const calls=[];
   const denied=(name)=>()=>{calls.push(name);throw Error(`unexpected_${name}`);};
@@ -1753,7 +1781,7 @@ test('pilot operational verifier executes the pinned candidate with invocation-o
 });
 test('actual pilot database branch backs up before exactly 052 and requires enable proof before candidate restart',async()=>{
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'){")+"}else if(action==='database'||action==='database-booking-compatibility-adapter'){".length;
+ const start=code.indexOf("}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){")+"}else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){".length;
  const end=code.indexOf("}else if(action==='activate'){",start);
  const branch=code.slice(start,end).replaceAll('import.meta.url','controllerModuleUrl');
  for(const proofValid of [true,false]){

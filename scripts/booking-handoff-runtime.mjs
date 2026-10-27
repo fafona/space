@@ -12,6 +12,8 @@ import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs'
 import {assertBookingBuiltSmokeRuntimeContinuation} from './booking-built-smoke-repair.mjs';
 import {assertBookingCompatibilityRuntimeContinuation} from './booking-compatibility-tool.mjs';
 import {BOOKING_COMPATIBILITY_PRIOR_TOOL} from './booking-compatibility-tool-policy.mjs';
+import {assertBookingRegistryRuntimeContinuation} from './booking-registry-tool.mjs';
+import {BOOKING_REGISTRY_PRIOR_TOOL} from './booking-registry-tool-policy.mjs';
 import {bookingProtectedEnvironment,assertBookingCompatibilityEnvironment} from './booking-publication-policy.mjs';
 import {verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
@@ -156,7 +158,8 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
   const rollbackText=read(RELEASE+'/'+APPLICATION+'/state.json').toString(),rollback=JSON.parse(rollbackText);
   const buildToolRevision=primary.bookingReviewedStage?.toolRevision===toolRevision?toolRevision:
     toolRevision===BOOKING_COMPATIBILITY_PRIOR_TOOL?assertBookingBuiltSmokeRuntimeContinuation({toolRevision,primary,rollback}):
-    assertBookingCompatibilityRuntimeContinuation({toolRevision,primary,rollback});
+    toolRevision===BOOKING_REGISTRY_PRIOR_TOOL?assertBookingCompatibilityRuntimeContinuation({toolRevision,primary,rollback}):
+    assertBookingRegistryRuntimeContinuation({toolRevision,primary,rollback});
   need(primary.status==='database-ready'&&primary.baseline===BASELINE&&primary.lane==='booking-runtime-compatibility-only'&&
     primary.bookingReviewedStage?.toolRevision===buildToolRevision&&
     (buildToolRevision!==toolRevision||primary.bookingReviewedStage?.toolClosureSha256===toolClosureSha256)&&
