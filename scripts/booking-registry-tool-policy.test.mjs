@@ -15,8 +15,14 @@ test('source scope is exactly twenty-four tool/test files; unchanged inputs incl
  // A CI checkout need not contain historical objects. The fixed predecessor
  // digest still binds every current non-allowlisted input, without fetching or
  // skipping anything. The production verifier separately reads BOTH revisions.
+ // Project only the six new formal-backup successor files out of this sealed
+ // predecessor test. Its runtime policy/digest are unchanged; the new policy
+ // test separately pins every current non-allowlisted blob.
+ const successorAdded=['scripts/booking-formal-backup-policy.mjs','scripts/booking-formal-backup-policy.test.mjs',
+  'scripts/booking-formal-backup-tool.mjs','scripts/booking-formal-backup-tool.test.mjs',
+  'scripts/booking-formal-backup.mjs','scripts/booking-formal-backup.test.mjs'];
  const original=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
-  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))&&!successorAdded.includes(row.slice(row.indexOf('\t')+1))).join('\0');
  assert.equal(p.assertBookingRegistryToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_REGISTRY_INPUTS_SHA256);
  for(const patch of [{files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(1),'src/app/login/page.tsx']},{currentInputs:original+'changed'},{originalInputs:'fake',currentInputs:'fake'}])
   assert.throws(()=>p.assertBookingRegistryToolDelta({files,originalInputs:original,currentInputs:original,...patch}));

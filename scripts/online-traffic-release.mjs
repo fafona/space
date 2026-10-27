@@ -1002,11 +1002,12 @@ async function resumeBookingStage(s,probeRecovery=false){
   s.status=onlineReleaseStageStatus(s.lane);save(s);
  }catch(error){writeFileSync(`${audit}-failure.json`,JSON.stringify({toolRevision:tool.revision,error:error.message,failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});throw error;}
 }
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','finish-booking-built-smoke','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','database-booking-compatibility-adapter','database-booking-registry-repair','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','finish-booking-built-smoke','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','database-booking-compatibility-adapter','database-booking-registry-repair','database-booking-formal-backup','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(target===BOOKING_HANDOFF_CANDIDATE&&['finish-stage','resume-booking-stage','resume-booking-probe-stage'].includes(action))fail('booking_built_smoke_use_reviewed_continuation');
 if(action==='finish-booking-built-smoke'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_built_smoke_invocation');
 if(action==='database-booking-compatibility-adapter'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_compatibility_adapter_invocation');
 if(action==='database-booking-registry-repair'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_registry_repair_invocation');
+if(action==='database-booking-formal-backup'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_formal_backup_invocation');
 if(action==='resume-login-stage'&&process.argv.slice(2).length!==2)fail('invalid_online_invocation');
 if(target===LOGIN_UNBUILT_REPAIR.target&&['finish-stage','resume-booking-stage','resume-booking-probe-stage','retry-static'].includes(action))fail('merchant_login_unbuilt_use_reviewed_resume');
 try{await withOnlineRetentionLocks(async heldLock=>{
@@ -1344,6 +1345,15 @@ try{
     verifyBuilt:()=>{s.loginBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyLoginRelease(s,true);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.loginDependenciesSha256)fail('merchant_login_dependency_tree_changed');run('node',['scripts/check-admin-bundle-budget.mjs'],{cwd:s.directory});},
     start:()=>run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(s.port)],{env:candidateEnvironment(s)}),
     smoke:()=>smoke(s),ready:()=>{verifyCandidate(s);s.status=onlineReleaseStageStatus(s.lane);save(s);}});
+  }else if(action==='database-booking-formal-backup'){
+   if(s.lane!==BOOKING_RELEASE_LANE||s.target!==BOOKING_HANDOFF_CANDIDATE||s.status!=='staged')fail('booking_formal_backup_stage');
+   configUnchanged(s);verifyCandidate(s);
+   const {runBookingFormalBackup}=await import('./booking-formal-backup.mjs');
+   console.log('online_booking_formal_backup_continuation_started');await runBookingFormalBackup({lock:heldLock});
+   await verifyBase(s);configUnchanged(s);verifyCandidate(s);
+   await installInactiveBookingSchema({target:s.target,baseline:s.baseline,rootDir:s.directory,operation});
+   s.bookingDatabaseProofSha256=hash(safeFile(`${operation}/booking-database-inactive.json`));save(s);await verifyBookingDatabaseProof(s);
+   s.status='database-ready';save(s);await smoke(s);
   }else if(action==='database'||action==='database-booking-compatibility-adapter'||action==='database-booking-registry-repair'){
    if(action==='database-booking-compatibility-adapter'&&s.lane!==BOOKING_RELEASE_LANE)fail('booking_compatibility_adapter_lane');
    if(action==='database-booking-registry-repair'&&s.lane!==BOOKING_RELEASE_LANE)fail('booking_registry_repair_lane');

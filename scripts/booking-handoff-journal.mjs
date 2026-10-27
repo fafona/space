@@ -21,7 +21,7 @@ import {ONLINE_RETENTION_POLICY,retentionHash,retentionCanonicalText} from './on
 import {createOnlineRetentionJournal,executeOnlineRetention,assertOnlineRetentionHeldLocks,assertOnlineRetentionPersistedProcesses} from './online-release-retention-writer.mjs';
 import {normalizeRetirementProcess,parseRetirementSockets,assertExistingPm2Directory} from './online-release-retirement.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY,WEB_RELEASE_MARKER,webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
-import {validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-registry-backup.mjs';
+import {bookingPublicationBackupRequest,validateBookingPublicationBackupEvidence as validateAttendanceBackupEvidence} from './booking-formal-backup.mjs';
 
 const APP='/www/wwwroot/merchant-space',RELEASE='/var/lib/faolla-online-release',CONTAINER='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416';
 const need=(v,c)=>{if(!v)throw Error('booking_handoff_journal_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
@@ -170,8 +170,7 @@ export function createBookingHandoffRetentionOperations({lock,toolRevision}){
     verifyProof();return observation;
   };
   return {history,observe,now:()=>new Date().toISOString(),wait:ms=>new Promise(r=>setTimeout(r,ms)),
-    verifyPrerequisites:async()=>{verifyProof();const backup=await validateAttendanceBackupEvidence({target:CANDIDATE,
-      backup:RELEASE+'/'+CANDIDATE+'/database.tar.enc',createReport:RELEASE+'/'+CANDIDATE+'/backup-create.json',verifyReport:RELEASE+'/'+CANDIDATE+'/backup-verify.json'});
+    verifyPrerequisites:async()=>{verifyProof();const backup=await validateAttendanceBackupEvidence(bookingPublicationBackupRequest(CANDIDATE,RELEASE+'/'+CANDIDATE));
       need(backup.archiveSha256===e.backupSha256,'backup_archive_changed');verifyProof();},
     persistProcesses:async()=>{
       verifyProof();need(!persisted,'save_repeated');persisted=true;const before=processes(JSON.parse(pm(['jlist'])));
