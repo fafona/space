@@ -1,4 +1,6 @@
-import {projectBookingCiPredecessorRows} from './booking-ci-continuation-policy.mjs';
+import {projectBookingCiPredecessorRows as projectCiRows} from './booking-ci-continuation-policy.mjs';
+import {projectBookingDependencyPredecessorRows} from './booking-dependency-continuation-policy.mjs';
+const projectBookingCiPredecessorRows=rows=>projectCiRows(projectBookingDependencyPredecessorRows(rows));
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';

@@ -31,7 +31,7 @@ test('backup receipt selection follows mandatory source attestation; runtime imp
  assert.match(backup,/assertBookingCurrentContinuation as assertBookingFormalContinuation/);
  for(const file of ['booking-handoff-host-io','booking-handoff-journal','booking-handoff-routing','booking-handoff-legacy','booking-handoff-runtime','online-traffic-release']){
   const code=readFileSync(new URL('./'+file+'.mjs',import.meta.url),'utf8');
-  assert.match(code,/assertBookingCurrentToolClosure as assertBookingHandoffToolClosure/);
+  assert.match(code,/assertBookingDependencyToolClosure as assertBookingHandoffToolClosure/);
  }
- assert.match(readFileSync(new URL('./booking-handoff-runtime.mjs',import.meta.url),'utf8'),/assertBookingCurrentRuntimeContinuation as assertBookingFormalRuntimeContinuation/);
+ assert.match(readFileSync(new URL('./booking-handoff-runtime.mjs',import.meta.url),'utf8'),/assertBookingDependencyRuntimeContinuation as assertBookingFormalRuntimeContinuation/);
 });
