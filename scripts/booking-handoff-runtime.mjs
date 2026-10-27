@@ -1,4 +1,4 @@
-import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
+import {assertBookingDependencyToolClosure as assertBookingHandoffToolClosure} from './booking-dependency-continuation-policy.mjs';
 // Private runtime preparation only. No public routing, legacy-host restart,
 // database mutation, history append or worker enablement is exposed here.
 import * as fs from 'node:fs';
@@ -16,7 +16,8 @@ import {BOOKING_COMPATIBILITY_PRIOR_TOOL} from './booking-compatibility-tool-pol
 import {assertBookingRegistryRuntimeContinuation} from './booking-registry-tool.mjs';
 import {BOOKING_REGISTRY_PRIOR_TOOL} from './booking-registry-tool-policy.mjs';
 import {BOOKING_FORMAL_PRIOR_TOOL} from './booking-formal-backup-policy.mjs';
-import {assertBookingCurrentRuntimeContinuation as assertBookingFormalRuntimeContinuation} from './booking-ci-continuation.mjs';
+import {assertBookingDependencyRuntimeContinuation as assertBookingFormalRuntimeContinuation} from './booking-dependency-continuation-tool.mjs';
+import {bookingModeAwareDependencies,assertBookingDependencyBinding} from './booking-dependency-fingerprint.mjs';
 import {bookingProtectedEnvironment,assertBookingCompatibilityEnvironment} from './booking-publication-policy.mjs';
 import {verifyInactiveBookingSchema} from './booking-publication-database.mjs';
 import {assertContactWechatBuildEnvironmentKeys} from './contact-wechat-online-build.mjs';
@@ -195,7 +196,8 @@ export async function prepareBookingAtomicRuntime({lock,toolRevision}){
     need(runOnlineToolGit(s.directory,['rev-parse','HEAD']).toString().trim()===s.target&&
       !runOnlineToolGit(s.directory,['status','--porcelain=v1','--untracked-files=all']).toString().trim(),'source');
     const dep=attendanceRepairTreeFingerprint(s.directory+'/node_modules',{allowInternalLinks:true});
-    need(dep.sha256===(s.target===CANDIDATE?primary.bookingDependenciesSha256:JSON.parse(read(op+'/rollback-built.json')).dependenciesSha256),'dependencies');
+    assertBookingDependencyBinding({target:s.target,savedDigest:s.target===CANDIDATE?primary.bookingDependenciesSha256:JSON.parse(read(op+'/rollback-built.json')).dependenciesSha256,
+      modeAwareDigest:bookingModeAwareDependencies(s.directory+'/node_modules'),streamedTree:dep});
     if(s.target===CANDIDATE){
       need(originals[s.target].runtimeSha256===primary.bookingRuntimeSha256&&originals[s.target].environmentFileSha256===primary.bookingEnvironmentFileSha256&&
         originals[s.target].buildProofSha256===primary.bookingBuildProofSha256,'primary_artifacts');

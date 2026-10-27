@@ -1,4 +1,4 @@
-import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
+import {assertBookingDependencyToolClosure as assertBookingHandoffToolClosure} from './booking-dependency-continuation-policy.mjs';
 // Fixed-host IO shared only by the approved booking controller. No alternate
 // host, database, process name, source revision or unheld lock is accepted.
 import * as fs from 'node:fs';

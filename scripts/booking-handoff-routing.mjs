@@ -1,4 +1,4 @@
-import {assertBookingCurrentToolClosure as assertBookingHandoffToolClosure} from './booking-ci-continuation-policy.mjs';
+import {assertBookingDependencyToolClosure as assertBookingHandoffToolClosure} from './booking-dependency-continuation-policy.mjs';
 // A new routing edge, not a rewrite of the original staged 52f rollback files.
 // Once authority may have flipped, only C or the compatible 6c can be selected.
 import * as fs from 'node:fs';

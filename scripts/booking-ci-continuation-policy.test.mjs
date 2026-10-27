@@ -4,11 +4,12 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import * as p from './booking-ci-continuation-policy.mjs';
+import {projectBookingDependencyPredecessorRows} from './booking-dependency-continuation-policy.mjs';
 import {BOOKING_FORMAL_PRESERVED,BOOKING_FORMAL_FILES,assertBookingFormalToolDelta} from './booking-formal-backup-policy.mjs';
 import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,assertBookingHandoffToolClosure} from './booking-handoff-policy.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const read=file=>readFileSync(new URL('../'+file,import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const currentRows=()=>execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean);
+const currentRows=()=>projectBookingDependencyPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean));
 export function ciReceiptFixture(){return {schemaVersion:1,kind:'booking-ci-continuation-tool',priorTool:'0b0f3f9dbe60a2fa3553c3b510a937cd13c4bd35',
  base:p.BOOKING_CI_BASE,verifiedCiSource:p.BOOKING_CI_VERIFIED_SOURCE,toolRevision:'f'.repeat(40),sourceInputsSha256:p.BOOKING_CI_INPUTS_SHA256,
  toolClosureSha256:'a'.repeat(64),preservedSha256:hash(JSON.stringify(BOOKING_FORMAL_PRESERVED)),
