@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/release-toolchain*.mjs'
+      - 'scripts/test-support/release-toolchain-*'
       - 'scripts/booking-handoff-execution*'
       - 'scripts/booking-handoff-policy.mjs'
       - '.github/workflows/release-toolchain.yml'
@@ -42,6 +43,9 @@ jobs:
         run: |
           set -euo pipefail
           node "$RUNNER_TEMP/release-toolchain-bundle/scripts/release-toolchain.mjs" rehearse /usr/sbin/nginx 5
+      - name: Real Interruption And Owned Cleanup
+        shell: bash
+        run: node "$RUNNER_TEMP/release-toolchain-bundle/scripts/release-toolchain-interrupt-acceptance.mjs" "$RUNNER_TEMP/release-toolchain-bundle" /usr/sbin/nginx
       - name: Preserve Synthetic Reports
         if: always()
         uses: actions/upload-artifact@v4

@@ -56,7 +56,14 @@ are not automatically replayed. New shared sources are included in the native
 acceptance source inventory. Historical attempts/receipts/allowlists are retained.
 
 The new dedicated `Release Toolchain Safety` workflow tests the packaged tools
-and real Nginx boundary on a disposable Linux runner. Adopting this tooling as a
+and real Nginx boundary on a disposable Linux runner, including a real SIGTERM
+interruption after an owned Nginx starts. It requires stopped owned children,
+an explicit failed controller exit and no misleading successful drill report.
+Historical policy unit tests use hash-bound complete Git tree evidence from
+`38a3ba02a3f2b2165994043e2ac78ea1d90d0282`, not a moving HEAD disguised as that
+historical source. They separately assert that the old guards reject current
+outside-scope changes. Production policies, pins and source admission are unchanged.
+Adopting this tooling as a
 production publisher still requires reviewed source admission, the full required
 CI set and complete existing application/database/recovery acceptance. Do not
 describe this engineering milestone as a deployed application or a finished

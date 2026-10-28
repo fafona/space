@@ -34,7 +34,8 @@ export function toolchainImportGraph({entrypoints,resources=[],readBlob}){
  return [...files.values()].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
 }
 function git(repo,args){const r=spawnSync('git',args,{cwd:repo,encoding:null,maxBuffer:8*1024**2,timeout:15000,windowsHide:true});need(r.status===0&&!r.error&&!r.signal,'source_changed');return r.stdout;}
-export function packCommittedToolchain({repository,revision,directory,entrypoints=['scripts/release-toolchain.mjs'],resources=[]}){
+export const TOOLCHAIN_ENTRYPOINTS=Object.freeze(['scripts/release-toolchain.mjs','scripts/release-toolchain-interrupt-acceptance.mjs']);
+export function packCommittedToolchain({repository,revision,directory,entrypoints=TOOLCHAIN_ENTRYPOINTS,resources=[]}){
  need(/^[a-f0-9]{40}$/.test(revision??''),'invalid_contract');const repo=path.resolve(repository);need(git(repo,['rev-parse',revision+'^{commit}']).toString().trim()===revision,'source_changed');
  const readBlob=file=>{safeRelativePath(file);const row=git(repo,['ls-tree',revision,'--',file]).toString().trim();
   need(row.startsWith('100644 blob ')||row.startsWith('100755 blob '),'bundle_missing_file');return git(repo,['show',revision+':'+file]);};

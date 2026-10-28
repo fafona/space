@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {historicalToolTreeRows} from './test-support/release-toolchain-historical-fixture.mjs';
 import * as p from './booking-registry-tool-policy.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 export function registryReceiptFixture(){return {schemaVersion:1,kind:'booking-registry-tool',priorTool:p.BOOKING_REGISTRY_PRIOR_TOOL,
@@ -16,16 +17,15 @@ test('source scope is exactly twenty-four tool/test files; unchanged inputs incl
  assert.equal(files.length,24);assert.equal(new Set(files).size,24);assert.ok(files.every(f=>f.startsWith('scripts/')));
  for(const forbidden of ['scripts/attendance-extension-metadata.mjs','scripts/prepare-online-release-tool.mjs','scripts/create-production-database-backup.mjs',
   'scripts/verify-production-database-backup.mjs','scripts/attendance-production-database-migrations.mjs','package.json','package-lock.json'])assert.ok(!files.includes(forbidden));
- // A CI checkout need not contain historical objects. The fixed predecessor
- // digest still binds every current non-allowlisted input, without fetching or
- // skipping anything. The production verifier separately reads BOTH revisions.
- // Project only the six new formal-backup successor files out of this sealed
- // predecessor test. Its runtime policy/digest are unchanged; the new policy
- // test separately pins every current non-allowlisted blob.
+ // Immutable full-tree test evidence is available even in shallow CI. The
+ // production policy still rejects current non-allowlisted changes.
+ const head=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
+  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+ assert.throws(()=>p.assertBookingRegistryToolDelta({files,originalInputs:head,currentInputs:head}),/application_inputs/);
  const successorAdded=['scripts/booking-formal-backup-policy.mjs','scripts/booking-formal-backup-policy.test.mjs',
   'scripts/booking-formal-backup-tool.mjs','scripts/booking-formal-backup-tool.test.mjs',
   'scripts/booking-formal-backup.mjs','scripts/booking-formal-backup.test.mjs'];
- const original=projectBookingCiPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean))
+ const original=projectBookingCiPredecessorRows(historicalToolTreeRows())
   .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))&&!successorAdded.includes(row.slice(row.indexOf('\t')+1))).join('\0');
  assert.equal(p.assertBookingRegistryToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_REGISTRY_INPUTS_SHA256);
  for(const patch of [{files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(1),'src/app/login/page.tsx']},{currentInputs:original+'changed'},{originalInputs:'fake',currentInputs:'fake'}])

@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {historicalToolTreeRows} from './test-support/release-toolchain-historical-fixture.mjs';
 import * as p from './booking-formal-backup-policy.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 export function formalReceiptFixture(){return {schemaVersion:1,kind:'booking-formal-backup-tool',priorTool:p.BOOKING_FORMAL_PRIOR_TOOL,
@@ -13,11 +14,14 @@ export function formalReceiptFixture(){return {schemaVersion:1,kind:'booking-for
  preservedSha256:hash(JSON.stringify(p.BOOKING_FORMAL_PRESERVED)),preparedAt:'2026-10-27T03:00:00.000Z'};}
 test('independent successor is exactly nineteen tool/test files and pins all non-allowlisted blobs',()=>{
  const files=p.BOOKING_FORMAL_FILES;assert.equal(files.length,19);assert.equal(new Set(files).size,19);
+ const head=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
+  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+ assert.throws(()=>p.assertBookingFormalToolDelta({files,originalInputs:head,currentInputs:head}),/application_inputs/);
  for(const forbidden of ['scripts/create-production-database-backup.mjs','scripts/verify-production-database-backup.mjs',
   'scripts/attendance-production-database-migrations.mjs','scripts/database-backup-contract.mjs','scripts/check-database-backup-readiness.mjs',
   'scripts/prepare-online-release-tool.mjs','scripts/booking-registry-tool.mjs','scripts/booking-registry-tool-policy.mjs','scripts/booking-registry-backup.mjs',
   'scripts/booking-publication-compatibility.mjs','package.json','package-lock.json'])assert.ok(!files.includes(forbidden));
- const rows=projectBookingCiPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean))
+ const rows=projectBookingCiPredecessorRows(historicalToolTreeRows())
   .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
  assert.equal(p.assertBookingFormalToolDelta({files,originalInputs:rows,currentInputs:rows}),p.BOOKING_FORMAL_INPUTS_SHA256);
  for(const patch of [{files:files.slice(1)},{files:[...files,files[0]]},{files:[...files.slice(1),'src/app/login/page.tsx']},
