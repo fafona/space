@@ -31,6 +31,14 @@ function logBytes(file){
  try{equal(identity(fs.fstatSync(fd)),identity(before),'termination_log_replaced');const b=fs.readFileSync(fd),after=fs.fstatSync(fd);equal(identity(after),identity(before),'termination_log_replaced');equal(identity(fs.lstatSync(file)),identity(before),'termination_log_replaced');need(b.length<=LIMIT&&b.length>=before.size&&after.size>=b.length,'termination_log_changed');return {bytes:b,identity:identity(before)};}finally{fs.closeSync(fd);}
 }
 export function capturePm2TerminationAnchor(file){const r=logBytes(file);return {file,identity:r.identity,offset:r.bytes.length,prefixSha256:hash(r.bytes)};}
+// Observation of already-existing exact records, not a pre-restart anchor and
+// never a replacement for the fresh SIGINT witness API above.
+export function inspectPinnedPm2RecordSequence(file,lines){
+ need(Array.isArray(lines)&&lines.length>=2&&lines.length<=8&&lines.every(v=>typeof v==='string'&&v.length>0&&v.length<=512&&!/[\r\n\0]/.test(v)),'historical_record_contract');
+ const r=logBytes(file),record=Buffer.from(lines.join('\n')+'\n'),fromOffset=r.bytes.indexOf(record);
+ need(fromOffset>=0&&(fromOffset===0||r.bytes[fromOffset-1]===10)&&r.bytes.indexOf(record,fromOffset+1)===-1,'historical_record_not_unique');
+ return{kind:'pm2-existing-record-sequence-observation',file,identity:r.identity,fromOffset,toOffset:fromOffset+record.length,sequenceSha256:hash(record),observedAt:new Date().toISOString(),observationOfExistingRecords:true,eventTimeNotReissued:true,publicationAuthority:false};
+}
 export function assertPm2TerminationEvidence(proof,{before,after,window,observedAt,logFile}){
  keys(proof,['kind','file','identity','fromOffset','toOffset','prefixSha256','recordSha256','beforePid','afterPid','name','pmId','exitCode','signal','observedAt'],'termination_shape');
  need(proof.kind==='pm2-observed-sigint-termination'&&proof.file===logFile&&proof.file.endsWith('/pm2.log')&&proof.beforePid===before.pid&&proof.afterPid===after.pid&&proof.name===before.name&&proof.pmId===before.pmId&&proof.exitCode===130&&proof.signal==='SIGINT','termination_binding');
@@ -47,8 +55,8 @@ export function inspectPm2SigintTermination(anchor,before,after){
  need(lines.length===1&&lines[0].endsWith(token+'130] via signal [SIGINT]'),'termination_signal_not_observed');
  return {kind:'pm2-observed-sigint-termination',file:anchor.file,identity:r.identity,fromOffset:anchor.offset,toOffset:r.bytes.length,prefixSha256:anchor.prefixSha256,recordSha256:hash(lines[0]+'\n'),beforePid:before.pid,afterPid:after.pid,name:before.name,pmId:before.pmId,exitCode:130,signal:'SIGINT',observedAt:new Date().toISOString()};
 }
-export function assertManagedPauseEnvironmentTransition(value,{framework,assertWindow,expectedExitCode=0,terminationEvidence,logFile}={}){
- need((expectedExitCode===0||expectedExitCode===130)&&typeof assertWindow==='function','runtime_validation_contract');
+export function assertManagedPauseEnvironmentDelta(value,{framework,expectedExitCode=0}={}){
+ need(expectedExitCode===0||expectedExitCode===130,'runtime_validation_contract');
  const {beforeRaw:before,afterRaw:after,legacyBefore,legacyAfter,beforePmUptime,afterPmUptime}=value;
  equal(value.framework,framework,'pm2_provenance');
  need(framework.nodeVersion==='v20.20.1'&&framework.managerVersion==='6.0.14','pm2_provenance');
@@ -61,8 +69,6 @@ export function assertManagedPauseEnvironmentTransition(value,{framework,assertW
  need(!value.beforeConfigured.RESEND_API_KEY&&!value.afterConfigured.RESEND_API_KEY&&!value.beforeConfigured.BOOKING_CONFIRMATION_EMAIL_FROM&&!value.afterConfigured.BOOKING_CONFIRMATION_EMAIL_FROM,'email_not_disabled');
  equal(value.beforePmDerived,{exitCode:null,nodeVersion:'20.20.1',version:'16.3.4',previousRestartDelay:null,unstableRestarts:0},'runtime_manager_before');
  equal(value.afterPmDerived,{exitCode:expectedExitCode,nodeVersion:'20.20.1',version:'16.3.4',previousRestartDelay:0,unstableRestarts:0},'runtime_manager_after');
- if(expectedExitCode===130)assertPm2TerminationEvidence(terminationEvidence,{before:legacyBefore,after:legacyAfter,window:value.window,observedAt:value.observedAt,logFile});
- else need(terminationEvidence===undefined,'termination_unexpected');
  const added={exit_code:String(expectedExitCode),node_version:'20.20.1',version:'16.3.4',prev_restart_delay:'0'};
  for(const [key,expected]of Object.entries(added))need(!Object.hasOwn(before,key)&&after[key]===expected&&!Object.hasOwn(value.beforeConfigured,key)&&!Object.hasOwn(value.afterConfigured,key),'runtime_manager_collision');
  equal(Object.keys(after).sort(),[...Object.keys(before),...Object.keys(added)].sort(),'runtime_environment_keys');
@@ -72,6 +78,13 @@ export function assertManagedPauseEnvironmentTransition(value,{framework,assertW
  const rest=env=>Object.fromEntries(Object.entries(env).filter(([key])=>!derived.includes(key)).sort(([a],[b])=>a.localeCompare(b)));equal(rest(after),rest(before),'runtime_environment_other_change');
  need(before.restart_time===String(legacyBefore.restartCount)&&after.restart_time===String(legacyAfter.restartCount),'runtime_restart_counter');
  need(positive(beforePmUptime)&&positive(afterPmUptime)&&before.pm_uptime===String(beforePmUptime)&&after.pm_uptime===String(afterPmUptime)&&before.created_at===String(legacyBefore.createdAt)&&after.created_at===String(legacyAfter.createdAt),'runtime_start_counter');
+ return true;
+}
+export function assertManagedPauseEnvironmentTransition(value,{framework,assertWindow,expectedExitCode=0,terminationEvidence,logFile}={}){
+ need(typeof assertWindow==='function','runtime_validation_contract');assertManagedPauseEnvironmentDelta(value,{framework,expectedExitCode});
+ const {legacyBefore,legacyAfter,beforePmUptime,afterPmUptime}=value;
+ if(expectedExitCode===130)assertPm2TerminationEvidence(terminationEvidence,{before:legacyBefore,after:legacyAfter,window:value.window,observedAt:value.observedAt,logFile});
+ else need(terminationEvidence===undefined,'termination_unexpected');
  const now=iso(value.observedAt),window=assertWindow(value.window,{nowMs:now});
  need(beforePmUptime>=legacyBefore.createdAt&&beforePmUptime<=window.startedAtMs&&legacyAfter.createdAt>=window.startedAtMs&&legacyAfter.createdAt<=afterPmUptime&&afterPmUptime>=window.startedAtMs&&afterPmUptime>beforePmUptime&&afterPmUptime<=now,'runtime_start_bound');return true;
 }

@@ -6,7 +6,7 @@ import * as fs from'node:fs';import path from'node:path';import net from'node:ne
 import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{randomBytes,randomUUID,createHash}from'node:crypto';import assert from'node:assert/strict';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,assertBookingHandoffWindow}from'./booking-handoff-policy.mjs';
 import{normalizeRetirementProcess,parseRetirementSockets}from'./online-release-retirement.mjs';import{bookingLegacyRpcExpected}from'./booking-handoff-legacy.mjs';
-import{capturePm2TerminationAnchor,inspectPm2SigintTermination,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow}from'./release-toolchain-pm2-transition.mjs';
+import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow}from'./release-toolchain-pm2-transition.mjs';
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
@@ -92,6 +92,17 @@ try{
  const after=normalizeRetirementProcess(afterRow),afterRaw=raw(after.pid),rawObservation={beforeRaw,afterRaw,beforeConfigured:beforeRow.pm2_env.env,afterConfigured:afterRow.pm2_env.env,legacyBefore:before,legacyAfter:after,beforePmUptime:beforeRow.pm2_env.pm_uptime,afterPmUptime:afterRow.pm2_env.pm_uptime,beforePmDerived:manager(beforeRow.pm2_env),afterPmDerived:manager(afterRow.pm2_env),framework,window};
  seal('transition-observed.json',{value:{...rawObservation,observedAt:new Date().toISOString()},unverified:true,syntheticInputsOnly:true});
  const termination=inspectPm2SigintTermination(anchor,before,after);seal('termination-observed.json',{termination,unverified:true});
+ // Existing records do not become a fresh restart witness or authority.
+ const logLines=fs.readFileSync(home+'/pm2.log','utf8').split('\n'),exitIndex=logLines.findIndex(line=>line.endsWith('App [eq-next:0] exited with code [130] via signal [SIGINT]'));
+ need(exitIndex>=0&&logLines[exitIndex+1]?.length>0,'historical_log_sequence');
+ const sequence=logLines.slice(exitIndex,exitIndex+2),existing=inspectPinnedPm2RecordSequence(home+'/pm2.log',sequence);
+ need(existing.eventTimeNotReissued===true&&existing.observationOfExistingRecords===true&&existing.publicationAuthority===false,'historical_log_not_authority');
+ assert.throws(()=>inspectPinnedPm2RecordSequence(home+'/pm2.log',[sequence[0]+'-missing',sequence[1]]));
+ const duplicated=root+'/duplicated-records.log',embedded=root+'/embedded-records.log',linked=root+'/linked-records.log';
+ fs.writeFileSync(duplicated,sequence.join('\n')+'\n'+sequence.join('\n')+'\n',{mode:0o600,flag:'wx'});
+ fs.writeFileSync(embedded,'prefix'+sequence.join('\n')+'\n',{mode:0o600,flag:'wx'});fs.symlinkSync(home+'/pm2.log',linked);
+ for(const file of [duplicated,embedded,linked])assert.throws(()=>inspectPinnedPm2RecordSequence(file,sequence));
+ seal('existing-record-observation.json',{existing,actualPrivatePm2Log:true,duplicateRefused:true,embeddedRefused:true,symlinkRefused:true,publicationAuthority:false});
  // The complete observation ends after reading both actual runtime and log,
  // never before the termination witness was independently collected.
  const value={...rawObservation,observedAt:new Date().toISOString()};
