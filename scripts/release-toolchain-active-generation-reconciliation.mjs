@@ -17,12 +17,14 @@ import {inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {stopOwnedIsolation} from './release-toolchain-isolation.mjs';
 import {bookingHostRead} from './booking-handoff-host-io.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
+import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
 const FILE=fileURLToPath(import.meta.url),SOURCE=path.dirname(path.dirname(FILE));
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch');
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
 const digest=file=>sha256(bookingHostRead(file,{binary:true}));
 const dirIdentity=file=>Object.fromEntries(['dev','ino','uid','mode'].map(k=>[k,fs.lstatSync(file)[k]]));
 const CLOSURE_FILES=Object.freeze(['intent.json','preserved.json','current-observation.json','metadata-before-observation.json','metadata-correction-intent.json','metadata-after-observation.json','metadata-corrected.json','pm2-persistence-before-observation.json','pm2-persistence-after-observation.json','pm2-persistence-attempt.json','pm2-persistence-completed.json','pm2-dump-before.json','pm2-backup-before.json']);
+const diagnostic=error=>stageFailureDiagnostic(error,{stage:'rehearsal',toolRevision:path.basename(SOURCE),knownFiles:['release-toolchain-active-generation-reconciliation.mjs','release-toolchain-active-generation-owned-lab.mjs','release-toolchain-active-generation-preservation.mjs','release-toolchain-active-generation-metadata.mjs','release-toolchain-active-generation-persistence.mjs','online-release-retention-writer.mjs','release-toolchain-contracts.mjs']});
 function closureFiles(s){return Object.fromEntries([...CLOSURE_FILES,...s.pins.map(v=>v[0])].map(name=>[name,digest(s.directory+'/vault/'+name)]));}
 export async function verifyOwnedActiveReconciliationClosure(capability,lock){
  const s=ownedActiveReconciliationScope(capability),held=ownedActiveReconciliationHeldChecker(capability,lock);held();
@@ -60,7 +62,7 @@ export async function runOwnedActiveReconciliationCase(capability){
    sealClosure:()=>{sealOwnedLab(vault+'/closure-sealed.json',{kind:'owned-active-reconciliation-closure-sealed',window,toolRevision:s.toolRevision,inventorySha256:s.inventorySha256,files:closureFiles(s),backupSha256:digest(s.directory+'/backup-verified.json'),postconditionsSha256:digest(s.directory+'/postconditions.json'),formalIncidentClosed:false,publicationAuthority:false,completedAt:new Date().toISOString()});},
    archiveOldOperation:async()=>{closure=await verifyOwnedActiveReconciliationClosure(capability,lock);await archiveOwnedActiveReconciliationOperation(capability,lock);ownedActiveReconciliationBoundary(capability,'after-archive');},
    complete:()=>{const value={kind:'owned-active-reconciliation-completed',window,closureSha256:closure.sha256,archiveSha256:digest(vault+'/operation-archived.json'),oldEvidenceRetained:true,formalIncidentClosed:false,publicationAuthority:false,completedAt:new Date().toISOString()};sealOwnedLab(vault+'/reconciliation-completed.json',value);return value;},
-   failure:(error,stage)=>sealOwnedLab(s.directory+'/failed.json',{kind:'owned-active-reconciliation-unconfirmed',stage,errorSha256:sha256(String(error?.message??'unknown')),automaticRetryAllowed:false,publicationAuthority:false,at:new Date().toISOString()}),
+   failure:(error,stage)=>{held();sealOwnedLab(s.directory+'/failed.json',{kind:'owned-active-reconciliation-unconfirmed',stage,diagnostic:diagnostic(error),automaticRetryAllowed:false,publicationAuthority:false,at:new Date().toISOString()});},
   });
   await releaseOwnedActiveReconciliationOperation(capability,lock);return result;
  });
@@ -93,7 +95,7 @@ export async function acceptOwnedActiveReconciliation(pm2Root){
    const report={kind:'owned-active-reconciliation-case-verified',name:s.name,actualOutcome:outcome,realKernelFlock:true,actualNextProcess:true,persistenceAttempted:fs.existsSync(vault+'/pm2-persistence-attempt.json'),persistenceCompleted:fs.existsSync(vault+'/pm2-persistence-completed.json'),realActivePostgres:true,dumpRestoreVerified:true,oldInodeRetained:true,originalEvidenceRetained:true,replayRefused,processesUnchanged:true,formalHostTouched:false,publicationAuthority:false,at:new Date().toISOString()};sealOwnedLab(s.directory+'/acceptance.json',report);results.push(report);
   }
   same(inspectPinnedExecutionSource({revision:resources.tool.revision??path.basename(SOURCE),directory:SOURCE}).inventorySha256,resources.tool.inventorySha256);passed=true;
- }catch(error){sealOwnedLab(resources.root+'/failure.json',{kind:'owned-active-reconciliation-acceptance-failed',errorSha256:sha256(String(error?.message??'unknown')),detailsRedacted:true,completedCases:results.map(r=>r.name),publicationAuthority:false,at:new Date().toISOString()});throw error;}
+ }catch(error){sealOwnedLab(resources.root+'/failure.json',{kind:'owned-active-reconciliation-acceptance-failed',diagnostic:diagnostic(error),completedCases:results.map(r=>r.name),publicationAuthority:false,at:new Date().toISOString()});throw error;}
  finally{stopOwnedIsolation(resources.isolation);sealOwnedLab(resources.root+'/cleanup-verified.json',{ownedDatabaseStopped:true,privatePm2RetainedForOuterOwnerCleanup:true,filesRetained:true,passed,formalHostTouched:false,publicationAuthority:false,at:new Date().toISOString()});}
  const report={kind:'owned-active-reconciliation-native-acceptance',root:resources.root,toolRevision:path.basename(SOURCE),inventorySha256:resources.tool.inventorySha256,cases:results.map(r=>r.name),samePhysicalMetadataVaultPersistenceAndArchiveEngines:true,controllerDeathsObserved:true,formalIncidentClosed:false,formalPublicationAccepted:false,publicationAuthority:false,mailEnabled:false,at:new Date().toISOString()};sealOwnedLab(resources.root+'/acceptance.json',report);return report;
 }

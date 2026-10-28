@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-import {ownedActiveReconciliationScope,loadOwnedActiveReconciliationCase,createOwnedActiveReconciliationCases,ownedActiveReconciliationBoundary,ACTIVE_LAB_CASES} from './release-toolchain-active-generation-owned-lab.mjs';
+import {ownedActiveReconciliationScope,loadOwnedActiveReconciliationCase,createOwnedActiveReconciliationCases,ownedActiveReconciliationBoundary,activeReconciliationCaseLocation,ACTIVE_LAB_CASES} from './release-toolchain-active-generation-owned-lab.mjs';
 import {runOwnedActiveReconciliationCase,verifyOwnedActiveReconciliationClosure} from './release-toolchain-active-generation-reconciliation.mjs';
 import {ownedActiveReconciliationHeldChecker,archiveOwnedActiveReconciliationOperation,releaseOwnedActiveReconciliationOperation} from './online-release-retention-writer.mjs';
 test('serialized green resources, held locks, closures and incident IDs cannot grant owned or formal authority',async()=>{
@@ -11,6 +11,12 @@ test('owned capability cannot be reconstructed on an ordinary local or productio
  if(process.platform!=='linux'||process.getuid?.()!==0||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_RELEASE_PRODUCTION_EQ!=='1'){
   assert.throws(()=>loadOwnedActiveReconciliationCase('/var/lib/faolla-active-reconciliation-ci-fixture/normal'));await assert.rejects(createOwnedActiveReconciliationCases('/var/lib/faolla-eq-fixture'));
  }
+});
+test('case configuration always includes the derived root, including on Windows hosts, without conferring a capability',()=>{
+ const directory='/var/lib/faolla-active-reconciliation-ci-test123/normal',value=activeReconciliationCaseLocation(directory);
+ assert.deepEqual(value,{root:'/var/lib/faolla-active-reconciliation-ci-test123',directory});assert.ok(Object.isFrozen(value));assert.throws(()=>ownedActiveReconciliationScope(value));
+ for(const value of [undefined,null,{},'/root/.pm2','/var/lib/faolla-active-reconciliation-ci-test123/../normal',directory+'/'])assert.throws(()=>activeReconciliationCaseLocation(value));
+ const text=readFileSync(new URL('./release-toolchain-active-generation-owned-lab.mjs',import.meta.url),'utf8');assert.ok(text.includes('const s={...owner,...location,rootIdentity'));
 });
 test('complete owned acceptance is mandatory inside the real Next PM2 test and retains reports',()=>{
  const runner=readFileSync(new URL('./release-toolchain-pm2-real-acceptance.mjs',import.meta.url),'utf8'),workflow=readFileSync(new URL('../.github/workflows/release-toolchain.yml',import.meta.url),'utf8');

@@ -16,6 +16,11 @@ const scopes=new WeakMap(),source=path.dirname(path.dirname(fileURLToPath(import
 const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'owned_lab_observation_changed');
 export const ACTIVE_LAB_CASES=Object.freeze(['normal','after-metadata','after-save','after-archive','controller-death-after-metadata','controller-death-after-save','controller-death-after-archive']);
+// Pure path derivation only: never a capability or a selectable formal path.
+export function activeReconciliationCaseLocation(directory){
+ need(typeof directory==='string'&&/^\/var\/lib\/faolla-active-reconciliation-ci-[A-Za-z0-9]+\/(normal|after-metadata|after-save|after-archive|controller-death-after-metadata|controller-death-after-save|controller-death-after-archive)$/.test(directory),'invalid_path');
+ return Object.freeze({root:path.posix.dirname(directory),directory});
+}
 const identity=s=>Object.fromEntries(['dev','ino','uid','mode'].map(k=>[k,s[k]]));
 export const sealOwnedLab=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 function ci(){need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&!anchors.some(f=>fs.existsSync(f)),'ci_only');need(source==='/var/lib/faolla-online-code/'+revision&&/^[a-f0-9]{40}$/.test(revision),'source_changed');}
@@ -31,9 +36,9 @@ function check(s){
 }
 export function ownedActiveReconciliationScope(capability){const s=scopes.get(capability);need(s,'owned_lab_capability_required');return check(s);}
 function issue(owner){
- const root=path.dirname(owner.directory),rootIdentity=dir(root),directoryIdentity=dir(owner.directory),ownerText=bookingHostRead(owner.directory+'/owner.json');
+ const location=activeReconciliationCaseLocation(owner.directory),rootIdentity=dir(location.root),directoryIdentity=dir(location.directory),ownerText=bookingHostRead(location.directory+'/owner.json');
  const isolation=loadOwnedIsolation(owner.isolationRoot),daemon=captureDaemon(owner.daemonPid),capability=Object.freeze({kind:'owned-active-reconciliation-capability'});
- const s={...owner,rootIdentity,directoryIdentity,ownerText,isolation,daemon};scopes.set(capability,s);check(s);return capability;
+ const s={...owner,...location,rootIdentity,directoryIdentity,ownerText,isolation,daemon};scopes.set(capability,s);check(s);return capability;
 }
 const dataSql="begin read only;select jsonb_build_object('pages',(select jsonb_agg(to_jsonb(p) order by id) from public.pages p),'registry',(select jsonb_agg(to_jsonb(m) order by version) from public.faolla_schema_migrations m),'control',(select jsonb_agg(to_jsonb(c)) from public.faolla_booking_atomic_control c),'commands',(select jsonb_agg(to_jsonb(c) order by site_id,command_key) from public.faolla_booking_atomic_commands c),'mail',(select jsonb_agg(to_jsonb(j) order by id) from public.faolla_booking_mail_jobs j));rollback;";
 function seedActiveFixture(isolation){
