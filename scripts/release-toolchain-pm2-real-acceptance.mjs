@@ -10,6 +10,7 @@ import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2R
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
 import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
+import{collectOwnedCiPm2Registry}from'./release-toolchain-pm2-observation.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&process.argv.length===2&&!ANCHORS.some(f=>fs.existsSync(f)),'ci_only');
@@ -101,6 +102,8 @@ try{
  const rows=registry(),beforeRow=rows.find(p=>p.name===name),other=rows.find(p=>p.name==='eq-unrelated');need(beforeRow.pm_id===0&&beforeRow.pm2_env.status==='online'&&other?.pid>0,'initial_processes');
  need(Date.now()-beforeRow.pm2_env.pm_uptime>=1500&&beforeRow.pm2_env.unstable_restarts===0,'stable_initial_process');
  const beforeFact=fact(beforeRow.pid),beforeOther={row:other,raw:raw(other.pid),identity:fact(other.pid)},beforeRaw=raw(beforeRow.pid),before=normalizeRetirementProcess(beforeRow),anchor=capturePm2TerminationAnchor(home+'/pm2.log');
+ const readOnlyFull=collectOwnedCiPm2Registry(root);assert.deepEqual(readOnlyFull.daemonPeer,daemonPeer);assert.deepEqual(readOnlyFull.rows.map(stablePm2RegistryRow),rows.map(stablePm2RegistryRow));
+ seal('connect-only-full-observation.json',{actualPrivatePm2:true,processCount:readOnlyFull.rows.length,daemonPeerMatched:true,fullRegistryMatchesExistingTransport:true,rawEnvironmentsNotLogged:true,publicationAuthority:false});
  const start=Date.now(),window={id:randomUUID(),startedAt:new Date(start).toISOString(),deadlineAt:new Date(start+600000).toISOString()};
  stage='actual-peer-bound-restart';const request={action:'restart',daemon:daemonPeer,root,socket:home+'/rpc.sock',expected:bookingLegacyRpcExpected(beforeRow),process:python({action:'identity',pid:beforeRow.pid})};
  seal('restart-intent.json',{window,before,anchor,requestSha256:sha(JSON.stringify(request)),sourceHashes:{transport:sha(fs.readFileSync(source+'/scripts/booking-handoff-pm2-pause.py')),validator:sha(fs.readFileSync(source+'/scripts/release-toolchain-pm2-transition.mjs'))}});
@@ -155,6 +158,8 @@ try{
  // exact owned identities, then retain every fixture and report for inspection.
  if(daemon){assertDaemon();for(const p of privateAppProcesses()){need(p.parentPid===daemon.pid,'fixture_app_parent');owned.set(p.pid,p);}process.kill(daemon.pid,'SIGINT');for(let i=0;i<100&&alive(daemon);i++)await sleep(50);need(!alive(daemon),'daemon_cleanup');for(const p of owned.values()){if(!alive(p))continue;process.kill(p.pid,'SIGTERM');for(let i=0;i<100&&alive(p);i++)await sleep(50);need(!alive(p),'child_cleanup');}}
  need(privateAppProcesses().length===0,'untracked_fixture_process');
+ assert.throws(()=>collectOwnedCiPm2Registry(root));
+ if(fs.existsSync(home+'/pm2.pid')){need(Boolean(daemon),'untracked_fixture_daemon');need(!alive(daemon),'missing_daemon_read_booted_process');}
  seal('cleanup-verified.json',{allOwnedProcessesStopped:true,formalHostTouched:false,passed,at:new Date().toISOString()});
 }
 console.log(JSON.stringify({kind:'release-toolchain-real-pm2-next-transition-acceptance',root,revision,realNextVersion:'16.3.4',realPm2Version:'6.0.14',nodeVersion:process.version,actualExitCode:130,signal:'SIGINT',sharedProductionPeerFraming:true,unrelatedProcessUnchanged:true,staleAttemptRefused:true,allOwnedProcessesStopped:true,formalHostTouched:false,fullPublicationAuthority:false,mailEnabled:false}));

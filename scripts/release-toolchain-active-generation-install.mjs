@@ -24,7 +24,7 @@ export function assertActiveBootstrapBytes(actual,committed){need(Buffer.isBuffe
 // Only the new read-only observer/pure validators are loaded from exact Git
 // blobs here. Every host reader comes from the fully pinned installed OLD tool.
 function incidentObserverUrl(git,revision){
- const selected=new Set(['release-toolchain-active-generation-contract.mjs','release-toolchain-pm2-transition.mjs','release-toolchain-active-generation-incident.mjs','release-toolchain-recovery-probe.mjs']),cache=new Map();
+ const selected=new Set(['release-toolchain-active-generation-contract.mjs','release-toolchain-pm2-transition.mjs','release-toolchain-active-generation-incident.mjs','release-toolchain-recovery-probe.mjs','release-toolchain-pm2-observation.mjs']),cache=new Map();
  const url=name=>{if(cache.has(name))return cache.get(name);need(selected.has(name),'observer_source');const bytes=git(REPO,['show',revision+':scripts/'+name]);need(Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<256*1024,'observer_source');
   const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);need(Buffer.from(text).equals(bytes),'observer_source');
   const source=text.replace(/from\s*'\.\/([^']+)'/g,(_,dependency)=>'from '+JSON.stringify(selected.has(dependency)?url(dependency):'file://'+TOOLS+'/'+OLD+'/scripts/'+dependency));

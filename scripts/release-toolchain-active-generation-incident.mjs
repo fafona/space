@@ -6,7 +6,7 @@ import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA,ACTIVE_BOOKING_PM2_
 import {inspectPinnedPm2RecordSequence} from './release-toolchain-pm2-transition.mjs';
 import {bookingHostRead,bookingHostSql,bookingHostRun} from './booking-handoff-host-io.mjs';
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
-import {collectBookingLegacyHost} from './booking-handoff-legacy.mjs';
+import {collectActiveBookingLegacyHost as collectBookingLegacyHost} from './release-toolchain-pm2-observation.mjs';
 import {assertBookingWatchdogArmedLease} from './booking-handoff-watchdog.mjs';
 import {assertBookingRoutingCurrent} from './booking-handoff-routing.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';

@@ -8,4 +8,4 @@ export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOU
  'release-toolchain-worker.mjs','release-toolchain-worker-contract.mjs','release-toolchain-pm2-worker.py','release-toolchain-booking-compatibility.mjs','release-toolchain-full-interrupt.mjs','release-toolchain-recovery-diagnostics.mjs','release-toolchain-recovery-probe.mjs',
  'release-toolchain-pm2-transition.mjs','release-toolchain-active-generation-contract.mjs','release-toolchain-active-generation-incident.mjs','release-toolchain-active-generation-preservation.mjs','release-toolchain-active-generation-profile.mjs','online-release-retention-writer.mjs',
  'production-maintenance-pm2-adapter.mjs','production-maintenance-pm2-control.py','production-maintenance-pm2-connection.py','production-maintenance-pm2-dump.py','release-toolchain-active-generation-metadata.mjs',
- 'check-production-runtime-supervision.mjs','production-maintenance-trusted-python.mjs','production-maintenance-daemon-continuity.mjs']);
+ 'check-production-runtime-supervision.mjs','production-maintenance-trusted-python.mjs','production-maintenance-daemon-continuity.mjs','release-toolchain-pm2-observation.mjs']);
