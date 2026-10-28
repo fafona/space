@@ -41,7 +41,8 @@ export function verifyQualificationFiles(root,{toolRevision,inventorySha256}){
  for(const c of report.cases){need(c.receiptFile===root+'/cases/'+c.name+'.json'&&sha256(bookingHostRead(c.receiptFile))===c.receiptSha256,'evidence_invalid');const actual=read(c.receiptFile);
   for(const key of ['name','completed','elapsedMs','inheritedKernelLock','realNginx','realPostgres','realProcesses','ownedFixturesOnly'])same(actual[key],c[key]);
   need(actual.allFixturesStopped===true&&actual.gateClosed===true&&actual.rowsPreserved===true&&actual.actualDatabase?.systemIdentifier===report.postgresSystemIdentifier,'evidence_invalid');
-  const backup=read(root+'/runtime-'+c.name+'/backup-restore.json');need(backup.restoredRowsEqual===true&&backup.corruptArchiveRefused===true&&backup.productionDatabaseTouched===false,'evidence_invalid');
+  const runtime=root+'/runtime-'+c.name,backup=read(runtime+'/backup-restore.json');need(backup.restoredRowsEqual===true&&backup.corruptArchiveRefused===true&&backup.productionDatabaseTouched===false&&
+   sha256(bookingHostRead(runtime+'/backup.dump',{binary:true}))===backup.archiveSha256&&sha256(bookingHostRead(runtime+'/backup-corrupt.dump',{binary:true}))!==backup.archiveSha256,'evidence_invalid');
  }
  need(/^\/var\/lib\/faolla-release-toolchain-isolation-[A-Za-z0-9]+$/.test(report.isolationRoot??''),'invalid_path');const dbOwner=read(report.isolationRoot+'/owner.json'),stopped=read(report.isolationRoot+'/stopped.json');
  need(stopped.stopped===true&&stopped.filesPreserved===true&&stopped.containerId===dbOwner.containerId,'cleanup_unconfirmed');

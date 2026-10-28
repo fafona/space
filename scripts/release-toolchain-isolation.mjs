@@ -1,7 +1,7 @@
 // A new, network-none PostgreSQL fixture per run. Never starts an old pilot,
 // connects to a production endpoint, removes evidence, or accepts a DB override.
 import * as fs from 'node:fs';import path from 'node:path';import {spawnSync} from 'node:child_process';import {randomUUID} from 'node:crypto';
-import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
+import {canonicalJson,sha256,fingerprint,compareFingerprint,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 export const ISOLATION_IMAGE='sha256:8613ba8eab946dff6674a2db6aab75b80aa101da39035fe20f62b0c7591ab35d';
 export const ISOLATION_IMAGE_REFERENCE='supabase/postgres@sha256:af083ef64d0408c8f098ee6f5c364a59b26f36fbc0f3a334a62c5c1d57362e9b';
@@ -65,6 +65,7 @@ export function stopOwnedIsolation(c){
  check(c,null);const current=inspect(c.owner);if(current.State.Running){command(['stop','--time','10',c.owner.containerId],{timeout:20000});inspect(c.owner,false);}
  if(!fs.existsSync(c.root+'/stopped.json'))seal(c.root+'/stopped.json',{containerId:c.owner.containerId,stopped:true,filesPreserved:true,stoppedAt:new Date().toISOString()});
 }
+export function verifyIsolatedArchiveBytes(bytes,expected){need(Buffer.isBuffer(bytes)&&bytes.length>100,'evidence_invalid');compareFingerprint(fingerprint('backup-archive',bytes),expected,'backup-archive');return bytes;}
 export function rehearseIsolatedBackup(c,database,directory){
  check(c);ownedReleasePath(directory,{directory:true});need(directory.startsWith('/var/lib/faolla-booking-full-rehearsal-'),'invalid_path');
  // Pages and the migration registry are portable dump -> restore invariants.
@@ -75,10 +76,11 @@ export function rehearseIsolatedBackup(c,database,directory){
  try{const r=spawnSync('docker',isolatedPgArguments(c,database,{program:'pg_dump'}),{env:env(),stdio:['ignore',fd,'pipe'],timeout:60000});need(r.status===0&&!r.signal&&!r.error,'operation_unconfirmed');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
  ownedReleasePath(file);const bytes=fs.readFileSync(file),digest=sha256(bytes);need(bytes.length>100,'evidence_invalid');
  const restore='faolla_booking_activation_'+randomUUID().replaceAll('-','').slice(0,16);isolatedPg(c,'postgres','create database "'+restore+'" with template template0 owner supabase_admin;');
- command(isolatedPgArguments(c,restore,{program:'pg_restore'}),{input:bytes,encoding:null,timeout:60000});
+ const archive=fingerprint('backup-archive',bytes);command(isolatedPgArguments(c,restore,{program:'pg_restore'}),{input:verifyIsolatedArchiveBytes(fs.readFileSync(file),archive),encoding:null,timeout:60000});
  const after=JSON.parse(isolatedPg(c,restore,dataSql));need(canonicalJson(after)===canonicalJson(before),'observation_mismatch');
- const corrupted=Buffer.from(bytes);corrupted[Math.floor(corrupted.length/2)]^=1;need(sha256(corrupted)!==digest,'evidence_invalid');
+ const corrupted=Buffer.from(bytes);corrupted[Math.floor(corrupted.length/2)]^=1;
  const corruptFd=fs.openSync(directory+'/backup-corrupt.dump',fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);try{fs.writeFileSync(corruptFd,corrupted);fs.fsyncSync(corruptFd);}finally{fs.closeSync(corruptFd);}
- const proof={kind:'isolated-dump-restore-rehearsal',containerId:c.owner.containerId,sourceDatabase:database,restoredDatabase:restore,archiveSha256:digest,restoredRowsEqual:true,corruptArchiveRefused:true,productionDatabaseTouched:false,completedAt:new Date().toISOString()};
+ let corruptArchiveRefused=false;try{verifyIsolatedArchiveBytes(fs.readFileSync(directory+'/backup-corrupt.dump'),archive);}catch(e){if(e.code!=='fingerprint_mismatch')throw e;corruptArchiveRefused=true;}need(corruptArchiveRefused,'evidence_invalid');
+ const proof={kind:'isolated-dump-restore-rehearsal',containerId:c.owner.containerId,sourceDatabase:database,restoredDatabase:restore,archiveSha256:digest,restoredRowsEqual:true,corruptArchiveRefused,productionDatabaseTouched:false,completedAt:new Date().toISOString()};
  seal(directory+'/backup-restore.json',proof);return proof;
 }
