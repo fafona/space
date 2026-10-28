@@ -18,6 +18,24 @@ and the additional release-toolchain safety job successful.
 
 Operator sequence (Linux root, from the verified installed tool directory):
 
+The 2026-10-28 pre-activation failure exposed a lease digest representation
+mismatch: the arming receipt seals canonical FILE bytes (including newline),
+not the canonical JSON-value hash. Producer, parent and ingress authorizer now
+share the same strict helper. OS process and inherited-FD checks are unchanged.
+Only the specifically approved, recovered operation
+`11b4f503-ab11-4c4c-9ec2-8d4aee0c20de` can use `qualify-recovered` then
+`archive-recovered`. The first runs full new-source qualification and verifies
+the real old arming receipt with the corrected production helper. The second
+requires current-main CI, qualification, real locks, all 17 pinned evidence
+files, dead original controller/watchdog, an inactive unchanged formal DB,
+unchanged routing/processes/retention and healthy old public versions. It moves
+only those exact files to a private immutable incident archive, fsyncs per-file
+receipts and seals completion after a second live verification. Unknown/partial
+moves cannot be retried or reset. It never activates, reroutes, restarts, deletes,
+modifies an old journal or marks the failed publication successful. Normal
+admission now requires that completed archive; the next publish creates a new
+journal and fresh backup. No other incident is admitted by these commands.
+
 1. Pack the exact committed tool bundle. Run its source-only installer with
    `install-qualification COMMIT` for a fully tested PR, or `install COMMIT` for
    fully tested current main. The installer fetches only the exact object and

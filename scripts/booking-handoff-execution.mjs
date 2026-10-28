@@ -2,6 +2,7 @@
 // No stage/build, generic deployment, mail setup or automatic mutation retry.
 import * as fs from 'node:fs';
 import {drainAndProbeIngress} from './release-toolchain-ingress.mjs';
+import {assertBookingWatchdogArmedLease} from './booking-handoff-watchdog.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {requireBookingAdmission} from './release-toolchain-admission-context.mjs';
 import {readReviewedBookingRuntimeCache} from './release-toolchain-legacy-runtime.mjs';
@@ -155,7 +156,7 @@ export async function installAndDrainBookingIngress(options){
  const authorize=()=>{assertOnlineRetentionHeldLocks(options.lock);assertBookingHandoffWindow(gate.window,{nowMs:Date.now()});
   equal(read(ROOT+'/ingress-plan.json'),gateText,'gate_plan_changed');need(hash(read('/www/server/nginx/conf/nginx.conf',{privateMode:false}))===BOOKING_INGRESS_MAIN_SHA256,'nginx_main_changed');
   const armed=JSON.parse(read(ROOT+'/watchdog-armed.json')),lease=JSON.parse(read(ROOT+'/watchdog-lease.json'));
-  need(armed.leaseSha256===retentionHash(lease)&&lease.window.id===gate.window.id,'watchdog_not_armed');
+  assertBookingWatchdogArmedLease(armed,lease);need(lease.window.id===gate.window.id,'watchdog_not_armed');
   const root='/proc/'+armed.process.pid,stat=fs.readFileSync(root+'/stat','utf8'),fields=stat.slice(stat.lastIndexOf(')')+2).trim().split(/\s+/),
    actual={pid:armed.process.pid,uid:fs.lstatSync(root).uid,startTicks:fields[19],executable:fs.realpathSync(root+'/exe'),cwd:fs.realpathSync(root+'/cwd'),commandSha256:hash(fs.readFileSync(root+'/cmdline'))};
   equal(actual,armed.process,'watchdog_process_changed');need(fs.readlinkSync(root+'/fd/3')===lease.deploy.file,'watchdog_not_alive');

@@ -21,7 +21,7 @@ test('the real supervisor admits only the exact canonical publish argv under rev
  const source=readFileSync(new URL('./booking-handoff-watchdog.mjs',import.meta.url),'utf8');assert.match(source,/assertBookingWatchdogControllerArguments\(command\(process.pid\),toolRevision,!!reviewedBookingExecution\(toolRevision\)\)/);
 });
 test('production and qualification entries have closed commands and cannot consume a caller plan, skip, receipt or target',()=>{
- for(const action of ['status','qualify','prepare-worker','validate','publish'])assert.equal(assertCanonicalReleaseCommand([action]),action);
+ for(const action of ['status','qualify','qualify-recovered','archive-recovered','prepare-worker','validate','publish'])assert.equal(assertCanonicalReleaseCommand([action]),action);
  for(const args of [[],['publish','skip'],['publish','--force'],['reset'],['resume'],['publish','other-database']])assert.throws(()=>assertCanonicalReleaseCommand(args));
  assert.equal(reviewedBookingExecution('a'.repeat(40)),null);assert.equal(preparedBookingExecution('a'.repeat(40)),null);
  assert.throws(()=>requireBookingAdmission('a'.repeat(40)));assert.throws(()=>withFreshBookingAdmission({proof:{verified:true}},()=>assert.fail()));
