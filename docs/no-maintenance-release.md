@@ -46,7 +46,11 @@ Operator sequence (Linux root, from the verified installed tool directory):
    unrelated process, and leaves the gate closed and mail disabled. Historical
    preparation receipts remain immutable; each later tool hop has its own
    source-inventory/attempt/predecessor-bound receipt.
-5. `publish` requires that exact current-tool worker before any production
+5. `validate` exercises the complete real-source/backup/compatibility/cohort
+   admission without calling activation, routing, retention commit or worker
+   enable. Its new encrypted backup and evidence are retained; the report is
+   not a reusable publication capability and cannot resume or bypass a stage.
+6. `publish` requires that exact current-tool worker before any production
    backup or switch. It creates/verifies a new encrypted existing-format full
    backup bound to application C and the exact formal database, never to the
    tool SHA or a pilot. Historical migration backup/compatibility provenance

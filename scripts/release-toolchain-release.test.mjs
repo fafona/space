@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-import {assertCanonicalReleaseCommand,executeCanonicalPublication} from './release-toolchain-release.mjs';
+import {assertCanonicalReleaseCommand,executeCanonicalPublication,executeCanonicalValidation} from './release-toolchain-release.mjs';
 import {reviewedBookingExecution,preparedBookingExecution} from './release-toolchain-authority.mjs';
 import {requireBookingAdmission,withFreshBookingAdmission,retainedBookingMigrationBackup,assertQualificationReport} from './release-toolchain-booking-admission.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
@@ -12,7 +12,7 @@ test('the real supervisor admits only the exact canonical publish argv under rev
  const source=readFileSync(new URL('./booking-handoff-watchdog.mjs',import.meta.url),'utf8');assert.match(source,/bookingWatchdogControllerArguments\(toolRevision,!!reviewedBookingExecution\(toolRevision\)\)/);
 });
 test('production and qualification entries have closed commands and cannot consume a caller plan, skip, receipt or target',()=>{
- for(const action of ['status','qualify','prepare-worker','publish'])assert.equal(assertCanonicalReleaseCommand([action]),action);
+ for(const action of ['status','qualify','prepare-worker','validate','publish'])assert.equal(assertCanonicalReleaseCommand([action]),action);
  for(const args of [[],['publish','skip'],['publish','--force'],['reset'],['resume'],['publish','other-database']])assert.throws(()=>assertCanonicalReleaseCommand(args));
  assert.equal(reviewedBookingExecution('a'.repeat(40)),null);assert.equal(preparedBookingExecution('a'.repeat(40)),null);
  assert.throws(()=>requireBookingAdmission('a'.repeat(40)));assert.throws(()=>withFreshBookingAdmission({proof:{verified:true}},()=>assert.fail()));
@@ -30,6 +30,11 @@ test('any unknown canonical stage stops before the next effect; switch is never 
   ops.backupAndCompatibility=async next=>{seen.push('backupAndCompatibility');if(failure==='backupAndCompatibility')throw Error(failure);return next();};
   await assert.rejects(executeCanonicalPublication(ops));assert.deepEqual(seen,order.slice(0,order.indexOf(failure)+1));
  }
+});
+test('validate exercises all real preparation bindings but cannot switch, verify a publication, activate or mint a continuation',async()=>{
+ const seen=[],ops=Object.fromEntries(['source','bundle','environment','candidate','rehearsal','admission'].map(name=>[name,async()=>seen.push(name)]));
+ ops.backupAndCompatibility=async next=>{seen.push('backup','compatibility');await next();};ops.switch=()=>assert.fail('no switch');ops.verify=()=>assert.fail('no publication');ops.result=()=>seen;
+ assert.deepEqual(await executeCanonicalValidation(ops),['source','bundle','environment','backup','compatibility','candidate','rehearsal','admission']);
 });
 test('native report refuses stale, wrong source, fake production system and incomplete recovery evidence',()=>{
  const at=Date.now(),v={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision:'a'.repeat(40),toolInventorySha256:'b'.repeat(64),candidate:'f274ad615550c83717aa7af2ad32339608e6f8aa',rollback:'6c5d5df31d06b43929e5ba5e6f3978dd51f1c6b0',productionMutated:false,originalTimerMutated:false,mailEnabled:false,publicationAuthority:false,backupRestoreVerified:true,allFixturesStopped:true,postgresServerVersionNum:'150008',postgresSystemIdentifier:'7612049595342295080',completedAt:new Date(at).toISOString(),sourceHashes:Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,'c'.repeat(64)])),cases:['normal','controller-death-before-commit','controller-death-after-commit'].map(name=>({name,completed:true,elapsedMs:1000,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true}))};

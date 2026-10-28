@@ -25,7 +25,7 @@ function invocation(){need(process.platform==='linux'&&process.getuid?.()===0&&/
 function privateChild(parent,name){ownedReleasePath(parent,{directory:true});const child=parent+'/'+name;fs.mkdirSync(child,{mode:0o700});return child;}
 function ensurePrivate(parent,name){const child=parent+'/'+name;if(!fs.existsSync(child))privateChild(parent,name);ownedReleasePath(child,{directory:true,privateMode:true});return child;}
 async function publicVersions(expected){const result=[];for(const origin of ['https://faolla.com','https://launch.faolla.com']){const r=await fetch(origin+'/api/app-web-version?releaseToolchain='+randomUUID(),{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(5000)}),v=await r.json();need(r.status===200&&v.ok===true&&v.buildId===expected,'observation_mismatch');result.push({origin,status:r.status,buildId:v.buildId});}return result;}
-export function assertCanonicalReleaseCommand(args){need(Array.isArray(args)&&args.length===1&&['status','qualify','prepare-worker','publish'].includes(args[0]),'invalid_contract');return args[0];}
+export function assertCanonicalReleaseCommand(args){need(Array.isArray(args)&&args.length===1&&['status','qualify','prepare-worker','validate','publish'].includes(args[0]),'invalid_contract');return args[0];}
 export async function collectReleaseToolchainStatus(){
  invocation();const checks=[];let qualification;async function check(stage,work){try{const detail=await work();checks.push({stage,passed:true,detail});}catch(error){checks.push({stage,passed:false,...publicFailure(error,{stage})});}}
  await check('source',()=>inspectPinnedExecutionSource({revision:toolRevision,directory}).inventorySha256);
@@ -56,14 +56,19 @@ export async function executeCanonicalPublication(operations){
   await operations.candidate();await operations.rehearsal();await operations.admission();await operations.switch();await operations.verify();
  });return operations.result();
 }
-async function publish(lock,authority){
+export async function executeCanonicalValidation(operations){
+ await operations.source();await operations.bundle();await operations.environment();await operations.backupAndCompatibility(async()=>{
+  await operations.candidate();await operations.rehearsal();await operations.admission();
+ });return operations.result();
+}
+async function publish(lock,authority,{publication=true}={}){
  assertOnlineRetentionHeldLocks(lock);assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);
  // A stale worker is an EARLY refusal, before any production backup/preflight
  // or public mutation. prepare-worker is a separate one-attempt operation.
  const cohort=collectBookingReadyRuntimeCohort({toolRevision}),worker=cohort.processes.find(p=>p.name==='merchant-space-booking-atomic-'+C.slice(0,12));need(worker?.executable===directory+'/scripts/booking-atomic-worker.mjs','source_changed');
  const parent=ensurePrivate('/var/lib','faolla-release-toolchain-runs'),binding=toolchainRunBinding({profile:'booking-handoff',application:authority.application,toolRevision,toolInventorySha256:authority.tool.inventorySha256}),run=createToolchainRun(parent,binding),artifacts=privateChild(ensurePrivate(ROOT,'toolchain-admission'),Date.now()+'-'+randomUUID());
  const stage=(name,execute,verify=v=>v)=>executeJournaledStage(run,name,{binding,observe:()=>fingerprint('evidence',{toolRevision,name},'canonical-json-v1'),execute,verify:async value=>fingerprint('evidence',await verify(value),'canonical-json-v1')});
- let result;return executeCanonicalPublication({
+ let result;return (publication?executeCanonicalPublication:executeCanonicalValidation)({
   source:()=>stage('source',()=>{reviewedBookingExecution(toolRevision);return authority.application;}),bundle:()=>stage('bundle',()=>authority.tool),
   environment:()=>stage('environment',()=>{const h=localHostObservation(directory);need(h.platform==='linux'&&h.architecture==='x64'&&h.nodeMajor===20&&h.availableDiskBytes>=1024**3,'unsupported_runtime');return h;}),
   backupAndCompatibility:async next=>{let admission;await stage('backup',async()=>{admission=await collectFreshBookingAdmission({lock,directory:artifacts,qualification});return admission.proof.backup;});
@@ -72,12 +77,12 @@ async function publish(lock,authority){
   admission:()=>stage('admission',async()=>{await refreshReviewedBookingExecution(toolRevision);assertReviewedBookingNoPending(toolRevision);return requireBookingAdmission(toolRevision);}),
   switch:()=>stage('switch',async()=>{try{result=await executeBookingHandoffHost(createBookingHandoffHostOperations({lock,toolRevision}));return result;}catch(error){
    const lease=fs.existsSync(ROOT+'/watchdog-lease.json')?read(ROOT+'/watchdog-lease.json'):null;if(lease?.parent?.pid===process.pid&&lease.toolRevision===toolRevision){seal(ROOT+'/controller-failure.json',{kind:'release-toolchain-controller-failure',operationId:lease.window.id,errorSha256:sha256(String(error?.message??'unknown')),at:new Date().toISOString()});console.error('release_toolchain_controller_failed_independent_recovery_retains_lock');process.exit(1);}throw error;
-  }}),verify:()=>stage('verify',async()=>({public:await publicVersions(C),result})),result:()=>({kind:'release-toolchain-publication-completed',toolRevision,run,journalHead:inspectToolchainRun(run).head,mailEnabled:false,result}),
+  }}),verify:()=>stage('verify',async()=>({public:await publicVersions(C),result})),result:()=>publication?({kind:'release-toolchain-publication-completed',toolRevision,run,journalHead:inspectToolchainRun(run).head,mailEnabled:false,result}):({kind:'release-toolchain-preflight-validated',toolRevision,run,journalHead:inspectToolchainRun(run).head,verifiedThrough:'admission',applicationPublished:false,productionDatabaseMutated:false,trafficChanged:false,mailEnabled:false,publicationAuthority:false}),
  });
 }
 async function main(){invocation();const action=assertCanonicalReleaseCommand(process.argv.slice(2));if(action==='status')return collectReleaseToolchainStatus();if(action==='qualify')return qualify();
  return withReviewedBookingExecution({applicationRevision:C,preparationRevision:BOOKING_PREPARATION_REVISION,verifyPreparation:verifyBookingPreparation},authority=>withOnlineRetentionLocks(lock=>{
-  if(action!=='prepare-worker')return publish(lock,authority);assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
+  if(action!=='prepare-worker')return publish(lock,authority,{publication:action==='publish'});assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
  }));
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(result=>console.log(canonicalJson(result)),error=>{console.error(canonicalJson(publicFailure(error,{stage:'release'})));process.exitCode=1;});
