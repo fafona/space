@@ -8,6 +8,14 @@ test('dedicated safety job verifies a complete committed bundle before actual ow
  for(const token of ['booking-ci-continuation-tool.test.mjs','booking-ready-*.test.mjs','booking-handoff-activation.test.mjs','booking-handoff-rule-repair.test.mjs','booking-publication-database.test.mjs'])assert.ok(workflow.includes(token),token);
  for(const value of ['Full New-Database Handoff And Recovery Rehearsal','release-toolchain-full-rehearsal.mjs','docker pull supabase/postgres@sha256:af083ef','--no-hardlinks','read-tree -mu HEAD'])assert.ok(workflow.includes(value),value);
 });
+
+test('required safety check includes actual pinned Next/PM2 and the unchanged shared production RPC framing, not only replacement processes',()=>{
+ for(const text of ['node-version: 20.20.1','Real PM2 And Next Production Transition Equivalence','FAOLLA_RELEASE_PRODUCTION_EQ=1','release-toolchain-pm2-real-acceptance.mjs','/var/lib/faolla-eq-*/reports'])assert.ok(workflow.includes(text),text);
+ const source=readFileSync(new URL('./release-toolchain-pm2-real-acceptance.mjs',import.meta.url),'utf8');
+ for(const text of ['booking-handoff-pm2-pause.py','m._Session','m._ARGUMENT','m._control._check_target_process','real-next-build','pm2@6.0.14','actual-transition-proof','inspectPm2SigintTermination','assertManagedPauseEnvironmentTransition','staleAttemptRefusedWithoutSend','allOwnedProcessesStopped'])assert.ok(source.includes(text),text);
+ assert.doesNotMatch(source,/kill.*\[.*--force|set active|UPDATE public|booking_.*_skip/);
+ assert.ok(source.includes('!ANCHORS.some(f=>fs.existsSync(f))'));
+});
 test('CI fixture has no server credentials, production mutation, skipped tests or accepted failed commands',()=>{
  assert.doesNotMatch(workflow,/secrets\.|ssh |scp |pm2 |continue-on-error|\|\| true|--force|--skip|workflow_dispatch/);
  assert.match(workflow,/pull_request:/);assert.match(workflow,/\.github\/workflows\/release-toolchain\.yml/);

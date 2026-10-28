@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 20.20.1
           cache: npm
       - name: Install Development Test Dependencies
         run: npm ci
@@ -70,13 +70,22 @@ jobs:
           sudo chown -R root:root "$application"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-interrupt.mjs"
+      - name: Real PM2 And Next Production Transition Equivalence
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          npm_cli="$(readlink -f "$(command -v npm)")"
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            FAOLLA_RELEASE_PRODUCTION_EQ=1 FAOLLA_EQ_NPM_CLI="$npm_cli" \
+            /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-pm2-real-acceptance.mjs"
       - name: Collect Root-Owned Synthetic Reports
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-*)
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-* /var/lib/faolla-eq-*/reports)
           if ((${#roots[@]})); then
             sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
