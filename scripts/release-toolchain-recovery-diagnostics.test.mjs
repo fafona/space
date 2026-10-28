@@ -40,12 +40,14 @@ for(const [name,result,expected]of [
 ])test('watchdog preserves '+name+' and never grants publication authority',()=>{
  const r=recoveryChildExitEvidence(result,{...context,at});for(const [k,v]of Object.entries(expected))assert.equal(r[k],v);assert.equal(r.publicationAuthority,false);assert.equal(r.childDiagnostic,null);
 });
-for(const text of ['private error',JSON.stringify({...diagnostic(),operationId:'20000000-0000-4000-8000-000000000001'}),JSON.stringify(diagnostic())+'\n'+JSON.stringify(diagnostic()),JSON.stringify(diagnostic())+'\nforeign error'])test('untrusted stderr is hashed, never accepted as a recovery cause: '+sha256(text).slice(0,8),()=>{
+for(const text of ['private error',JSON.stringify({...diagnostic(),operationId:'20000000-0000-4000-8000-000000000001'}),JSON.stringify(diagnostic())+'\n'+JSON.stringify(diagnostic()),JSON.stringify(diagnostic())+'\nforeign error',JSON.stringify(diagnostic()).replace('"step":"publicProof"','"step":"private-value","step":"publicProof"')])test('untrusted stderr is hashed, never accepted as a recovery cause: '+sha256(text).slice(0,8),()=>{
  const r=recoveryChildExitEvidence({status:1,stdout:'',stderr:text},{...context,at});assert.equal(r.childDiagnostic,null);assert.equal(r.outputEmpty,false);assert.equal(r.stderrSha256,sha256(text));assert.doesNotMatch(JSON.stringify(r),/private error|foreign error/);
 });
-test('oversized output is refused rather than silently truncated',()=>{
- assert.throws(()=>recoveryChildExitEvidence({status:1,stderr:'x'.repeat(65537)},context),/size/);
+test('the final chunk past maxBuffer retains ENOBUFS and full hashes without becoming accepted output',()=>{
+ const stderr='x'.repeat(65537),r=recoveryChildExitEvidence({status:null,error:{code:'ENOBUFS'},stderr},context);
+ assert.equal(r.outputExceededLimit,true);assert.equal(r.errorCode,'ENOBUFS');assert.equal(r.stderrBytes,65537);assert.equal(r.stderrSha256,sha256(stderr));assert.equal(r.childDiagnostic,null);assert.equal(r.outputEmpty,false);assert.equal(r.publicationAuthority,false);assert.equal(Object.hasOwn(r,'stderr'),false);
 });
+test('an unknown termination signal is recorded only as an unclassified signal',()=>{const r=recoveryChildExitEvidence({status:null,signal:'SIGPRIVATE'},context);assert.equal(r.signal,'unclassified');assert.doesNotMatch(JSON.stringify(r),/SIGPRIVATE/);});
 function operations(failAt,progressFails=false){
  const calls=[],steps=[],failures=[],original=Error('fixed-original-error');let completed=false;
  const run=name=>async()=>{calls.push(name);if(name===failAt&&!progressFails)throw original;

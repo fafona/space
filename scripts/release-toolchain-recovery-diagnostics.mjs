@@ -15,10 +15,12 @@ export function assertRecoveryFailureDiagnostic(value,{operationId,toolRevision}
 }
 export function recoveryChildExitEvidence(result,{operationId,toolRevision,at=new Date().toISOString()}){
  need(uuid.test(operationId)&&/^[a-f0-9]{40}$/.test(toolRevision),'context');
- const stdout=typeof result.stdout==='string'?result.stdout:'',stderr=typeof result.stderr==='string'?result.stderr:'';need(Buffer.byteLength(stdout)<=65536&&Buffer.byteLength(stderr)<=65536,'size');
- let childDiagnostic=null;for(const line of stderr.trim().split('\n').filter(Boolean)){
+ const stdout=typeof result.stdout==='string'?result.stdout:'',stderr=typeof result.stderr==='string'?result.stderr:'',stdoutBytes=Buffer.byteLength(stdout),stderrBytes=Buffer.byteLength(stderr),outputExceededLimit=stdoutBytes>65536||stderrBytes>65536;
+ // spawnSync may return the final pipe chunk beyond maxBuffer together with
+ // ENOBUFS. Preserve its exit/hash evidence rather than failing the reporter.
+ let childDiagnostic=null;for(const line of (outputExceededLimit?[]:stderr.trim().split('\n').filter(Boolean))){
   if(['booking_recovery_unconfirmed','booking_recovery_diagnostic_unconfirmed'].includes(line))continue;
-  try{const d=JSON.parse(line);assertRecoveryFailureDiagnostic(d,{operationId,toolRevision});need(childDiagnostic===null,'duplicate');childDiagnostic=d;}catch{childDiagnostic=null;break;}
+  try{const d=JSON.parse(line);need(JSON.stringify(d)===line,'canonical');assertRecoveryFailureDiagnostic(d,{operationId,toolRevision});need(childDiagnostic===null,'duplicate');childDiagnostic=d;}catch{childDiagnostic=null;break;}
  }
- return{kind:'booking-watchdog-recovery-child-exit',operationId,toolRevision,at,status:Number.isSafeInteger(result.status)?result.status:null,signal:['SIGKILL','SIGTERM','SIGINT'].includes(result.signal)?result.signal:null,errorCode:['ETIMEDOUT','ENOENT','EACCES','ENOBUFS'].includes(result.error?.code)?result.error.code:result.error?'unclassified':null,stdoutBytes:Buffer.byteLength(stdout),stderrBytes:Buffer.byteLength(stderr),stdoutSha256:sha256(stdout),stderrSha256:sha256(stderr),childDiagnostic,outputEmpty:stdout===''&&stderr==='',publicationAuthority:false};
+ return{kind:'booking-watchdog-recovery-child-exit',operationId,toolRevision,at,status:Number.isSafeInteger(result.status)?result.status:null,signal:['SIGKILL','SIGTERM','SIGINT'].includes(result.signal)?result.signal:result.signal?'unclassified':null,errorCode:['ETIMEDOUT','ENOENT','EACCES','ENOBUFS'].includes(result.error?.code)?result.error.code:result.error?'unclassified':null,stdoutBytes,stderrBytes,outputExceededLimit,stdoutSha256:sha256(stdout),stderrSha256:sha256(stderr),childDiagnostic,outputEmpty:stdout===''&&stderr==='',publicationAuthority:false};
 }
