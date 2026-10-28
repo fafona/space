@@ -26,7 +26,7 @@ test('continued runtime cannot manufacture a receipt, replace web identities or 
   const value=structuredClone(expected);if(failure==='gate')value.gateNeverOpened=false;if(failure==='mail')value.mailEnabled=true;
   if(failure==='identity')value.identity.pid=999;if(failure==='hash')value.attemptSha256='bad';if(failure==='extra')value.extra=true;
   const need=(v,c)=>{if(!v)throw Error(c);},fn=runInNewContext(node.getText(ast).replace(/^export /,'')+'\nattestBookingReadyReplacement',{
-   assertBookingReadySource:()=>{if(failure==='source')throw Error('source');},same:(a,b,c)=>need(isDeepStrictEqual(JSON.parse(JSON.stringify(a)),JSON.parse(JSON.stringify(b))),c),need,BASE,WORKER:old.name,ROOT:'/root',Date,
+   preparedBookingExecution:()=>null,assertBookingReadySource:()=>{if(failure==='source')throw Error('source');},same:(a,b,c)=>need(isDeepStrictEqual(JSON.parse(JSON.stringify(a)),JSON.parse(JSON.stringify(b))),c),need,BASE,WORKER:old.name,ROOT:'/root',Date,
    read:()=>JSON.stringify({priorTool:BASE,toolRevision:failure==='attempt-source'?'bad':revision,before:failure==='before'?{}:old}),hash:()=> 'attempt-hash',
    assertBookingReadyWorkerTransition,collect:v=>v});
   if(failure)assert.throws(()=>fn(value,revision));else assert.equal(fn(value,revision),value);

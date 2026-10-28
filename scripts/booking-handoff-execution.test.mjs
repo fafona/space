@@ -21,13 +21,36 @@ function drainFixture({failAt,neverDrained=false,eligible=0}={}){
 test('ingress drain proves old worker exit and zero connections before actual automation evidence',async()=>{
  const f=drainFixture(),receipt=await executeBookingIngressDrain(f.operations,{window});assert.equal(receipt.automationEligibleRecords,0);
  assert.equal(f.events.filter(n=>n==='install').length,1);assert.equal(f.events.filter(n=>n==='reload').length,1);
- assert.equal(f.events.filter(n=>n==='drain').length,3);assert.ok(f.events.indexOf('probeGate')<f.events.indexOf('drain'));assert.equal(f.events.at(-1),'complete');
+ assert.equal(f.events.filter(n=>n==='drain').length,3);assert.ok(f.events.indexOf('probeGate')>f.events.lastIndexOf('drain'));assert.equal(f.events.at(-1),'complete');
 });
 for(const name of ['authorize','workers','begin','install','syntax','reload','probeGate','drain','automation','complete'])test('gate failure '+name+' cannot be labelled drained or automatically replayed',async()=>{
  const f=drainFixture({failAt:name});await assert.rejects(executeBookingIngressDrain(f.operations,{window}),/unknown_/);assert.equal(f.events.filter(n=>n===name).length,1);
 });
 test('busy old worker and any eligible automation fail closed within the drain reserve',async()=>{
  for(const options of [{neverDrained:true},{eligible:1}]){const f=drainFixture(options);await assert.rejects(executeBookingIngressDrain(f.operations,{window}),/not_drained|automation_drain/);assert.equal(f.events.includes('complete'),false);}
+});
+test('new-worker 503 does not allow a protected POST to race the old open generation',async()=>{
+ const f=drainFixture();let oldWorkerAlive=true,connections=1,polls=0,probes=0;
+ f.operations.drain=async()=>{f.events.push('drain');if(++polls===2)oldWorkerAlive=false;if(polls===3)connections=0;
+  return {oldWorkersRemaining:oldWorkerAlive?1:0,applicationConnections:connections};};
+ f.operations.probeGate=async()=>{probes++;assert.equal(oldWorkerAlive,false);assert.equal(connections,0);
+  // The observed incident: GET already reaches new503 while a POST can still
+  // reach old200. No arbitrary sleep or retry of a business POST fixes that.
+  const statuses=[503,oldWorkerAlive?200:503,connections?200:503];assert.deepEqual(statuses,[503,503,503]);};
+ await executeBookingIngressDrain(f.operations,{window});assert.equal(probes,1);assert.equal(polls,3);
+ assert.equal(f.events.filter(n=>n==='reload').length,1);
+});
+test('old workers or connections never draining forbid all gate probes and all later work',async()=>{
+ for(const observed of [{oldWorkersRemaining:1,applicationConnections:0},{oldWorkersRemaining:0,applicationConnections:1}]){
+  const f=drainFixture();f.operations.drain=async()=>observed;
+  await assert.rejects(executeBookingIngressDrain(f.operations,{window}),/ingress_not_drained/);
+  assert.equal(f.events.includes('probeGate'),false);assert.equal(f.events.includes('automation'),false);assert.equal(f.events.includes('complete'),false);
+ }
+});
+test('a non503 gate response AFTER drain is still terminal, with no automatic POST replay',async()=>{
+ const f=drainFixture();let calls=0;f.operations.probeGate=async()=>{calls++;throw Error('protected_route_not503');};
+ await assert.rejects(executeBookingIngressDrain(f.operations,{window}),/protected_route_not503/);assert.equal(calls,1);
+ assert.equal(f.events.includes('automation'),false);assert.equal(f.events.includes('complete'),false);
 });
 function activationFixture(failAt){
  const events=[],original=before(),rebased={...original,savedBookingRowsSha256:h('b')},activation={before:rebased,after:{...rebased,active:true}},

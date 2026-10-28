@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {historicalToolTreeRows} from './test-support/release-toolchain-historical-fixture.mjs';
 import * as p from './booking-compatibility-tool-policy.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 export function compatibilityReceiptFixture(){return {schemaVersion:1,kind:'booking-compatibility-tool',priorTool:p.BOOKING_COMPATIBILITY_PRIOR_TOOL,
@@ -15,18 +16,17 @@ test('source scope is exactly fifteen tool/test files; unchanged inputs include 
  const files=p.BOOKING_COMPATIBILITY_TOOL_FILES;
  assert.equal(files.length,15);assert.equal(new Set(files).size,15);assert.ok(files.every(f=>f.startsWith('scripts/')));
  for(const forbidden of ['scripts/attendance-extension-metadata.mjs','scripts/prepare-online-release-tool.mjs','package.json','package-lock.json'])assert.ok(!files.includes(forbidden));
- // A CI checkout need not contain historical objects. The fixed predecessor
- // digest still binds every current non-allowlisted input, without fetching or
- // skipping anything. The production verifier separately reads BOTH revisions.
- // Project only the explicitly approved successor delta back to this sealed
- // predecessor. Its validator and fixed digest are NOT widened. The successor
- // test independently binds every current non-allowlisted tree entry.
+ // Test the historical policy against complete, hash-bound Git tree evidence.
+ // Production still reads BOTH raw revisions; no policy or digest is widened.
+ const head=execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)
+  .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))).join('\0');
+ assert.throws(()=>p.assertBookingCompatibilityToolDelta({files,originalInputs:head,currentInputs:head}),/application_inputs/);
  const predecessorRows={"scripts/booking-handoff-execution.mjs":"100644 blob 3bf60348711aeb1e5689d2742e8a5adb8214c2a3\tscripts/booking-handoff-execution.mjs","scripts/booking-handoff-execution.test.mjs":"100644 blob 271d1e627302daae37389ea444cc24e93cb3e8ca\tscripts/booking-handoff-execution.test.mjs","scripts/booking-handoff-journal.mjs":"100644 blob 0f7e0770be3c01560682a97c8bc20d619d66aec9\tscripts/booking-handoff-journal.mjs","scripts/booking-handoff-journal.test.mjs":"100644 blob 7f05ebd5297508cc0329a0cac87e47004a5abc11\tscripts/booking-handoff-journal.test.mjs","scripts/booking-publication-database.mjs":"100644 blob f2b0b6655b2b722f7feb0d95ca8e04d18939a47e\tscripts/booking-publication-database.mjs","scripts/booking-publication-database.test.mjs":"100644 blob 0d1b0a1cbad9db23e45deb18efc17a44bc586bbc\tscripts/booking-publication-database.test.mjs"};
  const successorAdded=["scripts/booking-registry-backup.mjs","scripts/booking-registry-backup.test.mjs","scripts/booking-registry-extension.mjs","scripts/booking-registry-extension.test.mjs","scripts/booking-registry-tool-policy.mjs","scripts/booking-registry-tool-policy.test.mjs","scripts/booking-registry-tool.mjs","scripts/booking-registry-tool.test.mjs",
   'scripts/booking-formal-backup-policy.mjs','scripts/booking-formal-backup-policy.test.mjs',
   'scripts/booking-formal-backup-tool.mjs','scripts/booking-formal-backup-tool.test.mjs',
   'scripts/booking-formal-backup.mjs','scripts/booking-formal-backup.test.mjs'];
- const original=projectBookingCiPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean))
+ const original=projectBookingCiPredecessorRows(historicalToolTreeRows())
   .filter(row=>!files.includes(row.slice(row.indexOf('\t')+1))&&!successorAdded.includes(row.slice(row.indexOf('\t')+1)))
   .map(row=>predecessorRows[row.slice(row.indexOf('\t')+1)]??row).join('\0');
  assert.equal(p.assertBookingCompatibilityToolDelta({files,originalInputs:original,currentInputs:original}),p.BOOKING_COMPATIBILITY_INPUTS_SHA256);

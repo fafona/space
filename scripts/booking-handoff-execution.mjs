@@ -1,6 +1,9 @@
 // Actual preflight, narrow gate/drain and the single repair+activation executor.
 // No stage/build, generic deployment, mail setup or automatic mutation retry.
 import * as fs from 'node:fs';
+import {drainAndProbeIngress} from './release-toolchain-ingress.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
+import {requireBookingAdmission} from './release-toolchain-admission-context.mjs';
 import {spawnSync} from 'node:child_process';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE,
  assertBookingHandoffWindow,assertBookingAtomicActivationTransition} from './booking-handoff-policy.mjs';
@@ -102,8 +105,9 @@ const sameWorker=p=>{try{const text=fs.readFileSync('/proc/'+p.pid+'/stat','utf8
 const currentRouting=()=>Object.fromEntries(WEB_RELEASE_FILES.map(f=>[f,read(WEB_RELEASE_PROXY+'/'+f,{privateMode:false})]));
 const now=()=>new Date().toISOString();
 
-export async function prepareBookingHandoffPreflight(options){
+export async function inspectBookingHandoffPreflight(options){
  const {lock,toolRevision}=options;const invocation=assertBookingHostInvocation(options),cohort=verifyBookingAtomicRuntimeCohort(options);
+ if(reviewedBookingExecution(toolRevision))requireBookingAdmission(toolRevision);
  const originalStageText=read(ROOT+'/primary-original-stage.json'),stage=JSON.parse(originalStageText),history=readOnlineRetentionHistory();
  need(stage.status==='database-ready'&&stage.target===CANDIDATE&&stage.retentionHeadSha256===history.headSha256&&history.entries.at(-1)?.active.target===BASELINE,'stage_predecessor');
  const inactiveText=read(RELEASE+'/'+CANDIDATE+'/booking-database-inactive.json'),inactive=JSON.parse(inactiveText),compatibilityText=read(RELEASE+'/'+CANDIDATE+'/booking-compatibility.json');
@@ -112,6 +116,7 @@ export async function prepareBookingHandoffPreflight(options){
  const backup=await validateAttendanceBackupEvidence(bookingPublicationBackupRequest(CANDIDATE,RELEASE+'/'+CANDIDATE));
  need(backup.archiveSha256===inactive.backupSha256,'full_backup_changed');
  const data=liveDatasetAndPure(new Date(Date.now()+600000).toISOString()),before=JSON.parse(sql(bookingHandoffActivationSnapshotSql));
+ if(reviewedBookingExecution(toolRevision))equal(before,requireBookingAdmission(toolRevision).databaseBefore,'fresh_admission_database_changed');
  assertBookingAtomicActivationTransition(before,{...before,active:true});need(data.legacy.legacy.pid===1590381&&data.legacy.legacy.backgroundPaused==='0','original_timer');
  equal(data.legacy.legacy,history.entries.at(-1).processes.find(p=>p.name==='merchant-space'),'original_timer_history');
  const readiness={schemaVersion:1,kind:'booking-atomic-rollback-ready',candidate:CANDIDATE,target:APPLICATION,stateText:read(RELEASE+'/'+APPLICATION+'/state.json'),
@@ -123,17 +128,19 @@ export async function prepareBookingHandoffPreflight(options){
   backupSha256:backup.archiveSha256,originalBackupSealSha256:ORIGINAL_SEAL,ruleRepairPlanSha256:data.plan.planSha256,networkPolicySha256:networkProof(),
   savedDatasetSha256:contentHash(data.live),automationEligibleRecords:data.pure.automationEligibleRecords,automationCheckedThrough:data.pure.throughAt,completedAt:now()};
  need(JSON.parse(preflight.activeFileText).target===BASELINE,'active_predecessor');assertOnlineRetentionHeldLocks(lock);
- write(ROOT+'/rule-repair-plan.json',retentionCanonicalText(data.plan));write(ROOT+'/rollback-readiness.json',retentionCanonicalText(readiness));write(ROOT+'/preflight.json',retentionCanonicalText(preflight));return preflight;
+ return {preflight,repairPlan:data.plan,readiness};
+}
+export async function prepareBookingHandoffPreflight(options){
+ const {preflight,repairPlan,readiness}=await inspectBookingHandoffPreflight(options);assertOnlineRetentionHeldLocks(options.lock);
+ write(ROOT+'/rule-repair-plan.json',retentionCanonicalText(repairPlan));write(ROOT+'/rollback-readiness.json',retentionCanonicalText(readiness));write(ROOT+'/preflight.json',retentionCanonicalText(preflight));return preflight;
 }
 
 export async function executeBookingIngressDrain(operations,plan){
- const {window}=plan;assertBookingHandoffWindow(window,{nowMs:operations.nowMs()});await operations.authorize();
- const workers=await operations.workers();await operations.begin({window,workers,startedAt:operations.now()});
- await operations.install();await operations.syntax();await operations.reload();await operations.probeGate();
- let proof;while(operations.nowMs()<Date.parse(window.startedAt)+90000){
-  await operations.authorize();proof=await operations.drain(workers);if(proof.oldWorkersRemaining===0&&proof.applicationConnections===0)break;await operations.wait(250);
- }
- need(proof?.oldWorkersRemaining===0&&proof.applicationConnections===0,'ingress_not_drained');
+ const {window}=plan;assertBookingHandoffWindow(window,{nowMs:operations.nowMs()});
+ // A successful reload and one 503 can coexist with an old worker returning
+ // 200 on an already accepted connection. Drain the captured generation FIRST;
+ // then prove every protected route. Neither condition alone permits activation.
+ await drainAndProbeIngress(operations,{startedAtMs:Date.parse(window.startedAt),deadlineAtMs:Date.parse(window.startedAt)+90000,window});
  const data=await operations.automation();need(data.automationEligibleRecords===0&&Date.parse(data.throughAt)>=Date.parse(window.deadlineAt),'automation_drain');
  const receipt={schemaVersion:1,kind:'booking-legacy-ingress-drained',window,oldWorkersRemaining:0,applicationConnections:0,
   automationEligibleRecords:data.automationEligibleRecords,automationCheckedThrough:data.throughAt,datasetSha256:data.datasetSha256,completedAt:operations.now()};

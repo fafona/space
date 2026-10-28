@@ -3,6 +3,8 @@
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
+import {requireBookingAdmission} from './release-toolchain-admission-context.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE,
  BOOKING_HANDOFF_CANDIDATE_CLOSURE_SHA256,BOOKING_HANDOFF_NATIVE_SOURCES,assertBookingHandoffWindow} from './booking-handoff-policy.mjs';
 import {BOOKING_HANDOFF_ROOT as ROOT,verifyBookingAtomicRuntimeCohort} from './booking-handoff-runtime.mjs';
@@ -53,6 +55,7 @@ export async function executeBookingHandoffHost(operations){
 function nativeAcceptance(toolRevision){
  // The full native runner writes this only from actual normal/failure results.
  // Its implementation and source bindings are installed with this same tool.
+ const adopted=reviewedBookingExecution(toolRevision);if(adopted){const admission=requireBookingAdmission(toolRevision);return admission.compatibility.nativeAcceptanceSha256;}
  const text=read(ROOT+'/native-handoff-acceptance.json'),value=JSON.parse(text);
  need(value.schemaVersion===1&&value.kind==='booking-full-native-handoff-acceptance'&&value.toolRevision===toolRevision&&
   value.candidate===CANDIDATE&&value.rollback===APPLICATION&&value.productionMutated===false&&

@@ -1,5 +1,146 @@
 # Default: no-maintenance publication
 
+## Toolchain consolidation (2026-10-28; guarded booking-profile integration)
+
+`scripts/release-toolchain.mjs` is the new safety/diagnostics entrypoint. It has
+NO deploy, apply, merge, restart, cleanup, force or skip command. Existing
+production source admission, backup, ownership, CI, watchdog and rollback gates
+remain mandatory; a green doctor or synthetic rehearsal is not publication authority.
+
+The separate canonical production entry is
+`scripts/release-toolchain-release.mjs`. Its first reviewed profile adopts the
+already-built booking C/A pair; it is NOT an unrestricted publisher for another
+application, migration, candidate or service. A later application scope still
+requires review. A tool-only repair no longer requires another hand-maintained
+tool-SHA exception: actual application inputs/builds must be identical, while
+the new tool must independently be current main with all 12 existing CI jobs
+and the additional release-toolchain safety job successful.
+
+Operator sequence (Linux root, from the verified installed tool directory):
+
+1. Pack the exact committed tool bundle. Run its source-only installer with
+   `install-qualification COMMIT` for a fully tested PR, or `install COMMIT` for
+   fully tested current main. The installer fetches only the exact object and
+   creates a new complete detached tool worktree, excluding public downloads.
+   It does not move `origin/main`, edit candidates or change running processes.
+   Existing/partial installation directories are not overwritten.
+2. `node scripts/release-toolchain-release.mjs status` aggregates independent
+   source/review/environment/build/native/compatibility/worker/public checks.
+   `readyForFreshAdmission` is explicitly not a publication certificate. A
+   fresh encrypted production backup remains required at publication time.
+3. `node scripts/release-toolchain-release.mjs qualify` checks retained builds
+   before/after a full rehearsal and a real full-controller interruption. It
+   creates a NEW capped, unprivileged, network-none PostgreSQL 15.8 container,
+   new unique databases, and private loopback Nginx/process fixtures. No old
+   pilot is started. Current default privilege metadata, not passwords or role
+   powers, is reproduced only inside the new fixture. It exercises normal
+   publication, controller death before commit, controller death after commit,
+   actual SQL commit/rollback target decisions, inherited kernel locks, backup
+   dump/restore and a corrupt-archive negative check. The public sites and
+   formal processes/data are not switched or written. Fixture web responses
+   are synthetic; pinned application helpers are exercised separately.
+   Every owned process/container must stop; files and databases are retained.
+4. After current-main CI and qualification pass, `prepare-worker` may replace
+   only the already-gated private booking worker's tool source. It uses a
+   single peer-bound PM2 RPC, checks full OS/config environments and every
+   unrelated process, and leaves the gate closed and mail disabled. Historical
+   preparation receipts remain immutable; each later tool hop has its own
+   source-inventory/attempt/predecessor-bound receipt.
+5. `validate` exercises the complete real-source/backup/compatibility/cohort
+   admission without calling activation, routing, retention commit or worker
+   enable. Its new encrypted backup and evidence are retained; the report is
+   not a reusable publication capability and cannot resume or bypass a stage.
+6. `publish` requires that exact current-tool worker before any production
+   backup or switch. It creates/verifies a new encrypted existing-format full
+   backup bound to application C and the exact formal database, never to the
+   tool SHA or a pilot. Historical migration backup/compatibility provenance
+   remains separate and is not relabelled as fresh evidence. Fresh read-only
+   compatibility checks prove the old structural contract unchanged and the
+   installed additive objects equal the current isolated rehearsal (including
+   actual inherited default privileges). Normal pending-state, actual cohort,
+   90-second drain, automation, activation, independent watchdog, five-file
+   retention certificate, rollback and public checks all remain.
+
+The canonical journal has fixed source/bundle/environment/backup/compatibility/
+candidate/rehearsal/admission/switch/verify stages. Intent is fsynced before an
+effect, and observations are hash-chained. An uncertain mutating result is
+terminal: there is no automatic replay, reset, skip, or generic reconcile
+command. Read the preserved attempt and actual live resources before proposing
+any recovery. Once the watchdog is armed, controller failure exits without
+releasing its inherited kernel lock ahead of independent recovery. A web
+rollback never rolls back business data or disables the new database authority.
+
+Qualification attempts are append-only under the candidate's
+`toolchain-qualification/TOOL_COMMIT` directory. The latest failed/unfinished
+attempt is not replaced with an older green result. Fresh admission artifacts
+and generic stage journals use separate private directories. Historical
+candidates, backups, old receipts and failed attempts remain. No automatic
+disk cleanup or mail setup is included.
+
+- `node scripts/release-toolchain.mjs doctor` reports this machine's bounded
+  host metadata. It does not mistake the workstation for the server or claim
+  that release evidence has been checked.
+- `node scripts/release-toolchain.mjs doctor SNAPSHOT.json` evaluates expected
+  application/tool/scope/database/backup/compatibility bindings with fresh local
+  RAM/disk observations. The snapshot must come from independently trusted
+  collectors. This offline diagnostic cannot authenticate a caller-supplied
+  snapshot, replace fresh production attestation or authorize a write.
+- `node scripts/release-toolchain-pack.mjs pack REPOSITORY COMMIT NEW_DIRECTORY`
+  creates a complete Node-only runtime bundle from committed Git blobs. An AST
+  import closure and explicit runtime resources replace ad-hoc sparse checkout.
+  Missing JSON, unknown dynamic imports, dependency packages, path escapes,
+  extra files, symlinks and changed bytes fail closed. The destination must not
+  exist; failed packages are preserved rather than overwritten.
+- `node scripts/release-toolchain.mjs verify-bundle DIRECTORY` verifies every
+  declared file and refuses undeclared files before any host rehearsal.
+- `node scripts/release-toolchain.mjs rehearse /usr/sbin/nginx 5` (or the fixed
+  BT binary `/www/server/nginx/sbin/nginx`) creates new loopback-only fixtures.
+  A deliberately accepted old request proves old200/new503 coexistence, then the
+  SAME drain primitive used by the booking controller proves old generation exit,
+  zero application connections and every protected route503. Syntax/probe failure
+  cases must stop and clean up only their owned test processes. Reports are kept.
+  This is ingress-boundary evidence, not application/database/rollback acceptance.
+- `node scripts/release-toolchain.mjs journal RUN_DIRECTORY` inspects an
+  append-only hash-chained operation journal. Unknown effect results cannot be
+  automatically retried, skipped or marked successful. No journal-reset or
+  automatic reconciliation command is exposed.
+
+Fingerprints include domain, algorithm and representation. Canonical JSON object
+key order is immaterial; array order and types are not. Application inputs,
+verified build artifacts and tool bundles have separate identities. A tool-only
+repair can retain a verified immutable build only if application revision,
+source/dependencies/migrations and actual build bytes all remain identical;
+full tool revalidation is still required. Backup identity binds the application
+and exact database, never the tool commit or an incidental pilot environment.
+
+All known stale/mismatched evidence is reported at one early preflight. The
+6 GiB build floor is unchanged; it applies when a build is needed, not as an
+excuse to rebuild an already verified candidate. A broken existing build binding
+is a blocker, not permission to overwrite the artifact.
+
+The booking boundary now drains the captured old workers/connections BEFORE
+probing the entire gate. Reload success or a single503 is not proof of a drained
+generation. The original90-second drain budget, strict503 checks, automation
+proof, activation guards and independent watchdog remain; business POST requests
+are not automatically replayed. New shared sources are included in the native
+acceptance source inventory. Historical attempts/receipts/allowlists are retained.
+
+The new dedicated `Release Toolchain Safety` workflow tests the packaged tools
+and real Nginx boundary on a disposable Linux runner, including a real SIGTERM
+interruption after an owned Nginx starts. It requires stopped owned children,
+an explicit failed controller exit and no misleading successful drill report.
+Historical policy unit tests use hash-bound complete Git tree evidence from
+`38a3ba02a3f2b2165994043e2ac78ea1d90d0282`, not a moving HEAD disguised as that
+historical source. They separately assert that the old guards reject current
+outside-scope changes. Historical production policies, pins and direct-entry
+source admission remain strict. The separate canonical entry uses
+non-serializable reviewed-source and fresh-admission capabilities after
+collecting real evidence; no caller JSON can enable them. The safety workflow
+also exercises the full new-database rehearsal and real SIGTERM of its own full
+controller, retaining bounded synthetic failure reports from the disposable
+runner. Toolchain installation/qualification is not an application deployment,
+nor a replacement for every historical release lane.
+
 User authorized this default and an additive analytics-capable lane on 2026-09-23.
 This is not permission to skip tests, authentication checks, backups or ownership checks.
 

@@ -1,4 +1,5 @@
 import {assertBookingReadyClosure as assertBookingHandoffToolClosure} from './booking-ready-policy.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 // Actual append-only host collector for the one approved booking handoff.
 // No DB mutation, routing change, restart or stop. The worker gate can be
 // written only AFTER the complete five-file journal and external head commit.
@@ -54,6 +55,7 @@ function rawEnv(pid){
 const location=s=>Object.fromEntries(['target','name','directory','port'].map(k=>[k,s[k]]));
 function invocation(lock,toolRevision){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
+  const adopted=reviewedBookingExecution(toolRevision);if(adopted)return adopted.tool;
   need(sha.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
   const tool=verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
   const files=runOnlineToolGit(APP,['diff','--name-only',CANDIDATE,toolRevision]).toString().trim().split('\n');

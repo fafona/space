@@ -26,7 +26,7 @@ export const BOOKING_HANDOFF_MAX_MS=600000;
 export const BOOKING_HANDOFF_NATIVE_SOURCES=Object.freeze(['booking-handoff-native-acceptance.mjs','booking-handoff-policy.mjs',
  'booking-handoff-host.mjs','booking-handoff-execution.mjs','booking-handoff-host-io.mjs','booking-handoff-watchdog.mjs','booking-handoff-recovery.mjs',
  'booking-handoff-activation.mjs','booking-handoff-rule-repair.mjs','booking-handoff-ingress.mjs','booking-handoff-routing.mjs',
- 'booking-handoff-runtime.mjs','booking-handoff-legacy.mjs','booking-handoff-journal.mjs']);
+ 'booking-handoff-runtime.mjs','booking-handoff-legacy.mjs','booking-handoff-journal.mjs','release-toolchain-ingress.mjs','release-toolchain-contracts.mjs']);
 // Read-only provenance collected from the actual host on 2026-10-26. PM2's
 // executeApp refreshes pm_uptime, resetState refreshes created_at and the retry
 // delay, and restartProcessId increments restart_time. The isolated real-host

@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
+import {historicalToolTreeRows,readHistoricalCiBlob,HISTORICAL_CI_FILES} from './test-support/release-toolchain-historical-fixture.mjs';
 import * as p from './booking-ci-continuation-policy.mjs';
 import {projectBookingDependencyPredecessorRows} from './booking-dependency-continuation-policy.mjs';
 import {projectBookingReadyPredecessorRows} from './booking-ready-policy.mjs';
 import {BOOKING_FORMAL_PRESERVED,BOOKING_FORMAL_FILES,assertBookingFormalToolDelta} from './booking-formal-backup-policy.mjs';
 import {BOOKING_HANDOFF_CANDIDATE,BOOKING_HANDOFF_TOOL_FILES,assertBookingHandoffToolClosure} from './booking-handoff-policy.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
-const read=file=>readFileSync(new URL('../'+file,import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const currentRows=()=>projectBookingDependencyPredecessorRows(projectBookingReadyPredecessorRows(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean)));
+const read=file=>HISTORICAL_CI_FILES.includes(file)?readHistoricalCiBlob(file):readFileSync(new URL('../'+file,import.meta.url),'utf8').replace(/\r\n/g,'\n');
+const currentRows=()=>projectBookingDependencyPredecessorRows(projectBookingReadyPredecessorRows(historicalToolTreeRows()));
 export function ciReceiptFixture(){return {schemaVersion:1,kind:'booking-ci-continuation-tool',priorTool:'0b0f3f9dbe60a2fa3553c3b510a937cd13c4bd35',
  base:p.BOOKING_CI_BASE,verifiedCiSource:p.BOOKING_CI_VERIFIED_SOURCE,toolRevision:'f'.repeat(40),sourceInputsSha256:p.BOOKING_CI_INPUTS_SHA256,
  toolClosureSha256:'a'.repeat(64),preservedSha256:hash(JSON.stringify(BOOKING_FORMAL_PRESERVED)),
@@ -29,6 +30,8 @@ test('fixed successor pins every actual non-allowlisted tree entry and exactly f
   readBlob:f=>read(f)+(f===file?'\nchanged':'')}),/ci_content/);
 });
 test('old source guard still rejects raw current source; projection is limited to the fixed predecessor rows',()=>{
+ const head=p.bookingCiInputs(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean));
+ assert.throws(()=>p.assertBookingCiToolDelta({files:p.BOOKING_CI_FILES,originalInputs:head,currentInputs:head,readBlob:read}),/application_inputs/);
  const rows=currentRows(),outside=rows.filter(r=>!BOOKING_FORMAL_FILES.includes(r.slice(r.indexOf('\t')+1))).join('\0');
  assert.throws(()=>assertBookingFormalToolDelta({files:BOOKING_FORMAL_FILES,originalInputs:outside,currentInputs:outside}),/application_inputs/);
  const restored=p.projectBookingCiPredecessorRows(rows),projected=restored.filter(r=>!BOOKING_FORMAL_FILES.includes(r.slice(r.indexOf('\t')+1))).join('\0');

@@ -10,6 +10,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {assertOnlineToolOwnedPath,verifyOnlineReleaseTool,createOnlineReleaseToolPlan,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE} from './booking-handoff-policy.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 
 export const BOOKING_HOST_RELEASE='/var/lib/faolla-online-release';
 export const BOOKING_HOST_CONTAINER='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416';
@@ -47,6 +48,7 @@ export function bookingHostReplace(file,before,after,suffix){
 }
 export function assertBookingHostInvocation({lock,toolRevision}){
  bookingHostNeed(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
+ const adopted=reviewedBookingExecution(toolRevision);if(adopted)return {tool:adopted.tool,toolClosureSha256:adopted.toolClosureSha256};
  bookingHostNeed(/^[a-f0-9]{40}$/.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
  const tool=verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
  const files=runOnlineToolGit('/www/wwwroot/merchant-space',['diff','--name-only',CANDIDATE,toolRevision]).toString().trim().split('\n');

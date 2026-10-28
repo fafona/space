@@ -1,0 +1,92 @@
+name: Release Toolchain Safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/release-toolchain*'
+      - 'scripts/test-support/release-toolchain-*'
+      - 'scripts/booking-handoff-execution*'
+      - 'scripts/booking-handoff-policy.mjs'
+      - '.github/workflows/release-toolchain.yml'
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  toolchain:
+    name: Packaged Tools And Real Ingress Boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Development Test Dependencies
+        run: npm ci
+      - name: Unit And Existing Handoff Regression Tests
+        run: node --test scripts/release-toolchain-*.test.mjs scripts/booking-ci-continuation-tool.test.mjs scripts/booking-ready-*.test.mjs scripts/booking-handoff-activation.test.mjs scripts/booking-handoff-rule-repair.test.mjs scripts/booking-publication-database.test.mjs scripts/booking-handoff-execution.test.mjs scripts/booking-handoff-host.test.mjs scripts/booking-handoff-native-acceptance.test.mjs
+      - name: Install Disposable Runner Nginx
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y nginx
+      - name: Build Complete Tool Bundle From Exact Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          node scripts/release-toolchain-pack.mjs pack "$GITHUB_WORKSPACE" "$revision" "$RUNNER_TEMP/release-toolchain-bundle"
+          node "$RUNNER_TEMP/release-toolchain-bundle/scripts/release-toolchain.mjs" verify-bundle "$RUNNER_TEMP/release-toolchain-bundle"
+      - name: Real Owned Old200 New503 Drain And Negative Cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/release-toolchain-bundle/scripts/release-toolchain.mjs" rehearse /usr/sbin/nginx 5
+      - name: Real Interruption And Owned Cleanup
+        shell: bash
+        run: node "$RUNNER_TEMP/release-toolchain-bundle/scripts/release-toolchain-interrupt-acceptance.mjs" "$RUNNER_TEMP/release-toolchain-bundle" /usr/sbin/nginx
+      - name: Full New-Database Handoff And Recovery Rehearsal
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          source="/var/lib/faolla-online-code/$revision"
+          application="/var/lib/faolla-release-toolchain-application-$revision"
+          # setup-node is intentionally outside sudo's PATH on hosted runners.
+          # Install its already selected Node 20 binary at the native test path.
+          sudo install -m 755 "$(command -v node)" /usr/bin/node
+          sudo docker pull supabase/postgres@sha256:af083ef64d0408c8f098ee6f5c364a59b26f36fbc0f3a334a62c5c1d57362e9b
+          sudo mkdir -p /www/wwwroot /var/lib/faolla-online-code
+          sudo git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" /www/wwwroot/merchant-space
+          sudo git -C /www/wwwroot/merchant-space worktree add --detach --no-checkout "$source" "$revision"
+          printf '/*\n!/public/downloads/\n' | sudo git -C "$source" sparse-checkout set --no-cone --stdin
+          sudo git -C "$source" config --worktree core.sparseCheckoutCone false
+          sudo git -C "$source" config --worktree index.sparse false
+          sudo git -C "$source" read-tree -mu HEAD
+          sudo chmod 700 "$source"
+          sudo mkdir -m 700 "$application"
+          sudo cp -a "$GITHUB_WORKSPACE/package.json" "$GITHUB_WORKSPACE/tsconfig.json" "$GITHUB_WORKSPACE/src" "$GITHUB_WORKSPACE/node_modules" "$application/"
+          sudo chown -R root:root "$application"
+          sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
+          sudo /usr/bin/node "$source/scripts/release-toolchain-full-interrupt.mjs"
+      - name: Collect Root-Owned Synthetic Reports
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-*)
+          if ((${#roots[@]})); then
+            sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
+          fi
+      - name: Preserve Synthetic Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-toolchain-ingress-evidence
+          path: |
+            /tmp/faolla-release-toolchain-lab-*/**/*.json
+            ${{ runner.temp }}/release-toolchain-native-evidence.tar
+          if-no-files-found: warn

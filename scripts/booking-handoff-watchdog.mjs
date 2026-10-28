@@ -2,6 +2,7 @@
 // flock held if the controller/SSH session dies. It may terminate ONLY its own
 // provenance-bound controller, never a web/DB/enterprise/background process.
 import * as fs from 'node:fs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import path from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -47,7 +48,7 @@ function run(bin,args,options={}){const r=spawnSync(bin,args,{env:env(),encoding
 function sourceIdentity(toolRevision,{initial=false}={}){
   const directory='/var/lib/faolla-online-code/'+toolRevision;
   need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))===directory,'source_path');
-  if(initial)return verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
+  if(initial){const adopted=reviewedBookingExecution(toolRevision);if(adopted)return adopted.tool;return verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));}
   // Long-lived recovery pins immutable source, not a moving origin/main ref.
   need(runOnlineToolGit(directory,['rev-parse','HEAD']).toString().trim()===toolRevision&&
     !runOnlineToolGit(directory,['status','--porcelain=v1','--untracked-files=all']).toString().trim(),'source_changed');
@@ -109,11 +110,20 @@ function kernelLease(lease,{requireParentGone=false}={}){
   return true;
 }
 export function assertBookingWatchdogInheritedLease(lease,options){sourceIdentity(lease.toolRevision);return kernelLease(lease,options);}
+export function bookingWatchdogControllerArguments(toolRevision,reviewed=false){
+ need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&typeof reviewed==='boolean','controller_entry');const directory='/var/lib/faolla-online-code/'+toolRevision;
+ return reviewed?['/usr/bin/node',directory+'/scripts/release-toolchain-release.mjs','publish']:['/usr/bin/node',directory+'/scripts/booking-handoff-host.mjs'];
+}
+export function assertBookingWatchdogControllerArguments(actual,toolRevision,reviewed=false){
+ const expected=bookingWatchdogControllerArguments(toolRevision,reviewed);if(!reviewed){equal(actual,expected,'controller_entry');return true;}
+ need(Array.isArray(actual)&&actual.length===3&&['node','/usr/bin/node'].includes(actual[0])&&
+  [expected[1],'scripts/release-toolchain-release.mjs'].includes(actual[1])&&actual[2]==='publish','controller_entry');return true;
+}
 
 export async function armBookingHandoffWatchdog({lock,toolRevision}){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);sourceIdentity(toolRevision,{initial:true});
   const directory='/var/lib/faolla-online-code/'+toolRevision,parent=fact(process.pid);
-  equal(command(process.pid),['/usr/bin/node',directory+'/scripts/booking-handoff-host.mjs'],'controller_entry');need(parent.cwd===directory,'controller_cwd');
+  assertBookingWatchdogControllerArguments(command(process.pid),toolRevision,!!reviewedBookingExecution(toolRevision));need(parent.cwd===directory,'controller_cwd');
   // No gate is installed unless BOTH the supervisor and its separately verified
   // recovery entrypoint have already been installed by the standard tool path.
   for(const file of ['booking-handoff-watchdog.mjs','booking-handoff-recovery.mjs'])assertOnlineToolOwnedPath(directory+'/scripts/'+file,'file');

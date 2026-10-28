@@ -18,6 +18,7 @@ import {verifyHistoricalOnlineTool} from './online-release-tool-retention.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {observeBookingReadyApplication} from './booking-ready-backup.mjs';
 import {collectBookingReadyOriginalCohort} from './booking-ready-runtime.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {assertBookingReadyToolNoPending} from './booking-ready-pending.mjs';
 import {createOnlineReleaseToolPlan,verifyOnlineReleaseTool,verifyOnlineToolBootstrap,executeOnlineReleaseToolPlan,
  assertOnlineToolOwnedPath,runOnlineToolGit,withOnlineToolPreparationLocks} from './prepare-online-release-tool.mjs';
@@ -126,6 +127,7 @@ export function assertBookingReadyPreserved(){
  assertBookingFormalPreserved();assertBookingCiKernelEvidence();return hash(JSON.stringify(EVIDENCE));
 }
 export function assertBookingReadySource(revision){
+ const adopted=reviewedBookingExecution(revision);if(adopted)return {sourceInputsSha256:adopted.sourceInputsSha256,toolClosureSha256:adopted.toolClosureSha256};
  const actual=source(revision,ROOT),receipt=JSON.parse(read(OP+'/'+RECEIPT)),evidenceSha256=assertBookingReadyPreserved();
  assertBookingReadyReceipt(receipt,revision,evidenceSha256);same(actual,{sourceInputsSha256:receipt.sourceInputsSha256,toolClosureSha256:receipt.toolClosureSha256},'receipt_source');return actual;
 }

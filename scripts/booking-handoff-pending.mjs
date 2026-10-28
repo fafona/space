@@ -5,6 +5,8 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
+import {collectBookingReadyRuntimeCohort} from './booking-ready-runtime.mjs';
 import {observeBookingBuiltSmokePair} from './booking-built-smoke-repair.mjs';
 import {observeBookingCompatibilityContinuation} from './booking-compatibility-tool.mjs';
 import {observeBookingRegistryContinuation} from './booking-registry-tool.mjs';
@@ -204,4 +206,14 @@ export function assertBookingHandoffToolNoPending(...args){
   const file=new URL('./prepare-online-release-tool.mjs',import.meta.url);assertOnlineToolOwnedPath(fileURLToPath(file),'file');
   assertBookingBasePendingGuardSource(fs.readFileSync(file,'utf8'));
   return bookingHandoffPendingBody(...args);
+}
+export function assertReviewedBookingNoPending(toolRevision){
+  if(arguments.length!==1||!reviewedBookingExecution(toolRevision))fail('booking_reviewed_source_required');
+  assertBookingBasePendingGuardSource(fs.readFileSync(new URL('./prepare-online-release-tool.mjs',import.meta.url),'utf8'));
+  const cohort=collectBookingReadyRuntimeCohort({toolRevision}),C=cohort.active.target;
+  const expected={[C]:'7ba13be0b859c918a71481b469596d6f2ef430ba61b1fc1946471812fb5651d3',[APPLICATION]:'12a7590d9de39d10179d0b60d3730c0451c5ad9e2b9a6d22044a77fe0861be3d'};
+  const pair={preserved:{}};for(const [target,digest]of Object.entries(expected)){
+    if(sha256(privateRead(RELEASE_ROOT+'/'+target+'/state.json'))!==digest)fail('release_pending');pair.preserved[target]={stateSha256:digest};
+  }
+  return bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair);
 }
