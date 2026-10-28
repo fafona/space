@@ -4,6 +4,8 @@
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {rollingHash} from './online-release-rolling-policy.mjs';
+import {ACTIVE_BOOKING_HANDOFF_KIND,assertActiveBookingRetentionHandoff} from './booking-handoff-active-retention.mjs';
+import {ACTIVE_ROLLBACK_REVALIDATED_KIND,assertActiveBookingRollbackReadiness} from './release-toolchain-active-generation-readiness-contract.mjs';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION, BOOKING_HANDOFF_CANDIDATE as CANDIDATE,
   BOOKING_HANDOFF_BASELINE as BASELINE, assertBookingHandoffEvidence,
   assertBookingHandoffProcessSet, assertBookingAtomicCohort,
@@ -21,6 +23,7 @@ const location=a=>Object.fromEntries(['target','name','directory','port'].map(k=
 const parse=text=>{need(typeof text==='string','state_text');try{return JSON.parse(text);}catch{fail('state_text');}};
 
 export function assertBookingRollbackReadiness(readiness,rollback,evidence){
+  if(readiness?.kind===ACTIVE_ROLLBACK_REVALIDATED_KIND)return assertActiveBookingRollbackReadiness(readiness,rollback,evidence);
   keys(readiness,['schemaVersion','kind','candidate','target','stateText','buildEvidenceSha256','runtimeSha256',
     'environmentFileSha256','compatibilitySha256'],'readiness_shape');
   need(readiness.schemaVersion===1&&readiness.kind==='booking-atomic-rollback-ready'&&
@@ -42,6 +45,7 @@ export function assertBookingRollbackReadiness(readiness,rollback,evidence){
  * subset. The original stage keeps its original 52f baseline, while the newly
  * recorded runtime edge explicitly names the compatible 6c rollback. */
 export function assertBookingRetentionHandoff({handoff,prior,previousSha256,active,rollback,processes,toolRevision,completedAt}){
+  if(handoff?.evidence?.kind===ACTIVE_BOOKING_HANDOFF_KIND)return assertActiveBookingRetentionHandoff({handoff,prior,previousSha256,active,rollback,processes,toolRevision,completedAt});
   keys(handoff,['evidence','originalStageText','legacyBefore','legacyAfter','added','runtimeByName',
     'databaseBefore','databaseAfter','rollbackReadiness','ruleRepair'],'proof_shape');
   const e=handoff.evidence;
