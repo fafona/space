@@ -20,5 +20,5 @@ export async function toolchainMain(args,write=value=>console.log(JSON.stringify
  if(parsed.command==='journal'){const r=inspectToolchainRun(parsed.file);write({schemaVersion:1,kind:'release-toolchain-run-status',status:r.status,nextStage:r.nextStage,head:r.head,events:r.events.length,publicationAuthority:false});return r.status==='unknown'?1:0;}
  write(await rehearseToolchainIngress({...parsed,onEvent:write}));return 0;
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)toolchainMain(process.argv.slice(2)).then(code=>{process.exitCode=code;},error=>{console.error(JSON.stringify(publicFailure(error,{stage:'environment'})));process.exitCode=1;});
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)toolchainMain(process.argv.slice(2)).then(code=>{process.exitCode=code;},error=>{console.error(JSON.stringify(publicFailure(error,{stage:process.argv[2]==='rehearse'?'rehearsal':'environment'})));process.exitCode=1;});
 export const TOOLCHAIN_CLI_SOURCE=fileURLToPath(import.meta.url);
