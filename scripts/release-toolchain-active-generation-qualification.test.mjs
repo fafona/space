@@ -15,3 +15,7 @@ test('new active observation never replaces the original inactive observer or pe
  assert.ok(interrupt.includes('rehearseFullToolchainInterruptionProfile(false)'));assert.ok(interrupt.includes('rehearseFullToolchainInterruptionProfile(true)'));assert.ok(entry.includes("process.argv[2]==='--interrupt'"));
  assert.ok(workflow.includes('Full Active-Profile Isolated Handoff And Interruption'));const start=workflow.indexOf('- name: Full Active-Profile'),step=workflow.slice(start,workflow.indexOf('- name:',start+1));assert.doesNotMatch(step,/continue-on-error|if:/);
 });
+test('choosing the active host observation cannot shadow the actual database snapshot function',()=>{
+ const text=readFileSync(new URL('./release-toolchain-full-rehearsal.mjs',import.meta.url),'utf8'),body=text.slice(text.indexOf('async function runFullToolchainRehearsalProfile'),text.indexOf('export const runFullToolchainRehearsal='));
+ assert.ok(body.includes('const hostSnapshot=activeProfile?captureActiveToolchainProductionSnapshot:production'));assert.ok(body.includes('const actual=snapshot(database)'));assert.ok(body.includes('equal(hostSnapshot(),formal'));assert.doesNotMatch(body,/\b(?:const|let|var)\s+snapshot\b/);
+});

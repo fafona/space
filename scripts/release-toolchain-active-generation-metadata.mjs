@@ -6,7 +6,7 @@ import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA as M,assertActiveBo
 import {inspectActiveBookingIncident,inspectActiveBookingIncidentAfterMetadata} from './release-toolchain-active-generation-incident.mjs';
 import {verifyActiveBookingIncidentPreservation} from './release-toolchain-active-generation-preservation.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
-import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
+import {assertOnlineRetentionHeldLocks,assertActiveBookingIncidentHeldWindow} from './online-release-retention-writer.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostReplace,bookingHostSync} from './booking-handoff-host-io.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
@@ -33,6 +33,7 @@ async function correctMetadata({file,beforeText,afterText,directory,binding,asse
 }
 export async function correctActiveBookingCompatibleMetadata({lock,toolRevision,window}){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
+ assertActiveBookingIncidentHeldWindow(lock,window);
  const preserved=verifyActiveBookingIncidentPreservation({lock,toolRevision,window});
  const binding={oldOperationId:P.operationId,window,toolRevision,toolInventorySha256:authority.tool.inventorySha256,preservedSha256:preserved.preservedSha256};
  need(digest.test(binding.preservedSha256),'evidence_invalid');

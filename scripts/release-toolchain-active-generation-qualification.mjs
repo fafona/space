@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';import {isDeepStrictEqual} from 'node:uti
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow,assertActiveBookingObservedHostProgress} from './release-toolchain-active-generation-contract.mjs';
 import {inspectActiveBookingIncident} from './release-toolchain-active-generation-incident.mjs';
 import {reviewedBookingExecution,refreshReviewedBookingExecution} from './release-toolchain-authority.mjs';
-import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
+import {assertOnlineRetentionHeldLocks,assertActiveBookingIncidentHeldWindow} from './online-release-retention-writer.mjs';
 import {runFullActiveToolchainRehearsal} from './release-toolchain-full-rehearsal.mjs';
 import {rehearseFullActiveToolchainInterruption,verifyFullInterruptionReport} from './release-toolchain-full-interrupt.mjs';
 import {verifyQualificationFiles,observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';
@@ -21,6 +21,7 @@ function ensure(parent,name){ownedReleasePath(parent,{directory:true});const fil
 const invocation=toolRevision=>need(path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'source_changed');
 export async function qualifyActiveBookingIncident({lock,toolRevision,window}){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);invocation(toolRevision);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
+ assertActiveBookingIncidentHeldWindow(lock,window);
  const directory=ensure(ensure(ensure('/var/lib','faolla-booking-active-qualifications'),P.operationId),toolRevision),attempt=directory+'/attempt_'+Date.now()+'_'+randomUUID();fs.mkdirSync(attempt,{mode:0o700});bookingHostSync(directory);
  const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');};
  let stage='before';try{

@@ -555,13 +555,38 @@ export async function archiveOwnedActiveReconciliationOperation(capability,token
 export async function releaseOwnedActiveReconciliationOperation(capability,token){
   await assertOwnedActiveReconciliationHeldLocks(capability,token);
   const {verifyOwnedActiveReconciliationClosure}=await import('./release-toolchain-active-generation-reconciliation.mjs');
-  const closure=await verifyOwnedActiveReconciliationClosure(capability,token),held=heldLocks.get(token);
+  const closure=await verifyOwnedActiveReconciliationClosure(capability,token);
+  return releaseArchivedReplacement(token,closure,'owned-active-reconciliation-completed','owned-active-replacement');
+}
+function releaseArchivedReplacement(token,closure,completionKind,releaseKind){
+  assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);
   const completed=JSON.parse(readOwned(closure.directory+'/reconciliation-completed.json'));
-  if(completed.kind!=='owned-active-reconciliation-completed'||completed.closureSha256!==closure.sha256||completed.publicationAuthority!==false||!held.activeArchive||held.activeArchive.vault!==closure.directory||held.activeArchive.closureSha256!==closure.sha256)fail('active_archive_not_authorized');
+  if(completed.kind!==completionKind||completed.closureSha256!==closure.sha256||completed.archiveSha256!==digest(readOwned(closure.directory+'/operation-archived.json'))||completed.publicationAuthority!==false||!held.activeArchive||held.activeArchive.vault!==closure.directory||held.activeArchive.closureSha256!==closure.sha256)fail('active_archive_not_authorized');
   assertExistingOperationScopeHeld(token);equal(dirIdentity(privateDirectory(held.activeArchive.destination)),held.activeArchive.original,'active_archive_original_changed');
-  privateWrite(closure.directory+'/replacement-release-attempt.json',retentionCanonicalText({kind:'owned-active-replacement-release-intent',closureSha256:closure.sha256,replacement:held.operationIdentity,originalInodeRetained:true,publicationAuthority:false}));
+  privateWrite(closure.directory+'/replacement-release-attempt.json',retentionCanonicalText({kind:releaseKind+'-release-intent',closureSha256:closure.sha256,replacement:held.operationIdentity,originalInodeRetained:true,publicationAuthority:false}));
   assertExistingOperationScopeHeld(token);fs.rmdirSync(held.operation);syncDirectory(path.dirname(held.operation));held.activeScopeReleased=true;assertExistingOperationScopeHeld(token);
-  privateWrite(closure.directory+'/replacement-released.json',retentionCanonicalText({kind:'owned-active-replacement-released',closureSha256:closure.sha256,originalInodeRetained:true,publicationAuthority:false}));
+  const receipt={kind:releaseKind+'-released',closureSha256:closure.sha256,originalInodeRetained:true,publicationAuthority:false};privateWrite(closure.directory+'/replacement-released.json',retentionCanonicalText(receipt));return receipt;
+}
+// Read-only access to OUR real archive transition, not caller-provided JSON.
+export function activeBookingArchiveWitness(token){
+  assertHeldLocks(token);const held=heldLocks.get(token);if(!held.activeArchive)return null;
+  const archive=held.activeArchive;if(archive.vault!=='/var/lib/faolla-booking-active-closures/b49808d6-1950-4cb4-b029-97086873d7a7/'+held.activeWindow.id)fail('active_archive_not_authorized');
+  equal(dirIdentity(privateDirectory(archive.destination)),archive.original,'active_archive_original_changed');
+  const value=structuredClone({...archive,window:held.activeWindow,canonicalOperation:held.operation}),freeze=v=>{if(v&&typeof v==='object'){for(const child of Object.values(v))freeze(child);Object.freeze(v);}return v;};return freeze(value);
+}
+export function assertActiveBookingIncidentHeldWindow(token,window){
+  assertHeldLocks(token);const held=heldLocks.get(token);if(!held.activeWindow||!isDeepStrictEqual(held.activeWindow,window))fail('active_incident_window_mismatch');
+}
+export function assertReleasedActiveBookingScope(token,closureSha256){
+  const held=heldLocks.get(token);if(!held?.activeScopeReleased||held.deployLock!==DEPLOY_LOCK||held.operation!==OPERATION_LOCK||held.activeArchive?.closureSha256!==closureSha256)fail('active_archive_not_authorized');assertExistingOperationScopeHeld(token);
+}
+export async function archiveActiveBookingClosureOperation({lock,toolRevision,window}){
+  assertHeldLocks(lock);const {verifyActiveBookingClosure}=await import('./release-toolchain-active-generation-closure.mjs');
+  const closure=await verifyActiveBookingClosure({lock,toolRevision,window});return archiveOwnedExistingOperation(lock,closure.directory,closure.sha256);
+}
+export async function releaseActiveBookingClosureOperation({lock,toolRevision,window}){
+  assertHeldLocks(lock);const {verifyActiveBookingClosure}=await import('./release-toolchain-active-generation-closure.mjs');
+  const closure=await verifyActiveBookingClosure({lock,toolRevision,window});return releaseArchivedReplacement(lock,closure,'active-incident-reconciliation-completed','active-incident-replacement');
 }
 
 // Physical archive primitive shared with disposable native tests. Deliberately

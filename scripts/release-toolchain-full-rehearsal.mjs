@@ -239,8 +239,8 @@ export const captureActiveToolchainProductionSnapshot=()=>production({connectOnl
 async function runFullToolchainRehearsalProfile(activeProfile){
  const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
  need(directory==='/var/lib/faolla-online-code/'+toolRevision&&/^[a-f0-9]{40}$/.test(toolRevision),'prepared_source');const verifiedSource=inspectPinnedExecutionSource({revision:toolRevision,directory});inspectToolchainNginxProfile(NGINX);
- const snapshot=activeProfile?captureActiveToolchainProductionSnapshot:production;
- const formal=snapshot(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
+ const hostSnapshot=activeProfile?captureActiveToolchainProductionSnapshot:production;
+ const formal=hostSnapshot(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
  const sourceHashes=Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,hash(fs.readFileSync(new URL('./'+f,import.meta.url)))]));
  write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
  const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges;cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
@@ -288,7 +288,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    await stopNginx(nginx,runtime);
    for(const f of [...children].reverse())await stop(f);need(children.every(f=>!alive(f)),'process_leak');
    need(spawnSync('flock',['--nonblock',runtime+'/deploy.lock','/usr/bin/true'],{timeout:2000}).status===0,'kernel_lock_not_released');
-   equal(snapshot(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
+   equal(hostSnapshot(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
     actualDatabase:{name:database,...actual},rowsPreserved:true,optionsRepaired:name!=='controller-death-before-commit',gateClosed:true,target:expected,controllerExit:exit,watchdog:finished,allFixturesStopped:true,completedAt:now()};
    need(receipt.elapsedMs>0&&receipt.elapsedMs<=600000,'actual_window_exceeded');const receiptFile=root+'/cases/'+name+'.json';write(receiptFile,receipt);results.push({name,completed:true,elapsedMs:receipt.elapsedMs,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,receiptFile,receiptSha256:hash(read(receiptFile))});
   }finally{
@@ -302,7 +302,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    });
   }
  }}finally{try{if(isolation)stopOwnedIsolation(isolation);}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
- equal(snapshot(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
+ equal(hostSnapshot(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
  const report={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision,candidate:CANDIDATE,rollback:APPLICATION,productionMutated:false,originalTimerMutated:false,mailEnabled:false,
   postgresServerVersionNum:'150008',postgresSystemIdentifier,allFixturesStopped:true,cases:results,sourceHashes,activationBodySha256:BOOKING_ACTIVATION_BODY_SHA256,
   scope:'shared handoff/watchdog/recovery sequences with real isolated IO; production-specific attesters and certificate validation remain mandatory on the real host',completedAt:now()};

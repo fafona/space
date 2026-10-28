@@ -7,7 +7,7 @@ import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow} from './release-
 import {ACTIVE_INCIDENT_ROOT,ACTIVE_INCIDENT_FILES,inspectActiveBookingIncident} from './release-toolchain-active-generation-incident.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
-import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
+import {assertOnlineRetentionHeldLocks,assertActiveBookingIncidentHeldWindow} from './online-release-retention-writer.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync} from './booking-handoff-host-io.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch');
@@ -51,6 +51,7 @@ function vault({source,destination,pins,assertHeld,binding}){
 
 export async function preserveActiveBookingIncidentEvidence({lock,toolRevision,window}){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
+ assertActiveBookingIncidentHeldWindow(lock,window);
  const current=await inspectActiveBookingIncident({window});
  const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');};
  held();const parent='/var/lib/faolla-booking-active-closures';

@@ -9,7 +9,7 @@ import {createOwnedActiveReconciliationCases,ownedActiveReconciliationScope,obse
 import {withOwnedActiveReconciliationLocks,ownedActiveReconciliationHeldChecker,archiveOwnedActiveReconciliationOperation,releaseOwnedActiveReconciliationOperation,assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {preserveOwnedActiveReconciliationEvidence} from './release-toolchain-active-generation-preservation.mjs';
 import {correctOwnedActiveReconciliationMetadata} from './release-toolchain-active-generation-metadata.mjs';
-import {persistOwnedActiveReconciliationProcesses} from './release-toolchain-active-generation-persistence.mjs';
+import {persistOwnedActiveReconciliationProcesses,verifyOwnedActiveReconciliationPersistence} from './release-toolchain-active-generation-persistence.mjs';
 import {collectOwnedCiPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump,pm2RegistryDigest} from './production-maintenance-pm2-adapter.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
@@ -41,7 +41,7 @@ export async function verifyOwnedActiveReconciliationClosure(capability,lock){
  need(persisted.kind==='active-incident-current-pm2-persistence-completed'&&persisted.receipt.saved===true&&persisted.publicationAuthority===false&&persisted.beforeObservationSha256===sha256(canonicalJson(persistenceBefore))&&persisted.afterObservationSha256===sha256(canonicalJson(persistenceAfter)),'evidence_invalid');
  const {commandLine,...daemon}=captureProcessFact(s.daemon.fact.pid),boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();same(commandLine,s.daemon.commandLine);
  const registry=await inspectPm2Registry(daemon,boot);need(pm2RegistryDigest(registry)===persisted.registrySha256&&await verifyPm2Dump(daemon,boot,registry,persisted.receipt)===true,'operation_unconfirmed');
- assertOwnedActiveReconciliationDelta(persistenceAfter,await observeOwnedActiveReconciliation(capability));held();return{directory,sha256:digest(directory+'/closure-sealed.json')};
+ assertOwnedActiveReconciliationDelta(persistenceAfter,await observeOwnedActiveReconciliation(capability));await verifyOwnedActiveReconciliationPersistence(capability,lock);held();return{directory,sha256:digest(directory+'/closure-sealed.json')};
 }
 export async function runOwnedActiveReconciliationCase(capability){
  const s=ownedActiveReconciliationScope(capability);need(!fs.existsSync(s.directory+'/controller.json'),'attempt_replay_forbidden');
