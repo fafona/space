@@ -5,7 +5,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {BUILD_MEMORY_FLOOR,ToolchainError,assertApplication,assertBuiltArtifact,compareApplication,assertFingerprint,compareFingerprint,compareDatabase,assertBackupBinding,assertFreshEvidence,publicFailure,requireToolchain as need,safeRelativePath} from './release-toolchain-contracts.mjs';
 export function assessToolchainReadiness(expected,observed,{nowMs=Date.now()}={}){
  const checks=[];function check(stage,test){try{test();checks.push({stage,passed:true,code:null});}catch(error){checks.push({stage,passed:false,code:publicFailure(error,{stage}).code});}}
- const sameTool=()=>{need(expected?.tool?.revision===observed?.tool?.revision,'source_changed');compareFingerprint(expected.tool.bundle,observed.tool.bundle,'tool-bundle');};
+ const sameTool=()=>{need(typeof expected?.tool?.revision==='string'&&/^[a-f0-9]{40}$/.test(expected.tool.revision)&&expected.tool.revision===observed?.tool?.revision,'source_changed');compareFingerprint(expected.tool.bundle,observed.tool.bundle,'tool-bundle');};
  check('source',()=>{assertApplication(expected.application);compareApplication(expected.application,observed.application);
   need(Array.isArray(expected.scope)&&Array.isArray(observed.scope),'scope_changed');for(const v of [...expected.scope,...observed.scope])safeRelativePath(v);
   need(new Set(expected.scope).size===expected.scope.length&&new Set(observed.scope).size===observed.scope.length&&isDeepStrictEqual([...expected.scope].sort(),[...observed.scope].sort()),'scope_changed');});

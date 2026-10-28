@@ -27,6 +27,13 @@ test('an invalid existing build cannot silently become a request to overwrite/re
  const f=fixture();f.observed.build.application.dependencies=fingerprint('application-dependencies','changed');const r=assessToolchainReadiness(f.expected,f.observed,{nowMs:time});
  assert.equal(r.ready,false);assert.equal(r.buildRequired,false);assert.equal(r.checks.find(v=>v.stage==='candidate').code,'build_binding_mismatch');
 });
+test('matching malformed tool revisions are never accepted as a valid source binding',()=>{
+ for(const revision of ['', 'main', 'b'.repeat(39), 'B'.repeat(40), 123, null]){
+  const f=fixture();f.expected.tool.revision=revision;f.observed.tool.revision=revision;
+  const r=assessToolchainReadiness(f.expected,f.observed,{nowMs:time});assert.equal(r.ready,false);
+  assert.equal(r.checks.find(v=>v.stage==='bundle').code,'source_changed');
+ }
+});
 test('node major, architecture and platform are explicit capabilities; kernel major is not a blind denylist',()=>{
  for(const patch of [{nodeMajor:19},{nodeMajor:99},{platform:'win32'},{architecture:'arm64'}]){const f=fixture();Object.assign(f.observed.host,patch);assert.equal(assessToolchainReadiness(f.expected,f.observed,{nowMs:time}).checks.find(v=>v.stage==='environment').code,'unsupported_runtime');}
  const f=fixture();f.observed.host.kernel='7.0.0';assert.equal(assessToolchainReadiness(f.expected,f.observed,{nowMs:time}).ready,true);
