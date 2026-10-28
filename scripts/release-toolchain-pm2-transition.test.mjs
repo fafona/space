@@ -1,5 +1,5 @@
 import test from'node:test';import assert from'node:assert/strict';
-import{assertManagedPauseEnvironmentTransition,assertPm2TerminationEvidence,capturePm2TerminationAnchor,stablePm2RegistryRow}from'./release-toolchain-pm2-transition.mjs';
+import{assertManagedPauseEnvironmentTransition,assertPm2TerminationEvidence,capturePm2TerminationAnchor,stablePm2RegistryRow,requirePm2RegistryObservation}from'./release-toolchain-pm2-transition.mjs';
 import{assertProvenBookingLegacyTransition}from'./release-toolchain-managed-pause.mjs';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as framework,BOOKING_HANDOFF_LEGACY_DIRECTORY as cwd,assertBookingHandoffWindow,assertBookingLegacyRuntimeEnvironmentTransition}from'./booking-handoff-policy.mjs';
 const h='a'.repeat(64),logFile='/root/.pm2/pm2.log';
@@ -20,4 +20,10 @@ test('live CPU/RSS/heap telemetry is not configuration; every other raw manager 
  assert.deepEqual(stablePm2RegistryRow(after),stablePm2RegistryRow(original));assert.deepEqual(original.pm2_env.axm_monitor,{});
  for(const mutate of [r=>r.pid++,r=>r.pm2_env.restart_time++,r=>r.pm2_env.env.KEEP='changed',r=>r.pm2_env.pm_cwd='/other',r=>r.extra='unexpected']){const changed=structuredClone(after);mutate(changed);assert.notDeepEqual(stablePm2RegistryRow(changed),stablePm2RegistryRow(original));}
  assert.throws(()=>stablePm2RegistryRow({...original,monit:{cpu:0,memory:1,extra:true}}));
+});
+test('connect-only inspect envelope is unwrapped to the validated ARRAY required by dump persistence',()=>{
+ const row={name:'owned-fixture',pid:20,pm_id:0,pm2_env:{name:'owned-fixture',pm_id:0,status:'online',created_at:123,pm_uptime:234,restart_time:0,pm_cwd:'/owned/app',pm_exec_path:'/owned/app/entry.cjs',args:[],node_args:[],exec_mode:'fork_mode',exec_interpreter:'/usr/bin/node',watch:false,cron_restart:null,autorestart:true,FAOLLA_BACKGROUND_JOBS_PAUSED:null,nonce:null,envDigest:null}},envelope={version:1,pm2Version:'6.0.14',peerVerified:true,registry:[row]},before=structuredClone(envelope),rows=requirePm2RegistryObservation(envelope);
+ assert.ok(Array.isArray(rows));assert.deepEqual(rows,[row]);assert.notEqual(rows,envelope.registry);assert.deepEqual(envelope,before);
+ for(const invalid of [[row],{...envelope,registry:envelope},{...envelope,registry:[]},{...envelope,registry:[{...row,pid:'20'}]},{...envelope,peerVerified:false},{...envelope,pm2Version:'6.0.15'},{...envelope,extra:true}])assert.throws(()=>requirePm2RegistryObservation(invalid));
+ let invoked=false;const getter={...envelope};Object.defineProperty(getter,'registry',{enumerable:true,get(){invoked=true;return[row];}});assert.throws(()=>requirePm2RegistryObservation(getter));assert.equal(invoked,false);assert.throws(()=>requirePm2RegistryObservation(new Proxy(envelope,{})));
 });

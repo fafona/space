@@ -3,8 +3,9 @@
 // A 130 result needs an independently read, append-bound SIGINT log witness.
 import * as fs from 'node:fs';
 import path from 'node:path';
-import {isDeepStrictEqual} from 'node:util';
+import {isDeepStrictEqual,types} from 'node:util';
 import {createHash} from 'node:crypto';
+import {validatePm2Registry} from './production-maintenance-pm2-adapter.mjs';
 const need=(v,c)=>{if(!v)throw Error('booking_handoff_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
 const hash=v=>createHash('sha256').update(v).digest('hex'),hex=/^[a-f0-9]{64}$/;
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -13,6 +14,14 @@ const iso=s=>{const t=Date.parse(s);need(typeof s==='string'&&Number.isFinite(t)
 const positive=v=>Number.isSafeInteger(v)&&v>0;
 const identity=s=>Object.fromEntries(['dev','ino','uid','mode','nlink'].map(k=>[k,s[k]]));
 const LIMIT=64*1024**2;
+// The connect-only Python inspector returns an envelope, whereas persistence
+// accepts only its validated registry ARRAY. Never pass the envelope itself.
+export function requirePm2RegistryObservation(value){
+ need(object(value)&&!types.isProxy(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value)),'registry_observation');
+ const descriptors=Object.getOwnPropertyDescriptors(value);keys(descriptors,['version','pm2Version','peerVerified','registry'],'registry_observation');
+ need(Object.values(descriptors).every(d=>d.enumerable&&Object.hasOwn(d,'value'))&&descriptors.version.value===1&&descriptors.pm2Version.value==='6.0.14'&&descriptors.peerVerified.value===true,'registry_observation');
+ const rows=validatePm2Registry(descriptors.registry.value);need(rows.length>0,'registry_observation');return rows;
+}
 // A live monitor refresh changes CPU, RSS and heap gauges without a restart or
 // configuration mutation. Exclude only those two explicitly named telemetry
 // containers; keep every identity, environment and other manager field exact.

@@ -6,7 +6,7 @@ import * as fs from'node:fs';import path from'node:path';import net from'node:ne
 import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{randomBytes,randomUUID,createHash}from'node:crypto';import assert from'node:assert/strict';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,assertBookingHandoffWindow}from'./booking-handoff-policy.mjs';
 import{normalizeRetirementProcess,parseRetirementSockets}from'./online-release-retirement.mjs';import{bookingLegacyRpcExpected}from'./booking-handoff-legacy.mjs';
-import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow}from'./release-toolchain-pm2-transition.mjs';
+import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow,requirePm2RegistryObservation}from'./release-toolchain-pm2-transition.mjs';
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
@@ -121,7 +121,7 @@ try{
  // Reuse the existing connect-only dump implementation without changing its
  // guards or RPC allowlist. Persistence must not boot a daemon or restart apps.
  stage='actual-connect-only-dump-persistence';
- const dumpRequest={daemon:daemonPeer,root,socket:home+'/rpc.sock'},dumpRegistry=python({...dumpRequest,action:'dump-inspect'}),dumpTarget=python({...dumpRequest,action:'dump-capture'});
+ const dumpRequest={daemon:daemonPeer,root,socket:home+'/rpc.sock'},dumpRegistry=requirePm2RegistryObservation(python({...dumpRequest,action:'dump-inspect'})),dumpTarget=python({...dumpRequest,action:'dump-capture'});
  const dumpReceipt=python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget});
  need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===2,'dump_receipt');
  need(python({...dumpRequest,action:'dump-verify',registry:dumpRegistry,proof:dumpReceipt})===true,'dump_verification');
