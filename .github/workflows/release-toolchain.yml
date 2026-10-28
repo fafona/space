@@ -8,7 +8,7 @@ on:
       - 'scripts/booking-handoff-policy.mjs'
       - '.github/workflows/release-toolchain.yml'
   push:
-    branches: [feat/release-toolchain-v2-20261028]
+    branches: [main, master]
 
 permissions:
   contents: read

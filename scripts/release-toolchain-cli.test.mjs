@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {parseToolchainArguments,toolchainMain} from './release-toolchain.mjs';import {parseSyntheticHttp,rehearseToolchainIngress,remainingOwnedLabProcesses} from './release-toolchain-rehearsal.mjs';
+import {parseToolchainArguments,toolchainMain} from './release-toolchain.mjs';import {parseSyntheticHttp,rehearseToolchainIngress,remainingOwnedLabProcesses,priorLabProcessIdentities} from './release-toolchain-rehearsal.mjs';
 test('CLI exposes doctor, verification, journal inspection and isolated rehearsal, no production mutator',()=>{
  assert.deepEqual(parseToolchainArguments(['doctor']),{command:'host'});assert.equal(parseToolchainArguments(['rehearse','/usr/sbin/nginx','3']).runs,3);
  for(const args of [[],['apply'],['deploy','main'],['doctor','--force','x'],['rehearse','/bin/sh','--skip'],['rehearse','/usr/sbin/nginx','0'],['rehearse','/usr/sbin/nginx','11'],['rehearse','/usr/sbin/nginx','3garbage']])assert.throws(()=>parseToolchainArguments(args));
@@ -23,4 +23,12 @@ test('unreadable SAME-UID ownership remains a blocker; only vanished processes c
  const context={directory:'/tmp/new-owned-case',binary:'/usr/sbin/nginx',uid:1001,pids:['2'],ownerOf:()=>1001};
  assert.throws(()=>remainingOwnedLabProcesses({...context,readFact:()=>{throw Object.assign(Error('denied'),{code:'EACCES'});}}));
  assert.deepEqual(remainingOwnedLabProcesses({...context,readFact:()=>{throw Object.assign(Error('gone'),{code:'ENOENT'});}}),[]);
+});
+test('pre-fixture birth identities exclude already-existing protected processes, never a recycled PID',()=>{
+ const prior=priorLabProcessIdentities({uid:1001,pids:['1','2'],ownerOf:pid=>pid===1?0:1001,startTicks:()=> '100'});assert.deepEqual([...prior],[[2,'100']]);
+ const context={directory:'/tmp/case',binary:'/usr/sbin/nginx',uid:1001,pids:['2'],ownerOf:()=>1001,priorProcesses:prior,
+  readFact:()=>{throw Object.assign(Error('protected'),{code:'EACCES'});}};
+ assert.deepEqual(remainingOwnedLabProcesses({...context,startTicks:()=> '100'}),[]);
+ assert.throws(()=>remainingOwnedLabProcesses({...context,startTicks:()=> '200'}));
+ assert.deepEqual(remainingOwnedLabProcesses({...context,startTicks:()=> '200',readFact:()=>({pid:2,state:'S',cwd:'/tmp/case',executable:'/usr/sbin/nginx'})}),[2]);
 });

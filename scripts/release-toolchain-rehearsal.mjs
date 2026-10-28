@@ -10,9 +10,17 @@ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const childEnv=()=>({PATH:'/usr/sbin:/usr/bin:/sbin:/bin',HOME:os.tmpdir(),LANG:'C.UTF-8',LC_ALL:'C.UTF-8',NODE_OPTIONS:'',NODE_PATH:''});
 function procFact(pid){const root='/proc/'+pid,text=fs.readFileSync(root+'/stat','utf8'),parts=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);
  return {pid,state:parts[0],startTicks:parts[19],uid:fs.lstatSync(root).uid,executable:parts[0]==='Z'?null:fs.realpathSync(root+'/exe'),cwd:parts[0]==='Z'?null:fs.realpathSync(root+'/cwd')};}
-export function remainingOwnedLabProcesses({directory,binary,uid=process.getuid(),pids=fs.readdirSync('/proc'),ownerOf=pid=>fs.lstatSync('/proc/'+pid).uid,readFact=procFact}){
+const processStartTicks=pid=>{const s=fs.readFileSync('/proc/'+pid+'/stat','utf8');return s.slice(s.lastIndexOf(')')+2).trim().split(/\s+/)[19];};
+export function priorLabProcessIdentities({uid=process.getuid(),pids=fs.readdirSync('/proc'),ownerOf=pid=>fs.lstatSync('/proc/'+pid).uid,startTicks=processStartTicks}={}){
+ const result=new Map();for(const value of pids.filter(v=>/^[1-9][0-9]*$/.test(String(v))))try{const pid=Number(value);if(ownerOf(pid)===uid){const ticks=startTicks(pid);need(/^[0-9]+$/.test(ticks),'observation_mismatch');result.set(pid,ticks);}}
+ catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}return result;
+}
+export function remainingOwnedLabProcesses({directory,binary,uid=process.getuid(),pids=fs.readdirSync('/proc'),ownerOf=pid=>fs.lstatSync('/proc/'+pid).uid,readFact=procFact,priorProcesses=new Map(),startTicks=processStartTicks}){
  const remaining=[];for(const value of pids.filter(v=>/^[1-9][0-9]*$/.test(String(v))))try{
   const pid=Number(value);if(ownerOf(pid)!==uid)continue; // Foreign UID is never ours and may correctly deny /exe or /cwd reads.
+  // PID AND birth ticks prove this process predates the fixture. Never inspect
+  // or signal its protected details. PID reuse is NOT this exemption.
+  if(priorProcesses.has(pid)&&startTicks(pid)===priorProcesses.get(pid))continue;
   const f=readFact(pid);if(f.state!=='Z'&&f.cwd===directory&&f.executable===binary)remaining.push(f.pid);
  }catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}return remaining;
 }
@@ -39,6 +47,7 @@ export function parseSyntheticHttp(text){
 async function caseRun(profile,parent,index,{fault='none',signal}={}){
  need(!signal?.aborted,'operation_unconfirmed');
  const binary=profile.resolvedBinary;
+ const priorProcesses=priorLabProcessIdentities();
  const directory=fs.mkdtempSync(path.join(parent,'case-'+index+'-'));fs.chmodSync(directory,0o700);const context={binary,directory},events=[],workers=new Map();
  const sockets=new Set(),upstream=createServer((req,res)=>{req.resume();res.writeHead(200,{'Content-Type':'application/json',Connection:'close'});res.end('{"fixture":true}');});
  upstream.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
@@ -98,7 +107,7 @@ location / {proxy_pass http://127.0.0.1:${upstreamPort};proxy_set_header Connect
   await new Promise(resolve=>upstream.close(resolve));
   // Do not certify cleanup from only our saved PID list if a new worker was
   // orphaned before registration. Observation never grants authority to kill it.
-  let remaining;try{remaining=remainingOwnedLabProcesses({directory,binary});}catch(e){write('cleanup-observation-error.json',{schemaVersion:1,kind:'release-toolchain-cleanup-observation-error',phase,
+  let remaining;try{remaining=remainingOwnedLabProcesses({directory,binary,priorProcesses});}catch(e){write('cleanup-observation-error.json',{schemaVersion:1,kind:'release-toolchain-cleanup-observation-error',phase,
    error:publicFailure(e,{stage:'rehearsal'}),errno:['EACCES','EPERM','ENOENT','ESRCH'].includes(e.code)?e.code:null,publicationAuthority:false});throw e;}
   need(failures.length===0&&remaining.length===0&&[master,...workers.values()].filter(Boolean).every(f=>!ownedAlive(f,context)),'cleanup_unconfirmed');
  }

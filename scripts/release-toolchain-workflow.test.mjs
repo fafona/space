@@ -8,4 +8,5 @@ test('dedicated safety job verifies a complete committed bundle before actual ow
 test('CI fixture has no server credentials, production mutation, skipped tests or accepted failed commands',()=>{
  assert.doesNotMatch(workflow,/secrets\.|ssh |scp |pm2 |continue-on-error|\|\| true|--force|--skip|workflow_dispatch/);
  assert.match(workflow,/pull_request:/);assert.match(workflow,/\.github\/workflows\/release-toolchain\.yml/);
+ assert.match(workflow,/branches: \[main, master\]/);
 });
