@@ -3,6 +3,7 @@ import {RECOVERED_BOOKING_ATTEMPT as P,RECOVERED_BOOKING_STATIC_NAMES} from './r
 import {assertRecoveredBookingProof,assertRecoveredCandidateMetadata,executeRecoveredCandidateTransition,executeRecoveredBookingArchive,archiveRecoveredBookingAttempt} from './release-toolchain-recovered-attempt.mjs';
 import {bookingWatchdogLeaseDigest} from './booking-handoff-watchdog.mjs';
 import {sha256} from './release-toolchain-contracts.mjs';
+import {spawnSync} from 'node:child_process';
 const C='f274ad615550c83717aa7af2ad32339608e6f8aa',B='52f602c0734284d81a19f4cdf9cdbf3766aa1834';
 function proof(){const window={id:P.operationId,startedAt:'2026-10-28T15:10:59.000Z',deadlineAt:'2026-10-28T15:20:59.000Z'},h='a'.repeat(64),
  lease={schemaVersion:1,kind:'booking-handoff-independent-watchdog',candidate:C,toolRevision:P.priorTool,window,
@@ -42,6 +43,12 @@ test('archive-only pending adapter verifies the actual recovered incident; norma
  assert.match(normal,/'7ba13be0b859c918a71481b469596d6f2ef430ba61b1fc1946471812fb5651d3'/);assert.doesNotMatch(normal,/failedSha256|RecoveredBookingAttempt/);
  const special=src.slice(src.indexOf('export async function assertReviewedRecoveredBookingNoPending'));for(const v of ['reviewedBookingExecution(toolRevision)','await inspectRecoveredBookingAttempt()','collectBookingReadyRuntimeCohort','bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair)'])assert.ok(special.includes(v),v);
  const release=readFileSync(new URL('./release-toolchain-release.mjs',import.meta.url),'utf8');assert.match(release,/if\(action==='archive-recovered'\)\{await assertReviewedRecoveredBookingNoPending/);assert.match(release,/archiveRecoveredBookingAttempt\(.*?\);assertReviewedBookingNoPending\(toolRevision\)/);
+});
+test('every affected production entry can initialize independently without an ESM cycle',()=>{
+ for(const name of ['booking-handoff-activation.mjs','booking-handoff-host.mjs','booking-handoff-rule-repair.mjs','booking-handoff-pending.mjs','release-toolchain-recovered-attempt.mjs','release-toolchain-release.mjs']){
+  const uri=new URL('./'+name,import.meta.url).href,r=spawnSync(process.execPath,['--input-type=module','--eval','await import('+JSON.stringify(uri)+')'],{encoding:'utf8',timeout:15000,maxBuffer:262144,windowsHide:true});
+  assert.equal(r.error,undefined,name);assert.equal(r.status,0,name+': '+r.stderr);assert.equal(r.stdout,'',name);
+ }
 });
 test('production archiver requires actual reviewed authority and held locks, never caller green JSON',async()=>{await assert.rejects(archiveRecoveredBookingAttempt({lock:{verified:true},toolRevision:'a'.repeat(40),qualificationSha256:'b'.repeat(64)}));});
 test('actual archiver is fixed-path, exclusive, ownership/byte checked and durable; normal admission mandates a completed archive',()=>{

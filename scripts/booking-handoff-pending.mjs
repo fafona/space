@@ -6,7 +6,6 @@ import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
-import {inspectRecoveredBookingAttempt} from './release-toolchain-recovered-attempt.mjs';
 import {RECOVERED_BOOKING_ATTEMPT} from './release-toolchain-recovered-contract.mjs';
 import {collectBookingReadyRuntimeCohort} from './booking-ready-runtime.mjs';
 import {observeBookingBuiltSmokePair} from './booking-built-smoke-repair.mjs';
@@ -224,6 +223,9 @@ export function assertReviewedBookingNoPending(toolRevision){
 export async function assertReviewedRecoveredBookingNoPending(toolRevision){
   if(arguments.length!==1||!reviewedBookingExecution(toolRevision))fail('booking_reviewed_source_required');
   assertBookingBasePendingGuardSource(fs.readFileSync(new URL('./prepare-online-release-tool.mjs',import.meta.url),'utf8'));
+  // Load only inside this archive-only entry: the recovery verifier itself uses
+  // the host controller, whose preflight imports this pending module.
+  const {inspectRecoveredBookingAttempt}=await import('./release-toolchain-recovered-attempt.mjs');
   await inspectRecoveredBookingAttempt();
   const cohort=collectBookingReadyRuntimeCohort({toolRevision}),C=cohort.active.target,M=RECOVERED_BOOKING_ATTEMPT.candidateMetadata;
   const expected={[C]:M.failedSha256,[APPLICATION]:M.rollbackSha256},pair={preserved:{}};
