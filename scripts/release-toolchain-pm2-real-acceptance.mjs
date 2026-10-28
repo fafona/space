@@ -83,7 +83,12 @@ try{
  stage='negative-proof-cases';for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterPmDerived.exitCode=1,v=>v.legacyAfter.restartCount++,v=>v.afterConfigured.RESEND_API_KEY='forbidden']){const changed=structuredClone(value);mutate(changed);assert.throws(()=>assertManagedPauseEnvironmentTransition(changed,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'}));}
  const stable=registry();python(request,{reject:true});assert.deepEqual(registry(),stable);
  seal('transition-verified.json',{value,termination,sharedProductionFraming:true,realNext:true,realPm2:true,staleAttemptRefusedWithoutSend:true,unrelatedProcessUnchanged:true});passed=true;
-}catch(e){seal('failure.json',{stage,diagnostic:stageFailureDiagnostic(e,{stage:'switch',toolRevision:revision,knownFiles:['release-toolchain-pm2-real-acceptance.mjs','release-toolchain-pm2-transition.mjs']}),detailsRedacted:true});throw e;
+}catch(e){
+ // Synthetic fixture only: neither this isolated HOME nor these two generated
+ // programs inherit server/CI credentials. Keep actual startup error evidence.
+ const logs={};for(const name of ['pm2.log','logs/eq-next-error.log','logs/eq-next-out.log']){const file=home+'/'+name;if(!fs.existsSync(file))continue;const s=fs.lstatSync(file);need(s.isFile()&&!s.isSymbolicLink()&&s.uid===0&&s.nlink===1&&fs.realpathSync(file)===file,'diagnostic_log');const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const b=Buffer.alloc(Math.min(s.size,16384));fs.readSync(fd,b,0,b.length,Math.max(0,s.size-b.length));logs[name]=b.toString('utf8');}finally{fs.closeSync(fd);}}
+ seal('fixture-logs.json',{kind:'ci-only-synthetic-fixture-logs',logs,syntheticInputsOnly:true});
+ seal('failure.json',{stage,diagnostic:stageFailureDiagnostic(e,{stage:'switch',toolRevision:revision,knownFiles:['release-toolchain-pm2-real-acceptance.mjs','release-toolchain-pm2-transition.mjs']}),detailsRedacted:true});throw e;
 }finally{
  // No CLI cleanup (which could auto-boot a missing daemon). Signal only the
  // exact owned identities, then retain every fixture and report for inspection.

@@ -19,6 +19,7 @@ import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-po
 import {assertOnlineToolOwnedPath,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {BOOKING_PROTECTED_SLUGS} from './booking-publication-database.mjs';
 import {RECOVERY_STEPS,recoveryFailureDiagnostic} from './release-toolchain-recovery-diagnostics.mjs';
+import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 
 const RELEASE='/var/lib/faolla-online-release',CONTAINER='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416';
 const hash=v=>createHash('sha256').update(v).digest('hex'),need=(v,c)=>{if(!v)throw Error('booking_recovery_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
@@ -170,15 +171,7 @@ function productionOperations(lease){
         run('/www/server/nginx/sbin/nginx',['-t']);run('/www/server/nginx/sbin/nginx',['-s','reload']);}
       need(read(BOOKING_INGRESS_VHOST,false)===gate.beforeText,'ingress_readback');
     },
-    publicProof:async phase=>{
-      const target=phase==='baseline'?BASELINE:APPLICATION,proof=[];
-      for(const origin of ['https://faolla.com','https://launch.faolla.com']){
-        let confirmed=false;for(let i=0;i<10&&!confirmed;i++){
-          verify();try{const r=await fetch(origin+'/api/app-web-version?bookingRecovery='+lease.window.id,{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(1000)}),v=await r.json();confirmed=r.status===200&&v.ok===true&&v.buildId===target;}catch{/* read-only probe only */}
-          if(!confirmed)await new Promise(r=>setTimeout(r,100));
-        }need(confirmed,'public_not_recovered');proof.push({origin,status:200,buildId:target});
-      }return proof;
-    },
+    publicProof:phase=>proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:phase==='baseline'?BASELINE:APPLICATION,operationId:lease.window.id,verify,deadlineAtMs:Date.now()+30000}),
     publicationMetadata:phase=>{
       verify();const before=read(RELEASE+'/active.json'),actual=JSON.parse(before),baseline=JSON.parse(preflight.activeFileText);
       const allowed=[baseline,plan.primary,plan.rollback];need(allowed.some(a=>isDeepStrictEqual(location(actual),location(a)))&&Object.keys(actual).length===4,'active_file_not_owned');

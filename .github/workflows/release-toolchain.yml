@@ -85,10 +85,17 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-* /var/lib/faolla-eq-*/reports)
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-*)
           if ((${#roots[@]})); then
             sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
+          fi
+          # Expand only the public /var/lib entry names as runner. Traversal of
+          # private 0700 roots happens under sudo, not in a non-root shell glob.
+          eq_roots=(/var/lib/faolla-eq-*)
+          if ((${#eq_roots[@]})); then
+            sudo find "${eq_roots[@]}" -maxdepth 2 -type f -path '/var/lib/faolla-eq-*/reports/*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-equivalence-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-equivalence-evidence.tar"
           fi
       - name: Preserve Synthetic Reports
         if: always()
@@ -98,4 +105,5 @@ jobs:
           path: |
             /tmp/faolla-release-toolchain-lab-*/**/*.json
             ${{ runner.temp }}/release-toolchain-native-evidence.tar
+            ${{ runner.temp }}/release-toolchain-equivalence-evidence.tar
           if-no-files-found: warn

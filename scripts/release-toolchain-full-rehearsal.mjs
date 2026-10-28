@@ -26,6 +26,7 @@ import {createOwnedIsolation,loadOwnedIsolation,isolatedPgArguments,stopOwnedIso
 import {inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {inspectToolchainNginxProfile} from './release-toolchain-profiles.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
+import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
@@ -146,7 +147,7 @@ async function watchdog(c){
     legacyState:()=>({paused:legacy.paused,originalIntact:!legacy.paused&&legacy.restarts===0&&alive(legacy.process)}),begin:a=>write(c.directory+'/recovery-attempt.json',a),
     disableBookingWorker:()=>need(!fs.existsSync(c.directory+'/worker-enabled.json'),'unexpected_completed_gate'),pauseLegacyOnce:()=>pauseFixture(c),
     route:phase=>reload(c,phase==='baseline'?'baseline':'rollback',true),unfence:()=>reload(c,database.active?'rollback':'baseline',false),
-    publicProof:async phase=>{const target=phase==='baseline'?BASELINE:APPLICATION;await until(async()=>{const p=await probe(c);return p.status===200&&p.value.buildId===target;});return [{status:200,buildId:target}];},
+    publicProof:phase=>proveRecoveryTargets({origins:['http://127.0.0.1:'+c.ports.ingress],target:phase==='baseline'?BASELINE:APPLICATION,operationId:c.window.id,verify:()=>{ownedCase(c.directory);assertFd(c);need(!alive(parent),'controller_alive');},deadlineAtMs:Date.now()+5000}),
     publicationMetadata:phase=>write(c.directory+'/recovered-publication.json',{phase,at:now()}),persistProcesses:()=>write(c.directory+'/recovered-processes.json',{legacy:json(c.directory+'/legacy.json'),at:now()}),
     complete:r=>write(c.directory+'/recovery.json',r),
    },{window:c.window});return receipt;

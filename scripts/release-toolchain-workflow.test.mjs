@@ -17,6 +17,9 @@ test('required safety check includes actual pinned Next/PM2 and the unchanged sh
  assert.ok(source.includes('!ANCHORS.some(f=>fs.existsSync(f))'));
  assert.match(source,/stage='real-next-build';run\([^\n]+120000,release\)/);
  assert.ok(source.includes('ci-only-synthetic-command-failure'));
+ assert.ok(workflow.includes('eq_roots=(/var/lib/faolla-eq-*)'));
+ assert.ok(workflow.includes('sudo find "${eq_roots[@]}" -maxdepth 2'));
+ assert.doesNotMatch(workflow,/roots=\([^\n]*faolla-eq-\*\/reports/);
 });
 test('CI fixture has no server credentials, production mutation, skipped tests or accepted failed commands',()=>{
  assert.doesNotMatch(workflow,/secrets\.|ssh |scp |pm2 |continue-on-error|\|\| true|--force|--skip|workflow_dispatch/);
