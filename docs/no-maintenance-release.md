@@ -91,6 +91,16 @@ receipt linking the actual journal head and admission-file hash; it is evidence,
 not a replay/continuation capability. A failed attempt is never overwritten or
 reused by a later source revision.
 
+The reviewed booking profile also recognizes exactly one existing data link:
+the retained legacy release's `.runtime` to
+`/www/wwwroot/merchant-space.shared/.runtime`. The link and its parent/target
+ownership and identities must match before and after each read; the resolved
+file still passes the unchanged strict file reader. Other links and legacy
+callers remain refused. Full cache JSON, saved-row hashes and automation checks
+remain exact; no record reordering, timestamp ignoring, normalization or data
+write is added. Private stage failures retain only known source locations and
+a hash of exception text, never arbitrary messages, stacks or credentials.
+
 - `node scripts/release-toolchain.mjs doctor` reports this machine's bounded
   host metadata. It does not mistake the workstation for the server or claim
   that release evidence has been checked.

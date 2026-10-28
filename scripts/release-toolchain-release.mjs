@@ -18,12 +18,15 @@ import {collectBookingReadyRuntimeCohort,bookingReadyRawProcesses} from './booki
 import {createBookingHandoffHostOperations,executeBookingHandoffHost} from './booking-handoff-host.mjs';
 import {inspectBookingHandoffPreflight} from './booking-handoff-execution.mjs';
 import {assertBookingWatchdogControllerArguments} from './booking-handoff-watchdog.mjs';
+import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
+import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
 import {bookingHostRead,bookingHostWriteOnce} from './booking-handoff-host-io.mjs';
 const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url))),toolRevision=path.basename(directory),ROOT='/var/lib/faolla-booking-handoff/'+C;
 let reportingStage='source',reportingArtifacts;
 const seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n'),read=file=>JSON.parse(bookingHostRead(file));
 const same=(a,b)=>need(canonicalJson(a)===canonicalJson(b),'observation_mismatch');
+function recordStageFailure(error,stage){if(!reportingArtifacts)return;try{const file=reportingArtifacts+'/failure-'+stage+'.json';if(!fs.existsSync(file))seal(file,{...stageFailureDiagnostic(error,{stage,toolRevision,knownFiles:FULL_REHEARSAL_SOURCES}),at:new Date().toISOString()});}catch{console.error('release_toolchain_private_diagnostic_unconfirmed');}}
 function invocation(){need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(toolRevision)&&directory==='/var/lib/faolla-online-code/'+toolRevision&&process.cwd()===directory,'unsupported_runtime');}
 function privateChild(parent,name){ownedReleasePath(parent,{directory:true});const child=parent+'/'+name;fs.mkdirSync(child,{mode:0o700});return child;}
 function ensurePrivate(parent,name){const child=parent+'/'+name;if(!fs.existsSync(child))privateChild(parent,name);ownedReleasePath(child,{directory:true,privateMode:true});return child;}
@@ -72,7 +75,7 @@ async function publish(lock,authority,{publication=true}={}){
  const cohort=collectBookingReadyRuntimeCohort({toolRevision}),worker=cohort.processes.find(p=>p.name==='merchant-space-booking-atomic-'+C.slice(0,12));need(worker?.executable===directory+'/scripts/booking-atomic-worker.mjs','source_changed');
  const parent=ensurePrivate('/var/lib','faolla-release-toolchain-runs'),binding=toolchainRunBinding({profile:'booking-handoff',application:authority.application,toolRevision,toolInventorySha256:authority.tool.inventorySha256}),run=createToolchainRun(parent,binding),artifacts=privateChild(ensurePrivate(ROOT,'toolchain-admission'),Date.now()+'-'+randomUUID());
  reportingArtifacts=artifacts;
- const stage=(name,execute,verify=v=>v)=>{reportingStage=name;return executeJournaledStage(run,name,{binding,observe:()=>fingerprint('evidence',{toolRevision,name},'canonical-json-v1'),execute,verify:async value=>fingerprint('evidence',await verify(value),'canonical-json-v1')});};
+ const stage=async(name,execute,verify=v=>v)=>{reportingStage=name;try{return await executeJournaledStage(run,name,{binding,observe:()=>fingerprint('evidence',{toolRevision,name},'canonical-json-v1'),execute,verify:async value=>fingerprint('evidence',await verify(value),'canonical-json-v1')});}catch(error){recordStageFailure(error,name);throw error;}};
  let result;return (publication?executeCanonicalPublication:executeCanonicalValidation)({
   source:()=>stage('source',()=>{reviewedBookingExecution(toolRevision);return authority.application;}),bundle:()=>stage('bundle',()=>authority.tool),
   environment:()=>stage('environment',()=>{const h=localHostObservation(directory);need(h.platform==='linux'&&h.architecture==='x64'&&h.nodeMajor===20&&h.availableDiskBytes>=1024**3,'unsupported_runtime');return h;}),
@@ -91,4 +94,4 @@ async function main(){invocation();const action=assertCanonicalReleaseCommand(pr
   if(action!=='prepare-worker')return publish(lock,authority,{publication:action==='publish'});reportingStage='candidate';assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
  }));
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(result=>console.log(canonicalJson(result)),error=>{console.error(canonicalJson({...publicFailure(error,{stage:reportingStage}),...(reportingArtifacts?{evidenceDirectory:reportingArtifacts}:{})}));process.exitCode=1;});
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(result=>console.log(canonicalJson(result)),error=>{recordStageFailure(error,reportingStage);console.error(canonicalJson({...publicFailure(error,{stage:reportingStage}),...(reportingArtifacts?{evidenceDirectory:reportingArtifacts}:{})}));process.exitCode=1;});
