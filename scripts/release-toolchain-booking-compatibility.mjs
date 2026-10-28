@@ -28,7 +28,7 @@ select encode(sha256(convert_to(jsonb_build_object(
  )::text,'UTF8')),'hex');rollback;`;
 export const bookingDefaultPrivilegesReadSql=`begin read only;set local statement_timeout='8s';select jsonb_agg(jsonb_build_object('scope',x.scope,'kind',x.kind,'acl',
  (select coalesce(jsonb_agg(jsonb_build_object('grantee',case when a.grantee=0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end,'grantor',pg_get_userbyid(a.grantor),'privilege',a.privilege_type,'grantable',a.is_grantable) order by a.grantee,a.privilege_type),'[]'::jsonb)
- from aclexplode(case when x.scope='global' then coalesce(d.defaclacl,acldefault(x.code,'supabase_admin'::regrole)) else coalesce(d.defaclacl,'{}'::aclitem[]) end) a)) order by x.scope,x.kind)
+ from aclexplode(case when x.scope='global' then coalesce(d.defaclacl,acldefault(x.code,'supabase_admin'::regrole)) else d.defaclacl end) a)) order by x.scope,x.kind)
  from (values('global','tables','r'::"char",0::oid),('global','functions','f'::"char",0::oid),('public','tables','r'::"char",'public'::regnamespace::oid),('public','functions','f'::"char",'public'::regnamespace::oid)) x(scope,kind,code,namespace)
  left join pg_default_acl d on d.defaclrole='supabase_admin'::regrole and d.defaclnamespace=x.namespace and d.defaclobjtype=x.code;rollback;`;
 export function isolatedBookingDefaultPrivilegesSql(value){

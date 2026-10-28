@@ -5,6 +5,9 @@ test('formal compatibility uses only read-only projections; only the exact alrea
  assert.match(sql,/not\(s\.nspname='public' and c\.relname in/);assert.match(sql,/not\(s\.nspname='public' and p\.proname in/);
  for(const name of ['schemas','relations','functions','constraints','triggers','policies','defaults','extensions'])assert.ok(sql.includes("'"+name+"'"));
  for(const query of [sql,bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql])assert.doesNotMatch(query,/\b(?:drop|alter|insert|update|delete|truncate|grant|revoke)\s+(?:table|function|schema|on|into|from|public\.)/i);
+ // Missing schema defaults are NULL/no rows. PostgreSQL's ACL iterator rejects
+ // a zero-dimensional '{}' ACL array with SQLSTATE 22023.
+ assert.doesNotMatch(bookingDefaultPrivilegesReadSql,/'\{\}'::aclitem\[\]/);
  const migration=readFileSync(new URL('./supabase-migrations/202610250211_booking_atomic_preparation.sql',import.meta.url),'utf8');
  for(const [,name]of migration.matchAll(/create trigger (\w+)/g))assert.ok(sql.includes(name));
 });
