@@ -5,7 +5,7 @@ import * as fs from 'node:fs';import path from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {executeActiveBookingReconciliation} from './release-toolchain-active-generation-contract.mjs';
-import {createOwnedActiveReconciliationCases,ownedActiveReconciliationScope,loadOwnedActiveReconciliationCase,observeOwnedActiveReconciliation,assertOwnedActiveReconciliationDelta,createOwnedActiveReconciliationBackup,ownedActiveReconciliationBoundary,sealOwnedLab} from './release-toolchain-active-generation-owned-lab.mjs';
+import {createOwnedActiveReconciliationCases,ownedActiveReconciliationScope,observeOwnedActiveReconciliation,assertOwnedActiveReconciliationDelta,createOwnedActiveReconciliationBackup,ownedActiveReconciliationBoundary,sealOwnedLab} from './release-toolchain-active-generation-owned-lab.mjs';
 import {withOwnedActiveReconciliationLocks,ownedActiveReconciliationHeldChecker,archiveOwnedActiveReconciliationOperation,releaseOwnedActiveReconciliationOperation,assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {preserveOwnedActiveReconciliationEvidence} from './release-toolchain-active-generation-preservation.mjs';
 import {correctOwnedActiveReconciliationMetadata} from './release-toolchain-active-generation-metadata.mjs';
@@ -19,6 +19,7 @@ import {bookingHostRead} from './booking-handoff-host-io.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
 const FILE=fileURLToPath(import.meta.url),SOURCE=path.dirname(path.dirname(FILE));
+const CHILD=SOURCE+'/scripts/release-toolchain-active-generation-reconciliation-case.mjs';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch');
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
 const digest=file=>sha256(bookingHostRead(file,{binary:true}));
@@ -68,9 +69,9 @@ export async function runOwnedActiveReconciliationCase(capability){
  });
 }
 async function childCase(s){
- const child=spawn('/usr/bin/node',[FILE,'--owned-case',s.directory],{cwd:'/',stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',FAOLLA_RELEASE_PRODUCTION_EQ:'1'},windowsHide:true});
+ const child=spawn('/usr/bin/node',[CHILD,s.directory],{cwd:'/',stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',FAOLLA_RELEASE_PRODUCTION_EQ:'1'},windowsHide:true});
  let bytes=0;for(const stream of [child.stdout,child.stderr])stream.on('data',chunk=>{bytes+=chunk.length;});
- let timer;try{return await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>resolve({code,signal,diagnosticBytes:bytes}));timer=setTimeout(()=>{try{const fact=captureProcessFact(child.pid);need(fact.commandLine[0]==='/usr/bin/node'&&fact.commandLine.includes(FILE)&&fact.commandLine.includes(s.directory),'owned_resource_changed');process.kill(child.pid,'SIGKILL');}catch(error){reject(error);}reject(Error('owned_lab_child_deadline'));},180000);});}finally{clearTimeout(timer);}
+ let timer;try{return await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>resolve({code,signal,diagnosticBytes:bytes}));timer=setTimeout(()=>{try{const fact=captureProcessFact(child.pid);need(fact.commandLine[0]==='/usr/bin/node'&&fact.commandLine.includes(CHILD)&&fact.commandLine.includes(s.directory),'owned_resource_changed');process.kill(child.pid,'SIGKILL');}catch(error){reject(error);}reject(Error('owned_lab_child_deadline'));},180000);});}finally{clearTimeout(timer);}
 }
 export async function acceptOwnedActiveReconciliation(pm2Root){
  const resources=await createOwnedActiveReconciliationCases(pm2Root),results=[];let passed=false;
@@ -81,8 +82,8 @@ export async function acceptOwnedActiveReconciliation(pm2Root){
   const registry=await inspectPm2Registry(daemon,boot),target=await capturePm2DumpTarget(daemon,boot),setup=await persistPm2Dump(daemon,boot,registry,target);need(await verifyPm2Dump(daemon,boot,registry,setup)===true,'operation_unconfirmed');sealOwnedLab(resources.root+'/private-fixture-dump-initialized.json',{setup,fixtureOnly:true,publicationAuthority:false});
   for(const capability of resources.cases){
    const s=ownedActiveReconciliationScope(capability),initial=await observeOwnedActiveReconciliation(capability),old=dirIdentity(s.directory+'/operation.lock');let outcome;
-   if(s.name.startsWith('controller-death-')){outcome=await childCase(s);need(outcome.code===null&&outcome.signal==='SIGKILL'&&outcome.diagnosticBytes<=65536,'operation_unconfirmed');const controller=read(s.directory+'/controller.json');let gone=false;try{captureProcessFact(controller.process.pid);}catch(error){if(['ENOENT','ESRCH'].includes(error.code))gone=true;else throw error;}need(gone,'owned_resource_changed');}
-   else{try{outcome=await runOwnedActiveReconciliationCase(capability);need(s.name==='normal','operation_unconfirmed');}catch(error){need(s.name!=='normal'&&error.message==='owned_lab_'+s.name.replaceAll('-','_')+'_unknown','operation_unconfirmed');outcome={unknown:true,automaticRetry:false};}}
+   if(s.name.startsWith('controller-death-')){outcome=await childCase(s);sealOwnedLab(s.directory+'/child-outcome.json',{kind:'owned-active-controller-exit-observed',...outcome,publicationAuthority:false});need(outcome.code===null&&outcome.signal==='SIGKILL'&&outcome.diagnosticBytes<=65536,'operation_unconfirmed');const controller=read(s.directory+'/controller.json');let gone=false;try{captureProcessFact(controller.process.pid);}catch(error){if(['ENOENT','ESRCH'].includes(error.code))gone=true;else throw error;}need(gone,'owned_resource_changed');}
+   else{try{outcome=await runOwnedActiveReconciliationCase(capability);need(s.name==='normal','operation_unconfirmed');}catch(error){if(s.name==='normal'||error.message!=='owned_lab_'+s.name.replaceAll('-','_')+'_unknown')throw error;outcome={unknown:true,automaticRetry:false};}}
    const after=await observeOwnedActiveReconciliation(capability);assertOwnedActiveReconciliationDelta(initial,after,{metadata:true});
    const vault=s.directory+'/vault',archived=s.name==='normal'||s.name.endsWith('after-archive'),normal=s.name==='normal';
    same(dirIdentity(archived?vault+'/operation.lock':s.directory+'/operation.lock'),old);
@@ -98,8 +99,4 @@ export async function acceptOwnedActiveReconciliation(pm2Root){
  }catch(error){sealOwnedLab(resources.root+'/failure.json',{kind:'owned-active-reconciliation-acceptance-failed',diagnostic:diagnostic(error),completedCases:results.map(r=>r.name),publicationAuthority:false,at:new Date().toISOString()});throw error;}
  finally{stopOwnedIsolation(resources.isolation);sealOwnedLab(resources.root+'/cleanup-verified.json',{ownedDatabaseStopped:true,privatePm2RetainedForOuterOwnerCleanup:true,filesRetained:true,passed,formalHostTouched:false,publicationAuthority:false,at:new Date().toISOString()});}
  const report={kind:'owned-active-reconciliation-native-acceptance',root:resources.root,toolRevision:path.basename(SOURCE),inventorySha256:resources.tool.inventorySha256,cases:results.map(r=>r.name),samePhysicalMetadataVaultPersistenceAndArchiveEngines:true,controllerDeathsObserved:true,formalIncidentClosed:false,formalPublicationAccepted:false,publicationAuthority:false,mailEnabled:false,at:new Date().toISOString()};sealOwnedLab(resources.root+'/acceptance.json',report);return report;
-}
-if(process.argv[1]&&path.resolve(process.argv[1])===FILE){
- if(process.argv.length!==4||process.argv[2]!=='--owned-case')throw Error('owned_active_reconciliation_no_production_entry');
- try{await runOwnedActiveReconciliationCase(loadOwnedActiveReconciliationCase(process.argv[3]));}catch{console.error('owned_active_reconciliation_unconfirmed');process.exitCode=1;}
 }

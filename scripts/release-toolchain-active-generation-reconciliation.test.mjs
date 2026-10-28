@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {ownedActiveReconciliationScope,loadOwnedActiveReconciliationCase,createOwnedActiveReconciliationCases,ownedActiveReconciliationBoundary,activeReconciliationCaseLocation,ACTIVE_LAB_CASES} from './release-toolchain-active-generation-owned-lab.mjs';
 import {runOwnedActiveReconciliationCase,verifyOwnedActiveReconciliationClosure} from './release-toolchain-active-generation-reconciliation.mjs';
 import {ownedActiveReconciliationHeldChecker,archiveOwnedActiveReconciliationOperation,releaseOwnedActiveReconciliationOperation} from './online-release-retention-writer.mjs';
@@ -27,4 +28,12 @@ test('owned acceptance shares the real physical engines without a formal CLI or 
  const text=readFileSync(new URL('./release-toolchain-active-generation-reconciliation.mjs',import.meta.url),'utf8');
  for(const token of ['executeActiveBookingReconciliation','preserveOwnedActiveReconciliationEvidence(capability,lock,window)','correctOwnedActiveReconciliationMetadata(capability,lock,window)','persistOwnedActiveReconciliationProcesses(capability,lock,window)','archiveOwnedActiveReconciliationOperation(capability,lock)','releaseOwnedActiveReconciliationOperation(capability,lock)','verifyPm2Dump(daemon,boot,registry,persisted.receipt)','formalPublicationAccepted:false','formalIncidentClosed:false','attempt_replay_forbidden'])assert.ok(text.includes(token),token);
  assert.doesNotMatch(text,/reconcileActiveBookingIncidentUnderHeldLocks|guardedProductionBookingActivationSql|pauseOriginalOnce|enableBookingWorker|--allow|force/);
+});
+test('separate entry finishes module evaluation before a dynamic self import; the old inline topology exits 13',()=>{
+ const fixture=new URL('./test-support/release-toolchain-self-import-fixture.mjs',import.meta.url),old=spawnSync(process.execPath,[fileURLToPath(fixture),'--old-inline-entry'],{encoding:'utf8',timeout:5000,maxBuffer:65536,windowsHide:true});
+ assert.equal(old.error,undefined);assert.equal(old.signal,null);assert.equal(old.status,13);
+ const fixed=spawnSync(process.execPath,['--input-type=module','--eval',`const engine=await import(${JSON.stringify(fixture.href)});if(await engine.verifySelfImportAfterEvaluation()!=='fully-evaluated')throw Error('not_ready');`],{encoding:'utf8',timeout:5000,maxBuffer:65536,windowsHide:true});
+ assert.equal(fixed.error,undefined);assert.equal(fixed.signal,null);assert.equal(fixed.status,0,fixed.stderr);
+ const engine=readFileSync(new URL('./release-toolchain-active-generation-reconciliation.mjs',import.meta.url),'utf8'),entry=readFileSync(new URL('./release-toolchain-active-generation-reconciliation-case.mjs',import.meta.url),'utf8');
+ assert.doesNotMatch(engine,/await runOwnedActiveReconciliationCase\(loadOwned/);assert.ok(engine.includes("[CHILD,s.directory]"));assert.ok(entry.includes("import {runOwnedActiveReconciliationCase}"));
 });

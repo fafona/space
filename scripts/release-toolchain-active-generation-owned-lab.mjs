@@ -65,7 +65,7 @@ export async function createOwnedActiveReconciliationCases(pm2Root){
  let isolation;
  try{
   isolation=createOwnedIsolation();const database=seedActiveFixture(isolation),cases=[];
-  const sourceNames=['release-toolchain-active-generation-owned-lab.mjs','release-toolchain-active-generation-reconciliation.mjs','release-toolchain-active-generation-preservation.mjs','release-toolchain-active-generation-metadata.mjs','release-toolchain-active-generation-persistence.mjs','online-release-retention-writer.mjs','release-toolchain-pm2-observation.mjs'];
+  const sourceNames=['release-toolchain-active-generation-owned-lab.mjs','release-toolchain-active-generation-reconciliation.mjs','release-toolchain-active-generation-reconciliation-case.mjs','release-toolchain-active-generation-preservation.mjs','release-toolchain-active-generation-metadata.mjs','release-toolchain-active-generation-persistence.mjs','online-release-retention-writer.mjs','release-toolchain-pm2-observation.mjs'];
   const sourceHashes=Object.fromEntries(sourceNames.map(name=>[name,sha256(fs.readFileSync(source+'/scripts/'+name))]));
   for(const name of ACTIVE_LAB_CASES){
    const directory=make(root,name),evidence=make(directory,'old-evidence');make(directory,'operation.lock');bookingHostWriteOnce(directory+'/deploy.lock','owned active reconciliation kernel lease\n');
