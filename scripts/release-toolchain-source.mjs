@@ -9,7 +9,7 @@ export const RELEASE_SAFETY_JOB='Packaged Tools And Real Ingress Boundary';
 const revision=v=>typeof v==='string'&&/^[a-f0-9]{40}$/.test(v);
 export function toolOnlySourcePath(file){
  if(/\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/.test(file)||file.startsWith('scripts/test-support/')||file.startsWith('docs/')||file.startsWith('.github/'))return true;
- return /^scripts\/(?:release-toolchain[\w-]*\.(?:mjs|py)|(?:booking-(?:handoff|ready|dependency|ci|formal|registry|compatibility|publication|built-smoke)[\w-]*|online-(?:traffic|release)[\w-]*|prepare-online-release-tool|production-maintenance-ingress-acceptance|booking-(?:atomic-worker|release-probe)|test_booking_(?:handoff|ready)_pm2_[\w-]+)\.(?:mjs|py))$/.test(file);
+ return /^scripts\/(?:release-toolchain[\w-]*(?:\.test)?\.(?:mjs|py)|(?:booking-(?:handoff|ready|dependency|ci|formal|registry|compatibility|publication|built-smoke)[\w-]*|online-(?:traffic|release)[\w-]*|prepare-online-release-tool|production-maintenance-ingress-acceptance|booking-(?:atomic-worker|release-probe)|test_booking_(?:handoff|ready)_pm2_[\w-]+)\.(?:mjs|py))$/.test(file);
 }
 export function parseSourceTree(raw){
  const rows=new TextDecoder('utf8',{fatal:true}).decode(raw).split('\0').filter(Boolean),seen=new Set();need(rows.length>0,'source_changed');
