@@ -4,7 +4,7 @@
 import * as fs from 'node:fs';import path from 'node:path';import {fileURLToPath,pathToFileURL} from 'node:url';import {randomUUID} from 'node:crypto';
 import {canonicalJson,sha256,fingerprint,publicFailure,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {collectRemoteReleaseReview,inspectPinnedExecutionSource,assertUnchangedApplicationSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
-import {withReviewedBookingExecution,reviewedBookingExecution} from './release-toolchain-authority.mjs';
+import {withReviewedBookingExecution,reviewedBookingExecution,refreshReviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {BOOKING_PREPARATION_REVISION,verifyBookingPreparation} from './release-toolchain-booking-profile.mjs';
 import {latestBookingQualification,verifyQualificationFiles,collectFreshBookingAdmission,withFreshBookingAdmission,requireBookingAdmission,observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';
 import {prepareExecutionWorker} from './release-toolchain-worker.mjs';
@@ -69,7 +69,7 @@ async function publish(lock,authority){
   backupAndCompatibility:async next=>{let admission;await stage('backup',async()=>{admission=await collectFreshBookingAdmission({lock,directory:artifacts,qualification});return admission.proof.backup;});
    return withFreshBookingAdmission(admission,async()=>{await stage('compatibility',()=>requireBookingAdmission(toolRevision).compatibility);return next();});},
   candidate:()=>stage('candidate',()=>collectBookingReadyRuntimeCohort({toolRevision})),rehearsal:()=>stage('rehearsal',()=>verifyQualificationFiles(qualification.root,{toolRevision,inventorySha256:authority.tool.inventorySha256}).sha256),
-  admission:()=>stage('admission',()=>{assertReviewedBookingNoPending(toolRevision);return requireBookingAdmission(toolRevision);}),
+  admission:()=>stage('admission',async()=>{await refreshReviewedBookingExecution(toolRevision);assertReviewedBookingNoPending(toolRevision);return requireBookingAdmission(toolRevision);}),
   switch:()=>stage('switch',async()=>{try{result=await executeBookingHandoffHost(createBookingHandoffHostOperations({lock,toolRevision}));return result;}catch(error){
    const lease=fs.existsSync(ROOT+'/watchdog-lease.json')?read(ROOT+'/watchdog-lease.json'):null;if(lease?.parent?.pid===process.pid&&lease.toolRevision===toolRevision){seal(ROOT+'/controller-failure.json',{kind:'release-toolchain-controller-failure',operationId:lease.window.id,errorSha256:sha256(String(error?.message??'unknown')),at:new Date().toISOString()});console.error('release_toolchain_controller_failed_independent_recovery_retains_lock');process.exit(1);}throw error;
   }}),verify:()=>stage('verify',async()=>({public:await publicVersions(C),result})),result:()=>({kind:'release-toolchain-publication-completed',toolRevision,run,journalHead:inspectToolchainRun(run).head,mailEnabled:false,result}),

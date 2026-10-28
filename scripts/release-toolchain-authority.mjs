@@ -5,11 +5,16 @@ import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain
 const active=new AsyncLocalStorage(),issued=new WeakSet();
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 const fact=s=>['dev','ino','uid','mode','size','mtimeMs','ctimeMs','nlink'].map(k=>s[k]);
+function unchanged(c){for(const [file,expected]of c.witnesses){const s=fs.lstatSync(file);need(!s.isSymbolicLink()&&canonicalJson(fact(s))===expected,'source_changed');}}
 export function reviewedBookingExecution(revision){
  const c=active.getStore();if(!c)return null;need(issued.has(c)&&c.profile==='booking-handoff'&&c.revision===revision,'source_changed');
  assertReviewFresh(c.review,revision);
- for(const [file,expected]of c.witnesses){const s=fs.lstatSync(file);need(!s.isSymbolicLink()&&canonicalJson(fact(s))===expected,'source_changed');}
+ unchanged(c);
  return c.public;
+}
+export async function refreshReviewedBookingExecution(revision){
+ const c=active.getStore();need(c&&issued.has(c)&&c.revision===revision,'source_changed');unchanged(c);
+ c.review=await collectRemoteReleaseReview(revision);return reviewedBookingExecution(revision);
 }
 export function preparedBookingExecution(revision){
  const c=active.getStore();if(!c)return null;reviewedBookingExecution(c.revision);need(c.preparationRevision===revision,'source_changed');return c.public;
