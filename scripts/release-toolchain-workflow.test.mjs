@@ -15,6 +15,8 @@ test('required safety check includes actual pinned Next/PM2 and the unchanged sh
  for(const text of ['booking-handoff-pm2-pause.py','m._Session','m._ARGUMENT','m._control._check_target_process','real-next-build','pm2@6.0.14','actual-transition-proof','inspectPm2SigintTermination','assertManagedPauseEnvironmentTransition','staleAttemptRefusedWithoutSend','allOwnedProcessesStopped'])assert.ok(source.includes(text),text);
  assert.doesNotMatch(source,/kill.*\[.*--force|set active|UPDATE public|booking_.*_skip/);
  assert.ok(source.includes('!ANCHORS.some(f=>fs.existsSync(f))'));
+ assert.match(source,/stage='real-next-build';run\([^\n]+120000,release\)/);
+ assert.ok(source.includes('ci-only-synthetic-command-failure'));
 });
 test('CI fixture has no server credentials, production mutation, skipped tests or accepted failed commands',()=>{
  assert.doesNotMatch(workflow,/secrets\.|ssh |scp |pm2 |continue-on-error|\|\| true|--force|--skip|workflow_dispatch/);

@@ -2,6 +2,7 @@
 // its fixed process binding; CI supplies a separately owned real PM2 fixture.
 // A 130 result needs an independently read, append-bound SIGINT log witness.
 import * as fs from 'node:fs';
+import path from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
 const need=(v,c)=>{if(!v)throw Error('booking_handoff_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
@@ -14,6 +15,7 @@ const identity=s=>Object.fromEntries(['dev','ino','uid','mode','nlink'].map(k=>[
 const LIMIT=64*1024**2;
 function ownedLog(file){
  need(process.platform==='linux'&&process.getuid?.()===0&&typeof file==='string'&&file.startsWith('/')&&fs.realpathSync(file)===file,'termination_log_path');
+ for(let dir=path.dirname(file);;dir=path.dirname(dir)){const s=fs.lstatSync(dir);need(s.isDirectory()&&!s.isSymbolicLink()&&s.uid===0&&!(s.mode&0o022),'termination_log_ancestor');if(dir==='/')break;}
  const s=fs.lstatSync(file);need(s.isFile()&&!s.isSymbolicLink()&&s.uid===0&&s.nlink===1&&!(s.mode&0o022)&&s.size<=LIMIT,'termination_log_file');return s;
 }
 function logBytes(file){

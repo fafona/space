@@ -17,7 +17,8 @@ need(typeof npmCli==='string'&&path.isAbsolute(npmCli)&&fs.realpathSync(npmCli)=
 const root=fs.mkdtempSync('/var/lib/faolla-eq-');fs.chmodSync(root,0o700);const home=root+'/pm2',release=root+'/app',name='eq-next';
 for(const d of [home,release,release+'/node_modules',release+'/pages',release+'/scripts',root+'/reports'])fs.mkdirSync(d,{mode:0o700});
 const env={PATH:'/usr/bin:/bin',HOME:root,LANG:'C.UTF-8',LC_ALL:'C.UTF-8',PM2_HOME:home,NODE_OPTIONS:'',NODE_PATH:'',PM2_NODE_OPTIONS:'',GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',FAOLLA_RELEASE_PRODUCTION_EQ:'1',NEXT_TELEMETRY_DISABLED:'1'};
-const run=(bin,args,input,timeout=30000)=>{const r=spawnSync(bin,args,{input,encoding:'utf8',env,cwd:root,timeout,killSignal:'SIGKILL',maxBuffer:2*1024**2,windowsHide:true});need(!r.error&&!r.signal&&r.status===0,'command');return r.stdout;};
+const run=(bin,args,input,timeout=30000,cwd=root)=>{const r=spawnSync(bin,args,{input,encoding:'utf8',env,cwd,timeout,killSignal:'SIGKILL',maxBuffer:2*1024**2,windowsHide:true});
+ if(r.error||r.signal||r.status!==0){seal('command-failure.json',{kind:'ci-only-synthetic-command-failure',stage,program:path.basename(bin),action:args[1]??args[0],cwd,exitCode:r.status,signal:r.signal,errorCode:r.error?.code??null,stdout:String(r.stdout??'').slice(0,16384),stderr:String(r.stderr??'').slice(0,16384),syntheticInputsOnly:true});need(false,'command');}return r.stdout;};
 const seal=(name,value)=>{const f=root+'/reports/'+name,fd=fs.openSync(f,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);try{fs.writeFileSync(fd,JSON.stringify(value)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}};
 const bridge=String.raw`import importlib.util,json,os,socket,sys,time
 v=json.loads(sys.stdin.buffer.read(524289))
@@ -59,7 +60,7 @@ try{
  for(const n of fs.readdirSync(application+'/node_modules')){if(n==='next')fs.cpSync(application+'/node_modules/next',release+'/node_modules/next',{recursive:true});else fs.symlinkSync(application+'/node_modules/'+n,release+'/node_modules/'+n);}
  need(JSON.parse(fs.readFileSync(release+'/node_modules/next/package.json','utf8')).version==='16.3.4','next_version');
  fs.writeFileSync(release+'/pages/index.js',"export default function Page(){return 'Real Next process fixture';}\n",{mode:0o600,flag:'wx'});fs.writeFileSync(release+'/package.json','{"name":"private-next-equivalence","private":true}\n',{mode:0o600,flag:'wx'});
- stage='real-next-build';run('/usr/bin/node',[release+'/node_modules/next/dist/bin/next','build','--webpack'],undefined,120000);
+ stage='real-next-build';run('/usr/bin/node',[release+'/node_modules/next/dist/bin/next','build','--webpack'],undefined,120000,release);
  stage='pinned-pm2-install';run('/usr/bin/node',[npmCli,'install','--prefix',root+'/dependencies','--cache',root+'/cache','--registry=https://registry.npmjs.org','--ignore-scripts','--no-audit','--no-fund','pm2@6.0.14'],undefined,180000);
  const pm2=root+'/dependencies/node_modules/pm2';need(JSON.parse(fs.readFileSync(pm2+'/package.json','utf8')).version==='6.0.14','pm2_version');
  const framework={nodeVersion:process.version,managerVersion:'6.0.14',frameworkSources:Object.fromEntries(Object.keys(FRAMEWORK.frameworkSources).map(f=>[f,sha(fs.readFileSync(pm2+'/'+f))]))};assert.deepEqual(framework,FRAMEWORK);
