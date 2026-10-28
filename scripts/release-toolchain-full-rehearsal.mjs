@@ -300,9 +300,9 @@ export async function runFullToolchainRehearsal(){
 }
 async function main(){
  need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');
- if(process.argv.length===2)return runFullToolchainRehearsal();need(process.argv.length===4,'child_arguments');const role=process.argv[2],c=ownedCase(process.argv[3]);
+ if(process.argv.length===2)return runFullToolchainRehearsal();need(process.argv.length===4,'child_arguments');const role=process.argv[2],c=ownedCase(process.argv[3]);diagnosticRoot=c.directory;
  need(['controller','watchdog','worker','web-baseline','web-primary','web-rollback'].includes(role),'child_role');
  if(role.startsWith('web-'))return childWeb(role,c);if(role==='worker')return new Promise(()=>{setInterval(()=>{},1000);});
  if(role==='watchdog')return watchdog(c);return controller(c);
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().catch(error=>{const code=/^(?:booking_native_[a-z_]+|release_toolchain_[a-z_]+)$/.test(error.message??'')?error.message:'release_toolchain_operation_unconfirmed';if(diagnosticRoot)try{write(diagnosticRoot+'/failure.json',{code,stage:'full-rehearsal',evidencePreserved:true,at:now()});}catch{}console.error(JSON.stringify({code,stage:'full-rehearsal',root:diagnosticRoot,evidencePreserved:true}));process.exitCode=1;});
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().catch(error=>{const code=/^(?:booking_[a-z0-9_]+|release_toolchain_[a-z0-9_]+)$/.test(error.message??'')?error.message:'release_toolchain_operation_unconfirmed';if(diagnosticRoot)try{write(diagnosticRoot+'/failure-'+process.pid+'.json',{code,stage:'full-rehearsal',systemCode:/^[A-Z0-9_]+$/.test(error.code??'')?error.code:null,frames:String(error.stack??'').split('\n').slice(1,6),evidencePreserved:true,at:now()});}catch{}console.error(JSON.stringify({code,stage:'full-rehearsal',root:diagnosticRoot,evidencePreserved:true}));process.exitCode=1;});
