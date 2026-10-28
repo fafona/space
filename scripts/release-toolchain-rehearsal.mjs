@@ -10,6 +10,12 @@ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const childEnv=()=>({PATH:'/usr/sbin:/usr/bin:/sbin:/bin',HOME:os.tmpdir(),LANG:'C.UTF-8',LC_ALL:'C.UTF-8',NODE_OPTIONS:'',NODE_PATH:''});
 function procFact(pid){const root='/proc/'+pid,text=fs.readFileSync(root+'/stat','utf8'),parts=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);
  return {pid,state:parts[0],startTicks:parts[19],uid:fs.lstatSync(root).uid,executable:parts[0]==='Z'?null:fs.realpathSync(root+'/exe'),cwd:parts[0]==='Z'?null:fs.realpathSync(root+'/cwd')};}
+export function remainingOwnedLabProcesses({directory,binary,uid=process.getuid(),pids=fs.readdirSync('/proc'),ownerOf=pid=>fs.lstatSync('/proc/'+pid).uid,readFact=procFact}){
+ const remaining=[];for(const value of pids.filter(v=>/^[1-9][0-9]*$/.test(String(v))))try{
+  const pid=Number(value);if(ownerOf(pid)!==uid)continue; // Foreign UID is never ours and may correctly deny /exe or /cwd reads.
+  const f=readFact(pid);if(f.state!=='Z'&&f.cwd===directory&&f.executable===binary)remaining.push(f.pid);
+ }catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}return remaining;
+}
 function ownedAlive(expected,{binary,directory}){try{const actual=procFact(expected.pid);need(actual.startTicks===expected.startTicks,'owned_resource_changed');if(actual.state==='Z')return false;
  need(actual.uid===process.getuid()&&actual.executable===binary&&actual.cwd===directory,'owned_resource_changed');return true;
  }catch(e){if(['ENOENT','ESRCH'].includes(e.code))return false;throw e;}}
@@ -92,7 +98,8 @@ location / {proxy_pass http://127.0.0.1:${upstreamPort};proxy_set_header Connect
   await new Promise(resolve=>upstream.close(resolve));
   // Do not certify cleanup from only our saved PID list if a new worker was
   // orphaned before registration. Observation never grants authority to kill it.
-  const remaining=[];for(const name of fs.readdirSync('/proc').filter(v=>/^[1-9][0-9]*$/.test(v)))try{const f=procFact(Number(name));if(f.state!=='Z'&&f.cwd===directory&&f.executable===binary)remaining.push(f.pid);}catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}
+  let remaining;try{remaining=remainingOwnedLabProcesses({directory,binary});}catch(e){write('cleanup-observation-error.json',{schemaVersion:1,kind:'release-toolchain-cleanup-observation-error',phase,
+   error:publicFailure(e,{stage:'rehearsal'}),errno:['EACCES','EPERM','ENOENT','ESRCH'].includes(e.code)?e.code:null,publicationAuthority:false});throw e;}
   need(failures.length===0&&remaining.length===0&&[master,...workers.values()].filter(Boolean).every(f=>!ownedAlive(f,context)),'cleanup_unconfirmed');
  }
  const expected=fault==='none'?'passed':'failed',result={schemaVersion:1,kind:'release-toolchain-ingress-case',publicationAuthority:false,databaseAccess:false,directory,fault,outcome,expectedOutcome:expected,
