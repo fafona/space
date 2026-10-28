@@ -30,7 +30,6 @@ function incidentObserverUrl(git,revision){
   const source=text.replace(/from\s*'\.\/([^']+)'/g,(_,dependency)=>'from '+JSON.stringify(selected.has(dependency)?url(dependency):'file://'+TOOLS+'/'+OLD+'/scripts/'+dependency));
   const value='data:text/javascript;base64,'+Buffer.from(source).toString('base64');cache.set(name,value);return value;};return url('release-toolchain-active-generation-incident.mjs');
 }
-function stableObservation(value){const copy=structuredClone(value);delete copy.observedAt;delete copy.historicalPause.observedAt;delete copy.recordProof.observedAt;copy.publicProof=copy.publicProof.map(({origin,status,buildId})=>({origin,status,buildId}));return copy;}
 export async function installReviewedActiveBookingTool(){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.argv.length===2&&fs.realpathSync(process.execPath)==='/usr/bin/node','runtime');
  const entry=fileURLToPath(import.meta.url),revision=path.basename(entry,'.mjs');need(/^[a-f0-9]{40}$/.test(revision)&&entry===BOOT+'/'+revision+'.mjs'&&revision!==OLD,'bootstrap_path');
@@ -48,13 +47,13 @@ export async function installReviewedActiveBookingTool(){
   source.sourceGit(REPO,['fetch','--no-tags','origin',revision]);held();
   assertActiveBootstrapBytes(io.bookingHostRead(entry,{binary:true}),source.sourceGit(REPO,['show',revision+':'+FILE]));
   const application=source.assertUnchangedApplicationSource(APP,source.parseSourceTree(source.sourceGit(REPO,['ls-tree','-r','-z',APP])),source.parseSourceTree(source.sourceGit(REPO,['ls-tree','-r','-z',revision])));
-  stage='current-active-incident';const {inspectActiveBookingIncident}=await import(incidentObserverUrl(source.sourceGit,revision)),start=Date.now(),window={id:randomUUID(),startedAt:new Date(start).toISOString(),deadlineAt:new Date(start+600000).toISOString()},before=await inspectActiveBookingIncident({window});held();
+  stage='current-active-incident';const {inspectActiveBookingIncident,assertActiveBookingObservedHostProgress}=await import(incidentObserverUrl(source.sourceGit,revision)),start=Date.now(),window={id:randomUUID(),startedAt:new Date(start).toISOString(),deadlineAt:new Date(start+600000).toISOString()},before=await inspectActiveBookingIncident({window});held();
   audit=BOOT+'/'+revision+'.install';fs.mkdirSync(audit,{mode:0o700});io.bookingHostSync(BOOT);
   seal('started.json',{kind:'active-incident-source-only-install-started',revision,priorReader:OLD,review,application,window,before,at:new Date().toISOString(),publicationAuthority:false});
   const directory=TOOLS+'/'+revision;need(!fs.existsSync(directory),'installation_replay');source.ownedReleasePath(TOOLS,{directory:true});
   stage='source-worktree-install';for(const command of activeToolInstallGitPlan(revision)){held();source.sourceGit(command.cwd,command.args,command.input);if(command.args[0]==='worktree')fs.chmodSync(directory,0o700);held();}
   stage='complete-byte-and-host-revalidation';const installed=source.inspectPinnedExecutionSource({revision,directory});held();
-  const after=await inspectActiveBookingIncident({window});same(stableObservation(after),stableObservation(before));held();source.assertReviewFresh(review,revision);
+  const after=await inspectActiveBookingIncident({window});assertActiveBookingObservedHostProgress(before,after);same(after.activeMetadataSha256,before.activeMetadataSha256);same(after.metadataCorrected,before.metadataCorrected);held();source.assertReviewFresh(review,revision);
   same(source.sourceGit(REPO,['for-each-ref','--format=%(refname) %(objectname)','refs/heads','refs/remotes']).toString(),refs);
   const result={kind:'active-incident-source-only-tool-installed',revision,directory,sourceFiles:installed.sourceFiles,inventorySha256:installed.inventorySha256,oldOperationRetained:true,applicationPublished:false,productionDatabaseMutated:false,trafficChanged:false,mailEnabled:false,publicationAuthority:false,completedAt:new Date().toISOString()};seal('completed.json',result);held();return result;
  }catch(error){if(audit)try{seal('failed.json',{kind:'active-incident-source-only-install-failed',stage,code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'operation_unconfirmed',errorSha256:digest(String(error?.message??'unknown')),detailsRedacted:true,originalOperationRetained:true,applicationPublished:false,at:new Date().toISOString()});}catch{}throw error;}

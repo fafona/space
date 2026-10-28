@@ -127,7 +127,7 @@ try{
  // guards or RPC allowlist. Persistence must not boot a daemon or restart apps.
  stage='actual-connect-only-dump-persistence';
  const dumpRequest={daemon:daemonPeer,root,socket:home+'/rpc.sock'},dumpRegistry=requirePm2RegistryObservation(python({...dumpRequest,action:'dump-inspect'})),dumpTarget=python({...dumpRequest,action:'dump-capture'});
- assertCompletePm2DumpSet(collectOwnedCiPm2Registry(root).rows,dumpRegistry);
+ const dumpPhysical=collectOwnedCiPm2Registry(root);assert.deepEqual(dumpPhysical.filteredRegistry,dumpRegistry);assertCompletePm2DumpSet(dumpPhysical.rows,dumpRegistry);
  const {commandLine:daemonCommand,...dumpDaemon}=captureProcessFact(daemon.pid),dumpBoot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
  need(daemonCommand.length===1&&daemonCommand[0]==='PM2 v6.0.14: God Daemon ('+home+')','dump_daemon_command');
  assert.deepEqual(await inspectPm2Registry(dumpDaemon,dumpBoot),dumpRegistry);assert.deepEqual(await capturePm2DumpTarget(dumpDaemon,dumpBoot),dumpTarget);

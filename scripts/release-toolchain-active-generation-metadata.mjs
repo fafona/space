@@ -2,7 +2,7 @@
 // or permission to remove the old operation directory. No CLI action exists.
 import * as fs from 'node:fs';import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA as M,assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
+import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA as M,assertActiveBookingWindow,assertActiveBookingObservedHostProgress} from './release-toolchain-active-generation-contract.mjs';
 import {inspectActiveBookingIncident,inspectActiveBookingIncidentAfterMetadata} from './release-toolchain-active-generation-incident.mjs';
 import {verifyActiveBookingIncidentPreservation} from './release-toolchain-active-generation-preservation.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
@@ -11,9 +11,11 @@ import {bookingHostRead,bookingHostWriteOnce,bookingHostReplace,bookingHostSync}
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 const digest=/^[a-f0-9]{64}$/;
-function stableObservation(value){const copy=structuredClone(value);for(const key of ['observedAt','metadataCorrected','activeMetadataSha256'])delete copy[key];delete copy.historicalPause.observedAt;delete copy.recordProof.observedAt;copy.publicProof=copy.publicProof.map(({origin,status,buildId})=>({origin,status,buildId}));return copy;}
 export function assertActiveMetadataOnlyDelta(before,after){
- need(before?.oldOperationId===P.operationId&&after?.oldOperationId===P.operationId&&before.metadataCorrected===false&&after.metadataCorrected===true&&before.activeMetadataSha256===sha256(M.beforeText)&&after.activeMetadataSha256===sha256(M.afterText)&&before.publicationAuthority===false&&after.publicationAuthority===false,'evidence_invalid');same(stableObservation(before),stableObservation(after));return true;
+ need(before?.oldOperationId===P.operationId&&after?.oldOperationId===P.operationId&&before.metadataCorrected===false&&after.metadataCorrected===true&&before.activeMetadataSha256===sha256(M.beforeText)&&after.activeMetadataSha256===sha256(M.afterText)&&before.publicationAuthority===false&&after.publicationAuthority===false,'evidence_invalid');assertActiveBookingObservedHostProgress(before,after);return true;
+}
+export function assertActiveCorrectedObservationProgress(before,after){
+ need(before?.oldOperationId===P.operationId&&after?.oldOperationId===P.operationId&&before.metadataCorrected===true&&after.metadataCorrected===true&&before.activeMetadataSha256===sha256(M.afterText)&&after.activeMetadataSha256===sha256(M.afterText)&&before.publicationAuthority===false&&after.publicationAuthority===false,'evidence_invalid');assertActiveBookingObservedHostProgress(before,after);return true;
 }
 // Same physical write/fsync/readback path for fixed production metadata and
 // owned CI metadata. Factories below construct all paths and ownership checks.

@@ -11,6 +11,7 @@ import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {bookingLegacyRpcExpected} from './booking-handoff-legacy.mjs';
 import {captureTrustedPython,verifyTrustedPython} from './production-maintenance-trusted-python.mjs';
 import {sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
+import {validatePm2Registry} from './production-maintenance-pm2-adapter.mjs';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'owned_resource_changed');
 const SOURCES=Object.freeze({'production-maintenance-pm2-control.py':'94da8cfb9d2a9b944946d6da431c79a5d44c695b2fe6d427d3e25f0fdbbc98c5','production-maintenance-pm2-connection.py':'2ac9a51736605bfe3715060d25ed38e408771faaca4e9ea4768dbfabab8cfa54'});
 const metadata=s=>['dev','ino','size','mtimeNs','ctimeNs','nlink','uid','mode'].map(k=>String(s[k])).join(':');
@@ -31,7 +32,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
  if session.call('getVersion',{})!='6.0.14': raise RuntimeError('read_only_registry_version')
  rows=session.call('getMonitorData',{});session.verify()
  if type(rows) is not list or not 1<=len(rows)<=128: raise RuntimeError('read_only_registry_shape')
- print(json.dumps({'version':1,'pm2Version':'6.0.14','peerVerified':True,'registry':rows},separators=(',',':'),allow_nan=False))
+ print(json.dumps({'version':1,'pm2Version':'6.0.14','peerVerified':True,'registry':rows,'filteredRegistry':m._filter_registry(rows)},separators=(',',':'),allow_nan=False))
 `;
 function collect({home,source}){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.version===FRAMEWORK.nodeVersion,'unsupported_runtime');ownedReleasePath(home,{directory:true});ownedReleasePath(home+'/pm2.pid');
@@ -45,9 +46,9 @@ function collect({home,source}){
  // credentials. A refused read has no side effects and no fallback CLI path.
  need(r.status===0&&!r.error&&!r.signal&&r.stderr===''&&Buffer.byteLength(r.stdout)<=4*1024**2,'pm2_read_only_observation_unconfirmed');
  let result;try{result=JSON.parse(r.stdout);}catch{need(false,'pm2_read_only_observation_unconfirmed');}
- need(result?.version===1&&result.pm2Version==='6.0.14'&&result.peerVerified===true&&Array.isArray(result.registry)&&result.registry.length>0&&result.registry.length<=128&&Object.keys(result).sort().join(',')==='peerVerified,pm2Version,registry,version','evidence_invalid');
+ need(result?.version===1&&result.pm2Version==='6.0.14'&&result.peerVerified===true&&Array.isArray(result.registry)&&result.registry.length>0&&result.registry.length<=128&&Object.keys(result).sort().join(',')==='filteredRegistry,peerVerified,pm2Version,registry,version','evidence_invalid');
  const normalized=result.registry.map(normalizeRetirementProcess);need(new Set(normalized.map(p=>p.name)).size===normalized.length&&new Set(normalized.map(p=>p.pmId)).size===normalized.length,'evidence_invalid');
- return{rows:result.registry,daemonPeer:expected,daemon};
+ return{rows:result.registry,filteredRegistry:validatePm2Registry(result.filteredRegistry),daemonPeer:expected,daemon};
 }
 const rawEnvironment=pid=>{const value={};for(const row of fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean)){const at=row.indexOf('=');need(at>0&&!Object.hasOwn(value,row.slice(0,at)),'evidence_invalid');value[row.slice(0,at)]=row.slice(at+1);}return value;};
 export function collectActiveBookingLegacyHost(){

@@ -27,8 +27,23 @@ export function assertActiveBookingWindow(window,{nowMs=Date.now()}={}){
 }
 export function assertActiveBookingDatabase(database,{systemIdentifier,databaseOid,generation=ACTIVE_BOOKING_INCIDENT.generation}={}){
  keys(database,['systemIdentifier','databaseOid','serverVersionNum','generation','revision','protocol','active','savedBookingRowsSha256','commands','mailJobs']);
- need(/^[1-9][0-9]{0,19}(?![\s\S])/.test(systemIdentifier??'')&&/^[1-9][0-9]{0,9}(?![\s\S])/.test(databaseOid??'')&&database.systemIdentifier===systemIdentifier&&database.databaseOid===databaseOid&&database.serverVersionNum==='150008'&&database.active===true&&database.protocol===2&&database.generation===generation&&/^(0|[1-9][0-9]*)(?![\s\S])/.test(database.revision)&&hash.test(database.savedBookingRowsSha256)&&['commands','mailJobs'].every(k=>Number.isSafeInteger(database[k])&&database[k]>=0),'active_database');
+ need(/^[1-9][0-9]{0,19}(?![\s\S])/.test(systemIdentifier??'')&&/^[1-9][0-9]{0,9}(?![\s\S])/.test(databaseOid??'')&&database.systemIdentifier===systemIdentifier&&database.databaseOid===databaseOid&&database.serverVersionNum==='150008'&&database.active===true&&database.protocol===2&&database.generation===generation&&typeof database.revision==='string'&&/^(0|[1-9][0-9]{0,18})(?![\s\S])/.test(database.revision)&&BigInt(database.revision)<=9223372036854775807n&&typeof database.savedBookingRowsSha256==='string'&&hash.test(database.savedBookingRowsSha256)&&['commands','mailJobs'].every(k=>Number.isSafeInteger(database[k])&&database[k]>=0),'active_database');
  return true;
+}
+// Live atomic bookings may advance while metadata/configuration is reconciled.
+// This is never permission to restore an older JSON snapshot or replay SQL.
+export function assertActiveBookingDatabaseProgress(before,after,identity){
+ assertActiveBookingDatabase(before,identity);assertActiveBookingDatabase(after,identity);
+ const earlier=BigInt(before.revision),later=BigInt(after.revision);
+ need(later>=earlier&&after.commands>=before.commands&&after.mailJobs>=before.mailJobs&&(after.savedBookingRowsSha256===before.savedBookingRowsSha256||later>earlier),'active_database_regression');return true;
+}
+// Host/configuration comparison only. Metadata transitions are checked by the
+// caller separately. Legitimate committed booking progress is not rolled back
+// or mistaken for a release-tool mutation; all identity/generation checks stay.
+export function assertActiveBookingObservedHostProgress(before,after){
+ assertActiveBookingDatabaseProgress(before.database,after.database,{systemIdentifier:'7612049595342295079',databaseOid:'5'});
+ const stable=value=>{const copy=structuredClone(value);for(const key of ['observedAt','metadataCorrected','activeMetadataSha256'])delete copy[key];for(const key of ['revision','commands','mailJobs','savedBookingRowsSha256'])delete copy.database[key];delete copy.historicalPause.observedAt;delete copy.recordProof.observedAt;copy.publicProof=copy.publicProof.map(({origin,status,buildId})=>({origin,status,buildId}));return copy;};
+ need(isDeepStrictEqual(stable(before),stable(after)),'observed_host_change');return true;
 }
 export function assertActiveBookingHistoricalEvidence({lease,activation,originalPause,recoveryAttempt,failure}){
  const p=ACTIVE_BOOKING_INCIDENT;need(lease?.toolRevision===p.toolRevision&&isDeepStrictEqual(lease.window,p.originalWindow)&&originalPause?.window?.id===p.operationId&&failure?.operationId===p.operationId&&recoveryAttempt?.operationId===p.operationId,'incident_binding');

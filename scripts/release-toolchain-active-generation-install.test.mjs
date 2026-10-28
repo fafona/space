@@ -12,7 +12,7 @@ test('bootstrap must be byte-for-byte the independently reviewed Git blob',()=>{
 test('an ordinary local invocation cannot install or select another bootstrap path',async()=>{await assert.rejects(installReviewedActiveBookingTool());});
 test('the new bootstrap preserves old operation state and proves installed source and host unchanged',()=>{
  const source=readFileSync(new URL('./release-toolchain-active-generation-install.mjs',import.meta.url),'utf8');
- for(const token of ['collectRemoteReleaseReview(revision)','assertActiveBootstrapBytes','inspectPinnedExecutionSource','assertUnchangedApplicationSource','inspectActiveBookingIncident({window})','stableObservation(after)','stableObservation(before)','--nonblock','fs.closeSync(fd)','originalOperationRetained:true','applicationPublished:false'])assert.ok(source.includes(token),token);
+ for(const token of ['collectRemoteReleaseReview(revision)','assertActiveBootstrapBytes','inspectPinnedExecutionSource','assertUnchangedApplicationSource','inspectActiveBookingIncident({window})','assertActiveBookingObservedHostProgress(before,after)','same(after.activeMetadataSha256,before.activeMetadataSha256)','same(after.metadataCorrected,before.metadataCorrected)','--nonblock','fs.closeSync(fd)','originalOperationRetained:true','applicationPublished:false'])assert.ok(source.includes(token),token);
  assert.doesNotMatch(source,/rmdirSync|unlinkSync|rmSync|renameSync|bookingHostSql|process\.kill|\.deployFd/);
  const original=readFileSync(new URL('./release-toolchain-install.mjs',import.meta.url),'utf8');assert.ok(original.includes('fs.mkdirSync(operation,{mode:0o700})'));assert.ok(original.includes("phase==='ended'"));
 });

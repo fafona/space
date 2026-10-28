@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_PM2_RECORDS,assertHistoricalPausedBookingHost,assertActiveBookingWindow,assertActiveBookingDatabase,assertActiveBookingHistoricalEvidence,ACTIVE_RECONCILIATION_STEPS,ACTIVE_PUBLICATION_STEPS,ACTIVE_RECOVERY_STEPS,executeActiveBookingReconciliation,executeActiveBookingPublication,executeActiveBookingRecovery} from './release-toolchain-active-generation-contract.mjs';
+import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_PM2_RECORDS,assertHistoricalPausedBookingHost,assertActiveBookingWindow,assertActiveBookingDatabase,assertActiveBookingDatabaseProgress,assertActiveBookingHistoricalEvidence,ACTIVE_RECONCILIATION_STEPS,ACTIVE_PUBLICATION_STEPS,ACTIVE_RECOVERY_STEPS,executeActiveBookingReconciliation,executeActiveBookingPublication,executeActiveBookingRecovery} from './release-toolchain-active-generation-contract.mjs';
 import {historicalPauseFixture} from './test-support/release-toolchain-pause-fixture.mjs';
 import {sha256} from './release-toolchain-contracts.mjs';
 const window={id:'10000000-0000-4000-8000-000000000001',startedAt:'2026-10-29T10:00:00.000Z',deadlineAt:'2026-10-29T10:10:00.000Z'},nowMs=Date.parse('2026-10-29T10:01:00.000Z');
@@ -10,10 +10,16 @@ test('active-generation continuation requires a genuinely new exact ten-minute w
 const database=()=>({systemIdentifier:'7612049595342295079',databaseOid:'5',serverVersionNum:'150008',generation:P.generation,revision:'0',protocol:2,active:true,savedBookingRowsSha256:'a'.repeat(64),commands:0,mailJobs:0}),identity={systemIdentifier:'7612049595342295079',databaseOid:'5'};
 test('active admission binds the real database generation rather than replaying a false-to-true activation',()=>{
  assert.equal(assertActiveBookingDatabase(database(),identity),true);
- for(const patch of [{active:false},{generation:'foreign'},{protocol:1},{databaseOid:'6'},{systemIdentifier:'7612049595342295080'},{revision:'-1'},{commands:-1},{mailJobs:'0'},{savedBookingRowsSha256:'bad'},{extra:true}])assert.throws(()=>assertActiveBookingDatabase({...database(),...patch},identity));
+ for(const patch of [{active:false},{generation:'foreign'},{protocol:1},{databaseOid:'6'},{systemIdentifier:'7612049595342295080'},{revision:'-1'},{revision:0},{revision:'9223372036854775808'},{commands:-1},{mailJobs:'0'},{savedBookingRowsSha256:'bad'},{savedBookingRowsSha256:['a'.repeat(64)]},{extra:true}])assert.throws(()=>assertActiveBookingDatabase({...database(),...patch},identity));
  assert.throws(()=>assertActiveBookingDatabase(database()));
  // Real bookings after activation are not grounds for restoring old JSON.
  assert.equal(assertActiveBookingDatabase({...database(),revision:'2',commands:2,savedBookingRowsSha256:'b'.repeat(64)},identity),true);
+});
+test('live atomic progress is allowed, but reversal, identity changes and row changes without revision advancement refuse',()=>{
+ const before=database(),after={...database(),revision:'2',commands:2,mailJobs:1,savedBookingRowsSha256:'b'.repeat(64)};
+ assert.equal(assertActiveBookingDatabaseProgress(before,after,identity),true);assert.equal(assertActiveBookingDatabaseProgress(before,before,identity),true);
+ for(const patch of [{revision:'0',savedBookingRowsSha256:'c'.repeat(64)},{generation:'foreign'},{active:false},{systemIdentifier:'7612049595342295080'}])assert.throws(()=>assertActiveBookingDatabaseProgress(before,{...after,...patch},identity));
+ for(const patch of [{revision:'1'},{commands:1},{mailJobs:0}])assert.throws(()=>assertActiveBookingDatabaseProgress(after,{...after,...patch},identity));
 });
 function history(){const before={...database(),active:false};return{lease:{toolRevision:P.toolRevision,window:{...P.originalWindow}},activation:{before,after:{...before,active:true}},originalPause:{window:{...P.originalWindow},before:{legacy:{pid:1590381,backgroundPaused:'0'}}},recoveryAttempt:{operationId:P.operationId,startedAt:'2026-10-28T18:50:30.310Z',before:{processes:[{name:'merchant-space',pid:P.legacyPid,backgroundPaused:'1',restartCount:1}]}},failure:{operationId:P.operationId}};}
 test('historical activation and observed paused successor explain the incident but never become a backdated success',()=>{
