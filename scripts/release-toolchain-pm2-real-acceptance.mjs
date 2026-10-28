@@ -68,7 +68,10 @@ try{
  const server=net.createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r));
  fs.writeFileSync(release+'/scripts/unrelated.cjs',"setInterval(()=>{},1000);\n",{mode:0o600,flag:'wx'});
  const config={apps:[{name,script:release+'/node_modules/next/dist/bin/next',cwd:release,args:['start','-H','127.0.0.1','-p',String(port)],interpreter:'/usr/bin/node',exec_mode:'fork',watch:false,autorestart:true,kill_timeout:10000,env:{FAOLLA_BACKGROUND_JOBS_PAUSED:'0',NODE_ENV:'production',KEEP:'synthetic-only'}}]};
- fs.writeFileSync(root+'/ecosystem.cjs','module.exports='+JSON.stringify(config)+';\n',{mode:0o600,flag:'wx'});run('/usr/bin/node',[pm2+'/bin/pm2','start',root+'/ecosystem.cjs']);await ready(port);
+ const configFile=root+'/ecosystem.config.cjs';
+ const common=(await import(pm2+'/lib/Common.js')).default;need(common.isConfigFile(configFile)==='js'&&common.isConfigFile(root+'/ecosystem.cjs')===null,'pm2_config_recognition');
+ fs.writeFileSync(configFile,'module.exports='+JSON.stringify(config)+';\n',{mode:0o600,flag:'wx'});run('/usr/bin/node',[pm2+'/bin/pm2','start',configFile]);
+ const started=registry();need(started.length===1&&started[0].name===name&&started[0].pm_id===0&&started[0].pm2_env.pm_cwd===release&&started[0].pm2_env.pm_exec_path===release+'/node_modules/next/dist/bin/next','started_real_next');await ready(port);
  run('/usr/bin/node',[pm2+'/bin/pm2','start',release+'/scripts/unrelated.cjs','--name','eq-unrelated','--cwd',release]);
  const rows=registry(),beforeRow=rows.find(p=>p.name===name),other=rows.find(p=>p.name==='eq-unrelated');need(beforeRow.pm_id===0&&beforeRow.pm2_env.status==='online'&&other?.pid>0,'initial_processes');
  const beforeFact=fact(beforeRow.pid),beforeOther={row:other,raw:raw(other.pid),identity:fact(other.pid)},beforeRaw=raw(beforeRow.pid),before=normalizeRetirementProcess(beforeRow),anchor=capturePm2TerminationAnchor(home+'/pm2.log');
