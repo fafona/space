@@ -23,6 +23,9 @@ export function backupProducerGitPlan({revision,producer}){
   // ref response, origin/main override or formal-repository fetch is used.
   {cwd:producer,args:['fetch','--no-tags','origin','main:refs/remotes/origin/main']},
   {cwd:producer,args:['sparse-checkout','set','--no-cone','--stdin'],input:'/*\n!/public/downloads/\n'},
+  // Git 2.27 leaves --no-checkout's index empty after sparse setup. Populate
+  // that new clone's original index before the normal detached checkout.
+  {cwd:producer,args:['read-tree','-mu','HEAD']},
   {cwd:producer,args:['checkout','--detach',revision]},
  ];
 }
@@ -43,10 +46,11 @@ export function assertProducerApplicationBackupBinding({toolRevision,producer,ap
 export function backupPassphraseFileText(passphrase){need(typeof passphrase==='string'&&/^[A-Za-z0-9_-]{64}$/.test(passphrase),'invalid_contract');return passphrase+'\n';}
 export async function createReviewedBookingBackup({lock,toolRevision,directory}){
  assertOnlineRetentionHeldLocks(lock);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');ownedReleasePath(directory,{directory:true,privateMode:true});
- const producerDirectory=directory+'/producer-source',plan=backupProducerGitPlan({revision:toolRevision,producer:producerDirectory}),backupPath=directory+'/database.tar.enc',appDirectory='/www/wwwroot/merchant-space.web-releases/'+C.slice(0,12)+'-online';let site='source';
+ const producerDirectory=directory+'/producer-source',plan=backupProducerGitPlan({revision:toolRevision,producer:producerDirectory}),backupPath=directory+'/database.tar.enc',appDirectory='/www/wwwroot/merchant-space.web-releases/'+C.slice(0,12)+'-online';let site='source',sourceCommand='clone';
  try{
-  for(const step of plan){assertOnlineRetentionHeldLocks(lock);reviewedBookingExecution(toolRevision);sourceGit(step.cwd,step.args,step.input);}
+  for(const step of plan){sourceCommand=step.args[0];assertOnlineRetentionHeldLocks(lock);reviewedBookingExecution(toolRevision);sourceGit(step.cwd,step.args,step.input);}
   fs.chmodSync(producerDirectory,0o700);
+  sourceCommand='verify';
   const observe=()=>{const actual=inspectOwnedDetachedSource({revision:toolRevision,directory:producerDirectory,repository:producerDirectory});same(actual.inventorySha256,authority.tool.inventorySha256);
    const originMainSha=sourceGit(producerDirectory,['rev-parse','refs/remotes/origin/main']).toString().trim();need(originMainSha===toolRevision,'source_changed');
    need(sourceGit(producerDirectory,['config','--get','remote.origin.url']).toString().trim()===REMOTE,'source_changed');return {revision:toolRevision,directory:producerDirectory,originMainSha,inventorySha256:actual.inventorySha256};};
@@ -62,5 +66,5 @@ export async function createReviewedBookingBackup({lock,toolRevision,directory})
   same(observe(),producer);need(sha256(bookingHostRead(appDirectory+'/.env.local',{binary:true}))===verified.callbackResult,'build_binding_mismatch');
   const binding=assertProducerApplicationBackupBinding({toolRevision,producer,application:authority.application,applicationBuilds:authority.prepared.application,backup,payloadEnvironmentSha256:verified.callbackResult});
   seal(directory+'/backup-application-binding.json',binding);assertOnlineRetentionHeldLocks(lock);reviewedBookingExecution(toolRevision);return {backup,binding};
- }catch(error){const failure=backupProducerFailure(error,site);seal(directory+'/backup-producer-failure.json',{...failure,at:new Date().toISOString()});if(failure.code==='backup_source_origin_main_mismatch')throw new ToolchainError('backup_source_mismatch');throw error;}
+ }catch(error){const failure=backupProducerFailure(error,site);seal(directory+'/backup-producer-failure.json',{...failure,sourceCommand:site==='source'?sourceCommand:null,at:new Date().toISOString()});if(failure.code==='backup_source_origin_main_mismatch')throw new ToolchainError('backup_source_mismatch');throw error;}
 }

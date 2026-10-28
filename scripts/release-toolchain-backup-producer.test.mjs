@@ -19,6 +19,7 @@ test('producer protocol has fixed formal source, real remote main, private desti
  assert.deepEqual(plan[0].args,['clone','--shared','--no-hardlinks','--no-checkout','/www/wwwroot/merchant-space',producer]);
  assert.deepEqual(plan[2].args,['fetch','--no-tags','origin','main:refs/remotes/origin/main']);
  assert.equal(plan[3].input,'/*\n!/public/downloads/\n');
+ assert.deepEqual(plan[4].args,['read-tree','-mu','HEAD']);assert.deepEqual(plan[5].args,['checkout','--detach',revision]);
  for(const step of plan.slice(1))assert.equal(step.cwd,producer);
  for(const p of ['/www/wwwroot/merchant-space','/tmp/source',producer+'/../escape',producer+'-other',ROOT+'../producer-source'])assert.throws(()=>backupProducerGitPlan({revision,producer:p}));
  assert.throws(()=>backupProducerGitPlan({revision:'main',producer}));
