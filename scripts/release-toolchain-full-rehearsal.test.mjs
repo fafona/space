@@ -4,7 +4,7 @@ test('the reusable full runner uses owned new PG, exact shared sequences and nev
  const source=readFileSync(new URL('./release-toolchain-full-rehearsal.mjs',import.meta.url),'utf8');
  for(const name of ['executeBookingHandoffHost','executeBookingIngressDrain','runBookingWatchdogSequence','executeBookingFailureRecoverySequence','createOwnedIsolation','stopOwnedIsolation','rehearseIsolatedBackup','inspectPinnedExecutionSource'])assert.ok(source.includes(name),name);
  assert.doesNotMatch(source,/PILOT=|\.pilot-owner|write\(ROOT\+|verifyOnlineReleaseTool\(/);
- assert.match(source,/publicationAuthority:false/);assert.match(source,/finally\{stopOwnedIsolation\(isolation\);\}/);
+ assert.match(source,/publicationAuthority:false/);assert.match(source,/finally\{try\{if\(isolation\)stopOwnedIsolation\(isolation\);/);assert.match(source,/process\.on\('SIGTERM',interrupt\)/);
  assert.equal(new Set(FULL_REHEARSAL_SOURCES).size,FULL_REHEARSAL_SOURCES.length);
  for(const name of FULL_REHEARSAL_SOURCES)assert.ok(readFileSync(new URL('./'+name,import.meta.url)).length>0);
 });

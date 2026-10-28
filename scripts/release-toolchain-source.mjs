@@ -71,6 +71,7 @@ export function inspectPinnedExecutionSource({revision:sha,directory,repository=
  need(revision(sha)&&directory==='/var/lib/faolla-online-code/'+sha,'source_changed');ownedReleasePath(directory,{directory:true});ownedReleasePath(repository,{directory:true});
  const git=args=>sourceGit(directory,args).toString().trim();need(git(['rev-parse','HEAD'])===sha&&git(['rev-parse','--abbrev-ref','HEAD'])==='HEAD'&&
   git(['rev-parse','--show-toplevel'])===directory&&!git(['status','--porcelain=v1','--untracked-files=all']),'source_changed');
+ ownedReleasePath(directory+'/.git');need(git(['rev-parse','--path-format=absolute','--git-common-dir'])===repository+'/.git','source_changed');ownedReleasePath(repository+'/.git',{directory:true});
  const rows=parseSourceTree(sourceGit(repository,['ls-tree','-r','-z',sha])),allowed=new Set(['.git']);let count=0;
  for(const row of rows){if(row.file.startsWith('public/downloads/'))continue;const file=directory+'/'+row.file;ownedReleasePath(file);
   const s=fs.lstatSync(file),fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW),h=createHash('sha1');h.update('blob '+s.size+'\0');

@@ -6,6 +6,7 @@ import {BOOKING_READY_BASE as BASE} from './booking-ready-policy.mjs';
 import {assertBookingReadySource} from './booking-ready-tool.mjs';
 import {reviewedBookingExecution,preparedBookingExecution} from './release-toolchain-authority.mjs';
 import {assertExecutionWorkerReceipt} from './release-toolchain-worker-contract.mjs';
+import {inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
 import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
 import {normalizeRetirementProcess,assertExistingPm2Directory} from './online-release-retirement.mjs';
@@ -96,7 +97,7 @@ export function attestBookingReadyReplacement(receipt,toolRevision){
  need(match,'execution_worker_source');const chain=[],seen=new Set();let revision=match[1];
  while(revision!==toolRevision){need(chain.length<32&&!seen.has(revision),'execution_worker_chain');seen.add(revision);
   const root=ROOT+'/toolchain-runtime/'+revision,next=JSON.parse(read(root+'/worker-completed.json')),attempt=JSON.parse(read(root+'/worker-attempt.json'));
-  need(next.toolRevision===revision,'execution_worker_receipt');chain.push({receipt:next,attempt,revision});revision=next.priorRevision;
+  need(next.toolRevision===revision&&inspectPinnedExecutionSource({revision,directory:'/var/lib/faolla-online-code/'+revision}).inventorySha256===next.toolInventorySha256,'execution_worker_receipt');chain.push({receipt:next,attempt,revision});revision=next.priorRevision;
  }
  let latest=receipt;for(const hop of chain.reverse()){assertExecutionWorkerReceipt(hop.receipt,hop.attempt,{revision:hop.revision,prior:latest});latest=hop.receipt;}
  return collect(latest,receipt);

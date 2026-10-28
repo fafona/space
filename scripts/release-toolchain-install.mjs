@@ -17,7 +17,7 @@ export async function installReviewedReleaseTool(revision,{qualificationOnly=fal
  try{
   const st=fs.fstatSync(fd),disk=fs.lstatSync(lock);need(st.dev===disk.dev&&st.ino===disk.ino,'owned_resource_changed');
   const r=spawnSync('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd],timeout:10000});need(r.status===0&&!r.error&&!r.signal,'journal_busy');
-  need(JSON.parse(fs.readFileSync(MAINTENANCE+'/state.json','utf8')).phase==='ended','operation_unconfirmed');
+  ownedReleasePath(MAINTENANCE+'/state.json',{privateMode:true});need(JSON.parse(fs.readFileSync(MAINTENANCE+'/state.json','utf8')).phase==='ended','operation_unconfirmed');
   operation=MAINTENANCE+'/operation.lock';fs.mkdirSync(operation,{mode:0o700});identity=fs.lstatSync(operation);
   need(!fs.existsSync(directory),'attempt_replay_forbidden');
   sourceGit(REPO,['worktree','add','--detach','--no-checkout',directory,revision]);fs.chmodSync(directory,0o700);

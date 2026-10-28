@@ -1,11 +1,77 @@
 # Default: no-maintenance publication
 
-## Toolchain consolidation (2026-10-28; engineering validation, not production replacement)
+## Toolchain consolidation (2026-10-28; guarded booking-profile integration)
 
 `scripts/release-toolchain.mjs` is the new safety/diagnostics entrypoint. It has
 NO deploy, apply, merge, restart, cleanup, force or skip command. Existing
 production source admission, backup, ownership, CI, watchdog and rollback gates
 remain mandatory; a green doctor or synthetic rehearsal is not publication authority.
+
+The separate canonical production entry is
+`scripts/release-toolchain-release.mjs`. Its first reviewed profile adopts the
+already-built booking C/A pair; it is NOT an unrestricted publisher for another
+application, migration, candidate or service. A later application scope still
+requires review. A tool-only repair no longer requires another hand-maintained
+tool-SHA exception: actual application inputs/builds must be identical, while
+the new tool must independently be current main with all 12 existing CI jobs
+and the additional release-toolchain safety job successful.
+
+Operator sequence (Linux root, from the verified installed tool directory):
+
+1. Pack the exact committed tool bundle. Run its source-only installer with
+   `install-qualification COMMIT` for a fully tested PR, or `install COMMIT` for
+   fully tested current main. The installer fetches only the exact object and
+   creates a new complete detached tool worktree, excluding public downloads.
+   It does not move `origin/main`, edit candidates or change running processes.
+   Existing/partial installation directories are not overwritten.
+2. `node scripts/release-toolchain-release.mjs status` aggregates independent
+   source/review/environment/build/native/compatibility/worker/public checks.
+   `readyForFreshAdmission` is explicitly not a publication certificate. A
+   fresh encrypted production backup remains required at publication time.
+3. `node scripts/release-toolchain-release.mjs qualify` checks retained builds
+   before/after a full rehearsal and a real full-controller interruption. It
+   creates a NEW capped, unprivileged, network-none PostgreSQL 15.8 container,
+   new unique databases, and private loopback Nginx/process fixtures. No old
+   pilot is started. Current default privilege metadata, not passwords or role
+   powers, is reproduced only inside the new fixture. It exercises normal
+   publication, controller death before commit, controller death after commit,
+   actual SQL commit/rollback target decisions, inherited kernel locks, backup
+   dump/restore and a corrupt-archive negative check. The public sites and
+   formal processes/data are not switched or written. Fixture web responses
+   are synthetic; pinned application helpers are exercised separately.
+   Every owned process/container must stop; files and databases are retained.
+4. After current-main CI and qualification pass, `prepare-worker` may replace
+   only the already-gated private booking worker's tool source. It uses a
+   single peer-bound PM2 RPC, checks full OS/config environments and every
+   unrelated process, and leaves the gate closed and mail disabled. Historical
+   preparation receipts remain immutable; each later tool hop has its own
+   source-inventory/attempt/predecessor-bound receipt.
+5. `publish` requires that exact current-tool worker before any production
+   backup or switch. It creates/verifies a new encrypted existing-format full
+   backup bound to application C and the exact formal database, never to the
+   tool SHA or a pilot. Historical migration backup/compatibility provenance
+   remains separate and is not relabelled as fresh evidence. Fresh read-only
+   compatibility checks prove the old structural contract unchanged and the
+   installed additive objects equal the current isolated rehearsal (including
+   actual inherited default privileges). Normal pending-state, actual cohort,
+   90-second drain, automation, activation, independent watchdog, five-file
+   retention certificate, rollback and public checks all remain.
+
+The canonical journal has fixed source/bundle/environment/backup/compatibility/
+candidate/rehearsal/admission/switch/verify stages. Intent is fsynced before an
+effect, and observations are hash-chained. An uncertain mutating result is
+terminal: there is no automatic replay, reset, skip, or generic reconcile
+command. Read the preserved attempt and actual live resources before proposing
+any recovery. Once the watchdog is armed, controller failure exits without
+releasing its inherited kernel lock ahead of independent recovery. A web
+rollback never rolls back business data or disables the new database authority.
+
+Qualification attempts are append-only under the candidate's
+`toolchain-qualification/TOOL_COMMIT` directory. The latest failed/unfinished
+attempt is not replaced with an older green result. Fresh admission artifacts
+and generic stage journals use separate private directories. Historical
+candidates, backups, old receipts and failed attempts remain. No automatic
+disk cleanup or mail setup is included.
 
 - `node scripts/release-toolchain.mjs doctor` reports this machine's bounded
   host metadata. It does not mistake the workstation for the server or claim
@@ -62,12 +128,14 @@ an explicit failed controller exit and no misleading successful drill report.
 Historical policy unit tests use hash-bound complete Git tree evidence from
 `38a3ba02a3f2b2165994043e2ac78ea1d90d0282`, not a moving HEAD disguised as that
 historical source. They separately assert that the old guards reject current
-outside-scope changes. Production policies, pins and source admission are unchanged.
-Adopting this tooling as a
-production publisher still requires reviewed source admission, the full required
-CI set and complete existing application/database/recovery acceptance. Do not
-describe this engineering milestone as a deployed application or a finished
-replacement for every historical release lane.
+outside-scope changes. Historical production policies, pins and direct-entry
+source admission remain strict. The separate canonical entry uses
+non-serializable reviewed-source and fresh-admission capabilities after
+collecting real evidence; no caller JSON can enable them. The safety workflow
+also exercises the full new-database rehearsal and real SIGTERM of its own full
+controller, retaining bounded synthetic failure reports from the disposable
+runner. Toolchain installation/qualification is not an application deployment,
+nor a replacement for every historical release lane.
 
 User authorized this default and an additive analytics-capable lane on 2026-09-23.
 This is not permission to skip tests, authentication checks, backups or ownership checks.

@@ -6,6 +6,7 @@ import {canonicalJson,sha256,assertFreshEvidence,requireToolchain as need} from 
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {validateIsolationContainer} from './release-toolchain-isolation.mjs';
+import {verifyFullInterruptionReport} from './release-toolchain-full-interrupt.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
 import {validateDatabaseBackupSourceIdentity} from './database-backup-contract.mjs';
@@ -51,7 +52,7 @@ export function latestBookingQualification(toolRevision,inventorySha256){
  const directory=ROOT+'/toolchain-qualification/'+toolRevision;ownedReleasePath(directory,{directory:true,privateMode:true});const entries=fs.readdirSync(directory).sort();
  need(entries.length>0&&entries.every(n=>/^attempt_[0-9]{13}_[a-f0-9-]{36}$/.test(n)),'evidence_invalid');const selected=directory+'/'+entries.at(-1),start=read(selected+'/started.json'),proof=read(selected+'/verified.json');
  need(start.toolRevision===toolRevision&&proof.toolRevision===toolRevision,'source_changed');const native=verifyQualificationFiles(proof.root,{toolRevision,inventorySha256});
- same(native.sha256,proof.nativeSha256);return {...native,qualificationDirectory:selected,application:proof.application};
+ same(native.sha256,proof.nativeSha256);const interrupt=verifyFullInterruptionReport(proof.interruptionRoot,{toolRevision});same(interrupt.sha256,proof.interruptionSha256);return {...native,qualificationDirectory:selected,application:proof.application};
 }
 function fresh(c){need(issued.has(c)&&reviewedBookingExecution(c.toolRevision),'evidence_invalid');assertFreshEvidence(c.proof,{nowMs:Date.now(),maxAgeMs:600000});
  for(const [file,witness]of c.witnesses)same(fact(file),witness);return c;}
@@ -71,20 +72,24 @@ async function historicalBackup(){
  need(create.status==='created'&&saved.status==='verified'&&create.outputSha256===saved.inputSha256&&create.outputBytes===saved.inputBytes&&create.createdAt===saved.backupCreatedAt,'evidence_invalid');
  return {createReportSha256:sha256(bookingHostRead(request.createReport)),verifyReportSha256:sha256(bookingHostRead(request.verifyReport)),backup:{archiveSha256:create.outputSha256,archiveBytes:create.outputBytes,createdAt:create.createdAt,source:validated.source,restoreRehearsed:false}};
 }
+export function observeBookingCompatibility(qualification){
+ const contract=JSON.parse(bookingHostSql(bookingHistoricalMetadataReadSql())),installedMetadata=bookingHostSql(bookingInstalledMetadataReadSql),defaults=JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql)),originalEvidence=read(OP+'/booking-compatibility-evidence.json'),originalCompatibility=read(OP+'/booking-compatibility.json');
+ need(installedMetadata===qualification.report.installedMetadataSha256&&sha256(JSON.stringify(defaults))===qualification.report.defaultPrivilegesSha256,'observation_mismatch');
+ need(sha256(bookingHostRead(OP+'/booking-compatibility-evidence.json'))===originalCompatibility.evidenceSha256&&contract===originalEvidence.contractSha256,'observation_mismatch');
+ return {contract,installedMetadata,defaultPrivilegesSha256:qualification.report.defaultPrivilegesSha256,historicalCompatibilitySha256:sha256(bookingHostRead(OP+'/booking-compatibility.json'))};
+}
 export async function collectFreshBookingAdmission({lock,directory,qualification}){
  assertOnlineRetentionHeldLocks(lock);const toolRevision=path.basename(path.dirname(path.dirname(new URL(import.meta.url).pathname))),authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
  ownedReleasePath(directory,{directory:true,privateMode:true});same(qualification.application,authority.prepared.application);verifyQualificationFiles(qualification.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});
  const before=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));need(before.active===false&&before.systemIdentifier===production.systemIdentifier,'database_identity_mismatch');
- const metadataSql=bookingHistoricalMetadataReadSql(),contract=JSON.parse(bookingHostSql(metadataSql)),installedMetadata=bookingHostSql(bookingInstalledMetadataReadSql),defaults=JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql)),originalEvidence=read(OP+'/booking-compatibility-evidence.json'),originalCompatibility=read(OP+'/booking-compatibility.json');
- need(installedMetadata===qualification.report.installedMetadataSha256&&sha256(JSON.stringify(defaults))===qualification.report.defaultPrivilegesSha256,'observation_mismatch');
- need(sha256(bookingHostRead(OP+'/booking-compatibility-evidence.json'))===originalCompatibility.evidenceSha256&&contract===originalEvidence.contractSha256,'observation_mismatch');
+ const compatibility=observeBookingCompatibility(qualification),{contract,installedMetadata}=compatibility;
  const historical=await historicalBackup(),passphrase=randomBytes(48).toString('base64url'),backupPath=directory+'/database.tar.enc';seal(directory+'/backup.key',passphrase);
  const appDirectory='/www/wwwroot/merchant-space.web-releases/'+C.slice(0,12)+'-online';
  const created=await createProductionDatabaseBackup({outputPath:backupPath,passphrase,appDirectory,sourceDirectory:appDirectory,sourceRepository:'fafona/space',sourceSha:C,
   env:{...process.env,FAOLLA_DATABASE_CONTAINER:'supabase-db',FAOLLA_STORAGE_CONTAINER:'supabase-storage'}});seal(directory+'/backup-create.json',created);
  const checked=await verifyProductionDatabaseBackup({inputPath:backupPath,passphrase});seal(directory+'/backup-verify.json',checked);
  const backup=await validateAttendanceBackupEvidence({target:C,backup:backupPath,createReport:directory+'/backup-create.json',verifyReport:directory+'/backup-verify.json'});
- same(JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql)),before);same(JSON.parse(bookingHostSql(metadataSql)),contract);same(bookingHostSql(bookingInstalledMetadataReadSql),installedMetadata);same(observeBookingReadyApplication(),authority.prepared.application);
+ same(JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql)),before);same(observeBookingCompatibility(qualification),compatibility);same(observeBookingReadyApplication(),authority.prepared.application);
  const createdAt=new Date().toISOString(),proof={kind:'release-toolchain-fresh-booking-admission',toolRevision,application:authority.application,applicationBuilds:authority.prepared.application,
   databaseBefore:before,backup:{...backup,archive:{schemaVersion:1,algorithm:'sha256',domain:'backup-archive',representation:'bytes-v1',value:backup.archiveSha256}},historicalBackupArchiveSha256:historical.backup.archiveSha256,
   compatibility:{method:'unchanged-production-structural-contract-and-current-isolated-handoff',currentMetadataContractSha256:contract,installedMetadataSha256:installedMetadata,defaultPrivilegesSha256:qualification.report.defaultPrivilegesSha256,historicalCompatibilitySha256:sha256(bookingHostRead(OP+'/booking-compatibility.json')),nativeAcceptanceSha256:qualification.sha256},

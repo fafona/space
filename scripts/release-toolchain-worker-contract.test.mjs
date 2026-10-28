@@ -6,6 +6,6 @@ test('reviewed tool revisions no longer require a hardcoded private PID, while e
 });
 test('each immutable receipt is bound to its actual attempt and immediate historical predecessor, never a latest pointer',()=>{
  const prior={toolRevision:priorRevision,after:before},attempt={kind:'release-toolchain-private-worker-attempt',toolRevision:revision,priorRevision,before},receipt={schemaVersion:1,kind:'release-toolchain-private-worker-replacement',toolRevision:revision,priorRevision,before,after,identity:{name:before.name,pid:after.pid},attemptSha256:sha256(canonicalJson(attempt)+'\n'),gateNeverOpened:true,mailEnabled:false,completedAt:'2026-10-28T10:00:00.000Z'};
- assert.equal(assertExecutionWorkerReceipt(receipt,attempt,{revision,prior}),true);
+ attempt.toolInventorySha256='d'.repeat(64);receipt.toolInventorySha256=attempt.toolInventorySha256;receipt.attemptSha256=sha256(canonicalJson(attempt)+'\n');assert.equal(assertExecutionWorkerReceipt(receipt,attempt,{revision,prior}),true);
  for(const patch of [{priorRevision:'c'.repeat(40)},{toolRevision:priorRevision},{attemptSha256:'0'.repeat(64)},{gateNeverOpened:false},{mailEnabled:true},{identity:{name:'other',pid:after.pid}}])assert.throws(()=>assertExecutionWorkerReceipt({...receipt,...patch},attempt,{revision,prior}));
 });

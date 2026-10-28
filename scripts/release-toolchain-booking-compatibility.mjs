@@ -37,7 +37,7 @@ export function isolatedBookingDefaultPrivilegesSql(value){
   for(const a of row.acl){need(typeof a.grantee==='string'&&a.grantee.length>0&&Buffer.byteLength(a.grantee)<=63&&!/[\x00-\x1f]/.test(a.grantee)&&a.grantor==='supabase_admin'&&typeof a.grantable==='boolean'&&
    (row.kind==='functions'?a.privilege==='EXECUTE':['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'].includes(a.privilege)),'evidence_invalid');if(a.grantee!=='PUBLIC')roles.add(a.grantee);}}
  need(roles.size<=64,'evidence_invalid');const identifier=v=>'"'+v.replaceAll('"','""')+'"',literal=v=>"'"+v.replaceAll("'","''")+"'";
- let sql='begin;';for(const role of roles)sql+=`do $fixture_role$ begin if not exists(select 1 from pg_roles where rolname=${literal(role)}) then execute ${literal('create role '+identifier(role)+' nologin')};end if;end;$fixture_role$;`;
+ let sql='begin;set local standard_conforming_strings=on;';for(const role of roles)sql+='do '+literal(`begin if not exists(select 1 from pg_roles where rolname=${literal(role)}) then execute ${literal('create role '+identifier(role)+' nologin')};end if;end;`)+';';
  for(const row of value){const prefix='alter default privileges for role supabase_admin'+(row.scope==='public'?' in schema public':'');
   sql+=prefix+' revoke all on '+row.kind+' from PUBLIC,'+[...roles].map(identifier).join(',')+';';
   for(const a of row.acl)sql+=prefix+' grant '+a.privilege+' on '+row.kind+' to '+(a.grantee==='PUBLIC'?'PUBLIC':identifier(a.grantee))+(a.grantable?' with grant option':'')+';';

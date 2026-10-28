@@ -6,9 +6,10 @@ import {canonicalJson,sha256,fingerprint,publicFailure,requireToolchain as need}
 import {collectRemoteReleaseReview,inspectPinnedExecutionSource,assertUnchangedApplicationSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
 import {withReviewedBookingExecution,reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {BOOKING_PREPARATION_REVISION,verifyBookingPreparation} from './release-toolchain-booking-profile.mjs';
-import {latestBookingQualification,verifyQualificationFiles,collectFreshBookingAdmission,withFreshBookingAdmission,requireBookingAdmission} from './release-toolchain-booking-admission.mjs';
+import {latestBookingQualification,verifyQualificationFiles,collectFreshBookingAdmission,withFreshBookingAdmission,requireBookingAdmission,observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';
 import {prepareExecutionWorker} from './release-toolchain-worker.mjs';
 import {runFullToolchainRehearsal} from './release-toolchain-full-rehearsal.mjs';
+import {rehearseFullToolchainInterruption} from './release-toolchain-full-interrupt.mjs';
 import {localHostObservation} from './release-toolchain-doctor.mjs';
 import {createToolchainRun,executeJournaledStage,inspectToolchainRun,toolchainRunBinding} from './release-toolchain-journal.mjs';
 import {withOnlineRetentionLocks,assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
@@ -26,14 +27,15 @@ function ensurePrivate(parent,name){const child=parent+'/'+name;if(!fs.existsSyn
 async function publicVersions(expected){const result=[];for(const origin of ['https://faolla.com','https://launch.faolla.com']){const r=await fetch(origin+'/api/app-web-version?releaseToolchain='+randomUUID(),{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(5000)}),v=await r.json();need(r.status===200&&v.ok===true&&v.buildId===expected,'observation_mismatch');result.push({origin,status:r.status,buildId:v.buildId});}return result;}
 export function assertCanonicalReleaseCommand(args){need(Array.isArray(args)&&args.length===1&&['status','qualify','prepare-worker','publish'].includes(args[0]),'invalid_contract');return args[0];}
 export async function collectReleaseToolchainStatus(){
- invocation();const checks=[];async function check(stage,work){try{const detail=await work();checks.push({stage,passed:true,detail});}catch(error){checks.push({stage,passed:false,...publicFailure(error,{stage})});}}
+ invocation();const checks=[];let qualification;async function check(stage,work){try{const detail=await work();checks.push({stage,passed:true,detail});}catch(error){checks.push({stage,passed:false,...publicFailure(error,{stage})});}}
  await check('source',()=>inspectPinnedExecutionSource({revision:toolRevision,directory}).inventorySha256);
  await check('review',()=>collectRemoteReleaseReview(toolRevision));
  await check('environment',()=>{const h=localHostObservation(directory);need(h.platform==='linux'&&h.architecture==='x64'&&h.nodeMajor===20&&h.availableDiskBytes>=1024**3,'unsupported_runtime');return {...h,applicationRebuildRequired:false};});
  await check('preparation',()=>{const p=verifyBookingPreparation(BOOKING_PREPARATION_REVISION);return {revision:p.revision,applicationBuilds:p.application,preservedSha256:p.preservedSha256};});
- await check('qualification',()=>latestBookingQualification(toolRevision,inspectPinnedExecutionSource({revision:toolRevision,directory}).inventorySha256).sha256);
+ await check('qualification',()=>{qualification=latestBookingQualification(toolRevision,inspectPinnedExecutionSource({revision:toolRevision,directory}).inventorySha256);return qualification.sha256;});
+ await check('compatibility',()=>{need(qualification,'evidence_invalid');return observeBookingCompatibility(qualification);});
  await check('worker',()=>{const p=bookingReadyRawProcesses().find(p=>p.name==='merchant-space-booking-atomic-'+C.slice(0,12));need(p?.pm2_env.pm_exec_path===directory+'/scripts/booking-atomic-worker.mjs','source_changed');return {pid:p.pid,gated:!fs.existsSync(ROOT+'/worker-enabled.json')};});
- await check('public',()=>publicVersions(B));return {kind:'release-toolchain-production-readiness',toolRevision,checks,ready:checks.every(c=>c.passed),publicationAuthority:false,productionMutated:false};
+ await check('public',()=>publicVersions(B));return {kind:'release-toolchain-production-readiness',toolRevision,checks,readyForFreshAdmission:checks.every(c=>c.passed),freshEncryptedBackupStillRequired:true,publicationAuthority:false,productionMutated:false};
 }
 async function qualify(){
  invocation();const review=await collectRemoteReleaseReview(toolRevision,{production:false}),source=inspectPinnedExecutionSource({revision:toolRevision,directory});
@@ -41,7 +43,8 @@ async function qualify(){
  return withOnlineRetentionLocks(async lock=>{assertOnlineRetentionHeldLocks(lock);const preparation=verifyBookingPreparation(BOOKING_PREPARATION_REVISION),root=ensurePrivate(ensurePrivate(ROOT,'toolchain-qualification'),toolRevision),attempt=privateChild(root,'attempt_'+Date.now()+'_'+randomUUID());
   seal(attempt+'/started.json',{kind:'release-toolchain-qualification-attempt',toolRevision,inventorySha256:source.inventorySha256,review,application:preparation.application,startedAt:new Date().toISOString()});
   const before=await publicVersions(B);try{const result=await runFullToolchainRehearsal();same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),preparation);same(await publicVersions(B),before);assertOnlineRetentionHeldLocks(lock);
-   const native=verifyQualificationFiles(result.root,{toolRevision,inventorySha256:source.inventorySha256});seal(attempt+'/verified.json',{toolRevision,root:result.root,nativeSha256:native.sha256,application:preparation.application,completedAt:new Date().toISOString()});
+   const native=verifyQualificationFiles(result.root,{toolRevision,inventorySha256:source.inventorySha256}),interruption=await rehearseFullToolchainInterruption();same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),preparation);same(await publicVersions(B),before);
+   seal(attempt+'/verified.json',{toolRevision,root:result.root,nativeSha256:native.sha256,interruptionRoot:interruption.root,interruptionSha256:interruption.sha256,application:preparation.application,completedAt:new Date().toISOString()});
    return {kind:'release-toolchain-qualified',toolRevision,root:result.root,attempt,nativeSha256:native.sha256,productionMutated:false,mailEnabled:false};
   }catch(error){seal(attempt+'/failed.json',{...publicFailure(error,{stage:'rehearsal'}),failedAt:new Date().toISOString()});throw error;}
  });
@@ -73,6 +76,8 @@ async function publish(lock,authority){
  });
 }
 async function main(){invocation();const action=assertCanonicalReleaseCommand(process.argv.slice(2));if(action==='status')return collectReleaseToolchainStatus();if(action==='qualify')return qualify();
- return withReviewedBookingExecution({applicationRevision:C,preparationRevision:BOOKING_PREPARATION_REVISION,verifyPreparation:verifyBookingPreparation},authority=>withOnlineRetentionLocks(lock=>action==='prepare-worker'?prepareExecutionWorker({lock,toolRevision}):publish(lock,authority)));
+ return withReviewedBookingExecution({applicationRevision:C,preparationRevision:BOOKING_PREPARATION_REVISION,verifyPreparation:verifyBookingPreparation},authority=>withOnlineRetentionLocks(lock=>{
+  if(action!=='prepare-worker')return publish(lock,authority);assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
+ }));
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(result=>console.log(canonicalJson(result)),error=>{console.error(canonicalJson(publicFailure(error,{stage:'release'})));process.exitCode=1;});

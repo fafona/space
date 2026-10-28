@@ -13,6 +13,7 @@ export function assertExecutionWorkerTransition(before,after,{priorRevision,revi
 export function assertExecutionWorkerReceipt(receipt,attempt,{revision,prior}){
  need(receipt?.schemaVersion===1&&receipt.kind==='release-toolchain-private-worker-replacement'&&receipt.toolRevision===revision&&receipt.priorRevision===prior.toolRevision&&
   receipt.gateNeverOpened===true&&receipt.mailEnabled===false&&Number.isFinite(Date.parse(receipt.completedAt))&&
+  /^[a-f0-9]{64}$/.test(receipt.toolInventorySha256??'')&&receipt.toolInventorySha256===attempt?.toolInventorySha256&&
   receipt.identity?.name===NAME&&receipt.identity.pid===receipt.after?.pid&&receipt.attemptSha256===sha256(canonicalJson(attempt)+'\n'),'evidence_invalid');
  need(attempt?.kind==='release-toolchain-private-worker-attempt'&&attempt.toolRevision===revision&&attempt.priorRevision===prior.toolRevision&&
   canonicalJson(attempt.before)===canonicalJson(prior.after)&&canonicalJson(receipt.before)===canonicalJson(prior.after),'observation_mismatch');

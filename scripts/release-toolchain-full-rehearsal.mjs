@@ -29,11 +29,11 @@ import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
-let isolation,diagnosticRoot;
+let isolation,diagnosticRoot,cancelled=false;
 const CASES=['normal','controller-death-before-commit','controller-death-after-commit'];
 const need=(v,c)=>{if(!v)throw Error('booking_native_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c),hash=v=>createHash('sha256').update(v).digest('hex');
 const env=()=>({...bookingHostEnvironment(),NODE_OPTIONS:'',NODE_PATH:'',PM2_NODE_OPTIONS:''}),now=()=>new Date().toISOString(),wait=ms=>new Promise(r=>setTimeout(r,ms));
-function run(bin,args,options={}){const r=spawnSync(bin,args,{encoding:'utf8',env:env(),timeout:10000,maxBuffer:16*1024**2,windowsHide:true,...options});
+function run(bin,args,options={}){need(!cancelled,'interrupted');const r=spawnSync(bin,args,{encoding:'utf8',env:env(),timeout:10000,maxBuffer:16*1024**2,windowsHide:true,...options});
  if(r.status!==0||r.error||r.signal){if(diagnosticRoot)write(diagnosticRoot+'/command-failure-'+randomUUID()+'.json',{kind:'native-fixture-command-failure',program:path.basename(bin),action:args[0],exitCode:r.status,signal:r.signal,errorCode:r.error?.code??null,fixtureStderr:String(r.stderr??'').slice(0,2000),at:now()});need(false,'command_unconfirmed');}return r.stdout;}
 const read=file=>bookingHostRead(file),json=file=>JSON.parse(read(file));
 function write(file,value){bookingHostWriteOnce(file,typeof value==='string'?value:JSON.stringify(value,null,2)+'\n');}
@@ -73,7 +73,7 @@ function reload(c,phase,gated){ownedCase(c.directory);const file=c.directory+'/n
 async function probe(c,uri='/api/app-web-version',method='GET'){
  const r=await fetch('http://127.0.0.1:'+c.ports.ingress+uri,{method,headers:{Connection:'close'},redirect:'manual',signal:AbortSignal.timeout(1500)});return {status:r.status,value:await r.json()};
 }
-async function until(predicate,timeout=5000){const end=Date.now()+timeout;while(Date.now()<end){if(await predicate())return;await wait(25);}need(false,'condition_timeout');}
+async function until(predicate,timeout=5000){const end=Date.now()+timeout;while(Date.now()<end){need(!cancelled,'interrupted');if(await predicate())return;await wait(25);}need(false,'condition_timeout');}
 function launch(role,directory,{fd}={}){ownedCase(directory);const output=fs.openSync(directory+'/'+role+'-'+randomUUID()+'.log',fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
  try{return spawn('/usr/bin/node',[FILE,role,directory],{cwd:directory,env:env(),detached:role==='watchdog'||role==='worker',stdio:['ignore',output,output,...(fd===undefined?[]:[fd])]});}
  finally{fs.closeSync(output);}}
@@ -230,14 +230,16 @@ function production(){
   files:Object.fromEntries(files.map(f=>[f,hash(fs.readFileSync(f))])),current:fs.realpathSync('/www/wwwroot/merchant-space.current'),
   registry:bookingHostSql("begin read only;select encode(sha256(convert_to(jsonb_agg(to_jsonb(m) order by version)::text,'UTF8')),'hex') from public.faolla_schema_migrations m;rollback;"),defaultPrivileges:JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql))};
 }
+export {production as captureToolchainProductionSnapshot};
 export async function runFullToolchainRehearsal(){
  const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
  need(directory==='/var/lib/faolla-online-code/'+toolRevision&&/^[a-f0-9]{40}$/.test(toolRevision),'prepared_source');const verifiedSource=inspectPinnedExecutionSource({revision:toolRevision,directory});inspectToolchainNginxProfile(NGINX);
  const formal=production(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
  const sourceHashes=Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,hash(fs.readFileSync(new URL('./'+f,import.meta.url)))]));
- write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
- const results=[];let postgresSystemIdentifier,installedMetadataSha256;isolation=createOwnedIsolation();const defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
- try{for(const name of CASES){
+ write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
+ const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges;cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
+ try{isolation=createOwnedIsolation();defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
+ for(const name of CASES){
   const runtime=root+'/runtime-'+name;fs.mkdirSync(runtime,{mode:0o700});let children=[],nginx,controllerProcess;const started=Date.now();
   try{
    const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database,defaultPrivileges);postgresSystemIdentifier=seeded.before.systemIdentifier;
@@ -251,7 +253,7 @@ export async function runFullToolchainRehearsal(){
    window.deadlineAt=new Date(Date.parse(window.startedAt)+600000).toISOString();
    const applicationDirectory=formal.formalHostPresent===false?'/var/lib/faolla-release-toolchain-application-'+toolRevision:'/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
    const c={name,root,directory:runtime,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],isolationRoot:isolation.root,applicationDirectory,database,before:seeded.before,plan:seeded.plan,ports,lua,window};write(runtime+'/owner.json',c);
-   for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=launch(role,runtime),f=await spawned(child);children.push(f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
+   for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=launch(role,runtime),f=await spawned(child);children.push(f);write(runtime+'/owned-process-'+f.pid+'.json',f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
    write(runtime+'/nginx.conf',bookingNativeConfigText(c,'baseline',false));run(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-t']);
    const child=spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'});
    await startBookingNativeNginx({directory:runtime,spawned:()=>spawned(child),register:f=>{nginx=f;},actual:fact,until,
@@ -293,7 +295,7 @@ export async function runFullToolchainRehearsal(){
     children:async()=>{const failures=[];for(const f of [...children].reverse())try{await stop(f);}catch(e){failures.push(e);}if(failures.length)throw new AggregateError(failures);},
    });
   }
- }}finally{stopOwnedIsolation(isolation);}
+ }}finally{try{if(isolation)stopOwnedIsolation(isolation);}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
  equal(production(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
  const report={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision,candidate:CANDIDATE,rollback:APPLICATION,productionMutated:false,originalTimerMutated:false,mailEnabled:false,
   postgresServerVersionNum:'150008',postgresSystemIdentifier,allFixturesStopped:true,cases:results,sourceHashes,activationBodySha256:BOOKING_ACTIVATION_BODY_SHA256,

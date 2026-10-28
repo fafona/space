@@ -4,7 +4,7 @@ import {canonicalJson} from './release-toolchain-contracts.mjs';
 const tree=()=>({'scripts/main.mjs':Buffer.from("import './child.mjs';import 'node:fs';import './data.json' with {type:'json'};export const text='import missing';"),
  'scripts/child.mjs':Buffer.from("// import './not-real.mjs'\nexport const value=1;"),'scripts/data.json':Buffer.from('{"a":1}')});
 test('the complete runtime bundle includes both safety CLI and owned interruption acceptance',()=>{
- assert.deepEqual(TOOLCHAIN_ENTRYPOINTS,['scripts/release-toolchain.mjs','scripts/release-toolchain-interrupt-acceptance.mjs']);assert.ok(Object.isFrozen(TOOLCHAIN_ENTRYPOINTS));
+ assert.deepEqual(TOOLCHAIN_ENTRYPOINTS,['scripts/release-toolchain.mjs','scripts/release-toolchain-interrupt-acceptance.mjs','scripts/release-toolchain-install.mjs']);assert.ok(Object.isFrozen(TOOLCHAIN_ENTRYPOINTS));
 });
 function plan(blobs=tree()){const readBlob=p=>{if(!blobs[p])throw Error('private');return blobs[p];};
  return {readBlob,manifest:bundleManifest({toolRevision:'a'.repeat(40),entrypoints:['scripts/main.mjs'],files:toolchainImportGraph({entrypoints:['scripts/main.mjs'],resources:['scripts/data.json'],readBlob})})};}
