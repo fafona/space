@@ -1,5 +1,10 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {RELEASE_REPOSITORY,RELEASE_REQUIRED_JOBS,RELEASE_SAFETY_JOB,validateReviewRuns,toolOnlySourcePath,parseSourceTree,assertUnchangedApplicationSource} from './release-toolchain-source.mjs';
+import {RELEASE_REPOSITORY,RELEASE_REQUIRED_JOBS,RELEASE_SAFETY_JOB,validateReviewRuns,toolOnlySourcePath,parseSourceTree,assertUnchangedApplicationSource,commonGitDirectory} from './release-toolchain-source.mjs';
+test('Git 2.27 common-dir output is resolved without a newer --path-format flag or accepting unknown-option output',()=>{
+ assert.equal(commonGitDirectory('/var/lib/tools/commit','/www/wwwroot/app/.git'),'/www/wwwroot/app/.git');
+ assert.equal(commonGitDirectory('/work/repo/tools/commit','../../.git'),'/work/repo/.git');
+ for(const output of ['','--path-format=absolute\n/www/wwwroot/app/.git','/path\nother',' /path','/path\u0000'])assert.throws(()=>commonGitDirectory('/work/tool',output));
+});
 const sha='a'.repeat(40),old='b'.repeat(40),nowMs=Date.parse('2026-10-28T05:00:00.000Z');
 function fixture(){const runs=[['.github/workflows/ci.yml',1],['.github/workflows/release-toolchain.yml',2]].map(([path,id])=>({id,path,head_sha:sha,head_branch:'main',event:'push',run_attempt:1,status:'completed',conclusion:'success',repository:{full_name:RELEASE_REPOSITORY},head_repository:{full_name:RELEASE_REPOSITORY}}));
  return {revision:sha,main:sha,runs,jobsByRun:{1:RELEASE_REQUIRED_JOBS.map(name=>({name,run_attempt:1,status:'completed',conclusion:'success'})),2:[{name:RELEASE_SAFETY_JOB,run_attempt:1,status:'completed',conclusion:'success'}]},nowMs};}
