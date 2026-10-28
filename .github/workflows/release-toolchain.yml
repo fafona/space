@@ -69,6 +69,17 @@ jobs:
           sudo cp -a "$GITHUB_WORKSPACE/package.json" "$GITHUB_WORKSPACE/tsconfig.json" "$GITHUB_WORKSPACE/src" "$GITHUB_WORKSPACE/node_modules" "$application/"
           sudo chown -R root:root "$application"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
+      - name: Collect Root-Owned Synthetic Reports
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-*)
+          if ((${#roots[@]})); then
+            sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
+          fi
       - name: Preserve Synthetic Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -76,6 +87,5 @@ jobs:
           name: release-toolchain-ingress-evidence
           path: |
             /tmp/faolla-release-toolchain-lab-*/**/*.json
-            /var/lib/faolla-booking-full-rehearsal-*/**/*.json
-            /var/lib/faolla-release-toolchain-isolation-*/*.json
+            ${{ runner.temp }}/release-toolchain-native-evidence.tar
           if-no-files-found: warn

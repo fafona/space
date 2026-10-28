@@ -32,7 +32,8 @@ let isolation,diagnosticRoot;
 const CASES=['normal','controller-death-before-commit','controller-death-after-commit'];
 const need=(v,c)=>{if(!v)throw Error('booking_native_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c),hash=v=>createHash('sha256').update(v).digest('hex');
 const env=()=>({...bookingHostEnvironment(),NODE_OPTIONS:'',NODE_PATH:'',PM2_NODE_OPTIONS:''}),now=()=>new Date().toISOString(),wait=ms=>new Promise(r=>setTimeout(r,ms));
-function run(bin,args,options={}){const r=spawnSync(bin,args,{encoding:'utf8',env:env(),timeout:10000,maxBuffer:16*1024**2,windowsHide:true,...options});need(r.status===0&&!r.error&&!r.signal,'command_unconfirmed');return r.stdout;}
+function run(bin,args,options={}){const r=spawnSync(bin,args,{encoding:'utf8',env:env(),timeout:10000,maxBuffer:16*1024**2,windowsHide:true,...options});
+ if(r.status!==0||r.error||r.signal){if(diagnosticRoot)write(diagnosticRoot+'/command-failure-'+randomUUID()+'.json',{kind:'native-fixture-command-failure',program:path.basename(bin),action:args[0],exitCode:r.status,signal:r.signal,errorCode:r.error?.code??null,fixtureStderr:String(r.stderr??'').slice(0,2000),at:now()});need(false,'command_unconfirmed');}return r.stdout;}
 const read=file=>bookingHostRead(file),json=file=>JSON.parse(read(file));
 function write(file,value){bookingHostWriteOnce(file,typeof value==='string'?value:JSON.stringify(value,null,2)+'\n');}
 function fact(pid){const root='/proc/'+pid,text=fs.readFileSync(root+'/stat','utf8'),f=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync(root).uid===0,'process_owner');
