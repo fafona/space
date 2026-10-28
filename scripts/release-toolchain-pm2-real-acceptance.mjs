@@ -73,7 +73,12 @@ try{
  fs.writeFileSync(configFile,'module.exports='+JSON.stringify(config)+';\n',{mode:0o600,flag:'wx'});run('/usr/bin/node',[pm2+'/bin/pm2','start',configFile]);
  const started=registry();need(started.length===1&&started[0].name===name&&started[0].pm_id===0&&started[0].pm2_env.pm_cwd===release&&started[0].pm2_env.pm_exec_path===release+'/node_modules/next/dist/bin/next','started_real_next');await ready(port);
  run('/usr/bin/node',[pm2+'/bin/pm2','start',release+'/scripts/unrelated.cjs','--name','eq-unrelated','--cwd',release]);
+ // Model the stable existing production host, not a process restarted within
+ // PM2's pinned default min_uptime (1000ms), which increments unstable_restarts.
+ const warming=registry().find(p=>p.name===name);need(warming&&[undefined,1000].includes(warming.pm2_env.min_uptime),'fixture_min_uptime');
+ await sleep(Math.max(0,1500-(Date.now()-warming.pm2_env.pm_uptime)));
  const rows=registry(),beforeRow=rows.find(p=>p.name===name),other=rows.find(p=>p.name==='eq-unrelated');need(beforeRow.pm_id===0&&beforeRow.pm2_env.status==='online'&&other?.pid>0,'initial_processes');
+ need(Date.now()-beforeRow.pm2_env.pm_uptime>=1500&&beforeRow.pm2_env.unstable_restarts===0,'stable_initial_process');
  const beforeFact=fact(beforeRow.pid),beforeOther={row:other,raw:raw(other.pid),identity:fact(other.pid)},beforeRaw=raw(beforeRow.pid),before=normalizeRetirementProcess(beforeRow),anchor=capturePm2TerminationAnchor(home+'/pm2.log');
  const start=Date.now(),window={id:randomUUID(),startedAt:new Date(start).toISOString(),deadlineAt:new Date(start+600000).toISOString()};
  stage='actual-peer-bound-restart';const request={action:'restart',daemon:daemonPeer,root,socket:home+'/rpc.sock',expected:bookingLegacyRpcExpected(beforeRow),process:python({action:'identity',pid:beforeRow.pid})};
@@ -81,6 +86,7 @@ try{
  need(python(request).acknowledged===true,'ack');await ready(port);let afterRow;
  for(let i=0;i<100;i++){afterRow=registry().find(p=>p.name===name);if(afterRow.pid!==before.pid&&afterRow.pm2_env.status==='online')break;await sleep(100);}
  const after=normalizeRetirementProcess(afterRow),termination=inspectPm2SigintTermination(anchor,before,after),afterRaw=raw(after.pid),value={beforeRaw,afterRaw,beforeConfigured:beforeRow.pm2_env.env,afterConfigured:afterRow.pm2_env.env,legacyBefore:before,legacyAfter:after,beforePmUptime:beforeRow.pm2_env.pm_uptime,afterPmUptime:afterRow.pm2_env.pm_uptime,beforePmDerived:manager(beforeRow.pm2_env),afterPmDerived:manager(afterRow.pm2_env),framework,window,observedAt:new Date().toISOString()};
+ seal('transition-observed.json',{value,termination,unverified:true,syntheticInputsOnly:true});
  stage='actual-transition-proof';need(value.afterPmDerived.exitCode===130,'actual_next_sigint_not_130');assertManagedPauseEnvironmentTransition(value,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'});
  const afterOther=registry().find(p=>p.name==='eq-unrelated');assert.deepEqual(afterOther,beforeOther.row);assert.deepEqual(raw(afterOther.pid),beforeOther.raw);assert.deepEqual(fact(afterOther.pid),beforeOther.identity);need(!alive(beforeFact),'old_process_still_alive');
  stage='negative-proof-cases';for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterPmDerived.exitCode=1,v=>v.legacyAfter.restartCount++,v=>v.afterConfigured.RESEND_API_KEY='forbidden']){const changed=structuredClone(value);mutate(changed);assert.throws(()=>assertManagedPauseEnvironmentTransition(changed,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'}));}

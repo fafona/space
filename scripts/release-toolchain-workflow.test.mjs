@@ -18,6 +18,8 @@ test('required safety check includes actual pinned Next/PM2 and the unchanged sh
  assert.match(source,/stage='real-next-build';run\([^\n]+120000,release\)/);
  assert.ok(source.includes('ci-only-synthetic-command-failure'));
  for(const text of ['ecosystem.config.cjs','common.isConfigFile(configFile)','started_real_next'])assert.ok(source.includes(text),text);
+ for(const text of ['stable_initial_process','transition-observed.json','beforeRow.pm2_env.unstable_restarts===0'])assert.ok(source.includes(text),text);
+ assert.ok(source.indexOf("seal('transition-observed.json'")<source.indexOf("stage='actual-transition-proof'"));
  assert.ok(workflow.includes('eq_roots=(/var/lib/faolla-eq-*)'));
  assert.ok(workflow.includes('sudo find "${eq_roots[@]}" -maxdepth 2'));
  assert.doesNotMatch(workflow,/roots=\([^\n]*faolla-eq-\*\/reports/);
