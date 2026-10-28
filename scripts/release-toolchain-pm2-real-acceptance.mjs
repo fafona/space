@@ -8,6 +8,8 @@ import{BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,assertBookingHandoffWindow}fr
 import{normalizeRetirementProcess,parseRetirementSockets}from'./online-release-retirement.mjs';import{bookingLegacyRpcExpected}from'./booking-handoff-legacy.mjs';
 import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow,requirePm2RegistryObservation}from'./release-toolchain-pm2-transition.mjs';
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
+import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
+import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&process.argv.length===2&&!ANCHORS.some(f=>fs.existsSync(f)),'ci_only');
@@ -122,14 +124,18 @@ try{
  // guards or RPC allowlist. Persistence must not boot a daemon or restart apps.
  stage='actual-connect-only-dump-persistence';
  const dumpRequest={daemon:daemonPeer,root,socket:home+'/rpc.sock'},dumpRegistry=requirePm2RegistryObservation(python({...dumpRequest,action:'dump-inspect'})),dumpTarget=python({...dumpRequest,action:'dump-capture'});
- const dumpReceipt=python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget});
+ const {commandLine:daemonCommand,...dumpDaemon}=captureProcessFact(daemon.pid),dumpBoot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
+ need(daemonCommand.length===1&&daemonCommand[0]==='PM2 v6.0.14: God Daemon ('+home+')','dump_daemon_command');
+ assert.deepEqual(await inspectPm2Registry(dumpDaemon,dumpBoot),dumpRegistry);assert.deepEqual(await capturePm2DumpTarget(dumpDaemon,dumpBoot),dumpTarget);
+ const dumpReceipt=await persistPm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpTarget);
  need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===2,'dump_receipt');
  need(python({...dumpRequest,action:'dump-verify',registry:dumpRegistry,proof:dumpReceipt})===true,'dump_verification');
+ need(await verifyPm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'production_adapter_dump_verification');
  const dumpSha=sha(fs.readFileSync(home+'/dump.pm2'));
  python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget},{reject:true,rejectLastLine:'fixed_dump.PM2DumpError: pm2_dump_target_changed'});
  need(sha(fs.readFileSync(home+'/dump.pm2'))===dumpSha,'stale_dump_changed');
  const afterSave=registry().find(p=>p.name===name);assert.deepEqual(stablePm2RegistryRow(afterSave),stablePm2RegistryRow(afterRow));assert.deepEqual(raw(afterSave.pid),afterRaw);assert.deepEqual(fact(afterSave.pid),afterIdentity);
- seal('dump-persistence-verified.json',{kind:'real-next-private-pm2-connect-only-dump-persistence',receipt:dumpReceipt,savedBytesSha256:dumpSha,staleTargetRefused:true,noDaemonBootOrAppControl:true,sharedProductionDumpSourceSha256:sha(fs.readFileSync(source+'/scripts/production-maintenance-pm2-dump.py')),publicationAuthority:false});
+ seal('dump-persistence-verified.json',{kind:'real-next-private-pm2-connect-only-dump-persistence',receipt:dumpReceipt,savedBytesSha256:dumpSha,staleTargetRefused:true,noDaemonBootOrAppControl:true,unmodifiedProductionJsAdapter:true,actualProcessFactCollection:true,sharedProductionDumpSourceSha256:sha(fs.readFileSync(source+'/scripts/production-maintenance-pm2-dump.py')),publicationAuthority:false});
  // The complete observation ends after reading both actual runtime and log,
  // never before the termination witness was independently collected.
  const value={...rawObservation,observedAt:new Date().toISOString()};
