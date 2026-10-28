@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {validateIsolationContainer,ISOLATION_IMAGE,verifyIsolatedArchiveBytes} from './release-toolchain-isolation.mjs';
+import {validateIsolationContainer,ISOLATION_IMAGE,verifyIsolatedArchiveBytes,assertIsolationResources} from './release-toolchain-isolation.mjs';
 import {fingerprint} from './release-toolchain-contracts.mjs';
 test('the actual restore input guard rejects changed bytes and a wrong fingerprint scheme before any restore',()=>{
  const bytes=Buffer.alloc(512,42),expected=fingerprint('backup-archive',bytes);assert.equal(verifyIsolatedArchiveBytes(bytes,expected),bytes);
@@ -8,6 +8,10 @@ test('the actual restore input guard rejects changed bytes and a wrong fingerpri
 });
 const owner={root:'/var/lib/faolla-release-toolchain-isolation-abcdef',id:'12345678-1234-1234-1234-123456789abc',containerId:'a'.repeat(64)};
 const actual=()=>({Id:owner.containerId,Name:'/faolla-release-toolchain-'+owner.id,Image:ISOLATION_IMAGE,Config:{User:'postgres',Labels:{'io.faolla.release-toolchain.owner':owner.id,'io.faolla.release-toolchain.root':owner.root}},HostConfig:{NetworkMode:'none',Privileged:false,PortBindings:{},CapDrop:['ALL'],SecurityOpt:['no-new-privileges']},Mounts:[{Type:'bind',Source:owner.root+'/database',Destination:'/fixture',RW:true}],State:{Running:true}});
+test('bounded isolation has its own early reserve and never lowers or invokes the 6 GiB application build floor',()=>{
+ const host={platform:'linux',architecture:'x64',nodeMajor:20,availableMemoryBytes:2*1024**3,availableDiskBytes:2*1024**3};assert.equal(assertIsolationResources(host),true);
+ for(const patch of [{platform:'win32'},{nodeMajor:24},{availableMemoryBytes:2*1024**3-1},{availableDiskBytes:2*1024**3-1},{availableMemoryBytes:NaN}])assert.throws(()=>assertIsolationResources({...host,...patch}));
+});
 test('only the new exact owned network-none unprivileged fixture is admitted',()=>{assert.equal(validateIsolationContainer(actual(),owner,{running:true}),true);
  for(const change of [v=>v.Id='b'.repeat(64),v=>v.Name='/supabase-db',v=>v.Image='sha256:'+'b'.repeat(64),v=>v.Config.User='root',v=>v.Config.Labels['io.faolla.release-toolchain.owner']='other',v=>v.HostConfig.NetworkMode='bridge',v=>v.HostConfig.Privileged=true,v=>v.HostConfig.PortBindings={'5432/tcp':[{}]},v=>v.HostConfig.CapDrop=[],v=>v.HostConfig.SecurityOpt=[],v=>v.Mounts[0].Source='/opt/supabase/docker/volumes/db/data',v=>v.Mounts.push({...v.Mounts[0]}),v=>v.State.Running=false]){const v=actual();change(v);assert.throws(()=>validateIsolationContainer(v,owner,{running:true}));}
 });

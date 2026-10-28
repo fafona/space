@@ -3,8 +3,14 @@
 import * as fs from 'node:fs';import path from 'node:path';import {spawnSync} from 'node:child_process';import {randomUUID} from 'node:crypto';
 import {canonicalJson,sha256,fingerprint,compareFingerprint,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
+import {localHostObservation} from './release-toolchain-doctor.mjs';
 export const ISOLATION_IMAGE='sha256:8613ba8eab946dff6674a2db6aab75b80aa101da39035fe20f62b0c7591ab35d';
 export const ISOLATION_IMAGE_REFERENCE='supabase/postgres@sha256:af083ef64d0408c8f098ee6f5c364a59b26f36fbc0f3a334a62c5c1d57362e9b';
+export function assertIsolationResources(host){
+ need(host?.platform==='linux'&&host.architecture==='x64'&&host.nodeMajor===20,'unsupported_runtime');
+ need(Number.isSafeInteger(host.availableMemoryBytes)&&host.availableMemoryBytes>=2*1024**3,'isolation_memory_insufficient');
+ need(Number.isSafeInteger(host.availableDiskBytes)&&host.availableDiskBytes>=2*1024**3,'disk_insufficient');return true;
+}
 const productionContainer='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416',productionSystem='7612049595342295079';
 const ROOT=/^\/var\/lib\/faolla-release-toolchain-isolation-[A-Za-z0-9]+$/,capsules=new WeakSet();let diagnosticRoot;
 const env=()=>({PATH:'/usr/sbin:/usr/bin:/sbin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',HOME:'/root',DOCKER_CONFIG:'/root/.docker'});
@@ -36,6 +42,7 @@ export function loadOwnedIsolation(root){need(ROOT.test(root),'invalid_path');ow
 }
 export function createOwnedIsolation(){
  need(process.platform==='linux'&&process.getuid?.()===0,'unsupported_runtime');ownedReleasePath('/var/lib',{directory:true});
+ assertIsolationResources(localHostObservation('/var/lib'));
  const image=JSON.parse(command(['image','inspect',ISOLATION_IMAGE]))[0];need(image.Id===ISOLATION_IMAGE&&image.RepoDigests?.some(v=>v.endsWith(ISOLATION_IMAGE_REFERENCE.slice(ISOLATION_IMAGE_REFERENCE.indexOf('@')))),'database_identity_mismatch');
  const root=fs.mkdtempSync('/var/lib/faolla-release-toolchain-isolation-');diagnosticRoot=root;fs.chmodSync(root,0o700);const id=randomUUID(),name='faolla-release-toolchain-'+id;
  // The image's immutable passwd file determines the unprivileged owner. No
