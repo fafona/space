@@ -72,10 +72,18 @@ export function commonGitDirectory(directory,output){
   !/[\x00-\x1f]/.test(output)&&!output.startsWith('--'),'source_changed');return path.posix.resolve(directory,output);
 }
 export function inspectPinnedExecutionSource({revision:sha,directory,repository='/www/wwwroot/merchant-space'}){
- need(revision(sha)&&directory==='/var/lib/faolla-online-code/'+sha,'source_changed');ownedReleasePath(directory,{directory:true});ownedReleasePath(repository,{directory:true});
+ need(revision(sha)&&directory==='/var/lib/faolla-online-code/'+sha,'source_changed');
+ return inspectOwnedDetachedSource({revision:sha,directory,repository});
+}
+// Read-only byte attestation, not release authority. The production wrapper
+// above still requires its exact installed-tool path. A backup producer uses a
+// NEW independent Git repository so the shared backup's real-main guard can
+// remain unchanged without moving refs in the formal application repository.
+export function inspectOwnedDetachedSource({revision:sha,directory,repository}){
+ need(revision(sha),'source_changed');ownedReleasePath(directory,{directory:true});ownedReleasePath(repository,{directory:true});
  const git=args=>sourceGit(directory,args).toString().trim();need(git(['rev-parse','HEAD'])===sha&&git(['rev-parse','--abbrev-ref','HEAD'])==='HEAD'&&
   git(['rev-parse','--show-toplevel'])===directory&&!git(['status','--porcelain=v1','--untracked-files=all']),'source_changed');
- ownedReleasePath(directory+'/.git');need(commonGitDirectory(directory,git(['rev-parse','--git-common-dir']))===repository+'/.git','source_changed');ownedReleasePath(repository+'/.git',{directory:true});
+ ownedReleasePath(directory+'/.git',{directory:directory===repository});need(commonGitDirectory(directory,git(['rev-parse','--git-common-dir']))===repository+'/.git','source_changed');ownedReleasePath(repository+'/.git',{directory:true});
  const rows=parseSourceTree(sourceGit(repository,['ls-tree','-r','-z',sha])),allowed=new Set(['.git']);let count=0;
  for(const row of rows){if(row.file.startsWith('public/downloads/'))continue;const file=directory+'/'+row.file;ownedReleasePath(file);
   const s=fs.lstatSync(file),fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW),h=createHash('sha1');h.update('blob '+s.size+'\0');
@@ -84,7 +92,7 @@ export function inspectPinnedExecutionSource({revision:sha,directory,repository=
     ((s.mode&0o111)!==0)===(row.mode==='100755')&&h.digest('hex')===row.oid,'source_changed');
   }finally{fs.closeSync(fd);}count++;const parts=row.file.split('/');while(parts.length){allowed.add(parts.join('/'));parts.pop();}
  }
- const walk=(dir,prefix='')=>{for(const e of fs.readdirSync(dir,{withFileTypes:true})){const name=prefix+e.name;need(allowed.has(name)&&!e.isSymbolicLink(),'source_changed');if(e.isDirectory())walk(dir+'/'+e.name,name+'/');}};walk(directory);
+ const walk=(dir,prefix='')=>{for(const e of fs.readdirSync(dir,{withFileTypes:true})){const name=prefix+e.name;need(allowed.has(name)&&!e.isSymbolicLink(),'source_changed');if(name!=='.git'&&e.isDirectory())walk(dir+'/'+e.name,name+'/');}};walk(directory);
  return {revision:sha,directory,sourceFiles:count,inventorySha256:fingerprint('tool-bundle',rows,'canonical-json-v1').value,rows};
 }
 export function assertReviewFresh(review,sha,nowMs=Date.now()){
