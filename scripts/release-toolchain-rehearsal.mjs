@@ -16,7 +16,7 @@ function ownedAlive(expected,{binary,directory}){try{const actual=procFact(expec
 async function stopOwned(expected,context){if(!ownedAlive(expected,context))return;process.kill(expected.pid,'SIGTERM');
  for(let i=0;i<100&&ownedAlive(expected,context);i++)await wait(20);
  if(ownedAlive(expected,context)){process.kill(expected.pid,'SIGKILL');for(let i=0;i<100&&ownedAlive(expected,context);i++)await wait(20);}need(!ownedAlive(expected,context),'cleanup_unconfirmed');}
-async function until(fn,timeout=5000){const deadline=Date.now()+timeout;while(Date.now()<deadline){if(await fn())return;await wait(10);}throw new ToolchainError('operation_unconfirmed');}
+async function until(fn,timeout=5000,signal){const deadline=Date.now()+timeout;while(Date.now()<deadline){need(!signal?.aborted,'operation_unconfirmed');if(await fn())return;await wait(10);}throw new ToolchainError('operation_unconfirmed');}
 async function listen(server){await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});return server.address().port;}
 async function freePort(){const s=net.createServer(),port=await listen(s);await new Promise(resolve=>s.close(resolve));return port;}
 function acceptedBy(worker,serverPort,clientPort){
@@ -30,7 +30,8 @@ export function parseSyntheticHttp(text){
  const headers=new Map(lines.map(l=>{const at=l.indexOf(':');return [l.slice(0,at).toLowerCase(),l.slice(at+1).trim()];}));
  const workerPid=Number(headers.get('x-faolla-lab-worker')),gate=headers.get('x-faolla-lab-gate');need(Number.isSafeInteger(workerPid)&&workerPid>0&&['open','gated'].includes(gate),'observation_mismatch');return {status:Number(match[1]),workerPid,gate};
 }
-async function caseRun(profile,parent,index,{fault='none'}={}){
+async function caseRun(profile,parent,index,{fault='none',signal}={}){
+ need(!signal?.aborted,'operation_unconfirmed');
  const binary=profile.resolvedBinary;
  const directory=fs.mkdtempSync(path.join(parent,'case-'+index+'-'));fs.chmodSync(directory,0o700);const context={binary,directory},events=[],workers=new Map();
  const sockets=new Set(),upstream=createServer((req,res)=>{req.resume();res.writeHead(200,{'Content-Type':'application/json',Connection:'close'});res.end('{"fixture":true}');});
@@ -58,20 +59,20 @@ location / {proxy_pass http://127.0.0.1:${upstreamPort};proxy_set_header Connect
   const fd=fs.openSync(path.join(directory,'process.log'),fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);
   try{child=spawn(binary,['-p',directory+'/', '-c',file,'-g','daemon off;'],{cwd:directory,env:childEnv(),stdio:['ignore',fd,fd]});}finally{fs.closeSync(fd);}
   phase='baseline-start';await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});master=procFact(child.pid);need(master.executable===binary&&master.cwd===directory,'owned_resource_changed');
-  await until(async()=>{need(ownedAlive(master,context),'owned_resource_changed');try{return fs.readFileSync(path.join(directory,'nginx.pid'),'utf8').trim()===String(master.pid)&&(await probe('/api/app-web-version')).status===200;}catch(e){if(e instanceof ToolchainError)throw e;return false;}});
+  await until(async()=>{need(ownedAlive(master,context),'owned_resource_changed');try{return fs.readFileSync(path.join(directory,'nginx.pid'),'utf8').trim()===String(master.pid)&&(await probe('/api/app-web-version')).status===200;}catch(e){if(e instanceof ToolchainError)throw e;return false;}},5000,signal);
   phase='held-request';const old=snapshotWorkers();need(old.length===1,'observation_mismatch');
   held=net.connect({host:'127.0.0.1',port});heldDone=new Promise((resolve,reject)=>{held.on('data',b=>{heldText+=b;if(Buffer.byteLength(heldText)>65536){reject(new ToolchainError('observation_mismatch'));held.destroy();}});held.once('end',()=>resolve(heldText));held.once('error',reject);});heldDone.catch(()=>{});
   await new Promise((resolve,reject)=>{held.once('connect',resolve);held.once('error',reject);});
   // A real already-accepted incomplete request keeps the old generation alive.
   // Its destination is our constant fixture, never an application business API.
   held.write('POST /api/publish HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n');
-  await until(()=>acceptedBy(old[0],port,held.localPort));
+  await until(()=>acceptedBy(old[0],port,held.localPort),5000,signal);
   let releaseOld=false;const start=Date.now();
-  await drainAndProbeIngress({nowMs:()=>Date.now(),now:()=>new Date().toISOString(),authorize:()=>need(ownedAlive(master,context),'owned_resource_changed'),
+  await drainAndProbeIngress({nowMs:()=>Date.now(),now:()=>new Date().toISOString(),authorize:()=>{need(!signal?.aborted,'operation_unconfirmed');need(ownedAlive(master,context),'owned_resource_changed');},
    workers:()=>old,begin:()=>events.push({step:'begin'}),install:()=>{fs.writeFileSync(file,config(true)+(fault==='syntax'?'\ninvalid_fixture_directive;':''),{mode:0o600});events.push({step:'install'});},
    syntax:()=>{phase='gate-syntax';command(['-p',directory+'/', '-c',file,'-t']);},reload:()=>{phase='reload';need(fs.readFileSync(path.join(directory,'nginx.pid'),'utf8').trim()===String(master.pid),'owned_resource_changed');command(['-p',directory+'/', '-c',file,'-s','reload']);},
    drain:async()=>{
-    phase='mixed-generation-drain';snapshotWorkers();if(!releaseOld){let newer;await until(async()=>{const r=await probe('/api/bookings');if(r.status===503&&r.gate==='gated'&&r.workerPid!==old[0].pid){newer=r;return true;}return false;});
+    phase='mixed-generation-drain';snapshotWorkers();if(!releaseOld){let newer;await until(async()=>{const r=await probe('/api/bookings');if(r.status===503&&r.gate==='gated'&&r.workerPid!==old[0].pid){newer=r;return true;}return false;},5000,signal);
      held.write('\r\n');const prior=parseSyntheticHttp(await Promise.race([heldDone,new Promise((_,reject)=>setTimeout(()=>reject(new ToolchainError('operation_unconfirmed')),2000))]));
      need(prior.status===200&&prior.gate==='open'&&prior.workerPid===old[0].pid,'observation_mismatch');mixed={newer:{status:newer.status,workerPid:newer.workerPid,gate:newer.gate},prior};releaseOld=true;events.push({step:'mixed-generations-proved',...mixed});
     }
@@ -88,7 +89,11 @@ location / {proxy_pass http://127.0.0.1:${upstreamPort};proxy_set_header Connect
   if(held)held.destroy();for(const socket of sockets)socket.destroy();
   const failures=[];try{snapshotWorkers();}catch(e){failures.push(publicFailure(e,{stage:'rehearsal'}));}
   for(const f of [master,...workers.values()].filter(Boolean))try{await stopOwned(f,context);}catch(e){failures.push(publicFailure(e,{stage:'rehearsal'}));}
-  await new Promise(resolve=>upstream.close(resolve));need(failures.length===0&&[master,...workers.values()].filter(Boolean).every(f=>!ownedAlive(f,context)),'cleanup_unconfirmed');
+  await new Promise(resolve=>upstream.close(resolve));
+  // Do not certify cleanup from only our saved PID list if a new worker was
+  // orphaned before registration. Observation never grants authority to kill it.
+  const remaining=[];for(const name of fs.readdirSync('/proc').filter(v=>/^[1-9][0-9]*$/.test(v)))try{const f=procFact(Number(name));if(f.state!=='Z'&&f.cwd===directory&&f.executable===binary)remaining.push(f.pid);}catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}
+  need(failures.length===0&&remaining.length===0&&[master,...workers.values()].filter(Boolean).every(f=>!ownedAlive(f,context)),'cleanup_unconfirmed');
  }
  const expected=fault==='none'?'passed':'failed',result={schemaVersion:1,kind:'release-toolchain-ingress-case',publicationAuthority:false,databaseAccess:false,directory,fault,outcome,expectedOutcome:expected,
   mixedGenerationObserved:!!mixed,mixed:mixed??null,probeCount,error:error??null,phase,allOwnedStopped:true,events};write('result.json',result);
@@ -96,15 +101,16 @@ location / {proxy_pass http://127.0.0.1:${upstreamPort};proxy_set_header Connect
   (fault!=='syntax'||error?.code==='operation_unconfirmed'&&probeCount===0)&&
   (fault!=='probe'||error?.code==='gate_not_confirmed'&&probeCount===1&&!!mixed),'observation_mismatch');return result;
 }
-export async function rehearseToolchainIngress({nginx,runs=3,parent=os.tmpdir(),onEvent=()=>{}}){
+export async function rehearseToolchainIngress({nginx,runs=3,parent=os.tmpdir(),onEvent=()=>{},signal}){
+ need(!signal?.aborted,'operation_unconfirmed');
  need(process.platform==='linux'&&process.arch==='x64'&&Number.isInteger(runs)&&runs>=1&&runs<=10,'unsupported_runtime');
  const profile=inspectToolchainNginxProfile(nginx);
  const base=fs.realpathSync(parent);need(/^\/[A-Za-z0-9_./-]+$/.test(base),'invalid_path');
  const root=fs.mkdtempSync(path.join(base,'faolla-release-toolchain-lab-'));fs.chmodSync(root,0o700);const results=[];
  const attempt={schemaVersion:1,kind:'release-toolchain-lab-attempt',root,nginxProfile:profile.id,publicationAuthority:false,databaseAccess:false,startedAt:new Date().toISOString()};
  fs.writeFileSync(path.join(root,'attempt.json'),canonicalJson(attempt)+'\n',{flag:'wx',mode:0o600});onEvent(attempt);
- for(let i=0;i<runs;i++)results.push(await caseRun(profile,root,i));
- results.push(await caseRun(profile,root,runs,{fault:'syntax'}));results.push(await caseRun(profile,root,runs+1,{fault:'probe'}));
+ for(let i=0;i<runs;i++)results.push(await caseRun(profile,root,i,{signal}));
+ results.push(await caseRun(profile,root,runs,{fault:'syntax',signal}));results.push(await caseRun(profile,root,runs+1,{fault:'probe',signal}));
  const report={schemaVersion:1,kind:'release-toolchain-ingress-rehearsal',publicationAuthority:false,scope:'ingress-boundary-only',root,databaseAccess:false,
   normalRuns:runs,mixedGenerationProvedInEveryNormalRun:results.filter(r=>r.fault==='none').every(r=>r.mixedGenerationObserved&&r.outcome==='passed'),
   syntaxFailureRefused:true,probeFailureRefused:true,noMutatingPostRetry:results.every(r=>r.probeCount<=1),allOwnedStopped:results.every(r=>r.allOwnedStopped),

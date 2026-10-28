@@ -18,7 +18,9 @@ export async function toolchainMain(args,write=value=>console.log(JSON.stringify
   const {expected,observed}=JSON.parse(fs.readFileSync(parsed.file,'utf8'));observed.host=localHostObservation();const report=assessToolchainReadiness(expected,observed);write(report);return report.ready?0:1;}
  if(parsed.command==='verify-bundle'){write(verifyToolchainBundle(parsed.file));return 0;}
  if(parsed.command==='journal'){const r=inspectToolchainRun(parsed.file);write({schemaVersion:1,kind:'release-toolchain-run-status',status:r.status,nextStage:r.nextStage,head:r.head,events:r.events.length,publicationAuthority:false});return r.status==='unknown'?1:0;}
- write(await rehearseToolchainIngress({...parsed,onEvent:write}));return 0;
+ const abort=new AbortController(),interrupt=()=>abort.abort();process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
+ try{write(await rehearseToolchainIngress({...parsed,onEvent:write,signal:abort.signal}));return 0;}
+ finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)toolchainMain(process.argv.slice(2)).then(code=>{process.exitCode=code;},error=>{console.error(JSON.stringify(publicFailure(error,{stage:process.argv[2]==='rehearse'?'rehearsal':'environment'})));process.exitCode=1;});
 export const TOOLCHAIN_CLI_SOURCE=fileURLToPath(import.meta.url);
