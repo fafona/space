@@ -5,4 +5,4 @@ export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOU
  'release-toolchain-full-rehearsal.mjs','release-toolchain-isolation.mjs','release-toolchain-authority.mjs',
  'release-toolchain-source.mjs','release-toolchain-profiles.mjs','release-toolchain-native-inventory.mjs',
  'release-toolchain-booking-profile.mjs','release-toolchain-booking-admission.mjs','release-toolchain-release.mjs',
- 'release-toolchain-worker.mjs','release-toolchain-worker-contract.mjs','release-toolchain-pm2-worker.py']);
+ 'release-toolchain-worker.mjs','release-toolchain-worker-contract.mjs','release-toolchain-pm2-worker.py','release-toolchain-booking-compatibility.mjs']);

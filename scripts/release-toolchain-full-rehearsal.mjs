@@ -26,6 +26,7 @@ import {createOwnedIsolation,loadOwnedIsolation,isolatedPgArguments,stopOwnedIso
 import {inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {inspectToolchainNginxProfile} from './release-toolchain-profiles.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
+import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot;
@@ -191,8 +192,9 @@ async function controller(c){
   finishSupervisor:async()=>{await until(()=>fs.existsSync(c.directory+'/watchdog-finished.json'));need(json(c.directory+'/watchdog-finished.json').outcome==='committed','normal_watchdog');await until(()=>!alive(watchdogProcess));},
  });write(c.directory+'/controller-completed.json',{completed:true,at:now()});
 }
-async function seed(database){
+async function seed(database,defaultPrivileges){
  need(/^faolla_booking_activation_[a-f0-9]{16}$/.test(database),'seed_database');pg('postgres',`create database "${database}" with template template0 owner supabase_admin;`);
+ pg(database,isolatedBookingDefaultPrivilegesSql(defaultPrivileges));
  pg(database,`create table public.pages(id uuid primary key default gen_random_uuid(),merchant_id text,slug text,blocks jsonb,created_at timestamptz default now(),updated_at timestamptz default now());
 create table public.faolla_schema_migrations(version bigint primary key,name text not null);
 insert into public.faolla_schema_migrations select n,'synthetic-registry-'||n from generate_series(1,209) n;
@@ -226,7 +228,7 @@ function production(){
   ...['e6718553d7a03bef1e991fe6b6898cab_www.faolla.com.conf','no_store_entries_www.faolla.com.conf','faolla_contact_card_release.conf'].map(f=>'/www/server/panel/vhost/nginx/proxy/www.faolla.com/'+f)];
  return {daemon:binding(fact(daemon)),processes:all.map(p=>({name:p.name,pid:p.pid,status:p.pm2_env.status,restarts:p.pm2_env.restart_time,cwd:p.pm2_env.pm_cwd,environmentSha256:hash(JSON.stringify(p.pm2_env.env))})),
   files:Object.fromEntries(files.map(f=>[f,hash(fs.readFileSync(f))])),current:fs.realpathSync('/www/wwwroot/merchant-space.current'),
-  registry:bookingHostSql("begin read only;select encode(sha256(convert_to(jsonb_agg(to_jsonb(m) order by version)::text,'UTF8')),'hex') from public.faolla_schema_migrations m;rollback;")};
+  registry:bookingHostSql("begin read only;select encode(sha256(convert_to(jsonb_agg(to_jsonb(m) order by version)::text,'UTF8')),'hex') from public.faolla_schema_migrations m;rollback;"),defaultPrivileges:JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql))};
 }
 export async function runFullToolchainRehearsal(){
  const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
@@ -234,11 +236,12 @@ export async function runFullToolchainRehearsal(){
  const formal=production(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
  const sourceHashes=Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,hash(fs.readFileSync(new URL('./'+f,import.meta.url)))]));
  write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
- const results=[];let postgresSystemIdentifier;isolation=createOwnedIsolation();
+ const results=[];let postgresSystemIdentifier,installedMetadataSha256;isolation=createOwnedIsolation();const defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
  try{for(const name of CASES){
   const runtime=root+'/runtime-'+name;fs.mkdirSync(runtime,{mode:0o700});let children=[],nginx,controllerProcess;const started=Date.now();
   try{
-   const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database);postgresSystemIdentifier=seeded.before.systemIdentifier;
+   const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database,defaultPrivileges);postgresSystemIdentifier=seeded.before.systemIdentifier;
+   const installed=pg(database,bookingInstalledMetadataReadSql);need(/^[a-f0-9]{64}$/.test(installed),'installed_metadata');if(installedMetadataSha256)equal(installed,installedMetadataSha256,'installed_metadata_changed');else installedMetadataSha256=installed;
    need(seeded.before.serverVersionNum==='150008'&&postgresSystemIdentifier!=='7612049595342295079','actual_pg15');write(runtime+'/original-rows.json',seeded.initial);rehearseIsolatedBackup(isolation,database,runtime);
    const ports={};for(const key of ['baseline','primary','rollback','ingress'])ports[key]=await freePort();need(new Set(Object.values(ports)).size===4,'ports');
    const profile=inspectToolchainNginxProfile(NGINX),lua=profile.httpDirectives?[profile.httpDirectives]:[];
@@ -295,7 +298,7 @@ export async function runFullToolchainRehearsal(){
  const report={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision,candidate:CANDIDATE,rollback:APPLICATION,productionMutated:false,originalTimerMutated:false,mailEnabled:false,
   postgresServerVersionNum:'150008',postgresSystemIdentifier,allFixturesStopped:true,cases:results,sourceHashes,activationBodySha256:BOOKING_ACTIVATION_BODY_SHA256,
   scope:'shared handoff/watchdog/recovery sequences with real isolated IO; production-specific attesters and certificate validation remain mandatory on the real host',completedAt:now()};
- const complete={...report,publicationAuthority:false,isolationRoot:isolation.root,backupRestoreVerified:true,toolInventorySha256:verifiedSource.inventorySha256};write(root+'/acceptance.json',complete);
+ const complete={...report,publicationAuthority:false,isolationRoot:isolation.root,backupRestoreVerified:true,toolInventorySha256:verifiedSource.inventorySha256,installedMetadataSha256,defaultPrivilegesSha256:hash(JSON.stringify(defaultPrivileges))};write(root+'/acceptance.json',complete);
  console.log(JSON.stringify({kind:report.kind,root,cases:results.map(c=>({name:c.name,elapsedMs:c.elapsedMs})),productionMutated:false,allFixturesStopped:true}));return {root,report:complete};
 }
 async function main(){

@@ -10,7 +10,7 @@ import {createProductionDatabaseBackup} from './create-production-database-backu
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
 import {validateDatabaseBackupSourceIdentity} from './database-backup-contract.mjs';
 import {attendanceProductionIdentity as production,validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
-import {attendanceCompatibilityMetadataContractSql} from './attendance-production-052-compatibility.mjs';
+import {bookingHistoricalMetadataReadSql,bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql} from './release-toolchain-booking-compatibility.mjs';
 import {observeBookingReadyApplication,bookingPublicationBackupRequest} from './booking-ready-backup.mjs';
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
@@ -24,7 +24,7 @@ const freeze=value=>{if(value&&typeof value==='object'){for(const v of Object.va
 export function assertQualificationReport(report,{toolRevision,inventorySha256,nowMs=Date.now()}){
  need(report?.schemaVersion===1&&report.kind==='booking-full-native-handoff-acceptance'&&report.toolRevision===toolRevision&&report.toolInventorySha256===inventorySha256&&
   report.candidate===C&&report.rollback===A&&report.productionMutated===false&&report.originalTimerMutated===false&&report.mailEnabled===false&&report.publicationAuthority===false&&
-  report.backupRestoreVerified===true&&report.allFixturesStopped===true&&report.postgresServerVersionNum==='150008'&&/^[1-9][0-9]{0,19}$/.test(report.postgresSystemIdentifier??'')&&
+  report.backupRestoreVerified===true&&report.allFixturesStopped===true&&/^[a-f0-9]{64}$/.test(report.installedMetadataSha256??'')&&/^[a-f0-9]{64}$/.test(report.defaultPrivilegesSha256??'')&&report.postgresServerVersionNum==='150008'&&/^[1-9][0-9]{0,19}$/.test(report.postgresSystemIdentifier??'')&&
   report.postgresSystemIdentifier!==production.systemIdentifier,'evidence_invalid');
  const at=Date.parse(report.completedAt);need(Number.isFinite(at)&&at<=nowMs&&nowMs-at<86400000,'evidence_stale');
  same(Object.keys(report.sourceHashes).sort(),[...FULL_REHEARSAL_SOURCES].sort());
@@ -75,7 +75,8 @@ export async function collectFreshBookingAdmission({lock,directory,qualification
  assertOnlineRetentionHeldLocks(lock);const toolRevision=path.basename(path.dirname(path.dirname(new URL(import.meta.url).pathname))),authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
  ownedReleasePath(directory,{directory:true,privateMode:true});same(qualification.application,authority.prepared.application);verifyQualificationFiles(qualification.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});
  const before=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));need(before.active===false&&before.systemIdentifier===production.systemIdentifier,'database_identity_mismatch');
- const contract=JSON.parse(bookingHostSql(attendanceCompatibilityMetadataContractSql())),originalEvidence=read(OP+'/booking-compatibility-evidence.json'),originalCompatibility=read(OP+'/booking-compatibility.json');
+ const metadataSql=bookingHistoricalMetadataReadSql(),contract=JSON.parse(bookingHostSql(metadataSql)),installedMetadata=bookingHostSql(bookingInstalledMetadataReadSql),defaults=JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql)),originalEvidence=read(OP+'/booking-compatibility-evidence.json'),originalCompatibility=read(OP+'/booking-compatibility.json');
+ need(installedMetadata===qualification.report.installedMetadataSha256&&sha256(JSON.stringify(defaults))===qualification.report.defaultPrivilegesSha256,'observation_mismatch');
  need(sha256(bookingHostRead(OP+'/booking-compatibility-evidence.json'))===originalCompatibility.evidenceSha256&&contract===originalEvidence.contractSha256,'observation_mismatch');
  const historical=await historicalBackup(),passphrase=randomBytes(48).toString('base64url'),backupPath=directory+'/database.tar.enc';seal(directory+'/backup.key',passphrase);
  const appDirectory='/www/wwwroot/merchant-space.web-releases/'+C.slice(0,12)+'-online';
@@ -83,10 +84,10 @@ export async function collectFreshBookingAdmission({lock,directory,qualification
   env:{...process.env,FAOLLA_DATABASE_CONTAINER:'supabase-db',FAOLLA_STORAGE_CONTAINER:'supabase-storage'}});seal(directory+'/backup-create.json',created);
  const checked=await verifyProductionDatabaseBackup({inputPath:backupPath,passphrase});seal(directory+'/backup-verify.json',checked);
  const backup=await validateAttendanceBackupEvidence({target:C,backup:backupPath,createReport:directory+'/backup-create.json',verifyReport:directory+'/backup-verify.json'});
- same(JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql)),before);same(JSON.parse(bookingHostSql(attendanceCompatibilityMetadataContractSql())),contract);same(observeBookingReadyApplication(),authority.prepared.application);
+ same(JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql)),before);same(JSON.parse(bookingHostSql(metadataSql)),contract);same(bookingHostSql(bookingInstalledMetadataReadSql),installedMetadata);same(observeBookingReadyApplication(),authority.prepared.application);
  const createdAt=new Date().toISOString(),proof={kind:'release-toolchain-fresh-booking-admission',toolRevision,application:authority.application,applicationBuilds:authority.prepared.application,
   databaseBefore:before,backup:{...backup,archive:{schemaVersion:1,algorithm:'sha256',domain:'backup-archive',representation:'bytes-v1',value:backup.archiveSha256}},historicalBackupArchiveSha256:historical.backup.archiveSha256,
-  compatibility:{method:'unchanged-production-structural-contract-and-current-isolated-handoff',currentMetadataContractSha256:contract,historicalCompatibilitySha256:sha256(bookingHostRead(OP+'/booking-compatibility.json')),nativeAcceptanceSha256:qualification.sha256},
+  compatibility:{method:'unchanged-production-structural-contract-and-current-isolated-handoff',currentMetadataContractSha256:contract,installedMetadataSha256:installedMetadata,defaultPrivilegesSha256:qualification.report.defaultPrivilegesSha256,historicalCompatibilitySha256:sha256(bookingHostRead(OP+'/booking-compatibility.json')),nativeAcceptanceSha256:qualification.sha256},
   createdAt,expiresAt:new Date(Date.parse(createdAt)+600000).toISOString(),mailEnabled:false};
  seal(directory+'/admission.json',proof);const original=bookingPublicationBackupRequest(C,OP),witnesses=new Map();
  for(const file of [backupPath,directory+'/backup.key',directory+'/backup-create.json',directory+'/backup-verify.json',directory+'/admission.json',original.backup,original.createReport,original.verifyReport,path.dirname(original.backup)+'/backup.key'])witnesses.set(file,fact(file));
