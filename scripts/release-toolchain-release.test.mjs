@@ -3,13 +3,16 @@ import {assertCanonicalReleaseCommand,executeCanonicalPublication,executeCanonic
 import {reviewedBookingExecution,preparedBookingExecution} from './release-toolchain-authority.mjs';
 import {requireBookingAdmission,withFreshBookingAdmission,retainedBookingMigrationBackup,assertQualificationReport} from './release-toolchain-booking-admission.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
-import {bookingWatchdogControllerArguments} from './booking-handoff-watchdog.mjs';
+import {bookingWatchdogControllerArguments,assertBookingWatchdogControllerArguments} from './booking-handoff-watchdog.mjs';
 test('the real supervisor admits only the exact canonical publish argv under reviewed source authority; its old argv remains unchanged',()=>{
  const revision='a'.repeat(40),prefix='/var/lib/faolla-online-code/'+revision+'/scripts/';
  assert.deepEqual(bookingWatchdogControllerArguments(revision),['/usr/bin/node',prefix+'booking-handoff-host.mjs']);
  assert.deepEqual(bookingWatchdogControllerArguments(revision,true),['/usr/bin/node',prefix+'release-toolchain-release.mjs','publish']);
  for(const args of [['main',true],[revision,'true'],[revision,{}]])assert.throws(()=>bookingWatchdogControllerArguments(...args));
- const source=readFileSync(new URL('./booking-handoff-watchdog.mjs',import.meta.url),'utf8');assert.match(source,/bookingWatchdogControllerArguments\(toolRevision,!!reviewedBookingExecution\(toolRevision\)\)/);
+ for(const binary of ['node','/usr/bin/node'])for(const entry of [prefix+'release-toolchain-release.mjs','scripts/release-toolchain-release.mjs'])assert.equal(assertBookingWatchdogControllerArguments([binary,entry,'publish'],revision,true),true);
+ for(const argv of [['node',prefix+'release-toolchain-release.mjs','publish','--extra'],['/bin/sh',prefix+'release-toolchain-release.mjs','publish'],['node','other.mjs','publish'],['node',prefix+'release-toolchain-release.mjs','validate']])assert.throws(()=>assertBookingWatchdogControllerArguments(argv,revision,true));
+ assert.throws(()=>assertBookingWatchdogControllerArguments(['node',prefix+'booking-handoff-host.mjs'],revision,false));
+ const source=readFileSync(new URL('./booking-handoff-watchdog.mjs',import.meta.url),'utf8');assert.match(source,/assertBookingWatchdogControllerArguments\(command\(process.pid\),toolRevision,!!reviewedBookingExecution\(toolRevision\)\)/);
 });
 test('production and qualification entries have closed commands and cannot consume a caller plan, skip, receipt or target',()=>{
  for(const action of ['status','qualify','prepare-worker','validate','publish'])assert.equal(assertCanonicalReleaseCommand([action]),action);

@@ -114,12 +114,16 @@ export function bookingWatchdogControllerArguments(toolRevision,reviewed=false){
  need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&typeof reviewed==='boolean','controller_entry');const directory='/var/lib/faolla-online-code/'+toolRevision;
  return reviewed?['/usr/bin/node',directory+'/scripts/release-toolchain-release.mjs','publish']:['/usr/bin/node',directory+'/scripts/booking-handoff-host.mjs'];
 }
+export function assertBookingWatchdogControllerArguments(actual,toolRevision,reviewed=false){
+ const expected=bookingWatchdogControllerArguments(toolRevision,reviewed);if(!reviewed){equal(actual,expected,'controller_entry');return true;}
+ need(Array.isArray(actual)&&actual.length===3&&['node','/usr/bin/node'].includes(actual[0])&&
+  [expected[1],'scripts/release-toolchain-release.mjs'].includes(actual[1])&&actual[2]==='publish','controller_entry');return true;
+}
 
 export async function armBookingHandoffWatchdog({lock,toolRevision}){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);sourceIdentity(toolRevision,{initial:true});
   const directory='/var/lib/faolla-online-code/'+toolRevision,parent=fact(process.pid);
-  const expected=bookingWatchdogControllerArguments(toolRevision,!!reviewedBookingExecution(toolRevision));
-  equal(command(process.pid),expected,'controller_entry');need(parent.cwd===directory,'controller_cwd');
+  assertBookingWatchdogControllerArguments(command(process.pid),toolRevision,!!reviewedBookingExecution(toolRevision));need(parent.cwd===directory,'controller_cwd');
   // No gate is installed unless BOTH the supervisor and its separately verified
   // recovery entrypoint have already been installed by the standard tool path.
   for(const file of ['booking-handoff-watchdog.mjs','booking-handoff-recovery.mjs'])assertOnlineToolOwnedPath(directory+'/scripts/'+file,'file');

@@ -17,6 +17,7 @@ import {assertReviewedBookingNoPending} from './booking-handoff-pending.mjs';
 import {collectBookingReadyRuntimeCohort,bookingReadyRawProcesses} from './booking-ready-runtime.mjs';
 import {createBookingHandoffHostOperations,executeBookingHandoffHost} from './booking-handoff-host.mjs';
 import {inspectBookingHandoffPreflight} from './booking-handoff-execution.mjs';
+import {assertBookingWatchdogControllerArguments} from './booking-handoff-watchdog.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
 import {bookingHostRead,bookingHostWriteOnce} from './booking-handoff-host-io.mjs';
 const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url))),toolRevision=path.basename(directory),ROOT='/var/lib/faolla-booking-handoff/'+C;
@@ -81,7 +82,7 @@ async function publish(lock,authority,{publication=true}={}){
   }}),verify:()=>stage('verify',async()=>({public:await publicVersions(C),result})),result:()=>publication?({kind:'release-toolchain-publication-completed',toolRevision,run,journalHead:inspectToolchainRun(run).head,mailEnabled:false,result}):({kind:'release-toolchain-preflight-validated',toolRevision,run,journalHead:inspectToolchainRun(run).head,verifiedThrough:'admission',applicationPublished:false,productionDatabaseMutated:false,trafficChanged:false,mailEnabled:false,publicationAuthority:false}),
  });
 }
-async function main(){invocation();const action=assertCanonicalReleaseCommand(process.argv.slice(2));if(action==='status')return collectReleaseToolchainStatus();if(action==='qualify')return qualify();
+async function main(){invocation();const action=assertCanonicalReleaseCommand(process.argv.slice(2));if(action==='publish'){need(fs.realpathSync(process.execPath)==='/usr/bin/node','unsupported_runtime');assertBookingWatchdogControllerArguments(fs.readFileSync('/proc/self/cmdline','utf8').replace(/\0+$/,'').split('\0'),toolRevision,true);}if(action==='status')return collectReleaseToolchainStatus();if(action==='qualify')return qualify();
  return withReviewedBookingExecution({applicationRevision:C,preparationRevision:BOOKING_PREPARATION_REVISION,verifyPreparation:verifyBookingPreparation},authority=>withOnlineRetentionLocks(lock=>{
   if(action!=='prepare-worker')return publish(lock,authority,{publication:action==='publish'});assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
  }));
