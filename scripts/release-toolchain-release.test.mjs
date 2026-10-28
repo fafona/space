@@ -43,7 +43,12 @@ test('native report refuses stale, wrong source, fake production system and inco
 });
 test('real adapters bind historical provenance separately from fresh backup and retain the inherited-lock failure exit',()=>{
  const release=readFileSync(new URL('./release-toolchain-release.mjs',import.meta.url),'utf8'),admission=readFileSync(new URL('./release-toolchain-booking-admission.mjs',import.meta.url),'utf8');
- for(const name of ['withReviewedBookingExecution','assertReviewedBookingNoPending','latestBookingQualification','collectFreshBookingAdmission','withFreshBookingAdmission','createBookingHandoffHostOperations','executeBookingHandoffHost','process.exit(1)','publicVersions(C)'])assert.ok(release.includes(name),name);
+ for(const name of ['withReviewedBookingExecution','assertReviewedBookingNoPending','latestBookingQualification','collectFreshBookingAdmission','withFreshBookingAdmission','inspectBookingHandoffPreflight','createBookingHandoffHostOperations','executeBookingHandoffHost','process.exit(1)','publicVersions(C)'])assert.ok(release.includes(name),name);
  for(const name of ['verifyProductionDatabaseBackup','createProductionDatabaseBackup','sourceSha:C','FAOLLA_DATABASE_CONTAINER:\'supabase-db\'','backup_source_mismatch','currentMetadataContractSha256','historicalBackupArchiveSha256'])assert.ok(admission.includes(name),name);
  assert.doesNotMatch(release,/force|skip|backup override|withFreshAdmissionFromSameExecution/);
+});
+test('validate reuses the actual complete preflight inspection without claiming the old public-attempt files',()=>{
+ const source=readFileSync(new URL('./booking-handoff-execution.mjs',import.meta.url),'utf8'),start=source.indexOf('export async function inspectBookingHandoffPreflight'),end=source.indexOf('export async function prepareBookingHandoffPreflight',start),inspection=source.slice(start,end);
+ for(const token of ['liveDatasetAndPure','validateAttendanceBackupEvidence','verifyBookingAtomicRuntimeCohort','networkProof()','assertBookingAtomicActivationTransition'])assert.ok(inspection.includes(token),token);
+ assert.doesNotMatch(inspection,/\bwrite\(|bookingHostReplace|fs\.write|process\.kill/);assert.match(source.slice(end),/await inspectBookingHandoffPreflight\(options\)/);
 });

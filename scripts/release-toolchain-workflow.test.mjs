@@ -5,6 +5,7 @@ test('dedicated safety job verifies a complete committed bundle before actual ow
   'git rev-parse HEAD','release-toolchain-pack.mjs pack','verify-bundle','rehearse /usr/sbin/nginx 5','release-toolchain-interrupt-acceptance.mjs',
   'scripts/test-support/release-toolchain-*','if: always()','release-toolchain-ingress-evidence'])assert.ok(workflow.includes(value),value);
  assert.ok(workflow.indexOf('verify-bundle')<workflow.indexOf('rehearse /usr/sbin/nginx 5'));
+ for(const token of ['booking-ci-continuation-tool.test.mjs','booking-ready-*.test.mjs','booking-handoff-activation.test.mjs','booking-handoff-rule-repair.test.mjs','booking-publication-database.test.mjs'])assert.ok(workflow.includes(token),token);
  for(const value of ['Full New-Database Handoff And Recovery Rehearsal','release-toolchain-full-rehearsal.mjs','docker pull supabase/postgres@sha256:af083ef','--no-hardlinks','read-tree -mu HEAD'])assert.ok(workflow.includes(value),value);
 });
 test('CI fixture has no server credentials, production mutation, skipped tests or accepted failed commands',()=>{

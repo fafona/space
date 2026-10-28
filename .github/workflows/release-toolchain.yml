@@ -28,7 +28,7 @@ jobs:
       - name: Install Development Test Dependencies
         run: npm ci
       - name: Unit And Existing Handoff Regression Tests
-        run: node --test scripts/release-toolchain-*.test.mjs scripts/booking-handoff-execution.test.mjs scripts/booking-handoff-host.test.mjs scripts/booking-handoff-native-acceptance.test.mjs
+        run: node --test scripts/release-toolchain-*.test.mjs scripts/booking-ci-continuation-tool.test.mjs scripts/booking-ready-*.test.mjs scripts/booking-handoff-activation.test.mjs scripts/booking-handoff-rule-repair.test.mjs scripts/booking-publication-database.test.mjs scripts/booking-handoff-execution.test.mjs scripts/booking-handoff-host.test.mjs scripts/booking-handoff-native-acceptance.test.mjs
       - name: Install Disposable Runner Nginx
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y nginx
       - name: Build Complete Tool Bundle From Exact Commit

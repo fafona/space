@@ -16,6 +16,7 @@ import {withOnlineRetentionLocks,assertOnlineRetentionHeldLocks} from './online-
 import {assertReviewedBookingNoPending} from './booking-handoff-pending.mjs';
 import {collectBookingReadyRuntimeCohort,bookingReadyRawProcesses} from './booking-ready-runtime.mjs';
 import {createBookingHandoffHostOperations,executeBookingHandoffHost} from './booking-handoff-host.mjs';
+import {inspectBookingHandoffPreflight} from './booking-handoff-execution.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
 import {bookingHostRead,bookingHostWriteOnce} from './booking-handoff-host-io.mjs';
 const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url))),toolRevision=path.basename(directory),ROOT='/var/lib/faolla-booking-handoff/'+C;
@@ -74,7 +75,7 @@ async function publish(lock,authority,{publication=true}={}){
   backupAndCompatibility:async next=>{let admission;await stage('backup',async()=>{admission=await collectFreshBookingAdmission({lock,directory:artifacts,qualification});return admission.proof.backup;});
    return withFreshBookingAdmission(admission,async()=>{await stage('compatibility',()=>requireBookingAdmission(toolRevision).compatibility);return next();});},
   candidate:()=>stage('candidate',()=>collectBookingReadyRuntimeCohort({toolRevision})),rehearsal:()=>stage('rehearsal',()=>verifyQualificationFiles(qualification.root,{toolRevision,inventorySha256:authority.tool.inventorySha256}).sha256),
-  admission:()=>stage('admission',async()=>{await refreshReviewedBookingExecution(toolRevision);assertReviewedBookingNoPending(toolRevision);return requireBookingAdmission(toolRevision);}),
+  admission:()=>stage('admission',async()=>{await refreshReviewedBookingExecution(toolRevision);assertReviewedBookingNoPending(toolRevision);const preflight=await inspectBookingHandoffPreflight({lock,toolRevision});return {admission:requireBookingAdmission(toolRevision),preflight:preflight.preflight};}),
   switch:()=>stage('switch',async()=>{try{result=await executeBookingHandoffHost(createBookingHandoffHostOperations({lock,toolRevision}));return result;}catch(error){
    const lease=fs.existsSync(ROOT+'/watchdog-lease.json')?read(ROOT+'/watchdog-lease.json'):null;if(lease?.parent?.pid===process.pid&&lease.toolRevision===toolRevision){seal(ROOT+'/controller-failure.json',{kind:'release-toolchain-controller-failure',operationId:lease.window.id,errorSha256:sha256(String(error?.message??'unknown')),at:new Date().toISOString()});console.error('release_toolchain_controller_failed_independent_recovery_retains_lock');process.exit(1);}throw error;
   }}),verify:()=>stage('verify',async()=>({public:await publicVersions(C),result})),result:()=>publication?({kind:'release-toolchain-publication-completed',toolRevision,run,journalHead:inspectToolchainRun(run).head,mailEnabled:false,result}):({kind:'release-toolchain-preflight-validated',toolRevision,run,journalHead:inspectToolchainRun(run).head,verifiedThrough:'admission',applicationPublished:false,productionDatabaseMutated:false,trafficChanged:false,mailEnabled:false,publicationAuthority:false}),

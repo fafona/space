@@ -105,7 +105,7 @@ const sameWorker=p=>{try{const text=fs.readFileSync('/proc/'+p.pid+'/stat','utf8
 const currentRouting=()=>Object.fromEntries(WEB_RELEASE_FILES.map(f=>[f,read(WEB_RELEASE_PROXY+'/'+f,{privateMode:false})]));
 const now=()=>new Date().toISOString();
 
-export async function prepareBookingHandoffPreflight(options){
+export async function inspectBookingHandoffPreflight(options){
  const {lock,toolRevision}=options;const invocation=assertBookingHostInvocation(options),cohort=verifyBookingAtomicRuntimeCohort(options);
  if(reviewedBookingExecution(toolRevision))requireBookingAdmission(toolRevision);
  const originalStageText=read(ROOT+'/primary-original-stage.json'),stage=JSON.parse(originalStageText),history=readOnlineRetentionHistory();
@@ -128,7 +128,11 @@ export async function prepareBookingHandoffPreflight(options){
   backupSha256:backup.archiveSha256,originalBackupSealSha256:ORIGINAL_SEAL,ruleRepairPlanSha256:data.plan.planSha256,networkPolicySha256:networkProof(),
   savedDatasetSha256:contentHash(data.live),automationEligibleRecords:data.pure.automationEligibleRecords,automationCheckedThrough:data.pure.throughAt,completedAt:now()};
  need(JSON.parse(preflight.activeFileText).target===BASELINE,'active_predecessor');assertOnlineRetentionHeldLocks(lock);
- write(ROOT+'/rule-repair-plan.json',retentionCanonicalText(data.plan));write(ROOT+'/rollback-readiness.json',retentionCanonicalText(readiness));write(ROOT+'/preflight.json',retentionCanonicalText(preflight));return preflight;
+ return {preflight,repairPlan:data.plan,readiness};
+}
+export async function prepareBookingHandoffPreflight(options){
+ const {preflight,repairPlan,readiness}=await inspectBookingHandoffPreflight(options);assertOnlineRetentionHeldLocks(options.lock);
+ write(ROOT+'/rule-repair-plan.json',retentionCanonicalText(repairPlan));write(ROOT+'/rollback-readiness.json',retentionCanonicalText(readiness));write(ROOT+'/preflight.json',retentionCanonicalText(preflight));return preflight;
 }
 
 export async function executeBookingIngressDrain(operations,plan){

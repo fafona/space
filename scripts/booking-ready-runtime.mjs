@@ -97,7 +97,8 @@ export function attestBookingReadyReplacement(receipt,toolRevision){
  need(match,'execution_worker_source');const chain=[],seen=new Set();let revision=match[1];
  while(revision!==toolRevision){need(chain.length<32&&!seen.has(revision),'execution_worker_chain');seen.add(revision);
   const root=ROOT+'/toolchain-runtime/'+revision,next=JSON.parse(read(root+'/worker-completed.json')),attempt=JSON.parse(read(root+'/worker-attempt.json'));
-  need(next.toolRevision===revision&&inspectPinnedExecutionSource({revision,directory:'/var/lib/faolla-online-code/'+revision}).inventorySha256===next.toolInventorySha256,'execution_worker_receipt');chain.push({receipt:next,attempt,revision});revision=next.priorRevision;
+  const source=revision===adopted.revision?adopted.tool:inspectPinnedExecutionSource({revision,directory:'/var/lib/faolla-online-code/'+revision});
+  need(next.toolRevision===revision&&source.inventorySha256===next.toolInventorySha256,'execution_worker_receipt');chain.push({receipt:next,attempt,revision});revision=next.priorRevision;
  }
  let latest=receipt;for(const hop of chain.reverse()){assertExecutionWorkerReceipt(hop.receipt,hop.attempt,{revision:hop.revision,prior:latest});latest=hop.receipt;}
  return collect(latest,receipt);
