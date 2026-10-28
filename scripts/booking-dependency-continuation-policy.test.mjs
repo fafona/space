@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-import {historicalToolTreeRows} from './test-support/release-toolchain-historical-fixture.mjs';
+import {historicalToolTreeRows,readHistoricalCiBlob,HISTORICAL_CI_FILES} from './test-support/release-toolchain-historical-fixture.mjs';
 import * as p from './booking-dependency-continuation-policy.mjs';
 import {projectBookingReadyPredecessorRows} from './booking-ready-policy.mjs';
 import {BOOKING_CI_FILES,bookingCiInputs,assertBookingCiToolDelta,BOOKING_CI_TOOL_FILES,assertBookingCurrentToolClosure} from './booking-ci-continuation-policy.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C} from './booking-handoff-policy.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
-const read=f=>readFileSync(new URL('../'+f,import.meta.url),'utf8').replaceAll('\r\n','\n');
+const read=f=>HISTORICAL_CI_FILES.includes(f)?readHistoricalCiBlob(f):readFileSync(new URL('../'+f,import.meta.url),'utf8').replaceAll('\r\n','\n');
 const rows=()=>projectBookingReadyPredecessorRows(historicalToolTreeRows());
 test('exact25 historical successor independently binds its captured Git tree; predecessor stays sealed',()=>{
  const head=p.bookingDependencyInputs(execFileSync('git',['ls-tree','-r','-z','HEAD'],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean));

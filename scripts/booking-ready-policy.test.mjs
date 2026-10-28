@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-import {historicalToolTreeRows} from './test-support/release-toolchain-historical-fixture.mjs';
+import {historicalToolTreeRows,readHistoricalCiBlob,HISTORICAL_CI_FILES} from './test-support/release-toolchain-historical-fixture.mjs';
 import * as p from './booking-ready-policy.mjs';
 import {bookingDependencyInputs,assertBookingDependencyToolDelta,assertBookingDependencyToolClosure,BOOKING_DEPENDENCY_FILES,BOOKING_DEPENDENCY_TOOL_FILES} from './booking-dependency-continuation-policy.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C} from './booking-handoff-policy.mjs';
 import {BOOKING_READY_EVIDENCE} from './booking-ready-evidence.mjs';
-const hash=x=>createHash('sha256').update(x).digest('hex'),read=f=>readFileSync(new URL('../'+f,import.meta.url),'utf8').replaceAll('\r\n','\n');
+const hash=x=>createHash('sha256').update(x).digest('hex'),read=f=>HISTORICAL_CI_FILES.includes(f)?readHistoricalCiBlob(f):readFileSync(new URL('../'+f,import.meta.url),'utf8').replaceAll('\r\n','\n');
 const tree=revision=>execFileSync('git',['ls-tree','-r','-z',revision],{cwd:new URL('../',import.meta.url)}).toString().split('\0').filter(Boolean);
 test('independent exact32 historical successor binds captured raw tree, unchanged app/deps/SQL/old guards and CI pins',()=>{
  // Immutable evidence works in shallow CI. Production still reads BOTH raw

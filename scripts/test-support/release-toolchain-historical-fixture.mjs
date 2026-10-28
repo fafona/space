@@ -27,3 +27,22 @@ export function parseHistoricalToolTreeFixture(fixture){
 export function historicalToolTreeRows(){
  return parseHistoricalToolTreeFixture(JSON.parse(readFileSync(new URL('./release-toolchain-historical-tree.json',import.meta.url),'utf8')));
 }
+export const HISTORICAL_CI_FILES=Object.freeze(['.github/workflows/ci.yml','scripts/ci-workflow-contract.test.mjs',
+ 'scripts/production-maintenance-ingress-acceptance.mjs','scripts/production-maintenance-ingress-acceptance.test.mjs']);
+export function parseHistoricalCiFixture(fixture){
+ assert.deepEqual(Object.keys(fixture).sort(),['data','encoding']);assert.equal(fixture.encoding,'gzip-base64');
+ assert.equal(typeof fixture.data,'string');assert.ok(fixture.data.length<=65536);assert.match(fixture.data,/^[A-Za-z0-9+/]+={0,2}$/);
+ const value=JSON.parse(gunzipSync(Buffer.from(fixture.data,'base64'),{maxOutputLength:256*1024}).toString('utf8'));
+ assert.deepEqual(Object.keys(value).sort(),['blobs','revision']);assert.equal(value.revision,revision);
+ assert.deepEqual(Object.keys(value.blobs).sort(),[...HISTORICAL_CI_FILES].sort());const tree=historicalToolTreeRows();
+ for(const file of HISTORICAL_CI_FILES){
+  assert.equal(typeof value.blobs[file],'string');const bytes=Buffer.from(value.blobs[file],'utf8');
+  const oid=createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
+  assert.ok(tree.includes('100644 blob '+oid+'\t'+file),'historical blob must match actual immutable Git tree');
+ }
+ return Object.freeze(value.blobs);
+}
+export function readHistoricalCiBlob(file){
+ assert.ok(HISTORICAL_CI_FILES.includes(file));
+ return parseHistoricalCiFixture(JSON.parse(readFileSync(new URL('./release-toolchain-historical-ci.json',import.meta.url),'utf8')))[file];
+}
