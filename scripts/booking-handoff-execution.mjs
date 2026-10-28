@@ -3,7 +3,7 @@
 import * as fs from 'node:fs';
 import {drainAndProbeIngress} from './release-toolchain-ingress.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
-import {requireBookingAdmission} from './release-toolchain-booking-admission.mjs';
+import {requireBookingAdmission} from './release-toolchain-admission-context.mjs';
 import {spawnSync} from 'node:child_process';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE,
  assertBookingHandoffWindow,assertBookingAtomicActivationTransition} from './booking-handoff-policy.mjs';

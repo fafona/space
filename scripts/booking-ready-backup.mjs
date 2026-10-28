@@ -9,7 +9,7 @@ import {BOOKING_BUILT_SMOKE_PINS as P} from './booking-built-smoke-repair-policy
 import {BOOKING_DEPENDENCY_BASE as BASE,BOOKING_DEPENDENCY_STATES as STATES} from './booking-dependency-continuation-policy.mjs';
 import {BOOKING_CI_RECEIPT,BOOKING_CI_INPUTS_SHA256} from './booking-ci-continuation-policy.mjs';
 import {assertBookingReadySource} from './booking-ready-tool.mjs';
-import {retainedBookingMigrationBackup} from './release-toolchain-booking-admission.mjs';
+import {retainedBookingMigrationBackup} from './release-toolchain-admission-context.mjs';
 import {assertBookingDependencyBinding,bookingModeAwareDependencies} from './booking-dependency-fingerprint.mjs';
 import {BOOKING_FORMAL_DIRECTORY} from './booking-formal-backup-policy.mjs';
 import {BOOKING_REGISTRY_ORIGINAL_TOOL} from './booking-registry-tool-policy.mjs';

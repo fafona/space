@@ -1,8 +1,10 @@
 // Fresh admission is collected from real resources. Historical migration
 // provenance stays immutable and is NEVER relabelled as a fresh backup/clone.
-import * as fs from 'node:fs';import path from 'node:path';import {AsyncLocalStorage} from 'node:async_hooks';import {randomBytes} from 'node:crypto';
+import * as fs from 'node:fs';import path from 'node:path';import {randomBytes} from 'node:crypto';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
-import {canonicalJson,sha256,assertFreshEvidence,requireToolchain as need} from './release-toolchain-contracts.mjs';
+import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
+import {admissionFileFact as fact} from './release-toolchain-admission-context.mjs';
+export {collectFreshBookingAdmission,requireBookingAdmission,withFreshBookingAdmission,retainedBookingMigrationBackup} from './release-toolchain-admission-context.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {validateIsolationContainer} from './release-toolchain-isolation.mjs';
@@ -17,10 +19,9 @@ import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {bookingHostSql,bookingHostRead,bookingHostRun,bookingHostWriteOnce} from './booking-handoff-host-io.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A} from './booking-handoff-policy.mjs';
-const ROOT='/var/lib/faolla-booking-handoff/'+C,OP='/var/lib/faolla-online-release/'+C,context=new AsyncLocalStorage(),issued=new WeakSet();
+const ROOT='/var/lib/faolla-booking-handoff/'+C,OP='/var/lib/faolla-online-release/'+C;
 const read=file=>JSON.parse(bookingHostRead(file)),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 const same=(a,b)=>need(canonicalJson(a)===canonicalJson(b),'observation_mismatch');
-const fact=file=>{const s=ownedReleasePath(file,{privateMode:true});return ['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].map(k=>s[k]);};
 const freeze=value=>{if(value&&typeof value==='object'){for(const v of Object.values(value))freeze(v);Object.freeze(value);}return value;};
 export function assertQualificationReport(report,{toolRevision,inventorySha256,nowMs=Date.now()}){
  need(report?.schemaVersion===1&&report.kind==='booking-full-native-handoff-acceptance'&&report.toolRevision===toolRevision&&report.toolInventorySha256===inventorySha256&&
@@ -55,23 +56,13 @@ export function latestBookingQualification(toolRevision,inventorySha256){
  need(start.toolRevision===toolRevision&&proof.toolRevision===toolRevision,'source_changed');const native=verifyQualificationFiles(proof.root,{toolRevision,inventorySha256});
  same(native.sha256,proof.nativeSha256);const interrupt=verifyFullInterruptionReport(proof.interruptionRoot,{toolRevision});same(interrupt.sha256,proof.interruptionSha256);return {...native,qualificationDirectory:selected,application:proof.application};
 }
-function fresh(c){need(issued.has(c)&&reviewedBookingExecution(c.toolRevision),'evidence_invalid');assertFreshEvidence(c.proof,{nowMs:Date.now(),maxAgeMs:600000});
- for(const [file,witness]of c.witnesses)same(fact(file),witness);return c;}
-export function requireBookingAdmission(toolRevision){const c=fresh(context.getStore());need(c.toolRevision===toolRevision,'source_changed');return c.proof;}
-export async function retainedBookingMigrationBackup(request){
- const c=context.getStore();if(!c)return null;fresh(c);same(request,bookingPublicationBackupRequest(C,OP));
- // This digest proves HISTORICAL migration provenance only. Fresh admission is
- // independently mandatory and backed by a separately encrypted current dump.
- need(sha256(bookingHostRead(request.createReport))===c.historical.createReportSha256&&sha256(bookingHostRead(request.verifyReport))===c.historical.verifyReportSha256,'evidence_invalid');
- return c.historical.backup;
-}
 async function historicalBackup(){
  const request=bookingPublicationBackupRequest(C,OP),create=read(request.createReport),saved=read(request.verifyReport),directory=path.dirname(request.backup);
  ownedReleasePath(request.backup,{privateMode:true});const verified=await verifyProductionDatabaseBackup({inputPath:request.backup,passphrase:bookingHostRead(directory+'/backup.key').trim()});
  same({...verified,checkedAt:saved.checkedAt},saved);same(saved.source,create.source);const validated=validateDatabaseBackupSourceIdentity(create.source,{requireRecoveryContent:true});need(validated.valid,'backup_source_mismatch');
  for(const key of ['containerId','containerName','databaseName','databaseOid','systemIdentifier','serverVersionNum'])same(validated.source.database[key],production[key]);
  need(create.status==='created'&&saved.status==='verified'&&create.outputSha256===saved.inputSha256&&create.outputBytes===saved.inputBytes&&create.createdAt===saved.backupCreatedAt,'evidence_invalid');
- return {createReportSha256:sha256(bookingHostRead(request.createReport)),verifyReportSha256:sha256(bookingHostRead(request.verifyReport)),backup:{archiveSha256:create.outputSha256,archiveBytes:create.outputBytes,createdAt:create.createdAt,source:validated.source,restoreRehearsed:false}};
+ return {request,createReportSha256:sha256(bookingHostRead(request.createReport)),verifyReportSha256:sha256(bookingHostRead(request.verifyReport)),backup:{archiveSha256:create.outputSha256,archiveBytes:create.outputBytes,createdAt:create.createdAt,source:validated.source,restoreRehearsed:false}};
 }
 export function observeBookingCompatibility(qualification){
  const contract=JSON.parse(bookingHostSql(bookingHistoricalMetadataReadSql())),installedMetadata=bookingHostSql(bookingInstalledMetadataReadSql),defaults=JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql)),originalEvidence=read(OP+'/booking-compatibility-evidence.json'),originalCompatibility=read(OP+'/booking-compatibility.json');
@@ -79,7 +70,7 @@ export function observeBookingCompatibility(qualification){
  need(sha256(bookingHostRead(OP+'/booking-compatibility-evidence.json'))===originalCompatibility.evidenceSha256&&contract===originalEvidence.contractSha256,'observation_mismatch');
  return {contract,installedMetadata,defaultPrivilegesSha256:qualification.report.defaultPrivilegesSha256,historicalCompatibilitySha256:sha256(bookingHostRead(OP+'/booking-compatibility.json'))};
 }
-export async function collectFreshBookingAdmission({lock,directory,qualification}){
+export async function collectBookingAdmissionFacts({lock,directory,qualification}){
  assertOnlineRetentionHeldLocks(lock);const toolRevision=path.basename(path.dirname(path.dirname(new URL(import.meta.url).pathname))),authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
  ownedReleasePath(directory,{directory:true,privateMode:true});same(qualification.application,authority.prepared.application);verifyQualificationFiles(qualification.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});
  const before=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));need(before.active===false&&before.systemIdentifier===production.systemIdentifier,'database_identity_mismatch');
@@ -97,6 +88,5 @@ export async function collectFreshBookingAdmission({lock,directory,qualification
   createdAt,expiresAt:new Date(Date.parse(createdAt)+600000).toISOString(),mailEnabled:false};
  seal(directory+'/admission.json',proof);const original=bookingPublicationBackupRequest(C,OP),witnesses=new Map();
  for(const file of [backupPath,directory+'/backup.key',directory+'/backup-create.json',directory+'/backup-verify.json',directory+'/admission.json',original.backup,original.createReport,original.verifyReport,path.dirname(original.backup)+'/backup.key'])witnesses.set(file,fact(file));
- const c=Object.freeze({toolRevision,proof:freeze(proof),historical:freeze(historical),witnesses});issued.add(c);return c;
+ return Object.freeze({toolRevision,proof:freeze(proof),historical:freeze(historical),witnesses});
 }
-export function withFreshBookingAdmission(handle,work){const c=fresh(handle);need(typeof work==='function','invalid_contract');return context.run(c,()=>work(c.proof));}

@@ -7,15 +7,19 @@ import {isDeepStrictEqual} from 'node:util';
 import ts from 'typescript';
 import {bookingCiToolImportClosure,prepareBookingCiTool,assertBookingCiToolSource} from './booking-ci-continuation-tool.mjs';
 import {BOOKING_CI_EVIDENCE,BOOKING_CI_VERIFIED_SOURCE} from './booking-ci-continuation-policy.mjs';
+import {historicalBootstrapBlobs} from './test-support/release-toolchain-historical-fixture.mjs';
 const read=file=>readFileSync(new URL('../'+file,import.meta.url),'utf8'),source=read('scripts/booking-ci-continuation-tool.mjs');
 const need=(v,c)=>{if(!v)throw Error(c);},same=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
 const hash=x=>createHash('sha256').update(x).digest('hex');
 function extracted(name,context){const parsed=ts.createSourceFile('tool.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),fn=parsed.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
  assert.ok(fn,name);return runInNewContext(fn.getText(parsed).replace(/^export /,'')+'\n'+name,context);}
 test('actual bootstrap closure matches parsed static imports without changing the sealed predecessor preparer',()=>{
- const seen=new Set();function visit(file){if(seen.has(file))return;seen.add(file);const ast=ts.createSourceFile(file,read(file),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ function parsed(reader){const seen=new Set();function visit(file){if(seen.has(file))return;seen.add(file);const ast=ts.createSourceFile(file,reader(file),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   for(const n of ast.statements)if((ts.isImportDeclaration(n)||ts.isExportDeclaration(n))&&n.moduleSpecifier&&!n.moduleSpecifier.text.startsWith('node:'))visit('scripts/'+n.moduleSpecifier.text.slice(2));}
- visit('scripts/booking-ci-continuation-tool.mjs');assert.deepEqual(bookingCiToolImportClosure(read),[...seen].sort());
+ visit('scripts/booking-ci-continuation-tool.mjs');return seen;}
+ assert.deepEqual(bookingCiToolImportClosure(read),[...parsed(read)].sort());
+ const blobs=historicalBootstrapBlobs(),historicalRead=file=>{assert.equal(typeof blobs[file],'string');return blobs[file];},seen=parsed(historicalRead);
+ assert.deepEqual(bookingCiToolImportClosure(historicalRead),[...seen].sort());
  assert.equal(seen.size,28);
  for(const name of ['booking-formal-backup-tool','booking-formal-backup-policy','booking-registry-tool','booking-compatibility-tool','prepare-online-release-tool'])assert.ok(seen.has('scripts/'+name+'.mjs'));
  assert.throws(()=>bookingCiToolImportClosure(()=>"import '../escape.mjs';"),/import_path/);

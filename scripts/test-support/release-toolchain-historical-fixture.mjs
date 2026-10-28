@@ -46,3 +46,10 @@ export function readHistoricalCiBlob(file){
  assert.ok(HISTORICAL_CI_FILES.includes(file));
  return parseHistoricalCiFixture(JSON.parse(readFileSync(new URL('./release-toolchain-historical-ci.json',import.meta.url),'utf8')))[file];
 }
+export function parseHistoricalBootstrapFixture(fixture){
+ assert.deepEqual(Object.keys(fixture).sort(),['data','encoding']);assert.equal(fixture.encoding,'gzip-base64');assert.match(fixture.data,/^[A-Za-z0-9+/]+={0,2}$/);assert.ok(fixture.data.length<2*1024**2);
+ const value=JSON.parse(gunzipSync(Buffer.from(fixture.data,'base64'),{maxOutputLength:4*1024**2}).toString('utf8'));assert.deepEqual(Object.keys(value).sort(),['blobs','revision']);assert.equal(value.revision,revision);assert.equal(Object.keys(value.blobs).length,28);
+ const tree=historicalToolTreeRows();for(const [file,text]of Object.entries(value.blobs)){assert.match(file,/^scripts\/[a-z0-9-]+\.mjs$/);assert.equal(typeof text,'string');const bytes=Buffer.from(text,'utf8'),oid=createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');assert.ok(tree.includes('100644 blob '+oid+'\t'+file),'historical bootstrap blob must match its immutable tree');}
+ return Object.freeze(value.blobs);
+}
+export function historicalBootstrapBlobs(){return parseHistoricalBootstrapFixture(JSON.parse(readFileSync(new URL('./release-toolchain-historical-bootstrap.json',import.meta.url),'utf8')));}
