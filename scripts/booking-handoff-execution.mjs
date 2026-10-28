@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import {drainAndProbeIngress} from './release-toolchain-ingress.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {requireBookingAdmission} from './release-toolchain-admission-context.mjs';
+import {readReviewedBookingRuntimeCache} from './release-toolchain-legacy-runtime.mjs';
 import {spawnSync} from 'node:child_process';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE,
  assertBookingHandoffWindow,assertBookingAtomicActivationTransition} from './booking-handoff-policy.mjs';
@@ -69,12 +70,14 @@ for(const r of input.records){const settings=wb.normalizeMerchantBookingWorkbenc
  if(due)eligible++;
 }console.log(JSON.stringify({snapshots,automationEligibleRecords:eligible,observedAt:input.observedAt,throughAt:input.throughAt}));`;
 
-function liveDatasetAndPure(throughAt){
+function liveDatasetAndPure(throughAt,toolRevision){
  const live=JSON.parse(sql(BOOKING_HANDOFF_DATASET_SQL));assertBookingOriginalsMatchLive(originals(),live);
  const row=k=>live.bookingRows.find(p=>p.slug==='__merchant_booking_'+k+'__:v1'),rules=row('rules'),records=row('records').blocks,workbench=row('workbench').blocks;
  const legacy=collectBookingLegacyHost();
- for(const [name,file]of [['records','merchant-bookings.json'],['rules','merchant-booking-rules.json'],['workbench','merchant-booking-workbench.json']])
-  equal(JSON.parse(read(legacy.legacy.cwd+'/.runtime/'+file,{privateMode:false})),row(name).blocks,'legacy_cache_changed');
+ for(const [name,file]of [['records','merchant-bookings.json'],['rules','merchant-booking-rules.json'],['workbench','merchant-booking-workbench.json']]){
+  const text=toolRevision&&reviewedBookingExecution(toolRevision)?readReviewedBookingRuntimeCache(file,toolRevision):read(legacy.legacy.cwd+'/.runtime/'+file,{privateMode:false});
+  equal(JSON.parse(text),row(name).blocks,'legacy_cache_changed');
+ }
  const directory='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online',observedAt=new Date().toISOString();
  const source=()=>{need(runOnlineToolGit(directory,['rev-parse','HEAD']).toString().trim()===CANDIDATE&&
   !runOnlineToolGit(directory,['status','--porcelain=v1','--untracked-files=all']).toString().trim(),'pure_probe_source');};source();
@@ -115,7 +118,7 @@ export async function inspectBookingHandoffPreflight(options){
   inactive.compatibilitySha256===hash(compatibilityText),'inactive_evidence');
  const backup=await validateAttendanceBackupEvidence(bookingPublicationBackupRequest(CANDIDATE,RELEASE+'/'+CANDIDATE));
  need(backup.archiveSha256===inactive.backupSha256,'full_backup_changed');
- const data=liveDatasetAndPure(new Date(Date.now()+600000).toISOString()),before=JSON.parse(sql(bookingHandoffActivationSnapshotSql));
+ const data=liveDatasetAndPure(new Date(Date.now()+600000).toISOString(),toolRevision),before=JSON.parse(sql(bookingHandoffActivationSnapshotSql));
  if(reviewedBookingExecution(toolRevision))equal(before,requireBookingAdmission(toolRevision).databaseBefore,'fresh_admission_database_changed');
  assertBookingAtomicActivationTransition(before,{...before,active:true});need(data.legacy.legacy.pid===1590381&&data.legacy.legacy.backgroundPaused==='0','original_timer');
  equal(data.legacy.legacy,history.entries.at(-1).processes.find(p=>p.name==='merchant-space'),'original_timer_history');
@@ -166,7 +169,7 @@ export async function installAndDrainBookingIngress(options){
    need(response.status===503&&value.error==='booking_temporarily_paused'&&value.operation===gate.window.id,'gate_public_probe');}},
   drain:workers=>{authorize();const sockets=parseRetirementSockets(run('ss',['-ltnpH']),run('ss',['-tnpH']));
    return {oldWorkersRemaining:workers.filter(sameWorker).length,applicationConnections:sockets.established.filter(s=>s.localPort===3000||s.localPort>=3101&&s.localPort<=3110).length};},
-  wait:ms=>new Promise(r=>setTimeout(r,ms)),automation:()=>{authorize();const data=liveDatasetAndPure(gate.window.deadlineAt);
+  wait:ms=>new Promise(r=>setTimeout(r,ms)),automation:()=>{authorize();const data=liveDatasetAndPure(gate.window.deadlineAt,options.toolRevision);
    need(contentHash(data.live)===preflight.savedDatasetSha256&&data.plan.planSha256===preflight.ruleRepairPlanSha256,'drain_dataset_changed');
    equal(JSON.parse(sql(bookingHandoffActivationSnapshotSql)),preflight.databaseBefore,'drain_database_changed');return {...data.pure,datasetSha256:contentHash(data.live)};},
   complete:receipt=>{authorize();write(ROOT+'/legacy-drain.json',retentionCanonicalText(receipt));},
@@ -197,7 +200,7 @@ export async function activateRepairedBookingAuthority(options){
   return await executeBookingRepairActivation({now,authorize,snapshot:()=>JSON.parse(sql(bookingHandoffActivationSnapshotSql)),
    admission:async observed=>{equal(observed,before,'activation_observation');equal(drain.window,gate.window,'activation_drain_window');
     need(drain.automationEligibleRecords===0&&drain.datasetSha256===preflight.savedDatasetSha256&&Date.now()-Date.parse(drain.completedAt)<30000,'activation_drain_stale');
-    const data=liveDatasetAndPure(gate.window.deadlineAt);need(contentHash(data.live)===preflight.savedDatasetSha256,'activation_dataset_changed');equal(data.plan,plan,'activation_plan_changed');
+    const data=liveDatasetAndPure(gate.window.deadlineAt,options.toolRevision);need(contentHash(data.live)===preflight.savedDatasetSha256,'activation_dataset_changed');equal(data.plan,plan,'activation_plan_changed');
     const backup=await validateAttendanceBackupEvidence(bookingPublicationBackupRequest(CANDIDATE,RELEASE+'/'+CANDIDATE));
     need(backup.archiveSha256===preflight.backupSha256,'activation_full_backup_changed');return {window:gate.window,planSha256:plan.planSha256,backupSealSha256:ORIGINAL_SEAL,sqlSha256:hash(statement)};},
    begin:attempt=>{authorize();write(ROOT+'/activation-attempt.json',retentionCanonicalText(attempt));},
