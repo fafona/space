@@ -110,11 +110,16 @@ function kernelLease(lease,{requireParentGone=false}={}){
   return true;
 }
 export function assertBookingWatchdogInheritedLease(lease,options){sourceIdentity(lease.toolRevision);return kernelLease(lease,options);}
+export function bookingWatchdogControllerArguments(toolRevision,reviewed=false){
+ need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&typeof reviewed==='boolean','controller_entry');const directory='/var/lib/faolla-online-code/'+toolRevision;
+ return reviewed?['/usr/bin/node',directory+'/scripts/release-toolchain-release.mjs','publish']:['/usr/bin/node',directory+'/scripts/booking-handoff-host.mjs'];
+}
 
 export async function armBookingHandoffWatchdog({lock,toolRevision}){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);sourceIdentity(toolRevision,{initial:true});
   const directory='/var/lib/faolla-online-code/'+toolRevision,parent=fact(process.pid);
-  equal(command(process.pid),['/usr/bin/node',directory+'/scripts/booking-handoff-host.mjs'],'controller_entry');need(parent.cwd===directory,'controller_cwd');
+  const expected=bookingWatchdogControllerArguments(toolRevision,!!reviewedBookingExecution(toolRevision));
+  equal(command(process.pid),expected,'controller_entry');need(parent.cwd===directory,'controller_cwd');
   // No gate is installed unless BOTH the supervisor and its separately verified
   // recovery entrypoint have already been installed by the standard tool path.
   for(const file of ['booking-handoff-watchdog.mjs','booking-handoff-recovery.mjs'])assertOnlineToolOwnedPath(directory+'/scripts/'+file,'file');
