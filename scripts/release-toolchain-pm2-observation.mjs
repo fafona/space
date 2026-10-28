@@ -51,13 +51,16 @@ function collect({home,source}){
 }
 const rawEnvironment=pid=>{const value={};for(const row of fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean)){const at=row.indexOf('=');need(at>0&&!Object.hasOwn(value,row.slice(0,at)),'evidence_invalid');value[row.slice(0,at)]=row.slice(at+1);}return value;};
 export function collectActiveBookingLegacyHost(){
- const snapshot=collect({home:'/root/.pm2',source:'/var/lib/faolla-online-code/'+P.toolRevision+'/scripts'}),raw=snapshot.rows,processes=raw.map(normalizeRetirementProcess).sort((a,b)=>a.pmId-b.pmId),target=raw.find(p=>p.name==='merchant-space');
+ const snapshot=collectFormalBookingPm2Registry(),raw=snapshot.rows,processes=raw.map(normalizeRetirementProcess).sort((a,b)=>a.pmId-b.pmId),target=raw.find(p=>p.name==='merchant-space');
  need(target?.pid===P.legacyPid&&target.pm_id===0&&target.pm2_env.pm_cwd===LEGACY&&target.pm2_env.status==='online','evidence_invalid');
  const legacy=normalizeRetirementProcess(target),identity=fact(target.pid);need(identity.parentPid===snapshot.daemon.pid&&identity.cwd===LEGACY&&identity.executable==='/usr/bin/node','owned_resource_changed');
  const sources={};for(const [file,pin]of Object.entries(FRAMEWORK.frameworkSources)){const location='/usr/lib/node_modules/pm2/'+file;ownedReleasePath(location);sources[file]=sha256(fs.readFileSync(location));need(sources[file]===pin,'source_changed');}
  const e=target.pm2_env,result={legacy,raw:rawEnvironment(target.pid),configured:structuredClone(e.env),pmUptime:e.pm_uptime,pmDerived:{exitCode:e.exit_code??null,nodeVersion:e.node_version??null,version:e.version??null,previousRestartDelay:e.prev_restart_delay??null,unstableRestarts:e.unstable_restarts??null},framework:{nodeVersion:process.version,managerVersion:'6.0.14',frameworkSources:sources},processes,identityProofs:processes.filter(p=>p.status==='online').map(p=>({name:p.name,...fact(p.pid)})),daemonPeer:snapshot.daemonPeer,processPeer:peer(target.pid),rpcExpected:bookingLegacyRpcExpected(target)};
  same(fact(snapshot.daemon.pid),snapshot.daemon);same(peer(snapshot.daemon.pid),snapshot.daemonPeer);return result;
 }
+// Raw rows may contain credentials. Only internal root-owned release operations
+// may consume this result, and they must never log/serialize it publicly.
+export const collectFormalBookingPm2Registry=()=>collect({home:'/root/.pm2',source:'/var/lib/faolla-online-code/'+P.toolRevision+'/scripts'});
 export function collectOwnedCiPm2Registry(root){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&!['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'].some(f=>fs.existsSync(f))&&typeof root==='string'&&/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(root),'ci_only');
  ownedReleasePath(root,{directory:true,privateMode:true});const source=path.dirname(fileURLToPath(import.meta.url));need(/^\/var\/lib\/faolla-online-code\/[a-f0-9]{40}\/scripts$/.test(source),'ci_only');return collect({home:root+'/pm2',source});

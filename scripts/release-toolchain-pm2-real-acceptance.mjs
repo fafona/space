@@ -6,7 +6,7 @@ import * as fs from'node:fs';import path from'node:path';import net from'node:ne
 import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{randomBytes,randomUUID,createHash}from'node:crypto';import assert from'node:assert/strict';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,assertBookingHandoffWindow}from'./booking-handoff-policy.mjs';
 import{normalizeRetirementProcess,parseRetirementSockets}from'./online-release-retirement.mjs';import{bookingLegacyRpcExpected}from'./booking-handoff-legacy.mjs';
-import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow,requirePm2RegistryObservation}from'./release-toolchain-pm2-transition.mjs';
+import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow,requirePm2RegistryObservation,assertCompletePm2DumpSet}from'./release-toolchain-pm2-transition.mjs';
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
 import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
@@ -127,6 +127,7 @@ try{
  // guards or RPC allowlist. Persistence must not boot a daemon or restart apps.
  stage='actual-connect-only-dump-persistence';
  const dumpRequest={daemon:daemonPeer,root,socket:home+'/rpc.sock'},dumpRegistry=requirePm2RegistryObservation(python({...dumpRequest,action:'dump-inspect'})),dumpTarget=python({...dumpRequest,action:'dump-capture'});
+ assertCompletePm2DumpSet(collectOwnedCiPm2Registry(root).rows,dumpRegistry);
  const {commandLine:daemonCommand,...dumpDaemon}=captureProcessFact(daemon.pid),dumpBoot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
  need(daemonCommand.length===1&&daemonCommand[0]==='PM2 v6.0.14: God Daemon ('+home+')','dump_daemon_command');
  assert.deepEqual(await inspectPm2Registry(dumpDaemon,dumpBoot),dumpRegistry);assert.deepEqual(await capturePm2DumpTarget(dumpDaemon,dumpBoot),dumpTarget);

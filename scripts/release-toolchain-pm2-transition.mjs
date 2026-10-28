@@ -22,6 +22,19 @@ export function requirePm2RegistryObservation(value){
  need(Object.values(descriptors).every(d=>d.enumerable&&Object.hasOwn(d,'value'))&&descriptors.version.value===1&&descriptors.pm2Version.value==='6.0.14'&&descriptors.peerVerified.value===true,'registry_observation');
  const rows=validatePm2Registry(descriptors.registry.value);need(rows.length>0,'registry_observation');return rows;
 }
+export function assertCompletePm2DumpSet(rawRows,filtered){
+ const registry=validatePm2Registry(filtered);need(Array.isArray(rawRows)&&!types.isProxy(rawRows)&&rawRows.length>0&&rawRows.length===registry.length,'dump_process_set');
+ const observed=[];for(let i=0;i<rawRows.length;i++){
+  const entry=Object.getOwnPropertyDescriptor(rawRows,String(i));need(entry&&Object.hasOwn(entry,'value'),'dump_process_set');const row=entry.value;
+  need(object(row)&&!types.isProxy(row)&&[Object.prototype,null].includes(Object.getPrototypeOf(row)),'dump_process_set');
+  const d=Object.getOwnPropertyDescriptors(row);need(['name','pid','pm_id','pm2_env'].every(k=>d[k]?.enumerable&&Object.hasOwn(d[k],'value')),'dump_process_set');
+  need(typeof d.name.value==='string'&&/^[A-Za-z0-9._-]{1,150}$/.test(d.name.value)&&Number.isSafeInteger(d.pid.value)&&d.pid.value>=0&&Number.isSafeInteger(d.pm_id.value)&&d.pm_id.value>=0,'dump_process_set');
+  const env=d.pm2_env.value;need(object(env)&&!types.isProxy(env)&&[Object.prototype,null].includes(Object.getPrototypeOf(env)),'dump_process_set');
+  const module=Object.getOwnPropertyDescriptor(env,'pmx_module');need(!module||Object.hasOwn(module,'value')&&!module.value,'dump_module_process_excluded');
+  observed.push({name:d.name.value,pid:d.pid.value,pm_id:d.pm_id.value});
+ }
+ equal(observed.sort((a,b)=>a.pm_id-b.pm_id),registry.map(({name,pid,pm_id})=>({name,pid,pm_id})).sort((a,b)=>a.pm_id-b.pm_id),'dump_process_set');return true;
+}
 // A live monitor refresh changes CPU, RSS and heap gauges without a restart or
 // configuration mutation. Exclude only those two explicitly named telemetry
 // containers; keep every identity, environment and other manager field exact.

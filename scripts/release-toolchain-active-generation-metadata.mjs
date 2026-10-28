@@ -38,6 +38,18 @@ export async function correctActiveBookingCompatibleMetadata({lock,toolRevision,
  return correctMetadata({file:'/var/lib/faolla-online-release/active.json',beforeText:M.beforeText,afterText:M.afterText,directory:preserved.directory,binding,assertHeld:held,
   observe:phase=>phase==='before'?inspectActiveBookingIncident({window}):inspectActiveBookingIncidentAfterMetadata({window}),verifyDelta:assertActiveMetadataOnlyDelta});
 }
+export function verifyActiveBookingMetadataCorrection({lock,toolRevision,window}){
+ const preserved=verifyActiveBookingIncidentPreservation({lock,toolRevision,window}),authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
+ const directory=preserved.directory,binding={oldOperationId:P.operationId,window,toolRevision,toolInventorySha256:authority.tool.inventorySha256,preservedSha256:preserved.preservedSha256},read=name=>{const text=bookingHostRead(directory+'/'+name),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
+ need(!fs.existsSync(directory+'/metadata-correction-failed.json'),'operation_unconfirmed');
+ const before=read('metadata-before-observation.json'),after=read('metadata-after-observation.json'),intent=read('metadata-correction-intent.json'),receipt=read('metadata-corrected.json');assertActiveMetadataOnlyDelta(before,after);
+ const beforeSha256=sha256(M.beforeText),afterSha256=sha256(M.afterText),beforeObservationSha256=sha256(canonicalJson(before)),afterObservationSha256=sha256(canonicalJson(after));
+ same(intent,{kind:'active-incident-compatible-metadata-correction-intent',binding,file:'/var/lib/faolla-online-release/active.json',beforeSha256,afterSha256,beforeObservationSha256,at:intent.at,publicationAuthority:false});
+ same(receipt,{kind:'active-incident-compatible-metadata-corrected',binding,beforeSha256,afterSha256,beforeObservationSha256,afterObservationSha256,routingChanged:false,productionDatabaseMutated:false,processControlPerformed:false,oldOperationRemoved:false,publicationAuthority:false,completedAt:receipt.completedAt});
+ for(const date of [intent.at,receipt.completedAt]){const ms=Date.parse(date);need(Number.isFinite(ms)&&new Date(ms).toISOString()===date&&ms>=Date.parse(window.startedAt)&&ms<=Date.now()&&ms<Date.parse(window.deadlineAt),'evidence_invalid');}
+ need(Date.parse(receipt.completedAt)>=Date.parse(intent.at),'evidence_invalid');same(bookingHostRead('/var/lib/faolla-online-release/active.json'),M.afterText);assertOnlineRetentionHeldLocks(lock);
+ return{directory,binding,before,after,receipt,receiptSha256:sha256(bookingHostRead(directory+'/metadata-corrected.json'))};
+}
 export async function acceptActiveIncidentMetadataInCi(){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&!['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'].some(f=>fs.existsSync(f)),'ci_only');
  const root=fs.mkdtempSync('/var/lib/faolla-active-metadata-ci-');fs.chmodSync(root,0o700);seal(root+'/started.json',{kind:'active-incident-metadata-ci-started',syntheticInputsOnly:true,at:new Date().toISOString()});let stage='prepare';
