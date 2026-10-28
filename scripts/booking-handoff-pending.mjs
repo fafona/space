@@ -6,6 +6,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
+import {RECOVERED_BOOKING_ATTEMPT} from './release-toolchain-recovered-contract.mjs';
 import {collectBookingReadyRuntimeCohort} from './booking-ready-runtime.mjs';
 import {observeBookingBuiltSmokePair} from './booking-built-smoke-repair.mjs';
 import {observeBookingCompatibilityContinuation} from './booking-compatibility-tool.mjs';
@@ -213,6 +214,22 @@ export function assertReviewedBookingNoPending(toolRevision){
   const cohort=collectBookingReadyRuntimeCohort({toolRevision}),C=cohort.active.target;
   const expected={[C]:'7ba13be0b859c918a71481b469596d6f2ef430ba61b1fc1946471812fb5651d3',[APPLICATION]:'12a7590d9de39d10179d0b60d3730c0451c5ad9e2b9a6d22044a77fe0861be3d'};
   const pair={preserved:{}};for(const [target,digest]of Object.entries(expected)){
+    if(sha256(privateRead(RELEASE_ROOT+'/'+target+'/state.json'))!==digest)fail('release_pending');pair.preserved[target]={stateSha256:digest};
+  }
+  return bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair);
+}
+// Archive only: the one proven recovered failure must be re-attested in full.
+// Normal publication above still requires the original database-ready bytes.
+export async function assertReviewedRecoveredBookingNoPending(toolRevision){
+  if(arguments.length!==1||!reviewedBookingExecution(toolRevision))fail('booking_reviewed_source_required');
+  assertBookingBasePendingGuardSource(fs.readFileSync(new URL('./prepare-online-release-tool.mjs',import.meta.url),'utf8'));
+  // Load only inside this archive-only entry: the recovery verifier itself uses
+  // the host controller, whose preflight imports this pending module.
+  const {inspectRecoveredBookingAttempt}=await import('./release-toolchain-recovered-attempt.mjs');
+  await inspectRecoveredBookingAttempt();
+  const cohort=collectBookingReadyRuntimeCohort({toolRevision}),C=cohort.active.target,M=RECOVERED_BOOKING_ATTEMPT.candidateMetadata;
+  const expected={[C]:M.failedSha256,[APPLICATION]:M.rollbackSha256},pair={preserved:{}};
+  for(const [target,digest]of Object.entries(expected)){
     if(sha256(privateRead(RELEASE_ROOT+'/'+target+'/state.json'))!==digest)fail('release_pending');pair.preserved[target]={stateSha256:digest};
   }
   return bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair);

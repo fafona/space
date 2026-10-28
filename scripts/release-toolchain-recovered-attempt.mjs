@@ -2,18 +2,19 @@
 // path, restore, SQL mutation, process signal or removal is exposed.
 import * as fs from 'node:fs';
 import {RECOVERED_BOOKING_ATTEMPT as P,RECOVERED_BOOKING_STATIC_NAMES} from './release-toolchain-recovered-contract.mjs';
-import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
+import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B,BOOKING_HANDOFF_APPLICATION as A} from './booking-handoff-policy.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {ownedReleasePath,inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {captureToolchainProductionSnapshot} from './release-toolchain-full-rehearsal.mjs';
-import {bookingHostSql,bookingHostRun,bookingHostWriteOnce,bookingHostSync} from './booking-handoff-host-io.mjs';
+import {bookingHostSql,bookingHostRun,bookingHostWriteOnce,bookingHostSync,bookingHostReplace} from './booking-handoff-host-io.mjs';
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
 import {assertBookingWatchdogArmedLease} from './booking-handoff-watchdog.mjs';
 import {BOOKING_FORMAL_PILOT_IDS} from './booking-formal-backup-policy.mjs';
 const ROOT='/var/lib/faolla-booking-handoff/'+C,ARCHIVE=ROOT+'/recovered-attempts/'+P.operationId;
+const STATE='/var/lib/faolla-online-release/'+C+'/state.json',ROLLBACK='/var/lib/faolla-online-release/'+A+'/state.json',M=P.candidateMetadata;
 const same=(a,b)=>need(canonicalJson(a)===canonicalJson(b),'observation_mismatch');
 const identity=s=>Object.fromEntries(['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].map(k=>[k,s[k]]));
 function bytes(file){
@@ -23,6 +24,18 @@ function bytes(file){
 const json=file=>JSON.parse(bytes(file).toString('utf8'));
 const seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 function attest(file,pin){const b=bytes(file);need(b.length===pin[1]&&sha256(b)===pin[2],'evidence_invalid');return identity(fs.lstatSync(file));}
+// This is the exact metadata written by the old, successful baseline recovery.
+// It is not a business-state restore and accepts no other failure or extra edit.
+export function assertRecoveredCandidateMetadata(original,failed){
+ need(original.target===C&&original.status==='database-ready','evidence_invalid');
+ same(failed,{...original,status:'booking-cutover-failed',bookingRecoveryTarget:B,bookingRecoveryOperationId:P.operationId,bookingRecoveryAt:M.recoveredAt});return true;
+}
+function candidateMetadata(){
+ const failed=attest(STATE,['state.json',M.failedBytes,M.failedSha256]);
+ const original=attest(ROOT+'/primary-original-stage.json',['primary-original-stage.json',M.originalBytes,M.originalSha256]);
+ const rollback=bytes(ROLLBACK);need(sha256(rollback)===M.rollbackSha256,'evidence_invalid');
+ assertRecoveredCandidateMetadata(json(ROOT+'/primary-original-stage.json'),json(STATE));return {failed,original,failedSha256:M.failedSha256,originalSha256:M.originalSha256,rollbackSha256:M.rollbackSha256};
+}
 function noLiveProcess(expected){try{const s=fs.readFileSync('/proc/'+expected.pid+'/stat','utf8'),f=s.slice(s.lastIndexOf(')')+2).trim().split(/\s+/);need(f[19]!==expected.startTicks||f[0]==='Z','attempt_unknown');}catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}}
 async function unchangedFormalHost(){
  const snapshot=captureToolchainProductionSnapshot(),database=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));
@@ -46,13 +59,16 @@ export async function inspectRecoveredBookingAttempt(){
  const files=Object.fromEntries(P.files.map(pin=>[pin[0],attest(ROOT+'/'+pin[0],pin)]));
  const proof={lease:json(ROOT+'/watchdog-lease.json'),armed:json(ROOT+'/watchdog-armed.json'),failure:json(ROOT+'/controller-failure.json'),finished:json(ROOT+'/watchdog-finished.json'),recovery:json(ROOT+'/watchdog-recovery.json'),gate:json(ROOT+'/ingress-plan.json')};
  assertRecoveredBookingProof(proof);noLiveProcess(proof.lease.parent);noLiveProcess(proof.armed.process);
- const baseline=await unchangedFormalHost();return {files,baseline,operationId:P.operationId,profileSha256:sha256(canonicalJson(P))};
+ const candidate=candidateMetadata(),baseline=await unchangedFormalHost();return {files,candidate,baseline,operationId:P.operationId,profileSha256:sha256(canonicalJson(P))};
 }
 // Pure sequencing contract: uncertain moves are terminal, never retried.
 export async function executeRecoveredBookingArchive(operations){
- const before=await operations.inspect();await operations.begin(before);
+ const before=await operations.inspect();await operations.begin(before);await operations.preserveCandidate(before);
  for(let index=0;index<P.files.length;index++)await operations.move(index,P.files[index],before);
- await operations.verify(before);return operations.complete(before);
+ await operations.verify(before);await operations.transition(before);return operations.complete(before);
+}
+export async function executeRecoveredCandidateTransition(operations){
+ await operations.inspect();await operations.begin();await operations.replace();await operations.verify();return operations.complete();
 }
 export async function archiveRecoveredBookingAttempt({lock,toolRevision,qualificationSha256}){
  assertOnlineRetentionHeldLocks(lock);const authority=reviewedBookingExecution(toolRevision);need(authority&&/^[a-f0-9]{64}$/.test(qualificationSha256),'evidence_invalid');
@@ -62,13 +78,21 @@ export async function archiveRecoveredBookingAttempt({lock,toolRevision,qualific
   inspect:async()=>{held();return inspectRecoveredBookingAttempt();},
   begin:before=>{held();const parent=ROOT+'/recovered-attempts';fs.mkdirSync(parent,{mode:0o700});bookingHostSync(ROOT);fs.mkdirSync(ARCHIVE,{mode:0o700});bookingHostSync(parent);
    started={kind:'booking-recovered-attempt-archive-started',operationId:P.operationId,priorTool:P.priorTool,toolRevision,toolInventorySha256:authority.tool.inventorySha256,qualificationSha256,profileSha256,before,startedAt:new Date().toISOString()};seal(ARCHIVE+'/started.json',started);},
+  preserveCandidate:before=>{held();same(candidateMetadata(),before.candidate);bookingHostWriteOnce(ARCHIVE+'/candidate-failed-state.json',bytes(STATE).toString('utf8'));attest(ARCHIVE+'/candidate-failed-state.json',['candidate-failed-state.json',M.failedBytes,M.failedSha256]);},
   move:(index,pin,before)=>{held();const source=ROOT+'/'+pin[0],destination=ARCHIVE+'/'+pin[0];same(attest(source,pin),before.files[pin[0]]);need(!fs.existsSync(destination),'attempt_unknown');
    // Exact source/destination paths are all fixed above, never a glob/root move.
    fs.renameSync(source,destination);bookingHostSync(ROOT);bookingHostSync(ARCHIVE);const after=attest(destination,pin);need(!fs.existsSync(source),'attempt_unknown');
    seal(ARCHIVE+'/move-'+String(index+1).padStart(2,'0')+'.json',{kind:'booking-recovered-evidence-moved',index,name:pin[0],bytes:pin[1],sha256:pin[2],before:before.files[pin[0]],after});},
-  verify:async before=>{held();same(fs.readdirSync(ROOT).sort(),[...RECOVERED_BOOKING_STATIC_NAMES,'recovered-attempts'].sort());for(const pin of P.files)attest(ARCHIVE+'/'+pin[0],pin);same(await unchangedFormalHost(),before.baseline);},
+  verify:async before=>{held();same(fs.readdirSync(ROOT).sort(),[...RECOVERED_BOOKING_STATIC_NAMES,'recovered-attempts'].sort());for(const pin of P.files)attest(ARCHIVE+'/'+pin[0],pin);same(candidateMetadata(),before.candidate);same(await unchangedFormalHost(),before.baseline);},
+  transition:before=>{let failed,original,after;return executeRecoveredCandidateTransition({
+   inspect:()=>{held();same(candidateMetadata(),before.candidate);failed=bytes(ARCHIVE+'/candidate-failed-state.json').toString('utf8');original=bytes(ROOT+'/primary-original-stage.json').toString('utf8');need(sha256(failed)===M.failedSha256&&sha256(original)===M.originalSha256,'evidence_invalid');},
+   begin:()=>{held();seal(ARCHIVE+'/candidate-transition-started.json',{kind:'booking-recovered-candidate-transition-started',operationId:P.operationId,toolRevision,profileSha256,failedSha256:M.failedSha256,originalSha256:M.originalSha256,before:before.candidate.failed,at:new Date().toISOString()});},
+   replace:()=>{held();same(candidateMetadata(),before.candidate);bookingHostReplace(STATE,failed,original,'recovered-'+P.operationId);},
+   verify:async()=>{held();after=attest(STATE,['state.json',M.originalBytes,M.originalSha256]);need(sha256(bytes(ROLLBACK))===M.rollbackSha256,'observation_mismatch');same(await unchangedFormalHost(),before.baseline);},
+   complete:()=>{held();seal(ARCHIVE+'/candidate-transition-completed.json',{kind:'booking-recovered-candidate-transition-completed',operationId:P.operationId,toolRevision,profileSha256,startedSha256:sha256(bytes(ARCHIVE+'/candidate-transition-started.json')),failedSha256:M.failedSha256,originalSha256:M.originalSha256,after,productionDatabaseMutated:false,at:new Date().toISOString()});}
+  });},
   complete:()=>{held();const receipt={kind:'booking-recovered-attempt-archive-completed',operationId:P.operationId,priorTool:P.priorTool,toolRevision,toolInventorySha256:authority.tool.inventorySha256,qualificationSha256,profileSha256,startedSha256:sha256(bytes(ARCHIVE+'/started.json')),files:P.files.length,protectedSnapshotSha256:P.protectedSnapshotSha256,databaseSha256:P.databaseSha256,applicationPublished:false,productionDatabaseMutated:false,trafficChanged:false,mailEnabled:false,completedAt:new Date().toISOString()};
-   seal(ARCHIVE+'/completed.json',receipt);assertArchivedRecoveredBookingAttempt();return {kind:receipt.kind,archive:ARCHIVE,operationId:P.operationId,toolRevision,files:receipt.files,productionMutated:false,mailEnabled:false};}
+   receipt.candidateTransitionSha256=sha256(bytes(ARCHIVE+'/candidate-transition-completed.json'));seal(ARCHIVE+'/completed.json',receipt);assertArchivedRecoveredBookingAttempt();return {kind:receipt.kind,archive:ARCHIVE,operationId:P.operationId,toolRevision,files:receipt.files,candidateMetadataTransitioned:true,productionDatabaseMutated:false,mailEnabled:false};}
  });
 }
 export function assertArchivedRecoveredBookingAttempt(){
@@ -79,7 +103,14 @@ export function assertArchivedRecoveredBookingAttempt(){
   completed.qualificationSha256===started.qualificationSha256&&/^[a-f0-9]{64}$/.test(completed.qualificationSha256)&&completed.protectedSnapshotSha256===P.protectedSnapshotSha256&&completed.databaseSha256===P.databaseSha256&&started.before.profileSha256===completed.profileSha256&&
   completed.applicationPublished===false&&completed.productionDatabaseMutated===false&&completed.trafficChanged===false&&completed.mailEnabled===false,'evidence_invalid');
  const tool=inspectPinnedExecutionSource({revision:completed.toolRevision,directory:'/var/lib/faolla-online-code/'+completed.toolRevision});need(tool.inventorySha256===completed.toolInventorySha256&&started.toolInventorySha256===completed.toolInventorySha256,'source_changed');
- same(fs.readdirSync(ARCHIVE).sort(),['started.json','completed.json',...P.files.map(p=>p[0]),...P.files.map((_,i)=>'move-'+String(i+1).padStart(2,'0')+'.json')].sort());
+ same(fs.readdirSync(ARCHIVE).sort(),['started.json','completed.json','candidate-failed-state.json','candidate-transition-started.json','candidate-transition-completed.json',...P.files.map(p=>p[0]),...P.files.map((_,i)=>'move-'+String(i+1).padStart(2,'0')+'.json')].sort());
+ attest(ARCHIVE+'/candidate-failed-state.json',['candidate-failed-state.json',M.failedBytes,M.failedSha256]);attest(ROOT+'/primary-original-stage.json',['primary-original-stage.json',M.originalBytes,M.originalSha256]);
+ assertRecoveredCandidateMetadata(json(ROOT+'/primary-original-stage.json'),json(ARCHIVE+'/candidate-failed-state.json'));
+ const intent=json(ARCHIVE+'/candidate-transition-started.json'),transition=json(ARCHIVE+'/candidate-transition-completed.json');
+ need(intent.kind==='booking-recovered-candidate-transition-started'&&transition.kind==='booking-recovered-candidate-transition-completed'&&transition.productionDatabaseMutated===false&&
+  intent.operationId===P.operationId&&transition.operationId===P.operationId&&intent.toolRevision===completed.toolRevision&&transition.toolRevision===completed.toolRevision&&intent.profileSha256===completed.profileSha256&&transition.profileSha256===completed.profileSha256&&
+  intent.failedSha256===M.failedSha256&&transition.failedSha256===M.failedSha256&&intent.originalSha256===M.originalSha256&&transition.originalSha256===M.originalSha256&&transition.startedSha256===sha256(bytes(ARCHIVE+'/candidate-transition-started.json'))&&completed.candidateTransitionSha256===sha256(bytes(ARCHIVE+'/candidate-transition-completed.json')),'evidence_invalid');same(intent.before,started.before.candidate.failed);
+ need(started.before.candidate.failedSha256===M.failedSha256&&started.before.candidate.originalSha256===M.originalSha256&&started.before.candidate.rollbackSha256===M.rollbackSha256,'evidence_invalid');
  for(const [i,pin]of P.files.entries()){attest(ARCHIVE+'/'+pin[0],pin);const moved=json(ARCHIVE+'/move-'+String(i+1).padStart(2,'0')+'.json');need(moved.kind==='booking-recovered-evidence-moved'&&moved.index===i&&moved.name===pin[0]&&moved.bytes===pin[1]&&moved.sha256===pin[2],'evidence_invalid');same(moved.before,started.before.files[pin[0]]);const actual=identity(fs.lstatSync(ARCHIVE+'/'+pin[0]));same(actual,moved.after);}
  assertRecoveredBookingProof({lease:json(ARCHIVE+'/watchdog-lease.json'),armed:json(ARCHIVE+'/watchdog-armed.json'),failure:json(ARCHIVE+'/controller-failure.json'),finished:json(ARCHIVE+'/watchdog-finished.json'),recovery:json(ARCHIVE+'/watchdog-recovery.json'),gate:json(ARCHIVE+'/ingress-plan.json')});return completed;
 }

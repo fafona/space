@@ -1,8 +1,9 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
 import {RECOVERED_BOOKING_ATTEMPT as P,RECOVERED_BOOKING_STATIC_NAMES} from './release-toolchain-recovered-contract.mjs';
-import {assertRecoveredBookingProof,executeRecoveredBookingArchive,archiveRecoveredBookingAttempt} from './release-toolchain-recovered-attempt.mjs';
+import {assertRecoveredBookingProof,assertRecoveredCandidateMetadata,executeRecoveredCandidateTransition,executeRecoveredBookingArchive,archiveRecoveredBookingAttempt} from './release-toolchain-recovered-attempt.mjs';
 import {bookingWatchdogLeaseDigest} from './booking-handoff-watchdog.mjs';
 import {sha256} from './release-toolchain-contracts.mjs';
+import {spawnSync} from 'node:child_process';
 const C='f274ad615550c83717aa7af2ad32339608e6f8aa',B='52f602c0734284d81a19f4cdf9cdbf3766aa1834';
 function proof(){const window={id:P.operationId,startedAt:'2026-10-28T15:10:59.000Z',deadlineAt:'2026-10-28T15:20:59.000Z'},h='a'.repeat(64),
  lease={schemaVersion:1,kind:'booking-handoff-independent-watchdog',candidate:C,toolRevision:P.priorTool,window,
@@ -22,10 +23,33 @@ for(const change of [p=>p.lease.toolRevision='f'.repeat(40),p=>p.failure.operati
  p=>p.recovery.database.active=true,p=>p.recovery.database.activationAttempted=true,p=>p.recovery.database.activationCommitted=true,p=>p.recovery.legacyPause.attempted=true,
  p=>p.armed.leaseSha256='a'.repeat(64),p=>p.armed.at='2026-10-28T16:11:03.000Z'])test('archive refuses changed operation, active/unknown SQL, process restart, bad arming or unsafe recovery',()=>{const p=proof();change(p);assert.throws(()=>assertRecoveredBookingProof(p));});
 function fixture(failure){const events=[],ops={inspect:async()=>{events.push('inspect');if(failure==='inspect')throw Error('unknown');return {fixed:true};},
+ preserveCandidate:async()=>{events.push('preserveCandidate');if(failure==='preserveCandidate')throw Error('unknown');},
+ transition:async()=>{events.push('transition');if(failure==='transition')throw Error('unknown');},
  begin:async()=>{events.push('begin');if(failure==='begin')throw Error('unknown');},move:async i=>{events.push('move-'+i);if(failure==='move-'+i)throw Error('unknown');},
  verify:async()=>{events.push('verify');if(failure==='verify')throw Error('unknown');},complete:async()=>{events.push('complete');if(failure==='complete')throw Error('unknown');return {sealed:true};}};return {events,ops};}
-test('all 17 exact evidence moves are observed before a final seal, without replaying the old application attempt',async()=>{const f=fixture();assert.deepEqual(await executeRecoveredBookingArchive(f.ops),{sealed:true});assert.deepEqual(f.events,['inspect','begin',...P.files.map((_,i)=>'move-'+i),'verify','complete']);});
-for(const stage of ['inspect','begin',...P.files.map((_,i)=>'move-'+i),'verify','complete'])test('unknown archive '+stage+' stops terminally without retry or success',async()=>{const f=fixture(stage);await assert.rejects(executeRecoveredBookingArchive(f.ops),/unknown/);assert.equal(f.events.at(-1),stage);assert.equal(f.events.filter(v=>v===stage).length,1);});
+test('failed metadata is preserved before all 17 evidence moves, then checked and transitioned before sealing; no old attempt is replayed',async()=>{const f=fixture();assert.deepEqual(await executeRecoveredBookingArchive(f.ops),{sealed:true});assert.deepEqual(f.events,['inspect','begin','preserveCandidate',...P.files.map((_,i)=>'move-'+i),'verify','transition','complete']);});
+for(const stage of ['inspect','begin','preserveCandidate',...P.files.map((_,i)=>'move-'+i),'verify','transition','complete'])test('unknown archive '+stage+' stops terminally without retry or success',async()=>{const f=fixture(stage);await assert.rejects(executeRecoveredBookingArchive(f.ops),/unknown/);assert.equal(f.events.at(-1),stage);assert.equal(f.events.filter(v=>v===stage).length,1);});
+
+function metadata(){const original={target:C,status:'database-ready',immutable:{build:'retained',database:'unchanged'}};return {original,failed:{...original,status:'booking-cutover-failed',bookingRecoveryTarget:B,bookingRecoveryOperationId:P.operationId,bookingRecoveryAt:P.candidateMetadata.recoveredAt}};}
+for(const failure of [null,'inspect','begin','replace','verify','complete'])test('candidate metadata conversion is ordered, fail-closed and never retries an uncertain replacement: '+failure,async()=>{
+ const order=['inspect','begin','replace','verify','complete'],events=[],ops=Object.fromEntries(order.map(name=>[name,async()=>{events.push(name);if(name===failure)throw Error('unknown');}]));
+ if(failure)await assert.rejects(executeRecoveredCandidateTransition(ops),/unknown/);else await executeRecoveredCandidateTransition(ops);
+ assert.deepEqual(events,failure?order.slice(0,order.indexOf(failure)+1):order);
+});
+test('metadata transition accepts exactly the recovery marker over the original database-ready state',()=>{const p=metadata();assert.equal(assertRecoveredCandidateMetadata(p.original,p.failed),true);});
+for(const change of [p=>p.original.target=B,p=>p.original.status='active',p=>p.failed.status='active',p=>p.failed.bookingRecoveryTarget=C,p=>p.failed.bookingRecoveryOperationId='other',p=>p.failed.bookingRecoveryAt='2026-10-28T15:11:19.639Z',p=>p.failed.extra=true,p=>p.failed.immutable={build:'different'},p=>delete p.failed.bookingRecoveryAt])test('metadata transition refuses another candidate, time, status, changed application field or extra edit',()=>{const p=metadata();change(p);assert.throws(()=>assertRecoveredCandidateMetadata(p.original,p.failed));});
+test('archive-only pending adapter verifies the actual recovered incident; normal pending guard still pins original state',()=>{
+ const src=readFileSync(new URL('./booking-handoff-pending.mjs',import.meta.url),'utf8'),normal=src.slice(src.indexOf('export function assertReviewedBookingNoPending'),src.indexOf('// Archive only:'));
+ assert.match(normal,/'7ba13be0b859c918a71481b469596d6f2ef430ba61b1fc1946471812fb5651d3'/);assert.doesNotMatch(normal,/failedSha256|RecoveredBookingAttempt/);
+ const special=src.slice(src.indexOf('export async function assertReviewedRecoveredBookingNoPending'));for(const v of ['reviewedBookingExecution(toolRevision)','await inspectRecoveredBookingAttempt()','collectBookingReadyRuntimeCohort','bookingHandoffPendingBody({},assertOnlineToolOwnedPath,pair)'])assert.ok(special.includes(v),v);
+ const release=readFileSync(new URL('./release-toolchain-release.mjs',import.meta.url),'utf8');assert.match(release,/if\(action==='archive-recovered'\)\{await assertReviewedRecoveredBookingNoPending/);assert.match(release,/archiveRecoveredBookingAttempt\(.*?\);assertReviewedBookingNoPending\(toolRevision\)/);
+});
+test('every affected production entry can initialize independently without an ESM cycle',()=>{
+ for(const name of ['booking-handoff-activation.mjs','booking-handoff-host.mjs','booking-handoff-rule-repair.mjs','booking-handoff-pending.mjs','release-toolchain-recovered-attempt.mjs','release-toolchain-release.mjs']){
+  const uri=new URL('./'+name,import.meta.url).href,r=spawnSync(process.execPath,['--input-type=module','--eval','await import('+JSON.stringify(uri)+')'],{encoding:'utf8',timeout:15000,maxBuffer:262144,windowsHide:true});
+  assert.equal(r.error,undefined,name);assert.equal(r.status,0,name+': '+r.stderr);assert.equal(r.stdout,'',name);
+ }
+});
 test('production archiver requires actual reviewed authority and held locks, never caller green JSON',async()=>{await assert.rejects(archiveRecoveredBookingAttempt({lock:{verified:true},toolRevision:'a'.repeat(40),qualificationSha256:'b'.repeat(64)}));});
 test('actual archiver is fixed-path, exclusive, ownership/byte checked and durable; normal admission mandates a completed archive',()=>{
  const src=readFileSync(new URL('./release-toolchain-recovered-attempt.mjs',import.meta.url),'utf8'),profile=readFileSync(new URL('./release-toolchain-booking-profile.mjs',import.meta.url),'utf8');
