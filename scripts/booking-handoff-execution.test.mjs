@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {executeBookingIngressDrain,executeBookingRepairActivation,BOOKING_HANDOFF_DATASET_SQL,BOOKING_HANDOFF_PURE_PROBE} from './booking-handoff-execution.mjs';
 import {assertBookingHostInvocation} from './booking-handoff-host-io.mjs';
+import {bookingWatchdogLeaseDigest,assertBookingWatchdogArmedLease} from './booking-handoff-watchdog.mjs';
+import {retentionHash} from './online-release-retention-policy.mjs';
 const h=n=>n.repeat(64),window={id:'10000000-0000-4000-8000-000000000001',startedAt:'2026-10-26T10:00:00.000Z',deadlineAt:'2026-10-26T10:10:00.000Z'};
 test('preflight and activation revalidate the same immutable-application backup binding',()=>{
  const code=readFileSync(new URL('./booking-handoff-execution.mjs',import.meta.url),'utf8');
@@ -18,6 +20,16 @@ function drainFixture({failAt,neverDrained=false,eligible=0}={}){
   drain:step('drain',()=>({oldWorkersRemaining:neverDrained||polls++<2?1:0,applicationConnections:0})),wait:step('wait',()=>{elapsed+=1000;}),
   automation:step('automation',()=>({automationEligibleRecords:eligible,throughAt:window.deadlineAt,datasetSha256:h('b')})),complete:step('complete')}};
 }
+test('real arming verifier admits the cutover drain with the file digest, and the former JSON-value digest stops before any gate install',async()=>{
+ const revision='f'.repeat(40),digest='a'.repeat(64),lease={schemaVersion:1,kind:'booking-handoff-independent-watchdog',candidate:'f274ad615550c83717aa7af2ad32339608e6f8aa',toolRevision:revision,window,
+  parent:{pid:1234,uid:0,startTicks:'100',executable:'/usr/bin/node',cwd:'/var/lib/faolla-online-code/'+revision,commandSha256:digest},
+  deploy:{file:'/www/wwwroot/merchant-space.deploy.lock',identity:{dev:1,ino:2,uid:0,mode:0o100600,nlink:1}},operation:{directory:'/var/lib/faolla-maintenance/merchant-space/operation.lock',identity:{dev:1,ino:3,uid:0,mode:0o40700,nlink:2}},routingPlanSha256:digest,gatePlanSha256:digest};
+ for(const valid of [true,false]){const f=drainFixture(),armed={schemaVersion:1,leaseSha256:valid?bookingWatchdogLeaseDigest(lease):retentionHash(lease),process:{pid:5678},at:window.startedAt};
+  f.operations.authorize=()=>assertBookingWatchdogArmedLease(armed,lease);
+  if(valid){await executeBookingIngressDrain(f.operations,{window});assert.equal(f.events.at(-1),'complete');assert.equal(f.events.filter(v=>v==='install').length,1);}
+  else{await assert.rejects(executeBookingIngressDrain(f.operations,{window}),/arming_receipt/);assert.deepEqual(f.events,[]);}
+ }
+});
 test('ingress drain proves old worker exit and zero connections before actual automation evidence',async()=>{
  const f=drainFixture(),receipt=await executeBookingIngressDrain(f.operations,{window});assert.equal(receipt.automationEligibleRecords,0);
  assert.equal(f.events.filter(n=>n==='install').length,1);assert.equal(f.events.filter(n=>n==='reload').length,1);

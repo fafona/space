@@ -75,6 +75,15 @@ export function assertBookingWatchdogLease(lease){
   const bounds=assertBookingHandoffWindow(lease.window);need(bounds.deadlineAtMs-bounds.startedAtMs===600000,'lease_window');return true;
 }
 
+// This receipt seals FILE BYTES, including the canonical trailing newline.
+// Keep its producer and both production consumers on the same representation.
+export function bookingWatchdogLeaseDigest(lease){assertBookingWatchdogLease(lease);return hash(retentionCanonicalText(lease));}
+export function assertBookingWatchdogArmedLease(armed,lease){
+  equal(Object.keys(armed??{}).sort(),['schemaVersion','leaseSha256','process','at'].sort(),'arming_shape');
+  need(armed.schemaVersion===1&&armed.leaseSha256===bookingWatchdogLeaseDigest(lease),'arming_receipt');
+  const at=Date.parse(armed.at);need(Number.isFinite(at)&&new Date(at).toISOString()===armed.at&&at>=Date.parse(lease.window.startedAt)&&at<=Date.parse(lease.window.deadlineAt),'arming_time');return true;
+}
+
 /** Actual process/FD tests can exercise this same supervisor with isolated
  * operations. No user-facing timing override or generic target is accepted. */
 export async function runBookingWatchdogLoop(operations,lease){
@@ -144,7 +153,7 @@ export async function armBookingHandoffWatchdog({lock,toolRevision}){
   equal(command(child.pid),['/usr/bin/node',directory+'/scripts/booking-handoff-watchdog.mjs'],'watchdog_entry');
   let armed=false;for(let i=0;i<250;i++){
     assertOnlineRetentionHeldLocks(lock);equal(fact(child.pid),childFact,'watchdog_changed');
-    try{const a=JSON.parse(read(ROOT+'/watchdog-armed.json'));need(a.leaseSha256===hash(retentionCanonicalText(lease)),'arming_receipt');equal(a.process,childFact,'arming_process');armed=true;break;}
+    try{const a=JSON.parse(read(ROOT+'/watchdog-armed.json'));assertBookingWatchdogArmedLease(a,lease);equal(a.process,childFact,'arming_process');armed=true;break;}
     catch(error){if(error.code!=='ENOENT')throw error;}
     await new Promise(r=>setTimeout(r,20));
   }need(armed,'arming_unconfirmed');child.unref();const handle=Object.freeze({operationId:lease.window.id});handles.set(handle,{child,childFact,lease});return handle;
@@ -193,7 +202,7 @@ async function productionWatchdog(){
     need(parentState(lease.parent)!=='owned','controller_not_terminated');
   };
   await runBookingWatchdogLoop({verify:()=>kernelLease(lease),
-    armed:()=>write(ROOT+'/watchdog-armed.json',retentionCanonicalText({schemaVersion:1,leaseSha256:hash(retentionCanonicalText(lease)),process:self,at:new Date().toISOString()})),
+    armed:()=>write(ROOT+'/watchdog-armed.json',retentionCanonicalText({schemaVersion:1,leaseSha256:bookingWatchdogLeaseDigest(lease),process:self,at:new Date().toISOString()})),
     completed:()=>actualCompleted(lease),parentState:()=>parentState(lease.parent),
     elapsedMs:()=>initialElapsed+Number((process.hrtime.bigint()-started)/1000000n),wait:ms=>new Promise(r=>setTimeout(r,ms)),stopOwnedParent,
     recover:()=>{

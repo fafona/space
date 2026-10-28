@@ -2,12 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {BOOKING_HANDOFF_CANDIDATE as C} from './booking-handoff-policy.mjs';
-import {assertBookingWatchdogLease,runBookingWatchdogLoop,BOOKING_WATCHDOG_TRIGGER_MS,armBookingHandoffWatchdog} from './booking-handoff-watchdog.mjs';
+import {assertBookingWatchdogLease,runBookingWatchdogLoop,BOOKING_WATCHDOG_TRIGGER_MS,armBookingHandoffWatchdog,bookingWatchdogLeaseDigest,assertBookingWatchdogArmedLease} from './booking-handoff-watchdog.mjs';
+import {retentionHash,retentionCanonicalText} from './online-release-retention-policy.mjs';
+import {createHash} from 'node:crypto';
 const revision='f'.repeat(40),h='a'.repeat(64),window={id:'10000000-0000-4000-8000-000000000001',startedAt:'2026-10-26T10:00:00.000Z',deadlineAt:'2026-10-26T10:10:00.000Z'};
 const lease=()=>({schemaVersion:1,kind:'booking-handoff-independent-watchdog',candidate:C,toolRevision:revision,window:structuredClone(window),
   parent:{pid:1234,uid:0,startTicks:'100',executable:'/usr/bin/node',cwd:'/var/lib/faolla-online-code/'+revision,commandSha256:h},
   deploy:{file:'/www/wwwroot/merchant-space.deploy.lock',identity:{dev:1,ino:2,uid:0,mode:0o100600,nlink:1}},
   operation:{directory:'/var/lib/faolla-maintenance/merchant-space/operation.lock',identity:{dev:1,ino:3,uid:0,mode:0o40700,nlink:2}},routingPlanSha256:h,gatePlanSha256:h});
+test('the actual producer and both production consumers bind canonical lease FILE bytes, not a JSON-value digest',()=>{
+ const l=lease(),digest=createHash('sha256').update(Buffer.from(retentionCanonicalText(l),'utf8')).digest('hex'),armed={schemaVersion:1,leaseSha256:digest,process:{pid:5678},at:window.startedAt};
+ assert.notEqual(digest,retentionHash(l));assert.equal(bookingWatchdogLeaseDigest(l),digest);assert.equal(assertBookingWatchdogArmedLease(armed,l),true);
+ assert.throws(()=>assertBookingWatchdogArmedLease({...armed,leaseSha256:retentionHash(l)},l),/arming_receipt/);
+ for(const patch of [{schemaVersion:2},{leaseSha256:'a'.repeat(64)},{extra:true},{at:'invalid'},{at:'2026-10-26T10:11:00.000Z'}])assert.throws(()=>assertBookingWatchdogArmedLease({...armed,...patch},l));
+ const watchdog=readFileSync(new URL('./booking-handoff-watchdog.mjs',import.meta.url),'utf8'),execution=readFileSync(new URL('./booking-handoff-execution.mjs',import.meta.url),'utf8');
+ assert.match(watchdog,/leaseSha256:bookingWatchdogLeaseDigest\(lease\)/);assert.match(watchdog,/assertBookingWatchdogArmedLease\(a,lease\)/);
+ assert.match(execution,/assertBookingWatchdogArmedLease\(armed,lease\)/);assert.doesNotMatch(execution,/armed\.leaseSha256===retentionHash\(lease\)/);
+ for(const s of ['equal(actual,armed.process','watchdog_lock_changed','watchdog_not_alive'])assert.ok(execution.includes(s),s);
+});
 function fixture({states=['owned'],completedAt=Infinity,elapsedStep=250,failAt}={}){
   const calls=[];let elapsed=0,observations=0,stopped=false,recoveries=0;
   const step=(name,fn=()=>{})=>async(...args)=>{calls.push(name);if(name===failAt)throw Error('unknown_'+name);return fn(...args);};
