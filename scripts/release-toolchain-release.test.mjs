@@ -1,9 +1,15 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-import {assertCanonicalReleaseCommand,executeCanonicalPublication,executeCanonicalValidation} from './release-toolchain-release.mjs';
+import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
+import {assertCanonicalReleaseCommand,executeCanonicalPublication,executeCanonicalValidation,releaseStatusFailure} from './release-toolchain-release.mjs';
 import {reviewedBookingExecution,preparedBookingExecution} from './release-toolchain-authority.mjs';
 import {requireBookingAdmission,withFreshBookingAdmission,retainedBookingMigrationBackup,assertQualificationReport} from './release-toolchain-booking-admission.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {bookingWatchdogControllerArguments,assertBookingWatchdogControllerArguments} from './booking-handoff-watchdog.mjs';
+test('readiness failures use closed journal stage mappings, and an actual rejected CLI prints bounded JSON rather than throwing its formatter',()=>{
+ for(const stage of ['source','review','environment','preparation','qualification','compatibility','worker','public']){const v=releaseStatusFailure(stage,Error('not disclosed'));assert.equal(v.stage,stage);assert.equal(v.passed,false);assert.equal(v.failure.detailsRedacted,true);}
+ assert.throws(()=>releaseStatusFailure('constructor',Error()));const r=spawnSync(process.execPath,[fileURLToPath(new URL('./release-toolchain-release.mjs',import.meta.url)),'status'],{encoding:'utf8',timeout:15000,maxBuffer:262144,windowsHide:true});
+ assert.equal(r.error,undefined);assert.equal(r.status,1);const v=JSON.parse(r.stderr.trim());assert.equal(v.stage,'source');assert.equal(v.detailsRedacted,true);assert.equal(r.stdout,'');assert.doesNotMatch(r.stderr,/at .*\.mjs|ToolchainError:/);
+});
 test('the real supervisor admits only the exact canonical publish argv under reviewed source authority; its old argv remains unchanged',()=>{
  const revision='a'.repeat(40),prefix='/var/lib/faolla-online-code/'+revision+'/scripts/';
  assert.deepEqual(bookingWatchdogControllerArguments(revision),['/usr/bin/node',prefix+'booking-handoff-host.mjs']);

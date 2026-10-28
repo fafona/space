@@ -21,6 +21,7 @@ import {assertBookingWatchdogControllerArguments} from './booking-handoff-watchd
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_BASELINE as B} from './booking-handoff-policy.mjs';
 import {bookingHostRead,bookingHostWriteOnce} from './booking-handoff-host-io.mjs';
 const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url))),toolRevision=path.basename(directory),ROOT='/var/lib/faolla-booking-handoff/'+C;
+let reportingStage='source';
 const seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n'),read=file=>JSON.parse(bookingHostRead(file));
 const same=(a,b)=>need(canonicalJson(a)===canonicalJson(b),'observation_mismatch');
 function invocation(){need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(toolRevision)&&directory==='/var/lib/faolla-online-code/'+toolRevision&&process.cwd()===directory,'unsupported_runtime');}
@@ -28,8 +29,9 @@ function privateChild(parent,name){ownedReleasePath(parent,{directory:true});con
 function ensurePrivate(parent,name){const child=parent+'/'+name;if(!fs.existsSync(child))privateChild(parent,name);ownedReleasePath(child,{directory:true,privateMode:true});return child;}
 async function publicVersions(expected){const result=[];for(const origin of ['https://faolla.com','https://launch.faolla.com']){const r=await fetch(origin+'/api/app-web-version?releaseToolchain='+randomUUID(),{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(5000)}),v=await r.json();need(r.status===200&&v.ok===true&&v.buildId===expected,'observation_mismatch');result.push({origin,status:r.status,buildId:v.buildId});}return result;}
 export function assertCanonicalReleaseCommand(args){need(Array.isArray(args)&&args.length===1&&['status','qualify','prepare-worker','validate','publish'].includes(args[0]),'invalid_contract');return args[0];}
+export function releaseStatusFailure(stage,error){const names={source:'source',review:'source',environment:'environment',preparation:'candidate',qualification:'rehearsal',compatibility:'compatibility',worker:'candidate',public:'verify'};need(Object.hasOwn(names,stage),'invalid_contract');return {stage,passed:false,failure:publicFailure(error,{stage:names[stage]})};}
 export async function collectReleaseToolchainStatus(){
- invocation();const checks=[];let qualification;async function check(stage,work){try{const detail=await work();checks.push({stage,passed:true,detail});}catch(error){checks.push({stage,passed:false,...publicFailure(error,{stage})});}}
+ invocation();const checks=[];let qualification;async function check(stage,work){try{const detail=await work();checks.push({stage,passed:true,detail});}catch(error){checks.push(releaseStatusFailure(stage,error));}}
  await check('source',()=>inspectPinnedExecutionSource({revision:toolRevision,directory}).inventorySha256);
  await check('review',()=>collectRemoteReleaseReview(toolRevision));
  await check('environment',()=>{const h=localHostObservation(directory);need(h.platform==='linux'&&h.architecture==='x64'&&h.nodeMajor===20&&h.availableDiskBytes>=1024**3,'unsupported_runtime');return {...h,applicationRebuildRequired:false};});
@@ -44,7 +46,7 @@ async function qualify(){
  assertUnchangedApplicationSource(C,parseSourceTree(sourceGit('/www/wwwroot/merchant-space',['ls-tree','-r','-z',C])),source.rows);
  return withOnlineRetentionLocks(async lock=>{assertOnlineRetentionHeldLocks(lock);const preparation=verifyBookingPreparation(BOOKING_PREPARATION_REVISION),root=ensurePrivate(ensurePrivate(ROOT,'toolchain-qualification'),toolRevision),attempt=privateChild(root,'attempt_'+Date.now()+'_'+randomUUID());
   seal(attempt+'/started.json',{kind:'release-toolchain-qualification-attempt',toolRevision,inventorySha256:source.inventorySha256,review,application:preparation.application,startedAt:new Date().toISOString()});
-  const before=await publicVersions(B);try{const result=await runFullToolchainRehearsal();same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),preparation);same(await publicVersions(B),before);assertOnlineRetentionHeldLocks(lock);
+  const before=await publicVersions(B);try{reportingStage='rehearsal';const result=await runFullToolchainRehearsal();same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),preparation);same(await publicVersions(B),before);assertOnlineRetentionHeldLocks(lock);
    const native=verifyQualificationFiles(result.root,{toolRevision,inventorySha256:source.inventorySha256}),interruption=await rehearseFullToolchainInterruption();same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),preparation);same(await publicVersions(B),before);
    seal(attempt+'/verified.json',{toolRevision,root:result.root,nativeSha256:native.sha256,interruptionRoot:interruption.root,interruptionSha256:interruption.sha256,application:preparation.application,completedAt:new Date().toISOString()});
    return {kind:'release-toolchain-qualified',toolRevision,root:result.root,attempt,nativeSha256:native.sha256,productionMutated:false,mailEnabled:false};
@@ -69,7 +71,7 @@ async function publish(lock,authority,{publication=true}={}){
  // or public mutation. prepare-worker is a separate one-attempt operation.
  const cohort=collectBookingReadyRuntimeCohort({toolRevision}),worker=cohort.processes.find(p=>p.name==='merchant-space-booking-atomic-'+C.slice(0,12));need(worker?.executable===directory+'/scripts/booking-atomic-worker.mjs','source_changed');
  const parent=ensurePrivate('/var/lib','faolla-release-toolchain-runs'),binding=toolchainRunBinding({profile:'booking-handoff',application:authority.application,toolRevision,toolInventorySha256:authority.tool.inventorySha256}),run=createToolchainRun(parent,binding),artifacts=privateChild(ensurePrivate(ROOT,'toolchain-admission'),Date.now()+'-'+randomUUID());
- const stage=(name,execute,verify=v=>v)=>executeJournaledStage(run,name,{binding,observe:()=>fingerprint('evidence',{toolRevision,name},'canonical-json-v1'),execute,verify:async value=>fingerprint('evidence',await verify(value),'canonical-json-v1')});
+ const stage=(name,execute,verify=v=>v)=>{reportingStage=name;return executeJournaledStage(run,name,{binding,observe:()=>fingerprint('evidence',{toolRevision,name},'canonical-json-v1'),execute,verify:async value=>fingerprint('evidence',await verify(value),'canonical-json-v1')});};
  let result;return (publication?executeCanonicalPublication:executeCanonicalValidation)({
   source:()=>stage('source',()=>{reviewedBookingExecution(toolRevision);return authority.application;}),bundle:()=>stage('bundle',()=>authority.tool),
   environment:()=>stage('environment',()=>{const h=localHostObservation(directory);need(h.platform==='linux'&&h.architecture==='x64'&&h.nodeMajor===20&&h.availableDiskBytes>=1024**3,'unsupported_runtime');return h;}),
@@ -84,7 +86,7 @@ async function publish(lock,authority,{publication=true}={}){
 }
 async function main(){invocation();const action=assertCanonicalReleaseCommand(process.argv.slice(2));if(action==='publish'){need(fs.realpathSync(process.execPath)==='/usr/bin/node','unsupported_runtime');assertBookingWatchdogControllerArguments(fs.readFileSync('/proc/self/cmdline','utf8').replace(/\0+$/,'').split('\0'),toolRevision,true);}if(action==='status')return collectReleaseToolchainStatus();if(action==='qualify')return qualify();
  return withReviewedBookingExecution({applicationRevision:C,preparationRevision:BOOKING_PREPARATION_REVISION,verifyPreparation:verifyBookingPreparation},authority=>withOnlineRetentionLocks(lock=>{
-  if(action!=='prepare-worker')return publish(lock,authority,{publication:action==='publish'});assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
+  if(action!=='prepare-worker')return publish(lock,authority,{publication:action==='publish'});reportingStage='candidate';assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
  }));
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(result=>console.log(canonicalJson(result)),error=>{console.error(canonicalJson(publicFailure(error,{stage:'release'})));process.exitCode=1;});
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(result=>console.log(canonicalJson(result)),error=>{console.error(canonicalJson(publicFailure(error,{stage:reportingStage})));process.exitCode=1;});
