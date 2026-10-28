@@ -14,6 +14,7 @@ import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.
 import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,verifyOnlineReleaseTool,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
 import {retentionCanonicalText} from './online-release-retention-policy.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 
 const APP='/www/wwwroot/merchant-space',RELEASE='/var/lib/faolla-online-release';
 const hash=x=>createHash('sha256').update(x).digest('hex'),need=(v,c)=>{if(!v)throw Error('booking_handoff_routing_'+c);};
@@ -87,6 +88,7 @@ function sync(dir){const fd=fs.openSync(dir,fs.constants.O_RDONLY|fs.constants.O
 function writeOnce(file,text){assertOnlineToolOwnedPath(path.dirname(file));const fd=fs.openSync(file,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);try{fs.writeFileSync(fd,text);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}sync(path.dirname(file));equal(read(file),text,'write_readback');}
 function toolIdentity(lock,toolRevision){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
+  const adopted=reviewedBookingExecution(toolRevision);if(adopted)return adopted.tool;
   need(sha.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
   verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
   const files=runOnlineToolGit(APP,['diff','--name-only',CANDIDATE,toolRevision]).toString().trim().split('\n');

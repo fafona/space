@@ -2,6 +2,7 @@
 // flock held if the controller/SSH session dies. It may terminate ONLY its own
 // provenance-bound controller, never a web/DB/enterprise/background process.
 import * as fs from 'node:fs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import path from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -47,7 +48,7 @@ function run(bin,args,options={}){const r=spawnSync(bin,args,{env:env(),encoding
 function sourceIdentity(toolRevision,{initial=false}={}){
   const directory='/var/lib/faolla-online-code/'+toolRevision;
   need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))===directory,'source_path');
-  if(initial)return verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
+  if(initial){const adopted=reviewedBookingExecution(toolRevision);if(adopted)return adopted.tool;return verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));}
   // Long-lived recovery pins immutable source, not a moving origin/main ref.
   need(runOnlineToolGit(directory,['rev-parse','HEAD']).toString().trim()===toolRevision&&
     !runOnlineToolGit(directory,['status','--porcelain=v1','--untracked-files=all']).toString().trim(),'source_changed');

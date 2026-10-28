@@ -1,4 +1,5 @@
 import {assertBookingReadyClosure as assertBookingHandoffToolClosure} from './booking-ready-policy.mjs';
+import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 // Exactly one approved restart of the legacy booking timer host. This is NOT a
 // generic PM2 controller. No independent enterprise/outbox process is signalled.
 import * as fs from 'node:fs';
@@ -121,10 +122,11 @@ export async function waitBookingLegacyPauseSettled(window,assertHeld=()=>{}){
 
 export async function pauseLegacyBookingHost({lock,toolRevision}){
   need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');assertOnlineRetentionHeldLocks(lock);
+  const adopted=reviewedBookingExecution(toolRevision);
   need(/^[a-f0-9]{40}$/.test(toolRevision??'')&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'tool_path');
-  verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
-  const files=runOnlineToolGit(APP,['diff','--name-only',CANDIDATE,toolRevision]).toString().trim().split('\n');
-  assertBookingHandoffToolClosure({baseline:CANDIDATE,files,readBlob:f=>runOnlineToolGit(APP,['show',toolRevision+':'+f])});
+  if(!adopted){verifyOnlineReleaseTool(createOnlineReleaseToolPlan(toolRevision));
+   const files=runOnlineToolGit(APP,['diff','--name-only',CANDIDATE,toolRevision]).toString().trim().split('\n');
+   assertBookingHandoffToolClosure({baseline:CANDIDATE,files,readBlob:f=>runOnlineToolGit(APP,['show',toolRevision+':'+f])});}
   const routingText=read(ROOT+'/routing-plan.json'),routing=JSON.parse(routingText),window=routing.window;assertBookingAtomicRoutingPlan(routing);
   const preflightText=read(ROOT+'/preflight.json'),preflight=JSON.parse(preflightText),activationText=read(ROOT+'/activation.json'),activation=JSON.parse(activationText);
   need(activation.before?.active===false&&activation.after?.active===true&&activation.before.generation===activation.after.generation,'activation_not_committed');

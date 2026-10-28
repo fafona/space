@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_READY_BASE as BASE} from './booking-ready-policy.mjs';
 import {assertBookingReadySource} from './booking-ready-tool.mjs';
+import {reviewedBookingExecution,preparedBookingExecution} from './release-toolchain-authority.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
 import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
 import {normalizeRetirementProcess,assertExistingPm2Directory} from './online-release-retirement.mjs';
@@ -72,10 +73,12 @@ export function collectBookingReadyOriginalCohort(){
 }
 export function collectBookingReadyRuntimeCohort({toolRevision}){
  const text=read(ROOT+'/ready-worker-completed.json').toString(),receipt=JSON.parse(text);
- need(text===retentionCanonicalText(receipt),'receipt_encoding');return attestBookingReadyReplacement(receipt,toolRevision);
+ need(text===retentionCanonicalText(receipt),'receipt_encoding');
+ const adopted=reviewedBookingExecution(toolRevision);
+ return attestBookingReadyReplacement(receipt,adopted?adopted.preparationRevision:toolRevision);
 }
 export function attestBookingReadyReplacement(receipt,toolRevision){
- assertBookingReadySource(toolRevision);
+ if(!preparedBookingExecution(toolRevision))assertBookingReadySource(toolRevision);
  same(Object.keys(receipt).sort(),['schemaVersion','kind','priorTool','toolRevision','before','after','identity','attemptSha256','gateNeverOpened','mailEnabled','completedAt'].sort(),'receipt_shape');
  const attempt=JSON.parse(read(ROOT+'/ready-worker-attempt.json'));
  need(attempt.toolRevision===toolRevision&&attempt.priorTool===BASE,'attempt_identity');

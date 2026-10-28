@@ -3,7 +3,7 @@ name: Release Toolchain Safety
 on:
   pull_request:
     paths:
-      - 'scripts/release-toolchain*.mjs'
+      - 'scripts/release-toolchain*'
       - 'scripts/test-support/release-toolchain-*'
       - 'scripts/booking-handoff-execution*'
       - 'scripts/booking-handoff-policy.mjs'
@@ -18,7 +18,7 @@ jobs:
   toolchain:
     name: Packaged Tools And Real Ingress Boundary
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -46,10 +46,33 @@ jobs:
       - name: Real Interruption And Owned Cleanup
         shell: bash
         run: node "$RUNNER_TEMP/release-toolchain-bundle/scripts/release-toolchain-interrupt-acceptance.mjs" "$RUNNER_TEMP/release-toolchain-bundle" /usr/sbin/nginx
+      - name: Full New-Database Handoff And Recovery Rehearsal
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          source="/var/lib/faolla-online-code/$revision"
+          application="/var/lib/faolla-release-toolchain-application-$revision"
+          sudo docker pull supabase/postgres@sha256:af083ef64d0408c8f098ee6f5c364a59b26f36fbc0f3a334a62c5c1d57362e9b
+          sudo mkdir -p /www/wwwroot /var/lib/faolla-online-code
+          sudo git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" /www/wwwroot/merchant-space
+          sudo git -C /www/wwwroot/merchant-space worktree add --detach --no-checkout "$source" "$revision"
+          printf '/*\n!/public/downloads/\n' | sudo git -C "$source" sparse-checkout set --no-cone --stdin
+          sudo git -C "$source" config --worktree core.sparseCheckoutCone false
+          sudo git -C "$source" config --worktree index.sparse false
+          sudo git -C "$source" read-tree -mu HEAD
+          sudo chmod 700 "$source"
+          sudo mkdir -m 700 "$application"
+          sudo cp -a "$GITHUB_WORKSPACE/package.json" "$GITHUB_WORKSPACE/tsconfig.json" "$GITHUB_WORKSPACE/src" "$GITHUB_WORKSPACE/node_modules" "$application/"
+          sudo chown -R root:root "$application"
+          sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
       - name: Preserve Synthetic Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-toolchain-ingress-evidence
-          path: /tmp/faolla-release-toolchain-lab-*/**/*.json
+          path: |
+            /tmp/faolla-release-toolchain-lab-*/**/*.json
+            /var/lib/faolla-booking-full-rehearsal-*/**/*.json
+            /var/lib/faolla-release-toolchain-isolation-*/*.json
           if-no-files-found: warn
