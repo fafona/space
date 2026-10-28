@@ -6,6 +6,10 @@ import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A,BOOKING_
 import {assertManagedPauseEnvironmentDelta} from './release-toolchain-pm2-transition.mjs';
 import {sha256} from './release-toolchain-contracts.mjs';
 export const ACTIVE_BOOKING_INCIDENT=Object.freeze({operationId:'b49808d6-1950-4cb4-b029-97086873d7a7',toolRevision:'0fdad28d24245a84f7ced1656b5e1f2313bee0e7',generation:'9b85e75c-f474-4b17-b2a5-75601f7940b4',candidate:C,compatibleRollback:A,legacyBaseline:B,legacyPid:3902224,legacyRestartCount:1,privateWorkerPid:3889167,originalWindow:Object.freeze({id:'b49808d6-1950-4cb4-b029-97086873d7a7',startedAt:'2026-10-28T18:49:45.425Z',deadlineAt:'2026-10-28T18:59:45.425Z'})});
+export const ACTIVE_BOOKING_METADATA=Object.freeze({
+ beforeText:JSON.stringify({target:B,port:3103,directory:'/www/wwwroot/merchant-space.web-releases/'+B.slice(0,12)+'-online',name:'merchant-space-online-'+B.slice(0,12)}),
+ afterText:JSON.stringify({target:A,port:3110,directory:'/www/wwwroot/merchant-space.web-releases/'+A.slice(0,12)+'-online',name:'merchant-space-online-'+A.slice(0,12)}),
+});
 // PM2's daemon-local log uses a different timezone from ISO UTC evidence.
 // Preserve literal observed records; never reinterpret their timestamp as UTC.
 export const ACTIVE_BOOKING_PM2_RECORDS=Object.freeze([

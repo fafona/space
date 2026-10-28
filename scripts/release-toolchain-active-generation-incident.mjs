@@ -2,7 +2,7 @@
 // only: no lock removal, metadata write, SQL mutation, process signal or retry.
 import * as fs from 'node:fs';
 import {isDeepStrictEqual} from 'node:util';
-import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_PM2_RECORDS,assertActiveBookingWindow,assertActiveBookingDatabase,assertActiveBookingHistoricalEvidence,assertHistoricalPausedBookingHost} from './release-toolchain-active-generation-contract.mjs';
+import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA,ACTIVE_BOOKING_PM2_RECORDS,assertActiveBookingWindow,assertActiveBookingDatabase,assertActiveBookingHistoricalEvidence,assertHistoricalPausedBookingHost} from './release-toolchain-active-generation-contract.mjs';
 import {inspectPinnedPm2RecordSequence} from './release-toolchain-pm2-transition.mjs';
 import {bookingHostRead,bookingHostSql,bookingHostRun} from './booking-handoff-host-io.mjs';
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
@@ -65,7 +65,7 @@ export function assertActiveIncidentHostDelta(before,after){
 }
 // The report cannot authorize a mutation. An actuator must independently obtain
 // reviewed source/CI and the kernel flock, then recollect these actual facts.
-export async function inspectActiveBookingIncident({window}){
+async function collectActiveBookingIncident({window,metadataCorrected}){
  const bounds=assertActiveBookingWindow(window);ownedReleasePath(ACTIVE_INCIDENT_ROOT,{directory:true,privateMode:true});
  same(names(),[...ACTIVE_INCIDENT_STATIC_NAMES,...ACTIVE_INCIDENT_FILES.map(p=>p[0])].sort());
  const files=pinnedFiles(),j=name=>read(ACTIVE_INCIDENT_ROOT+'/'+name),lease=j('watchdog-lease.json'),armed=j('watchdog-armed.json'),originalPause=j('legacy-restart-attempt.json'),activation=j('activation.json');
@@ -83,12 +83,17 @@ export async function inspectActiveBookingIncident({window}){
  const originalStage=bookingHostRead(ACTIVE_INCIDENT_ROOT+'/primary-original-stage.json');
  need(sha256(originalStage)==='7ba13be0b859c918a71481b469596d6f2ef430ba61b1fc1946471812fb5651d3','evidence_invalid');same(bookingHostRead(RELEASE+'/'+P.candidate+'/state.json'),originalStage);
  const rollbackState=bookingHostRead(RELEASE+'/'+P.compatibleRollback+'/state.json');need(sha256(rollbackState)==='12a7590d9de39d10179d0b60d3730c0451c5ad9e2b9a6d22044a77fe0861be3d','evidence_invalid');
- const activeText=bookingHostRead(RELEASE+'/active.json');same(activeText,preflight.activeFileText);
+ same(preflight.activeFileText,ACTIVE_BOOKING_METADATA.beforeText);same(plan.rollback,JSON.parse(ACTIVE_BOOKING_METADATA.afterText));
+ const activeText=bookingHostRead(RELEASE+'/active.json');same(activeText,metadataCorrected?ACTIVE_BOOKING_METADATA.afterText:ACTIVE_BOOKING_METADATA.beforeText);
  const routing=()=>Object.fromEntries(WEB_RELEASE_FILES.map(f=>[f,bookingHostRead(WEB_RELEASE_PROXY+'/'+f,{privateMode:false})]));
  const verify=()=>{assertActiveBookingWindow(window);assertGone(lease.parent);assertGone(armed.process);same(pinnedFiles(),files);same(names(),[...ACTIVE_INCIDENT_STATIC_NAMES,...ACTIVE_INCIDENT_FILES.map(p=>p[0])].sort());same(lockFact(ownedReleasePath(DEPLOY,{privateMode:true})),lease.deploy.identity);same(lockFact(ownedReleasePath(OPERATION,{directory:true,privateMode:true})),lease.operation.identity);same(fs.readdirSync(OPERATION),[]);same(bookingHostRead(RELEASE+'/active.json'),activeText);same(bookingHostRead(RELEASE+'/'+P.candidate+'/state.json'),originalStage);same(bookingHostRead(RELEASE+'/'+P.compatibleRollback+'/state.json'),rollbackState);same(bookingHostRead(gate.file,{privateMode:false}),gate.beforeText);assertBookingRoutingCurrent(plan,routing(),{phase:'rollback'});};
  verify();const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:P.compatibleRollback,operationId:window.id,verify,deadlineAtMs:Math.min(bounds.deadlineAtMs,Date.now()+30000)});
  const pilots=bookingHostRun('docker',['inspect','--format','{{json .State.Running}}',...BOOKING_FORMAL_PILOT_IDS]).trim().split('\n');need(pilots.length===5&&pilots.every(v=>v==='false'),'operation_unconfirmed');
  const after=collectBookingLegacyHost();same(after,current);same(JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql)),database);verify();
  const history=readOnlineRetentionHistory();need(history.headSha256===preflight.priorRetentionHeadSha256,'observation_mismatch');assertArchivedRecoveredBookingAttempt();
- return{kind:'active-booking-incident-current-observation',oldOperationId:P.operationId,window,files,deploy:lease.deploy,operation:lease.operation,oldControllerGone:true,oldSupervisorGone:true,database,historicalPause,recordProof,processesSha256:sha256(canonicalJson(current.processes)),identitiesSha256:sha256(canonicalJson(current.identityProofs)),legacyEnvironmentSha256:sha256(canonicalJson(current.raw)),retentionHeadSha256:history.headSha256,activeMetadataSha256:sha256(activeText),candidateStateSha256:sha256(originalStage),rollbackStateSha256:sha256(rollbackState),actualRoute:P.compatibleRollback,publicProof,mailEnabled:false,productionMutated:false,publicationAuthority:false,observedAt:new Date().toISOString()};
+ return{kind:'active-booking-incident-current-observation',oldOperationId:P.operationId,window,files,deploy:lease.deploy,operation:lease.operation,oldControllerGone:true,oldSupervisorGone:true,database,historicalPause,recordProof,processesSha256:sha256(canonicalJson(current.processes)),identitiesSha256:sha256(canonicalJson(current.identityProofs)),legacyEnvironmentSha256:sha256(canonicalJson(current.raw)),retentionHeadSha256:history.headSha256,activeMetadataSha256:sha256(activeText),metadataCorrected,candidateStateSha256:sha256(originalStage),rollbackStateSha256:sha256(rollbackState),actualRoute:P.compatibleRollback,publicProof,mailEnabled:false,productionMutated:false,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
+export const inspectActiveBookingIncident=({window})=>collectActiveBookingIncident({window,metadataCorrected:false});
+// A separate fixed postcondition observer, not an allowPending/expected-path
+// option on the original admission or an authorization to perform correction.
+export const inspectActiveBookingIncidentAfterMetadata=({window})=>collectActiveBookingIncident({window,metadataCorrected:true});

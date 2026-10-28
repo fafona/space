@@ -54,7 +54,14 @@ else:
   else: raise RuntimeError('action')
 print(json.dumps(result,separators=(',',':')))
 `;
-function python(value,{reject=false,rejectLastLine}={}){const r=spawnSync('/usr/bin/python3',['-I','-S','-B','-c',bridge,source+'/scripts/booking-handoff-pm2-pause.py'],{cwd:root,env,input:JSON.stringify(value),encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:2*1024**2});if(reject){need(r.status!==0&&!r.error&&!r.signal&&(!rejectLastLine||r.stderr.trim().split('\n').at(-1)===rejectLastLine),'expected_refusal');return;}need(r.status===0&&!r.error&&!r.signal&&r.stderr==='','peer_transport');return JSON.parse(r.stdout);}
+function python(value,{reject=false,rejectLastLine}={}){const r=spawnSync('/usr/bin/python3',['-I','-S','-B','-c',bridge,source+'/scripts/booking-handoff-pm2-pause.py'],{cwd:root,env,input:JSON.stringify(value),encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:2*1024**2});
+ const rejectedCorrectly=r.status!==0&&!r.error&&!r.signal&&(!rejectLastLine||r.stderr.trim().split('\n').at(-1)===rejectLastLine);
+ if(reject&&rejectedCorrectly)return;
+ if(reject||r.status!==0||r.error||r.signal||r.stderr!==''){
+  seal('python-unexpected-result.json',{kind:'ci-only-synthetic-peer-result',stage,action:value.action,exitCode:r.status,signal:r.signal,errorCode:r.error?.code??null,expectedRefusal:reject,expectedLastLine:rejectLastLine??null,stdout:String(r.stdout??'').slice(0,16384),stderr:String(r.stderr??'').slice(0,16384),syntheticInputsOnly:true});
+  need(false,reject?'expected_refusal':'peer_transport');
+ }return JSON.parse(r.stdout);
+}
 let daemon,stage='prepare',passed=false;const owned=new Map();
 function fact(pid){const s=fs.readFileSync('/proc/'+pid+'/stat','utf8'),f=s.slice(s.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync('/proc/'+pid).uid===0&&f[0]!=='Z','process');return{pid,startTicks:f[19],parentPid:Number(f[1]),cwd:fs.realpathSync('/proc/'+pid+'/cwd'),executable:fs.realpathSync('/proc/'+pid+'/exe')};}
 function alive(p){try{const now=fact(p.pid);assert.deepEqual(Object.fromEntries(['pid','startTicks','cwd','executable'].map(k=>[k,now[k]])),Object.fromEntries(['pid','startTicks','cwd','executable'].map(k=>[k,p[k]])));return true;}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH'||e.message==='equivalence_process')return false;throw e;}}

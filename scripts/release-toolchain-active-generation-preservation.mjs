@@ -60,7 +60,23 @@ export async function preserveActiveBookingIncidentEvidence({lock,toolRevision,w
  const destination=incident+'/'+window.id,binding={oldOperationId:P.operationId,window,toolRevision,toolInventorySha256:authority.tool.inventorySha256,generation:P.generation,currentObservationSha256:sha256(canonicalJson(current))};
  const engine=vault({source:ACTIVE_INCIDENT_ROOT,destination,pins:ACTIVE_INCIDENT_FILES,assertHeld:held,binding});
  engine.begin();engine.copy();const preserved=engine.seal();held();
+ seal(destination+'/current-observation.json',current);held();
  return{kind:preserved.kind,directory:destination,preservedSha256:sha256(bookingHostRead(destination+'/preserved.json')),files:preserved.files.length,originalFilesRetained:true,incidentClosed:false,applicationPublished:false,productionDatabaseMutated:false,publicationAuthority:false};
+}
+
+export function verifyActiveBookingIncidentPreservation({lock,toolRevision,window}){
+ assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
+ const directory='/var/lib/faolla-booking-active-closures/'+P.operationId+'/'+window.id,read=name=>{const text=bookingHostRead(directory+'/'+name),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
+ const intent=read('intent.json'),preserved=read('preserved.json'),observation=read('current-observation.json'),binding={oldOperationId:P.operationId,window,toolRevision,toolInventorySha256:authority.tool.inventorySha256,generation:P.generation,currentObservationSha256:sha256(canonicalJson(observation))};
+ same(intent.binding,binding);same(preserved.binding,binding);
+ need(intent.kind==='active-booking-incident-evidence-preservation-intent'&&preserved.kind==='active-booking-incident-evidence-preserved'&&preserved.source===ACTIVE_INCIDENT_ROOT&&intent.source===ACTIVE_INCIDENT_ROOT&&preserved.destination===directory&&preserved.originalFilesRetained===true&&preserved.incidentClosed===false&&preserved.publicationAuthority===false&&intent.publicationAuthority===false&&preserved.intentSha256===sha256(bookingHostRead(directory+'/intent.json')),'evidence_invalid');
+ same(privateDir(ACTIVE_INCIDENT_ROOT),intent.sourceIdentity);same(preserved.sourceIdentity,intent.sourceIdentity);same(privateDir(directory),preserved.destinationIdentity);
+ same(preserved.files,ACTIVE_INCIDENT_FILES.map(([name,bytes,sha256])=>({name,bytes,sha256})));
+ same(intent.files,ACTIVE_INCIDENT_FILES.map(([name,bytes,sha256])=>({name,bytes,sha256,identity:fact(ownedReleasePath(ACTIVE_INCIDENT_ROOT+'/'+name,{privateMode:true}))})));
+ need(observation.oldOperationId===P.operationId&&observation.metadataCorrected===false&&observation.actualRoute===P.compatibleRollback&&observation.productionMutated===false&&observation.publicationAuthority===false&&observation.mailEnabled===false,'evidence_invalid');same(observation.window,window);
+ for(const pin of ACTIVE_INCIDENT_FILES){const original=readPin(ACTIVE_INCIDENT_ROOT+'/'+pin[0],pin);readPin(directory+'/'+pin[0],pin);same(observation.files[pin[0]],{...original.identity,sha256:pin[2]});}
+ for(const value of [intent.createdAt,preserved.completedAt,observation.observedAt]){const ms=Date.parse(value);need(Number.isFinite(ms)&&new Date(ms).toISOString()===value&&ms>=Date.parse(window.startedAt)&&ms<=Date.now()&&ms<Date.parse(window.deadlineAt),'evidence_invalid');}
+ assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');return{directory,preserved,observation,preservedSha256:sha256(bookingHostRead(directory+'/preserved.json'))};
 }
 
 // Closed disposable runner. Synthetic pins belong only to its own newly
