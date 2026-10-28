@@ -30,7 +30,7 @@ export function assertUnchangedApplicationSource(applicationRevision,application
 export function validateReviewRuns({revision:sha,main,runs,jobsByRun,production=true,nowMs=Date.now()}){
  need(revision(sha)&&revision(main)&&(!production||main===sha),'source_changed');
  const selected=[];for(const [workflow,required]of [['.github/workflows/ci.yml',RELEASE_REQUIRED_JOBS],['.github/workflows/release-toolchain.yml',[RELEASE_SAFETY_JOB]]]){
-  const matches=runs.filter(r=>r.head_sha===sha&&r.path===workflow&&r.repository?.full_name===RELEASE_REPOSITORY&&
+  const matches=runs.filter(r=>r.head_sha===sha&&r.path===workflow&&r.repository?.full_name===RELEASE_REPOSITORY&&r.head_repository?.full_name===RELEASE_REPOSITORY&&
    (!production||r.event==='push'&&r.head_branch==='main')).sort((a,b)=>b.id-a.id);
   const run=matches[0];need(run&&Number.isSafeInteger(run.id)&&run.id>0&&run.status==='completed'&&run.conclusion==='success','evidence_invalid');
   const jobs=jobsByRun[run.id];need(Array.isArray(jobs)&&jobs.length===required.length,'evidence_invalid');

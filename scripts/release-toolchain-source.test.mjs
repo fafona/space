@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {RELEASE_REPOSITORY,RELEASE_REQUIRED_JOBS,RELEASE_SAFETY_JOB,validateReviewRuns,toolOnlySourcePath,parseSourceTree,assertUnchangedApplicationSource} from './release-toolchain-source.mjs';
 const sha='a'.repeat(40),old='b'.repeat(40),nowMs=Date.parse('2026-10-28T05:00:00.000Z');
-function fixture(){const runs=[['.github/workflows/ci.yml',1],['.github/workflows/release-toolchain.yml',2]].map(([path,id])=>({id,path,head_sha:sha,head_branch:'main',event:'push',run_attempt:1,status:'completed',conclusion:'success',repository:{full_name:RELEASE_REPOSITORY}}));
+function fixture(){const runs=[['.github/workflows/ci.yml',1],['.github/workflows/release-toolchain.yml',2]].map(([path,id])=>({id,path,head_sha:sha,head_branch:'main',event:'push',run_attempt:1,status:'completed',conclusion:'success',repository:{full_name:RELEASE_REPOSITORY},head_repository:{full_name:RELEASE_REPOSITORY}}));
  return {revision:sha,main:sha,runs,jobsByRun:{1:RELEASE_REQUIRED_JOBS.map(name=>({name,run_attempt:1,status:'completed',conclusion:'success'})),2:[{name:RELEASE_SAFETY_JOB,run_attempt:1,status:'completed',conclusion:'success'}]},nowMs};}
 test('source review independently binds exact current main and both complete CI workflows, never a provided green flag',()=>{
  const r=validateReviewRuns(fixture());assert.equal(r.productionEligible,true);assert.equal(r.runs[0].jobs.length,12);assert.equal(r.runs[1].jobs.length,1);
@@ -12,7 +12,7 @@ test('the latest failed, pending or cancelled run never falls back to an older g
 });
 test('missing, extra, duplicate, skipped, stale-attempt and foreign-repository jobs fail source admission',()=>{
  for(const mutate of [f=>f.jobsByRun[1].pop(),f=>f.jobsByRun[1].push({...f.jobsByRun[1][0]}),f=>f.jobsByRun[1][0].conclusion='skipped',
- f=>f.jobsByRun[1][0].run_attempt=2,f=>f.runs[0].repository.full_name='foreign/repo',f=>f.runs[0].event='pull_request',f=>f.runs[0].head_branch='feature']){
+ f=>f.jobsByRun[1][0].run_attempt=2,f=>f.runs[0].repository.full_name='foreign/repo',f=>f.runs[0].head_repository.full_name='unreviewed/fork',f=>f.runs[0].event='pull_request',f=>f.runs[0].head_branch='feature']){
   const f=fixture();mutate(f);assert.throws(()=>validateReviewRuns(f));
  }
  const f=fixture();f.runs.forEach(r=>{r.event='pull_request';r.head_branch='feature';});assert.equal(validateReviewRuns({...f,production:false}).productionEligible,false);
