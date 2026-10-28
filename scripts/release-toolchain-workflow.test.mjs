@@ -21,6 +21,7 @@ test('required safety check includes actual pinned Next/PM2 and the unchanged sh
  for(const text of ['stable_initial_process','transition-observed.json','beforeRow.pm2_env.unstable_restarts===0'])assert.ok(source.includes(text),text);
  for(const text of ['privateAppProcesses().length===0','untracked_fixture_process','p.parentPid===daemon.pid'])assert.ok(source.includes(text),text);
  for(const text of ["headers:{Connection:'close'}",'await r.arrayBuffer()','fixture_requests_not_drained'])assert.ok(source.includes(text),text);
+ for(const text of ['production-maintenance-pm2-dump.py','dump.capture_pm2_dump_target','dump.persist_pm2_dump','dump.verify_pm2_dump','fixed_dump.PM2DumpError: pm2_dump_target_changed','dump-persistence-verified.json','stablePm2RegistryRow(afterSave)','RuntimeError: stale_target'])assert.ok(source.includes(text),text);
  assert.ok(source.indexOf("seal('transition-observed.json'")<source.indexOf("stage='actual-transition-proof'"));
  assert.ok(workflow.includes('eq_roots=(/var/lib/faolla-eq-*)'));
  assert.ok(workflow.includes('sudo find "${eq_roots[@]}" -maxdepth 2'));

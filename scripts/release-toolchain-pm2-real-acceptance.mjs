@@ -29,6 +29,14 @@ else:
  p=v['socket'];r=v['root'];st=os.lstat(r)
  if not r.startswith('/var/lib/faolla-eq-') or os.path.realpath(r)!=r or st.st_uid!=0 or st.st_mode&0o777!=0o700 or p!=r+'/pm2/rpc.sock': raise RuntimeError('scope')
  d=m._peer._validate_expected(v['daemon']);chain=m._peer._path_chain(p,0)
+ if v['action'].startswith('dump-'):
+  ds=importlib.util.spec_from_file_location('fixed_dump',os.path.join(os.path.dirname(sys.argv[1]),'production-maintenance-pm2-dump.py'));dump=importlib.util.module_from_spec(ds);ds.loader.exec_module(dump)
+  if v['action']=='dump-inspect': result=m._control.inspect_pm2_registry(p,d)
+  elif v['action']=='dump-capture': result=dump.capture_pm2_dump_target(p,d)
+  elif v['action']=='dump-persist': result=dump.persist_pm2_dump(p,d,v['registry'],v['proof'])
+  elif v['action']=='dump-verify': result=dump.verify_pm2_dump(p,d,v['registry'],v['proof'])
+  else: raise RuntimeError('dump_action')
+  print(json.dumps(result,separators=(',',':')));sys.exit(0)
  with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
   deadline=time.monotonic()+30;c.settimeout(30);c.connect(p);session=m._Session(c,d,p,chain,deadline)
   if session.call('getVersion',{})!='6.0.14': raise RuntimeError('version')
@@ -46,7 +54,7 @@ else:
   else: raise RuntimeError('action')
 print(json.dumps(result,separators=(',',':')))
 `;
-function python(value,{reject=false}={}){const r=spawnSync('/usr/bin/python3',['-I','-S','-B','-c',bridge,source+'/scripts/booking-handoff-pm2-pause.py'],{cwd:root,env,input:JSON.stringify(value),encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:2*1024**2});if(reject){need(r.status!==0&&!r.error&&!r.signal,'expected_refusal');return;}need(r.status===0&&!r.error&&!r.signal&&r.stderr==='','peer_transport');return JSON.parse(r.stdout);}
+function python(value,{reject=false,rejectLastLine}={}){const r=spawnSync('/usr/bin/python3',['-I','-S','-B','-c',bridge,source+'/scripts/booking-handoff-pm2-pause.py'],{cwd:root,env,input:JSON.stringify(value),encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:2*1024**2});if(reject){need(r.status!==0&&!r.error&&!r.signal&&(!rejectLastLine||r.stderr.trim().split('\n').at(-1)===rejectLastLine),'expected_refusal');return;}need(r.status===0&&!r.error&&!r.signal&&r.stderr==='','peer_transport');return JSON.parse(r.stdout);}
 let daemon,stage='prepare',passed=false;const owned=new Map();
 function fact(pid){const s=fs.readFileSync('/proc/'+pid+'/stat','utf8'),f=s.slice(s.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync('/proc/'+pid).uid===0&&f[0]!=='Z','process');return{pid,startTicks:f[19],parentPid:Number(f[1]),cwd:fs.realpathSync('/proc/'+pid+'/cwd'),executable:fs.realpathSync('/proc/'+pid+'/exe')};}
 function alive(p){try{const now=fact(p.pid);assert.deepEqual(Object.fromEntries(['pid','startTicks','cwd','executable'].map(k=>[k,now[k]])),Object.fromEntries(['pid','startTicks','cwd','executable'].map(k=>[k,p[k]])));return true;}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH'||e.message==='equivalence_process')return false;throw e;}}
@@ -89,7 +97,7 @@ try{
  seal('restart-intent.json',{window,before,anchor,requestSha256:sha(JSON.stringify(request)),sourceHashes:{transport:sha(fs.readFileSync(source+'/scripts/booking-handoff-pm2-pause.py')),validator:sha(fs.readFileSync(source+'/scripts/release-toolchain-pm2-transition.mjs'))}});
  need(python(request).acknowledged===true,'ack');await ready(port);let afterRow;
  for(let i=0;i<100;i++){afterRow=registry().find(p=>p.name===name);if(afterRow.pid!==before.pid&&afterRow.pm2_env.status==='online')break;await sleep(100);}
- const after=normalizeRetirementProcess(afterRow),afterRaw=raw(after.pid),rawObservation={beforeRaw,afterRaw,beforeConfigured:beforeRow.pm2_env.env,afterConfigured:afterRow.pm2_env.env,legacyBefore:before,legacyAfter:after,beforePmUptime:beforeRow.pm2_env.pm_uptime,afterPmUptime:afterRow.pm2_env.pm_uptime,beforePmDerived:manager(beforeRow.pm2_env),afterPmDerived:manager(afterRow.pm2_env),framework,window};
+ const after=normalizeRetirementProcess(afterRow),afterRaw=raw(after.pid),afterIdentity=fact(after.pid),rawObservation={beforeRaw,afterRaw,beforeConfigured:beforeRow.pm2_env.env,afterConfigured:afterRow.pm2_env.env,legacyBefore:before,legacyAfter:after,beforePmUptime:beforeRow.pm2_env.pm_uptime,afterPmUptime:afterRow.pm2_env.pm_uptime,beforePmDerived:manager(beforeRow.pm2_env),afterPmDerived:manager(afterRow.pm2_env),framework,window};
  seal('transition-observed.json',{value:{...rawObservation,observedAt:new Date().toISOString()},unverified:true,syntheticInputsOnly:true});
  const termination=inspectPm2SigintTermination(anchor,before,after);seal('termination-observed.json',{termination,unverified:true});
  // Existing records do not become a fresh restart witness or authority.
@@ -103,13 +111,25 @@ try{
  fs.writeFileSync(embedded,'prefix'+sequence.join('\n')+'\n',{mode:0o600,flag:'wx'});fs.symlinkSync(home+'/pm2.log',linked);
  for(const file of [duplicated,embedded,linked])assert.throws(()=>inspectPinnedPm2RecordSequence(file,sequence));
  seal('existing-record-observation.json',{existing,actualPrivatePm2Log:true,duplicateRefused:true,embeddedRefused:true,symlinkRefused:true,publicationAuthority:false});
+ // Reuse the existing connect-only dump implementation without changing its
+ // guards or RPC allowlist. Persistence must not boot a daemon or restart apps.
+ stage='actual-connect-only-dump-persistence';
+ const dumpRequest={daemon:daemonPeer,root,socket:home+'/rpc.sock'},dumpRegistry=python({...dumpRequest,action:'dump-inspect'}),dumpTarget=python({...dumpRequest,action:'dump-capture'});
+ const dumpReceipt=python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget});
+ need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===2,'dump_receipt');
+ need(python({...dumpRequest,action:'dump-verify',registry:dumpRegistry,proof:dumpReceipt})===true,'dump_verification');
+ const dumpSha=sha(fs.readFileSync(home+'/dump.pm2'));
+ python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget},{reject:true,rejectLastLine:'fixed_dump.PM2DumpError: pm2_dump_target_changed'});
+ need(sha(fs.readFileSync(home+'/dump.pm2'))===dumpSha,'stale_dump_changed');
+ const afterSave=registry().find(p=>p.name===name);assert.deepEqual(stablePm2RegistryRow(afterSave),stablePm2RegistryRow(afterRow));assert.deepEqual(raw(afterSave.pid),afterRaw);assert.deepEqual(fact(afterSave.pid),afterIdentity);
+ seal('dump-persistence-verified.json',{kind:'real-next-private-pm2-connect-only-dump-persistence',receipt:dumpReceipt,savedBytesSha256:dumpSha,staleTargetRefused:true,noDaemonBootOrAppControl:true,sharedProductionDumpSourceSha256:sha(fs.readFileSync(source+'/scripts/production-maintenance-pm2-dump.py')),publicationAuthority:false});
  // The complete observation ends after reading both actual runtime and log,
  // never before the termination witness was independently collected.
  const value={...rawObservation,observedAt:new Date().toISOString()};
  stage='actual-transition-proof';need(value.afterPmDerived.exitCode===130,'actual_next_sigint_not_130');assertManagedPauseEnvironmentTransition(value,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'});
  const afterOther=registry().find(p=>p.name==='eq-unrelated');assert.deepEqual(stablePm2RegistryRow(afterOther),stablePm2RegistryRow(beforeOther.row));assert.deepEqual(raw(afterOther.pid),beforeOther.raw);assert.deepEqual(fact(afterOther.pid),beforeOther.identity);need(!alive(beforeFact),'old_process_still_alive');
  stage='negative-proof-cases';for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterPmDerived.exitCode=1,v=>v.legacyAfter.restartCount++,v=>v.afterConfigured.RESEND_API_KEY='forbidden']){const changed=structuredClone(value);mutate(changed);assert.throws(()=>assertManagedPauseEnvironmentTransition(changed,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'}));}
- const stable=registry().map(stablePm2RegistryRow);python(request,{reject:true});assert.deepEqual(registry().map(stablePm2RegistryRow),stable);
+ const stable=registry().map(stablePm2RegistryRow);python(request,{reject:true,rejectLastLine:'RuntimeError: stale_target'});assert.deepEqual(registry().map(stablePm2RegistryRow),stable);
  seal('transition-verified.json',{value,termination,sharedProductionFraming:true,realNext:true,realPm2:true,staleAttemptRefusedWithoutSend:true,unrelatedProcessUnchanged:true});passed=true;
 }catch(e){
  // Synthetic fixture only: neither this isolated HOME nor these two generated
