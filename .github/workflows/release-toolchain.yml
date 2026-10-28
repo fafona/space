@@ -110,6 +110,11 @@ jobs:
             sudo find "${lock_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-lock-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-lock-evidence.tar"
           fi
+          vault_roots=(/var/lib/faolla-active-vault-ci-*)
+          if ((${#vault_roots[@]})); then
+            sudo find "${vault_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-vault-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-vault-evidence.tar"
+          fi
       - name: Preserve Synthetic Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,4 +125,5 @@ jobs:
             ${{ runner.temp }}/release-toolchain-native-evidence.tar
             ${{ runner.temp }}/release-toolchain-equivalence-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-lock-evidence.tar
+            ${{ runner.temp }}/release-toolchain-active-vault-evidence.tar
           if-no-files-found: warn
