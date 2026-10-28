@@ -13,6 +13,14 @@ const iso=s=>{const t=Date.parse(s);need(typeof s==='string'&&Number.isFinite(t)
 const positive=v=>Number.isSafeInteger(v)&&v>0;
 const identity=s=>Object.fromEntries(['dev','ino','uid','mode','nlink'].map(k=>[k,s[k]]));
 const LIMIT=64*1024**2;
+// A live monitor refresh changes CPU, RSS and heap gauges without a restart or
+// configuration mutation. Exclude only those two explicitly named telemetry
+// containers; keep every identity, environment and other manager field exact.
+export function stablePm2RegistryRow(row){
+ need(object(row)&&object(row.pm2_env)&&object(row.pm2_env.axm_monitor),'registry_row');
+ keys(row.monit,['cpu','memory'],'registry_metrics');need(Number.isFinite(row.monit.cpu)&&row.monit.cpu>=0&&Number.isSafeInteger(row.monit.memory)&&row.monit.memory>=0,'registry_metrics');
+ const {monit,...rest}=row,{axm_monitor,...configured}=row.pm2_env;return{...rest,pm2_env:configured};
+}
 function ownedLog(file){
  need(process.platform==='linux'&&process.getuid?.()===0&&typeof file==='string'&&file.startsWith('/')&&fs.realpathSync(file)===file,'termination_log_path');
  for(let dir=path.dirname(file);;dir=path.dirname(dir)){const s=fs.lstatSync(dir);need(s.isDirectory()&&!s.isSymbolicLink()&&s.uid===0&&!(s.mode&0o022),'termination_log_ancestor');if(dir==='/')break;}

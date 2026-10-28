@@ -6,7 +6,7 @@ import * as fs from'node:fs';import path from'node:path';import net from'node:ne
 import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{randomBytes,randomUUID,createHash}from'node:crypto';import assert from'node:assert/strict';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,assertBookingHandoffWindow}from'./booking-handoff-policy.mjs';
 import{normalizeRetirementProcess,parseRetirementSockets}from'./online-release-retirement.mjs';import{bookingLegacyRpcExpected}from'./booking-handoff-legacy.mjs';
-import{capturePm2TerminationAnchor,inspectPm2SigintTermination,assertManagedPauseEnvironmentTransition}from'./release-toolchain-pm2-transition.mjs';
+import{capturePm2TerminationAnchor,inspectPm2SigintTermination,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow}from'./release-toolchain-pm2-transition.mjs';
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
@@ -96,9 +96,9 @@ try{
  // never before the termination witness was independently collected.
  const value={...rawObservation,observedAt:new Date().toISOString()};
  stage='actual-transition-proof';need(value.afterPmDerived.exitCode===130,'actual_next_sigint_not_130');assertManagedPauseEnvironmentTransition(value,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'});
- const afterOther=registry().find(p=>p.name==='eq-unrelated');assert.deepEqual(afterOther,beforeOther.row);assert.deepEqual(raw(afterOther.pid),beforeOther.raw);assert.deepEqual(fact(afterOther.pid),beforeOther.identity);need(!alive(beforeFact),'old_process_still_alive');
+ const afterOther=registry().find(p=>p.name==='eq-unrelated');assert.deepEqual(stablePm2RegistryRow(afterOther),stablePm2RegistryRow(beforeOther.row));assert.deepEqual(raw(afterOther.pid),beforeOther.raw);assert.deepEqual(fact(afterOther.pid),beforeOther.identity);need(!alive(beforeFact),'old_process_still_alive');
  stage='negative-proof-cases';for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterPmDerived.exitCode=1,v=>v.legacyAfter.restartCount++,v=>v.afterConfigured.RESEND_API_KEY='forbidden']){const changed=structuredClone(value);mutate(changed);assert.throws(()=>assertManagedPauseEnvironmentTransition(changed,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'}));}
- const stable=registry();python(request,{reject:true});assert.deepEqual(registry(),stable);
+ const stable=registry().map(stablePm2RegistryRow);python(request,{reject:true});assert.deepEqual(registry().map(stablePm2RegistryRow),stable);
  seal('transition-verified.json',{value,termination,sharedProductionFraming:true,realNext:true,realPm2:true,staleAttemptRefusedWithoutSend:true,unrelatedProcessUnchanged:true});passed=true;
 }catch(e){
  // Synthetic fixture only: neither this isolated HOME nor these two generated

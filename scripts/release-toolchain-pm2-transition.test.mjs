@@ -1,5 +1,5 @@
 import test from'node:test';import assert from'node:assert/strict';
-import{assertManagedPauseEnvironmentTransition,assertPm2TerminationEvidence,capturePm2TerminationAnchor}from'./release-toolchain-pm2-transition.mjs';
+import{assertManagedPauseEnvironmentTransition,assertPm2TerminationEvidence,capturePm2TerminationAnchor,stablePm2RegistryRow}from'./release-toolchain-pm2-transition.mjs';
 import{assertProvenBookingLegacyTransition}from'./release-toolchain-managed-pause.mjs';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as framework,BOOKING_HANDOFF_LEGACY_DIRECTORY as cwd,assertBookingHandoffWindow,assertBookingLegacyRuntimeEnvironmentTransition}from'./booking-handoff-policy.mjs';
 const h='a'.repeat(64),logFile='/root/.pm2/pm2.log';
@@ -14,3 +14,10 @@ for(const mutate of [p=>p.signal='SIGTERM',p=>p.exitCode=0,p=>p.beforePid++,p=>p
 for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterConfigured.KEEP='changed',v=>v.afterRaw.EXTRA='added',v=>v.afterRaw.RESEND_API_KEY='forbidden',v=>v.legacyAfter.restartCount++,v=>v.legacyAfter.pid=v.legacyBefore.pid,v=>v.legacyAfter.cwd='/other',v=>v.afterPmDerived.exitCode=1,v=>v.afterRaw.exit_code='0',v=>v.afterPmDerived.unstableRestarts=1,v=>v.framework.managerVersion='6.0.15',v=>v.observedAt=v.window.deadlineAt])test('a SIGINT witness cannot excuse unrelated environment, credential, identity, counter or expiry changes',()=>{const f=fixture();mutate(f.value);assert.throws(()=>assertProvenBookingLegacyTransition(f.value,f.proof));});
 test('log acquisition is read-only and refuses unsupported platforms rather than synthesizing a proof',()=>{if(process.platform!=='linux'||process.getuid?.()!==0)assert.throws(()=>capturePm2TerminationAnchor(logFile));});
 test('proof validation requires actual complete context and cannot mint publication authority',()=>{const f=fixture();assert.equal(assertPm2TerminationEvidence(f.proof,{before:f.value.legacyBefore,after:f.value.legacyAfter,window:f.value.window,observedAt:f.value.observedAt,logFile}),true);for(const x of [1,137,'130',NaN])assert.throws(()=>assertManagedPauseEnvironmentTransition(f.value,{...options(f.proof),expectedExitCode:x}));});
+test('live CPU/RSS/heap telemetry is not configuration; every other raw manager field remains exact',()=>{
+ const original={pid:1,pm_id:1,name:'other',monit:{cpu:6.9,memory:56410112},pm2_env:{axm_monitor:{},pm_cwd:'/owned',restart_time:0,env:{KEEP:'same'}}},after=structuredClone(original);
+ after.monit={cpu:0,memory:56541184};after.pm2_env.axm_monitor={'Heap Size':{value:'9.98',unit:'MiB'}};
+ assert.deepEqual(stablePm2RegistryRow(after),stablePm2RegistryRow(original));assert.deepEqual(original.pm2_env.axm_monitor,{});
+ for(const mutate of [r=>r.pid++,r=>r.pm2_env.restart_time++,r=>r.pm2_env.env.KEEP='changed',r=>r.pm2_env.pm_cwd='/other',r=>r.extra='unexpected']){const changed=structuredClone(after);mutate(changed);assert.notDeepEqual(stablePm2RegistryRow(changed),stablePm2RegistryRow(original));}
+ assert.throws(()=>stablePm2RegistryRow({...original,monit:{cpu:0,memory:1,extra:true}}));
+});
