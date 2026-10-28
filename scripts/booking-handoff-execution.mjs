@@ -1,6 +1,7 @@
 // Actual preflight, narrow gate/drain and the single repair+activation executor.
 // No stage/build, generic deployment, mail setup or automatic mutation retry.
 import * as fs from 'node:fs';
+import {drainAndProbeIngress} from './release-toolchain-ingress.mjs';
 import {spawnSync} from 'node:child_process';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE,
  assertBookingHandoffWindow,assertBookingAtomicActivationTransition} from './booking-handoff-policy.mjs';
@@ -127,13 +128,11 @@ export async function prepareBookingHandoffPreflight(options){
 }
 
 export async function executeBookingIngressDrain(operations,plan){
- const {window}=plan;assertBookingHandoffWindow(window,{nowMs:operations.nowMs()});await operations.authorize();
- const workers=await operations.workers();await operations.begin({window,workers,startedAt:operations.now()});
- await operations.install();await operations.syntax();await operations.reload();await operations.probeGate();
- let proof;while(operations.nowMs()<Date.parse(window.startedAt)+90000){
-  await operations.authorize();proof=await operations.drain(workers);if(proof.oldWorkersRemaining===0&&proof.applicationConnections===0)break;await operations.wait(250);
- }
- need(proof?.oldWorkersRemaining===0&&proof.applicationConnections===0,'ingress_not_drained');
+ const {window}=plan;assertBookingHandoffWindow(window,{nowMs:operations.nowMs()});
+ // A successful reload and one 503 can coexist with an old worker returning
+ // 200 on an already accepted connection. Drain the captured generation FIRST;
+ // then prove every protected route. Neither condition alone permits activation.
+ await drainAndProbeIngress(operations,{startedAtMs:Date.parse(window.startedAt),deadlineAtMs:Date.parse(window.startedAt)+90000,window});
  const data=await operations.automation();need(data.automationEligibleRecords===0&&Date.parse(data.throughAt)>=Date.parse(window.deadlineAt),'automation_drain');
  const receipt={schemaVersion:1,kind:'booking-legacy-ingress-drained',window,oldWorkersRemaining:0,applicationConnections:0,
   automationEligibleRecords:data.automationEligibleRecords,automationCheckedThrough:data.throughAt,datasetSha256:data.datasetSha256,completedAt:operations.now()};

@@ -1,5 +1,67 @@
 # Default: no-maintenance publication
 
+## Toolchain consolidation (2026-10-28; engineering validation, not production replacement)
+
+`scripts/release-toolchain.mjs` is the new safety/diagnostics entrypoint. It has
+NO deploy, apply, merge, restart, cleanup, force or skip command. Existing
+production source admission, backup, ownership, CI, watchdog and rollback gates
+remain mandatory; a green doctor or synthetic rehearsal is not publication authority.
+
+- `node scripts/release-toolchain.mjs doctor` reports this machine's bounded
+  host metadata. It does not mistake the workstation for the server or claim
+  that release evidence has been checked.
+- `node scripts/release-toolchain.mjs doctor SNAPSHOT.json` evaluates expected
+  application/tool/scope/database/backup/compatibility bindings with fresh local
+  RAM/disk observations. The snapshot must come from independently trusted
+  collectors. This offline diagnostic cannot authenticate a caller-supplied
+  snapshot, replace fresh production attestation or authorize a write.
+- `node scripts/release-toolchain-pack.mjs pack REPOSITORY COMMIT NEW_DIRECTORY`
+  creates a complete Node-only runtime bundle from committed Git blobs. An AST
+  import closure and explicit runtime resources replace ad-hoc sparse checkout.
+  Missing JSON, unknown dynamic imports, dependency packages, path escapes,
+  extra files, symlinks and changed bytes fail closed. The destination must not
+  exist; failed packages are preserved rather than overwritten.
+- `node scripts/release-toolchain.mjs verify-bundle DIRECTORY` verifies every
+  declared file and refuses undeclared files before any host rehearsal.
+- `node scripts/release-toolchain.mjs rehearse /usr/sbin/nginx 5` (or the fixed
+  BT binary `/www/server/nginx/sbin/nginx`) creates new loopback-only fixtures.
+  A deliberately accepted old request proves old200/new503 coexistence, then the
+  SAME drain primitive used by the booking controller proves old generation exit,
+  zero application connections and every protected route503. Syntax/probe failure
+  cases must stop and clean up only their owned test processes. Reports are kept.
+  This is ingress-boundary evidence, not application/database/rollback acceptance.
+- `node scripts/release-toolchain.mjs journal RUN_DIRECTORY` inspects an
+  append-only hash-chained operation journal. Unknown effect results cannot be
+  automatically retried, skipped or marked successful. No journal-reset or
+  automatic reconciliation command is exposed.
+
+Fingerprints include domain, algorithm and representation. Canonical JSON object
+key order is immaterial; array order and types are not. Application inputs,
+verified build artifacts and tool bundles have separate identities. A tool-only
+repair can retain a verified immutable build only if application revision,
+source/dependencies/migrations and actual build bytes all remain identical;
+full tool revalidation is still required. Backup identity binds the application
+and exact database, never the tool commit or an incidental pilot environment.
+
+All known stale/mismatched evidence is reported at one early preflight. The
+6 GiB build floor is unchanged; it applies when a build is needed, not as an
+excuse to rebuild an already verified candidate. A broken existing build binding
+is a blocker, not permission to overwrite the artifact.
+
+The booking boundary now drains the captured old workers/connections BEFORE
+probing the entire gate. Reload success or a single503 is not proof of a drained
+generation. The original90-second drain budget, strict503 checks, automation
+proof, activation guards and independent watchdog remain; business POST requests
+are not automatically replayed. New shared sources are included in the native
+acceptance source inventory. Historical attempts/receipts/allowlists are retained.
+
+The new dedicated `Release Toolchain Safety` workflow tests the packaged tools
+and real Nginx boundary on a disposable Linux runner. Adopting this tooling as a
+production publisher still requires reviewed source admission, the full required
+CI set and complete existing application/database/recovery acceptance. Do not
+describe this engineering milestone as a deployed application or a finished
+replacement for every historical release lane.
+
 User authorized this default and an additive analytics-capable lane on 2026-09-23.
 This is not permission to skip tests, authentication checks, backups or ownership checks.
 
