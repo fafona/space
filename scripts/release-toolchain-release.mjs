@@ -14,7 +14,7 @@ import {rehearseFullToolchainInterruption} from './release-toolchain-full-interr
 import {localHostObservation} from './release-toolchain-doctor.mjs';
 import {createToolchainRun,executeJournaledStage,inspectToolchainRun,toolchainRunBinding} from './release-toolchain-journal.mjs';
 import {withOnlineRetentionLocks,assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
-import {assertReviewedBookingNoPending} from './booking-handoff-pending.mjs';
+import {assertReviewedBookingNoPending,assertReviewedRecoveredBookingNoPending} from './booking-handoff-pending.mjs';
 import {collectBookingReadyRuntimeCohort,bookingReadyRawProcesses} from './booking-ready-runtime.mjs';
 import {createBookingHandoffHostOperations,executeBookingHandoffHost} from './booking-handoff-host.mjs';
 import {inspectBookingHandoffPreflight} from './booking-handoff-execution.mjs';
@@ -94,8 +94,8 @@ async function publish(lock,authority,{publication=true}={}){
 async function main(){invocation();const action=assertCanonicalReleaseCommand(process.argv.slice(2));if(action==='publish'){need(fs.realpathSync(process.execPath)==='/usr/bin/node','unsupported_runtime');assertBookingWatchdogControllerArguments(fs.readFileSync('/proc/self/cmdline','utf8').replace(/\0+$/,'').split('\0'),toolRevision,true);}if(action==='status')return collectReleaseToolchainStatus();if(action==='qualify'||action==='qualify-recovered')return qualify({recovered:action==='qualify-recovered'});
  const verifyPreparation=action==='archive-recovered'?verifyRecoveredBookingPreparation:verifyBookingPreparation;
  return withReviewedBookingExecution({applicationRevision:C,preparationRevision:BOOKING_PREPARATION_REVISION,verifyPreparation},authority=>withOnlineRetentionLocks(async lock=>{
-  if(action==='archive-recovered'){assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);
-   const result=await archiveRecoveredBookingAttempt({lock,toolRevision,qualificationSha256:qualification.sha256});same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),authority.prepared);return result;}
+  if(action==='archive-recovered'){await assertReviewedRecoveredBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);
+   const result=await archiveRecoveredBookingAttempt({lock,toolRevision,qualificationSha256:qualification.sha256});assertReviewedBookingNoPending(toolRevision);same(verifyBookingPreparation(BOOKING_PREPARATION_REVISION),authority.prepared);return result;}
   if(action!=='prepare-worker')return publish(lock,authority,{publication:action==='publish'});reportingStage='candidate';assertReviewedBookingNoPending(toolRevision);const qualification=latestBookingQualification(toolRevision,authority.tool.inventorySha256);same(qualification.application,authority.prepared.application);return prepareExecutionWorker({lock,toolRevision});
  }));
 }

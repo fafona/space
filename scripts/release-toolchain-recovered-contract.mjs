@@ -5,6 +5,9 @@ export const RECOVERED_BOOKING_ATTEMPT=Object.freeze({
  protectedSnapshotSha256:'1a0280fd8c141e46cd8bfcb55535af4f445a2e2f71094b8096e8c7fe43d2093f',
  databaseSha256:'a70c7b01d0967a32c81195051952d9e1c659dd290196dac66a8013c071cbc1ee',
  retentionHead:'77ea9068d2c634f146f0f53be465ba9cb13ad335417cbc8f2228fd6bc5cef6cb',
+ candidateMetadata:Object.freeze({failedBytes:25203,failedSha256:'f52da532a34fc103886cad691d951c115d641c7cd924371222c84ff33e9f0a7d',
+  originalBytes:25001,originalSha256:'7ba13be0b859c918a71481b469596d6f2ef430ba61b1fc1946471812fb5651d3',
+  rollbackSha256:'12a7590d9de39d10179d0b60d3730c0451c5ad9e2b9a6d22044a77fe0861be3d',recoveredAt:'2026-10-28T15:11:19.638Z'}),
  files:Object.freeze([
  ['active-file-before-recovery.json',184,'20f06d98ce7cdbe9b3003b23d63967458842a144afd77ca04e249c38827c297b'],
  ['controller-failure.json',214,'ca4dbd4b42bb1d8342bfaa0bcfefc27125e0236290eec96e31e54a539d5bfcf5'],

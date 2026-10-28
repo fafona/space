@@ -36,6 +36,18 @@ modifies an old journal or marks the failed publication successful. Normal
 admission now requires that completed archive; the next publish creates a new
 journal and fresh backup. No other incident is admitted by these commands.
 
+The separately approved metadata completion also pins the actual failed C
+state (`f52da532...`) and original database-ready bytes (`7ba13be0...`). Before
+moving evidence it preserves the failed state in the private archive. Only
+after every move and a fresh unchanged-host/DB verification does it fsync a
+transition intent, atomically replace that exact candidate metadata with the
+retained original bytes, verify it, and seal the transition. Both the original
+failure and all transition receipts remain immutable. The archive-only pending
+adapter requires the actual complete recovered incident; the normal pending
+guard is unchanged and must pass again after conversion. No business data,
+application files, builds, old journals, or other candidate states are changed.
+Any uncertain metadata replacement is terminal, not retried or auto-restored.
+
 1. Pack the exact committed tool bundle. Run its source-only installer with
    `install-qualification COMMIT` for a fully tested PR, or `install COMMIT` for
    fully tested current main. The installer fetches only the exact object and
