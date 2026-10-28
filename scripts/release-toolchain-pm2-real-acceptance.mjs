@@ -89,9 +89,12 @@ try{
  seal('restart-intent.json',{window,before,anchor,requestSha256:sha(JSON.stringify(request)),sourceHashes:{transport:sha(fs.readFileSync(source+'/scripts/booking-handoff-pm2-pause.py')),validator:sha(fs.readFileSync(source+'/scripts/release-toolchain-pm2-transition.mjs'))}});
  need(python(request).acknowledged===true,'ack');await ready(port);let afterRow;
  for(let i=0;i<100;i++){afterRow=registry().find(p=>p.name===name);if(afterRow.pid!==before.pid&&afterRow.pm2_env.status==='online')break;await sleep(100);}
- const after=normalizeRetirementProcess(afterRow),afterRaw=raw(after.pid),value={beforeRaw,afterRaw,beforeConfigured:beforeRow.pm2_env.env,afterConfigured:afterRow.pm2_env.env,legacyBefore:before,legacyAfter:after,beforePmUptime:beforeRow.pm2_env.pm_uptime,afterPmUptime:afterRow.pm2_env.pm_uptime,beforePmDerived:manager(beforeRow.pm2_env),afterPmDerived:manager(afterRow.pm2_env),framework,window,observedAt:new Date().toISOString()};
- seal('transition-observed.json',{value,unverified:true,syntheticInputsOnly:true});
+ const after=normalizeRetirementProcess(afterRow),afterRaw=raw(after.pid),rawObservation={beforeRaw,afterRaw,beforeConfigured:beforeRow.pm2_env.env,afterConfigured:afterRow.pm2_env.env,legacyBefore:before,legacyAfter:after,beforePmUptime:beforeRow.pm2_env.pm_uptime,afterPmUptime:afterRow.pm2_env.pm_uptime,beforePmDerived:manager(beforeRow.pm2_env),afterPmDerived:manager(afterRow.pm2_env),framework,window};
+ seal('transition-observed.json',{value:{...rawObservation,observedAt:new Date().toISOString()},unverified:true,syntheticInputsOnly:true});
  const termination=inspectPm2SigintTermination(anchor,before,after);seal('termination-observed.json',{termination,unverified:true});
+ // The complete observation ends after reading both actual runtime and log,
+ // never before the termination witness was independently collected.
+ const value={...rawObservation,observedAt:new Date().toISOString()};
  stage='actual-transition-proof';need(value.afterPmDerived.exitCode===130,'actual_next_sigint_not_130');assertManagedPauseEnvironmentTransition(value,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'});
  const afterOther=registry().find(p=>p.name==='eq-unrelated');assert.deepEqual(afterOther,beforeOther.row);assert.deepEqual(raw(afterOther.pid),beforeOther.raw);assert.deepEqual(fact(afterOther.pid),beforeOther.identity);need(!alive(beforeFact),'old_process_still_alive');
  stage='negative-proof-cases';for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterPmDerived.exitCode=1,v=>v.legacyAfter.restartCount++,v=>v.afterConfigured.RESEND_API_KEY='forbidden']){const changed=structuredClone(value);mutate(changed);assert.throws(()=>assertManagedPauseEnvironmentTransition(changed,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'}));}
