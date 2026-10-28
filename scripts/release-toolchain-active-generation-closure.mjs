@@ -29,6 +29,13 @@ function scope(options){
  for(const [file,witness]of s.witnesses)same(admissionFileFact(file),witness);return s;
 }
 function vaultFiles(s){const pins=read(s.directory+'/preserved.json').files;return Object.fromEntries([...VAULT_FILES,...pins.map(v=>v.name)].map(name=>[name,digest(s.directory+'/'+name)]));}
+function noPreviousMutationAttempt(){
+ const parent='/var/lib/faolla-booking-active-closures/'+P.operationId;
+ if(!fs.existsSync(parent))return;ownedReleasePath(parent,{directory:true,privateMode:true});
+ // No retry under a new UUID can forget a previous unknown side-effect. A
+ // future observational adoption would need its own explicit, reviewed scope.
+ need(fs.readdirSync(parent).length===0,'attempt_unknown');
+}
 export async function verifyActiveBookingClosure(options){
  const s=scope(options),qualified=verifyLatestActiveBookingQualification(options);same(qualified.sha256,s.qualification.sha256);same(qualified.attempt,s.qualification.attempt);
  const preserved=verifyActiveBookingIncidentPreservation(options),metadata=verifyActiveBookingMetadataCorrection(options);same(preserved.directory,s.directory);same(metadata.receiptSha256,s.metadataSha256);
@@ -43,7 +50,7 @@ export async function verifyActiveBookingClosure(options){
 }
 export async function reconcileActiveBookingIncidentUnderHeldLocks(options){
  const {lock,toolRevision,window}=options;assertOnlineRetentionHeldLocks(lock);assertActiveBookingIncidentHeldWindow(lock,window);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority&&!scopes.has(lock),'source_changed');
- const qualification=verifyLatestActiveBookingQualification(options),s={toolRevision,window,authority,qualification,witnesses:new Map()};scopes.set(lock,s);let stage='inspect';
+ noPreviousMutationAttempt();const qualification=verifyLatestActiveBookingQualification(options),s={toolRevision,window,authority,qualification,witnesses:new Map()};scopes.set(lock,s);let stage='inspect';
  const held=()=>scope(options);let completed;
  try{
   completed=await executeActiveBookingReconciliation({assertHeld:held,progress:name=>{stage=name;},
