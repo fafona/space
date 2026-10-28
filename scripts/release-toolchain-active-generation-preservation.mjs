@@ -79,6 +79,19 @@ export function verifyActiveBookingIncidentPreservation({lock,toolRevision,windo
  assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');return{directory,preserved,observation,preservedSha256:sha256(bookingHostRead(directory+'/preserved.json'))};
 }
 
+// Same real vault engine, with a non-serializable owned-lab resource profile.
+export async function preserveOwnedActiveReconciliationEvidence(capability,lock,window){
+ const {ownedActiveReconciliationScope,observeOwnedActiveReconciliation}=await import('./release-toolchain-active-generation-owned-lab.mjs');
+ const {assertOwnedActiveReconciliationHeldLocks}=await import('./online-release-retention-writer.mjs');
+ const s=ownedActiveReconciliationScope(capability),assertHeld=()=>{ownedActiveReconciliationScope(capability);assertOnlineLabHeld();};
+ // Kernel checking is synchronous inside the physical engine; the wrapper
+ // captures a private checker only after the asynchronous capability gate.
+ await assertOwnedActiveReconciliationHeldLocks(capability,lock);
+ const {ownedActiveReconciliationHeldChecker}=await import('./online-release-retention-writer.mjs');const assertOnlineLabHeld=ownedActiveReconciliationHeldChecker(capability,lock);
+ const current=await observeOwnedActiveReconciliation(capability),binding={kind:'owned-active-reconciliation-preservation',window,toolRevision:s.toolRevision,inventorySha256:s.inventorySha256,currentObservationSha256:sha256(canonicalJson(current)),publicationAuthority:false};
+ const engine=vault({source:s.directory+'/old-evidence',destination:s.directory+'/vault',pins:s.pins,assertHeld,binding});engine.begin();engine.copy();const receipt=engine.seal();seal(s.directory+'/vault/current-observation.json',current);assertHeld();return receipt;
+}
+
 // Closed disposable runner. Synthetic pins belong only to its own newly
 // created files; no production PID, lease, DB identity or old receipt is faked.
 export async function acceptActiveIncidentPreservationInCi(){

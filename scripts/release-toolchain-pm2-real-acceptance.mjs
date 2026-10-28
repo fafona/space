@@ -147,7 +147,10 @@ try{
  const afterOther=registry().find(p=>p.name==='eq-unrelated');assert.deepEqual(stablePm2RegistryRow(afterOther),stablePm2RegistryRow(beforeOther.row));assert.deepEqual(raw(afterOther.pid),beforeOther.raw);assert.deepEqual(fact(afterOther.pid),beforeOther.identity);need(!alive(beforeFact),'old_process_still_alive');
  stage='negative-proof-cases';for(const mutate of [v=>v.afterRaw.KEEP='changed',v=>v.afterPmDerived.exitCode=1,v=>v.legacyAfter.restartCount++,v=>v.afterConfigured.RESEND_API_KEY='forbidden']){const changed=structuredClone(value);mutate(changed);assert.throws(()=>assertManagedPauseEnvironmentTransition(changed,{framework:FRAMEWORK,assertWindow:assertBookingHandoffWindow,expectedExitCode:130,terminationEvidence:termination,logFile:home+'/pm2.log'}));}
  const stable=registry().map(stablePm2RegistryRow);python(request,{reject:true,rejectLastLine:'RuntimeError: stale_target'});assert.deepEqual(registry().map(stablePm2RegistryRow),stable);
- seal('transition-verified.json',{value,termination,sharedProductionFraming:true,realNext:true,realPm2:true,staleAttemptRefusedWithoutSend:true,unrelatedProcessUnchanged:true});passed=true;
+ seal('transition-verified.json',{value,termination,sharedProductionFraming:true,realNext:true,realPm2:true,staleAttemptRefusedWithoutSend:true,unrelatedProcessUnchanged:true});
+ stage='complete-active-reconciliation-and-controller-deaths';
+ const {acceptOwnedActiveReconciliation}=await import('./release-toolchain-active-generation-reconciliation.mjs');
+ seal('active-reconciliation-verified.json',await acceptOwnedActiveReconciliation(root));passed=true;
 }catch(e){
  // Synthetic fixture only: neither this isolated HOME nor these two generated
  // programs inherit server/CI credentials. Keep actual startup error evidence.

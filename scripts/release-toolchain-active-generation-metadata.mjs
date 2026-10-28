@@ -52,6 +52,13 @@ export function verifyActiveBookingMetadataCorrection({lock,toolRevision,window}
  need(Date.parse(receipt.completedAt)>=Date.parse(intent.at),'evidence_invalid');same(bookingHostRead('/var/lib/faolla-online-release/active.json'),M.afterText);assertOnlineRetentionHeldLocks(lock);
  return{directory,binding,before,after,receipt,receiptSha256:sha256(bookingHostRead(directory+'/metadata-corrected.json'))};
 }
+export async function correctOwnedActiveReconciliationMetadata(capability,lock,window){
+ const {ownedActiveReconciliationScope,observeOwnedActiveReconciliation,assertOwnedActiveReconciliationDelta}=await import('./release-toolchain-active-generation-owned-lab.mjs');
+ const {ownedActiveReconciliationHeldChecker}=await import('./online-release-retention-writer.mjs'),held=ownedActiveReconciliationHeldChecker(capability,lock),s=ownedActiveReconciliationScope(capability);
+ const preserved=JSON.parse(bookingHostRead(s.directory+'/vault/preserved.json'));
+ need(preserved.binding.kind==='owned-active-reconciliation-preservation'&&preserved.publicationAuthority===false,'evidence_invalid');
+ return correctMetadata({file:s.directory+'/active.json',beforeText:s.beforeText,afterText:s.afterText,directory:s.directory+'/vault',binding:{kind:'owned-active-reconciliation-metadata',window,preservedSha256:sha256(bookingHostRead(s.directory+'/vault/preserved.json')),publicationAuthority:false},assertHeld:()=>{ownedActiveReconciliationScope(capability);held();},observe:()=>observeOwnedActiveReconciliation(capability),verifyDelta:(before,after)=>assertOwnedActiveReconciliationDelta(before,after,{metadata:true})});
+}
 export async function acceptActiveIncidentMetadataInCi(){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&!['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'].some(f=>fs.existsSync(f)),'ci_only');
  const root=fs.mkdtempSync('/var/lib/faolla-active-metadata-ci-');fs.chmodSync(root,0o700);seal(root+'/started.json',{kind:'active-incident-metadata-ci-started',syntheticInputsOnly:true,at:new Date().toISOString()});let stage='prepare';

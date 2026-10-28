@@ -27,6 +27,7 @@ const identity = st => Object.fromEntries(['dev', 'ino', 'mode', 'uid', 'nlink',
 const dirIdentity = st => Object.fromEntries(['dev', 'ino', 'mode', 'uid'].map(k => [k, st[k]]));
 const stableObservation = value => {const result = {...value}; delete result.established; return result;};
 const heldLocks = new WeakMap();
+const ownedReconciliationScopes = new WeakMap();
 function ownedPath(name, kind = 'directory', io = fs) {
   if (typeof name !== 'string' || !path.posix.isAbsolute(name) || path.posix.normalize(name) !== name || /[\\\0\r\n]/.test(name)) fail('path_invalid');
   for (let current = name; ; current = path.posix.dirname(current)) {
@@ -374,7 +375,7 @@ function productionOperations({toolRevision, kind, activeTarget, victimTarget = 
 export function createOnlineRetentionProductionOperations(options) {return productionOperations(options);}
 function assertHeldLocks(token) {
   const held = token && heldLocks.get(token);
-  if (!held || held.deployLock !== DEPLOY_LOCK || held.operation !== OPERATION_LOCK) fail('parent_locks_required');
+  if (!held || held.activeScopeReleased || held.deployLock !== DEPLOY_LOCK || held.operation !== OPERATION_LOCK) fail('parent_locks_required');
   assertExistingOperationScopeHeld(token);
 }
 function assertExistingOperationScopeHeld(token) {
@@ -384,9 +385,14 @@ function assertExistingOperationScopeHeld(token) {
     const at = Date.now();
     if (at < Date.parse(held.activeWindow.startedAt) || at >= Date.parse(held.activeWindow.deadlineAt)) fail('active_incident_window_expired');
   }
-  assertOnlineToolOwnedPath(held.deployLock, 'file'); privateDirectory(held.operation);
+  assertOnlineToolOwnedPath(held.deployLock, 'file');
   equal(dirIdentity(fs.fstatSync(token.deployFd)), held.deployIdentity, 'deploy_lock_changed');
   equal(dirIdentity(fs.lstatSync(held.deployLock)), held.deployIdentity, 'deploy_lock_changed');
+  if(held.activeScopeReleased){
+    if(exists(held.operation)||!held.activeArchive)fail('operation_lock_changed');
+    equal(dirIdentity(privateDirectory(held.activeArchive.destination)),held.activeArchive.original,'active_archive_original_changed');return;
+  }
+  privateDirectory(held.operation);
   equal(dirIdentity(fs.lstatSync(held.operation)), held.operationIdentity, 'operation_lock_changed');
   if (fs.readdirSync(held.operation).length) fail('operation_lock_changed');
 }
@@ -522,6 +528,40 @@ export async function acceptActiveIncidentPreparationLocksInCi() {
     }catch{/* A diagnostic failure cannot replace the original refusal. */}
     throw error;
   }
+}
+
+// Genuine owned CI capability, same kernel/inode engine; formal tokens still
+// require their exact paths AND reviewed execution authority independently.
+export async function withOwnedActiveReconciliationLocks(capability,work){
+  const {ownedActiveReconciliationScope}=await import('./release-toolchain-active-generation-owned-lab.mjs');
+  const s=ownedActiveReconciliationScope(capability);
+  return withExistingOperationPreparation({deployLock:s.directory+'/deploy.lock',operation:s.directory+'/operation.lock',observe:async()=>{ownedActiveReconciliationScope(capability);return{fixtureOnly:true};}},
+    async(token,context)=>{ownedReconciliationScopes.set(token,{capability,assertScope:()=>ownedActiveReconciliationScope(capability)});try{return await work(token,context);}finally{ownedReconciliationScopes.delete(token);}});
+}
+export function ownedActiveReconciliationHeldChecker(capability,token){
+  const bound=ownedReconciliationScopes.get(token);if(!bound||bound.capability!==capability)fail('parent_locks_required');
+  const check=()=>{if(ownedReconciliationScopes.get(token)!==bound||heldLocks.get(token)?.activeScopeReleased)fail('parent_locks_required');bound.assertScope();assertExistingOperationScopeHeld(token);};check();return check;
+}
+export async function assertOwnedActiveReconciliationHeldLocks(capability,token){
+  const {ownedActiveReconciliationScope}=await import('./release-toolchain-active-generation-owned-lab.mjs');const s=ownedActiveReconciliationScope(capability),held=heldLocks.get(token);
+  if(!held||held.activeScopeReleased||held.deployLock!==s.directory+'/deploy.lock'||held.operation!==s.directory+'/operation.lock')fail('parent_locks_required');assertExistingOperationScopeHeld(token);
+}
+export async function archiveOwnedActiveReconciliationOperation(capability,token){
+  await assertOwnedActiveReconciliationHeldLocks(capability,token);
+  const {verifyOwnedActiveReconciliationClosure}=await import('./release-toolchain-active-generation-reconciliation.mjs');
+  const closure=await verifyOwnedActiveReconciliationClosure(capability,token);
+  return archiveOwnedExistingOperation(token,closure.directory,closure.sha256);
+}
+export async function releaseOwnedActiveReconciliationOperation(capability,token){
+  await assertOwnedActiveReconciliationHeldLocks(capability,token);
+  const {verifyOwnedActiveReconciliationClosure}=await import('./release-toolchain-active-generation-reconciliation.mjs');
+  const closure=await verifyOwnedActiveReconciliationClosure(capability,token),held=heldLocks.get(token);
+  const completed=JSON.parse(readOwned(closure.directory+'/reconciliation-completed.json'));
+  if(completed.kind!=='owned-active-reconciliation-completed'||completed.closureSha256!==closure.sha256||completed.publicationAuthority!==false||!held.activeArchive||held.activeArchive.vault!==closure.directory||held.activeArchive.closureSha256!==closure.sha256)fail('active_archive_not_authorized');
+  assertExistingOperationScopeHeld(token);equal(dirIdentity(privateDirectory(held.activeArchive.destination)),held.activeArchive.original,'active_archive_original_changed');
+  privateWrite(closure.directory+'/replacement-release-attempt.json',retentionCanonicalText({kind:'owned-active-replacement-release-intent',closureSha256:closure.sha256,replacement:held.operationIdentity,originalInodeRetained:true,publicationAuthority:false}));
+  assertExistingOperationScopeHeld(token);fs.rmdirSync(held.operation);syncDirectory(path.dirname(held.operation));held.activeScopeReleased=true;assertExistingOperationScopeHeld(token);
+  privateWrite(closure.directory+'/replacement-released.json',retentionCanonicalText({kind:'owned-active-replacement-released',closureSha256:closure.sha256,originalInodeRetained:true,publicationAuthority:false}));
 }
 
 // Physical archive primitive shared with disposable native tests. Deliberately

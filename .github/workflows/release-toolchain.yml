@@ -120,6 +120,11 @@ jobs:
             sudo find "${metadata_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-metadata-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-metadata-evidence.tar"
           fi
+          reconciliation_roots=(/var/lib/faolla-active-reconciliation-ci-*)
+          if ((${#reconciliation_roots[@]})); then
+            sudo find "${reconciliation_roots[@]}" -maxdepth 2 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-reconciliation-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-reconciliation-evidence.tar"
+          fi
       - name: Preserve Synthetic Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -132,4 +137,5 @@ jobs:
             ${{ runner.temp }}/release-toolchain-active-lock-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-vault-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-metadata-evidence.tar
+            ${{ runner.temp }}/release-toolchain-active-reconciliation-evidence.tar
           if-no-files-found: warn

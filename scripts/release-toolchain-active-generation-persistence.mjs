@@ -23,25 +23,38 @@ export async function persistActiveBookingCurrentProcesses({lock,toolRevision,wi
  assertOnlineRetentionHeldLocks(lock);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');assertActiveBookingWindow(window);
  need(process.argv[1]&&process.argv[1]!=='-'&&Date.parse(window.deadlineAt)-Date.now()>=120000,'evidence_stale');
  const metadata=verifyActiveBookingMetadataCorrection({lock,toolRevision,window}),directory=metadata.directory;
- need(!['pm2-persistence-before-observation.json','pm2-persistence-after-observation.json','pm2-persistence-attempt.json','pm2-persistence-completed.json','pm2-persistence-failed.json','pm2-dump-before.json','pm2-backup-before.json'].some(name=>fs.existsSync(directory+'/'+name)),'attempt_replay_forbidden');
  const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');verifyActiveBookingMetadataCorrection({lock,toolRevision,window});};
+ const expectedPeer=JSON.parse(bookingHostRead(directory+'/legacy-restart-attempt.json')).before.daemonPeer;
+ return persistObservedCurrentProcesses({directory,metadata,held,observe:()=>inspectActiveBookingIncidentAfterMetadata({window}),compare:assertActiveCorrectedObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer});
+}
+// Shared real connect-only IO path. Only closed profile factories call it;
+// neither paths nor the private fault seam are CLI or serialized authority.
+async function persistObservedCurrentProcesses({directory,metadata,held,observe,compare,collect,home,expectedPeer,afterSave}){
+ need(!['pm2-persistence-before-observation.json','pm2-persistence-after-observation.json','pm2-persistence-attempt.json','pm2-persistence-completed.json','pm2-persistence-failed.json','pm2-dump-before.json','pm2-backup-before.json'].some(name=>fs.existsSync(directory+'/'+name)),'attempt_replay_forbidden');
  const {captureProcessFact}=await import('./check-production-runtime-supervision.mjs');
  let before,daemon,bootId,registry,target,receipt,after;
  return executeActiveProcessPersistence({assertHeld:held,
-  inspect:async()=>{before=await inspectActiveBookingIncidentAfterMetadata({window});assertActiveCorrectedObservationProgress(metadata.after,before);seal(directory+'/pm2-persistence-before-observation.json',before);},
+  inspect:async()=>{before=await observe();compare(metadata.after,before);seal(directory+'/pm2-persistence-before-observation.json',before);},
   freeze:async()=>{
-   const pid=Number(bookingHostRead('/root/.pm2/pm2.pid',{privateMode:false}).trim()),{commandLine,...captured}=captureProcessFact(pid);need(captured.uid===0&&captured.executable==='/usr/bin/node'&&commandLine.length===1&&commandLine[0]==='PM2 v6.0.14: God Daemon (/root/.pm2)','owned_resource_changed');daemon=captured;bootId=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
-   const historical=JSON.parse(bookingHostRead(directory+'/legacy-restart-attempt.json')).before.daemonPeer;
-   same({pid:daemon.pid,uid:daemon.uid,startTicks:daemon.startTicks,bootId,executable:daemon.executable,executableIdentity:daemon.executableIdentity},historical);
-   registry=await inspectPm2Registry(daemon,bootId);const physical=collectFormalBookingPm2Registry();same(physical.filteredRegistry,registry);assertCompletePm2DumpSet(physical.rows,registry);target=await capturePm2DumpTarget(daemon,bootId);need(target.dump&&target.backup,'evidence_invalid');
-   for(const [file,key,destination]of [['dump.pm2','dump','pm2-dump-before.json'],['dump.pm2.bak','backup','pm2-backup-before.json']]){held();const text=bookingHostRead('/root/.pm2/'+file,{privateMode:false});need(sha256(text)===target[key].sha256,'owned_resource_changed');bookingHostWriteOnce(directory+'/'+destination,text);}
+   const pid=Number(bookingHostRead(home+'/pm2.pid',{privateMode:false}).trim()),{commandLine,...captured}=captureProcessFact(pid);need(captured.uid===0&&captured.executable==='/usr/bin/node'&&commandLine.length===1&&commandLine[0]==='PM2 v6.0.14: God Daemon ('+home+')','owned_resource_changed');daemon=captured;bootId=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
+   same({pid:daemon.pid,uid:daemon.uid,startTicks:daemon.startTicks,bootId,executable:daemon.executable,executableIdentity:daemon.executableIdentity},expectedPeer);
+   registry=await inspectPm2Registry(daemon,bootId);const physical=collect();same(physical.filteredRegistry,registry);assertCompletePm2DumpSet(physical.rows,registry);target=await capturePm2DumpTarget(daemon,bootId);need(target.dump&&target.backup,'evidence_invalid');
+   for(const [file,key,destination]of [['dump.pm2','dump','pm2-dump-before.json'],['dump.pm2.bak','backup','pm2-backup-before.json']]){held();const text=bookingHostRead(home+'/'+file,{privateMode:false});need(sha256(text)===target[key].sha256,'owned_resource_changed');bookingHostWriteOnce(directory+'/'+destination,text);}
    same(await capturePm2DumpTarget(daemon,bootId),target);same(await inspectPm2Registry(daemon,bootId),registry);
   },
   claim:()=>seal(directory+'/pm2-persistence-attempt.json',{kind:'active-incident-current-pm2-persistence-attempt',binding:metadata.binding,metadataReceiptSha256:metadata.receiptSha256,daemon,bootId,registrySha256:pm2RegistryDigest(registry),target,beforeObservationSha256:sha256(canonicalJson(before)),at:new Date().toISOString(),publicationAuthority:false}),
-  saveOnce:async()=>{receipt=await persistPm2Dump(daemon,bootId,registry,target);need(receipt.processCount===registry.length,'evidence_invalid');},
-  verifySaved:async()=>{need(await verifyPm2Dump(daemon,bootId,registry,receipt)===true,'operation_unconfirmed');same(await inspectPm2Registry(daemon,bootId),registry);const {commandLine,...current}=captureProcessFact(daemon.pid);same(current,daemon);need(commandLine.length===1&&commandLine[0]==='PM2 v6.0.14: God Daemon (/root/.pm2)','owned_resource_changed');},
-  postconditions:async()=>{after=await inspectActiveBookingIncidentAfterMetadata({window});assertActiveCorrectedObservationProgress(before,after);seal(directory+'/pm2-persistence-after-observation.json',after);},
+  saveOnce:async()=>{receipt=await persistPm2Dump(daemon,bootId,registry,target);need(receipt.processCount===registry.length,'evidence_invalid');if(afterSave)afterSave();},
+  verifySaved:async()=>{need(await verifyPm2Dump(daemon,bootId,registry,receipt)===true,'operation_unconfirmed');same(await inspectPm2Registry(daemon,bootId),registry);const {commandLine,...current}=captureProcessFact(daemon.pid);same(current,daemon);need(commandLine.length===1&&commandLine[0]==='PM2 v6.0.14: God Daemon ('+home+')','owned_resource_changed');},
+  postconditions:async()=>{after=await observe();compare(before,after);seal(directory+'/pm2-persistence-after-observation.json',after);},
   complete:()=>{const completed={kind:'active-incident-current-pm2-persistence-completed',binding:metadata.binding,metadataReceiptSha256:metadata.receiptSha256,registrySha256:pm2RegistryDigest(registry),receipt,beforeObservationSha256:sha256(canonicalJson(before)),afterObservationSha256:sha256(canonicalJson(after)),processControlPerformed:false,daemonBootPerformed:false,productionDatabaseMutated:false,oldOperationRemoved:false,publicationAuthority:false,completedAt:new Date().toISOString()};seal(directory+'/pm2-persistence-completed.json',completed);return{kind:completed.kind,directory,processCount:receipt.processCount,persistenceSha256:sha256(bookingHostRead(directory+'/pm2-persistence-completed.json')),processControlPerformed:false,publicationAuthority:false};},
   failure:(error,stage)=>{held();seal(directory+'/pm2-persistence-failed.json',{kind:'active-incident-current-pm2-persistence-unconfirmed',binding:metadata.binding,stage,errorSha256:sha256(String(error?.message??'unknown')),detailsRedacted:true,retryAllowed:false,oldDumpNotAutomaticallyRestored:true,publicationAuthority:false,at:new Date().toISOString()});},
  });
+}
+export async function persistOwnedActiveReconciliationProcesses(capability,lock,window){
+ const {ownedActiveReconciliationScope,observeOwnedActiveReconciliation,assertOwnedActiveReconciliationDelta,ownedActiveReconciliationBoundary}=await import('./release-toolchain-active-generation-owned-lab.mjs');
+ const {ownedActiveReconciliationHeldChecker}=await import('./online-release-retention-writer.mjs'),held=ownedActiveReconciliationHeldChecker(capability,lock),s=ownedActiveReconciliationScope(capability),directory=s.directory+'/vault';
+ const metadata={directory,binding:{kind:'owned-active-reconciliation-persistence',window,publicationAuthority:false},receiptSha256:sha256(bookingHostRead(directory+'/metadata-corrected.json')),after:JSON.parse(bookingHostRead(directory+'/metadata-after-observation.json'))};
+ const {collectOwnedCiPm2Registry}=await import('./release-toolchain-pm2-observation.mjs'),physical=collectOwnedCiPm2Registry(s.pm2Root);
+ const afterSave=()=>ownedActiveReconciliationBoundary(capability,'after-save');
+ return persistObservedCurrentProcesses({directory,metadata,held,observe:()=>observeOwnedActiveReconciliation(capability),compare:assertOwnedActiveReconciliationDelta,collect:()=>collectOwnedCiPm2Registry(s.pm2Root),home:s.pm2Root+'/pm2',expectedPeer:physical.daemonPeer,afterSave});
 }
