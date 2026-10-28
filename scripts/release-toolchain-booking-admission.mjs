@@ -1,6 +1,6 @@
 // Fresh admission is collected from real resources. Historical migration
 // provenance stays immutable and is NEVER relabelled as a fresh backup/clone.
-import * as fs from 'node:fs';import path from 'node:path';import {randomBytes} from 'node:crypto';
+import * as fs from 'node:fs';import path from 'node:path';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {admissionFileFact as fact} from './release-toolchain-admission-context.mjs';
@@ -9,10 +9,10 @@ import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {validateIsolationContainer} from './release-toolchain-isolation.mjs';
 import {verifyFullInterruptionReport} from './release-toolchain-full-interrupt.mjs';
-import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
+import {createReviewedBookingBackup} from './release-toolchain-backup-producer.mjs';
 import {validateDatabaseBackupSourceIdentity} from './database-backup-contract.mjs';
-import {attendanceProductionIdentity as production,validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
+import {attendanceProductionIdentity as production} from './attendance-production-database-migrations.mjs';
 import {bookingHistoricalMetadataReadSql,bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql} from './release-toolchain-booking-compatibility.mjs';
 import {observeBookingReadyApplication,bookingPublicationBackupRequest} from './booking-ready-backup.mjs';
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
@@ -75,18 +75,14 @@ export async function collectBookingAdmissionFacts({lock,directory,qualification
  ownedReleasePath(directory,{directory:true,privateMode:true});same(qualification.application,authority.prepared.application);verifyQualificationFiles(qualification.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});
  const before=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));need(before.active===false&&before.systemIdentifier===production.systemIdentifier,'database_identity_mismatch');
  const compatibility=observeBookingCompatibility(qualification),{contract,installedMetadata}=compatibility;
- const historical=await historicalBackup(),passphrase=randomBytes(48).toString('base64url'),backupPath=directory+'/database.tar.enc';seal(directory+'/backup.key',passphrase);
- const appDirectory='/www/wwwroot/merchant-space.web-releases/'+C.slice(0,12)+'-online';
- const created=await createProductionDatabaseBackup({outputPath:backupPath,passphrase,appDirectory,sourceDirectory:appDirectory,sourceRepository:'fafona/space',sourceSha:C,
-  env:{...process.env,FAOLLA_DATABASE_CONTAINER:'supabase-db',FAOLLA_STORAGE_CONTAINER:'supabase-storage'}});seal(directory+'/backup-create.json',created);
- const checked=await verifyProductionDatabaseBackup({inputPath:backupPath,passphrase});seal(directory+'/backup-verify.json',checked);
- const backup=await validateAttendanceBackupEvidence({target:C,backup:backupPath,createReport:directory+'/backup-create.json',verifyReport:directory+'/backup-verify.json'});
+ const historical=await historicalBackup(),backupPath=directory+'/database.tar.enc';
+ const {backup,binding:backupBinding}=await createReviewedBookingBackup({lock,toolRevision,directory});
  same(JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql)),before);same(observeBookingCompatibility(qualification),compatibility);same(observeBookingReadyApplication(),authority.prepared.application);
- const createdAt=new Date().toISOString(),proof={kind:'release-toolchain-fresh-booking-admission',toolRevision,application:authority.application,applicationBuilds:authority.prepared.application,
+ const createdAt=new Date().toISOString(),proof={kind:'release-toolchain-fresh-booking-admission',toolRevision,evidenceDirectory:directory,application:authority.application,applicationBuilds:authority.prepared.application,backupBinding,
   databaseBefore:before,backup:{...backup,archive:{schemaVersion:1,algorithm:'sha256',domain:'backup-archive',representation:'bytes-v1',value:backup.archiveSha256}},historicalBackupArchiveSha256:historical.backup.archiveSha256,
   compatibility:{method:'unchanged-production-structural-contract-and-current-isolated-handoff',currentMetadataContractSha256:contract,installedMetadataSha256:installedMetadata,defaultPrivilegesSha256:qualification.report.defaultPrivilegesSha256,historicalCompatibilitySha256:sha256(bookingHostRead(OP+'/booking-compatibility.json')),nativeAcceptanceSha256:qualification.sha256},
   createdAt,expiresAt:new Date(Date.parse(createdAt)+600000).toISOString(),mailEnabled:false};
  seal(directory+'/admission.json',proof);const original=bookingPublicationBackupRequest(C,OP),witnesses=new Map();
- for(const file of [backupPath,directory+'/backup.key',directory+'/backup-create.json',directory+'/backup-verify.json',directory+'/admission.json',original.backup,original.createReport,original.verifyReport,path.dirname(original.backup)+'/backup.key'])witnesses.set(file,fact(file));
+ for(const file of [backupPath,directory+'/backup.key',directory+'/backup-create.json',directory+'/backup-verify.json',directory+'/backup-producer-source.json',directory+'/backup-application-binding.json',directory+'/admission.json',original.backup,original.createReport,original.verifyReport,path.dirname(original.backup)+'/backup.key'])witnesses.set(file,fact(file));
  return Object.freeze({toolRevision,proof:freeze(proof),historical:freeze(historical),witnesses});
 }

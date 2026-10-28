@@ -52,8 +52,15 @@ Operator sequence (Linux root, from the verified installed tool directory):
    not a reusable publication capability and cannot resume or bypass a stage.
 6. `publish` requires that exact current-tool worker before any production
    backup or switch. It creates/verifies a new encrypted existing-format full
-   backup bound to application C and the exact formal database, never to the
-   tool SHA or a pilot. Historical migration backup/compatibility provenance
+   backup bound to the exact formal database, never a pilot. Its unchanged
+   manifest truthfully identifies the backup producer's current-main commit.
+   A separate archive-hash-bound application proof binds the retained C/A
+   builds and hashes the actual encrypted application environment payload.
+   Producer identity is never substituted for the application version. A new,
+   fully byte-verified private Git clone fetches real current main for the
+   producer; neither the formal repository's refs nor Git command responses
+   are altered. All shared backup source/format/validation rules stay strict.
+   Historical migration backup/compatibility provenance
    remains separate and is not relabelled as fresh evidence. Fresh read-only
    compatibility checks prove the old structural contract unchanged and the
    installed additive objects equal the current isolated rehearsal (including
@@ -76,6 +83,13 @@ attempt is not replaced with an older green result. Fresh admission artifacts
 and generic stage journals use separate private directories. Historical
 candidates, backups, old receipts and failed attempts remain. No automatic
 disk cleanup or mail setup is included.
+
+Admission failures report the exact private evidence directory. Backup steps
+preserve a bounded, fixed-code failure record (never credentials or arbitrary
+exception text). Successful validation/publication writes a new completion
+receipt linking the actual journal head and admission-file hash; it is evidence,
+not a replay/continuation capability. A failed attempt is never overwritten or
+reused by a later source revision.
 
 - `node scripts/release-toolchain.mjs doctor` reports this machine's bounded
   host metadata. It does not mistake the workstation for the server or claim
