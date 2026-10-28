@@ -21,3 +21,9 @@ test('real kernel acceptance is a required CI step and retains its own audit rep
  for(const token of ['Active Incident Existing Operation Kernel Lock Acceptance','release-toolchain-active-generation-lock-acceptance.mjs','release-toolchain-active-lock-evidence.tar'])assert.ok(text.includes(token),token);
  const start=text.indexOf('- name: Active Incident Existing Operation Kernel Lock Acceptance'),step=text.slice(start,text.indexOf('- name:',start+1));assert.doesNotMatch(step,/continue-on-error|if:/);
 });
+test('original operation archive is an unexported physical primitive, not a preparation command or state-clearing bypass',()=>{
+ const source=readFileSync(new URL('./online-release-retention-writer.mjs',import.meta.url),'utf8'),start=source.indexOf('function archiveOwnedExistingOperation'),end=source.indexOf('export async function runOnlineRetentionUnderHeldLocks',start),archive=source.slice(start,end);
+ assert.ok(start>0&&end>start);for(const token of ['assertExistingOperationScopeHeld(token)','operation-archive-attempt.json','fs.renameSync(held.operation,destination)','fs.mkdirSync(held.operation,{mode:0o700})','originalInodeRetained:true','replacementScopeRetained:true','incidentClosed:false'])assert.ok(archive.includes(token),token);
+ assert.doesNotMatch(archive,/rmdirSync|unlinkSync|rmSync/);assert.ok(!source.includes('export function archiveOwnedExistingOperation'));
+ const productionStart=source.indexOf('export async function withActiveBookingIncidentPreparationLocks'),productionEnd=source.indexOf('export async function acceptActiveIncidentPreparationLocksInCi',productionStart);assert.ok(!source.slice(productionStart,productionEnd).includes('archiveOwnedExistingOperation'));
+});
