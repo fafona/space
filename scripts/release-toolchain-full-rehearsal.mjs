@@ -16,7 +16,7 @@ import {executeBookingFailureRecoverySequence,BOOKING_RECOVERY_BARRIER_SQL} from
 import {bookingIngressSnippet} from './booking-handoff-ingress.mjs';
 import {bookingHandoffActivationSnapshotSql,BOOKING_ACTIVATION_BODY_SHA256} from './booking-handoff-activation.mjs';
 import {isolatedBookingRepairActivationAcceptanceSql,planBookingRuleOptionRepair} from './booking-handoff-rule-repair.mjs';
-import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE,BOOKING_HANDOFF_NATIVE_SOURCES} from './booking-handoff-policy.mjs';
+import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION,BOOKING_HANDOFF_BASELINE as BASELINE} from './booking-handoff-policy.mjs';
 import {BOOKING_SCOPE} from './booking-publication-policy.mjs';
 import {assertOnlineToolOwnedPath} from './prepare-online-release-tool.mjs';
 import {bookingHostSql,bookingHostRead,bookingHostWriteOnce,bookingHostEnvironment} from './booking-handoff-host-io.mjs';
@@ -25,9 +25,10 @@ import {parseRetirementSockets} from './online-release-retirement.mjs';
 import {createOwnedIsolation,loadOwnedIsolation,isolatedPgArguments,stopOwnedIsolation,rehearseIsolatedBackup} from './release-toolchain-isolation.mjs';
 import {inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {inspectToolchainNginxProfile} from './release-toolchain-profiles.mjs';
+import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
+export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot;
-export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOURCES,'release-toolchain-full-rehearsal.mjs','release-toolchain-isolation.mjs','release-toolchain-authority.mjs','release-toolchain-source.mjs','release-toolchain-profiles.mjs']);
 const CASES=['normal','controller-death-before-commit','controller-death-after-commit'];
 const need=(v,c)=>{if(!v)throw Error('booking_native_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c),hash=v=>createHash('sha256').update(v).digest('hex');
 const env=()=>({...bookingHostEnvironment(),NODE_OPTIONS:'',NODE_PATH:'',PM2_NODE_OPTIONS:''}),now=()=>new Date().toISOString(),wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -227,8 +228,8 @@ function production(){
   registry:bookingHostSql("begin read only;select encode(sha256(convert_to(jsonb_agg(to_jsonb(m) order by version)::text,'UTF8')),'hex') from public.faolla_schema_migrations m;rollback;")};
 }
 export async function runFullToolchainRehearsal(){
- need(process.argv.length===2,'arguments');const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
- need(directory==='/var/lib/faolla-online-code/'+toolRevision&&/^[a-f0-9]{40}$/.test(toolRevision),'prepared_source');inspectPinnedExecutionSource({revision:toolRevision,directory});inspectToolchainNginxProfile(NGINX);
+ const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
+ need(directory==='/var/lib/faolla-online-code/'+toolRevision&&/^[a-f0-9]{40}$/.test(toolRevision),'prepared_source');const verifiedSource=inspectPinnedExecutionSource({revision:toolRevision,directory});inspectToolchainNginxProfile(NGINX);
  const formal=production(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
  const sourceHashes=Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,hash(fs.readFileSync(new URL('./'+f,import.meta.url)))]));
  write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
@@ -293,7 +294,7 @@ export async function runFullToolchainRehearsal(){
  const report={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision,candidate:CANDIDATE,rollback:APPLICATION,productionMutated:false,originalTimerMutated:false,mailEnabled:false,
   postgresServerVersionNum:'150008',postgresSystemIdentifier,allFixturesStopped:true,cases:results,sourceHashes,activationBodySha256:BOOKING_ACTIVATION_BODY_SHA256,
   scope:'shared handoff/watchdog/recovery sequences with real isolated IO; production-specific attesters and certificate validation remain mandatory on the real host',completedAt:now()};
- const complete={...report,publicationAuthority:false,isolationRoot:isolation.root,backupRestoreVerified:true};write(root+'/acceptance.json',complete);
+ const complete={...report,publicationAuthority:false,isolationRoot:isolation.root,backupRestoreVerified:true,toolInventorySha256:verifiedSource.inventorySha256};write(root+'/acceptance.json',complete);
  console.log(JSON.stringify({kind:report.kind,root,cases:results.map(c=>({name:c.name,elapsedMs:c.elapsedMs})),productionMutated:false,allFixturesStopped:true}));return {root,report:complete};
 }
 async function main(){

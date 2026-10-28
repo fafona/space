@@ -5,6 +5,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_READY_BASE as BASE} from './booking-ready-policy.mjs';
 import {assertBookingReadySource} from './booking-ready-tool.mjs';
 import {reviewedBookingExecution,preparedBookingExecution} from './release-toolchain-authority.mjs';
+import {assertExecutionWorkerReceipt} from './release-toolchain-worker-contract.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A,assertBookingAtomicCohort} from './booking-handoff-policy.mjs';
 import {assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
 import {normalizeRetirementProcess,assertExistingPm2Directory} from './online-release-retirement.mjs';
@@ -39,14 +40,14 @@ export function assertBookingReadyWorkerTransition(before,after,revision){
  const fixed=p=>Object.fromEntries(Object.entries(p).filter(([k])=>!['pid','restartCount','createdAt','executable'].includes(k)));
  same(fixed(after),fixed(before),'worker_configuration_changed');return true;
 }
-function collect(workerContinuation){
+function collect(workerContinuation,preparedContinuation=workerContinuation){
  const raw=bookingReadyRawProcesses(),rows=raw.map(normalizeRetirementProcess).sort((a,b)=>a.pmId-b.pmId),ready=JSON.parse(read(ROOT+'/runtime-ready.json')),
  attempt=JSON.parse(read(ROOT+'/runtime-attempt.json'));
  need(attempt.plan?.toolRevision===BASE&&hash(retentionCanonicalText(attempt.plan))===ready.planSha256,'original_plan');
  need(rows.length===ready.after.processes.length,'process_count');
  for(const old of ready.after.processes.filter(p=>p.name!=='merchant-space')){
   const actual=rows.find(p=>p.name===old.name);
-  if(old.name===WORKER&&workerContinuation){assertBookingReadyWorkerTransition(old,actual,workerContinuation.toolRevision);same(actual,workerContinuation.after,'worker_receipt');}
+  if(old.name===WORKER&&workerContinuation){assertBookingReadyWorkerTransition(old,preparedContinuation.after,preparedContinuation.toolRevision);same(actual,workerContinuation.after,'worker_receipt');}
   else same(actual,old,'protected_process_changed');
  }
  for(const old of ready.after.identityProofs.filter(p=>p.name!=='merchant-space')){
@@ -87,6 +88,17 @@ export function attestBookingReadyReplacement(receipt,toolRevision){
  need(receipt.schemaVersion===1&&receipt.kind==='booking-ready-worker-replacement'&&receipt.priorTool===BASE&&
  receipt.toolRevision===toolRevision&&receipt.gateNeverOpened===true&&receipt.mailEnabled===false&&
  receipt.attemptSha256===hash(read(ROOT+'/ready-worker-attempt.json')),'worker_continuation');
- return collect(receipt);
+ const adopted=preparedBookingExecution(toolRevision);if(!adopted)return collect(receipt);
+ // Read the actual configured worker revision, then verify every immutable
+ // source-only hop back to the original prepared receipt. No latest-pointer,
+ // caller supplied receipt, process-name exception or historical rewrite.
+ const actual=bookingReadyRawProcesses().map(normalizeRetirementProcess).find(p=>p.name===WORKER),match=/^\/var\/lib\/faolla-online-code\/([a-f0-9]{40})\/scripts\/booking-atomic-worker\.mjs$/.exec(actual?.executable??'');
+ need(match,'execution_worker_source');const chain=[],seen=new Set();let revision=match[1];
+ while(revision!==toolRevision){need(chain.length<32&&!seen.has(revision),'execution_worker_chain');seen.add(revision);
+  const root=ROOT+'/toolchain-runtime/'+revision,next=JSON.parse(read(root+'/worker-completed.json')),attempt=JSON.parse(read(root+'/worker-attempt.json'));
+  need(next.toolRevision===revision,'execution_worker_receipt');chain.push({receipt:next,attempt,revision});revision=next.priorRevision;
+ }
+ let latest=receipt;for(const hop of chain.reverse()){assertExecutionWorkerReceipt(hop.receipt,hop.attempt,{revision:hop.revision,prior:latest});latest=hop.receipt;}
+ return collect(latest,receipt);
 }
 export function verifyBookingReadyRuntimeCohort(options){assertOnlineRetentionHeldLocks(options.lock);return collectBookingReadyRuntimeCohort(options);}

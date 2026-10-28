@@ -35,7 +35,7 @@ function fixture(failure){
  if(failure==='archive')backup.archiveSha256='changed';
  const sealed=JSON.stringify(binding);if(failure==='archive')backup.archiveSha256='different';
  const calls=[];let observedCount=0;
- const fn=extracted('validateBookingPublicationBackupEvidence',{C,BASE,OP:op,DIR:'/dir',need,same,hash,bookingPublicationBackupRequest,
+ const fn=extracted('validateBookingPublicationBackupEvidence',{C,BASE,OP:op,DIR:'/dir',need,same,hash,bookingPublicationBackupRequest,retainedBookingMigrationBackup:async()=>null,
   observe:()=>{calls.push('observe');observedCount++;if(failure==='source')throw Error('source');return failure==='drift'&&observedCount>1?{...facts,application:{build:'changed'}}:facts;},
   read:f=>{if(failure==='missing')throw Error('missing');if(f.endsWith('application-binding.json'))return sealed;return failure==='report'&&f===request.verifyReport?Buffer.from('changed'):files[f];},
   validateAttendanceBackupEvidence:async input=>{calls.push('validate');assert.equal(input.target,BASE);assert.equal(input.backup,request.backup);if(failure==='shared')throw Error('shared');return backup;},
