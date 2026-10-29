@@ -94,7 +94,11 @@ jobs:
         run: |
           set -euo pipefail
           revision="$(git rev-parse HEAD)"
-          sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs"
+          # Independent fresh resources after each successful pass. The FIRST
+          # failure stops; no failed attempt is retried, resumed or discarded.
+          for repetition in 1 2 3 4 5 6 7 8; do
+            sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs"
+          done
           sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs" --interrupt
       - name: Active Incident Existing Operation Kernel Lock Acceptance
         shell: bash
