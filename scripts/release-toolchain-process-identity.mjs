@@ -3,10 +3,13 @@
 // every durable field, including the exact command, cwd and executable inode.
 import {isDeepStrictEqual} from 'node:util';
 import {assertSameLongLivedDaemon} from './release-toolchain-daemon-identity.mjs';
-import {sha256,requireToolchain as need,exactKeys} from './release-toolchain-contracts.mjs';
+import {requireToolchain as need,exactKeys} from './release-toolchain-contracts.mjs';
 const FIELDS=['pid','parentPid','startTicks','processIdentity','uid','cwd','cwdIdentity','executable','executableIdentity','commandLine','commandLineDigest'];
 export function assertSameNodeProcess(actual,expected){
- for(const value of [actual,expected]){exactKeys(value,FIELDS);need(Array.isArray(value.commandLine)&&value.commandLine.length>0&&value.commandLine.every(v=>typeof v==='string'&&!v.includes('\0')),'owned_resource_changed');need(value.commandLineDigest===sha256(value.commandLine.join('\0')+'\0'),'owned_resource_changed');}
+ // The digest is of the EXACT captured /proc bytes. PM2/process.title may
+ // leave extra zero padding that the decoded argument list does not retain.
+ // Never reconstruct that digest from the lossy parsed representation.
+ for(const value of [actual,expected]){exactKeys(value,FIELDS);need(Array.isArray(value.commandLine)&&value.commandLine.length>0&&value.commandLine.every(v=>typeof v==='string'&&!v.includes('\0')),'owned_resource_changed');}
  need(isDeepStrictEqual(actual.commandLine,expected.commandLine),'owned_resource_changed');
  const{commandLine:a,...left}=actual,{commandLine:b,...right}=expected;void a;void b;
  return assertSameLongLivedDaemon(left,right);
