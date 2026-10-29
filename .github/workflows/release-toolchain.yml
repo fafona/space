@@ -74,14 +74,19 @@ jobs:
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-interrupt.mjs"
       - name: Full Active-Profile Isolated Handoff And Interruption
+        # Independent diagnostic branch only: retain evidence sooner on a
+        # post-report exit hang. This is a failure, never release acceptance.
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
           revision="$(git rev-parse HEAD)"
           sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs"
+          printf '{"kind":"active-normal-cli-exited"}\n'
           # Fresh independent owners expose rare readiness/read/exit races.
           # Stop at the first failure and keep its full diagnostic evidence.
           for repetition in 1 2 3 4 5 6 7 8; do
+            printf '{"kind":"active-interruption-cli-starting","repetition":%s}\n' "$repetition"
             sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs" --interrupt
           done
       - name: Real PM2 And Next Production Transition Equivalence
