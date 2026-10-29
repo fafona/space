@@ -10,7 +10,7 @@ import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.
 import {collectActiveBookingLegacyHost,collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {assertCompletePm2DumpSet} from './release-toolchain-pm2-transition.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
-import {verifyPm2Dump,pm2RegistryDigest} from './production-maintenance-pm2-adapter.mjs';
+import {verifyPm2Dump,pm2RegistryDigest,capturePm2DumpTarget} from './production-maintenance-pm2-adapter.mjs';
 import {verifyQualificationFiles,observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';
 import {verifyFullInterruptionReport} from './release-toolchain-full-interrupt.mjs';
 import {validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
@@ -22,6 +22,7 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
 import {bookingHostRead,bookingHostSql,bookingHostRun} from './booking-handoff-host-io.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
+import {verifyOwnedActiveRoutingAcceptance} from './release-toolchain-active-generation-routing-native.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 const ROOT='/var/lib/faolla-booking-active-closures/'+P.operationId,OP='/var/lib/faolla-maintenance/merchant-space/operation.lock',RELEASE='/var/lib/faolla-online-release';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'evidence_invalid'),digest=file=>sha256(bookingHostRead(file,{binary:true}));
@@ -51,7 +52,7 @@ export function assertClosedActiveBookingReceipt({closed,context,sealed,completi
  need(Array.isArray(closed.publicProof)&&closed.publicProof.length===2&&new Set(closed.publicProof.map(v=>v.origin)).size===2&&closed.publicProof.every(v=>['https://faolla.com','https://launch.faolla.com'].includes(v.origin)&&v.status===200&&v.buildId===P.compatibleRollback&&Number.isSafeInteger(v.attempts)&&v.attempts>=1&&v.attempts<=6),'evidence_invalid');
  assertActiveBookingDatabaseProgress(context.before.database,closed.database,{systemIdentifier:'7612049595342295079',databaseOid:'5'});return true;
 }
-async function inspect(toolRevision,heldLock){
+async function inspect(toolRevision,heldLock,preparedWorker){
  need(process.platform==='linux'&&process.getuid?.()===0&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'unsupported_runtime');
  if(heldLock){assertOnlineRetentionHeldLocks(heldLock);need(reviewedBookingExecution(toolRevision),'source_changed');}else need(!fs.existsSync(OP),'attempt_unknown');
  ownedReleasePath(ROOT,{directory:true,privateMode:true});const entries=fs.readdirSync(ROOT);need(entries.length===1&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(entries[0]),'attempt_unknown');const directory=ROOT+'/'+entries[0];ownedReleasePath(directory,{directory:true,privateMode:true});
@@ -75,6 +76,7 @@ async function inspect(toolRevision,heldLock){
  need(context.qualificationAttempt.startsWith('/var/lib/faolla-booking-active-qualifications/'+P.operationId+'/'+toolRevision+'/attempt_')&&/^attempt_[0-9]{13}_[a-f0-9-]{36}$/.test(path.posix.basename(context.qualificationAttempt)),'invalid_path');
  const qualification=read(context.qualificationAttempt+'/verified.json');same(digest(context.qualificationAttempt+'/verified.json'),context.qualificationSha256);need(!fs.existsSync(context.qualificationAttempt+'/failed.json')&&qualification.kind==='active-incident-formal-qualification-completed'&&qualification.toolRevision===toolRevision&&qualification.inventorySha256===source.inventorySha256,'evidence_invalid');
  const native=verifyQualificationFiles(qualification.nativeRoot,{toolRevision,inventorySha256:source.inventorySha256}),interruption=verifyFullInterruptionReport(qualification.interruptionRoot,{toolRevision});same(native.sha256,qualification.nativeSha256);same(interruption.sha256,qualification.interruptionSha256);need(native.report.observationProfile==='fixed-active-incident-connect-only'&&interruption.report.observationProfile==='fixed-active-incident-connect-only','evidence_invalid');same(observeBookingCompatibility(native),context.compatibility);
+ same(verifyOwnedActiveRoutingAcceptance(qualification.activeRoutingNativeRoot,{toolRevision,inventorySha256:source.inventorySha256}).sha256,qualification.activeRoutingNativeSha256);
  need(typeof context.backupDirectory==='string'&&context.backupDirectory.startsWith(ACTIVE_INCIDENT_ROOT+'/toolchain-admission/')&&/^\d{13}-[a-f0-9-]{36}$/.test(path.posix.basename(context.backupDirectory)),'invalid_path');
  const backup=await validateAttendanceBackupEvidence({target:toolRevision,backup:context.backupDirectory+'/database.tar.enc',createReport:context.backupDirectory+'/backup-create.json',verifyReport:context.backupDirectory+'/backup-verify.json'});same(backup,context.backup);same(digest(context.backupDirectory+'/backup-application-binding.json'),context.backupBindingSha256);
  const check=()=>{
@@ -85,11 +87,22 @@ async function inspect(toolRevision,heldLock){
  };
  const pilots=bookingHostRun('docker',['inspect','--format','{{json .State.Running}}',...BOOKING_FORMAL_PILOT_IDS]).trim().split('\n');need(pilots.length===5&&pilots.every(value=>value==='false'),'owned_resource_changed');
  check();const cohort=collectActiveBookingLegacyHost(),physical=collectFormalBookingPm2Registry();assertCompletePm2DumpSet(physical.rows,physical.filteredRegistry);need(physical.rows.length===25,'owned_resource_changed');
- same(sha256(canonicalJson(cohort.processes)),context.before.processesSha256);same(sha256(canonicalJson(cohort.identityProofs)),context.before.identitiesSha256);same(sha256(canonicalJson(cohort.raw)),context.before.legacyEnvironmentSha256);
- const {commandLine,...daemon}=captureProcessFact(physical.daemon.pid),boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();same(daemon,attempt.daemon);same(boot,attempt.bootId);same(commandLine,['PM2 v6.0.14: God Daemon (/root/.pm2)']);same(pm2RegistryDigest(physical.filteredRegistry),saved.registrySha256);need(await verifyPm2Dump(daemon,boot,physical.filteredRegistry,saved.receipt)===true,'operation_unconfirmed');
+ const originalCohort=preparedWorker?preparedWorker.priorCohort:cohort;if(preparedWorker){same(cohort,preparedWorker.after.legacy);same(physical.filteredRegistry,preparedWorker.physical.filteredRegistry);same(preparedWorker.closedSha256,sha256(canonicalJson(closed)+'\n'));}
+ same(sha256(canonicalJson(originalCohort.processes)),context.before.processesSha256);same(sha256(canonicalJson(originalCohort.identityProofs)),context.before.identitiesSha256);same(sha256(canonicalJson(originalCohort.raw)),context.before.legacyEnvironmentSha256);
+ const {commandLine,...daemon}=captureProcessFact(physical.daemon.pid),boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();same(daemon,attempt.daemon);same(boot,attempt.bootId);same(commandLine,['PM2 v6.0.14: God Daemon (/root/.pm2)']);
+ if(preparedWorker){same(pm2RegistryDigest(preparedWorker.priorRegistry),saved.registrySha256);same(await capturePm2DumpTarget(daemon,boot),saved.receipt.target);}
+ else{same(pm2RegistryDigest(physical.filteredRegistry),saved.registrySha256);need(await verifyPm2Dump(daemon,boot,physical.filteredRegistry,saved.receipt)===true,'operation_unconfirmed');}
  const database=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));assertActiveBookingDatabaseProgress(closed.database,database,{systemIdentifier:'7612049595342295079',databaseOid:'5'});same(readOnlineRetentionHistory().headSha256,context.before.retentionHeadSha256);
  const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:P.compatibleRollback,operationId:randomUUID(),verify:check,deadlineAtMs:Date.now()+30000});same(collectActiveBookingLegacyHost(),cohort);check();
  return{kind:'closed-active-incident-current-observation',oldOperationId:P.operationId,generation:P.generation,toolRevision,inventorySha256:source.inventorySha256,directory,closedSha256:sha256(canonicalJson(closed)+'\n'),closureSha256:closed.closureSha256,closedAt:closed.completedAt,qualificationSha256:context.qualificationSha256,qualification,compatibility:context.compatibility,database,actualRoute:P.compatibleRollback,publicProof,originalOperationInodeRetained:true,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
 export const inspectClosedActiveBookingIncidentForPreparation=toolRevision=>inspect(toolRevision,null);
 export const inspectClosedActiveBookingIncidentUnderHeldLocks=async({toolRevision,lock})=>{assertOnlineRetentionHeldLocks(lock);return inspect(toolRevision,lock);};
+// A distinct profile after the one approved gated-worker source transition.
+// Actual sealed private receipts + current peer/process/raw environment are
+// checked first; callers cannot provide a JSON exception or original cohort.
+export async function inspectClosedActiveBookingIncidentWithPreparedWorker({lock,toolRevision,window,directory}){
+ const {observeActiveBookingPreparedWorker}=await import('./release-toolchain-active-generation-worker.mjs');
+ const before=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory}),result=await inspect(toolRevision,lock,before),after=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory});
+ same(after.receiptSha256,before.receiptSha256);same(after.after,before.after);same(after.priorRegistry,before.priorRegistry);return{...result,preparedWorker:{receiptSha256:after.receiptSha256,process:after.after.process,gateOpen:false,publicationAuthority:false}};
+}
