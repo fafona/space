@@ -465,6 +465,16 @@ export async function withActiveBookingIncidentPreparationLocks({toolRevision},w
     async(token,context)=>{assertHeldLocks(token);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;});
 }
 
+// Distinct post-save profile. The original pre-metadata observer above still
+// refuses this state; callers cannot select an observer, resource or old UUID.
+export async function withPostSaveBookingPreparationLocks({toolRevision},work){
+  if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('active_incident_scope');
+  const {reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),authority=reviewedBookingExecution(toolRevision);
+  if(!authority?.prepared.postSavePartial||authority.prepared.postSavePartial.metadataWriteAllowed!==false||authority.prepared.postSavePartial.processSaveAllowed!==false)fail('active_incident_review_required');
+  const {observePostSaveIncident}=await import('./release-toolchain-post-save-evidence.mjs');
+  return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:async window=>{if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');const result=await observePostSaveIncident({window});if(result.history.pinsSha256!==authority.prepared.postSavePartial.pinsSha256)fail('active_incident_review_changed');return result.current;}},async(token,context)=>{assertHeldLocks(token);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;});
+}
+
 // Closed disposable CI entry: same actual FD/flock/inode implementation, but a
 // separate owned resource identity. Its tokens MUST fail production admission.
 export async function acceptActiveIncidentPreparationLocksInCi() {
@@ -558,6 +568,12 @@ export async function releaseOwnedActiveReconciliationOperation(capability,token
   const closure=await verifyOwnedActiveReconciliationClosure(capability,token);
   return releaseArchivedReplacement(token,closure,'owned-active-reconciliation-completed','owned-active-replacement');
 }
+export async function archiveOwnedPostSaveOperation(capability,token){
+  await assertOwnedActiveReconciliationHeldLocks(capability,token);const {verifyOwnedPostSaveClosure}=await import('./release-toolchain-post-save-native.mjs');const closure=await verifyOwnedPostSaveClosure(capability,token);return archiveOwnedExistingOperation(token,closure.directory,closure.sha256);
+}
+export async function releaseOwnedPostSaveOperation(capability,token){
+  await assertOwnedActiveReconciliationHeldLocks(capability,token);const {verifyOwnedPostSaveClosure}=await import('./release-toolchain-post-save-native.mjs');const closure=await verifyOwnedPostSaveClosure(capability,token);return releaseArchivedReplacement(token,closure,'owned-post-save-reconciliation-completed','owned-post-save-replacement');
+}
 function releaseArchivedReplacement(token,closure,completionKind,releaseKind){
   assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);
   const completed=JSON.parse(readOwned(closure.directory+'/reconciliation-completed.json'));
@@ -587,6 +603,12 @@ export async function archiveActiveBookingClosureOperation({lock,toolRevision,wi
 export async function releaseActiveBookingClosureOperation({lock,toolRevision,window}){
   assertHeldLocks(lock);const {verifyActiveBookingClosure}=await import('./release-toolchain-active-generation-closure.mjs');
   const closure=await verifyActiveBookingClosure({lock,toolRevision,window});return releaseArchivedReplacement(lock,closure,'active-incident-reconciliation-completed','active-incident-replacement');
+}
+export async function archivePostSaveBookingClosureOperation(options){
+  assertHeldLocks(options.lock);const {verifyPostSaveClosure}=await import('./release-toolchain-post-save-closure.mjs'),closure=await verifyPostSaveClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);
+}
+export async function releasePostSaveBookingClosureOperation(options){
+  assertHeldLocks(options.lock);const {verifyPostSaveClosure}=await import('./release-toolchain-post-save-closure.mjs'),closure=await verifyPostSaveClosure(options);return releaseArchivedReplacement(options.lock,closure,'active-incident-reconciliation-completed','active-incident-replacement');
 }
 
 // Physical archive primitive shared with disposable native tests. Deliberately

@@ -16,9 +16,10 @@ const scopes=new WeakMap(),source=path.dirname(path.dirname(fileURLToPath(import
 const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'owned_lab_observation_changed');
 export const ACTIVE_LAB_CASES=Object.freeze(['normal','after-metadata','after-save','after-archive','controller-death-after-metadata','controller-death-after-save','controller-death-after-archive']);
+const POST_SAVE_LAB_CASES=Object.freeze(['post-save','post-save-incomplete']);
 // Pure path derivation only: never a capability or a selectable formal path.
 export function activeReconciliationCaseLocation(directory){
- need(typeof directory==='string'&&/^\/var\/lib\/faolla-active-reconciliation-ci-[A-Za-z0-9]+\/(normal|after-metadata|after-save|after-archive|controller-death-after-metadata|controller-death-after-save|controller-death-after-archive)$/.test(directory),'invalid_path');
+ need(typeof directory==='string'&&/^\/var\/lib\/faolla-active-reconciliation-ci-[A-Za-z0-9]+\/(normal|after-metadata|after-save|after-archive|controller-death-after-metadata|controller-death-after-save|controller-death-after-archive|post-save|post-save-incomplete)$/.test(directory),'invalid_path');
  return Object.freeze({root:path.posix.dirname(directory),directory});
 }
 const identity=s=>Object.fromEntries(['dev','ino','uid','mode'].map(k=>[k,s[k]]));
@@ -57,7 +58,9 @@ insert into public.pages(merchant_id,slug,blocks) values('__faolla_booking_persi
  isolatedPg(isolation,database,'update public.faolla_booking_atomic_control set active=true where singleton;');
  return database;
 }
-export async function createOwnedActiveReconciliationCases(pm2Root){
+export const createOwnedActiveReconciliationCases=pm2Root=>createCases(pm2Root,ACTIVE_LAB_CASES);
+export const createOwnedPostSaveCases=pm2Root=>createCases(pm2Root,POST_SAVE_LAB_CASES);
+async function createCases(pm2Root,names){
  ci();need(/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(pm2Root),'invalid_path');dir(pm2Root);
  const tool=inspectPinnedExecutionSource({revision,directory:source}),physical=collectOwnedCiPm2Registry(pm2Root);assertCompletePm2DumpSet(physical.rows,physical.filteredRegistry);
  need(physical.rows.length===3&&physical.rows.some(r=>r.name==='eq-next'&&r.pm2_env.env.FAOLLA_BACKGROUND_JOBS_PAUSED==='1')&&physical.rows.some(r=>r.name==='owned-gated-worker'&&r.pm_id===2),'owned_resource_changed');
@@ -67,7 +70,7 @@ export async function createOwnedActiveReconciliationCases(pm2Root){
   isolation=createOwnedIsolation();const database=seedActiveFixture(isolation),cases=[];
   const sourceNames=['release-toolchain-active-generation-owned-lab.mjs','release-toolchain-active-generation-reconciliation.mjs','release-toolchain-active-generation-reconciliation-case.mjs','release-toolchain-active-generation-preservation.mjs','release-toolchain-active-generation-metadata.mjs','release-toolchain-active-generation-persistence.mjs','online-release-retention-writer.mjs','release-toolchain-pm2-observation.mjs'];
   const sourceHashes=Object.fromEntries(sourceNames.map(name=>[name,sha256(fs.readFileSync(source+'/scripts/'+name))]));
-  for(const name of ACTIVE_LAB_CASES){
+  for(const name of names){
    const directory=make(root,name),evidence=make(directory,'old-evidence');make(directory,'operation.lock');bookingHostWriteOnce(directory+'/deploy.lock','owned active reconciliation kernel lease\n');
    const oldText=canonicalJson({kind:'owned-previous-interrupted-operation',publicationCompleted:false,fixtureOnly:true})+'\n';bookingHostWriteOnce(evidence+'/old-operation.json',oldText);
    const beforeText='{"target":"owned-lab-stale-metadata"}',afterText='{"target":"owned-lab-compatible"}';bookingHostWriteOnce(directory+'/active.json',beforeText);
@@ -78,13 +81,14 @@ export async function createOwnedActiveReconciliationCases(pm2Root){
  }catch(error){if(isolation)stopOwnedIsolation(isolation);throw error;}
 }
 export function loadOwnedActiveReconciliationCase(directory){
- ci();need(/^\/var\/lib\/faolla-active-reconciliation-ci-[A-Za-z0-9]+\/(normal|after-metadata|after-save|after-archive|controller-death-after-metadata|controller-death-after-save|controller-death-after-archive)$/.test(directory),'invalid_path');dir(directory);
- const owner=read(directory+'/owner.json');need(owner.kind==='owned-active-reconciliation-case'&&owner.directory===directory&&ACTIVE_LAB_CASES.includes(owner.name)&&directory.endsWith('/'+owner.name)&&owner.toolRevision===revision&&/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(owner.pm2Root),'owned_resource_changed');
+ ci();activeReconciliationCaseLocation(directory);dir(directory);
+ const owner=read(directory+'/owner.json');need(owner.kind==='owned-active-reconciliation-case'&&owner.directory===directory&&[...ACTIVE_LAB_CASES,...POST_SAVE_LAB_CASES].includes(owner.name)&&directory.endsWith('/'+owner.name)&&owner.toolRevision===revision&&/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(owner.pm2Root),'owned_resource_changed');
  return issue(owner);
 }
 export function ownedActiveReconciliationBoundary(capability,boundary){
  const s=ownedActiveReconciliationScope(capability);need(['after-metadata','after-save','after-archive'].includes(boundary),'invalid_contract');
  if(s.name===boundary)throw Error('owned_lab_'+boundary.replaceAll('-','_')+'_unknown');
+ if(s.name==='post-save-incomplete'&&boundary==='after-save')throw Error('owned_lab_post_save_incomplete_unknown');
  if(s.name==='controller-death-'+boundary)process.kill(process.pid,'SIGKILL');
 }
 export async function observeOwnedActiveReconciliation(capability){
@@ -99,8 +103,10 @@ export async function observeOwnedActiveReconciliation(capability){
 export function assertOwnedActiveReconciliationDelta(before,after,{metadata=false}={}){
  const expected=structuredClone(before);if(metadata)expected.activeText='{"target":"owned-lab-compatible"}';same(after,expected);return true;
 }
-export function createOwnedActiveReconciliationBackup(capability){
- const s=ownedActiveReconciliationScope(capability),before=JSON.parse(isolatedPg(s.isolation,s.database,dataSql)),file=s.directory+'/backup.dump';
+export const createOwnedActiveReconciliationBackup=capability=>createBackup(capability,'backup.dump','backup-verified.json');
+export const createOwnedPostSaveBackup=capability=>createBackup(capability,'post-save-backup.dump','post-save-backup-verified.json');
+function createBackup(capability,archiveName,reportName){
+ const s=ownedActiveReconciliationScope(capability),before=JSON.parse(isolatedPg(s.isolation,s.database,dataSql)),file=s.directory+'/'+archiveName;
  const fd=fs.openSync(file,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
  try{const r=spawnSync('docker',isolatedPgArguments(s.isolation,s.database,{program:'pg_dump'}),{stdio:['ignore',fd,'pipe'],env:{PATH:'/usr/bin:/bin'},timeout:60000,maxBuffer:1024**2});need(r.status===0&&!r.signal&&!r.error,'owned_lab_dump_failed');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}bookingHostSync(s.directory);
  const archive=fs.readFileSync(file),binding=fingerprint('backup-archive',archive),restoredDatabase='faolla_booking_activation_'+randomUUID().replaceAll('-','').slice(0,16);
@@ -108,5 +114,5 @@ export function createOwnedActiveReconciliationBackup(capability){
  const restored=spawnSync('docker',isolatedPgArguments(s.isolation,restoredDatabase,{program:'pg_restore'}),{input:verifyIsolatedArchiveBytes(archive,binding),env:{PATH:'/usr/bin:/bin'},timeout:60000,maxBuffer:1024**2});need(restored.status===0&&!restored.signal&&!restored.error,'owned_lab_restore_failed');
  same(JSON.parse(isolatedPg(s.isolation,restoredDatabase,dataSql)),before);same(JSON.parse(isolatedPg(s.isolation,s.database,dataSql)),before);
  const corrupt=Buffer.from(archive);corrupt[Math.floor(corrupt.length/2)]^=1;let refused=false;try{verifyIsolatedArchiveBytes(corrupt,binding);}catch{refused=true;}need(refused,'owned_lab_corruption_not_refused');
- const proof={kind:'owned-active-reconciliation-dump-restore',containerId:s.isolation.owner.containerId,sourceDatabase:s.database,restoredDatabase,archive:binding,activeRowsPreserved:true,corruptArchiveRefused:true,formalDatabaseTouched:false,publicationAuthority:false,at:new Date().toISOString()};sealOwnedLab(s.directory+'/backup-verified.json',proof);return proof;
+ const proof={kind:'owned-active-reconciliation-dump-restore',containerId:s.isolation.owner.containerId,sourceDatabase:s.database,restoredDatabase,archive:binding,activeRowsPreserved:true,corruptArchiveRefused:true,formalDatabaseTouched:false,publicationAuthority:false,at:new Date().toISOString()};sealOwnedLab(s.directory+'/'+reportName,proof);return proof;
 }
