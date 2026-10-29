@@ -11,6 +11,7 @@ import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
 import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
 import{collectOwnedCiPm2Registry}from'./release-toolchain-pm2-observation.mjs';
+import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&process.argv.length===2&&!ANCHORS.some(f=>fs.existsSync(f)),'ci_only');
@@ -32,6 +33,9 @@ else:
  p=v['socket'];r=v['root'];st=os.lstat(r)
  if not r.startswith('/var/lib/faolla-eq-') or os.path.realpath(r)!=r or st.st_uid!=0 or st.st_mode&0o777!=0o700 or p!=r+'/pm2/rpc.sock': raise RuntimeError('scope')
  d=m._peer._validate_expected(v['daemon']);chain=m._peer._path_chain(p,0)
+ if v['action']=='active-owned-worker':
+  spec=importlib.util.spec_from_file_location('active_worker',os.path.join(os.path.dirname(sys.argv[1]),'release-toolchain-active-generation-pm2-worker.py'));active=importlib.util.module_from_spec(spec);spec.loader.exec_module(active)
+  result=active.replace_owned_ci_worker(v);print(json.dumps(result,separators=(',',':')));sys.exit(0)
  if v['action'].startswith('dump-'):
   ds=importlib.util.spec_from_file_location('fixed_dump',os.path.join(os.path.dirname(sys.argv[1]),'production-maintenance-pm2-dump.py'));dump=importlib.util.module_from_spec(ds);ds.loader.exec_module(dump)
   if v['action']=='dump-inspect': result=m._control.inspect_pm2_registry(p,d)
@@ -70,7 +74,7 @@ function fact(pid){const s=fs.readFileSync('/proc/'+pid+'/stat','utf8'),f=s.slic
 function alive(p){try{const now=fact(p.pid);assert.deepEqual(Object.fromEntries(['pid','startTicks','cwd','executable'].map(k=>[k,now[k]])),Object.fromEntries(['pid','startTicks','cwd','executable'].map(k=>[k,p[k]])));return true;}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH'||e.message==='equivalence_process')return false;throw e;}}
 function assertDaemon(){need(daemon&&alive(daemon)&&fs.readFileSync('/proc/'+daemon.pid+'/cmdline','utf8').replace(/\0+$/,'')==='PM2 v6.0.14: God Daemon ('+home+')','daemon_identity');}
 function privateAppProcesses(){const found=[];for(const entry of fs.readdirSync('/proc')){if(!/^[1-9][0-9]*$/.test(entry))continue;const pid=Number(entry);try{if(fs.realpathSync('/proc/'+pid+'/cwd')!==release)continue;const p=fact(pid);need(p.executable==='/usr/bin/node','fixture_app_executable');found.push(p);}catch(error){if(['ENOENT','ESRCH','EACCES'].includes(error.code))continue;throw error;}}return found;}
-const registry=()=>{assertDaemon();const r=python({action:'registry',daemon:daemonPeer,root,socket:home+'/rpc.sock'});need(Array.isArray(r)&&r.length<=2,'registry');for(const row of r.filter(p=>p.pid>0)){const f=fact(row.pid);need(f.parentPid===daemon.pid&&f.cwd===release&&f.executable==='/usr/bin/node','child_identity');owned.set(row.pid,f);}return r;};
+const registry=()=>{assertDaemon();const r=python({action:'registry',daemon:daemonPeer,root,socket:home+'/rpc.sock'});need(Array.isArray(r)&&r.length<=3,'registry');for(const row of r.filter(p=>p.pid>0)){const f=fact(row.pid);need(f.parentPid===daemon.pid&&f.cwd===release&&f.executable==='/usr/bin/node','child_identity');owned.set(row.pid,f);}return r;};
 const raw=pid=>Object.fromEntries(fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean).map(s=>{const i=s.indexOf('=');return[s.slice(0,i),s.slice(i+1)];}));
 const manager=p=>({exitCode:p.exit_code??null,nodeVersion:p.node_version??null,version:p.version??null,previousRestartDelay:p.prev_restart_delay??null,unstableRestarts:p.unstable_restarts??null});
 let daemonPeer;
@@ -93,10 +97,17 @@ try{
  fs.writeFileSync(configFile,'module.exports='+JSON.stringify(config)+';\n',{mode:0o600,flag:'wx'});run('/usr/bin/node',[pm2+'/bin/pm2','start',configFile]);
  const started=registry();need(started.length===1&&started[0].name===name&&started[0].pm_id===0&&started[0].pm2_env.pm_cwd===release&&started[0].pm2_env.pm_exec_path===release+'/node_modules/next/dist/bin/next','started_real_next');await ready(port);
  run('/usr/bin/node',[pm2+'/bin/pm2','start',release+'/scripts/unrelated.cjs','--name','eq-unrelated','--cwd',release]);
+ // A third, genuinely owned still-gated worker. Its real PM2 id is 2; it never
+ // aliases the formal worker's id/PID or touches application/DB credentials.
+ for(const [file,body]of [['owned-worker-old.cjs','setInterval(()=>{},1000);\n'],['owned-worker-new.cjs','/* owned source variant */ setInterval(()=>{},1000);\n']])fs.writeFileSync(release+'/scripts/'+file,body,{mode:0o600,flag:'wx'});
+ const workerConfigDirectory=root+'/worker-fixture';fs.mkdirSync(workerConfigDirectory,{mode:0o700});
+ const workerConfig={apps:[{name:'owned-gated-worker',script:release+'/scripts/owned-worker-old.cjs',cwd:release,args:[],interpreter:'/usr/bin/node',exec_mode:'fork',watch:false,autorestart:true,env:{FAOLLA_BACKGROUND_JOBS_PAUSED:'0',MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED:'1',MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED:'0',MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED:'0'}}]};
+ fs.writeFileSync(workerConfigDirectory+'/ecosystem.config.cjs','module.exports='+JSON.stringify(workerConfig)+';\n',{mode:0o600,flag:'wx'});run('/usr/bin/node',[pm2+'/bin/pm2','start',workerConfigDirectory+'/ecosystem.config.cjs']);
  // Model the stable existing production host, not a process restarted within
  // PM2's pinned default min_uptime (1000ms), which increments unstable_restarts.
  const warming=registry().find(p=>p.name===name);need(warming&&[undefined,1000].includes(warming.pm2_env.min_uptime),'fixture_min_uptime');
- await sleep(Math.max(0,1500-(Date.now()-warming.pm2_env.pm_uptime)));
+ const warmRows=registry();need(warmRows.every(row=>[undefined,1000].includes(row.pm2_env.min_uptime)),'fixture_all_min_uptime');
+ await sleep(Math.max(0,...warmRows.map(row=>1500-(Date.now()-row.pm2_env.pm_uptime))));
  for(let i=0;i<100&&applicationConnections(port).length;i++)await sleep(25);
  need(applicationConnections(port).length===0,'fixture_requests_not_drained');
  const rows=registry(),beforeRow=rows.find(p=>p.name===name),other=rows.find(p=>p.name==='eq-unrelated');need(beforeRow.pm_id===0&&beforeRow.pm2_env.status==='online'&&other?.pid>0,'initial_processes');
@@ -132,7 +143,7 @@ try{
  need(daemonCommand.length===1&&daemonCommand[0]==='PM2 v6.0.14: God Daemon ('+home+')','dump_daemon_command');
  assert.deepEqual(await inspectPm2Registry(dumpDaemon,dumpBoot),dumpRegistry);assert.deepEqual(await capturePm2DumpTarget(dumpDaemon,dumpBoot),dumpTarget);
  const dumpReceipt=await persistPm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpTarget);
- need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===2,'dump_receipt');
+ need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===3,'dump_receipt');
  need(python({...dumpRequest,action:'dump-verify',registry:dumpRegistry,proof:dumpReceipt})===true,'dump_verification');
  need(await verifyPm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'production_adapter_dump_verification');
  const dumpSha=sha(fs.readFileSync(home+'/dump.pm2'));
@@ -150,7 +161,21 @@ try{
  seal('transition-verified.json',{value,termination,sharedProductionFraming:true,realNext:true,realPm2:true,staleAttemptRefusedWithoutSend:true,unrelatedProcessUnchanged:true});
  stage='complete-active-reconciliation-and-controller-deaths';
  const {acceptOwnedActiveReconciliation}=await import('./release-toolchain-active-generation-reconciliation.mjs');
- seal('active-reconciliation-verified.json',await acceptOwnedActiveReconciliation(root));passed=true;
+ seal('active-reconciliation-verified.json',await acceptOwnedActiveReconciliation(root));
+ stage='active-private-worker-source-equivalence';
+ const workerRows=registry(),workerBefore=workerRows.find(row=>row.name==='owned-gated-worker');need(workerBefore?.pm_id===2&&workerBefore.pm2_env.pm_exec_path===release+'/scripts/owned-worker-old.cjs','owned_worker_predecessor');
+ const workerBeforeRaw=raw(workerBefore.pid),workerBeforeConfig=bookingReadyWorkerConfiguration(workerBefore.pm2_env),workerOriginal=fact(workerBefore.pid),protectedWorkers=workerRows.filter(row=>row.name!=='owned-gated-worker').map(row=>({row:stablePm2RegistryRow(row),identity:fact(row.pid),raw:raw(row.pid)}));
+ const workerFields=['status','pm_cwd','pm_exec_path','exec_interpreter','exec_mode','args','node_args','watch','cron_restart','autorestart','kill_timeout','shutdown_with_message','created_at','pm_uptime','restart_time','node_version','version','exit_code','prev_restart_delay','unstable_restarts','FAOLLA_BACKGROUND_JOBS_PAUSED','env'];
+ const workerExpected={name:workerBefore.name,pid:workerBefore.pid,pm_id:workerBefore.pm_id,pm2_env:Object.fromEntries(workerFields.map(key=>[key,workerBefore.pm2_env[key]??(['args','node_args'].includes(key)?[]:key==='shutdown_with_message'?false:null)]))};
+ const workerRequest={action:'active-owned-worker',root,socket:home+'/rpc.sock',daemon:daemonPeer,process:python({action:'identity',pid:workerBefore.pid}),expected:workerExpected};
+ need(python(workerRequest).acknowledged===true,'owned_worker_ack');let workerAfter;
+ for(let index=0;index<100;index++){workerAfter=registry().find(row=>row.name==='owned-gated-worker');if(workerAfter?.pid>0&&workerAfter.pid!==workerBefore.pid&&workerAfter.pm2_env.status==='online')break;await sleep(100);}
+ need(workerAfter?.pid>0&&workerAfter.pid!==workerBefore.pid&&workerAfter.pm2_env.pm_exec_path===release+'/scripts/owned-worker-new.cjs'&&workerAfter.pm2_env.restart_time===workerBefore.pm2_env.restart_time+1&&!alive(workerOriginal),'owned_worker_actual_transition');
+ const workerAfterConfig=bookingReadyWorkerConfiguration(workerAfter.pm2_env);assertBookingReadyWorkerRawTransition(workerBeforeRaw,raw(workerAfter.pid),workerBeforeConfig,workerAfterConfig);
+ const workerExpectedConfig={...workerBeforeConfig};for(const key of ['created_at','pm_uptime','restart_time','pm_exec_path','exit_code','node_version','version','prev_restart_delay','unstable_restarts'])if(Object.hasOwn(workerAfterConfig,key))workerExpectedConfig[key]=workerAfterConfig[key];assert.deepEqual(workerAfterConfig,workerExpectedConfig);
+ const workerStable=registry().map(stablePm2RegistryRow);python(workerRequest,{reject:true,rejectLastLine:'RuntimeError: active_worker_unverified'});assert.deepEqual(registry().map(stablePm2RegistryRow),workerStable);
+ for(const proof of protectedWorkers){const current=registry().find(row=>row.name===proof.row.name);assert.deepEqual(stablePm2RegistryRow(current),proof.row);assert.deepEqual(fact(current.pid),proof.identity);assert.deepEqual(raw(current.pid),proof.raw);}
+ need(!fs.existsSync(root+'/worker-enabled.json'),'owned_worker_gate');seal('active-worker-source-verified.json',{kind:'owned-active-gated-worker-source-transition-acceptance',actualPm2Id:2,formalPm2IdNotAliased:true,actualPidChanged:true,sourceOnlyTransition:true,configuredEnvironmentUnchanged:true,otherTwoProcessesUnchanged:true,staleReplayRefused:true,gateNotOpened:true,sharedUnchangedProductionPeerFraming:true,formalHostTouched:false,publicationAuthority:false});passed=true;
 }catch(e){
  // Synthetic fixture only: neither this isolated HOME nor these two generated
  // programs inherit server/CI credentials. Keep actual startup error evidence.

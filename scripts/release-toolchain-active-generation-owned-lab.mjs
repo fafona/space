@@ -60,7 +60,7 @@ insert into public.pages(merchant_id,slug,blocks) values('__faolla_booking_persi
 export async function createOwnedActiveReconciliationCases(pm2Root){
  ci();need(/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(pm2Root),'invalid_path');dir(pm2Root);
  const tool=inspectPinnedExecutionSource({revision,directory:source}),physical=collectOwnedCiPm2Registry(pm2Root);assertCompletePm2DumpSet(physical.rows,physical.filteredRegistry);
- need(physical.rows.length===2&&physical.rows.some(r=>r.name==='eq-next'&&r.pm2_env.env.FAOLLA_BACKGROUND_JOBS_PAUSED==='1'),'owned_resource_changed');
+ need(physical.rows.length===3&&physical.rows.some(r=>r.name==='eq-next'&&r.pm2_env.env.FAOLLA_BACKGROUND_JOBS_PAUSED==='1')&&physical.rows.some(r=>r.name==='owned-gated-worker'&&r.pm_id===2),'owned_resource_changed');
  const root=fs.mkdtempSync('/var/lib/faolla-active-reconciliation-ci-');fs.chmodSync(root,0o700);sealOwnedLab(root+'/started.json',{kind:'owned-active-reconciliation-started',toolRevision:revision,inventorySha256:tool.inventorySha256,publicationAuthority:false,at:new Date().toISOString()});
  let isolation;
  try{
