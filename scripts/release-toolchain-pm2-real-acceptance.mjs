@@ -163,6 +163,8 @@ try{
  stage='complete-active-reconciliation-and-controller-deaths';
  const {acceptOwnedActiveReconciliation}=await import('./release-toolchain-active-generation-reconciliation.mjs');
  seal('active-reconciliation-verified.json',await acceptOwnedActiveReconciliation(root));
+ const {acceptOwnedActivePublicationProtocol}=await import('./release-toolchain-active-generation-publication-native.mjs');
+ seal('active-publication-protocol-verified.json',await acceptOwnedActivePublicationProtocol(root));
  stage='active-private-worker-source-equivalence';
  const workerRows=registry(),workerBefore=workerRows.find(row=>row.name==='owned-gated-worker');need(workerBefore?.pm_id===2&&workerBefore.pm2_env.pm_exec_path===release+'/scripts/owned-worker-old.cjs','owned_worker_predecessor');
  const workerBeforeRaw=raw(workerBefore.pid),workerBeforeConfig=bookingReadyWorkerConfiguration(workerBefore.pm2_env),workerOriginal=fact(workerBefore.pid),protectedWorkers=workerRows.filter(row=>row.name!=='owned-gated-worker').map(row=>({row:stablePm2RegistryRow(row),identity:fact(row.pid),raw:raw(row.pid)}));

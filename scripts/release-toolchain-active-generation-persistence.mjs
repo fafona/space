@@ -90,6 +90,15 @@ export async function persistOwnedActiveReconciliationProcesses(capability,lock,
  const afterSave=()=>ownedActiveReconciliationBoundary(capability,'after-save');
  return persistObservedCurrentProcesses({directory,metadata,held,observe:()=>observeOwnedActiveReconciliation(capability),compare:assertOwnedActiveReconciliationDelta,collect:()=>collectOwnedCiPm2Registry(s.pm2Root),home:s.pm2Root+'/pm2',expectedPeer:physical.daemonPeer,afterSave});
 }
+// CI composition profile: the actual publication order saves current processes
+// BEFORE final metadata. It still uses the real peer-bound one-shot engine;
+// only genuine CI-owned capabilities and their physical kernel scope can call.
+export async function persistOwnedActivePublicationProcesses(capability,lock,window){
+ const {ownedActiveReconciliationScope,observeOwnedActiveReconciliation,assertOwnedActiveReconciliationDelta,ownedActiveReconciliationBoundary}=await import('./release-toolchain-active-generation-owned-lab.mjs'),{ownedActiveReconciliationHeldChecker}=await import('./online-release-retention-writer.mjs'),{collectOwnedCiPm2Registry}=await import('./release-toolchain-pm2-observation.mjs');
+ const held=ownedActiveReconciliationHeldChecker(capability,lock),s=ownedActiveReconciliationScope(capability),directory=s.directory+'/vault',before=await observeOwnedActiveReconciliation(capability),checkpoint={kind:'owned-active-publication-runtime-checkpoint',window,observation:before,publicationAuthority:false};held();seal(directory+'/publication-runtime-checkpoint.json',checkpoint);
+ const metadata={directory,binding:{kind:'owned-active-publication-persistence',window,publicationAuthority:false},receiptSha256:sha256(bookingHostRead(directory+'/publication-runtime-checkpoint.json')),after:before},physical=collectOwnedCiPm2Registry(s.pm2Root);
+ return persistObservedCurrentProcesses({directory,metadata,held,observe:()=>observeOwnedActiveReconciliation(capability),compare:assertOwnedActiveReconciliationDelta,collect:()=>collectOwnedCiPm2Registry(s.pm2Root),home:s.pm2Root+'/pm2',expectedPeer:physical.daemonPeer,afterSave:()=>ownedActiveReconciliationBoundary(capability,'after-save')});
+}
 async function verifyObservedCurrentProcesses({metadata,held,observe,compare,collect,home,expectedPeer}){
  held();const directory=metadata.directory;need(!fs.existsSync(directory+'/pm2-persistence-failed.json'),'operation_unconfirmed');
  const before=read(directory+'/pm2-persistence-before-observation.json'),after=read(directory+'/pm2-persistence-after-observation.json'),attempt=read(directory+'/pm2-persistence-attempt.json'),completed=read(directory+'/pm2-persistence-completed.json');

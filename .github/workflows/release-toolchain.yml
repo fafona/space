@@ -149,6 +149,10 @@ jobs:
           if ((${#reconciliation_roots[@]})); then
             sudo find "${reconciliation_roots[@]}" -maxdepth 2 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-reconciliation-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-reconciliation-evidence.tar"
+            # Only the explicitly private protocol-model journal. Do NOT
+            # widen this to raw PM2 dumps or environment-bearing vault files.
+            sudo find "${reconciliation_roots[@]}" -maxdepth 3 -type f -path '*/protocol-journal/*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-publication-protocol-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-publication-protocol-evidence.tar"
           fi
       - name: Preserve Synthetic Reports
         if: always()
@@ -163,4 +167,5 @@ jobs:
             ${{ runner.temp }}/release-toolchain-active-vault-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-metadata-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-reconciliation-evidence.tar
+            ${{ runner.temp }}/release-toolchain-publication-protocol-evidence.tar
           if-no-files-found: warn
