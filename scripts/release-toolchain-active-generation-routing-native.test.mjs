@@ -1,8 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-import {ACTIVE_ROUTING_NATIVE_CASES,runOwnedActiveRoutingChild,acceptOwnedActiveRouting,rehearseOwnedActiveRoutingInterruption} from './release-toolchain-active-generation-routing-native.mjs';
+import {ACTIVE_ROUTING_NATIVE_CASES,runOwnedActiveRoutingChild,acceptOwnedActiveRouting,rehearseOwnedActiveRoutingInterruption,ownedNativeExitObservationError} from './release-toolchain-active-generation-routing-native.mjs';
 test('native active-route scope cannot be selected with a serialized green receipt, formal path or caller PID',async()=>{
  await assert.rejects(runOwnedActiveRoutingChild('controller','/tmp/not-owned'));await assert.rejects(runOwnedActiveRoutingChild('supervisor','/var/lib/faolla-booking-handoff/forged'));
  if(process.platform!=='linux'){await assert.rejects(acceptOwnedActiveRouting());await assert.rejects(rehearseOwnedActiveRoutingInterruption());}assert.deepEqual(ACTIVE_ROUTING_NATIVE_CASES,['normal','death-before-route','death-mid-route','death-after-route']);
+});
+test('a proc capture racing exit is accepted only after an independent same-birth absent/zombie observation',()=>{
+ for(const error of [Object.assign(Error('missing'),{code:'ENOENT'}),Object.assign(Error('gone'),{code:'ESRCH'}),Error('invalid_proc_stat'),Error('proc_file_size_invalid'),Error('proc_records_invalid'),Error('process_identity_drift')]){assert.equal(ownedNativeExitObservationError(error,false),true);assert.equal(ownedNativeExitObservationError(error,true),false);assert.equal(ownedNativeExitObservationError(error,undefined),false);}
+ assert.equal(ownedNativeExitObservationError(Error('unverified'),false),false);assert.equal(ownedNativeExitObservationError(Object.assign(Error('denied'),{code:'EACCES'}),false),false);
 });
 test('owner cancellation is source/birth-bound and fails only after real process, flock and stopped-cluster verification',()=>{
  const value=readFileSync(new URL('./release-toolchain-active-generation-routing-native.mjs',import.meta.url),'utf8');for(const token of ['process.on(\'SIGTERM\',cancel)','process.removeListener(\'SIGTERM\',cancel)','owned-process-','same(captureProcessFact(expected.pid),expected)',"process.kill(expected.pid,'SIGTERM')",'actualOwnedMidCase:true','validateIsolationContainer','running:false','active_routing_native_interrupted'])assert.ok(value.includes(token),token);
