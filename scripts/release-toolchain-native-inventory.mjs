@@ -14,4 +14,5 @@ export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOU
  'release-toolchain-active-generation-closure.mjs','release-toolchain-active-generation-close-entry.mjs',
  'release-toolchain-active-generation-closed-incident.mjs','release-toolchain-active-generation-readiness-contract.mjs','release-toolchain-active-generation-readiness.mjs','booking-handoff-active-retention.mjs',
  'release-toolchain-active-generation-worker.mjs','release-toolchain-active-generation-worker-settlement.mjs','release-toolchain-active-generation-pm2-worker.py',
- 'release-toolchain-active-generation-routing.mjs','release-toolchain-active-generation-routing-native.mjs','release-toolchain-active-generation-routing-native-entry.mjs']);
+ 'release-toolchain-active-generation-routing.mjs','release-toolchain-active-generation-routing-native.mjs','release-toolchain-active-generation-routing-native-entry.mjs',
+ 'release-toolchain-active-generation-publication-scope.mjs']);
