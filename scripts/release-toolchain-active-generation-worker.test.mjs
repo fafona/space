@@ -1,6 +1,27 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';import {readFileSync} from 'node:fs';
 import {prepareActiveBookingGatedWorker,observeActiveBookingPreparedWorker,parseActiveWorkerPreConnectRefusal} from './release-toolchain-active-generation-worker.mjs';
 import {canonicalJson} from './release-toolchain-contracts.mjs';
+import {executeBookingReadyWorkerReplacement} from './booking-ready-worker.mjs';
+test('read-only preparation never latches a mutation; intent persistence and every later failure remain conservative',async()=>{
+ for(const failing of ['first-observation','admission','intent-write','second-observation','control','settlement','postconditions','completion',null]){
+  let intent=0,control=0,observations=0;const before={pid:1},fail=name=>{if(failing===name)throw Error('fixed-refusal');};
+  const operations={observe:()=>{fail(++observations===1?'first-observation':'second-observation');return before;},admit:()=>fail('admission'),begin:()=>{intent++;fail('intent-write');},restart:()=>{control++;fail('control');return{kind:'booking-ready-worker-rpc-ack',schemaVersion:1,acknowledged:true,peerVerified:true,pm2Version:'6.0.14'};},settled:()=>{fail('settlement');return{};},verify:()=>fail('postconditions'),complete:()=>{fail('completion');return'completed';}};
+  if(failing)await assert.rejects(executeBookingReadyWorkerReplacement(operations),{message:'fixed-refusal'});else assert.equal(await executeBookingReadyWorkerReplacement(operations),'completed');
+  assert.equal(intent,['first-observation','admission'].includes(failing)?0:1,failing??'success');
+  assert.equal(control,['first-observation','admission','intent-write','second-observation'].includes(failing)?0:1,failing??'success');
+ }
+});
+test('the real controller latches at the private begin callback, not before asynchronous read-only worker preparation',()=>{
+ const publication=readFileSync(new URL('./release-toolchain-active-generation-publication.mjs',import.meta.url),'utf8'),scope=readFileSync(new URL('./release-toolchain-active-generation-publication-scope.mjs',import.meta.url),'utf8'),worker=readFileSync(new URL('./release-toolchain-active-generation-worker.mjs',import.meta.url),'utf8');
+ assert.match(publication,/prepareActiveBookingPublicationWorker\(scope,\{beforeWorkerIntent:\(\)=>\{mutationPossible=true;\}\}\)/);
+ assert.doesNotMatch(publication,/prepareGatedWorker:async\(\)=>\{mutationPossible=true/);
+ assert.ok(scope.includes('value.workerIntentStarted=true;beforeWorkerIntent();'));
+ const begin=worker.slice(worker.indexOf('begin:before=>'),worker.indexOf('restart:before=>'));
+ assert.ok(begin.indexOf('beforeIntent();')<begin.indexOf("seal(directory+'/worker-attempt.json'"));
+ assert.ok(begin.includes('beforeIntent();intentStarted=true;'));
+ assert.ok(worker.indexOf('const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks')<worker.indexOf('begin:before=>'));
+ assert.ok(scope.includes("value.phase=value.workerIntentStarted?'unknown':'worker-preflight-refused'"));
+});
 test('only a closed canonical pre-connect diagnostic is recognizable; it cannot authorize retry',()=>{const child={schemaVersion:1,kind:'active-gated-worker-refused-before-connect',stage:'formal-witness',code:'active_worker_closure',socketOpened:false,controlSent:false,mutationPossible:false,automaticRetryAllowed:false,detailsRedacted:true},response={status:1,signal:null,error:null,stdout:'',stderr:canonicalJson(child)+'\n'};assert.deepEqual(parseActiveWorkerPreConnectRefusal(response),child);for(const mutate of [v=>v.status=0,v=>v.signal='SIGKILL',v=>v.error={code:'ETIMEDOUT'},v=>v.stdout='unexpected',v=>v.stderr='SENSITIVE_SENTINEL',v=>v.stderr=canonicalJson({...child,stage:'transport'})+'\n',v=>v.stderr=canonicalJson({...child,controlSent:null})+'\n',v=>v.stderr=canonicalJson({...child,code:'unreviewed_secret'})+'\n',v=>v.stderr=canonicalJson({...child,extra:true})+'\n',v=>v.stderr=JSON.stringify(child)+'\n']){const v=structuredClone(response);mutate(v);assert.equal(parseActiveWorkerPreConnectRefusal(v),null);}});
 test('serialized worker readiness, source and held-lock objects cannot initiate the fixed formal transition',async()=>{await assert.rejects(prepareActiveBookingGatedWorker({lock:{deployFd:3},toolRevision:'a'.repeat(40),window:{id:'10000000-0000-4000-8000-000000000001'},directory:'/tmp/worker',ready:{verified:true}}));});
 test('post-transition observation has separate held admission and cannot accept a supplied ready/worker exception',()=>{assert.throws(()=>observeActiveBookingPreparedWorker({lock:{deployFd:3},toolRevision:'a'.repeat(40),window:{id:'10000000-0000-4000-8000-000000000001'},directory:'/tmp/worker',ready:{verified:true}}));});
