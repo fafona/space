@@ -2,6 +2,7 @@
 // control or reuse of old readiness as a newly performed observation.
 import {assertQualificationForClosedSource} from './release-toolchain-pre-route-contract.mjs';
 import {assertSameNodeProcess} from './release-toolchain-process-identity.mjs';
+import {randomUUID} from 'node:crypto';
 import * as fs from 'node:fs';import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
 import {ACTIVE_ROLLBACK_REVALIDATED_KIND,ACTIVE_ROLLBACK_ORIGINAL_READINESS_SHA256,assertActiveBookingRollbackReadiness} from './release-toolchain-active-generation-readiness-contract.mjs';
@@ -29,10 +30,26 @@ async function localBuild(target,port,verify){
  const value=JSON.parse(text);need(value.ok===true&&value.buildId===target,'observation_mismatch');verify();return{origin:'http://127.0.0.1:'+port,status:200,ok:true,buildId:target};
 }
 export async function observeActiveBookingRollbackReadiness({lock,toolRevision,window}){
- assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.oldOperationId===P.operationId&&authority.prepared.activeIncidentClosed.toolRevision===toolRevision,'evidence_invalid');
- const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');};
- const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);const qualification=verifyLatestActiveBookingQualification({lock,toolRevision});assertQualificationForClosedSource(qualification,closed);
- const compatibilitySha256=rollingHash(observeBookingCompatibility(qualification.native));same(observeBookingReadyApplication(),authority.prepared.application);held();
+ assertActiveBookingWindow(window);return observeRollback({lock,toolRevision},window);
+}
+// A separate fixed entry: finish expensive read-only historical verification
+// before issuing a NEW window. The live cohort, original readiness and HTTP
+// observations below still occur inside it. Never renew an existing window.
+export async function observeActiveBookingRollbackReadinessForNewWindow({lock,toolRevision}){
+ return observeRollback({lock,toolRevision},null);
+}
+// Sequencing seam only; it cannot acquire a lock, authorize or mutate anything.
+export async function executeRollbackReadinessPreparation(prepare,openWindow){
+ const prepared=await prepare();return{prepared,window:openWindow()};
+}
+async function observeRollback({lock,toolRevision},existingWindow){
+ assertOnlineRetentionHeldLocks(lock);let window=existingWindow;const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.oldOperationId===P.operationId&&authority.prepared.activeIncidentClosed.toolRevision===toolRevision,'evidence_invalid');
+ const held=()=>{assertOnlineRetentionHeldLocks(lock);if(window)assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');};
+ const preparation=await executeRollbackReadinessPreparation(async()=>{
+  held();const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);const qualification=verifyLatestActiveBookingQualification({lock,toolRevision});assertQualificationForClosedSource(qualification,closed);
+  const compatibility=rollingHash(observeBookingCompatibility(qualification.native));same(observeBookingReadyApplication(),authority.prepared.application);held();return compatibility;
+ },()=>{if(!window){const start=Date.now();window={id:randomUUID(),startedAt:new Date(start).toISOString(),deadlineAt:new Date(start+600000).toISOString()};}held();return window;});
+ const compatibilitySha256=preparation.prepared;same(preparation.window,window);
  const physical=collectFormalBookingPm2Registry(),processes=physical.rows.map(normalizeRetirementProcess),anchors={},runtimeByName={};
  for(const target of [P.candidate,P.compatibleRollback]){const state=JSON.parse(bookingHostRead(RELEASE+'/'+target+'/state.json')),row=processes.find(process=>process.name===state.name);need(row?.status==='online','owned_resource_changed');anchors[target]={...location(state),process:row};const saved=JSON.parse(bookingHostRead(RELEASE+'/'+target+'/atomic-runtime.json')),actual=webReleaseRuntimeEnvironment(fs.readFileSync('/proc/'+row.pid+'/environ','utf8'));for(const [key,value]of Object.entries(saved))same(actual[key],value);runtimeByName[state.name]=actual;}
  assertBookingAtomicCohort({active:anchors[P.candidate],rollback:anchors[P.compatibleRollback],runtimeByName});const rollback=anchors[P.compatibleRollback],identity=captureProcessFact(rollback.process.pid);

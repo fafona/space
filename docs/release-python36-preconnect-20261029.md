@@ -78,3 +78,20 @@ unchanged. Only the new preconnect and subsequent retained-booking publication
 entries use this separate boundary. Original general and historical guards are
 not widened. Installed source bytes, full CI and the full native inventory still
 bind the complete tool checkout, including this explicit pending application fix.
+
+## Keep preparation outside the new actuator window
+
+The retained 203e timestamps show 104 seconds between window issuance and scope
+creation, then 21 more seconds before the helper's pre-connect refusal. That
+already exceeds the supervisor's unchanged 120-second arming allowance, before
+post-transition verification. The new preconnect history adds further reads.
+
+The canonical publication now finishes the same historical closure, backup and
+qualification checks before issuing its one new 600-second window. A separate
+readiness entry independently repeats its original preparation, then issues the
+window and performs the live complete cohort/environment/original-readiness and
+domain-bound HTTP checks inside it. The publication takes that exact window; it
+cannot renew a prior window or accept a caller-provided timestamp. All subsequent
+worker checks, supervisor 480-second reserve, 120-second arming limit, rollback
+checks and original window-bound proof grammar remain unchanged. Failed read-only
+preparation cannot issue a window or initiate worker control.

@@ -7,7 +7,7 @@ import * as fs from 'node:fs';import {fileURLToPath} from 'node:url';import path
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow,assertActiveBookingDatabaseProgress} from './release-toolchain-active-generation-contract.mjs';
 import {inspectClosedActiveBookingIncidentUnderHeldLocks,inspectClosedActiveBookingIncidentWithPreparedWorker} from './release-toolchain-active-generation-closed-incident.mjs';
 import {verifyLatestActiveBookingQualification} from './release-toolchain-active-generation-qualification.mjs';
-import {observeActiveBookingRollbackReadiness} from './release-toolchain-active-generation-readiness.mjs';
+import {observeActiveBookingRollbackReadinessForNewWindow} from './release-toolchain-active-generation-readiness.mjs';
 import {prepareActiveBookingGatedWorker} from './release-toolchain-active-generation-worker.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {observeBookingReadyApplication} from './booking-ready-backup.mjs';import {observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';
@@ -27,15 +27,15 @@ function checked(capability){const value=scopes.get(capability);need(value,'inva
  else need(!fs.existsSync(gateFile),'attempt_unknown');return value;}
 function witness(value,name){const file=value.directory+'/'+name;value.witnesses.set(file,{stat:stat(ownedReleasePath(file,{privateMode:true})),sha256:sha256(bookingHostRead(file,{binary:true}))});}
 function privateDirectory(parent,name){ownedReleasePath(parent,{directory:true});const file=parent+'/'+name;if(!fs.existsSync(file)){fs.mkdirSync(file,{mode:0o700});bookingHostSync(parent);}ownedReleasePath(file,{directory:true,privateMode:true});return file;}
-export async function openActiveBookingPublicationScope({lock,toolRevision,window,backupDirectory}){
- assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const controller=invocation(toolRevision),authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.toolRevision===toolRevision,'source_changed');
- const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);need(Date.parse(closed.closedAt)<Date.parse(window.startedAt),'evidence_invalid');same(observeBookingReadyApplication(),authority.prepared.application);
+export async function openActiveBookingPublicationScope({lock,toolRevision,backupDirectory}){
+ assertOnlineRetentionHeldLocks(lock);const controller=invocation(toolRevision),authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.toolRevision===toolRevision,'source_changed');
+ const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);same(observeBookingReadyApplication(),authority.prepared.application);
  need(typeof backupDirectory==='string'&&backupDirectory.startsWith(BACKUPS)&&/^[0-9]{13}-[a-f0-9-]{36}$/.test(path.posix.basename(backupDirectory))&&Number(path.posix.basename(backupDirectory).slice(0,13))>=Date.parse(closed.closedAt),'invalid_path');ownedReleasePath(backupDirectory,{directory:true,privateMode:true});need(!fs.existsSync(backupDirectory+'/backup-producer-failure.json'),'attempt_unknown');
  const archiveStat=stat(ownedReleasePath(backupDirectory+'/database.tar.enc',{privateMode:true}));
  const backup=await validateAttendanceBackupEvidence({target:toolRevision,backup:backupDirectory+'/database.tar.enc',createReport:backupDirectory+'/backup-create.json',verifyReport:backupDirectory+'/backup-verify.json'}),binding=read(backupDirectory+'/backup-application-binding.json');same(stat(ownedReleasePath(backupDirectory+'/database.tar.enc',{privateMode:true})),archiveStat);
  need(binding.kind==='release-toolchain-backup-producer-application-binding'&&binding.producer.revision===toolRevision&&binding.producer.originMainSha===toolRevision&&binding.producer.inventorySha256===authority.tool.inventorySha256&&binding.archive.value===backup.archiveSha256,'backup_source_mismatch');same(binding.application,authority.application);same(binding.applicationBuilds,authority.prepared.application);
  const qualification=verifyLatestActiveBookingQualification({lock,toolRevision});assertQualificationForClosedSource(qualification,closed);const compatibility=observeBookingCompatibility(qualification.native);same(compatibility,closed.compatibility);
- const readiness=await observeActiveBookingRollbackReadiness({lock,toolRevision,window});same(readiness.compatibilitySha256,rollingHash(compatibility));
+ const readiness=await observeActiveBookingRollbackReadinessForNewWindow({lock,toolRevision}),window=readiness.readiness.window;assertActiveBookingWindow(window);need(Date.parse(closed.closedAt)<Date.parse(window.startedAt),'evidence_invalid');same(readiness.compatibilitySha256,rollingHash(compatibility));
  const parent=privateDirectory(privateDirectory('/var/lib','faolla-booking-active-publications'),P.candidate);need(parent===ROOT&&fs.readdirSync(parent).length===0,'attempt_unknown');const directory=parent+'/'+window.id;fs.mkdirSync(directory,{mode:0o700});bookingHostSync(parent);
  const database=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));assertActiveBookingDatabaseProgress(closed.database,database,{systemIdentifier:'7612049595342295079',databaseOid:'5'});
  const value={lock,toolRevision,window:structuredClone(window),directory,authority,controller,closed,backupDirectory,backup,qualification,compatibility,readiness,database,witnesses:new Map(),phase:'admitted'};
