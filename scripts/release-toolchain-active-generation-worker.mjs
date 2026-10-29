@@ -1,5 +1,6 @@
 // Fixed still-gated worker source transition, not a web restart or activation.
 // Only the real reviewed publication controller can reach the peer-bound helper.
+import {assertSameNodeProcess} from './release-toolchain-process-identity.mjs';
 import * as fs from 'node:fs';import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow,assertActiveBookingDatabaseProgress} from './release-toolchain-active-generation-contract.mjs';
 import {inspectClosedActiveBookingIncidentUnderHeldLocks} from './release-toolchain-active-generation-closed-incident.mjs';
@@ -64,9 +65,9 @@ function observePreparedWorker({lock,toolRevision,window,directory},gate){
  assertExecutionWorkerTransition(before.process,after.process,{priorRevision:P.toolRevision,revision:toolRevision});assertBookingAtomicWorkerEnvironment(after.raw);assertBookingReadyWorkerRawTransition(before.raw,after.raw,before.configured,after.configured);assertActiveBookingWorkerConfigurationTransition(before.configured,after.configured);
  for(const key of ['processes','identityProofs'])same(after.legacy[key].filter(value=>value.name!==NAME),before.legacy[key].filter(value=>value.name!==NAME));same(after.legacy.daemonPeer,before.legacy.daemonPeer);same(after.legacy.raw,before.legacy.raw);
  same(physical.filteredRegistry.filter(value=>value.name!==NAME),before.registry.filter(value=>value.name!==NAME));
- same(receipt,{kind:'active-booking-gated-worker-source-replaced',toolRevision,inventorySha256:authority.tool.inventorySha256,window,closedIncidentSha256:attempt.closedIncidentSha256,before:before.process,after:after.process,identity:after.identity,attemptSha256:sha256(canonicalJson(attempt)+'\n'),gateNeverOpened:true,webProcessesChanged:false,businessDataWrittenByTool:false,mailEnabled:false,publicationAuthority:false,completedAt:receipt.completedAt});
+ assertSameNodeProcess(after.identity,receipt.identity);same(receipt,{kind:'active-booking-gated-worker-source-replaced',toolRevision,inventorySha256:authority.tool.inventorySha256,window,closedIncidentSha256:attempt.closedIncidentSha256,before:before.process,after:after.process,identity:receipt.identity,attemptSha256:sha256(canonicalJson(attempt)+'\n'),gateNeverOpened:true,webProcessesChanged:false,businessDataWrittenByTool:false,mailEnabled:false,publicationAuthority:false,completedAt:receipt.completedAt});
  const at=Date.parse(receipt.completedAt);need(Number.isFinite(at)&&new Date(at).toISOString()===receipt.completedAt&&at>=Date.parse(attempt.at)&&Date.parse(attempt.at)>=Date.parse(window.startedAt)&&at<=Date.now()&&at<Date.parse(window.deadlineAt),'evidence_invalid');
  const priorCohort={...after.legacy,processes:after.legacy.processes.map(value=>value.name===NAME?before.legacy.processes.find(old=>old.name===NAME):value),identityProofs:after.legacy.identityProofs.map(value=>value.name===NAME?before.legacy.identityProofs.find(old=>old.name===NAME):value)};
- same(priorCohort,before.legacy);same(captureProcessFact(row.pid),after.identity);assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);
+ same(priorCohort,before.legacy);assertSameNodeProcess(captureProcessFact(row.pid),after.identity);assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);
  return{before,after,priorCohort,priorRegistry:before.registry,physical,receipt,receiptSha256:sha256(bookingHostRead(directory+'/worker-completed.json')),closedSha256:attempt.closedIncidentSha256,publicationAuthority:false};
 }

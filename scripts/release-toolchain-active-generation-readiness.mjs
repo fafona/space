@@ -1,5 +1,7 @@
 // New read-only rollback observation. No timestamp rewriting, build, process
 // control or reuse of old readiness as a newly performed observation.
+import {assertQualificationForClosedSource} from './release-toolchain-pre-route-contract.mjs';
+import {assertSameNodeProcess} from './release-toolchain-process-identity.mjs';
 import * as fs from 'node:fs';import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
 import {ACTIVE_ROLLBACK_REVALIDATED_KIND,ACTIVE_ROLLBACK_ORIGINAL_READINESS_SHA256,assertActiveBookingRollbackReadiness} from './release-toolchain-active-generation-readiness-contract.mjs';
@@ -29,7 +31,7 @@ async function localBuild(target,port,verify){
 export async function observeActiveBookingRollbackReadiness({lock,toolRevision,window}){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.oldOperationId===P.operationId&&authority.prepared.activeIncidentClosed.toolRevision===toolRevision,'evidence_invalid');
  const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');};
- const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);const qualification=verifyLatestActiveBookingQualification({lock,toolRevision});same(qualification.sha256,closed.qualificationSha256);
+ const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);const qualification=verifyLatestActiveBookingQualification({lock,toolRevision});assertQualificationForClosedSource(qualification,closed);
  const compatibilitySha256=rollingHash(observeBookingCompatibility(qualification.native));same(observeBookingReadyApplication(),authority.prepared.application);held();
  const physical=collectFormalBookingPm2Registry(),processes=physical.rows.map(normalizeRetirementProcess),anchors={},runtimeByName={};
  for(const target of [P.candidate,P.compatibleRollback]){const state=JSON.parse(bookingHostRead(RELEASE+'/'+target+'/state.json')),row=processes.find(process=>process.name===state.name);need(row?.status==='online','owned_resource_changed');anchors[target]={...location(state),process:row};const saved=JSON.parse(bookingHostRead(RELEASE+'/'+target+'/atomic-runtime.json')),actual=webReleaseRuntimeEnvironment(fs.readFileSync('/proc/'+row.pid+'/environ','utf8'));for(const [key,value]of Object.entries(saved))same(actual[key],value);runtimeByName[state.name]=actual;}
@@ -38,7 +40,7 @@ export async function observeActiveBookingRollbackReadiness({lock,toolRevision,w
  // Verify the historical proof in its ORIGINAL window, not the new one.
  assertBookingRollbackReadiness(original,rollback,{window:P.originalWindow,compatibilitySha256:original.compatibilitySha256,rollbackReadinessSha256:rollingHash(original)});
  const pins={buildEvidenceSha256:sha256(bookingHostRead(RELEASE+'/'+P.compatibleRollback+'/attendance-build-proof.json')),runtimeSha256:sha256(bookingHostRead(RELEASE+'/'+P.compatibleRollback+'/atomic-runtime.json')),environmentFileSha256:sha256(bookingHostRead(rollback.directory+'/.env.local',{binary:true}))};for(const [key,value]of Object.entries(pins))same(original[key],value);
- const verify=()=>{held();same(captureProcessFact(rollback.process.pid),identity);same(bookingHostRead(RELEASE+'/'+P.compatibleRollback+'/state.json'),stateText);same(sha256(bookingHostRead(ROOT+'/rollback-readiness.json')),ACTIVE_ROLLBACK_ORIGINAL_READINESS_SHA256);};
+ const verify=()=>{held();assertSameNodeProcess(captureProcessFact(rollback.process.pid),identity);same(bookingHostRead(RELEASE+'/'+P.compatibleRollback+'/state.json'),stateText);same(sha256(bookingHostRead(ROOT+'/rollback-readiness.json')),ACTIVE_ROLLBACK_ORIGINAL_READINESS_SHA256);};
  const http=await localBuild(P.compatibleRollback,rollback.port,verify);same(collectFormalBookingPm2Registry().filteredRegistry,physical.filteredRegistry);verify();
  const readiness={schemaVersion:2,kind:ACTIVE_ROLLBACK_REVALIDATED_KIND,candidate:P.candidate,target:P.compatibleRollback,stateText,...pins,compatibilitySha256,originalReadinessSha256:ACTIVE_ROLLBACK_ORIGINAL_READINESS_SHA256,window,observedAt:new Date().toISOString(),processSha256:sha256(canonicalJson(rollback.process)),http};
  assertActiveBookingRollbackReadiness(readiness,rollback,{schemaVersion:2,kind:'booking-active-generation-handoff',window,completedAt:readiness.observedAt,compatibilitySha256,rollbackReadinessSha256:rollingHash(readiness)});verify();return{readiness,rollback,compatibilitySha256,publicationAuthority:false};

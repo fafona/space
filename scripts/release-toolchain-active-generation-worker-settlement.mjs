@@ -1,6 +1,7 @@
 // Read-only settlement, not mutation authority. PM2 reports online before its
 // instrumentation has finished registering. Keep the complete strict config
 // comparison; never broaden the set of permitted changes to hide that race.
+import {assertSameNodeProcess} from './release-toolchain-process-identity.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition} from './booking-ready-worker.mjs';
 import {requireToolchain as need,canonicalJson} from './release-toolchain-contracts.mjs';
@@ -15,14 +16,14 @@ export function activeBookingWorkerObservation(row,runtime,identity){
 }
 export async function waitForActiveBookingWorkerSettlement({observe,before,script,now=()=>performance.now(),delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
  need(before?.pid>0&&Number.isSafeInteger(before.restartCount)&&typeof script==='string'&&script!==before.script,'invalid_contract');
- const deadline=now()+10000;let candidatePid=null,firstSeen=null,stableSince=null,last=null;
+ const deadline=now()+10000;let candidatePid=null,firstSeen=null,stableSince=null,last=null,lastObservation=null;
  for(let index=0;index<100&&now()<deadline;index++){
   let after;try{after=await observe();}catch(error){if(!['ENOENT','ESRCH'].includes(error.code)&&error.code!=='operation_unconfirmed')throw error;}
   const actual=after?.pid>0&&after.pid!==before.pid&&after.restartCount===before.restartCount+1&&after.script===script&&after.status==='online';
   if(actual){
    if(candidatePid!==after.pid){need(candidatePid===null,'attempt_unknown');candidatePid=after.pid;firstSeen=now();}
    let matches=false;try{assertActiveBookingWorkerConfigurationTransition(before.configured,after.configured);assertBookingReadyWorkerRawTransition(before.raw,after.raw,before.configured,after.configured);matches=true;}catch(error){if(error.code!=='observation_mismatch'&&!error.message?.startsWith('booking_ready_worker_'))throw error;}
-   if(matches){const text=canonicalJson(after);if(text!==last){last=text;stableSince=now();}
+   if(matches){let comparable=after;if(lastObservation&&after.identity?.processIdentity!==undefined&&lastObservation.identity?.processIdentity!==undefined){assertSameNodeProcess(after.identity,lastObservation.identity);comparable={...after,identity:lastObservation.identity};}const text=canonicalJson(comparable);if(text!==last){last=text;stableSince=now();lastObservation=after;}
     // Both minimum startup age and repeated *complete* observations are needed.
     if(now()-firstSeen>=1500&&now()-stableSince>=250)return after;
    }else{last=null;stableSince=null;}

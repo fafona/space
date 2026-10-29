@@ -1,5 +1,7 @@
 // Closed, owned CI resources for the complete active-incident reconciliation.
 // These capabilities cannot be serialized or used by formal-host admission.
+import {assertSameNodeProcess} from './release-toolchain-process-identity.mjs';
+import {assertSameLongLivedDaemon} from './release-toolchain-daemon-identity.mjs';
 import * as fs from 'node:fs';import path from 'node:path';
 import {spawnSync} from 'node:child_process';import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';import {isDeepStrictEqual} from 'node:util';
@@ -28,10 +30,11 @@ function ci(){need(process.platform==='linux'&&process.getuid?.()===0&&process.v
 const dir=file=>identity(ownedReleasePath(file,{directory:true,privateMode:true}));
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
 function make(parent,name){dir(parent);const file=parent+'/'+name;fs.mkdirSync(file,{mode:0o700});bookingHostSync(parent);dir(file);return file;}
+function sameDaemon(actual,expected){same(actual.commandLine,expected.commandLine);return assertSameLongLivedDaemon(actual.fact,expected.fact);}
 const captureDaemon=pid=>{const {commandLine,...fact}=captureProcessFact(pid);return{fact,commandLine};};
 function check(s){
  ci();same(dir(s.root),s.rootIdentity);same(dir(s.directory),s.directoryIdentity);same(bookingHostRead(s.directory+'/owner.json'),s.ownerText);
- same(captureDaemon(s.daemon.fact.pid),s.daemon);need(s.daemon.commandLine.length===1&&s.daemon.commandLine[0]==='PM2 v6.0.14: God Daemon ('+s.pm2Root+'/pm2)','owned_resource_changed');
+ sameDaemon(captureDaemon(s.daemon.fact.pid),s.daemon);need(s.daemon.commandLine.length===1&&s.daemon.commandLine[0]==='PM2 v6.0.14: God Daemon ('+s.pm2Root+'/pm2)','owned_resource_changed');
  for(const [name,digest]of Object.entries(s.sourceHashes))need(sha256(fs.readFileSync(source+'/scripts/'+name))===digest,'source_changed');
  return s;
 }
@@ -92,7 +95,7 @@ export function ownedActiveReconciliationBoundary(capability,boundary){
  if(s.name==='controller-death-'+boundary)process.kill(process.pid,'SIGKILL');
 }
 export async function observeOwnedActiveReconciliation(capability){
- const s=ownedActiveReconciliationScope(capability),physical=collectOwnedCiPm2Registry(s.pm2Root);same(captureDaemon(physical.daemon.pid),s.daemon);assertCompletePm2DumpSet(physical.rows,physical.filteredRegistry);
+ const s=ownedActiveReconciliationScope(capability),physical=collectOwnedCiPm2Registry(s.pm2Root);sameDaemon(captureDaemon(physical.daemon.pid),s.daemon);assertCompletePm2DumpSet(physical.rows,physical.filteredRegistry);
  const database=JSON.parse(isolatedPg(s.isolation,s.database,bookingHandoffActivationSnapshotSql));need(database.active===true&&database.protocol===2&&database.systemIdentifier!=='7612049595342295079','database_identity_mismatch');
  const rows=physical.rows.map(stablePm2RegistryRow),processes=physical.rows.map(row=>{need(row.pid>0&&row.pm2_env.pm_cwd===s.pm2Root+'/app','owned_resource_changed');return captureProcessFact(row.pid);});
  const next=physical.rows.find(row=>row.name==='eq-next');need(next?.pm2_env.env.FAOLLA_BACKGROUND_JOBS_PAUSED==='1','owned_resource_changed');
@@ -101,7 +104,8 @@ export async function observeOwnedActiveReconciliation(capability){
  check(s);return{kind:'owned-active-reconciliation-observation',database,rowsSha256:sha256(canonicalJson(rows)),processes,daemon:s.daemon,status:response.status,bodySha256:sha256(body),activeText:bookingHostRead(s.directory+'/active.json'),mailEnabled:false,publicationAuthority:false};
 }
 export function assertOwnedActiveReconciliationDelta(before,after,{metadata=false}={}){
- const expected=structuredClone(before);if(metadata)expected.activeText='{"target":"owned-lab-compatible"}';same(after,expected);return true;
+ sameDaemon(after.daemon,before.daemon);need(after.processes.length===before.processes.length,'owned_resource_changed');after.processes.forEach((value,index)=>assertSameNodeProcess(value,before.processes[index]));
+ const actual={...after,daemon:before.daemon,processes:before.processes},expected=structuredClone(before);if(metadata)expected.activeText='{"target":"owned-lab-compatible"}';same(actual,expected);return true;
 }
 export const createOwnedActiveReconciliationBackup=capability=>createBackup(capability,'backup.dump','backup-verified.json');
 export const createOwnedPostSaveBackup=capability=>createBackup(capability,'post-save-backup.dump','post-save-backup-verified.json');

@@ -1,5 +1,6 @@
 // The only armer/finisher for the fixed active-publication supervisor. Its
 // independent inherited lease cannot be reconstructed from a green receipt.
+import {assertSameNodeProcess,assertSameReparentableNodeProcess as assertExpectedReparentableProcessIdentity} from './release-toolchain-process-identity.mjs';
 import * as fs from 'node:fs';import {spawn} from 'node:child_process';import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P} from './release-toolchain-active-generation-contract.mjs';
 import {assertActiveBookingPublicationLockBinding,activeBookingPublicationEvidence,activeBookingPublicationGateProfile} from './release-toolchain-active-generation-publication-scope.mjs';
@@ -7,7 +8,7 @@ import {assertActiveBookingSupervisorLease,adoptActiveBookingSupervisorInherited
 import {inspectLiveActiveBookingPublicationSupervisor} from './release-toolchain-active-generation-routing-host.mjs';import {observeActiveBookingSupervisorHost,inspectActiveBookingSupervisorCommit} from './release-toolchain-active-generation-supervisor-host.mjs';
 import {createActiveBookingRoutingPlan,assertActiveBookingRoutingCurrent} from './release-toolchain-active-generation-routing.mjs';import {createActiveBookingIngressPlan} from './release-toolchain-active-generation-ingress.mjs';
 import {BOOKING_INGRESS_VHOST,BOOKING_INGRESS_MAIN_SHA256} from './booking-handoff-ingress.mjs';import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
-import {captureProcessFact} from './check-production-runtime-supervision.mjs';import {expectedProcessState,processBirth,assertExpectedReparentableProcessIdentity} from './release-toolchain-process-birth.mjs';
+import {captureProcessFact} from './check-production-runtime-supervision.mjs';import {expectedProcessState,processBirth} from './release-toolchain-process-birth.mjs';
 import {runBookingWatchdogSequence} from './booking-handoff-watchdog.mjs';import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostEnvironment} from './booking-handoff-host-io.mjs';import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 const ROOT='/var/lib/faolla-booking-handoff/'+P.candidate,handles=new WeakMap(),same=(a,b)=>need(isDeepStrictEqual(a,b),'owned_resource_changed'),read=file=>JSON.parse(bookingHostRead(file)),digest=file=>sha256(bookingHostRead(file)),wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -28,7 +29,7 @@ export async function finishActiveBookingPublicationSupervisor(options,handle){
  const value=handles.get(handle);need(value&&value.scope===options.scope&&value.lock===options.lock&&value.toolRevision===options.toolRevision,'invalid_contract');same(value.window,options.window);inspectLiveActiveBookingPublicationSupervisor(options);const gate=activeBookingPublicationGateProfile(options.scope,options);need(gate,'evidence_invalid');
  publishOnceVisible(value.directory+'/supervisor-finish-request.json',{kind:'active-booking-supervisor-finish-request',toolRevision:value.toolRevision,window:value.window,leaseSha256:digest(value.directory+'/supervisor-lease.json'),certificateSha256:gate.certificateSha256,workerGateReceiptSha256:gate.receiptSha256,at:new Date().toISOString(),publicationAuthority:false});
  const deadline=Math.min(Date.now()+45000,Date.parse(value.window.deadlineAt));let finished;while(Date.now()<deadline){assertActiveBookingPublicationLockBinding(options.scope,options);if(fs.existsSync(value.directory+'/supervisor-finished.json')){finished=read(value.directory+'/supervisor-finished.json');break;}need(expectedProcessState(value.fact)==='owned','operation_unconfirmed');await wait(25);}
- need(finished?.kind==='active-booking-supervisor-finished'&&finished.outcome==='committed'&&finished.commit?.certificateSha256===gate.certificateSha256&&finished.commit.gateEnabled===true&&finished.commit.actualRoute===P.candidate&&finished.publicationAuthority===false,'operation_unconfirmed');same(finished.window,value.window);same(finished.supervisor,value.fact);
+ need(finished?.kind==='active-booking-supervisor-finished'&&finished.outcome==='committed'&&finished.commit?.certificateSha256===gate.certificateSha256&&finished.commit.gateEnabled===true&&finished.commit.actualRoute===P.candidate&&finished.publicationAuthority===false,'operation_unconfirmed');same(finished.window,value.window);assertSameNodeProcess(finished.supervisor,value.fact);
  while(Date.now()<deadline){const birth=processBirth(value.fact.pid);need(birth===null||birth.startTicks===value.fact.startTicks,'owned_resource_changed');if(birth===null||birth.zombie){same(activeBookingPublicationGateProfile(options.scope,options),gate);handles.delete(handle);return finished;}await wait(25);}need(false,'operation_unconfirmed');
 }
 export async function stopExpectedActivePublicationParent(operations){

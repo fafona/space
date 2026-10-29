@@ -1,6 +1,7 @@
 // Read-only admission AFTER the separately sealed fixed incident. This cannot
 // close, repair, replay or adopt an unknown result. It accepts exactly one
 // completed closure and independently rechecks its files and the actual host.
+import {assertSameNodeProcess} from './release-toolchain-process-identity.mjs';
 import * as fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';import {randomUUID} from 'node:crypto';import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA as M,assertActiveBookingWindow,assertActiveBookingDatabaseProgress} from './release-toolchain-active-generation-contract.mjs';
 import {ACTIVE_INCIDENT_ROOT,ACTIVE_INCIDENT_FILES,ACTIVE_INCIDENT_STATIC_NAMES} from './release-toolchain-active-generation-incident.mjs';
@@ -99,7 +100,7 @@ async function inspect(toolRevision,heldLock,preparedWorker){
  return{kind:'closed-active-incident-current-observation',oldOperationId:P.operationId,generation:P.generation,toolRevision,inventorySha256:source.inventorySha256,directory,closedSha256:sha256(canonicalJson(closed)+'\n'),closureSha256:closed.closureSha256,closedAt:closed.completedAt,qualificationSha256:context.qualificationSha256,qualification,compatibility:context.compatibility,database,actualRoute:P.compatibleRollback,publicProof,originalOperationInodeRetained:true,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
 async function inspectSelectedProfile(toolRevision,lock,worker){
- if(fs.existsSync(ROOT)){const entries=fs.readdirSync(ROOT);if(entries.length===2&&entries.includes(POST_SAVE.windowId)){const {inspectClosedPostSaveIncident}=await import('./release-toolchain-post-save-closed.mjs');return inspectClosedPostSaveIncident(toolRevision,lock,worker);}}
+ if(fs.existsSync(ROOT)){const entries=fs.readdirSync(ROOT);if(entries.length===2&&entries.includes(POST_SAVE.windowId)){const {inspectClosedPostSaveIncident}=await import('./release-toolchain-post-save-closed.mjs');if(toolRevision!=='dc80eacba6b3c6a78b271f88786372b026efd7dc'){const {inspectPinnedPreRouteClosedIncident}=await import('./release-toolchain-pre-route-evidence.mjs');return inspectPinnedPreRouteClosedIncident(toolRevision,lock,worker);}return inspectClosedPostSaveIncident(toolRevision,lock,worker);}}
  return inspect(toolRevision,lock,worker);
 }
 export const inspectClosedActiveBookingIncidentForPreparation=toolRevision=>inspectSelectedProfile(toolRevision,null);
@@ -110,5 +111,5 @@ export const inspectClosedActiveBookingIncidentUnderHeldLocks=async({toolRevisio
 export async function inspectClosedActiveBookingIncidentWithPreparedWorker({lock,toolRevision,window,directory}){
  const {observeActiveBookingPreparedWorker}=await import('./release-toolchain-active-generation-worker.mjs');
  const before=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory}),result=await inspectSelectedProfile(toolRevision,lock,before),after=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory});
- same(after.receiptSha256,before.receiptSha256);same(after.after,before.after);same(after.priorRegistry,before.priorRegistry);return{...result,preparedWorker:{receiptSha256:after.receiptSha256,process:after.after.process,gateOpen:false,publicationAuthority:false}};
+ same(after.receiptSha256,before.receiptSha256);assertSameNodeProcess(after.after.identity,before.after.identity);same({...after.after,identity:before.after.identity},before.after);same(after.priorRegistry,before.priorRegistry);return{...result,preparedWorker:{receiptSha256:after.receiptSha256,process:after.after.process,gateOpen:false,publicationAuthority:false}};
 }
