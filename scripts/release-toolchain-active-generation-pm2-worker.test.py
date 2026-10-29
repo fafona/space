@@ -1,6 +1,10 @@
 import copy
+import base64
 import importlib.util
+import io
+import json
 import os
+import re
 import unittest
 from unittest.mock import patch
 
@@ -29,6 +33,43 @@ class Session:
 
 
 class Tests(unittest.TestCase):
+    def test_exact_historical_source_is_not_relabelled_as_current(self):
+        fixture = os.path.join(os.path.dirname(__file__), "test-support", "release-toolchain-pre-route-closed.mjs")
+        with open(fixture, "r", encoding="utf-8") as stream:
+            text = stream.read()
+        raw = base64.b64decode(re.search(r"Buffer\.from\('([^']+)'", text).group(1))
+        closed = json.loads(raw)
+        self.assertTrue(m._closed_source_matches(raw, closed, "a" * 40, m._CLOSED_DIRECTORY))
+        self.assertFalse(m._closed_source_matches(raw + b" ", closed, "a" * 40, m._CLOSED_DIRECTORY))
+        self.assertFalse(m._closed_source_matches(raw, closed, "a" * 40, "/other"))
+        self.assertFalse(m._closed_source_matches(raw, {**closed, "toolRevision": "b" * 40}, "a" * 40, m._CLOSED_DIRECTORY))
+        self.assertTrue(m._closed_source_matches(b"synthetic", {"toolRevision": "a" * 40}, "a" * 40, "/original-same-source"))
+
+    def test_witness_refusal_records_no_socket_or_control_without_secret_text(self):
+        request = {key: {} for key in ("daemon", "process", "expected", "revision", "operationId", "attemptSha256")}
+        stdin = type("Input", (), {"buffer": io.BytesIO(json.dumps(request).encode())})()
+        stderr = io.StringIO()
+        with patch.object(m.sys, "stdin", stdin), patch.object(m.sys, "stderr", stderr), patch.object(m.sys, "platform", "linux"), patch.object(m.os, "getuid", return_value=0, create=True), patch.object(m, "_formal_witness", side_effect=ValueError("active_worker_closure")), patch.object(m, "_connect") as connect:
+            self.assertEqual(m.main(), 1)
+        connect.assert_not_called()
+        receipt = json.loads(stderr.getvalue())
+        self.assertEqual(receipt["kind"], "active-gated-worker-refused-before-connect")
+        self.assertEqual(receipt["code"], "active_worker_closure")
+        self.assertIs(receipt["controlSent"], False)
+        self.assertIs(receipt["mutationPossible"], False)
+
+    def test_transport_refusal_cannot_claim_no_mutation(self):
+        request = {key: {} for key in ("daemon", "process", "expected", "revision", "operationId", "attemptSha256")}
+        stdin = type("Input", (), {"buffer": io.BytesIO(json.dumps(request).encode())})()
+        stderr = io.StringIO()
+        with patch.object(m.sys, "stdin", stdin), patch.object(m.sys, "stderr", stderr), patch.object(m.sys, "platform", "linux"), patch.object(m.os, "getuid", return_value=0, create=True), patch.object(m, "_formal_witness"), patch.object(m._worker, "snapshot", return_value={}), patch.object(m._transport, "replacement_argument", return_value={}), patch.object(m, "_connect", side_effect=RuntimeError("SENSITIVE_SENTINEL")):
+            self.assertEqual(m.main(), 1)
+        receipt = json.loads(stderr.getvalue())
+        self.assertEqual(receipt["kind"], "active-gated-worker-outcome-unconfirmed")
+        self.assertIs(receipt["mutationPossible"], True)
+        self.assertIsNone(receipt["controlSent"])
+        self.assertNotIn("SENSITIVE_SENTINEL", stderr.getvalue())
+
     def test_shared_engine_has_one_exact_source_call_after_two_witness_checks(self):
         session, checks = Session(), []
         argument = m._transport.replacement_argument("b" * 40)

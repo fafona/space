@@ -3,6 +3,7 @@ The inactive adapter and all of its refusal rules remain unchanged. The two
 closed profiles share the existing peer-bound framing, not a CLI or reconnect.
 """
 import hashlib
+import base64
 import importlib.util
 import json
 import os
@@ -21,6 +22,23 @@ _transport, _control, _peer = _worker._transport, _worker._control, _worker._pee
 _C = "f274ad615550c83717aa7af2ad32339608e6f8aa"
 _ROOT = "/var/lib/faolla-booking-active-publications/" + _C
 _OLD = "0fdad28d24245a84f7ced1656b5e1f2313bee0e7"
+_CLOSED_SOURCE = "dc80eacba6b3c6a78b271f88786372b026efd7dc"
+_CLOSED_SHA256 = "223c7799299cd1086e704eeae5871274fa05cb32c9ec7ce94e1b0e36a08c823a"
+_CLOSED_DIRECTORY = "/var/lib/faolla-booking-active-closures/b49808d6-1950-4cb4-b029-97086873d7a7/28c52817-ff38-49bd-94b7-ccd570c4d71b"
+
+
+def _closed_source_matches(raw, closed, revision, directory):
+    """Source identity only, NOT permission, a lease or transport authority.
+
+    Preserve the original same-source rule. The sole cross-source proof is
+    the exact immutable historical receipt, never a relabelled JSON object.
+    All physical parent/FD/window/peer/script checks remain in the caller.
+    """
+    return closed.get("toolRevision") == revision or (
+        closed.get("toolRevision") == _CLOSED_SOURCE
+        and directory == _CLOSED_DIRECTORY
+        and hashlib.sha256(raw).hexdigest() == _CLOSED_SHA256
+    )
 
 
 def _read(filename):
@@ -75,7 +93,7 @@ def _formal_witness(value):
     if not isinstance(closed_directory, str) or not re.fullmatch(r"/var/lib/faolla-booking-active-closures/b49808d6-1950-4cb4-b029-97086873d7a7/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", closed_directory):
         raise ValueError("active_worker_closure_path")
     closed_raw, closed = _read(closed_directory + "/closed.json")
-    if hashlib.sha256(closed_raw).hexdigest() != attempt["closedIncidentSha256"] or closed.get("kind") != "active-incident-closed-on-compatible-rollback" or closed.get("toolRevision") != revision or closed.get("oldOperationId") != "b49808d6-1950-4cb4-b029-97086873d7a7" or closed.get("generation") != "9b85e75c-f474-4b17-b2a5-75601f7940b4" or closed.get("originalOperationInodeRetained") is not True or closed.get("publicationAuthority") is not False or instant(closed["completedAt"]) >= start or closed["window"]["id"] == operation:
+    if hashlib.sha256(closed_raw).hexdigest() != attempt["closedIncidentSha256"] or closed.get("kind") != "active-incident-closed-on-compatible-rollback" or not _closed_source_matches(closed_raw, closed, revision, closed_directory) or closed.get("oldOperationId") != "b49808d6-1950-4cb4-b029-97086873d7a7" or closed.get("generation") != "9b85e75c-f474-4b17-b2a5-75601f7940b4" or closed.get("originalOperationInodeRetained") is not True or closed.get("publicationAuthority") is not False or instant(closed["completedAt"]) >= start or closed["window"]["id"] == operation:
         raise ValueError("active_worker_closure")
     # The helper inherits the parent's real OFD, never acquires another lock.
     actual = os.fstat(3)
@@ -138,6 +156,36 @@ def _connect(socket_path, daemon, process, expected, argument, snapshot, witness
         raise RuntimeError("active_worker_outcome_unknown" if session is not None and session.mutation_sent else "active_worker_unverified") from None
 
 
+def _owned_closed_source_vectors(root):
+    """Pure shared-source predicate + private fixture evidence, NOT a lease."""
+    filename = _SOURCE + "/test-support/release-toolchain-pre-route-closed.mjs"
+    info = os.lstat(filename)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o022 or os.path.realpath(filename) != filename:
+        raise ValueError("ci_source_fixture")
+    text = open(filename, "r", encoding="utf-8").read()
+    match = re.search(r"Buffer\.from\('([A-Za-z0-9+/=]+)'", text)
+    if not match:
+        raise ValueError("ci_source_fixture")
+    raw = base64.b64decode(match.group(1), validate=True)
+    closed = json.loads(raw.decode("utf-8"), object_pairs_hook=_peer._unique_object)
+    revision = os.path.basename(os.path.dirname(_SOURCE))
+    if not re.fullmatch(r"[a-f0-9]{40}", revision) or revision == _CLOSED_SOURCE or not _closed_source_matches(raw, closed, revision, _CLOSED_DIRECTORY) or _closed_source_matches(raw + b" ", closed, revision, _CLOSED_DIRECTORY) or _closed_source_matches(raw, {**closed, "toolRevision": "b" * 40}, revision, _CLOSED_DIRECTORY) or _closed_source_matches(raw, closed, revision, "/foreign") or not _closed_source_matches(b"owned-model", {"toolRevision": revision}, revision, "/owned-same-source"):
+        raise ValueError("ci_source_binding")
+    proof = {"kind": "owned-shared-worker-closed-source-predicate-verified", "toolRevision": revision, "closedSource": _CLOSED_SOURCE, "closedSha256": hashlib.sha256(raw).hexdigest(), "sameSourceAccepted": True, "exactHistoricalSourceAccepted": True, "alteredBytesSourceAndDirectoryRefused": True, "historicalBytesNotRelabelled": True, "sourceProofDoesNotOpenSocket": True, "componentProofOnly": True, "formalHostTouched": False, "publicationAuthority": False}
+    output = root + "/reports/worker-closed-source-predicate-verified.json"
+    encoded = (json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if not os.path.lexists(output):
+        fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            os.write(fd, encoded)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    data, actual = _read(output)
+    if data != encoded or actual != proof:
+        raise ValueError("ci_source_evidence_changed")
+
+
 def replace_owned_ci_worker(value):
     """Closed disposable adapter; never selectable by the formal CLI payload."""
     root = value.get("root")
@@ -162,15 +210,18 @@ def replace_owned_ci_worker(value):
         return result
     expected = snapshot(value["expected"])
     def witness():
+        _owned_closed_source_vectors(root)
         if os.path.lexists(root + "/worker-enabled.json"):
             raise ValueError("ci_gate_open")
         if open("/proc/" + str(value["daemon"]["pid"]) + "/cmdline", "rb").read().rstrip(b"\0") != ("PM2 v6.0.14: God Daemon (" + root + "/pm2)").encode():
             raise ValueError("ci_daemon_home")
     argument = {"id": 2, "env": {"current_conf": {"pm_exec_path": root + "/app/scripts/owned-worker-new.cjs"}}}
+    witness()
     return _connect(root + "/pm2/rpc.sock", value["daemon"], value["process"], expected, argument, snapshot, witness)
 
 
 def main():
+    phase = "input"
     try:
         raw = sys.stdin.buffer.read(524289)
         if len(raw) > 524288 or not sys.platform.startswith("linux") or os.getuid() != 0:
@@ -178,12 +229,20 @@ def main():
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_peer._unique_object)
         if type(value) is not dict or set(value) != {"daemon", "process", "expected", "revision", "operationId", "attemptSha256"}:
             raise ValueError()
+        phase = "formal-witness"
         _formal_witness(value)
+        phase = "transport"
         result = _connect("/root/.pm2/rpc.sock", value["daemon"], value["process"], _worker.snapshot(value["expected"]), _transport.replacement_argument(value["revision"]), _worker.snapshot, lambda: _formal_witness(value))
         sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
         return 0
-    except BaseException:
-        sys.stderr.write("active_gated_worker_outcome_unconfirmed\n")
+    except BaseException as error:
+        # Only this control-flow boundary proves the socket was never opened.
+        # Transport errors stay UNKNOWN, even if the current target looks old.
+        before_connect = phase in ("input", "formal-witness")
+        codes = {"active_worker_source", "active_worker_gate_open", "active_worker_attempt", "active_worker_binding", "active_worker_time", "active_worker_window", "active_worker_controller", "active_worker_closure_path", "active_worker_closure", "active_worker_inherited_fd", "active_worker_lock_not_held", "active_worker_fixed_predecessor", "active_worker_script", "active_worker_script_changed", "active_worker_path", "active_worker_file", "active_worker_file_changed"}
+        code = error.args[0] if type(error) is ValueError and len(error.args) == 1 and type(error.args[0]) is str and error.args[0] in codes else "unconfirmed"
+        receipt = {"schemaVersion": 1, "kind": "active-gated-worker-refused-before-connect" if before_connect else "active-gated-worker-outcome-unconfirmed", "stage": phase, "code": code, "socketOpened": False if before_connect else None, "controlSent": False if before_connect else None, "mutationPossible": not before_connect, "automaticRetryAllowed": False, "detailsRedacted": True}
+        sys.stderr.write(json.dumps(receipt, separators=(",", ":"), sort_keys=True) + "\n")
         return 1
 
 

@@ -475,6 +475,23 @@ export async function withPostSaveBookingPreparationLocks({toolRevision},work){
   return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:async window=>{if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');const result=await observePostSaveIncident({window});if(result.history.pinsSha256!==authority.prepared.postSavePartial.pinsSha256)fail('active_incident_review_changed');return result.current;}},async(token,context)=>{assertHeldLocks(token);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;});
 }
 
+// Separate fixed no-control abort scope. Neither the normal absent-operation
+// path nor the original 3566178 active-incident path is relaxed.
+export async function withPreControlAbortPreparationLocks({toolRevision},work){
+ if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('active_incident_scope');
+ const{reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),{PRE_CONTROL:H}=await import('./release-toolchain-pre-control-contract.mjs'),{observePreControlUnchanged,preControlPinsSha256}=await import('./release-toolchain-pre-control-evidence.mjs'),authority=reviewedBookingExecution(toolRevision);
+ if(authority?.prepared.preControlAbort?.pinsSha256!==preControlPinsSha256()||authority.prepared.preControlAbort.oldToolRevision!==H.toolRevision)fail('active_incident_review_required');
+ return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:async()=>{if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return observePreControlUnchanged();}},async(token,context)=>{
+  const held=heldLocks.get(token);held.preControlAbort=Object.freeze({toolRevision,pinsSha256:preControlPinsSha256(),root:H.root,originalInode:H.operationInode});assertPreControlAbortHeldWindow(token,context.window);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;
+ });
+}
+export function assertPreControlAbortHeldWindow(token,window){assertHeldLocks(token);const held=heldLocks.get(token);if(!held.preControlAbort||!isDeepStrictEqual(held.activeWindow,window))fail('pre_control_scope_required');return Object.freeze({...held.preControlAbort});}
+export function preControlAbortLockProfile(token){assertHeldLocks(token);const held=heldLocks.get(token);return held.preControlAbort?Object.freeze({...held.preControlAbort,window:structuredClone(held.activeWindow)}):null;}
+export function preControlAbortArchiveWitness(token){
+ assertExistingOperationScopeHeld(token);const held=heldLocks.get(token),marker=held.preControlAbort;if(!marker)fail('pre_control_scope_required');if(!held.activeArchive)return null;
+ const a=held.activeArchive;if(a.vault!==marker.root+'/'+held.activeWindow.id||a.original.ino!==marker.originalInode)fail('active_archive_not_authorized');equal(dirIdentity(privateDirectory(a.destination)),a.original,'active_archive_original_changed');return Object.freeze(structuredClone({...a,window:held.activeWindow,released:held.activeScopeReleased===true}));
+}
+
 // Closed disposable CI entry: same actual FD/flock/inode implementation, but a
 // separate owned resource identity. Its tokens MUST fail production admission.
 export async function acceptActiveIncidentPreparationLocksInCi() {
@@ -538,6 +555,35 @@ export async function acceptActiveIncidentPreparationLocksInCi() {
     }catch{/* A diagnostic failure cannot replace the original refusal. */}
     throw error;
   }
+}
+
+// Closed CI composition of the no-control abort's actual archive/release
+// primitives. No resource arguments, formal marker, or production action token.
+export async function acceptPreControlAbortClosureInCi(){
+ const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
+ if(process.platform!=='linux'||process.getuid?.()!==0||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_RELEASE_PRODUCTION_EQ!=='1'||anchors.some(f=>exists(f)))fail('ci_only');
+ const root=fs.mkdtempSync('/var/lib/faolla-pre-control-ci-');fs.chmodSync(root,0o700);const cases=[];let stage='prepare';
+ privateWrite(root+'/started.json',retentionCanonicalText({kind:'pre-control-abort-composition-started',syntheticInputsOnly:true,formalHostTouched:false,publicationAuthority:false}));
+ try{
+  for(const outcome of ['normal','wrong-completion','unknown-after-archive']){
+   stage=outcome;const parent=root+'/'+outcome;fs.mkdirSync(parent,{mode:0o700});const deployLock=parent+'/deploy.lock',operation=parent+'/operation.lock',publication=parent+'/publication',vault=parent+'/vault';privateWrite(deployLock,'owned-only\n');for(const directory of [operation,publication,vault])fs.mkdirSync(directory,{mode:0o700});syncDirectory(parent);
+   const names=['controller-exit-unconfirmed.json','publication-attempt.json','publication-unconfirmed.json','rollback-readiness.json','worker-attempt.json','worker-unconfirmed.json'];for(const name of names)privateWrite(publication+'/'+name,retentionCanonicalText({kind:'synthetic-pre-control-'+name,containsPrivateEnvironment:false}));
+   const original=dirIdentity(fs.lstatSync(operation)),publicationIdentity=dirIdentity(fs.lstatSync(publication)),files=Object.fromEntries(names.map(n=>[n,digest(readOwned(publication+'/'+n))])),closure={directory:vault,sha256:'a'.repeat(64)};let caught,replacement;
+   try{await withExistingOperationPreparation({deployLock,operation,observe:async()=>({syntheticInputsOnly:true})},async token=>{
+    let productionRejected=false;try{assertPreControlAbortHeldWindow(token,heldLocks.get(token).activeWindow);}catch{productionRejected=true;}if(!productionRejected)fail('ci_token_production_leak');
+    const archived=archiveOwnedExistingOperation(token,vault,closure.sha256);replacement=archived.replacement;fs.renameSync(publication,vault+'/publication');syncDirectory(parent);syncDirectory(vault);equal(dirIdentity(fs.lstatSync(vault+'/publication')),publicationIdentity,'ci_publication_inode_lost');
+    if(outcome==='unknown-after-archive')throw Error('owned-pre-control-unknown');
+    privateWrite(vault+'/reconciliation-completed.json',retentionCanonicalText({kind:outcome==='normal'?'pre-control-worker-attempt-reconciled':'foreign-completion',closureSha256:closure.sha256,archiveSha256:digest(readOwned(vault+'/operation-archived.json')),publicationAuthority:false}));
+    releaseArchivedReplacement(token,closure,'pre-control-worker-attempt-reconciled','pre-control-abort-replacement');assertExistingOperationScopeHeld(token);
+    if(exists(operation))fail('ci_replacement_not_released');if(JSON.parse(readOwned(vault+'/replacement-released.json')).kind!=='pre-control-abort-replacement-released')fail('ci_release_receipt_changed');
+   });}catch(error){caught=error;}
+   equal(dirIdentity(fs.lstatSync(vault+'/operation.lock')),original,'ci_original_inode_lost');equal(dirIdentity(fs.lstatSync(vault+'/publication')),publicationIdentity,'ci_publication_inode_lost');equal(fs.readdirSync(vault+'/publication').sort(),[...names].sort(),'ci_original_files_lost');for(const name of names)equal(digest(readOwned(vault+'/publication/'+name)),files[name],'ci_original_bytes_changed');
+   const probe=spawnSync('flock',['--nonblock',deployLock,'true'],{env:runtimeEnvironment(),timeout:10000,windowsHide:true});if(probe.status!==0||probe.error||probe.signal)fail('ci_deploy_lock_not_released');
+   if(outcome==='normal'){if(caught||exists(operation))fail('ci_abort_normal_failed');cases.push('normal-retains-both-inodes-and-all-six-files-releases-only-owned-replacement');}
+   else{if(!caught||exists(vault+'/replacement-released.json')||!replacement)fail('ci_unknown_false_success');equal(dirIdentity(fs.lstatSync(operation)),replacement,'ci_unknown_replacement_lost');if(outcome==='wrong-completion'&&caught.message!=='online_retention_writer_active_archive_not_authorized')throw caught;cases.push(outcome+'-retains-originals-and-blocks-release');}
+  }
+  if(anchors.some(f=>exists(f)))fail('ci_formal_anchor_created');const result={kind:'pre-control-abort-native-composition-accepted',root,cases,realKernelFlock:true,productionTokensRejected:true,bothOriginalInodesRetained:true,allSixOriginalFilesRetained:true,processControlPerformed:false,processSavePerformed:false,businessSqlWritten:false,formalHostTouched:false,publicationAuthority:false,completedAt:new Date().toISOString()};privateWrite(root+'/acceptance.json',retentionCanonicalText(result));return result;
+ }catch(error){privateWrite(root+'/failure.json',retentionCanonicalText({kind:'pre-control-abort-native-composition-unconfirmed',stage,errorSha256:digest(String(error?.message??'unknown')),automaticRetryAllowed:false,publicationAuthority:false}));throw error;}
 }
 
 // Genuine owned CI capability, same kernel/inode engine; formal tokens still
@@ -610,6 +656,9 @@ export async function archivePostSaveBookingClosureOperation(options){
 export async function releasePostSaveBookingClosureOperation(options){
   assertHeldLocks(options.lock);const {verifyPostSaveClosure}=await import('./release-toolchain-post-save-closure.mjs'),closure=await verifyPostSaveClosure(options);return releaseArchivedReplacement(options.lock,closure,'active-incident-reconciliation-completed','active-incident-replacement');
 }
+
+export async function archivePreControlAbortOperation(options){assertPreControlAbortHeldWindow(options.lock,options.window);const{verifyPreControlAbortClosure}=await import('./release-toolchain-pre-control-closure.mjs'),closure=await verifyPreControlAbortClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
+export async function releasePreControlAbortOperation(options){assertPreControlAbortHeldWindow(options.lock,options.window);const{verifyPreControlAbortClosure}=await import('./release-toolchain-pre-control-closure.mjs'),closure=await verifyPreControlAbortClosure(options);return releaseArchivedReplacement(options.lock,closure,'pre-control-worker-attempt-reconciled','pre-control-abort-replacement');}
 
 // Physical archive primitive shared with disposable native tests. Deliberately
 // NOT exported as a production action: a future closure entry must first verify
