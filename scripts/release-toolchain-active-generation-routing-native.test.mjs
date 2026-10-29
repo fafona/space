@@ -16,6 +16,21 @@ test('owner cancellation is source/birth-bound and fails only after real process
  const value=readFileSync(new URL('./release-toolchain-active-generation-routing-native.mjs',import.meta.url),'utf8');for(const token of ['process.on(\'SIGTERM\',cancel)','process.removeListener(\'SIGTERM\',cancel)','owned-process-','same(captureProcessFact(expected.pid),expected)',"process.kill(expected.pid,'SIGTERM')",'actualOwnedMidCase:true','validateIsolationContainer','running:false','active_routing_native_interrupted'])assert.ok(value.includes(token),token);
 });
 test('native Node processes execute in a pinned empty immutable directory; logs and receipts cannot mutate their cwd identity',()=>{const value=readFileSync(new URL('./release-toolchain-active-generation-routing-native.mjs',import.meta.url),'utf8');for(const token of ['cwd:c.executionDirectory',"executionDirectory===directory+'/execution'",'c.executionIdentity','same(fs.readdirSync(c.executionDirectory),[])','fact.cwd===c.executionDirectory','[c.directory,c.executionDirectory]'])assert.ok(value.includes(token),token);assert.ok(!value.includes('captureProcessFact(pid,{allow'));});
+test('active-route Nginx config applies the existing explicit runtime profile on every gated and ungated render',async()=>{
+ const {activeRoutingNativeNginxText}=await import('./release-toolchain-active-generation-routing-native.mjs');
+ assert.equal(typeof activeRoutingNativeNginxText,'function');
+ const c={directory:'/var/lib/faolla-active-routing-native-ABC123/normal',ports:{ingress:32123},window:{id:'10000000-0000-4000-8000-000000000001',startedAt:'2026-10-29T07:00:00.000Z',deadlineAt:'2026-10-29T07:10:00.000Z'}};
+ for(const gated of [false,true]){
+  const standard=activeRoutingNativeNginxText(c,gated,'/usr/sbin/nginx'),bt=activeRoutingNativeNginxText(c,gated,'/www/server/nginx/sbin/nginx');
+  const directive='lua_package_path "/www/server/nginx/lib/lua/?.lua;;";';
+  assert.equal(bt.replace(directive,''),standard,'the runtime library search path is the only BT-specific config delta');
+  assert.equal(bt.split(directive).length,2);assert.ok(bt.indexOf(directive)>bt.indexOf('http {'));assert.ok(bt.indexOf(directive)<bt.indexOf('access_log off;'));
+  assert.equal(standard.includes('lua_package_path'),false);assert.throws(()=>activeRoutingNativeNginxText(c,gated,'/bin/sh'),/invalid_contract/);
+ }
+ const source=readFileSync(new URL('./release-toolchain-active-generation-routing-native.mjs',import.meta.url),'utf8');
+ assert.ok(source.includes('inspectToolchainNginxProfile(NGINX);return activeRoutingNativeNginxText(c,gated,NGINX)'),'runtime resource ownership checks must precede use');
+ for(const token of ["nginxText(c,false)","replace(c,'nginx.conf',bookingHostRead(c.directory+'/nginx.conf'),nginxText(c,gated))"])assert.ok(source.includes(token),'initial and subsequent gate transitions must use the same profile renderer');
+});
 test('native acceptance shares the actual active-route and recovery algorithms with real bounded owned IO and never claims a formal certificate',()=>{
  const value=readFileSync(new URL('./release-toolchain-active-generation-routing-native.mjs',import.meta.url),'utf8');
  for(const token of ['executeActiveBookingRoutingPhase','executeActiveBookingRecovery','executeBookingIngressDrain','runBookingWatchdogSequence','BOOKING_RECOVERY_BARRIER_SQL','createOwnedIsolation','stopOwnedIsolation',"process.kill(process.pid,'SIGKILL')",'assertActualActiveSupervisorKernelIdentity','operationIdentity','assertActiveBookingRoutingCurrent','retentionCertificateNotMinted:true','formalPublicationAccepted:false','workerGateNotOpened:true','componentAcceptanceOnly:true','captureActiveToolchainProductionSnapshot'])assert.ok(value.includes(token),token);

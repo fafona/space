@@ -6,7 +6,7 @@ import {spawn,spawnSync} from 'node:child_process';import {fileURLToPath} from '
 import {createOwnedIsolation,loadOwnedIsolation,isolatedPg,stopOwnedIsolation,validateIsolationContainer} from './release-toolchain-isolation.mjs';
 import {inspectPinnedExecutionSource,ownedReleasePath} from './release-toolchain-source.mjs';
 import {captureActiveToolchainProductionSnapshot,startBookingNativeNginx,stopBookingNativeNginx} from './release-toolchain-full-rehearsal.mjs';
-import {inspectToolchainNginxProfile} from './release-toolchain-profiles.mjs';
+import {inspectToolchainNginxProfile,toolchainNginxProfile} from './release-toolchain-profiles.mjs';
 import {bookingHostWriteOnce,bookingHostRead,bookingHostSync} from './booking-handoff-host-io.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 import {createBookingAtomicRoutingPlan} from './booking-handoff-routing.mjs';
@@ -53,7 +53,10 @@ function physical(c,value){return value.replaceAll('127.0.0.1:3104;','127.0.0.1:
 function logical(c,value){return value.replaceAll('127.0.0.1:'+c.ports.primary+';','127.0.0.1:3104;').replaceAll('127.0.0.1:'+c.ports.rollback+';','127.0.0.1:3110;');}
 function current(c){return Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,logical(c,bookingHostRead(c.directory+'/'+file))]));}
 function replace(c,file,before,after){caseScope(c.directory);const target=c.directory+'/'+file;same(bookingHostRead(target),before);if(before===after)return;const temporary=target+'.'+randomUUID()+'.tmp';bookingHostWriteOnce(temporary,after);same(bookingHostRead(target),before);fs.renameSync(temporary,target);bookingHostSync(c.directory);same(bookingHostRead(target),after);}
-function nginxText(c,gated){return `user root;working_directory ${c.directory};pid ${c.directory}/nginx.pid;error_log ${c.directory}/nginx-error.log;worker_processes 2;events {worker_connections 64;}http {map $http_upgrade $connection_upgrade {default close;}access_log off;server {listen 127.0.0.1:${c.ports.ingress};server_name localhost;${gated?activeBookingIngressSnippet(c.window):''}\n${WEB_RELEASE_FILES.map(file=>'include '+c.directory+'/'+file+';').join('\n')}\n}}`;}
+// BT can pass nginx -t yet exit at runtime if resty.core is not discoverable.
+// Reuse the existing fixed profile on initial, fenced and unfenced configs.
+export function activeRoutingNativeNginxText(c,gated,binary=NGINX){const profile=toolchainNginxProfile(binary);return `user root;working_directory ${c.directory};pid ${c.directory}/nginx.pid;error_log ${c.directory}/nginx-error.log;worker_processes 2;events {worker_connections 64;}http {${profile.httpDirectives}map $http_upgrade $connection_upgrade {default close;}access_log off;server {listen 127.0.0.1:${c.ports.ingress};server_name localhost;${gated?activeBookingIngressSnippet(c.window):''}\n${WEB_RELEASE_FILES.map(file=>'include '+c.directory+'/'+file+';').join('\n')}\n}}`;}
+function nginxText(c,gated){inspectToolchainNginxProfile(NGINX);return activeRoutingNativeNginxText(c,gated,NGINX);}
 function syntax(c){caseScope(c.directory);run(NGINX,['-p',c.directory+'/', '-c',c.directory+'/nginx.conf','-t']);}
 function reload(c){caseScope(c.directory);const expected=read(c.directory+'/nginx-process.json'),actual=nginxFact(expected.pid);need(factsSame(expected,actual)&&actual.executable===NGINX,'owned_resource_changed');run(NGINX,['-p',c.directory+'/', '-c',c.directory+'/nginx.conf','-s','reload']);}
 function fence(c,gated){replace(c,'nginx.conf',bookingHostRead(c.directory+'/nginx.conf'),nginxText(c,gated));syntax(c);reload(c);}
